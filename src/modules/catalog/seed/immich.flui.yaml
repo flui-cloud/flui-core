@@ -1,0 +1,328 @@
+kind: CatalogApp
+apiVersion: flui/v1
+
+metadata:
+  id: immich
+  name: Immich
+  description: >
+    High-performance, self-hosted photo and video backup with facial recognition,
+    object detection, map view and native mobile apps. A privacy-first Google Photos
+    alternative that keeps your entire media library on EU infrastructure with zero
+    data sent to external services. Powered by machine-learning for smart search,
+    duplicate detection and face clustering.
+  appKind: APPLICATION
+  category: media
+  tags:
+    - photos
+    - video
+    - backup
+    - media
+    - machine-learning
+    - gdpr
+  license: AGPL-3.0
+  version: release
+  maintainedAt: '2026-05-28'
+  icon: https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/svg/immich.svg
+  links:
+    website: https://immich.app
+    docs: https://docs.immich.app
+    source: https://github.com/immich-app/immich
+  ratings:
+    wow: 5
+    utility: 5
+    euFit: 5
+    community: 5
+  alternativeTo:
+    - Google Photos
+    - Apple iCloud Photos
+    - Amazon Photos
+
+spec:
+  type: composed
+
+  domain:
+    auto: true
+    tls: true
+    userCustomizable: true
+
+  components:
+    # ── 1. Database (pgvector/vectorchord flavour — must be inlined, not linked BB) ──
+    - name: database
+      image:
+        registry: ghcr.io
+        repository: immich-app/postgres
+        tag: '14-vectorchord0.4.3-pgvectors0.2.0'
+      ports:
+        - name: postgres
+          internal: 5432
+          expose: false
+          protocol: tcp
+      volumes:
+        - name: pgdata
+          mountPath: /var/lib/postgresql/data
+          required: true
+          size: 20Gi
+      persistence:
+        scope: dedicated
+      env:
+        - name: POSTGRES_USER
+          value: immich
+        - name: POSTGRES_DB
+          value: immich
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            generate: secret
+            length: 32
+        - name: POSTGRES_INITDB_ARGS
+          value: '--data-checksums'
+        # Subdirectory avoids init-in-non-empty-dir failures on Flui persistent volumes
+        - name: PGDATA
+          value: /var/lib/postgresql/data/pgdata
+      resources:
+        requests:
+          cpu: 100m
+          memory: 256Mi
+        limits:
+          cpu: '1'
+          memory: 1Gi
+      scaling:
+        horizontal:
+          enabled: false
+        vertical:
+          enabled: true
+          mode: Recreate
+          bounds:
+            cpu:
+              min: 100m
+              max: '1'
+            memory:
+              min: 256Mi
+              max: 1Gi
+          updatePolicy:
+            trigger:
+              - OOMKilled
+              - CPUThrottling
+            cooldown: 10m
+      healthcheck:
+        type: exec
+        command:
+          - pg_isready
+          - -U
+          - immich
+        initialDelay: 15s
+        interval: 10s
+        timeout: 5s
+        retries: 10
+
+    # ── 2. Cache (Valkey / Redis-compatible) ──────────────────────────────────────
+    - name: redis
+      image:
+        registry: docker.io
+        repository: valkey/valkey
+        tag: '9'
+      ports:
+        - name: redis
+          internal: 6379
+          expose: false
+          protocol: tcp
+      env: []
+      resources:
+        requests:
+          cpu: 25m
+          memory: 32Mi
+        limits:
+          cpu: '250m'
+          memory: 128Mi
+      scaling:
+        horizontal:
+          enabled: false
+        vertical:
+          enabled: true
+          mode: Recreate
+          bounds:
+            cpu:
+              min: 25m
+              max: '250m'
+            memory:
+              min: 32Mi
+              max: 128Mi
+          updatePolicy:
+            trigger:
+              - OOMKilled
+            cooldown: 5m
+      healthcheck:
+        type: exec
+        command:
+          - redis-cli
+          - ping
+        initialDelay: 5s
+        interval: 10s
+        timeout: 3s
+        retries: 5
+
+    # ── 3. Machine-learning inference service ─────────────────────────────────────
+    - name: machine-learning
+      image:
+        registry: ghcr.io
+        repository: immich-app/immich-machine-learning
+        tag: 'release'
+      ports:
+        # Internal only — server reaches ML via http://{{components.machine-learning.host}}:3003
+        - name: http
+          internal: 3003
+          expose: false
+          protocol: http
+      volumes:
+        - name: model-cache
+          mountPath: /cache
+          required: false
+          size: 20Gi
+      env:
+        - name: MACHINE_LEARNING_CACHE_FOLDER
+          value: /cache
+      resources:
+        requests:
+          cpu: 100m
+          memory: 512Mi
+        limits:
+          cpu: '2'
+          memory: 3Gi
+      scaling:
+        horizontal:
+          enabled: false
+        vertical:
+          enabled: true
+          mode: Recreate
+          bounds:
+            cpu:
+              min: 100m
+              max: '2'
+            memory:
+              min: 512Mi
+              max: 3Gi
+          updatePolicy:
+            trigger:
+              - OOMKilled
+              - CPUThrottling
+            cooldown: 10m
+      healthcheck:
+        type: http
+        path: /ping
+        port: 3003
+        initialDelay: 30s
+        interval: 30s
+        timeout: 10s
+        retries: 5
+
+    # ── 4. Application server (user-facing) ───────────────────────────────────────
+    - name: server
+      dependsOn:
+        - database
+        - redis
+      image:
+        registry: ghcr.io
+        repository: immich-app/immich-server
+        tag: 'release'
+      ports:
+        - name: http
+          internal: 2283
+          expose: true
+          protocol: http
+      volumes:
+        - name: uploads
+          mountPath: /data
+          required: true
+          size: 50Gi
+      env:
+        - name: DB_HOSTNAME
+          value: '{{components.database.host}}'
+        - name: DB_PORT
+          value: '5432'
+        - name: DB_USERNAME
+          value: '{{components.database.env.POSTGRES_USER}}'
+        - name: DB_PASSWORD
+          value: '{{components.database.env.POSTGRES_PASSWORD}}'
+        - name: DB_DATABASE_NAME
+          value: '{{components.database.env.POSTGRES_DB}}'
+        - name: REDIS_HOSTNAME
+          value: '{{components.redis.host}}'
+        - name: REDIS_PORT
+          value: '6379'
+        - name: IMMICH_MACHINE_LEARNING_URL
+          value: 'http://{{components.machine-learning.host}}:3003'
+        - name: TZ
+          value: 'UTC'
+          userEditable: true
+          description: 'Server timezone (IANA format, e.g. Europe/Rome)'
+      resources:
+        requests:
+          cpu: 150m
+          memory: 512Mi
+        limits:
+          cpu: '2'
+          memory: 1.5Gi
+      scaling:
+        horizontal:
+          enabled: false
+        vertical:
+          enabled: true
+          mode: Recreate
+          bounds:
+            cpu:
+              min: 150m
+              max: '2'
+            memory:
+              min: 512Mi
+              max: 1.5Gi
+          updatePolicy:
+            trigger:
+              - OOMKilled
+              - CPUThrottling
+            cooldown: 5m
+      healthcheck:
+        type: http
+        path: /api/server/ping
+        port: 2283
+        initialDelay: 20s
+        interval: 30s
+        timeout: 5s
+        retries: 6
+
+  auth:
+    default: native
+    modes:
+      - native
+      - oidc
+    oidc:
+      redirectPaths:
+        - /auth/login
+        - /user-settings
+      scopes:
+        - openid
+        - email
+        - profile
+      configFile:
+        path: /config/immich.json
+        env: IMMICH_CONFIG_FILE
+        template: |
+          {"oauth":{"enabled":true,"issuerUrl":"{{oidc.issuerUrl}}","clientId":"{{oidc.clientId}}","clientSecret":"{{oidc.clientSecret}}","scope":"openid email profile","autoRegister":true,"buttonText":"Login with Flui"}}
+
+  # Only with OIDC: pre-create the admin so the installing user signs in via SSO
+  # (immich links by email). Skipped in native mode → normal immich onboarding.
+  postInstall:
+    - name: bootstrap-admin
+      when:
+        authMode: oidc
+      http:
+        method: POST
+        path: /api/auth/admin-sign-up
+        body: |
+          {"email":"{{install.userEmail}}","password":"{{generate.password}}","name":"Admin"}
+        expectStatus: [200, 201, 400]
+
+  smokeTest:
+    type: http
+    path: /api/server/ping
+    expectedStatus: 200
+    timeoutSeconds: 60
+    retries: 3

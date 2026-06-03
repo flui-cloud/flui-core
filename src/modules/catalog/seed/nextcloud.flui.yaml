@@ -1,0 +1,403 @@
+kind: CatalogApp
+apiVersion: flui/v1
+
+metadata:
+  id: nextcloud
+  name: Nextcloud
+  description: >
+    Self-hosted cloud platform for file sync, sharing, calendar, contacts
+    and collaboration. Runs entirely on your own EU infrastructure with an
+    AGPL-3.0 licence — no data leaves your server. This composed stack
+    bundles MariaDB, a Redis session cache and a dedicated background-job
+    worker (cron) into a single atomic install.
+  appKind: APPLICATION
+  category: storage
+  tags:
+    - cloud-storage
+    - file-sync
+    - collaboration
+    - gdpr
+    - php
+    - self-hosted
+  license: AGPL-3.0
+  version: '32'
+  maintainedAt: '2026-05-30'
+  icon: https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/svg/nextcloud.svg
+  links:
+    website: https://nextcloud.com
+    docs: https://docs.nextcloud.com
+    source: https://github.com/nextcloud/docker
+  ratings:
+    wow: 5
+    utility: 5
+    euFit: 5
+    community: 5
+  alternativeTo:
+    - Google Drive
+    - Dropbox
+    - Microsoft OneDrive
+
+spec:
+  type: composed
+
+  domain:
+    auto: true
+    tls: true
+    userCustomizable: true
+
+  components:
+    - name: db
+      image:
+        registry: docker.io
+        repository: library/mariadb
+        tag: 'lts'
+      ports:
+        - name: mysql
+          internal: 3306
+          expose: false
+          protocol: tcp
+      volumes:
+        - name: db-data
+          mountPath: /var/lib/mysql
+          required: true
+          size: 10Gi
+      persistence:
+        scope: dedicated
+      env:
+        - name: MYSQL_ROOT_PASSWORD
+          valueFrom:
+            generate: secret
+            length: 32
+        - name: MYSQL_DATABASE
+          value: nextcloud
+        - name: MYSQL_USER
+          value: nextcloud
+        - name: MYSQL_PASSWORD
+          valueFrom:
+            generate: secret
+            length: 32
+        - name: MARIADB_AUTO_UPGRADE
+          value: '1'
+        - name: MARIADB_DISABLE_UPGRADE_BACKUP
+          value: '1'
+      resources:
+        requests:
+          cpu: 100m
+          memory: 256Mi
+        limits:
+          cpu: '1'
+          memory: 1Gi
+      scaling:
+        horizontal:
+          enabled: false
+        vertical:
+          enabled: true
+          mode: Recreate
+          bounds:
+            cpu:
+              min: 100m
+              max: '1'
+            memory:
+              min: 256Mi
+              max: 1Gi
+          updatePolicy:
+            trigger:
+              - OOMKilled
+              - CPUThrottling
+            cooldown: 10m
+      healthcheck:
+        type: exec
+        command:
+          - healthcheck.sh
+          - '--connect'
+          - '--innodb_initialized'
+        initialDelay: 20s
+        interval: 10s
+        timeout: 5s
+        retries: 10
+
+    - name: redis
+      image:
+        registry: docker.io
+        repository: library/redis
+        tag: 'alpine'
+      ports:
+        - name: redis
+          internal: 6379
+          expose: false
+          protocol: tcp
+      env: []
+      resources:
+        requests:
+          cpu: 25m
+          memory: 32Mi
+        limits:
+          cpu: '250m'
+          memory: 128Mi
+      scaling:
+        horizontal:
+          enabled: false
+        vertical:
+          enabled: true
+          mode: Recreate
+          bounds:
+            cpu:
+              min: 25m
+              max: '250m'
+            memory:
+              min: 32Mi
+              max: 128Mi
+          updatePolicy:
+            trigger:
+              - OOMKilled
+            cooldown: 5m
+      healthcheck:
+        type: exec
+        command:
+          - redis-cli
+          - ping
+        initialDelay: 5s
+        interval: 10s
+        timeout: 3s
+        retries: 5
+
+    - name: app
+      dependsOn:
+        - db
+        - redis
+      image:
+        registry: docker.io
+        repository: library/nextcloud
+        tag: 'apache'
+      ports:
+        - name: http
+          internal: 80
+          expose: true
+          protocol: http
+      volumes:
+        - name: nextcloud-data
+          mountPath: /var/www/html
+          required: true
+          size: 20Gi
+      env:
+        - name: MYSQL_HOST
+          value: '{{components.db.host}}'
+        - name: MYSQL_DATABASE
+          value: '{{components.db.env.MYSQL_DATABASE}}'
+        - name: MYSQL_USER
+          value: '{{components.db.env.MYSQL_USER}}'
+        - name: MYSQL_PASSWORD
+          value: '{{components.db.env.MYSQL_PASSWORD}}'
+        - name: REDIS_HOST
+          value: '{{components.redis.host}}'
+        - name: NEXTCLOUD_ADMIN_USER
+          valueFrom:
+            userInput:
+              label: Admin username
+              default: admin
+              format: text
+              minLength: 3
+              maxLength: 32
+              pattern: '^[a-zA-Z0-9_-]{3,32}$'
+              patternDescription: Letters, numbers, hyphens and underscores, 3–32 chars
+        - name: NEXTCLOUD_ADMIN_PASSWORD
+          valueFrom:
+            userInput:
+              label: Admin password
+              sensitive: true
+              format: password
+              minLength: 8
+              maxLength: 128
+              confirm: true
+        - name: PHP_MEMORY_LIMIT
+          value: '512M'
+          userEditable: true
+          description: PHP memory limit per request (Dockerfile default)
+        - name: PHP_UPLOAD_LIMIT
+          value: '512M'
+          userEditable: true
+          description: Maximum upload size per request (Dockerfile default)
+        - name: APACHE_BODY_LIMIT
+          value: '1073741824'
+          userEditable: true
+          description: Apache request body limit in bytes (default 1 GiB)
+        - name: TZ
+          value: 'UTC'
+          userEditable: true
+          description: Server timezone (IANA format, e.g. Europe/Rome)
+      resources:
+        requests:
+          cpu: 100m
+          memory: 512Mi
+        limits:
+          cpu: '1.5'
+          memory: 1Gi
+      scaling:
+        horizontal:
+          enabled: false
+        vertical:
+          enabled: true
+          mode: Recreate
+          bounds:
+            cpu:
+              min: 100m
+              max: '1.5'
+            memory:
+              min: 512Mi
+              max: 1Gi
+          updatePolicy:
+            trigger:
+              - OOMKilled
+              - CPUThrottling
+            cooldown: 10m
+      healthcheck:
+        type: http
+        path: /status.php
+        port: 80
+        # Nextcloud 400s any Host not in trusted_domains; the kubelet probes the
+        # pod IP. Send a Host it always trusts so readiness reflects the
+        # container, not the (post-deploy) ingress/trusted-domain config.
+        httpHeaders:
+          Host: localhost
+        initialDelay: 30s
+        interval: 30s
+        timeout: 10s
+        retries: 6
+
+    # ── 4. Collabora Online (document server) — optional, gated by option "office" ──
+    - name: collabora
+      when:
+        option: office
+      image:
+        registry: docker.io
+        repository: collabora/code
+        tag: 'latest'
+      ports:
+        - name: http
+          internal: 9980
+          expose: true
+          protocol: http
+      env:
+        # Allow any WOPI host (the Nextcloud FQDN is assigned at install time).
+        - name: domain
+          value: '.*'
+        # TLS terminated by Flui's ingress (plain HTTP behind it). server_name is
+        # this component's own public FQDN — known before create thanks to the
+        # deterministic slug — so Collabora emits PUBLIC editor URLs (urlsrc) in
+        # its discovery even when Nextcloud fetches it over the internal service.
+        - name: extra_params
+          value: '--o:ssl.enable=false --o:ssl.termination=true --o:server_name={{self.fqdn}}'
+        - name: DONT_GEN_SSL_CERT
+          value: '1'
+      resources:
+        requests:
+          cpu: 150m
+          memory: 768Mi
+        limits:
+          cpu: '2'
+          memory: 2Gi
+      scaling:
+        horizontal:
+          enabled: false
+        vertical:
+          enabled: true
+          mode: Recreate
+          bounds:
+            cpu:
+              min: 150m
+              max: '2'
+            memory:
+              min: 768Mi
+              max: 2Gi
+          updatePolicy:
+            trigger:
+              - OOMKilled
+            cooldown: 10m
+      healthcheck:
+        type: tcp
+        port: 9980
+        initialDelay: 20s
+        interval: 15s
+        timeout: 5s
+        retries: 10
+
+  auth:
+    default: native
+    modes:
+      - native
+      - oidc
+    oidc:
+      # user_oidc callback endpoints (configured via occ in postInstall).
+      redirectPaths:
+        - /apps/user_oidc/code
+        - /index.php/apps/user_oidc/code
+      scopes:
+        - openid
+        - email
+        - profile
+
+  # Install-time feature toggles.
+  options:
+    - key: office
+      label: 'Office editing (Collabora)'
+      description: 'Edit Word/Excel/PowerPoint in the browser via Nextcloud Office (Collabora Online). Adds a document-server component.'
+      default: false
+
+  # Nextcloud is configured via the `occ` CLI, not HTTP/config-file — so these
+  # steps exec inside the app pod (as www-data). The resolved FQDN is known only
+  # after the endpoint is created, hence trusted_domains/overwrite live here.
+  postInstall:
+    # Always: make the app aware it sits behind Flui's TLS reverse proxy.
+    - name: configure-proxy
+      when:
+        authMode:
+          - native
+          - oidc
+      exec:
+        command:
+          - /bin/sh
+          - -c
+          - >
+            su -s /bin/sh -c "php occ config:system:set trusted_domains 1
+            --value={{install.resolvedFqdn}} && php occ config:system:set
+            overwritehost --value={{install.resolvedFqdn}} && php occ
+            config:system:set overwriteprotocol --value=https && php occ
+            config:system:set overwrite.cli.url
+            --value=https://{{install.resolvedFqdn}}" www-data
+    # OIDC only: install user_oidc and register Flui (Zitadel) as the provider.
+    - name: configure-oidc
+      when:
+        authMode: oidc
+      exec:
+        command:
+          - /bin/sh
+          - -c
+          - >
+            su -s /bin/sh -c "(php occ app:install user_oidc || php occ
+            app:enable user_oidc); php occ user_oidc:provider Flui
+            --clientid={{oidc.clientId}} --clientsecret={{oidc.clientSecret}}
+            --discoveryuri={{oidc.issuerUrl}}/.well-known/openid-configuration
+            --unique-uid=0" www-data
+    # Office only: install Nextcloud Office (richdocuments) and point it at the
+    # Collabora component over the INTERNAL k8s service (no public cert needed
+    # for the server-side discovery fetch → no cert-issuance race, no retry).
+    # The browser still loads the editor from Collabora's public URL, which
+    # Collabora advertises in discovery via its server_name (set above).
+    - name: enable-office
+      when:
+        option: office
+      exec:
+        command:
+          - /bin/sh
+          - -c
+          - >
+            su -s /bin/sh -c "(php occ app:install richdocuments || php occ
+            app:enable richdocuments); php occ config:app:set richdocuments
+            wopi_url --value=http://{{components.collabora.host}}:9980; php occ
+            richdocuments:activate-config" www-data
+
+  smokeTest:
+    type: http
+    path: /status.php
+    expectedStatus: 200
+    timeoutSeconds: 90
