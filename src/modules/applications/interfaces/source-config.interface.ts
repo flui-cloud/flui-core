@@ -131,6 +131,7 @@ export interface ApplicationHealthProbe {
   httpPath?: string;
   httpPort?: number;
   httpScheme?: 'HTTP' | 'HTTPS';
+  httpHeaders?: Record<string, string>;
   tcpPort?: number;
   execCommand?: string[];
   initialDelaySeconds?: number;

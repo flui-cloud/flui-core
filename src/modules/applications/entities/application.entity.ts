@@ -129,6 +129,12 @@ export class ApplicationEntity {
   @Column({ type: 'int', nullable: true })
   port?: number;
 
+  @Column({ type: 'varchar', length: 8, nullable: true })
+  portProtocol?: 'http' | 'tcp';
+
+  @Column({ type: 'json', nullable: true })
+  configFiles?: Array<{ path: string; content: string }>;
+
   @Column({ type: 'uuid', nullable: true })
   currentRevisionId?: string;
 

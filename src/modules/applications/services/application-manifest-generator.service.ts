@@ -43,7 +43,10 @@ export class ApplicationManifestGeneratorService {
       manifests.push(this.generateConfigMap(app));
     }
 
-    if (app.env?.some((e) => e.secret && !e.externalSecretRef)) {
+    if (
+      app.env?.some((e) => e.secret && !e.externalSecretRef) ||
+      app.configFiles?.length
+    ) {
       manifests.push(this.generateSecret(app));
     }
 
@@ -105,14 +108,16 @@ export class ApplicationManifestGeneratorService {
       .replaceAll('{{REPLICAS}}', String(app.replicas ?? 1))
       .replaceAll('{{IMAGE}}', imageRef)
       .replaceAll('{{PULL_POLICY}}', config.pullPolicy || 'IfNotPresent')
-      .replaceAll('{{PORT}}', String(app.port ?? 80))
+      .replaceAll(
+        '{{POD_ANNOTATIONS_BLOCK}}',
+        this.renderLabelsBlock(this.buildPodAnnotations(app, config), 8),
+      )
       .replaceAll('{{PORTS_BLOCK}}', this.renderPortsBlock(app.port))
       .replaceAll('{{ENV_BLOCK}}', this.renderEnvBlock(app))
       .replaceAll('{{CPU_REQUEST}}', cpuRequest)
       .replaceAll('{{CPU_LIMIT}}', cpuLimit)
       .replaceAll('{{MEMORY_REQUEST}}', memRequest)
       .replaceAll('{{MEMORY_LIMIT}}', memLimit)
-      .replaceAll('{{CONFIG_HASH}}', this.computeConfigHash(app, config))
       .replaceAll(
         '{{READINESS_PROBE_BLOCK}}',
         this.renderReadinessProbeBlock(app),
@@ -164,19 +169,25 @@ export class ApplicationManifestGeneratorService {
       .replaceAll('{{REPLICAS}}', String(app.replicas ?? 1))
       .replaceAll('{{IMAGE}}', imageRef)
       .replaceAll('{{PULL_POLICY}}', config.pullPolicy || 'IfNotPresent')
-      .replaceAll('{{PORT}}', String(app.port ?? 80))
+      .replaceAll(
+        '{{POD_ANNOTATIONS_BLOCK}}',
+        this.renderLabelsBlock(this.buildPodAnnotations(app, config), 8),
+      )
       .replaceAll('{{PORTS_BLOCK}}', this.renderPortsBlock(app.port))
       .replaceAll('{{ENV_BLOCK}}', this.renderEnvBlock(app))
       .replaceAll('{{CPU_REQUEST}}', cpuRequest)
       .replaceAll('{{CPU_LIMIT}}', cpuLimit)
       .replaceAll('{{MEMORY_REQUEST}}', memRequest)
       .replaceAll('{{MEMORY_LIMIT}}', memLimit)
-      .replaceAll('{{CONFIG_HASH}}', this.computeConfigHash(app, config))
       .replaceAll(
         '{{READINESS_PROBE_BLOCK}}',
         this.renderReadinessProbeBlock(app),
       )
       .replaceAll('{{VOLUME_MOUNTS_BLOCK}}', this.renderVolumeMountsBlock(app))
+      .replaceAll(
+        '{{CONFIG_VOLUMES_BLOCK}}',
+        this.renderConfigVolumesBlock(app),
+      )
       .replaceAll(
         '{{VOLUME_CLAIM_TEMPLATES_BLOCK}}',
         this.renderVolumeClaimTemplatesBlock(app),
@@ -266,15 +277,19 @@ export class ApplicationManifestGeneratorService {
     const secretEnv =
       app.env?.filter((e) => e.secret && !e.externalSecretRef) || [];
 
+    const secretData = [
+      this.renderSecretDataBlock(secretEnv),
+      this.renderConfigFileSecretData(app),
+    ]
+      .filter(Boolean)
+      .join('\n');
+
     const template = this.loadTemplate('secret.yaml');
     const yaml = template
       .replaceAll('{{SLUG}}', app.slug)
       .replaceAll('{{NAMESPACE}}', app.k8sNamespace)
       .replaceAll('{{LABELS_BLOCK}}', this.renderLabelsBlock(labels))
-      .replaceAll(
-        '{{SECRET_DATA_BLOCK}}',
-        this.renderSecretDataBlock(secretEnv),
-      );
+      .replaceAll('{{SECRET_DATA_BLOCK}}', secretData);
 
     return {
       kind: ApplicationResourceKind.SECRET,
@@ -528,22 +543,54 @@ export class ApplicationManifestGeneratorService {
     }
   }
 
+  private configFileName(path: string, index: number): string {
+    return path.split('/').pop() || `file-${index}`;
+  }
+
+  private renderConfigFileSecretData(app: ApplicationEntity): string {
+    return (app.configFiles ?? [])
+      .map(
+        (f, i) => `  file-${i}: ${Buffer.from(f.content).toString('base64')}`,
+      )
+      .join('\n');
+  }
+
+  private renderConfigFileMountLines(app: ApplicationEntity): string[] {
+    return (app.configFiles ?? []).flatMap((f, i) => [
+      `            - name: cfgfile-${i}`,
+      `              mountPath: ${f.path}`,
+      `              subPath: ${this.configFileName(f.path, i)}`,
+      `              readOnly: true`,
+    ]);
+  }
+
+  private renderConfigFileVolumeLines(app: ApplicationEntity): string[] {
+    return (app.configFiles ?? []).flatMap((f, i) => [
+      `        - name: cfgfile-${i}`,
+      `          secret:`,
+      `            secretName: ${app.slug}-secret`,
+      `            items:`,
+      `              - key: file-${i}`,
+      `                path: ${this.configFileName(f.path, i)}`,
+    ]);
+  }
+
   private renderVolumeMountsBlock(app: ApplicationEntity): string {
-    if (!app.volumes?.length) return '';
-    const lines: string[] = ['          volumeMounts:'];
-    for (const v of app.volumes) {
+    const lines: string[] = [];
+    for (const v of app.volumes ?? []) {
       lines.push(
         `            - name: ${v.name}`,
         `              mountPath: ${v.mountPath}`,
       );
     }
-    return lines.join('\n');
+    lines.push(...this.renderConfigFileMountLines(app));
+    if (!lines.length) return '';
+    return ['          volumeMounts:', ...lines].join('\n');
   }
 
   private renderVolumesBlock(app: ApplicationEntity): string {
-    if (!app.volumes?.length) return '';
-    const lines: string[] = ['      volumes:'];
-    for (const v of app.volumes) {
+    const lines: string[] = [];
+    for (const v of app.volumes ?? []) {
       const claimName = v.claimNameOverride ?? `${app.slug}-${v.name}`;
       lines.push(
         `        - name: ${v.name}`,
@@ -551,7 +598,15 @@ export class ApplicationManifestGeneratorService {
         `            claimName: ${claimName}`,
       );
     }
-    return lines.join('\n');
+    lines.push(...this.renderConfigFileVolumeLines(app));
+    if (!lines.length) return '';
+    return ['      volumes:', ...lines].join('\n');
+  }
+
+  private renderConfigVolumesBlock(app: ApplicationEntity): string {
+    const lines = this.renderConfigFileVolumeLines(app);
+    if (!lines.length) return '';
+    return ['      volumes:', ...lines].join('\n');
   }
 
   private renderVolumeClaimTemplatesBlock(app: ApplicationEntity): string {
@@ -696,6 +751,17 @@ export class ApplicationManifestGeneratorService {
         `${indent}    port: ${port}`,
         `${indent}    scheme: ${scheme}`,
       );
+      const headers = probe.httpHeaders ?? {};
+      const headerNames = Object.keys(headers);
+      if (headerNames.length) {
+        lines.push(`${indent}    httpHeaders:`);
+        for (const name of headerNames) {
+          lines.push(
+            `${indent}      - name: ${name}`,
+            `${indent}        value: ${JSON.stringify(String(headers[name]))}`,
+          );
+        }
+      }
     } else if (probe.type === 'tcp') {
       const port = probe.tcpPort ?? app.port ?? 80;
       lines.push(`${indent}  tcpSocket:`, `${indent}    port: ${port}`);
@@ -724,6 +790,20 @@ export class ApplicationManifestGeneratorService {
     return {
       'flui.cloud/revision': String(app.currentRevisionId ? 1 : 0),
     };
+  }
+
+  private buildPodAnnotations(
+    app: ApplicationEntity,
+    config: DockerImageSourceConfig,
+  ): Record<string, string> {
+    const annotations: Record<string, string> = {
+      'flui.cloud/config-hash': this.computeConfigHash(app, config),
+    };
+    if (app.portProtocol !== 'tcp') {
+      annotations['prometheus.io/scrape'] = 'true';
+      annotations['prometheus.io/port'] = String(app.port ?? 80);
+    }
+    return annotations;
   }
 
   /**

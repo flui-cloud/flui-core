@@ -92,7 +92,7 @@ export class ApplicationService {
       await this.assertInternalHostingReady(clusterId);
     }
 
-    const slug = await this.generateUniqueSlug(dto.name);
+    const slug = dto.slug ?? (await this.generateUniqueSlug(dto.name));
 
     const envWithEncryptedSecrets = dto.env
       ? dto.env.map((e) => ({
@@ -132,6 +132,8 @@ export class ApplicationService {
       scaling: dto.scaling || ({ enabled: false } as ApplicationScaling),
       replicas: dto.replicas ?? 1,
       port: dto.port,
+      portProtocol: dto.portProtocol ?? null,
+      configFiles: dto.configFiles ?? null,
       healthProbe: dto.healthProbe ?? null,
       volumes: dto.volumes ?? [],
       workloadKind: dto.workloadKind ?? 'Deployment',

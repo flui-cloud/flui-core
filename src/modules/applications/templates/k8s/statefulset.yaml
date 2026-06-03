@@ -21,9 +21,7 @@ spec:
       labels:
 {{POD_LABELS_BLOCK}}
       annotations:
-        prometheus.io/scrape: "true"
-        prometheus.io/port: "{{PORT}}"
-        flui.cloud/config-hash: "{{CONFIG_HASH}}"
+{{POD_ANNOTATIONS_BLOCK}}
     spec:
 {{NODE_PLACEMENT_BLOCK}}
 {{IMAGE_PULL_SECRETS_BLOCK}}
@@ -43,4 +41,5 @@ spec:
               memory: "{{MEMORY_LIMIT}}"
 {{READINESS_PROBE_BLOCK}}
 {{VOLUME_MOUNTS_BLOCK}}
+{{CONFIG_VOLUMES_BLOCK}}
 {{VOLUME_CLAIM_TEMPLATES_BLOCK}}

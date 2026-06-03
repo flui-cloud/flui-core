@@ -2,6 +2,7 @@ import {
   IsString,
   IsOptional,
   IsEnum,
+  IsIn,
   IsInt,
   IsBoolean,
   IsArray,
@@ -123,6 +124,15 @@ export class CreateApplicationDto {
   @MaxLength(255)
   name: string;
 
+  @ApiPropertyOptional({
+    description:
+      'Explicit slug. When set, used verbatim instead of a randomly-suffixed one — lets composed components have deterministic, FQDN-predictable names (and makes re-processing idempotent). Caller guarantees uniqueness.',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(255)
+  slug?: string;
+
   @ApiPropertyOptional({ description: 'Optional description' })
   @IsOptional()
   @IsString()
@@ -209,6 +219,22 @@ export class CreateApplicationDto {
   @Min(1)
   @Max(65535)
   port?: number;
+
+  @ApiPropertyOptional({
+    enum: ['http', 'tcp'],
+    description: 'Wire protocol of the main port (gates Prometheus scraping)',
+  })
+  @IsOptional()
+  @IsIn(['http', 'tcp'])
+  portProtocol?: 'http' | 'tcp';
+
+  @ApiPropertyOptional({
+    description:
+      'Files mounted into the pod from the app Secret (path+content).',
+  })
+  @IsOptional()
+  @IsArray()
+  configFiles?: Array<{ path: string; content: string }>;
 
   @ApiPropertyOptional({ description: 'K8s-style labels' })
   @IsOptional()
