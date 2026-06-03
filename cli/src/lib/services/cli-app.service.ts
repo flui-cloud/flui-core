@@ -13,6 +13,26 @@ export interface AppSummary {
   clusterId: string;
 }
 
+export interface AppGroupComponent extends AppSummary {
+  isPrimary?: boolean;
+}
+
+export interface AppGroup {
+  id: string;
+  type: 'standalone' | 'composed';
+  name: string;
+  slug: string;
+  status: string;
+  category: string;
+  clusterId: string;
+  url?: string;
+  catalogSlug?: string;
+  catalogInstallId?: string;
+  primaryComponentId?: string;
+  componentCount: number;
+  components: AppGroupComponent[];
+}
+
 export interface AppRuntime {
   appId: string;
   deploymentName: string;
@@ -234,6 +254,12 @@ export class CliAppService {
   async listApps(): Promise<AppSummary[]> {
     return this.apiClient.get<AppSummary[]>(
       `/clusters/${this.clusterId}/applications`,
+    );
+  }
+
+  async listAppGroups(): Promise<AppGroup[]> {
+    return this.apiClient.get<AppGroup[]>(
+      `/clusters/${this.clusterId}/applications/grouped`,
     );
   }
 
