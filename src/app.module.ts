@@ -154,6 +154,7 @@ import { TopologyModule } from './modules/topology/topology.module';
     BullModule.forRootAsync({
       imports: [ConfigModule],
       useFactory: (configService: ConfigService) => ({
+        prefix: configService.get('BULL_PREFIX') || undefined,
         redis: {
           host: configService.get('REDIS_HOST', 'localhost'),
           port: configService.get('REDIS_PORT', 6379),
