@@ -20,6 +20,7 @@ import { ApplicationsRepository } from './repositories/applications.repository';
 import { AppRevisionsRepository } from './repositories/app-revisions.repository';
 import { AppResourcesRepository } from './repositories/app-resources.repository';
 import { ApplicationService } from './services/application.service';
+import { ApplicationGroupingService } from './services/application-grouping.service';
 import { ApplicationManifestGeneratorService } from './services/application-manifest-generator.service';
 import { ApplicationDeployService } from './services/application-deploy.service';
 import { DeployConfigService } from './services/deploy-config.service';
@@ -102,6 +103,7 @@ import { StorageModule } from '../storage/storage.module';
 
     // Services
     ApplicationService,
+    ApplicationGroupingService,
     ApplicationManifestGeneratorService,
     ApplicationDeployService,
     DeployConfigService,

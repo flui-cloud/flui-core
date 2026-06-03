@@ -26,6 +26,8 @@ import {
   ApiQuery,
 } from '@nestjs/swagger';
 import { ApplicationService } from '../services/application.service';
+import { ApplicationGroupingService } from '../services/application-grouping.service';
+import { ApplicationGroupDto } from '../dto/application-group.dto';
 import { AppManagementService } from '../services/app-management.service';
 import { ApplicationDeployService } from '../services/application-deploy.service';
 import { SystemAppCatalogService } from '../services/system-app-catalog.service';
@@ -96,6 +98,7 @@ export class ApplicationsController {
     private readonly volumeSnapshotsService: VolumeSnapshotsService,
     private readonly volumeBackupsService: VolumeBackupsService,
     private readonly appManagementService: AppManagementService,
+    private readonly applicationGroupingService: ApplicationGroupingService,
   ) {}
 
   // ── CRUD ──────────────────────────────────────────────
@@ -225,6 +228,34 @@ export class ApplicationsController {
       status,
     });
     return apps.map((a) => this.applicationService.toResponseDto(a));
+  }
+
+  @Get('clusters/:clusterId/applications/grouped')
+  @ApiOperation({
+    summary: 'List applications grouped by composed-app bundle',
+    description:
+      'Like the flat listing, but composed catalog installs collapse their ' +
+      'component apps into a single entry (with aggregated status and the ' +
+      'primary URL). Standalone apps are groups of one. Both the dashboard ' +
+      'and CLI render from this shape.',
+  })
+  @ApiParam({ name: 'clusterId', description: 'Cluster ID' })
+  @ApiQuery({
+    name: 'refresh',
+    required: false,
+    type: Boolean,
+    description:
+      'Reconcile application status from K8s before returning (default: false)',
+  })
+  @ApiResponse({ status: 200, type: [ApplicationGroupDto] })
+  async listGroupedByCluster(
+    @Param('clusterId') clusterId: string,
+    @Query('refresh') refresh?: string,
+  ): Promise<ApplicationGroupDto[]> {
+    if (refresh === 'true') {
+      await this.reconciliationService.reconcileByClusterId(clusterId);
+    }
+    return this.applicationGroupingService.listGroupedByCluster(clusterId);
   }
 
   @Get('applications/:id')

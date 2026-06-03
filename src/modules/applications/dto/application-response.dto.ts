@@ -459,6 +459,18 @@ export class ApplicationResponseDto {
   })
   catalogVersion?: string;
 
+  @ApiPropertyOptional({
+    description:
+      'Set only within a composed-app group response: true for the component that is the face of the bundle (owns the public endpoint). Undefined in flat listings.',
+  })
+  isPrimary?: boolean;
+
+  @ApiPropertyOptional({
+    description:
+      'Set only within a composed-app group response: the bundle display name (e.g. "Nextcloud") this component belongs to. Undefined in flat listings.',
+  })
+  composedAppName?: string;
+
   @ApiProperty()
   createdAt: Date;
 
