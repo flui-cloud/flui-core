@@ -194,4 +194,15 @@ export class ApplicationsRepository {
       .orderBy('app.createdAt', 'DESC')
       .getMany();
   }
+
+  async findByCatalogInstall(installId: string): Promise<ApplicationEntity[]> {
+    return this.repository
+      .createQueryBuilder('app')
+      .where('app.deletedAt IS NULL')
+      .andWhere(`app.labels->>'flui.cloud/catalog-install' = :id`, {
+        id: installId,
+      })
+      .orderBy('app.createdAt', 'ASC')
+      .getMany();
+  }
 }

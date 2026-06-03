@@ -21,6 +21,7 @@ export interface OidcApp {
   appId: string;
   projectId: string;
   clientId: string;
+  clientSecret?: string;
   redirectUris: string[];
   postLogoutRedirectUris: string[];
 }
@@ -240,6 +241,20 @@ export class OidcProviderAdminClient {
     };
   }
 
+  async deleteOidcApp(
+    pat: string,
+    hostHeader: string,
+    projectId: string,
+    appId: string,
+  ): Promise<void> {
+    await firstValueFrom(
+      this.httpService.delete(
+        `${resolveProviderBaseUrl()}/management/v1/projects/${projectId}/apps/${appId}`,
+        { headers: this.headers(pat, hostHeader) },
+      ),
+    );
+  }
+
   async createOidcApp(
     pat: string,
     hostHeader: string,
@@ -276,6 +291,42 @@ export class OidcProviderAdminClient {
       clientId: resp.data.clientId,
       redirectUris: params.redirectUris,
       postLogoutRedirectUris: params.postLogoutRedirectUris,
+    };
+  }
+
+  async createWebOidcApp(
+    pat: string,
+    hostHeader: string,
+    projectId: string,
+    params: {
+      name: string;
+      redirectUris: string[];
+      postLogoutRedirectUris?: string[];
+    },
+  ): Promise<OidcApp> {
+    const resp = await firstValueFrom(
+      this.httpService.post(
+        `${resolveProviderBaseUrl()}/management/v1/projects/${projectId}/apps/oidc`,
+        {
+          name: params.name,
+          redirectUris: params.redirectUris,
+          postLogoutRedirectUris: params.postLogoutRedirectUris ?? [],
+          responseTypes: ['OIDC_RESPONSE_TYPE_CODE'],
+          grantTypes: ['OIDC_GRANT_TYPE_AUTHORIZATION_CODE'],
+          appType: 'OIDC_APP_TYPE_WEB',
+          authMethodType: 'OIDC_AUTH_METHOD_TYPE_BASIC',
+          accessTokenType: 'OIDC_TOKEN_TYPE_JWT',
+        },
+        { headers: this.headers(pat, hostHeader) },
+      ),
+    );
+    return {
+      appId: resp.data.appId,
+      projectId,
+      clientId: resp.data.clientId,
+      clientSecret: resp.data.clientSecret,
+      redirectUris: params.redirectUris,
+      postLogoutRedirectUris: params.postLogoutRedirectUris ?? [],
     };
   }
 

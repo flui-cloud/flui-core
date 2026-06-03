@@ -65,6 +65,12 @@ export class CatalogInstallEntity {
   @Column({ type: 'json', default: '{}' })
   userInputs: Record<string, string>;
 
+  @Column({ length: 20, nullable: true })
+  authMode?: string;
+
+  @Column({ type: 'json', default: '{}' })
+  options: Record<string, boolean>;
+
   @Column({ type: 'json', default: '[]' })
   dependencyChoices: DependencyChoice[];
 
@@ -88,6 +94,12 @@ export class CatalogInstallEntity {
 
   @Column({ length: 255, nullable: true })
   resolvedFqdn?: string;
+
+  @Column({ length: 255, nullable: true })
+  oidcAppId?: string;
+
+  @Column({ length: 255, nullable: true })
+  oidcProjectId?: string;
 
   @Column({ default: false })
   skipEndpoint: boolean;

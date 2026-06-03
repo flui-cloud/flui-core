@@ -227,6 +227,8 @@ export class CatalogController {
       envOverrides: dto.envOverrides,
       resourceOverrides: dto.resourceOverrides,
       exposure: dto.exposure,
+      authMode: dto.authMode,
+      options: dto.options,
       dependencyChoices: dto.dependencyChoices,
     };
     const { install } = await this.installer.install(

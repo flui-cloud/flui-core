@@ -1,5 +1,8 @@
 import { Injectable } from '@nestjs/common';
-import { TemplateContext } from '../interfaces/template-context.interface';
+import {
+  TemplateContext,
+  TemplateComponentContext,
+} from '../interfaces/template-context.interface';
 
 const EXPR_REGEX = /\{\{\s*([^}]+?)\s*\}\}/g;
 
@@ -46,9 +49,25 @@ export class CatalogTemplateResolverService {
     if (root === 'components') {
       return this.lookupComponents(parts.slice(1), ctx);
     }
+    if (root === 'self') {
+      return ctx.self
+        ? this.lookupComponentFields(parts.slice(1), ctx.self)
+        : undefined;
+    }
     if (root === 'deps') {
       return this.lookupDeps(parts.slice(1), ctx);
     }
+    return undefined;
+  }
+
+  private lookupComponentFields(
+    parts: string[],
+    component: TemplateComponentContext,
+  ): string | undefined {
+    const [field, ...rest] = parts;
+    if (field === 'host') return component.host;
+    if (field === 'fqdn') return component.fqdn;
+    if (field === 'env') return component.env[rest[0]];
     return undefined;
   }
 
@@ -66,15 +85,10 @@ export class CatalogTemplateResolverService {
     ctx: TemplateContext,
   ): string | undefined {
     if (!ctx.components) return undefined;
-    const [componentName, field, ...rest] = parts;
+    const [componentName, ...fieldParts] = parts;
     const component = ctx.components[componentName];
     if (!component) return undefined;
-    if (field === 'host') return component.host;
-    if (field === 'env') {
-      const varName = rest[0];
-      return component.env[varName];
-    }
-    return undefined;
+    return this.lookupComponentFields(fieldParts, component);
   }
 
   private lookupDeps(

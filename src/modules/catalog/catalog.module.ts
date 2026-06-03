@@ -22,6 +22,10 @@ import { CatalogInstallProcessor } from './processors/catalog-install.processor'
 import { CatalogController } from './controllers/catalog.controller';
 import { ApplicationsModule } from '../applications/applications.module';
 import { DnsModule } from '../dns/dns.module';
+import { OidcModule } from '../oidc/oidc.module';
+import { ClusterEntity } from '../infrastructure/clusters/entities/cluster.entity';
+import { SharedInfrastructureModule } from '../infrastructure/shared/shared-infrastructure.module';
+import { EncryptionModule } from '../shared/encryption/encryption.module';
 
 @Module({
   imports: [
@@ -29,10 +33,14 @@ import { DnsModule } from '../dns/dns.module';
       CatalogAppDefinitionEntity,
       CatalogInstallEntity,
       InfrastructureOperationEntity,
+      ClusterEntity,
     ]),
     BullModule.registerQueue({ name: CATALOG_INSTALL_QUEUE }),
     ApplicationsModule,
     DnsModule,
+    OidcModule,
+    SharedInfrastructureModule,
+    EncryptionModule,
   ],
   controllers: [CatalogController],
   providers: [

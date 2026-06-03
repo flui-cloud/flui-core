@@ -3,6 +3,7 @@ export interface TemplateContext {
   env: Record<string, string>;
   components?: Record<string, TemplateComponentContext>;
   deps?: Record<string, TemplateDependencyContext>;
+  self?: TemplateComponentContext;
 }
 
 export interface TemplateAppContext {
@@ -15,6 +16,7 @@ export interface TemplateAppContext {
 export interface TemplateComponentContext {
   host: string;
   env: Record<string, string>;
+  fqdn?: string;
 }
 
 export interface TemplateDependencyContext {

@@ -91,4 +91,23 @@ export class InstallFromYamlDto {
   @IsOptional()
   @IsIn(['public', 'internal'])
   exposure?: 'public' | 'internal';
+
+  @ApiPropertyOptional({
+    enum: ['native', 'oidc', 'proxy', 'none'],
+    description:
+      'Authentication method chosen at install, among spec.auth.modes. Defaults to spec.auth.default (or native).',
+  })
+  @IsOptional()
+  @IsIn(['native', 'oidc', 'proxy', 'none'])
+  authMode?: 'native' | 'oidc' | 'proxy' | 'none';
+
+  @ApiPropertyOptional({
+    type: 'object',
+    additionalProperties: { type: 'boolean' },
+    description:
+      'Install-time feature toggles (spec.options[].key → enabled). Omitted keys fall back to the option default.',
+  })
+  @IsOptional()
+  @IsObject()
+  options?: Record<string, boolean>;
 }

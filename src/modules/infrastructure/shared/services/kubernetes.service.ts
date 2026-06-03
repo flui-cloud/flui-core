@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import * as k8s from '@kubernetes/client-node';
+import { Writable } from 'node:stream';
 
 export interface ContainerResources {
   cpu: string | null;
@@ -816,22 +817,26 @@ export class KubernetesService {
     return new Promise<string>((resolve, reject) => {
       let stdout = '';
       let stderr = '';
+      const stdoutStream = new Writable({
+        write(chunk, _enc, cb) {
+          stdout += chunk.toString();
+          cb();
+        },
+      });
+      const stderrStream = new Writable({
+        write(chunk, _enc, cb) {
+          stderr += chunk.toString();
+          cb();
+        },
+      });
       exec
         .exec(
           namespace,
           pod.metadata.name,
           containerName,
           command,
-          {
-            write: (chunk: Buffer | string) => {
-              stdout += typeof chunk === 'string' ? chunk : chunk.toString();
-            },
-          } as any,
-          {
-            write: (chunk: Buffer | string) => {
-              stderr += typeof chunk === 'string' ? chunk : chunk.toString();
-            },
-          } as any,
+          stdoutStream,
+          stderrStream,
           null,
           false,
           (status) => {

@@ -11,6 +11,7 @@ import {
 import { ApplicationService } from '../../applications/services/application.service';
 import { ApplicationDeployService } from '../../applications/services/application-deploy.service';
 import { ApplicationsRepository } from '../../applications/repositories/applications.repository';
+import { ApplicationEntity } from '../../applications/entities/application.entity';
 import { DeployConfigService } from '../../applications/services/deploy-config.service';
 import { ApplicationStatus } from '../../applications/enums/application-status.enum';
 import { ApplicationSourceType } from '../../applications/enums/application-source-type.enum';
@@ -35,6 +36,7 @@ import {
   CatalogSpecBuildingBlock,
   CatalogSpecComposed,
   CatalogComponent,
+  CatalogPostInstallStep,
   CatalogEnvVar,
   CatalogHealthcheck,
   CatalogImageSource,
@@ -48,7 +50,10 @@ import { CatalogInstallEntity } from '../entities/catalog-install.entity';
 import { CatalogAppDefinitionEntity } from '../entities/catalog-app-definition.entity';
 import { CatalogInstallStatus } from '../enums/catalog-install-status.enum';
 import { CatalogAppType } from '../enums/catalog-app-type.enum';
-import { TemplateContext } from '../interfaces/template-context.interface';
+import {
+  TemplateContext,
+  TemplateComponentContext,
+} from '../interfaces/template-context.interface';
 import { CatalogTemplateResolverService } from '../services/catalog-template-resolver.service';
 import { CatalogSecretGeneratorService } from '../services/catalog-secret-generator.service';
 import { CatalogDependencyResolverService } from '../services/catalog-dependency-resolver.service';
@@ -61,12 +66,25 @@ import {
   CatalogUninstallJobData,
 } from '../services/catalog-installer.service';
 import { buildUserNamespace } from '../../applications/utils/k8s-namespace.util';
+import { OidcProviderAdminClient } from '../../oidc/services/oidc-provider-admin.service';
+import { ClusterEntity } from '../../infrastructure/clusters/entities/cluster.entity';
+import { buildSystemNipHostname } from '../../dns/utils/nip-hostname.util';
+import { randomUUID } from 'node:crypto';
+import { KubernetesService } from '../../infrastructure/shared/services/kubernetes.service';
+import { EncryptionService } from '../../shared/encryption/services/encryption.service';
+import { EndpointModeResolverService } from '../../dns/services/endpoint-mode-resolver.service';
 
 interface ResolvedEnv {
   name: string;
   value: string;
   secret: boolean;
   externalSecretRef?: { secretName: string; key: string };
+}
+
+interface OidcWireResult {
+  issuerUrl: string;
+  clientId: string;
+  clientSecret: string;
 }
 
 @Processor(CATALOG_INSTALL_QUEUE)
@@ -89,6 +107,12 @@ export class CatalogInstallProcessor {
     private readonly deployConfig: DeployConfigService,
     private readonly dependencyResolver: CatalogDependencyResolverService,
     private readonly installerService: CatalogInstallerService,
+    private readonly oidcProvider: OidcProviderAdminClient,
+    @InjectRepository(ClusterEntity)
+    private readonly clusterRepository: Repository<ClusterEntity>,
+    private readonly kubernetesService: KubernetesService,
+    private readonly encryptionService: EncryptionService,
+    private readonly endpointModeResolver: EndpointModeResolverService,
   ) {}
 
   @Process({ name: CATALOG_INSTALL_JOB, concurrency: 5 })
@@ -339,7 +363,13 @@ export class CatalogInstallProcessor {
         OperationStep.CATALOG_UNINSTALL_DELETE_APPS,
       );
 
-      for (const appId of install.applicationIds) {
+      const labelled = await this.applicationRepo.findByCatalogInstall(
+        install.id,
+      );
+      const appIds = [
+        ...new Set([...install.applicationIds, ...labelled.map((a) => a.id)]),
+      ];
+      for (const appId of appIds) {
         try {
           await this.deployService.deleteApplication(appId, install.userId);
         } catch (err) {
@@ -350,6 +380,8 @@ export class CatalogInstallProcessor {
           );
         }
       }
+
+      await this.cleanupOidcClient(install);
 
       for (const depInstallId of install.dependencyInstallIds ?? []) {
         try {
@@ -388,6 +420,48 @@ export class CatalogInstallProcessor {
         message,
       );
       throw err;
+    }
+  }
+
+  private async resolveOidcProviderDomain(
+    install: CatalogInstallEntity,
+  ): Promise<{ pat: string; providerDomain: string } | null> {
+    const pat = process.env.ZITADEL_SERVICE_ACCOUNT_PAT;
+    if (!pat) return null;
+    const cluster = await this.clusterRepository.findOne({
+      where: { id: install.clusterId },
+    });
+    if (!cluster?.masterIpAddress) return null;
+    const providerDomain = buildSystemNipHostname(
+      'auth',
+      cluster.masterIpAddress,
+      cluster.nipHostnameToken,
+    );
+    return { pat, providerDomain };
+  }
+
+  private async cleanupOidcClient(
+    install: CatalogInstallEntity,
+  ): Promise<void> {
+    if (!install.oidcAppId || !install.oidcProjectId) return;
+    try {
+      const domain = await this.resolveOidcProviderDomain(install);
+      if (!domain) return;
+      await this.oidcProvider.deleteOidcApp(
+        domain.pat,
+        domain.providerDomain,
+        install.oidcProjectId,
+        install.oidcAppId,
+      );
+      this.logger.log(
+        `Install ${install.id}: removed OIDC client ${install.oidcAppId}`,
+      );
+    } catch (err) {
+      this.logger.warn(
+        `Install ${install.id}: failed to remove OIDC client ${install.oidcAppId}: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
     }
   }
 
@@ -562,6 +636,8 @@ export class CatalogInstallProcessor {
       scaling: this.mapScaling(spec.scaling),
       replicas: this.resolveReplicas(spec, install.resourceOverrides),
       port: primaryPort?.internal,
+      portProtocol: primaryPort?.protocol,
+      allowMasterPlacement: process.env.FLUI_ALLOW_MASTER === 'true',
       healthProbe: this.mapHealthProbe(
         this.resolveHealthcheckTemplates(spec.healthcheck, ctx),
         primaryPort?.internal,
@@ -569,7 +645,6 @@ export class CatalogInstallProcessor {
       volumes: this.mapVolumes(spec.volumes),
       workloadKind: isBuildingBlock ? 'StatefulSet' : 'Deployment',
       persistenceScope: spec.persistence?.scope ?? 'shared',
-      allowMasterPlacement: spec.persistence?.allowMaster ?? false,
       startCommand: spec.startCommand,
       labels: {
         'flui.cloud/catalog-app': definition.slug,
@@ -881,6 +956,7 @@ export class CatalogInstallProcessor {
         ...base,
         httpPath: hc.path ?? '/',
         httpPort: hc.port ?? port ?? 80,
+        ...(hc.httpHeaders ? { httpHeaders: hc.httpHeaders } : {}),
       };
     }
     if (hc.type === 'tcp') {
@@ -976,7 +1052,10 @@ export class CatalogInstallProcessor {
     spec: CatalogSpecComposed,
     operationId: string,
   ): Promise<void> {
-    const order = this.topologicallySortComponents(spec.components);
+    const includedComponents = spec.components.filter((c) =>
+      this.componentIncluded(c, install, spec),
+    );
+    const order = this.topologicallySortComponents(includedComponents);
 
     await this.updateOperation(
       operationId,
@@ -1000,17 +1079,62 @@ export class CatalogInstallProcessor {
     };
 
     const applicationIds: string[] = [];
-    const primaryComponent = this.pickPrimaryComponent(spec.components);
+    const primaryComponent = this.pickPrimaryComponent(includedComponents);
+    const appIdByComponent = new Map<string, string>();
+
+    const cluster = await this.clusterRepository.findOne({
+      where: { id: install.clusterId },
+    });
+    const zoneAssignment = install.requestedDomain
+      ? await this.clusterDnsZoneService.getZoneForFqdn(
+          install.clusterId,
+          install.requestedDomain,
+        )
+      : await this.clusterDnsZoneService.getZoneAssignment(install.clusterId);
+    const componentFqdns: Record<string, string> = {};
+    if (cluster && !install.skipEndpoint && spec.domain?.auto !== false) {
+      for (const c of includedComponents) {
+        if (!(c.ports ?? []).some((p) => p.expose)) continue;
+        const requestedFqdn =
+          c === primaryComponent
+            ? (install.requestedDomain ?? undefined)
+            : undefined;
+        componentFqdns[c.name] = this.endpointModeResolver.resolve({
+          cluster,
+          clusterDnsZone: zoneAssignment ?? null,
+          requestedFqdn,
+          slug: `${install.slug}-${c.name}`,
+        }).fqdn;
+      }
+    }
+
+    const existingApps = await this.applicationRepo.findByCatalogInstall(
+      install.id,
+    );
+    const existingByComponent = new Map(
+      existingApps
+        .map((a) => [a.labels?.['flui.cloud/composed-component'], a] as const)
+        .filter(([name]) => !!name) as Array<
+        readonly [string, (typeof existingApps)[number]]
+      >,
+    );
 
     for (let i = 0; i < order.length; i++) {
       const component = order[i];
       const componentSlug = `${install.slug}-${component.name}`;
-      const componentHost = `${componentSlug}-svc.${namespace}.svc.cluster.local`;
 
       const resolvedEnv = this.resolveEnv(component.env, install);
+      const componentEnvMap = Object.fromEntries(
+        resolvedEnv.map((e) => [e.name, e.value]),
+      );
       const componentCtx: TemplateContext = {
         ...ctx,
-        env: Object.fromEntries(resolvedEnv.map((e) => [e.name, e.value])),
+        env: componentEnvMap,
+        self: {
+          host: `${componentSlug}-svc.${namespace}.svc.cluster.local`,
+          fqdn: componentFqdns[component.name],
+          env: componentEnvMap,
+        },
       };
       const substituted = resolvedEnv.map((e) => ({
         name: e.name,
@@ -1019,24 +1143,31 @@ export class CatalogInstallProcessor {
         externalSecretRef: e.externalSecretRef,
       }));
 
-      const isPrimary = component === primaryComponent;
-      const dto = this.buildComponentCreateDto(
-        definition,
-        install,
-        component,
-        componentSlug,
-        namespace,
-        substituted,
-        isPrimary,
-      );
-
-      const application = await this.applicationService.create(
-        install.clusterId,
-        dto,
-        install.userId,
-        install.userEmail,
-      );
+      const reused = existingByComponent.get(component.name);
+      let application: ApplicationEntity;
+      if (reused) {
+        application = reused;
+        this.logger.log(
+          `Install ${install.id}: reusing existing component "${component.name}" (${reused.id}) — idempotent re-entry`,
+        );
+      } else {
+        const dto = this.buildComponentCreateDto(
+          definition,
+          install,
+          component,
+          componentSlug,
+          namespace,
+          substituted,
+        );
+        application = await this.applicationService.create(
+          install.clusterId,
+          dto,
+          install.userId,
+          install.userEmail,
+        );
+      }
       applicationIds.push(application.id);
+      appIdByComponent.set(component.name, application.id);
       await this.installRepo.update(install.id, { applicationIds });
 
       const progress = 20 + Math.floor((60 * (i + 1)) / order.length);
@@ -1066,8 +1197,9 @@ export class CatalogInstallProcessor {
       }
 
       ctx.components[component.name] = {
-        host: componentHost,
+        host: `${application.slug}-svc.${namespace}.svc.cluster.local`,
         env: Object.fromEntries(substituted.map((e) => [e.name, e.value])),
+        fqdn: componentFqdns[component.name],
       };
     }
 
@@ -1079,13 +1211,33 @@ export class CatalogInstallProcessor {
     );
 
     if (primaryComponent && applicationIds.length) {
-      const primaryIdx = order.indexOf(primaryComponent);
-      const primaryAppId = applicationIds[primaryIdx];
-      await this.maybeCreateComposedEndpoint(
+      for (const component of order) {
+        if (!(component.ports ?? []).some((p) => p.expose)) continue;
+        const appId = appIdByComponent.get(component.name);
+        if (!appId) continue;
+        await this.createComposedComponentEndpoint(
+          install,
+          appId,
+          spec,
+          component,
+          component === primaryComponent,
+          componentFqdns[component.name],
+        );
+      }
+
+      const primaryAppId = appIdByComponent.get(primaryComponent.name)!;
+      const oidc = await this.maybeWireComposedOidc(
         install,
-        primaryAppId,
         spec,
         primaryComponent,
+        primaryAppId,
+      );
+      await this.maybeRunPostInstall(
+        install,
+        spec,
+        primaryAppId,
+        oidc,
+        ctx.components,
       );
     }
 
@@ -1148,6 +1300,26 @@ export class CatalogInstallProcessor {
     return components.find((c) => (c.ports ?? []).some((p) => p.expose));
   }
 
+  private isOptionEnabled(
+    install: CatalogInstallEntity,
+    spec: CatalogSpecComposed,
+    key: string,
+  ): boolean {
+    const chosen = install.options?.[key];
+    if (typeof chosen === 'boolean') return chosen;
+    return spec.options?.find((o) => o.key === key)?.default ?? false;
+  }
+
+  private componentIncluded(
+    component: CatalogComponent,
+    install: CatalogInstallEntity,
+    spec: CatalogSpecComposed,
+  ): boolean {
+    const opt = component.when?.option;
+    if (!opt) return true;
+    return this.isOptionEnabled(install, spec, opt);
+  }
+
   private buildComponentCreateDto(
     definition: CatalogAppDefinitionEntity,
     install: CatalogInstallEntity,
@@ -1155,18 +1327,17 @@ export class CatalogInstallProcessor {
     componentSlug: string,
     namespace: string,
     env: ResolvedEnv[],
-    isPrimary: boolean,
   ): CreateApplicationDto {
     const imageRef = this.buildImageRef(component.image);
     const primaryPort = component.ports?.[0];
     const exposedPort = (component.ports ?? []).find((p) => p.expose);
-    const exposure: ApplicationExposure =
-      isPrimary && exposedPort
-        ? ApplicationExposure.PUBLIC
-        : ApplicationExposure.INTERNAL;
+    const exposure: ApplicationExposure = exposedPort
+      ? ApplicationExposure.PUBLIC
+      : ApplicationExposure.CLUSTER;
 
     return {
       name: componentSlug,
+      slug: componentSlug,
       description: definition.description,
       category: ApplicationCategory.USER,
       kind: definition.appKind ?? mapCatalogCategoryToKind(definition.category),
@@ -1189,6 +1360,8 @@ export class CatalogInstallProcessor {
         ? (component.scaling.horizontal.min ?? 1)
         : 1,
       port: primaryPort?.internal,
+      portProtocol: primaryPort?.protocol,
+      allowMasterPlacement: process.env.FLUI_ALLOW_MASTER === 'true',
       healthProbe: component.healthcheck
         ? this.mapHealthProbe(component.healthcheck, primaryPort?.internal)
         : undefined,
@@ -1197,7 +1370,6 @@ export class CatalogInstallProcessor {
         ? 'StatefulSet'
         : 'Deployment',
       persistenceScope: component.persistence?.scope ?? 'shared',
-      allowMasterPlacement: component.persistence?.allowMaster ?? false,
       labels: {
         'flui.cloud/catalog-app': definition.slug,
         'flui.cloud/catalog-install': install.id,
@@ -1214,31 +1386,34 @@ export class CatalogInstallProcessor {
     };
   }
 
-  private async maybeCreateComposedEndpoint(
+  private async createComposedComponentEndpoint(
     install: CatalogInstallEntity,
     applicationId: string,
     spec: CatalogSpecComposed,
-    primary: CatalogComponent,
-  ): Promise<void> {
+    component: CatalogComponent,
+    isPrimary: boolean,
+    resolvedFqdn?: string,
+  ): Promise<string | null> {
     if (install.skipEndpoint) {
       this.logger.log(
         `Composed install ${install.id}: skipEndpoint=true — user will configure domain/TLS later`,
       );
-      return;
+      return null;
     }
     if (spec.domain?.auto === false) {
       this.logger.log(
         `Composed install ${install.id}: domain.auto=false — skipping endpoint`,
       );
-      return;
+      return null;
     }
-    const exposedPort = (primary.ports ?? []).find((p) => p.expose);
-    if (!exposedPort) return;
+    const exposedPort = (component.ports ?? []).find((p) => p.expose);
+    if (!exposedPort) return null;
 
-    const assignment = install.requestedDomain
+    const requestedDomain = isPrimary ? install.requestedDomain : undefined;
+    const assignment = requestedDomain
       ? await this.clusterDnsZoneService.getZoneForFqdn(
           install.clusterId,
-          install.requestedDomain,
+          requestedDomain,
         )
       : await this.clusterDnsZoneService.getZoneAssignment(install.clusterId);
     const wildcardIssuer = assignment?.dnsZone?.zoneName
@@ -1258,15 +1433,17 @@ export class CatalogInstallProcessor {
         install.clusterId,
         {
           applicationId,
-          fqdn: install.requestedDomain,
+          fqdn: resolvedFqdn ?? requestedDomain,
           clusterDnsZoneId: assignment?.id,
           certificateRequired,
           ...domainHints,
         },
       );
-      await this.installRepo.update(install.id, {
-        resolvedFqdn: endpoint.fqdn,
-      });
+      if (isPrimary) {
+        await this.installRepo.update(install.id, {
+          resolvedFqdn: endpoint.fqdn,
+        });
+      }
       void this.appEndpointReconciliationService
         .reconcile(endpoint.id)
         .catch((err) =>
@@ -1276,12 +1453,309 @@ export class CatalogInstallProcessor {
             }`,
           ),
         );
+      return endpoint.fqdn;
     } catch (err) {
       this.logger.warn(
-        `Composed endpoint creation failed for install ${install.id}: ${
+        `Composed endpoint creation failed for component "${component.name}" of install ${install.id}: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+      return null;
+    }
+  }
+
+  private async maybeWireComposedOidc(
+    install: CatalogInstallEntity,
+    spec: CatalogSpecComposed,
+    primaryComponent: CatalogComponent,
+    primaryAppId: string,
+  ): Promise<OidcWireResult | null> {
+    const auth = spec.auth;
+    const mode = install.authMode ?? auth?.default ?? auth?.mode ?? 'native';
+    if (mode !== 'oidc') return null;
+    if (!auth?.oidc) {
+      this.logger.warn(
+        `Install ${install.id}: authMode=oidc but spec.auth.oidc missing — skipping SSO wiring`,
+      );
+      return null;
+    }
+    const pat = process.env.ZITADEL_SERVICE_ACCOUNT_PAT;
+    if (!pat) {
+      this.logger.warn(
+        `Install ${install.id}: ZITADEL_SERVICE_ACCOUNT_PAT not set — skipping SSO wiring`,
+      );
+      return null;
+    }
+
+    const fresh = await this.installRepo.findById(install.id);
+    const fqdn = fresh?.resolvedFqdn;
+    if (!fqdn) {
+      this.logger.warn(
+        `Install ${install.id}: no resolved FQDN — skipping SSO wiring`,
+      );
+      return null;
+    }
+    const cluster = await this.clusterRepository.findOne({
+      where: { id: install.clusterId },
+    });
+    if (!cluster?.masterIpAddress) {
+      this.logger.warn(
+        `Install ${install.id}: cluster master IP missing — skipping SSO wiring`,
+      );
+      return null;
+    }
+
+    const providerDomain = buildSystemNipHostname(
+      'auth',
+      cluster.masterIpAddress,
+      cluster.nipHostnameToken,
+    );
+    const issuer = `https://${providerDomain}`;
+    const project = await this.oidcProvider.findProjectByName(
+      pat,
+      providerDomain,
+      'Flui',
+    );
+    if (!project) {
+      this.logger.warn(
+        `Install ${install.id}: Flui OIDC project not found — skipping SSO wiring`,
+      );
+      return null;
+    }
+
+    const paths = auth.oidc.redirectPaths ?? ['/auth/login'];
+    const redirectUris = paths.map((p) => `https://${fqdn}${p}`);
+    const app = await this.oidcProvider.createWebOidcApp(
+      pat,
+      providerDomain,
+      project.id,
+      { name: install.slug, redirectUris },
+    );
+    this.logger.log(
+      `Install ${install.id}: registered OIDC client ${app.clientId} for ${fqdn}`,
+    );
+    await this.installRepo.update(install.id, {
+      oidcAppId: app.appId,
+      oidcProjectId: project.id,
+    });
+
+    const result: OidcWireResult = {
+      issuerUrl: issuer,
+      clientId: app.clientId,
+      clientSecret: app.clientSecret ?? '',
+    };
+
+    const entity = await this.applicationRepo.findById(primaryAppId);
+    if (!entity) return result;
+    const env = [...(entity.env ?? [])];
+    let configFiles: Array<{ path: string; content: string }> | undefined;
+
+    if (auth.oidc.configFile) {
+      const cf = auth.oidc.configFile;
+      const content = cf.template
+        .replaceAll('{{oidc.issuerUrl}}', issuer)
+        .replaceAll('{{oidc.clientId}}', app.clientId)
+        .replaceAll('{{oidc.clientSecret}}', app.clientSecret ?? '');
+      configFiles = [{ path: cf.path, content }];
+      env.push({ name: cf.env, value: cf.path });
+    } else if (auth.oidc.envMapping) {
+      const m = auth.oidc.envMapping;
+      if (m.issuerUrl) env.push({ name: m.issuerUrl, value: issuer });
+      if (m.clientId) env.push({ name: m.clientId, value: app.clientId });
+      if (m.clientSecret)
+        env.push({ name: m.clientSecret, value: app.clientSecret ?? '' });
+      if (m.enabledFlag) env.push({ name: m.enabledFlag, value: 'true' });
+    }
+
+    if (!configFiles && !auth.oidc.envMapping) {
+      this.logger.log(
+        `Install ${install.id}: OIDC client registered; ${primaryComponent.name} configured via postInstall — no redeploy`,
+      );
+      return result;
+    }
+
+    await this.applicationRepo.update(primaryAppId, {
+      env,
+      ...(configFiles ? { configFiles } : {}),
+    });
+
+    const imageRef = this.buildImageRef(primaryComponent.image);
+    const op = await this.deployService.triggerDeployWithImage(
+      primaryAppId,
+      imageRef,
+      install.userId,
+    );
+    await this.waitForDeployOperation(
+      op.id,
+      primaryAppId,
+      this.deployConfig.getCatalogInstallWaitTimeoutMs(),
+      this.deployConfig.getCatalogInstallPollIntervalMs(),
+    );
+    this.logger.log(
+      `Install ${install.id}: SSO wired + ${primaryComponent.name} redeployed`,
+    );
+    return result;
+  }
+
+  private async maybeRunPostInstall(
+    install: CatalogInstallEntity,
+    spec: CatalogSpecComposed,
+    primaryAppId: string,
+    oidc: OidcWireResult | null,
+    components: Record<string, TemplateComponentContext> = {},
+  ): Promise<void> {
+    const steps = spec.postInstall ?? [];
+    if (!steps.length) return;
+    const mode =
+      install.authMode ?? spec.auth?.default ?? spec.auth?.mode ?? 'native';
+    const fresh = await this.installRepo.findById(install.id);
+    const fqdn = fresh?.resolvedFqdn ?? '';
+
+    const ctx: Record<string, string> = {
+      'install.userEmail': install.userEmail ?? '',
+      'install.resolvedFqdn': fqdn,
+      'generate.password': `${randomUUID()}aA1!`,
+      ...(oidc
+        ? {
+            'oidc.issuerUrl': oidc.issuerUrl,
+            'oidc.clientId': oidc.clientId,
+            'oidc.clientSecret': oidc.clientSecret,
+          }
+        : {}),
+    };
+    for (const [name, c] of Object.entries(components)) {
+      if (c.host) ctx[`components.${name}.host`] = c.host;
+      if (c.fqdn) ctx[`components.${name}.fqdn`] = c.fqdn;
+    }
+    const render = (s: string): string =>
+      s.replace(/\{\{([^}]+)\}\}/g, (_, k) => ctx[k.trim()] ?? '');
+
+    for (const step of steps) {
+      if (!this.postInstallStepMatches(step, mode, install, spec)) continue;
+      if (step.exec) {
+        await this.runPostInstallExec(install, primaryAppId, step, render);
+      } else if (step.http) {
+        await this.runPostInstallHttp(install, fqdn, step, render);
+      }
+    }
+  }
+
+  private async runPostInstallHttp(
+    install: CatalogInstallEntity,
+    fqdn: string,
+    step: CatalogPostInstallStep,
+    render: (s: string) => string,
+  ): Promise<void> {
+    if (!step.http) return;
+    if (!fqdn) {
+      this.logger.warn(
+        `Install ${install.id}: postInstall "${step.name}" needs an endpoint but none resolved — skipping`,
+      );
+      return;
+    }
+    const expect = step.http.expectStatus ?? [200, 201];
+    try {
+      const resp = await fetch(`http://${fqdn}${step.http.path}`, {
+        method: step.http.method,
+        headers: {
+          'Content-Type': 'application/json',
+          ...(step.http.headers ?? {}),
+        },
+        body: step.http.body ? render(step.http.body) : undefined,
+      });
+      this.logger.log(
+        `Install ${install.id}: postInstall "${step.name}" → ${resp.status} (${
+          expect.includes(resp.status) ? 'ok' : 'unexpected'
+        })`,
+      );
+    } catch (err) {
+      this.logger.warn(
+        `Install ${install.id}: postInstall "${step.name}" failed: ${
           err instanceof Error ? err.message : String(err)
         }`,
       );
     }
+  }
+
+  private async runPostInstallExec(
+    install: CatalogInstallEntity,
+    primaryAppId: string,
+    step: CatalogPostInstallStep,
+    render: (s: string) => string,
+  ): Promise<void> {
+    if (!step.exec) return;
+    const app = await this.applicationRepo.findById(primaryAppId);
+    if (!app) {
+      this.logger.warn(
+        `Install ${install.id}: postInstall "${step.name}" — primary app not found, skipping`,
+      );
+      return;
+    }
+    const command = step.exec.command.map(render);
+    const container = step.exec.container ?? app.slug;
+    try {
+      const kubeconfig = await this.getClusterKubeconfigContent(
+        install.clusterId,
+      );
+      const out = await this.kubernetesService.execInPod(
+        kubeconfig,
+        app.k8sNamespace,
+        `flui-app-id=${primaryAppId}`,
+        container,
+        command,
+      );
+      this.logger.log(
+        `Install ${install.id}: postInstall "${step.name}" exec ok${
+          out?.trim() ? ` — ${out.trim().slice(0, 200)}` : ''
+        }`,
+      );
+    } catch (err) {
+      this.logger.warn(
+        `Install ${install.id}: postInstall "${step.name}" exec failed: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+    }
+  }
+
+  private async getClusterKubeconfigContent(
+    clusterId: string,
+  ): Promise<string> {
+    const cluster = await this.clusterRepository.findOne({
+      where: { id: clusterId },
+    });
+    if (!cluster?.kubeconfigEncrypted) {
+      throw new Error(`Kubeconfig not available for cluster ${clusterId}`);
+    }
+    const kubeconfig = this.encryptionService.decrypt(
+      cluster.kubeconfigEncrypted,
+    );
+    const override = process.env.KUBECONFIG_SERVER_OVERRIDE;
+    return override
+      ? kubeconfig.replaceAll(
+          /server:\s*https?:\/\/[^\s]+/g,
+          `server: ${override}`,
+        )
+      : kubeconfig;
+  }
+
+  private postInstallStepMatches(
+    step: CatalogPostInstallStep,
+    mode: string,
+    install: CatalogInstallEntity,
+    spec: CatalogSpecComposed,
+  ): boolean {
+    const authGate = step.when?.authMode;
+    if (authGate !== undefined) {
+      const ok = Array.isArray(authGate)
+        ? authGate.includes(mode as never)
+        : authGate === mode;
+      if (!ok) return false;
+    }
+    const optionGate = step.when?.option;
+    if (optionGate && !this.isOptionEnabled(install, spec, optionGate)) {
+      return false;
+    }
+    return true;
   }
 }

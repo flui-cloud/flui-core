@@ -90,6 +90,8 @@ export class CatalogInstallerService {
       requestedDomain: dto.domain,
       skipEndpoint: dto.skipEndpoint ?? false,
       requestedExposure: dto.exposure,
+      authMode: dto.authMode,
+      options: dto.options ?? {},
       userInputs: dto.userInputs ?? {},
       envOverrides: dto.envOverrides ?? {},
       dependencyChoices: dto.dependencyChoices ?? [],

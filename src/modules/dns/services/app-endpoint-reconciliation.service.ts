@@ -41,6 +41,23 @@ export class AppEndpointReconciliationService {
     private readonly clusterDnsGateway: ClusterDnsGateway,
   ) {}
 
+  private resolveCertProvider(
+    endpoint: AppEndpointEntity,
+  ): CertificateProvider | undefined {
+    const explicit =
+      endpoint.certificateProvider ??
+      endpoint.clusterDnsZone?.certificateProvider;
+    if (explicit) return explicit;
+    if (
+      process.env.FLUI_NIPIO_TLS === 'true' &&
+      endpoint.certificateRequired &&
+      !endpoint.fqdn.startsWith('*.')
+    ) {
+      return CertificateProvider.LETS_ENCRYPT;
+    }
+    return undefined;
+  }
+
   private async resolveReadyIssuerOrNull(
     endpoint: AppEndpointEntity,
     certProvider: CertificateProvider,
@@ -223,8 +240,7 @@ export class AppEndpointReconciliationService {
       }
 
       const configuredCertProvider: CertificateProvider | undefined =
-        endpoint.certificateProvider ??
-        endpoint.clusterDnsZone?.certificateProvider;
+        this.resolveCertProvider(endpoint);
 
       const usesWildcardBinding = !!endpoint.wildcardCertificateId;
       const usesSanBinding = !!endpoint.sanCertificateId;
@@ -460,9 +476,7 @@ export class AppEndpointReconciliationService {
       );
     }
 
-    const effectiveCertProvider =
-      endpoint.certificateProvider ??
-      endpoint.clusterDnsZone?.certificateProvider;
+    const effectiveCertProvider = this.resolveCertProvider(endpoint);
     if (!effectiveCertProvider) {
       return { status: null, message: null };
     }

@@ -104,6 +104,7 @@ export interface CatalogSpecStandalone {
   privatizable?: boolean;
   domain?: CatalogDomainSpec;
   auth?: CatalogAuth;
+  postInstall?: CatalogPostInstallStep[];
   startCommand?: string;
   /**
    * Per-BB linking declarations. The `ref` of each entry must be present in
@@ -144,6 +145,7 @@ export interface CatalogSpecBuildingBlock {
   healthcheck: CatalogHealthcheck;
   startCommand?: string;
   auth?: CatalogAuth;
+  postInstall?: CatalogPostInstallStep[];
   smokeTest?: CatalogSmokeTest;
   dependencies?: CatalogDependency[];
 }
@@ -154,19 +156,31 @@ export interface CatalogSpecComposed {
   networking?: CatalogComposedNetworking;
   domain?: CatalogDomainSpec;
   auth?: CatalogAuth;
+  options?: CatalogOption[];
+  postInstall?: CatalogPostInstallStep[];
   components: CatalogComponent[];
+}
+
+export interface CatalogOption {
+  key: string;
+  label: string;
+  description?: string;
+  default?: boolean;
 }
 
 export type CatalogAuthMode = 'oidc' | 'proxy' | 'native' | 'none';
 
 export interface CatalogAuth {
-  mode: CatalogAuthMode;
+  mode?: CatalogAuthMode;
+  modes?: CatalogAuthMode[];
+  default?: CatalogAuthMode;
   oidc?: CatalogAuthOidc;
   proxy?: CatalogAuthProxy;
 }
 
 export interface CatalogAuthOidc {
   redirectPath?: string;
+  redirectPaths?: string[];
   scopes?: string[];
   envMapping?: {
     issuerUrl?: string;
@@ -174,10 +188,35 @@ export interface CatalogAuthOidc {
     clientSecret?: string;
     enabledFlag?: string;
   };
+  configFile?: {
+    path: string;
+    env: string;
+    template: string;
+  };
 }
 
 export interface CatalogAuthProxy {
   headerMapping?: Record<string, string>;
+}
+
+export interface CatalogPostInstallStep {
+  name: string;
+  description?: string;
+  when?: {
+    authMode?: CatalogAuthMode | CatalogAuthMode[];
+    option?: string;
+  };
+  http?: {
+    method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
+    path: string;
+    headers?: Record<string, string>;
+    body?: string;
+    expectStatus?: number[];
+  };
+  exec?: {
+    command: string[];
+    container?: string;
+  };
 }
 
 export interface CatalogComponent {
@@ -191,6 +230,9 @@ export interface CatalogComponent {
   scaling: CatalogScaling;
   healthcheck?: CatalogHealthcheck;
   dependsOn?: string[];
+  when?: {
+    option?: string;
+  };
 }
 
 export interface CatalogComposedNetworking {
@@ -265,11 +307,6 @@ export type CatalogPersistenceScope = 'shared' | 'dedicated';
 
 export interface CatalogPersistence {
   scope: CatalogPersistenceScope;
-  /**
-   * When `scope=dedicated`, allow the app to schedule on the master
-   * (control-plane) node instead of a worker. Defaults to false.
-   */
-  allowMaster?: boolean;
 }
 
 export interface CatalogEnvVar {
@@ -392,6 +429,7 @@ export interface CatalogHealthcheck {
   path?: string;
   port?: number;
   command?: string[];
+  httpHeaders?: Record<string, string>;
   /**
    * How long Kubernetes waits after container start before the first probe.
    * Use for apps with slow cold start (JVM, Python, heavy framework boot).
