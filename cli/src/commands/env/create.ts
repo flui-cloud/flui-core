@@ -86,6 +86,7 @@ export default class EnvCreate extends Command {
     'configure-firewall': Flags.boolean({
       description: 'Automatically configure firewall after cluster creation',
       default: true,
+      allowNo: true,
     }),
     'firewall-ip': Flags.string({
       description:
@@ -499,7 +500,10 @@ export default class EnvCreate extends Command {
           }
 
           const rules = CONTROL_FIREWALL_RULES(sourceCidrs);
-          const temporaryFirewallName = 'flui-control-firewall';
+          // Unique temporary name to avoid colliding with orphaned firewalls
+          // from previous runs; renamed to flui-control-firewall-<clusterId>
+          // (by firewallId) once the cluster is ready.
+          const temporaryFirewallName = `flui-control-firewall-${randomBytes(4).toString('hex')}`;
 
           // Create firewall with temporary name (will be renamed when cluster is ready)
           const result = await firewallService.createFirewall({
@@ -533,14 +537,18 @@ export default class EnvCreate extends Command {
             `Firewall created (Source: ${sourceCidrs.join(', ')})`,
           );
         } catch (error) {
-          spinner.warn(`Firewall creation failed: ${error.message}`);
+          spinner.fail(`Firewall creation failed: ${error.message}`);
           console.log(
-            chalk.yellow(
-              '   Continuing without firewall. You can configure it manually later.',
+            chalk.red(
+              '\n   Aborting: the control cluster must not be provisioned without a firewall.',
             ),
           );
-          firewallId = undefined;
-          sourceCidrs = undefined;
+          console.log(
+            chalk.dim(
+              '   Resolve the cause (e.g. remove a leftover/orphaned firewall on the provider) and retry,\n   or pass --no-configure-firewall to explicitly opt out of firewall protection.',
+            ),
+          );
+          this.exit(1);
         }
       }
 

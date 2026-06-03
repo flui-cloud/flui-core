@@ -6,6 +6,7 @@ import {
   ClusterEntity,
   ClusterStatus,
   ClusterType,
+  isControlClusterType,
 } from 'src/modules/infrastructure/clusters/entities/cluster.entity';
 import { CreateClusterDto } from 'src/modules/infrastructure/clusters/dto/create-cluster.dto';
 import { HostnameMode } from 'src/modules/dns/enums/hostname-mode.enum';
@@ -590,6 +591,35 @@ export class CliClustersService {
             this.logger.log(
               `No firewalls found with observability name patterns`,
             );
+          }
+        }
+
+        // STEP 1c: Sweep orphaned control firewalls left with a TEMPORARY name.
+        // A firewall created before a failed cluster run keeps its temp name
+        // (`flui-control-firewall` or `flui-control-firewall-<hex>`) and has no
+        // flui-cluster-id label, so neither the label query nor the scoped-name
+        // fallback above can find it. There is exactly one control cluster per
+        // environment, so any such firewall is leftover garbage from a previous
+        // attempt and is safe to remove while tearing down the control cluster.
+        // The regex only matches the temp form (8-hex suffix), never another
+        // cluster's UUID-scoped name.
+        if (isControlClusterType(cluster.clusterType)) {
+          const tempControlFirewall = /^flui-control-firewall(-[0-9a-f]{8})?$/;
+          const known = new Set(allFirewalls.map((fw) => fw.id));
+          const providerFirewalls = await this.firewallService.listFirewalls(
+            {},
+          );
+          const orphans = providerFirewalls.filter(
+            (fw) => tempControlFirewall.test(fw.name) && !known.has(fw.id),
+          );
+          if (orphans.length > 0) {
+            this.logger.log(
+              `Found ${orphans.length} orphaned control firewall(s) with a temporary name:`,
+            );
+            orphans.forEach((fw) =>
+              this.logger.log(`  - ${fw.name} (${fw.id})`),
+            );
+            allFirewalls.push(...orphans);
           }
         }
 

@@ -507,6 +507,30 @@ export class CliClusterCreatorService {
     } catch (error) {
       this.log(opId, `Failed to create cluster: ${error.message}`, 'ERROR');
 
+      // Roll back the pre-created firewall. If creation failed before the
+      // rename/label step it stays with a temporary name and no
+      // flui-cluster-id label, which makes it invisible to `env destroy`
+      // (it matches neither the label query nor the scoped-name fallback)
+      // and leaks as an orphan that blocks the next run's name.
+      const orphanFirewallId = (operation.metadata as any)?.firewallId;
+      if (orphanFirewallId) {
+        try {
+          await this.firewallService.deleteFirewall(orphanFirewallId);
+          await this.firewallRepository.delete(orphanFirewallId);
+          this.log(
+            opId,
+            `✅ Rolled back firewall ${orphanFirewallId} after failed cluster creation`,
+          );
+        } catch (cleanupError) {
+          this.log(
+            opId,
+            `Failed to roll back firewall ${orphanFirewallId}: ${cleanupError.message}. ` +
+              `Delete it manually on the provider to avoid an orphan.`,
+            'WARN',
+          );
+        }
+      }
+
       // Mark cluster as FAILED
       cluster.status = ClusterStatus.ERROR;
       await this.clusterRepository.save(cluster);
