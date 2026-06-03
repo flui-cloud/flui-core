@@ -1599,7 +1599,9 @@ export class ScalewayProviderService implements ICloudProvider {
         for (const [name, entry] of typeMap.entries()) {
           const t = entry.type;
           const ramBytes = t.ram || 0;
-          const ramGb = Math.round(ramBytes / 1e9); // Scaleway uses decimal bytes (1 GB = 1_000_000_000)
+          // RAM is reported in binary bytes (8 GiB = 8_589_934_592), unlike disk
+          // which is decimal. Divide by 1024³ so a "8G" plan reads 8 GB, not 9.
+          const ramGb = Math.round(ramBytes / 1024 ** 3);
           const diskGb = mapDiskGb(t);
 
           const prices: NodeSizePriceDto[] = [];

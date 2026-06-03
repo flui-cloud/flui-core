@@ -7,12 +7,48 @@ import { CLI_DEFAULTS } from '../../config/defaults';
 import { ProviderFactory } from 'src/modules/providers/core/factories/provider.factory';
 import { CloudProvider } from 'src/modules/providers/enums/cloud-provider.enum';
 
+/**
+ * Parse a numeric filter expression into an inclusive {min, max} range.
+ * Accepts "16" (exact), "8-32" (range), "8-" (min only), "-32" (max only).
+ * Returns null on invalid input.
+ */
+function parseNumericRange(raw: string): { min?: number; max?: number } | null {
+  const value = raw.trim();
+  if (!value) return null;
+
+  const num = (s: string): number | undefined => {
+    if (s === '') return undefined;
+    const n = Number.parseFloat(s);
+    return Number.isFinite(n) && n >= 0 ? n : Number.NaN;
+  };
+
+  if (!value.includes('-')) {
+    const exact = num(value);
+    if (exact === undefined || Number.isNaN(exact)) return null;
+    return { min: exact, max: exact };
+  }
+
+  const [minPart, maxPart, ...rest] = value.split('-');
+  if (rest.length > 0) return null;
+  const min = num(minPart);
+  const max = num(maxPart);
+  if (Number.isNaN(min) || Number.isNaN(max)) return null;
+  if (min === undefined && max === undefined) return null;
+  if (min !== undefined && max !== undefined && min > max) return null;
+  return { min, max };
+}
+
 export default class ServerTypesList extends Command {
   static readonly description = 'List available server types for a provider';
 
   static readonly examples = [
     '<%= config.bin %> <%= command.id %> --provider hetzner',
     '<%= config.bin %> <%= command.id %> --provider hetzner --region fsn1',
+    '<%= config.bin %> <%= command.id %> --provider scaleway --memory 16',
+    '<%= config.bin %> <%= command.id %> --provider scaleway --memory 8-32',
+    '<%= config.bin %> <%= command.id %> --provider scaleway --memory -32',
+    '<%= config.bin %> <%= command.id %> --provider scaleway --sort memory',
+    '<%= config.bin %> <%= command.id %> --provider scaleway --sort price --desc',
     '<%= config.bin %> <%= command.id %> --provider hetzner --json',
     '<%= config.bin %> <%= command.id %> --provider hetzner --force-refresh',
   ];
@@ -27,6 +63,21 @@ export default class ServerTypesList extends Command {
     region: Flags.string({
       char: 'r',
       description: 'Filter by region/location',
+    }),
+    memory: Flags.string({
+      char: 'm',
+      description:
+        'Filter by RAM in GB: exact "16", range "8-32", min "8-", or max "-32"',
+    }),
+    sort: Flags.string({
+      char: 's',
+      description: 'Sort by field',
+      options: ['price', 'memory', 'cores', 'disk', 'name'],
+      default: 'price',
+    }),
+    desc: Flags.boolean({
+      description: 'Sort in descending order',
+      default: false,
     }),
     json: Flags.boolean({
       description: 'Output as JSON',
@@ -61,7 +112,9 @@ export default class ServerTypesList extends Command {
 
       if (flags['force-refresh']) {
         if (!flags.json) {
-          this.log(chalk.dim(`Fetching server types from ${flags.provider}...`));
+          this.log(
+            chalk.dim(`Fetching server types from ${flags.provider}...`),
+          );
         }
         serverTypes = await fetchFromProvider();
         await cacheService.set(flags.provider, serverTypes);
@@ -105,6 +158,21 @@ export default class ServerTypesList extends Command {
         });
       }
 
+      // Filter by memory (GB): "16" | "8-32" | "8-" | "-32"
+      if (flags.memory && serverTypes) {
+        const range = parseNumericRange(flags.memory);
+        if (!range) {
+          throw new Error(
+            `Invalid --memory value "${flags.memory}". Use "16", "8-32", "8-", or "-32".`,
+          );
+        }
+        serverTypes = serverTypes.filter(
+          (type) =>
+            (range.min === undefined || type.memory >= range.min) &&
+            (range.max === undefined || type.memory <= range.max),
+        );
+      }
+
       // Filter out deprecated types
       const activeTypes = serverTypes?.filter((type) => !type.deprecated) || [];
       const deprecatedTypes =
@@ -114,6 +182,29 @@ export default class ServerTypesList extends Command {
         this.log(chalk.yellow('No active server types found'));
         return;
       }
+
+      // Sort (default: cheapest first). Missing/zero prices sort last —
+      // €0.00 means the provider didn't return a price (e.g. bare-metal types).
+      const priceOf = (type: (typeof activeTypes)[number]): number => {
+        const raw = validatorService.getFormattedPrice(type).monthly;
+        const n = raw ? Number.parseFloat(raw) : Number.NaN;
+        return Number.isFinite(n) && n > 0 ? n : Number.POSITIVE_INFINITY;
+      };
+      const dir = flags.desc ? -1 : 1;
+      activeTypes.sort((a, b) => {
+        switch (flags.sort) {
+          case 'memory':
+            return (a.memory - b.memory) * dir;
+          case 'cores':
+            return (a.cores - b.cores) * dir;
+          case 'disk':
+            return (a.disk - b.disk) * dir;
+          case 'name':
+            return a.name.localeCompare(b.name) * dir;
+          default:
+            return (priceOf(a) - priceOf(b)) * dir;
+        }
+      });
 
       // JSON output
       if (flags.json) {
@@ -153,7 +244,8 @@ export default class ServerTypesList extends Command {
           };
         }
         if (regions.length === 0) return { label: 'None', color: chalk.red };
-        if (outOfStock.length === 0) return { label: 'All', color: chalk.green };
+        if (outOfStock.length === 0)
+          return { label: 'All', color: chalk.green };
         if (regions.length > outOfStock.length) {
           return { label: 'Limited', color: chalk.yellow };
         }
