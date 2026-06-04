@@ -134,6 +134,21 @@ export default class Deploy extends Command {
       description: 'Skip DNS and TLS provisioning (kind:CatalogApp only)',
       default: false,
     }),
+    'cert-challenge': Flags.string({
+      description:
+        'ACME challenge for the app endpoint (kind:CatalogApp). http-01 works without a DNS zone and forces a per-host cert; dns-01 needs a cluster DNS zone with a wildcard issuer. Default: derived from cluster config.',
+      options: ['http-01', 'dns-01'],
+    }),
+    'cert-provider': Flags.string({
+      description:
+        'Certificate issuer for the app endpoint (kind:CatalogApp). Default: cluster default.',
+      options: ['lets-encrypt', 'lets-encrypt-staging'],
+    }),
+    hostname: Flags.string({
+      description:
+        'How the app is exposed (kind:CatalogApp): ip (nip.io) or domain (cluster DNS zone). Default: derived from manifest/cluster.',
+      options: ['ip', 'domain'],
+    }),
     'no-wait': Flags.boolean({
       description: 'Alias for --detach (kind:CatalogApp compat)',
       default: false,
@@ -491,6 +506,13 @@ export default class Deploy extends Command {
           clusterId,
           ...(flags.name ? { displayName: flags.name as string } : {}),
           ...(flags.domain ? { domain: flags.domain as string } : {}),
+          ...(flags['cert-challenge']
+            ? { certChallenge: flags['cert-challenge'] as string }
+            : {}),
+          ...(flags['cert-provider']
+            ? { certificateProvider: flags['cert-provider'] as string }
+            : {}),
+          ...(flags.hostname ? { hostnameMode: flags.hostname as string } : {}),
           ...(flags['skip-endpoint'] ? { skipEndpoint: true } : {}),
           ...(Object.keys(envOverrides).length > 0
             ? { envOverrides, userInputs: envOverrides }

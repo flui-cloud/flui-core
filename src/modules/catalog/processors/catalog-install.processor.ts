@@ -696,6 +696,24 @@ export class CatalogInstallProcessor {
       spec.domain,
       wildcardIssuer?.certificateProvider,
     );
+
+    // Install params win over the manifest; http-01 forces a per-host cert even on a wildcard zone.
+    if (install.requestedCertChallenge === 'http-01')
+      domainHints.certChallenge = CertChallenge.HTTP_01;
+    else if (install.requestedCertChallenge === 'dns-01')
+      domainHints.certChallenge = CertChallenge.DNS_01;
+
+    if (install.requestedHostnameMode === 'ip')
+      domainHints.hostnameMode = HostnameMode.IP;
+    else if (install.requestedHostnameMode === 'domain')
+      domainHints.hostnameMode = HostnameMode.DOMAIN;
+
+    if (install.requestedCertificateProvider === 'lets-encrypt')
+      domainHints.certificateProvider = CertificateProvider.LETS_ENCRYPT;
+    else if (install.requestedCertificateProvider === 'lets-encrypt-staging')
+      domainHints.certificateProvider =
+        CertificateProvider.LETS_ENCRYPT_STAGING;
+
     const certificateRequired = spec.domain?.tls !== false;
 
     try {
@@ -1426,6 +1444,24 @@ export class CatalogInstallProcessor {
       spec.domain,
       wildcardIssuer?.certificateProvider,
     );
+
+    // Install params win over the manifest; http-01 forces a per-host cert even on a wildcard zone.
+    if (install.requestedCertChallenge === 'http-01')
+      domainHints.certChallenge = CertChallenge.HTTP_01;
+    else if (install.requestedCertChallenge === 'dns-01')
+      domainHints.certChallenge = CertChallenge.DNS_01;
+
+    if (install.requestedHostnameMode === 'ip')
+      domainHints.hostnameMode = HostnameMode.IP;
+    else if (install.requestedHostnameMode === 'domain')
+      domainHints.hostnameMode = HostnameMode.DOMAIN;
+
+    if (install.requestedCertificateProvider === 'lets-encrypt')
+      domainHints.certificateProvider = CertificateProvider.LETS_ENCRYPT;
+    else if (install.requestedCertificateProvider === 'lets-encrypt-staging')
+      domainHints.certificateProvider =
+        CertificateProvider.LETS_ENCRYPT_STAGING;
+
     const certificateRequired = spec.domain?.tls !== false;
 
     try {

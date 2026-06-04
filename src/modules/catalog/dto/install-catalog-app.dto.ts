@@ -35,6 +35,33 @@ export class InstallCatalogAppDto {
   domain?: string;
 
   @ApiPropertyOptional({
+    enum: ['http-01', 'dns-01'],
+    description:
+      'ACME challenge override. Overrides manifest domain.certChallenge; http-01 forces a per-host cert even on a wildcard zone. Default: derived from cluster config.',
+  })
+  @IsOptional()
+  @IsIn(['http-01', 'dns-01'])
+  certChallenge?: 'http-01' | 'dns-01';
+
+  @ApiPropertyOptional({
+    enum: ['lets-encrypt', 'lets-encrypt-staging'],
+    description:
+      'Certificate issuer override. Overrides manifest domain.certificateProvider.',
+  })
+  @IsOptional()
+  @IsIn(['lets-encrypt', 'lets-encrypt-staging'])
+  certificateProvider?: 'lets-encrypt' | 'lets-encrypt-staging';
+
+  @ApiPropertyOptional({
+    enum: ['ip', 'domain'],
+    description:
+      'Hostname mode override. Overrides manifest domain.hostnameMode.',
+  })
+  @IsOptional()
+  @IsIn(['ip', 'domain'])
+  hostnameMode?: 'ip' | 'domain';
+
+  @ApiPropertyOptional({
     description:
       'When true, skip endpoint (DNS + certificate) provisioning at install time even if the cluster is ready. The user will configure domain and TLS later. Default false.',
     default: false,

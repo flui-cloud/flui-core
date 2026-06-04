@@ -92,6 +92,15 @@ export class CatalogInstallEntity {
   @Column({ length: 255, nullable: true })
   requestedDomain?: string;
 
+  @Column({ length: 16, nullable: true })
+  requestedCertChallenge?: string;
+
+  @Column({ length: 32, nullable: true })
+  requestedCertificateProvider?: string;
+
+  @Column({ length: 16, nullable: true })
+  requestedHostnameMode?: string;
+
   @Column({ length: 255, nullable: true })
   resolvedFqdn?: string;
 

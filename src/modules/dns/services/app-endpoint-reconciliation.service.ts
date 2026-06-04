@@ -165,8 +165,10 @@ export class AppEndpointReconciliationService {
         );
       }
 
+      // An explicit http-01 request opts the endpoint out of the shared wildcard.
       const wildcardEnabled =
         !endpoint.sanCertificateId &&
+        endpoint.certChallenge !== CertChallenge.HTTP_01 &&
         this.wildcardCertificateService.isEnabled();
       this.logger.log(
         `[wildcard] endpoint=${endpointId} flag=${wildcardEnabled} certRequired=${endpoint.certificateRequired} hasZone=${!!endpoint.clusterDnsZone} fqdn=${endpoint.fqdn}`,
