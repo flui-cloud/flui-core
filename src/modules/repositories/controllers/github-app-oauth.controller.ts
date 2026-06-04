@@ -203,7 +203,11 @@ export class GithubAppOAuthController {
     );
     const fallbackRedirect =
       explicit ??
-      `${(this.configService.get<string>('DASHBOARD_URL') ?? DEFAULT_DASHBOARD_URL).replace(/\/$/, '')}${DEFAULT_POST_INSTALL_PATH}`;
+      `${(
+        this.configService.get<string>('FRONTEND_URL') ??
+        this.configService.get<string>('DASHBOARD_URL') ??
+        DEFAULT_DASHBOARD_URL
+      ).replace(/\/$/, '')}${DEFAULT_POST_INSTALL_PATH}`;
 
     if (!state) {
       res.redirect(`${fallbackRedirect}?error=missing_state`);

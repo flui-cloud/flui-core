@@ -247,7 +247,9 @@ export class GitHubSetupController {
     @Res() res: Response,
   ): Promise<void> {
     const dashboardUrl = (
-      this.envConfig.get<string>('DASHBOARD_URL') ?? DEFAULT_DASHBOARD_URL
+      this.envConfig.get<string>('FRONTEND_URL') ??
+      this.envConfig.get<string>('DASHBOARD_URL') ??
+      DEFAULT_DASHBOARD_URL
     ).replace(/\/$/, '');
     const returnTo = `${dashboardUrl}${SETUP_RETURN_PATH}`;
 
