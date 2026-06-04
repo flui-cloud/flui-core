@@ -8,8 +8,8 @@ importers:
   .:
     dependencies:
       '@flui-cloud/spec':
-        specifier: ^0.4.0
-        version: 0.4.0
+        specifier: ^0.5.0
+        version: 0.5.0
       '@nestjs/bull':
         specifier: ^11.0.4
         version: 11.0.4(@nestjs/common@10.4.20(reflect-metadata@0.1.14)(rxjs@7.8.2))(@nestjs/core@10.4.20(@nestjs/common@10.4.20(reflect-metadata@0.1.14)(rxjs@7.8.2))(encoding@0.1.13)(reflect-metadata@0.1.14)(rxjs@7.8.2))(bull@4.16.5)
@@ -311,10 +311,10 @@ packages:
       }
     engines: { node: '>=12' }
 
-  '@flui-cloud/spec@0.4.0':
+  '@flui-cloud/spec@0.5.0':
     resolution:
       {
-        integrity: sha512-hC3o300TLXsmIruIlBKIitjxh8DKA5t3AxyQ3QYrrJ/jyv5zvnng7U5sqxKZk6Nz3/zsrIr+QNOPgEFx56703w==,
+        integrity: sha512-0I8MV9Tc7tDsaWSesWNDWKRFjztOV+RFLh6QuN5EMNdKMWrQpjBAZTEdFPvxNmhosb3HEEoZKWD5WI5RssvU7A==,
       }
     hasBin: true
 
@@ -3499,7 +3499,7 @@ snapshots:
     dependencies:
       '@jridgewell/trace-mapping': 0.3.9
 
-  '@flui-cloud/spec@0.4.0':
+  '@flui-cloud/spec@0.5.0':
     dependencies:
       ajv: 8.18.0
       ajv-formats: 3.0.1(ajv@8.18.0)
