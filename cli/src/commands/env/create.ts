@@ -50,8 +50,8 @@ export default class EnvCreate extends Command {
   static readonly flags = {
     provider: Flags.string({
       char: 'p',
-      description: 'Cloud provider for the control cluster',
-      default: 'hetzner',
+      description:
+        "Cloud provider for the control cluster (default: the profile's configured provider)",
       options: ['hetzner', 'scaleway'],
     }),
     'node-size': Flags.string({
@@ -114,10 +114,54 @@ export default class EnvCreate extends Command {
     }),
   };
 
+  /** The sole provider with configured credentials, or undefined if none/both. */
+  private detectConfiguredProvider(
+    configStorage: ConfigStorage,
+  ): string | undefined {
+    const configured = (['hetzner', 'scaleway'] as const).filter((p) =>
+      isCompoundProvider(p)
+        ? configStorage.hasCredentials(p)
+        : configStorage.hasToken(p),
+    );
+    return configured.length === 1 ? configured[0] : undefined;
+  }
+
   async run(): Promise<void> {
     const { flags } = await this.parse(EnvCreate);
 
-    const providerKey = flags.provider;
+    if (flags['auth-mode'] !== 'oidc') {
+      this.error(
+        `Authentication mode '${flags['auth-mode']}' is not supported. Only 'oidc' is available.`,
+        { exit: 1 },
+      );
+    }
+
+    const configStorage = new ConfigStorage();
+    const hasCreds = (p: string): boolean =>
+      isCompoundProvider(p)
+        ? configStorage.hasCredentials(p)
+        : configStorage.hasToken(p);
+
+    // Resolve the target provider BEFORE deriving provider-specific defaults.
+    // Precedence: explicit --provider > the profile's single configured
+    // provider > the setup wizard's choice. (Previously hard-defaulted to
+    // hetzner, so a Scaleway-only profile still tried — and failed — to build
+    // on Hetzner.)
+    let providerKey =
+      flags.provider ?? this.detectConfiguredProvider(configStorage);
+    if (!providerKey || !hasCreds(providerKey)) {
+      const configured = await runProviderSetupWizard(providerKey);
+      if (!configured) {
+        console.log(
+          chalk.dim(
+            `   To configure manually: flui config set ${providerKey ?? '<provider>'}\n`,
+          ),
+        );
+        this.exit(1);
+      }
+      providerKey = configured;
+    }
+
     const cloudProvider =
       providerKey === 'scaleway'
         ? CloudProvider.SCALEWAY
@@ -130,13 +174,6 @@ export default class EnvCreate extends Command {
     if (!allowedRegions.includes(region)) {
       this.error(
         `Region '${region}' is not supported for provider '${providerKey}'. Allowed: ${allowedRegions.join(', ')}`,
-        { exit: 1 },
-      );
-    }
-
-    if (flags['auth-mode'] !== 'oidc') {
-      this.error(
-        `Authentication mode '${flags['auth-mode']}' is not supported. Only 'oidc' is available.`,
         { exit: 1 },
       );
     }
@@ -156,7 +193,6 @@ export default class EnvCreate extends Command {
       spinner.succeed('Initialized');
 
       spinner = ora('Loading services...').start();
-      const configStorage = new ConfigStorage();
       const apiUrl = configStorage.getApiUrl();
       const controlService = app.get(CliControlClusterService);
       const apiClient = new ApiClient({
@@ -166,25 +202,6 @@ export default class EnvCreate extends Command {
       const cacheService = new ServerTypeCacheService();
       const validatorService = new ServerTypeValidatorService();
       spinner.succeed('Services loaded');
-
-      // 2. Early credential check — must happen before any provider call
-      const hasProviderCreds = isCompoundProvider(providerKey)
-        ? configStorage.hasCredentials(providerKey)
-        : configStorage.hasToken(providerKey);
-      if (!hasProviderCreds) {
-        spinner.stop();
-        const configured = await runProviderSetupWizard();
-        if (!configured) {
-          console.log(
-            chalk.dim(
-              `   To configure manually: flui config set ${providerKey}\n`,
-            ),
-          );
-          this.exit(1);
-        }
-        spinner = ora('Resuming...').start();
-        spinner.succeed('Provider configured');
-      }
 
       // 3. Resolve admin email (prompt if not set, then persist)
       const emailResolver = new PreferencesResolver(configStorage);

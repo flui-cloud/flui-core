@@ -225,44 +225,45 @@ export async function promptMaskedInput(message: string): Promise<string> {
  * Shows arrow-key provider selection, prompts for token, saves to ConfigStorage.
  * Returns true if setup completed successfully, false if cancelled.
  */
-export async function runProviderSetupWizard(): Promise<boolean> {
-  console.log(chalk.yellow('\n⚠  No cloud provider API token configured.'));
+async function pickProviderToConfigure(
+  preselectedProviderId?: string,
+): Promise<ProviderOption | null> {
+  // When the target provider is already known (explicit --provider, or a
+  // single-provider profile with missing creds), configure it directly.
+  const preselected = preselectedProviderId
+    ? SUPPORTED_PROVIDERS.find(
+        (p) => p.id === preselectedProviderId && p.available,
+      )
+    : undefined;
+  if (preselected) {
+    console.log(
+      chalk.yellow(`\n⚠  No ${preselected.label} API token configured.`),
+    );
+    return preselected;
+  }
 
+  console.log(chalk.yellow('\n⚠  No cloud provider API token configured.'));
   const items: ArrowSelectItem[] = SUPPORTED_PROVIDERS.map((p) => ({
     label: p.label,
     disabled: !p.available,
     disabledReason: p.unavailableReason,
   }));
-
   const index = await selectWithArrows(
     'Select a provider to configure:',
     items,
   );
-
   if (index === -1) {
     console.log(
       chalk.dim('\n   Cancelled. Run: flui config set hetzner YOUR_TOKEN\n'),
     );
-    return false;
+    return null;
   }
+  return SUPPORTED_PROVIDERS[index];
+}
 
-  const selectedProvider = SUPPORTED_PROVIDERS[index];
-  const schema = getCredentialSchema(selectedProvider.id);
-  if (!schema) {
-    console.log(
-      chalk.red(
-        `\n   Missing credential schema for ${selectedProvider.label}\n`,
-      ),
-    );
-    return false;
-  }
-
-  console.log(
-    chalk.dim(
-      `\n   Enter your ${selectedProvider.label} credentials below.\n   They will be stored encrypted on disk.\n`,
-    ),
-  );
-
+async function collectProviderCredentials(
+  schema: NonNullable<ReturnType<typeof getCredentialSchema>>,
+): Promise<Record<string, string> | null> {
   const collected: Record<string, string> = {};
   for (const field of schema.fields) {
     const label = `   ${field.label}`;
@@ -278,10 +279,37 @@ export async function runProviderSetupWizard(): Promise<boolean> {
       console.log(
         chalk.red(`\n   ${field.label} is required. Setup cancelled.\n`),
       );
-      return false;
+      return null;
     }
     collected[field.key] = value.trim();
   }
+  return collected;
+}
+
+export async function runProviderSetupWizard(
+  preselectedProviderId?: string,
+): Promise<string | null> {
+  const selectedProvider = await pickProviderToConfigure(preselectedProviderId);
+  if (!selectedProvider) return null;
+
+  const schema = getCredentialSchema(selectedProvider.id);
+  if (!schema) {
+    console.log(
+      chalk.red(
+        `\n   Missing credential schema for ${selectedProvider.label}\n`,
+      ),
+    );
+    return null;
+  }
+
+  console.log(
+    chalk.dim(
+      `\n   Enter your ${selectedProvider.label} credentials below.\n   They will be stored encrypted on disk.\n`,
+    ),
+  );
+
+  const collected = await collectProviderCredentials(schema);
+  if (!collected) return null;
 
   if (selectedProvider.id === 'scaleway') {
     process.stdout.write(
@@ -294,7 +322,7 @@ export async function runProviderSetupWizard(): Promise<boolean> {
     process.stdout.write('\r\u001B[2K');
     if (!result.success) {
       console.log(chalk.red(`   ✖ ${result.message}\n`));
-      return false;
+      return null;
     }
     console.log(chalk.green(`   ✔ ${result.message}`));
   }
@@ -311,14 +339,14 @@ export async function runProviderSetupWizard(): Promise<boolean> {
         `\n   ✔ ${selectedProvider.label} credentials saved (AES-256-GCM encrypted)\n`,
       ),
     );
-    return true;
+    return selectedProvider.id;
   } catch (err) {
     console.log(
       chalk.red(
         `\n   Failed to save credentials: ${err instanceof Error ? err.message : String(err)}\n`,
       ),
     );
-    return false;
+    return null;
   }
 }
 
