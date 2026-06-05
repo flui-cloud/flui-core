@@ -39,8 +39,11 @@ export class SystemAppCatalogService {
   ) {}
 
   getCatalogForClusterType(clusterType: string): SystemAppDefinition[] {
+    // 'control' is the renamed 'observability'; the catalog still uses the old name.
+    const legacyType =
+      clusterType === 'control' ? 'observability' : clusterType;
     return SYSTEM_APP_CATALOG.filter((def) =>
-      def.clusterTypes.includes(clusterType as 'observability' | 'workload'),
+      def.clusterTypes.includes(legacyType as 'observability' | 'workload'),
     );
   }
 
