@@ -215,6 +215,7 @@ export class CliClusterCreatorService {
         clusterFirewallId: firewallId || '',
         nipIoCertEnabled: !clusterMeta?.zitadelDomain,
         acmeStaging: !!clusterMeta?.acmeStaging,
+        useLatest: !!clusterMeta?.useLatest,
         nipHostnameToken: cluster.nipHostnameToken || null,
         envVnet: envVnet
           ? {
@@ -399,6 +400,7 @@ export class CliClusterCreatorService {
               provider: cluster.provider,
               caPublicKey,
               operationId: operation.id,
+              useLatest: !!clusterMeta?.useLatest,
               sharedStorage: workerSharedStorage,
             });
 

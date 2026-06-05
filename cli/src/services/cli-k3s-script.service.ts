@@ -3,7 +3,8 @@ import { promises as fs } from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
 import { CliLoggerService } from './cli-logger.service';
-import { BOOTSTRAP_CONFIG } from '../config/bootstrap.config';
+import { getScriptsBaseUrl } from '../config/bootstrap.config';
+import { resolveImageTags } from '../config/release.config';
 
 export interface K3sMasterConfig {
   serverId?: string; // Database node ID (ClusterNodeEntity.id) - used for observability metrics
@@ -46,6 +47,11 @@ export interface K3sMasterConfig {
   clusterFirewallId?: string;
   nipIoCertEnabled?: boolean;
   acmeStaging?: boolean;
+  /**
+   * Install from mobile tags instead of the pinned release: bootstrap ref
+   * `master` + `:latest` Docker images. Set by `flui env create --latest`.
+   */
+  useLatest?: boolean;
   // Per-cluster nip.io hostname token. When set, system FQDNs become
   // auth/api/app.${token}.${masterIp}.nip.io — gives each cluster a unique
   // Let's Encrypt domain set so repeated test creations don't burn the
@@ -86,6 +92,8 @@ export interface K3sWorkerConfig {
   provider: string;
   caPublicKey?: string;
   operationId?: string; // For logging to operation log file
+  /** See K3sMasterConfig.useLatest — keeps the worker on the same bootstrap ref. */
+  useLatest?: boolean;
   /**
    * Flui shared storage on workers: install cachefilesd + mount NFS export
    * from master. See scaling doc §14.
@@ -149,15 +157,14 @@ export class CliK3sScriptService {
         `[BOOTSTRAP MASTER SCRIPT] Cluster: ${config.clusterName}`,
         opId,
       );
-      this.log(`Scripts URL: ${BOOTSTRAP_CONFIG.scriptsBaseUrl}`, opId);
+      const scriptsBaseUrl = getScriptsBaseUrl(config.useLatest ?? false);
+      const imageTags = resolveImageTags(config.useLatest ?? false);
+      this.log(`Scripts URL: ${scriptsBaseUrl}`, opId);
 
       // Generate bootstrap script that downloads and executes k3s-master-init.sh from GitHub
       const script = this.generateBootstrapScript('master', {
-        SCRIPTS_BASE_URL: BOOTSTRAP_CONFIG.scriptsBaseUrl,
-        MANIFESTS_BASE_URL: BOOTSTRAP_CONFIG.scriptsBaseUrl.replace(
-          '/scripts',
-          '/manifests',
-        ),
+        SCRIPTS_BASE_URL: scriptsBaseUrl,
+        MANIFESTS_BASE_URL: scriptsBaseUrl.replace('/scripts', '/manifests'),
         SERVER_ID: config.serverId || '', // Database node ID for observability
         INSTANCE_ID: config.instanceId,
         INSTANCE_NAME: config.instanceName,
@@ -166,6 +173,10 @@ export class CliK3sScriptService {
         CLUSTER_NAME: config.clusterName,
         K3S_TOKEN: config.k3sToken,
         K3S_VERSION: config.k3sVersion || 'v1.35.4+k3s1',
+        // Pinned Flui image tags — consumed by the system manifests via envsubst.
+        FLUI_API_IMAGE_TAG: imageTags.fluiApi,
+        FLUI_WEB_IMAGE_TAG: imageTags.fluiWeb,
+        FLUI_AUTHZ_IMAGE_TAG: imageTags.fluiAuthz,
         DEPLOY_OBSERVABILITY_STACK: config.deployObservabilityStack
           ? 'true'
           : 'false',
@@ -259,12 +270,13 @@ export class CliK3sScriptService {
         `[BOOTSTRAP WORKER SCRIPT] Cluster: ${config.clusterName}`,
         opId,
       );
-      this.log(`Scripts URL: ${BOOTSTRAP_CONFIG.scriptsBaseUrl}`, opId);
+      const scriptsBaseUrl = getScriptsBaseUrl(config.useLatest ?? false);
+      this.log(`Scripts URL: ${scriptsBaseUrl}`, opId);
 
       // Generate bootstrap script that downloads and executes k3s-worker-init.sh from GitHub
       const script = this.generateBootstrapScript('worker', {
         SERVER_ID: config.serverId || '', // Database node ID for observability
-        SCRIPTS_BASE_URL: BOOTSTRAP_CONFIG.scriptsBaseUrl,
+        SCRIPTS_BASE_URL: scriptsBaseUrl,
         INSTANCE_ID: config.instanceId,
         INSTANCE_NAME: config.instanceName,
         CLOUD_PROVIDER: config.provider,

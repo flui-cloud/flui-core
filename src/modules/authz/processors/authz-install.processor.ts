@@ -24,8 +24,12 @@ import {
   AuthzInstallJobData,
   AuthzUninstallJobData,
 } from '../services/authz-install.service';
+import { RELEASE } from 'src/config/release.config';
 
-const FLUI_AUTHZ_IMAGE = `ghcr.io/flui-cloud/flui-authz:${process.env.FLUI_AUTHZ_IMAGE_TAG ?? 'latest'}`;
+// FLUI_AUTHZ_IMAGE_TAG is injected into the API env by the control-cluster
+// bootstrap (pinned to the install's release); the release pin is the fallback
+// when that env is absent.
+const FLUI_AUTHZ_IMAGE = `ghcr.io/flui-cloud/flui-authz:${process.env.FLUI_AUTHZ_IMAGE_TAG ?? RELEASE.images.fluiAuthz}`;
 const FLUI_SYSTEM_NS = 'flui-system';
 const AUTHZ_DEPLOYMENT_NAME = 'flui-authz';
 const AUTHZ_SERVICE_NAME = 'flui-authz';

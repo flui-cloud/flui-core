@@ -101,6 +101,11 @@ export default class EnvCreate extends Command {
         "Use Let's Encrypt staging endpoint (untrusted cert, no rate limits) — useful while iterating to avoid burning prod quota",
       default: false,
     }),
+    latest: Flags.boolean({
+      description:
+        'Install mobile dev tags instead of the pinned release: bootstrap scripts from `master` and `:latest` Docker images. Default: every component is pinned to the CLI release version.',
+      default: false,
+    }),
     'no-shared-storage': Flags.boolean({
       description:
         'Disable Flui shared storage (NFS+fscache). Default: shared storage enabled — master gets a Volume hosting the NFS export, workers mount it. Disable to fall back to local-path on each node bundled disk.',
@@ -226,6 +231,7 @@ export default class EnvCreate extends Command {
       // server-side, so the LE 5-certs-per-7-days rate limit never trips on
       // repeated test creations.
       const acmeStaging = flags['acme-staging'];
+      const useLatest = flags.latest;
       spinner.stop();
       if (acmeStaging) {
         console.log(
@@ -603,6 +609,7 @@ export default class EnvCreate extends Command {
         {
           sharedStorageEnabled: !flags['no-shared-storage'],
           sharedStorageVolumeSizeGb: flags['shared-storage-size'],
+          useLatest,
         },
       );
 

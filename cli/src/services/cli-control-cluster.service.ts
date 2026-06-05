@@ -5,6 +5,11 @@ import {
 } from 'src/modules/infrastructure/clusters/entities/cluster.entity';
 import { CloudProvider } from 'src/modules/providers/enums/cloud-provider.enum';
 import { CliClusterRepository } from '../lib/repositories/cli-cluster.repository';
+import {
+  RELEASE,
+  resolveBootstrapRef,
+  resolveImageTags,
+} from '../config/release.config';
 import { buildNipBaseDomain } from '../lib/nip-base-domain.util';
 import { CliNodeRepository } from '../lib/repositories/cli-node.repository';
 import { CliClustersService } from './cli-clusters.service';
@@ -125,8 +130,13 @@ export class CliControlClusterService {
     options?: {
       sharedStorageEnabled?: boolean;
       sharedStorageVolumeSizeGb?: number;
+      useLatest?: boolean;
     },
   ): Promise<string> {
+    // Pin the install to the CLI release (bootstrap ref + image tags), unless
+    // --latest opted into mobile dev tags. Recorded on the cluster so the
+    // installed version stays queryable after creation.
+    const useLatest = options?.useLatest ?? false;
     const createDto = {
       name: 'control-cluster',
       provider: provider as CloudProvider,
@@ -145,6 +155,10 @@ export class CliControlClusterService {
         envVnet,
         adminEmail,
         acmeStaging,
+        useLatest,
+        platformVersion: useLatest ? null : RELEASE.version,
+        componentVersions: resolveImageTags(useLatest),
+        bootstrapRef: resolveBootstrapRef(useLatest),
       },
     };
 

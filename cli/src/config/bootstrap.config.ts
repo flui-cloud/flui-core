@@ -2,8 +2,28 @@
  * Bootstrap Scripts Configuration
  *
  * Configuration for downloading initialization scripts from GitHub.
- * Scripts are hosted in the flui-cloud/flui-bootstrap repository.
+ * Scripts are hosted in the flui-cloud/bootstrap-scripts repository.
  */
+
+import { resolveBootstrapRef } from './release.config';
+
+const BOOTSTRAP_REPO_RAW_BASE =
+  'https://raw.githubusercontent.com/flui-cloud/bootstrap-scripts';
+
+/**
+ * Base URL for the bootstrap scripts directory.
+ *
+ * Precedence:
+ *  1. `BOOTSTRAP_SCRIPTS_URL` env — full override (dev/CI escape hatch), wins over all.
+ *  2. Otherwise derived from the release pin: `<repo>/<ref>/scripts`, where the
+ *     ref is the pinned release tag, or `master` when `useLatest`.
+ */
+export function getScriptsBaseUrl(useLatest = false): string {
+  if (process.env.BOOTSTRAP_SCRIPTS_URL) {
+    return process.env.BOOTSTRAP_SCRIPTS_URL;
+  }
+  return `${BOOTSTRAP_REPO_RAW_BASE}/${resolveBootstrapRef(useLatest)}/scripts`;
+}
 
 export interface BootstrapConfig {
   /**
@@ -35,9 +55,8 @@ export interface BootstrapConfig {
  * Default bootstrap configuration
  */
 export const BOOTSTRAP_CONFIG: BootstrapConfig = {
-  scriptsBaseUrl:
-    process.env.BOOTSTRAP_SCRIPTS_URL ||
-    'https://raw.githubusercontent.com/flui-cloud/bootstrap-scripts/master/scripts',
+  // Pinned-release default; per-install resolution goes through getScriptsBaseUrl().
+  scriptsBaseUrl: getScriptsBaseUrl(false),
 
   scripts: {
     fluiInit: 'flui-init.sh',
@@ -48,13 +67,15 @@ export const BOOTSTRAP_CONFIG: BootstrapConfig = {
   repository: {
     org: 'flui-cloud',
     name: 'bootstrap-scripts',
-    branch: 'master',
+    branch: resolveBootstrapRef(false),
   },
 };
 
 /**
  * Get the full URL for a script
  */
-export function getScriptUrl(scriptName: keyof BootstrapConfig['scripts']): string {
+export function getScriptUrl(
+  scriptName: keyof BootstrapConfig['scripts'],
+): string {
   return `${BOOTSTRAP_CONFIG.scriptsBaseUrl}/${BOOTSTRAP_CONFIG.scripts[scriptName]}`;
 }

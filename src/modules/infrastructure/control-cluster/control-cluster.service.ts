@@ -18,6 +18,7 @@ import {
 import { ClustersService } from '../clusters/clusters.service';
 import { KubernetesService } from '../shared/services/kubernetes.service';
 import { GrafanaDatasourceService } from 'src/modules/grafana/services/grafana-datasource.service';
+import { RELEASE } from 'src/config/release.config';
 
 export interface ObservabilityEndpoints {
   prometheus?: string;
@@ -125,7 +126,9 @@ export class ControlClusterService {
         config?.postgresPassword || this.generateSecurePassword(),
       redisPassword: config?.redisPassword || this.generateSecurePassword(),
       grafanaPassword: config?.grafanaPassword || this.generateSecurePassword(),
-      fluiApiImage: config?.fluiApiImage || 'ghcr.io/flui-cloud/core:latest',
+      fluiApiImage:
+        config?.fluiApiImage ||
+        `ghcr.io/flui-cloud/core:${RELEASE.images.fluiApi}`,
       storageSize: config?.storageSize || '10Gi',
     };
 
