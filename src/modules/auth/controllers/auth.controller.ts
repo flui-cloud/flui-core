@@ -313,16 +313,18 @@ export class AuthController {
   @Public()
   @ApiOperation({
     summary:
-      'Get public auth configuration (auth mode, OIDC issuer, CLI client ID)',
+      'Get public auth configuration (auth mode, OIDC issuer, web + CLI client IDs)',
   })
-  @ApiOkResponse({ description: '{ authMode, issuer?, cliClientId? }' })
-  getConfig(): { authMode: string; issuer?: string; cliClientId?: string } {
-    return {
-      authMode: process.env.AUTH_MODE ?? 'local',
-      issuer:
-        process.env.OIDC_ISSUER || process.env.ZITADEL_ISSUER || undefined,
-      cliClientId: process.env.OIDC_CLI_CLIENT_ID || undefined,
-    };
+  @ApiOkResponse({
+    description: '{ authMode, issuer?, clientId?, cliClientId? }',
+  })
+  getConfig(): Promise<{
+    authMode: string;
+    issuer?: string;
+    clientId?: string;
+    cliClientId?: string;
+  }> {
+    return this.oidcBootstrapService.getPublicOidcConfig();
   }
 
   @Post('bootstrap')

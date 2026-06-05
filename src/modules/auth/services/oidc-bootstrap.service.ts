@@ -5,10 +5,8 @@ import {
   ClusterEntity,
   ClusterType,
 } from '../../infrastructure/clusters/entities/cluster.entity';
-import { ApplicationEntity } from '../../applications/entities/application.entity';
 import { KubernetesService } from '../../infrastructure/shared/services/kubernetes.service';
 import { EncryptionService } from '../../shared/encryption/services/encryption.service';
-import { AppManagementService } from '../../applications/services/app-management.service';
 import { OidcProviderAdminClient } from '../../oidc/services/oidc-provider-admin.service';
 import { OidcIdentityBranding } from '../../oidc/services/oidc-identity-branding.service';
 import { buildSystemNipHostname } from '../../dns/utils/nip-hostname.util';
@@ -63,7 +61,6 @@ export interface OidcBootstrapResult {
   issuer: string;
   adminGranted: boolean;
   configMapsPatched: boolean;
-  deploymentsRestarted: boolean;
 }
 
 /**
@@ -78,14 +75,17 @@ export interface OidcBootstrapResult {
 export class OidcBootstrapService {
   private readonly logger = new Logger(OidcBootstrapService.name);
 
+  private cachedPublicOidc: {
+    issuer?: string;
+    clientId?: string;
+    cliClientId?: string;
+  } | null = null;
+
   constructor(
     @InjectRepository(ClusterEntity)
     private readonly clusterRepository: Repository<ClusterEntity>,
-    @InjectRepository(ApplicationEntity)
-    private readonly applicationRepository: Repository<ApplicationEntity>,
     private readonly kubernetesService: KubernetesService,
     private readonly encryptionService: EncryptionService,
-    private readonly appManagementService: AppManagementService,
     private readonly oidcProvider: OidcProviderAdminClient,
     private readonly oidcBranding: OidcIdentityBranding,
   ) {}
@@ -198,7 +198,16 @@ export class OidcBootstrapService {
       pat,
     });
 
-    const deploymentsRestarted = await this.restartFluiApps(cluster.id);
+    // No restart: surface in-process so this pod serves them. A self-restart
+    // here used to wipe these and race the secret patch.
+    process.env.OIDC_ISSUER = issuer;
+    process.env.OIDC_AUDIENCE = app.clientId;
+    process.env.OIDC_CLI_CLIENT_ID = cliApp.clientId;
+    this.cachedPublicOidc = {
+      issuer,
+      clientId: app.clientId,
+      cliClientId: cliApp.clientId,
+    };
 
     const result: OidcBootstrapResult = {
       projectId: project.id,
@@ -208,11 +217,87 @@ export class OidcBootstrapService {
       issuer,
       adminGranted,
       configMapsPatched,
-      deploymentsRestarted,
     };
 
     this.logger.log(`OIDC bootstrap completed: ${JSON.stringify(result)}`);
     return result;
+  }
+
+  /** Public OIDC values; live-reads flui-secrets/flui-api-config when env is stale. */
+  async getPublicOidcConfig(): Promise<{
+    authMode: string;
+    issuer?: string;
+    clientId?: string;
+    cliClientId?: string;
+  }> {
+    const authMode = process.env.AUTH_MODE ?? 'local';
+    const issuer =
+      process.env.OIDC_ISSUER || process.env.ZITADEL_ISSUER || undefined;
+    const clientId = process.env.OIDC_AUDIENCE || undefined;
+    const cliClientId = process.env.OIDC_CLI_CLIENT_ID || undefined;
+
+    if (authMode !== 'oidc' || (clientId && cliClientId)) {
+      return { authMode, issuer, clientId, cliClientId };
+    }
+
+    const live = await this.readLiveOidcClientIds();
+    return {
+      authMode,
+      issuer: issuer || live.issuer,
+      clientId: clientId || live.clientId,
+      cliClientId: cliClientId || live.cliClientId,
+    };
+  }
+
+  private async readLiveOidcClientIds(): Promise<{
+    issuer?: string;
+    clientId?: string;
+    cliClientId?: string;
+  }> {
+    if (this.cachedPublicOidc?.clientId) return this.cachedPublicOidc;
+    try {
+      const cluster = await this.clusterRepository.findOne({
+        where: {
+          clusterType: In([ClusterType.CONTROL, ClusterType.OBSERVABILITY]),
+        },
+      });
+      if (!cluster?.kubeconfigEncrypted) return {};
+      const kubeconfig = await this.getKubeconfig(cluster);
+      const [secret, cm] = await Promise.all([
+        this.kubernetesService.getResource(
+          kubeconfig,
+          'Secret',
+          'flui-secrets',
+          'flui-system',
+        ),
+        this.kubernetesService.getResource(
+          kubeconfig,
+          'ConfigMap',
+          'flui-api-config',
+          'flui-system',
+        ),
+      ]);
+      const secretData: Record<string, string> =
+        (secret?.body ?? secret)?.data ?? {};
+      const cmData: Record<string, string> = (cm?.body ?? cm)?.data ?? {};
+      const audience = secretData.OIDC_AUDIENCE
+        ? Buffer.from(secretData.OIDC_AUDIENCE, 'base64').toString('utf8')
+        : undefined;
+      const live = {
+        issuer: cmData.OIDC_ISSUER || undefined,
+        clientId: audience || undefined,
+        cliClientId: cmData.OIDC_CLI_CLIENT_ID || undefined,
+      };
+      if (live.clientId) this.cachedPublicOidc = live;
+      return live;
+    } catch (err) {
+      this.logger.warn(
+        `Live OIDC config read failed: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+      return {};
+    }
   }
 
   /**
@@ -593,33 +678,6 @@ export class OidcBootstrapService {
       ...updated.split('\n').map((line) => `    ${line}`),
     ].join('\n');
     await this.kubernetesService.replaceManifest(kubeconfig, manifest);
-  }
-
-  private async restartFluiApps(clusterId: string): Promise<boolean> {
-    const apiApp = await this.applicationRepository.findOne({
-      where: { clusterId, slug: 'flui-api' },
-    });
-    const webApp = await this.applicationRepository.findOne({
-      where: { clusterId, slug: 'flui-web' },
-    });
-    let ok = true;
-    if (apiApp) {
-      try {
-        await this.appManagementService.restartDeployment(apiApp.id);
-      } catch (err) {
-        this.logger.error(`flui-api restart failed: ${err.message}`);
-        ok = false;
-      }
-    }
-    if (webApp) {
-      try {
-        await this.appManagementService.restartDeployment(webApp.id);
-      } catch (err) {
-        this.logger.error(`flui-web restart failed: ${err.message}`);
-        ok = false;
-      }
-    }
-    return ok;
   }
 
   private async getKubeconfig(cluster: ClusterEntity): Promise<string> {

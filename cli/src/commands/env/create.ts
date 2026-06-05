@@ -829,7 +829,13 @@ export default class EnvCreate extends Command {
               } else {
                 console.log(
                   chalk.yellow(
-                    '⚠ OIDC not ready — run `flui env force-ready` to retry bootstrap',
+                    '⚠ OIDC login not ready — the dashboard sign-in will fail until this is resolved.',
+                  ),
+                );
+                console.log(
+                  chalk.dim(
+                    '   Diagnose with `flui env status`, or `flui ssh master` + kubectl (check the zitadel and flui-web pods).\n' +
+                      '   `flui env force-ready` does NOT retry bootstrap — it only overrides the local status, so use it only after the cause is fixed.',
                   ),
                 );
               }
