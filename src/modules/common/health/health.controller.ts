@@ -3,6 +3,7 @@ import { ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { PingResponseDto } from './dto/ping-response.dto';
 import { OidcReadinessDto } from './dto/oidc-readiness.dto';
 import { Public } from '../../auth/decorators/public.decorator';
+import { OidcBootstrapService } from '../../auth/services/oidc-bootstrap.service';
 
 @ApiTags('Health')
 @Public()
@@ -10,7 +11,7 @@ import { Public } from '../../auth/decorators/public.decorator';
 export class HealthController {
   private readonly startTime: number;
 
-  constructor() {
+  constructor(private readonly oidcBootstrapService: OidcBootstrapService) {
     this.startTime = Date.now();
   }
 
@@ -44,7 +45,10 @@ export class HealthController {
     description: 'OIDC readiness status',
     type: OidcReadinessDto,
   })
-  oidcReadiness(): OidcReadinessDto {
-    return { ready: !!(process.env.OIDC_AUDIENCE ?? '').trim() };
+  async oidcReadiness(): Promise<OidcReadinessDto> {
+    // Read the live config (not process.env, which the kubeconfig restart
+    // wipes) so readiness matches what /auth/config serves to the dashboard.
+    const cfg = await this.oidcBootstrapService.getPublicOidcConfig();
+    return { ready: cfg.authMode !== 'oidc' || !!cfg.clientId };
   }
 }
