@@ -12,6 +12,10 @@ import {
   SYSTEM_APP_CATALOG,
   SystemAppDefinition,
 } from '../constants/system-app-catalog';
+import {
+  FLUI_CONTROL_NAMESPACE,
+  FLUI_LEGACY_CONTROL_NAMESPACE,
+} from '../../infrastructure/clusters/constants';
 import { ApplicationResourceKind } from '../enums/application-resource-kind.enum';
 import { ApplicationCategory } from '../enums/application-category.enum';
 import { ApplicationKind } from '../enums/application-kind.enum';
@@ -79,8 +83,9 @@ export class SystemAppCatalogService {
       existingApps.map((a) => [a.labels?.['app'] || a.slug, a] as const),
     );
 
-    for (const appDef of catalog) {
+    for (const catalogDef of catalog) {
       try {
+        const appDef = await this.resolveAppNamespace(kubeconfig, catalogDef);
         const existing = existingByLabel.get(appDef.k8sAppLabel);
         if (existing) {
           if (appDef.imageSource) {
@@ -182,17 +187,52 @@ export class SystemAppCatalogService {
         );
       } catch (error) {
         result.errors.push({
-          name: appDef.name,
+          name: catalogDef.name,
           error: error.message,
         });
         this.logger.error(
-          `Failed to discover ${appDef.name}: ${error.message}`,
+          `Failed to discover ${catalogDef.name}: ${error.message}`,
           error.stack,
         );
       }
     }
 
     return result;
+  }
+
+  /**
+   * The observability stack moved namespaces in the control rename. For its apps,
+   * use whichever of the new/legacy namespace actually holds the resource.
+   */
+  private async resolveAppNamespace(
+    kubeconfig: string,
+    appDef: SystemAppDefinition,
+  ): Promise<SystemAppDefinition> {
+    const ns = appDef.k8sNamespace;
+    if (ns !== FLUI_CONTROL_NAMESPACE && ns !== FLUI_LEGACY_CONTROL_NAMESPACE) {
+      return appDef;
+    }
+    const primaryName =
+      appDef.expectedResources.find(
+        (r) => r.kind === appDef.primaryResourceKind,
+      )?.name || appDef.k8sAppLabel;
+    for (const candidate of [
+      FLUI_CONTROL_NAMESPACE,
+      FLUI_LEGACY_CONTROL_NAMESPACE,
+    ]) {
+      const found = await this.findResourceOnK8s(
+        kubeconfig,
+        appDef.primaryResourceKind,
+        primaryName,
+        candidate,
+      );
+      if (found) {
+        return candidate === ns
+          ? appDef
+          : { ...appDef, k8sNamespace: candidate };
+      }
+    }
+    return appDef;
   }
 
   private async discoverExpectedResources(

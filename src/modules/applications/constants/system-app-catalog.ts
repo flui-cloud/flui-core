@@ -114,7 +114,7 @@ export const SYSTEM_APP_CATALOG: SystemAppDefinition[] = [
   {
     name: 'VictoriaMetrics',
     k8sAppLabel: 'vmsingle',
-    k8sNamespace: 'flui-observability',
+    k8sNamespace: 'flui-control',
     sourceType: ApplicationSourceType.RAW_MANIFEST,
     clusterTypes: ['observability'],
     primaryResourceKind: ApplicationResourceKind.DEPLOYMENT,
@@ -141,7 +141,7 @@ export const SYSTEM_APP_CATALOG: SystemAppDefinition[] = [
   {
     name: 'vmagent',
     k8sAppLabel: 'vmagent',
-    k8sNamespace: 'flui-observability',
+    k8sNamespace: 'flui-control',
     sourceType: ApplicationSourceType.RAW_MANIFEST,
     clusterTypes: ['observability'],
     primaryResourceKind: ApplicationResourceKind.DEPLOYMENT,
@@ -169,7 +169,7 @@ export const SYSTEM_APP_CATALOG: SystemAppDefinition[] = [
   {
     name: 'vmalert',
     k8sAppLabel: 'vmalert',
-    k8sNamespace: 'flui-observability',
+    k8sNamespace: 'flui-control',
     sourceType: ApplicationSourceType.RAW_MANIFEST,
     clusterTypes: ['observability'],
     primaryResourceKind: ApplicationResourceKind.DEPLOYMENT,
@@ -197,7 +197,7 @@ export const SYSTEM_APP_CATALOG: SystemAppDefinition[] = [
   {
     name: 'Loki',
     k8sAppLabel: 'loki',
-    k8sNamespace: 'flui-observability',
+    k8sNamespace: 'flui-control',
     sourceType: ApplicationSourceType.RAW_MANIFEST,
     clusterTypes: ['observability'],
     primaryResourceKind: ApplicationResourceKind.DEPLOYMENT,
@@ -225,7 +225,7 @@ export const SYSTEM_APP_CATALOG: SystemAppDefinition[] = [
   {
     name: 'Grafana',
     k8sAppLabel: 'grafana',
-    k8sNamespace: 'flui-observability',
+    k8sNamespace: 'flui-control',
     sourceType: ApplicationSourceType.RAW_MANIFEST,
     clusterTypes: ['observability'],
     primaryResourceKind: ApplicationResourceKind.DEPLOYMENT,
