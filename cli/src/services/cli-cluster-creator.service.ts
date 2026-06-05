@@ -25,6 +25,7 @@ import { execFileSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
+import { ProfileManager } from '../lib/profile-manager';
 import * as https from 'node:https';
 
 import { HetznerFirewallService } from 'src/modules/providers/services/hetzner-firewall.service';
@@ -829,8 +830,10 @@ export class CliClusterCreatorService {
     );
 
     try {
-      // Load CLI CA keys to share with API for unified SSH access
-      const caKeyDir = path.join(os.homedir(), '.flui', 'ca');
+      // Load CLI CA keys to share with API for unified SSH access.
+      // CA keys are profile-scoped (~/.flui/profiles/<profile>/ca), not global —
+      // the old global path threw ENOENT and silently skipped the whole patch.
+      const caKeyDir = path.join(ProfileManager.getProfileDir(), 'ca');
       const caPrivateKey = fs
         .readFileSync(path.join(caKeyDir, 'ca_key'), 'utf8')
         .trim();

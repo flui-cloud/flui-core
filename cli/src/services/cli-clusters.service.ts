@@ -27,7 +27,8 @@ import { EncryptionService } from 'src/modules/shared/encryption/services/encryp
 import { CliSshService } from './cli-ssh.service';
 import { CliCaService } from './cli-ca.service';
 import { ProviderFactory } from 'src/modules/providers/services/provider.factory';
-import { HetznerFirewallService } from 'src/modules/providers/services/hetzner-firewall.service';
+import { FirewallProviderFactory } from 'src/modules/providers/core/factories/firewall-provider.factory';
+import { CloudProvider } from 'src/modules/providers/enums/cloud-provider.enum';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
@@ -52,7 +53,7 @@ export class CliClustersService {
     private readonly sshService: CliSshService,
     private readonly caService: CliCaService,
     private readonly providerFactory: ProviderFactory,
-    private readonly firewallService: HetznerFirewallService,
+    private readonly firewallFactory: FirewallProviderFactory,
     @Inject('BullQueue_infrastructure')
     private readonly infrastructureQueue: any,
   ) {}
@@ -549,11 +550,17 @@ export class CliClustersService {
       );
 
       try {
+        const providerEnum = (
+          cluster.provider || ''
+        ).toLowerCase() as CloudProvider;
+        const firewallService =
+          this.firewallFactory.getFirewallProviderOrFail(providerEnum);
+
         // STEP 1: Find ALL firewalls for this cluster
         this.logger.log(
           `Searching for firewalls with label flui-cluster-id=${cluster.id}`,
         );
-        const clusterFirewalls = await this.firewallService.listFirewalls({
+        const clusterFirewalls = await firewallService.listFirewalls({
           clusterId: cluster.id,
         });
 
@@ -569,9 +576,7 @@ export class CliClustersService {
           );
           // Exact cluster-scoped names only — never global prefixes (would hit
           // another cluster's firewall).
-          const allProviderFirewalls = await this.firewallService.listFirewalls(
-            {},
-          );
+          const allProviderFirewalls = await firewallService.listFirewalls({});
           const nameMatchedFirewalls = allProviderFirewalls.filter(
             (fw) =>
               fw.name === `flui-control-firewall-${cluster.id}` ||
@@ -606,9 +611,7 @@ export class CliClustersService {
         if (isControlClusterType(cluster.clusterType)) {
           const tempControlFirewall = /^flui-control-firewall(-[0-9a-f]{8})?$/;
           const known = new Set(allFirewalls.map((fw) => fw.id));
-          const providerFirewalls = await this.firewallService.listFirewalls(
-            {},
-          );
+          const providerFirewalls = await firewallService.listFirewalls({});
           const orphans = providerFirewalls.filter(
             (fw) => tempControlFirewall.test(fw.name) && !known.has(fw.id),
           );
@@ -626,9 +629,9 @@ export class CliClustersService {
         if (allFirewalls.length === 0) {
           this.logger.log('✓ No firewalls to delete for this cluster');
         } else {
-          // STEP 2: Delete each firewall with retry logic for "resource_in_use" errors
+          // STEP 2: Delete each firewall, retrying while the server still holds it
           const deletePromises = allFirewalls.map(async (fw) => {
-            const maxRetries = 5;
+            const maxRetries = 6;
             const retryDelay = 5000; // 5 seconds
 
             for (let attempt = 1; attempt <= maxRetries; attempt++) {
@@ -636,17 +639,14 @@ export class CliClustersService {
                 this.logger.log(
                   `Deleting firewall ${fw.name} (${fw.id}) - Attempt ${attempt}/${maxRetries}`,
                 );
-                await this.firewallService.deleteFirewall(fw.id);
+                await firewallService.deleteFirewall(fw.id);
                 this.logger.log(`✓ Deleted firewall ${fw.name}`);
                 return { success: true, id: fw.id, name: fw.name };
               } catch (error) {
-                const isResourceInUse =
-                  error.message?.includes('resource_in_use') ||
-                  error.message?.includes('still in use');
-
-                if (isResourceInUse && attempt < maxRetries) {
+                // Retry on any error: the firewall frees up once the server is gone.
+                if (attempt < maxRetries) {
                   this.logger.warn(
-                    `Firewall ${fw.name} is still in use. Waiting ${retryDelay}ms before retry ${attempt + 1}/${maxRetries}...`,
+                    `Firewall ${fw.name} not deletable yet (${error.message}); retry ${attempt + 1}/${maxRetries} in ${retryDelay}ms...`,
                   );
                   await new Promise((resolve) =>
                     setTimeout(resolve, retryDelay),
@@ -674,7 +674,7 @@ export class CliClustersService {
 
           // STEP 3: VERIFICATION - Re-scan to ensure all deleted
           this.logger.log('Verifying all firewalls deleted...');
-          const remainingFirewalls = await this.firewallService.listFirewalls({
+          const remainingFirewalls = await firewallService.listFirewalls({
             clusterId: cluster.id,
           });
 
@@ -689,7 +689,7 @@ export class CliClustersService {
                 this.logger.log(
                   `RETRY: Deleting firewall ${fw.name} (${fw.id})`,
                 );
-                await this.firewallService.deleteFirewall(fw.id);
+                await firewallService.deleteFirewall(fw.id);
                 this.logger.log(`✓ RETRY SUCCESS: Deleted firewall ${fw.name}`);
               } catch (error) {
                 this.logger.error(
@@ -699,7 +699,7 @@ export class CliClustersService {
             }
 
             // Final verification
-            const finalCheck = await this.firewallService.listFirewalls({
+            const finalCheck = await firewallService.listFirewalls({
               clusterId: cluster.id,
             });
 
@@ -763,12 +763,15 @@ export class CliClustersService {
         // Filter bootstrap keys for this control cluster
         const bootstrapKeys = allKeys.filter((key) => {
           const tags = key.tags || {};
-
-          const isFluiManaged = tags['managed-by'] === 'flui-cloud';
-          const hasMatchingObsId = tags['flui-cluster-id'] === cluster.id;
-          const isBootstrapKey = tags['flui-resource-type'] === 'ssh-key';
-
-          return isFluiManaged && hasMatchingObsId && isBootstrapKey;
+          const tagMatch =
+            tags['managed-by'] === 'flui-cloud' &&
+            tags['flui-cluster-id'] === cluster.id &&
+            tags['flui-resource-type'] === 'ssh-key';
+          // Scaleway IAM keys have no tags — match the cluster id in the name.
+          const nameMatch =
+            typeof key.name === 'string' &&
+            key.name.startsWith(`flui-bootstrap-${cluster.id}`);
+          return tagMatch || nameMatch;
         });
 
         this.logger.log(

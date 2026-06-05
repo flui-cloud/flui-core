@@ -25,6 +25,40 @@ export default class EnvDestroy extends Command {
     }),
   };
 
+  // Drop config tied to the deleted cluster: registration, API endpoint and key.
+  private cleanupClusterScopedConfig(): void {
+    const spinner = ora('Cleaning up configuration...').start();
+    try {
+      const configStorage = new ConfigStorage();
+      const config = configStorage['readConfig']();
+      let changed = false;
+      if (config.credentials?.['observability-cluster-registration']) {
+        delete config.credentials['observability-cluster-registration'];
+        changed = true;
+      }
+      if (config.apiUrl) {
+        delete config.apiUrl;
+        if (config.metadata) delete config.metadata.apiUrlUpdatedAt;
+        changed = true;
+      }
+      if (config.apiKey) {
+        delete config.apiKey;
+        changed = true;
+      }
+      if (changed) {
+        configStorage['writeConfig'](config);
+        spinner.succeed('Configuration cleaned up');
+      } else {
+        spinner.info('No configuration to clean up');
+      }
+    } catch (error) {
+      spinner.warn(
+        `Failed to clean up configuration: ${(error as Error).message}`,
+      );
+      console.log(chalk.yellow('   This is not critical, continuing...'));
+    }
+  }
+
   async run(): Promise<void> {
     const { flags } = await this.parse(EnvDestroy);
 
@@ -115,22 +149,7 @@ export default class EnvDestroy extends Command {
         throw error;
       }
 
-      // Clean up observability-cluster-registration from config.json
-      spinner = ora('Cleaning up configuration...').start();
-      try {
-        const configStorage = new ConfigStorage();
-        const config = configStorage['readConfig']();
-        if (config.credentials?.['observability-cluster-registration']) {
-          delete config.credentials['observability-cluster-registration'];
-          configStorage['writeConfig'](config);
-          spinner.succeed('Configuration cleaned up');
-        } else {
-          spinner.info('No registration to clean up');
-        }
-      } catch (error) {
-        spinner.warn(`Failed to clean up configuration: ${error.message}`);
-        console.log(chalk.yellow('   This is not critical, continuing...'));
-      }
+      this.cleanupClusterScopedConfig();
 
       // Tear down environment VNet/Subnet (must run AFTER all servers are deleted —
       // Hetzner refuses to delete a network that still has attached servers).

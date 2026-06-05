@@ -562,7 +562,9 @@ export class ScalewayFirewallService implements IFirewallProvider {
         );
         return;
       }
-      throw new Error(`Failed to delete security group: ${error.message}`);
+      const data = error?.response?.data;
+      const detail = data?.help_message || data?.message || error.message;
+      throw new Error(`Failed to delete security group: ${detail}`);
     }
   }
 
