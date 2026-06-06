@@ -115,6 +115,14 @@ interface RemoteSnapshot {
   configmap: { data?: Record<string, string> } | null;
   secret: { data?: Record<string, string> } | null;
   webConfigMap: { data?: Record<string, string> } | null;
+  // Live OIDC from the running flui-api — authoritative over the frozen
+  // ConfigMap/Secret, which k3s auto-deploy resets to empty.
+  authConfig?: {
+    authMode?: string;
+    issuer?: string;
+    clientId?: string;
+    cliClientId?: string;
+  } | null;
 }
 
 @Injectable()
@@ -132,23 +140,20 @@ export class CliEndpointResolverService {
     const configMapData = snapshot.configmap?.data ?? {};
     const secretData = snapshot.secret?.data ?? {};
 
-    const authMode = configMapData['AUTH_MODE'] ?? 'unknown';
-    const oidcIssuer = configMapData['OIDC_ISSUER'] ?? '';
-    const oidcJwksUri = configMapData['OIDC_JWKS_URI'] ?? '';
-    const oidcCliClientId = configMapData['OIDC_CLI_CLIENT_ID'] ?? '';
-    const oidcAudience = secretData['OIDC_AUDIENCE']
+    const live = snapshot.authConfig ?? {};
+    const pick = (...vals: (string | undefined)[]): string =>
+      vals.find((v) => typeof v === 'string' && v.trim() !== '')?.trim() ?? '';
+
+    const frozenAudience = secretData['OIDC_AUDIENCE']
       ? Buffer.from(secretData['OIDC_AUDIENCE'], 'base64').toString('utf-8')
       : '';
-
-    // Dashboard public client_id lives inside the flui-web-config ConfigMap's
-    // `config.json` data key — written by OidcBootstrapService.patchWebConfigMap.
-    let oidcClientId = '';
+    let frozenClientId = '';
     const webConfigJson = snapshot.webConfigMap?.data?.['config.json'];
     if (webConfigJson) {
       try {
         const parsed = JSON.parse(webConfigJson) as Record<string, unknown>;
         if (typeof parsed.oidcClientId === 'string') {
-          oidcClientId = parsed.oidcClientId;
+          frozenClientId = parsed.oidcClientId;
         }
       } catch (err) {
         this.logger.warn(
@@ -156,6 +161,19 @@ export class CliEndpointResolverService {
         );
       }
     }
+
+    // Prefer the live values; fall back to the frozen ConfigMap/Secret only if
+    // the API was unreachable (k3s auto-deploy resets the frozen ones).
+    const authMode = pick(live.authMode, configMapData['AUTH_MODE'], 'unknown');
+    const oidcIssuer = pick(live.issuer, configMapData['OIDC_ISSUER']);
+    const oidcJwksUri = configMapData['OIDC_JWKS_URI'] ?? '';
+    const oidcCliClientId = pick(
+      live.cliClientId,
+      configMapData['OIDC_CLI_CLIENT_ID'],
+    );
+    const oidcClientId = pick(live.clientId, frozenClientId);
+    // audience = web client id
+    const oidcAudience = pick(live.clientId, frozenAudience);
 
     const endpoints = {} as Record<SystemAppKey, EndpointInfo>;
     for (const key of Object.keys(SYSTEM_APPS) as SystemAppKey[]) {
@@ -187,7 +205,10 @@ export class CliEndpointResolverService {
       `CM=$(kubectl get configmap flui-api-config -n flui-system -o json 2>/dev/null || echo '{}')`,
       `SEC=$(kubectl get secret flui-secrets -n flui-system -o json 2>/dev/null || echo '{}')`,
       `WCM=$(kubectl get configmap flui-web-config -n flui-system -o json 2>/dev/null || echo '{}')`,
-      `printf '{"ingresses":%s,"ingressRoutes":%s,"configmap":%s,"secret":%s,"webConfigMap":%s}' "$ING" "$IR" "$CM" "$SEC" "$WCM"`,
+      `AIP=$(kubectl get svc flui-api -n flui-system -o jsonpath='{.spec.clusterIP}' 2>/dev/null)`,
+      `APT=$(kubectl get svc flui-api -n flui-system -o jsonpath='{.spec.ports[0].port}' 2>/dev/null)`,
+      `AC=$(curl -s --max-time 5 "http://$AIP:$APT/api/v1/auth/config" 2>/dev/null || echo '{}')`,
+      `printf '{"ingresses":%s,"ingressRoutes":%s,"configmap":%s,"secret":%s,"webConfigMap":%s,"authConfig":%s}' "$ING" "$IR" "$CM" "$SEC" "$WCM" "$AC"`,
     ].join('; ');
 
     const output = await this.sshService.sshExec(masterIp, command);

@@ -25,10 +25,10 @@ export interface ReleaseManifest {
 }
 
 export const RELEASE: ReleaseManifest = {
-  version: '0.5.0',
-  bootstrapRef: 'v0.5.0',
+  version: '0.5.1',
+  bootstrapRef: 'v0.5.1',
   images: {
-    fluiApi: '0.5.0',
+    fluiApi: '0.5.1',
     fluiWeb: '0.5.0',
     fluiAuthz: '0.5.0',
   },

@@ -441,9 +441,11 @@ export default class EnvExportConfig extends Command {
       apiBaseUrl: 'http://localhost:3000',
       wsUrl: 'ws://localhost:3000',
       authMode: opts.authMode,
-      oidcIssuer: opts.oidcIssuer || (current.oidcIssuer as string) || '',
-      oidcClientId: opts.oidcClientId || (current.oidcClientId as string) || '',
-      oidcAudience: opts.oidcAudience || (current.oidcAudience as string) || '',
+      // Always reflect the resolved cluster — never keep a previous cluster's
+      // value. Empty oidcClientId is fine: the dashboard fetches it at runtime.
+      oidcIssuer: opts.oidcIssuer || '',
+      oidcClientId: opts.oidcClientId || '',
+      oidcAudience: opts.oidcAudience || '',
       certificateMode,
     };
 
