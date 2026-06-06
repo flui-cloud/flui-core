@@ -4,7 +4,7 @@ import * as path from 'node:path';
 import * as os from 'node:os';
 import { CliLoggerService } from './cli-logger.service';
 import { getScriptsBaseUrl } from '../config/bootstrap.config';
-import { resolveImageTags } from 'src/config/release.config';
+import { resolveEffectiveImageTags } from '../config/release-override';
 
 export interface K3sMasterConfig {
   serverId?: string; // Database node ID (ClusterNodeEntity.id) - used for observability metrics
@@ -158,7 +158,7 @@ export class CliK3sScriptService {
         opId,
       );
       const scriptsBaseUrl = getScriptsBaseUrl(config.useLatest ?? false);
-      const imageTags = resolveImageTags(config.useLatest ?? false);
+      const imageTags = resolveEffectiveImageTags(config.useLatest ?? false);
       this.log(`Scripts URL: ${scriptsBaseUrl}`, opId);
 
       // Generate bootstrap script that downloads and executes k3s-master-init.sh from GitHub

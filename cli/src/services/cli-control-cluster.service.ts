@@ -5,11 +5,7 @@ import {
 } from 'src/modules/infrastructure/clusters/entities/cluster.entity';
 import { CloudProvider } from 'src/modules/providers/enums/cloud-provider.enum';
 import { CliClusterRepository } from '../lib/repositories/cli-cluster.repository';
-import {
-  RELEASE,
-  resolveBootstrapRef,
-  resolveImageTags,
-} from 'src/config/release.config';
+import { getEffectiveRelease } from '../config/release-override';
 import { buildNipBaseDomain } from '../lib/nip-base-domain.util';
 import { CliNodeRepository } from '../lib/repositories/cli-node.repository';
 import { CliClustersService } from './cli-clusters.service';
@@ -137,6 +133,7 @@ export class CliControlClusterService {
     // --latest opted into mobile dev tags. Recorded on the cluster so the
     // installed version stays queryable after creation.
     const useLatest = options?.useLatest ?? false;
+    const release = getEffectiveRelease(useLatest);
     const createDto = {
       name: 'control-cluster',
       provider: provider as CloudProvider,
@@ -156,9 +153,9 @@ export class CliControlClusterService {
         adminEmail,
         acmeStaging,
         useLatest,
-        platformVersion: useLatest ? null : RELEASE.version,
-        componentVersions: resolveImageTags(useLatest),
-        bootstrapRef: resolveBootstrapRef(useLatest),
+        platformVersion: release.version,
+        componentVersions: release.images,
+        bootstrapRef: release.bootstrapRef,
       },
     };
 

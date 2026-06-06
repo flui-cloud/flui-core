@@ -1,11 +1,21 @@
 import { Command, Flags } from '@oclif/core';
 import chalk from 'chalk';
-import {
-  RELEASE,
-  resolveBootstrapRef,
-  resolveImageTags,
-} from 'src/config/release.config';
 import { getScriptsBaseUrl } from '../config/bootstrap.config';
+import {
+  getEffectiveRelease,
+  displayReleaseFilePath,
+  type EffectiveRelease,
+} from '../config/release-override';
+
+function describePlatform(release: EffectiveRelease): string {
+  if (release.source === 'latest') {
+    return chalk.yellow('latest (mobile tags)');
+  }
+  if (release.source === 'override') {
+    return `${chalk.yellow(release.version ?? 'override')}${chalk.dim('  (release override)')}`;
+  }
+  return `${chalk.cyan(release.version ?? '')}${chalk.dim('  (pinned release)')}`;
+}
 
 /**
  * `flui version` — surfaces the CLI version AND the platform release it pins.
@@ -41,8 +51,9 @@ export default class Version extends Command {
     const { flags } = await this.parse(Version);
     const useLatest = flags.latest;
 
-    const tags = resolveImageTags(useLatest);
-    const bootstrapRef = resolveBootstrapRef(useLatest);
+    const release = getEffectiveRelease(useLatest);
+    const tags = release.images;
+    const bootstrapRef = release.bootstrapRef;
     const scriptsBaseUrl = getScriptsBaseUrl(useLatest);
     const urlOverride = process.env.BOOTSTRAP_SCRIPTS_URL ?? null;
 
@@ -57,11 +68,12 @@ export default class Version extends Command {
         JSON.stringify(
           {
             cli: this.config.version,
-            mode: useLatest ? 'latest' : 'pinned',
-            platform: useLatest ? null : RELEASE.version,
+            mode: release.source,
+            platform: release.version,
             bootstrapRef,
             scriptsBaseUrl,
             bootstrapUrlOverride: urlOverride,
+            releaseFile: release.filePath,
             images: tags,
           },
           null,
@@ -72,20 +84,14 @@ export default class Version extends Command {
     }
 
     const label = (s: string) => chalk.dim(s.padEnd(15));
+    const cliName = chalk.dim(`(${this.config.name})`);
+    const platformLabel = describePlatform(release);
 
     this.log('');
     this.log(chalk.bold('Flui CLI'));
     this.log('');
-    this.log(
-      `  ${label('CLI')}${chalk.cyan(this.config.version)}  ${chalk.dim(`(${this.config.name})`)}`,
-    );
-    this.log(
-      `  ${label('Platform')}${
-        useLatest
-          ? chalk.yellow('latest (mobile tags)')
-          : `${chalk.cyan(RELEASE.version)}${chalk.dim('  (pinned release)')}`
-      }`,
-    );
+    this.log(`  ${label('CLI')}${chalk.cyan(this.config.version)}  ${cliName}`);
+    this.log(`  ${label('Platform')}${platformLabel}`);
     this.log(`  ${label('Bootstrap ref')}${chalk.cyan(bootstrapRef)}`);
     this.log('');
     this.log(chalk.dim('  Component images:'));
@@ -99,7 +105,11 @@ export default class Version extends Command {
         `  ${label('')}${chalk.yellow('↑ overridden via BOOTSTRAP_SCRIPTS_URL')}`,
       );
     }
-    if (!useLatest) {
+    if (release.source === 'override' && release.filePath) {
+      const rel = displayReleaseFilePath(release.filePath);
+      this.log(`  ${label('Release file')}${chalk.yellow(rel)}`);
+    }
+    if (!useLatest && release.source !== 'override') {
       this.log('');
       this.log(
         chalk.dim(

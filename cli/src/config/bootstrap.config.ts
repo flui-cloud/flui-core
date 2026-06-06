@@ -6,6 +6,7 @@
  */
 
 import { resolveBootstrapRef } from 'src/config/release.config';
+import { resolveEffectiveBootstrapRef } from './release-override';
 
 const BOOTSTRAP_REPO_RAW_BASE =
   'https://raw.githubusercontent.com/flui-cloud/bootstrap-scripts';
@@ -22,7 +23,7 @@ export function getScriptsBaseUrl(useLatest = false): string {
   if (process.env.BOOTSTRAP_SCRIPTS_URL) {
     return process.env.BOOTSTRAP_SCRIPTS_URL;
   }
-  return `${BOOTSTRAP_REPO_RAW_BASE}/${resolveBootstrapRef(useLatest)}/scripts`;
+  return `${BOOTSTRAP_REPO_RAW_BASE}/${resolveEffectiveBootstrapRef(useLatest)}/scripts`;
 }
 
 export interface BootstrapConfig {
@@ -55,8 +56,10 @@ export interface BootstrapConfig {
  * Default bootstrap configuration
  */
 export const BOOTSTRAP_CONFIG: BootstrapConfig = {
-  // Pinned-release default; per-install resolution goes through getScriptsBaseUrl().
-  scriptsBaseUrl: getScriptsBaseUrl(false),
+  // Static pinned default; per-install (override-aware) resolution goes through
+  // getScriptsBaseUrl() at runtime — keep this off the override path so importing
+  // the module never reads flui.release.json.
+  scriptsBaseUrl: `${BOOTSTRAP_REPO_RAW_BASE}/${resolveBootstrapRef(false)}/scripts`,
 
   scripts: {
     fluiInit: 'flui-init.sh',

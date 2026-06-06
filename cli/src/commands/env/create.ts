@@ -17,6 +17,10 @@ import { ApiClient } from '../../lib/api-client';
 import { ConfigStorage } from '../../lib/config-storage';
 import { isCompoundProvider } from '../../lib/provider-credential-schemas';
 import { printContextBanner } from '../../lib/context-banner';
+import {
+  getEffectiveRelease,
+  formatReleaseOverrideBanner,
+} from '../../config/release-override';
 import { ServerTypeCacheService } from '../../services/server-type-cache.service';
 import { ServerTypeValidatorService } from '../../services/server-type-validator.service';
 
@@ -233,6 +237,12 @@ export default class EnvCreate extends Command {
       const acmeStaging = flags['acme-staging'];
       const useLatest = flags.latest;
       spinner.stop();
+      const overrideBanner = formatReleaseOverrideBanner(
+        getEffectiveRelease(useLatest),
+      );
+      if (overrideBanner) {
+        console.log(overrideBanner);
+      }
       if (acmeStaging) {
         console.log(
           chalk.yellow(
