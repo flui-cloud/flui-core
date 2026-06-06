@@ -1,9 +1,9 @@
 /**
  * Release manifest — single source of truth for the versions Flui pins at
- * install time. Keep in sync with cli/src/config/release.config.ts.
- *
- * The backend (API-driven cluster creation) pins to this release by default;
- * the bootstrap-scripts ref can still be overridden via BOOTSTRAP_SCRIPTS_URL.
+ * install time. Shared by the backend (API-driven cluster creation) AND the
+ * CLI (which imports it via the `src/*` path alias), so bumping a release means
+ * editing this one file. The bootstrap-scripts ref can still be overridden via
+ * BOOTSTRAP_SCRIPTS_URL.
  */
 
 export interface ComponentImageTags {

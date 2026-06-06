@@ -9,7 +9,7 @@ import {
   RELEASE,
   resolveBootstrapRef,
   resolveImageTags,
-} from '../config/release.config';
+} from 'src/config/release.config';
 import { buildNipBaseDomain } from '../lib/nip-base-domain.util';
 import { CliNodeRepository } from '../lib/repositories/cli-node.repository';
 import { CliClustersService } from './cli-clusters.service';

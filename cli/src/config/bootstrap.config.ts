@@ -5,7 +5,7 @@
  * Scripts are hosted in the flui-cloud/bootstrap-scripts repository.
  */
 
-import { resolveBootstrapRef } from './release.config';
+import { resolveBootstrapRef } from 'src/config/release.config';
 
 const BOOTSTRAP_REPO_RAW_BASE =
   'https://raw.githubusercontent.com/flui-cloud/bootstrap-scripts';

@@ -4,7 +4,7 @@ import * as path from 'node:path';
 import * as os from 'node:os';
 import { CliLoggerService } from './cli-logger.service';
 import { getScriptsBaseUrl } from '../config/bootstrap.config';
-import { resolveImageTags } from '../config/release.config';
+import { resolveImageTags } from 'src/config/release.config';
 
 export interface K3sMasterConfig {
   serverId?: string; // Database node ID (ClusterNodeEntity.id) - used for observability metrics
