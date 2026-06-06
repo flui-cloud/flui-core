@@ -1,4 +1,5 @@
 import { ProviderRegion } from './provider-region.entity';
+import { InferenceCapability } from '../../providers/interfaces/inference-capability';
 
 /**
  * Describes how VNets are scoped for a provider:
@@ -93,4 +94,6 @@ export interface ProviderCapabilities {
   vnetTopology: VNetTopology | null;
   vnetRequired: boolean;
   crossClusterAllowed: boolean;
+  /** Present only for inference-capable providers (e.g. Scaleway Generative APIs). */
+  inference?: InferenceCapability;
 }

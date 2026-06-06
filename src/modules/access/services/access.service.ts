@@ -373,6 +373,7 @@ export class AccessService {
       {
         credentialType: CredentialType.API_KEY,
         expiresAt: createApiTokenDto.expiresAt,
+        purpose: createApiTokenDto.purpose,
       },
     );
 

@@ -9,6 +9,7 @@ import { InstancesModule } from './modules/instances/instances.moduel';
 import { ApiTokenEntity } from './modules/access/entities/api-token.entity';
 import { ProviderConfigurationEntity } from './modules/management/entities/provider-configuration.entity';
 import { ManagementModule } from './modules/management/management.module';
+import { InferenceModule } from './modules/inference/inference.module';
 import { InfrastructureModule } from './modules/infrastructure/infrastructure.module';
 import { InfrastructureOperationEntity } from './modules/infrastructure/servers/entities/infrastructure-operations.entity';
 import { ServerEntity } from './modules/infrastructure/servers/entities/server.entity';
@@ -169,6 +170,7 @@ import { TopologyModule } from './modules/topology/topology.module';
     AccessModule,
     InstancesModule,
     ManagementModule,
+    InferenceModule,
     InfrastructureModule,
     TerminalModule,
     RepositoriesModule,
