@@ -10,6 +10,9 @@ import { ApiTokenEntity } from './modules/access/entities/api-token.entity';
 import { ProviderConfigurationEntity } from './modules/management/entities/provider-configuration.entity';
 import { ManagementModule } from './modules/management/management.module';
 import { InferenceModule } from './modules/inference/inference.module';
+import { InferenceConnectionEntity } from './modules/inference/entities/inference-connection.entity';
+import { AssistantModule } from './modules/assistant/assistant.module';
+import { AssistantMessageLogEntity } from './modules/assistant/entities/assistant-message-log.entity';
 import { InfrastructureModule } from './modules/infrastructure/infrastructure.module';
 import { InfrastructureOperationEntity } from './modules/infrastructure/servers/entities/infrastructure-operations.entity';
 import { ServerEntity } from './modules/infrastructure/servers/entities/server.entity';
@@ -147,6 +150,8 @@ import { TopologyModule } from './modules/topology/topology.module';
           BackupArtifactEntity,
           BackupArtifactLocationEntity,
           RestoreJobEntity,
+          InferenceConnectionEntity,
+          AssistantMessageLogEntity,
         ],
         synchronize: true, // Solo per development!
       }),
@@ -171,6 +176,7 @@ import { TopologyModule } from './modules/topology/topology.module';
     InstancesModule,
     ManagementModule,
     InferenceModule,
+    AssistantModule,
     InfrastructureModule,
     TerminalModule,
     RepositoriesModule,

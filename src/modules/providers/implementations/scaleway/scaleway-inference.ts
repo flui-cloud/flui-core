@@ -7,4 +7,5 @@ export const SCALEWAY_INFERENCE: InferenceCapability = {
   models: [],
   euDataResidency: true,
   sharesComputeCredentials: true,
+  defaultModel: 'llama-3.3-70b-instruct',
 };

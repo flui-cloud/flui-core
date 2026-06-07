@@ -36,10 +36,24 @@ export class InferenceResolverService {
     return inference;
   }
 
+  inferenceCapableProviders(): CloudProvider[] {
+    return this.capabilities
+      .getSupportedProviders()
+      .filter(
+        (p) =>
+          !!this.capabilities.getCapabilitiesService(p).getStaticCapabilities()
+            .inference,
+      );
+  }
+
   async resolveNative(provider: CloudProvider): Promise<InferenceEndpoint> {
     const inference = this.getInferenceCapability(provider);
     const apiKey = await this.resolveNativeKey(provider, inference);
-    return { baseUrl: inference.baseUrl, apiKey };
+    return {
+      baseUrl: inference.baseUrl,
+      apiKey,
+      defaultModel: inference.defaultModel,
+    };
   }
 
   async hasNativeCredential(provider: CloudProvider): Promise<boolean> {
@@ -49,6 +63,21 @@ export class InferenceResolverService {
     } catch {
       return false;
     }
+  }
+
+  // Default surface for the assistant: prefer a configured native provider
+  // (EU-first by capability order), else the default BYO connection.
+  async resolveDefault(): Promise<InferenceEndpoint> {
+    for (const provider of this.inferenceCapableProviders()) {
+      if (await this.hasNativeCredential(provider)) {
+        return this.resolveNative(provider);
+      }
+    }
+    const fallback = await this.connections.findDefault();
+    if (fallback) {
+      return this.resolveConnection(fallback.id);
+    }
+    throw new NotFoundException('No inference endpoint configured');
   }
 
   async resolveConnection(id: string): Promise<InferenceEndpoint> {
@@ -61,6 +90,7 @@ export class InferenceResolverService {
       apiKey: this.keyStorage.decryptKeyFromString(
         connection.encrypted_api_key,
       ),
+      defaultModel: connection.models?.[0],
     };
   }
 

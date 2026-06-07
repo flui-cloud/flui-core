@@ -26,6 +26,6 @@ import { InferenceController } from './controllers/inference.controller';
     InferenceProviderService,
     InferenceConnectionService,
   ],
-  exports: [InferenceResolverService],
+  exports: [InferenceResolverService, InferenceClientService],
 })
 export class InferenceModule {}

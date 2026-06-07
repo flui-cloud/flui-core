@@ -1,6 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { CloudProvider } from '../../providers/enums/cloud-provider.enum';
-import { CapabilitiesProviderFactory } from '../../providers/core/factories/capabilities-provider.factory';
 import { ValidationResultDto } from '../../management/dto/validation-result.dto';
 import { InferenceClientService } from './inference-client.service';
 import { InferenceResolverService } from './inference-resolver.service';
@@ -15,23 +14,12 @@ export class InferenceProviderService {
   private readonly logger = new Logger(InferenceProviderService.name);
 
   constructor(
-    private readonly capabilities: CapabilitiesProviderFactory,
     private readonly client: InferenceClientService,
     private readonly resolver: InferenceResolverService,
   ) {}
 
-  private inferenceCapableProviders(): CloudProvider[] {
-    return this.capabilities
-      .getSupportedProviders()
-      .filter(
-        (p) =>
-          !!this.capabilities.getCapabilitiesService(p).getStaticCapabilities()
-            .inference,
-      );
-  }
-
   async listProviders(): Promise<InferenceProviderInfoDto[]> {
-    const providers = this.inferenceCapableProviders();
+    const providers = this.resolver.inferenceCapableProviders();
     return Promise.all(
       providers.map(async (provider) => {
         const inference = this.resolver.getInferenceCapability(provider);

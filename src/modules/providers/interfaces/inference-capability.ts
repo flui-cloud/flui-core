@@ -17,9 +17,13 @@ export interface InferenceCapability {
   euDataResidency: boolean;
   /** True when the provider's compute credential doubles as the inference key (e.g. Scaleway IAM secret). */
   sharesComputeCredentials: boolean;
+  /** Provider-specific default chat model id (model ids are not portable across providers). */
+  defaultModel?: string;
 }
 
 export interface InferenceEndpoint {
   baseUrl: string;
   apiKey: string;
+  /** Default chat model for this source (provider default or BYO connection's first model). */
+  defaultModel?: string;
 }
