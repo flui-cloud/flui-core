@@ -9,6 +9,7 @@ import { JwtStrategy } from './strategies/jwt.strategy';
 import { LocalJwtStrategy } from './strategies/local-jwt.strategy';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { AdminGuard } from './guards/admin.guard';
+import { ScopeGuard } from './guards/scope.guard';
 import { AuthController } from './controllers/auth.controller';
 import { UserEntity } from './entities/user.entity';
 import { RefreshTokenEntity } from './entities/refresh-token.entity';
@@ -96,6 +97,7 @@ import { FirewallsModule } from '../infrastructure/firewalls/firewalls.module';
     ApiKeyService,
     JwtAuthGuard,
     AdminGuard,
+    ScopeGuard,
     LocalAuthService,
     OidcProfileSyncService,
     AdminSeeder,
@@ -130,6 +132,7 @@ import { FirewallsModule } from '../infrastructure/firewalls/firewalls.module';
     PassportModule,
     JwtAuthGuard,
     AdminGuard,
+    ScopeGuard,
     ApiKeyService,
     ApiKeyStrategy,
     OidcBootstrapService,

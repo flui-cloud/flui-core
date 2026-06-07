@@ -13,6 +13,8 @@ import { InferenceModule } from './modules/inference/inference.module';
 import { InferenceConnectionEntity } from './modules/inference/entities/inference-connection.entity';
 import { AssistantModule } from './modules/assistant/assistant.module';
 import { AssistantMessageLogEntity } from './modules/assistant/entities/assistant-message-log.entity';
+import { McpModule } from './modules/mcp/mcp.module';
+import { McpToolCallLogEntity } from './modules/mcp/entities/mcp-tool-call-log.entity';
 import { InfrastructureModule } from './modules/infrastructure/infrastructure.module';
 import { InfrastructureOperationEntity } from './modules/infrastructure/servers/entities/infrastructure-operations.entity';
 import { ServerEntity } from './modules/infrastructure/servers/entities/server.entity';
@@ -152,6 +154,7 @@ import { TopologyModule } from './modules/topology/topology.module';
           RestoreJobEntity,
           InferenceConnectionEntity,
           AssistantMessageLogEntity,
+          McpToolCallLogEntity,
         ],
         synchronize: true, // Solo per development!
       }),
@@ -177,6 +180,7 @@ import { TopologyModule } from './modules/topology/topology.module';
     ManagementModule,
     InferenceModule,
     AssistantModule,
+    McpModule,
     InfrastructureModule,
     TerminalModule,
     RepositoriesModule,

@@ -15,7 +15,22 @@ const FLUI_PROJECT_NAME = 'Flui';
 const FLUI_ADMIN_ROLE = 'admin';
 const FLUI_OIDC_APP_NAME = 'Flui Web';
 const FLUI_CLI_APP_NAME = 'Flui CLI';
+const FLUI_MCP_APP_NAME = 'Flui MCP';
 const FLUI_ADMIN_USERNAME_PREFIX = 'flui-admin';
+
+/**
+ * MCP agent scopes, provisioned as Flui project roles. createNativeOidcApp sets
+ * accessTokenRoleAssertion, so a token minted for the Flui MCP app carries any
+ * granted mcp:* role in its roles claim — which McpScopeResolver maps to scopes.
+ */
+const FLUI_MCP_ROLES: ReadonlyArray<{ key: string; displayName: string }> = [
+  { key: 'mcp:catalog:read', displayName: 'MCP — catalog read' },
+  { key: 'mcp:app:read', displayName: 'MCP — application read' },
+  { key: 'mcp:obs:read', displayName: 'MCP — observability read' },
+  { key: 'mcp:spec:validate', displayName: 'MCP — spec validate' },
+  { key: 'mcp:app:write', displayName: 'MCP — application write' },
+  { key: 'mcp:app:destructive', displayName: 'MCP — application destructive' },
+];
 
 const FLUI_PROJECT_ROLES: ReadonlyArray<{ key: string; displayName: string }> =
   [
@@ -58,6 +73,7 @@ export interface OidcBootstrapResult {
   appId: string;
   clientId: string;
   cliClientId: string;
+  mcpClientId?: string;
   issuer: string;
   adminGranted: boolean;
   configMapsPatched: boolean;
@@ -111,6 +127,36 @@ export class OidcBootstrapService {
     const cliApp = await this.ensureCliApp(pat, providerDomain, project.id);
     await this.patchApiConfigMap(kubeconfig, issuer, cliApp.clientId);
     return { clientId: cliApp.clientId };
+  }
+
+  /**
+   * Idempotently provisions the dedicated "Flui MCP" native OIDC app + the mcp:*
+   * scope roles, and stores OIDC_MCP_CLIENT_ID in flui-api-config. Run once on
+   * existing installs to enable the MCP agent surface. Unlike the bootstrap path,
+   * errors here surface to the caller.
+   */
+  async provisionMcpApp(): Promise<{ mcpClientId: string }> {
+    const cluster = await this.clusterRepository.findOne({
+      where: {
+        clusterType: In([ClusterType.CONTROL, ClusterType.OBSERVABILITY]),
+      },
+    });
+    if (!cluster) {
+      throw new BadRequestException('Control cluster not registered yet');
+    }
+    const kubeconfig = await this.getKubeconfig(cluster);
+    const issuer = process.env.OIDC_ISSUER ?? process.env.ZITADEL_ISSUER ?? '';
+    const providerDomain = issuer.replace('https://', '');
+    const pat = await this.readOrInjectPat(kubeconfig);
+    const project = await this.ensureProject(pat, providerDomain);
+    await this.ensureMcpRoles(pat, providerDomain, project.id);
+    const app = await this.ensureMcpApp(pat, providerDomain, project.id);
+    process.env.OIDC_MCP_CLIENT_ID = app.clientId;
+    await this.patchApiConfigMap(kubeconfig, issuer, undefined, app.clientId);
+    this.logger.log(
+      `MCP OIDC app provisioned: ${app.appId} (client ${app.clientId})`,
+    );
+    return { mcpClientId: app.clientId };
   }
 
   /**
@@ -173,6 +219,11 @@ export class OidcBootstrapService {
       this.logger.log(`Enabled role assertion flags on OIDC app ${app.appId}`);
     }
     const cliApp = await this.ensureCliApp(pat, providerDomain, project.id);
+    const mcpClientId = await this.ensureMcpAppNonFatal(
+      pat,
+      providerDomain,
+      project.id,
+    );
     const adminGranted = await this.grantAdminRole(
       pat,
       providerDomain,
@@ -195,6 +246,7 @@ export class OidcBootstrapService {
       issuer,
       clientId: app.clientId,
       cliClientId: cliApp.clientId,
+      mcpClientId,
       pat,
     });
 
@@ -203,6 +255,7 @@ export class OidcBootstrapService {
     process.env.OIDC_ISSUER = issuer;
     process.env.OIDC_AUDIENCE = app.clientId;
     process.env.OIDC_CLI_CLIENT_ID = cliApp.clientId;
+    if (mcpClientId) process.env.OIDC_MCP_CLIENT_ID = mcpClientId;
     this.cachedPublicOidc = {
       issuer,
       clientId: app.clientId,
@@ -214,6 +267,7 @@ export class OidcBootstrapService {
       appId: app.appId,
       clientId: app.clientId,
       cliClientId: cliApp.clientId,
+      mcpClientId,
       issuer,
       adminGranted,
       configMapsPatched,
@@ -476,6 +530,87 @@ export class OidcBootstrapService {
     return { appId: created.appId, clientId: created.clientId };
   }
 
+  /**
+   * Provisions the dedicated "Flui MCP" native app + mcp:* scope roles. Kept
+   * non-fatal: a failure here must never block the core OIDC bootstrap, since the
+   * MCP surface is optional. Returns the app's clientId, or undefined on failure.
+   */
+  private async ensureMcpAppNonFatal(
+    pat: string,
+    hostHeader: string,
+    projectId: string,
+  ): Promise<string | undefined> {
+    try {
+      await this.ensureMcpRoles(pat, hostHeader, projectId);
+      const app = await this.ensureMcpApp(pat, hostHeader, projectId);
+      this.logger.log(
+        `MCP OIDC app ready: ${app.appId} (client ${app.clientId})`,
+      );
+      return app.clientId;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      this.logger.warn(`MCP app provisioning skipped (non-fatal): ${message}`);
+      return undefined;
+    }
+  }
+
+  private async ensureMcpRoles(
+    pat: string,
+    hostHeader: string,
+    projectId: string,
+  ): Promise<void> {
+    for (const role of FLUI_MCP_ROLES) {
+      const existing = await this.oidcProvider.findRole(
+        pat,
+        hostHeader,
+        projectId,
+        role.key,
+      );
+      if (existing) continue;
+      await this.oidcProvider.createRole(
+        pat,
+        hostHeader,
+        projectId,
+        role.key,
+        role.displayName,
+      );
+      this.logger.log(`MCP role '${role.key}' created on project ${projectId}`);
+    }
+  }
+
+  private async ensureMcpApp(
+    pat: string,
+    hostHeader: string,
+    projectId: string,
+  ): Promise<{ appId: string; clientId: string }> {
+    const existing = await this.oidcProvider.findOidcAppByName(
+      pat,
+      hostHeader,
+      projectId,
+      FLUI_MCP_APP_NAME,
+    );
+    if (existing) {
+      const missingUris = FLUI_CLI_REDIRECT_URIS.filter(
+        (u) => !existing.redirectUris.includes(u),
+      );
+      if (missingUris.length > 0) {
+        await this.oidcProvider.updateOidcAppUris(pat, hostHeader, existing, {
+          redirectUris: [...existing.redirectUris, ...missingUris],
+          postLogoutRedirectUris: existing.postLogoutRedirectUris,
+        });
+      }
+      return { appId: existing.appId, clientId: existing.clientId };
+    }
+    const created = await this.oidcProvider.createNativeOidcApp(
+      pat,
+      hostHeader,
+      projectId,
+      FLUI_MCP_APP_NAME,
+      FLUI_CLI_REDIRECT_URIS,
+    );
+    return { appId: created.appId, clientId: created.clientId };
+  }
+
   private async grantAdminRole(
     pat: string,
     hostHeader: string,
@@ -583,6 +718,7 @@ export class OidcBootstrapService {
       issuer: string;
       clientId: string;
       cliClientId: string;
+      mcpClientId?: string;
       pat: string;
     },
   ): Promise<boolean> {
@@ -596,7 +732,12 @@ export class OidcBootstrapService {
           ZITADEL_SERVICE_ACCOUNT_PAT: data.pat,
         },
       );
-      await this.patchApiConfigMap(kubeconfig, data.issuer, data.cliClientId);
+      await this.patchApiConfigMap(
+        kubeconfig,
+        data.issuer,
+        data.cliClientId,
+        data.mcpClientId,
+      );
       await this.patchWebConfigMap(kubeconfig, data.issuer, data.clientId);
       return true;
     } catch (err) {
@@ -608,7 +749,8 @@ export class OidcBootstrapService {
   private async patchApiConfigMap(
     kubeconfig: string,
     issuer: string,
-    cliClientId: string,
+    cliClientId?: string,
+    mcpClientId?: string,
   ): Promise<void> {
     const cm = await this.kubernetesService.getResource(
       kubeconfig,
@@ -624,7 +766,8 @@ export class OidcBootstrapService {
     // Must use the public URL: the OIDC provider rejects /oauth/v2/keys when Host doesn't match its external domain.
     existingData['OIDC_JWKS_URI'] =
       `${issuer.replace(/\/+$/, '')}/oauth/v2/keys`;
-    existingData['OIDC_CLI_CLIENT_ID'] = cliClientId;
+    if (cliClientId) existingData['OIDC_CLI_CLIENT_ID'] = cliClientId;
+    if (mcpClientId) existingData['OIDC_MCP_CLIENT_ID'] = mcpClientId;
     delete existingData['ZITADEL_ISSUER'];
     delete existingData['ZITADEL_JWKS_URI'];
 
