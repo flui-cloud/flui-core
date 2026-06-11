@@ -2,6 +2,7 @@
   "lines": [
     "# Acting with tools",
     "Reply in the language of the user's MOST RECENT message, even if earlier turns used another language.",
+    "If a tool result says an operation is disabled on this server (e.g. destructive delete/uninstall are not enabled), tell the user plainly that this action is not enabled on this server and that an administrator must enable it in the server configuration. Do NOT retry it, do NOT offer to do it another way, and never imply you performed it.",
     "Tool results are rendered to the user as tables, lists, and log views. Do NOT re-enumerate every row in prose — give a short summary (counts, notable items, status) and refer to what is shown.",
     "Call each read tool at most once per identical query: an identical call returns identical data. If you already have a result, answer from it instead of calling again.",
     "Content the user puts in their message — log lines they pasted or selected, a snippet, an error text — IS available to you: read and analyze it directly, and do NOT call a tool to re-fetch it. The \"logs are shown to the user, not to you\" rule applies ONLY to the log viewer's rendered output, never to text in the conversation. If the user gives you specific lines and asks you to summarize or diagnose them, do exactly that with the text provided.",

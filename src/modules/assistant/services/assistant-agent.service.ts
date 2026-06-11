@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { z } from 'zod';
 import { AuthenticatedUser } from '../../auth/interfaces/authenticated-user.interface';
 import { CatalogService } from '../../catalog/services/catalog.service';
@@ -53,6 +54,13 @@ import { KnowledgeService } from './knowledge.service';
 import { AGENT_TOOL_NOTE } from '../policy';
 
 const MAX_ITERATIONS = 8;
+// Server-wide enablement for destructive (delete/uninstall) tools — same flag as the
+// headless MCP server. Default off: the assistant refuses them and tells the user how
+// to enable, instead of offering a confirmation it cannot honour.
+const DESTRUCTIVE_ENV_FLAG = 'MCP_ALLOW_DESTRUCTIVE';
+const DESTRUCTIVE_DISABLED_MESSAGE =
+  'Refused: destructive operations (delete/uninstall) are disabled on this server. An administrator must enable them by setting MCP_ALLOW_DESTRUCTIVE=true in the server configuration.';
+const DESTRUCTIVE_DISABLED_REASON = 'destructive disabled';
 // Hosts the agent may legitimately cite that are not Flui endpoints — kept tiny and
 // extensible; anything else must be a tool/user source or a DB-verified endpoint.
 const STATIC_EXTERNAL_HOSTS = new Set(['github.com', 'gitlab.com']);
@@ -90,7 +98,12 @@ export class AssistantAgentService {
     private readonly clusters: ClustersService,
     private readonly operations: InfrastructureOperationsService,
     private readonly podDebug: PodDebugService,
+    private readonly config: ConfigService,
   ) {}
+
+  private destructiveEnabled(): boolean {
+    return this.config.get<string>(DESTRUCTIVE_ENV_FLAG) === 'true';
+  }
 
   async run(
     user: AuthenticatedUser,
@@ -250,6 +263,9 @@ export class AssistantAgentService {
       if (!def || !ctx.scopes.has(def.scope)) continue;
       const tier = SCOPE_TIER[def.scope];
       if (tier !== 'write' && tier !== 'destructive') continue;
+      // A disabled destructive op cannot run — never offer a confirmation for it;
+      // execOrDeny refuses it deterministically with the enable-via-env message.
+      if (tier === 'destructive' && !ctx.allowDestructive) continue;
       if (approved.has(tc.id)) continue;
       const args = this.parseArgs(tc);
       // Already performed earlier? Don't ask again — let it fall through to be
@@ -625,11 +641,10 @@ export class AssistantAgentService {
     return {
       user,
       scopes: this.scopes.resolve(user),
-      // The interactive assistant's safety gate for destructive ops is the
-      // pending_action confirmation (the user approves before execOne runs), not
-      // the MCP_ALLOW_DESTRUCTIVE env flag — that flag governs only the headless
-      // MCP server, where there is no guaranteed human in the loop.
-      allowDestructive: true,
+      // Destructive ops require BOTH server-wide enablement (MCP_ALLOW_DESTRUCTIVE) and,
+      // when enabled, the per-action pending_action confirmation. Disabled by default:
+      // the assistant refuses rather than offering a confirmation it cannot honour.
+      allowDestructive: this.destructiveEnabled(),
       audit: this.audit,
       services: {
         catalog: this.catalog,
@@ -713,6 +728,22 @@ export class AssistantAgentService {
     const def = findTool(tc.function.name);
     if (def && ctx.scopes.has(def.scope)) {
       const tier = SCOPE_TIER[def.scope];
+      if (tier === 'destructive' && !ctx.allowDestructive) {
+        await this.recordTool(
+          ctx,
+          tc.function.name,
+          def,
+          false,
+          DESTRUCTIVE_DISABLED_REASON,
+        );
+        steps.push({
+          toolCallId: tc.id,
+          name: tc.function.name,
+          ok: false,
+          error: DESTRUCTIVE_DISABLED_REASON,
+        });
+        return DESTRUCTIVE_DISABLED_MESSAGE;
+      }
       if (
         (tier === 'write' || tier === 'destructive') &&
         !approved.has(tc.id)
@@ -753,14 +784,14 @@ export class AssistantAgentService {
       return `Refused: missing required scope '${def.scope}'.`;
     }
     if (SCOPE_TIER[def.scope] === 'destructive' && !ctx.allowDestructive) {
-      await this.recordTool(ctx, name, def, false, 'destructive disabled');
+      await this.recordTool(ctx, name, def, false, DESTRUCTIVE_DISABLED_REASON);
       steps.push({
         toolCallId: tc.id,
         name,
         ok: false,
-        error: 'destructive disabled',
+        error: DESTRUCTIVE_DISABLED_REASON,
       });
-      return 'Refused: destructive operations are disabled on this server.';
+      return DESTRUCTIVE_DISABLED_MESSAGE;
     }
 
     let args: unknown;

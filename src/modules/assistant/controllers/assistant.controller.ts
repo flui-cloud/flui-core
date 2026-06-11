@@ -14,6 +14,7 @@ import {
   ApiResponse,
   ApiTags,
 } from '@nestjs/swagger';
+import { ConfigService } from '@nestjs/config';
 import { Response } from 'express';
 import { AuthenticatedUser } from '../../auth/interfaces/authenticated-user.interface';
 import { describeError } from '../../shared/utils/error.util';
@@ -40,15 +41,22 @@ export class AssistantController {
     private readonly agent: AssistantAgentService,
     private readonly knowledge: KnowledgeService,
     private readonly recommendations: AssistantRecommendationsService,
+    private readonly config: ConfigService,
   ) {}
 
   @Get('info')
   @ApiOperation({
-    summary: 'Assistant identity and knowledge-base version binding',
+    summary: 'Assistant identity, KB version binding, and server capabilities',
   })
   @ApiResponse({ status: 200 })
   info() {
-    return this.knowledge.getInfo();
+    return {
+      ...this.knowledge.getInfo(),
+      capabilities: {
+        destructiveEnabled:
+          this.config.get<string>('MCP_ALLOW_DESTRUCTIVE') === 'true',
+      },
+    };
   }
 
   @Get('recommendations')
