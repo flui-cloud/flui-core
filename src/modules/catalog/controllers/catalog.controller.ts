@@ -255,14 +255,8 @@ export class CatalogController {
     @Req() req: Request,
   ): Promise<CatalogInstallResponseDto> {
     const user = req.user as AuthenticatedUser | undefined;
-    // Gating: refuse synchronously if the app is `exposure: internal` and
-    // the target cluster has no internal hosting. Throws the structured
-    // 400 INTERNAL_HOSTING_NOT_AVAILABLE so the FE gets the same error
-    // shape it sees on POST /clusters/:id/applications.
-    await this.catalogService.assertCatalogAppInstallableOnCluster(
-      slug,
-      dto.clusterId,
-    );
+    // The requirements↔cluster gate (incl. internal-hosting) now lives in
+    // installer.install(), so every caller (HTTP, install-from-yaml, MCP) shares it.
     const { install } = await this.installer.install(
       slug,
       dto,

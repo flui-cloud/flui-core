@@ -55,6 +55,11 @@ import { CrashDiagnosesController } from './controllers/crash-diagnoses.controll
       useExisting: KubernetesService,
     },
   ],
-  exports: [DeploymentGuardService, CrashRecoveryService, ActuatorService],
+  exports: [
+    DeploymentGuardService,
+    CrashRecoveryService,
+    ActuatorService,
+    PodDebugService,
+  ],
 })
 export class ScalingModule {}

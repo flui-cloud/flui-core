@@ -1,0 +1,101 @@
+import { Injectable } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { AuthenticatedUser } from '../../auth/interfaces/authenticated-user.interface';
+import { CatalogService } from '../../catalog/services/catalog.service';
+import { CatalogInstallerService } from '../../catalog/services/catalog-installer.service';
+import { ApplicationService } from '../../applications/services/application.service';
+import { ApplicationDeployService } from '../../applications/services/application-deploy.service';
+import { AppManagementService } from '../../applications/services/app-management.service';
+import { ApplicationReleaseService } from '../../applications/services/application-release.service';
+import { ApplicationSourceDeployService } from '../../applications/services/application-source-deploy.service';
+import { TemplatesService } from '../../templates/templates.service';
+import { RepositoriesService } from '../../repositories/services/repositories.service';
+import { GitHubOAuthService } from '../../repositories/services/github-oauth.service';
+import { GithubAppUserAuthService } from '../../repositories/services/github-app-user-auth.service';
+import { GithubAppManifestStateService } from '../../repositories/services/github-app-manifest-state.service';
+import { LokiQueryService } from '../../observability/services/loki-query.service';
+import { ClustersService } from '../../infrastructure/clusters/clusters.service';
+import { InfrastructureOperationsService } from '../../infrastructure/operations/infrastructure-operations.service';
+import { PodDebugService } from '../../scaling/services/pod-debug.service';
+import { McpAuditRepository } from '../repositories/mcp-audit.repository';
+import { McpScopeResolver } from './mcp-scope.resolver';
+import { McpToolContext, runGated } from '../tools/mcp-tool.util';
+import { ALL_TOOLS } from '../tools/tool-registry';
+
+export const MCP_SERVER_NAME = 'flui';
+export const MCP_SERVER_VERSION = '0.1.0';
+
+/**
+ * Builds a stateless MCP server scoped to one authenticated principal. Tools are
+ * thin adapters over existing Nest services; the principal's resolved scopes and
+ * the destructive-enablement flag are captured per request so every tool gates
+ * and audits against the caller, not shared state.
+ */
+@Injectable()
+export class McpServerFactory {
+  constructor(
+    private readonly resolver: McpScopeResolver,
+    private readonly audit: McpAuditRepository,
+    private readonly config: ConfigService,
+    private readonly catalog: CatalogService,
+    private readonly installer: CatalogInstallerService,
+    private readonly apps: ApplicationService,
+    private readonly deploy: ApplicationDeployService,
+    private readonly management: AppManagementService,
+    private readonly releases: ApplicationReleaseService,
+    private readonly sourceDeploy: ApplicationSourceDeployService,
+    private readonly templates: TemplatesService,
+    private readonly repos: RepositoriesService,
+    private readonly github: GitHubOAuthService,
+    private readonly githubAuth: GithubAppUserAuthService,
+    private readonly githubManifest: GithubAppManifestStateService,
+    private readonly loki: LokiQueryService,
+    private readonly clusters: ClustersService,
+    private readonly operations: InfrastructureOperationsService,
+    private readonly podDebug: PodDebugService,
+  ) {}
+
+  build(user: AuthenticatedUser): McpServer {
+    const server = new McpServer({
+      name: MCP_SERVER_NAME,
+      version: MCP_SERVER_VERSION,
+    });
+
+    const ctx: McpToolContext = {
+      user,
+      scopes: this.resolver.resolve(user),
+      allowDestructive:
+        this.config.get<string>('MCP_ALLOW_DESTRUCTIVE') === 'true',
+      audit: this.audit,
+      services: {
+        catalog: this.catalog,
+        installer: this.installer,
+        apps: this.apps,
+        deploy: this.deploy,
+        management: this.management,
+        releases: this.releases,
+        sourceDeploy: this.sourceDeploy,
+        templates: this.templates,
+        repos: this.repos,
+        github: this.github,
+        githubAuth: this.githubAuth,
+        githubManifest: this.githubManifest,
+        loki: this.loki,
+        clusters: this.clusters,
+        operations: this.operations,
+        podDebug: this.podDebug,
+      },
+    };
+
+    for (const def of ALL_TOOLS) {
+      server.registerTool(
+        def.name,
+        { description: def.description, inputSchema: def.inputSchema },
+        (args) => runGated(ctx, def.name, def.scope, () => def.run(args, ctx)),
+      );
+    }
+
+    return server;
+  }
+}

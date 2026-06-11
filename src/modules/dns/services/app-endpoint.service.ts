@@ -5,7 +5,7 @@ import {
   ConflictException,
   Logger,
 } from '@nestjs/common';
-import { QueryFailedError, Repository } from 'typeorm';
+import { In, QueryFailedError, Repository } from 'typeorm';
 import { InjectRepository } from '@nestjs/typeorm';
 import { AppEndpointEntity } from '../entities/app-endpoint.entity';
 import { SanCertificateEntity } from '../entities/san-certificate.entity';
@@ -332,6 +332,40 @@ export class AppEndpointService {
       where: { applicationId },
       relations: ['cluster', 'clusterDnsZone', 'clusterDnsZone.dnsZone'],
     });
+  }
+
+  /**
+   * Of the given candidate hostnames, return those that are real app endpoint fqdns —
+   * the source of truth used to tell a genuine app URL from a model-fabricated one.
+   */
+  async existingFqdns(hosts: string[]): Promise<string[]> {
+    if (hosts.length === 0) return [];
+    const rows = await this.endpointRepository.find({
+      where: { fqdn: In(hosts) },
+      select: ['fqdn'],
+    });
+    return rows.map((r) => r.fqdn);
+  }
+
+  /**
+   * Resolve the primary endpoint hostname of several applications in one query —
+   * used to attach the real public URL to app listings without an N+1 lookup. Maps
+   * each applicationId to its first endpoint fqdn; ids with no endpoint are absent.
+   */
+  async mapPrimaryFqdns(
+    applicationIds: string[],
+  ): Promise<Map<string, string>> {
+    if (applicationIds.length === 0) return new Map();
+    const endpoints = await this.endpointRepository.find({
+      where: { applicationId: In(applicationIds) },
+    });
+    const byApp = new Map<string, string>();
+    for (const endpoint of endpoints) {
+      if (endpoint.fqdn && !byApp.has(endpoint.applicationId)) {
+        byApp.set(endpoint.applicationId, endpoint.fqdn);
+      }
+    }
+    return byApp;
   }
 
   async getEndpoint(id: string): Promise<AppEndpointEntity> {

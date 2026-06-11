@@ -10,6 +10,7 @@ import { RepositoryCredentialEntity } from './entities/repository-credential.ent
 import { GitHubIntegrationConfigEntity } from './entities/github-integration-config.entity';
 import { GitHubAppInstallationEntity } from './entities/github-app-installation.entity';
 import { GithubUserTokenEntity } from './entities/github-user-token.entity';
+import { GithubAppManifestStateEntity } from './entities/github-app-manifest-state.entity';
 import { RepositoriesRepository } from './repositories/repositories.repository';
 import { RepositoryCredentialsRepository } from './repositories/repository-credentials.repository';
 import { RepositoriesService } from './services/repositories.service';
@@ -44,6 +45,7 @@ import { WsAuthModule } from '../auth/ws-auth.module';
       GitHubIntegrationConfigEntity,
       GitHubAppInstallationEntity,
       GithubUserTokenEntity,
+      GithubAppManifestStateEntity,
     ]),
     SharedModule,
     GitModule,
@@ -85,6 +87,7 @@ import { WsAuthModule } from '../auth/ws-auth.module';
     GitHubAppService,
     GitHubTokenResolverService,
     GithubAppUserAuthService,
+    GithubAppManifestStateService,
     UserEventsGateway,
     EnvExtractorService,
     DockerfileAnalyzerService,

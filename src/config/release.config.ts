@@ -46,6 +46,26 @@ export function resolveBootstrapRef(useLatest: boolean): string {
   return useLatest ? LATEST_BOOTSTRAP_REF : RELEASE.bootstrapRef;
 }
 
+/**
+ * Knowledge sources the assistant KB is built from — pinned to a ref so the KB tracks the
+ * release train (reproducible builds) instead of vendoring committed doc copies. `kb:sync`
+ * fetches these public repos at the pinned ref; a local checkout can override via
+ * FLUI_DOCS_DIR / FLUI_SPEC_DIR. flui-docs has no tags yet, so docsRef pins a commit.
+ */
+export interface KnowledgeSources {
+  docsRepo: string;
+  docsRef: string;
+  specRepo: string;
+  specRef: string;
+}
+
+export const KNOWLEDGE_SOURCES: KnowledgeSources = {
+  docsRepo: 'dawit-io/flui-docs',
+  docsRef: 'b15332bf2ced531ea0c9252b178334cb0a7930a2',
+  specRepo: 'flui-cloud/flui-spec',
+  specRef: 'v0.5.0',
+};
+
 /** Docker image tags to deploy. `useLatest` → all `latest`. */
 export function resolveImageTags(useLatest: boolean): ComponentImageTags {
   return useLatest ? { ...LATEST_IMAGE_TAGS } : { ...RELEASE.images };

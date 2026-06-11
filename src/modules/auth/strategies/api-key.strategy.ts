@@ -30,6 +30,7 @@ export class ApiKeyStrategy {
           roles: {},
           role: user.role ?? IdentityRole.USER,
           isAdmin: user.isAdmin,
+          scopes: record.scopes ?? undefined,
         };
       }
     }
@@ -40,6 +41,7 @@ export class ApiKeyStrategy {
       roles: {},
       role: IdentityRole.ADMIN,
       isAdmin: true,
+      scopes: record.scopes ?? undefined,
     };
   }
 }

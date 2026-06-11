@@ -24,6 +24,7 @@ import { ApplicationCategory } from '../enums/application-category.enum';
 import { ApplicationKind } from '../enums/application-kind.enum';
 import { ApplicationExposure } from '../enums/application-exposure.enum';
 import { ClusterDnsZoneService } from '../../dns/services/cluster-dns-zone.service';
+import { AppEndpointService } from '../../dns/services/app-endpoint.service';
 import { internalHostingNotAvailableException } from '../../dns/constants/internal-hosting-error';
 import {
   ApplicationSourceConfig,
@@ -65,6 +66,8 @@ export class ApplicationService {
     private readonly operationRepository: Repository<InfrastructureOperationEntity>,
     @Inject(forwardRef(() => ClusterDnsZoneService))
     private readonly clusterDnsZoneService: ClusterDnsZoneService,
+    @Inject(forwardRef(() => AppEndpointService))
+    private readonly appEndpointService: AppEndpointService,
   ) {}
 
   /**
@@ -671,15 +674,85 @@ export class ApplicationService {
     }
     if (entity.exposure === ApplicationExposure.INTERNAL) {
       dto.internalUrl = await this.computeInternalUrl(entity);
+    } else {
+      const endpoints = await this.appEndpointService.listByApplicationId(
+        entity.id,
+      );
+      const fqdn = endpoints.find((e) => e.fqdn)?.fqdn;
+      if (fqdn) dto.url = this.publicUrlFromFqdn(entity, fqdn);
     }
     return dto;
   }
 
   /**
+   * Build the authoritative public access URL from an endpoint hostname. The path
+   * comes from the app's catalog `entrypointPath` (default "/"), mirroring how the
+   * dashboard and catalog compose "Open app" links — callers must never guess it.
+   */
+  private publicUrlFromFqdn(entity: ApplicationEntity, fqdn: string): string {
+    return `https://${fqdn}${entity.metadata?.entrypointPath ?? '/'}`;
+  }
+
+  /** Of the candidate hostnames, those that are a real app endpoint fqdn. */
+  filterKnownEndpointHosts(hosts: string[]): Promise<string[]> {
+    return this.appEndpointService.existingFqdns(hosts);
+  }
+
+  /**
+   * Map a list of applications to response DTOs with each app's real access URL
+   * attached: public apps get `url` from their endpoint fqdn (one batched query),
+   * internal apps get `internalUrl` resolving each cluster's internal zone once. So
+   * every exposure mode carries a real, citable endpoint — no per-app N+1.
+   */
+  async toResponseDtosWithUrls(
+    entities: ApplicationEntity[],
+  ): Promise<ApplicationResponseDto[]> {
+    const dtos = entities.map((e) => this.toResponseDto(e));
+    const isInternal = (e: ApplicationEntity) =>
+      (e.exposure ?? ApplicationExposure.PUBLIC) ===
+      ApplicationExposure.INTERNAL;
+
+    const publicIds = entities.filter((e) => !isInternal(e)).map((e) => e.id);
+    const fqdns = await this.appEndpointService.mapPrimaryFqdns(publicIds);
+
+    const internalClusterIds = [
+      ...new Set(entities.filter(isInternal).map((e) => e.clusterId)),
+    ];
+    const zoneByCluster = new Map<string, string | undefined>();
+    await Promise.all(
+      internalClusterIds.map(async (clusterId) => {
+        const status =
+          await this.clusterDnsZoneService.getInternalHostingStatus(clusterId);
+        zoneByCluster.set(
+          clusterId,
+          status.ready ? status.zoneName : undefined,
+        );
+      }),
+    );
+
+    entities.forEach((entity, i) => {
+      if (isInternal(entity)) {
+        const zone = zoneByCluster.get(entity.clusterId);
+        if (zone) dtos[i].internalUrl = this.internalUrlFromZone(entity, zone);
+        return;
+      }
+      const fqdn = fqdns.get(entity.id);
+      if (fqdn) dtos[i].url = this.publicUrlFromFqdn(entity, fqdn);
+    });
+    return dtos;
+  }
+
+  /** `https://<slug>.internal.<zoneName><entrypointPath>` — the internal "Open" URL. */
+  private internalUrlFromZone(
+    entity: ApplicationEntity,
+    zoneName: string,
+  ): string {
+    return `https://${entity.slug}.internal.${zoneName}${entity.metadata?.entrypointPath ?? '/'}`;
+  }
+
+  /**
    * Composes the public-facing URL the dashboard uses for the "Open" button
-   * on internal apps: `https://<slug>.internal.<zoneName><entrypointPath>`.
-   * Returns undefined when the cluster is not internal-ready or the catalog
-   * entry's entrypointPath cannot be resolved (uses '/' by default).
+   * on internal apps. Returns undefined when the cluster is not internal-ready.
    */
   private async computeInternalUrl(
     entity: ApplicationEntity,
@@ -688,8 +761,7 @@ export class ApplicationService {
       entity.clusterId,
     );
     if (!status.ready || !status.zoneName) return undefined;
-    const entrypointPath = entity.metadata?.entrypointPath ?? '/';
-    return `https://${entity.slug}.internal.${status.zoneName}${entrypointPath}`;
+    return this.internalUrlFromZone(entity, status.zoneName);
   }
 
   toRevisionResponseDto(entity: AppRevisionEntity): AppRevisionResponseDto {

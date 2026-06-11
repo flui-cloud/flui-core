@@ -16,6 +16,7 @@ import { AppResourcesRepository } from '../repositories/app-resources.repository
 import { ApplicationEntity } from '../entities/application.entity';
 import { ApplicationResources } from '../interfaces/source-config.interface';
 import { AppEventType, AppEventActorType } from '../enums/app-event-type.enum';
+import { ApplicationStatus } from '../enums/application-status.enum';
 import {
   AppRuntimeResponseDto,
   ContainerRuntimeDetailDto,
@@ -247,6 +248,47 @@ export class AppManagementService {
     // Fire-and-forget: track the rollout until all pods have restarted
     this.watchRollout(app, kubeconfig, 'restart', RolloutSection.PODS, true);
 
+    return this.buildRuntimeResponse(app, kubeconfig);
+  }
+
+  /** Stop an application: scale to 0 replicas and mark it STOPPED. */
+  async stop(appId: string): Promise<AppRuntimeResponseDto> {
+    const current = await this.applicationsRepository.findById(appId);
+    if (!current) {
+      throw new NotFoundException(`Application ${appId} not found`);
+    }
+    const { app, kubeconfig } = await this.applyReplicas(appId, 0);
+    await this.applicationsRepository.updateStatus(
+      appId,
+      ApplicationStatus.STOPPED,
+    );
+    await this.appRevisionsRepository.createAuditEvent({
+      applicationId: appId,
+      eventType: AppEventType.STOP,
+      actor: { type: AppEventActorType.API },
+      changeMetadata: { previousReplicas: current.replicas },
+    });
+    return this.buildRuntimeResponse(app, kubeconfig);
+  }
+
+  /** Start a stopped application: restore its replicas (>=1) and mark it RUNNING. */
+  async start(appId: string): Promise<AppRuntimeResponseDto> {
+    const current = await this.applicationsRepository.findById(appId);
+    if (!current) {
+      throw new NotFoundException(`Application ${appId} not found`);
+    }
+    const replicas = current.replicas > 0 ? current.replicas : 1;
+    const { app, kubeconfig } = await this.applyReplicas(appId, replicas);
+    await this.applicationsRepository.updateStatus(
+      appId,
+      ApplicationStatus.RUNNING,
+    );
+    await this.appRevisionsRepository.createAuditEvent({
+      applicationId: appId,
+      eventType: AppEventType.START,
+      actor: { type: AppEventActorType.API },
+      changeMetadata: { restoredReplicas: replicas },
+    });
     return this.buildRuntimeResponse(app, kubeconfig);
   }
 

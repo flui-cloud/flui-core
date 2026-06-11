@@ -27,4 +27,8 @@ export class ApiKeyEntity {
 
   @Column({ nullable: true, type: 'varchar' })
   userId: string | null;
+
+  /** Granted scopes for non-interactive agent tokens (e.g. MCP). Null = no scoped grant. */
+  @Column({ type: 'simple-array', nullable: true })
+  scopes: string[] | null;
 }

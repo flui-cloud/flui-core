@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { forwardRef, Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { BullModule } from '@nestjs/bull';
 import { CatalogAppDefinitionEntity } from './entities/catalog-app-definition.entity';
@@ -24,6 +24,7 @@ import { ApplicationsModule } from '../applications/applications.module';
 import { DnsModule } from '../dns/dns.module';
 import { OidcModule } from '../oidc/oidc.module';
 import { ClusterEntity } from '../infrastructure/clusters/entities/cluster.entity';
+import { ClustersModule } from '../infrastructure/clusters/clusters.module';
 import { SharedInfrastructureModule } from '../infrastructure/shared/shared-infrastructure.module';
 import { EncryptionModule } from '../shared/encryption/encryption.module';
 
@@ -41,6 +42,7 @@ import { EncryptionModule } from '../shared/encryption/encryption.module';
     OidcModule,
     SharedInfrastructureModule,
     EncryptionModule,
+    forwardRef(() => ClustersModule),
   ],
   controllers: [CatalogController],
   providers: [

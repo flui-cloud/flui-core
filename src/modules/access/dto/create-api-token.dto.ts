@@ -1,6 +1,13 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsNotEmpty, IsString, IsOptional, IsDate } from 'class-validator';
+import {
+  IsNotEmpty,
+  IsString,
+  IsOptional,
+  IsDate,
+  IsEnum,
+} from 'class-validator';
 import { Type } from 'class-transformer';
+import { CredentialPurpose } from '../enums/credential-purpose.enum';
 
 export class CreateApiTokenDto {
   @ApiProperty({
@@ -43,4 +50,13 @@ export class CreateApiTokenDto {
   @IsDate()
   @Type(() => Date)
   expiresAt?: Date;
+
+  @ApiPropertyOptional({
+    description: 'What the credential is used for',
+    enum: CredentialPurpose,
+    default: CredentialPurpose.COMPUTE,
+  })
+  @IsOptional()
+  @IsEnum(CredentialPurpose)
+  purpose?: CredentialPurpose;
 }

@@ -359,6 +359,22 @@ export class AuthController {
     return { cliClientId: result.clientId };
   }
 
+  @Post('provision-mcp-app')
+  @UseGuards(JwtAuthGuard, AdminGuard)
+  @Admin()
+  @HttpCode(HttpStatus.OK)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary:
+      'Provision the Flui MCP native OIDC app + mcp:* roles (idempotent)',
+    description:
+      'Creates the "Flui MCP" native OIDC app and the mcp:* scope roles if missing, and stores OIDC_MCP_CLIENT_ID in flui-api-config. Run once on existing installs to enable the MCP agent surface.',
+  })
+  @ApiOkResponse({ description: '{ mcpClientId: string }' })
+  async provisionMcpApp(): Promise<{ mcpClientId: string }> {
+    return this.oidcBootstrapService.provisionMcpApp();
+  }
+
   @Post('api-keys')
   @UseGuards(JwtAuthGuard)
   @HttpCode(HttpStatus.CREATED)

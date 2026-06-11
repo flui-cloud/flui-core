@@ -25,6 +25,7 @@ import {
   Configuration as IamConfiguration,
 } from 'src/modules/providers/implementations/scaleway/generated/iam';
 import { getRegionCoordinates } from '../../data/region-coordinates';
+import { SCALEWAY_INFERENCE } from './scaleway-inference';
 
 @Injectable()
 export class ScalewayCapabilitiesService
@@ -238,6 +239,7 @@ export class ScalewayCapabilitiesService
       },
       vnetRequired: true,
       crossClusterAllowed: false,
+      inference: SCALEWAY_INFERENCE,
     };
   }
 

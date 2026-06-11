@@ -9,6 +9,12 @@ import { InstancesModule } from './modules/instances/instances.moduel';
 import { ApiTokenEntity } from './modules/access/entities/api-token.entity';
 import { ProviderConfigurationEntity } from './modules/management/entities/provider-configuration.entity';
 import { ManagementModule } from './modules/management/management.module';
+import { InferenceModule } from './modules/inference/inference.module';
+import { InferenceConnectionEntity } from './modules/inference/entities/inference-connection.entity';
+import { AssistantModule } from './modules/assistant/assistant.module';
+import { AssistantMessageLogEntity } from './modules/assistant/entities/assistant-message-log.entity';
+import { McpModule } from './modules/mcp/mcp.module';
+import { McpToolCallLogEntity } from './modules/mcp/entities/mcp-tool-call-log.entity';
 import { InfrastructureModule } from './modules/infrastructure/infrastructure.module';
 import { InfrastructureOperationEntity } from './modules/infrastructure/servers/entities/infrastructure-operations.entity';
 import { ServerEntity } from './modules/infrastructure/servers/entities/server.entity';
@@ -27,6 +33,7 @@ import { RepositoryCredentialEntity } from './modules/repositories/entities/repo
 import { GitHubIntegrationConfigEntity } from './modules/repositories/entities/github-integration-config.entity';
 import { GitHubAppInstallationEntity } from './modules/repositories/entities/github-app-installation.entity';
 import { GithubUserTokenEntity } from './modules/repositories/entities/github-user-token.entity';
+import { GithubAppManifestStateEntity } from './modules/repositories/entities/github-app-manifest-state.entity';
 import { ImagesModule } from './modules/images/images.module';
 import { ClusterFirewallEntity } from './modules/infrastructure/firewalls/entities/cluster-firewall.entity';
 import { FirewallEntity } from './modules/infrastructure/firewalls/entities/firewall.entity';
@@ -115,6 +122,7 @@ import { TopologyModule } from './modules/topology/topology.module';
           GitHubIntegrationConfigEntity,
           GitHubAppInstallationEntity,
           GithubUserTokenEntity,
+          GithubAppManifestStateEntity,
           ClusterFirewallEntity,
           FirewallEntity,
           VNetEntity,
@@ -146,6 +154,9 @@ import { TopologyModule } from './modules/topology/topology.module';
           BackupArtifactEntity,
           BackupArtifactLocationEntity,
           RestoreJobEntity,
+          InferenceConnectionEntity,
+          AssistantMessageLogEntity,
+          McpToolCallLogEntity,
         ],
         synchronize: true, // Solo per development!
       }),
@@ -169,6 +180,9 @@ import { TopologyModule } from './modules/topology/topology.module';
     AccessModule,
     InstancesModule,
     ManagementModule,
+    InferenceModule,
+    AssistantModule,
+    McpModule,
     InfrastructureModule,
     TerminalModule,
     RepositoriesModule,

@@ -10,4 +10,6 @@ export interface AuthenticatedUser {
   roles: Record<string, Record<string, string>>;
   role: IdentityRole;
   isAdmin?: boolean;
+  /** OAuth-style granted scopes, when the credential carries them (API key / token claim). */
+  scopes?: string[];
 }

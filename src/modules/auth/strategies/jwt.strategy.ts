@@ -100,6 +100,9 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       roles,
       role: user.role,
       isAdmin: user.isAdmin,
+      scopes: payload.scope
+        ? payload.scope.split(' ').filter(Boolean)
+        : undefined,
     };
   }
 
