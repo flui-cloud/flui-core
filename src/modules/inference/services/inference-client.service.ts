@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import axios from 'axios';
+import { filterAssistantModels } from '../utils/model-filter.util';
 
 interface OpenAiModelsResponse {
   data?: Array<{ id: string }>;
@@ -13,6 +14,7 @@ export class InferenceClientService {
       headers: { Authorization: `Bearer ${apiKey}` },
       timeout: 10000,
     });
-    return (response.data?.data ?? []).map((m) => m.id);
+    const ids = (response.data?.data ?? []).map((m) => m.id);
+    return filterAssistantModels(ids);
   }
 }

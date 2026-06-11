@@ -19,4 +19,10 @@ export class InferenceProviderInfoDto {
     description: 'Live model ids when configured',
   })
   models: string[];
+
+  @ApiProperty({
+    description: 'Default chat model used when none is specified',
+    required: false,
+  })
+  defaultModel?: string;
 }

@@ -9,10 +9,11 @@ export class ValidationResultDto {
 
   @ApiPropertyOptional({ description: 'Validation details' })
   details?: {
-    apiAccess: boolean;
-    readPermissions: boolean;
-    writePermissions: boolean;
-    regionsDiscovered: number;
+    apiAccess?: boolean;
+    readPermissions?: boolean;
+    writePermissions?: boolean;
+    regionsDiscovered?: number;
+    models?: string[];
     [key: string]: any;
   };
 

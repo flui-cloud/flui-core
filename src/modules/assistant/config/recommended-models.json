@@ -1,0 +1,45 @@
+{
+  "recommendedProvider": {
+    "key": "mistral",
+    "label": "Mistral",
+    "reason": "Generous free tier — recommended to get started",
+    "defaultModel": "mistral-small-2506"
+  },
+  "groups": [
+    {
+      "key": "scaleway",
+      "matchProvider": "scaleway",
+      "models": [
+        {
+          "model": "mistral-small-3.2-24b-instruct-2506",
+          "description": "Fast · best value for tool use",
+          "isDefault": true
+        },
+        {
+          "model": "devstral-2-123b-instruct-2512",
+          "description": "Balanced · stronger reasoning"
+        },
+        {
+          "model": "qwen3-235b-a22b-instruct-2507",
+          "description": "Most capable · complex tasks"
+        }
+      ]
+    },
+    {
+      "key": "mistral",
+      "matchConnectionHost": "api.mistral.ai",
+      "models": [
+        {
+          "model": "mistral-small-2506",
+          "description": "Recommended default · best value for tool use",
+          "isDefault": true
+        },
+        {
+          "model": "mistral-medium-2508",
+          "description": "Balanced · stronger reasoning",
+          "note": "Not recommended on free plan"
+        }
+      ]
+    }
+  ]
+}

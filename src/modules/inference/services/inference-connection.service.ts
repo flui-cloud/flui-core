@@ -29,11 +29,13 @@ export class InferenceConnectionService {
     if (dto.isDefault) {
       await this.repository.clearDefault();
     }
+    const models =
+      dto.models ?? (await this.discoverModels(dto.baseUrl, dto.apiKey));
     const entity = await this.repository.create({
       label: dto.label,
       baseUrl: dto.baseUrl,
       encryptedApiKey: this.keyStorage.encryptKeyToString(dto.apiKey),
-      models: dto.models ?? [],
+      models,
       isDefault: dto.isDefault ?? false,
     });
     return InferenceConnectionDto.fromEntity(entity);
@@ -59,15 +61,28 @@ export class InferenceConnectionService {
         endpoint.baseUrl,
         endpoint.apiKey,
       );
+      await this.repository.updateModels(id, models);
       return {
         success: true,
         message: `Valid — ${models.length} models reachable`,
+        details: { models },
       };
     } catch (error) {
       if (error.response?.status === 401 || error.response?.status === 403) {
         return { success: false, message: 'Invalid API key' };
       }
       return { success: false, message: `Validation failed: ${error.message}` };
+    }
+  }
+
+  private async discoverModels(
+    baseUrl: string,
+    apiKey: string,
+  ): Promise<string[]> {
+    try {
+      return await this.client.listModelIds(baseUrl, apiKey);
+    } catch {
+      return [];
     }
   }
 

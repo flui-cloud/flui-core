@@ -43,6 +43,10 @@ export class InferenceConnectionRepository {
     await this.repo.update({ is_default: true }, { is_default: false });
   }
 
+  async updateModels(id: string, models: string[]): Promise<void> {
+    await this.repo.update({ id }, { models });
+  }
+
   async delete(id: string): Promise<boolean> {
     const result = await this.repo.delete({ id });
     return result.affected > 0;

@@ -44,6 +44,7 @@ export class InferenceProviderService {
           euDataResidency: inference.euDataResidency,
           configured,
           models,
+          defaultModel: inference.defaultModel,
         };
       }),
     );
