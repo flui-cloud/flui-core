@@ -47,15 +47,13 @@ const app = (over: Partial<ApplicationEntity>): ApplicationEntity =>
 describe('ApplicationService.toResponseDtosWithUrls', () => {
   it('builds the authoritative public URL from the endpoint fqdn (https + root path)', async () => {
     const fqdns: FqdnMap = new Map([
-      ['a1', 'it-tools-125d30-3l6a9w.51-15-211-217.nip.io'],
+      ['a1', 'it-tools-125d30-3l6a9w.203-0-113-7.nip.io'],
     ]);
     const { service } = makeService(fqdns);
 
     const [dto] = await service.toResponseDtosWithUrls([app({ id: 'a1' })]);
 
-    expect(dto.url).toBe(
-      'https://it-tools-125d30-3l6a9w.51-15-211-217.nip.io/',
-    );
+    expect(dto.url).toBe('https://it-tools-125d30-3l6a9w.203-0-113-7.nip.io/');
   });
 
   it('honours the catalog entrypointPath when composing the link', async () => {

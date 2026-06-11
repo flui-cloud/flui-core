@@ -8,8 +8,8 @@ import {
 describe('url-guard.util', () => {
   describe('normalizeUrl / hostOf', () => {
     it('drops a trailing slash and surrounding punctuation', () => {
-      expect(normalizeUrl('https://a-b.51-15-211-217.nip.io/.')).toBe(
-        'https://a-b.51-15-211-217.nip.io',
+      expect(normalizeUrl('https://a-b.203-0-113-7.nip.io/.')).toBe(
+        'https://a-b.203-0-113-7.nip.io',
       );
     });
     it('lowercases and extracts the host', () => {
@@ -22,18 +22,18 @@ describe('url-guard.util', () => {
   describe('collectHosts', () => {
     it('gathers every host from tool-result / user text', () => {
       const hosts = collectHosts([
-        '{"url":"https://it-tools-3l6a9w.51-15-211-217.nip.io/"}',
+        '{"url":"https://it-tools-3l6a9w.203-0-113-7.nip.io/"}',
         'la mia app è su https://my-app.acme.com',
       ]);
       expect(hosts).toEqual(
-        new Set(['it-tools-3l6a9w.51-15-211-217.nip.io', 'my-app.acme.com']),
+        new Set(['it-tools-3l6a9w.203-0-113-7.nip.io', 'my-app.acme.com']),
       );
     });
   });
 
   describe('findUnverifiedUrls', () => {
     it('flags a URL whose host is not in the allow-set (mode-agnostic)', () => {
-      const allowed = new Set(['it-tools-3l6a9w.51-15-211-217.nip.io']);
+      const allowed = new Set(['it-tools-3l6a9w.203-0-113-7.nip.io']);
       // Fabricated immich URL under a DIFFERENT domain — slug/domain heuristics miss this.
       const content =
         "L'endpoint di Immich è https://immich-444f95-server.flui.app.";
