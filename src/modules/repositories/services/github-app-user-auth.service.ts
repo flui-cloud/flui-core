@@ -18,6 +18,7 @@ import { GitHubAuthMethod } from '../enums/github-auth-method.enum';
 import { EncryptionService } from '../../shared/encryption/services/encryption.service';
 import { GitHubIntegrationConfigService } from './github-integration-config.service';
 import { GhcrPatAuditService } from './ghcr-pat-audit.service';
+import { GithubAppInstallStateService } from './github-app-install-state.service';
 import { CredentialStatus, GhcrPatStatusDto } from '../dto/ghcr-pat.dto';
 
 export interface ExchangedTokens {
@@ -53,9 +54,32 @@ export class GithubAppUserAuthService {
     private readonly configService: ConfigService,
     private readonly integrationConfig: GitHubIntegrationConfigService,
     private readonly audit: GhcrPatAuditService,
+    private readonly stateStore: GithubAppInstallStateService,
   ) {}
 
   static readonly EXPIRING_SOON_DAYS = 14;
+
+  /**
+   * The connect flow for a user, surface-agnostic: if already connected returns
+   * `alreadyConnected`, otherwise an `installUrl` to open in a browser. Mirrors the
+   * controller's GET /install-url logic so an agent tool can return the same URL the
+   * dashboard uses — no OAuth done by the agent, the URL is generated server-side.
+   */
+  async getConnectFlow(userId: string): Promise<{
+    alreadyConnected: boolean;
+    login?: string;
+    installUrl?: string;
+  }> {
+    const status = await this.getConnectionStatus(userId);
+    if (status.connected && (status.installationsCount ?? 0) > 0) {
+      return { alreadyConnected: true, login: status.login };
+    }
+    const state = this.stateStore.issue(userId);
+    const installUrl = status.connected
+      ? await this.buildInstallOnlyUrl(state)
+      : await this.buildInstallUrl(state);
+    return { alreadyConnected: false, installUrl };
+  }
 
   /**
    * Build the GitHub URL the user should be redirected to in order to connect

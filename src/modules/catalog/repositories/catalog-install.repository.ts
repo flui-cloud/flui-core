@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository as TypeOrmRepository, IsNull } from 'typeorm';
+import { Repository as TypeOrmRepository, In, IsNull } from 'typeorm';
 import { CatalogInstallEntity } from '../entities/catalog-install.entity';
 import { CatalogInstallStatus } from '../enums/catalog-install-status.enum';
 
@@ -16,6 +16,17 @@ export class CatalogInstallRepository {
   ): Promise<CatalogInstallEntity> {
     const entity = this.repository.create(data);
     return this.repository.save(entity);
+  }
+
+  async existingResolvedFqdns(hosts: string[]): Promise<string[]> {
+    if (hosts.length === 0) return [];
+    const rows = await this.repository.find({
+      where: { resolvedFqdn: In(hosts), deletedAt: IsNull() },
+      select: ['resolvedFqdn'],
+    });
+    return rows
+      .map((r) => r.resolvedFqdn)
+      .filter((fqdn): fqdn is string => !!fqdn);
   }
 
   async findById(id: string): Promise<CatalogInstallEntity | null> {

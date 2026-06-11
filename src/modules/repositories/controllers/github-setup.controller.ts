@@ -168,42 +168,16 @@ export class GitHubSetupController {
       dto.publicApiUrl ?? this.resolvePublicApiUrl(req),
     );
 
-    const callbackUrl = `${publicApiUrl}/api/v1/repositories/github-app/user-callback`;
-    const webhookUrl = dto.webhooksEnabled
-      ? `${publicApiUrl}/api/v1/webhooks/github-app`
-      : '';
-
-    const state = this.manifestState.issue(user.userId, callbackUrl);
-    const redirectUrl = `${publicApiUrl}/api/v1/repositories/github/setup/github-app/manifest-callback/${state}`;
-
-    const manifestJson: Record<string, unknown> = {
+    const result = await this.manifestState.buildManifestStart(user.userId, {
       name: dto.name,
-      url: publicApiUrl,
-      redirect_url: redirectUrl,
-      callback_urls: [callbackUrl],
-      public: dto.publicApp ?? false,
-      request_oauth_on_install: true,
-      hook_attributes: { url: webhookUrl, active: dto.webhooksEnabled },
-      default_permissions: {
-        contents: 'write',
-        metadata: 'read',
-        actions: 'write',
-        workflows: 'write',
-        packages: 'write',
-        pull_requests: 'write',
-      },
-      default_events: ['workflow_run', 'push', 'pull_request'],
-    };
+      publicApiUrl,
+      webhooksEnabled: dto.webhooksEnabled,
+      publicApp: dto.publicApp,
+    });
 
-    this.logger.log(
-      `manifest-start: publicApiUrl=${publicApiUrl} redirect_url=${redirectUrl}`,
-    );
+    this.logger.log(`manifest-start: publicApiUrl=${publicApiUrl}`);
 
-    return {
-      manifestJson,
-      githubUrl: 'https://github.com/settings/apps/new',
-      state,
-    };
+    return result;
   }
 
   private normalizePublicApiUrl(raw: string): string {
@@ -258,7 +232,7 @@ export class GitHubSetupController {
       return;
     }
 
-    const consumed = this.manifestState.consume(state);
+    const consumed = await this.manifestState.consume(state);
     if (!consumed) {
       res.redirect(
         `${returnTo}?manifest=error&reason=invalid_or_expired_state`,

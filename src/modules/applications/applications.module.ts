@@ -131,6 +131,7 @@ import { StorageModule } from '../storage/storage.module';
   exports: [
     ApplicationService,
     ApplicationDeployService,
+    ApplicationSourceDeployService,
     ApplicationReconciliationService,
     ApplicationsRepository,
     AppRevisionsRepository,

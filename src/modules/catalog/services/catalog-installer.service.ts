@@ -27,6 +27,17 @@ import { InstallCatalogAppDto } from '../dto/install-catalog-app.dto';
 import { ApplicationsRepository } from '../../applications/repositories/applications.repository';
 import { ApplicationDeployService } from '../../applications/services/application-deploy.service';
 import { CatalogLinkingService } from './catalog-linking.service';
+import { CatalogService } from './catalog.service';
+import { ClustersService } from '../../infrastructure/clusters/clusters.service';
+import {
+  CatalogManifest,
+  CatalogResources,
+  CatalogScaling,
+} from '../interfaces/catalog-manifest.interface';
+import {
+  parseCpuMillicores,
+  parseMemoryMB,
+} from '../../topology/services/topology-k8s.helper';
 
 export const CATALOG_INSTALL_QUEUE = 'catalog-install';
 export const CATALOG_INSTALL_JOB = 'install-catalog-app';
@@ -56,6 +67,8 @@ export class CatalogInstallerService {
     private readonly applicationsRepo: ApplicationsRepository,
     private readonly deployService: ApplicationDeployService,
     private readonly linkingService: CatalogLinkingService,
+    private readonly catalogService: CatalogService,
+    private readonly clustersService: ClustersService,
   ) {}
 
   async install(
@@ -76,6 +89,17 @@ export class CatalogInstallerService {
 
     this.validateUserInputs(definition, dto);
     this.validateDependencyChoices(definition, dto);
+    // Preflight the same requirements↔cluster gate as the dashboard controller, so
+    // every caller (HTTP, install-from-yaml, MCP/agent) fails fast with the structured
+    // reason instead of enqueuing a job that dies at create-applications.
+    await this.catalogService.assertCatalogAppInstallableOnCluster(
+      slug,
+      dto.clusterId,
+    );
+    // Capacity gate (parity with the dashboard deploy wizard): sum the resource
+    // requests of every component this install will create and refuse if the cluster
+    // cannot fit them within its 10% safety margin (unless autoscaling absorbs it).
+    await this.assertClusterHasCapacity(definition, dto);
 
     const installSlug = `${definition.slug}-${this.randomSuffix()}`;
 
@@ -230,6 +254,117 @@ export class CatalogInstallerService {
     );
 
     return { install, operation: savedOperation };
+  }
+
+  /**
+   * Uninstall by the application id (what callers see in app listings) rather than
+   * the internal install id: resolves the catalog install that owns the app on its
+   * cluster, then delegates to {@link uninstall}.
+   */
+  /**
+   * Resolve the catalog install that owns an application id on its cluster, or null
+   * when the app was not created by a catalog install (a custom/source app). Lets
+   * callers route removal to uninstall (whole install) vs delete (single app).
+   */
+  async findInstallByApplicationId(
+    applicationId: string,
+    clusterId: string,
+  ): Promise<CatalogInstallEntity | null> {
+    const installs = await this.installRepo.listByCluster(clusterId);
+    return (
+      installs.find((i) => i.applicationIds?.includes(applicationId)) ?? null
+    );
+  }
+
+  /** Of the candidate hostnames, those that are a catalog install's resolved fqdn. */
+  async existingResolvedFqdns(hosts: string[]): Promise<string[]> {
+    return this.installRepo.existingResolvedFqdns(hosts);
+  }
+
+  /**
+   * Refuse the install when the cluster cannot fit the sum of all its components'
+   * CPU/memory requests (within the 10% safety margin). Same check the dashboard
+   * deploy wizard runs before enabling the button — applied server-side so every
+   * surface (HTTP, install-from-yaml, MCP/agent) honours it.
+   */
+  private async assertClusterHasCapacity(
+    definition: CatalogAppDefinitionEntity,
+    dto: InstallCatalogAppDto,
+  ): Promise<void> {
+    let totalCpu = 0;
+    let totalMemory = 0;
+    for (const c of this.enumerateInstallComponents(
+      definition.manifest,
+      dto.options ?? {},
+    )) {
+      // CPU is compressible — oversubscription only throttles — so gate on the
+      // scheduling floor (requests). Memory is incompressible: a pod holds RAM up
+      // to its limit and the node OOMs past allocatable, so gate on the peak
+      // (limits, falling back to requests when a component declares none).
+      const memory =
+        c.resources?.limits?.memory ?? c.resources?.requests?.memory;
+      totalCpu += parseCpuMillicores(c.resources?.requests?.cpu) * c.replicas;
+      totalMemory += parseMemoryMB(memory) * c.replicas;
+    }
+    if (totalCpu === 0 && totalMemory === 0) return;
+
+    const check = await this.clustersService.checkResourceAvailability(
+      dto.clusterId,
+      totalCpu,
+      totalMemory,
+      1,
+    );
+    if (!check.canDeploy) {
+      throw new BadRequestException(
+        `Not enough capacity on the cluster to install ${definition.name}: it needs about ${totalCpu}m CPU and up to ${totalMemory}Mi memory at peak, but only ${check.available.cpu} CPU and ${check.available.memory} memory are free (a 10% safety margin is kept). Free up resources (remove unused apps) or add capacity to the cluster, then try again.`,
+      );
+    }
+  }
+
+  /** Components an install will create, each with its declared resources + replicas. */
+  private enumerateInstallComponents(
+    manifest: CatalogManifest,
+    options: Record<string, boolean>,
+  ): Array<{ resources?: CatalogResources; replicas: number }> {
+    const replicasOf = (scaling?: CatalogScaling): number =>
+      scaling?.horizontal?.enabled ? (scaling.horizontal.min ?? 1) : 1;
+    if (manifest.spec.type === CatalogAppType.COMPOSED) {
+      const spec = manifest.spec;
+      return spec.components
+        .filter((c) => {
+          const opt = c.when?.option;
+          if (!opt) return true;
+          const fallback =
+            spec.options?.find((o) => o.key === opt)?.default ?? false;
+          return options[opt] ?? fallback;
+        })
+        .map((c) => ({
+          resources: c.resources,
+          replicas: replicasOf(c.scaling),
+        }));
+    }
+    const spec = manifest.spec;
+    return [{ resources: spec.resources, replicas: replicasOf(spec.scaling) }];
+  }
+
+  async uninstallByApplicationId(
+    applicationId: string,
+    clusterId: string,
+    userId?: string,
+  ): Promise<{
+    install: CatalogInstallEntity;
+    operation: InfrastructureOperationEntity;
+  }> {
+    const match = await this.findInstallByApplicationId(
+      applicationId,
+      clusterId,
+    );
+    if (!match) {
+      throw new BadRequestException(
+        `Application ${applicationId} is not a catalog install — use the delete action instead.`,
+      );
+    }
+    return this.uninstall(match.id, userId);
   }
 
   async uninstall(

@@ -60,9 +60,30 @@ export class RepositoriesService {
   ) {}
 
   /**
-   * @deprecated Use importRepositories with OAuth instead
-   * Legacy method for connecting repositories with Personal Access Token
+   * Connect a repository by URL, resolving the user's GitHub token SERVER-SIDE.
+   * Lets an agent connect `owner/repo` without ever handling the access token
+   * (credentials stay out of the LLM). Requires GitHub already connected.
    */
+  async connectRepositoryByUrl(
+    userId: string,
+    repositoryUrl: string,
+    autoDeployEnabled = false,
+  ): Promise<ConnectRepositoryResponseDto> {
+    const parsed = this.gitValidationService.parseGitUrl(repositoryUrl);
+    if (!parsed) {
+      throw new BadRequestException('Failed to parse Git repository URL');
+    }
+    const owner = parsed.fullName.split('/')[0];
+    const accessToken = await this.tokenResolver.getAccessToken(userId, owner);
+    return this.connectRepository(
+      userId,
+      repositoryUrl,
+      accessToken,
+      GitProvider.GITHUB,
+      autoDeployEnabled,
+    );
+  }
+
   async connectRepository(
     userId: string,
     repositoryUrl: string,

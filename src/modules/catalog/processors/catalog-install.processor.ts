@@ -597,8 +597,9 @@ export class CatalogInstallProcessor {
       privatizable && install.requestedExposure === 'internal'
         ? 'internal'
         : manifestExposure;
-    const exposure: ApplicationExposure =
-      isBuildingBlock || effectiveExposure === 'internal'
+    const exposure: ApplicationExposure = isBuildingBlock
+      ? ApplicationExposure.CLUSTER
+      : effectiveExposure === 'internal'
         ? ApplicationExposure.INTERNAL
         : ApplicationExposure.PUBLIC;
 
