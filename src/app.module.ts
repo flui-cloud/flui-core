@@ -33,6 +33,7 @@ import { RepositoryCredentialEntity } from './modules/repositories/entities/repo
 import { GitHubIntegrationConfigEntity } from './modules/repositories/entities/github-integration-config.entity';
 import { GitHubAppInstallationEntity } from './modules/repositories/entities/github-app-installation.entity';
 import { GithubUserTokenEntity } from './modules/repositories/entities/github-user-token.entity';
+import { GithubAppManifestStateEntity } from './modules/repositories/entities/github-app-manifest-state.entity';
 import { ImagesModule } from './modules/images/images.module';
 import { ClusterFirewallEntity } from './modules/infrastructure/firewalls/entities/cluster-firewall.entity';
 import { FirewallEntity } from './modules/infrastructure/firewalls/entities/firewall.entity';
@@ -121,6 +122,7 @@ import { TopologyModule } from './modules/topology/topology.module';
           GitHubIntegrationConfigEntity,
           GitHubAppInstallationEntity,
           GithubUserTokenEntity,
+          GithubAppManifestStateEntity,
           ClusterFirewallEntity,
           FirewallEntity,
           VNetEntity,

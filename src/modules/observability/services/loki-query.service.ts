@@ -189,6 +189,44 @@ export class LokiQueryService {
   }
 
   /**
+   * List the queryable log sources for a cluster: the distinct `app` and `namespace`
+   * label values Loki has indexed. Lets a caller discover the exact (lowercase, indexed)
+   * labels instead of guessing from a display name — the selector is exact-match, so a
+   * near-miss silently returns nothing.
+   */
+  async getLogSources(
+    clusterId: string,
+  ): Promise<{ apps: string[]; namespaces: string[] }> {
+    const now = Date.now();
+    const params: Record<string, string | number> = {
+      'match[]': `{cluster_id="${clusterId}"}`,
+      start: (now - 24 * 60 * 60 * 1000) * 1000000,
+      end: now * 1000000,
+    };
+    try {
+      const res = await this.lokiGet<{ data?: Record<string, string>[] }>(
+        '/loki/api/v1/series',
+        params,
+      );
+      const streams = res.data?.data ?? [];
+      const distinct = (key: string): string[] =>
+        [
+          ...new Set(
+            streams
+              .map((s) => s[key])
+              .filter(
+                (v): v is string => typeof v === 'string' && v.length > 0,
+              ),
+          ),
+        ].sort((a, b) => a.localeCompare(b));
+      return { apps: distinct('app'), namespaces: distinct('namespace') };
+    } catch (error) {
+      this.logger.error(`Loki series query failed: ${error.message}`);
+      throw new Error(`Loki sources query failed: ${error.message}`);
+    }
+  }
+
+  /**
    * Get logs for a specific server
    */
   async getServerLogs(

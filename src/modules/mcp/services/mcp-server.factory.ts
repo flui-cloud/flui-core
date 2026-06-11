@@ -3,16 +3,25 @@ import { ConfigService } from '@nestjs/config';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { AuthenticatedUser } from '../../auth/interfaces/authenticated-user.interface';
 import { CatalogService } from '../../catalog/services/catalog.service';
+import { CatalogInstallerService } from '../../catalog/services/catalog-installer.service';
 import { ApplicationService } from '../../applications/services/application.service';
 import { ApplicationDeployService } from '../../applications/services/application-deploy.service';
+import { AppManagementService } from '../../applications/services/app-management.service';
+import { ApplicationReleaseService } from '../../applications/services/application-release.service';
+import { ApplicationSourceDeployService } from '../../applications/services/application-source-deploy.service';
+import { TemplatesService } from '../../templates/templates.service';
+import { RepositoriesService } from '../../repositories/services/repositories.service';
+import { GitHubOAuthService } from '../../repositories/services/github-oauth.service';
+import { GithubAppUserAuthService } from '../../repositories/services/github-app-user-auth.service';
+import { GithubAppManifestStateService } from '../../repositories/services/github-app-manifest-state.service';
 import { LokiQueryService } from '../../observability/services/loki-query.service';
+import { ClustersService } from '../../infrastructure/clusters/clusters.service';
+import { InfrastructureOperationsService } from '../../infrastructure/operations/infrastructure-operations.service';
+import { PodDebugService } from '../../scaling/services/pod-debug.service';
 import { McpAuditRepository } from '../repositories/mcp-audit.repository';
 import { McpScopeResolver } from './mcp-scope.resolver';
-import { McpToolContext } from '../tools/mcp-tool.util';
-import { registerCatalogTools } from '../tools/catalog.tools';
-import { registerSpecTools } from '../tools/spec.tools';
-import { registerApplicationTools } from '../tools/application.tools';
-import { registerObservabilityTools } from '../tools/observability.tools';
+import { McpToolContext, runGated } from '../tools/mcp-tool.util';
+import { ALL_TOOLS } from '../tools/tool-registry';
 
 export const MCP_SERVER_NAME = 'flui';
 export const MCP_SERVER_VERSION = '0.1.0';
@@ -30,9 +39,21 @@ export class McpServerFactory {
     private readonly audit: McpAuditRepository,
     private readonly config: ConfigService,
     private readonly catalog: CatalogService,
+    private readonly installer: CatalogInstallerService,
     private readonly apps: ApplicationService,
     private readonly deploy: ApplicationDeployService,
+    private readonly management: AppManagementService,
+    private readonly releases: ApplicationReleaseService,
+    private readonly sourceDeploy: ApplicationSourceDeployService,
+    private readonly templates: TemplatesService,
+    private readonly repos: RepositoriesService,
+    private readonly github: GitHubOAuthService,
+    private readonly githubAuth: GithubAppUserAuthService,
+    private readonly githubManifest: GithubAppManifestStateService,
     private readonly loki: LokiQueryService,
+    private readonly clusters: ClustersService,
+    private readonly operations: InfrastructureOperationsService,
+    private readonly podDebug: PodDebugService,
   ) {}
 
   build(user: AuthenticatedUser): McpServer {
@@ -49,16 +70,31 @@ export class McpServerFactory {
       audit: this.audit,
       services: {
         catalog: this.catalog,
+        installer: this.installer,
         apps: this.apps,
         deploy: this.deploy,
+        management: this.management,
+        releases: this.releases,
+        sourceDeploy: this.sourceDeploy,
+        templates: this.templates,
+        repos: this.repos,
+        github: this.github,
+        githubAuth: this.githubAuth,
+        githubManifest: this.githubManifest,
         loki: this.loki,
+        clusters: this.clusters,
+        operations: this.operations,
+        podDebug: this.podDebug,
       },
     };
 
-    registerCatalogTools(server, ctx);
-    registerSpecTools(server, ctx);
-    registerApplicationTools(server, ctx);
-    registerObservabilityTools(server, ctx);
+    for (const def of ALL_TOOLS) {
+      server.registerTool(
+        def.name,
+        { description: def.description, inputSchema: def.inputSchema },
+        (args) => runGated(ctx, def.name, def.scope, () => def.run(args, ctx)),
+      );
+    }
 
     return server;
   }

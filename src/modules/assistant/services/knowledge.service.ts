@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { CompiledKb, KbCompatibility, KbSection } from '../knowledge/kb.types';
+import { CONTINUATION_REMINDER, SYSTEM_REMINDER } from '../policy';
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 import kbData = require('../knowledge/dist/kb.json');
 
@@ -8,6 +9,14 @@ const KB = kbData as unknown as CompiledKb;
 // Always present even when routing returns nothing usable, so a vague Flui question
 // still gets grounded context instead of the whole 76k-token corpus.
 const FALLBACK_SECTION_IDS = ['concepts/00-what-is-flui'];
+
+// Published docs site (Astro Starlight). A section id is its content path under
+// src/content/docs minus the extension, so the public route is one pure function of
+// the id — no per-page mapping to maintain. Only `flui-docs` sections have a page;
+// the generated CLI reference (oclif-manifest) and the schema (flui-spec) do not.
+const DOCS_BASE = 'https://docs.flui.cloud';
+const DOCS_SOURCE = 'flui-docs';
+const MAX_DOC_LINKS = 3;
 
 /**
  * Serves the baked knowledge base as the assistant's system context. Guardrails + version
@@ -20,12 +29,8 @@ export class KnowledgeService {
     KB.sections.map((s) => [s.id, s]),
   );
   private readonly binding = this.composeBinding();
-  private readonly reminder = [
-    '# Reminder',
-    'You are the Flui Assistant. Use only the Flui knowledge above.',
-    'If a request is not about Flui, refuse briefly and redirect — do not answer it.',
-    "If the answer isn't in the knowledge above, say you don't have it and point to `flui <command> --help` or the docs. Never invent commands, flags, fields, or version numbers.",
-  ].join('\n');
+  private readonly reminder = SYSTEM_REMINDER;
+  private readonly continuationReminder = CONTINUATION_REMINDER;
 
   /** Compact id — title list the router selects from. */
   getIndexPrompt(): string {
@@ -46,6 +51,40 @@ export class KnowledgeService {
       corpus,
       this.reminder,
     ].join('\n\n');
+  }
+
+  /**
+   * Lean system context for tool-continuation iterations and the final synthesis:
+   * guardrails + version binding only, WITHOUT the KB corpus. The corpus grounds the
+   * first decision (answer vs. act); re-sending it each loop iteration is pure token
+   * burn (and trips per-minute rate limits on small models). Guardrails persist.
+   */
+  getBaseContext(): string {
+    return [KB.guardrails, this.binding, this.continuationReminder].join(
+      '\n\n',
+    );
+  }
+
+  /**
+   * Canonical documentation links for the sections the router grounded this turn in,
+   * resolved deterministically (id → docs route) so the model never composes a doc URL.
+   * Capped and deduped; sections without a published page (generated reference, schema)
+   * are skipped.
+   */
+  docLinksFor(sectionIds?: string[]): { title: string; url: string }[] {
+    if (!sectionIds?.length) return [];
+    const seen = new Set<string>();
+    const links: { title: string; url: string }[] = [];
+    for (const id of sectionIds) {
+      const section = this.sectionsById.get(id);
+      if (!section) continue;
+      if (section.source !== DOCS_SOURCE || seen.has(section.id)) continue;
+      seen.add(section.id);
+      const path = section.id.replace(/\/index$/, '');
+      links.push({ title: section.title, url: `${DOCS_BASE}/${path}/` });
+      if (links.length >= MAX_DOC_LINKS) break;
+    }
+    return links;
   }
 
   getInfo(): {

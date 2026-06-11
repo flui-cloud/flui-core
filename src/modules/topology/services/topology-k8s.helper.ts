@@ -104,13 +104,13 @@ function parseMemoryBytes(s: string): number {
   return value * (map[unit] ?? 1);
 }
 
-function parseCpuMillicores(s?: string | null): number {
+export function parseCpuMillicores(s?: string | null): number {
   if (!s) return 0;
   if (s.endsWith('m')) return Number.parseInt(s.slice(0, -1), 10);
   return Math.round(Number.parseFloat(s) * 1000);
 }
 
-function parseMemoryMB(s?: string | null): number {
+export function parseMemoryMB(s?: string | null): number {
   if (!s) return 0;
   return Math.round(parseMemoryBytes(s) / (1024 * 1024));
 }
