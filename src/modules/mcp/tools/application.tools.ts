@@ -204,6 +204,7 @@ export const APPLICATION_TOOLS: ToolDef[] = [
       const apps = data as Array<{
         id?: string;
         name?: string;
+        slug?: string;
         status?: string;
         kind?: string;
         url?: string;
@@ -212,6 +213,7 @@ export const APPLICATION_TOOLS: ToolDef[] = [
       return apps.map((a) => ({
         id: a.id,
         name: a.name,
+        slug: a.slug,
         status: a.status,
         kind: a.kind,
         url: a.url ?? a.internalUrl ?? NO_ENDPOINT,

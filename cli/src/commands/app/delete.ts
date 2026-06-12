@@ -1,7 +1,10 @@
 import { Args, Command, Flags } from '@oclif/core';
 import chalk from 'chalk';
 import ora from 'ora';
-import { CliAppService } from '../../lib/services/cli-app.service';
+import {
+  CliAppService,
+  DeleteTarget,
+} from '../../lib/services/cli-app.service';
 import { resolveCluster } from '../../lib/resolve-cluster';
 import { confirmByTypingPrompt } from '../../lib/prompts';
 
@@ -58,68 +61,47 @@ export default class AppDelete extends Command {
       this.exit(1);
     }
 
-    let app: Awaited<ReturnType<CliAppService['getAppByName']>>;
+    let target: Awaited<ReturnType<CliAppService['resolveDeleteTarget']>>;
     try {
-      app = await service.getAppByName(args.name);
+      target = await service.resolveDeleteTarget(args.name);
     } catch (error: any) {
       spinner.fail('App not found');
       console.log(chalk.red(`\n  Error: ${error.message}\n`));
       this.exit(1);
     }
 
-    const detail = await service.getAppDetail(app.id);
+    const isCatalog = target.kind === 'composed';
+    let isSystemProtected = false;
+    if (!isCatalog && target.appId) {
+      const detail = await service.getAppDetail(target.appId);
+      isSystemProtected = detail.systemProtected === true;
+    }
     spinner.stop();
-
-    const isCatalog = !!detail.catalogInstallId;
-    const isSystemProtected = detail.systemProtected === true;
 
     if (isSystemProtected && !flags.force) {
       console.log(
-        chalk.red(`\n  "${app.name}" is a system-protected application.\n`),
+        chalk.red(`\n  "${target.name}" is a system-protected application.\n`),
       );
       console.log(chalk.yellow('  Re-run with --force to delete it anyway.\n'));
       this.exit(1);
     }
 
-    console.log(
-      chalk.red(`\n  ${isCatalog ? 'UNINSTALL' : 'DELETE'} Application\n`),
+    const proceed = await this.confirmDeletion(
+      target,
+      isCatalog,
+      isSystemProtected,
+      flags.force,
     );
-    console.log(`  ${chalk.bold('Name:')}   ${app.name}`);
-    console.log(`  ${chalk.bold('Slug:')}   ${app.slug}`);
-    console.log(
-      `  ${chalk.bold('Kind:')}   ${isCatalog ? 'catalog' : 'source-deploy'}${isSystemProtected ? chalk.yellow(' (system-protected)') : ''}`,
-    );
-    console.log(`  ${chalk.bold('Status:')} ${app.status}`);
-    console.log(
-      chalk.red('\n  ALL DATA AND VOLUMES WILL BE PERMANENTLY DELETED!\n'),
-    );
-
-    if (!flags.force) {
-      console.log(
-        chalk.yellow(
-          `  To confirm, type the app name exactly: ${chalk.bold(app.name)}`,
-        ),
-      );
-      const confirmed = await confirmByTypingPrompt(
-        chalk.yellow('  App name'),
-        app.name,
-      );
-      if (!confirmed) {
-        console.log(
-          chalk.green('\n  Deletion cancelled (name did not match)\n'),
-        );
-        return;
-      }
-    }
+    if (!proceed) return;
 
     const queueSpinner = ora(
       isCatalog ? 'Queuing uninstall…' : 'Queuing delete…',
     ).start();
     try {
       if (isCatalog) {
-        await service.uninstall(detail.catalogInstallId);
+        await service.uninstall(target.catalogInstallId);
       } else {
-        await service.deleteApp(app.id);
+        await service.deleteApp(target.appId);
       }
       queueSpinner.succeed(isCatalog ? 'Uninstall queued' : 'Delete queued');
       console.log('');
@@ -139,7 +121,43 @@ export default class AppDelete extends Command {
       return;
     }
 
-    await this.waitForUninstall(service, detail.catalogInstallId, app.name);
+    await this.waitForUninstall(service, target.catalogInstallId, target.name);
+  }
+
+  private async confirmDeletion(
+    target: DeleteTarget,
+    isCatalog: boolean,
+    isSystemProtected: boolean,
+    force: boolean,
+  ): Promise<boolean> {
+    console.log(
+      chalk.red(`\n  ${isCatalog ? 'UNINSTALL' : 'DELETE'} Application\n`),
+    );
+    console.log(`  ${chalk.bold('Name:')}   ${target.name}`);
+    console.log(`  ${chalk.bold('Slug:')}   ${target.slug}`);
+    console.log(
+      `  ${chalk.bold('Kind:')}   ${isCatalog ? 'catalog' : 'source-deploy'}${isSystemProtected ? chalk.yellow(' (system-protected)') : ''}`,
+    );
+    console.log(`  ${chalk.bold('Status:')} ${target.status}`);
+    console.log(
+      chalk.red('\n  ALL DATA AND VOLUMES WILL BE PERMANENTLY DELETED!\n'),
+    );
+
+    if (force) return true;
+
+    console.log(
+      chalk.yellow(
+        `  To confirm, type the app name exactly: ${chalk.bold(target.name)}`,
+      ),
+    );
+    const confirmed = await confirmByTypingPrompt(
+      chalk.yellow('  App name'),
+      target.name,
+    );
+    if (!confirmed) {
+      console.log(chalk.green('\n  Deletion cancelled (name did not match)\n'));
+    }
+    return confirmed;
   }
 
   private async waitForUninstall(

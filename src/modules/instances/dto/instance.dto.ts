@@ -1,6 +1,7 @@
 import { ApiProperty } from '@nestjs/swagger';
 import { InstanceType } from '../entities/instance-type.enum';
 import { InstanceStatus } from '../entities/instance-status.enum';
+import { InstanceOwnership } from '../entities/instance-ownership.enum';
 import { CloudProvider } from '../../providers/enums/cloud-provider.enum';
 
 export class IpAddressConfigDto {
@@ -107,6 +108,16 @@ export class InstanceDto {
     required: false,
   })
   metadata?: any;
+
+  @ApiProperty({
+    enum: InstanceOwnership,
+    description:
+      'Ownership relative to this installation: "self" if managed by this ' +
+      'installation, "other-flui" if managed by another installation sharing ' +
+      'the same provider account, "unmanaged" if not provisioned by flui',
+    required: false,
+  })
+  ownership?: InstanceOwnership;
 
   @ApiProperty({ description: 'Creation timestamp' })
   createdAt: Date;

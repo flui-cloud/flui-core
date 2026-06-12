@@ -58,10 +58,10 @@ export default class AppList extends Command {
       console.log(chalk.cyan('\n  Applications\n'));
       console.log(
         chalk.dim(
-          `  ${'NAME'.padEnd(30)} ${'STATUS'.padEnd(14)} ${'REPLICAS'.padEnd(10)} ${'KIND'.padEnd(12)} ${'EXPOSURE'.padEnd(10)} LAST DEPLOY`,
+          `  ${'NAME'.padEnd(30)} ${'SLUG'.padEnd(26)} ${'STATUS'.padEnd(14)} ${'REPLICAS'.padEnd(10)} ${'KIND'.padEnd(12)} ${'EXPOSURE'.padEnd(10)} LAST DEPLOY`,
         ),
       );
-      console.log(chalk.dim('  ' + '─'.repeat(92)));
+      console.log(chalk.dim('  ' + '─'.repeat(119)));
 
       for (const group of groups) {
         this.printGroup(group, flags.expanded);
@@ -92,6 +92,7 @@ export default class AppList extends Command {
       const app = group.components[0];
       this.printRow({
         name: group.name,
+        slug: group.slug,
         status: group.status,
         replicas: String(app?.replicas ?? '-'),
         kind: (app?.kind || '').toLowerCase(),
@@ -105,6 +106,7 @@ export default class AppList extends Command {
     const primary = group.components.find((c) => c.isPrimary);
     this.printRow({
       name: `${marker} ${group.name} (${group.componentCount})`,
+      slug: group.slug,
       status: group.status,
       replicas: '-',
       kind: 'composed',
@@ -123,6 +125,7 @@ export default class AppList extends Command {
         : c.slug;
       this.printRow({
         name: `    ${branch} ${short}${c.isPrimary ? chalk.dim(' (primary)') : ''}`,
+        slug: c.slug,
         status: c.status,
         replicas: String(c.replicas ?? '-'),
         kind: (c.kind || '').toLowerCase(),
@@ -135,6 +138,7 @@ export default class AppList extends Command {
 
   private printRow(r: {
     name: string;
+    slug?: string;
     status: string;
     replicas: string;
     kind: string;
@@ -148,7 +152,7 @@ export default class AppList extends Command {
     const last = r.lastDeploy
       ? new Date(r.lastDeploy).toLocaleString()
       : chalk.dim('—');
-    const line = `  ${namePad} ${status} ${r.replicas.padEnd(10)} ${r.kind.padEnd(12)} ${r.exposure.padEnd(10)} ${last}`;
+    const line = `  ${namePad} ${(r.slug ?? '').padEnd(26)} ${status} ${r.replicas.padEnd(10)} ${r.kind.padEnd(12)} ${r.exposure.padEnd(10)} ${last}`;
     console.log(r.dim ? chalk.dim(line) : line);
   }
 

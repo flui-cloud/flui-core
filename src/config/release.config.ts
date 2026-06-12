@@ -18,18 +18,17 @@ export interface ComponentImageTags {
 export interface ReleaseManifest {
   /** Platform release version, recorded on the cluster at install. */
   version: string;
-  /** Git ref (tag) on flui-cloud/bootstrap-scripts holding scripts + manifests. */
   bootstrapRef: string;
   /** Pinned Docker image tags, per Flui component. */
   images: ComponentImageTags;
 }
 
 export const RELEASE: ReleaseManifest = {
-  version: '0.5.1',
-  bootstrapRef: 'v0.5.1',
+  version: '0.6.0',
+  bootstrapRef: 'master',
   images: {
-    fluiApi: '0.5.1',
-    fluiWeb: '0.5.0',
+    fluiApi: '0.6.0',
+    fluiWeb: '0.7.0',
     fluiAuthz: '0.5.0',
   },
 };

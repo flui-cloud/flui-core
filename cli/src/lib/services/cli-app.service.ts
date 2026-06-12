@@ -140,6 +140,15 @@ export interface AppDetail {
   systemProtected?: boolean;
 }
 
+export interface DeleteTarget {
+  kind: 'standalone' | 'composed';
+  name: string;
+  slug: string;
+  status: string;
+  appId?: string;
+  catalogInstallId?: string;
+}
+
 export interface UninstallResult {
   id: string;
   status: string;
@@ -274,6 +283,49 @@ export class CliAppService {
       throw new Error(`App "${name}" not found in cluster.`);
     }
     return app;
+  }
+
+  // Group-aware: a composed catalog install matches by its bundle name/slug (or
+  // any component's) and removal uninstalls the whole bundle; the flat listing
+  // only carries components, so name/slug lookup there can't see the bundle.
+  async resolveDeleteTarget(name: string): Promise<DeleteTarget> {
+    const groups = await this.listAppGroups();
+    const q = name.toLowerCase();
+
+    const group = groups.find(
+      (g) => g.name.toLowerCase() === q || g.slug.toLowerCase() === q,
+    );
+    if (group) return this.toDeleteTarget(group);
+
+    for (const g of groups) {
+      const hit = g.components.some(
+        (c) => c.name.toLowerCase() === q || c.slug.toLowerCase() === q,
+      );
+      if (hit) return this.toDeleteTarget(g);
+    }
+
+    throw new Error(`App "${name}" not found in cluster.`);
+  }
+
+  private toDeleteTarget(group: AppGroup): DeleteTarget {
+    if (group.type === 'composed') {
+      return {
+        kind: 'composed',
+        name: group.name,
+        slug: group.slug,
+        status: group.status,
+        catalogInstallId: group.catalogInstallId ?? group.id,
+      };
+    }
+    const app =
+      group.components.find((c) => c.isPrimary) ?? group.components[0];
+    return {
+      kind: 'standalone',
+      name: group.name,
+      slug: group.slug,
+      status: group.status,
+      appId: app?.id,
+    };
   }
 
   async getRuntime(appId: string): Promise<AppRuntime> {

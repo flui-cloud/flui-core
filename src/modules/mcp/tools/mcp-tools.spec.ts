@@ -68,6 +68,7 @@ describe('MCP agent-facing tool surface', () => {
         {
           id: 'a1',
           name: 'it-tools',
+          slug: 'it-tools-3l6a9w',
           status: 'running',
           kind: 'TOOL',
           url: 'https://it-tools-3l6a9w.nip.io/',
@@ -79,7 +80,7 @@ describe('MCP agent-facing tool surface', () => {
       ]) as Array<Record<string, unknown>>;
 
       expect(new Set(Object.keys(projected[0]))).toEqual(
-        new Set(['id', 'name', 'status', 'kind', 'url']),
+        new Set(['id', 'name', 'slug', 'status', 'kind', 'url']),
       );
     });
 

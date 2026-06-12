@@ -8,6 +8,7 @@ import { ProvidersModule } from '../providers/providers.module';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { ProviderConfigurationEntity } from '../management/entities/provider-configuration.entity';
 import { ProviderConfigurationRepository } from '../management/repositories/provider-configuration.repository';
+import { ClusterEntity } from '../infrastructure/clusters/entities/cluster.entity';
 
 @Module({
   imports: [
@@ -15,7 +16,7 @@ import { ProviderConfigurationRepository } from '../management/repositories/prov
     HttpModule,
     AccessModule,
     ProvidersModule,
-    TypeOrmModule.forFeature([ProviderConfigurationEntity]),
+    TypeOrmModule.forFeature([ProviderConfigurationEntity, ClusterEntity]),
   ],
   controllers: [InstancesController],
   providers: [InstancesService, ProviderConfigurationRepository],

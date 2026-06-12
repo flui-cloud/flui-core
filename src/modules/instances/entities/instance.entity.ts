@@ -7,6 +7,7 @@ import {
 } from 'typeorm';
 import { InstanceType } from './instance-type.enum';
 import { InstanceStatus } from './instance-status.enum';
+import { InstanceOwnership } from './instance-ownership.enum';
 import { CloudProvider } from '../../providers/enums/cloud-provider.enum';
 
 @Entity('instances')
@@ -91,6 +92,12 @@ export class InstanceEntity {
 
   @Column({ type: 'json', default: '{}' })
   metadata: Record<string, any>;
+
+  /**
+   * Computed at list time, not persisted: which installation this machine
+   * belongs to relative to the one answering the request.
+   */
+  ownership?: InstanceOwnership;
 
   @CreateDateColumn({ type: 'timestamptz' })
   createdAt: Date;

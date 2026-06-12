@@ -26,6 +26,7 @@ export class InstanceMapper {
       defaultUser: entity.defaultUser,
       additionalIps: entity.additionalIps,
       metadata: entity.metadata,
+      ownership: entity.ownership,
       createdAt: entity.createdAt,
       updatedAt: entity.updatedAt,
       cancelDate: entity.cancelDate,

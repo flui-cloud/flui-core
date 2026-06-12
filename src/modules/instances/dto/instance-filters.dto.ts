@@ -2,6 +2,7 @@ import { IsOptional, IsString, IsEnum } from 'class-validator';
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { InstanceType } from '../entities/instance-type.enum';
 import { InstanceStatus } from '../entities/instance-status.enum';
+import { InstanceOwnership } from '../entities/instance-ownership.enum';
 import { CloudProvider } from '../../providers/enums/cloud-provider.enum';
 
 export class InstanceFiltersDto {
@@ -50,4 +51,13 @@ export class InstanceFiltersDto {
   @IsOptional()
   @IsString()
   clusterId?: string;
+
+  @ApiPropertyOptional({
+    enum: InstanceOwnership,
+    description:
+      'Filter by ownership relative to this installation (self / other-flui / unmanaged)',
+  })
+  @IsOptional()
+  @IsEnum(InstanceOwnership)
+  ownership?: InstanceOwnership;
 }

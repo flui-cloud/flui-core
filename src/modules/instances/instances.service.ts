@@ -1,7 +1,10 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
 import { ProviderFactory } from '../providers/services/provider.factory';
 import { InstanceFiltersDto } from './dto/instance-filters.dto';
 import { InstanceEntity } from './entities/instance.entity';
+import { InstanceOwnership } from './entities/instance-ownership.enum';
 import { CloudProvider } from '../providers/enums/cloud-provider.enum';
 import {
   InstanceResponseDto,
@@ -10,6 +13,7 @@ import {
 import { CacheService } from '../common/cache/cache.service';
 import { CacheCategory } from '../common/cache/enums/cache-category.enum';
 import { ProviderConfigurationRepository } from '../management/repositories/provider-configuration.repository';
+import { ClusterEntity } from '../infrastructure/clusters/entities/cluster.entity';
 
 @Injectable()
 export class InstancesService {
@@ -19,6 +23,8 @@ export class InstancesService {
     private readonly providerFactory: ProviderFactory,
     private readonly cacheService: CacheService,
     private readonly providerConfigRepo: ProviderConfigurationRepository,
+    @InjectRepository(ClusterEntity)
+    private readonly clusterRepository: Repository<ClusterEntity>,
   ) {}
 
   async listInstances(filters?: any): Promise<InstanceResponseDto> {
@@ -31,6 +37,7 @@ export class InstancesService {
       filters?.clusterId || 'no-cluster',
       filters?.type || 'all',
       filters?.status || 'all',
+      filters?.ownership || 'all',
     );
 
     return this.cacheService.wrap(
@@ -89,6 +96,8 @@ export class InstancesService {
           });
         }
 
+        await this.classifyOwnership(allInstances);
+
         const filteredInstances = this.applyFilters(allInstances, filters);
 
         return new InstanceResponseDto(filteredInstances, errors);
@@ -107,6 +116,45 @@ export class InstancesService {
   private async getActiveConfiguredProviders(): Promise<CloudProvider[]> {
     const activeConfigs = await this.providerConfigRepo.findActiveProviders();
     return activeConfigs.map((config) => config.provider);
+  }
+
+  /**
+   * Tag each instance with its ownership relative to this installation by
+   * cross-referencing the `flui-cluster-id` label against the cluster IDs in
+   * our own DB. This is what disambiguates machines belonging to a parallel
+   * installation that merely shares the same cloud provider account.
+   */
+  private async classifyOwnership(instances: InstanceEntity[]): Promise<void> {
+    const ownedClusterIds = await this.getOwnedClusterIds();
+
+    for (const instance of instances) {
+      const labels = instance.metadata?.labels as
+        | Record<string, string>
+        | undefined;
+
+      if (labels?.['managed-by'] !== 'flui-cloud') {
+        instance.ownership = InstanceOwnership.UNMANAGED;
+        continue;
+      }
+
+      const clusterId = labels['flui-cluster-id'];
+      instance.ownership =
+        clusterId && ownedClusterIds.has(clusterId)
+          ? InstanceOwnership.SELF
+          : InstanceOwnership.OTHER_FLUI;
+    }
+  }
+
+  /**
+   * IDs of every cluster this installation has ever provisioned, including
+   * deleted ones — a leftover VM from a destroyed cluster is still our orphan,
+   * not another installation's resource.
+   */
+  private async getOwnedClusterIds(): Promise<Set<string>> {
+    const clusters = await this.clusterRepository.find({
+      select: { id: true },
+    });
+    return new Set(clusters.map((cluster) => cluster.id));
   }
 
   private applyFilters(
@@ -131,6 +179,10 @@ export class InstancesService {
       }
 
       if (filters.dataCenter && instance.dataCenter !== filters.dataCenter) {
+        return false;
+      }
+
+      if (filters.ownership && instance.ownership !== filters.ownership) {
         return false;
       }
 
