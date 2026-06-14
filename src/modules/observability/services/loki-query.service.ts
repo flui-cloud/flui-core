@@ -342,8 +342,10 @@ export class LokiQueryService {
     if (query.pod) labelFilters.push(`pod="${query.pod}"`);
     if (query.stream) labelFilters.push(`stream="${query.stream}"`);
 
-    // level is an indexed label (Vector sets it), add it directly to the stream selector
-    if (query.level) labelFilters.push(`level="${query.level}"`);
+    // level is an indexed label (Vector sets it), add it directly to the stream selector.
+    // Regex match so a multi-level filter (e.g. "error|warn") works; Loki anchors the regex,
+    // so a single value like "error" still matches exactly.
+    if (query.level) labelFilters.push(`level=~"${query.level}"`);
 
     const logQL_base = `{${labelFilters.join(',')}}`;
 
