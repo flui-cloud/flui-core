@@ -242,6 +242,7 @@ spec:
           value: '{{components.database.env.POSTGRES_USER}}'
         - name: DB_PASSWORD
           value: '{{components.database.env.POSTGRES_PASSWORD}}'
+          secret: true
         - name: DB_DATABASE_NAME
           value: '{{components.database.env.POSTGRES_DB}}'
         - name: REDIS_HOSTNAME

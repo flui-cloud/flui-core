@@ -1,0 +1,110 @@
+kind: CatalogApp
+apiVersion: flui/v1
+
+metadata:
+  id: redis
+  name: Redis
+  description: >
+    The original Redis in-memory key-value store (Redis 8, AGPLv3). Used as a
+    cache/queue building block for composed catalog apps. Not installed
+    directly — referenced as a dependency. For a BSD-licensed drop-in,
+    see Valkey.
+  appKind: DATABASE
+  category: cache
+  tags:
+    - cache
+    - key-value
+    - queue
+    - building-block
+    - redis
+  license: AGPL-3.0-only
+  version: '8'
+  maintainedAt: '2026-06-13'
+  icon: https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/svg/redis.svg
+  links:
+    website: https://redis.io
+    docs: https://redis.io/docs/latest/
+    source: https://github.com/redis/redis
+
+spec:
+  type: building-block
+
+  image:
+    registry: docker.io
+    repository: library/redis
+    tag: '8-alpine'
+
+  ports:
+    - name: redis
+      internal: 6379
+      expose: false
+      protocol: tcp
+
+  volumes:
+    - name: data
+      mountPath: /data
+      required: true
+      size: 2Gi
+
+  persistence:
+    scope: dedicated
+
+  env:
+    - name: REDIS_PASSWORD
+      valueFrom:
+        generate: secret
+        length: 32
+    - name: REDISCLI_AUTH
+      value: '{{env.REDIS_PASSWORD}}'
+
+  # The official redis image does NOT read REDIS_PASSWORD — auth must be set via
+  # --requirepass. The generator wraps startCommand in `/bin/sh -c`, so the var
+  # expands from the container env at runtime (never baked into the manifest).
+  startCommand: exec redis-server --requirepass "$REDIS_PASSWORD"
+
+  resources:
+    requests:
+      cpu: 100m
+      memory: 64Mi
+    limits:
+      cpu: '1'
+      memory: 512Mi
+
+  scaling:
+    horizontal:
+      enabled: false
+    vertical:
+      enabled: true
+      mode: Recreate
+      bounds:
+        cpu:
+          min: 100m
+          max: '2'
+        memory:
+          min: 64Mi
+          max: 2Gi
+      updatePolicy:
+        trigger:
+          - OOMKilled
+          - CPUThrottling
+        cooldown: 10m
+
+  healthcheck:
+    type: exec
+    command:
+      - redis-cli
+      - ping
+    initialDelay: 5s
+    interval: 10s
+    timeout: 3s
+    retries: 5
+
+  auth:
+    mode: none
+
+  smokeTest:
+    type: script
+    timeoutSeconds: 10
+    inline: |
+      redis-cli -h "$SMOKE_APP_FQDN" -p 6379 -a "$REDIS_PASSWORD" SET _smoke ok
+      redis-cli -h "$SMOKE_APP_FQDN" -p 6379 -a "$REDIS_PASSWORD" DEL _smoke

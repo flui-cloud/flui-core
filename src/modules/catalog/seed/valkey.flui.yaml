@@ -17,8 +17,8 @@ metadata:
     - building-block
     - redis-compatible
   license: BSD-3-Clause
-  version: '7'
-  maintainedAt: '2026-04-19'
+  version: '8'
+  maintainedAt: '2026-06-13'
   icon: https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/svg/valkey.svg
   links:
     website: https://valkey.io
@@ -31,7 +31,7 @@ spec:
   image:
     registry: docker.io
     repository: valkey/valkey
-    tag: '7-alpine'
+    tag: '8-alpine'
 
   ports:
     - name: valkey

@@ -116,6 +116,7 @@ export class CatalogInstallerService {
       requestedCertificateProvider: dto.certificateProvider,
       requestedHostnameMode: dto.hostnameMode,
       skipEndpoint: dto.skipEndpoint ?? false,
+      allowMasterPlacement: dto.allowMasterPlacement ?? false,
       requestedExposure: dto.exposure,
       authMode: dto.authMode,
       options: dto.options ?? {},
@@ -291,6 +292,15 @@ export class CatalogInstallerService {
     definition: CatalogAppDefinitionEntity,
     dto: InstallCatalogAppDto,
   ): Promise<void> {
+    // resourceOverrides only reach the deployment for standalone installs
+    // (buildCreateApplicationDto applies them; composed components deploy at
+    // manifest defaults), so fold them in here only for standalone — otherwise
+    // the gate rejects scaled-down installs the deployment would actually accept.
+    const overrides =
+      definition.manifest.spec.type === CatalogAppType.COMPOSED
+        ? undefined
+        : dto.resourceOverrides;
+
     let totalCpu = 0;
     let totalMemory = 0;
     for (const c of this.enumerateInstallComponents(
@@ -301,10 +311,15 @@ export class CatalogInstallerService {
       // scheduling floor (requests). Memory is incompressible: a pod holds RAM up
       // to its limit and the node OOMs past allocatable, so gate on the peak
       // (limits, falling back to requests when a component declares none).
-      const memory =
-        c.resources?.limits?.memory ?? c.resources?.requests?.memory;
-      totalCpu += parseCpuMillicores(c.resources?.requests?.cpu) * c.replicas;
-      totalMemory += parseMemoryMB(memory) * c.replicas;
+      const cpuRequest = overrides?.cpu?.request ?? c.resources?.requests?.cpu;
+      const memoryLimit =
+        overrides?.memory?.limit ?? c.resources?.limits?.memory;
+      const memoryRequest =
+        overrides?.memory?.request ?? c.resources?.requests?.memory;
+      const memory = memoryLimit ?? memoryRequest;
+      const replicas = overrides?.replicas ?? c.replicas;
+      totalCpu += parseCpuMillicores(cpuRequest) * replicas;
+      totalMemory += parseMemoryMB(memory) * replicas;
     }
     if (totalCpu === 0 && totalMemory === 0) return;
 

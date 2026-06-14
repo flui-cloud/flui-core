@@ -48,5 +48,8 @@ import { AssistantController } from './controllers/assistant.controller';
     AssistantRecommendationsService,
     AssistantAuditRepository,
   ],
+  // Reusable inference plumbing for other modules (e.g. the DB console copilot):
+  // endpoint resolution (native/BYO/default) + OpenAI-compatible transport with param recovery.
+  exports: [AssistantInferenceService, AssistantLlmService],
 })
 export class AssistantModule {}

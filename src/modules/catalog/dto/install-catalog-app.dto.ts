@@ -72,6 +72,15 @@ export class InstallCatalogAppDto {
 
   @ApiPropertyOptional({
     description:
+      'When the app uses dedicated (node-local) storage, allow its components to schedule on the control-plane node instead of requiring a worker. Set this when the target cluster has no worker node so the install does not fail. Defaults to false.',
+    default: false,
+  })
+  @IsOptional()
+  @IsBoolean()
+  allowMasterPlacement?: boolean;
+
+  @ApiPropertyOptional({
+    description:
       'Answers to valueFrom.userInput prompts keyed by env var name.',
     type: 'object',
     additionalProperties: { type: 'string' },

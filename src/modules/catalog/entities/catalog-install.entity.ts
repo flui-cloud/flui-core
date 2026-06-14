@@ -113,6 +113,9 @@ export class CatalogInstallEntity {
   @Column({ default: false })
   skipEndpoint: boolean;
 
+  @Column({ default: false })
+  allowMasterPlacement: boolean;
+
   @Column({ length: 20, nullable: true })
   requestedExposure?: 'public' | 'internal';
 

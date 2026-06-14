@@ -240,6 +240,8 @@ export default class EnvExportConfig extends Command {
         DB_NAME: 'fluicloud',
         REDIS_HOST: '127.0.0.1',
         REDIS_PORT: '6379',
+        // Namespace this local API's Bull queues. Only for local developments.
+        BULL_PREFIX: 'local-dev',
         GRAFANA_URL: 'http://localhost:3001',
         PROMETHEUS_ENDPOINT: 'http://localhost:9090',
         LOKI_ENDPOINT: 'http://localhost:3100',

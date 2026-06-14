@@ -362,6 +362,7 @@ export class CatalogController {
       requestedDomain: install.requestedDomain,
       resolvedFqdn: install.resolvedFqdn,
       skipEndpoint: install.skipEndpoint,
+      allowMasterPlacement: install.allowMasterPlacement,
       resourceOverrides: install.resourceOverrides,
       connectedInstallId: target?.installId ?? null,
       connectedSlug: target?.slug ?? null,

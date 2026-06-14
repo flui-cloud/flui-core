@@ -10,7 +10,7 @@ import { UserEntity } from '../auth/entities/user.entity';
 
 @Module({
   imports: [
-    HttpModule,
+    HttpModule.register({ timeout: 10000 }),
     ConfigModule,
     TypeOrmModule.forFeature([ClusterEntity, UserEntity]),
   ],

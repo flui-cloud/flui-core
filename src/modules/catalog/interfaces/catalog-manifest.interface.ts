@@ -312,6 +312,13 @@ export interface CatalogPersistence {
 export interface CatalogEnvVar {
   name: string;
   value?: string;
+  /**
+   * When true, the resolved value is stored in the component's Secret (encrypted) and injected
+   * via secretKeyRef, never as a plaintext ConfigMap entry. Use it on any env carrying sensitive
+   * data — typically a `value` referencing another component's secret (e.g. a DB password).
+   * `valueFrom.generate` and a `userInput` marked `sensitive` are always secrets regardless.
+   */
+  secret?: boolean;
   valueFrom?: CatalogValueFrom;
   userEditable?: boolean;
   description?: string;
