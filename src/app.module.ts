@@ -85,6 +85,7 @@ import { BackupArtifactLocationEntity } from './modules/backups/entities/backup-
 import { RestoreJobEntity } from './modules/backups/entities/restore-job.entity';
 import { VisualizationsModule } from './modules/visualizations/visualizations.module';
 import { TopologyModule } from './modules/topology/topology.module';
+import { DatabaseConsoleModule } from './modules/database-console/database-console.module';
 
 @Module({
   imports: [
@@ -204,6 +205,7 @@ import { TopologyModule } from './modules/topology/topology.module';
     BackupsModule,
     VisualizationsModule,
     TopologyModule,
+    DatabaseConsoleModule,
     ScheduleModule.forRoot(),
   ],
   providers: [
