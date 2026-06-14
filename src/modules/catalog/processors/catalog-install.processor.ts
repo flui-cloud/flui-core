@@ -1100,6 +1100,7 @@ export class CatalogInstallProcessor {
     };
 
     const applicationIds: string[] = [];
+    const degradedComponents: string[] = [];
     const primaryComponent = this.pickPrimaryComponent(includedComponents);
     const appIdByComponent = new Map<string, string>();
 
@@ -1212,11 +1213,23 @@ export class CatalogInstallProcessor {
         this.deployConfig.getCatalogInstallPollIntervalMs(),
       );
       if (!deployResult.ok) {
-        throw new Error(
-          `Deploy failed for component ${component.name} (app ${application.id}): ${deployResult.error ?? 'unknown'}`,
-        );
+        // An optional component (when.option) that fails readiness must not abort
+        // the install — that would block the primary app's endpoint + postInstall
+        // and leave it misconfigured. Degrade it; required components still fail.
+        if (component.when?.option) {
+          this.logger.warn(
+            `Install ${install.id}: optional component "${component.name}" did not become ready (${deployResult.error ?? 'unknown'}) — continuing without it; its feature stays unavailable until it recovers.`,
+          );
+          degradedComponents.push(component.name);
+        } else {
+          throw new Error(
+            `Deploy failed for component ${component.name} (app ${application.id}): ${deployResult.error ?? 'unknown'}`,
+          );
+        }
       }
 
+      // Service DNS resolves as soon as the Service exists (independent of pod
+      // readiness), so still expose the component to later template contexts.
       ctx.components[component.name] = {
         host: `${application.slug}-svc.${namespace}.svc.cluster.local`,
         env: Object.fromEntries(substituted.map((e) => [e.name, e.value])),
@@ -1247,12 +1260,23 @@ export class CatalogInstallProcessor {
       }
 
       const primaryAppId = appIdByComponent.get(primaryComponent.name)!;
-      const oidc = await this.maybeWireComposedOidc(
-        install,
-        spec,
-        primaryComponent,
-        primaryAppId,
-      );
+      // SSO wiring is best-effort (HTTP call to the OIDC provider): a slow or
+      // unreachable provider must not abort an otherwise-deployed install.
+      // Degrade SSO; reconcile re-runs it.
+      let oidc: OidcWireResult | null = null;
+      try {
+        oidc = await this.maybeWireComposedOidc(
+          install,
+          spec,
+          primaryComponent,
+          primaryAppId,
+        );
+      } catch (err) {
+        this.logger.warn(
+          `Install ${install.id}: SSO wiring failed (${err instanceof Error ? err.message : String(err)}) — continuing without SSO; retry/reconcile to enable it.`,
+        );
+        degradedComponents.push('sso');
+      }
       await this.maybeRunPostInstall(
         install,
         spec,
@@ -1272,6 +1296,11 @@ export class CatalogInstallProcessor {
       install.id,
       CatalogInstallStatus.RUNNING,
     );
+    if (degradedComponents.length) {
+      this.logger.warn(
+        `Install ${install.id}: completed with degraded optional components [${degradedComponents.join(', ')}] — core app is configured; retry/reconcile those components to enable their features.`,
+      );
+    }
     await this.updateOperation(
       operationId,
       OperationStatus.COMPLETED,
