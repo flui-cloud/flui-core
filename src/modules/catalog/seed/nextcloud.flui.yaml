@@ -191,6 +191,17 @@ spec:
           secret: true
         - name: REDIS_HOST
           value: '{{components.redis.host}}'
+        # Trusted domains baked at boot from the create-time FQDN, so the app trusts
+        # its own domain + localhost from first install — independent of the
+        # post-install occ step and the readiness probe (Host=localhost).
+        - name: NEXTCLOUD_TRUSTED_DOMAINS
+          value: '{{self.fqdn}} localhost'
+        - name: OVERWRITEHOST
+          value: '{{self.fqdn}}'
+        - name: OVERWRITEPROTOCOL
+          value: 'https'
+        - name: OVERWRITECLIURL
+          value: 'https://{{self.fqdn}}'
         - name: NEXTCLOUD_ADMIN_USER
           valueFrom:
             userInput:
