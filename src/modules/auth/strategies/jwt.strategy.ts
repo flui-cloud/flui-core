@@ -57,6 +57,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       cache: true,
       rateLimit: true,
       jwksRequestsPerMinute: 5,
+      timeout: 10000,
       jwksUri:
         jwksUri || 'https://oidc-not-configured.invalid/.well-known/jwks.json',
     };
@@ -83,12 +84,23 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     const roles = rawRoles ?? {};
     const claimedRole = this.pickHighestRole(roles);
 
-    const baseUser = await this.resolveLocalUser(
+    const user = await this.resolveLocalUser(
       payload.sub,
       payload.email,
       claimedRole,
     );
-    const user = await this.profileSync.syncFromProvider(baseUser);
+    // Refresh the OIDC profile out-of-band: authentication must never block on a
+    // provider round-trip, otherwise a slow/stalled provider hangs every request
+    // once the sync TTL lapses.
+    void this.profileSync
+      .syncFromProvider(user)
+      .catch((err: unknown) =>
+        JwtStrategy.logger.warn(
+          `Background profile sync failed: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        ),
+      );
 
     return {
       userId: user.id,
