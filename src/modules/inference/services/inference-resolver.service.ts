@@ -66,14 +66,18 @@ export class InferenceResolverService {
   }
 
   // Default surface for the assistant: prefer a configured native provider
-  // (EU-first by capability order), else the default BYO connection.
+  // (EU-first by capability order), else a BYO connection — the one flagged
+  // default, or any configured one when none is flagged (a single connection is
+  // implicitly the default; otherwise resolution would 404 despite a usable endpoint).
   async resolveDefault(): Promise<InferenceEndpoint> {
     for (const provider of this.inferenceCapableProviders()) {
       if (await this.hasNativeCredential(provider)) {
         return this.resolveNative(provider);
       }
     }
-    const fallback = await this.connections.findDefault();
+    const fallback =
+      (await this.connections.findDefault()) ??
+      (await this.connections.findAll())[0];
     if (fallback) {
       return this.resolveConnection(fallback.id);
     }
