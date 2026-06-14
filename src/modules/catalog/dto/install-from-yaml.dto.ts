@@ -137,4 +137,13 @@ export class InstallFromYamlDto {
   @IsOptional()
   @IsObject()
   options?: Record<string, boolean>;
+
+  @ApiPropertyOptional({
+    description:
+      'When true, skip the cluster capacity gate and install even if the footprint exceeds free capacity. The user explicitly accepts the risk (pods may be OOM-killed or throttled at peak). Default false.',
+    default: false,
+  })
+  @IsOptional()
+  @IsBoolean()
+  force?: boolean;
 }

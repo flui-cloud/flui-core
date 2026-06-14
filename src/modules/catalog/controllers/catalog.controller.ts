@@ -41,6 +41,8 @@ import {
 } from '../dto/catalog-validate.dto';
 import { InstallCatalogAppDto } from '../dto/install-catalog-app.dto';
 import { InstallFromYamlDto } from '../dto/install-from-yaml.dto';
+import { CatalogCapacityPreviewDto } from '../dto/catalog-capacity-preview.dto';
+import { ResourceAvailabilityResponseDto } from '../../infrastructure/clusters/dto/resource-availability.dto';
 import { ConnectClientDto } from '../dto/connect-client.dto';
 import { CatalogInstallEntity } from '../entities/catalog-install.entity';
 
@@ -188,6 +190,24 @@ export class CatalogController {
   }
 
   @ApiBearerAuth()
+  @Post(':slug/capacity-preview')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Preview whether a cluster can fit a catalog install',
+    description:
+      'Computes the install footprint — the same options + override-aware sum the install capacity gate uses (CPU on requests, memory on limits, option-gated components included only when enabled) — and checks it against live cluster capacity. The deploy wizard calls this with the selected options/overrides and renders required/available/canDeploy, so the preview never drifts from the server-side gate. Returns the same shape as GET /clusters/:id/resource-availability.',
+  })
+  @ApiParam({ name: 'slug' })
+  @ApiResponse({ status: 200, type: ResourceAvailabilityResponseDto })
+  async capacityPreview(
+    @Param('slug') slug: string,
+    @Body() dto: CatalogCapacityPreviewDto,
+  ): Promise<ResourceAvailabilityResponseDto> {
+    const definition = await this.catalogService.findPublishedBySlug(slug);
+    return this.installer.previewCapacity(definition, dto);
+  }
+
+  @ApiBearerAuth()
   @Get('clusters/:clusterId/capabilities')
   @ApiOperation({
     summary:
@@ -232,6 +252,7 @@ export class CatalogController {
       exposure: dto.exposure,
       authMode: dto.authMode,
       options: dto.options,
+      force: dto.force,
       dependencyChoices: dto.dependencyChoices,
     };
     const { install } = await this.installer.install(

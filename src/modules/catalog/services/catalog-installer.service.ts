@@ -24,6 +24,9 @@ import { CatalogInstallEntity } from '../entities/catalog-install.entity';
 import { CatalogInstallStatus } from '../enums/catalog-install-status.enum';
 import { CatalogAppType } from '../enums/catalog-app-type.enum';
 import { InstallCatalogAppDto } from '../dto/install-catalog-app.dto';
+import { ResourceOverridesDto } from '../dto/resource-overrides.dto';
+import { CatalogCapacityPreviewDto } from '../dto/catalog-capacity-preview.dto';
+import { ResourceAvailabilityResponseDto } from '../../infrastructure/clusters/dto/resource-availability.dto';
 import { ApplicationsRepository } from '../../applications/repositories/applications.repository';
 import { ApplicationDeployService } from '../../applications/services/application-deploy.service';
 import { CatalogLinkingService } from './catalog-linking.service';
@@ -288,29 +291,32 @@ export class CatalogInstallerService {
    * deploy wizard runs before enabling the button — applied server-side so every
    * surface (HTTP, install-from-yaml, MCP/agent) honours it.
    */
-  private async assertClusterHasCapacity(
-    definition: CatalogAppDefinitionEntity,
-    dto: InstallCatalogAppDto,
-  ): Promise<void> {
-    // resourceOverrides only reach the deployment for standalone installs
-    // (buildCreateApplicationDto applies them; composed components deploy at
-    // manifest defaults), so fold them in here only for standalone — otherwise
-    // the gate rejects scaled-down installs the deployment would actually accept.
+  /**
+   * The cluster footprint an install will request: the sum, across every
+   * component the install will create, of CPU (requests — compressible, so gate
+   * on the scheduling floor) and memory (limits, falling back to requests —
+   * incompressible, so gate on the peak). Option-gated components are filtered
+   * by `options`. resourceOverrides are folded in only for non-composed apps,
+   * because composed components always deploy at manifest defaults
+   * (buildComponentCreateDto ignores overrides) — counting a scaled-down
+   * override here would let an install pass the gate then deploy bigger.
+   *
+   * Single source of truth shared by the install capacity gate and the
+   * capacity-preview endpoint the dashboard renders, so they can never drift.
+   */
+  computeInstallFootprint(
+    manifest: CatalogManifest,
+    options: Record<string, boolean>,
+    resourceOverrides?: ResourceOverridesDto,
+  ): { cpu: number; memory: number } {
     const overrides =
-      definition.manifest.spec.type === CatalogAppType.COMPOSED
+      manifest.spec.type === CatalogAppType.COMPOSED
         ? undefined
-        : dto.resourceOverrides;
+        : resourceOverrides;
 
     let totalCpu = 0;
     let totalMemory = 0;
-    for (const c of this.enumerateInstallComponents(
-      definition.manifest,
-      dto.options ?? {},
-    )) {
-      // CPU is compressible — oversubscription only throttles — so gate on the
-      // scheduling floor (requests). Memory is incompressible: a pod holds RAM up
-      // to its limit and the node OOMs past allocatable, so gate on the peak
-      // (limits, falling back to requests when a component declares none).
+    for (const c of this.enumerateInstallComponents(manifest, options)) {
       const cpuRequest = overrides?.cpu?.request ?? c.resources?.requests?.cpu;
       const memoryLimit =
         overrides?.memory?.limit ?? c.resources?.limits?.memory;
@@ -321,6 +327,45 @@ export class CatalogInstallerService {
       totalCpu += parseCpuMillicores(cpuRequest) * replicas;
       totalMemory += parseMemoryMB(memory) * replicas;
     }
+    return { cpu: totalCpu, memory: totalMemory };
+  }
+
+  /**
+   * Run the capacity gate without committing to an install. The dashboard deploy
+   * wizard calls this with the same options + overrides it will install with and
+   * renders required/available/canDeploy — so the preview shares
+   * computeInstallFootprint with assertClusterHasCapacity and cannot drift.
+   */
+  async previewCapacity(
+    definition: CatalogAppDefinitionEntity,
+    dto: CatalogCapacityPreviewDto,
+  ): Promise<ResourceAvailabilityResponseDto> {
+    const { cpu, memory } = this.computeInstallFootprint(
+      definition.manifest,
+      dto.options ?? {},
+      dto.resourceOverrides,
+    );
+    return this.clustersService.checkResourceAvailability(
+      dto.clusterId,
+      cpu,
+      memory,
+      1,
+    );
+  }
+
+  private async assertClusterHasCapacity(
+    definition: CatalogAppDefinitionEntity,
+    dto: InstallCatalogAppDto,
+  ): Promise<void> {
+    // The user explicitly accepted the risk (peak memory may OOM-kill or
+    // throttle the pods) — skip the gate entirely.
+    if (dto.force) return;
+
+    const { cpu: totalCpu, memory: totalMemory } = this.computeInstallFootprint(
+      definition.manifest,
+      dto.options ?? {},
+      dto.resourceOverrides,
+    );
     if (totalCpu === 0 && totalMemory === 0) return;
 
     const check = await this.clustersService.checkResourceAvailability(
