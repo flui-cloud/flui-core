@@ -501,7 +501,7 @@ export class CatalogInstallProcessor {
       }
 
       const rawValue = override ?? e.value ?? '';
-      out.push({ name: e.name, value: rawValue, secret: false });
+      out.push({ name: e.name, value: rawValue, secret: !!e.secret });
     }
     return out;
   }

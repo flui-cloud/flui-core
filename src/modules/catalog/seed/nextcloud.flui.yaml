@@ -188,6 +188,7 @@ spec:
           value: '{{components.db.env.MYSQL_USER}}'
         - name: MYSQL_PASSWORD
           value: '{{components.db.env.MYSQL_PASSWORD}}'
+          secret: true
         - name: REDIS_HOST
           value: '{{components.redis.host}}'
         - name: NEXTCLOUD_ADMIN_USER
