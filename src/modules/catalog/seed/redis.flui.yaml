@@ -2,12 +2,13 @@ kind: CatalogApp
 apiVersion: flui/v1
 
 metadata:
-  id: valkey
-  name: Valkey
+  id: redis
+  name: Redis
   description: >
-    Community Linux Foundation fork of Redis (BSD 3-Clause). In-memory
-    key-value store used as a cache/queue building block for composed
-    catalog apps. Not installed directly — referenced as a dependency.
+    The original Redis in-memory key-value store (Redis 8, AGPLv3). Used as a
+    cache/queue building block for composed catalog apps. Not installed
+    directly — referenced as a dependency. For a BSD-licensed drop-in,
+    see Valkey.
   appKind: DATABASE
   category: cache
   tags:
@@ -15,26 +16,26 @@ metadata:
     - key-value
     - queue
     - building-block
-    - redis-compatible
-  license: BSD-3-Clause
+    - redis
+  license: AGPL-3.0-only
   version: '8'
   maintainedAt: '2026-06-13'
-  icon: https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/svg/valkey.svg
+  icon: https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/svg/redis.svg
   links:
-    website: https://valkey.io
-    docs: https://valkey.io/topics/
-    source: https://github.com/valkey-io/valkey
+    website: https://redis.io
+    docs: https://redis.io/docs/latest/
+    source: https://github.com/redis/redis
 
 spec:
   type: building-block
 
   image:
     registry: docker.io
-    repository: valkey/valkey
+    repository: library/redis
     tag: '8-alpine'
 
   ports:
-    - name: valkey
+    - name: redis
       internal: 6379
       expose: false
       protocol: tcp
@@ -49,12 +50,17 @@ spec:
     scope: dedicated
 
   env:
-    - name: VALKEY_PASSWORD
+    - name: REDIS_PASSWORD
       valueFrom:
         generate: secret
         length: 32
     - name: REDISCLI_AUTH
-      value: '{{env.VALKEY_PASSWORD}}'
+      value: '{{env.REDIS_PASSWORD}}'
+
+  # The official redis image does NOT read REDIS_PASSWORD — auth must be set via
+  # --requirepass. The generator wraps startCommand in `/bin/sh -c`, so the var
+  # expands from the container env at runtime (never baked into the manifest).
+  startCommand: exec redis-server --requirepass "$REDIS_PASSWORD"
 
   resources:
     requests:
@@ -100,5 +106,5 @@ spec:
     type: script
     timeoutSeconds: 10
     inline: |
-      redis-cli -h "$SMOKE_APP_FQDN" -p 6379 -a "$VALKEY_PASSWORD" SET _smoke ok
-      redis-cli -h "$SMOKE_APP_FQDN" -p 6379 -a "$VALKEY_PASSWORD" DEL _smoke
+      redis-cli -h "$SMOKE_APP_FQDN" -p 6379 -a "$REDIS_PASSWORD" SET _smoke ok
+      redis-cli -h "$SMOKE_APP_FQDN" -p 6379 -a "$REDIS_PASSWORD" DEL _smoke
