@@ -12,6 +12,7 @@ import {
 } from '../dto/catalog-detail-response.dto';
 import { CatalogClusterCapabilitiesDto } from '../dto/catalog-cluster-capabilities.dto';
 import {
+  CatalogAuthMode,
   CatalogEnvVar,
   CatalogManifest,
   CatalogSpecStandalone,
@@ -330,6 +331,7 @@ export class CatalogService {
     dependencies: CatalogDependencyDto[];
     resources: CatalogResourcesDto;
     replicas: number;
+    resourceOverridesSupported: boolean;
     exposesPublicEndpoint: boolean;
     exposure: 'public' | 'internal';
     privatizable: boolean;
@@ -345,6 +347,16 @@ export class CatalogService {
       certChallenge?: 'http-01' | 'dns-01';
       certificateProvider?: 'lets-encrypt' | 'lets-encrypt-staging';
     };
+    auth?: {
+      modes: CatalogAuthMode[];
+      default: CatalogAuthMode;
+    };
+    options?: Array<{
+      key: string;
+      label: string;
+      description?: string;
+      default: boolean;
+    }>;
   } {
     const spec = manifest.spec;
     const envVars = this.collectEnvVars(spec);
@@ -399,6 +411,10 @@ export class CatalogService {
       dependencies: this.buildDependencyList(spec),
       resources: this.aggregateResources(spec),
       replicas: this.defaultReplicas(spec),
+      // Composed components always deploy at manifest defaults (overrides are not
+      // applied per-component), so the override knob would be a no-op — tell the
+      // wizard to hide it and show resources read-only.
+      resourceOverridesSupported: spec.type !== CatalogAppType.COMPOSED,
       exposesPublicEndpoint,
       exposure,
       privatizable,
@@ -416,7 +432,46 @@ export class CatalogService {
             certificateProvider: domainSpec.certificateProvider,
           }
         : undefined,
+      auth: this.buildAuthPreview(spec),
+      options: this.buildOptionsPreview(spec),
     };
+  }
+
+  private buildOptionsPreview(spec: CatalogSpecAny):
+    | Array<{
+        key: string;
+        label: string;
+        description?: string;
+        default: boolean;
+      }>
+    | undefined {
+    if (spec.type !== CatalogAppType.COMPOSED || !spec.options?.length) {
+      return undefined;
+    }
+    return spec.options.map((o) => ({
+      key: o.key,
+      label: o.label,
+      description: o.description,
+      default: o.default ?? false,
+    }));
+  }
+
+  /**
+   * Surface the manifest's selectable auth modes + initial default so the
+   * install wizard can render an auth-mode selector. `spec.auth` lives on
+   * every spec type. Returns undefined when the manifest declares no auth,
+   * leaving the install to the backend default (native).
+   */
+  private buildAuthPreview(
+    spec: CatalogSpecAny,
+  ): { modes: CatalogAuthMode[]; default: CatalogAuthMode } | undefined {
+    const auth = spec.auth;
+    if (!auth) return undefined;
+    const single = auth.mode ?? auth.default;
+    const declared = auth.modes ?? (single ? [single] : []);
+    const modes = [...new Set(declared)];
+    if (modes.length === 0) return undefined;
+    return { modes, default: auth.default ?? auth.mode ?? modes[0] };
   }
 
   private collectPorts(

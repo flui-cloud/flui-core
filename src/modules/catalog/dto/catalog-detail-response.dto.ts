@@ -102,6 +102,52 @@ export class CatalogResourcesDto {
   @ApiProperty() limits: CatalogResourceSpecDto;
 }
 
+export class CatalogAuthSpecDto {
+  @ApiProperty({
+    enum: ['native', 'oidc', 'proxy', 'none'],
+    isArray: true,
+    description:
+      'Selectable authentication modes declared by the manifest (spec.auth.modes, or the single spec.auth.mode/default). The install wizard should render an auth-mode selector when this has more than one entry (e.g. Nextcloud → native | Flui SSO); with a single entry it can stay implicit. The chosen value is sent back as InstallCatalogAppDto.authMode.',
+    example: ['native', 'oidc'],
+  })
+  modes: Array<'native' | 'oidc' | 'proxy' | 'none'>;
+
+  @ApiProperty({
+    enum: ['native', 'oidc', 'proxy', 'none'],
+    description:
+      'Initial selection for the auth-mode selector (spec.auth.default, falling back to spec.auth.mode then the first mode). When the user does not change it the backend applies this same default.',
+    example: 'native',
+  })
+  default: 'native' | 'oidc' | 'proxy' | 'none';
+}
+
+export class CatalogOptionDto {
+  @ApiProperty({
+    description:
+      'Stable option key. Sent back as InstallCatalogAppDto.options[key] = true | false.',
+    example: 'office',
+  })
+  key: string;
+
+  @ApiProperty({
+    description: 'Human-readable label for the toggle.',
+    example: 'Office editing (Collabora)',
+  })
+  label: string;
+
+  @ApiPropertyOptional({
+    description: 'Longer help text shown beneath the toggle.',
+  })
+  description?: string;
+
+  @ApiProperty({
+    description:
+      'Default enabled state when the user does not toggle it. Mirrors what the backend applies when options[key] is omitted.',
+    example: false,
+  })
+  default: boolean;
+}
+
 export class CatalogDetailResponseDto extends CatalogResponseDto {
   @ApiProperty({ type: [CatalogUserInputPromptDto] })
   userInputPrompts: CatalogUserInputPromptDto[];
@@ -128,6 +174,13 @@ export class CatalogDetailResponseDto extends CatalogResponseDto {
 
   @ApiProperty({
     description:
+      'Whether install-time resource overrides (CPU/memory/replicas) actually take effect for this app. True for standalone apps and building blocks (the override is applied to the workload). False for composed apps, whose components always deploy at their manifest defaults — the install wizard MUST hide the override controls and show resources read-only rather than offer a knob that does nothing. Capacity for composed apps is still computed correctly via POST /catalog/:slug/capacity-preview (options-aware).',
+    example: true,
+  })
+  resourceOverridesSupported: boolean;
+
+  @ApiProperty({
+    description:
       'True when the manifest declares at least one port with `expose: true` AND `exposure` is `public`. False for building blocks, for standalone apps with `exposure: internal`, and for any app whose ports are all internal. The install wizard MUST skip the Domain step when false; the app detail page MUST hide the "App Endpoints" / DNS / Certificate tabs.',
     example: true,
   })
@@ -139,6 +192,20 @@ export class CatalogDetailResponseDto extends CatalogResponseDto {
       'Manifest-declared domain/endpoint defaults. Drives the initial values of the install wizard "Domain" step. Omitted when the manifest does not declare `spec.domain` or when `exposesPublicEndpoint=false`.',
   })
   domain?: CatalogDomainSpecDto;
+
+  @ApiPropertyOptional({
+    type: CatalogAuthSpecDto,
+    description:
+      'Manifest-declared authentication options. Present when spec.auth declares one or more modes; omitted when the app has no selectable auth. Drives the install wizard auth-mode selector and is sent back as InstallCatalogAppDto.authMode.',
+  })
+  auth?: CatalogAuthSpecDto;
+
+  @ApiPropertyOptional({
+    type: [CatalogOptionDto],
+    description:
+      'Manifest-declared install-time feature toggles (spec.options). Present only for composed apps that declare options (e.g. Nextcloud → "office"/Collabora); omitted otherwise. Each toggle the user enables is sent back as InstallCatalogAppDto.options[key] = true.',
+  })
+  options?: CatalogOptionDto[];
 
   @ApiProperty({
     enum: ['public', 'internal'],
