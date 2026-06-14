@@ -25,6 +25,12 @@ export class CatalogInstallResponseDto {
   })
   skipEndpoint: boolean;
 
+  @ApiProperty({
+    description:
+      'Whether dedicated-storage components were allowed to schedule on the control-plane node (set at install when the cluster had no worker). Defaults to false.',
+  })
+  allowMasterPlacement: boolean;
+
   @ApiPropertyOptional({
     description:
       'Effective resource overrides applied to this install (echoed from the install DTO). Null/undefined when the manifest defaults were accepted as-is.',

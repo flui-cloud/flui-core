@@ -116,6 +116,7 @@ export class CatalogInstallerService {
       requestedCertificateProvider: dto.certificateProvider,
       requestedHostnameMode: dto.hostnameMode,
       skipEndpoint: dto.skipEndpoint ?? false,
+      allowMasterPlacement: dto.allowMasterPlacement ?? false,
       requestedExposure: dto.exposure,
       authMode: dto.authMode,
       options: dto.options ?? {},

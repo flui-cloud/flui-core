@@ -638,7 +638,9 @@ export class CatalogInstallProcessor {
       replicas: this.resolveReplicas(spec, install.resourceOverrides),
       port: primaryPort?.internal,
       portProtocol: primaryPort?.protocol,
-      allowMasterPlacement: process.env.FLUI_ALLOW_MASTER === 'true',
+      allowMasterPlacement:
+        install.allowMasterPlacement ||
+        process.env.FLUI_ALLOW_MASTER === 'true',
       healthProbe: this.mapHealthProbe(
         this.resolveHealthcheckTemplates(spec.healthcheck, ctx),
         primaryPort?.internal,
@@ -1380,7 +1382,9 @@ export class CatalogInstallProcessor {
         : 1,
       port: primaryPort?.internal,
       portProtocol: primaryPort?.protocol,
-      allowMasterPlacement: process.env.FLUI_ALLOW_MASTER === 'true',
+      allowMasterPlacement:
+        install.allowMasterPlacement ||
+        process.env.FLUI_ALLOW_MASTER === 'true',
       healthProbe: component.healthcheck
         ? this.mapHealthProbe(component.healthcheck, primaryPort?.internal)
         : undefined,
