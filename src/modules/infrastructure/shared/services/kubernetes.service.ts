@@ -884,25 +884,16 @@ export class KubernetesService {
     this.logger.log(`Secret ${name} patched in namespace ${namespace}`);
   }
 
-  /**
-   * Trigger a rolling restart of a Deployment by patching the pod template annotation.
-   * Equivalent to `kubectl rollout restart deployment/<name>`.
-   */
-  /**
-   * Trigger a rolling restart of a Deployment by patching the pod template annotation.
-   * Equivalent to `kubectl rollout restart deployment/<name>`.
-   */
-  async restartDeployment(
+  /** Rolling restart via the `restartedAt` annotation (`kubectl rollout restart <kind>/<name>`). */
+  async restartWorkload(
     kubeconfigContent: string,
+    kind: string,
     namespace: string,
     name: string,
   ): Promise<void> {
-    const kc = this.loadKubeconfig(kubeconfigContent);
-    const client = k8s.KubernetesObjectApi.makeApiClient(kc);
-
-    const patch: k8s.V1Deployment = {
+    const patch = {
       apiVersion: 'apps/v1',
-      kind: 'Deployment',
+      kind,
       metadata: { name, namespace },
       spec: {
         template: {
@@ -912,19 +903,105 @@ export class KubernetesService {
             },
           },
         },
-      } as unknown as k8s.V1DeploymentSpec,
+      },
     };
+    await this.strategicPatchWorkload(kubeconfigContent, patch);
+    this.logger.log(
+      `${kind} ${name} restart triggered in namespace ${namespace}`,
+    );
+  }
 
+  /** Scale a workload (`kubectl scale <kind>/<name> --replicas=<n>`). */
+  async scaleWorkload(
+    kubeconfigContent: string,
+    kind: string,
+    namespace: string,
+    name: string,
+    replicas: number,
+  ): Promise<void> {
+    const patch = {
+      apiVersion: 'apps/v1',
+      kind,
+      metadata: { name, namespace },
+      spec: { replicas },
+    };
+    await this.strategicPatchWorkload(kubeconfigContent, patch);
+    this.logger.log(
+      `${kind} ${name} scaled to ${replicas} replica(s) in namespace ${namespace}`,
+    );
+  }
+
+  /** Patch a single container's requests/limits (`kubectl set resources <kind>/<name> -c <container>`). */
+  async patchWorkloadContainerResources(
+    kubeconfigContent: string,
+    kind: string,
+    namespace: string,
+    name: string,
+    containerName: string,
+    resources: {
+      requests?: Record<string, string>;
+      limits?: Record<string, string>;
+    },
+  ): Promise<void> {
+    const patch = {
+      apiVersion: 'apps/v1',
+      kind,
+      metadata: { name, namespace },
+      spec: {
+        template: {
+          spec: { containers: [{ name: containerName, resources }] },
+        },
+      },
+    };
+    await this.strategicPatchWorkload(kubeconfigContent, patch);
+    this.logger.log(
+      `${kind} ${name} container ${containerName} resources patched in namespace ${namespace}`,
+    );
+  }
+
+  /** Repoint a named pod-template volume to a different PVC. */
+  async patchWorkloadVolumeClaimName(
+    kubeconfigContent: string,
+    kind: string,
+    namespace: string,
+    name: string,
+    volumeName: string,
+    claimName: string,
+  ): Promise<void> {
+    const patch = {
+      apiVersion: 'apps/v1',
+      kind,
+      metadata: { name, namespace },
+      spec: {
+        template: {
+          spec: {
+            volumes: [
+              { name: volumeName, persistentVolumeClaim: { claimName } },
+            ],
+          },
+        },
+      },
+    };
+    await this.strategicPatchWorkload(kubeconfigContent, patch);
+    this.logger.log(
+      `${kind} ${name} volume ${volumeName} repointed to PVC ${claimName} in namespace ${namespace}`,
+    );
+  }
+
+  /** Apply a strategic-merge patch to an apps/v1 workload object. */
+  private async strategicPatchWorkload(
+    kubeconfigContent: string,
+    patch: Record<string, unknown>,
+  ): Promise<void> {
+    const kc = this.loadKubeconfig(kubeconfigContent);
+    const client = k8s.KubernetesObjectApi.makeApiClient(kc);
     await client.patch(
-      patch,
+      patch as unknown as k8s.KubernetesObject,
       undefined,
       undefined,
       'flui-api',
       undefined,
       k8s.PatchStrategy.StrategicMergePatch,
-    );
-    this.logger.log(
-      `Deployment ${name} restart triggered in namespace ${namespace}`,
     );
   }
 

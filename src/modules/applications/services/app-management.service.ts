@@ -6,7 +6,6 @@ import {
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import * as jsYaml from 'js-yaml';
 import { ClusterEntity } from '../../infrastructure/clusters/entities/cluster.entity';
 import { KubernetesService } from '../../infrastructure/shared/services/kubernetes.service';
 import { EncryptionService } from '../../shared/encryption/services/encryption.service';
@@ -62,19 +61,11 @@ export class AppManagementService {
     dto: UpdateResourcesDto,
   ): Promise<AppRuntimeResponseDto> {
     const { app, kubeconfig } = await this.resolveAppAndKubeconfig(appId);
-    const deploymentName = app.slug;
-
-    const deployment = await this.kubernetesService.getResource(
-      kubeconfig,
-      'Deployment',
-      deploymentName,
-      app.k8sNamespace,
-    );
-    if (!deployment) {
-      throw new NotFoundException(
-        `Deployment "${deploymentName}" not found in namespace "${app.k8sNamespace}". Deploy the application first.`,
-      );
-    }
+    const {
+      kind,
+      name: deploymentName,
+      resource: deployment,
+    } = await this.getWorkloadOrThrow(app, kubeconfig);
 
     const containers: any[] = deployment.spec?.template?.spec?.containers ?? [];
 
@@ -117,9 +108,16 @@ export class AppManagementService {
     // Capture before state for audit
     const beforeResources = app.resources;
 
-    await this.applyDeployment(kubeconfig, deployment);
+    await this.kubernetesService.patchWorkloadContainerResources(
+      kubeconfig,
+      kind,
+      app.k8sNamespace,
+      deploymentName,
+      container.name,
+      container.resources,
+    );
     this.logger.log(
-      `Updated resources for container "${containers[targetIndex].name}" in deployment "${deploymentName}"`,
+      `Updated resources for container "${container.name}" in ${kind} "${deploymentName}"`,
     );
 
     // Sync DB entity so the stored resources reflect the live state
@@ -155,26 +153,22 @@ export class AppManagementService {
     replicas: number,
   ): Promise<{ app: ApplicationEntity; kubeconfig: string; previous: number }> {
     const { app, kubeconfig } = await this.resolveAppAndKubeconfig(appId);
-    const deploymentName = app.slug;
-
-    const deployment = await this.kubernetesService.getResource(
+    const { kind, name: deploymentName } = await this.getWorkloadOrThrow(
+      app,
       kubeconfig,
-      'Deployment',
-      deploymentName,
-      app.k8sNamespace,
     );
-    if (!deployment) {
-      throw new NotFoundException(
-        `Deployment "${deploymentName}" not found in namespace "${app.k8sNamespace}". Deploy the application first.`,
-      );
-    }
 
-    deployment.spec.replicas = replicas;
     const previous = app.replicas;
 
-    await this.applyDeployment(kubeconfig, deployment);
+    await this.kubernetesService.scaleWorkload(
+      kubeconfig,
+      kind,
+      app.k8sNamespace,
+      deploymentName,
+      replicas,
+    );
     this.logger.log(
-      `Scaled deployment "${deploymentName}" to ${replicas} replica(s)`,
+      `Scaled ${kind} "${deploymentName}" to ${replicas} replica(s)`,
     );
 
     await this.applicationsRepository.update(appId, { replicas });
@@ -210,31 +204,20 @@ export class AppManagementService {
 
   async restartDeployment(appId: string): Promise<AppRuntimeResponseDto> {
     const { app, kubeconfig } = await this.resolveAppAndKubeconfig(appId);
-    const deploymentName = app.slug;
-
-    const deployment = await this.kubernetesService.getResource(
+    const { kind, name: deploymentName } = await this.getWorkloadOrThrow(
+      app,
       kubeconfig,
-      'Deployment',
-      deploymentName,
-      app.k8sNamespace,
     );
-    if (!deployment) {
-      throw new NotFoundException(
-        `Deployment "${deploymentName}" not found in namespace "${app.k8sNamespace}". Deploy the application first.`,
-      );
-    }
-
-    deployment.spec.template.metadata = deployment.spec.template.metadata ?? {};
-    deployment.spec.template.metadata.annotations =
-      deployment.spec.template.metadata.annotations ?? {};
-    deployment.spec.template.metadata.annotations[
-      'kubectl.kubernetes.io/restartedAt'
-    ] = new Date().toISOString();
 
     const restartedAt = new Date().toISOString();
-    await this.applyDeployment(kubeconfig, deployment);
+    await this.kubernetesService.restartWorkload(
+      kubeconfig,
+      kind,
+      app.k8sNamespace,
+      deploymentName,
+    );
     this.logger.log(
-      `Triggered rolling restart for deployment "${deploymentName}"`,
+      `Triggered rolling restart for ${kind} "${deploymentName}"`,
     );
 
     // Audit event
@@ -298,7 +281,6 @@ export class AppManagementService {
     newClaimName: string,
   ): Promise<AppRuntimeResponseDto & { operationId: string }> {
     const { app, kubeconfig } = await this.resolveAppAndKubeconfig(appId);
-    const deploymentName = app.slug;
 
     const { result, operationId } = await this.runner.run(
       {
@@ -308,30 +290,30 @@ export class AppManagementService {
         metadata: { volumeName, newClaimName },
       },
       async () => {
-        const deployment = await this.kubernetesService.getResource(
-          kubeconfig,
-          'Deployment',
-          deploymentName,
-          app.k8sNamespace,
-        );
-        if (!deployment) {
-          throw new NotFoundException(
-            `Deployment "${deploymentName}" not found in namespace "${app.k8sNamespace}".`,
-          );
-        }
+        const {
+          kind,
+          name: deploymentName,
+          resource: deployment,
+        } = await this.getWorkloadOrThrow(app, kubeconfig);
         const volumes: any[] = deployment.spec?.template?.spec?.volumes ?? [];
         const target = volumes.find((v) => v.name === volumeName);
         if (!target?.persistentVolumeClaim) {
           throw new NotFoundException(
-            `Volume "${volumeName}" with a PVC not found on deployment "${deploymentName}".`,
+            `Volume "${volumeName}" with a PVC not found on ${kind} "${deploymentName}".`,
           );
         }
         const previousClaim = target.persistentVolumeClaim.claimName;
-        target.persistentVolumeClaim.claimName = newClaimName;
 
-        await this.applyDeployment(kubeconfig, deployment);
+        await this.kubernetesService.patchWorkloadVolumeClaimName(
+          kubeconfig,
+          kind,
+          app.k8sNamespace,
+          deploymentName,
+          volumeName,
+          newClaimName,
+        );
         this.logger.log(
-          `Swapped volume "${volumeName}" claimName ${previousClaim} → ${newClaimName} on deployment "${deploymentName}"`,
+          `Swapped volume "${volumeName}" claimName ${previousClaim} → ${newClaimName} on ${kind} "${deploymentName}"`,
         );
 
         const updatedVolumes = (app.volumes ?? []).map((v) =>
@@ -380,7 +362,8 @@ export class AppManagementService {
   ): void {
     const run = async () => {
       const startTime = Date.now();
-      const deploymentName = app.slug;
+      const { kind: workloadKind, name: deploymentName } =
+        await this.resolveWorkloadKind(app.id);
 
       // Short initial delay to let K8s register the update
       await this.sleep(1000);
@@ -391,7 +374,7 @@ export class AppManagementService {
         try {
           const detail = await this.kubernetesService.getResourceDetail(
             kubeconfig,
-            'Deployment',
+            workloadKind,
             deploymentName,
             app.k8sNamespace,
           );
@@ -500,6 +483,26 @@ export class AppManagementService {
     };
   }
 
+  /** Resolve + fetch the app's primary workload (StatefulSet for persistent apps, else Deployment). */
+  private async getWorkloadOrThrow(
+    app: ApplicationEntity,
+    kubeconfig: string,
+  ): Promise<{ kind: string; name: string; resource: any }> {
+    const { kind, name } = await this.resolveWorkloadKind(app.id);
+    const resource = await this.kubernetesService.getResource(
+      kubeconfig,
+      kind,
+      name,
+      app.k8sNamespace,
+    );
+    if (!resource) {
+      throw new NotFoundException(
+        `${kind} "${name}" not found in namespace "${app.k8sNamespace}". Deploy the application first.`,
+      );
+    }
+    return { kind, name, resource };
+  }
+
   private async buildRuntimeResponse(
     app: ApplicationEntity,
     kubeconfig: string,
@@ -568,29 +571,6 @@ export class AppManagementService {
       replicas: detail?.replicas ?? {},
       containers,
     };
-  }
-
-  private async applyDeployment(
-    kubeconfig: string,
-    deployment: {
-      metadata?: {
-        resourceVersion?: unknown;
-        uid?: unknown;
-        creationTimestamp?: unknown;
-        generation?: unknown;
-      };
-      status?: unknown;
-      [key: string]: unknown;
-    },
-  ): Promise<void> {
-    delete deployment.metadata?.resourceVersion;
-    delete deployment.metadata?.uid;
-    delete deployment.metadata?.creationTimestamp;
-    delete deployment.metadata?.generation;
-    delete deployment.status;
-
-    const yaml = jsYaml.dump(deployment);
-    await this.kubernetesService.applyManifest(kubeconfig, yaml);
   }
 
   private buildEntityResources(
