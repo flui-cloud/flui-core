@@ -72,6 +72,15 @@ export interface ApplicationResources {
   memory?: { request?: string; limit?: string };
 }
 
+/** Pod/container security; only set fields are emitted. Mainly `fsGroup` so non-root images can write a PVC. */
+export interface ApplicationSecurityContext {
+  fsGroup?: number;
+  runAsUser?: number;
+  runAsGroup?: number;
+  runAsNonRoot?: boolean;
+  hardened?: boolean;
+}
+
 export interface ApplicationScaling {
   enabled: boolean;
   minReplicas?: number;

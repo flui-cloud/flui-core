@@ -21,6 +21,7 @@ import { ApplicationSourceType } from '../enums/application-source-type.enum';
 import { ApplicationExposure } from '../enums/application-exposure.enum';
 import {
   ApplicationHealthProbe,
+  ApplicationSecurityContext,
   ApplicationVolume,
 } from '../interfaces/source-config.interface';
 
@@ -316,6 +317,14 @@ export class CreateApplicationDto {
   @IsOptional()
   @IsString()
   startCommand?: string;
+
+  @ApiPropertyOptional({
+    description:
+      'Pod/container security settings (fsGroup, runAsUser/runAsGroup, runAsNonRoot, hardened). Emitted into the workload only for the fields that are set. Used so non-root images can write a persistent volume (fsGroup).',
+  })
+  @IsOptional()
+  @IsObject()
+  securityContext?: ApplicationSecurityContext;
 
   @ApiPropertyOptional({
     example: true,

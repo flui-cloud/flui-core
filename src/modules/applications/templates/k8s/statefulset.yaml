@@ -23,12 +23,14 @@ spec:
       annotations:
 {{POD_ANNOTATIONS_BLOCK}}
     spec:
+{{POD_SECURITY_CONTEXT_BLOCK}}
 {{NODE_PLACEMENT_BLOCK}}
 {{IMAGE_PULL_SECRETS_BLOCK}}
       containers:
         - name: {{SLUG}}
           image: "{{IMAGE}}"
           imagePullPolicy: {{PULL_POLICY}}
+{{CONTAINER_SECURITY_CONTEXT_BLOCK}}
 {{COMMAND_OVERRIDE_BLOCK}}
 {{PORTS_BLOCK}}
 {{ENV_BLOCK}}

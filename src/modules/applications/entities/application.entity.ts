@@ -24,6 +24,7 @@ import {
   ApplicationEnvVar,
   ApplicationResources,
   ApplicationScaling,
+  ApplicationSecurityContext,
   ApplicationHealthProbe,
   ApplicationVolume,
 } from '../interfaces/source-config.interface';
@@ -143,6 +144,9 @@ export class ApplicationEntity {
 
   @Column({ type: 'text', nullable: true })
   startCommand?: string;
+
+  @Column({ type: 'json', nullable: true })
+  securityContext?: ApplicationSecurityContext;
 
   @Column({ nullable: true })
   userId?: string;

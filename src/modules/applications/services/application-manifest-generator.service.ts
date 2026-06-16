@@ -133,6 +133,14 @@ export class ApplicationManifestGeneratorService {
         this.renderNodePlacementBlock(app),
       )
       .replaceAll(
+        '{{POD_SECURITY_CONTEXT_BLOCK}}',
+        this.renderPodSecurityContextBlock(app),
+      )
+      .replaceAll(
+        '{{CONTAINER_SECURITY_CONTEXT_BLOCK}}',
+        this.renderContainerSecurityContextBlock(app),
+      )
+      .replaceAll(
         '{{COMMAND_OVERRIDE_BLOCK}}',
         this.renderCommandBlock(this.getStartCommandOverride(app)),
       );
@@ -199,6 +207,14 @@ export class ApplicationManifestGeneratorService {
       .replaceAll(
         '{{NODE_PLACEMENT_BLOCK}}',
         this.renderNodePlacementBlock(app),
+      )
+      .replaceAll(
+        '{{POD_SECURITY_CONTEXT_BLOCK}}',
+        this.renderPodSecurityContextBlock(app),
+      )
+      .replaceAll(
+        '{{CONTAINER_SECURITY_CONTEXT_BLOCK}}',
+        this.renderContainerSecurityContextBlock(app),
       )
       .replaceAll(
         '{{COMMAND_OVERRIDE_BLOCK}}',
@@ -444,6 +460,41 @@ export class ApplicationManifestGeneratorService {
     }
 
     return undefined; // no override — K8s uses the image's baked CMD
+  }
+
+  /** Pod-level securityContext; emits only declared fields, nothing when the app declares none. */
+  private renderPodSecurityContextBlock(app: ApplicationEntity): string {
+    const sc = app.securityContext;
+    if (!sc) return '';
+    const lines: string[] = ['      securityContext:'];
+    if (sc.fsGroup !== undefined) {
+      lines.push(
+        `        fsGroup: ${sc.fsGroup}`,
+        '        fsGroupChangePolicy: OnRootMismatch',
+      );
+    }
+    if (sc.runAsUser !== undefined)
+      lines.push(`        runAsUser: ${sc.runAsUser}`);
+    if (sc.runAsGroup !== undefined)
+      lines.push(`        runAsGroup: ${sc.runAsGroup}`);
+    if (sc.runAsNonRoot !== undefined)
+      lines.push(`        runAsNonRoot: ${sc.runAsNonRoot}`);
+    if (sc.hardened) {
+      lines.push('        seccompProfile:', '          type: RuntimeDefault');
+    }
+    return lines.length > 1 ? lines.join('\n') : '';
+  }
+
+  /** Container-level securityContext, only when `hardened`: drop all caps, no privilege escalation. */
+  private renderContainerSecurityContextBlock(app: ApplicationEntity): string {
+    if (!app.securityContext?.hardened) return '';
+    return [
+      '          securityContext:',
+      '            allowPrivilegeEscalation: false',
+      '            capabilities:',
+      '              drop:',
+      '                - ALL',
+    ].join('\n');
   }
 
   /** Render the command/args override block for the container spec. Empty string if no override. */
