@@ -18,8 +18,8 @@ metadata:
     - building-block
     - typo-tolerant
   license: MIT
-  version: "1"
-  maintainedAt: "2026-04-22"
+  version: '1'
+  maintainedAt: '2026-04-22'
   icon: https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/svg/meilisearch.svg
   links:
     website: https://www.meilisearch.com
@@ -32,7 +32,7 @@ spec:
   image:
     registry: docker.io
     repository: getmeili/meilisearch
-    tag: "v1"
+    tag: 'v1'
 
   ports:
     - name: http
@@ -45,6 +45,9 @@ spec:
       mountPath: /meili_data
       required: true
       size: 5Gi
+
+  persistence:
+    scope: dedicated
 
   env:
     - name: MEILI_MASTER_KEY
@@ -59,7 +62,7 @@ spec:
       cpu: 100m
       memory: 128Mi
     limits:
-      cpu: "2"
+      cpu: '2'
       memory: 2Gi
 
   scaling:
@@ -71,7 +74,7 @@ spec:
       bounds:
         cpu:
           min: 100m
-          max: "4"
+          max: '4'
         memory:
           min: 128Mi
           max: 4Gi

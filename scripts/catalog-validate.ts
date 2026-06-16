@@ -65,7 +65,9 @@ async function validateFile(
     return {
       path,
       ok: false,
-      errors: [`cannot read file: ${err instanceof Error ? err.message : String(err)}`],
+      errors: [
+        `cannot read file: ${err instanceof Error ? err.message : String(err)}`,
+      ],
     };
   }
 
@@ -112,7 +114,6 @@ async function main(): Promise<void> {
 
   // Instantiate services directly — no Nest DI to avoid loading DB/Redis/etc.
   const validator = new CatalogSchemaValidatorService();
-  validator.onModuleInit();
   const loader = new CatalogManifestLoaderService(validator);
 
   const results: FileResult[] = [];
@@ -134,6 +135,8 @@ async function main(): Promise<void> {
 }
 
 main().catch((err) => {
-  process.stderr.write(`${RED}fatal:${RESET} ${err instanceof Error ? err.stack : err}\n`);
+  process.stderr.write(
+    `${RED}fatal:${RESET} ${err instanceof Error ? err.stack : err}\n`,
+  );
   process.exit(1);
 });

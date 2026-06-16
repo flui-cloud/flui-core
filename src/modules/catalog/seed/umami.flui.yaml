@@ -1,0 +1,179 @@
+kind: CatalogApp
+apiVersion: flui/v1
+
+metadata:
+  id: umami
+  name: Umami
+  description: >
+    Privacy-first, cookieless web analytics — a lightweight, GDPR-compliant
+    alternative to Google Analytics. Track page views and visitors with a
+    sub-2KB script and a clean dashboard, with full ownership of your data.
+    Ships as the app plus its own PostgreSQL, installed and torn down together.
+    First login uses the default admin account (admin / umami) — change the
+    password immediately from Settings after signing in.
+  appKind: APPLICATION
+  category: analytics
+  tags:
+    - analytics
+    - web-analytics
+    - privacy
+    - gdpr
+    - cookieless
+    - composed
+  license: MIT
+  version: '2.20'
+  maintainedAt: '2026-06-15'
+  icon: https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/svg/umami.svg
+  links:
+    website: https://umami.is
+    docs: https://umami.is/docs
+    source: https://github.com/umami-software/umami
+  ratings:
+    wow: 4
+    utility: 4
+    euFit: 5
+    community: 4
+  alternativeTo:
+    - Google Analytics
+    - Plausible
+    - Matomo
+
+spec:
+  type: composed
+
+  domain:
+    auto: true
+    tls: true
+    userCustomizable: true
+
+  networking:
+    internal: umami.internal
+
+  components:
+    - name: db
+      image:
+        registry: docker.io
+        repository: library/postgres
+        tag: '15-alpine'
+      ports:
+        - name: postgres
+          internal: 5432
+          expose: false
+          protocol: tcp
+      volumes:
+        - name: data
+          mountPath: /var/lib/postgresql/data
+          required: true
+          size: 5Gi
+      persistence:
+        scope: dedicated
+      env:
+        - name: POSTGRES_DB
+          value: umami
+        - name: POSTGRES_USER
+          value: umami
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            generate: secret
+            length: 32
+            format: hex
+        - name: PGDATA
+          value: /var/lib/postgresql/data/pgdata
+      resources:
+        requests:
+          cpu: 100m
+          memory: 256Mi
+        limits:
+          cpu: '1'
+          memory: 1Gi
+      scaling:
+        horizontal:
+          enabled: false
+        vertical:
+          enabled: true
+          mode: Recreate
+          bounds:
+            cpu:
+              min: 100m
+              max: '2'
+            memory:
+              min: 256Mi
+              max: 2Gi
+          updatePolicy:
+            trigger:
+              - OOMKilled
+              - CPUThrottling
+            cooldown: 10m
+      healthcheck:
+        type: tcp
+        port: 5432
+        initialDelay: 15s
+        interval: 10s
+        timeout: 5s
+        retries: 10
+
+    - name: umami
+      dependsOn:
+        - db
+      image:
+        registry: ghcr.io
+        repository: umami-software/umami
+        tag: postgresql-v2.20.2
+      ports:
+        - name: http
+          internal: 3000
+          expose: true
+          protocol: http
+      env:
+        - name: DATABASE_TYPE
+          value: postgresql
+        - name: DATABASE_URL
+          value: 'postgresql://{{components.db.env.POSTGRES_USER}}:{{components.db.env.POSTGRES_PASSWORD}}@{{components.db.host}}:5432/{{components.db.env.POSTGRES_DB}}'
+          secret: true
+        - name: APP_SECRET
+          valueFrom:
+            generate: secret
+            length: 32
+            format: hex
+          description: Salt used to hash session/visitor identifiers. Generated once at install.
+      resources:
+        requests:
+          cpu: 100m
+          memory: 256Mi
+        limits:
+          cpu: '1'
+          memory: 1Gi
+      scaling:
+        horizontal:
+          enabled: false
+        vertical:
+          enabled: true
+          mode: Recreate
+          bounds:
+            cpu:
+              min: 100m
+              max: '2'
+            memory:
+              min: 256Mi
+              max: 2Gi
+          updatePolicy:
+            trigger:
+              - OOMKilled
+            cooldown: 5m
+      healthcheck:
+        type: http
+        path: /api/heartbeat
+        port: 3000
+        initialDelay: 20s
+        interval: 15s
+        timeout: 5s
+        retries: 6
+
+  auth:
+    mode: native
+
+  smokeTest:
+    type: http
+    path: /api/heartbeat
+    expectedStatus: 200
+    timeoutSeconds: 60

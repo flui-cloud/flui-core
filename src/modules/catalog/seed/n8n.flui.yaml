@@ -1,0 +1,216 @@
+kind: CatalogApp
+apiVersion: flui/v1
+
+metadata:
+  id: n8n
+  name: n8n
+  description: >
+    Workflow automation you own. Connect 400+ apps and APIs, build flows
+    visually or with code, and add AI steps — a self-hosted, fair-code
+    alternative to Zapier and Make. Ships as the app plus its own PostgreSQL,
+    installed and torn down together.
+  appKind: APPLICATION
+  category: automation
+  tags:
+    - automation
+    - workflow
+    - integration
+    - no-code
+    - ai
+    - composed
+  license: Sustainable Use License
+  version: '2.25'
+  maintainedAt: '2026-06-15'
+  icon: https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/svg/n8n.svg
+  links:
+    website: https://n8n.io
+    docs: https://docs.n8n.io
+    source: https://github.com/n8n-io/n8n
+  ratings:
+    wow: 5
+    utility: 5
+    euFit: 4
+    community: 5
+  alternativeTo:
+    - Zapier
+    - Make
+    - Workato
+
+spec:
+  type: composed
+
+  domain:
+    auto: true
+    tls: true
+    userCustomizable: true
+
+  networking:
+    internal: n8n.internal
+
+  components:
+    - name: postgres
+      image:
+        registry: docker.io
+        repository: library/postgres
+        tag: '16'
+      ports:
+        - name: postgres
+          internal: 5432
+          expose: false
+          protocol: tcp
+      volumes:
+        - name: data
+          mountPath: /var/lib/postgresql/data
+          required: true
+          size: 5Gi
+      persistence:
+        scope: dedicated
+      env:
+        - name: POSTGRES_DB
+          value: n8n
+        - name: POSTGRES_USER
+          value: n8n
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            generate: secret
+            length: 32
+            format: hex
+        - name: PGDATA
+          value: /var/lib/postgresql/data/pgdata
+      resources:
+        requests:
+          cpu: 100m
+          memory: 256Mi
+        limits:
+          cpu: '1'
+          memory: 1Gi
+      scaling:
+        horizontal:
+          enabled: false
+        vertical:
+          enabled: true
+          mode: Recreate
+          bounds:
+            cpu:
+              min: 100m
+              max: '2'
+            memory:
+              min: 256Mi
+              max: 2Gi
+          updatePolicy:
+            trigger:
+              - OOMKilled
+            cooldown: 10m
+      healthcheck:
+        type: tcp
+        port: 5432
+        initialDelay: 15s
+        interval: 10s
+        timeout: 5s
+        retries: 10
+
+    - name: n8n
+      dependsOn:
+        - postgres
+      image:
+        registry: docker.io
+        repository: n8nio/n8n
+        tag: '2.25.7'
+      ports:
+        - name: http
+          internal: 5678
+          expose: true
+          protocol: http
+      volumes:
+        - name: data
+          mountPath: /home/node/.n8n
+          required: true
+          size: 5Gi
+      persistence:
+        scope: dedicated
+      # n8n's image declares a NAMED user ("node", UID/GID 1000) and stores its
+      # encrypted credentials under /home/node/.n8n. runAsUser/runAsGroup must be
+      # numeric (a named user fails the kubelet runAsNonRoot check); fsGroup lets
+      # it own the persistent volume.
+      securityContext:
+        fsGroup: 1000
+        runAsUser: 1000
+        runAsGroup: 1000
+        runAsNonRoot: true
+      env:
+        - name: DB_TYPE
+          value: postgresdb
+        - name: DB_POSTGRESDB_HOST
+          value: '{{components.postgres.host}}'
+        - name: DB_POSTGRESDB_PORT
+          value: '5432'
+        - name: DB_POSTGRESDB_DATABASE
+          value: n8n
+        - name: DB_POSTGRESDB_USER
+          value: n8n
+        - name: DB_POSTGRESDB_PASSWORD
+          value: '{{components.postgres.env.POSTGRES_PASSWORD}}'
+          secret: true
+        - name: N8N_ENCRYPTION_KEY
+          valueFrom:
+            generate: secret
+            length: 32
+            format: hex
+          description: Encrypts stored credentials. Generated once at install; rotating it makes existing credentials unreadable.
+        - name: N8N_HOST
+          value: '{{self.fqdn}}'
+        - name: N8N_PROTOCOL
+          value: https
+        - name: N8N_PORT
+          value: '5678'
+        - name: WEBHOOK_URL
+          value: 'https://{{self.fqdn}}/'
+        - name: N8N_EDITOR_BASE_URL
+          value: 'https://{{self.fqdn}}/'
+        - name: N8N_RUNNERS_ENABLED
+          value: 'true'
+        - name: N8N_DIAGNOSTICS_ENABLED
+          value: 'false'
+        - name: N8N_HIRING_BANNER_ENABLED
+          value: 'false'
+      resources:
+        requests:
+          cpu: 200m
+          memory: 384Mi
+        limits:
+          cpu: '1'
+          memory: 1Gi
+      scaling:
+        horizontal:
+          enabled: false
+        vertical:
+          enabled: true
+          mode: Recreate
+          bounds:
+            cpu:
+              min: 200m
+              max: '2'
+            memory:
+              min: 384Mi
+              max: 2Gi
+          updatePolicy:
+            trigger:
+              - OOMKilled
+            cooldown: 5m
+      healthcheck:
+        type: http
+        path: /healthz
+        port: 5678
+        initialDelay: 20s
+        interval: 15s
+        timeout: 5s
+        retries: 8
+
+  auth:
+    mode: native
+
+  smokeTest:
+    type: http
+    path: /healthz
+    expectedStatus: 200
+    timeoutSeconds: 60

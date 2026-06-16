@@ -1,0 +1,119 @@
+kind: CatalogApp
+apiVersion: flui/v1
+
+metadata:
+  id: gitea
+  name: Gitea
+  description: >
+    Lightweight, self-hosted Git service: repositories, pull requests, issues,
+    a built-in CI/CD (Gitea Actions) and a package registry — all in a single
+    Go binary backed by SQLite. A privacy-respecting alternative to GitHub and
+    GitLab with full data ownership.
+  appKind: APPLICATION
+  category: developer-tools
+  tags:
+    - git
+    - devops
+    - ci-cd
+    - code-hosting
+    - package-registry
+  license: MIT
+  version: '1.26'
+  maintainedAt: '2026-06-15'
+  icon: https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/svg/gitea.svg
+  links:
+    website: https://about.gitea.com
+    docs: https://docs.gitea.com
+    source: https://github.com/go-gitea/gitea
+  ratings:
+    wow: 4
+    utility: 5
+    euFit: 4
+    community: 5
+  alternativeTo:
+    - GitHub
+    - GitLab
+    - Bitbucket
+
+spec:
+  type: standalone
+  privatizable: true
+
+  image:
+    registry: docker.gitea.com
+    repository: gitea
+    tag: '1.26.2'
+
+  ports:
+    - name: http
+      internal: 3000
+      expose: true
+      protocol: http
+
+  volumes:
+    - name: data
+      mountPath: /data
+      required: true
+      size: 10Gi
+
+  persistence:
+    scope: dedicated
+
+  env:
+    - name: USER_UID
+      value: '1000'
+      description: Unix UID the Gitea process runs as; owns the /data volume.
+    - name: USER_GID
+      value: '1000'
+      description: Unix GID the Gitea process runs as.
+    - name: GITEA__database__DB_TYPE
+      value: sqlite3
+      description: Use the embedded SQLite database so Gitea runs as a single binary with no external DB.
+    - name: GITEA__security__INSTALL_LOCK
+      value: 'true'
+      description: Skip the web install wizard. The first account that signs up becomes the site administrator.
+    - name: GITEA__server__DISABLE_SSH
+      value: 'true'
+      description: Disable git-over-SSH; cloning and pushing go over HTTPS. Keeps the deployment to a single exposed port.
+
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: '1'
+      memory: 1Gi
+
+  scaling:
+    horizontal:
+      enabled: false
+    vertical:
+      enabled: true
+      mode: Recreate
+      bounds:
+        cpu:
+          min: 100m
+          max: '2'
+        memory:
+          min: 256Mi
+          max: 2Gi
+      updatePolicy:
+        trigger:
+          - OOMKilled
+        cooldown: 5m
+
+  healthcheck:
+    type: http
+    path: /api/healthz
+    port: 3000
+    interval: 30s
+    timeout: 5s
+    retries: 3
+
+  domain:
+    auto: true
+    userCustomizable: true
+    tls: true
+
+  auth:
+    mode: native

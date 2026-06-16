@@ -53,6 +53,7 @@
     "cli:build": "cd cli && pnpm run build",
     "catalog:validate": "ts-node -r tsconfig-paths/register ./scripts/catalog-validate.ts",
     "catalog:smoke-test": "ts-node -r tsconfig-paths/register ./scripts/catalog-smoke-test.ts",
+    "catalog:validate-all": "ts-node -r tsconfig-paths/register ./scripts/catalog-validate-all.ts",
     "catalog:diagnose": "ts-node -r tsconfig-paths/register ./scripts/catalog-diagnose.ts",
     "kb:sync": "ts-node -r tsconfig-paths/register ./scripts/kb-sync.ts",
     "kb:cli-ref": "ts-node -r tsconfig-paths/register ./scripts/kb-cli-ref.ts",

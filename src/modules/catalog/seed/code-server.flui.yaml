@@ -1,0 +1,123 @@
+kind: CatalogApp
+apiVersion: flui/v1
+
+metadata:
+  id: code-server
+  name: code-server
+  description: >
+    VS Code running in your browser, hosted on your own cluster. A full remote
+    development environment — editor, terminal, extensions and Git — reachable
+    from any device, with your workspace and settings persisted on a volume.
+  appKind: APPLICATION
+  category: developer-tools
+  tags:
+    - ide
+    - vscode
+    - development
+    - editor
+    - remote-dev
+  license: MIT
+  version: '4.123'
+  maintainedAt: '2026-06-15'
+  icon: https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/svg/code-server.svg
+  links:
+    website: https://coder.com
+    docs: https://coder.com/docs/code-server
+    source: https://github.com/coder/code-server
+  ratings:
+    wow: 4
+    utility: 5
+    euFit: 4
+    community: 5
+  alternativeTo:
+    - GitHub Codespaces
+    - Gitpod
+    - VS Code
+
+spec:
+  type: standalone
+  privatizable: true
+
+  image:
+    registry: docker.io
+    repository: codercom/code-server
+    tag: '4.123.0'
+
+  ports:
+    - name: http
+      internal: 8080
+      expose: true
+      protocol: http
+
+  volumes:
+    - name: home
+      mountPath: /home/coder
+      required: true
+      size: 10Gi
+
+  persistence:
+    scope: dedicated
+
+  # Official image runs as the non-root "coder" user (UID/GID 1000). fsGroup lets
+  # it write the persistent /home/coder volume; hardened drops caps + blocks
+  # privilege escalation (binds 8080, needs no extra capability).
+  securityContext:
+    fsGroup: 1000
+    runAsNonRoot: true
+    hardened: true
+
+  env:
+    - name: PASSWORD
+      valueFrom:
+        userInput:
+          label: Access password
+          sensitive: true
+          format: password
+          confirm: true
+          minLength: 10
+          maxLength: 128
+          pattern: '^.{10,128}$'
+          patternDescription: At least 10 characters
+      description: Password required to open the editor in the browser. Flui does not store or log it.
+
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: '2'
+      memory: 2Gi
+
+  scaling:
+    horizontal:
+      enabled: false
+    vertical:
+      enabled: true
+      mode: Recreate
+      bounds:
+        cpu:
+          min: 100m
+          max: '4'
+        memory:
+          min: 256Mi
+          max: 4Gi
+      updatePolicy:
+        trigger:
+          - OOMKilled
+        cooldown: 5m
+
+  healthcheck:
+    type: http
+    path: /healthz
+    port: 8080
+    interval: 30s
+    timeout: 5s
+    retries: 3
+
+  domain:
+    auto: true
+    userCustomizable: true
+    tls: true
+
+  auth:
+    mode: native

@@ -104,5 +104,9 @@ src/modules/assistant/knowledge/dist/kb.md
 .sonar/
 .scannerwork/
 
+# Local scratch scripts and smoke-test run output (not committed)
+/runs/
+/scripts/_*.ts
+
 # Internal documentation (reference only, not for public repo)
 internal-docs/

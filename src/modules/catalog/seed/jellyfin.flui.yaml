@@ -1,0 +1,111 @@
+kind: CatalogApp
+apiVersion: flui/v1
+
+metadata:
+  id: jellyfin
+  name: Jellyfin
+  description: >
+    The free software media system — stream your own movies, TV, music and
+    photos to any device, with no tracking and no subscriptions. Organises your
+    library, fetches metadata and transcodes on the fly (software transcoding,
+    no GPU required). A self-hosted alternative to Plex and Emby.
+  appKind: APPLICATION
+  category: media
+  tags:
+    - media-server
+    - streaming
+    - movies
+    - music
+    - self-hosted
+  license: GPL-2.0
+  version: '10.11'
+  maintainedAt: '2026-06-15'
+  icon: https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/svg/jellyfin.svg
+  links:
+    website: https://jellyfin.org
+    docs: https://jellyfin.org/docs
+    source: https://github.com/jellyfin/jellyfin
+  ratings:
+    wow: 4
+    utility: 5
+    euFit: 4
+    community: 5
+  alternativeTo:
+    - Plex
+    - Emby
+
+spec:
+  type: standalone
+  privatizable: true
+
+  image:
+    registry: docker.io
+    repository: jellyfin/jellyfin
+    tag: '10.11.11'
+
+  ports:
+    - name: http
+      internal: 8096
+      expose: true
+      protocol: http
+
+  volumes:
+    - name: config
+      mountPath: /config
+      required: true
+      size: 8Gi
+    - name: media
+      mountPath: /media
+      required: true
+      size: 20Gi
+
+  persistence:
+    scope: dedicated
+
+  # No required env: Jellyfin runs its first-launch setup wizard in the browser.
+  # The published server URL is set there (standalone {{self.fqdn}} injection is
+  # not available yet — see SHARED_FIX_BACKLOG standalone-self.fqdn item).
+  env: []
+
+  resources:
+    requests:
+      cpu: 200m
+      memory: 256Mi
+    limits:
+      cpu: '4'
+      memory: 2Gi
+
+  scaling:
+    horizontal:
+      enabled: false
+    vertical:
+      enabled: true
+      mode: Recreate
+      bounds:
+        cpu:
+          min: 200m
+          max: '6'
+        memory:
+          min: 256Mi
+          max: 4Gi
+      updatePolicy:
+        trigger:
+          - OOMKilled
+        cooldown: 5m
+
+  healthcheck:
+    type: http
+    path: /health
+    port: 8096
+    initialDelay: 20s
+    interval: 30s
+    timeout: 5s
+    retries: 6
+
+  domain:
+    auto: true
+    userCustomizable: true
+    tls: true
+
+  auth:
+    mode: native
