@@ -245,6 +245,7 @@ export class CatalogController {
       certChallenge: dto.certChallenge,
       certificateProvider: dto.certificateProvider,
       hostnameMode: dto.hostnameMode,
+      tls: dto.tls,
       skipEndpoint: dto.skipEndpoint,
       userInputs: dto.userInputs,
       envOverrides: dto.envOverrides,
@@ -253,6 +254,7 @@ export class CatalogController {
       authMode: dto.authMode,
       options: dto.options,
       force: dto.force,
+      allowMasterPlacement: dto.allowMasterPlacement,
       dependencyChoices: dto.dependencyChoices,
     };
     const { install } = await this.installer.install(

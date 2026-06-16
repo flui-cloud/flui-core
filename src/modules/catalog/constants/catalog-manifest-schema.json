@@ -3,12 +3,7 @@
   "$id": "https://flui.cloud/schema/catalog-manifest/v1.json",
   "title": "Flui Catalog App Manifest",
   "type": "object",
-  "required": [
-    "kind",
-    "apiVersion",
-    "metadata",
-    "spec"
-  ],
+  "required": ["kind", "apiVersion", "metadata", "spec"],
   "additionalProperties": false,
   "properties": {
     "kind": {
@@ -27,13 +22,7 @@
   "definitions": {
     "metadata": {
       "type": "object",
-      "required": [
-        "id",
-        "name",
-        "appKind",
-        "category",
-        "version"
-      ],
+      "required": ["id", "name", "appKind", "category", "version"],
       "additionalProperties": false,
       "properties": {
         "id": {
@@ -172,14 +161,7 @@
     },
     "specStandalone": {
       "type": "object",
-      "required": [
-        "type",
-        "image",
-        "ports",
-        "env",
-        "resources",
-        "scaling"
-      ],
+      "required": ["type", "image", "ports", "env", "resources", "scaling"],
       "additionalProperties": false,
       "properties": {
         "type": {
@@ -230,6 +212,9 @@
         },
         "startCommand": {
           "type": "string"
+        },
+        "securityContext": {
+          "$ref": "#/definitions/securityContext"
         },
         "linkedBuildingBlocks": {
           "type": "array",
@@ -301,6 +286,9 @@
         "startCommand": {
           "type": "string"
         },
+        "securityContext": {
+          "$ref": "#/definitions/securityContext"
+        },
         "smokeTest": {
           "$ref": "#/definitions/smokeTest"
         },
@@ -314,10 +302,7 @@
     },
     "specComposed": {
       "type": "object",
-      "required": [
-        "type",
-        "components"
-      ],
+      "required": ["type", "components"],
       "additionalProperties": false,
       "properties": {
         "type": {
@@ -355,13 +340,7 @@
     },
     "component": {
       "type": "object",
-      "required": [
-        "name",
-        "image",
-        "env",
-        "resources",
-        "scaling"
-      ],
+      "required": ["name", "image", "env", "resources", "scaling"],
       "additionalProperties": false,
       "properties": {
         "name": {
@@ -398,11 +377,35 @@
         "healthcheck": {
           "$ref": "#/definitions/healthcheck"
         },
+        "securityContext": {
+          "$ref": "#/definitions/securityContext"
+        },
         "dependsOn": {
           "type": "array",
           "items": {
             "type": "string"
           }
+        }
+      }
+    },
+    "securityContext": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "fsGroup": {
+          "type": "integer"
+        },
+        "runAsUser": {
+          "type": "integer"
+        },
+        "runAsGroup": {
+          "type": "integer"
+        },
+        "runAsNonRoot": {
+          "type": "boolean"
+        },
+        "hardened": {
+          "type": "boolean"
         }
       }
     },
@@ -421,17 +424,11 @@
         },
         "credentials": {
           "type": "object",
-          "required": [
-            "type",
-            "secretRef"
-          ],
+          "required": ["type", "secretRef"],
           "additionalProperties": false,
           "properties": {
             "type": {
-              "enum": [
-                "registry",
-                "git-token"
-              ]
+              "enum": ["registry", "git-token"]
             },
             "secretRef": {
               "type": "string"
@@ -440,11 +437,7 @@
         },
         "source": {
           "type": "object",
-          "required": [
-            "type",
-            "url",
-            "branch"
-          ],
+          "required": ["type", "url", "branch"],
           "additionalProperties": false,
           "properties": {
             "type": {
@@ -466,11 +459,7 @@
     },
     "port": {
       "type": "object",
-      "required": [
-        "name",
-        "internal",
-        "expose"
-      ],
+      "required": ["name", "internal", "expose"],
       "additionalProperties": false,
       "properties": {
         "name": {
@@ -485,19 +474,13 @@
           "type": "boolean"
         },
         "protocol": {
-          "enum": [
-            "http",
-            "tcp"
-          ]
+          "enum": ["http", "tcp"]
         }
       }
     },
     "volume": {
       "type": "object",
-      "required": [
-        "name",
-        "mountPath"
-      ],
+      "required": ["name", "mountPath"],
       "additionalProperties": false,
       "properties": {
         "name": {
@@ -516,9 +499,7 @@
     },
     "envVar": {
       "type": "object",
-      "required": [
-        "name"
-      ],
+      "required": ["name"],
       "additionalProperties": false,
       "properties": {
         "name": {
@@ -540,23 +521,15 @@
       },
       "oneOf": [
         {
-          "required": [
-            "value"
-          ],
+          "required": ["value"],
           "not": {
-            "required": [
-              "valueFrom"
-            ]
+            "required": ["valueFrom"]
           }
         },
         {
-          "required": [
-            "valueFrom"
-          ],
+          "required": ["valueFrom"],
           "not": {
-            "required": [
-              "value"
-            ]
+            "required": ["value"]
           }
         }
       ]
@@ -565,10 +538,7 @@
       "oneOf": [
         {
           "type": "object",
-          "required": [
-            "generate",
-            "length"
-          ],
+          "required": ["generate", "length"],
           "additionalProperties": false,
           "properties": {
             "generate": {
@@ -580,18 +550,13 @@
               "maximum": 256
             },
             "format": {
-              "enum": [
-                "base64url",
-                "hex"
-              ]
+              "enum": ["base64url", "hex"]
             }
           }
         },
         {
           "type": "object",
-          "required": [
-            "secretRef"
-          ],
+          "required": ["secretRef"],
           "additionalProperties": false,
           "properties": {
             "secretRef": {
@@ -601,9 +566,7 @@
         },
         {
           "type": "object",
-          "required": [
-            "userInput"
-          ],
+          "required": ["userInput"],
           "additionalProperties": false,
           "properties": {
             "userInput": {
@@ -643,12 +606,7 @@
                   "type": "boolean"
                 },
                 "format": {
-                  "enum": [
-                    "email",
-                    "url",
-                    "password",
-                    "text"
-                  ]
+                  "enum": ["email", "url", "password", "text"]
                 }
               }
             }
@@ -682,17 +640,12 @@
     },
     "scaling": {
       "type": "object",
-      "required": [
-        "horizontal",
-        "vertical"
-      ],
+      "required": ["horizontal", "vertical"],
       "additionalProperties": false,
       "properties": {
         "horizontal": {
           "type": "object",
-          "required": [
-            "enabled"
-          ],
+          "required": ["enabled"],
           "additionalProperties": false,
           "properties": {
             "enabled": {
@@ -710,32 +663,19 @@
               "type": "array",
               "items": {
                 "type": "object",
-                "required": [
-                  "type",
-                  "target"
-                ],
+                "required": ["type", "target"],
                 "additionalProperties": false,
                 "properties": {
                   "type": {
-                    "enum": [
-                      "cpu",
-                      "memory",
-                      "custom"
-                    ]
+                    "enum": ["cpu", "memory", "custom"]
                   },
                   "target": {
                     "type": "object",
-                    "required": [
-                      "type",
-                      "value"
-                    ],
+                    "required": ["type", "value"],
                     "additionalProperties": false,
                     "properties": {
                       "type": {
-                        "enum": [
-                          "utilization",
-                          "averageValue"
-                        ]
+                        "enum": ["utilization", "averageValue"]
                       },
                       "value": {
                         "type": "number",
@@ -762,21 +702,14 @@
         },
         "vertical": {
           "type": "object",
-          "required": [
-            "enabled"
-          ],
+          "required": ["enabled"],
           "additionalProperties": false,
           "properties": {
             "enabled": {
               "type": "boolean"
             },
             "mode": {
-              "enum": [
-                "Off",
-                "Initial",
-                "Recreate",
-                "Auto"
-              ]
+              "enum": ["Off", "Initial", "Recreate", "Auto"]
             },
             "bounds": {
               "type": "object",
@@ -797,10 +730,7 @@
                 "trigger": {
                   "type": "array",
                   "items": {
-                    "enum": [
-                      "OOMKilled",
-                      "CPUThrottling"
-                    ]
+                    "enum": ["OOMKilled", "CPUThrottling"]
                   }
                 },
                 "cooldown": {
@@ -814,10 +744,7 @@
     },
     "hpaBehaviorPolicy": {
       "type": "object",
-      "required": [
-        "stabilizationWindow",
-        "step"
-      ],
+      "required": ["stabilizationWindow", "step"],
       "additionalProperties": false,
       "properties": {
         "stabilizationWindow": {
@@ -831,10 +758,7 @@
     },
     "vpaRange": {
       "type": "object",
-      "required": [
-        "min",
-        "max"
-      ],
+      "required": ["min", "max"],
       "additionalProperties": false,
       "properties": {
         "min": {
@@ -847,17 +771,11 @@
     },
     "scalingPolicy": {
       "type": "object",
-      "required": [
-        "mode"
-      ],
+      "required": ["mode"],
       "additionalProperties": false,
       "properties": {
         "mode": {
-          "enum": [
-            "conservative",
-            "balanced",
-            "aggressive"
-          ]
+          "enum": ["conservative", "balanced", "aggressive"]
         },
         "notifications": {
           "type": "object",
@@ -881,17 +799,11 @@
     },
     "healthcheck": {
       "type": "object",
-      "required": [
-        "type"
-      ],
+      "required": ["type"],
       "additionalProperties": false,
       "properties": {
         "type": {
-          "enum": [
-            "http",
-            "tcp",
-            "exec"
-          ]
+          "enum": ["http", "tcp", "exec"]
         },
         "path": {
           "type": "string"
@@ -924,10 +836,7 @@
     },
     "exposure": {
       "type": "string",
-      "enum": [
-        "public",
-        "internal"
-      ],
+      "enum": ["public", "internal"],
       "default": "public",
       "description": "Controls how the app is reached. 'public' (default) generates Ingress + Certificate + DNS on a public hostname. 'internal' skips all public exposure: only Deployment + Service ClusterIP are created; the app is reachable only from the Flui dashboard via the ForwardAuth proxy on a wildcard internal hostname."
     },
@@ -948,10 +857,7 @@
     },
     "linkedBuildingBlock": {
       "type": "object",
-      "required": [
-        "ref",
-        "envMapping"
-      ],
+      "required": ["ref", "envMapping"],
       "additionalProperties": false,
       "description": "Declares this standalone app is a client/UI for a building block (e.g. pgweb \u2192 postgresql). At runtime, the user connects the client to a running BB install via POST /catalog/installs/:id/connect with body { targetInstallId }. The backend wires the env vars below with `secretKeyRef` to the BB's existing K8s Secret (passwords never leave the cluster) and literal values for non-secret sources (host, port, db name). Connection is mutable: the same client can be disconnected or switched to another BB without reinstalling.",
       "properties": {
@@ -971,9 +877,7 @@
     },
     "linkedEnv": {
       "type": "object",
-      "required": [
-        "name"
-      ],
+      "required": ["name"],
       "additionalProperties": false,
       "properties": {
         "name": {
@@ -981,10 +885,7 @@
           "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
         },
         "fromService": {
-          "enum": [
-            "host",
-            "port"
-          ],
+          "enum": ["host", "port"],
           "description": "Compute from the BB's Kubernetes Service: 'host' \u2192 cluster DNS, 'port' \u2192 first port's internal number."
         },
         "fromBBEnv": {
@@ -1000,24 +901,33 @@
       "oneOf": [
         {
           "required": ["fromService"],
-          "not": { "anyOf": [{ "required": ["fromBBEnv"] }, { "required": ["value"] }] }
+          "not": {
+            "anyOf": [{ "required": ["fromBBEnv"] }, { "required": ["value"] }]
+          }
         },
         {
           "required": ["fromBBEnv"],
-          "not": { "anyOf": [{ "required": ["fromService"] }, { "required": ["value"] }] }
+          "not": {
+            "anyOf": [
+              { "required": ["fromService"] },
+              { "required": ["value"] }
+            ]
+          }
         },
         {
           "required": ["value"],
-          "not": { "anyOf": [{ "required": ["fromService"] }, { "required": ["fromBBEnv"] }] }
+          "not": {
+            "anyOf": [
+              { "required": ["fromService"] },
+              { "required": ["fromBBEnv"] }
+            ]
+          }
         }
       ]
     },
     "dependency": {
       "type": "object",
-      "required": [
-        "ref",
-        "as"
-      ],
+      "required": ["ref", "as"],
       "additionalProperties": false,
       "properties": {
         "ref": {
@@ -1037,18 +947,11 @@
     },
     "auth": {
       "type": "object",
-      "required": [
-        "mode"
-      ],
+      "required": ["mode"],
       "additionalProperties": false,
       "properties": {
         "mode": {
-          "enum": [
-            "oidc",
-            "proxy",
-            "native",
-            "none"
-          ]
+          "enum": ["oidc", "proxy", "native", "none"]
         },
         "oidc": {
           "type": "object",
@@ -1099,19 +1002,12 @@
     },
     "smokeTest": {
       "type": "object",
-      "required": [
-        "type"
-      ],
+      "required": ["type"],
       "additionalProperties": false,
       "properties": {
         "type": {
           "type": "string",
-          "enum": [
-            "http",
-            "tcp",
-            "script",
-            "skip"
-          ]
+          "enum": ["http", "tcp", "script", "skip"]
         },
         "reason": {
           "type": "string"

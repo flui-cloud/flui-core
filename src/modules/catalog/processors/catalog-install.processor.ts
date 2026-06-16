@@ -649,6 +649,7 @@ export class CatalogInstallProcessor {
       workloadKind: isBuildingBlock ? 'StatefulSet' : 'Deployment',
       persistenceScope: spec.persistence?.scope ?? 'shared',
       startCommand: spec.startCommand,
+      securityContext: spec.securityContext,
       labels: {
         'flui.cloud/catalog-app': definition.slug,
         'flui.cloud/catalog-install': install.id,
@@ -717,7 +718,9 @@ export class CatalogInstallProcessor {
       domainHints.certificateProvider =
         CertificateProvider.LETS_ENCRYPT_STAGING;
 
-    const certificateRequired = spec.domain?.tls !== false;
+    // Install param (requestedTls) wins over the manifest's domain.tls.
+    const certificateRequired =
+      (install.requestedTls ?? spec.domain?.tls) !== false;
 
     try {
       const endpoint = await this.appEndpointService.createEndpoint(
@@ -1130,6 +1133,17 @@ export class CatalogInstallProcessor {
       }
     }
 
+    // Pre-populate every component's host/fqdn (deterministic from slug+namespace)
+    // so siblings can cross-reference regardless of deploy order. `env` stays empty
+    // until each deploys, so secret refs still require the producer first.
+    for (const c of includedComponents) {
+      ctx.components[c.name] = {
+        host: `${install.slug}-${c.name}-svc.${namespace}.svc.cluster.local`,
+        fqdn: componentFqdns[c.name],
+        env: {},
+      };
+    }
+
     const existingApps = await this.applicationRepo.findByCatalogInstall(
       install.id,
     );
@@ -1270,6 +1284,7 @@ export class CatalogInstallProcessor {
           spec,
           primaryComponent,
           primaryAppId,
+          appIdByComponent,
         );
       } catch (err) {
         this.logger.warn(
@@ -1422,6 +1437,8 @@ export class CatalogInstallProcessor {
         ? 'StatefulSet'
         : 'Deployment',
       persistenceScope: component.persistence?.scope ?? 'shared',
+      securityContext: component.securityContext,
+      startCommand: component.startCommand,
       labels: {
         'flui.cloud/catalog-app': definition.slug,
         'flui.cloud/catalog-install': install.id,
@@ -1496,7 +1513,9 @@ export class CatalogInstallProcessor {
       domainHints.certificateProvider =
         CertificateProvider.LETS_ENCRYPT_STAGING;
 
-    const certificateRequired = spec.domain?.tls !== false;
+    // Install param (requestedTls) wins over the manifest's domain.tls.
+    const certificateRequired =
+      (install.requestedTls ?? spec.domain?.tls) !== false;
 
     try {
       const endpoint = await this.appEndpointService.createEndpoint(
@@ -1539,6 +1558,7 @@ export class CatalogInstallProcessor {
     spec: CatalogSpecComposed,
     primaryComponent: CatalogComponent,
     primaryAppId: string,
+    appIdByComponent: Map<string, string>,
   ): Promise<OidcWireResult | null> {
     const auth = spec.auth;
     const mode = install.authMode ?? auth?.default ?? auth?.mode ?? 'native';
@@ -1615,7 +1635,15 @@ export class CatalogInstallProcessor {
       clientSecret: app.clientSecret ?? '',
     };
 
-    const entity = await this.applicationRepo.findById(primaryAppId);
+    // OIDC env/config targets the component that speaks OIDC (may differ from the exposed one), else the primary.
+    const targetName = auth.oidc.targetComponent;
+    const targetAppId =
+      (targetName && appIdByComponent.get(targetName)) || primaryAppId;
+    const targetComponent =
+      (targetName && spec.components.find((c) => c.name === targetName)) ||
+      primaryComponent;
+
+    const entity = await this.applicationRepo.findById(targetAppId);
     if (!entity) return result;
     const env = [...(entity.env ?? [])];
     let configFiles: Array<{ path: string; content: string }> | undefined;
@@ -1637,32 +1665,41 @@ export class CatalogInstallProcessor {
       if (m.enabledFlag) env.push({ name: m.enabledFlag, value: 'true' });
     }
 
-    if (!configFiles && !auth.oidc.envMapping) {
+    // OIDC-only extra env; replaces any same-named entry already present.
+    if (auth.oidc.extraEnv) {
+      for (const [name, value] of Object.entries(auth.oidc.extraEnv)) {
+        const i = env.findIndex((e) => e.name === name);
+        if (i >= 0) env[i] = { ...env[i], value };
+        else env.push({ name, value });
+      }
+    }
+
+    if (!configFiles && !auth.oidc.envMapping && !auth.oidc.extraEnv) {
       this.logger.log(
         `Install ${install.id}: OIDC client registered; ${primaryComponent.name} configured via postInstall — no redeploy`,
       );
       return result;
     }
 
-    await this.applicationRepo.update(primaryAppId, {
+    await this.applicationRepo.update(targetAppId, {
       env,
       ...(configFiles ? { configFiles } : {}),
     });
 
-    const imageRef = this.buildImageRef(primaryComponent.image);
+    const imageRef = this.buildImageRef(targetComponent.image);
     const op = await this.deployService.triggerDeployWithImage(
-      primaryAppId,
+      targetAppId,
       imageRef,
       install.userId,
     );
     await this.waitForDeployOperation(
       op.id,
-      primaryAppId,
+      targetAppId,
       this.deployConfig.getCatalogInstallWaitTimeoutMs(),
       this.deployConfig.getCatalogInstallPollIntervalMs(),
     );
     this.logger.log(
-      `Install ${install.id}: SSO wired + ${primaryComponent.name} redeployed`,
+      `Install ${install.id}: SSO wired + ${targetComponent.name} redeployed`,
     );
     return result;
   }

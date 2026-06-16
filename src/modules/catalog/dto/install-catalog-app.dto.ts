@@ -72,6 +72,14 @@ export class InstallCatalogAppDto {
 
   @ApiPropertyOptional({
     description:
+      "Override manifest domain.tls. When false, the endpoint is provisioned with DNS only and no per-app certificate is requested (HTTP). Useful to avoid Let's Encrypt rate limits during bulk installs. Omit to use the manifest default (tls: true).",
+  })
+  @IsOptional()
+  @IsBoolean()
+  tls?: boolean;
+
+  @ApiPropertyOptional({
+    description:
       'When the app uses dedicated (node-local) storage, allow its components to schedule on the control-plane node instead of requiring a worker. Set this when the target cluster has no worker node so the install does not fail. Defaults to false.',
     default: false,
   })

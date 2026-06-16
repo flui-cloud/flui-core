@@ -101,6 +101,9 @@ export class CatalogInstallEntity {
   @Column({ length: 16, nullable: true })
   requestedHostnameMode?: string;
 
+  @Column({ nullable: true })
+  requestedTls?: boolean;
+
   @Column({ length: 255, nullable: true })
   resolvedFqdn?: string;
 

@@ -67,6 +67,14 @@ export class InstallFromYamlDto {
   hostnameMode?: 'ip' | 'domain';
 
   @ApiPropertyOptional({
+    description:
+      "Override manifest domain.tls. When false, the endpoint is provisioned with DNS only and no per-app certificate is requested (HTTP). Useful to avoid Let's Encrypt rate limits during bulk installs. Omit to use the manifest default (tls: true).",
+  })
+  @IsOptional()
+  @IsBoolean()
+  tls?: boolean;
+
+  @ApiPropertyOptional({
     description: 'Skip endpoint provisioning at install time.',
     default: false,
   })
@@ -146,4 +154,13 @@ export class InstallFromYamlDto {
   @IsOptional()
   @IsBoolean()
   force?: boolean;
+
+  @ApiPropertyOptional({
+    description:
+      'Allow the workload to be scheduled on the control-plane (master) node. Needed for node-local-storage apps on clusters without a worker node. Default false.',
+    default: false,
+  })
+  @IsOptional()
+  @IsBoolean()
+  allowMasterPlacement?: boolean;
 }

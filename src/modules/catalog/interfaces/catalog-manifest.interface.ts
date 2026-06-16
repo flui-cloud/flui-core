@@ -106,6 +106,7 @@ export interface CatalogSpecStandalone {
   auth?: CatalogAuth;
   postInstall?: CatalogPostInstallStep[];
   startCommand?: string;
+  securityContext?: CatalogSecurityContext;
   /**
    * Per-BB linking declarations. The `ref` of each entry must be present in
    * `metadata.clientFor`. At connect time the installer picks the entry whose
@@ -114,6 +115,18 @@ export interface CatalogSpecStandalone {
   linkedBuildingBlocks?: CatalogLinkedBuildingBlock[];
   dependencies?: CatalogDependency[];
   smokeTest?: CatalogSmokeTest;
+}
+
+/** Pod/container security; only the set fields are emitted into the workload. */
+export interface CatalogSecurityContext {
+  /** GID of the image's non-root user so it can write mounted volumes (emitted with `fsGroupChangePolicy: OnRootMismatch`). */
+  fsGroup?: number;
+  runAsUser?: number;
+  runAsGroup?: number;
+  /** Opt-in: a root-entrypoint image (postgres, gitea) would fail with this set. */
+  runAsNonRoot?: boolean;
+  /** Baseline hardening: no privilege escalation, drop all caps, RuntimeDefault seccomp. */
+  hardened?: boolean;
 }
 
 export interface CatalogLinkedBuildingBlock {
@@ -144,6 +157,7 @@ export interface CatalogSpecBuildingBlock {
   scaling: CatalogScaling;
   healthcheck: CatalogHealthcheck;
   startCommand?: string;
+  securityContext?: CatalogSecurityContext;
   auth?: CatalogAuth;
   postInstall?: CatalogPostInstallStep[];
   smokeTest?: CatalogSmokeTest;
@@ -182,6 +196,10 @@ export interface CatalogAuthOidc {
   redirectPath?: string;
   redirectPaths?: string[];
   scopes?: string[];
+  /** Composed apps: component receiving the OIDC env/config when it differs from the exposed one (e.g. Penpot backend). Defaults to primary. */
+  targetComponent?: string;
+  /** Extra env injected into the target component only in OIDC mode, alongside the client credentials. */
+  extraEnv?: Record<string, string>;
   envMapping?: {
     issuerUrl?: string;
     clientId?: string;
@@ -229,6 +247,8 @@ export interface CatalogComponent {
   resources: CatalogResources;
   scaling: CatalogScaling;
   healthcheck?: CatalogHealthcheck;
+  securityContext?: CatalogSecurityContext;
+  startCommand?: string;
   dependsOn?: string[];
   when?: {
     option?: string;
