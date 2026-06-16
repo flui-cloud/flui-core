@@ -13,12 +13,14 @@ export default class ConfigRemove extends Command {
     '<%= config.bin %> <%= command.id %> hetzner',
     '<%= config.bin %> <%= command.id %> email',
     '<%= config.bin %> <%= command.id %> scaleway --force',
+    '<%= config.bin %> <%= command.id %> api-url',
   ];
 
   static readonly args = {
     key: Args.string({
       required: true,
-      description: 'Configuration key (preference name or provider name)',
+      description:
+        'Configuration key: a preference, a provider name, or a system override (api-url)',
     }),
   };
 

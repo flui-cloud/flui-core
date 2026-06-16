@@ -13,18 +13,20 @@ import { validateScalewayCredentials } from '../../lib/scaleway-validator';
 
 export default class ConfigSet extends Command {
   static readonly description =
-    'Set a configuration value. The key determines whether it is stored as a non-secret preference (e.g. email, certificateMode) or as an encrypted provider token (e.g. hetzner).';
+    'Set a configuration value. The key determines whether it is stored as a non-secret preference (e.g. email, certificateMode), an encrypted provider token (e.g. hetzner), or a system override (api-url — the Flui API base URL the CLI talks to). Run with an unknown key to list every accepted key.';
 
   static readonly examples = [
     '<%= config.bin %> <%= command.id %> hetzner YOUR_API_TOKEN',
     '<%= config.bin %> <%= command.id %> email you@example.com',
     '<%= config.bin %> <%= command.id %> certificateMode preflight',
+    '<%= config.bin %> <%= command.id %> api-url http://localhost:3000/api/v1',
   ];
 
   static readonly args = {
     key: Args.string({
       required: true,
-      description: 'Configuration key (preference name or provider name)',
+      description:
+        'Configuration key: a preference, a provider name, or a system override (api-url)',
     }),
     value: Args.string({
       required: false,

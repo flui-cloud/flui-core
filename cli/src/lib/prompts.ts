@@ -220,11 +220,28 @@ export async function promptMaskedInput(message: string): Promise<string> {
   });
 }
 
-/**
- * Interactive provider setup wizard.
- * Shows arrow-key provider selection, prompts for token, saves to ConfigStorage.
- * Returns true if setup completed successfully, false if cancelled.
- */
+/** Pick among already-configured providers (no token prompt). Returns the chosen id, or null if cancelled. */
+export async function selectConfiguredProvider(
+  configuredIds: string[],
+): Promise<string | null> {
+  const options = SUPPORTED_PROVIDERS.filter((p) =>
+    configuredIds.includes(p.id),
+  );
+  if (options.length === 0) return null;
+  if (options.length === 1) return options[0].id;
+
+  console.log(chalk.cyan('\nℹ  Multiple cloud providers are configured.'));
+  const index = await selectWithArrows(
+    'Select the provider to use:',
+    options.map((p) => ({ label: p.label })),
+  );
+  if (index === -1) {
+    console.log(chalk.dim('\n   Cancelled.\n'));
+    return null;
+  }
+  return options[index].id;
+}
+
 async function pickProviderToConfigure(
   preselectedProviderId?: string,
 ): Promise<ProviderOption | null> {

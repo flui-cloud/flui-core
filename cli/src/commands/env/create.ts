@@ -35,6 +35,7 @@ import {
   displayServerTypeNotFoundError,
   selectServerTypePrompt,
   runProviderSetupWizard,
+  selectConfiguredProvider,
   promptInput,
 } from '../../lib/prompts';
 import { PreferencesResolver } from '../../config/preferences-resolver';
@@ -123,16 +124,13 @@ export default class EnvCreate extends Command {
     }),
   };
 
-  /** The sole provider with configured credentials, or undefined if none/both. */
-  private detectConfiguredProvider(
-    configStorage: ConfigStorage,
-  ): string | undefined {
-    const configured = (['hetzner', 'scaleway'] as const).filter((p) =>
+  /** Providers that already have stored credentials in this profile. */
+  private getConfiguredProviders(configStorage: ConfigStorage): string[] {
+    return (['hetzner', 'scaleway'] as const).filter((p) =>
       isCompoundProvider(p)
         ? configStorage.hasCredentials(p)
         : configStorage.hasToken(p),
     );
-    return configured.length === 1 ? configured[0] : undefined;
   }
 
   async run(): Promise<void> {
@@ -151,13 +149,19 @@ export default class EnvCreate extends Command {
         ? configStorage.hasCredentials(p)
         : configStorage.hasToken(p);
 
-    // Resolve the target provider BEFORE deriving provider-specific defaults.
-    // Precedence: explicit --provider > the profile's single configured
-    // provider > the setup wizard's choice. (Previously hard-defaulted to
-    // hetzner, so a Scaleway-only profile still tried — and failed — to build
-    // on Hetzner.)
-    let providerKey =
-      flags.provider ?? this.detectConfiguredProvider(configStorage);
+    // Precedence: explicit --provider > already-configured provider(s) > setup wizard.
+    // One configured provider is auto-selected, several are offered as a pick list.
+    let providerKey = flags.provider;
+    if (!providerKey) {
+      const configured = this.getConfiguredProviders(configStorage);
+      if (configured.length === 1) {
+        providerKey = configured[0];
+      } else if (configured.length > 1) {
+        const picked = await selectConfiguredProvider(configured);
+        if (!picked) this.exit(1);
+        providerKey = picked;
+      }
+    }
     if (!providerKey || !hasCreds(providerKey)) {
       const configured = await runProviderSetupWizard(providerKey);
       if (!configured) {

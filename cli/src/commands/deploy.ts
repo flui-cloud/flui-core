@@ -134,6 +134,11 @@ export default class Deploy extends Command {
       description: 'Skip DNS and TLS provisioning (kind:CatalogApp only)',
       default: false,
     }),
+    'no-tls': Flags.boolean({
+      description:
+        "Provision the endpoint with DNS only, without a per-app TLS certificate (kind:CatalogApp). Overrides the manifest domain.tls. Avoids Let's Encrypt rate limits; the app is served over HTTP.",
+      default: false,
+    }),
     'cert-challenge': Flags.string({
       description:
         'ACME challenge for the app endpoint (kind:CatalogApp). http-01 works without a DNS zone and forces a per-host cert; dns-01 needs a cluster DNS zone with a wildcard issuer. Default: derived from cluster config.',
@@ -514,6 +519,7 @@ export default class Deploy extends Command {
             : {}),
           ...(flags.hostname ? { hostnameMode: flags.hostname as string } : {}),
           ...(flags['skip-endpoint'] ? { skipEndpoint: true } : {}),
+          ...(flags['no-tls'] ? { tls: false } : {}),
           ...(Object.keys(envOverrides).length > 0
             ? { envOverrides, userInputs: envOverrides }
             : {}),
