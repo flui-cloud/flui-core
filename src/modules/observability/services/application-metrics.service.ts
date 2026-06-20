@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { PrometheusQueryService } from './prometheus-query.service';
 import { ApplicationService } from '../../applications/services/application.service';
 import { AppResourcesRepository } from '../../applications/repositories/app-resources.repository';
+import { ApplicationResourceKind } from '../../applications/enums/application-resource-kind.enum';
 import {
   PrometheusInstantQueryResponse,
   PrometheusRangeQueryResponse,
@@ -14,6 +15,7 @@ import {
   ReplicaMetricsDto,
   ReplicaMetricsDataPointDto,
   AppHealthStatusDto,
+  AppVolumeMetricsDto,
 } from '../dto/application-metrics.dto';
 
 /** Maps ApplicationResourceKind workload values to kube-state-metrics label keys */
@@ -187,6 +189,8 @@ export class ApplicationMetricsService {
       ),
     ]);
 
+    const volume = await this.getAppVolume(appId, namespace);
+
     return {
       app_id: appId,
       app_name: appName,
@@ -234,6 +238,61 @@ export class ApplicationMetricsService {
         podPhaseByPodRes,
       ),
       health: this.extractHealthStatus(app?.metadata),
+      volume,
+    };
+  }
+
+  /**
+   * Persistent-volume (disk) usage for an app + a near-full alert level. Queries the raw
+   * kubelet volume stats directly (no recording rule needed) filtered to the app's PVCs
+   * (resolved from AppResources, same source the snapshot/backup features use). Returns null
+   * when the app has no PVC or the metric isn't scraped — disk stays absent, never fabricated.
+   */
+  private async getAppVolume(
+    appId: string,
+    namespace: string,
+  ): Promise<AppVolumeMetricsDto | null> {
+    const pvcs = await this.appResourcesRepository.findByApplicationIdAndKind(
+      appId,
+      ApplicationResourceKind.PERSISTENT_VOLUME_CLAIM,
+    );
+    const names = pvcs.map((r) => r.name).filter((n): n is string => !!n);
+    if (names.length === 0) return null;
+
+    const sel = `namespace="${namespace}",persistentvolumeclaim=~"${names.join('|')}"`;
+    const [usedRes, capRes, availRes] = await Promise.all([
+      this.prometheusQuery.queryInstant(
+        `sum(kubelet_volume_stats_used_bytes{${sel}})`,
+      ),
+      this.prometheusQuery.queryInstant(
+        `sum(kubelet_volume_stats_capacity_bytes{${sel}})`,
+      ),
+      this.prometheusQuery.queryInstant(
+        `sum(kubelet_volume_stats_available_bytes{${sel}})`,
+      ),
+    ]);
+
+    const used = this.extractSumValue(usedRes);
+    const capacity = this.extractSumValue(capRes);
+    const available = this.extractSumValue(availRes);
+    if (used === null && capacity === null) return null; // metric not scraped
+
+    const utilization =
+      capacity && capacity > 0 && used !== null
+        ? (used / capacity) * 100
+        : null;
+    let alertLevel: 'none' | 'warning' | 'critical' = 'none';
+    if (utilization !== null) {
+      if (utilization >= 95) alertLevel = 'critical';
+      else if (utilization >= 80) alertLevel = 'warning';
+    }
+
+    return {
+      used_bytes: used,
+      capacity_bytes: capacity,
+      available_bytes: available,
+      utilization_percent: utilization,
+      alert_level: alertLevel,
     };
   }
 

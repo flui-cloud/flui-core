@@ -71,6 +71,14 @@ export interface IBackupStorageBackend {
     ttlSeconds: number,
   ): Promise<string>;
 
+  /** Upload a local file under `key` (prefixed by pathPrefix); returns the full object key. */
+  uploadFile(
+    creds: StorageBackendCredentials,
+    key: string,
+    filePath: string,
+    contentType?: string,
+  ): Promise<string>;
+
   toVeleroBSL(creds: StorageBackendCredentials): VeleroBSLConfig;
 
   toRcloneRemote(creds: StorageBackendCredentials): RcloneRemoteConfig;

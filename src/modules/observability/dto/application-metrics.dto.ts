@@ -315,6 +315,29 @@ export class AppHealthStatusDto {
 // Instant Metrics - App Metrics DTO
 // =====================================================
 
+export class AppVolumeMetricsDto {
+  @ApiProperty({
+    nullable: true,
+    description: 'Used bytes across the app PVCs',
+  })
+  used_bytes: number | null;
+
+  @ApiProperty({ nullable: true, description: 'Total provisioned bytes' })
+  capacity_bytes: number | null;
+
+  @ApiProperty({ nullable: true, description: 'Free bytes' })
+  available_bytes: number | null;
+
+  @ApiProperty({ nullable: true, description: 'used / capacity * 100' })
+  utilization_percent: number | null;
+
+  @ApiProperty({
+    enum: ['none', 'warning', 'critical'],
+    description: 'Disk near-full level — warning ≥80%, critical ≥95%',
+  })
+  alert_level: 'none' | 'warning' | 'critical';
+}
+
 export class AppMetricsDto {
   @ApiProperty({ description: 'Application ID (from DB)' })
   app_id: string;
@@ -335,6 +358,14 @@ export class AppMetricsDto {
 
   @ApiProperty({ type: AppNetworkMetricsDto })
   network: AppNetworkMetricsDto;
+
+  @ApiPropertyOptional({
+    type: AppVolumeMetricsDto,
+    nullable: true,
+    description:
+      'Persistent volume (disk) usage + near-full alert. Null for apps without a PVC.',
+  })
+  volume?: AppVolumeMetricsDto | null;
 
   @ApiProperty({ type: AppStatusMetricsDto })
   status: AppStatusMetricsDto;
