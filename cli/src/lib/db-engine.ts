@@ -55,6 +55,21 @@ const PROFILES: Record<string, CliEngineProfile> = {
     clientHint: (_user, _database, port, password) =>
       `redis-cli -h 127.0.0.1 -p ${port} -a '${password}'`,
   },
+  ferretdb: {
+    label: 'FerretDB',
+    // FerretDB v1 (auth: none) connects anonymously; the keys cover a future authenticated store.
+    secretPasswordKeys: [
+      'FERRETDB_PASSWORD',
+      'MONGODB_PASSWORD',
+      'MONGO_PASSWORD',
+    ],
+    urlScheme: 'mongodb',
+    defaultLocalPort: 57017,
+    clientHint: (user, _database, port, password) =>
+      password
+        ? `mongosh "mongodb://${user || 'admin'}:${password}@127.0.0.1:${port}/?authSource=admin"`
+        : `mongosh "mongodb://127.0.0.1:${port}"`,
+  },
 };
 
 const FALLBACK = PROFILES.postgres;

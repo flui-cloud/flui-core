@@ -169,6 +169,10 @@ export default class Deploy extends Command {
         'Only use when you are certain the Dockerfile will succeed despite the warnings.',
       default: false,
     }),
+    'api-url': Flags.string({
+      description:
+        'Override the API base URL (e.g. http://localhost:3000/api/v1) for local-API testing against an unreleased backend. Default: active profile.',
+    }),
   };
 
   async run(): Promise<void> {
@@ -185,7 +189,7 @@ export default class Deploy extends Command {
     const raw = fs.readFileSync(filePath, 'utf-8');
 
     const configStorage = new ConfigStorage();
-    const apiUrl = configStorage.getApiUrlOrThrow();
+    const apiUrl = flags['api-url'] ?? configStorage.getApiUrlOrThrow();
     const apiKey = configStorage.getApiKey();
     if (!apiKey) {
       this.error('Not logged in. Run `flui auth login` first.', { exit: 1 });
@@ -540,6 +544,13 @@ export default class Deploy extends Command {
       const msg =
         (error as any).response?.data?.message ?? (error as Error).message;
       console.log(chalk.red(`\n  Error: ${msg}\n`));
+      const serverErrors = (error as any).response?.data?.errors;
+      if (Array.isArray(serverErrors)) {
+        for (const e of serverErrors) {
+          console.log(chalk.red(`    • ${e}`));
+        }
+        console.log('');
+      }
       this.exit(1);
     }
 

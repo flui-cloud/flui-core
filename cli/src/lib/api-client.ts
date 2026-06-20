@@ -1,5 +1,6 @@
 import axios, { AxiosInstance, AxiosError } from 'axios';
 import * as https from 'node:https';
+import { Readable } from 'node:stream';
 import { Injectable } from '@nestjs/common';
 import { NodeSizeDto } from '../../../src/modules/providers/dto/node-size.dto';
 
@@ -111,6 +112,56 @@ export class ApiClient {
    */
   async delete<T>(path: string, config?: { data?: unknown }): Promise<T> {
     const response = await this.client.delete<T>(path, config);
+    return response.data;
+  }
+
+  /**
+   * GET returning the raw response body as a stream (no timeout) — for large downloads
+   * such as a database dump. Caller pipes it to a file/stdout.
+   */
+  async getStream(path: string): Promise<NodeJS.ReadableStream> {
+    try {
+      const response = await this.client.get(path, {
+        responseType: 'stream',
+        timeout: 0,
+      });
+      return response.data as NodeJS.ReadableStream;
+    } catch (err) {
+      // On an error status the body arrives as a stream (responseType=stream); read it so the
+      // server's JSON { message } surfaces instead of a generic "status code 500".
+      const e = err as ApiError;
+      const body = e.details as { on?: unknown } | undefined;
+      if (body && typeof body.on === 'function') {
+        const text = await new Promise<string>((resolve) => {
+          let buf = '';
+          const s = body as NodeJS.ReadableStream;
+          s.on('data', (c: Buffer) => (buf += c.toString()));
+          s.on('end', () => resolve(buf));
+          s.on('error', () => resolve(buf));
+        });
+        let message = text || e.message;
+        try {
+          message = (JSON.parse(text) as { message?: string }).message ?? text;
+        } catch {
+          /* not JSON — use raw text */
+        }
+        throw new ApiError(message, e.statusCode);
+      }
+      throw err;
+    }
+  }
+
+  /**
+   * POST a stream/buffer body as application/octet-stream (no timeout) — for large uploads
+   * such as a database restore.
+   */
+  async postStream<T>(path: string, body: Readable | Buffer): Promise<T> {
+    const response = await this.client.post<T>(path, body, {
+      headers: { 'Content-Type': 'application/octet-stream' },
+      timeout: 0,
+      maxBodyLength: Infinity,
+      maxContentLength: Infinity,
+    });
     return response.data;
   }
 
