@@ -9,6 +9,8 @@ export class CatalogSchemaValidatorService {
     'persistence',
     'securityContext',
     'startCommand',
+    'configFiles',
+    'command',
   ];
 
   getSchema(): unknown {

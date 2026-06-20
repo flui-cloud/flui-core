@@ -106,7 +106,18 @@ export interface CatalogSpecStandalone {
   auth?: CatalogAuth;
   postInstall?: CatalogPostInstallStep[];
   startCommand?: string;
+  /**
+   * Exec-form entrypoint override (full argv, run without a shell). Use instead
+   * of `startCommand` for distroless images that have no /bin/sh (e.g. Garage).
+   */
+  command?: string[];
   securityContext?: CatalogSecurityContext;
+  /**
+   * Static config files mounted into the container from the app Secret
+   * (e.g. a `garage.toml`). Each entry's `content` is rendered verbatim;
+   * inject any secrets via env instead of templating them here.
+   */
+  configFiles?: CatalogConfigFile[];
   /**
    * Per-BB linking declarations. The `ref` of each entry must be present in
    * `metadata.clientFor`. At connect time the installer picks the entry whose
@@ -115,6 +126,16 @@ export interface CatalogSpecStandalone {
   linkedBuildingBlocks?: CatalogLinkedBuildingBlock[];
   dependencies?: CatalogDependency[];
   smokeTest?: CatalogSmokeTest;
+}
+
+/**
+ * A configuration file rendered into the app Secret and mounted read-only at
+ * `path`. Content is static — secrets belong in env (`valueFrom.generate`),
+ * not interpolated into the file.
+ */
+export interface CatalogConfigFile {
+  path: string;
+  content: string;
 }
 
 /** Pod/container security; only the set fields are emitted into the workload. */
@@ -157,7 +178,10 @@ export interface CatalogSpecBuildingBlock {
   scaling: CatalogScaling;
   healthcheck: CatalogHealthcheck;
   startCommand?: string;
+  /** Exec-form entrypoint override (argv, no shell) — for distroless images. */
+  command?: string[];
   securityContext?: CatalogSecurityContext;
+  configFiles?: CatalogConfigFile[];
   auth?: CatalogAuth;
   postInstall?: CatalogPostInstallStep[];
   smokeTest?: CatalogSmokeTest;
@@ -249,6 +273,9 @@ export interface CatalogComponent {
   healthcheck?: CatalogHealthcheck;
   securityContext?: CatalogSecurityContext;
   startCommand?: string;
+  /** Exec-form entrypoint override (argv, no shell) — for distroless images. */
+  command?: string[];
+  configFiles?: CatalogConfigFile[];
   dependsOn?: string[];
   when?: {
     option?: string;

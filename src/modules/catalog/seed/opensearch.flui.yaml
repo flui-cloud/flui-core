@@ -1,0 +1,120 @@
+kind: CatalogApp
+apiVersion: flui/v1
+
+metadata:
+  id: opensearch
+  name: OpenSearch
+  description: >
+    Distributed search and analytics engine — full-text search, log analytics,
+    and dashboards over your own data. Apache-2.0 fork of Elasticsearch, fully
+    ES-wire compatible. Building block: referenced as a dependency by apps that
+    need search or log aggregation. Runs single-node for self-hosted setups.
+  appKind: APPLICATION
+  category: search
+  tags:
+    - search
+    - full-text
+    - log-analytics
+    - elasticsearch-compatible
+    - building-block
+  license: Apache-2.0
+  version: '2'
+  maintainedAt: '2026-06-17'
+  icon: https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/svg/opensearch.svg
+  links:
+    website: https://opensearch.org
+    docs: https://opensearch.org/docs/latest/
+    source: https://github.com/opensearch-project/OpenSearch
+  alternativeTo:
+    - Elasticsearch
+    - AWS OpenSearch Service
+    - Algolia
+
+spec:
+  type: building-block
+
+  image:
+    registry: docker.io
+    repository: opensearchproject/opensearch
+    tag: '2'
+
+  # Re-invoke the image's own entrypoint (keeps the security/admin-password bootstrap) and pass
+  # single-node mode as a -E setting — `discovery.type` can't be a K8s env var name (dots), and
+  # single-node puts OpenSearch in dev mode so the vm.max_map_count bootstrap check is a warning.
+  startCommand: './opensearch-docker-entrypoint.sh opensearch -Ediscovery.type=single-node'
+
+  ports:
+    - name: http
+      internal: 9200
+      expose: false
+      protocol: tcp
+    - name: metrics
+      internal: 9600
+      expose: false
+      protocol: tcp
+
+  volumes:
+    - name: data
+      mountPath: /usr/share/opensearch/data
+      required: true
+      size: 20Gi
+
+  persistence:
+    scope: dedicated
+
+  env:
+    # Cap the JVM heap so it fits the container limit (heap + ~1Gi JVM/off-heap overhead).
+    - name: OPENSEARCH_JAVA_OPTS
+      value: '-Xms512m -Xmx512m'
+    # Required since 2.12 to bootstrap the admin user (high-entropy random → passes the
+    # password-strength check).
+    - name: OPENSEARCH_INITIAL_ADMIN_PASSWORD
+      valueFrom:
+        generate: secret
+        length: 32
+
+  resources:
+    requests:
+      cpu: 250m
+      memory: 1Gi
+    limits:
+      cpu: '2'
+      memory: 2Gi
+
+  scaling:
+    horizontal:
+      enabled: false
+    vertical:
+      enabled: true
+      mode: Recreate
+      bounds:
+        cpu:
+          min: 250m
+          max: '4'
+        memory:
+          min: 1Gi
+          max: 4Gi
+      updatePolicy:
+        trigger:
+          - OOMKilled
+          - CPUThrottling
+        cooldown: 10m
+
+  # TCP probe avoids the TLS + admin-auth dance on the REST port.
+  healthcheck:
+    type: tcp
+    port: 9200
+    initialDelay: 30s
+    interval: 15s
+    timeout: 5s
+    retries: 10
+
+  auth:
+    mode: native
+
+  smokeTest:
+    type: script
+    timeoutSeconds: 60
+    inline: |
+      curl -sk -u "admin:${OPENSEARCH_INITIAL_ADMIN_PASSWORD}" \
+        "https://${SMOKE_APP_FQDN}:9200/_cluster/health?wait_for_status=yellow&timeout=30s"

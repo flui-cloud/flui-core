@@ -1,0 +1,115 @@
+kind: CatalogApp
+apiVersion: flui/v1
+
+metadata:
+  id: pgvector
+  name: pgvector
+  description: >
+    PostgreSQL with the pgvector extension — vector storage and similarity
+    search (embeddings, RAG, semantic search) inside a normal relational
+    database. Building block: referenced as a dependency, not installed
+    standalone. The open, self-hosted stand-in for managed vector databases.
+  appKind: DATABASE
+  category: database
+  tags:
+    - database
+    - relational
+    - sql
+    - vector
+    - ai
+    - embeddings
+    - building-block
+  license: PostgreSQL
+  version: 'pg17'
+  maintainedAt: '2026-06-17'
+  icon: https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/svg/postgres.svg
+  links:
+    website: https://github.com/pgvector/pgvector
+    docs: https://github.com/pgvector/pgvector#getting-started
+    source: https://github.com/pgvector/pgvector
+
+spec:
+  type: building-block
+
+  image:
+    registry: docker.io
+    repository: pgvector/pgvector
+    tag: 'pg17'
+
+  ports:
+    - name: postgres
+      internal: 5432
+      expose: false
+      protocol: tcp
+
+  volumes:
+    - name: data
+      mountPath: /var/lib/postgresql/data
+      required: true
+      size: 10Gi
+
+  persistence:
+    scope: dedicated
+
+  env:
+    - name: POSTGRES_DB
+      value: '{{app.id}}'
+    - name: POSTGRES_USER
+      value: '{{app.id}}'
+    - name: POSTGRES_PASSWORD
+      valueFrom:
+        generate: secret
+        length: 32
+    - name: PGDATA
+      value: /var/lib/postgresql/data/pgdata
+
+  resources:
+    requests:
+      cpu: 250m
+      memory: 256Mi
+    limits:
+      cpu: '2'
+      memory: 2Gi
+
+  scaling:
+    horizontal:
+      enabled: false
+    vertical:
+      enabled: true
+      mode: Recreate
+      bounds:
+        cpu:
+          min: 250m
+          max: '4'
+        memory:
+          min: 256Mi
+          max: 8Gi
+      updatePolicy:
+        trigger:
+          - OOMKilled
+          - CPUThrottling
+        cooldown: 10m
+
+  healthcheck:
+    type: exec
+    command:
+      - pg_isready
+      - -U
+      - '{{env.POSTGRES_USER}}'
+    initialDelay: 10s
+    interval: 10s
+    timeout: 5s
+    retries: 5
+
+  auth:
+    mode: none
+
+  smokeTest:
+    type: script
+    timeoutSeconds: 30
+    inline: |
+      psql "postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@${SMOKE_APP_FQDN}:5432/${POSTGRES_DB}" \
+        -c "CREATE EXTENSION IF NOT EXISTS vector;" \
+        -c "CREATE TABLE _smoke_vec (id serial PRIMARY KEY, emb vector(3));" \
+        -c "INSERT INTO _smoke_vec (emb) VALUES ('[1,2,3]');" \
+        -c "DROP TABLE _smoke_vec;"

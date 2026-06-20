@@ -649,7 +649,9 @@ export class CatalogInstallProcessor {
       workloadKind: isBuildingBlock ? 'StatefulSet' : 'Deployment',
       persistenceScope: spec.persistence?.scope ?? 'shared',
       startCommand: spec.startCommand,
+      command: spec.command,
       securityContext: spec.securityContext,
+      configFiles: spec.configFiles,
       labels: {
         'flui.cloud/catalog-app': definition.slug,
         'flui.cloud/catalog-install': install.id,
@@ -1439,6 +1441,8 @@ export class CatalogInstallProcessor {
       persistenceScope: component.persistence?.scope ?? 'shared',
       securityContext: component.securityContext,
       startCommand: component.startCommand,
+      command: component.command,
+      configFiles: component.configFiles,
       labels: {
         'flui.cloud/catalog-app': definition.slug,
         'flui.cloud/catalog-install': install.id,

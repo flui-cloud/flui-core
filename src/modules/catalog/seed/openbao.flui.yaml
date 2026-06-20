@@ -1,0 +1,132 @@
+kind: CatalogApp
+apiVersion: flui/v1
+
+metadata:
+  id: openbao
+  name: OpenBao
+  description: >
+    Secrets manager and KV store with a Vault-compatible API — store, version
+    and serve application secrets (API keys, credentials, certs) from your own
+    EU server. Open, community-driven fork of HashiCorp Vault. Building block:
+    referenced as a dependency by apps that need a secrets backend; managed from
+    Flui's built-in secrets console.
+  appKind: APPLICATION
+  category: security
+  tags:
+    - secrets
+    - vault
+    - kv
+    - security
+    - building-block
+  license: MPL-2.0
+  version: '2.5'
+  maintainedAt: '2026-06-17'
+  icon: https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/svg/openbao.svg
+  links:
+    website: https://openbao.org
+    docs: https://openbao.org/docs/
+    source: https://github.com/openbao/openbao
+  alternativeTo:
+    - AWS Secrets Manager
+    - AWS KMS
+    - Azure Key Vault
+    - HashiCorp Vault
+
+spec:
+  type: building-block
+
+  image:
+    registry: docker.io
+    repository: openbao/openbao
+    tag: '2.5'
+
+  # Run a production server with file storage (single-node). Re-invoke the
+  # image's entrypoint so it sets up the runtime, then start the configured
+  # server. Flui's secrets console initialises + unseals it on first use.
+  command:
+    - docker-entrypoint.sh
+    - server
+    - -config=/openbao/config/bao.hcl
+
+  ports:
+    - name: api
+      internal: 8200
+      expose: false
+      protocol: http
+
+  volumes:
+    - name: data
+      mountPath: /openbao/data
+      required: true
+      size: 5Gi
+
+  persistence:
+    scope: dedicated
+
+  # OpenBao runs as the non-root "openbao" user (gid 1000); fsGroup lets it write
+  # the mounted data volume.
+  securityContext:
+    fsGroup: 1000
+
+  # No env: the access token + unseal key are generated at init time by the
+  # secrets console bootstrap and written into this install's Secret.
+  env: []
+
+  configFiles:
+    - path: /openbao/config/bao.hcl
+      content: |
+        storage "file" {
+          path = "/openbao/data"
+        }
+        listener "tcp" {
+          address = "0.0.0.0:8200"
+          tls_disable = 1
+        }
+        disable_mlock = true
+        api_addr = "http://127.0.0.1:8200"
+        ui = false
+
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: '1'
+      memory: 512Mi
+
+  scaling:
+    horizontal:
+      enabled: false
+    vertical:
+      enabled: true
+      mode: Recreate
+      bounds:
+        cpu:
+          min: 100m
+          max: '2'
+        memory:
+          min: 128Mi
+          max: 2Gi
+      updatePolicy:
+        trigger:
+          - OOMKilled
+          - CPUThrottling
+        cooldown: 10m
+
+  # TCP probe — the API listens even while sealed/uninitialised.
+  healthcheck:
+    type: tcp
+    port: 8200
+    initialDelay: 5s
+    interval: 10s
+    timeout: 5s
+    retries: 5
+
+  auth:
+    mode: none
+
+  smokeTest:
+    type: script
+    timeoutSeconds: 20
+    inline: |
+      wget -qO- "http://${SMOKE_APP_FQDN}:8200/v1/sys/health?uninitcode=200&sealedcode=200&standbyok=true"

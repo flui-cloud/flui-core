@@ -4,94 +4,175 @@ apiVersion: flui/v1
 metadata:
   id: ferretdb
   name: FerretDB
-  draft: true
   description: >
-    MongoDB-compatible proxy that stores data in PostgreSQL. 100% open source
-    (Apache 2.0) alternative to MongoDB — use existing MongoDB drivers and
-    tools without SSPL. Requires a Flui PostgreSQL building block as its
-    backend storage. Recommended for stacks that need document-oriented
-    queries on a fully OSI-approved stack.
+    MongoDB-compatible document database, 100% open source (Apache 2.0). FerretDB
+    v2 speaks the MongoDB wire protocol and stores data in PostgreSQL via the
+    DocumentDB extension, so existing MongoDB drivers and tools work unchanged —
+    without SSPL. Installed as a single atomic stack: the FerretDB proxy and its
+    PostgreSQL+DocumentDB backend are provisioned and torn down together.
   appKind: DATABASE
   category: database
   tags:
     - database
     - document-db
     - mongodb-compatible
-    - building-block
+    - composed
     - open-source
   license: Apache-2.0
-  version: "1"
-  maintainedAt: "2026-04-24"
+  # Track the FerretDB 2.x line: images pin the major (proxy `2`, backend `17`)
+  # so patches/minors flow on redeploy but never jump to a breaking 3.x.
+  version: '2'
+  maintainedAt: '2026-06-16'
   icon: https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/svg/ferretdb.svg
   links:
     website: https://www.ferretdb.com
     docs: https://docs.ferretdb.io
     source: https://github.com/FerretDB/FerretDB
+  alternativeTo:
+    - MongoDB
+    - Amazon DocumentDB
+    - Azure Cosmos DB for MongoDB
 
 spec:
-  type: building-block
+  type: composed
 
-  image:
-    registry: ghcr.io
-    repository: ferretdb/ferretdb
-    tag: "1"
-
-  ports:
-    - name: mongodb
-      internal: 27017
-      expose: false
-      protocol: tcp
-
-  dependencies:
-    - ref: postgresql
-      as: postgres
-      required: true
-      reuseExisting: true
-
-  env:
-    - name: FERRETDB_POSTGRESQL_URL
-      value: "postgres://{{deps.postgres.env.POSTGRES_USER}}:{{deps.postgres.env.POSTGRES_PASSWORD}}@{{deps.postgres.host}}:{{deps.postgres.port}}/{{deps.postgres.env.POSTGRES_DB}}"
-      description: Full PostgreSQL connection URL used as FerretDB backend storage
-
-  resources:
-    requests:
-      cpu: 100m
-      memory: 128Mi
-    limits:
-      cpu: "1"
-      memory: 512Mi
-
-  scaling:
-    horizontal:
-      enabled: false
-    vertical:
-      enabled: true
-      mode: Recreate
-      bounds:
-        cpu:
-          min: 100m
-          max: "2"
-        memory:
-          min: 128Mi
-          max: 1Gi
-      updatePolicy:
-        trigger:
-          - OOMKilled
-          - CPUThrottling
-        cooldown: 5m
-
-  healthcheck:
-    type: tcp
-    port: 27017
-    initialDelay: 10s
-    interval: 10s
-    timeout: 5s
-    retries: 5
-
-  smokeTest:
-    type: tcp
-    port: 27017
-    timeoutSeconds: 20
+  networking:
+    internal: ferretdb.internal
 
   auth:
     mode: none
+
+  components:
+    # PostgreSQL 17 bundled with the DocumentDB extension — FerretDB v2's backend
+    # store. The prebuilt image's entrypoint configures shared_preload_libraries
+    # (pg_cron, pg_documentdb_core, pg_documentdb) and creates the extension on
+    # first init; only the three POSTGRES_* envs are required. POSTGRES_DB MUST be
+    # `postgres` (FerretDB requires that database to exist).
+    - name: db
+      image:
+        registry: ghcr.io
+        repository: ferretdb/postgres-documentdb
+        # Floating `17` tracks the latest Postgres-17 build of the 2.x line
+        # (currently 17-0.107.0-ferretdb-2.7.0); released in lockstep with the
+        # proxy `2` tag, so the two stay version-aligned.
+        tag: '17'
+      ports:
+        - name: postgres
+          internal: 5432
+          expose: false
+          protocol: tcp
+      volumes:
+        - name: data
+          mountPath: /var/lib/postgresql/data
+          required: true
+          size: 10Gi
+      persistence:
+        scope: dedicated
+      env:
+        - name: POSTGRES_USER
+          value: postgres
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            generate: secret
+            length: 32
+        - name: POSTGRES_DB
+          value: postgres
+        - name: PGDATA
+          value: /var/lib/postgresql/data/pgdata
+      resources:
+        requests:
+          cpu: 250m
+          memory: 256Mi
+        limits:
+          cpu: '2'
+          memory: 2Gi
+      scaling:
+        horizontal:
+          enabled: false
+        vertical:
+          enabled: true
+          mode: Recreate
+          bounds:
+            cpu:
+              min: 250m
+              max: '4'
+            memory:
+              min: 256Mi
+              max: 8Gi
+          updatePolicy:
+            trigger:
+              - OOMKilled
+              - CPUThrottling
+            cooldown: 10m
+      healthcheck:
+        type: exec
+        command:
+          - pg_isready
+          - -U
+          - postgres
+        initialDelay: 15s
+        interval: 10s
+        timeout: 5s
+        retries: 10
+
+    # FerretDB proxy — speaks the MongoDB wire protocol on 27017 and authenticates
+    # against the co-located Postgres using its credentials (v2 has no anonymous
+    # mode). FERRETDB_USER/FERRETDB_PASSWORD are surfaced for the Flui document
+    # console / `flui db credentials`; FerretDB itself reads creds from the URL.
+    - name: ferretdb
+      dependsOn:
+        - db
+      image:
+        registry: ghcr.io
+        repository: ferretdb/ferretdb
+        # Floating `2` tracks the latest 2.x (currently 2.7.0); never jumps to 3.x.
+        tag: '2'
+      ports:
+        - name: mongodb
+          internal: 27017
+          expose: false
+          protocol: tcp
+      env:
+        - name: FERRETDB_POSTGRESQL_URL
+          value: 'postgres://postgres:{{components.db.env.POSTGRES_PASSWORD}}@{{components.db.host}}:5432/postgres'
+          secret: true
+          description: PostgreSQL+DocumentDB connection URL FerretDB uses as its backend store.
+        - name: FERRETDB_USER
+          value: postgres
+          description: MongoDB auth user (mirrors the Postgres superuser); used by the Flui console and external clients.
+        - name: FERRETDB_PASSWORD
+          value: '{{components.db.env.POSTGRES_PASSWORD}}'
+          secret: true
+          description: MongoDB auth password (mirrors POSTGRES_PASSWORD); read by the Flui console / CLI, never the FerretDB process.
+      resources:
+        requests:
+          cpu: 100m
+          memory: 128Mi
+        limits:
+          cpu: '1'
+          memory: 512Mi
+      scaling:
+        horizontal:
+          enabled: false
+        vertical:
+          enabled: true
+          mode: Recreate
+          bounds:
+            cpu:
+              min: 100m
+              max: '2'
+            memory:
+              min: 128Mi
+              max: 1Gi
+          updatePolicy:
+            trigger:
+              - OOMKilled
+              - CPUThrottling
+            cooldown: 5m
+      healthcheck:
+        type: tcp
+        port: 27017
+        initialDelay: 15s
+        interval: 10s
+        timeout: 5s
+        retries: 10

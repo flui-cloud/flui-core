@@ -1,0 +1,148 @@
+kind: CatalogApp
+apiVersion: flui/v1
+
+metadata:
+  id: kafka
+  name: Apache Kafka
+  description: >
+    Distributed event streaming platform for high-throughput pub/sub, event
+    sourcing and stream processing — the open, self-hosted stand-in for managed
+    streaming. Runs in KRaft mode (no ZooKeeper). Building block: referenced as
+    a dependency by apps that need durable, partitioned event streams.
+  appKind: APPLICATION
+  category: messaging
+  tags:
+    - streaming
+    - events
+    - pubsub
+    - kafka
+    - kraft
+    - building-block
+  license: Apache-2.0
+  version: '4.3'
+  maintainedAt: '2026-06-17'
+  icon: https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/svg/apache-kafka.svg
+  links:
+    website: https://kafka.apache.org
+    docs: https://kafka.apache.org/documentation
+    source: https://github.com/apache/kafka
+  alternativeTo:
+    - AWS MSK
+    - Confluent Cloud
+    - Azure Event Hubs
+    - Google Cloud Pub/Sub
+
+spec:
+  type: building-block
+
+  # Official Apache Kafka image, KRaft combined mode (broker + controller in one
+  # node) — no ZooKeeper. Pinned to the latest stable 4.3.x line.
+  image:
+    registry: docker.io
+    repository: apache/kafka
+    tag: '4.3.0'
+
+  ports:
+    - name: kafka
+      internal: 9092
+      expose: false
+      protocol: tcp
+
+  volumes:
+    - name: data
+      mountPath: /var/lib/kafka/data
+      required: true
+      size: 10Gi
+
+  persistence:
+    scope: dedicated
+
+  # The Apache image runs as uid 1000; let it own the log volume.
+  securityContext:
+    fsGroup: 1000
+
+  # Single-node KRaft. The broker advertises its in-cluster Service DNS so other
+  # Flui apps connect normally; the Flui console reaches it through a port-forward
+  # tunnel and ignores the advertised address, so one PLAINTEXT listener serves
+  # both. The controller listener (9093) is node-internal only.
+  env:
+    - name: KAFKA_NODE_ID
+      value: '1'
+    - name: KAFKA_PROCESS_ROLES
+      value: broker,controller
+    - name: KAFKA_CONTROLLER_QUORUM_VOTERS
+      value: 1@localhost:9093
+    - name: KAFKA_LISTENERS
+      value: PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093
+    - name: KAFKA_ADVERTISED_LISTENERS
+      value: PLAINTEXT://{{app.slug}}-svc.{{app.namespace}}.svc.cluster.local:9092
+    - name: KAFKA_LISTENER_SECURITY_PROTOCOL_MAP
+      value: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+    - name: KAFKA_CONTROLLER_LISTENER_NAMES
+      value: CONTROLLER
+    - name: KAFKA_INTER_BROKER_LISTENER_NAME
+      value: PLAINTEXT
+    - name: KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR
+      value: '1'
+    - name: KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR
+      value: '1'
+    - name: KAFKA_TRANSACTION_STATE_LOG_MIN_ISR
+      value: '1'
+    - name: KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS
+      value: '0'
+    # Producing to a not-yet-existing topic auto-creates it (dev-friendly default
+    # for a building block; topics can still be created explicitly).
+    - name: KAFKA_AUTO_CREATE_TOPICS_ENABLE
+      value: 'true'
+    - name: KAFKA_LOG_DIRS
+      value: /var/lib/kafka/data
+    - name: KAFKA_HEAP_OPTS
+      value: '-Xmx1G -Xms512M'
+    # Storage is formatted on first boot with this cluster id (each install is its
+    # own isolated single-node cluster, so a fixed id is fine).
+    - name: CLUSTER_ID
+      value: 5L6g3nShT-eMCtK--X86sw
+
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: '2'
+      memory: 2Gi
+
+  scaling:
+    horizontal:
+      enabled: false
+    vertical:
+      enabled: true
+      mode: Recreate
+      bounds:
+        cpu:
+          min: 250m
+          max: '4'
+        memory:
+          min: 512Mi
+          max: 6Gi
+      updatePolicy:
+        trigger:
+          - OOMKilled
+          - CPUThrottling
+        cooldown: 10m
+
+  healthcheck:
+    type: tcp
+    port: 9092
+    initialDelay: 30s
+    interval: 15s
+    timeout: 10s
+    retries: 12
+
+  auth:
+    mode: none
+
+  smokeTest:
+    type: script
+    timeoutSeconds: 60
+    inline: |
+      nc -z -w5 "${SMOKE_APP_FQDN}" 9092

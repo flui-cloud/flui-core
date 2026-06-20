@@ -1,0 +1,93 @@
+kind: CatalogApp
+apiVersion: flui/v1
+
+metadata:
+  id: memcached
+  name: Memcached
+  description: >
+    High-performance, in-memory key/value cache — the classic stand-in for
+    managed caches, ideal for sessions, page fragments and hot lookups. Volatile
+    by design (no persistence). Building block: referenced as a dependency by
+    apps that need a cache.
+  appKind: DATABASE
+  category: cache
+  tags:
+    - cache
+    - key-value
+    - in-memory
+    - sessions
+    - building-block
+  license: BSD-3-Clause
+  version: '1.6'
+  maintainedAt: '2026-06-17'
+  icon: https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/svg/memcached.svg
+  links:
+    website: https://memcached.org
+    docs: https://github.com/memcached/memcached/wiki
+    source: https://github.com/memcached/memcached
+  alternativeTo:
+    - AWS ElastiCache for Memcached
+    - Google Cloud Memorystore for Memcached
+
+spec:
+  type: building-block
+
+  image:
+    registry: docker.io
+    repository: library/memcached
+    tag: '1.6-alpine'
+
+  ports:
+    - name: memcached
+      internal: 11211
+      expose: false
+      protocol: tcp
+
+  # Volatile cache — no volume, no persistence block (defaults to no storage).
+
+  env: []
+
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+
+  scaling:
+    horizontal:
+      enabled: false
+    vertical:
+      enabled: true
+      mode: Recreate
+      bounds:
+        cpu:
+          min: 50m
+          max: '1'
+        memory:
+          min: 64Mi
+          max: 1Gi
+      updatePolicy:
+        trigger:
+          - OOMKilled
+          - CPUThrottling
+        cooldown: 10m
+
+  # TCP probe — Memcached has no HTTP/health command; an open port means ready.
+  healthcheck:
+    type: tcp
+    port: 11211
+    initialDelay: 3s
+    interval: 10s
+    timeout: 3s
+    retries: 5
+
+  auth:
+    mode: none
+
+  smokeTest:
+    type: script
+    timeoutSeconds: 15
+    inline: |
+      printf 'version\r\n' | nc -w2 "${SMOKE_APP_FQDN}" 11211 | grep -q VERSION

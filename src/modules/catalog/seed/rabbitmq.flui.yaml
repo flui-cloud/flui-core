@@ -1,0 +1,122 @@
+kind: CatalogApp
+apiVersion: flui/v1
+
+metadata:
+  id: rabbitmq
+  name: RabbitMQ
+  description: >
+    Battle-tested message broker for queues, pub/sub, routing and RPC over
+    AMQP — the open, self-hosted stand-in for managed message queues. Ships
+    with the management UI and HTTP API. Building block: referenced as a
+    dependency by apps that need eventing or work queues.
+  appKind: APPLICATION
+  category: messaging
+  tags:
+    - messaging
+    - queue
+    - pubsub
+    - amqp
+    - broker
+    - building-block
+  license: MPL-2.0
+  version: '4.3'
+  maintainedAt: '2026-06-17'
+  icon: https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/svg/rabbitmq.svg
+  links:
+    website: https://www.rabbitmq.com
+    docs: https://www.rabbitmq.com/docs
+    source: https://github.com/rabbitmq/rabbitmq-server
+  alternativeTo:
+    - AWS SQS
+    - AWS Amazon MQ
+    - Azure Service Bus
+    - Google Cloud Pub/Sub
+
+spec:
+  type: building-block
+
+  # The -management image bundles the management plugin (HTTP API + UI on 15672),
+  # which the Flui messaging console drives for stats, queues, publish and peek.
+  # Pinned to the 4.3 minor line (latest stable): tracks 4.3.x security patches
+  # without auto-jumping to a minor that could deprecate features.
+  image:
+    registry: docker.io
+    repository: library/rabbitmq
+    tag: '4.3-management'
+
+  ports:
+    - name: amqp
+      internal: 5672
+      expose: false
+      protocol: tcp
+    - name: management
+      internal: 15672
+      expose: false
+      protocol: http
+
+  volumes:
+    - name: data
+      mountPath: /var/lib/rabbitmq
+      required: true
+      size: 5Gi
+
+  persistence:
+    scope: dedicated
+
+  # The default owner user; the management console authenticates with these. The
+  # generated password lands in the install's Secret under RABBITMQ_DEFAULT_PASS.
+  env:
+    - name: RABBITMQ_DEFAULT_USER
+      value: flui
+    - name: RABBITMQ_DEFAULT_PASS
+      valueFrom:
+        generate: secret
+        length: 32
+
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: '1'
+      memory: 1Gi
+
+  scaling:
+    horizontal:
+      enabled: false
+    vertical:
+      enabled: true
+      mode: Recreate
+      bounds:
+        cpu:
+          min: 100m
+          max: '2'
+        memory:
+          min: 256Mi
+          max: 4Gi
+      updatePolicy:
+        trigger:
+          - OOMKilled
+          - CPUThrottling
+        cooldown: 10m
+
+  healthcheck:
+    type: exec
+    command:
+      - rabbitmq-diagnostics
+      - -q
+      - ping
+    initialDelay: 20s
+    interval: 15s
+    timeout: 10s
+    retries: 10
+
+  auth:
+    mode: none
+
+  smokeTest:
+    type: script
+    timeoutSeconds: 60
+    inline: |
+      curl -sf -u "${RABBITMQ_DEFAULT_USER}:${RABBITMQ_DEFAULT_PASS}" \
+        "http://${SMOKE_APP_FQDN}:15672/api/overview"

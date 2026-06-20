@@ -213,8 +213,20 @@
         "startCommand": {
           "type": "string"
         },
+        "command": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
         "securityContext": {
           "$ref": "#/definitions/securityContext"
+        },
+        "configFiles": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/configFile"
+          }
         },
         "linkedBuildingBlocks": {
           "type": "array",
@@ -286,8 +298,20 @@
         "startCommand": {
           "type": "string"
         },
+        "command": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
         "securityContext": {
           "$ref": "#/definitions/securityContext"
+        },
+        "configFiles": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/configFile"
+          }
         },
         "smokeTest": {
           "$ref": "#/definitions/smokeTest"
@@ -379,6 +403,18 @@
         },
         "securityContext": {
           "$ref": "#/definitions/securityContext"
+        },
+        "command": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "configFiles": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/configFile"
+          }
         },
         "dependsOn": {
           "type": "array",
@@ -493,6 +529,19 @@
           "type": "boolean"
         },
         "size": {
+          "type": "string"
+        }
+      }
+    },
+    "configFile": {
+      "type": "object",
+      "required": ["path", "content"],
+      "additionalProperties": false,
+      "properties": {
+        "path": {
+          "type": "string"
+        },
+        "content": {
           "type": "string"
         }
       }

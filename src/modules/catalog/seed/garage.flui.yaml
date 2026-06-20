@@ -1,0 +1,174 @@
+kind: CatalogApp
+apiVersion: flui/v1
+
+metadata:
+  id: garage
+  name: Garage
+  description: >
+    S3-compatible object storage — a light, self-hosted alternative to AWS S3
+    for storing files, backups, media, and static assets. Single Rust binary,
+    geo-distributable, talks the S3 API so existing SDKs and tools work
+    unchanged. Building block: referenced as a dependency by apps that need an
+    object store, or used directly through the Flui storage console.
+  appKind: APPLICATION
+  category: storage
+  tags:
+    - object-storage
+    - s3
+    - storage
+    - backups
+    - building-block
+  license: AGPL-3.0
+  version: '2.3.0'
+  maintainedAt: '2026-06-17'
+  icon: https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/svg/garage.svg
+  links:
+    website: https://garagehq.deuxfleurs.fr
+    docs: https://garagehq.deuxfleurs.fr/documentation/
+    source: https://git.deuxfleurs.fr/Deuxfleurs/garage
+  alternativeTo:
+    - Amazon S3
+    - MinIO
+    - Google Cloud Storage
+    - Azure Blob Storage
+
+spec:
+  type: building-block
+
+  image:
+    registry: docker.io
+    repository: dxflrs/garage
+    tag: v2.3.0
+
+  # Garage ships distroless (no /bin/sh), so the start command is exec-form argv,
+  # not a shell string. --single-node bootstraps the cluster layout; --default-bucket
+  # (implies --default-access-key) auto-provisions the S3 key + bucket from the
+  # GARAGE_DEFAULT_* env on first boot — no manual `garage layout`/`key`/`bucket`.
+  command:
+    - /garage
+    - server
+    - --single-node
+    - --default-bucket
+
+  ports:
+    - name: s3
+      internal: 3900
+      expose: false
+      protocol: http
+    - name: admin
+      internal: 3903
+      expose: false
+      protocol: http
+
+  volumes:
+    - name: data
+      mountPath: /var/lib/garage
+      required: true
+      size: 20Gi
+
+  # LMDB metadata needs real fsync/locking — keep it off NFS.
+  persistence:
+    scope: dedicated
+
+  env:
+    # 32-byte shared cluster key = 64 hex chars (the generator's `length` counts
+    # output chars, not bytes). Overrides rpc_secret in garage.toml so the config
+    # file carries no secret.
+    - name: GARAGE_RPC_SECRET
+      valueFrom:
+        generate: secret
+        length: 64
+        format: hex
+    # Admin API bearer token (also unauthenticated /health is used for probes).
+    - name: GARAGE_ADMIN_TOKEN
+      valueFrom:
+        generate: secret
+        length: 32
+        format: hex
+    # Default S3 access key id auto-created on first boot (identifier, kept in the
+    # app Secret so the storage console can read it).
+    - name: GARAGE_DEFAULT_ACCESS_KEY
+      valueFrom:
+        generate: secret
+        length: 16
+        format: hex
+    # Default S3 secret key for the access key above — 32 bytes = 64 hex chars.
+    - name: GARAGE_DEFAULT_SECRET_KEY
+      valueFrom:
+        generate: secret
+        length: 64
+        format: hex
+    - name: GARAGE_DEFAULT_BUCKET
+      value: default
+
+  configFiles:
+    - path: /etc/garage.toml
+      content: |
+        metadata_dir = "/var/lib/garage/meta"
+        data_dir = "/var/lib/garage/data"
+        db_engine = "lmdb"
+
+        replication_factor = 1
+
+        rpc_bind_addr = "[::]:3901"
+        rpc_public_addr = "127.0.0.1:3901"
+
+        [s3_api]
+        s3_region = "garage"
+        api_bind_addr = "[::]:3900"
+        root_domain = ".s3.garage.internal"
+
+        [s3_web]
+        bind_addr = "[::]:3902"
+        root_domain = ".web.garage.internal"
+        index = "index.html"
+
+        [admin]
+        api_bind_addr = "[::]:3903"
+
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: '2'
+      memory: 1Gi
+
+  scaling:
+    horizontal:
+      enabled: false
+    vertical:
+      enabled: true
+      mode: Recreate
+      bounds:
+        cpu:
+          min: 100m
+          max: '4'
+        memory:
+          min: 128Mi
+          max: 4Gi
+      updatePolicy:
+        trigger:
+          - OOMKilled
+          - CPUThrottling
+        cooldown: 10m
+
+  # Admin /health is unauthenticated and returns 200 once the node is up.
+  healthcheck:
+    type: http
+    path: /health
+    port: 3903
+    initialDelay: 10s
+    interval: 15s
+    timeout: 5s
+    retries: 5
+
+  # S3 access is key-based (keys live in the app Secret); no interactive login.
+  auth:
+    mode: none
+
+  smokeTest:
+    type: script
+    timeoutSeconds: 30
+    inline: |
+      curl -sf "http://${SMOKE_APP_FQDN}:3903/health"
