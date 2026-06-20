@@ -1,5 +1,14 @@
-import { Body, Controller, Get, Param, Post, Request } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Param,
+  Post,
+  Request,
+  UseGuards,
+} from '@nestjs/common';
 import { AuthenticatedUser } from '../../auth/interfaces/authenticated-user.interface';
+import { AppOwnershipGuard } from '../guards/app-ownership.guard';
 import { RunQueryDto } from '../dto/run-query.dto';
 import { DbAssistDto } from '../dto/db-assist.dto';
 import { DbQueryService } from '../services/db-query.service';
@@ -10,6 +19,7 @@ import { SchemaTree, SqlQueryResult } from '../engine/sql-engine';
 const DEFAULT_STATEMENT_TIMEOUT_MS = 30_000;
 const DEFAULT_MAX_ROWS = 1000;
 
+@UseGuards(AppOwnershipGuard)
 @Controller('applications/:id/db')
 export class DbConsoleController {
   constructor(

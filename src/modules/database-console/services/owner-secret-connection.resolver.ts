@@ -78,6 +78,15 @@ export class OwnerSecretConnectionResolver implements DbConnectionResolver {
       }
       credentials.user = user;
       credentials.database = database;
+    } else if (profile.family === 'document') {
+      // Document engines (FerretDB v2) authenticate with user + password against
+      // authSource=admin — no fixed database. Password lives in the Secret; the
+      // owner user is a plain env (FERRETDB_USER), mirroring the Postgres superuser.
+      credentials.password = await this.readSecretPassword(
+        app,
+        profile.secretPasswordKeys,
+      );
+      credentials.user = firstEnv(app, profile.envUserKeys);
     } else {
       // Key-value caches (Redis/Valkey) are often deployed without auth — read the password if
       // present, otherwise connect anonymously. The real isolation boundary is network policy

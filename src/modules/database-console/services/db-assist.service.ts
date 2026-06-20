@@ -139,37 +139,46 @@ export class DbAssistService {
         mutation: this.isMutation(sql),
       };
     }
-    // Fallback: a fenced ```sql block, prose around it as the explanation.
-    const fence = /```(?:sql)?([\s\S]*?)```/i.exec(raw);
+    // Fallback: a fenced ```sql block. Require the `sql` tag — a ```json wrapper must NOT
+    // be captured here, or the { sql, … } object itself would land in the SQL editor.
+    const fence = /```sql\s*([\s\S]*?)```/i.exec(raw);
     const sql = (fence?.[1] ?? '').trim();
     const explanation = raw.replaceAll(/```[\s\S]*?```/g, '').trim();
     return { sql, explanation, mutation: this.isMutation(sql) };
   }
 
+  /**
+   * Extract the { sql, explanation } object the model was asked to return. The model may
+   * emit it bare, fenced as ```json, or inside a prose reply that itself contains braces
+   * (e.g. a jsonb example) — which broke a naive first-brace/last-brace slice and leaked the
+   * raw wrapper into the editor. So try each fenced block's contents first (isolated from the
+   * surrounding prose), then the whole text, and accept the first that yields the shape.
+   */
   private tryJson(raw: string): { sql?: string; explanation?: string } | null {
-    const body = raw
-      .trim()
-      .replace(/^```(?:json)?\s*/i, '')
-      .replace(/```$/, '')
-      .trim();
-    const start = body.indexOf('{');
-    const end = body.lastIndexOf('}');
-    if (start === -1 || end <= start) return null;
-    try {
-      const parsed = JSON.parse(body.slice(start, end + 1)) as {
-        sql?: string;
-        explanation?: string;
-      };
-      if (
-        typeof parsed.sql === 'string' ||
-        typeof parsed.explanation === 'string'
-      ) {
-        return parsed;
+    const candidates: string[] = [];
+    const fence = /```(?:json|sql)?\s*([\s\S]*?)```/gi;
+    for (let m = fence.exec(raw); m; m = fence.exec(raw)) candidates.push(m[1]);
+    candidates.push(raw);
+    for (const candidate of candidates) {
+      const start = candidate.indexOf('{');
+      const end = candidate.lastIndexOf('}');
+      if (start === -1 || end <= start) continue;
+      try {
+        const parsed = JSON.parse(candidate.slice(start, end + 1)) as {
+          sql?: string;
+          explanation?: string;
+        };
+        if (
+          typeof parsed.sql === 'string' ||
+          typeof parsed.explanation === 'string'
+        ) {
+          return parsed;
+        }
+      } catch {
+        // try the next candidate
       }
-      return null;
-    } catch {
-      return null;
     }
+    return null;
   }
 
   // UI hint only — the read-only transaction is the real boundary. Strips leading

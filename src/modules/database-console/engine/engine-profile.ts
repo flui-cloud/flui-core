@@ -3,10 +3,11 @@ import { DbEngine } from '../interfaces/db-connection';
 /**
  * Engine family — drives which capability + console serves the engine. 'sql' uses the
  * SqlEngineAdapter (query/schema); 'keyvalue' (Redis/Valkey) uses the KeyValueEngineAdapter
- * (keyspace browse + command). A future MongoDB would add 'document'. Routing is by family,
+ * (keyspace browse + command); 'document' (FerretDB and any Mongo-wire store) uses the
+ * DocumentEngineAdapter (database/collection browse + command). Routing is by family,
  * never by engine name.
  */
-export type DbEngineFamily = 'sql' | 'keyvalue';
+export type DbEngineFamily = 'sql' | 'keyvalue' | 'document';
 
 /**
  * The single source of truth for everything that differs between supported
@@ -47,7 +48,8 @@ export const ENGINE_PROFILES: Record<DbEngine, EngineProfile> = {
     secretPasswordKeys: ['POSTGRES_PASSWORD'],
     envUserKeys: ['POSTGRES_USER'],
     envDatabaseKeys: ['POSTGRES_DB'],
-    imagePattern: /postgres/i,
+    // pgvector ships as pgvector/pgvector (Postgres + vector ext) — same wire/console.
+    imagePattern: /postgres|pgvector/i,
   },
   mariadb: {
     engine: 'mariadb',
@@ -88,6 +90,25 @@ export const ENGINE_PROFILES: Record<DbEngine, EngineProfile> = {
     envDatabaseKeys: [],
     imagePattern: /redis/i,
   },
+  ferretdb: {
+    engine: 'ferretdb',
+    family: 'document',
+    label: 'FerretDB',
+    dialect: 'mongodb',
+    defaultPort: 27017,
+    urlScheme: 'mongodb',
+    // FerretDB v1 (catalog seed) runs with auth: none and stores data in Postgres, so it is
+    // reached anonymously. The candidate keys cover a future authenticated Mongo-wire store
+    // (first present wins); absent → connect anonymously, exactly like a no-auth cache.
+    secretPasswordKeys: [
+      'FERRETDB_PASSWORD',
+      'MONGODB_PASSWORD',
+      'MONGO_PASSWORD',
+    ],
+    envUserKeys: ['FERRETDB_USER', 'MONGODB_USERNAME', 'MONGO_USERNAME'],
+    envDatabaseKeys: [],
+    imagePattern: /ferretdb/i,
+  },
 };
 
 export function profileForEngine(engine: DbEngine): EngineProfile {
@@ -103,6 +124,7 @@ export function detectEngineFromImage(imageRef?: string): DbEngine | null {
     ENGINE_PROFILES.mariadb,
     ENGINE_PROFILES.valkey,
     ENGINE_PROFILES.redis,
+    ENGINE_PROFILES.ferretdb,
   ]) {
     if (profile.imagePattern.test(imageRef)) return profile.engine;
   }

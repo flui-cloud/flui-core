@@ -72,6 +72,7 @@ import { CrashDiagnosisEntity } from './modules/scaling/entities/crash-diagnosis
 import { CatalogModule } from './modules/catalog/catalog.module';
 import { CatalogAppDefinitionEntity } from './modules/catalog/entities/catalog-app-definition.entity';
 import { CatalogInstallEntity } from './modules/catalog/entities/catalog-install.entity';
+import { ObjectStoreShareEntity } from './modules/database-console/entities/object-store-share.entity';
 import { AuthzModule } from './modules/authz/authz.module';
 import { ClusterAuthzInstallEntity } from './modules/authz/entities/cluster-authz-install.entity';
 import { BackupsModule } from './modules/backups/backups.module';
@@ -147,6 +148,7 @@ import { DatabaseConsoleModule } from './modules/database-console/database-conso
           CrashDiagnosisEntity,
           CatalogAppDefinitionEntity,
           CatalogInstallEntity,
+          ObjectStoreShareEntity,
           ClusterAuthzInstallEntity,
           BackupDestinationEntity,
           BackupPolicyEntity,

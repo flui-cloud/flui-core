@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import * as k8s from '@kubernetes/client-node';
-import { Writable } from 'node:stream';
+import { Writable, Readable } from 'node:stream';
 
 export interface ContainerResources {
   cpu: string | null;
@@ -842,6 +842,69 @@ export class KubernetesService {
           (status) => {
             if (status?.status === 'Success') {
               resolve(stdout);
+            } else {
+              reject(
+                new Error(
+                  `exec failed: ${status?.message ?? stderr ?? 'unknown error'}`,
+                ),
+              );
+            }
+          },
+        )
+        .catch(reject);
+    });
+  }
+
+  /**
+   * Streaming exec in a pod: pipe the command's stdout into `streams.stdout` and/or feed
+   * `streams.stdin` to its stdin. Resolves on a Success exit, rejects with stderr otherwise.
+   * Unlike execInPod (which buffers all output into a string) this never holds the payload in
+   * memory — required for logical DB dump (stdout → HTTP) and restore (HTTP → stdin).
+   */
+  async execStream(
+    kubeconfigContent: string,
+    namespace: string,
+    labelSelector: string,
+    command: string[],
+    streams: { stdin?: Readable | null; stdout?: Writable | null },
+    containerName?: string,
+  ): Promise<void> {
+    const kc = this.loadKubeconfig(kubeconfigContent);
+    const coreApi = kc.makeApiClient(k8s.CoreV1Api);
+    const pods = await coreApi.listNamespacedPod({ namespace, labelSelector });
+    const pod = (pods.items ?? []).find((p) => p.status?.phase === 'Running');
+    if (!pod?.metadata?.name) {
+      throw new Error(
+        `No running pod found with selector "${labelSelector}" in namespace "${namespace}"`,
+      );
+    }
+    const container = containerName || pod.spec?.containers?.[0]?.name;
+    if (!container) {
+      throw new Error(`No container found in pod ${pod.metadata.name}`);
+    }
+
+    const exec = new k8s.Exec(kc);
+    return new Promise<void>((resolve, reject) => {
+      let stderr = '';
+      const stderrStream = new Writable({
+        write(chunk, _enc, cb) {
+          stderr += chunk.toString();
+          cb();
+        },
+      });
+      exec
+        .exec(
+          namespace,
+          pod.metadata!.name!,
+          container,
+          command,
+          streams.stdout ?? null,
+          stderrStream,
+          streams.stdin ?? null,
+          false,
+          (status) => {
+            if (status?.status === 'Success') {
+              resolve();
             } else {
               reject(
                 new Error(

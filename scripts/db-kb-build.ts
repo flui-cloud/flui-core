@@ -61,6 +61,9 @@ const ENGINES: { engine: string; dialect: string }[] = [
   { engine: 'postgres', dialect: 'postgres' },
   { engine: 'mariadb', dialect: 'mysql' },
   { engine: 'redis', dialect: 'redis' },
+  { engine: 'ferretdb', dialect: 'mongodb' },
+  { engine: 'opensearch', dialect: 'opensearch' },
+  { engine: 'opensearch-devtools', dialect: 'opensearch' },
 ];
 
 function stripFrontmatter(raw: string): string {

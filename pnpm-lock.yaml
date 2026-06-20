@@ -25,6 +25,9 @@ importers:
       '@modelcontextprotocol/sdk':
         specifier: ^1.29.0
         version: 1.29.0(zod@4.4.3)
+      '@mongodb-js/shell-bson-parser':
+        specifier: ^1.5.12
+        version: 1.5.12(bson@7.2.0)
       '@nestjs/axios':
         specifier: ^4.0.0
         version: 4.0.1(@nestjs/common@11.1.6(class-transformer@0.5.1)(class-validator@0.14.2)(reflect-metadata@0.2.2)(rxjs@7.8.2))(axios@1.16.0)(rxjs@7.8.2)
@@ -66,7 +69,7 @@ importers:
         version: 6.5.0(@nestjs/common@11.1.6(class-transformer@0.5.1)(class-validator@0.14.2)(reflect-metadata@0.2.2)(rxjs@7.8.2))(@nestjs/core@11.1.6)(reflect-metadata@0.2.2)
       '@nestjs/typeorm':
         specifier: ^11.0.0
-        version: 11.0.0(@nestjs/common@11.1.6(class-transformer@0.5.1)(class-validator@0.14.2)(reflect-metadata@0.2.2)(rxjs@7.8.2))(@nestjs/core@11.1.6)(reflect-metadata@0.2.2)(rxjs@7.8.2)(typeorm@0.3.27(ioredis@5.10.1)(mongodb@6.20.0(socks@2.8.7))(mysql2@3.22.5(@types/node@20.19.24))(pg@8.16.3)(redis@4.7.1)(reflect-metadata@0.2.2)(sqlite3@5.1.7)(ts-node@10.9.2(@types/node@20.19.24)(typescript@5.9.3)))
+        version: 11.0.0(@nestjs/common@11.1.6(class-transformer@0.5.1)(class-validator@0.14.2)(reflect-metadata@0.2.2)(rxjs@7.8.2))(@nestjs/core@11.1.6)(reflect-metadata@0.2.2)(rxjs@7.8.2)(typeorm@0.3.27(ioredis@5.10.1)(mongodb@7.3.0(socks@2.8.7))(mysql2@3.22.5(@types/node@20.19.24))(pg@8.16.3)(redis@4.7.1)(reflect-metadata@0.2.2)(sqlite3@5.1.7)(ts-node@10.9.2(@types/node@20.19.24)(typescript@5.9.3)))
       '@nestjs/websockets':
         specifier: ^11.1.14
         version: 11.1.14(@nestjs/common@11.1.6(class-transformer@0.5.1)(class-validator@0.14.2)(reflect-metadata@0.2.2)(rxjs@7.8.2))(@nestjs/core@11.1.6)(@nestjs/platform-socket.io@11.1.14)(reflect-metadata@0.2.2)(rxjs@7.8.2)
@@ -76,6 +79,9 @@ importers:
       '@octokit/rest':
         specifier: ^22.0.0
         version: 22.0.1
+      '@smithy/node-http-handler':
+        specifier: 4.6.1
+        version: 4.6.1
       '@types/bcrypt':
         specifier: ^6.0.0
         version: 6.0.0
@@ -136,15 +142,24 @@ importers:
       jwks-rsa:
         specifier: ^4.0.1
         version: 4.0.1
+      kafkajs:
+        specifier: ^2.2.4
+        version: 2.2.4
       keyv:
         specifier: ^5.6.0
         version: 5.6.0
       libsodium-wrappers:
         specifier: ^0.8.2
         version: 0.8.2
+      mongodb:
+        specifier: ^7.3.0
+        version: 7.3.0(socks@2.8.7)
       mysql2:
         specifier: ^3.22.5
         version: 3.22.5(@types/node@20.19.24)
+      nats:
+        specifier: ^2.29.3
+        version: 2.29.3
       passport:
         specifier: ^0.7.0
         version: 0.7.0
@@ -174,7 +189,7 @@ importers:
         version: 1.17.0
       typeorm:
         specifier: ^0.3.20
-        version: 0.3.27(ioredis@5.10.1)(mongodb@6.20.0(socks@2.8.7))(mysql2@3.22.5(@types/node@20.19.24))(pg@8.16.3)(redis@4.7.1)(reflect-metadata@0.2.2)(sqlite3@5.1.7)(ts-node@10.9.2(@types/node@20.19.24)(typescript@5.9.3))
+        version: 0.3.27(ioredis@5.10.1)(mongodb@7.3.0(socks@2.8.7))(mysql2@3.22.5(@types/node@20.19.24))(pg@8.16.3)(redis@4.7.1)(reflect-metadata@0.2.2)(sqlite3@5.1.7)(ts-node@10.9.2(@types/node@20.19.24)(typescript@5.9.3))
       uuid:
         specifier: ^11.1.0
         version: 11.1.0
@@ -1488,6 +1503,14 @@ packages:
       {
         integrity: sha512-o9rAHc0IpIjuPSxRutWpE1F62x7n+4mVS4rCNHkzhIUMQcc18bb6xEq5wd2NdN0WjepIyXIppRshYI2kQDOZVA==,
       }
+
+  '@mongodb-js/shell-bson-parser@1.5.12':
+    resolution:
+      {
+        integrity: sha512-ooVD7OFR17v+dgEY1DATrHmr6U65Nkl/PoAlWa4yoM5GuavkaW2HuOYkZqUc6qkHcygV3+BId9sJwJhRLVL63w==,
+      }
+    peerDependencies:
+      bson: ^4.6.3 || ^5 || ^6.10.3 || ^7.0.0
 
   '@msgpackr-extract/msgpackr-extract-darwin-arm64@3.0.3':
     resolution:
@@ -3172,10 +3195,10 @@ packages:
         integrity: sha512-CiJJvcRtIgzadHCYXw7dqEnMNRjhGZlYK05Mj9OyktqV8uVT8fD2BFOB7S1uwBE3Kj2Z+4UyPmFw/Ixgw/LAlA==,
       }
 
-  '@types/whatwg-url@11.0.5':
+  '@types/whatwg-url@13.0.0':
     resolution:
       {
-        integrity: sha512-coYR071JRaHa+xoEvvYqvnIHaVqaYrLPbsufM9BF63HkwI5Lgmy2QR8Q5K/lYDYo5AK82wOvSOS0UsLTpTG7uQ==,
+        integrity: sha512-N8WXpbE6Wgri7KUSvrmQcqrMllKZ9uxkYWMt+mCSGwNc0Hsw9VQTW7ApqI4XNrx6/SaM2QQJCzMPDEXE058s+Q==,
       }
 
   '@types/yargs-parser@21.0.3':
@@ -3435,6 +3458,14 @@ packages:
     resolution:
       {
         integrity: sha512-NZyJarBfL7nWwIq+FDL6Zp/yHEhePMNnnJ0y3qfieCrmNvYct8uvtiV41UvlSe6apAfk0fY1FbWx+NwfmpvtTg==,
+      }
+    engines: { node: '>=0.4.0' }
+    hasBin: true
+
+  acorn@8.17.0:
+    resolution:
+      {
+        integrity: sha512-xRQbDb9BnwDafYNn6Vwl839DYVjqXYb1XVGtWAZ1kcDc6iwAL4hg3B1dZlRiuENFeO2H53gFG3in621AdERVAg==,
       }
     engines: { node: '>=0.4.0' }
     hasBin: true
@@ -3950,12 +3981,12 @@ packages:
         integrity: sha512-gQxTNE/GAfIIrmHLUE3oJyp5FO6HRBfhjnw4/wMmA63ZGDJnWBmgY/lyQBpnDUkGmAhbSe39tx2d/iTOAfglwQ==,
       }
 
-  bson@6.10.4:
+  bson@7.2.0:
     resolution:
       {
-        integrity: sha512-WIsKqkSC0ABoBJuT1LEX+2HEvNmNKKgnTAyd0fL8qzK4SH2i9NXg+t08YtdZp/V9IZ33cxe3iV4yM0qg8lMQng==,
+        integrity: sha512-YCEo7KjMlbNlyHhz7zAZNDpIpQbd+wOEHJYezv0nMYTn4x31eIUM2yomNNubclAt63dObUzKHWsBLJ9QcZNSnQ==,
       }
-    engines: { node: '>=16.20.1' }
+    engines: { node: '>=20.19.0' }
 
   buffer-equal-constant-time@1.0.1:
     resolution:
@@ -6476,6 +6507,13 @@ packages:
         integrity: sha512-YHlZCB6lMTllWDtSPHz/ZXTsi8S00usEV6v1tjq8tOUZzw7DpSDWVXjXDre6ed1w/pd495ODpHZYSdkRTsa0HA==,
       }
 
+  kafkajs@2.2.4:
+    resolution:
+      {
+        integrity: sha512-j/YeapB1vfPT2iOIUn/vxdyKEuhuY2PxMBvf5JWux6iSaukAccrMtXEY/Lb7OvavDhOWME589bpLrEdnVHjfjA==,
+      }
+    engines: { node: '>=14.0.0' }
+
   keyv@4.5.4:
     resolution:
       {
@@ -7021,26 +7059,27 @@ packages:
     engines: { node: '>=10' }
     hasBin: true
 
-  mongodb-connection-string-url@3.0.2:
+  mongodb-connection-string-url@7.0.1:
     resolution:
       {
-        integrity: sha512-rMO7CGo/9BFwyZABcKAWL8UJwH/Kc2x0g72uhDWzG48URRax5TCIcJ7Rc3RZqffZzO/Gwff/jyKwCU9TN8gehA==,
+        integrity: sha512-h0AZ9A7IDVwwHyMxmdMXKy+9oNlF0zFoahHiX3vQ8e3KFcSP3VmsmfvtRSuLPxmyv2vjIDxqty8smTgie/SNRQ==,
       }
+    engines: { node: '>=20.19.0' }
 
-  mongodb@6.20.0:
+  mongodb@7.3.0:
     resolution:
       {
-        integrity: sha512-Tl6MEIU3K4Rq3TSHd+sZQqRBoGlFsOgNrH5ltAcFBV62Re3Fd+FcaVf8uSEQFOJ51SDowDVttBTONMfoYWrWlQ==,
+        integrity: sha512-WpCqSx7JAU9vcyjm/SU7ydnHls2YrfU3Y3sx4Ml9D7sPe4mXPlaapndiurDXrQ7/VvJkB4/i7b7WovHb8bd8sg==,
       }
-    engines: { node: '>=16.20.1' }
+    engines: { node: '>=20.19.0' }
     peerDependencies:
-      '@aws-sdk/credential-providers': ^3.188.0
-      '@mongodb-js/zstd': ^1.1.0 || ^2.0.0
-      gcp-metadata: ^5.2.0
-      kerberos: ^2.0.1
-      mongodb-client-encryption: '>=6.0.0 <7'
+      '@aws-sdk/credential-providers': ^3.806.0
+      '@mongodb-js/zstd': ^7.0.0
+      gcp-metadata: ^7.0.1
+      kerberos: ^7.0.0
+      mongodb-client-encryption: '>=7.0.0 <7.1.0'
       snappy: ^7.3.2
-      socks: ^2.7.1
+      socks: ^2.8.6
     peerDependenciesMeta:
       '@aws-sdk/credential-providers':
         optional: true
@@ -7124,6 +7163,14 @@ packages:
         integrity: sha512-GEbrYkbfF7MoNaoh2iGG84Mnf/WZfB0GdGEsM8wz7Expx/LlWf5U8t9nvJKXSp3qr5IsEbK04cBGhol/KwOsWA==,
       }
 
+  nats@2.29.3:
+    resolution:
+      {
+        integrity: sha512-tOQCRCwC74DgBTk4pWZ9V45sk4d7peoE2njVprMRCBXrhJ5q5cYM7i6W+Uvw2qUrcfOSnuisrX7bEx3b3Wx4QA==,
+      }
+    engines: { node: '>= 14.0.0' }
+    deprecated: Package moved. Use @nats-io/transport-node from https://github.com/nats-io/nats.js
+
   natural-compare@1.4.0:
     resolution:
       {
@@ -7163,6 +7210,13 @@ packages:
         integrity: sha512-dBpDMdxv9Irdq66304OLfEmQ9tbNRFnFTuZiLo+bD+r332bBmMJ8GBLXklIXXgxd3+v9+KUnZaUR5PJMa75Gsg==,
       }
     engines: { node: '>= 0.4.0' }
+
+  nkeys.js@1.1.0:
+    resolution:
+      {
+        integrity: sha512-tB/a0shZL5UZWSwsoeyqfTszONTt4k2YS0tuQioMOD180+MbombYVgzDUYHlx+gejYK6rgf08n/2Df99WY0Sxg==,
+      }
+    engines: { node: '>=10.0.0' }
 
   node-abi@3.80.0:
     resolution:
@@ -8896,6 +8950,12 @@ packages:
     resolution:
       {
         integrity: sha512-KXXFFdAbFXY4geFIwoyNK+f5Z1b7swfXABfL7HXCmoIWMKU3dmS26672A4EeQtDzLKy7SXmfBu51JolvEKwtGA==,
+      }
+
+  tweetnacl@1.0.3:
+    resolution:
+      {
+        integrity: sha512-6rt+RN7aOi1nGMyC4Xa5DdYiukl2UWCbcJft7YhxReBGQD7OAM8Pbxw6YMo4r2diNEA8FEmu32YOn9rhaiE5yw==,
       }
 
   type-check@0.4.0:
@@ -10664,7 +10724,11 @@ snapshots:
   '@mongodb-js/saslprep@1.4.11':
     dependencies:
       sparse-bitfield: 3.0.3
-    optional: true
+
+  '@mongodb-js/shell-bson-parser@1.5.12(bson@7.2.0)':
+    dependencies:
+      acorn: 8.17.0
+      bson: 7.2.0
 
   '@msgpackr-extract/msgpackr-extract-darwin-arm64@3.0.3':
     optional: true
@@ -10878,13 +10942,13 @@ snapshots:
       '@nestjs/core': 11.1.6(@nestjs/common@11.1.6(class-transformer@0.5.1)(class-validator@0.14.2)(reflect-metadata@0.2.2)(rxjs@7.8.2))(@nestjs/platform-express@11.1.14)(@nestjs/websockets@11.1.14)(reflect-metadata@0.2.2)(rxjs@7.8.2)
       reflect-metadata: 0.2.2
 
-  '@nestjs/typeorm@11.0.0(@nestjs/common@11.1.6(class-transformer@0.5.1)(class-validator@0.14.2)(reflect-metadata@0.2.2)(rxjs@7.8.2))(@nestjs/core@11.1.6)(reflect-metadata@0.2.2)(rxjs@7.8.2)(typeorm@0.3.27(ioredis@5.10.1)(mongodb@6.20.0(socks@2.8.7))(mysql2@3.22.5(@types/node@20.19.24))(pg@8.16.3)(redis@4.7.1)(reflect-metadata@0.2.2)(sqlite3@5.1.7)(ts-node@10.9.2(@types/node@20.19.24)(typescript@5.9.3)))':
+  '@nestjs/typeorm@11.0.0(@nestjs/common@11.1.6(class-transformer@0.5.1)(class-validator@0.14.2)(reflect-metadata@0.2.2)(rxjs@7.8.2))(@nestjs/core@11.1.6)(reflect-metadata@0.2.2)(rxjs@7.8.2)(typeorm@0.3.27(ioredis@5.10.1)(mongodb@7.3.0(socks@2.8.7))(mysql2@3.22.5(@types/node@20.19.24))(pg@8.16.3)(redis@4.7.1)(reflect-metadata@0.2.2)(sqlite3@5.1.7)(ts-node@10.9.2(@types/node@20.19.24)(typescript@5.9.3)))':
     dependencies:
       '@nestjs/common': 11.1.6(class-transformer@0.5.1)(class-validator@0.14.2)(reflect-metadata@0.2.2)(rxjs@7.8.2)
       '@nestjs/core': 11.1.6(@nestjs/common@11.1.6(class-transformer@0.5.1)(class-validator@0.14.2)(reflect-metadata@0.2.2)(rxjs@7.8.2))(@nestjs/platform-express@11.1.14)(@nestjs/websockets@11.1.14)(reflect-metadata@0.2.2)(rxjs@7.8.2)
       reflect-metadata: 0.2.2
       rxjs: 7.8.2
-      typeorm: 0.3.27(ioredis@5.10.1)(mongodb@6.20.0(socks@2.8.7))(mysql2@3.22.5(@types/node@20.19.24))(pg@8.16.3)(redis@4.7.1)(reflect-metadata@0.2.2)(sqlite3@5.1.7)(ts-node@10.9.2(@types/node@20.19.24)(typescript@5.9.3))
+      typeorm: 0.3.27(ioredis@5.10.1)(mongodb@7.3.0(socks@2.8.7))(mysql2@3.22.5(@types/node@20.19.24))(pg@8.16.3)(redis@4.7.1)(reflect-metadata@0.2.2)(sqlite3@5.1.7)(ts-node@10.9.2(@types/node@20.19.24)(typescript@5.9.3))
 
   '@nestjs/websockets@11.1.14(@nestjs/common@11.1.6(class-transformer@0.5.1)(class-validator@0.14.2)(reflect-metadata@0.2.2)(rxjs@7.8.2))(@nestjs/core@11.1.6)(@nestjs/platform-socket.io@11.1.14)(reflect-metadata@0.2.2)(rxjs@7.8.2)':
     dependencies:
@@ -11799,13 +11863,11 @@ snapshots:
 
   '@types/validator@13.15.4': {}
 
-  '@types/webidl-conversions@7.0.3':
-    optional: true
+  '@types/webidl-conversions@7.0.3': {}
 
-  '@types/whatwg-url@11.0.5':
+  '@types/whatwg-url@13.0.0':
     dependencies:
       '@types/webidl-conversions': 7.0.3
-    optional: true
 
   '@types/yargs-parser@21.0.3': {}
 
@@ -12014,6 +12076,8 @@ snapshots:
       acorn: 8.15.0
 
   acorn@8.15.0: {}
+
+  acorn@8.17.0: {}
 
   agent-base@6.0.2:
     dependencies:
@@ -12340,8 +12404,7 @@ snapshots:
     dependencies:
       node-int64: 0.4.0
 
-  bson@6.10.4:
-    optional: true
+  bson@7.2.0: {}
 
   buffer-equal-constant-time@1.0.1: {}
 
@@ -14052,6 +14115,8 @@ snapshots:
       jwa: 1.4.2
       safe-buffer: 5.2.1
 
+  kafkajs@2.2.4: {}
+
   keyv@4.5.4:
     dependencies:
       json-buffer: 3.0.1
@@ -14244,8 +14309,7 @@ snapshots:
     dependencies:
       fs-monkey: 1.1.0
 
-  memory-pager@1.5.0:
-    optional: true
+  memory-pager@1.5.0: {}
 
   merge-descriptors@2.0.0: {}
 
@@ -14348,20 +14412,18 @@ snapshots:
 
   mkdirp@1.0.4: {}
 
-  mongodb-connection-string-url@3.0.2:
+  mongodb-connection-string-url@7.0.1:
     dependencies:
-      '@types/whatwg-url': 11.0.5
+      '@types/whatwg-url': 13.0.0
       whatwg-url: 14.2.0
-    optional: true
 
-  mongodb@6.20.0(socks@2.8.7):
+  mongodb@7.3.0(socks@2.8.7):
     dependencies:
       '@mongodb-js/saslprep': 1.4.11
-      bson: 6.10.4
-      mongodb-connection-string-url: 3.0.2
+      bson: 7.2.0
+      mongodb-connection-string-url: 7.0.1
     optionalDependencies:
       socks: 2.8.7
-    optional: true
 
   ms@2.1.3: {}
 
@@ -14416,6 +14478,10 @@ snapshots:
 
   napi-build-utils@2.0.0: {}
 
+  nats@2.29.3:
+    dependencies:
+      nkeys.js: 1.1.0
+
   natural-compare@1.4.0: {}
 
   negotiator@0.6.3: {}
@@ -14428,6 +14494,10 @@ snapshots:
   neo-async@2.6.2: {}
 
   netmask@2.0.2: {}
+
+  nkeys.js@1.1.0:
+    dependencies:
+      tweetnacl: 1.0.3
 
   node-abi@3.80.0:
     dependencies:
@@ -15215,7 +15285,6 @@ snapshots:
   sparse-bitfield@3.0.3:
     dependencies:
       memory-pager: 1.5.0
-    optional: true
 
   split2@4.2.0: {}
 
@@ -15565,6 +15634,8 @@ snapshots:
 
   tweetnacl@0.14.5: {}
 
+  tweetnacl@1.0.3: {}
+
   type-check@0.4.0:
     dependencies:
       prelude-ls: 1.2.1
@@ -15596,7 +15667,7 @@ snapshots:
 
   typedarray@0.0.6: {}
 
-  typeorm@0.3.27(ioredis@5.10.1)(mongodb@6.20.0(socks@2.8.7))(mysql2@3.22.5(@types/node@20.19.24))(pg@8.16.3)(redis@4.7.1)(reflect-metadata@0.2.2)(sqlite3@5.1.7)(ts-node@10.9.2(@types/node@20.19.24)(typescript@5.9.3)):
+  typeorm@0.3.27(ioredis@5.10.1)(mongodb@7.3.0(socks@2.8.7))(mysql2@3.22.5(@types/node@20.19.24))(pg@8.16.3)(redis@4.7.1)(reflect-metadata@0.2.2)(sqlite3@5.1.7)(ts-node@10.9.2(@types/node@20.19.24)(typescript@5.9.3)):
     dependencies:
       '@sqltools/formatter': 1.2.5
       ansis: 3.17.0
@@ -15615,7 +15686,7 @@ snapshots:
       yargs: 17.7.2
     optionalDependencies:
       ioredis: 5.10.1
-      mongodb: 6.20.0(socks@2.8.7)
+      mongodb: 7.3.0(socks@2.8.7)
       mysql2: 3.22.5(@types/node@20.19.24)
       pg: 8.16.3
       redis: 4.7.1

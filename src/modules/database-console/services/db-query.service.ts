@@ -1,4 +1,9 @@
-import { BadRequestException, Inject, Injectable } from '@nestjs/common';
+import {
+  BadRequestException,
+  HttpException,
+  Inject,
+  Injectable,
+} from '@nestjs/common';
 import { ClustersService } from '../../infrastructure/clusters/clusters.service';
 import {
   DB_CONNECTION_RESOLVER,
@@ -141,8 +146,37 @@ export class DbQueryService {
       } finally {
         await conn.close();
       }
+    } catch (err) {
+      throw this.toClientError(err);
     } finally {
       await tunnel.dispose();
     }
+  }
+
+  /**
+   * Map a connection/auth failure to a readable 400 instead of an opaque 500.
+   * Query-time errors are already mapped to HttpExceptions inside the adapters;
+   * this only catches connect-time faults (wrong password, unreachable host,
+   * missing database). Unknown errors are left to surface as 500.
+   */
+  private toClientError(err: unknown): unknown {
+    if (err instanceof HttpException) return err;
+    const e = err as { code?: string; message?: string };
+    const CONNECT_CODES = new Set([
+      'ECONNREFUSED',
+      'ETIMEDOUT',
+      'ENOTFOUND',
+      'EHOSTUNREACH',
+      '28P01', // pg: invalid password
+      '28000', // pg/maria: invalid authorization
+      '3D000', // pg: database does not exist
+      'ER_ACCESS_DENIED_ERROR',
+      'ER_DBACCESS_DENIED_ERROR',
+      'ER_BAD_DB_ERROR',
+    ]);
+    if (e?.code && CONNECT_CODES.has(e.code) && e.message) {
+      return new BadRequestException(e.message);
+    }
+    return err;
   }
 }

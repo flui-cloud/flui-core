@@ -1,4 +1,4 @@
-export type DbEngine = 'postgres' | 'mariadb' | 'redis' | 'valkey';
+export type DbEngine = 'postgres' | 'mariadb' | 'redis' | 'valkey' | 'ferretdb';
 
 export type DbConnectionRole = 'owner' | 'user';
 
