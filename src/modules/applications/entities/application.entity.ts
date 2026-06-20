@@ -145,6 +145,12 @@ export class ApplicationEntity {
   @Column({ type: 'text', nullable: true })
   startCommand?: string;
 
+  // Exec-form entrypoint override (full argv, run without a shell). Takes
+  // precedence over startCommand. Required for distroless images that have no
+  // /bin/sh (e.g. Garage): startCommand wraps in ["/bin/sh","-c"] which fails.
+  @Column({ type: 'json', nullable: true })
+  command?: string[];
+
   @Column({ type: 'json', nullable: true })
   securityContext?: ApplicationSecurityContext;
 

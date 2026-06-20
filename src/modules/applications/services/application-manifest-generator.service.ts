@@ -140,10 +140,7 @@ export class ApplicationManifestGeneratorService {
         '{{CONTAINER_SECURITY_CONTEXT_BLOCK}}',
         this.renderContainerSecurityContextBlock(app),
       )
-      .replaceAll(
-        '{{COMMAND_OVERRIDE_BLOCK}}',
-        this.renderCommandBlock(this.getStartCommandOverride(app)),
-      );
+      .replaceAll('{{COMMAND_OVERRIDE_BLOCK}}', this.renderCommandBlock(app));
 
     return {
       kind: ApplicationResourceKind.DEPLOYMENT,
@@ -216,10 +213,7 @@ export class ApplicationManifestGeneratorService {
         '{{CONTAINER_SECURITY_CONTEXT_BLOCK}}',
         this.renderContainerSecurityContextBlock(app),
       )
-      .replaceAll(
-        '{{COMMAND_OVERRIDE_BLOCK}}',
-        this.renderCommandBlock(this.getStartCommandOverride(app)),
-      );
+      .replaceAll('{{COMMAND_OVERRIDE_BLOCK}}', this.renderCommandBlock(app));
 
     return {
       kind: ApplicationResourceKind.STATEFUL_SET,
@@ -497,8 +491,16 @@ export class ApplicationManifestGeneratorService {
     ].join('\n');
   }
 
-  /** Render the command/args override block for the container spec. Empty string if no override. */
-  private renderCommandBlock(startCommand?: string): string {
+  /**
+   * Render the command/args override block for the container spec. Empty string
+   * if no override. `command` (exec-form argv) wins over `startCommand` and runs
+   * without a shell — required for distroless images (no /bin/sh).
+   */
+  private renderCommandBlock(app: ApplicationEntity): string {
+    if (app.command?.length) {
+      return `          command: ${JSON.stringify(app.command)}`;
+    }
+    const startCommand = this.getStartCommandOverride(app);
     if (!startCommand) return '';
     const escaped = startCommand
       .replaceAll(String.raw`\\`, String.raw`\\`)

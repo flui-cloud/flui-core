@@ -144,6 +144,7 @@ export class ApplicationService {
       dedicatedNodeName: dto.dedicatedNodeName ?? null,
       allowMasterPlacement: dto.allowMasterPlacement ?? false,
       startCommand: dto.startCommand,
+      command: dto.command ?? null,
       securityContext: dto.securityContext,
       labels: dto.labels || {},
       metadata: dto.metadata || {},
