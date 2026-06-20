@@ -22,6 +22,8 @@ const DEPLOY_FILES_COMMON = ['flui.yaml', 'Dockerfile', '.dockerignore'];
 const DEPLOY_FILES_BY_FRAMEWORK: Record<string, string[]> = {
   astro: ['nginx/default.conf'],
   angular: ['nginx/default.conf'],
+  vitepress: ['nginx/default.conf'],
+  'vue-vite': ['nginx/default.conf'],
 };
 
 function filesForFramework(framework: string): string[] {
