@@ -22,6 +22,8 @@ import {
 import { JwtAuthGuard } from '../guards/jwt-auth.guard';
 import { AdminGuard } from '../guards/admin.guard';
 import { Admin } from '../decorators/admin.decorator';
+import { RequirePermission } from '../../iam/decorators/require-permission.decorator';
+import { IAM_PERMISSION } from '../../iam/constants/iam-permissions';
 import { AuthenticatedUser } from '../interfaces/authenticated-user.interface';
 import {
   CreateIdentityUserDto,
@@ -33,18 +35,22 @@ import {
   ResetPasswordDto,
   ResetPasswordResultDto,
 } from '../dto/reset-password.dto';
+import { InviteLinkResultDto } from '../dto/invite-link.dto';
 import { UserManagementService } from '../services/user-management.service';
 import { IdentityUser } from '../interfaces/identity-directory.interface';
+import { RequireSection } from '../../iam/decorators/require-section.decorator';
 
 @ApiTags('auth')
 @ApiBearerAuth()
 @Controller('auth/users')
-@UseGuards(JwtAuthGuard, AdminGuard)
-@Admin()
+@UseGuards(JwtAuthGuard)
+@RequireSection('access')
 export class UserManagementController {
   constructor(private readonly users: UserManagementService) {}
 
   @Post()
+  @UseGuards(AdminGuard)
+  @Admin()
   @ApiOperation({ summary: 'Create a new identity user (admin)' })
   @ApiCreatedResponse({ type: CreatedIdentityUserDto })
   create(@Body() dto: CreateIdentityUserDto): Promise<CreatedIdentityUserDto> {
@@ -52,13 +58,17 @@ export class UserManagementController {
   }
 
   @Get()
-  @ApiOperation({ summary: 'List identity users (admin)' })
+  @RequirePermission(IAM_PERMISSION.IAM_ASSIGN_ROLE)
+  @ApiOperation({ summary: 'List identity users (requires iam:assign-role)' })
   list(@Query() query: ListIdentityUsersQueryDto): Promise<IdentityUser[]> {
     return this.users.listUsers(query);
   }
 
   @Get(':id')
-  @ApiOperation({ summary: 'Get identity user details (admin)' })
+  @RequirePermission(IAM_PERMISSION.IAM_ASSIGN_ROLE)
+  @ApiOperation({
+    summary: 'Get identity user details (requires iam:assign-role)',
+  })
   async get(@Param('id') id: string): Promise<IdentityUser> {
     const user = await this.users.getUser(id);
     if (!user) {
@@ -71,6 +81,8 @@ export class UserManagementController {
   }
 
   @Delete(':id')
+  @UseGuards(AdminGuard)
+  @Admin()
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Delete an identity user (admin)' })
   async delete(
@@ -81,8 +93,11 @@ export class UserManagementController {
   }
 
   @Patch(':id/role')
+  @RequirePermission(IAM_PERMISSION.IAM_ASSIGN_ROLE)
   @HttpCode(HttpStatus.NO_CONTENT)
-  @ApiOperation({ summary: 'Change role for an identity user (admin)' })
+  @ApiOperation({
+    summary: 'Change role for an identity user (requires iam:assign-role)',
+  })
   async setRole(
     @Param('id') id: string,
     @Body() dto: UpdateIdentityRoleDto,
@@ -92,6 +107,8 @@ export class UserManagementController {
   }
 
   @Post(':id/reset-password')
+  @UseGuards(AdminGuard)
+  @Admin()
   @ApiOperation({
     summary: 'Reset password / resend invite for an identity user (admin)',
   })
@@ -101,5 +118,17 @@ export class UserManagementController {
     @Body() dto: ResetPasswordDto,
   ): Promise<ResetPasswordResultDto> {
     return this.users.resetPassword(id, dto.sendInvite);
+  }
+
+  @Post(':id/invite-link')
+  @UseGuards(AdminGuard)
+  @Admin()
+  @ApiOperation({
+    summary:
+      'Generate a copyable invite link for a user (admin) — no email required',
+  })
+  @ApiOkResponse({ type: InviteLinkResultDto })
+  inviteLink(@Param('id') id: string): Promise<InviteLinkResultDto> {
+    return this.users.createInviteLink(id);
   }
 }

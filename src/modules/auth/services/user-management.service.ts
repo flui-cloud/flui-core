@@ -13,6 +13,7 @@ import {
   IDENTITY_DIRECTORY,
   IIdentityDirectory,
   IdentityUser,
+  InviteLink,
   ListIdentityUsersQuery,
 } from '../interfaces/identity-directory.interface';
 
@@ -81,7 +82,15 @@ export class UserManagementService {
   resetPassword(
     id: string,
     sendInvite: boolean,
-  ): Promise<{ tempPassword?: string }> {
+  ): Promise<{
+    tempPassword?: string;
+    inviteLink?: string;
+    inviteCode?: string;
+  }> {
     return this.directory.resetPassword(id, sendInvite);
+  }
+
+  createInviteLink(id: string): Promise<InviteLink> {
+    return this.directory.createInviteLink(id);
   }
 }

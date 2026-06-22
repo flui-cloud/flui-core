@@ -7,6 +7,7 @@ import {
   CreatedIdentityUser,
   IIdentityDirectory,
   IdentityUser,
+  InviteLink,
   ListIdentityUsersQuery,
 } from '../interfaces/identity-directory.interface';
 
@@ -51,7 +52,17 @@ export class LocalIdentityDirectory implements IIdentityDirectory {
   setRole(_: string, __: IdentityRole): Promise<void> {
     throw new NotImplementedException(NOT_IMPLEMENTED);
   }
-  resetPassword(_: string, __: boolean): Promise<{ tempPassword?: string }> {
+  resetPassword(
+    _: string,
+    __: boolean,
+  ): Promise<{
+    tempPassword?: string;
+    inviteLink?: string;
+    inviteCode?: string;
+  }> {
+    throw new NotImplementedException(NOT_IMPLEMENTED);
+  }
+  createInviteLink(_: string): Promise<InviteLink> {
     throw new NotImplementedException(NOT_IMPLEMENTED);
   }
 

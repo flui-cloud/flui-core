@@ -620,6 +620,52 @@ export class OidcProviderAdminClient {
     );
   }
 
+  /**
+   * Create an invite code for a user via the user_service v2 API and have the
+   * provider RETURN it (returnCode) instead of emailing it — so Flui can surface
+   * a copyable invite link without any SMTP configured. `details.resourceOwner`
+   * is the user's organization id, needed to build the verification link.
+   */
+  async createInviteCode(
+    pat: string,
+    hostHeader: string,
+    userId: string,
+  ): Promise<{ code: string; orgId?: string }> {
+    const resp = await firstValueFrom(
+      this.httpService.post(
+        `${resolveProviderBaseUrl()}/v2/users/${userId}/invite_code`,
+        { returnCode: {} },
+        { headers: this.headers(pat, hostHeader) },
+      ),
+    );
+    return {
+      code: resp.data?.inviteCode,
+      orgId: resp.data?.details?.resourceOwner,
+    };
+  }
+
+  /**
+   * Force the user's email to verified. The `_import` isEmailVerified flag does
+   * not stick, and v1 UpdateHumanEmail rejects an unchanged address
+   * (FailedPrecondition), so we use the v2 SetEmail `isVerified` variant which
+   * marks the address verified directly — otherwise the legacy invite/init flow
+   * stalls on an email-verification code we cannot deliver without SMTP.
+   */
+  async setEmailVerified(
+    pat: string,
+    hostHeader: string,
+    userId: string,
+    email: string,
+  ): Promise<void> {
+    await firstValueFrom(
+      this.httpService.post(
+        `${resolveProviderBaseUrl()}/v2/users/${userId}/email`,
+        { email, isVerified: true },
+        { headers: this.headers(pat, hostHeader) },
+      ),
+    );
+  }
+
   async setUserPassword(
     pat: string,
     hostHeader: string,

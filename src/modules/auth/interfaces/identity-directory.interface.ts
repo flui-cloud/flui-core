@@ -16,6 +16,20 @@ export interface CreatedIdentityUser {
   email: string;
   role: IdentityRole;
   tempPassword?: string;
+  inviteLink?: string;
+  inviteCode?: string;
+}
+
+/**
+ * A ready-to-share invite link plus the raw provider code. The link path is
+ * environment-configurable (OIDC_INVITE_LINK_TEMPLATE); the code is the
+ * authoritative value to fall back on if the link path needs adjusting.
+ */
+export interface InviteLink {
+  inviteLink: string;
+  inviteCode: string;
+  userId: string;
+  organizationId?: string;
 }
 
 export interface IdentityUser {
@@ -44,5 +58,10 @@ export interface IIdentityDirectory {
   resetPassword(
     id: string,
     sendInvite: boolean,
-  ): Promise<{ tempPassword?: string }>;
+  ): Promise<{
+    tempPassword?: string;
+    inviteLink?: string;
+    inviteCode?: string;
+  }>;
+  createInviteLink(id: string): Promise<InviteLink>;
 }

@@ -16,6 +16,7 @@ import {
   CreatedIdentityUser,
   IIdentityDirectory,
   IdentityUser,
+  InviteLink,
   ListIdentityUsersQuery,
 } from '../../auth/interfaces/identity-directory.interface';
 import {
@@ -61,26 +62,44 @@ export class OidcIdentityDirectory implements IIdentityDirectory {
         lastName: input.lastName,
         initialPassword: tempPassword,
         passwordChangeRequired: !input.sendInvite,
-        isEmailVerified: !input.sendInvite,
+        // Admin-provisioned: the admin vouches for the address and delivers the
+        // invite link out-of-band, so mark verified — otherwise login stalls on
+        // an email-verification code that needs SMTP we don't have yet.
+        isEmailVerified: true,
       });
     } catch (err) {
       throw this.translateProviderError(err, 'createUser');
     }
 
+    await this.applyRole(pat, hostHeader, projectId, created.id, role);
+
     if (input.sendInvite) {
+      // Flui owns the invite transport: instead of asking the provider to email
+      // the user (which needs SMTP), we have it return the invite code and
+      // surface a copyable link. Switching to actually emailing it is a later step.
+      // First force the email verified so the invite flow completes without an
+      // email-verification code (best-effort: never block account creation on it).
       try {
-        await this.oidcProvider.resendUserInitialization(
+        await this.oidcProvider.setEmailVerified(
           pat,
           hostHeader,
           created.id,
           input.email,
         );
       } catch (err) {
-        throw this.translateProviderError(err, 'sendInvite');
+        this.logger.warn(
+          `setEmailVerified failed for ${created.id}: ${(err as Error).message}`,
+        );
       }
+      const invite = await this.makeInvite(pat, hostHeader, created.id);
+      return {
+        id: created.id,
+        email: input.email,
+        role,
+        inviteLink: invite.inviteLink,
+        inviteCode: invite.inviteCode,
+      };
     }
-
-    await this.applyRole(pat, hostHeader, projectId, created.id, role);
 
     return {
       id: created.id,
@@ -88,6 +107,13 @@ export class OidcIdentityDirectory implements IIdentityDirectory {
       role,
       tempPassword,
     };
+  }
+
+  async createInviteLink(id: string): Promise<InviteLink> {
+    const { pat, hostHeader } = await this.connection();
+    const u = await this.oidcProvider.getUser(pat, hostHeader, id);
+    if (!u) throw new NotFoundException(`User ${id} not found`);
+    return this.makeInvite(pat, hostHeader, id);
   }
 
   async listUsers(query?: ListIdentityUsersQuery): Promise<IdentityUser[]> {
@@ -188,22 +214,17 @@ export class OidcIdentityDirectory implements IIdentityDirectory {
   async resetPassword(
     id: string,
     sendInvite: boolean,
-  ): Promise<{ tempPassword?: string }> {
+  ): Promise<{
+    tempPassword?: string;
+    inviteLink?: string;
+    inviteCode?: string;
+  }> {
     const { pat, hostHeader } = await this.connection();
     const u = await this.oidcProvider.getUser(pat, hostHeader, id);
     if (!u) throw new NotFoundException(`User ${id} not found`);
     if (sendInvite) {
-      try {
-        await this.oidcProvider.resendUserInitialization(
-          pat,
-          hostHeader,
-          id,
-          u.email ?? u.userName,
-        );
-      } catch (err) {
-        throw this.translateProviderError(err, 'sendInvite');
-      }
-      return {};
+      const invite = await this.makeInvite(pat, hostHeader, id);
+      return { inviteLink: invite.inviteLink, inviteCode: invite.inviteCode };
     }
     const tempPassword = this.generatePassword();
     try {
@@ -315,6 +336,56 @@ export class OidcIdentityDirectory implements IIdentityDirectory {
     if (!email) return false;
     const expected = process.env.ADMIN_EMAIL || 'admin@flui.cloud';
     return email.toLowerCase() === expected.toLowerCase();
+  }
+
+  private async makeInvite(
+    pat: string,
+    hostHeader: string,
+    userId: string,
+  ): Promise<InviteLink> {
+    let code: { code: string; orgId?: string };
+    try {
+      code = await this.oidcProvider.createInviteCode(pat, hostHeader, userId);
+    } catch (err) {
+      throw this.translateProviderError(err, 'createInviteLink');
+    }
+    return {
+      inviteLink: this.buildInviteLink(
+        hostHeader,
+        userId,
+        code.code,
+        code.orgId,
+      ),
+      inviteCode: code.code,
+      userId,
+      organizationId: code.orgId,
+    };
+  }
+
+  /**
+   * Builds the user-facing verification link from the provider's invite code.
+   * The path differs across provider login UIs, so it is overridable via
+   * OIDC_INVITE_LINK_TEMPLATE ({base}/{userId}/{code}/{orgId} placeholders).
+   * The raw code travels alongside the link as the authoritative fallback.
+   */
+  private buildInviteLink(
+    authHost: string,
+    userId: string,
+    code: string,
+    orgId?: string,
+  ): string {
+    const base = `https://${authHost}`;
+    // Default targets the bundled (legacy) login's invite-acceptance page, which
+    // verifies the v2 invite code (validated live). Override via
+    // OIDC_INVITE_LINK_TEMPLATE if a different login UI (e.g. login v2) is served.
+    const template =
+      process.env.OIDC_INVITE_LINK_TEMPLATE ??
+      '{base}/ui/login/user/invite?userID={userId}&code={code}&orgID={orgId}';
+    return template
+      .replaceAll('{base}', base)
+      .replaceAll('{userId}', encodeURIComponent(userId))
+      .replaceAll('{code}', encodeURIComponent(code))
+      .replaceAll('{orgId}', encodeURIComponent(orgId ?? ''));
   }
 
   private generatePassword(): string {
