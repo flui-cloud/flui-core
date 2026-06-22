@@ -276,6 +276,12 @@ export class ApplicationResponseDto {
   @ApiProperty()
   clusterId: string;
 
+  @ApiPropertyOptional({
+    nullable: true,
+    description: 'Owning project id (null if unassigned)',
+  })
+  projectId?: string | null;
+
   @ApiProperty()
   k8sNamespace: string;
 

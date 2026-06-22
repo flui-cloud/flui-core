@@ -615,6 +615,7 @@ export class ApplicationService {
     dto.kind = entity.kind ?? ApplicationKind.APPLICATION;
     dto.sourceType = entity.sourceType;
     dto.clusterId = entity.clusterId;
+    dto.projectId = entity.projectId ?? null;
     dto.k8sNamespace = entity.k8sNamespace;
     dto.status = entity.status;
     dto.reconciliationStatus = entity.reconciliationStatus;
