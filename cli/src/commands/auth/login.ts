@@ -208,6 +208,11 @@ export default class AuthLogin extends Command {
       description: 'Name for the generated API key',
       default: 'cli',
     }),
+    prompt: Flags.string({
+      description:
+        "OIDC prompt. 'select_account' (default) shows the account picker so you confirm or switch user before minting an API key; 'login' forces re-authentication; '' reuses the current SSO session silently.",
+      default: 'select_account',
+    }),
   };
 
   async run(): Promise<void> {
@@ -269,6 +274,7 @@ export default class AuthLogin extends Command {
       `&redirect_uri=${encodeURIComponent(redirectUri)}` +
       `&response_type=code` +
       `&scope=${encodeURIComponent('openid profile email')}` +
+      (flags.prompt ? `&prompt=${encodeURIComponent(flags.prompt)}` : '') +
       `&code_challenge=${challenge}` +
       `&code_challenge_method=S256` +
       `&state=${state}`;

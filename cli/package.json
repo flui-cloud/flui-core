@@ -89,6 +89,15 @@
       "auth": {
         "description": "Authentication management"
       },
+      "iam": {
+        "description": "Access management: roles, grants (role bindings) and groups"
+      },
+      "iam:grant": {
+        "description": "Access grants: bind a principal to a role at a scope"
+      },
+      "iam:group": {
+        "description": "Flui-local groups and their membership"
+      },
       "config": {
         "description": "Configuration: provider tokens (encrypted) and user preferences (plain text)"
       },
