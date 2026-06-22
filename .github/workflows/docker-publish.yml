@@ -20,9 +20,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Multi-arch: build amd64 (cloud VPS) + arm64 (Apple Silicon dev, arm64
-      # BYOS servers like Graviton/Ampere/Raspberry Pi). QEMU emulates arm64 on
-      # the amd64 runner; the Dockerfile is arch-agnostic so no other changes.
+      # Multi-arch (amd64 + arm64); QEMU emulates arm64 on the amd64 runner.
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
 
