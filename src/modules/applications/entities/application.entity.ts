@@ -8,9 +8,11 @@ import {
   ManyToOne,
   JoinColumn,
   BeforeInsert,
+  Index,
 } from 'typeorm';
 import { v4 as uuidv4 } from 'uuid';
 import { ClusterEntity } from '../../infrastructure/clusters/entities/cluster.entity';
+import { ProjectEntity } from '../../projects/entities/project.entity';
 import { AppRevisionEntity } from './app-revision.entity';
 import { AppResourceEntity } from './app-resource.entity';
 import { ApplicationCategory } from '../enums/application-category.enum';
@@ -50,12 +52,14 @@ export class ApplicationEntity {
   @Column({ type: 'text', nullable: true })
   description?: string;
 
+  @Index()
   @Column({
     type: 'enum',
     enum: ApplicationCategory,
   })
   category: ApplicationCategory;
 
+  @Index()
   @Column({
     type: 'enum',
     enum: ApplicationKind,
@@ -69,6 +73,7 @@ export class ApplicationEntity {
   })
   sourceType: ApplicationSourceType;
 
+  @Index()
   @Column('uuid')
   clusterId: string;
 
@@ -181,6 +186,26 @@ export class ApplicationEntity {
 
   @Column({ type: 'json', default: '{}' })
   metadata: Record<string, string>;
+
+  /**
+   * Owning project (first-class, global grouping). An app belongs to at most one;
+   * the IAM selector targets it by the project's slug. Indexed for scope filtering;
+   * FK SET NULL so deleting a project just unassigns its apps.
+   */
+  @Index()
+  @Column({ type: 'uuid', nullable: true })
+  projectId?: string | null;
+
+  @ManyToOne(() => ProjectEntity, { onDelete: 'SET NULL', nullable: true })
+  @JoinColumn({ name: 'projectId' })
+  project?: ProjectEntity;
+
+  /**
+   * Free-form labels for IAM selector targeting — tags match ALL-of (k8s
+   * matchLabels / `@>` containment). jsonb + GIN index (added via migration).
+   */
+  @Column({ type: 'jsonb', default: () => "'[]'" })
+  tags: string[];
 
   @Column({ type: 'boolean', default: false })
   preDeploySnapshotEnabled: boolean;

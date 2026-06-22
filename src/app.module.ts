@@ -59,6 +59,11 @@ import { AppBuildEntity } from './modules/app-builds/entities/app-build.entity';
 import { BuildCacheSnapshotEntity } from './modules/app-builds/entities/build-cache-snapshot.entity';
 import { AuthModule } from './modules/auth/auth.module';
 import { JwtAuthGuard } from './modules/auth/guards/jwt-auth.guard';
+import { IamModule } from './modules/iam/iam.module';
+import { PermissionsGuard } from './modules/iam/guards/permissions.guard';
+import { SectionAccessGuard } from './modules/iam/guards/section-access.guard';
+import { IamRoleBindingEntity } from './modules/iam/entities/iam-role-binding.entity';
+import { IamGroupEntity } from './modules/iam/entities/iam-group.entity';
 import { UserEntity } from './modules/auth/entities/user.entity';
 import { RefreshTokenEntity } from './modules/auth/entities/refresh-token.entity';
 import { ApiKeyEntity } from './modules/auth/entities/api-key.entity';
@@ -87,6 +92,8 @@ import { RestoreJobEntity } from './modules/backups/entities/restore-job.entity'
 import { VisualizationsModule } from './modules/visualizations/visualizations.module';
 import { TopologyModule } from './modules/topology/topology.module';
 import { DatabaseConsoleModule } from './modules/database-console/database-console.module';
+import { ProjectsModule } from './modules/projects/projects.module';
+import { ProjectEntity } from './modules/projects/entities/project.entity';
 
 @Module({
   imports: [
@@ -160,6 +167,9 @@ import { DatabaseConsoleModule } from './modules/database-console/database-conso
           InferenceConnectionEntity,
           AssistantMessageLogEntity,
           McpToolCallLogEntity,
+          IamRoleBindingEntity,
+          IamGroupEntity,
+          ProjectEntity,
         ],
         synchronize: true, // Solo per development!
       }),
@@ -208,12 +218,22 @@ import { DatabaseConsoleModule } from './modules/database-console/database-conso
     VisualizationsModule,
     TopologyModule,
     DatabaseConsoleModule,
+    IamModule,
+    ProjectsModule,
     ScheduleModule.forRoot(),
   ],
   providers: [
     {
       provide: APP_GUARD,
       useClass: JwtAuthGuard,
+    },
+    {
+      provide: APP_GUARD,
+      useClass: PermissionsGuard,
+    },
+    {
+      provide: APP_GUARD,
+      useClass: SectionAccessGuard,
     },
   ],
 })

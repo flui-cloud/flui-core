@@ -1,0 +1,191 @@
+import { Injectable } from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
+import { IamRoleBindingEntity } from '../entities/iam-role-binding.entity';
+import { IamGroupEntity } from '../entities/iam-group.entity';
+import { PolicyEngine } from '../interfaces/policy-engine.interface';
+import {
+  IamPrincipal,
+  IamSelector,
+  PrincipalAccess,
+  ResourceAttributes,
+  ScopedGrant,
+} from '../interfaces/iam.types';
+import { ALL_PERMISSIONS } from '../constants/iam-permissions';
+import { permissionsForRole } from '../constants/iam-roles';
+import { ALL_SECTION_KEYS, SECTIONS } from '../constants/iam-sections';
+
+/**
+ * SQL-backed PolicyEngine.
+ *
+ * `resolveAccess` reads the principal's bindings once and splits them into a
+ * resource-independent set (`globalPermissions` = any GLOBAL-scope bindings) and
+ * `scopedGrants` (cluster/section/selector-scoped). `can` then evaluates that
+ * against a resource purely in memory — so a list query resolves access once and
+ * filters N rows with no extra IO.
+ *
+ * DENY-BY-DEFAULT: a non-admin has NO implicit access. Everything comes from
+ * explicit bindings (own / group / global). The IdP coarse role no longer acts
+ * as a floor — a user with no grants sees nothing, so an admin always knows
+ * exactly what access they handed out. Admin/root → allow-all.
+ */
+@Injectable()
+export class PolicyEngineService implements PolicyEngine {
+  constructor(
+    @InjectRepository(IamRoleBindingEntity)
+    private readonly bindings: Repository<IamRoleBindingEntity>,
+    @InjectRepository(IamGroupEntity)
+    private readonly groups: Repository<IamGroupEntity>,
+  ) {}
+
+  async resolveAccess(principal: IamPrincipal): Promise<PrincipalAccess> {
+    if (principal.isAdmin) {
+      return {
+        isAdmin: true,
+        globalPermissions: new Set(ALL_PERMISSIONS),
+        scopedGrants: [],
+      };
+    }
+
+    // (a) deny-by-default: no implicit floor from the IdP role. A non-admin
+    // starts with zero access; it is granted only by explicit bindings below.
+    const globalPermissions = new Set<string>();
+
+    // (b) explicit bindings (own + service-account + group).
+    const groupNames = await this.resolveGroups(principal.email);
+    const bindings = await this.findBindingsFor(principal, groupNames);
+    const scopedGrants: ScopedGrant[] = [];
+    for (const b of bindings) {
+      const permissions = new Set<string>(permissionsForRole(b.role));
+      if (b.scopeType === 'global') {
+        for (const p of permissions) globalPermissions.add(p);
+      } else {
+        scopedGrants.push({
+          permissions,
+          scopeType: b.scopeType,
+          scopeRef: b.scopeRef,
+          selector: b.selector,
+        });
+      }
+    }
+
+    return { isAdmin: false, globalPermissions, scopedGrants };
+  }
+
+  can(
+    access: PrincipalAccess,
+    action: string,
+    resource?: ResourceAttributes,
+  ): boolean {
+    if (access.isAdmin) return true;
+    if (access.globalPermissions.has(action)) return true;
+    return access.scopedGrants.some(
+      (g) => g.permissions.has(action) && this.scopeApplies(g, resource),
+    );
+  }
+
+  async check(
+    principal: IamPrincipal,
+    action: string,
+    resource?: ResourceAttributes,
+  ): Promise<boolean> {
+    const access = await this.resolveAccess(principal);
+    return this.can(access, action, resource);
+  }
+
+  /**
+   * Which portal sections this principal may enter. Derived from the resolved
+   * access: a management section requires its governing permission at GLOBAL
+   * scope; a workload section accepts it at any scope. Admin → all sections.
+   */
+  async resolveSections(principal: IamPrincipal): Promise<string[]> {
+    const access = await this.resolveAccess(principal);
+    if (access.isAdmin) return [...ALL_SECTION_KEYS];
+
+    const hasGlobal = (perm: string) => access.globalPermissions.has(perm);
+    const hasAny = (perm: string) =>
+      access.globalPermissions.has(perm) ||
+      access.scopedGrants.some((g) => g.permissions.has(perm));
+
+    return SECTIONS.filter((s) => {
+      switch (s.gate.kind) {
+        case 'always':
+          return true;
+        case 'permission':
+          return s.gate.scope === 'global'
+            ? hasGlobal(s.gate.permission)
+            : hasAny(s.gate.permission);
+      }
+    }).map((s) => s.key);
+  }
+
+  async getEffectivePermissions(principal: IamPrincipal): Promise<string[]> {
+    const access = await this.resolveAccess(principal);
+    if (access.isAdmin) return [...ALL_PERMISSIONS];
+    const perms = new Set<string>(access.globalPermissions);
+    for (const g of access.scopedGrants) {
+      for (const p of g.permissions) perms.add(p);
+    }
+    return Array.from(perms);
+  }
+
+  /**
+   * Does this scoped grant apply to the resource? Without a resource we answer
+   * coarsely (true) — the grant carries the action *somewhere*, which is what a
+   * resource-less @RequirePermission gate asks.
+   */
+  private scopeApplies(g: ScopedGrant, resource?: ResourceAttributes): boolean {
+    if (!resource) return true;
+    switch (g.scopeType) {
+      case 'global':
+        return true;
+      case 'cluster':
+        return !!g.scopeRef && resource.clusterId === g.scopeRef;
+      case 'section':
+        return false; // portal sections are not app resources
+      case 'selector':
+        return this.matchesSelector(resource, g.selector ?? {});
+    }
+  }
+
+  /** Mirror of the dashboard predicate: equality AND-ed, slugs IN, tags ALL-of. */
+  private matchesSelector(r: ResourceAttributes, s: IamSelector): boolean {
+    const equality: Array<[string | undefined, string | undefined]> = [
+      [s.type, r.type],
+      [s.kind, r.kind],
+      [s.clusterId, r.clusterId],
+      [s.clusterName, r.clusterName],
+      [s.provider, r.provider],
+      [s.project, r.project],
+    ];
+    if (equality.some(([sel, res]) => !!sel && sel !== res)) return false;
+    if (s.slugs?.length && !(r.slug && s.slugs.includes(r.slug))) return false;
+    if (s.tags?.length && !s.tags.every((t) => r.tags?.includes(t)))
+      return false;
+    return true;
+  }
+
+  private async resolveGroups(email: string): Promise<string[]> {
+    const all = await this.groups.find();
+    return all.filter((g) => g.members?.includes(email)).map((g) => g.name);
+  }
+
+  private findBindingsFor(
+    principal: IamPrincipal,
+    groupNames: string[],
+  ): Promise<IamRoleBindingEntity[]> {
+    const refs: Array<{ type: string; ref: string }> = [
+      { type: 'user', ref: principal.email },
+      { type: 'service_account', ref: principal.userId },
+      ...groupNames.map((g) => ({ type: 'group', ref: g })),
+    ];
+    const qb = this.bindings.createQueryBuilder('b');
+    refs.forEach((r, i) => {
+      const cond = `(b.principalType = :pt${i} AND b.principalRef = :pr${i})`;
+      const params = { [`pt${i}`]: r.type, [`pr${i}`]: r.ref };
+      if (i === 0) qb.where(cond, params);
+      else qb.orWhere(cond, params);
+    });
+    return qb.getMany();
+  }
+}
