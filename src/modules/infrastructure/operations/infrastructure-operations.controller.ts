@@ -8,10 +8,12 @@ import {
 } from '@nestjs/swagger';
 import { InfrastructureOperationsService } from './infrastructure-operations.service';
 import { InfrastructureOperationEntity } from '../servers/entities/infrastructure-operations.entity';
+import { RequireSection } from '../../iam/decorators/require-section.decorator';
 
 @ApiTags('Infrastructure - Operations')
 @ApiBearerAuth()
 @Controller('infrastructure/operations')
+@RequireSection('infrastructure')
 export class InfrastructureOperationsController {
   constructor(
     private readonly operationsService: InfrastructureOperationsService,

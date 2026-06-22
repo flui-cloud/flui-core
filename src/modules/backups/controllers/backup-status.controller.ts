@@ -2,10 +2,12 @@ import { Controller, Get, Req } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { Request } from 'express';
 import { BackupStatusService } from '../services/backup-status.service';
+import { RequireSection } from '../../iam/decorators/require-section.decorator';
 
 @ApiTags('Backups')
 @ApiBearerAuth()
 @Controller('backups')
+@RequireSection('backup')
 export class BackupStatusController {
   constructor(private readonly service: BackupStatusService) {}
 

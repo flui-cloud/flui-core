@@ -5,10 +5,12 @@ import {
   EstimateProfile,
 } from '../services/billing-estimator.service';
 import { StorageBackendProvider } from '../../storage/enums/storage-backend-provider.enum';
+import { RequireSection } from '../../iam/decorators/require-section.decorator';
 
 @ApiTags('Billing')
 @ApiBearerAuth()
 @Controller('billing')
+@RequireSection('backup')
 export class BillingEstimatorController {
   constructor(private readonly service: BillingEstimatorService) {}
 

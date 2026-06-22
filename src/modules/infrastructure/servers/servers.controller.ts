@@ -30,10 +30,12 @@ import {
   DeleteServerResponseDto,
 } from './dto/delete-server.dto';
 import { CloudProvider } from 'src/modules/providers/enums/cloud-provider.enum';
+import { RequireSection } from '../../iam/decorators/require-section.decorator';
 
 @ApiTags('Infrastructure - Servers')
 @ApiBearerAuth()
 @Controller('infrastructure/servers')
+@RequireSection('infrastructure')
 export class ServersController {
   constructor(private readonly serversService: ServersService) {}
 

@@ -59,6 +59,8 @@ import { ApplicationStatus } from '../enums/application-status.enum';
 import { ApplicationSourceType } from '../enums/application-source-type.enum';
 import { AdminGuard } from '../../auth/guards/admin.guard';
 import { Admin } from '../../auth/decorators/admin.decorator';
+import { AppAccessGuard } from '../guards/app-access.guard';
+import { ApplicationAccessService } from '../services/application-access.service';
 import { DockerHubService } from '../../images/services/dockerhub.service';
 import { ApplicationVersionsService } from '../services/application-versions.service';
 import { AvailableVersionsResponseDto } from '../dto/available-versions.dto';
@@ -81,10 +83,12 @@ import {
 @ApiTags('Applications')
 @ApiBearerAuth()
 @Controller()
+@UseGuards(AppAccessGuard)
 export class ApplicationsController {
   private readonly logger = new Logger(ApplicationsController.name);
 
   constructor(
+    private readonly applicationAccess: ApplicationAccessService,
     private readonly applicationService: ApplicationService,
     private readonly applicationDeployService: ApplicationDeployService,
     private readonly systemAppCatalogService: SystemAppCatalogService,
@@ -119,6 +123,13 @@ export class ApplicationsController {
     @Req() req: Request,
   ): Promise<CreateApplicationResponseDto> {
     const user = req.user as AuthenticatedUser | undefined;
+
+    await this.applicationAccess.assertCanCreate(user, {
+      clusterId,
+      category: dto.category,
+      kind: dto.kind,
+      slug: dto.slug,
+    });
 
     // Create app atomically from a completed standalone build
     if (dto.buildId) {
@@ -213,6 +224,7 @@ export class ApplicationsController {
   })
   @ApiResponse({ status: 200, type: [ApplicationResponseDto] })
   async listByCluster(
+    @Req() req: Request,
     @Param('clusterId') clusterId: string,
     @Query('category') category?: ApplicationCategory,
     @Query('kind') kind?: ApplicationKind,
@@ -227,7 +239,11 @@ export class ApplicationsController {
       kind,
       status,
     });
-    return apps.map((a) => this.applicationService.toResponseDto(a));
+    const visible = await this.applicationAccess.filterReadable(
+      req.user as AuthenticatedUser,
+      apps,
+    );
+    return visible.map((a) => this.applicationService.toResponseDto(a));
   }
 
   @Get('clusters/:clusterId/applications/grouped')
@@ -249,13 +265,17 @@ export class ApplicationsController {
   })
   @ApiResponse({ status: 200, type: [ApplicationGroupDto] })
   async listGroupedByCluster(
+    @Req() req: Request,
     @Param('clusterId') clusterId: string,
     @Query('refresh') refresh?: string,
   ): Promise<ApplicationGroupDto[]> {
     if (refresh === 'true') {
       await this.reconciliationService.reconcileByClusterId(clusterId);
     }
-    return this.applicationGroupingService.listGroupedByCluster(clusterId);
+    return this.applicationGroupingService.listGroupedByCluster(
+      clusterId,
+      req.user as AuthenticatedUser,
+    );
   }
 
   @Get('applications/:id')
@@ -434,8 +454,11 @@ export class ApplicationsController {
     @Req() req: Request,
     @Body() dto: DeployFromYamlDto,
   ): Promise<DeployFromYamlResponseDto> {
-    const { userId } = (req as any).user;
-    return this.applicationSourceDeployService.deployFromYaml(userId, dto);
+    const user = req.user as AuthenticatedUser;
+    await this.applicationAccess.assertCanCreate(user, {
+      clusterId: dto.clusterId,
+    });
+    return this.applicationSourceDeployService.deployFromYaml(user.userId, dto);
   }
 
   // ── Deploy Operations ─────────────────────────────────

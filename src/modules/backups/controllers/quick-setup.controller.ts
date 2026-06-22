@@ -3,10 +3,12 @@ import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { Request } from 'express';
 import { QuickSetupService } from '../services/quick-setup.service';
 import { QuickSetupDto } from '../dto/quick-setup.dto';
+import { RequireSection } from '../../iam/decorators/require-section.decorator';
 
 @ApiTags('Backups')
 @ApiBearerAuth()
 @Controller('clusters/:clusterId/backups')
+@RequireSection('backup')
 export class QuickSetupController {
   constructor(private readonly service: QuickSetupService) {}
 

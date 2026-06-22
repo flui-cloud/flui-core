@@ -11,6 +11,7 @@ import { ClusterMapperService } from '../clusters/services/cluster-mapper.servic
 import { ObservabilityEndpointsDto } from '../../grafana/dto/grafana-datasource.dto';
 import { GrafanaDatasourceService } from '../../grafana/services/grafana-datasource.service';
 import { GrafanaConfigService } from '../../grafana/services/grafana-config.service';
+import { RequireSection } from '../../iam/decorators/require-section.decorator';
 
 /**
  * Controller for managing control cluster operations
@@ -19,6 +20,7 @@ import { GrafanaConfigService } from '../../grafana/services/grafana-config.serv
 @ApiTags('Control Cluster')
 @ApiBearerAuth()
 @Controller('control-cluster')
+@RequireSection('infrastructure')
 export class ControlClusterController {
   constructor(
     private readonly controlClusterService: ControlClusterService,

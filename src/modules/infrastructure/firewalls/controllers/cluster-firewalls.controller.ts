@@ -28,10 +28,12 @@ import {
 } from '../dto/cluster-firewall.dto';
 import { ImportFirewallDto } from '../dto/import-firewall.dto';
 import { HetznerFirewallService } from '../../../providers/services/hetzner-firewall.service';
+import { RequireSection } from '../../../iam/decorators/require-section.decorator';
 
 @ApiTags('Firewalls')
 @ApiBearerAuth()
 @Controller('firewalls')
+@RequireSection('firewall')
 export class ClusterFirewallsController {
   constructor(
     private readonly desiredStateService: FirewallDesiredStateService,

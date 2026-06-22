@@ -22,10 +22,12 @@ import {
   SubnetResponseDto,
   SubnetListResponseDto,
 } from '../dto';
+import { RequireSection } from '../../../iam/decorators/require-section.decorator';
 
 @ApiTags('Subnets')
 @ApiBearerAuth()
 @Controller('subnets')
+@RequireSection('infrastructure')
 export class SubnetsController {
   constructor(private readonly subnetsService: SubnetsService) {}
 

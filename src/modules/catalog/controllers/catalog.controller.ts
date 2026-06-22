@@ -22,6 +22,7 @@ import {
 } from '@nestjs/swagger';
 import { AuthenticatedUser } from '../../auth/interfaces/authenticated-user.interface';
 import { Public } from '../../auth/decorators/public.decorator';
+import { ApplicationAccessService } from '../../applications/services/application-access.service';
 import { CatalogService } from '../services/catalog.service';
 import { CatalogInstallerService } from '../services/catalog-installer.service';
 import { CatalogDependencyResolverService } from '../services/catalog-dependency-resolver.service';
@@ -55,6 +56,7 @@ export class CatalogController {
     private readonly dependencyResolver: CatalogDependencyResolverService,
     private readonly installRepo: CatalogInstallRepository,
     private readonly schemaValidator: CatalogSchemaValidatorService,
+    private readonly applicationAccess: ApplicationAccessService,
   ) {}
 
   @Public()
@@ -237,6 +239,9 @@ export class CatalogController {
     @Req() req: Request,
   ): Promise<CatalogInstallResponseDto> {
     const user = req.user as AuthenticatedUser | undefined;
+    await this.applicationAccess.assertCanCreate(user, {
+      clusterId: dto.clusterId,
+    });
     const definition = await this.catalogService.upsertFromYaml(dto.yaml);
     const installDto: InstallCatalogAppDto = {
       clusterId: dto.clusterId,
@@ -278,6 +283,9 @@ export class CatalogController {
     @Req() req: Request,
   ): Promise<CatalogInstallResponseDto> {
     const user = req.user as AuthenticatedUser | undefined;
+    await this.applicationAccess.assertCanCreate(user, {
+      clusterId: dto.clusterId,
+    });
     // The requirements↔cluster gate (incl. internal-hosting) now lives in
     // installer.install(), so every caller (HTTP, install-from-yaml, MCP) shares it.
     const { install } = await this.installer.install(

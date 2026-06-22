@@ -10,6 +10,8 @@ import {
   ApplicationGroupType,
 } from '../dto/application-group.dto';
 import { ApplicationService } from './application.service';
+import { ApplicationAccessService } from './application-access.service';
+import { AuthenticatedUser } from '../../auth/interfaces/authenticated-user.interface';
 
 const CATALOG_INSTALL_LABEL = 'flui.cloud/catalog-install';
 
@@ -33,12 +35,17 @@ export class ApplicationGroupingService {
     private readonly applicationService: ApplicationService,
     @InjectRepository(CatalogInstallEntity)
     private readonly installRepo: Repository<CatalogInstallEntity>,
+    private readonly access: ApplicationAccessService,
   ) {}
 
   async listGroupedByCluster(
     clusterId: string,
+    user?: AuthenticatedUser,
   ): Promise<ApplicationGroupDto[]> {
-    const apps = await this.applicationService.findByClusterId(clusterId);
+    const all = await this.applicationService.findByClusterId(clusterId);
+    // Resource-aware: a non-admin only sees groups whose components they may read.
+    // Composed installs whose components are all filtered out simply don't appear.
+    const apps = user ? await this.access.filterReadable(user, all) : all;
     const installs = await this.installRepo.find({
       where: { clusterId, deletedAt: IsNull() },
       relations: ['definition'],

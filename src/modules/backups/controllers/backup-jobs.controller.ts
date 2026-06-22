@@ -3,10 +3,12 @@ import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { Request } from 'express';
 import { BackupJobsService } from '../services/backup-jobs.service';
 import { CreateBackupJobDto } from '../dto/create-backup-job.dto';
+import { RequireSection } from '../../iam/decorators/require-section.decorator';
 
 @ApiTags('Backups')
 @ApiBearerAuth()
 @Controller('backup-jobs')
+@RequireSection('backup')
 export class BackupJobsController {
   constructor(private readonly service: BackupJobsService) {}
 

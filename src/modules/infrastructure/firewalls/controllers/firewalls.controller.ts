@@ -26,10 +26,12 @@ import {
   ProviderFirewallDto,
 } from '../../../providers/dto/firewall.dto';
 import { FirewallEntity } from '../entities/firewall.entity';
+import { RequireSection } from '../../../iam/decorators/require-section.decorator';
 
 @ApiTags('Firewalls')
 @ApiBearerAuth()
 @Controller('infrastructure/firewalls')
+@RequireSection('firewall')
 export class FirewallsController {
   constructor(private readonly firewallsService: FirewallsService) {}
 

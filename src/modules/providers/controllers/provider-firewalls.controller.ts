@@ -25,10 +25,12 @@ import { FirewallProviderFactory } from '../services/firewall-provider.factory';
 import { ProviderFirewallResponseDto } from '../dto/provider-firewall-response.dto';
 import { CloudProvider } from '../enums/cloud-provider.enum';
 import { FirewallDetails } from '../interfaces/firewall-provider.interface';
+import { RequireSection } from '../../iam/decorators/require-section.decorator';
 
 @ApiTags('Provider Firewalls')
 @ApiBearerAuth()
 @Controller('providers/:provider/firewalls')
+@RequireSection('firewall')
 export class ProviderFirewallsController {
   private readonly logger = new Logger(ProviderFirewallsController.name);
 

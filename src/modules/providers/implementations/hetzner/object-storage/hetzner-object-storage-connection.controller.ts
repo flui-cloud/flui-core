@@ -2,7 +2,9 @@ import { Body, Controller, Post, Get } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { IsOptional, IsString } from 'class-validator';
 import { HetznerObjectStorageConnectionService } from './hetzner-object-storage-connection.service';
+import { RequireSection } from '../../../../iam/decorators/require-section.decorator';
 
+@RequireSection('providers')
 export class ConnectHetznerObjectStorageDto {
   @IsString()
   accessKey: string;

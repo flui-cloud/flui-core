@@ -24,10 +24,12 @@ import {
 import { VeleroInstallerService } from '../services/velero-installer.service';
 import { ClusterEntity } from '../../infrastructure/clusters/entities/cluster.entity';
 import { EncryptionService } from '../../shared/encryption/services/encryption.service';
+import { RequireSection } from '../../iam/decorators/require-section.decorator';
 
 @ApiTags('Backups')
 @ApiBearerAuth()
 @Controller('backup-policies')
+@RequireSection('backup')
 export class BackupPoliciesController {
   constructor(
     private readonly service: BackupPoliciesService,

@@ -6,10 +6,12 @@ import {
   CreateRestoreJobDto,
   RestorePreviewDto,
 } from '../dto/create-restore-job.dto';
+import { RequireSection } from '../../iam/decorators/require-section.decorator';
 
 @ApiTags('Backups')
 @ApiBearerAuth()
 @Controller('restore-jobs')
+@RequireSection('backup')
 export class RestoreJobsController {
   constructor(private readonly service: RestoreJobsService) {}
 

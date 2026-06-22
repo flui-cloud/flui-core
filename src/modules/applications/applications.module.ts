@@ -9,6 +9,10 @@ import { AppRevisionEntity } from './entities/app-revision.entity';
 import { AppResourceEntity } from './entities/app-resource.entity';
 import { InfrastructureOperationEntity } from '../infrastructure/servers/entities/infrastructure-operations.entity';
 import { ClusterEntity } from '../infrastructure/clusters/entities/cluster.entity';
+import { ProjectEntity } from '../projects/entities/project.entity';
+import { IamModule } from '../iam/iam.module';
+import { ApplicationAccessService } from './services/application-access.service';
+import { AppAccessGuard } from './guards/app-access.guard';
 import { RepositoryCredentialEntity } from '../repositories/entities/repository-credential.entity';
 import { AppBuildEntity } from '../app-builds/entities/app-build.entity';
 import { CatalogInstallEntity } from '../catalog/entities/catalog-install.entity';
@@ -65,6 +69,7 @@ import { StorageModule } from '../storage/storage.module';
       AppResourceEntity,
       InfrastructureOperationEntity,
       ClusterEntity,
+      ProjectEntity,
       RepositoryCredentialEntity,
       AppBuildEntity,
       // Registered here for cascade cleanup only: when an Application owned
@@ -89,6 +94,7 @@ import { StorageModule } from '../storage/storage.module';
     forwardRef(() => DnsModule),
     WsAuthModule,
     StorageModule,
+    IamModule,
   ],
   controllers: [
     ApplicationsController,
@@ -96,6 +102,10 @@ import { StorageModule } from '../storage/storage.module';
     AppManagementController,
   ],
   providers: [
+    // IAM enforcement (resource-aware app access)
+    ApplicationAccessService,
+    AppAccessGuard,
+
     // Repositories
     ApplicationsRepository,
     AppRevisionsRepository,
@@ -129,6 +139,7 @@ import { StorageModule } from '../storage/storage.module';
     GhcrSecretRefreshProcessor,
   ],
   exports: [
+    ApplicationAccessService,
     ApplicationService,
     ApplicationDeployService,
     ApplicationSourceDeployService,

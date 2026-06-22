@@ -20,10 +20,12 @@ import {
 import { VNetsService } from '../services/vnets.service';
 import { CreateVNetDto, VNetResponseDto, VNetListResponseDto } from '../dto';
 import { AddSubnetDto } from '../dto/add-subnet.dto';
+import { RequireSection } from '../../../iam/decorators/require-section.decorator';
 
 @ApiTags('VNets')
 @ApiBearerAuth()
 @Controller('vnets')
+@RequireSection('infrastructure')
 export class VNetsController {
   constructor(private readonly vnetsService: VNetsService) {}
 

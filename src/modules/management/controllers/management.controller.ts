@@ -39,10 +39,12 @@ import { UpdateCredentialsExpiryDto } from '../dto/update-credentials-expiry.dto
 import { NodeSizeOptionDto } from '../dto/node-size-option.dto';
 import { PricingQueryDto } from '../dto/pricing-query.dto';
 import { PricingResponseDto } from '../dto/pricing-response.dto';
+import { RequireSection } from '../../iam/decorators/require-section.decorator';
 
 @ApiTags('Provider Management')
 @Controller('management')
 @ApiBearerAuth()
+@RequireSection('providers')
 export class ManagementController {
   constructor(private readonly managementService: ManagementService) {}
 

@@ -11,10 +11,12 @@ import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { Request } from 'express';
 import { BackupDestinationsService } from '../services/backup-destinations.service';
 import { CreateBackupDestinationDto } from '../dto/create-backup-destination.dto';
+import { RequireSection } from '../../iam/decorators/require-section.decorator';
 
 @ApiTags('Backups')
 @ApiBearerAuth()
 @Controller('backup-destinations')
+@RequireSection('backup')
 export class BackupDestinationsController {
   constructor(private readonly service: BackupDestinationsService) {}
 

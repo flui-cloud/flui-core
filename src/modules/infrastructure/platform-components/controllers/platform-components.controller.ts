@@ -14,10 +14,12 @@ import {
   PlatformComponentResponseDto,
   RedeployPlatformComponentResponseDto,
 } from '../dto/platform-components.dto';
+import { RequireSection } from '../../../iam/decorators/require-section.decorator';
 
 @ApiTags('Infrastructure - Platform Components')
 @ApiBearerAuth()
 @Controller('infrastructure/clusters/:clusterId/platform-components')
+@RequireSection('infrastructure')
 export class PlatformComponentsController {
   constructor(
     private readonly platformComponentsService: PlatformComponentsService,
