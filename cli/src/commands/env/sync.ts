@@ -10,6 +10,7 @@ import {
   SystemEndpoints,
 } from '../../services/cli-endpoint-resolver.service';
 import { CliSshService } from '../../services/cli-ssh.service';
+import { resolveClusterSshTarget } from '../../lib/cluster-ssh-target';
 import { ConfigStorage } from '../../lib/config-storage';
 import { ClusterStatus } from 'src/modules/infrastructure/clusters/entities/cluster.entity';
 import { updateEnvContent } from '../../lib/utils/env-file';
@@ -69,9 +70,11 @@ export default class EnvSync extends Command {
         return;
       }
 
+      const sshT = resolveClusterSshTarget(cluster, masterIp);
       const endpoints = await resolver.resolveEndpoints(
         masterIp,
         cluster.nipHostnameToken,
+        sshT,
       );
       spinner.succeed('Endpoints resolved from cluster');
 
@@ -79,8 +82,10 @@ export default class EnvSync extends Command {
         console.log(chalk.cyan('\n🔬 Debug: ingresses on cluster\n'));
         try {
           const raw = await sshService.sshExec(
-            masterIp,
+            sshT.host,
             "kubectl get ingress -A -o custom-columns='NAMESPACE:.metadata.namespace,NAME:.metadata.name,HOSTS:.spec.rules[*].host,LABELS:.metadata.labels' 2>/dev/null || echo '(kubectl failed)'",
+            sshT.user,
+            sshT.port,
           );
           console.log(raw || chalk.dim('(no ingresses found)'));
         } catch (err) {

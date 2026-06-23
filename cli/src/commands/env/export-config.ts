@@ -8,6 +8,7 @@ import { CliControlClusterService } from '../../services/cli-control-cluster.ser
 import { CliEndpointResolverService } from '../../services/cli-endpoint-resolver.service';
 import { ConfigStorage } from '../../lib/config-storage';
 import { ClusterStatus } from 'src/modules/infrastructure/clusters/entities/cluster.entity';
+import { resolveClusterSshTarget } from '../../lib/cluster-ssh-target';
 import { updateEnvContent } from '../../lib/utils/env-file';
 import { PreferencesResolver } from '../../config/preferences-resolver';
 import { echoPreferences } from '../../config/preferences-echo';
@@ -107,6 +108,7 @@ export default class EnvExportConfig extends Command {
       const endpoints = await resolver.resolveEndpoints(
         masterIp,
         cluster.nipHostnameToken,
+        resolveClusterSshTarget(cluster, masterIp),
       );
       spinner.succeed('Endpoints resolved');
 

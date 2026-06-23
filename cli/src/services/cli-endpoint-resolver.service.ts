@@ -134,8 +134,9 @@ export class CliEndpointResolverService {
   async resolveEndpoints(
     masterIp: string,
     nipHostnameToken?: string | null,
+    ssh?: { host: string; port: number; user: string },
   ): Promise<SystemEndpoints> {
-    const snapshot = await this.fetchSnapshot(masterIp);
+    const snapshot = await this.fetchSnapshot(masterIp, ssh);
 
     const configMapData = snapshot.configmap?.data ?? {};
     const secretData = snapshot.secret?.data ?? {};
@@ -198,7 +199,10 @@ export class CliEndpointResolverService {
     };
   }
 
-  private async fetchSnapshot(masterIp: string): Promise<RemoteSnapshot> {
+  private async fetchSnapshot(
+    masterIp: string,
+    ssh?: { host: string; port: number; user: string },
+  ): Promise<RemoteSnapshot> {
     const command = [
       `ING=$(kubectl get ingress -n flui-system -o json 2>/dev/null || echo '{"items":[]}')`,
       `IR=$(kubectl get ingressroute.traefik.io -n flui-system -o json 2>/dev/null || echo '{"items":[]}')`,
@@ -211,7 +215,12 @@ export class CliEndpointResolverService {
       `printf '{"ingresses":%s,"ingressRoutes":%s,"configmap":%s,"secret":%s,"webConfigMap":%s,"authConfig":%s}' "$ING" "$IR" "$CM" "$SEC" "$WCM" "$AC"`,
     ].join('; ');
 
-    const output = await this.sshService.sshExec(masterIp, command);
+    const output = await this.sshService.sshExec(
+      ssh?.host ?? masterIp,
+      command,
+      ssh?.user ?? 'root',
+      ssh?.port ?? 22,
+    );
 
     try {
       return JSON.parse(output);

@@ -8,6 +8,7 @@ import { getNestApp, closeNestApp } from '../../lib/nest-app';
 import { CliControlClusterService } from '../../services/cli-control-cluster.service';
 import { CliSshService } from '../../services/cli-ssh.service';
 import { printContextBanner } from '../../lib/context-banner';
+import { resolveClusterSshTarget } from '../../lib/cluster-ssh-target';
 
 export default class EnvRepairSshCa extends Command {
   static readonly description =
@@ -80,6 +81,7 @@ export default class EnvRepairSshCa extends Command {
         return;
       }
 
+      const sshT = resolveClusterSshTarget(cluster, cluster.masterIpAddress);
       const patchSpinner = ora(
         `Patching flui-secrets on ${cluster.masterIpAddress}...`,
       ).start();
@@ -88,7 +90,7 @@ export default class EnvRepairSshCa extends Command {
         `kubectl -n flui-system patch secret flui-secrets ` +
         `--type='json' -p='[{"op":"replace","path":"/data/SSH_CA_PRIVATE_KEY","value":"${base64}"}]'`;
       try {
-        await ssh.sshExec(cluster.masterIpAddress, patchCmd);
+        await ssh.sshExec(sshT.host, patchCmd, sshT.user, sshT.port);
         patchSpinner.succeed('Secret SSH_CA_PRIVATE_KEY patched');
       } catch (err: any) {
         patchSpinner.fail(`Patch failed: ${err.message}`);
@@ -100,8 +102,10 @@ export default class EnvRepairSshCa extends Command {
         const restartSpinner = ora('Restarting flui-api...').start();
         try {
           await ssh.sshExec(
-            cluster.masterIpAddress,
+            sshT.host,
             'kubectl -n flui-system rollout restart deployment/flui-api',
+            sshT.user,
+            sshT.port,
           );
           restartSpinner.succeed('flui-api rolling restart triggered');
         } catch (err: any) {

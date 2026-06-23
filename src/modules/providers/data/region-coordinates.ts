@@ -22,6 +22,9 @@ const COORDINATES: Record<CloudProvider, Record<string, RegionCoordinates>> = {
     'EU-2': { latitude: 48.1351, longitude: 11.582 },
     UK: { latitude: 50.8198, longitude: -1.0879 },
   },
+  // BYOS has no provider-defined regions — the operator's host has its own
+  // location, unknown to Flui.
+  [CloudProvider.BYOS]: {},
 };
 
 export function getRegionCoordinates(

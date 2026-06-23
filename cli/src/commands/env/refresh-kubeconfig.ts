@@ -8,6 +8,7 @@ import { CliClusterRepository } from '../../lib/repositories/cli-cluster.reposit
 import { EncryptionService } from 'src/modules/shared/encryption/services/encryption.service';
 import { ClusterStatus } from 'src/modules/infrastructure/clusters/entities/cluster.entity';
 import { printContextBanner } from '../../lib/context-banner';
+import { resolveClusterSshTarget } from '../../lib/cluster-ssh-target';
 
 export default class EnvRefreshKubeconfig extends Command {
   static readonly description =
@@ -46,9 +47,12 @@ export default class EnvRefreshKubeconfig extends Command {
       }
 
       // Fetch real kubeconfig from K3s master
+      const t = resolveClusterSshTarget(cluster, masterIp);
       const raw = await sshService.sshExec(
-        masterIp,
+        t.host,
         'sudo cat /etc/rancher/k3s/k3s.yaml',
+        t.user,
+        t.port,
       );
 
       // Replace localhost with real master IP

@@ -7,6 +7,7 @@ import { CliControlClusterService } from '../../services/cli-control-cluster.ser
 import { CliNodeRepository } from '../../lib/repositories/cli-node.repository';
 import { NodeType } from 'src/modules/infrastructure/clusters/entities/cluster-node.entity';
 import { CliSshService } from '../../services/cli-ssh.service';
+import { resolveClusterSshTarget } from '../../lib/cluster-ssh-target';
 
 export default class EnvUncordon extends Command {
   static readonly description =
@@ -56,9 +57,12 @@ export default class EnvUncordon extends Command {
       }
 
       spinner.text = `Uncordoning ${target.serverName} via SSH to master...`;
+      const sshT = resolveClusterSshTarget(cluster, cluster.masterIpAddress);
       const out = await ssh.sshExec(
-        cluster.masterIpAddress,
+        sshT.host,
         `kubectl uncordon ${target.serverName}`,
+        sshT.user,
+        sshT.port,
       );
       spinner.succeed(`Node ${target.serverName} is now schedulable`);
       if (out.trim()) {

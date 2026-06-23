@@ -295,6 +295,22 @@ export class CliClustersService {
     cluster.status = ClusterStatus.DELETING;
     await this.clusterRepository.save(cluster);
 
+    // BYOS: no provider API to delete servers — drop the local records only.
+    // The host is the operator's own machine; uninstalling k3s is their call.
+    if (cluster.provider === CloudProvider.BYOS) {
+      const localNodes = await this.nodeRepository.find({
+        where: { clusterId: cluster.id },
+      });
+      for (const node of localNodes) {
+        await this.nodeRepository.remove(node);
+      }
+      await this.clusterRepository.remove(cluster);
+      this.logger.log(
+        `BYOS cluster ${cluster.id} records removed (server left intact)`,
+      );
+      return;
+    }
+
     try {
       // Get provider instance
       const provider = this.providerFactory.getProvider(

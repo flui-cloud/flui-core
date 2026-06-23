@@ -7,6 +7,10 @@ import { CliControlClusterService } from '../../services/cli-control-cluster.ser
 import { CliClusterRepository } from '../../lib/repositories/cli-cluster.repository';
 import { CliSshService } from '../../services/cli-ssh.service';
 import { ClusterEntity } from 'src/modules/infrastructure/clusters/entities/cluster.entity';
+import {
+  resolveClusterSshTarget,
+  SshTarget,
+} from '../../lib/cluster-ssh-target';
 
 const CP_LABEL = 'node-role.kubernetes.io/control-plane';
 const APPLY_CMD = `kubectl taint nodes -l ${CP_LABEL} ${CP_LABEL}=:NoSchedule --overwrite`;
@@ -55,26 +59,21 @@ export default class EnvSetMasterProtection extends Command {
         this.exit(1);
       }
 
+      const sshT = resolveClusterSshTarget(cluster, masterIp);
+
       // Worker count comes from the live cluster, not the local profile (which
       // can drift out of sync with the backend).
-      const workers = await this.countWorkers(ssh, masterIp);
+      const workers = await this.countWorkers(ssh, sshT);
 
       if (args.action === 'show') {
-        await this.showState(spinner, ssh, cluster, masterIp, workers);
+        await this.showState(spinner, ssh, cluster, sshT, workers);
         return;
       }
       if (args.action === 'on') {
-        await this.turnOn(
-          spinner,
-          ssh,
-          clusterRepo,
-          cluster,
-          masterIp,
-          workers,
-        );
+        await this.turnOn(spinner, ssh, clusterRepo, cluster, sshT, workers);
         return;
       }
-      await this.turnOff(spinner, ssh, clusterRepo, cluster, masterIp);
+      await this.turnOff(spinner, ssh, clusterRepo, cluster, sshT);
     } catch (error) {
       spinner.fail('set-master-protection failed');
       console.log(
@@ -90,17 +89,17 @@ export default class EnvSetMasterProtection extends Command {
 
   private async countWorkers(
     ssh: CliSshService,
-    masterIp: string,
+    t: SshTarget,
   ): Promise<number> {
-    const out = await ssh.sshExec(masterIp, WORKER_COUNT_CMD);
+    const out = await ssh.sshExec(t.host, WORKER_COUNT_CMD, t.user, t.port);
     return Number.parseInt(out.trim(), 10) || 0;
   }
 
   private async masterTainted(
     ssh: CliSshService,
-    masterIp: string,
+    t: SshTarget,
   ): Promise<boolean> {
-    const out = await ssh.sshExec(masterIp, TAINT_KEYS_CMD);
+    const out = await ssh.sshExec(t.host, TAINT_KEYS_CMD, t.user, t.port);
     return out.includes(CP_LABEL);
   }
 
@@ -113,10 +112,10 @@ export default class EnvSetMasterProtection extends Command {
     spinner: Ora,
     ssh: CliSshService,
     cluster: ClusterEntity,
-    masterIp: string,
+    t: SshTarget,
     workers: number,
   ): Promise<void> {
-    const tainted = await this.masterTainted(ssh, masterIp);
+    const tainted = await this.masterTainted(ssh, t);
     spinner.stop();
     const flag = cluster.metadata?.masterProtection;
     console.log(chalk.cyan('\n  Master protection\n'));
@@ -132,7 +131,7 @@ export default class EnvSetMasterProtection extends Command {
     ssh: CliSshService,
     clusterRepo: CliClusterRepository,
     cluster: ClusterEntity,
-    masterIp: string,
+    t: SshTarget,
     workers: number,
   ): Promise<void> {
     if (workers === 0) {
@@ -142,7 +141,7 @@ export default class EnvSetMasterProtection extends Command {
       this.exit(1);
     }
     spinner.text = 'Tainting master via SSH...';
-    await ssh.sshExec(masterIp, APPLY_CMD);
+    await ssh.sshExec(t.host, APPLY_CMD, t.user, t.port);
     await this.persist(clusterRepo, cluster, true);
     spinner.succeed('Master protection enabled');
     console.log(
@@ -157,10 +156,10 @@ export default class EnvSetMasterProtection extends Command {
     ssh: CliSshService,
     clusterRepo: CliClusterRepository,
     cluster: ClusterEntity,
-    masterIp: string,
+    t: SshTarget,
   ): Promise<void> {
     spinner.text = 'Removing master taint via SSH...';
-    await ssh.sshExec(masterIp, REMOVE_CMD);
+    await ssh.sshExec(t.host, REMOVE_CMD, t.user, t.port);
     await this.persist(clusterRepo, cluster, false);
     spinner.succeed('Master protection disabled');
     console.log(

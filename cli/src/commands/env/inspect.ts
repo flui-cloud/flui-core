@@ -5,6 +5,7 @@ import { getNestApp, closeNestApp } from '../../lib/nest-app';
 import { CliControlClusterService } from '../../services/cli-control-cluster.service';
 import { CliSshService } from '../../services/cli-ssh.service';
 import { printContextBanner } from '../../lib/context-banner';
+import { resolveClusterSshTarget } from '../../lib/cluster-ssh-target';
 
 export default class EnvInspect extends Command {
   static readonly description = 'Inspect remote cluster logs via SSH';
@@ -110,6 +111,11 @@ export default class EnvInspect extends Command {
         return;
       }
 
+      const target =
+        flags.node === 'master'
+          ? resolveClusterSshTarget(cluster, nodeIp)
+          : { host: nodeIp, port: 22, user: 'root' };
+
       // Determine log file path
       const logPaths: Record<string, string> = {
         'cloud-init': '/var/log/cloud-init.log',
@@ -151,7 +157,12 @@ export default class EnvInspect extends Command {
 
         try {
           // Start streaming logs
-          const stream = await sshService.streamRemoteLog(nodeIp, logPath);
+          const stream = await sshService.streamRemoteLog(
+            target.host,
+            logPath,
+            target.user,
+            target.port,
+          );
           cleanup = stream.cleanup;
 
           // Keep process alive while streaming
@@ -173,9 +184,11 @@ export default class EnvInspect extends Command {
 
         try {
           const logs = await sshService.tailRemoteLog(
-            nodeIp,
+            target.host,
             logPath,
             flags.tail,
+            target.user,
+            target.port,
           );
           spinner.succeed(`Logs fetched from ${nodeName}`);
 

@@ -6,6 +6,10 @@ import { buildNipBaseDomain } from '../../lib/nip-base-domain.util';
 import { CliControlClusterService } from '../../services/cli-control-cluster.service';
 import { CliSshService } from '../../services/cli-ssh.service';
 import { printContextBanner } from '../../lib/context-banner';
+import {
+  resolveClusterSshTarget,
+  SshTarget,
+} from '../../lib/cluster-ssh-target';
 
 export default class EnvDiagCA extends Command {
   static readonly description = 'Diagnose CA configuration on the cluster';
@@ -30,18 +34,11 @@ export default class EnvDiagCA extends Command {
       console.log(chalk.cyan('\n🔍 CA Diagnostic Report\n'));
       console.log(chalk.dim('─'.repeat(80)));
 
+      const sshT = resolveClusterSshTarget(cluster, cluster.masterIpAddress);
       this.checkLocalCaFiles();
-      await this.checkKubernetesSecret(
-        sshService,
-        cluster.masterIpAddress,
-        spinner,
-      );
-      await this.checkApiPodEnvironment(
-        sshService,
-        cluster.masterIpAddress,
-        spinner,
-      );
-      await this.checkApiCaStatusEndpoint(sshService, cluster, spinner);
+      await this.checkKubernetesSecret(sshService, sshT, spinner);
+      await this.checkApiPodEnvironment(sshService, sshT, spinner);
+      await this.checkApiCaStatusEndpoint(sshService, cluster, sshT, spinner);
 
       this.printSummary();
 
@@ -103,14 +100,19 @@ export default class EnvDiagCA extends Command {
 
   private async checkKubernetesSecret(
     sshService: CliSshService,
-    masterIp: string,
+    ssh: SshTarget,
     spinner: any,
   ): Promise<void> {
     console.log(chalk.bold('\n2. Kubernetes Secret (flui-secrets):'));
     spinner.start('Checking Kubernetes secret...');
     try {
       const secretCheckCmd = `kubectl get secret flui-secrets -n default -o jsonpath='{.data}' 2>&1`;
-      const secretOutput = await sshService.sshExec(masterIp, secretCheckCmd);
+      const secretOutput = await sshService.sshExec(
+        ssh.host,
+        secretCheckCmd,
+        ssh.user,
+        ssh.port,
+      );
       const hasPriv = secretOutput.includes('SSH_CA_PRIVATE_KEY');
       const hasPub = secretOutput.includes('SSH_CA_PUBLIC_KEY');
       spinner.succeed('Kubernetes secret checked');
@@ -136,14 +138,16 @@ export default class EnvDiagCA extends Command {
 
   private async checkApiPodEnvironment(
     sshService: CliSshService,
-    masterIp: string,
+    ssh: SshTarget,
     spinner: any,
   ): Promise<void> {
     console.log(chalk.bold('\n3. API Pod Environment Variables:'));
     spinner.start('Checking API pod...');
     try {
       const getPodCmd = `kubectl get pods -n default -l app=flui-api -o jsonpath='{.items[0].metadata.name}' 2>&1`;
-      const podName = (await sshService.sshExec(masterIp, getPodCmd)).trim();
+      const podName = (
+        await sshService.sshExec(ssh.host, getPodCmd, ssh.user, ssh.port)
+      ).trim();
       if (
         !podName ||
         podName.includes('error') ||
@@ -154,7 +158,12 @@ export default class EnvDiagCA extends Command {
         return;
       }
       const checkEnvCmd = `kubectl exec -n default ${podName} -- env | grep SSH_CA 2>&1 || echo "NOT_FOUND"`;
-      const envOutput = await sshService.sshExec(masterIp, checkEnvCmd);
+      const envOutput = await sshService.sshExec(
+        ssh.host,
+        checkEnvCmd,
+        ssh.user,
+        ssh.port,
+      );
       spinner.succeed(`API pod found: ${podName}`);
       this.reportApiPodEnv(envOutput);
     } catch (error: any) {
@@ -200,6 +209,7 @@ export default class EnvDiagCA extends Command {
   private async checkApiCaStatusEndpoint(
     sshService: CliSshService,
     cluster: { masterIpAddress: string; nipHostnameToken?: string | null },
+    ssh: SshTarget,
     spinner: any,
   ): Promise<void> {
     console.log(chalk.bold('\n4. API CA Status Endpoint:'));
@@ -211,8 +221,10 @@ export default class EnvDiagCA extends Command {
       );
       const apiUrl = `https://api.${baseDomain}/api/v1/access/ca/status`;
       const apiResponse = await sshService.sshExec(
-        cluster.masterIpAddress,
+        ssh.host,
         `curl -s -f ${apiUrl} 2>&1`,
+        ssh.user,
+        ssh.port,
       );
       this.reportApiCaResponse(apiResponse, spinner);
     } catch (error: any) {

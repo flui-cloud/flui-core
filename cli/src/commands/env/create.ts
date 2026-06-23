@@ -1,4 +1,7 @@
 import { randomBytes } from 'node:crypto';
+import * as os from 'node:os';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 import { Command, Flags } from '@oclif/core';
 import chalk from 'chalk';
 import ora from 'ora';
@@ -8,6 +11,7 @@ import { CliControlClusterService } from '../../services/cli-control-cluster.ser
 import { CliSshService } from '../../services/cli-ssh.service';
 import { CloudProvider } from 'src/modules/providers/enums/cloud-provider.enum';
 import { ClusterStatus } from 'src/modules/infrastructure/clusters/entities/cluster.entity';
+import { OperationStatus } from 'src/modules/infrastructure/servers/entities/infrastructure-operations.entity';
 import { FirewallProviderFactory } from 'src/modules/providers/core/factories/firewall-provider.factory';
 import { IpDetectionService } from '../../lib/utils/ip-detection';
 import { CliFirewallRepository } from '../../lib/repositories/cli-firewall.repository';
@@ -122,6 +126,40 @@ export default class EnvCreate extends Command {
       default: 20,
       min: 10,
     }),
+    // BYOS (bring-your-own-server)
+    host: Flags.string({
+      description:
+        'BYOS: install onto an existing Linux host (IP or DNS) over SSH instead of provisioning via a cloud provider. Enables BYOS mode.',
+    }),
+    port: Flags.integer({
+      description: 'BYOS: SSH port of --host (default: 22)',
+      default: 22,
+    }),
+    user: Flags.string({
+      description: 'BYOS: SSH user for --host (default: root)',
+      default: 'root',
+    }),
+    'ssh-key': Flags.string({
+      description:
+        'BYOS: path to the SSH private key that already authenticates to --host (default: ~/.ssh/id_rsa)',
+    }),
+    'master-public-ip': Flags.string({
+      description:
+        'BYOS: externally reachable IP of --host (defaults to --host); used for endpoints/TLS',
+    }),
+    'skip-precheck': Flags.boolean({
+      description: 'BYOS: skip the host readiness precheck',
+      default: false,
+    }),
+    'best-effort': Flags.boolean({
+      description: 'BYOS: continue even if the precheck reports problems',
+      default: false,
+    }),
+    'local-stub': Flags.boolean({
+      description:
+        'BYOS (dev): stop after bootstrap + CA check; skip observability/kubeconfig/secret patch. Use with BOOTSTRAP_SCRIPTS_URL=file://… for local Podman testing.',
+      default: false,
+    }),
   };
 
   /** Providers that already have stored credentials in this profile. */
@@ -133,6 +171,207 @@ export default class EnvCreate extends Command {
     );
   }
 
+  private resolveKeyPath(flag?: string): string {
+    const raw = flag || path.join(os.homedir(), '.ssh', 'id_rsa');
+    return raw.startsWith('~') ? path.join(os.homedir(), raw.slice(1)) : raw;
+  }
+
+  private async byosPrecheck(
+    sshService: CliSshService,
+    conn: { host: string; port: number; user: string; keyPath: string },
+    bestEffort: boolean,
+  ): Promise<void> {
+    const probe = await sshService.sshExecWithKey({
+      ...conn,
+      command:
+        '. /etc/os-release 2>/dev/null || true; ' +
+        'printf "os=%s\\n" "${PRETTY_NAME:-unknown}"; ' +
+        'printf "arch=%s\\n" "$(uname -m)"; ' +
+        'printf "memkb=%s\\n" "$(grep MemTotal /proc/meminfo | tr -dc 0-9)"; ' +
+        'printf "cpu=%s\\n" "$(nproc)"; ' +
+        'printf "k3s=%s\\n" "$(command -v k3s || echo none)"',
+    });
+    const get = (k: string): string =>
+      (new RegExp(`${k}=(.*)`).exec(probe)?.[1] ?? '').trim();
+    const memMb = Math.floor(
+      (Number.parseInt(get('memkb') || '0', 10) || 0) / 1024,
+    );
+    const arch = get('arch');
+    const k3s = get('k3s');
+    console.log(
+      chalk.dim(
+        `   Host: ${get('os')} · ${arch} · ${memMb}MB RAM · ${get('cpu')} vCPU`,
+      ),
+    );
+
+    const problems: string[] = [];
+    if (!/x86_64|aarch64|arm64/.test(arch))
+      problems.push(`unsupported architecture: ${arch}`);
+    if (memMb > 0 && memMb < 1800)
+      problems.push(`low memory: ${memMb}MB (recommend ≥2GB)`);
+    if (k3s !== 'none') problems.push(`k3s already installed at ${k3s}`);
+
+    if (problems.length > 0) {
+      const bullets = problems.map((p) => `   • ${p}`).join('\n');
+      console.log(chalk.yellow(`\n⚠ Precheck warnings:\n${bullets}\n`));
+      if (!bestEffort) {
+        this.error(
+          'Precheck failed. Re-run with --best-effort to proceed anyway, or --skip-precheck to skip it.',
+          { exit: 1 },
+        );
+      }
+    }
+  }
+
+  private async runByos(flags: Record<string, any>): Promise<void> {
+    const host = flags.host as string;
+    const port = (flags.port as number) ?? 22;
+    const user = (flags.user as string) ?? 'root';
+    const keyPath = this.resolveKeyPath(flags['ssh-key']);
+    const masterPublicIp = (flags['master-public-ip'] as string) || host;
+    const localStub = !!flags['local-stub'];
+
+    if (!fs.existsSync(keyPath)) {
+      this.error(`SSH key not found: ${keyPath}. Pass --ssh-key <path>.`, {
+        exit: 1,
+      });
+    }
+
+    printContextBanner({ cluster: { provider: 'byos', region: host } });
+
+    let spinner = ora('Initializing...').start();
+    let app: any;
+    try {
+      app = await getNestApp();
+      const controlService = app.get(CliControlClusterService);
+      const sshService = app.get(CliSshService);
+      spinner.succeed('Initialized');
+
+      const existing = await controlService.getControlCluster();
+      if (existing && existing.status !== ClusterStatus.DELETED) {
+        console.log(
+          chalk.yellow(
+            '\n⚠️  A control cluster already exists. Destroy it first with `flui env destroy`.\n',
+          ),
+        );
+        return;
+      }
+
+      if (!flags['skip-precheck']) {
+        spinner = ora(`Prechecking ${user}@${host}:${port}...`).start();
+        try {
+          spinner.stop();
+          await this.byosPrecheck(
+            sshService,
+            { host, port, user, keyPath },
+            !!flags['best-effort'],
+          );
+        } catch (e: any) {
+          console.log(chalk.red(`\n❌ Precheck failed: ${e.message}\n`));
+          console.log(
+            chalk.dim(
+              `   Verify access: ssh -p ${port} -i ${keyPath} ${user}@${host}\n`,
+            ),
+          );
+          this.exit(1);
+        }
+      }
+
+      let adminEmail: string | undefined;
+      if (!localStub) {
+        const configStorage = new ConfigStorage();
+        const resolver = new PreferencesResolver(configStorage);
+        const r = resolver.resolve('email');
+        if (r.value) {
+          adminEmail = r.value;
+        } else {
+          adminEmail = await promptInput({
+            message: "Admin email (used for Let's Encrypt and notifications)",
+            validate: PREFERENCES.email.validate,
+          });
+          configStorage.setPreference('email', adminEmail);
+        }
+      }
+
+      console.log(chalk.cyan('\n🚀 Installing Flui on your server (BYOS)\n'));
+      console.log(chalk.dim(`   Host:      ${user}@${host}:${port}`));
+      console.log(chalk.dim(`   Public IP: ${masterPublicIp}`));
+      if (localStub) {
+        console.log(
+          chalk.yellow('   Mode:      LOCAL STUB (orchestration only)\n'),
+        );
+      }
+
+      spinner = ora('Starting installation...').start();
+      const clusterId = await controlService.createControlClusterByos({
+        host,
+        port,
+        user,
+        keyPath,
+        masterPublicIp,
+        localStub,
+        authMode: flags['auth-mode'],
+        adminEmail,
+        acmeStaging: !!flags['acme-staging'],
+        useLatest: !!flags.latest,
+      });
+      spinner.succeed('Installation started');
+
+      await this.followByosOperation(controlService, clusterId);
+    } finally {
+      await closeNestApp();
+    }
+  }
+
+  private async followByosOperation(
+    controlService: CliControlClusterService,
+    clusterId: string,
+  ): Promise<void> {
+    const logPath = (opId: string): string =>
+      path.join(os.homedir(), '.flui', 'logs', `${opId}.log`);
+    let printed = 0;
+    const deadline = Date.now() + 30 * 60_000;
+
+    console.log(chalk.dim('\n' + '─'.repeat(80)));
+    while (Date.now() < deadline) {
+      const op = await controlService.getClusterOperation(clusterId);
+      if (op) {
+        try {
+          const p = logPath(op.id);
+          const content = fs.existsSync(p) ? fs.readFileSync(p, 'utf-8') : '';
+          if (content.length > printed) {
+            process.stdout.write(content.slice(printed));
+            printed = content.length;
+          }
+        } catch {
+          /* log not ready yet */
+        }
+        if (op.status === OperationStatus.COMPLETED) {
+          console.log(chalk.dim('─'.repeat(80)));
+          console.log(chalk.green('\n✅ Flui installed on your server!\n'));
+          console.log(
+            chalk.bold('   Retrieve credentials: ') +
+              chalk.cyan('flui env credentials\n'),
+          );
+          return;
+        }
+        if (op.status === OperationStatus.FAILED) {
+          const err = (op.metadata as any)?.error || 'unknown error';
+          console.log(chalk.dim('─'.repeat(80)));
+          console.log(chalk.red(`\n❌ Installation failed: ${err}\n`));
+          console.log(chalk.dim(`   Full log: ${logPath(op.id)}\n`));
+          this.exit(1);
+        }
+      }
+      await new Promise((r) => setTimeout(r, 3000));
+    }
+    console.log(
+      chalk.yellow(
+        '\n⚠ Timed out waiting for installation. Check `flui env status`.\n',
+      ),
+    );
+  }
+
   async run(): Promise<void> {
     const { flags } = await this.parse(EnvCreate);
 
@@ -141,6 +380,10 @@ export default class EnvCreate extends Command {
         `Authentication mode '${flags['auth-mode']}' is not supported. Only 'oidc' is available.`,
         { exit: 1 },
       );
+    }
+
+    if (flags.host) {
+      return this.runByos(flags);
     }
 
     const configStorage = new ConfigStorage();

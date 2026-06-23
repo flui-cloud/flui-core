@@ -3,6 +3,9 @@
 /node_modules
 /build
 
+# local dev harness (not shipped)
+/dev
+
 # Logs
 logs
 *.log

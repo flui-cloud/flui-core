@@ -10,6 +10,10 @@ import { CliSshService } from '../../services/cli-ssh.service';
 import { ConfigStorage } from '../../lib/config-storage';
 import { EncryptionService } from 'src/modules/shared/encryption/services/encryption.service';
 import { ClusterStatus } from 'src/modules/infrastructure/clusters/entities/cluster.entity';
+import {
+  resolveClusterSshTarget,
+  SshTarget,
+} from '../../lib/cluster-ssh-target';
 import { updateEnvContent } from '../../lib/utils/env-file';
 import { PreferencesResolver } from '../../config/preferences-resolver';
 import { promptInput } from '../../lib/prompts';
@@ -95,7 +99,10 @@ export default class DevCreds extends Command {
       // flui-secrets via SSH + kubectl on the master (avoids needing kube-API
       // open or a running tunnel). Falls back gracefully if the secret is missing.
       spinner = ora('Reading flui-secrets via SSH...').start();
-      const fluiSecrets = await this.readFluiSecrets(sshService, masterIp);
+      const fluiSecrets = await this.readFluiSecrets(
+        sshService,
+        resolveClusterSshTarget(cluster, masterIp),
+      );
       spinner.succeed('flui-secrets read');
 
       // Local encryption key — shared with API via ~/.flui/encryption.key.
@@ -237,12 +244,14 @@ export default class DevCreds extends Command {
 
   private async readFluiSecrets(
     sshService: CliSshService,
-    masterIp: string,
+    ssh: SshTarget,
   ): Promise<FluiSecrets> {
     try {
       const raw = await sshService.sshExec(
-        masterIp,
+        ssh.host,
         "kubectl -n flui-system get secret flui-secrets -o jsonpath='{.data}'",
+        ssh.user,
+        ssh.port,
       );
       const data = JSON.parse(raw) as Record<string, string>;
       const decode = (v?: string) =>

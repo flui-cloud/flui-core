@@ -10,6 +10,7 @@ import {
 import { ClusterStatus } from 'src/modules/infrastructure/clusters/entities/cluster.entity';
 import { printContextBanner } from '../../lib/context-banner';
 import { ConfigStorage } from '../../lib/config-storage';
+import { resolveClusterSshTarget } from '../../lib/cluster-ssh-target';
 import { buildNipBaseDomain } from '../../lib/nip-base-domain.util';
 
 export default class EnvStatus extends Command {
@@ -81,6 +82,7 @@ export default class EnvStatus extends Command {
           cluster.masterIpAddress,
           cluster.nipHostnameToken,
           spinner,
+          resolveClusterSshTarget(cluster, cluster.masterIpAddress),
         );
       } else if (cluster.status === ClusterStatus.STOPPED) {
         console.log(chalk.cyan('\n💤 Cluster Status:\n'));
@@ -123,6 +125,7 @@ export default class EnvStatus extends Command {
     masterIp: string,
     nipHostnameToken: string | null | undefined,
     initialSpinner: ReturnType<typeof ora>,
+    sshTarget?: { host: string; port: number; user: string },
   ): Promise<ReturnType<typeof ora>> {
     initialSpinner.stop();
     const spinner = ora('Checking observability services...').start();
@@ -130,6 +133,7 @@ export default class EnvStatus extends Command {
       const servicesHealth = await controlService.checkObservabilityServices(
         masterIp,
         nipHostnameToken,
+        sshTarget,
       );
       spinner.succeed('Services health checked');
 
@@ -167,6 +171,7 @@ export default class EnvStatus extends Command {
       const endpoints = await resolver.resolveEndpoints(
         cluster.masterIpAddress,
         cluster.nipHostnameToken,
+        resolveClusterSshTarget(cluster, cluster.masterIpAddress),
       );
       spinner.succeed('Endpoints resolved');
       this.renderEndpoints(endpoints);

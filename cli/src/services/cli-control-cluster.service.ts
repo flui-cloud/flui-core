@@ -163,6 +163,53 @@ export class CliControlClusterService {
     return cluster.id;
   }
 
+  /** BYOS control cluster: connection details go in metadata.byos so the detached creator can SSH to the host. */
+  async createControlClusterByos(opts: {
+    host: string;
+    port?: number;
+    user?: string;
+    keyPath: string;
+    masterPublicIp?: string;
+    localStub?: boolean;
+    authMode?: string;
+    adminEmail?: string;
+    acmeStaging?: boolean;
+    useLatest?: boolean;
+  }): Promise<string> {
+    const useLatest = opts.useLatest ?? false;
+    const release = getEffectiveRelease(useLatest);
+    const createDto = {
+      name: 'control-cluster',
+      provider: CloudProvider.BYOS,
+      region: 'byos',
+      nodeSize: 'byos',
+      workerCount: 0,
+      image: 'ubuntu-24.04',
+      sharedStorageEnabled: false, // BYOS: local-path on the node's own disk
+      metadata: {
+        isObservabilityCluster: true,
+        authMode: opts.authMode ?? 'oidc',
+        adminEmail: opts.adminEmail,
+        acmeStaging: opts.acmeStaging,
+        useLatest,
+        platformVersion: release.version,
+        componentVersions: release.images,
+        bootstrapRef: release.bootstrapRef,
+        byos: {
+          host: opts.host,
+          port: opts.port ?? 22,
+          user: opts.user ?? 'root',
+          keyPath: opts.keyPath,
+          masterPublicIp: opts.masterPublicIp || opts.host,
+          localStub: opts.localStub ?? false,
+        },
+      },
+    };
+
+    const { cluster } = await this.clustersService.create(createDto);
+    return cluster.id;
+  }
+
   /**
    * Deploy observability stack (Prometheus, Grafana, Loki)
    */
@@ -479,6 +526,7 @@ export class CliControlClusterService {
   async checkObservabilityServices(
     masterIp: string,
     _nipHostnameToken?: string | null,
+    ssh?: { host: string; port: number; user: string },
   ): Promise<{
     prometheus: 'healthy' | 'unreachable';
     grafana: 'healthy' | 'unreachable';
@@ -538,7 +586,12 @@ export class CliControlClusterService {
         `(kubectl -n flui-observability get deploy,statefulset -o json 2>/dev/null || echo '{"items":[]}') ; ` +
         `echo '---FLUI-SEP---' ; ` +
         `(kubectl -n flui-system get deploy,statefulset -o json 2>/dev/null || echo '{"items":[]}')`;
-      const raw = await this.sshService.sshExec(masterIp, combined);
+      const raw = await this.sshService.sshExec(
+        ssh?.host ?? masterIp,
+        combined,
+        ssh?.user ?? 'root',
+        ssh?.port ?? 22,
+      );
       const [controlRaw, legacyRaw, sysRaw] = raw.split('---FLUI-SEP---');
 
       const collect = (json: string): WorkloadItem[] => {

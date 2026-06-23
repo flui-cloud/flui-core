@@ -182,12 +182,16 @@ export class CliSshService {
   /**
    * SSH into a server using ephemeral certificate
    */
-  async sshConnect(host: string, username: string = 'root'): Promise<void> {
+  async sshConnect(
+    host: string,
+    username: string = 'root',
+    port = 22,
+  ): Promise<void> {
     const { privateKeyPath, certificatePath, cleanup } =
       await this.generateEphemeralKeypair();
 
     this.logger.log(
-      `Connecting to ${username}@${host} with ephemeral certificate...`,
+      `Connecting to ${username}@${host}:${port} with ephemeral certificate...`,
     );
 
     try {
@@ -196,6 +200,8 @@ export class CliSshService {
         [
           '-i',
           privateKeyPath,
+          '-p',
+          String(port),
           '-o',
           `CertificateFile=${certificatePath}`,
           '-o',
@@ -236,6 +242,7 @@ export class CliSshService {
     host: string,
     command: string,
     username: string = 'root',
+    port = 22,
   ): Promise<string> {
     const { privateKeyPath, certificatePath, cleanup } =
       await this.generateEphemeralKeypair();
@@ -246,6 +253,8 @@ export class CliSshService {
         [
           '-i',
           privateKeyPath,
+          '-p',
+          String(port),
           '-o',
           `CertificateFile=${certificatePath}`,
           '-o',
@@ -418,14 +427,174 @@ export class CliSshService {
   }
 
   /**
+   * Run a command over the operator's OWN SSH key (not a Flui CA cert) — the
+   * only way into a BYOS host before the Flui CA is installed.
+   */
+  async sshExecWithKey(opts: {
+    host: string;
+    command: string;
+    user?: string;
+    keyPath: string;
+    port?: number;
+    timeoutMs?: number;
+  }): Promise<string> {
+    const result = spawnSync(
+      'ssh',
+      [
+        '-i',
+        opts.keyPath,
+        '-p',
+        String(opts.port ?? 22),
+        '-o',
+        'StrictHostKeyChecking=no',
+        '-o',
+        'UserKnownHostsFile=/dev/null',
+        '-o',
+        'PreferredAuthentications=publickey',
+        '-o',
+        'BatchMode=yes',
+        '-o',
+        'ConnectTimeout=10',
+        `${opts.user ?? 'root'}@${opts.host}`,
+        opts.command,
+      ],
+      { encoding: 'utf-8', timeout: opts.timeoutMs ?? 30_000 },
+    );
+
+    if (
+      result.error &&
+      (result.error as NodeJS.ErrnoException).code === 'ETIMEDOUT'
+    ) {
+      throw new Error(`SSH command timed out on ${opts.host}`);
+    }
+    if (result.status !== 0) {
+      const errMsg =
+        result.stderr?.trim() || `SSH exited with code ${result.status}`;
+      throw new Error(`Command failed on ${opts.host}: ${errMsg}`);
+    }
+    return result.stdout.trim();
+  }
+
+  /**
+   * Stream a bootstrap script to a BYOS host over the operator key and run it
+   * via `bash -s` (no scp); `sudo` is prefixed for non-root users.
+   */
+  async runScriptWithKey(opts: {
+    host: string;
+    script: string;
+    user?: string;
+    keyPath: string;
+    port?: number;
+    onData?: (chunk: string) => void;
+  }): Promise<void> {
+    const user = opts.user ?? 'root';
+    const runner = user === 'root' ? 'bash -s' : 'sudo -n bash -s';
+
+    return new Promise((resolve, reject) => {
+      const child = spawn(
+        'ssh',
+        [
+          '-i',
+          opts.keyPath,
+          '-p',
+          String(opts.port ?? 22),
+          '-o',
+          'StrictHostKeyChecking=no',
+          '-o',
+          'UserKnownHostsFile=/dev/null',
+          '-o',
+          'PreferredAuthentications=publickey',
+          '-o',
+          'BatchMode=yes',
+          '-o',
+          'ServerAliveInterval=15',
+          '-o',
+          'ServerAliveCountMax=8',
+          `${user}@${opts.host}`,
+          runner,
+        ],
+        { stdio: ['pipe', 'pipe', 'pipe'] },
+      );
+
+      const sink = (chunk: Buffer): void => {
+        const text = chunk.toString('utf-8');
+        if (opts.onData) opts.onData(text);
+        else process.stdout.write(text);
+      };
+      child.stdout?.on('data', sink);
+      child.stderr?.on('data', sink);
+      child.on('error', reject);
+      child.on('exit', (code) => {
+        if (code === 0) resolve();
+        else reject(new Error(`Bootstrap script exited with code ${code}`));
+      });
+
+      // Feed the script over stdin, then close so `bash -s` runs it.
+      child.stdin?.write(opts.script);
+      child.stdin?.end();
+    });
+  }
+
+  /**
+   * Like sshExec (CA-signed cert auth) but allows a custom port — used to
+   * verify, after BYOS bootstrap, that the host now trusts the Flui CA.
+   */
+  async sshExecCertOnPort(
+    host: string,
+    command: string,
+    port: number,
+    username: string = 'root',
+  ): Promise<string> {
+    const { privateKeyPath, certificatePath, cleanup } =
+      await this.generateEphemeralKeypair();
+    try {
+      const result = spawnSync(
+        'ssh',
+        [
+          '-i',
+          privateKeyPath,
+          '-p',
+          String(port),
+          '-o',
+          `CertificateFile=${certificatePath}`,
+          '-o',
+          'StrictHostKeyChecking=no',
+          '-o',
+          'UserKnownHostsFile=/dev/null',
+          '-o',
+          'PasswordAuthentication=no',
+          '-o',
+          'PreferredAuthentications=publickey',
+          '-o',
+          'BatchMode=yes',
+          '-o',
+          'ConnectTimeout=10',
+          `${username}@${host}`,
+          command,
+        ],
+        { encoding: 'utf-8', timeout: 30_000 },
+      );
+      if (result.status !== 0) {
+        const errMsg =
+          result.stderr?.trim() || `SSH exited with code ${result.status}`;
+        throw new Error(`Command failed: ${errMsg}`);
+      }
+      return result.stdout.trim();
+    } finally {
+      cleanup();
+    }
+  }
+
+  /**
    * Get remote log file via SSH
    */
   async getRemoteLog(
     host: string,
     logPath: string,
     username: string = 'root',
+    port = 22,
   ): Promise<string> {
-    return this.sshExec(host, `cat '${logPath}'`, username);
+    return this.sshExec(host, `cat '${logPath}'`, username, port);
   }
 
   /**
@@ -436,8 +605,9 @@ export class CliSshService {
     logPath: string,
     lines: number = 100,
     username: string = 'root',
+    port = 22,
   ): Promise<string> {
-    return this.sshExec(host, `tail -n ${lines} '${logPath}'`, username);
+    return this.sshExec(host, `tail -n ${lines} '${logPath}'`, username, port);
   }
 
   /**
@@ -448,6 +618,7 @@ export class CliSshService {
     host: string,
     logPath: string,
     username: string = 'root',
+    port = 22,
     onData?: (data: string) => void,
   ): Promise<{ cleanup: () => void }> {
     const {
@@ -457,7 +628,7 @@ export class CliSshService {
     } = await this.generateEphemeralKeypair();
 
     this.logger.debug(
-      `Starting log stream from ${username}@${host}:${logPath}`,
+      `Starting log stream from ${username}@${host}:${port}:${logPath}`,
     );
 
     // Spawn SSH process with tail -f
@@ -466,6 +637,8 @@ export class CliSshService {
       [
         '-i',
         privateKeyPath,
+        '-p',
+        String(port),
         '-o',
         `CertificateFile=${certificatePath}`,
         '-o',

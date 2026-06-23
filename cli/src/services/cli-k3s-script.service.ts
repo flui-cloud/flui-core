@@ -45,6 +45,9 @@ export interface K3sMasterConfig {
   clusterRegion?: string;
   instanceType?: string;
   clusterFirewallId?: string;
+  /** BYOS: operator-provided public IP — drives the nip.io domain when the
+   *  node's detected IP isn't the reachable address (NAT / fixed public IP). */
+  masterPublicIp?: string;
   nipIoCertEnabled?: boolean;
   acmeStaging?: boolean;
   /**
@@ -209,6 +212,7 @@ export class CliK3sScriptService {
         CLUSTER_REGION: config.clusterRegion || '',
         INSTANCE_TYPE: config.instanceType || '',
         CLUSTER_FIREWALL_ID: config.clusterFirewallId || '',
+        FLUI_MASTER_PUBLIC_IP: config.masterPublicIp || '',
         FLUI_VNET_PROVIDER_RESOURCE_ID:
           config.envVnet?.vnetProviderResourceId || '',
         FLUI_VNET_PROVIDER: config.envVnet?.vnetProvider || '',

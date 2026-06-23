@@ -16,6 +16,7 @@ import { CliClusterRepository } from '../lib/repositories/cli-cluster.repository
 import { CliNodeRepository } from '../lib/repositories/cli-node.repository';
 import { CliOperationRepository } from '../lib/repositories/cli-operation.repository';
 import { ProviderFactory } from 'src/modules/providers/services/provider.factory';
+import { CloudProvider } from 'src/modules/providers/enums/cloud-provider.enum';
 import { EncryptionService } from 'src/modules/shared/encryption/services/encryption.service';
 import { CliK3sScriptService } from './cli-k3s-script.service';
 import { buildNipBaseDomain } from '../lib/nip-base-domain.util';
@@ -84,6 +85,11 @@ export class CliClusterCreatorService {
       opId,
       `[CLI Mode] Creating cluster ${cluster.name} synchronously...`,
     );
+
+    // BYOS has no provisioning API — install over SSH onto an existing host.
+    if (cluster.provider === CloudProvider.BYOS) {
+      return this.createClusterSyncByos(cluster, operation);
+    }
 
     try {
       // Update operation status
@@ -552,6 +558,230 @@ export class CliClusterCreatorService {
   }
 
   /**
+   * BYOS install: mirrors createClusterSync but runs the bootstrap over the
+   * operator's own SSH key (the only credential the host trusts pre-CA). No
+   * provider API, so firewall / vnet / managed-volume are skipped.
+   */
+  private async createClusterSyncByos(
+    cluster: ClusterEntity,
+    operation: InfrastructureOperationEntity,
+  ): Promise<void> {
+    const opId = operation.id;
+    const byos = ((cluster.metadata as any)?.byos ?? {}) as {
+      host?: string;
+      port?: number;
+      user?: string;
+      keyPath?: string;
+      masterPublicIp?: string;
+      localStub?: boolean;
+    };
+
+    try {
+      operation.status = OperationStatus.IN_PROGRESS;
+      operation.currentStepIndex = 0;
+      await this.operationRepository.save(operation);
+
+      if (!byos.host || !byos.keyPath) {
+        throw new Error(
+          'BYOS cluster metadata missing host/keyPath — cannot reach the server.',
+        );
+      }
+      const port = byos.port ?? 22;
+      const user = byos.user ?? 'root';
+      const publicIp = byos.masterPublicIp || byos.host;
+
+      const k3sToken = this.encryptionService.decrypt(
+        cluster.k3sTokenEncrypted,
+      );
+      const caPublicKey = await this.caService.getCaPublicKey();
+      const decrypted = this.decryptClusterSecrets(cluster);
+      const clusterMeta = cluster.metadata as any;
+
+      this.log(opId, 'Creating master node record (BYOS)...');
+      operation.currentStepIndex = 1;
+      await this.operationRepository.save(operation);
+
+      const masterServerName = `${cluster.name}-master`;
+      const masterNode = this.nodeRepository.create({
+        cluster,
+        clusterId: cluster.id,
+        providerResourceId: byos.host, // host identifier, not a cloud resource id
+        serverName: masterServerName,
+        nodeType: NodeType.MASTER,
+        status: NodeStatus.CREATING,
+        ipAddress: publicIp,
+        privateIp: byos.host,
+        metadata: { byosHost: byos.host, byosPort: port },
+      });
+      await this.nodeRepository.save(masterNode);
+
+      // No managed block volume on BYOS — local-path on the node's own disk.
+      const masterUserData = await this.k3sScriptService.generateMasterScript({
+        serverId: masterNode.id,
+        clusterId: cluster.id,
+        clusterName: cluster.name,
+        k3sToken,
+        instanceId: `${cluster.name}-master`,
+        instanceName: masterServerName,
+        provider: cluster.provider,
+        caPublicKey,
+        operationId: opId,
+        deployObservabilityStack: isControlClusterType(cluster.clusterType),
+        postgresPassword: decrypted.postgresPassword,
+        redisPassword: decrypted.redisPassword,
+        grafanaPassword: decrypted.grafanaPassword,
+        authMode: clusterMeta?.authMode || 'local',
+        jwtSecret: decrypted.jwtSecret,
+        adminEmail: decrypted.adminEmail,
+        adminPassword: decrypted.adminPassword,
+        encryptionKey: decrypted.encryptionKey,
+        zitadelMasterkey: decrypted.zitadelMasterkey,
+        zitadelDbAdminPassword: decrypted.zitadelDbAdminPassword,
+        zitadelDbUserPassword: decrypted.zitadelDbUserPassword,
+        zitadelAdminTempPassword: decrypted.zitadelAdminTempPassword,
+        fluiApiKey: decrypted.fluiApiKey,
+        clusterRegion: cluster.region,
+        instanceType: cluster.nodeSize,
+        masterPublicIp: publicIp,
+        nipIoCertEnabled: !clusterMeta?.zitadelDomain,
+        acmeStaging: !!clusterMeta?.acmeStaging,
+        useLatest: !!clusterMeta?.useLatest,
+        nipHostnameToken: cluster.nipHostnameToken || null,
+        sharedStorage: undefined,
+      });
+
+      this.log(opId, `Running bootstrap on ${user}@${byos.host}:${port} ...`);
+      operation.currentStepIndex = 2;
+      await this.operationRepository.save(operation);
+
+      await this.sshService.runScriptWithKey({
+        host: byos.host,
+        port,
+        user,
+        keyPath: byos.keyPath,
+        script: masterUserData,
+        onData: (chunk) =>
+          this.cliLoggerService.writeLog(opId, chunk.trimEnd(), 'INFO'),
+      });
+
+      masterNode.status = NodeStatus.READY;
+      await this.nodeRepository.save(masterNode);
+      cluster.masterIpAddress = publicIp;
+      cluster.nodeCount = 1;
+      await this.clusterRepository.save(cluster);
+      this.log(opId, `✅ Master bootstrap completed on ${publicIp}`);
+
+      // Verify the host now trusts the Flui CA — the key new BYOS mechanic.
+      try {
+        const probe = await this.sshService.sshExecCertOnPort(
+          byos.host,
+          'echo flui-ca-ok',
+          port,
+          user,
+        );
+        if (probe.includes('flui-ca-ok')) {
+          this.log(opId, '✅ Flui SSH CA trusted on host (cert auth works)');
+        }
+      } catch (e) {
+        this.log(
+          opId,
+          `⚠ CA-cert SSH verification failed: ${(e as Error).message}`,
+          'WARN',
+        );
+      }
+
+      if (byos.localStub) {
+        this.log(
+          opId,
+          'ℹ Local stub mode — skipping observability wait, kubeconfig fetch and secret patch.',
+        );
+      } else {
+        this.log(opId, 'Waiting for control-plane / observability stack...');
+        operation.currentStepIndex = 3;
+        await this.operationRepository.save(operation);
+        await this.waitForObservabilityStackReady(
+          publicIp,
+          1800000,
+          cluster.nipHostnameToken,
+        );
+
+        // Fetch kubeconfig over the operator's SSH target (port-aware — the
+        // host may not be on :22, e.g. local Podman on 2222). Best-effort.
+        try {
+          const raw = await this.sshService.sshExecCertOnPort(
+            byos.host,
+            'sudo cat /etc/rancher/k3s/k3s.yaml',
+            port,
+            user,
+          );
+          cluster.kubeconfigEncrypted = this.encryptionService.encrypt(
+            raw.replaceAll('127.0.0.1', publicIp),
+          );
+          await this.clusterRepository.save(cluster);
+          this.log(opId, '✅ Kubeconfig fetched');
+        } catch (e) {
+          this.log(
+            opId,
+            `⚠ Kubeconfig fetch skipped: ${(e as Error).message}`,
+            'WARN',
+          );
+        }
+
+        // SSH-CA secret patch lets the API SSH to nodes. Best-effort on BYOS:
+        // it runs kubectl over SSH on :22 today, so a non-22 host just skips it
+        // (the stack itself is already deployed by the bootstrap).
+        try {
+          await this.createApiCredentialsSecret(
+            opId,
+            publicIp,
+            {
+              fluiApiKey: decrypted.fluiApiKey,
+              providerToken: '',
+              providerScalewayAccessKey: '',
+              providerScalewaySecretKey: '',
+              providerRegions: '',
+              clusterRegion: cluster.region,
+              instanceType: cluster.nodeSize,
+              provider: cluster.provider,
+              bootstrapNodePrivateIp: byos.host,
+            },
+            { host: byos.host, port, user },
+          );
+        } catch (e) {
+          this.log(
+            opId,
+            `⚠ API-credentials secret patch skipped: ${(e as Error).message}`,
+            'WARN',
+          );
+        }
+      }
+
+      cluster.status = ClusterStatus.READY;
+      await this.clusterRepository.save(cluster);
+      operation.status = OperationStatus.COMPLETED;
+      operation.currentStepIndex = operation.totalSteps;
+      await this.operationRepository.save(operation);
+      this.log(opId, `BYOS cluster ${cluster.name} created successfully!`);
+    } catch (error) {
+      this.log(
+        opId,
+        `BYOS cluster creation failed: ${(error as Error).message}`,
+        'ERROR',
+      );
+      cluster.status = ClusterStatus.ERROR;
+      await this.clusterRepository.save(cluster);
+      operation.status = OperationStatus.FAILED;
+      operation.metadata = {
+        ...operation.metadata,
+        error: (error as Error).message,
+        errorStack: (error as Error).stack,
+      };
+      await this.operationRepository.save(operation);
+      throw error;
+    }
+  }
+
+  /**
    * Generate bootstrap SSH key for a node
    * Returns the SSH key ID from the cloud provider and local key paths
    */
@@ -825,6 +1055,7 @@ export class CliClusterCreatorService {
         networkZone: string;
       };
     },
+    ssh?: { host: string; port: number; user: string },
   ): Promise<void> {
     this.log(
       operationId,
@@ -910,7 +1141,12 @@ export class CliClusterCreatorService {
         ` && (kubectl rollout restart deployment/flui-api -n flui-system 2>/dev/null` +
         ` || kubectl rollout restart deployment/flui-api -n default 2>/dev/null` +
         ` || true)`;
-      await this.sshService.sshExec(masterIp, writeAndPatchCmd);
+      await this.sshService.sshExec(
+        ssh?.host ?? masterIp,
+        writeAndPatchCmd,
+        ssh?.user ?? 'root',
+        ssh?.port ?? 22,
+      );
 
       this.log(
         operationId,

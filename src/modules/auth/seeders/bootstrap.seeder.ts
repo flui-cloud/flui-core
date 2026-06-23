@@ -524,10 +524,15 @@ export class BootstrapSeeder implements OnModuleInit {
     vnetSeed: { vnetId: string; subnetId: string } | null,
   ): Promise<string | null> {
     const clusterId = process.env.CLUSTER_ID;
-    const masterIp = process.env.MASTER_IP;
+    // Use the public/reachable IP — it drives ACME, browser endpoints and the
+    // OIDC issuer host; on BYOS the detected node IP is internal, so operator IP wins.
+    const nodeIp = process.env.MASTER_IP;
+    const masterIp = process.env.FLUI_MASTER_PUBLIC_IP || nodeIp;
     if (!clusterId || !masterIp) return null;
 
-    const privateIp = process.env.FLUI_BOOTSTRAP_NODE_PRIVATE_IP || undefined;
+    const privateIp =
+      process.env.FLUI_BOOTSTRAP_NODE_PRIVATE_IP ||
+      (process.env.FLUI_MASTER_PUBLIC_IP ? nodeIp : undefined);
     const nipHostnameToken = process.env.NIP_HOSTNAME_TOKEN || undefined;
     const sharedStorageVolumeId =
       process.env.FLUI_SHARED_STORAGE_VOLUME_ID || undefined;

@@ -4,6 +4,7 @@ import ora from 'ora';
 import { getNestApp, closeNestApp } from '../lib/nest-app';
 import { CliControlClusterService } from '../services/cli-control-cluster.service';
 import { CliSshService } from '../services/cli-ssh.service';
+import { resolveClusterSshTarget } from '../lib/cluster-ssh-target';
 
 export default class Ssh extends Command {
   static readonly description = 'SSH into a cluster node';
@@ -88,8 +89,16 @@ export default class Ssh extends Command {
         return;
       }
 
+      const target =
+        args.node === 'master'
+          ? resolveClusterSshTarget(cluster, nodeIp)
+          : { host: nodeIp, port: 22, user: 'root' };
+
       spinner.succeed(`Connecting to ${nodeName}...`);
-      console.log(chalk.dim(`   SSH: root@${nodeIp}`));
+      const portSuffix = target.port === 22 ? '' : ` -p ${target.port}`;
+      console.log(
+        chalk.dim(`   SSH: ${target.user}@${target.host}${portSuffix}`),
+      );
 
       const exitHint =
         process.platform === 'win32'
@@ -100,7 +109,7 @@ export default class Ssh extends Command {
       console.log(exitHint);
 
       // SSH into the node
-      await sshService.sshConnect(nodeIp, 'root');
+      await sshService.sshConnect(target.host, target.user, target.port);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       spinner.fail('SSH connection failed');
