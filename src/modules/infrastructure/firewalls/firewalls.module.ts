@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { FirewallEntity } from './entities/firewall.entity';
 import { ClusterFirewallEntity } from './entities/cluster-firewall.entity';
+import { ClusterEntity } from '../clusters/entities/cluster.entity';
 import { FirewallsService } from './services/firewalls.service';
 import { FirewallDesiredStateService } from './services/firewall-desired-state.service';
 import { FirewallReconciliationService } from './services/firewall-reconciliation.service';
@@ -12,7 +13,11 @@ import { SharedInfrastructureModule } from '../shared/shared-infrastructure.modu
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([FirewallEntity, ClusterFirewallEntity]),
+    TypeOrmModule.forFeature([
+      FirewallEntity,
+      ClusterFirewallEntity,
+      ClusterEntity,
+    ]),
     ProvidersModule, // For FirewallProviderFactory and provider services
     SharedInfrastructureModule, // For LabelService
   ],

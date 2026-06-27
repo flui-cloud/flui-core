@@ -1,11 +1,24 @@
-import { Injectable, Logger, BadRequestException } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  BadRequestException,
+  UnprocessableEntityException,
+} from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
 import { FirewallDesiredStateService } from './firewall-desired-state.service';
 import { FirewallProviderFactory } from '../../../providers/services/firewall-provider.factory';
+import { CapabilitiesProviderFactory } from '../../../providers/core/factories/capabilities-provider.factory';
 import { LabelService } from '../../../common/services/label.service';
 import {
   ClusterFirewallEntity,
   ReconciliationStatus,
 } from '../entities/cluster-firewall.entity';
+import {
+  ClusterEntity,
+  isControlClusterType,
+} from '../../clusters/entities/cluster.entity';
+import { getFirewallRulesForClusterType } from '../templates/firewall-rules.template';
 import { FirewallRuleDto } from '../../../providers/dto/firewall.dto';
 import { CloudProvider } from '../../../providers/enums/cloud-provider.enum';
 
@@ -16,8 +29,114 @@ export class FirewallReconciliationService {
   constructor(
     private readonly desiredStateService: FirewallDesiredStateService,
     private readonly firewallProviderFactory: FirewallProviderFactory,
+    private readonly capabilitiesFactory: CapabilitiesProviderFactory,
     private readonly labelService: LabelService,
+    @InjectRepository(ClusterEntity)
+    private readonly clusterRepository: Repository<ClusterEntity>,
   ) {}
+
+  async ensureClusterFirewall(
+    clusterId: string,
+  ): Promise<ClusterFirewallEntity> {
+    const existing = await this.findFirewallByClusterId(clusterId);
+    if (existing) {
+      this.logger.log(
+        `Firewall already exists for cluster ${clusterId}; reconciling`,
+      );
+      return this.reconcile(existing.id);
+    }
+
+    const cluster = await this.clusterRepository.findOne({
+      where: { id: clusterId },
+    });
+    if (!cluster) {
+      throw new BadRequestException(`Cluster ${clusterId} not found`);
+    }
+
+    const clusterType = isControlClusterType(cluster.clusterType)
+      ? 'control'
+      : 'workload';
+    const baseRules = getFirewallRulesForClusterType(clusterType, [
+      '0.0.0.0/0',
+      '::/0',
+    ]) as FirewallRuleDto[];
+    const rules = this.normalizeRulesForCapability(cluster.provider, baseRules);
+
+    this.logger.log(
+      `Seeding ${clusterType} firewall for cluster ${clusterId} (provider ${cluster.provider})`,
+    );
+    const firewall = await this.desiredStateService.createFirewall(
+      clusterId,
+      rules,
+    );
+    return this.reconcile(firewall.id);
+  }
+
+  async reconcileClusterFirewallIfExists(
+    clusterId: string,
+  ): Promise<ClusterFirewallEntity | null> {
+    const existing = await this.findFirewallByClusterId(clusterId);
+    if (!existing) return null;
+    return this.reconcile(existing.id);
+  }
+
+  private async findFirewallByClusterId(
+    clusterId: string,
+  ): Promise<ClusterFirewallEntity | null> {
+    try {
+      return await this.desiredStateService.getFirewallByClusterId(clusterId);
+    } catch {
+      return null;
+    }
+  }
+
+  normalizeRulesForCapability(
+    provider: string,
+    rules: FirewallRuleDto[],
+  ): FirewallRuleDto[] {
+    let supportsSshAllowlist = true;
+    try {
+      if (
+        this.capabilitiesFactory.isProviderSupported(provider as CloudProvider)
+      ) {
+        supportsSshAllowlist = this.capabilitiesFactory
+          .getCapabilitiesService(provider as CloudProvider)
+          .getStaticCapabilities().firewall.supportsSshAllowlist;
+      }
+    } catch {
+      supportsSshAllowlist = true;
+    }
+
+    if (supportsSshAllowlist) return rules;
+
+    return rules.map((rule) =>
+      rule.direction === 'in' && rule.protocol === 'tcp' && rule.port === '22'
+        ? { ...rule, sourceIps: ['0.0.0.0/0', '::/0'] }
+        : rule,
+    );
+  }
+
+  private static readonly REQUIRED_INGRESS_TCP = ['443', '80'];
+
+  static assertRequiredIngress(rules: FirewallRuleDto[]): void {
+    const inboundTcpPorts = new Set(
+      rules
+        .filter((r) => r.direction === 'in' && r.protocol === 'tcp' && r.port)
+        .map((r) => r.port as string),
+    );
+    const missing = FirewallReconciliationService.REQUIRED_INGRESS_TCP.filter(
+      (port) => !inboundTcpPorts.has(port),
+    );
+    if (missing.length > 0) {
+      throw new UnprocessableEntityException(
+        `Firewall must keep inbound TCP ${missing.join(' and ')} open — ` +
+          `443 serves the dashboard, API and apps over HTTPS (Traefik) and 80 serves ` +
+          `ACME HTTP-01 cert renewal + the HTTP→HTTPS redirect. Removing them would lock ` +
+          `you out of the cluster. You can restrict the source IPs, but the ports must stay ` +
+          `present. (SSH :22 stays open automatically on a host firewall; egress is not restricted.)`,
+      );
+    }
+  }
 
   /**
    * Update desired rules and apply them atomically.
@@ -39,8 +158,13 @@ export class FirewallReconciliationService {
       throw new BadRequestException('Cluster not found for firewall');
     }
 
-    // Canonicalize and validate new rules
-    const canonicalRules = this.desiredStateService.canonicalizeRules(newRules);
+    const normalizedRules = this.normalizeRulesForCapability(
+      cluster.provider,
+      newRules,
+    );
+    FirewallReconciliationService.assertRequiredIngress(normalizedRules);
+    const canonicalRules =
+      this.desiredStateService.canonicalizeRules(normalizedRules);
     const newDesiredHash =
       this.desiredStateService.calculateHash(canonicalRules);
 

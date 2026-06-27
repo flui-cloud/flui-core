@@ -199,6 +199,28 @@ export class ClusterFirewallsController {
     return this.desiredStateService.toResponseDto(firewall);
   }
 
+  @Post('cluster/:clusterId/enable')
+  @ApiOperation({
+    summary: 'Enable firewall for a cluster',
+    description:
+      'Idempotently ensure a firewall exists for the cluster, then apply it. Seeds the default rules for the cluster type when none exists (the primary way a host-firewall / nftables cluster gets a firewall generated and applied, since there is no managed-edge resource to import). Re-applies the desired state when one already exists.',
+  })
+  @ApiParam({ name: 'clusterId', description: 'Cluster ID' })
+  @ApiResponse({
+    status: 201,
+    description: 'Firewall enabled and applied',
+    type: FirewallResponseDto,
+  })
+  @ApiResponse({ status: 400, description: 'Cluster not found' })
+  @ApiResponse({ status: 500, description: 'Failed to apply firewall' })
+  async enableForCluster(
+    @Param('clusterId') clusterId: string,
+  ): Promise<FirewallResponseDto> {
+    const firewall =
+      await this.reconciliationService.ensureClusterFirewall(clusterId);
+    return this.desiredStateService.toResponseDto(firewall);
+  }
+
   @Put(':id/desired-rules')
   @ApiOperation({
     summary: 'Update and apply firewall rules',
