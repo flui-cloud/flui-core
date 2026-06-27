@@ -237,6 +237,11 @@ export class ScalewayCapabilitiesService
         vnetIpRange: { minPrefix: 20, maxPrefix: 28 },
         subnetIpRange: { minPrefix: 20, maxPrefix: 28 },
       },
+      firewall: {
+        backend: 'managed-api',
+        managedEdge: true,
+        supportsSshAllowlist: true,
+      },
       vnetRequired: true,
       crossClusterAllowed: false,
       inference: SCALEWAY_INFERENCE,

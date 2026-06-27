@@ -129,6 +129,36 @@ export class ProviderFeaturesDto {
 
   @ApiProperty()
   dnsZones: boolean;
+
+  @ApiProperty({
+    description:
+      'Whether Flui can add/remove nodes via this provider API (false for BYOS)',
+  })
+  nodeProvisioning: boolean;
+}
+
+export class ProviderFirewallDto {
+  @ApiProperty({
+    enum: ['managed-api', 'host-nftables', 'none'],
+    description:
+      'How the node firewall is enforced: provider API (cloud edge), host nftables over SSH, or none',
+    example: 'managed-api',
+  })
+  backend: 'managed-api' | 'host-nftables' | 'none';
+
+  @ApiProperty({
+    description:
+      'True when filtering happens at the cloud edge (managed API) vs on the host',
+    example: true,
+  })
+  managedEdge: boolean;
+
+  @ApiProperty({
+    description:
+      'Whether port 22 may be IP-allowlisted. Only when an out-of-band recovery channel exists (managedEdge); host-firewall hosts keep 22 open + CA-only to avoid lockout',
+    example: true,
+  })
+  supportsSshAllowlist: boolean;
 }
 
 export class ProviderPricingDto {
@@ -149,11 +179,27 @@ export class ProviderCapabilitiesDto {
   @ApiProperty({ type: [ProviderRegionDto] })
   supportedRegions: ProviderRegionDto[];
 
-  @ApiProperty({ enum: ['api_key', 'bearer_token', 'user_password'] })
-  credentialType: 'api_key' | 'bearer_token' | 'user_password';
+  @ApiProperty({
+    enum: [
+      'api_key',
+      'access_key_secret',
+      'bearer_token',
+      'user_password',
+      'ssh',
+    ],
+  })
+  credentialType:
+    | 'api_key'
+    | 'access_key_secret'
+    | 'bearer_token'
+    | 'user_password'
+    | 'ssh';
 
   @ApiProperty({ type: ProviderFeaturesDto })
   features: ProviderFeaturesDto;
+
+  @ApiProperty({ type: ProviderFirewallDto })
+  firewall: ProviderFirewallDto;
 
   @ApiProperty({ type: ProviderPricingDto })
   pricing: ProviderPricingDto;

@@ -19,6 +19,10 @@ import { ScalewayProviderModule } from './implementations/scaleway/scaleway-prov
 import { ScalewayObjectStorageModule } from './implementations/scaleway/object-storage/scaleway-object-storage.module';
 import { ProviderFactory } from './core/factories/provider.factory';
 import { FirewallProviderFactory } from './core/factories/firewall-provider.factory';
+import { NftablesFirewallBackend } from './core/firewall/nftables-firewall.backend';
+import { NativeSSHConnectionService } from '../terminal/services/native-ssh-connection.service';
+import { IFirewallProvider } from './interfaces/firewall-provider.interface';
+import { FirewallProviderRegistration } from './core/tokens';
 import { DnsProviderFactory } from './core/factories/dns-provider.factory';
 import { CapabilitiesProviderFactory } from './core/factories/capabilities-provider.factory';
 import { VolumeExportFactory } from './core/factories/volume-export.factory';
@@ -30,11 +34,11 @@ import { VolumeExportService } from './services/volume-export.service';
 import { HetznerCapabilitiesService } from './implementations/hetzner/hetzner-capabilities.service';
 import { ContaboCapabilitiesService } from './implementations/contabo/contabo-capabilities.service';
 import { ScalewayCapabilitiesService } from './implementations/scaleway/scaleway-capabilities.service';
+import { ByosCapabilitiesService } from './implementations/byos/byos-capabilities.service';
 import { HetznerProviderService } from './services/hetzner-provider.service';
 import { HetznerFirewallService } from './services/hetzner-firewall.service';
 import { HetznerDnsService } from './services/hetzner-dns.service';
 import { ContaboProviderService } from './services/contabo-provider.service';
-import { ContaboFirewallService } from './services/contabo-firewall.service';
 
 import { ScalewayProviderService } from './implementations/scaleway/scaleway-provider.service';
 import { ScalewayFirewallService } from './implementations/scaleway/scaleway-firewall.service';
@@ -76,6 +80,7 @@ import { DnsProvider } from './enums/dns-provider.enum';
       provide: 'ICredentialProvider',
       useExisting: CredentialProviderService,
     },
+    ByosCapabilitiesService,
     {
       provide: ProviderFactory,
       useFactory: (
@@ -94,22 +99,43 @@ import { DnsProvider } from './enums/dns-provider.enum';
         ScalewayProviderService,
       ],
     },
+    NativeSSHConnectionService,
+    NftablesFirewallBackend,
     {
       provide: FirewallProviderFactory,
       useFactory: (
         hetzner: HetznerFirewallService,
-        contabo: ContaboFirewallService,
         scaleway: ScalewayFirewallService,
-      ) =>
-        new FirewallProviderFactory([
-          { provider: CloudProvider.HETZNER, service: hetzner },
-          { provider: CloudProvider.CONTABO, service: contabo },
-          { provider: CloudProvider.SCALEWAY, service: scaleway },
-        ]),
+        nftables: NftablesFirewallBackend,
+        capabilities: CapabilitiesProviderFactory,
+      ) => {
+        const managedApi: Partial<Record<CloudProvider, IFirewallProvider>> = {
+          [CloudProvider.HETZNER]: hetzner,
+          [CloudProvider.SCALEWAY]: scaleway,
+        };
+        const registrations: FirewallProviderRegistration[] = [];
+        for (const provider of [
+          CloudProvider.HETZNER,
+          CloudProvider.SCALEWAY,
+          CloudProvider.CONTABO,
+          CloudProvider.BYOS,
+        ]) {
+          const backend = capabilities
+            .getCapabilitiesService(provider)
+            .getStaticCapabilities().firewall.backend;
+          if (backend === 'host-nftables') {
+            registrations.push({ provider, service: nftables });
+          } else if (backend === 'managed-api' && managedApi[provider]) {
+            registrations.push({ provider, service: managedApi[provider]! });
+          }
+        }
+        return new FirewallProviderFactory(registrations);
+      },
       inject: [
         HetznerFirewallService,
-        ContaboFirewallService,
         ScalewayFirewallService,
+        NftablesFirewallBackend,
+        CapabilitiesProviderFactory,
       ],
     },
     {
@@ -127,16 +153,19 @@ import { DnsProvider } from './enums/dns-provider.enum';
         hetzner: HetznerCapabilitiesService,
         contabo: ContaboCapabilitiesService,
         scaleway: ScalewayCapabilitiesService,
+        byos: ByosCapabilitiesService,
       ) =>
         new CapabilitiesProviderFactory([
           { provider: CloudProvider.HETZNER, service: hetzner },
           { provider: CloudProvider.CONTABO, service: contabo },
           { provider: CloudProvider.SCALEWAY, service: scaleway },
+          { provider: CloudProvider.BYOS, service: byos },
         ]),
       inject: [
         HetznerCapabilitiesService,
         ContaboCapabilitiesService,
         ScalewayCapabilitiesService,
+        ByosCapabilitiesService,
       ],
     },
     VolumeExportService,

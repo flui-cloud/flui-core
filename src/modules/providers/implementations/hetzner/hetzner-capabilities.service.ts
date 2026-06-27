@@ -232,6 +232,11 @@ export class HetznerCapabilitiesService
         vnetIpRange: { minPrefix: 8, maxPrefix: 29 },
         subnetIpRange: { minPrefix: 8, maxPrefix: 29 },
       },
+      firewall: {
+        backend: 'managed-api',
+        managedEdge: true,
+        supportsSshAllowlist: true,
+      },
       vnetRequired: true,
       crossClusterAllowed: false,
     };

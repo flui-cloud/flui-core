@@ -13,7 +13,7 @@ import { InferenceCapability } from '../../providers/interfaces/inference-capabi
  * multiple datacenters share a zone (Hetzner eu-central) or each datacenter is its
  * own zone (Scaleway).
  */
-export type VNetScope = 'global' | 'regional';
+export type VNetScope = 'global' | 'regional' | 'manual';
 
 /**
  * A logical network zone that can be targeted when creating a VNet.
@@ -74,7 +74,8 @@ export interface ProviderCapabilities {
     | 'api_key'
     | 'access_key_secret'
     | 'bearer_token'
-    | 'user_password';
+    | 'user_password'
+    | 'ssh';
   features: {
     autoScaling: boolean;
     loadBalancers: boolean;
@@ -89,6 +90,11 @@ export interface ProviderCapabilities {
     currency: string;
     billingCycle: 'hourly' | 'monthly';
     minimumCost: number;
+  };
+  firewall: {
+    backend: 'managed-api' | 'host-nftables' | 'none';
+    managedEdge: boolean;
+    supportsSshAllowlist: boolean;
   };
   /** VNet topology info — null when privateNetworking is false */
   vnetTopology: VNetTopology | null;

@@ -13,6 +13,7 @@ export enum SubnetType {
   CLOUD = 'cloud',
   SERVER = 'server',
   VSWITCH = 'vswitch',
+  MANUAL = 'manual',
 }
 
 @Entity('vnet_subnets')

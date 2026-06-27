@@ -249,6 +249,11 @@ export class ContaboCapabilitiesService
         billingCycle: 'monthly',
         minimumCost: 4.5, // Cloud VPS 10: 4 vCPU, 8 GB RAM @ €4.50/mo
       },
+      firewall: {
+        backend: 'host-nftables',
+        managedEdge: false,
+        supportsSshAllowlist: false,
+      },
       vnetTopology: null, // Contabo VNet not yet implemented
       vnetRequired: true,
       crossClusterAllowed: false,
