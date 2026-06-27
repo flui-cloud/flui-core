@@ -18,6 +18,7 @@ import { AddSubnetDto } from '../dto/add-subnet.dto';
 import { DeleteSubnetDto } from '../dto/delete-subnet.dto';
 import { SubnetCalculator } from '../utils/subnet-calculator';
 import { AddSubnetResult } from 'src/modules/providers/interfaces/network-provider.interface';
+import * as ipaddr from 'ipaddr.js';
 
 @Injectable()
 export class VNetsService {
@@ -249,6 +250,106 @@ export class VNetsService {
         error.stack,
       );
       throw new BadRequestException(`Failed to import VNet: ${error.message}`);
+    }
+  }
+
+  async registerManualVNet(input: {
+    clusterId: string;
+    provider: CloudProvider;
+    name: string;
+    ipRange: string;
+  }): Promise<VNetResponseDto> {
+    this.assertValidCidr(input.ipRange);
+
+    const constraints = this.capabilitiesFactory
+      .getCapabilitiesService(input.provider)
+      .getStaticCapabilities().vnetTopology?.vnetIpRange;
+    if (constraints) {
+      const prefix = Number.parseInt(input.ipRange.split('/')[1], 10);
+      if (
+        Number.isNaN(prefix) ||
+        prefix < constraints.minPrefix ||
+        prefix > constraints.maxPrefix
+      ) {
+        throw new BadRequestException(
+          `Private network prefix /${prefix} is out of range ` +
+            `(/${constraints.minPrefix}–/${constraints.maxPrefix}).`,
+        );
+      }
+    }
+
+    const providerResourceId = `manual:${input.clusterId}`;
+    const labels = [
+      { key: 'managed-by', value: 'flui-cloud' },
+      { key: 'flui-resource-type', value: 'vnet' },
+      { key: 'flui-vnet-name', value: input.name },
+      { key: 'flui-cluster-id', value: input.clusterId },
+      { key: 'flui-vnet-scope', value: 'manual' },
+    ];
+
+    const existing = await this.vnetRepository.findOne({
+      where: { providerResourceId },
+      relations: ['subnets'],
+    });
+    if (existing) {
+      if (existing.ipRange !== input.ipRange) {
+        existing.ipRange = input.ipRange;
+        await this.vnetRepository.save(existing);
+      }
+      const manualSubnet = (existing.subnets ?? []).find(
+        (s) => s.type === SubnetType.MANUAL,
+      );
+      if (!manualSubnet) {
+        await this.subnetRepository.save(
+          this.buildManualSubnet(existing.id, input.ipRange),
+        );
+      } else if (manualSubnet.ipRange !== input.ipRange) {
+        manualSubnet.ipRange = input.ipRange;
+        await this.subnetRepository.save(manualSubnet);
+      }
+      this.logger.log(
+        `Manual VNet for cluster ${input.clusterId} already registered; CIDR synced to ${input.ipRange}`,
+      );
+      return this.getVNet(existing.id);
+    }
+
+    const vnet = this.vnetRepository.create({
+      providerResourceId,
+      name: input.name,
+      provider: input.provider,
+      ipRange: input.ipRange,
+      labels,
+      status: VNetStatus.ACTIVE,
+      metadata: { clusterId: input.clusterId, manual: true },
+    });
+    const savedVNet = await this.vnetRepository.save(vnet);
+    await this.subnetRepository.save(
+      this.buildManualSubnet(savedVNet.id, input.ipRange),
+    );
+
+    this.logger.log(
+      `Registered manual VNet "${input.name}" (${input.ipRange}) for cluster ${input.clusterId}`,
+    );
+    return this.getVNet(savedVNet.id);
+  }
+
+  private buildManualSubnet(vnetId: string, ipRange: string): VNetSubnetEntity {
+    return this.subnetRepository.create({
+      vnetId,
+      ipRange,
+      type: SubnetType.MANUAL,
+      networkZone: 'manual',
+      attachedServerIds: [],
+    });
+  }
+
+  private assertValidCidr(cidr: string): void {
+    try {
+      ipaddr.parseCIDR(cidr);
+    } catch {
+      throw new BadRequestException(
+        `Invalid CIDR "${cidr}" — expected e.g. 10.0.0.0/24.`,
+      );
     }
   }
 

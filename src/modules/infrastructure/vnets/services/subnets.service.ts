@@ -6,7 +6,7 @@ import {
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { VNetSubnetEntity } from '../entities/vnet-subnet.entity';
+import { VNetSubnetEntity, SubnetType } from '../entities/vnet-subnet.entity';
 import { VNetEntity } from '../entities/vnet.entity';
 import { ProviderFactory } from 'src/modules/providers/services/provider.factory';
 import {
@@ -98,6 +98,25 @@ export class SubnetsService {
       throw new NotFoundException(`Subnet with ID ${subnetId} not found`);
     }
 
+    if (subnet.type === SubnetType.MANUAL) {
+      if (attachDto.ip && !this.isIpInSubnet(attachDto.ip, subnet.ipRange)) {
+        throw new BadRequestException(
+          `IP ${attachDto.ip} is not within the private network ${subnet.ipRange}`,
+        );
+      }
+      if (!subnet.attachedServerIds) {
+        subnet.attachedServerIds = [];
+      }
+      if (!subnet.attachedServerIds.includes(attachDto.serverId)) {
+        subnet.attachedServerIds.push(attachDto.serverId);
+        await this.subnetRepository.save(subnet);
+      }
+      this.logger.log(
+        `Recorded server ${attachDto.serverId} on manual subnet ${subnetId} (${subnet.ipRange})`,
+      );
+      return this.getSubnet(subnetId);
+    }
+
     const vnet = subnet.vnet;
     const provider = this.providerFactory.getProvider(vnet.provider);
 
@@ -182,6 +201,17 @@ export class SubnetsService {
 
     if (!subnet) {
       throw new NotFoundException(`Subnet with ID ${subnetId} not found`);
+    }
+
+    if (subnet.type === SubnetType.MANUAL) {
+      subnet.attachedServerIds = (subnet.attachedServerIds ?? []).filter(
+        (id) => id !== detachDto.serverId,
+      );
+      await this.subnetRepository.save(subnet);
+      this.logger.log(
+        `Removed server ${detachDto.serverId} from manual subnet ${subnetId}`,
+      );
+      return this.getSubnet(subnetId);
     }
 
     const vnet = subnet.vnet;

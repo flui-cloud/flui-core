@@ -204,7 +204,6 @@ export class NativeSSHConnectionService {
 
   /**
    * Execute a single command over SSH and return stdout.
-   * Uses plain private-key auth (no certificate) — suitable for bootstrap key access.
    */
   async execCommand(
     host: string,
@@ -212,12 +211,21 @@ export class NativeSSHConnectionService {
     privateKey: string,
     command: string,
     timeoutMs = 30000,
+    options?: { certificate?: string; port?: number },
   ): Promise<string> {
     let tempDir: string | null = null;
     try {
       tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'flui-ssh-exec-'));
       const keyPath = path.join(tempDir, 'key');
       await fs.writeFile(keyPath, privateKey, { mode: 0o600 });
+
+      const certArgs: string[] = [];
+      if (options?.certificate) {
+        const certPath = path.join(tempDir, 'key-cert.pub');
+        await fs.writeFile(certPath, options.certificate, { mode: 0o644 });
+        certArgs.push('-o', `CertificateFile=${certPath}`);
+      }
+      const portArgs = options?.port ? ['-p', String(options.port)] : [];
 
       return await new Promise<string>((resolve, reject) => {
         const timer = setTimeout(
@@ -230,6 +238,8 @@ export class NativeSSHConnectionService {
           [
             '-i',
             keyPath,
+            ...certArgs,
+            ...portArgs,
             '-o',
             'StrictHostKeyChecking=no',
             '-o',

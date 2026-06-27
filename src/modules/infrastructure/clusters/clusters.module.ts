@@ -42,6 +42,9 @@ import { ClusterOrchestrationService } from './services/cluster-orchestration.se
 import { ClusterPowerManagementService } from './services/cluster-power-management.service';
 import { ClusterSshCleanupService } from './services/cluster-ssh-cleanup.service';
 import { K3sScriptService } from './services/k3s-script.service';
+import { ByosNodeJoinService } from './services/byos-node-join.service';
+import { ByosNodeRemovalService } from './services/byos-node-removal.service';
+import { ByosVNetService } from './services/byos-vnet.service';
 import { EncryptionModule } from 'src/modules/shared/encryption/encryption.module';
 import { ClusterBillingService } from './services/cluster-billing.service';
 import { BillingIntervalsService } from './services/billing-intervals.service';
@@ -122,6 +125,9 @@ import { ClusterQueueProcessor } from './processors/cluster-queue.processor';
     ClusterNodeScalingService,
     OrphanVolumesService,
     K3sScriptService,
+    ByosNodeJoinService,
+    ByosNodeRemovalService,
+    ByosVNetService,
 
     // Queue processor
     ClusterQueueProcessor,

@@ -1,4 +1,20 @@
 import { BadRequestException, NotFoundException } from '@nestjs/common';
+
+// cluster-scaling → cluster-node-scaling → kubernetes.service pulls in the
+// ESM-only @kubernetes/client-node, which jest can't transform. The service is
+// not exercised here (nodeScalingService is fully stubbed), so replace the
+// module with a stub via a factory so the real file (and the ESM import) is
+// never evaluated.
+jest.mock('../../shared/services/kubernetes.service', () => ({
+  KubernetesService: class {},
+}));
+
+// cluster-scaling → byos-node-removal → byos-vnet → vnets.service →
+// subnet-calculator → ip-cidr is ESM-only; stub the calculator (unused here).
+jest.mock('../../vnets/utils/subnet-calculator', () => ({
+  SubnetCalculator: { validateSubnetInRange: () => true },
+}));
+
 import { ClusterScalingService } from './cluster-scaling.service';
 import { ClusterStatus } from '../entities/cluster.entity';
 import { NodeType } from '../entities/cluster-node.entity';
@@ -11,6 +27,7 @@ describe('ClusterScalingService', () => {
       firewallId?: string | null;
       queueAdd?: jest.Mock;
       saveOp?: jest.Mock;
+      byosRemove?: jest.Mock;
     } = {},
   ) {
     const queueAdd = overrides.queueAdd ?? jest.fn().mockResolvedValue({});
@@ -43,10 +60,15 @@ describe('ClusterScalingService', () => {
 
     const capabilitiesFactory = {
       isProviderSupported: jest.fn().mockReturnValue(true),
-      getCapabilitiesProvider: jest.fn(),
+      getCapabilitiesService: jest.fn().mockReturnValue({
+        getStaticCapabilities: () => ({ features: { nodeProvisioning: true } }),
+      }),
     };
     const nodeScalingService = {
       assertNodeUnlocked: jest.fn().mockResolvedValue(undefined),
+    };
+    const byosNodeRemoval = {
+      removeWorker: overrides.byosRemove ?? jest.fn(),
     };
     const svc = new ClusterScalingService(
       clusterRepo as any,
@@ -56,8 +78,17 @@ describe('ClusterScalingService', () => {
       firewallsService,
       capabilitiesFactory as any,
       nodeScalingService as any,
+      byosNodeRemoval as any,
     );
-    return { svc, queueAdd, saveOp, clusterRepo, opRepo, firewallsService };
+    return {
+      svc,
+      queueAdd,
+      saveOp,
+      clusterRepo,
+      opRepo,
+      firewallsService,
+      byosNodeRemoval,
+    };
   }
 
   const baseCluster = (extra: Partial<any> = {}) => ({
@@ -199,6 +230,44 @@ describe('ClusterScalingService', () => {
       await expect(svc.removeWorker('c-1', 'n-w1')).rejects.toBeInstanceOf(
         NotFoundException,
       );
+    });
+
+    it('delegates to the BYOS removal path (no queue) for byos clusters', async () => {
+      const cluster = baseCluster({
+        provider: 'byos',
+        metadata: {},
+        nodes: [
+          { id: 'n-master', nodeType: NodeType.MASTER, serverName: 'master' },
+          { id: 'n-w1', nodeType: NodeType.WORKER, serverName: 'w1' },
+          { id: 'n-w2', nodeType: NodeType.WORKER, serverName: 'w2' },
+        ],
+      });
+      const byosRemove = jest
+        .fn()
+        .mockResolvedValue({ id: 'op-byos', operationType: 'remove_worker' });
+      const { svc, queueAdd, byosNodeRemoval } = makeService({
+        cluster,
+        byosRemove,
+      });
+      const op = await svc.removeWorker('c-1', 'n-w1');
+      expect(byosNodeRemoval.removeWorker).toHaveBeenCalledWith(
+        cluster,
+        expect.objectContaining({ id: 'n-w1' }),
+      );
+      expect(queueAdd).not.toHaveBeenCalled();
+      expect(op).toEqual(expect.objectContaining({ id: 'op-byos' }));
+    });
+
+    it('still guards the master on byos clusters (validation precedes the branch)', async () => {
+      const byosRemove = jest.fn();
+      const { svc, byosNodeRemoval } = makeService({
+        cluster: baseCluster({ provider: 'byos', metadata: {} }),
+        byosRemove,
+      });
+      await expect(svc.removeWorker('c-1', 'n-master')).rejects.toBeInstanceOf(
+        BadRequestException,
+      );
+      expect(byosNodeRemoval.removeWorker).not.toHaveBeenCalled();
     });
   });
 });

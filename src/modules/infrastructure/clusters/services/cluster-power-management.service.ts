@@ -380,7 +380,22 @@ export class ClusterPowerManagementService {
     const cluster = await this.loadClusterWithNodes(clusterId);
     const previousStatus = cluster.status;
     const actions: string[] = [];
-    const provider = await this.getProviderWithPowerManagement(cluster);
+
+    const provider = this.getCloudProviderOrNull(cluster);
+    if (!provider) {
+      return {
+        cluster_id: cluster.id,
+        cluster_name: cluster.name,
+        previous_status: previousStatus,
+        new_status: cluster.status,
+        is_synced: true,
+        nodes_reconciled: cluster.nodes.length,
+        actions_taken: [
+          `Provider ${cluster.provider} has no power-management API; ` +
+            `status reflects node readiness — nothing to reconcile`,
+        ],
+      };
+    }
 
     const counts = await this.countNodeStates(cluster, provider);
     const totalNodes = cluster.nodes.length;
@@ -963,18 +978,25 @@ export class ClusterPowerManagementService {
   /**
    * Get provider and verify it supports power management
    */
+  private getCloudProviderOrNull(
+    cluster: ClusterEntity,
+  ): ICloudProvider | null {
+    const supported = this.providerFactory.getSupportedProviders() as string[];
+    if (!supported.includes(cluster.provider)) return null;
+    const provider = this.providerFactory.getProvider(cluster.provider as any);
+    if (!provider.powerOnServer || !provider.powerOffServer) return null;
+    return provider;
+  }
+
   private async getProviderWithPowerManagement(
     cluster: ClusterEntity,
   ): Promise<ICloudProvider> {
-    const provider = this.providerFactory.getProvider(cluster.provider as any);
-
-    // Check if provider supports power management
-    if (!provider.powerOnServer || !provider.powerOffServer) {
+    const provider = this.getCloudProviderOrNull(cluster);
+    if (!provider) {
       throw new BadRequestException(
         `Provider ${cluster.provider} does not support power management operations`,
       );
     }
-
     return provider;
   }
 

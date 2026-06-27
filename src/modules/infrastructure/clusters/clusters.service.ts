@@ -185,6 +185,22 @@ export class ClustersService {
     return await this.clusterOperationsService.getClusterNodes(clusterId);
   }
 
+  async registerByosNode(
+    clusterId: string,
+    input: {
+      serverName: string;
+      nodeType?: 'worker' | 'master';
+      ipAddress?: string;
+      privateIp?: string;
+      byos?: { host?: string; port?: number; user?: string };
+    },
+  ): Promise<ClusterNodeEntity> {
+    return await this.clusterOperationsService.registerByosNode(
+      clusterId,
+      input,
+    );
+  }
+
   /**
    * Update cluster metadata
    */

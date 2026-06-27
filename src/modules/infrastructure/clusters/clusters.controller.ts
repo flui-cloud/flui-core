@@ -7,6 +7,7 @@ import {
   Param,
   Body,
   Query,
+  Header,
   UseGuards,
 } from '@nestjs/common';
 import {
@@ -70,6 +71,16 @@ import { ClusterScalingService } from './services/cluster-scaling.service';
 import { ClusterStorageService } from './services/cluster-storage.service';
 import { AddWorkerDto, AddWorkerResponseDto } from './dto/add-worker.dto';
 import { RemoveWorkerResponseDto } from './dto/remove-worker.dto';
+import { RegisterByosNodeDto } from './dto/register-byos-node.dto';
+import { EnsureByosVNetDto } from './dto/byos-vnet.dto';
+import {
+  IssueJoinTokenDto,
+  IssuedJoinTokenResponseDto,
+  CompleteJoinDto,
+} from './dto/join-token.dto';
+import { ByosNodeJoinService } from './services/byos-node-join.service';
+import { ByosVNetService } from './services/byos-vnet.service';
+import { Public } from '../../auth/decorators/public.decorator';
 import { ClusterStorageStatusDto } from './dto/cluster-storage.dto';
 import { ClusterCapacityService } from './services/cluster-capacity.service';
 import { ClusterCapacityPlanDto } from './dto/cluster-capacity-plan.dto';
@@ -96,6 +107,8 @@ export class ClustersController {
     private readonly clusterCapacityService: ClusterCapacityService,
     private readonly clusterNodeScalingService: ClusterNodeScalingService,
     private readonly orphanVolumesService: OrphanVolumesService,
+    private readonly byosNodeJoinService: ByosNodeJoinService,
+    private readonly byosVNetService: ByosVNetService,
   ) {}
 
   @Get('orphan-volumes')
@@ -185,6 +198,121 @@ export class ClustersController {
       estimated_duration: '2-3 minutes',
       created_at: operation.createdAt,
     };
+  }
+
+  @Post(':id/byos-nodes')
+  @ApiOperation({
+    summary: 'Register a node joined to a BYOS cluster out-of-band',
+    description:
+      'Records a node that the operator joined via `flui node connect` (the worker ' +
+      'bootstrap runs over the operator SSH key — the in-cluster API cannot reach a ' +
+      'host that does not yet trust the Flui CA, so the join is operator-driven). No ' +
+      'provisioning happens. Idempotent per (cluster, serverName). Returns the node. ' +
+      '400 if the cluster is not BYOS (use POST /workers for provisioned providers).',
+  })
+  @ApiParam({ name: 'id', description: 'Cluster ID' })
+  @ApiBody({ type: RegisterByosNodeDto })
+  @ApiResponse({ status: 201, description: 'Node registered' })
+  @ApiResponse({ status: 400, description: 'Cluster is not BYOS' })
+  @ApiResponse({ status: 404, description: 'Cluster not found' })
+  async registerByosNode(
+    @Param('id') clusterId: string,
+    @Body() dto: RegisterByosNodeDto,
+  ) {
+    const node = await this.clustersService.registerByosNode(clusterId, dto);
+    return {
+      id: node.id,
+      serverName: node.serverName,
+      nodeType: node.nodeType,
+      ipAddress: node.ipAddress,
+      privateIp: node.privateIp,
+      status: node.status,
+      metadata: node.metadata,
+      createdAt: node.createdAt,
+    };
+  }
+
+  @Post(':id/byos-vnet')
+  @ApiOperation({
+    summary: 'Register/ensure the private network (VNet) of a BYOS cluster',
+    description:
+      'Registers the operator-wired private network as a first-class VNet ' +
+      '(no provisioning — register + validate), points the cluster at it ' +
+      '(metadata.vnetConfig) and attaches every node whose private IP belongs ' +
+      'to the CIDR. Idempotent; also backfills clusters created before VNets ' +
+      'existed. Body.ipRange is optional (derived from the cluster when omitted). ' +
+      '400 if the cluster is not BYOS.',
+  })
+  @ApiParam({ name: 'id', description: 'Cluster ID' })
+  @ApiBody({ type: EnsureByosVNetDto, required: false })
+  @ApiResponse({ status: 201, description: 'VNet ensured' })
+  @ApiResponse({ status: 400, description: 'Cluster is not BYOS' })
+  @ApiResponse({ status: 404, description: 'Cluster not found' })
+  async ensureByosVNet(
+    @Param('id') clusterId: string,
+    @Body() dto?: EnsureByosVNetDto,
+  ) {
+    return this.byosVNetService.ensureClusterVNet(clusterId, {
+      ipRange: dto?.ipRange,
+    });
+  }
+
+  @Post(':id/join-tokens')
+  @ApiOperation({
+    summary: 'Issue a short-lived worker join token for a BYOS cluster',
+    description:
+      'Returns an opaque single-use token (~30 min) + a one-liner to run on the new ' +
+      'host. The host fetches the join material over TLS, runs the worker bootstrap, ' +
+      'self-applies the firewall and registers itself — no SSH key leaves the operator. ' +
+      'Also pre-authorises the host firewall so the new node can reach the master.',
+  })
+  @ApiParam({ name: 'id', description: 'Cluster ID (BYOS)' })
+  @ApiBody({ type: IssueJoinTokenDto, required: false })
+  @ApiResponse({ status: 201, type: IssuedJoinTokenResponseDto })
+  @ApiResponse({ status: 400, description: 'Cluster is not BYOS' })
+  async issueJoinToken(
+    @Param('id') clusterId: string,
+    @Body() dto: IssueJoinTokenDto,
+  ): Promise<IssuedJoinTokenResponseDto> {
+    return this.byosNodeJoinService.issueToken(clusterId, dto ?? {});
+  }
+
+  @Public()
+  @Get(':id/join/:token')
+  @Header('Content-Type', 'text/plain; charset=utf-8')
+  @ApiOperation({
+    summary: 'Fetch the host-pull join script for a join token (single-use)',
+    description:
+      'Returns the bash script the new host runs. Authenticated by the token in the ' +
+      'path (no bearer). Consumes the token. Intended for `curl … | sudo bash`.',
+  })
+  @ApiParam({ name: 'id', description: 'Cluster ID' })
+  @ApiParam({ name: 'token', description: 'Join token' })
+  async getJoinScript(
+    @Param('id') clusterId: string,
+    @Param('token') token: string,
+  ): Promise<string> {
+    return this.byosNodeJoinService.buildJoinScript(clusterId, token);
+  }
+
+  @Public()
+  @Post(':id/join/:token/complete')
+  @ApiOperation({
+    summary:
+      'Register a node that joined via a join token (called by the script)',
+    description:
+      'Token-authenticated callback the join script makes after the host joins. ' +
+      'Records the node so the dashboard lists it and the firewall can enforce on it.',
+  })
+  @ApiParam({ name: 'id', description: 'Cluster ID' })
+  @ApiParam({ name: 'token', description: 'Join token' })
+  @ApiBody({ type: CompleteJoinDto })
+  async completeJoin(
+    @Param('id') clusterId: string,
+    @Param('token') token: string,
+    @Body() dto: CompleteJoinDto,
+  ) {
+    return this.byosNodeJoinService.completeJoin(clusterId, token, dto ?? {});
   }
 
   @Get('autoscale/defaults')

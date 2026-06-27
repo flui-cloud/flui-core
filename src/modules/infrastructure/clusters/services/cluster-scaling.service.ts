@@ -19,6 +19,7 @@ import { getOperationSteps } from '../../operations/helpers/operation-steps.help
 import { FirewallsService } from '../../firewalls/services/firewalls.service';
 import { CapabilitiesProviderFactory } from '../../../providers/core/factories/capabilities-provider.factory';
 import { ClusterNodeScalingService } from './cluster-node-scaling.service';
+import { ByosNodeRemovalService } from './byos-node-removal.service';
 import { CloudProvider } from '../../../providers/enums/cloud-provider.enum';
 
 export interface AddWorkerJobData {
@@ -51,6 +52,7 @@ export class ClusterScalingService {
     private readonly firewallsService: FirewallsService,
     private readonly capabilitiesFactory: CapabilitiesProviderFactory,
     private readonly nodeScalingService: ClusterNodeScalingService,
+    private readonly byosNodeRemoval: ByosNodeRemovalService,
   ) {}
 
   private assertNodeProvisioning(cluster: ClusterEntity): void {
@@ -169,8 +171,6 @@ export class ClusterScalingService {
       throw new NotFoundException(`Cluster ${clusterId} not found`);
     }
 
-    this.assertNodeProvisioning(cluster);
-
     const node = cluster.nodes?.find((n) => n.id === nodeId);
     if (!node) {
       throw new NotFoundException(
@@ -203,6 +203,12 @@ export class ClusterScalingService {
     }
 
     await this.nodeScalingService.assertNodeUnlocked(clusterId, nodeId);
+
+    if ((cluster.provider as CloudProvider) === CloudProvider.BYOS) {
+      return this.byosNodeRemoval.removeWorker(cluster, node);
+    }
+
+    this.assertNodeProvisioning(cluster);
 
     const steps = getOperationSteps(OperationType.REMOVE_WORKER);
 
