@@ -25,6 +25,7 @@ import { CliClusterCreatorService } from '../services/cli-cluster-creator.servic
 import { CliClustersService } from '../services/cli-clusters.service';
 import { CliControlClusterService } from '../services/cli-control-cluster.service';
 import { CliSshService } from '../services/cli-ssh.service';
+import { CliByosPurgeService } from '../services/cli-byos-purge.service';
 import { CliCaService } from '../services/cli-ca.service';
 import { CliLoggerService } from '../services/cli-logger.service';
 import { CliEndpointResolverService } from '../services/cli-endpoint-resolver.service';
@@ -154,6 +155,7 @@ import { CommonModule } from 'src/modules/common/common.module';
     CliClustersService,
     CliControlClusterService,
     CliSshService,
+    CliByosPurgeService,
     CliCaService,
     CliLoggerService,
     CliEndpointResolverService,
@@ -227,6 +229,7 @@ import { CommonModule } from 'src/modules/common/common.module';
     KubernetesService,
     LabelService,
     CliSshService,
+    CliByosPurgeService,
     CliCaService,
     CliLoggerService,
     CliEndpointResolverService,

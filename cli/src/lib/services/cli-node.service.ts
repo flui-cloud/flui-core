@@ -75,6 +75,7 @@ export class CliNodeService {
   async removeWorker(nodeId: string): Promise<RemoveWorkerResult> {
     return this.apiClient.delete<RemoveWorkerResult>(
       `/infrastructure/clusters/${this.clusterId}/workers/${nodeId}`,
+      { timeout: 180_000 },
     );
   }
 

@@ -110,7 +110,10 @@ export class ApiClient {
   /**
    * DELETE request
    */
-  async delete<T>(path: string, config?: { data?: unknown }): Promise<T> {
+  async delete<T>(
+    path: string,
+    config?: { data?: unknown; timeout?: number },
+  ): Promise<T> {
     const response = await this.client.delete<T>(path, config);
     return response.data;
   }

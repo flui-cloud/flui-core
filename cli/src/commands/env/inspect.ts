@@ -70,7 +70,9 @@ export default class EnvInspect extends Command {
       let nodeName: string;
 
       if (flags.node === 'master') {
-        nodeIp = cluster.masterIpAddress;
+        nodeIp =
+          resolveClusterSshTarget(cluster, cluster.masterIpAddress ?? '')
+            .host || undefined;
         nodeName = 'Master Node';
       } else {
         // Find worker node
@@ -126,6 +128,21 @@ export default class EnvInspect extends Command {
 
       const logPath = logPaths[flags.log];
 
+      const isByos = (cluster as { provider?: string }).provider === 'byos';
+      const journalUnit: Record<string, string> = {
+        'cloud-init': '',
+        'cloud-init-output': '',
+        k3s: '-u k3s',
+        syslog: '',
+      };
+      const byosJournalCmd = (follow: boolean): string => {
+        const tailPart = follow ? '-f' : `-n ${flags.tail}`;
+        return `journalctl ${journalUnit[flags.log]} --no-pager ${tailPart}`
+          .replace(/\s+/g, ' ')
+          .trim();
+      };
+      const logLabel = isByos ? byosJournalCmd(flags.follow) : logPath;
+
       // Handle follow mode vs one-time fetch
       if (flags.follow) {
         // FOLLOW MODE: Stream logs in real-time
@@ -136,7 +153,7 @@ export default class EnvInspect extends Command {
           chalk.cyan(`\n📋 ${nodeName} - ${flags.log} (following)\n`),
         );
         console.log(chalk.dim(`   Node: ${flags.node} (${nodeIp})`));
-        console.log(chalk.dim(`   Log: ${logPath}`));
+        console.log(chalk.dim(`   Log: ${logLabel}`));
         console.log(chalk.dim(`   Press Ctrl+C to stop\n`));
         console.log(chalk.dim('─'.repeat(80)));
 
@@ -162,6 +179,8 @@ export default class EnvInspect extends Command {
             logPath,
             target.user,
             target.port,
+            undefined,
+            isByos ? byosJournalCmd(true) : undefined,
           );
           cleanup = stream.cleanup;
 
@@ -183,19 +202,26 @@ export default class EnvInspect extends Command {
         spinner = ora(`Fetching ${flags.log} logs from ${nodeName}...`).start();
 
         try {
-          const logs = await sshService.tailRemoteLog(
-            target.host,
-            logPath,
-            flags.tail,
-            target.user,
-            target.port,
-          );
+          const logs = isByos
+            ? await sshService.sshExec(
+                target.host,
+                byosJournalCmd(false),
+                target.user,
+                target.port,
+              )
+            : await sshService.tailRemoteLog(
+                target.host,
+                logPath,
+                flags.tail,
+                target.user,
+                target.port,
+              );
           spinner.succeed(`Logs fetched from ${nodeName}`);
 
           // Display logs
           console.log(chalk.cyan(`\n📋 ${nodeName} - ${flags.log}\n`));
           console.log(chalk.dim(`   Node: ${flags.node} (${nodeIp})`));
-          console.log(chalk.dim(`   Log: ${logPath}`));
+          console.log(chalk.dim(`   Log: ${logLabel}`));
           console.log(chalk.dim(`   Lines: ${flags.tail}\n`));
           console.log(chalk.dim('─'.repeat(80)));
           console.log(logs);

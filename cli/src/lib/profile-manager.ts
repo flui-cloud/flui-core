@@ -24,8 +24,16 @@ const DIRS_TO_MIGRATE = ['ca', 'logs'];
 export class ProfileManager {
   static readonly BASE_DIR = path.join(homedir(), '.flui');
   static readonly PROFILES_DIR = path.join(ProfileManager.BASE_DIR, 'profiles');
+  static readonly BACKUPS_DIR = path.join(ProfileManager.BASE_DIR, 'backups');
   static readonly CONTEXT_FILE = path.join(ProfileManager.BASE_DIR, 'context');
   static readonly DEFAULT_PROFILE = 'default';
+
+  private static readonly SNAPSHOT_SKIP = new Set([
+    'operations.json',
+    'logs',
+    'debug',
+    'cache',
+  ]);
 
   /**
    * Returns the currently active profile name.
@@ -171,6 +179,71 @@ export class ProfileManager {
         ProfileManager.copyDirSync(src, path.join(defaultDir, dir));
         fs.rmSync(src, { recursive: true, force: true });
       }
+    }
+  }
+
+  static snapshotActiveProfile(opts?: {
+    keep?: number;
+    timestamp?: string;
+  }): { path: string; profile: string; fileCount: number } | null {
+    const profile = ProfileManager.getActiveProfile();
+    const srcDir = ProfileManager.getProfileDir(profile);
+    if (!fs.existsSync(srcDir)) {
+      return null;
+    }
+
+    const stamp = (opts?.timestamp ?? new Date().toISOString()).replace(
+      /[:.]/g,
+      '-',
+    );
+    const destDir = path.join(
+      ProfileManager.BACKUPS_DIR,
+      `${profile}-${stamp}`,
+    );
+
+    fs.mkdirSync(ProfileManager.BACKUPS_DIR, { recursive: true, mode: 0o700 });
+    const fileCount = ProfileManager.snapshotCopyDir(srcDir, destDir);
+    ProfileManager.pruneSnapshots(profile, opts?.keep ?? 10);
+
+    return { path: destDir, profile, fileCount };
+  }
+
+  private static snapshotCopyDir(src: string, dest: string): number {
+    fs.mkdirSync(dest, { recursive: true, mode: 0o700 });
+    let count = 0;
+    for (const entry of fs.readdirSync(src, { withFileTypes: true })) {
+      if (ProfileManager.SNAPSHOT_SKIP.has(entry.name)) continue;
+      const srcPath = path.join(src, entry.name);
+      const destPath = path.join(dest, entry.name);
+      if (entry.isDirectory()) {
+        count += ProfileManager.snapshotCopyDir(srcPath, destPath);
+      } else if (entry.isFile()) {
+        fs.copyFileSync(srcPath, destPath);
+        fs.chmodSync(destPath, 0o600);
+        count++;
+      }
+    }
+    return count;
+  }
+
+  private static pruneSnapshots(profile: string, keep: number): void {
+    if (keep <= 0 || !fs.existsSync(ProfileManager.BACKUPS_DIR)) {
+      return;
+    }
+    const prefix = `${profile}-`;
+    const snapshots = fs
+      .readdirSync(ProfileManager.BACKUPS_DIR, { withFileTypes: true })
+      .filter((e) => e.isDirectory() && e.name.startsWith(prefix))
+      .map((e) => e.name)
+      .sort((a, b) => a.localeCompare(b));
+    for (const name of snapshots.slice(
+      0,
+      Math.max(0, snapshots.length - keep),
+    )) {
+      fs.rmSync(path.join(ProfileManager.BACKUPS_DIR, name), {
+        recursive: true,
+        force: true,
+      });
     }
   }
 
