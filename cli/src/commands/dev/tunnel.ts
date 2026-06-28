@@ -9,6 +9,10 @@ import { getNestApp, closeNestApp } from '../../lib/nest-app';
 import { CliControlClusterService } from '../../services/cli-control-cluster.service';
 import { CliSshService } from '../../services/cli-ssh.service';
 import { ClusterStatus } from 'src/modules/infrastructure/clusters/entities/cluster.entity';
+import {
+  resolveClusterSshTarget,
+  SshTarget,
+} from '../../lib/cluster-ssh-target';
 
 interface ForwardSpec {
   name: string;
@@ -107,6 +111,7 @@ export default class DevTunnel extends Command {
     const spinner = ora('Resolving cluster...').start();
 
     let masterIp: string | undefined;
+    let sshT: SshTarget | undefined;
     try {
       const app = await getNestApp();
       const controlService = app.get(CliControlClusterService);
@@ -126,7 +131,10 @@ export default class DevTunnel extends Command {
         spinner.fail('Master IP address not available');
         return;
       }
-      spinner.succeed(`Cluster ${cluster.name} → master ${masterIp}`);
+      sshT = resolveClusterSshTarget(cluster, masterIp);
+      spinner.succeed(
+        `Cluster ${cluster.name} → master ${sshT.host}:${sshT.port}`,
+      );
     } catch (error) {
       spinner.fail('Error resolving cluster');
       console.error(chalk.red(`\n❌ ${(error as Error).message}\n`));
@@ -181,12 +189,14 @@ export default class DevTunnel extends Command {
         } else {
           console.log(
             chalk.cyan(
-              `\n🔌 Opening SSH tunnel to ${masterIp}. Press CTRL-C to close.\n`,
+              `\n🔌 Opening SSH tunnel to ${sshT.host}:${sshT.port}. Press CTRL-C to close.\n`,
             ),
           );
         }
         const result = await sshService.sshForward({
-          host: masterIp,
+          host: sshT.host,
+          port: sshT.port,
+          username: sshT.user,
           forwards: sshForwards,
           remoteCommand,
           expectedForwardLines: specs.filter((s) => s.needsKubectl).length,
@@ -213,12 +223,49 @@ export default class DevTunnel extends Command {
     }
   }
 
+  // A local container runtime (gvproxy/vpnkit/vfkit) holds the VM's published
+  // ports — killing it drops the whole VM network, so we never SIGKILL it.
+  private isRuntimeInfra(command: string): boolean {
+    return /gvproxy|vpnkit|vfkit|qemu|krunkit|com\.docker|dockerd|Virtualization\.framework/i.test(
+      command,
+    );
+  }
+
+  private async processCommand(pid: number): Promise<string> {
+    try {
+      const { stdout } = await execFileAsync('ps', [
+        '-p',
+        String(pid),
+        '-o',
+        'command=',
+      ]);
+      return stdout.trim();
+    } catch {
+      return '';
+    }
+  }
+
   private async freeLocalPorts(ports: number[]): Promise<void> {
     for (const port of ports) {
       const pids = await this.findListeningPids(port);
       if (pids.length === 0) continue;
       const ownPid = process.pid;
-      const targets = pids.filter((p) => p !== ownPid);
+      const targets: number[] = [];
+      for (const pid of pids) {
+        if (pid === ownPid) continue;
+        const cmd = await this.processCommand(pid);
+        if (this.isRuntimeInfra(cmd)) {
+          console.log(
+            chalk.yellow(
+              `⚠️  Port ${port} is served by the local container runtime (pid ${pid}) — ` +
+                `leaving it alone (killing it would drop the VM network). ` +
+                `It's already reachable; drop it from --ports if SSH warns about the bind.`,
+            ),
+          );
+          continue;
+        }
+        targets.push(pid);
+      }
       if (targets.length === 0) continue;
       console.log(
         chalk.yellow(
@@ -234,7 +281,7 @@ export default class DevTunnel extends Command {
       }
       await new Promise((r) => setTimeout(r, 400));
       const stillThere = (await this.findListeningPids(port)).filter(
-        (p) => p !== ownPid,
+        (p) => p !== ownPid && targets.includes(p),
       );
       for (const pid of stillThere) {
         try {
