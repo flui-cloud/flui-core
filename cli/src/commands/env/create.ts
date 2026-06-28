@@ -141,7 +141,12 @@ export default class EnvCreate extends Command {
     }),
     'ssh-key': Flags.string({
       description:
-        'BYOS: path to the SSH private key that already authenticates to --host (default: ~/.ssh/id_rsa)',
+        'BYOS: SSH private key for --host. Optional — if omitted, Flui reuses an existing key that already works, otherwise it authorizes one (asking for the host password once) and never stores the password. A passphrase-protected key is supported only when loaded in your ssh-agent (run `ssh-add` first).',
+    }),
+    'ssh-password': Flags.string({
+      description:
+        'BYOS: host password, for non-interactive key authorization (e.g. CI). Prefer the FLUI_SSH_PASSWORD env var to keep it out of shell history. Used only in-memory to install the key, then auth switches to the key.',
+      env: 'FLUI_SSH_PASSWORD',
     }),
     'master-public-ip': Flags.string({
       description:
@@ -227,14 +232,17 @@ export default class EnvCreate extends Command {
     const host = flags.host as string;
     const port = (flags.port as number) ?? 22;
     const user = (flags.user as string) ?? 'root';
-    const keyPath = this.resolveKeyPath(flags['ssh-key']);
+    const explicitKeyPath = flags['ssh-key']
+      ? this.resolveKeyPath(flags['ssh-key'])
+      : undefined;
     const masterPublicIp = (flags['master-public-ip'] as string) || host;
     const localStub = !!flags['local-stub'];
 
-    if (!fs.existsSync(keyPath)) {
-      this.error(`SSH key not found: ${keyPath}. Pass --ssh-key <path>.`, {
-        exit: 1,
-      });
+    if (explicitKeyPath && !fs.existsSync(explicitKeyPath)) {
+      this.error(
+        `SSH key not found: ${explicitKeyPath}. Pass a valid --ssh-key <path>, or omit it to auto-resolve/generate one.`,
+        { exit: 1 },
+      );
     }
 
     printContextBanner({ cluster: { provider: 'byos', region: host } });
@@ -255,6 +263,27 @@ export default class EnvCreate extends Command {
           ),
         );
         return;
+      }
+
+      let keyPath = '';
+      try {
+        const access = await sshService.ensureKeyAccess({
+          host,
+          port,
+          user,
+          explicitKeyPath,
+          password: flags['ssh-password'],
+          log: (m) => console.log(chalk.dim(`   ${m}`)),
+        });
+        keyPath = access.keyPath;
+      } catch (e: any) {
+        console.log(chalk.red(`\n❌ SSH access setup failed: ${e.message}\n`));
+        console.log(
+          chalk.dim(
+            `   Verify you can reach the host: ssh -p ${port} ${user}@${host}\n`,
+          ),
+        );
+        this.exit(1);
       }
 
       if (!flags['skip-precheck']) {
@@ -336,32 +365,8 @@ export default class EnvCreate extends Command {
     while (Date.now() < deadline) {
       const op = await controlService.getClusterOperation(clusterId);
       if (op) {
-        try {
-          const p = logPath(op.id);
-          const content = fs.existsSync(p) ? fs.readFileSync(p, 'utf-8') : '';
-          if (content.length > printed) {
-            process.stdout.write(content.slice(printed));
-            printed = content.length;
-          }
-        } catch {
-          /* log not ready yet */
-        }
-        if (op.status === OperationStatus.COMPLETED) {
-          console.log(chalk.dim('─'.repeat(80)));
-          console.log(chalk.green('\n✅ Flui installed on your server!\n'));
-          console.log(
-            chalk.bold('   Retrieve credentials: ') +
-              chalk.cyan('flui env credentials\n'),
-          );
-          return;
-        }
-        if (op.status === OperationStatus.FAILED) {
-          const err = (op.metadata as any)?.error || 'unknown error';
-          console.log(chalk.dim('─'.repeat(80)));
-          console.log(chalk.red(`\n❌ Installation failed: ${err}\n`));
-          console.log(chalk.dim(`   Full log: ${logPath(op.id)}\n`));
-          this.exit(1);
-        }
+        printed = this.printNewLog(logPath(op.id), printed);
+        if (this.handleByosTerminalStatus(op, logPath(op.id))) return;
       }
       await new Promise((r) => setTimeout(r, 3000));
     }
@@ -370,6 +375,42 @@ export default class EnvCreate extends Command {
         '\n⚠ Timed out waiting for installation. Check `flui env status`.\n',
       ),
     );
+  }
+
+  private printNewLog(p: string, printed: number): number {
+    try {
+      const content = fs.existsSync(p) ? fs.readFileSync(p, 'utf-8') : '';
+      if (content.length > printed) {
+        process.stdout.write(content.slice(printed));
+        return content.length;
+      }
+    } catch {
+      /* log not ready yet */
+    }
+    return printed;
+  }
+
+  private handleByosTerminalStatus(
+    op: { status: OperationStatus; metadata?: Record<string, unknown> | null },
+    logPathStr: string,
+  ): boolean {
+    if (op.status === OperationStatus.COMPLETED) {
+      console.log(chalk.dim('─'.repeat(80)));
+      console.log(chalk.green('\n✅ Flui installed on your server!\n'));
+      console.log(
+        chalk.bold('   Retrieve credentials: ') +
+          chalk.cyan('flui env credentials\n'),
+      );
+      return true;
+    }
+    if (op.status === OperationStatus.FAILED) {
+      const err = (op.metadata?.error as string) || 'unknown error';
+      console.log(chalk.dim('─'.repeat(80)));
+      console.log(chalk.red(`\n❌ Installation failed: ${err}\n`));
+      console.log(chalk.dim(`   Full log: ${logPathStr}\n`));
+      this.exit(1);
+    }
+    return false;
   }
 
   async run(): Promise<void> {

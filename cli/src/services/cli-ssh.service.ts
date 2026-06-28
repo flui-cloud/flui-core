@@ -5,6 +5,20 @@ import * as os from 'node:os';
 import { spawn, spawnSync } from 'node:child_process';
 import { CliCaService } from './cli-ca.service';
 
+interface Ssh2ExecStream {
+  on(event: string, cb: (...args: unknown[]) => void): Ssh2ExecStream;
+  stderr: { on(event: string, cb: (...args: unknown[]) => void): void };
+}
+interface Ssh2Client {
+  on(event: string, cb: (...args: unknown[]) => void): Ssh2Client;
+  exec(
+    cmd: string,
+    cb: (err: Error | undefined, stream: Ssh2ExecStream) => void,
+  ): void;
+  connect(cfg: Record<string, unknown>): void;
+  end(): void;
+}
+
 /**
  * CLI SSH Management Service
  *
@@ -309,6 +323,7 @@ export class CliSshService {
   async sshForward(opts: {
     host: string;
     username?: string;
+    port?: number;
     forwards: Array<{
       localPort: number;
       remotePort: number;
@@ -326,6 +341,8 @@ export class CliSshService {
     const args: string[] = [
       '-i',
       privateKeyPath,
+      '-p',
+      String(opts.port ?? 22),
       '-o',
       `CertificateFile=${certificatePath}`,
       '-o',
@@ -475,6 +492,290 @@ export class CliSshService {
     return result.stdout.trim();
   }
 
+  async canAuthWithKey(opts: {
+    host: string;
+    port?: number;
+    user?: string;
+    keyPath: string;
+  }): Promise<boolean> {
+    try {
+      const out = await this.sshExecWithKey({
+        host: opts.host,
+        port: opts.port,
+        user: opts.user,
+        keyPath: opts.keyPath,
+        command: 'echo flui-key-ok',
+        timeoutMs: 15_000,
+      });
+      return out.includes('flui-key-ok');
+    } catch {
+      return false;
+    }
+  }
+
+  publicKeyFor(keyPath: string): string | null {
+    const pub = `${keyPath}.pub`;
+    if (fs.existsSync(pub)) {
+      const content = fs.readFileSync(pub, 'utf-8').trim();
+      if (content) return content;
+    }
+    const derived = spawnSync('ssh-keygen', ['-y', '-f', keyPath, '-P', ''], {
+      encoding: 'utf-8',
+    });
+    if (derived.status === 0 && derived.stdout.trim()) {
+      return derived.stdout.trim();
+    }
+    return null;
+  }
+
+  isKeyEncrypted(keyPath: string): boolean {
+    if (!fs.existsSync(keyPath)) return false;
+    const r = spawnSync('ssh-keygen', ['-y', '-f', keyPath, '-P', ''], {
+      encoding: 'utf-8',
+    });
+    return r.status !== 0;
+  }
+
+  private pickInstallKey(
+    explicitKeyPath: string | undefined,
+    managedKeyPath: string,
+    log: (msg: string) => void,
+  ): string {
+    if (!explicitKeyPath || !fs.existsSync(explicitKeyPath)) {
+      return managedKeyPath;
+    }
+    if (!this.isKeyEncrypted(explicitKeyPath)) return explicitKeyPath;
+    log(
+      `⚠ ${explicitKeyPath} is passphrase-protected and not in your ssh-agent — can't use it non-interactively.`,
+    );
+    log(
+      `  Using Flui's managed key instead. Tip: \`ssh-add ${explicitKeyPath}\` then retry to use your own key.`,
+    );
+    return managedKeyPath;
+  }
+
+  async installPublicKeyWithPassword(opts: {
+    host: string;
+    port?: number;
+    user?: string;
+    publicKey: string;
+  }): Promise<void> {
+    if (!process.stdin.isTTY) {
+      throw new Error(
+        'A key needs authorizing on the host but there is no terminal for the password prompt. ' +
+          'Run interactively, pass --ssh-key with a key the host already trusts, or pre-authorize one with `ssh-copy-id`.',
+      );
+    }
+    const user = opts.user ?? 'root';
+    const remote =
+      'umask 077; mkdir -p ~/.ssh; touch ~/.ssh/authorized_keys; ' +
+      `grep -qxF '${opts.publicKey}' ~/.ssh/authorized_keys || echo '${opts.publicKey}' >> ~/.ssh/authorized_keys`;
+    const result = spawnSync(
+      'ssh',
+      [
+        '-p',
+        String(opts.port ?? 22),
+        '-o',
+        'StrictHostKeyChecking=no',
+        '-o',
+        'UserKnownHostsFile=/dev/null',
+        '-o',
+        'PubkeyAuthentication=no',
+        '-o',
+        'PreferredAuthentications=password,keyboard-interactive',
+        '-o',
+        'NumberOfPasswordPrompts=3',
+        '-o',
+        'ConnectTimeout=15',
+        `${user}@${opts.host}`,
+        remote,
+      ],
+      { stdio: 'inherit' },
+    );
+    if (result.status !== 0) {
+      throw new Error(
+        `Could not authorize the SSH key on ${user}@${opts.host} (ssh exit ${result.status ?? result.signal}). ` +
+          'Check the password and that the host allows password login.',
+      );
+    }
+  }
+
+  async installPublicKeyWithPasswordValue(opts: {
+    host: string;
+    port?: number;
+    user?: string;
+    password: string;
+    publicKey: string;
+  }): Promise<void> {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { Client } = require('ssh2') as { Client: new () => Ssh2Client };
+
+    const user = opts.user ?? 'root';
+    const remote =
+      'umask 077; mkdir -p ~/.ssh; touch ~/.ssh/authorized_keys; ' +
+      `grep -qxF '${opts.publicKey}' ~/.ssh/authorized_keys || echo '${opts.publicKey}' >> ~/.ssh/authorized_keys`;
+
+    await new Promise<void>((resolve, reject) => {
+      const conn = new Client();
+      let settled = false;
+      const done = (err?: Error): void => {
+        if (settled) return;
+        settled = true;
+        try {
+          conn.end();
+        } catch {
+          /* already closed */
+        }
+        if (err) reject(err);
+        else resolve();
+      };
+
+      conn.on('ready', () => this.execForKeyInstall(conn, remote, done));
+      conn.on('error', (...args: unknown[]) =>
+        done(
+          new Error(
+            `SSH password auth failed for ${user}@${opts.host}: ${(args[0] as Error).message}`,
+          ),
+        ),
+      );
+      conn.on('keyboard-interactive', (...args: unknown[]) =>
+        (args[4] as (responses: string[]) => void)([opts.password]),
+      );
+
+      conn.connect({
+        host: opts.host,
+        port: opts.port ?? 22,
+        username: user,
+        password: opts.password,
+        readyTimeout: 20_000,
+        tryKeyboard: true,
+      });
+    });
+  }
+
+  private execForKeyInstall(
+    conn: Ssh2Client,
+    cmd: string,
+    done: (err?: Error) => void,
+  ): void {
+    conn.exec(cmd, (err, stream) => {
+      if (err) return done(err);
+      let stderr = '';
+      stream.on('close', (...args: unknown[]) => {
+        const code = (args[0] as number) ?? 0;
+        const suffix = stderr.trim() ? `: ${stderr.trim()}` : '';
+        done(
+          code === 0
+            ? undefined
+            : new Error(`key install exited ${code}${suffix}`),
+        );
+      });
+      stream.on('data', () => {});
+      stream.stderr.on('data', (...args: unknown[]) => {
+        stderr += (args[0] as Buffer).toString();
+      });
+    });
+  }
+
+  private async authorizeKeyOnHost(opts: {
+    host: string;
+    port: number;
+    user: string;
+    publicKey: string;
+    password?: string;
+    log: (msg: string) => void;
+  }): Promise<void> {
+    if (opts.password) {
+      opts.log('Authorizing one with the supplied password (non-interactive).');
+      await this.installPublicKeyWithPasswordValue({
+        host: opts.host,
+        port: opts.port,
+        user: opts.user,
+        password: opts.password,
+        publicKey: opts.publicKey,
+      });
+      return;
+    }
+    opts.log(
+      'Authorizing one now — enter the host password once when prompted',
+    );
+    opts.log('(used only to install the key, never stored).');
+    await this.installPublicKeyWithPassword({
+      host: opts.host,
+      port: opts.port,
+      user: opts.user,
+      publicKey: opts.publicKey,
+    });
+  }
+
+  async ensureKeyAccess(opts: {
+    host: string;
+    port?: number;
+    user?: string;
+    explicitKeyPath?: string;
+    password?: string;
+    log?: (msg: string) => void;
+  }): Promise<{ keyPath: string; installed: boolean }> {
+    const user = opts.user ?? 'root';
+    const port = opts.port ?? 22;
+    const log = opts.log ?? ((): void => {});
+
+    const candidates: string[] = [];
+    if (opts.explicitKeyPath) candidates.push(opts.explicitKeyPath);
+    for (const name of ['id_ed25519', 'id_rsa']) {
+      const p = path.join(os.homedir(), '.ssh', name);
+      if (fs.existsSync(p) && !candidates.includes(p)) candidates.push(p);
+    }
+    const managed = await this.getOrCreateSshKey();
+    if (!candidates.includes(managed.privateKeyPath)) {
+      candidates.push(managed.privateKeyPath);
+    }
+
+    for (const keyPath of candidates) {
+      if (!fs.existsSync(keyPath)) continue;
+      if (await this.canAuthWithKey({ host: opts.host, port, user, keyPath })) {
+        log(`SSH key already authorized (${keyPath})`);
+        return { keyPath, installed: false };
+      }
+    }
+
+    const installKeyPath = this.pickInstallKey(
+      opts.explicitKeyPath,
+      managed.privateKeyPath,
+      log,
+    );
+    const publicKey = this.publicKeyFor(installKeyPath);
+    if (!publicKey) {
+      throw new Error(
+        `Could not read or derive the public key for ${installKeyPath}.`,
+      );
+    }
+    log(`No SSH key is authorized on ${user}@${opts.host} yet.`);
+    await this.authorizeKeyOnHost({
+      host: opts.host,
+      port,
+      user,
+      publicKey,
+      password: opts.password,
+      log,
+    });
+    if (
+      !(await this.canAuthWithKey({
+        host: opts.host,
+        port,
+        user,
+        keyPath: installKeyPath,
+      }))
+    ) {
+      throw new Error(
+        `Authorized a key on ${user}@${opts.host} but it still does not authenticate. ` +
+          'Check sshd PubkeyAuthentication and ~/.ssh permissions on the host.',
+      );
+    }
+    log(`✅ SSH key authorized (${installKeyPath})`);
+    return { keyPath: installKeyPath, installed: true };
+  }
+
   /**
    * Stream a bootstrap script to a BYOS host over the operator key and run it
    * via `bash -s` (no scp); `sudo` is prefixed for non-root users.
@@ -620,6 +921,7 @@ export class CliSshService {
     username: string = 'root',
     port = 22,
     onData?: (data: string) => void,
+    command?: string,
   ): Promise<{ cleanup: () => void }> {
     const {
       privateKeyPath,
@@ -654,7 +956,7 @@ export class CliSshService {
         '-o',
         'BatchMode=yes',
         `${username}@${host}`,
-        `tail -f ${logPath}`,
+        command ?? `tail -f ${logPath}`,
       ],
       {
         stdio: ['pipe', 'pipe', 'pipe'],

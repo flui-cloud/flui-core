@@ -34,6 +34,8 @@ import { CliFirewallRepository } from '../lib/repositories/cli-firewall.reposito
 import { CliSshService } from './cli-ssh.service';
 import { CliLoggerService } from './cli-logger.service';
 import { CliVnetRepository } from '../lib/repositories/cli-vnet.repository';
+import { ApiClient } from '../lib/api-client';
+import { ConfigStorage } from '../lib/config-storage';
 
 /**
  * CLI Cluster Creator Service
@@ -758,6 +760,29 @@ export class CliClusterCreatorService {
 
       cluster.status = ClusterStatus.READY;
       await this.clusterRepository.save(cluster);
+
+      // The API-DB cluster record is seeded in-cluster by the bootstrap and
+      // lacks the operator's SSH coordinates, so the dashboard/API can't reach
+      // a node on a non-standard SSH port (firewall, etc.). Persist them (best
+      // effort — never fail the create over this).
+      await this.persistByosTargetToApi(
+        cluster,
+        byos,
+        decrypted.fluiApiKey,
+        opId,
+      );
+
+      // Register the private network as a first-class VNet (register+validate,
+      // mirroring cloud) + attach the master. Server derives the CIDR from the
+      // node when not declared. Best-effort — never fail the create over it.
+      await this.ensureByosVNetOnApi(
+        cluster,
+        (cluster.metadata as { byos?: { nodeNetwork?: string } })?.byos
+          ?.nodeNetwork,
+        decrypted.fluiApiKey,
+        opId,
+      );
+
       operation.status = OperationStatus.COMPLETED;
       operation.currentStepIndex = operation.totalSteps;
       await this.operationRepository.save(operation);
@@ -778,6 +803,404 @@ export class CliClusterCreatorService {
       };
       await this.operationRepository.save(operation);
       throw error;
+    }
+  }
+
+  /**
+   * BYOS worker join: the same scaling flow as the provisioned path, minus
+   * provisioning. We don't call `provider.createServer`; instead we deliver the
+   * SAME `k3s-worker-init.sh` bootstrap over the operator's own SSH key (the
+   * only credential a fresh host trusts before the Flui CA is installed), join
+   * it to the existing master, and record the node. Mirrors
+   * {@link createClusterSyncByos} for the master.
+   *
+   * The firewall is handled in two passes when the cluster has a host firewall:
+   * before the join we widen the MASTER ruleset to accept the node network (so
+   * the worker can reach :6443); after the worker is registered (and trusts the
+   * CA) we reconcile again to push the ruleset to the worker too. Both are
+   * best-effort and driven through the admin API.
+   */
+  async joinWorkerByos(opts: {
+    cluster: ClusterEntity;
+    host: string;
+    port: number;
+    user: string;
+    keyPath: string;
+    masterIp: string;
+    nodeNetwork?: string;
+    onLog?: (msg: string) => void;
+  }): Promise<{
+    nodeId: string;
+    serverName: string;
+    privateIp?: string;
+    nodeNetwork?: string;
+  }> {
+    const { cluster } = opts;
+    const port = opts.port ?? 22;
+    const user = opts.user ?? 'root';
+    const log = (m: string): void =>
+      opts.onLog ? opts.onLog(m) : this.logger.log(m);
+
+    const k3sToken = this.encryptionService.decrypt(cluster.k3sTokenEncrypted);
+    const caPublicKey = await this.caService.getCaPublicKey();
+    const decrypted = this.decryptClusterSecrets(cluster);
+    const clusterMeta = cluster.metadata as any;
+
+    // 1. Detect the worker's real on-network private IP over the operator key
+    //    (before the CA is installed). Feeds the host firewall's internalCidrs.
+    let privateIp: string | undefined;
+    try {
+      const detected = await this.sshService.sshExecWithKey({
+        host: opts.host,
+        port,
+        user,
+        keyPath: opts.keyPath,
+        command:
+          "ip -4 -o addr show 2>/dev/null | awk '{print $4}' | cut -d/ -f1 | " +
+          String.raw`grep -E '^(10\.|172\.(1[6-9]|2[0-9]|3[01])\.|192\.168\.)' | head -1`,
+      });
+      privateIp = detected.trim() || undefined;
+    } catch {
+      /* best effort — firewall can still use an explicit --node-network */
+    }
+    log(`→ Worker private IP: ${privateIp ?? '(undetected)'}`);
+
+    const nodeNetwork =
+      opts.nodeNetwork ||
+      (privateIp ? CliClusterCreatorService.toSlash24(privateIp) : undefined);
+    if (nodeNetwork) log(`→ Node network (firewall): ${nodeNetwork}`);
+
+    // 2. Allocate the worker name + local node record.
+    const workerIndex =
+      (cluster.nodes ?? []).filter((n) => n.nodeType === NodeType.WORKER)
+        .length + 1;
+    const serverName = `${cluster.name}-worker-${workerIndex}`;
+    log(`→ Worker name: ${serverName}`);
+
+    const workerNode = this.nodeRepository.create({
+      cluster,
+      clusterId: cluster.id,
+      providerResourceId: opts.host,
+      serverName,
+      nodeType: NodeType.WORKER,
+      status: NodeStatus.JOINING,
+      ipAddress: opts.host,
+      privateIp,
+      metadata: { byos: { host: opts.host, port, user } },
+    });
+    await this.nodeRepository.save(workerNode);
+
+    // 3. Build a best-effort admin API client (dashboard/firewall sync).
+    const api = this.buildAdminApiClient(cluster, decrypted.fluiApiKey);
+
+    // 4. Pre-authorise the firewall: persist the node network and reconcile the
+    //    MASTER so it accepts the worker's k3s traffic BEFORE the join. (No-op
+    //    when no host firewall is configured.) The byos object is sent whole —
+    //    metadata merge is shallow, so we must carry port/user through or they
+    //    get clobbered (the firewall backend needs them to reach each node).
+    const clusterByos = (cluster.metadata as any)?.byos ?? {};
+    if (api && nodeNetwork) {
+      await this.tryPatchNodeNetwork(
+        api,
+        cluster.id,
+        {
+          port: clusterByos.port ?? 22,
+          user: clusterByos.user ?? 'root',
+          nodeNetwork,
+        },
+        log,
+      );
+    }
+    if (api) {
+      await this.tryReconcileFirewall(
+        api,
+        cluster.id,
+        'pre-join (master accepts node network)',
+        log,
+      );
+    }
+
+    // 5. Deliver + run the worker bootstrap over the operator key.
+    log(
+      `→ Joining ${user}@${opts.host}:${port} to master ${opts.masterIp} ...`,
+    );
+    const workerUserData = await this.k3sScriptService.generateWorkerScript({
+      serverId: workerNode.id,
+      clusterId: cluster.id,
+      clusterName: cluster.name,
+      k3sToken,
+      masterIp: opts.masterIp,
+      instanceId: serverName,
+      instanceName: serverName,
+      provider: cluster.provider,
+      caPublicKey,
+      useLatest: !!clusterMeta?.useLatest,
+      sharedStorage: undefined,
+    });
+
+    await this.sshService.runScriptWithKey({
+      host: opts.host,
+      port,
+      user,
+      keyPath: opts.keyPath,
+      script: workerUserData,
+      onData: (chunk) => log(chunk.trimEnd()),
+    });
+
+    // 6. Verify the worker now trusts the Flui CA (cert auth works).
+    try {
+      const probe = await this.sshService.sshExecCertOnPort(
+        opts.host,
+        'echo flui-ca-ok',
+        port,
+        user,
+      );
+      if (probe.includes('flui-ca-ok')) {
+        log('✅ Flui SSH CA trusted on worker (cert auth works)');
+      }
+    } catch (e) {
+      log(`⚠ CA-cert SSH verification failed: ${(e as Error).message}`);
+    }
+
+    // 7. Mark the local node ready + bump node count.
+    workerNode.status = NodeStatus.READY;
+    await this.nodeRepository.save(workerNode);
+    cluster.nodeCount = (cluster.nodeCount ?? 1) + 1;
+    await this.clusterRepository.save(cluster);
+    log(`✅ Worker ${serverName} joined the cluster`);
+
+    // 8. Register the worker in the API DB so the dashboard lists it and the
+    //    firewall backend can enforce on it (best-effort).
+    if (api) {
+      await this.tryRegisterByosNode(
+        api,
+        cluster.id,
+        { serverName, ipAddress: opts.host, privateIp, port, user },
+        log,
+      );
+      // 9. Reconcile again — now resolveTargets includes the worker, so the
+      //    ruleset lands on it too (it trusts the CA after the bootstrap).
+      await this.tryReconcileFirewall(
+        api,
+        cluster.id,
+        'post-join (apply ruleset to worker)',
+        log,
+      );
+    }
+
+    return { nodeId: workerNode.id, serverName, privateIp, nodeNetwork };
+  }
+
+  /** /24 of a dotted-quad IP (a sensible default node-network for the firewall). */
+  static toSlash24(ip: string): string | undefined {
+    const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.\d{1,3}$/.exec(ip.trim());
+    return m ? `${m[1]}.${m[2]}.${m[3]}.0/24` : undefined;
+  }
+
+  /** Admin API client over the cluster's M2M key (best-effort, normalises /api/v1). */
+  private buildAdminApiClient(
+    cluster: ClusterEntity,
+    fluiApiKey: string,
+  ): ApiClient | null {
+    try {
+      const cfg = new ConfigStorage();
+      const raw =
+        cfg.getApiUrl() ||
+        (cluster.masterIpAddress
+          ? `https://api.${buildNipBaseDomain(cluster.masterIpAddress, cluster.nipHostnameToken)}`
+          : '');
+      if (!raw || !fluiApiKey) return null;
+      const baseUrl = raw.replace(/\/api\/v1\/?$/, '');
+      return new ApiClient({ baseUrl, apiKey: fluiApiKey });
+    } catch {
+      return null;
+    }
+  }
+
+  private async tryPatchNodeNetwork(
+    api: ApiClient,
+    clusterId: string,
+    byos: { port: number; user: string; nodeNetwork: string },
+    log: (m: string) => void,
+  ): Promise<void> {
+    try {
+      await api.patch(`/api/v1/infrastructure/clusters/${clusterId}/metadata`, {
+        metadata: { byos },
+      });
+    } catch (e) {
+      log(`⚠ Could not persist node network: ${(e as Error).message}`);
+    }
+  }
+
+  private async tryRegisterByosNode(
+    api: ApiClient,
+    clusterId: string,
+    node: {
+      serverName: string;
+      ipAddress?: string;
+      privateIp?: string;
+      port: number;
+      user: string;
+    },
+    log: (m: string) => void,
+  ): Promise<void> {
+    try {
+      await api.post(
+        `/api/v1/infrastructure/clusters/${clusterId}/byos-nodes`,
+        {
+          serverName: node.serverName,
+          nodeType: 'worker',
+          ipAddress: node.ipAddress,
+          privateIp: node.privateIp,
+          byos: { host: node.ipAddress, port: node.port, user: node.user },
+        },
+      );
+      log('✅ Worker registered with the control plane (visible in dashboard)');
+    } catch (e) {
+      log(
+        `⚠ Worker not registered with the API (dashboard may not list it): ${(e as Error).message}`,
+      );
+    }
+  }
+
+  /**
+   * Reconcile the cluster host firewall through the idempotent enable endpoint.
+   * A 404 means no firewall is configured — nothing to do (the join works
+   * without one). Any other failure is logged, not fatal.
+   */
+  private async tryReconcileFirewall(
+    api: ApiClient,
+    clusterId: string,
+    phase: string,
+    log: (m: string) => void,
+  ): Promise<void> {
+    try {
+      await api.get(`/api/v1/firewalls/cluster/${clusterId}`);
+    } catch {
+      log(`→ No host firewall on the cluster — skipping ${phase}`);
+      return;
+    }
+    try {
+      await api.post(`/api/v1/firewalls/cluster/${clusterId}/enable`, {});
+      log(`✅ Host firewall reconciled: ${phase}`);
+    } catch (e) {
+      log(`⚠ Firewall reconcile failed (${phase}): ${(e as Error).message}`);
+    }
+  }
+
+  /**
+   * Decide what BYOS SSH coordinates to persist into the API-DB cluster
+   * metadata. Only the perspective-independent bits (port/user) are stored —
+   * the host is resolved from the node IP by the firewall backend. Returns null
+   * for the default :22/root case, which the node-IP fallback already covers.
+   * Pure (no I/O) so the skip-on-default decision is unit-testable.
+   */
+  static buildByosTargetPatch(
+    clusterId: string,
+    byos: { port?: number; user?: string },
+  ): {
+    path: string;
+    body: { metadata: { byos: { port: number; user: string } } };
+  } | null {
+    const port = byos.port ?? 22;
+    const user = byos.user ?? 'root';
+    if (port === 22 && user === 'root') return null;
+    return {
+      path: `/api/v1/infrastructure/clusters/${clusterId}/metadata`,
+      body: { metadata: { byos: { port, user } } },
+    };
+  }
+
+  /**
+   * Best-effort persistence of the BYOS SSH target to the API DB so the
+   * dashboard/API firewall (and future SSH ops) can reach the node. Never
+   * fatal: on failure the operator can set it later via
+   * `PATCH /infrastructure/clusters/:id/metadata`.
+   */
+  private async persistByosTargetToApi(
+    cluster: ClusterEntity,
+    byos: { host?: string; port?: number; user?: string },
+    fluiApiKey: string,
+    opId: string,
+  ): Promise<void> {
+    const patch = CliClusterCreatorService.buildByosTargetPatch(
+      cluster.id,
+      byos,
+    );
+    if (!patch) return; // default :22/root — node-IP fallback already works
+
+    try {
+      const cfg = new ConfigStorage();
+      const baseUrl =
+        cfg.getApiUrl() ||
+        (cluster.masterIpAddress
+          ? `https://api.${buildNipBaseDomain(cluster.masterIpAddress, cluster.nipHostnameToken)}`
+          : '');
+      if (!baseUrl || !fluiApiKey) {
+        this.log(
+          opId,
+          '⚠ BYOS SSH-target persistence skipped (no API URL or key) — set it later from the dashboard.',
+          'WARN',
+        );
+        return;
+      }
+      const client = new ApiClient({ baseUrl, apiKey: fluiApiKey });
+      await client.patch(patch.path, patch.body);
+      this.log(
+        opId,
+        '✅ BYOS SSH target persisted to API (firewall manageable from dashboard)',
+      );
+    } catch (e) {
+      this.log(
+        opId,
+        `⚠ BYOS SSH-target persistence skipped: ${(e as Error).message}`,
+        'WARN',
+      );
+    }
+  }
+
+  /**
+   * Best-effort: register the cluster's private network as a first-class VNet on
+   * the API DB (mirrors cloud — one network per cluster, nodes attach to it).
+   * The server derives the CIDR from the master node when `ipRange` is omitted.
+   * Never fatal: on failure the operator can run it later from the dashboard.
+   */
+  private async ensureByosVNetOnApi(
+    cluster: ClusterEntity,
+    ipRange: string | undefined,
+    fluiApiKey: string,
+    opId: string,
+  ): Promise<void> {
+    try {
+      const cfg = new ConfigStorage();
+      const baseUrl =
+        cfg.getApiUrl() ||
+        (cluster.masterIpAddress
+          ? `https://api.${buildNipBaseDomain(cluster.masterIpAddress, cluster.nipHostnameToken)}`
+          : '');
+      if (!baseUrl || !fluiApiKey) {
+        this.log(
+          opId,
+          '⚠ BYOS VNet registration skipped (no API URL or key) — register it later from the dashboard.',
+          'WARN',
+        );
+        return;
+      }
+      const client = new ApiClient({ baseUrl, apiKey: fluiApiKey });
+      const res = await client.post<{ ipRange?: string }>(
+        `/api/v1/infrastructure/clusters/${cluster.id}/byos-vnet`,
+        ipRange ? { ipRange } : {},
+      );
+      this.log(
+        opId,
+        `✅ Private network registered as VNet (${res?.ipRange ?? 'derived'})`,
+      );
+    } catch (e) {
+      this.log(
+        opId,
+        `⚠ BYOS VNet registration skipped: ${(e as Error).message}`,
+        'WARN',
+      );
     }
   }
 
