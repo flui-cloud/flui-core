@@ -77,11 +77,18 @@ export class ClusterBillingService {
       throw new NotFoundException(`Cluster ${clusterId} not found`);
     }
 
+    const now = new Date();
+    const billingPeriod = this.computeBillingPeriod(now);
+
+    // BYOS (and any provider Flui doesn't price): no provider pricing API — you
+    // pay your own infra provider, Flui bills nothing — so report zeros, not 500.
+    if (!this.providerHasPricing(cluster.provider)) {
+      return this.zeroBilling(cluster, billingPeriod, now);
+    }
+
     const providerEnum = cluster.provider as CloudProvider;
     const provider = this.providerFactory.getProvider(providerEnum);
     const pricingMap = await this.getServerTypePricing(providerEnum, provider);
-    const now = new Date();
-    const billingPeriod = this.computeBillingPeriod(now);
 
     const [nodeMtd, volumeMtd, runRate, traffic] = await Promise.all([
       this.computeNodeMonthToDate(cluster, pricingMap, billingPeriod, now),
@@ -433,6 +440,57 @@ export class ClusterBillingService {
       overageBytes: 0,
       overageCostGross: '0.0000',
       overageCostNet: '0.0000',
+    };
+  }
+
+  private providerHasPricing(provider: string): boolean {
+    const supported = this.providerFactory.getSupportedProviders() as string[];
+    return supported.includes(provider);
+  }
+
+  private zeroBilling(
+    cluster: ClusterEntity,
+    billingPeriod: BillingPeriodDto,
+    now: Date,
+  ): ClusterBillingResponseDto {
+    const zeroBreakdown: BillingBreakdownDto = {
+      computeGross: '0.0000',
+      computeNet: '0.0000',
+      storageGross: '0.0000',
+      storageNet: '0.0000',
+      trafficGross: '0.0000',
+      trafficNet: '0.0000',
+    };
+    return {
+      clusterId: cluster.id,
+      clusterName: cluster.name,
+      provider: cluster.provider,
+      region: cluster.region,
+      currency: 'EUR',
+      billingPeriod,
+      monthToDate: {
+        totalGross: '0.0000',
+        totalNet: '0.0000',
+        breakdown: zeroBreakdown,
+        nodes: [],
+        volumes: [],
+        traffic: this.zeroTraffic(),
+      },
+      runRate: {
+        monthlyGross: '0.00',
+        monthlyNet: '0.00',
+        breakdown: {
+          computeGross: '0.00',
+          computeNet: '0.00',
+          storageGross: '0.00',
+          storageNet: '0.00',
+          trafficGross: '0.00',
+          trafficNet: '0.00',
+        },
+        activeNodes: 0,
+        activeVolumes: 0,
+      },
+      calculatedAt: now,
     };
   }
 
