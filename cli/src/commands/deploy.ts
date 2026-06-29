@@ -169,6 +169,12 @@ export default class Deploy extends Command {
         'Only use when you are certain the Dockerfile will succeed despite the warnings.',
       default: false,
     }),
+    'allow-master': Flags.boolean({
+      description:
+        'Allow dedicated (node-local) storage to be placed on the control-plane node ' +
+        'when the cluster has no worker. Escape hatch for single-node clusters (kind:CatalogApp).',
+      default: false,
+    }),
     'api-url': Flags.string({
       description:
         'Override the API base URL (e.g. http://localhost:3000/api/v1) for local-API testing against an unreleased backend. Default: active profile.',
@@ -524,6 +530,7 @@ export default class Deploy extends Command {
           ...(flags.hostname ? { hostnameMode: flags.hostname as string } : {}),
           ...(flags['skip-endpoint'] ? { skipEndpoint: true } : {}),
           ...(flags['no-tls'] ? { tls: false } : {}),
+          ...(flags['allow-master'] ? { allowMasterPlacement: true } : {}),
           ...(Object.keys(envOverrides).length > 0
             ? { envOverrides, userInputs: envOverrides }
             : {}),

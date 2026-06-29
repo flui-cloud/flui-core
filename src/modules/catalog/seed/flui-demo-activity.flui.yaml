@@ -1,0 +1,253 @@
+# Composed demo: app + Postgres + Redis + NATS installed/torn down as one.
+# INSERT on Postgres reaches the browser via pg_notify -> NATS -> Redis -> SSE.
+kind: CatalogApp
+apiVersion: flui/v1
+
+metadata:
+  id: flui-demo-activity
+  name: Flui Live Activity (demo)
+  description: >
+    A reference reactive app that demonstrates Flui's composed-install pattern.
+    A raw INSERT on Postgres flows through pg_notify -> NATS -> Redis -> SSE and
+    reaches the browser in ~1s with no refresh — all three components are
+    genuinely in the data path. Installing it provisions Postgres, Redis and NATS
+    together as a single application.
+  appKind: APPLICATION
+  category: demo
+  tags:
+    - demo
+    - reactive
+    - sse
+    - composed
+  license: MIT
+  version: '0.1.0'
+  maintainedAt: '2026-06-29'
+  # Unpublished until the app image is built & pushed to the image ref below.
+  draft: true
+  links:
+    source: https://github.com/flui-cloud/flui-demo-app
+  ratings:
+    wow: 4
+    utility: 3
+    euFit: 5
+    community: 3
+
+spec:
+  type: composed
+
+  domain:
+    auto: true
+    tls: true
+    userCustomizable: true
+
+  networking:
+    internal: demo.internal
+
+  components:
+    # Postgres — system of record (activity table + AFTER INSERT trigger).
+    - name: postgres
+      image:
+        registry: docker.io
+        repository: library/postgres
+        tag: '16-alpine'
+      ports:
+        - name: postgres
+          internal: 5432
+          expose: false
+          protocol: tcp
+      volumes:
+        - name: data
+          mountPath: /var/lib/postgresql/data
+          required: true
+          size: 5Gi
+      persistence:
+        scope: dedicated
+      env:
+        - name: POSTGRES_DB
+          value: '{{app.id}}'
+        - name: POSTGRES_USER
+          value: '{{app.id}}'
+        # Generated secret — plaintext never in the manifest.
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            generate: secret
+            length: 32
+        - name: PGDATA
+          value: /var/lib/postgresql/data/pgdata
+      resources:
+        requests: { cpu: 250m, memory: 256Mi }
+        limits: { cpu: '2', memory: 2Gi }
+      scaling:
+        horizontal: { enabled: false }
+        vertical:
+          enabled: true
+          mode: Recreate
+          bounds:
+            cpu: { min: 250m, max: '4' }
+            memory: { min: 256Mi, max: 8Gi }
+          updatePolicy:
+            trigger: [OOMKilled, CPUThrottling]
+            cooldown: 10m
+      healthcheck:
+        type: exec
+        command: [pg_isready, -U, '{{env.POSTGRES_USER}}']
+        initialDelay: 10s
+        interval: 10s
+        timeout: 5s
+        retries: 5
+
+    # Redis — hot feed + counter + top-action aggregates.
+    - name: redis
+      image:
+        registry: docker.io
+        repository: library/redis
+        tag: '8-alpine'
+      ports:
+        - name: redis
+          internal: 6379
+          expose: false
+          protocol: tcp
+      volumes:
+        - name: data
+          mountPath: /data
+          required: true
+          size: 1Gi
+      persistence:
+        scope: dedicated
+      env:
+        - name: REDIS_PASSWORD
+          valueFrom:
+            generate: secret
+            length: 32
+      # redis image ignores REDIS_PASSWORD; --requirepass expands from env at runtime.
+      startCommand: exec redis-server --requirepass "$REDIS_PASSWORD"
+      resources:
+        requests: { cpu: 100m, memory: 64Mi }
+        limits: { cpu: '1', memory: 512Mi }
+      scaling:
+        horizontal: { enabled: false }
+        vertical:
+          enabled: true
+          mode: Recreate
+          bounds:
+            cpu: { min: 100m, max: '2' }
+            memory: { min: 64Mi, max: 2Gi }
+          updatePolicy:
+            trigger: [OOMKilled, CPUThrottling]
+            cooldown: 10m
+      healthcheck:
+        type: exec
+        command: [redis-cli, ping]
+        initialDelay: 5s
+        interval: 10s
+        timeout: 3s
+        retries: 5
+
+    # NATS — carries feed.new from the pg relay to the consumer.
+    - name: nats
+      image:
+        registry: docker.io
+        repository: library/nats
+        tag: '2.10-alpine'
+      startCommand: 'nats-server --jetstream --store_dir=/data --http_port=8222'
+      ports:
+        - name: client
+          internal: 4222
+          expose: false
+          protocol: tcp
+        - name: monitoring
+          internal: 8222
+          expose: false
+          protocol: http
+      volumes:
+        - name: data
+          mountPath: /data
+          required: true
+          size: 1Gi
+      persistence:
+        scope: dedicated
+      env: []
+      resources:
+        requests: { cpu: 50m, memory: 64Mi }
+        limits: { cpu: '1', memory: 512Mi }
+      scaling:
+        horizontal: { enabled: false }
+        vertical:
+          enabled: true
+          mode: Recreate
+          bounds:
+            cpu: { min: 50m, max: '2' }
+            memory: { min: 64Mi, max: 2Gi }
+          updatePolicy:
+            trigger: [OOMKilled, CPUThrottling]
+            cooldown: 10m
+      healthcheck:
+        type: http
+        path: /healthz
+        port: 8222
+        initialDelay: 5s
+        interval: 10s
+        timeout: 5s
+        retries: 5
+
+    # App — relay + consumer + SSE + static page; the only public component.
+    - name: app
+      dependsOn: [postgres, redis, nats]
+      image:
+        registry: ghcr.io
+        repository: flui-cloud/flui-demo-app
+        tag: '0.1.0'
+      ports:
+        - name: http
+          internal: 3000
+          expose: true
+          protocol: http
+      # Wiring: {{components.*.host}} + generated secrets injected as Secret refs.
+      env:
+        - name: NODE_ENV
+          value: production
+        - name: GENERATOR_ENABLED
+          value: 'true'
+        - name: PGHOST
+          value: '{{components.postgres.host}}'
+        - name: PGPORT
+          value: '5432'
+        - name: PGUSER
+          value: '{{components.postgres.env.POSTGRES_USER}}'
+        - name: PGPASSWORD
+          value: '{{components.postgres.env.POSTGRES_PASSWORD}}'
+        - name: PGDATABASE
+          value: '{{components.postgres.env.POSTGRES_DB}}'
+        - name: REDIS_HOST
+          value: '{{components.redis.host}}'
+        - name: REDIS_PORT
+          value: '6379'
+        - name: REDIS_PASSWORD
+          value: '{{components.redis.env.REDIS_PASSWORD}}'
+        - name: NATS_HOST
+          value: '{{components.nats.host}}'
+        - name: NATS_PORT
+          value: '4222'
+      resources:
+        requests: { cpu: 100m, memory: 128Mi }
+        limits: { cpu: '1', memory: 256Mi }
+      scaling:
+        horizontal: { enabled: false }
+        vertical: { enabled: false }
+      healthcheck:
+        type: http
+        path: /health
+        port: 3000
+        initialDelay: 10s
+        interval: 10s
+        timeout: 5s
+        retries: 5
+
+  auth:
+    mode: none
+
+  smokeTest:
+    type: http
+    path: /health
+    expectedStatus: 200
+    timeoutSeconds: 60
