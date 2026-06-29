@@ -48,8 +48,9 @@ export class AppEndpointReconciliationService {
       endpoint.certificateProvider ??
       endpoint.clusterDnsZone?.certificateProvider;
     if (explicit) return explicit;
+    // Default-on per-host LE cert for nip.io endpoints; opt out with FLUI_NIPIO_TLS=false.
     if (
-      process.env.FLUI_NIPIO_TLS === 'true' &&
+      process.env.FLUI_NIPIO_TLS !== 'false' &&
       endpoint.certificateRequired &&
       !endpoint.fqdn.startsWith('*.')
     ) {

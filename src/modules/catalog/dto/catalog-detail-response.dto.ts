@@ -148,6 +148,17 @@ export class CatalogOptionDto {
   default: boolean;
 }
 
+export class CatalogDefaultCredentialsDto {
+  @ApiPropertyOptional({ example: 'admin' })
+  username?: string;
+
+  @ApiPropertyOptional({ example: 'umami' })
+  password?: string;
+
+  @ApiPropertyOptional({ description: 'Hint shown with the credentials.' })
+  changeNote?: string;
+}
+
 export class CatalogDetailResponseDto extends CatalogResponseDto {
   @ApiProperty({ type: [CatalogUserInputPromptDto] })
   userInputPrompts: CatalogUserInputPromptDto[];
@@ -206,6 +217,13 @@ export class CatalogDetailResponseDto extends CatalogResponseDto {
       'Manifest-declared install-time feature toggles (spec.options). Present only for composed apps that declare options (e.g. Nextcloud → "office"/Collabora); omitted otherwise. Each toggle the user enables is sent back as InstallCatalogAppDto.options[key] = true.',
   })
   options?: CatalogOptionDto[];
+
+  @ApiPropertyOptional({
+    type: CatalogDefaultCredentialsDto,
+    description:
+      'Built-in login the app ships with (e.g. admin/umami); shown read-only at install. Flui does not set or rotate it.',
+  })
+  defaultCredentials?: CatalogDefaultCredentialsDto;
 
   @ApiProperty({
     enum: ['public', 'internal'],

@@ -357,6 +357,11 @@ export class CatalogService {
       description?: string;
       default: boolean;
     }>;
+    defaultCredentials?: {
+      username?: string;
+      password?: string;
+      changeNote?: string;
+    };
   } {
     const spec = manifest.spec;
     const envVars = this.collectEnvVars(spec);
@@ -405,6 +410,11 @@ export class CatalogService {
       spec.type === CatalogAppType.COMPOSED
         ? spec.domain
         : undefined;
+    const defaultCredentials =
+      spec.type === CatalogAppType.STANDALONE ||
+      spec.type === CatalogAppType.COMPOSED
+        ? spec.defaultCredentials
+        : undefined;
     return {
       userInputPrompts: this.buildUserInputPrompts(envVars),
       editableEnv: this.buildEditableEnv(envVars),
@@ -434,6 +444,7 @@ export class CatalogService {
         : undefined,
       auth: this.buildAuthPreview(spec),
       options: this.buildOptionsPreview(spec),
+      defaultCredentials,
     };
   }
 

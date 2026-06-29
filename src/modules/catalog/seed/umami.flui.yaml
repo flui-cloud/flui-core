@@ -172,6 +172,12 @@ spec:
   auth:
     mode: native
 
+  # Built-in admin Umami ships with (no env to set it); surfaced at install.
+  defaultCredentials:
+    username: admin
+    password: umami
+    changeNote: Change the password immediately from Settings → Profile after your first login.
+
   smokeTest:
     type: http
     path: /api/heartbeat

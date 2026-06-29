@@ -125,6 +125,7 @@ export interface CatalogSpecStandalone {
    */
   linkedBuildingBlocks?: CatalogLinkedBuildingBlock[];
   dependencies?: CatalogDependency[];
+  defaultCredentials?: CatalogDefaultCredentials;
   smokeTest?: CatalogSmokeTest;
 }
 
@@ -196,7 +197,15 @@ export interface CatalogSpecComposed {
   auth?: CatalogAuth;
   options?: CatalogOption[];
   postInstall?: CatalogPostInstallStep[];
+  defaultCredentials?: CatalogDefaultCredentials;
   components: CatalogComponent[];
+}
+
+/** A login the image ships with (Flui doesn't set/rotate it); shown to the user at install. */
+export interface CatalogDefaultCredentials {
+  username?: string;
+  password?: string;
+  changeNote?: string;
 }
 
 export interface CatalogOption {

@@ -1,5 +1,3 @@
-# Composed demo: app + Postgres + Redis + NATS installed/torn down as one.
-# INSERT on Postgres reaches the browser via pg_notify -> NATS -> Redis -> SSE.
 kind: CatalogApp
 apiVersion: flui/v1
 
@@ -44,7 +42,6 @@ spec:
     internal: demo.internal
 
   components:
-    # Postgres — system of record (activity table + AFTER INSERT trigger).
     - name: postgres
       image:
         registry: docker.io
@@ -67,7 +64,6 @@ spec:
           value: '{{app.id}}'
         - name: POSTGRES_USER
           value: '{{app.id}}'
-        # Generated secret — plaintext never in the manifest.
         - name: POSTGRES_PASSWORD
           valueFrom:
             generate: secret
@@ -96,7 +92,6 @@ spec:
         timeout: 5s
         retries: 5
 
-    # Redis — hot feed + counter + top-action aggregates.
     - name: redis
       image:
         registry: docker.io
@@ -143,7 +138,6 @@ spec:
         timeout: 3s
         retries: 5
 
-    # NATS — carries feed.new from the pg relay to the consumer.
     - name: nats
       image:
         registry: docker.io
@@ -190,7 +184,6 @@ spec:
         timeout: 5s
         retries: 5
 
-    # App — relay + consumer + SSE + static page; the only public component.
     - name: app
       dependsOn: [postgres, redis, nats]
       image:
@@ -202,7 +195,6 @@ spec:
           internal: 3000
           expose: true
           protocol: http
-      # Wiring: {{components.*.host}} + generated secrets injected as Secret refs.
       env:
         - name: NODE_ENV
           value: production
