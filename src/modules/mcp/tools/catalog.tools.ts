@@ -1,5 +1,7 @@
+import { NotFoundException } from '@nestjs/common';
 import { z } from 'zod';
 import { InstallCatalogAppDto } from '../../catalog/dto/install-catalog-app.dto';
+import { rankBySimilarity } from '../../catalog/utils/catalog-fuzzy.util';
 import { MCP_SCOPE } from '../constants/mcp-scopes';
 import {
   defineTool,
@@ -14,19 +16,27 @@ export const CATALOG_TOOLS: ToolDef[] = [
   defineTool({
     name: 'catalog_search',
     description:
-      'Search the Flui catalog of installable apps and building blocks. Optional filters: free-text search, category, tags.',
+      'Search the Flui catalog of installable apps and building blocks by free-text name, category, or tags. The search is tolerant: if no exact match is found it falls back to the closest apps by name similarity, so prefer searching by the app NAME the user said rather than guessing a slug. Results may be near-matches ranked by relevance — read the `name` to pick the right one (confirm with the user if ambiguous).',
     scope: MCP_SCOPE.CATALOG_READ,
     inputSchema: {
       search: z.string().optional(),
       category: z.string().optional(),
       tags: z.array(z.string()).optional(),
     },
-    run: (args, ctx) =>
-      ctx.services.catalog.listPublic({
+    run: async (args, ctx) => {
+      const results = await ctx.services.catalog.listPublic({
         search: args.search,
         category: args.category,
         tags: args.tags,
-      }),
+      });
+      if (results.length > 0 || !args.search) return results;
+      // Substring LIKE missed — rank by similarity so a near-name still surfaces.
+      const pool = await ctx.services.catalog.listPublic({
+        category: args.category,
+        tags: args.tags,
+      });
+      return rankBySimilarity(args.search, pool);
+    },
     // A catalog listing can be long — the model gets the essentials.
     forModel: (data) => {
       const apps = data as Array<{
@@ -46,7 +56,7 @@ export const CATALOG_TOOLS: ToolDef[] = [
   defineTool({
     name: 'catalog_get_app',
     description:
-      'Get the full detail of one catalog app by slug: required user inputs, dependencies, exposure, and whether it can be installed on the target cluster right now. ALWAYS call this before app_install and check `installable` — if it is false the install will be refused, so tell the user the missing requirement (e.g. the cluster needs DNS + TLS for internal apps) and how to resolve it instead of attempting the install. The cluster is auto-resolved when there is a single one.',
+      'Get the full detail of one catalog app by slug: required user inputs, dependencies, exposure, and whether it can be installed on the target cluster right now. ALWAYS call this before app_install and check `installable` — if it is false the install will be refused, so tell the user the missing requirement (e.g. the cluster needs DNS + TLS for internal apps) and how to resolve it instead of attempting the install. If the slug is wrong the error lists the closest slugs ("did you mean …") — retry with one of those rather than telling the user the app is absent. The cluster is auto-resolved when there is a single one.',
     scope: MCP_SCOPE.CATALOG_READ,
     inputSchema: {
       slug: z.string(),
@@ -63,7 +73,21 @@ export const CATALOG_TOOLS: ToolDef[] = [
           clusterId = undefined;
         }
       }
-      return ctx.services.catalog.getDetailBySlug(args.slug, clusterId);
+      try {
+        return await ctx.services.catalog.getDetailBySlug(args.slug, clusterId);
+      } catch (err) {
+        // Surface the closest slugs on a wrong guess so the model retries.
+        if (!(err instanceof NotFoundException)) throw err;
+        const suggestions = rankBySimilarity(
+          args.slug,
+          await ctx.services.catalog.listPublic({}),
+        );
+        if (!suggestions.length) throw err;
+        const list = suggestions.map((s) => `${s.slug} (${s.name})`).join(', ');
+        throw new NotFoundException(
+          `Catalog app "${args.slug}" not found. Did you mean: ${list}? Retry with the exact slug.`,
+        );
+      }
     },
     forModel: (data) => {
       const d = data as {
