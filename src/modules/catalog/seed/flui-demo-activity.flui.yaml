@@ -20,8 +20,6 @@ metadata:
   license: MIT
   version: '0.1.0'
   maintainedAt: '2026-06-29'
-  # Unpublished until the app image is built & pushed to the image ref below.
-  draft: true
   links:
     source: https://github.com/flui-cloud/flui-demo-app
   ratings:
