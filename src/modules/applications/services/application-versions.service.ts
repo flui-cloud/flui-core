@@ -18,6 +18,7 @@ import {
 } from '../constants/system-app-catalog';
 import { ApplicationEntity } from '../entities/application.entity';
 import { matchesAnyPattern } from '../utils/version-pattern';
+import { sortVersionsForDisplay } from '../utils/version-ordering.util';
 import { ApplicationReleaseService } from './application-release.service';
 import { ApplicationReleaseDto } from '../dto/application-release.dto';
 import { GhcrTagDto } from '../../image-registry/dto/ghcr.dto';
@@ -249,10 +250,12 @@ export class ApplicationVersionsService {
     if (!current.digest && !current.tag) {
       return {
         ...response,
-        versions: response.versions.map((v) => ({
-          ...v,
-          isCurrentlyDeployed: false,
-        })),
+        versions: sortVersionsForDisplay(
+          response.versions.map((v) => ({
+            ...v,
+            isCurrentlyDeployed: false,
+          })),
+        ),
       };
     }
     let alreadyFlagged = false;
@@ -270,7 +273,7 @@ export class ApplicationVersionsService {
       if (isCurrent) alreadyFlagged = true;
       return { ...v, isCurrentlyDeployed: isCurrent };
     });
-    return { ...response, versions };
+    return { ...response, versions: sortVersionsForDisplay(versions) };
   }
 
   // Hides platform-specific manifests of a multi-platform buildx push (the
