@@ -1,6 +1,6 @@
 {
   "name": "@flui-cloud/cli",
-  "version": "0.6.1",
+  "version": "0.7.0",
   "description": "Command-line interface for Flui — the open-source platform to deploy applications across cloud providers and your own servers.",
   "author": "Flui <hello@flui.cloud>",
   "license": "AGPL-3.0-or-later",

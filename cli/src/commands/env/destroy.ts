@@ -25,6 +25,11 @@ export default class EnvDestroy extends Command {
   static readonly examples = [
     '<%= config.bin %> <%= command.id %>',
     '<%= config.bin %> <%= command.id %> --force',
+    {
+      description:
+        'BYOS: de-register the cluster but leave Flui running on the host',
+      command: '<%= config.bin %> <%= command.id %> --keep-host',
+    },
   ];
 
   static readonly flags = {
@@ -35,17 +40,22 @@ export default class EnvDestroy extends Command {
     }),
     'purge-host': Flags.boolean({
       description:
-        'BYOS: also uninstall Flui from the host over SSH (k3s, data, firewall, kubeconfig) — leaving a clean, reinstall-ready machine. SSH trust is kept so `env create --host` can run again.',
+        'BYOS: uninstall Flui from the host over SSH (k3s, data, firewall, kubeconfig) — leaving a clean, reinstall-ready machine. This is the DEFAULT for BYOS now; the flag is kept for explicitness. SSH trust is kept so `env create --host` can run again.',
+      default: false,
+    }),
+    'keep-host': Flags.boolean({
+      description:
+        'BYOS: de-register the cluster but leave Flui running on the host (skip teardown). The host stays dirty — a reinstall on it will fail until cleaned.',
       default: false,
     }),
     'remove-access': Flags.boolean({
       description:
-        'BYOS (with --purge-host): full decommission — also remove Flui’s SSH CA trust and managed key and re-enable password login, so the host no longer trusts Flui.',
+        'BYOS: full decommission — also remove Flui’s SSH CA trust and managed key and re-enable password login, so the host no longer trusts Flui.',
       default: false,
     }),
     'dry-run': Flags.boolean({
       description:
-        'BYOS (with --purge-host): print the host teardown script without running it or deleting anything.',
+        'BYOS: print the host teardown script without running it or deleting anything.',
       default: false,
     }),
     host: Flags.string({
@@ -366,7 +376,7 @@ export default class EnvDestroy extends Command {
     app: INestApplication,
     flags: Record<string, unknown>,
   ): Promise<void> {
-    if ((flags['purge-host'] || flags['remove-access']) && flags.host) {
+    if (flags.host) {
       await this.runOrphanPurge(app, flags);
       return;
     }
@@ -385,9 +395,7 @@ export default class EnvDestroy extends Command {
       return;
     }
     console.log(
-      chalk.dim(
-        '\n   --dry-run applies only with --purge-host on a BYOS cluster.\n',
-      ),
+      chalk.dim('\n   --dry-run applies only to BYOS host teardown.\n'),
     );
   }
 
@@ -422,7 +430,6 @@ export default class EnvDestroy extends Command {
 
       // Find control cluster
       const cluster = await controlService.getControlCluster();
-      const wantPurge = !!(flags['purge-host'] || flags['remove-access']);
 
       if (!cluster) {
         spinner.stop();
@@ -431,6 +438,13 @@ export default class EnvDestroy extends Command {
       }
 
       spinner.succeed('Cluster found');
+
+      // BYOS has no provider servers to delete, so destroy cleans the host
+      // itself (else a reinstall on it fails); --keep-host opts out.
+      const isByos = (cluster.provider as CloudProvider) === CloudProvider.BYOS;
+      const wantPurge = isByos
+        ? !flags['keep-host']
+        : !!(flags['purge-host'] || flags['remove-access']);
 
       this.printClusterInfo(cluster);
 
