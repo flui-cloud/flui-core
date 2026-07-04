@@ -46,6 +46,7 @@ import { HealthModule } from './modules/common/health/health.module';
 import { StartupHealthCheckService } from './modules/common/health/startup-health-check.service';
 import { DnsModule } from './modules/dns/dns.module';
 import { DnsZoneEntity } from './modules/dns/entities/dns-zone.entity';
+import { DnsZoneReplicaEntity } from './modules/dns/entities/dns-zone-replica.entity';
 import { ClusterDnsZoneEntity } from './modules/dns/entities/cluster-dns-zone.entity';
 import { AppEndpointEntity } from './modules/dns/entities/app-endpoint.entity';
 import { WildcardCertificateEntity } from './modules/dns/entities/wildcard-certificate.entity';
@@ -138,6 +139,7 @@ import { ProjectEntity } from './modules/projects/entities/project.entity';
           VNetSubnetEntity,
           VNetRouteEntity,
           DnsZoneEntity,
+          DnsZoneReplicaEntity,
           ClusterDnsZoneEntity,
           AppEndpointEntity,
           WildcardCertificateEntity,

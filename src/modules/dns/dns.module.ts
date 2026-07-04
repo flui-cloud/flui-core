@@ -10,6 +10,7 @@ import { OidcModule } from '../oidc/oidc.module';
 import { WsAuthModule } from '../auth/ws-auth.module';
 
 import { DnsZoneEntity } from './entities/dns-zone.entity';
+import { DnsZoneReplicaEntity } from './entities/dns-zone-replica.entity';
 import { ClusterDnsZoneEntity } from './entities/cluster-dns-zone.entity';
 import { AppEndpointEntity } from './entities/app-endpoint.entity';
 import { WildcardCertificateEntity } from './entities/wildcard-certificate.entity';
@@ -37,8 +38,12 @@ import { ReflectorInstallerService } from './services/reflector-installer.servic
 import { SystemIngressService } from './services/system-ingress.service';
 import { ClusterDnsCleanupService } from './services/cluster-dns-cleanup.service';
 import { EndpointModeResolverService } from './services/endpoint-mode-resolver.service';
+import { DnsZoneReconciliationService } from './services/dns-zone-reconciliation.service';
+import { DnsZoneReplicaService } from './services/dns-zone-replica.service';
+import { DnsZoneReconciliationScheduler } from './schedulers/dns-zone-reconciliation.scheduler';
 
 import { DnsZoneController } from './controllers/dns-zone.controller';
+import { DnsZoneReplicaController } from './controllers/dns-zone-replica.controller';
 import { ClusterDnsZoneController } from './controllers/cluster-dns-zone.controller';
 import { AppEndpointController } from './controllers/app-endpoint.controller';
 import { SanCertificateController } from './controllers/san-certificate.controller';
@@ -49,6 +54,7 @@ import { ClusterDnsGateway } from './gateway/cluster-dns.gateway';
     ConfigModule,
     TypeOrmModule.forFeature([
       DnsZoneEntity,
+      DnsZoneReplicaEntity,
       ClusterDnsZoneEntity,
       AppEndpointEntity,
       WildcardCertificateEntity,
@@ -83,9 +89,13 @@ import { ClusterDnsGateway } from './gateway/cluster-dns.gateway';
     ClusterAuthzInstallRepository,
     ClusterDnsCleanupService,
     EndpointModeResolverService,
+    DnsZoneReconciliationService,
+    DnsZoneReplicaService,
+    DnsZoneReconciliationScheduler,
   ],
   controllers: [
     DnsZoneController,
+    DnsZoneReplicaController,
     ClusterDnsZoneController,
     AppEndpointController,
     SanCertificateController,

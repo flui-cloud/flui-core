@@ -1360,6 +1360,18 @@ export class ClusterDnsZoneService {
             zoneName: assignment.dnsZone.zoneName,
             dnsProvider: assignment.dnsZone.dnsProvider,
             description: assignment.dnsZone.description,
+            recordTtlSeconds: assignment.dnsZone.recordTtlSeconds,
+            replicas: (assignment.dnsZone.replicas ?? []).map((r) => ({
+              id: r.id,
+              dnsZoneId: r.dnsZoneId,
+              dnsProvider: r.dnsProvider,
+              providerZoneId: r.providerZoneId,
+              status: r.status,
+              lastReconciledAt: r.lastReconciledAt ?? null,
+              errorMessage: r.errorMessage ?? null,
+              createdAt: r.createdAt,
+              updatedAt: r.updatedAt,
+            })),
             createdAt: assignment.dnsZone.createdAt,
             updatedAt: assignment.dnsZone.updatedAt,
           }

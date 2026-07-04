@@ -1,5 +1,6 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { DnsProvider } from '../../providers/enums/dns-provider.enum';
+import { DnsZoneReplicaResponseDto } from './dns-zone-replica-response.dto';
 
 export class DnsZoneResponseDto {
   @ApiProperty()
@@ -16,6 +17,18 @@ export class DnsZoneResponseDto {
 
   @ApiPropertyOptional()
   description: string;
+
+  @ApiProperty({
+    description: 'TTL applied to records Flui writes into this zone (seconds).',
+  })
+  recordTtlSeconds: number;
+
+  @ApiProperty({
+    type: [DnsZoneReplicaResponseDto],
+    description:
+      'Redundancy replicas of this zone on additional DNS providers.',
+  })
+  replicas: DnsZoneReplicaResponseDto[];
 
   @ApiProperty()
   createdAt: Date;

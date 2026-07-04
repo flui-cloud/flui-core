@@ -12,6 +12,7 @@ import { WildcardCertificateService } from './wildcard-certificate.service';
 import { SanCertificateService } from './san-certificate.service';
 import { AppEndpointEntity } from '../entities/app-endpoint.entity';
 import { ClusterDnsZoneEntity } from '../entities/cluster-dns-zone.entity';
+import { DnsZoneEntity } from '../entities/dns-zone.entity';
 import { DnsRecordInfo } from '../../providers/interfaces/dns-provider.interface';
 import { CertificateStatus } from '../../providers/interfaces/certificate-provider.interface';
 import { CertificateProvider } from '../../providers/enums/certificate-provider.enum';
@@ -21,6 +22,8 @@ import { HostnameMode } from '../enums/hostname-mode.enum';
 import { CertChallenge } from '../enums/cert-challenge.enum';
 import { ClusterAuthzInstallRepository } from '../../authz/repositories/cluster-authz-install.repository';
 import { ClusterDnsGateway } from '../gateway/cluster-dns.gateway';
+import { DnsZoneReconciliationService } from './dns-zone-reconciliation.service';
+import { resolveRecordName } from '../utils/resolve-record-name.util';
 
 @Injectable()
 export class AppEndpointReconciliationService {
@@ -39,6 +42,7 @@ export class AppEndpointReconciliationService {
     private readonly wildcardCertificateService: WildcardCertificateService,
     private readonly sanCertificateService: SanCertificateService,
     private readonly clusterDnsGateway: ClusterDnsGateway,
+    private readonly dnsZoneReconciliationService: DnsZoneReconciliationService,
   ) {}
 
   private resolveCertProvider(
@@ -433,8 +437,8 @@ export class AppEndpointReconciliationService {
     }
 
     if (endpoint.dnsRecordId && endpoint.clusterDnsZone) {
+      const dnsZone = endpoint.clusterDnsZone.dnsZone;
       try {
-        const dnsZone = endpoint.clusterDnsZone.dnsZone;
         const dnsProvider = this.dnsProviderFactory.getDnsProviderOrFail(
           dnsZone.dnsProvider,
         );
@@ -450,6 +454,13 @@ export class AppEndpointReconciliationService {
           `Failed to delete DNS record for endpoint ${endpointId}: ${error.message}`,
         );
       }
+
+      // Mirror the delete to any redundancy replicas (best-effort, never throws).
+      await this.dnsZoneReconciliationService.fanOutDeleteToReplicas(
+        dnsZone,
+        resolveRecordName(endpoint.fqdn, dnsZone.zoneName),
+        endpoint.dnsRecordType,
+      );
     }
   }
 
@@ -700,10 +711,6 @@ export class AppEndpointReconciliationService {
     cluster: ClusterEntity,
   ): Promise<DnsRecordInfo> {
     const dnsZone = clusterDnsZone.dnsZone;
-    const dnsProvider = this.dnsProviderFactory.getDnsProviderOrFail(
-      dnsZone.dnsProvider,
-    );
-
     const recordValue = endpoint.dnsRecordValue ?? cluster.masterIpAddress;
     if (!recordValue) {
       throw new Error(
@@ -712,7 +719,40 @@ export class AppEndpointReconciliationService {
       );
     }
 
-    const recordName = this.resolveRecordName(endpoint.fqdn, dnsZone.zoneName);
+    const recordName = resolveRecordName(endpoint.fqdn, dnsZone.zoneName);
+    const ttl = dnsZone.recordTtlSeconds;
+
+    const primary = await this.writePrimaryRecord(
+      endpoint,
+      dnsZone,
+      cluster,
+      recordName,
+      recordValue,
+      ttl,
+    );
+
+    // Publish the same record to any redundancy replicas (best-effort, never throws).
+    await this.dnsZoneReconciliationService.fanOutRecordToReplicas(dnsZone, {
+      name: recordName,
+      type: endpoint.dnsRecordType,
+      value: recordValue,
+      ttl,
+    });
+
+    return primary;
+  }
+
+  private async writePrimaryRecord(
+    endpoint: AppEndpointEntity,
+    dnsZone: DnsZoneEntity,
+    cluster: ClusterEntity,
+    recordName: string,
+    recordValue: string,
+    ttl: number,
+  ): Promise<DnsRecordInfo> {
+    const dnsProvider = this.dnsProviderFactory.getDnsProviderOrFail(
+      dnsZone.dnsProvider,
+    );
 
     if (endpoint.dnsRecordId) {
       const existing = await dnsProvider.getRecord(
@@ -730,7 +770,7 @@ export class AppEndpointReconciliationService {
           type: endpoint.dnsRecordType,
           name: recordName,
           value: recordValue,
-          ttl: 300,
+          ttl,
         });
       }
 
@@ -747,7 +787,7 @@ export class AppEndpointReconciliationService {
       type: endpoint.dnsRecordType,
       name: recordName,
       value: recordValue,
-      ttl: 300,
+      ttl,
       labels: {
         'managed-by': 'flui-cloud',
         'flui-resource-type': 'dns-record',
@@ -1048,18 +1088,6 @@ export class AppEndpointReconciliationService {
     // Traefik middleware reference format for CRD provider:
     // `<namespace>-<name>@kubernetescrd`
     return `${namespace}-${middlewareName}@kubernetescrd`;
-  }
-
-  private resolveRecordName(fqdn: string, zoneName: string): string {
-    if (fqdn === zoneName) {
-      return '@';
-    }
-
-    if (fqdn.endsWith(`.${zoneName}`)) {
-      return fqdn.slice(0, fqdn.length - zoneName.length - 1);
-    }
-
-    return fqdn;
   }
 
   private async getCluster(clusterId: string): Promise<ClusterEntity> {

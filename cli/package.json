@@ -118,6 +118,15 @@
       },
       "vnet": {
         "description": "Virtual network management"
+      },
+      "dns": {
+        "description": "DNS zones and dual-provider redundancy"
+      },
+      "dns:zone": {
+        "description": "Inspect DNS zones and their redundancy replicas"
+      },
+      "dns:replica": {
+        "description": "Manage dual-provider DNS redundancy replicas"
       }
     }
   },

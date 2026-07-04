@@ -139,6 +139,18 @@ export class DnsZoneService {
       zoneName: zone.zoneName,
       dnsProvider: zone.dnsProvider,
       description: zone.description,
+      recordTtlSeconds: zone.recordTtlSeconds,
+      replicas: (zone.replicas ?? []).map((r) => ({
+        id: r.id,
+        dnsZoneId: r.dnsZoneId,
+        dnsProvider: r.dnsProvider,
+        providerZoneId: r.providerZoneId,
+        status: r.status,
+        lastReconciledAt: r.lastReconciledAt ?? null,
+        errorMessage: r.errorMessage ?? null,
+        createdAt: r.createdAt,
+        updatedAt: r.updatedAt,
+      })),
       createdAt: zone.createdAt,
       updatedAt: zone.updatedAt,
     };
