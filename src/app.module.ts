@@ -82,6 +82,7 @@ import { ObjectStoreShareEntity } from './modules/database-console/entities/obje
 import { AuthzModule } from './modules/authz/authz.module';
 import { ClusterAuthzInstallEntity } from './modules/authz/entities/cluster-authz-install.entity';
 import { BackupsModule } from './modules/backups/backups.module';
+import { DbLifecycleModule } from './modules/db-lifecycle/db-lifecycle.module';
 import { StorageModule } from './modules/storage/storage.module';
 import { BackupDestinationEntity } from './modules/backups/entities/backup-destination.entity';
 import { BackupPolicyEntity } from './modules/backups/entities/backup-policy.entity';
@@ -90,6 +91,12 @@ import { BackupJobEntity } from './modules/backups/entities/backup-job.entity';
 import { BackupArtifactEntity } from './modules/backups/entities/backup-artifact.entity';
 import { BackupArtifactLocationEntity } from './modules/backups/entities/backup-artifact-location.entity';
 import { RestoreJobEntity } from './modules/backups/entities/restore-job.entity';
+import { DbReplicationLinkEntity } from './modules/db-lifecycle/entities/db-replication-link.entity';
+import { DbMigrationEntity } from './modules/db-lifecycle/entities/db-migration.entity';
+import { AppMigrationModule } from './modules/app-migration/app-migration.module';
+import { AppMigrationEntity } from './modules/app-migration/entities/app-migration.entity';
+import { FullMigrationModule } from './modules/full-migration/full-migration.module';
+import { FullMigrationEntity } from './modules/full-migration/entities/full-migration.entity';
 import { VisualizationsModule } from './modules/visualizations/visualizations.module';
 import { TopologyModule } from './modules/topology/topology.module';
 import { DatabaseConsoleModule } from './modules/database-console/database-console.module';
@@ -172,6 +179,10 @@ import { ProjectEntity } from './modules/projects/entities/project.entity';
           IamRoleBindingEntity,
           IamGroupEntity,
           ProjectEntity,
+          DbReplicationLinkEntity,
+          DbMigrationEntity,
+          AppMigrationEntity,
+          FullMigrationEntity,
         ],
         synchronize: true, // Solo per development!
       }),
@@ -217,6 +228,9 @@ import { ProjectEntity } from './modules/projects/entities/project.entity';
     AuthzModule,
     StorageModule,
     BackupsModule,
+    DbLifecycleModule,
+    AppMigrationModule,
+    FullMigrationModule,
     VisualizationsModule,
     TopologyModule,
     DatabaseConsoleModule,

@@ -68,6 +68,12 @@ export enum OperationType {
   APP_SNAPSHOT_RESTORE = 'app_snapshot_restore',
   APP_VOLUME_SWAP = 'app_volume_swap',
   APP_BACKUP_CREATE = 'app_backup_create',
+  // Database lifecycle
+  MIGRATE_DATABASE = 'migrate_database',
+  // Application lifecycle
+  MIGRATE_APPLICATION = 'migrate_application',
+  // Full-app lifecycle (app + DB)
+  MIGRATE_FULL_APP = 'migrate_full_app',
 }
 
 export enum OperationStatus {
@@ -269,6 +275,27 @@ export enum OperationStep {
   QUICK_SETUP_INSTALL_VELERO = 'quick_setup_install_velero',
   QUICK_SETUP_RUN_FIRST_BACKUP = 'quick_setup_run_first_backup',
   QUICK_SETUP_FINALIZE = 'quick_setup_finalize',
+
+  // Database migration machine
+  DB_MIGRATE_PROVISION_TARGET = 'db_migrate_provision_target',
+  DB_MIGRATE_REPLICATE = 'db_migrate_replicate',
+  DB_MIGRATE_SYNCED = 'db_migrate_synced',
+  DB_MIGRATE_CUTOVER = 'db_migrate_cutover',
+  DB_MIGRATE_RESTORE = 'db_migrate_restore',
+
+  // Application migration machine
+  APP_MIGRATE_PROVISION_TARGET = 'app_migrate_provision_target',
+  APP_MIGRATE_READY = 'app_migrate_ready',
+  APP_MIGRATE_CUTOVER = 'app_migrate_cutover',
+
+  // Full-app migration orchestrator
+  FULL_MIGRATE_DB_REPLICATE = 'full_migrate_db_replicate',
+  FULL_MIGRATE_APP_STAGE = 'full_migrate_app_stage',
+  FULL_MIGRATE_READY = 'full_migrate_ready',
+  FULL_MIGRATE_DB_CUTOVER = 'full_migrate_db_cutover',
+  FULL_MIGRATE_REWIRE = 'full_migrate_rewire',
+  FULL_MIGRATE_APP_START = 'full_migrate_app_start',
+  FULL_MIGRATE_DNS_CUTOVER = 'full_migrate_dns_cutover',
 }
 
 // Base metadata interface - allows additional runtime properties

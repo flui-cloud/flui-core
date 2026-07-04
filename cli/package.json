@@ -119,6 +119,18 @@
       "vnet": {
         "description": "Virtual network management"
       },
+      "migrate": {
+        "description": "Move apps and managed databases between clusters (workload re-point, DB migration, full-app)"
+      },
+      "migrate:app": {
+        "description": "Move an app's workload to another cluster (stateless re-point)"
+      },
+      "migrate:db": {
+        "description": "Move a managed Postgres to another cluster (live replication or PITR restore)"
+      },
+      "migrate:full": {
+        "description": "Move an app together with its managed Postgres in one orchestrated cutover"
+      },
       "dns": {
         "description": "DNS zones and dual-provider redundancy"
       },

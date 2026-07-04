@@ -26,6 +26,7 @@ import { AppResourcesRepository } from './repositories/app-resources.repository'
 import { ApplicationService } from './services/application.service';
 import { ApplicationGroupingService } from './services/application-grouping.service';
 import { ApplicationManifestGeneratorService } from './services/application-manifest-generator.service';
+import { ApplicationMaterializerService } from './services/application-materializer.service';
 import { ApplicationDeployService } from './services/application-deploy.service';
 import { DeployConfigService } from './services/deploy-config.service';
 import { ApplicationReconciliationService } from './services/application-reconciliation.service';
@@ -115,6 +116,7 @@ import { StorageModule } from '../storage/storage.module';
     ApplicationService,
     ApplicationGroupingService,
     ApplicationManifestGeneratorService,
+    ApplicationMaterializerService,
     ApplicationDeployService,
     DeployConfigService,
     ApplicationReconciliationService,
@@ -142,6 +144,7 @@ import { StorageModule } from '../storage/storage.module';
     ApplicationAccessService,
     ApplicationService,
     ApplicationDeployService,
+    ApplicationMaterializerService,
     ApplicationSourceDeployService,
     ApplicationReconciliationService,
     ApplicationsRepository,
