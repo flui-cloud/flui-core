@@ -40,6 +40,10 @@ spec:
             - mountPath: /credentials
               name: cloud-credentials
           env:
+            - name: NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
             - name: VELERO_NAMESPACE
               valueFrom:
                 fieldRef:

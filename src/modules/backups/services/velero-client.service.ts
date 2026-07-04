@@ -30,6 +30,16 @@ export interface CreateVeleroRestoreSpec {
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+// FailedValidation is terminal too (bad BSL/creds/region, or the backup not yet
+// synced on the target). Omitting it makes the waiters spin for the full poll
+// timeout and surface a misleading "did not complete" instead of the real error.
+const TERMINAL_VELERO_PHASES = new Set([
+  'Completed',
+  'PartiallyFailed',
+  'Failed',
+  'FailedValidation',
+]);
+
 @Injectable()
 export class VeleroClientService {
   private readonly logger = new Logger(VeleroClientService.name);
@@ -121,7 +131,7 @@ export class VeleroClientService {
     while (Date.now() - start < timeoutMs) {
       const obj: any = await this.getBackup(kubeconfig, name);
       const phase = obj?.body?.status?.phase ?? obj?.status?.phase;
-      if (phase && ['Completed', 'PartiallyFailed', 'Failed'].includes(phase)) {
+      if (phase && TERMINAL_VELERO_PHASES.has(phase)) {
         return obj?.body ?? obj;
       }
       await sleep(VELERO_BACKUP_POLL_INTERVAL_MS);
@@ -138,11 +148,70 @@ export class VeleroClientService {
     while (Date.now() - start < timeoutMs) {
       const obj: any = await this.getRestore(kubeconfig, name);
       const phase = obj?.body?.status?.phase ?? obj?.status?.phase;
-      if (phase && ['Completed', 'PartiallyFailed', 'Failed'].includes(phase)) {
+      if (phase && TERMINAL_VELERO_PHASES.has(phase)) {
         return obj?.body ?? obj;
       }
       await sleep(VELERO_BACKUP_POLL_INTERVAL_MS);
     }
     throw new Error(`Velero Restore ${name} did not complete within timeout`);
+  }
+
+  async waitForBackupSynced(
+    kubeconfig: string,
+    name: string,
+    timeoutMs: number = 3 * 60 * 1000,
+  ): Promise<void> {
+    const start = Date.now();
+    while (Date.now() - start < timeoutMs) {
+      const obj = await this.getBackup(kubeconfig, name);
+      if (obj) return;
+      await sleep(VELERO_BACKUP_POLL_INTERVAL_MS);
+    }
+    throw new Error(
+      `Velero Backup ${name} was not synced to the target cluster within ${timeoutMs}ms`,
+    );
+  }
+
+  async waitForStorageLocationAvailable(
+    kubeconfig: string,
+    bslName: string,
+    timeoutMs: number = 3 * 60 * 1000,
+  ): Promise<void> {
+    const start = Date.now();
+    while (Date.now() - start < timeoutMs) {
+      const obj = await this.k8s.getResource(
+        kubeconfig,
+        'BackupStorageLocation',
+        bslName,
+        VELERO_NAMESPACE,
+      );
+      const phase = obj?.body?.status?.phase ?? obj?.status?.phase;
+      if (phase === 'Available') return;
+      await sleep(VELERO_BACKUP_POLL_INTERVAL_MS);
+    }
+    throw new Error(
+      `Velero BackupStorageLocation ${bslName} did not become Available within ${timeoutMs}ms`,
+    );
+  }
+
+  async listFailedPodVolumeBackups(
+    kubeconfig: string,
+    backupName: string,
+  ): Promise<string[]> {
+    const items = await this.k8s.listResourcesByLabel(
+      kubeconfig,
+      'PodVolumeBackup',
+      VELERO_NAMESPACE,
+      `velero.io/backup-name=${backupName}`,
+    );
+    // A terminal backup should leave every PVB Completed; anything else —
+    // including a PVB stuck with no phase (the NODE_NAME-hang symptom) — means
+    // volume data is missing.
+    return items
+      .filter((pvb) => (pvb?.status?.phase ?? '') !== 'Completed')
+      .map(
+        (pvb) =>
+          `${pvb?.spec?.pod?.namespace ?? '?'}/${pvb?.spec?.volume ?? '?'}=${pvb?.status?.phase ?? 'no-status'}`,
+      );
   }
 }

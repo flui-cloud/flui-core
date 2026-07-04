@@ -25,6 +25,8 @@ import { ArtifactLocationState } from '../enums/artifact-location-state.enum';
 import { DestinationRole } from '../enums/destination-role.enum';
 import { BackupPolicyStatus } from '../enums/backup-policy-status.enum';
 import { BackupArtifactLocationEntity } from '../entities/backup-artifact-location.entity';
+import { BackupDestinationEntity } from '../entities/backup-destination.entity';
+import { BackupPolicyEntity } from '../entities/backup-policy.entity';
 import { BACKUP_QUEUE, BACKUP_JOB_TYPES } from '../backups.constants';
 import { BackupScope } from '../enums/backup-scope.enum';
 
@@ -97,6 +99,8 @@ export class RunBackupJobProcessor {
         startedAt: new Date(),
       });
 
+      await this.ensureVeleroReady(kubeconfig, primaryDestEntity, policy);
+
       await setStep(OperationStep.BACKUP_RUN_CREATE_VELERO_CR, 20);
       const ttlHours = (policy?.retentionDays ?? 30) * 24;
       await this.veleroClient.createBackup(kubeconfig, {
@@ -115,9 +119,7 @@ export class RunBackupJobProcessor {
         veleroBackupName,
       );
       const phase = finalCr?.status?.phase;
-      if (phase !== 'Completed' && phase !== 'PartiallyFailed') {
-        throw new Error(`Velero backup ended with phase=${phase}`);
-      }
+      await this.assertBackupUsable(kubeconfig, veleroBackupName, finalCr);
 
       await setStep(OperationStep.BACKUP_RUN_RECORD_ARTIFACT, 60);
       const artifact = this.artifactRepo.createArtifact({
@@ -242,6 +244,69 @@ export class RunBackupJobProcessor {
       return policy.scopeSelector.namespaces;
     }
     return [];
+  }
+
+  private async ensureVeleroReady(
+    kubeconfig: string,
+    primaryDest: BackupDestinationEntity,
+    policy: BackupPolicyEntity | null,
+  ): Promise<void> {
+    if (await this.installer.isInstalled(kubeconfig)) {
+      await this.installer.applyBSL(kubeconfig, primaryDest, true);
+      // Re-apply the node-agent so installs predating the NODE_NAME fix
+      // self-heal before we wait for readiness.
+      await this.installer.applyNodeAgent(kubeconfig);
+      await this.installer.waitForNodeAgentReady(kubeconfig);
+      return;
+    }
+    const replicaDestEntities = policy
+      ? (
+          await Promise.all(
+            this.policiesService
+              .replicaDestinationsOf(policy)
+              .map((d) => this.destRepo.findById(d.destinationId)),
+          )
+        ).filter((d): d is BackupDestinationEntity => !!d)
+      : [];
+    await this.installer.ensureInstalled({
+      kubeconfig,
+      destinations: [primaryDest, ...replicaDestEntities],
+      primaryDestinationId: primaryDest.id,
+    });
+  }
+
+  private async assertBackupUsable(
+    kubeconfig: string,
+    veleroBackupName: string,
+    finalCr: { status?: { phase?: string; validationErrors?: string[] } },
+  ): Promise<void> {
+    const phase = finalCr?.status?.phase;
+    if (phase === 'Failed' || phase === 'FailedValidation') {
+      const errs = finalCr?.status?.validationErrors ?? [];
+      const detail = errs.length ? `: ${errs.join('; ')}` : '';
+      throw new Error(`Velero backup ended with phase=${phase}${detail}`);
+    }
+    if (phase === 'PartiallyFailed') {
+      // A PartiallyFailed backup may have captured manifests but not the volume
+      // data. Never record it as a usable (AVAILABLE) restore source when any
+      // PodVolumeBackup failed — that is silent data loss.
+      const failedVolumes = await this.veleroClient.listFailedPodVolumeBackups(
+        kubeconfig,
+        veleroBackupName,
+      );
+      if (failedVolumes.length > 0) {
+        throw new Error(
+          `Velero backup ${veleroBackupName} PartiallyFailed with ${failedVolumes.length} failed volume backup(s): ${failedVolumes.join(', ')}. Not recording as a restore source.`,
+        );
+      }
+      this.logger.warn(
+        `[run-backup] ${veleroBackupName} PartiallyFailed but all volume backups completed; recording as available.`,
+      );
+      return;
+    }
+    if (phase !== 'Completed') {
+      throw new Error(`Velero backup ended with unexpected phase=${phase}`);
+    }
   }
 
   @Process(BACKUP_JOB_TYPES.PRE_DEPLOY_SNAPSHOT)

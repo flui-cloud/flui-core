@@ -31,6 +31,11 @@ export default class BackupRestoreCreate extends Command {
     'target-app': Flags.string({
       description: 'Required when --target-kind=application',
     }),
+    'map-namespace': Flags.string({
+      multiple: true,
+      description:
+        'Remap a namespace on restore: "source:target" (repeatable). Enables a same-cluster restore into a new namespace.',
+    }),
     strategy: Flags.string({ options: [...STRATEGIES] }),
   };
 
@@ -38,12 +43,27 @@ export default class BackupRestoreCreate extends Command {
     const { flags } = await this.parse(BackupRestoreCreate);
     printContextBanner();
     const client = BackupClient.fromConfig();
-    let selector: Record<string, any> | undefined;
+    const selector: Record<string, any> = {};
     if (flags['target-namespace']) {
-      selector = { namespace: flags['target-namespace'] };
-    } else if (flags['target-app']) {
-      selector = { applicationId: flags['target-app'] };
+      selector.namespaces = [flags['target-namespace']];
     }
+    if (flags['target-app']) {
+      selector.applicationId = flags['target-app'];
+    }
+    if (flags['map-namespace']?.length) {
+      selector.namespaceMapping = Object.fromEntries(
+        flags['map-namespace'].map((m) => {
+          const [src, dst] = m.split(':');
+          if (!src || !dst) {
+            throw new Error(
+              `--map-namespace expects "source:target", got "${m}"`,
+            );
+          }
+          return [src, dst];
+        }),
+      );
+    }
+    const targetSelector = Object.keys(selector).length ? selector : undefined;
     const spinner = ora('Creating restore job...').start();
     try {
       const r = await client.createRestore({
@@ -51,7 +71,7 @@ export default class BackupRestoreCreate extends Command {
         sourceDestinationId: flags['source-destination'],
         targetClusterId: flags['target-cluster'],
         targetKind: flags['target-kind'],
-        targetSelector: selector,
+        targetSelector,
         strategy: flags.strategy,
       });
       spinner.succeed(

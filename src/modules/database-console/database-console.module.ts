@@ -75,6 +75,7 @@ import { DbBackupController } from './controllers/db-backup.controller';
 import { DbBackupService } from './services/db-backup.service';
 import { DbDiskController } from './controllers/db-disk.controller';
 import { DbDiskService } from './services/db-disk.service';
+import { DbPitrController } from './controllers/db-pitr.controller';
 
 @Module({
   imports: [
@@ -102,6 +103,7 @@ import { DbDiskService } from './services/db-disk.service';
     FulltextConsoleController,
     DbBackupController,
     DbDiskController,
+    DbPitrController,
   ],
   providers: [
     AppOwnershipGuard,

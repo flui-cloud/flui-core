@@ -15,8 +15,8 @@ metadata:
     - sql
     - building-block
   license: PostgreSQL
-  version: '16'
-  maintainedAt: '2026-04-19'
+  version: '17'
+  maintainedAt: '2026-07-03'
   icon: https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/svg/postgres.svg
   links:
     website: https://www.postgresql.org
@@ -27,9 +27,9 @@ spec:
   type: building-block
 
   image:
-    registry: docker.io
-    repository: library/postgres
-    tag: '16-alpine'
+    registry: ghcr.io
+    repository: flui-cloud/flui-postgres
+    tag: '17-dev'
 
   ports:
     - name: postgres
@@ -57,6 +57,41 @@ spec:
         length: 32
     - name: PGDATA
       value: /var/lib/postgresql/data/pgdata
+    # Restore-bootstrap knobs (empty on a normal install; the backups engine sets
+    # them via envOverrides when creating a PITR restore-to-new-install). Hidden
+    # from the editable-env UI on purpose.
+    - name: FLUI_PG_RESTORE
+      value: ''
+      description: Internal — set to 1 by a PITR restore install.
+    - name: FLUI_PG_RESTORE_TARGET
+      value: ''
+      description: Internal — PITR recovery target timestamp.
+    - name: FLUI_PG_RESTORE_SET
+      value: ''
+      description: Internal — pgBackRest backup set to restore (as-of-backup).
+    - name: FLUI_PG_S3_ENDPOINT
+      value: ''
+      description: Internal — pgBackRest repo S3 endpoint (restore).
+    - name: FLUI_PG_S3_BUCKET
+      value: ''
+      description: Internal — pgBackRest repo S3 bucket (restore).
+    - name: FLUI_PG_S3_REGION
+      value: ''
+      description: Internal — pgBackRest repo S3 region (restore).
+    - name: FLUI_PG_S3_KEY
+      value: ''
+      secret: true
+      description: Internal — pgBackRest repo S3 access key (restore).
+    - name: FLUI_PG_S3_KEY_SECRET
+      value: ''
+      secret: true
+      description: Internal — pgBackRest repo S3 secret key (restore).
+    - name: FLUI_PG_S3_URI_STYLE
+      value: ''
+      description: Internal — pgBackRest repo S3 uri-style (restore).
+    - name: FLUI_PG_S3_PATH
+      value: ''
+      description: Internal — pgBackRest repo path (restore).
 
   resources:
     requests:

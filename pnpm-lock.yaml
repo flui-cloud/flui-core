@@ -91,6 +91,9 @@ importers:
       '@types/uuid':
         specifier: ^10.0.0
         version: 10.0.0
+      age-encryption:
+        specifier: ^0.3.0
+        version: 0.3.0
       ajv:
         specifier: ^8.17.1
         version: 8.17.1
@@ -1814,12 +1817,54 @@ packages:
       '@nestjs/platform-socket.io':
         optional: true
 
+  '@noble/ciphers@2.2.0':
+    resolution:
+      {
+        integrity: sha512-Z6pjIZ/8IJcCGzb2S/0Px5J81yij85xASuk1teLNeg75bfT07MV3a/O2Mtn1I2se43k3lkVEcFaR10N4cgQcZA==,
+      }
+    engines: { node: '>= 20.19.0' }
+
+  '@noble/curves@2.0.1':
+    resolution:
+      {
+        integrity: sha512-vs1Az2OOTBiP4q0pwjW5aF0xp9n4MxVrmkFBxc6EKZc6ddYx5gaZiAsZoq0uRRXWbi3AT/sBqn05eRPtn1JCPw==,
+      }
+    engines: { node: '>= 20.19.0' }
+
+  '@noble/curves@2.2.0':
+    resolution:
+      {
+        integrity: sha512-T/BoHgFXirb0ENSPBquzX0rcjXeM6Lo892a2jlYJkqk83LqZx0l1Of7DzlKJ6jkpvMrkHSnAcgb5JegL8SeIkQ==,
+      }
+    engines: { node: '>= 20.19.0' }
+
   '@noble/hashes@1.8.0':
     resolution:
       {
         integrity: sha512-jCs9ldd7NwzpgXDIf6P3+NrHh9/sD6CQdxHyjQI+h/6rDNo88ypBxxz45UDuZHz9r3tNz7N/VInSVoVdtXEI4A==,
       }
     engines: { node: ^14.21.3 || >=16 }
+
+  '@noble/hashes@2.0.1':
+    resolution:
+      {
+        integrity: sha512-XlOlEbQcE9fmuXxrVTXCTlG2nlRXa9Rj3rr5Ue/+tX+nmkgbX720YHh0VR3hBF9xDvwnb8D2shVGOwNx+ulArw==,
+      }
+    engines: { node: '>= 20.19.0' }
+
+  '@noble/hashes@2.2.0':
+    resolution:
+      {
+        integrity: sha512-IYqDGiTXab6FniAgnSdZwgWbomxpy9FtYvLKs7wCUs2a8RkITG+DFGO1DM9cr+E3/RgADRpFjrKVaJ1z6sjtEg==,
+      }
+    engines: { node: '>= 20.19.0' }
+
+  '@noble/post-quantum@0.5.4':
+    resolution:
+      {
+        integrity: sha512-leww0zzIirrvwaYMPI9fj6aRIlA/c6Y0/lifQQ1YOOyHEr0MNH3yYpjXeiVG+tWdPps4XxGclFWX2INPO3Yo5w==,
+      }
+    engines: { node: '>= 20.19.0' }
 
   '@nodable/entities@2.1.0':
     resolution:
@@ -2448,6 +2493,12 @@ packages:
     resolution:
       {
         integrity: sha512-xxeapPiUXdZAE3che6f3xogoJPeZgig6omHEy1rIY5WVsB3H2BHNnZH+gHG6x91SCWyQCzWGsuL2Hh3ClO5/qQ==,
+      }
+
+  '@scure/base@2.2.0':
+    resolution:
+      {
+        integrity: sha512-b8XEupJibegiXV+tDUseI8oLQc8ei3d/4Jkb2RpbHh3MfE054ov3uIz2dhFkB3FI8iwYkEh0gGCApkrYggkPNg==,
       }
 
   '@simple-git/args-pathspec@1.0.3':
@@ -3469,6 +3520,12 @@ packages:
       }
     engines: { node: '>=0.4.0' }
     hasBin: true
+
+  age-encryption@0.3.0:
+    resolution:
+      {
+        integrity: sha512-vDhGGp5ZXpbKL6oc3FEBjGhyepr/0SwIWmia6CcPXvYcxGBSQNcDdMv9m2yVOkjjYuJEmtGEhOojIUcjrj0cEw==,
+      }
 
   agent-base@6.0.2:
     resolution:
@@ -10962,7 +11019,26 @@ snapshots:
     optionalDependencies:
       '@nestjs/platform-socket.io': 11.1.14(@nestjs/common@11.1.6(class-transformer@0.5.1)(class-validator@0.14.2)(reflect-metadata@0.2.2)(rxjs@7.8.2))(@nestjs/websockets@11.1.14)(rxjs@7.8.2)
 
+  '@noble/ciphers@2.2.0': {}
+
+  '@noble/curves@2.0.1':
+    dependencies:
+      '@noble/hashes': 2.0.1
+
+  '@noble/curves@2.2.0':
+    dependencies:
+      '@noble/hashes': 2.2.0
+
   '@noble/hashes@1.8.0': {}
+
+  '@noble/hashes@2.0.1': {}
+
+  '@noble/hashes@2.2.0': {}
+
+  '@noble/post-quantum@0.5.4':
+    dependencies:
+      '@noble/curves': 2.0.1
+      '@noble/hashes': 2.0.1
 
   '@nodable/entities@2.1.0': {}
 
@@ -11304,6 +11380,8 @@ snapshots:
       '@redis/client': 1.6.1
 
   '@scarf/scarf@1.4.0': {}
+
+  '@scure/base@2.2.0': {}
 
   '@simple-git/args-pathspec@1.0.3': {}
 
@@ -12078,6 +12156,14 @@ snapshots:
   acorn@8.15.0: {}
 
   acorn@8.17.0: {}
+
+  age-encryption@0.3.0:
+    dependencies:
+      '@noble/ciphers': 2.2.0
+      '@noble/curves': 2.2.0
+      '@noble/hashes': 2.2.0
+      '@noble/post-quantum': 0.5.4
+      '@scure/base': 2.2.0
 
   agent-base@6.0.2:
     dependencies:

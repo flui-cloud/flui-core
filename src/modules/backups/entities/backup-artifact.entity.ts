@@ -8,6 +8,7 @@ import {
   OneToMany,
 } from 'typeorm';
 import { EncryptionMode } from '../enums/destination-health.enum';
+import { BackupEngineClass } from '../enums/backup-engine-class.enum';
 import { BackupArtifactLocationEntity } from './backup-artifact-location.entity';
 
 @Entity('backup_artifacts')
@@ -23,8 +24,18 @@ export class BackupArtifactEntity {
   @Column({ type: 'uuid' })
   clusterId: string;
 
-  @Column({ length: 253 })
-  veleroBackupName: string;
+  @Column({ length: 253, nullable: true })
+  veleroBackupName?: string;
+
+  @Column({
+    type: 'enum',
+    enum: BackupEngineClass,
+    default: BackupEngineClass.VOLUME,
+  })
+  engineClass: BackupEngineClass;
+
+  @Column({ length: 64, nullable: true })
+  engineRef?: string;
 
   @Column({ type: 'bigint', nullable: true })
   sizeBytes?: string;

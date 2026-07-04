@@ -1,4 +1,9 @@
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bull';
 import { Queue } from 'bull';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -10,7 +15,12 @@ import {
   RestorePreviewDto,
 } from '../dto/create-restore-job.dto';
 import { RestoreJobEntity } from '../entities/restore-job.entity';
-import { RestoreJobStatus } from '../enums/restore-job.enum';
+import {
+  RestoreJobStatus,
+  RestoreTargetKind,
+  RestoreStrategy,
+} from '../enums/restore-job.enum';
+import { BackupEngineClass } from '../enums/backup-engine-class.enum';
 import {
   InfrastructureOperationEntity,
   OperationStatus,
@@ -73,6 +83,28 @@ export class RestoreJobsService {
     if (!artifact)
       throw new NotFoundException(`Artifact ${dto.artifactId} not found`);
 
+    if (artifact.engineClass === BackupEngineClass.PLATFORM) {
+      throw new BadRequestException(
+        'Platform (master) artifacts are operator-sealed and cannot be restored through this pipeline. ' +
+          'Recover them offline with your age identity per the cold-rebuild runbook.',
+      );
+    }
+
+    const isDb = dto.targetKind === RestoreTargetKind.DATABASE;
+    if (isDb) {
+      if (artifact.engineClass !== BackupEngineClass.DATABASE) {
+        throw new BadRequestException(
+          'Artifact is not a database-class backup',
+        );
+      }
+      const newInstall = dto.targetSelector?.newInstall;
+      if (!newInstall?.name || !newInstall?.clusterId) {
+        throw new BadRequestException(
+          'Database restore requires targetSelector.newInstall { name, clusterId }',
+        );
+      }
+    }
+
     const op = await this.opRepo.save(
       this.opRepo.create({
         operationType: OperationType.RUN_RESTORE_JOB,
@@ -91,16 +123,22 @@ export class RestoreJobsService {
       targetClusterId: dto.targetClusterId,
       targetKind: dto.targetKind,
       targetSelector: dto.targetSelector ?? {},
-      strategy: dto.strategy,
+      strategy: isDb ? RestoreStrategy.PG_PITR : dto.strategy,
+      recoveryTargetTime: dto.recoveryTargetTime
+        ? new Date(dto.recoveryTargetTime)
+        : undefined,
       status: RestoreJobStatus.PENDING,
       infrastructureOperationId: op.id,
     });
     const saved = await this.repo.save(entity);
 
-    await this.queue.add(BACKUP_JOB_TYPES.RUN_RESTORE, {
-      restoreJobId: saved.id,
-      operationId: op.id,
-    });
+    await this.queue.add(
+      isDb ? BACKUP_JOB_TYPES.RUN_DB_RESTORE : BACKUP_JOB_TYPES.RUN_RESTORE,
+      {
+        restoreJobId: saved.id,
+        operationId: op.id,
+      },
+    );
     return saved;
   }
 

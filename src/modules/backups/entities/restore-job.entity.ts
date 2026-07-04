@@ -17,6 +17,8 @@ export interface RestoreTargetSelector {
   applicationId?: string;
   namespaceMapping?: Record<string, string>;
   labelSelector?: string;
+  /** database PITR target: create a fresh catalog install to restore into. */
+  newInstall?: { name: string; clusterId: string };
 }
 
 @Entity('restore_jobs')
@@ -51,6 +53,10 @@ export class RestoreJobEntity {
     nullable: true,
   })
   strategy?: RestoreStrategy;
+
+  /** For PG_PITR: recover to this instant; null = latest (end of WAL). */
+  @Column({ type: 'timestamptz', nullable: true })
+  recoveryTargetTime?: Date;
 
   @Column({ length: 253, nullable: true })
   veleroRestoreName?: string;

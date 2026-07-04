@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsEnum, IsOptional, IsUUID } from 'class-validator';
+import { IsEnum, IsISO8601, IsOptional, IsUUID } from 'class-validator';
 import { RestoreTargetKind, RestoreStrategy } from '../enums/restore-job.enum';
 import { RestoreTargetSelector } from '../entities/restore-job.entity';
 
@@ -28,6 +28,14 @@ export class CreateRestoreJobDto {
   @IsOptional()
   @IsEnum(RestoreStrategy)
   strategy?: RestoreStrategy;
+
+  @ApiPropertyOptional({
+    description:
+      'PG_PITR only: ISO-8601 instant to recover to; omit for latest (end of WAL).',
+  })
+  @IsOptional()
+  @IsISO8601()
+  recoveryTargetTime?: string;
 }
 
 export class RestorePreviewDto {

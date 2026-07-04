@@ -36,6 +36,20 @@ export class BackupArtifactRepository {
     });
   }
 
+  /** Newest database-class artifact whose manifest points at the given app. */
+  findLatestDbArtifactForApp(
+    appId: string,
+  ): Promise<BackupArtifactEntity | null> {
+    return this.artifactRepo
+      .createQueryBuilder('a')
+      .leftJoinAndSelect('a.locations', 'l')
+      .where('a.engineClass = :engine', { engine: 'database' })
+      .andWhere(`a."manifestSummary"->>'applicationId' = :appId`, { appId })
+      .orderBy('a.createdAt', 'DESC')
+      .limit(1)
+      .getOne();
+  }
+
   findLatestWithSizeForCluster(
     clusterId: string,
   ): Promise<BackupArtifactEntity | null> {

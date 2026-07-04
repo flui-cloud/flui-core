@@ -68,6 +68,24 @@ export class EncryptionService {
   }
 
   /**
+   * Raw DB encryption key for the platform recovery bundle (MVP-4). This key
+   * decrypts EVERY `*Encrypted` column, so it may only be read to seal it into
+   * an age-encrypted, operator-recipient bundle — never logged, never returned
+   * to a client. The fingerprint lets callers audit which key was captured
+   * without exposing the bytes.
+   */
+  exportKeyMaterialForBundle(): { keyHex: string; fingerprint: string } {
+    return {
+      keyHex: this.encryptionKey.toString('hex'),
+      fingerprint: this.fingerprintOf(this.encryptionKey),
+    };
+  }
+
+  private fingerprintOf(key: Buffer): string {
+    return crypto.createHash('sha256').update(key).digest('hex').slice(0, 16);
+  }
+
+  /**
    * Encrypt plaintext string using AES-256-GCM
    * @param plaintext String to encrypt
    * @returns Base64 encoded encrypted data (iv + authTag + encrypted)

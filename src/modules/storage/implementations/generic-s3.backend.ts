@@ -47,6 +47,10 @@ export class GenericS3Backend implements IBackupStorageBackend {
     try {
       const client = this.buildClient(creds);
       await client.send(new HeadBucketCommand({ Bucket: creds.bucket }));
+      // HeadBucket only proves the bucket exists and creds can read; a backup
+      // needs write. Probe a real PUT+DELETE so read-only creds or a
+      // deny-PutObject policy fail the test instead of the first backup.
+      await this.writeAndDeleteProbe(creds);
       return { healthy: true, latencyMs: Date.now() - start };
     } catch (err: any) {
       return {

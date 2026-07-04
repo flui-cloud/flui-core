@@ -3,6 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { BackupPolicyEntity } from '../entities/backup-policy.entity';
 import { BackupPolicyDestinationEntity } from '../entities/backup-policy-destination.entity';
+import { BackupEngineClass } from '../enums/backup-engine-class.enum';
 
 @Injectable()
 export class BackupPolicyRepository {
@@ -40,6 +41,20 @@ export class BackupPolicyRepository {
       where: { clusterId },
       relations: ['destinations'],
     });
+  }
+
+  /** The database-class policy targeting a given application, if any. */
+  findDbPolicyForApp(appId: string): Promise<BackupPolicyEntity | null> {
+    return this.policyRepo
+      .createQueryBuilder('p')
+      .leftJoinAndSelect('p.destinations', 'd')
+      .where('p.engineClass = :engine', { engine: BackupEngineClass.DATABASE })
+      .andWhere(
+        `p."scopeSelector"->'applicationIds' @> to_jsonb(:appId::text)`,
+        { appId },
+      )
+      .orderBy('p.createdAt', 'DESC')
+      .getOne();
   }
 
   update(id: string, patch: Partial<BackupPolicyEntity>): Promise<unknown> {

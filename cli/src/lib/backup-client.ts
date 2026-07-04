@@ -47,7 +47,10 @@ export interface BackupPolicy {
   clusterId: string;
   scope: string;
   profile: string;
+  engineClass?: string;
   enabled?: boolean;
+  status?: string;
+  cronSchedule?: string;
   schedule?: string;
   retentionDays?: number;
   destinations?: Array<{
@@ -55,6 +58,13 @@ export interface BackupPolicy {
     role: string;
     priority?: number;
   }>;
+  metadata?: {
+    platform?: {
+      recipient?: string;
+      heartbeat?: { url?: string };
+    };
+    [key: string]: unknown;
+  };
   createdAt?: string;
   updatedAt?: string;
 }
@@ -79,9 +89,11 @@ export interface CreatePolicyInput {
 export interface BackupJob {
   id: string;
   policyId: string;
+  clusterId?: string;
   status: string;
   startedAt?: string;
   completedAt?: string;
+  finishedAt?: string;
   bytesTransferred?: number;
   errorMessage?: string;
 }
@@ -164,6 +176,21 @@ export class BackupClient {
 
   async createPolicy(input: CreatePolicyInput): Promise<BackupPolicy> {
     return this.api.post('/backup-policies', input);
+  }
+
+  async pausePolicy(id: string): Promise<BackupPolicy> {
+    return this.api.post(`/backup-policies/${id}/pause`);
+  }
+
+  async setPlatformConfig(
+    policyId: string,
+    cfg: { recipient: string; heartbeatUrl?: string },
+  ): Promise<BackupPolicy> {
+    return this.api.post(`/backup-policies/${policyId}/platform-config`, cfg);
+  }
+
+  async resumePolicy(id: string): Promise<BackupPolicy> {
+    return this.api.post(`/backup-policies/${id}/resume`);
   }
 
   async deletePolicy(id: string): Promise<{ ok: boolean }> {

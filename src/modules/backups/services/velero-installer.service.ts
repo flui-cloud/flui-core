@@ -93,14 +93,7 @@ export class VeleroInstallerService {
       }),
     );
 
-    await this.k8s.applyManifest(
-      kubeconfig,
-      this.templates.render('velero/velero-node-agent.yaml.tpl', {
-        NAMESPACE: VELERO_NAMESPACE,
-        SECRET_NAME: VELERO_CREDENTIALS_SECRET_NAME,
-        VELERO_IMAGE,
-      }),
-    );
+    await this.applyNodeAgent(kubeconfig);
 
     // Create one BSL per destination
     for (const dest of destinations) {
@@ -114,6 +107,62 @@ export class VeleroInstallerService {
       VELERO_DEPLOYMENT_NAME,
       VELERO_NAMESPACE,
       10 * 60 * 1000,
+    );
+    // The node-agent DaemonSet does the Kopia fs-backup; a backup started
+    // before it is Ready silently produces PartiallyFailed backups with
+    // missing volume data. (waitForReady has no DaemonSet readiness case, so
+    // check numberReady explicitly here.)
+    await this.waitForNodeAgentReady(kubeconfig);
+  }
+
+  // Idempotent re-apply of the node-agent DaemonSet. Called on the
+  // already-installed path so an install predating the NODE_NAME fix self-heals
+  // on the next backup (kubectl apply is a no-op once the spec matches).
+  async applyNodeAgent(kubeconfig: string): Promise<void> {
+    await this.k8s.applyManifest(
+      kubeconfig,
+      this.templates.render('velero/velero-node-agent.yaml.tpl', {
+        NAMESPACE: VELERO_NAMESPACE,
+        SECRET_NAME: VELERO_CREDENTIALS_SECRET_NAME,
+        VELERO_IMAGE,
+      }),
+    );
+  }
+
+  async waitForNodeAgentReady(
+    kubeconfig: string,
+    timeoutMs: number = 10 * 60 * 1000,
+  ): Promise<void> {
+    const start = Date.now();
+    while (Date.now() - start < timeoutMs) {
+      const ds = await this.k8s.getResource(
+        kubeconfig,
+        'DaemonSet',
+        VELERO_NODE_AGENT_DAEMONSET,
+        VELERO_NAMESPACE,
+      );
+      const status = ds?.body?.status ?? ds?.status;
+      const generation =
+        ds?.body?.metadata?.generation ?? ds?.metadata?.generation ?? 0;
+      const desired = status?.desiredNumberScheduled ?? 0;
+      const ready = status?.numberReady ?? 0;
+      const updated = status?.updatedNumberScheduled ?? 0;
+      const observedGen = status?.observedGeneration ?? 0;
+      // Rollout-aware: require the controller to have observed the latest spec
+      // and all pods updated + ready, so a re-applied (NODE_NAME) node-agent
+      // isn't reported ready on stale old pods still rolling out.
+      if (
+        desired > 0 &&
+        observedGen >= generation &&
+        updated >= desired &&
+        ready >= desired
+      ) {
+        return;
+      }
+      await new Promise((r) => setTimeout(r, 5000));
+    }
+    throw new Error(
+      `Velero node-agent DaemonSet did not become ready within ${timeoutMs}ms`,
     );
   }
 

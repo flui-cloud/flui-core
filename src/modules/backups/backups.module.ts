@@ -9,6 +9,9 @@ import { SharedInfrastructureModule } from '../infrastructure/shared/shared-infr
 import { ClustersModule } from '../infrastructure/clusters/clusters.module';
 import { EncryptionModule } from '../shared/encryption/encryption.module';
 import { StorageModule } from '../storage/storage.module';
+import { CatalogModule } from '../catalog/catalog.module';
+import { CatalogInstallEntity } from '../catalog/entities/catalog-install.entity';
+import { ControlClusterModule } from '../infrastructure/control-cluster/control-cluster.module';
 
 import { BackupDestinationEntity } from './entities/backup-destination.entity';
 import { BackupPolicyEntity } from './entities/backup-policy.entity';
@@ -40,6 +43,8 @@ import {
 } from './processors/run-backup-job.processor';
 import { ReplicateBackupProcessor } from './processors/replicate-backup.processor';
 import { RunRestoreJobProcessor } from './processors/run-restore-job.processor';
+import { RunDbBackupProcessor } from './processors/run-db-backup.processor';
+import { RunDbRestoreProcessor } from './processors/run-db-restore.processor';
 import { HealthCheckProcessor } from './processors/health-check.processor';
 
 import { BackupDestinationsController } from './controllers/backup-destinations.controller';
@@ -49,6 +54,13 @@ import { RestoreJobsController } from './controllers/restore-jobs.controller';
 import { QuickSetupController } from './controllers/quick-setup.controller';
 import { BillingEstimatorController } from './controllers/billing-estimator.controller';
 import { BackupStatusController } from './controllers/backup-status.controller';
+import { PgBackrestService } from './services/pgbackrest.service';
+import { DestinationPlacementValidator } from './services/destination-placement.validator';
+import { DbPitrService } from './services/db-pitr.service';
+import { PlatformKeyBundleService } from './services/platform-key-bundle.service';
+import { PlatformBackupService } from './services/platform-backup.service';
+import { RunPlatformBackupProcessor } from './processors/run-platform-backup.processor';
+import { MasterHeartbeatScheduler } from './schedulers/master-heartbeat.scheduler';
 
 import { ClusterNodeEntity } from '../infrastructure/clusters/entities/cluster-node.entity';
 import { QuickSetupService } from './services/quick-setup.service';
@@ -74,12 +86,15 @@ import { BACKUP_QUEUE } from './backups.constants';
       ClusterNodeEntity,
       InfrastructureOperationEntity,
       ApplicationEntity,
+      CatalogInstallEntity,
     ]),
     BullModule.registerQueue({ name: BACKUP_QUEUE }),
     SharedInfrastructureModule,
     ClustersModule,
     EncryptionModule,
     StorageModule,
+    CatalogModule,
+    ControlClusterModule,
   ],
   controllers: [
     BackupDestinationsController,
@@ -109,12 +124,21 @@ import { BACKUP_QUEUE } from './backups.constants';
     PreDeployTriggerProcessor,
     ReplicateBackupProcessor,
     RunRestoreJobProcessor,
+    RunDbBackupProcessor,
+    RunDbRestoreProcessor,
     HealthCheckProcessor,
     QuickSetupService,
     QuickSetupProcessor,
     BillingEstimatorService,
     BackupPolicyScheduler,
     BackupStatusService,
+    PgBackrestService,
+    DestinationPlacementValidator,
+    DbPitrService,
+    PlatformKeyBundleService,
+    PlatformBackupService,
+    RunPlatformBackupProcessor,
+    MasterHeartbeatScheduler,
   ],
   exports: [
     BackupDestinationsService,
@@ -124,6 +148,7 @@ import { BACKUP_QUEUE } from './backups.constants';
     QuickSetupService,
     BillingEstimatorService,
     BackupStatusService,
+    DbPitrService,
   ],
 })
 export class BackupsModule {}

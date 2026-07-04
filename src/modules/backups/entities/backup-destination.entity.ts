@@ -67,6 +67,11 @@ export class BackupDestinationEntity {
   @Column({ default: false })
   usableForEtcdL1: boolean;
 
+  // Operator attestation that an opaque (MinIO/generic-S3) destination is NOT hosted on the
+  // master's own provider — required to use it for the platform backup class.
+  @Column({ default: false })
+  offProviderAck: boolean;
+
   @Column({
     type: 'enum',
     enum: DestinationHealthStatus,

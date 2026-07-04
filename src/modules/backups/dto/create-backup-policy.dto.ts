@@ -13,6 +13,7 @@ import {
 import { Type } from 'class-transformer';
 import { BackupScope } from '../enums/backup-scope.enum';
 import { BackupPolicyProfile } from '../enums/backup-policy-status.enum';
+import { BackupEngineClass } from '../enums/backup-engine-class.enum';
 import { DestinationRole } from '../enums/destination-role.enum';
 import { BackupScopeSelector } from '../entities/backup-policy.entity';
 
@@ -56,6 +57,14 @@ export class CreateBackupPolicyDto {
   @ApiProperty({ enum: BackupScope })
   @IsEnum(BackupScope)
   scope: BackupScope;
+
+  @ApiPropertyOptional({
+    enum: BackupEngineClass,
+    default: BackupEngineClass.VOLUME,
+  })
+  @IsOptional()
+  @IsEnum(BackupEngineClass)
+  engineClass?: BackupEngineClass;
 
   @ApiPropertyOptional()
   @IsOptional()

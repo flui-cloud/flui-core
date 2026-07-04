@@ -101,6 +101,18 @@ export class RunRestoreJobProcessor {
         startedAt: new Date(),
       });
 
+      // The BSL must be Available and Velero's backup-sync controller must have
+      // discovered the backup from the bucket before the Restore CR is created;
+      // otherwise Velero terminally FailedValidations it ("backup not found").
+      await this.veleroClient.waitForStorageLocationAvailable(
+        kubeconfig,
+        this.installer.bslName(sourceDest.id),
+      );
+      await this.veleroClient.waitForBackupSynced(
+        kubeconfig,
+        artifact.veleroBackupName,
+      );
+
       const restoreName = `flui-restore-${restoreJobId.slice(0, 8)}-${Date.now()}`;
       await setStep(OperationStep.RESTORE_CREATE_VELERO_CR, 50);
       await this.veleroClient.createRestore(kubeconfig, {
@@ -125,7 +137,9 @@ export class RunRestoreJobProcessor {
       );
       const phase = finalCr?.status?.phase;
       if (phase !== 'Completed' && phase !== 'PartiallyFailed') {
-        throw new Error(`Velero restore ended with phase=${phase}`);
+        const errs: string[] = finalCr?.status?.validationErrors ?? [];
+        const detail = errs.length ? `: ${errs.join('; ')}` : '';
+        throw new Error(`Velero restore ended with phase=${phase}${detail}`);
       }
 
       await setStep(OperationStep.RESTORE_POSTPROCESS, 95);

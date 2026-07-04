@@ -11,6 +11,7 @@ import {
   BackupJobStatus,
   BackupJobTriggerType,
 } from '../enums/backup-job.enum';
+import { BackupEngineClass } from '../enums/backup-engine-class.enum';
 import { BackupJobEntity } from '../entities/backup-job.entity';
 import {
   InfrastructureOperationEntity,
@@ -69,11 +70,24 @@ export class BackupJobsService {
     });
     const saved = await this.jobRepo.save(entity);
 
-    await this.queue.add(BACKUP_JOB_TYPES.RUN_BACKUP, {
+    const jobType = this.jobTypeForClass(policy.engineClass);
+    const jobData: RunBackupJobData = {
       backupJobId: saved.id,
       operationId: op.id,
-    } as RunBackupJobData);
+    };
+    await this.queue.add(jobType, jobData);
     return saved;
+  }
+
+  private jobTypeForClass(engineClass: BackupEngineClass): string {
+    switch (engineClass) {
+      case BackupEngineClass.DATABASE:
+        return BACKUP_JOB_TYPES.RUN_DB_BACKUP;
+      case BackupEngineClass.PLATFORM:
+        return BACKUP_JOB_TYPES.RUN_PLATFORM_BACKUP;
+      default:
+        return BACKUP_JOB_TYPES.RUN_BACKUP;
+    }
   }
 
   async createPreDeploy(params: {
