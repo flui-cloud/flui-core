@@ -572,7 +572,9 @@ export class ApplicationManifestGeneratorService {
     return envVars
       .map((e) => {
         const plaintext = this.decryptIfEncrypted(e.value);
-        return `  ${e.name}: ${Buffer.from(plaintext).toString('base64')}`;
+        // Quoted: an empty value must stay an empty STRING — bare it parses as
+        // YAML null and the API server drops the key, breaking secretKeyRef.
+        return `  ${e.name}: "${Buffer.from(plaintext).toString('base64')}"`;
       })
       .join('\n');
   }

@@ -1842,12 +1842,13 @@ export class CatalogInstallProcessor {
       cluster.kubeconfigEncrypted,
     );
     const override = process.env.KUBECONFIG_SERVER_OVERRIDE;
-    return override
-      ? kubeconfig.replaceAll(
-          /server:\s*https?:\/\/[^\s]+/g,
-          `server: ${override}`,
-        )
-      : kubeconfig;
+    if (!override) return kubeconfig;
+    // Same scoping as KubernetesService.patchKubeconfigServer: an optional
+    // match keeps a multi-cluster dev setup from hijacking every cluster.
+    const match = process.env.KUBECONFIG_SERVER_OVERRIDE_MATCH;
+    return kubeconfig.replaceAll(/server:\s*https?:\/\/[^\s]+/g, (line) =>
+      !match || line.includes(match) ? `server: ${override}` : line,
+    );
   }
 
   private postInstallStepMatches(

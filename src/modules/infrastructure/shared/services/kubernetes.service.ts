@@ -215,6 +215,18 @@ export class KubernetesService {
     return results;
   }
 
+  /** Allocated nodePort of a Service's first port (undefined if not NodePort). */
+  async getServiceNodePort(
+    kubeconfigContent: string,
+    namespace: string,
+    name: string,
+  ): Promise<number | undefined> {
+    const kc = this.loadKubeconfig(kubeconfigContent);
+    const api = kc.makeApiClient(k8s.CoreV1Api);
+    const svc = await api.readNamespacedService({ name, namespace });
+    return svc?.spec?.ports?.[0]?.nodePort;
+  }
+
   /**
    * Delete a Kubernetes resource
    */
@@ -843,9 +855,10 @@ export class KubernetesService {
             if (status?.status === 'Success') {
               resolve(stdout);
             } else {
+              const detail = stderr.trim();
               reject(
                 new Error(
-                  `exec failed: ${status?.message ?? stderr ?? 'unknown error'}`,
+                  `exec failed: ${status?.message ?? 'unknown error'}${detail ? ` — ${detail.slice(-500)}` : ''}`,
                 ),
               );
             }
@@ -906,9 +919,10 @@ export class KubernetesService {
             if (status?.status === 'Success') {
               resolve();
             } else {
+              const detail = stderr.trim();
               reject(
                 new Error(
-                  `exec failed: ${status?.message ?? stderr ?? 'unknown error'}`,
+                  `exec failed: ${status?.message ?? 'unknown error'}${detail ? ` — ${detail.slice(-500)}` : ''}`,
                 ),
               );
             }
@@ -1349,9 +1363,12 @@ export class KubernetesService {
     if (!override) {
       return kubeconfig;
     }
-    return kubeconfig.replaceAll(
-      /server:\s*https?:\/\/[^\s]+/g,
-      `server: ${override}`,
+    // Optional scope: only rewrite servers containing this substring, so a
+    // multi-cluster dev setup can tunnel ONE cluster without hijacking the
+    // kubeconfigs of the others.
+    const match = process.env.KUBECONFIG_SERVER_OVERRIDE_MATCH;
+    return kubeconfig.replaceAll(/server:\s*https?:\/\/[^\s]+/g, (line) =>
+      !match || line.includes(match) ? `server: ${override}` : line,
     );
   }
 
