@@ -1359,12 +1359,25 @@ export class ClusterOrchestrationService {
         obsCluster &&
         (obsCluster.masterPrivateIp || obsCluster.masterIpAddress)
       ) {
-        const ip = obsCluster.masterPrivateIp ?? obsCluster.masterIpAddress;
-        this.logger.log(`✅ Using control cluster at ${ip} for monitoring`);
-        this.logger.debug(
-          `   Will pass OBSERVABILITY_CLUSTER_IP=${ip} to bootstrap script`,
+        // Cross-provider: the vnet/private IP is not routable off the master's
+        // provider, so a workload on a different provider must push to the
+        // public IP (the firewall opens the ingest ports to it — MVP-3).
+        const crossProvider = obsCluster.provider !== cluster.provider;
+        const ip = crossProvider
+          ? obsCluster.masterIpAddress
+          : (obsCluster.masterPrivateIp ?? obsCluster.masterIpAddress);
+        if (ip) {
+          this.logger.log(
+            `✅ Using control cluster at ${ip} for monitoring${crossProvider ? ' (cross-provider public IP)' : ''}`,
+          );
+          this.logger.debug(
+            `   Will pass OBSERVABILITY_CLUSTER_IP=${ip} to bootstrap script`,
+          );
+          return ip;
+        }
+        this.logger.warn(
+          `⚠️ Control cluster has no ${crossProvider ? 'public' : ''} IP for cross-provider monitoring`,
         );
-        return ip;
       }
       if (obsCluster) {
         this.logger.warn(
