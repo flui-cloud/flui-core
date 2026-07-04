@@ -9,6 +9,10 @@ import { InfrastructureOperationsModule } from '../infrastructure/operations/inf
 import { TemplatesModule } from '../templates/templates.module';
 import { RepositoriesModule } from '../repositories/repositories.module';
 import { ScalingModule } from '../scaling/scaling.module';
+import { BackupsModule } from '../backups/backups.module';
+import { DbLifecycleModule } from '../db-lifecycle/db-lifecycle.module';
+import { AppMigrationModule } from '../app-migration/app-migration.module';
+import { FullMigrationModule } from '../full-migration/full-migration.module';
 import { McpController } from './mcp.controller';
 import { McpServerFactory } from './services/mcp-server.factory';
 import { McpScopeResolver } from './services/mcp-scope.resolver';
@@ -32,6 +36,10 @@ import { McpToolCallLogEntity } from './entities/mcp-tool-call-log.entity';
     TemplatesModule,
     RepositoriesModule,
     ScalingModule,
+    BackupsModule,
+    DbLifecycleModule,
+    AppMigrationModule,
+    FullMigrationModule,
   ],
   controllers: [McpController],
   providers: [McpServerFactory, McpScopeResolver, McpAuditRepository],

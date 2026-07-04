@@ -7,6 +7,8 @@ import { APPLICATION_TOOLS } from './application.tools';
 import { OBSERVABILITY_TOOLS } from './observability.tools';
 import { INFRASTRUCTURE_TOOLS } from './infrastructure.tools';
 import { REPO_TOOLS } from './repo.tools';
+import { BACKUP_TOOLS } from './backup.tools';
+import { MIGRATION_TOOLS } from './migration.tools';
 
 /**
  * The single source of truth for Flui tools. Consumed by the MCP server (external
@@ -19,6 +21,8 @@ export const ALL_TOOLS: ToolDef[] = [
   ...APPLICATION_TOOLS,
   ...OBSERVABILITY_TOOLS,
   ...REPO_TOOLS,
+  ...BACKUP_TOOLS,
+  ...MIGRATION_TOOLS,
 ];
 
 export function findTool(name: string): ToolDef | undefined {

@@ -16,6 +16,12 @@ import { LokiQueryService } from '../../observability/services/loki-query.servic
 import { ClustersService } from '../../infrastructure/clusters/clusters.service';
 import { InfrastructureOperationsService } from '../../infrastructure/operations/infrastructure-operations.service';
 import { PodDebugService } from '../../scaling/services/pod-debug.service';
+import { BackupPoliciesService } from '../../backups/services/backup-policies.service';
+import { BackupJobsService } from '../../backups/services/backup-jobs.service';
+import { BackupStatusService } from '../../backups/services/backup-status.service';
+import { AppMigrationService } from '../../app-migration/services/app-migration.service';
+import { DbMigrationService } from '../../db-lifecycle/services/db-migration.service';
+import { FullMigrationService } from '../../full-migration/services/full-migration.service';
 import { CatalogInstallStatus } from '../../catalog/enums/catalog-install-status.enum';
 import { McpAuditRepository } from '../repositories/mcp-audit.repository';
 import { McpScope, SCOPE_TIER } from '../constants/mcp-scopes';
@@ -46,6 +52,12 @@ export interface McpServices {
   clusters: ClustersService;
   operations: InfrastructureOperationsService;
   podDebug: PodDebugService;
+  backupPolicies: BackupPoliciesService;
+  backupJobs: BackupJobsService;
+  backupStatus: BackupStatusService;
+  appMigration: AppMigrationService;
+  dbMigration: DbMigrationService;
+  fullMigration: FullMigrationService;
 }
 
 /** Per-request context shared by every tool registrar. */

@@ -18,6 +18,12 @@ import { LokiQueryService } from '../../observability/services/loki-query.servic
 import { ClustersService } from '../../infrastructure/clusters/clusters.service';
 import { InfrastructureOperationsService } from '../../infrastructure/operations/infrastructure-operations.service';
 import { PodDebugService } from '../../scaling/services/pod-debug.service';
+import { BackupPoliciesService } from '../../backups/services/backup-policies.service';
+import { BackupJobsService } from '../../backups/services/backup-jobs.service';
+import { BackupStatusService } from '../../backups/services/backup-status.service';
+import { AppMigrationService } from '../../app-migration/services/app-migration.service';
+import { DbMigrationService } from '../../db-lifecycle/services/db-migration.service';
+import { FullMigrationService } from '../../full-migration/services/full-migration.service';
 import { collectHosts, findUnverifiedUrls } from './url-guard.util';
 import { McpScopeResolver } from '../../mcp/services/mcp-scope.resolver';
 import { McpAuditRepository } from '../../mcp/repositories/mcp-audit.repository';
@@ -98,6 +104,12 @@ export class AssistantAgentService {
     private readonly clusters: ClustersService,
     private readonly operations: InfrastructureOperationsService,
     private readonly podDebug: PodDebugService,
+    private readonly backupPolicies: BackupPoliciesService,
+    private readonly backupJobs: BackupJobsService,
+    private readonly backupStatus: BackupStatusService,
+    private readonly appMigration: AppMigrationService,
+    private readonly dbMigration: DbMigrationService,
+    private readonly fullMigration: FullMigrationService,
     private readonly config: ConfigService,
   ) {}
 
@@ -663,6 +675,12 @@ export class AssistantAgentService {
         clusters: this.clusters,
         operations: this.operations,
         podDebug: this.podDebug,
+        backupPolicies: this.backupPolicies,
+        backupJobs: this.backupJobs,
+        backupStatus: this.backupStatus,
+        appMigration: this.appMigration,
+        dbMigration: this.dbMigration,
+        fullMigration: this.fullMigration,
       },
     };
   }

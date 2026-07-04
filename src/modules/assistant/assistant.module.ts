@@ -10,6 +10,10 @@ import { InfrastructureOperationsModule } from '../infrastructure/operations/inf
 import { TemplatesModule } from '../templates/templates.module';
 import { RepositoriesModule } from '../repositories/repositories.module';
 import { ScalingModule } from '../scaling/scaling.module';
+import { BackupsModule } from '../backups/backups.module';
+import { DbLifecycleModule } from '../db-lifecycle/db-lifecycle.module';
+import { AppMigrationModule } from '../app-migration/app-migration.module';
+import { FullMigrationModule } from '../full-migration/full-migration.module';
 import { AssistantMessageLogEntity } from './entities/assistant-message-log.entity';
 import { AssistantAuditRepository } from './repositories/assistant-audit.repository';
 import { AssistantLlmService } from './services/assistant-llm.service';
@@ -35,6 +39,10 @@ import { AssistantController } from './controllers/assistant.controller';
     TemplatesModule,
     RepositoriesModule,
     ScalingModule,
+    BackupsModule,
+    DbLifecycleModule,
+    AppMigrationModule,
+    FullMigrationModule,
   ],
   controllers: [AssistantController],
   providers: [
