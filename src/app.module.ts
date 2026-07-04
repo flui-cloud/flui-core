@@ -102,6 +102,8 @@ import { TopologyModule } from './modules/topology/topology.module';
 import { DatabaseConsoleModule } from './modules/database-console/database-console.module';
 import { ProjectsModule } from './modules/projects/projects.module';
 import { ProjectEntity } from './modules/projects/entities/project.entity';
+import { DemoModule } from './modules/demo/demo.module';
+import { DemoConfigEntity } from './modules/demo/entities/demo-config.entity';
 
 @Module({
   imports: [
@@ -183,6 +185,7 @@ import { ProjectEntity } from './modules/projects/entities/project.entity';
           DbMigrationEntity,
           AppMigrationEntity,
           FullMigrationEntity,
+          DemoConfigEntity,
         ],
         synchronize: true, // Solo per development!
       }),
@@ -231,6 +234,7 @@ import { ProjectEntity } from './modules/projects/entities/project.entity';
     DbLifecycleModule,
     AppMigrationModule,
     FullMigrationModule,
+    DemoModule,
     VisualizationsModule,
     TopologyModule,
     DatabaseConsoleModule,

@@ -139,6 +139,9 @@
       },
       "dns:replica": {
         "description": "Manage dual-provider DNS redundancy replicas"
+      },
+      "demo": {
+        "description": "The self-running cross-provider migration demo (status public; config admin)"
       }
     }
   },
