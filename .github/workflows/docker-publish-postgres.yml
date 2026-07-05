@@ -1,0 +1,59 @@
+name: Build and Push flui-postgres Image
+
+# Runs ONLY when the postgres image build context (or this workflow) changes,
+# not on every push — the image is a stable building block. Use the manual
+# trigger to force a rebuild without touching the files.
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'images/postgres/**'
+      - '.github/workflows/docker-publish-postgres.yml'
+  workflow_dispatch:
+
+env:
+  IMAGE_NAME: ghcr.io/flui-cloud/flui-postgres
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Multi-arch (amd64 + arm64); QEMU emulates arm64 on the amd64 runner.
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE_NAME }}
+          flavor: latest=false
+          tags: |
+            type=raw,value=17-dev
+            type=sha,prefix=,format=short
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: images/postgres
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
