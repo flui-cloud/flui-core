@@ -43,6 +43,21 @@ export class HetznerFirewallService implements IFirewallProvider {
   }
 
   /**
+   * Log-safe error summary: only the Hetzner API message/code and HTTP status.
+   * Never serialize the raw AxiosError — its config carries the Bearer token.
+   */
+  private describeError(error: any): string {
+    const api = error?.response?.data?.error;
+    if (api?.message) {
+      const code = api.code ? ` (${api.code})` : '';
+      return api.message + code;
+    }
+    const status = error?.response?.status;
+    const suffix = status ? ` [HTTP ${status}]` : '';
+    return (error?.message ?? 'unknown error') + suffix;
+  }
+
+  /**
    * Create custom Axios instance with optimized configuration
    */
   private createAxiosInstance(): AxiosInstance {
@@ -77,7 +92,9 @@ export class HetznerFirewallService implements IFirewallProvider {
         return config;
       },
       (error) => {
-        this.logger.error('Hetzner Firewall API Request Error:', error);
+        this.logger.error(
+          `Hetzner Firewall API Request Error: ${this.describeError(error)}`,
+        );
         return Promise.reject(error);
       },
     );
@@ -211,7 +228,9 @@ export class HetznerFirewallService implements IFirewallProvider {
       );
       return result;
     } catch (error) {
-      this.logger.error(`Failed to create firewall ${config.name}`, error);
+      this.logger.error(
+        `Failed to create firewall ${config.name}: ${this.describeError(error)}`,
+      );
 
       if (error.response?.data?.error) {
         const apiError = error.response.data.error;
@@ -242,7 +261,9 @@ export class HetznerFirewallService implements IFirewallProvider {
 
       this.logger.log(`Firewall ${firewallId} rules updated successfully`);
     } catch (error) {
-      this.logger.error(`Failed to update firewall ${firewallId} rules`, error);
+      this.logger.error(
+        `Failed to update firewall ${firewallId} rules: ${this.describeError(error)}`,
+      );
 
       if (error.response?.data?.error) {
         const apiError = error.response.data.error;
@@ -286,7 +307,9 @@ export class HetznerFirewallService implements IFirewallProvider {
         return null;
       }
 
-      this.logger.error(`Failed to get firewall ${firewallId}`, error);
+      this.logger.error(
+        `Failed to get firewall ${firewallId}: ${this.describeError(error)}`,
+      );
       throw new Error(`Failed to get firewall: ${error.message}`);
     }
   }
@@ -326,7 +349,9 @@ export class HetznerFirewallService implements IFirewallProvider {
         })),
       }));
     } catch (error) {
-      this.logger.error('Failed to list firewalls', error);
+      this.logger.error(
+        `Failed to list firewalls: ${this.describeError(error)}`,
+      );
       return [];
     }
   }
@@ -390,7 +415,9 @@ export class HetznerFirewallService implements IFirewallProvider {
       }
 
       // Other errors - log and throw immediately
-      this.logger.error(`Failed to delete firewall ${firewallId}`, error);
+      this.logger.error(
+        `Failed to delete firewall ${firewallId}: ${this.describeError(error)}`,
+      );
 
       if (error.response?.data?.error) {
         const apiError = error.response.data.error;
@@ -505,7 +532,9 @@ export class HetznerFirewallService implements IFirewallProvider {
         `Firewall ${firewallId} applied to ${serverIds.length} servers successfully`,
       );
     } catch (error) {
-      this.logger.error(`Failed to apply firewall ${firewallId}`, error);
+      this.logger.error(
+        `Failed to apply firewall ${firewallId}: ${this.describeError(error)}`,
+      );
 
       if (error.response?.data?.error) {
         const apiError = error.response.data.error;
@@ -544,7 +573,9 @@ export class HetznerFirewallService implements IFirewallProvider {
         `Firewall ${firewallId} removed from ${serverIds.length} servers successfully`,
       );
     } catch (error) {
-      this.logger.error(`Failed to remove firewall ${firewallId}`, error);
+      this.logger.error(
+        `Failed to remove firewall ${firewallId}: ${this.describeError(error)}`,
+      );
 
       if (error.response?.data?.error) {
         const apiError = error.response.data.error;

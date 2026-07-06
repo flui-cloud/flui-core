@@ -122,9 +122,7 @@ export class HetznerProviderService implements ICloudProvider {
         this.logger.debug(
           `Hetzner API Request: ${config.method?.toUpperCase()} ${config.url}`,
         );
-        this.logger.debug(
-          `Request Headers: ${JSON.stringify(config.headers, null, 2)}`,
-        );
+        // Headers intentionally not logged — they carry the API bearer token.
         return config;
       },
       (error) => {
@@ -333,15 +331,17 @@ export class HetznerProviderService implements ICloudProvider {
     // Map status
     instance.status = this.mapHetznerStatus(server.status);
 
-    // Map data center and region configuration
-    instance.dataCenter = server.datacenter.name;
-    instance.region = server.datacenter.location.name;
-    instance.regionName = server.datacenter.location.description;
+    // Map data center and region configuration. A just-created server may not
+    // have these populated yet — tolerate missing fields instead of throwing
+    // and voiding the whole instance list.
+    instance.dataCenter = server.datacenter?.name ?? 'unknown';
+    instance.region = server.datacenter?.location?.name ?? 'unknown';
+    instance.regionName = server.datacenter?.location?.description ?? '';
 
     // Map hardware specifications
-    instance.cpuCores = server.server_type.cores;
-    instance.ramMb = server.server_type.memory * 1024; // Convert from GB to MB
-    instance.diskMb = server.primary_disk_size * 1024; // Convert from GB to MB
+    instance.cpuCores = server.server_type?.cores ?? 0;
+    instance.ramMb = (server.server_type?.memory ?? 0) * 1024; // Convert from GB to MB
+    instance.diskMb = (server.primary_disk_size ?? 0) * 1024; // Convert from GB to MB
 
     // Operating system information
     instance.osType = server.image
@@ -350,14 +350,14 @@ export class HetznerProviderService implements ICloudProvider {
 
     // IP configuration
     instance.ipConfig = {
-      v4: server.public_net.ipv4
+      v4: server.public_net?.ipv4
         ? {
             ip: server.public_net.ipv4.ip,
             gateway: '', // Information not available in the response
             netmaskCidr: 32, // Standard IPv4
           }
         : undefined,
-      v6: server.public_net.ipv6
+      v6: server.public_net?.ipv6
         ? {
             ip: server.public_net.ipv6.ip,
             gateway: '', // Information not available in the response
@@ -367,13 +367,13 @@ export class HetznerProviderService implements ICloudProvider {
     };
 
     // Additional information
-    instance.productType = server.server_type.name;
-    instance.productName = server.server_type.description;
+    instance.productType = server.server_type?.name ?? 'unknown';
+    instance.productName = server.server_type?.description ?? '';
     instance.defaultUser = this.defaultUser; // Default user for Hetzner servers
 
     // Additional IPs (floating IPs)
     instance.additionalIps =
-      server.public_net.floating_ips?.map((ip) => ip.toString()) || [];
+      server.public_net?.floating_ips?.map((ip) => ip.toString()) || [];
 
     // Additional metadata that might be useful
     instance.metadata = {
@@ -520,7 +520,9 @@ export class HetznerProviderService implements ICloudProvider {
       this.logger.log(`Server ${config.name} created successfully`, result);
       return result;
     } catch (error) {
-      this.logger.error(`Failed to create server ${config.name}`, error);
+      this.logger.error(
+        `Failed to create server ${config.name}: ${this.describeError(error)}`,
+      );
 
       // Handle Hetzner API specific errors
       if (error.response?.data?.error) {
@@ -534,6 +536,21 @@ export class HetznerProviderService implements ICloudProvider {
     }
   }
 
+  /**
+   * Concise, secret-free one-line description of a provider/axios error.
+   * Never touches error.config/headers so the API token can't leak into logs.
+   */
+  private describeError(error: any): string {
+    const api = error?.response?.data?.error;
+    if (api?.message) {
+      const code = api.code ? ` (${api.code})` : '';
+      return api.message + code;
+    }
+    const status = error?.response?.status;
+    const suffix = status ? ` [HTTP ${status}]` : '';
+    return (error?.message ?? 'unknown error') + suffix;
+  }
+
   async getServerStatus(serverId: string): Promise<string> {
     try {
       const serversApi = await this.createServersApi();
@@ -541,7 +558,9 @@ export class HetznerProviderService implements ICloudProvider {
 
       return response.data.server.status;
     } catch (error) {
-      this.logger.warn(`Failed to get server status for ${serverId}`, error);
+      this.logger.warn(
+        `Failed to get server status for ${serverId}: ${this.describeError(error)}`,
+      );
 
       if (error.response?.status === 404) {
         return 'not-found';
@@ -560,7 +579,9 @@ export class HetznerProviderService implements ICloudProvider {
 
       return response.data.server;
     } catch (error) {
-      this.logger.warn(`Failed to get server details for ${serverId}`, error);
+      this.logger.warn(
+        `Failed to get server details for ${serverId}: ${this.describeError(error)}`,
+      );
       return null;
     }
   }
@@ -687,7 +708,9 @@ export class HetznerProviderService implements ICloudProvider {
       );
       return result;
     } catch (error) {
-      this.logger.error(`Failed to delete server ${config.server_id}`, error);
+      this.logger.error(
+        `Failed to delete server ${config.server_id}: ${this.describeError(error)}`,
+      );
 
       // Handle Hetzner API specific errors
       if (error.response?.data?.error) {
@@ -718,7 +741,9 @@ export class HetznerProviderService implements ICloudProvider {
       await actionsApi.poweroffServer(Number.parseInt(serverId));
       this.logger.log(`Server ${serverId} poweroff action sent successfully`);
     } catch (error) {
-      this.logger.error(`Failed to power off server ${serverId}`, error);
+      this.logger.error(
+        `Failed to power off server ${serverId}: ${this.describeError(error)}`,
+      );
 
       if (error.response?.data?.error) {
         const apiError = error.response.data.error;
@@ -746,7 +771,9 @@ export class HetznerProviderService implements ICloudProvider {
       await actionsApi.poweronServer(Number.parseInt(serverId));
       this.logger.log(`Server ${serverId} poweron action sent successfully`);
     } catch (error) {
-      this.logger.error(`Failed to power on server ${serverId}`, error);
+      this.logger.error(
+        `Failed to power on server ${serverId}: ${this.describeError(error)}`,
+      );
 
       if (error.response?.data?.error) {
         const apiError = error.response.data.error;
@@ -894,11 +921,22 @@ export class HetznerProviderService implements ICloudProvider {
       const serversApi = await this.createServersApi();
       const response = await serversApi.listServers();
 
-      return response.data.servers.map((server) =>
-        this.mapHetznerServerToDto(server),
-      );
+      return response.data.servers
+        .map((server) => {
+          try {
+            return this.mapHetznerServerToDto(server);
+          } catch (e) {
+            this.logger.warn(
+              `Skipping unmappable Hetzner server ${server?.id}: ${this.describeError(e)}`,
+            );
+            return null;
+          }
+        })
+        .filter((s): s is ServerResponseDto => s !== null);
     } catch (error) {
-      this.logger.error('Failed to list servers from Hetzner API', error);
+      this.logger.error(
+        `Failed to list servers from Hetzner API: ${this.describeError(error)}`,
+      );
       return [];
     }
   }
@@ -915,8 +953,7 @@ export class HetznerProviderService implements ICloudProvider {
       return this.mapHetznerServerToDto(serverDetails);
     } catch (error) {
       this.logger.warn(
-        `Failed to get server details as DTO for ${serverId}`,
-        error,
+        `Failed to get server details as DTO for ${serverId}: ${this.describeError(error)}`,
       );
       return null;
     }
@@ -931,7 +968,9 @@ export class HetznerProviderService implements ICloudProvider {
 
       return { success: true };
     } catch (error) {
-      this.logger.error('Hetzner API connection test failed', error);
+      this.logger.error(
+        `Hetzner API connection test failed: ${this.describeError(error)}`,
+      );
       return {
         success: false,
         error: error.message,
@@ -942,17 +981,20 @@ export class HetznerProviderService implements ICloudProvider {
   private mapHetznerServerToDto(
     server: ListServers200ResponseServersInner,
   ): ServerResponseDto {
+    // A freshly-created server may briefly lack datacenter/public_net while it
+    // initializes; never let one incomplete record throw and void the whole list
+    // (that silently breaks the create-idempotency check → duplicate-name 409s).
     return {
-      id: server.id.toString(),
+      id: server.id?.toString() ?? '',
       name: server.name,
       provider: CloudProvider.HETZNER,
-      provider_resource_id: server.id.toString(),
-      server_type: server.server_type.name,
-      location: server.datacenter.location.name,
+      provider_resource_id: server.id?.toString() ?? '',
+      server_type: server.server_type?.name ?? 'unknown',
+      location: server.datacenter?.location?.name ?? 'unknown',
       status: server.status,
-      public_ip: server.public_net.ipv4?.ip || null,
+      public_ip: server.public_net?.ipv4?.ip || null,
       private_ip: server.private_net?.[0]?.ip || null,
-      created_at: new Date(server.created),
+      created_at: server.created ? new Date(server.created) : new Date(),
       updated_at: new Date(),
       lastSyncAt: new Date(),
       labels: this.labelService.fromRecord(server.labels || {}),
@@ -995,7 +1037,9 @@ export class HetznerProviderService implements ICloudProvider {
       this.logger.log(`Retrieved ${allKeys.length} SSH keys from Hetzner`);
       return allKeys;
     } catch (error) {
-      this.logger.error('Failed to list SSH keys from Hetzner API', error);
+      this.logger.error(
+        `Failed to list SSH keys from Hetzner API: ${this.describeError(error)}`,
+      );
       return [];
     }
   }
@@ -1101,7 +1145,9 @@ export class HetznerProviderService implements ICloudProvider {
       return sortedNodeSizes;
     } catch (error) {
       //error.errors for each concatenate message an log them
-      this.logger.error('Failed to fetch Hetzner node sizes', error);
+      this.logger.error(
+        `Failed to fetch Hetzner node sizes: ${this.describeError(error)}`,
+      );
       error?.errors?.forEach((err) => this.logger.error(err));
       throw new Error(`Failed to fetch node sizes`);
     }
@@ -1124,7 +1170,9 @@ export class HetznerProviderService implements ICloudProvider {
         query.nodeSize,
       );
     } catch (error) {
-      this.logger.error('Failed to fetch Hetzner pricing', error);
+      this.logger.error(
+        `Failed to fetch Hetzner pricing: ${this.describeError(error)}`,
+      );
       throw new Error(`Failed to fetch pricing: ${error.message}`);
     }
   }
@@ -1174,7 +1222,9 @@ export class HetznerProviderService implements ICloudProvider {
 
       return availabilityMap;
     } catch (error) {
-      this.logger.error('Failed to fetch datacenter availability', error);
+      this.logger.error(
+        `Failed to fetch datacenter availability: ${this.describeError(error)}`,
+      );
       throw new Error(
         `Failed to fetch datacenter availability: ${error.message}`,
       );
@@ -1193,8 +1243,7 @@ export class HetznerProviderService implements ICloudProvider {
       const sshKeysApi = await this.createSSHKeysApi();
 
       this.logger.log(
-        `Creating SSH key ${name} on Hetzner with labels`,
-        labels,
+        `Creating SSH key ${name} on Hetzner with labels ${JSON.stringify(labels ?? {})}`,
       );
 
       const response = await sshKeysApi.createSshKey({
@@ -1212,7 +1261,9 @@ export class HetznerProviderService implements ICloudProvider {
         fingerprint: response.data.ssh_key.fingerprint,
       };
     } catch (error) {
-      this.logger.error(`Failed to create SSH key ${name} on Hetzner`, error);
+      this.logger.error(
+        `Failed to create SSH key ${name} on Hetzner: ${this.describeError(error)}`,
+      );
 
       if (error.response?.status === 409) {
         throw new Error(`SSH key with name ${name} already exists on Hetzner`);
@@ -1243,8 +1294,7 @@ export class HetznerProviderService implements ICloudProvider {
       }
 
       this.logger.error(
-        `Failed to delete SSH key ${providerKeyId} from Hetzner`,
-        error,
+        `Failed to delete SSH key ${providerKeyId} from Hetzner: ${this.describeError(error)}`,
       );
       throw new Error(
         `Failed to delete SSH key from Hetzner: ${error.message}`,
@@ -1276,8 +1326,7 @@ export class HetznerProviderService implements ICloudProvider {
       }
 
       this.logger.error(
-        `Failed to get SSH key ${providerKeyId} from Hetzner`,
-        error,
+        `Failed to get SSH key ${providerKeyId} from Hetzner: ${this.describeError(error)}`,
       );
       throw new Error(`Failed to get SSH key from Hetzner: ${error.message}`);
     }
@@ -1338,8 +1387,7 @@ export class HetznerProviderService implements ICloudProvider {
       this.logger.log(`Server ${serverId} labels updated successfully`);
     } catch (error) {
       this.logger.error(
-        `Failed to update labels for server ${serverId}`,
-        error,
+        `Failed to update labels for server ${serverId}: ${this.describeError(error)}`,
       );
 
       if (error.response?.status === 404) {

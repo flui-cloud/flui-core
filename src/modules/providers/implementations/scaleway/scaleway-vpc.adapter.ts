@@ -127,7 +127,7 @@ export class ScalewayVpcAdapter {
       this.logger.error(
         `Scaleway createPrivateNetwork failed: status=${status} detail=${JSON.stringify(detail)}`,
       );
-      throw err;
+      throw new Error(this.describeVpcError(detail, subnets, region));
     }
 
     const pn = resp.data;
@@ -144,6 +144,28 @@ export class ScalewayVpcAdapter {
         networkZone: region,
       })),
     };
+  }
+
+  /** Turn Scaleway's VPC validation payload into an actionable, user-facing message. */
+  private describeVpcError(
+    detail: any,
+    subnets: string[],
+    region: string,
+  ): string {
+    const first = Array.isArray(detail?.details)
+      ? detail.details[0]
+      : undefined;
+    const help: string = first?.help_message ?? '';
+    if (help.includes('subnet_overlaps_in_vpc')) {
+      return `Subnet ${subnets.join(', ')} overlaps an existing private network in your Scaleway VPC (${region}). Choose a different IP range.`;
+    }
+    if (detail?.message) {
+      const reason = help ? ` (${help.split(':')[0].trim()})` : '';
+      return `Scaleway rejected the network: ${detail.message}${reason}`;
+    }
+    return typeof detail === 'string'
+      ? detail
+      : 'Scaleway rejected the private network request.';
   }
 
   async deletePrivateNetwork(
