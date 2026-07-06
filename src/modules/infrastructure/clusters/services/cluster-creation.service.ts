@@ -17,7 +17,10 @@ import { CreateClusterDto } from '../dto/create-cluster.dto';
 import { EncryptionService } from '../../../shared/encryption/services/encryption.service';
 import { ClusterFirewallIntegrationService } from './cluster-firewall-integration.service';
 import { CapabilitiesProviderFactory } from '../../../providers/core/factories/capabilities-provider.factory';
+import { CloudProvider } from '../../../providers/enums/cloud-provider.enum';
 import { sanitizeApiServerFirewallRules } from '../../firewalls/templates/firewall-rules.template';
+import { FirewallReconciliationService } from '../../firewalls/services/firewall-reconciliation.service';
+import { FirewallRuleDto } from '../../../providers/dto/firewall.dto';
 import { getOperationSteps } from '../../operations/helpers/operation-steps.helper';
 import { CreateClusterJobData } from '../clusters.service';
 import { VNetSubnetEntity } from '../../vnets/entities/vnet-subnet.entity';
@@ -67,27 +70,53 @@ export class ClusterCreationService {
         : ClusterType.WORKLOAD;
 
     // Resolve the environment-level VNet/Subnet (seeded at bootstrap by the CLI).
-    // Every cluster — observability or workload — joins the same private network
-    // so intra-cluster and inter-cluster traffic stays off the public interface.
+    // Same-provider clusters join this shared private network so intra- and
+    // inter-cluster traffic stays off the public interface. A cross-provider
+    // workload can't attach to it (the network lives on the control's provider),
+    // so it must bring its own VNet on its own provider — cross-provider
+    // reachability is handled by firewall peer rules, not a shared L2.
     const envSubnet = await this.vnetSubnetRepository.findOne({
       where: {},
       order: { createdAt: 'ASC' },
+      relations: ['vnet'],
     });
     if (!envSubnet) {
       throw new BadRequestException(
         'No environment subnet registered. The CLI must provision a VNet/Subnet during `flui env create` before any cluster can be created.',
       );
     }
-    metadata.vnetConfig = {
-      vnetId: envSubnet.vnetId,
-      subnetId: envSubnet.id,
-      autoAssignIp: true,
-    };
-    this.logger.log(
-      `Cluster ${dto.name} attached to environment subnet ${envSubnet.id} (${envSubnet.ipRange})`,
-    );
 
-    await this.enforceProviderPolicies(dto, clusterType, !!envSubnet);
+    const isCrossProvider = envSubnet.vnet?.provider !== dto.provider;
+    let hasUsableSubnet: boolean;
+    if (isCrossProvider) {
+      if (dto.vnetConfig) {
+        metadata.vnetConfig = {
+          vnetId: dto.vnetConfig.vnetId,
+          subnetId: dto.vnetConfig.subnetId,
+          autoAssignIp: dto.vnetConfig.autoAssignIp ?? true,
+        };
+        this.logger.log(
+          `Cross-provider cluster ${dto.name} (${dto.provider}) attached to its own VNet ${dto.vnetConfig.vnetId}`,
+        );
+      } else {
+        this.logger.log(
+          `Cross-provider cluster ${dto.name} (${dto.provider}) has no VNet supplied; deferring to provider policy`,
+        );
+      }
+      hasUsableSubnet = !!dto.vnetConfig;
+    } else {
+      metadata.vnetConfig = {
+        vnetId: envSubnet.vnetId,
+        subnetId: envSubnet.id,
+        autoAssignIp: true,
+      };
+      this.logger.log(
+        `Cluster ${dto.name} attached to environment subnet ${envSubnet.id} (${envSubnet.ipRange})`,
+      );
+      hasUsableSubnet = true;
+    }
+
+    await this.enforceProviderPolicies(dto, clusterType, hasUsableSubnet);
 
     // Resolve nip.io hostname token: when running in IP mode, every cluster gets
     // a unique token segment so the LE domain set differs between recreations,
@@ -150,7 +179,7 @@ export class ClusterCreationService {
     // observability ↔ workload metrics traffic flows over the environment VNet.
     let providerFirewallId: string | null = null;
     try {
-      const desiredRules = sanitizeApiServerFirewallRules(
+      const desiredRules = this.buildDesiredFirewallRules(
         dto.firewallRules || [],
         envSubnet.ipRange,
       );
@@ -228,27 +257,50 @@ export class ClusterCreationService {
     return savedOperation;
   }
 
+  /**
+   * Resolve the firewall rules to seed at cluster creation. An empty input is an
+   * explicit deny-all firewall (documented DTO behaviour) and is passed through
+   * untouched; when rules are supplied we sanitize the API-server rule and then
+   * enforce the 80/443 invariant so the same server-side guarantee holds at
+   * create time as on every later update.
+   */
+  private buildDesiredFirewallRules(
+    providedRules: FirewallRuleDto[],
+    subnetCidr: string,
+  ): FirewallRuleDto[] {
+    if (providedRules.length === 0) return providedRules;
+    return FirewallReconciliationService.ensureRequiredIngress(
+      sanitizeApiServerFirewallRules(providedRules, subnetCidr),
+    );
+  }
+
   private async enforceProviderPolicies(
     dto: CreateClusterDto,
     clusterType: ClusterType,
-    hasEnvSubnet: boolean,
+    hasUsableSubnet: boolean,
   ): Promise<void> {
+    // Policy first: when cross-provider is banned outright, VNET_REQUIRED would
+    // send the user off to create a VNet only to hit the real block afterwards.
+    await this.assertWorkloadProviderMatchesControl(dto, clusterType);
+
     const capabilities = this.capabilitiesFactory
       .getCapabilitiesService(dto.provider)
       .getStaticCapabilities();
 
-    if (capabilities.vnetRequired && !dto.vnetConfig && !hasEnvSubnet) {
+    if (capabilities.vnetRequired && !dto.vnetConfig && !hasUsableSubnet) {
       throw new BadRequestException({
         code: 'VNET_REQUIRED',
         message: `Provider '${dto.provider}' requires a VNet/Subnet, but none was supplied or registered.`,
         details: { provider: dto.provider },
       });
     }
+  }
 
-    if (
-      clusterType !== ClusterType.WORKLOAD ||
-      capabilities.crossClusterAllowed
-    ) {
+  private async assertWorkloadProviderMatchesControl(
+    dto: CreateClusterDto,
+    clusterType: ClusterType,
+  ): Promise<void> {
+    if (clusterType !== ClusterType.WORKLOAD) {
       return;
     }
 
@@ -257,15 +309,27 @@ export class ClusterCreationService {
         clusterType: In([ClusterType.CONTROL, ClusterType.OBSERVABILITY]),
       },
     });
-    if (control && control.provider !== dto.provider) {
-      throw new BadRequestException({
-        code: 'CROSS_PROVIDER_NOT_ALLOWED',
-        message: `Workload provider '${dto.provider}' must match the control cluster provider '${control.provider}'.`,
-        details: {
-          workloadProvider: dto.provider,
-          controlProvider: control.provider,
-        },
-      });
+    if (!control || control.provider === dto.provider) {
+      return;
     }
+
+    // Cross-provider is gated by the CONTROL provider's capability: a control
+    // that permits it (e.g. BYOS, which can't provision workloads on itself)
+    // may run workloads on other providers.
+    const controlAllowsCross = this.capabilitiesFactory
+      .getCapabilitiesService(control.provider as CloudProvider)
+      .getStaticCapabilities().crossClusterAllowed;
+    if (controlAllowsCross) {
+      return;
+    }
+
+    throw new BadRequestException({
+      code: 'CROSS_PROVIDER_NOT_ALLOWED',
+      message: `Workload provider '${dto.provider}' must match the control cluster provider '${control.provider}'.`,
+      details: {
+        workloadProvider: dto.provider,
+        controlProvider: control.provider,
+      },
+    });
   }
 }

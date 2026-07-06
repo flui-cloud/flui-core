@@ -436,6 +436,68 @@ export class VNetsService {
   }
 
   /**
+   * List the subnet CIDRs that a NEW VNet must avoid on a provider, read live
+   * from the provider (not our DB) so it also reflects networks we don't track —
+   * orphans from failed creates and non-Flui networks.
+   *
+   * Only meaningful where all VNets share one address space (a VPC), so ranges
+   * across different VNets must not overlap (Scaleway). On providers with
+   * isolated networks (Hetzner) two VNets may reuse the same range with no
+   * conflict, so nothing is "occupied" for a new VNet → returns empty.
+   *
+   * `sharedAddressSpace` is scoped per region for regional VPCs, so results are
+   * filtered to the target region when one is supplied.
+   */
+  async getOccupiedSubnets(
+    providerName: string,
+    region?: string,
+  ): Promise<{ provider: string; cidrs: string[] }> {
+    const topology = this.capabilitiesFactory
+      .getCapabilitiesService(providerName as CloudProvider)
+      .getStaticCapabilities().vnetTopology;
+
+    // Isolated-network providers have no cross-VNet overlap to avoid.
+    if (!topology?.sharedAddressSpace) {
+      return { provider: providerName, cidrs: [] };
+    }
+
+    const provider = this.providerFactory.getProvider(
+      providerName as CloudProvider,
+    );
+    if (!provider.listVNets) {
+      return { provider: providerName, cidrs: [] };
+    }
+    try {
+      const vnets = await provider.listVNets();
+      const cidrs = new Set<string>();
+      for (const vnet of vnets) {
+        const subnets = vnet.subnets ?? [];
+        // Regional VPC: only the target region's networks share the space.
+        const inRegion =
+          !region ||
+          subnets.length === 0 ||
+          subnets.some((s) => !s.networkZone || s.networkZone === region);
+        if (!inRegion) continue;
+        if (vnet.ipRange) cidrs.add(vnet.ipRange);
+        for (const subnet of subnets) {
+          if (
+            subnet.ipRange &&
+            (!region || !subnet.networkZone || subnet.networkZone === region)
+          ) {
+            cidrs.add(subnet.ipRange);
+          }
+        }
+      }
+      return { provider: providerName, cidrs: [...cidrs] };
+    } catch (error) {
+      this.logger.warn(
+        `Failed to list occupied subnets for ${providerName}: ${error.message}`,
+      );
+      return { provider: providerName, cidrs: [] };
+    }
+  }
+
+  /**
    * Delete VNet
    * Handles gracefully when VNet doesn't exist on provider (404)
    */
@@ -677,6 +739,7 @@ export class VNetsService {
         vnetId: vnet.id,
         providerSubnetId: result.subnetId,
         ipRange: result.ipRange,
+        type: SubnetType.CLOUD,
         networkZone: result.networkZone,
         gateway: result.gateway,
         vswitchId: addSubnetDto.vswitchId,

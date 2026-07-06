@@ -61,6 +61,12 @@ export interface VNetTopology {
   subnetPerZone: boolean;
   /** Whether the provider supports explicit routing tables on VNets */
   supportsRoutes: boolean;
+  /**
+   * Whether all VNets share one address space (a VPC), so ranges across
+   * different VNets must not overlap. True for Scaleway (VPC per region);
+   * false/omitted for Hetzner, whose networks are isolated and may reuse ranges.
+   */
+  sharedAddressSpace?: boolean;
   /** Allowed CIDR prefix range for the VNet IP range */
   vnetIpRange: IpRangeConstraints;
   /** Allowed CIDR prefix range for individual subnets */

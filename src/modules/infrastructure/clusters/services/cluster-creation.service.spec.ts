@@ -6,9 +6,11 @@ describe('ClusterCreationService.createCluster — provider policies', () => {
   function build({
     capabilities,
     observabilityCluster,
+    envVnetProvider = CloudProvider.HETZNER,
   }: {
     capabilities: { vnetRequired: boolean; crossClusterAllowed: boolean };
     observabilityCluster?: unknown;
+    envVnetProvider?: CloudProvider;
   }) {
     const clusterRepo = {
       findOne: jest.fn().mockResolvedValue(observabilityCluster ?? null),
@@ -20,11 +22,14 @@ describe('ClusterCreationService.createCluster — provider policies', () => {
       create: jest.fn((x: object) => x),
       save: jest.fn(async (x: object) => ({ id: 'op-1', ...x })),
     };
+    // The env subnet lives on the CONTROL's provider; the service compares its
+    // vnet.provider against the workload's to detect cross-provider creation.
     const vnetSubnetRepo = {
       findOne: jest.fn().mockResolvedValue({
         id: 'subnet-1',
         vnetId: 'vnet-1',
         ipRange: '10.10.1.0/24',
+        vnet: { provider: envVnetProvider },
       }),
     };
     const queue = { add: jest.fn().mockResolvedValue(undefined) };
@@ -64,8 +69,11 @@ describe('ClusterCreationService.createCluster — provider policies', () => {
     const { service } = build({
       capabilities: { vnetRequired: true, crossClusterAllowed: false },
       observabilityCluster: { provider: CloudProvider.SCALEWAY },
+      envVnetProvider: CloudProvider.SCALEWAY,
     });
 
+    // Policy error wins over VNET_REQUIRED: pointing the user at a missing VNet
+    // when cross-provider is banned outright would be a dead end.
     await expect(service.createCluster(baseDto as never)).rejects.toMatchObject(
       {
         response: { code: 'CROSS_PROVIDER_NOT_ALLOWED' },
@@ -84,13 +92,19 @@ describe('ClusterCreationService.createCluster — provider policies', () => {
     expect(firewallIntegration.createAndReconcileFirewall).toHaveBeenCalled();
   });
 
-  it('allows cross-provider when crossClusterAllowed is true', async () => {
+  it('allows cross-provider when crossClusterAllowed is true (workload brings its own VNet)', async () => {
     const { service, firewallIntegration } = build({
       capabilities: { vnetRequired: true, crossClusterAllowed: true },
       observabilityCluster: { provider: CloudProvider.SCALEWAY },
+      envVnetProvider: CloudProvider.SCALEWAY,
     });
 
-    await service.createCluster(baseDto as never);
+    // A cross-provider workload can't join the control's env subnet; it must
+    // supply a VNet on its own provider.
+    await service.createCluster({
+      ...baseDto,
+      vnetConfig: { vnetId: 'vnet-h', subnetId: 'subnet-h' },
+    } as never);
 
     expect(firewallIntegration.createAndReconcileFirewall).toHaveBeenCalled();
   });
@@ -99,6 +113,7 @@ describe('ClusterCreationService.createCluster — provider policies', () => {
     const { service } = build({
       capabilities: { vnetRequired: true, crossClusterAllowed: false },
       observabilityCluster: { provider: CloudProvider.SCALEWAY },
+      envVnetProvider: CloudProvider.SCALEWAY,
     });
 
     await expect(service.createCluster(baseDto as never)).rejects.toThrow(

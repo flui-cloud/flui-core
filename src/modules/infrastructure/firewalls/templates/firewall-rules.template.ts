@@ -171,9 +171,20 @@ export function sanitizeApiServerFirewallRules(
   rules: FirewallRule[],
   subnetCidr: string,
 ): FirewallRule[] {
+  // The K3s API on 6443 is client-cert mTLS, so an open port grants nothing
+  // without the kubeconfig cert (same reasoning the cross-provider reconciler
+  // uses to open 6443 to the control's public IP). We therefore keep the
+  // caller's explicit sources — a cross-provider control/dev machine legitimately
+  // needs to reach 6443 from outside the VNet — while always guaranteeing the
+  // subnet CIDR is present so intra-cluster/same-VNet reachability can't be lost.
   return rules.map((rule) =>
     rule.direction === 'in' && rule.protocol === 'tcp' && rule.port === '6443'
-      ? { ...rule, sourceIps: [subnetCidr] }
+      ? {
+          ...rule,
+          sourceIps: Array.from(
+            new Set([subnetCidr, ...(rule.sourceIps ?? [])]),
+          ),
+        }
       : rule,
   );
 }

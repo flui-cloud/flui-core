@@ -1,4 +1,5 @@
 import { Test } from '@nestjs/testing';
+import { getRepositoryToken } from '@nestjs/typeorm';
 import { CrossProviderFirewallService } from './cross-provider-firewall.service';
 import { FirewallDesiredStateService } from './firewall-desired-state.service';
 import { FirewallReconciliationService } from './firewall-reconciliation.service';
@@ -69,10 +70,25 @@ describe('CrossProviderFirewallService', () => {
   let service: CrossProviderFirewallService;
   let list: jest.Mock;
   let apply: jest.Mock;
+  let clusterFind: jest.Mock;
 
   beforeEach(async () => {
     list = jest.fn();
     apply = jest.fn().mockResolvedValue({});
+    // The control is resolved from the cluster repository (a BYOS control owns
+    // no firewall). Default: derive control-type clusters from the same
+    // firewall fixtures; tests for firewall-less controls override this.
+    clusterFind = jest.fn(async () => {
+      const fws: ClusterFirewallEntity[] = (await list()) ?? [];
+      return fws
+        .map((f) => f.cluster)
+        .filter(
+          (c): c is ClusterEntity =>
+            !!c &&
+            (c.clusterType === ClusterType.CONTROL ||
+              c.clusterType === ClusterType.OBSERVABILITY),
+        );
+    });
     const mod = await Test.createTestingModule({
       providers: [
         CrossProviderFirewallService,
@@ -83,6 +99,10 @@ describe('CrossProviderFirewallService', () => {
         {
           provide: FirewallReconciliationService,
           useValue: { updateAndApplyRules: apply },
+        },
+        {
+          provide: getRepositoryToken(ClusterEntity),
+          useValue: { find: clusterFind },
         },
       ],
     }).compile();
@@ -246,6 +266,38 @@ describe('CrossProviderFirewallService', () => {
     const peer = peerOf(rulesFor('fw-w'));
     expect(peer).toHaveLength(1);
     expect(peer[0].sourceIps).toEqual(['9.9.9.9/32']); // re-derived to current master IP
+  });
+
+  it('resolves a firewall-less BYOS control and uses its public host for the 6443 peer rule', async () => {
+    const byosControl = cluster({
+      id: 'ctl-byos',
+      provider: 'byos',
+      clusterType: ClusterType.CONTROL,
+      masterIpAddress: '10.88.0.2', // internal (e.g. Podman) address
+      metadata: { byos: { host: '109.1.2.3' } },
+    });
+    const workload = cluster({
+      id: 'w',
+      provider: 'hetzner',
+      clusterType: ClusterType.WORKLOAD,
+      nodes: [{ ipAddress: '1.2.3.4' }] as any,
+    });
+    // The BYOS control owns NO firewall — it must still be resolved (from the
+    // cluster repo) and its operator-declared public host must source the rule.
+    list.mockResolvedValue([firewall('fw-w', workload)]);
+    clusterFind.mockResolvedValue([byosControl]);
+
+    await service.reconcileAllPeers();
+
+    expect(peerOf(rulesFor('fw-w'))).toEqual([
+      {
+        description: 'flui:xprovider:apiserver',
+        direction: 'in',
+        protocol: 'tcp',
+        port: '6443',
+        sourceIps: ['109.1.2.3/32'],
+      },
+    ]);
   });
 
   it('skips deleted clusters (no rule, and no node IPs contributed)', async () => {

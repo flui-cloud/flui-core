@@ -245,20 +245,25 @@ export class ClusterOrchestrationService {
     const supportsSSHRegistry =
       typeof masterProviderService.createSSHKey === 'function';
 
-    // Pass local key ID — ServersService will resolve it to the provider key ID during sync
+    // Inject the bootstrap key via cloud-init on EVERY provider — it appends to
+    // authorized_keys before the downstream script runs, so SSH access never
+    // depends on the provider's key registry landing correctly. Registry
+    // providers (Hetzner) ALSO get the key attached at boot (redundant, harmless):
+    // relying on the registry alone was fragile — a single hiccup left the master
+    // with no accepted key ("Permission denied (publickey)") while Scaleway's
+    // cloud-init path always worked.
     let localSSHKeyIds: string[] = [];
-    let bootstrapPublicKeyForCloudInit: string | undefined;
+    const bootstrapPublicKeyForCloudInit: string = bootstrapKey.publicKey;
 
     if (supportsSSHRegistry) {
       localSSHKeyIds = [savedBootstrapKey.id];
       this.logger.log(
-        `Bootstrap key ${savedBootstrapKey.id} will be synced with ${cluster.provider} by ServersService`,
+        `Bootstrap key ${savedBootstrapKey.id} will be synced with ${cluster.provider} and also injected via cloud-init`,
       );
     } else {
       this.logger.log(
-        `Provider ${cluster.provider} does not support SSH key registry — bootstrap key will be injected via cloud-init`,
+        `Provider ${cluster.provider} has no SSH key registry — bootstrap key injected via cloud-init only`,
       );
-      bootstrapPublicKeyForCloudInit = bootstrapKey.publicKey;
     }
 
     // Re-generate master script with bootstrap key if needed (cloud-init injection)
@@ -506,16 +511,22 @@ export class ClusterOrchestrationService {
     );
     await this.waitForK3sReady(node.ipAddress, k3sToken, 180000); // 3 min timeout
 
-    // Fetch kubeconfig from master via SSH using bootstrap key
+    // Fetch kubeconfig from master via SSH using bootstrap key. The server host
+    // baked into the kubeconfig is normally the master's private VNet IP, but a
+    // workload that does NOT share a private network with the control cluster
+    // (typical cross-provider case) is unreachable there — the API server must
+    // then be addressed on the master's public IP (the firewall opens 6443 to
+    // the control's public IP; see CrossProviderFirewallService).
+    const serverIp = await this.resolveKubeconfigServerIp(cluster, node);
     this.logger.log(
-      `[createMasterNode] Fetching kubeconfig from master ${node.ipAddress} via SSH (bootstrap key id: ${savedBootstrapKey.id})`,
+      `[createMasterNode] Fetching kubeconfig from master ${node.ipAddress} via SSH (bootstrap key id: ${savedBootstrapKey.id}); kubeconfig server=${serverIp}`,
     );
     let kubeconfig: string;
     try {
       kubeconfig = await this.fetchKubeconfigFromMaster(
         node.ipAddress,
         bootstrapKey.privateKey,
-        node.privateIp ?? node.ipAddress,
+        serverIp,
       );
     } catch (err) {
       this.logger.error(
@@ -1468,6 +1479,65 @@ export class ClusterOrchestrationService {
   }
 
   /**
+   * Decide which master IP the kubeconfig's API-server URL should point at.
+   *
+   * Default (and every control cluster): the private VNet IP — 6443 is never
+   * exposed publicly for same-network clusters. A WORKLOAD cluster that does not
+   * share a private network with the control (the typical cross-provider case:
+   * BYOS control, or a workload on a different provider/VNet) cannot reach that
+   * private IP, so we bake the master's PUBLIC IP instead. This is decided per
+   * cluster, never a global default, and only ever flips a workload to public.
+   */
+  private async resolveKubeconfigServerIp(
+    cluster: ClusterEntity,
+    node: ClusterNodeEntity,
+  ): Promise<string> {
+    const privateFirst = node.privateIp ?? node.ipAddress;
+    if (cluster.clusterType !== ClusterType.WORKLOAD) return privateFirst;
+
+    let control: ClusterEntity | null = null;
+    try {
+      control = await this.getControlCluster();
+    } catch (err) {
+      this.logger.warn(
+        `[kubeconfig] control lookup failed (${(err as Error).message}); ` +
+          `defaulting to private IP ${privateFirst}`,
+      );
+      return privateFirst;
+    }
+
+    if (control && this.sharesPrivateNetworkWithControl(cluster, control)) {
+      return privateFirst;
+    }
+    // No shared private network with the control → private IP is unroutable.
+    this.logger.log(
+      `[kubeconfig] workload ${cluster.name} does not share a private network ` +
+        `with the control cluster — baking public API-server IP ${node.ipAddress}`,
+    );
+    return node.ipAddress;
+  }
+
+  /**
+   * True when a workload and the control cluster sit on the same private network
+   * and can therefore reach each other over private IPs. Requires the same
+   * provider and the same VNet; if both pin an explicit subnet, the same subnet.
+   * A control with no VNet config (e.g. BYOS) never shares — returns false.
+   */
+  private sharesPrivateNetworkWithControl(
+    workload: ClusterEntity,
+    control: ClusterEntity,
+  ): boolean {
+    if (workload.provider !== control.provider) return false;
+    type VNetRef = { vnetId?: string; subnetId?: string };
+    const w = (workload.metadata as { vnetConfig?: VNetRef })?.vnetConfig;
+    const c = (control.metadata as { vnetConfig?: VNetRef })?.vnetConfig;
+    if (!w?.vnetId || !c?.vnetId) return false;
+    if (w.vnetId !== c.vnetId) return false;
+    if (w.subnetId && c.subnetId && w.subnetId !== c.subnetId) return false;
+    return true;
+  }
+
+  /**
    * Fetch kubeconfig from master node via SSH using the bootstrap key.
    * Reads /etc/rancher/k3s/k3s.yaml and replaces 127.0.0.1 with the public IP.
    */
@@ -1496,7 +1566,8 @@ export class ClusterOrchestrationService {
           throw new Error('Invalid kubeconfig received');
         }
 
-        // private VNet IP, not public: the K3s API (6443) is never public
+        // serverIp is the private VNet IP by default; resolveKubeconfigServerIp
+        // supplies the public IP for cross-network workloads (see its doc).
         const kubeconfig = raw.replaceAll('127.0.0.1', serverIp);
         this.logger.log('✅ Kubeconfig fetched successfully from master');
         return kubeconfig;

@@ -926,7 +926,77 @@ export class ClusterQueueProcessor {
       }
     }
 
+    // Orphan sweep: a server can exist on the provider without a usable node
+    // record — e.g. creation crashed after the provider made the server but
+    // before its id was persisted. Node-based deletion can't see those, so match
+    // by Flui's cluster-id label to guarantee nothing of THIS cluster survives.
+    await this.sweepOrphanedProviderServers(cluster, deleteOperations);
+
     return deleteOperations;
+  }
+
+  /**
+   * Delete provider servers that belong to this cluster (by Flui labels) but are
+   * not tracked as deletable nodes, so a failed/partial create can't leave an
+   * orphan the user must clean up by hand.
+   */
+  private async sweepOrphanedProviderServers(
+    cluster: ClusterEntity,
+    deleteOperations: Array<{
+      nodeId: string;
+      nodeName: string;
+      operationId: string;
+    }>,
+  ): Promise<void> {
+    try {
+      const provider = cluster.provider as CloudProvider;
+      const handledIds = new Set(
+        cluster.nodes
+          .map((n) => n.providerResourceId)
+          .filter((id): id is string => !!id),
+      );
+
+      const servers = await this.serversService.getServersByProvider(provider);
+      const orphans = servers.filter((s) => {
+        if (!s.id || handledIds.has(s.id)) return false;
+        const labels = s.labels ?? [];
+        const managed =
+          labels.find((l) => l.key === 'managed-by')?.value === 'flui-cloud';
+        if (!managed) return false;
+        // Match STRICTLY by cluster-id (UUID). Never by name: names are reused
+        // across retries AND across separate Flui installations sharing the same
+        // provider account (flui-environment is a constant), so a name match
+        // could force-delete another installation's servers.
+        const cid = labels.find((l) => l.key === 'flui-cluster-id')?.value;
+        return cid === cluster.id;
+      });
+
+      for (const orphan of orphans) {
+        this.logger.warn(
+          `Sweeping orphaned ${provider} server ${orphan.name} (${orphan.id}) — belongs to cluster ${cluster.name} but is not tracked as a node`,
+        );
+        try {
+          const op = await this.serversService.deleteServer({
+            server_id: orphan.id,
+            provider,
+            force: true,
+          });
+          deleteOperations.push({
+            nodeId: `orphan:${orphan.id}`,
+            nodeName: orphan.name,
+            operationId: op.id,
+          });
+        } catch (err: any) {
+          this.logger.error(
+            `Failed to sweep orphaned server ${orphan.name} (${orphan.id}): ${err?.message ?? err}`,
+          );
+        }
+      }
+    } catch (err: any) {
+      this.logger.warn(
+        `Orphan server sweep skipped for cluster ${cluster.name}: ${err?.message ?? err}`,
+      );
+    }
   }
 
   /**

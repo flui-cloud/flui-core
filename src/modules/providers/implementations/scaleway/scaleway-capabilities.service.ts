@@ -231,6 +231,9 @@ export class ScalewayCapabilitiesService
         supportsSubnets: false,
         subnetPerZone: false,
         supportsRoutes: false,
+        // Private networks live in a shared VPC per region → ranges across
+        // different networks must not overlap (subnet_overlaps_in_vpc).
+        sharedAddressSpace: true,
         // Scaleway VPC constraints (official docs: scaleway.com/en/docs/vpc/how-to/create-private-network/)
         // Both the private network and its subnets share the same /20–/28 prefix range.
         // Use 10.x.x.x ranges for consistency with other providers.

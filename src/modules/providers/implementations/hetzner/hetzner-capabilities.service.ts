@@ -63,7 +63,9 @@ export class HetznerCapabilitiesService
 
       return this.mapHetznerLocationsToRegions(response.data.locations);
     } catch (error) {
-      this.logger.error('Failed to fetch regions from Hetzner API', error);
+      this.logger.error(
+        `Failed to fetch regions from Hetzner API: ${error?.response?.data?.error?.message ?? error?.message ?? 'unknown error'}`,
+      );
       this.logger.warn('Using fallback mock data for regions');
       return this.getMockRegions();
     }
@@ -227,6 +229,9 @@ export class HetznerCapabilitiesService
         supportsSubnets: true,
         subnetPerZone: true,
         supportsRoutes: true,
+        // Networks are isolated (no shared VPC): different networks may reuse
+        // the same range with no conflict, so no cross-VNet overlap to avoid.
+        sharedAddressSpace: false,
         // Hetzner accepts /8–/29 for both VNet and subnets
         // Ref: https://docs.hetzner.com/cloud/networks/overview/
         vnetIpRange: { minPrefix: 8, maxPrefix: 29 },

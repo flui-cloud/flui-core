@@ -1,4 +1,4 @@
-import { ApiProperty } from '@nestjs/swagger';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { VNetScope } from '../entities/provider-capabilities.entity';
 
 export class IpRangeConstraintsDto {
@@ -63,6 +63,13 @@ export class VNetTopologyDto {
     example: true,
   })
   subnetPerZone: boolean;
+
+  @ApiPropertyOptional({
+    description:
+      'Whether all VNets share one address space (a VPC) so ranges across different VNets must not overlap (Scaleway=true). Isolated-network providers (Hetzner) may reuse ranges across VNets → false/omitted.',
+    example: false,
+  })
+  sharedAddressSpace?: boolean;
 
   @ApiProperty({
     description:

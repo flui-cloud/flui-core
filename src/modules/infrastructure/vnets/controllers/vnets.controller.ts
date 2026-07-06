@@ -95,6 +95,22 @@ export class VNetsController {
     return this.vnetsService.listVNets({ provider, clusterId });
   }
 
+  @Get('occupied-subnets')
+  @ApiOperation({
+    summary: 'List subnet CIDRs a new VNet must avoid on a provider',
+    description:
+      'Reads live from the provider. Empty for isolated-network providers (Hetzner); for shared-VPC providers (Scaleway) returns ranges already in use in the region so the UI can steer the user to a free one.',
+  })
+  @ApiQuery({ name: 'provider', required: true })
+  @ApiQuery({ name: 'region', required: false })
+  @ApiResponse({ status: HttpStatus.OK, description: 'Occupied subnet CIDRs' })
+  async getOccupiedSubnets(
+    @Query('provider') provider: string,
+    @Query('region') region?: string,
+  ): Promise<{ provider: string; cidrs: string[] }> {
+    return this.vnetsService.getOccupiedSubnets(provider, region);
+  }
+
   @Get(':id')
   @ApiOperation({ summary: 'Get VNet by ID' })
   @ApiParam({

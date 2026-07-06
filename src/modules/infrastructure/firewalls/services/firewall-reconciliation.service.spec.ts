@@ -1,7 +1,4 @@
-import {
-  BadRequestException,
-  UnprocessableEntityException,
-} from '@nestjs/common';
+import { BadRequestException } from '@nestjs/common';
 import { FirewallReconciliationService } from './firewall-reconciliation.service';
 import { FirewallRuleDto } from '../../../providers/dto/firewall.dto';
 
@@ -134,7 +131,7 @@ describe('FirewallReconciliationService — host firewall', () => {
   });
 });
 
-describe('FirewallReconciliationService.assertRequiredIngress', () => {
+describe('FirewallReconciliationService.ensureRequiredIngress', () => {
   const inbound = (port: string): FirewallRuleDto => ({
     description: `port ${port}`,
     direction: 'in',
@@ -148,50 +145,50 @@ describe('FirewallReconciliationService.assertRequiredIngress', () => {
     protocol: 'tcp',
     destinationIps: ['0.0.0.0/0', '::/0'],
   };
+  const inboundTcpPorts = (rules: FirewallRuleDto[]) =>
+    new Set(
+      rules
+        .filter((r) => r.direction === 'in' && r.protocol === 'tcp')
+        .map((r) => r.port),
+    );
 
-  it('passes when both 80 and 443 inbound are present', () => {
-    expect(() =>
-      FirewallReconciliationService.assertRequiredIngress([
-        inbound('22'),
-        inbound('80'),
-        inbound('443'),
-        outbound,
-      ]),
-    ).not.toThrow();
+  it('leaves rules untouched when both 80 and 443 inbound are present', () => {
+    const rules = [inbound('22'), inbound('80'), inbound('443'), outbound];
+    expect(FirewallReconciliationService.ensureRequiredIngress(rules)).toEqual(
+      rules,
+    );
   });
 
-  it('allows the required ports to be source-allowlisted (still present)', () => {
-    expect(() =>
-      FirewallReconciliationService.assertRequiredIngress([
-        { ...inbound('80'), sourceIps: ['203.0.113.0/24'] },
-        { ...inbound('443'), sourceIps: ['203.0.113.0/24'] },
-      ]),
-    ).not.toThrow();
+  it('does not re-inject a source-allowlisted required port (kept as-is)', () => {
+    const rules = [
+      { ...inbound('80'), sourceIps: ['203.0.113.0/24'] },
+      { ...inbound('443'), sourceIps: ['203.0.113.0/24'] },
+    ];
+    const out = FirewallReconciliationService.ensureRequiredIngress(rules);
+    expect(out).toEqual(rules);
   });
 
-  it('rejects removing 443 (would lock out the dashboard/API)', () => {
-    expect(() =>
-      FirewallReconciliationService.assertRequiredIngress([inbound('80')]),
-    ).toThrow(UnprocessableEntityException);
+  it('injects 443 when missing (would otherwise lock out the dashboard/API)', () => {
+    const out = FirewallReconciliationService.ensureRequiredIngress([
+      inbound('80'),
+    ]);
+    expect(inboundTcpPorts(out)).toEqual(new Set(['80', '443']));
+    const injected = out.find((r) => r.port === '443');
+    expect(injected?.sourceIps).toEqual(['0.0.0.0/0', '::/0']);
   });
 
-  it('rejects removing both 80 and 443, naming both', () => {
-    try {
-      FirewallReconciliationService.assertRequiredIngress([inbound('22')]);
-      fail('expected throw');
-    } catch (e) {
-      expect(e).toBeInstanceOf(UnprocessableEntityException);
-      expect((e as Error).message).toContain('443');
-      expect((e as Error).message).toContain('80');
-    }
+  it('injects both 80 and 443 when neither is present', () => {
+    const out = FirewallReconciliationService.ensureRequiredIngress([
+      inbound('22'),
+    ]);
+    expect(inboundTcpPorts(out)).toEqual(new Set(['22', '80', '443']));
   });
 
-  it('does not require any outbound/egress rule', () => {
-    expect(() =>
-      FirewallReconciliationService.assertRequiredIngress([
-        inbound('80'),
-        inbound('443'),
-      ]),
-    ).not.toThrow();
+  it('does not add any outbound/egress rule', () => {
+    const out = FirewallReconciliationService.ensureRequiredIngress([
+      inbound('80'),
+      inbound('443'),
+    ]);
+    expect(out.some((r) => r.direction === 'out')).toBe(false);
   });
 });

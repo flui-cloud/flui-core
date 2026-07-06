@@ -1,9 +1,4 @@
-import {
-  Injectable,
-  Logger,
-  BadRequestException,
-  UnprocessableEntityException,
-} from '@nestjs/common';
+import { Injectable, Logger, BadRequestException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { FirewallDesiredStateService } from './firewall-desired-state.service';
@@ -60,7 +55,9 @@ export class FirewallReconciliationService {
       '0.0.0.0/0',
       '::/0',
     ]) as FirewallRuleDto[];
-    const rules = this.normalizeRulesForCapability(cluster.provider, baseRules);
+    const rules = FirewallReconciliationService.ensureRequiredIngress(
+      this.normalizeRulesForCapability(cluster.provider, baseRules),
+    );
 
     this.logger.log(
       `Seeding ${clusterType} firewall for cluster ${clusterId} (provider ${cluster.provider})`,
@@ -118,24 +115,40 @@ export class FirewallReconciliationService {
 
   private static readonly REQUIRED_INGRESS_TCP = ['443', '80'];
 
-  static assertRequiredIngress(rules: FirewallRuleDto[]): void {
+  /**
+   * Server-side invariant: a cluster firewall must always keep inbound TCP
+   * 80/443 open (443 = dashboard/API/apps over HTTPS via Traefik; 80 = ACME
+   * HTTP-01 renewal + HTTP→HTTPS redirect). Rather than reject a write that
+   * omits them — which would leave a cross-provider firewall un-reconcilable and
+   * let the dashboard ship a default that locks the cluster out — we inject any
+   * missing port ourselves. A port already present (even source-allowlisted) is
+   * left untouched, so operators can still restrict the source IPs.
+   */
+  static ensureRequiredIngress(rules: FirewallRuleDto[]): FirewallRuleDto[] {
     const inboundTcpPorts = new Set(
       rules
         .filter((r) => r.direction === 'in' && r.protocol === 'tcp' && r.port)
-        .map((r) => r.port as string),
+        .map((r) => r.port),
     );
     const missing = FirewallReconciliationService.REQUIRED_INGRESS_TCP.filter(
       (port) => !inboundTcpPorts.has(port),
     );
-    if (missing.length > 0) {
-      throw new UnprocessableEntityException(
-        `Firewall must keep inbound TCP ${missing.join(' and ')} open — ` +
-          `443 serves the dashboard, API and apps over HTTPS (Traefik) and 80 serves ` +
-          `ACME HTTP-01 cert renewal + the HTTP→HTTPS redirect. Removing them would lock ` +
-          `you out of the cluster. You can restrict the source IPs, but the ports must stay ` +
-          `present. (SSH :22 stays open automatically on a host firewall; egress is not restricted.)`,
-      );
-    }
+    if (missing.length === 0) return rules;
+    // Loud on purpose: the caller dropped a mandatory port and gets it back
+    // world-open — an operator reading the logs must be able to see that their
+    // source restriction (if any) was not preserved.
+    new Logger(FirewallReconciliationService.name).warn(
+      `Inbound TCP ${missing.join(', ')} missing from submitted rules — re-injected open to 0.0.0.0/0, ::/0 (mandatory: 443 serves HTTPS via Traefik, 80 serves ACME/redirect; restrict sources instead of removing the port)`,
+    );
+    const injected: FirewallRuleDto[] = missing.map((port) => ({
+      description:
+        port === '443' ? 'flui:required:https' : 'flui:required:http-acme',
+      direction: 'in',
+      protocol: 'tcp',
+      port,
+      sourceIps: ['0.0.0.0/0', '::/0'],
+    }));
+    return [...rules, ...injected];
   }
 
   /**
@@ -162,9 +175,10 @@ export class FirewallReconciliationService {
       cluster.provider,
       newRules,
     );
-    FirewallReconciliationService.assertRequiredIngress(normalizedRules);
+    const requiredRules =
+      FirewallReconciliationService.ensureRequiredIngress(normalizedRules);
     const canonicalRules =
-      this.desiredStateService.canonicalizeRules(normalizedRules);
+      this.desiredStateService.canonicalizeRules(requiredRules);
     const newDesiredHash =
       this.desiredStateService.calculateHash(canonicalRules);
 

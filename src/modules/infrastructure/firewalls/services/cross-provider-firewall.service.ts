@@ -1,4 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
 import {
   ClusterEntity,
   ClusterStatus,
@@ -50,6 +52,8 @@ export class CrossProviderFirewallService {
   constructor(
     private readonly desiredState: FirewallDesiredStateService,
     private readonly reconciliation: FirewallReconciliationService,
+    @InjectRepository(ClusterEntity)
+    private readonly clusterRepository: Repository<ClusterEntity>,
   ) {}
 
   async reconcileAllPeers(): Promise<void> {
@@ -58,7 +62,10 @@ export class CrossProviderFirewallService {
       .map((f) => f.cluster)
       .filter((c): c is ClusterEntity => !!c);
 
-    const control = this.pickControlCluster(clusters);
+    // Resolve the control authoritatively from cluster state, not from the
+    // firewall set: a BYOS control is operator-wired and owns no cloud firewall,
+    // so scraping it from firewalls would miss it and skip every peer rule.
+    const control = await this.resolveControlCluster();
     if (!control) {
       this.logger.debug('[fw-xprovider] no control cluster — nothing to do');
       return;
@@ -87,6 +94,28 @@ export class CrossProviderFirewallService {
         );
       }
     }
+  }
+
+  /** Load control-type clusters (with nodes) straight from the repository so a
+   *  firewall-less BYOS control is still resolved. */
+  private async resolveControlCluster(): Promise<ClusterEntity | undefined> {
+    const candidates = await this.clusterRepository.find({
+      where: [
+        { clusterType: ClusterType.CONTROL },
+        { clusterType: ClusterType.OBSERVABILITY },
+      ],
+      relations: ['nodes'],
+    });
+    return this.pickControlCluster(candidates);
+  }
+
+  /** The control's public source IP as seen from another provider. For BYOS the
+   *  reachable address is the operator-declared host; masterIpAddress can be an
+   *  internal (e.g. Podman) address. Cloud controls expose masterIpAddress. */
+  private controlPublicIp(control: ClusterEntity): string | undefined {
+    const byosHost = (control.metadata as { byos?: { host?: string } })?.byos
+      ?.host;
+    return byosHost || control.masterIpAddress;
   }
 
   /** Match getControlCluster()'s resolution: prefer a real CONTROL over a legacy
@@ -168,14 +197,15 @@ export class CrossProviderFirewallService {
 
     // Workload: only cross-provider workloads need a public 6443 allow-rule.
     if (control.provider === cluster.provider) return [];
-    if (!control.masterIpAddress) return [];
+    const controlIp = this.controlPublicIp(control);
+    if (!controlIp) return [];
     return [
       {
         description: `${PEER_RULE_PREFIX}apiserver`,
         direction: 'in',
         protocol: 'tcp',
         port: API_SERVER_PORT,
-        sourceIps: [`${control.masterIpAddress}/32`],
+        sourceIps: [`${controlIp}/32`],
       },
     ];
   }

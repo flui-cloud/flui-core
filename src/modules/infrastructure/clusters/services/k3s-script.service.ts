@@ -374,13 +374,14 @@ export class K3sScriptService {
       );
     }
 
-    // SSH key injection block for providers without SSH key registry (e.g. Scaleway)
+    // Bootstrap SSH key injection. Appended to authorized_keys for every provider
+    // so SSH access never depends solely on a provider key registry attaching it
+    // at boot (append, so it never clobbers a registry-injected key).
     const escapedBootstrapKey = bootstrapPublicKey
       ? bootstrapPublicKey.replaceAll("'", String.raw`'\''`)
       : '';
     const sshKeyBlock = bootstrapPublicKey
       ? `
-# Bootstrap SSH access (provider does not support SSH key registry)
 mkdir -p /root/.ssh
 chmod 700 /root/.ssh
 echo '${escapedBootstrapKey}' >> /root/.ssh/authorized_keys
