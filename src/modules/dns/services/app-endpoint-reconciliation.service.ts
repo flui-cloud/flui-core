@@ -102,6 +102,69 @@ export class AppEndpointReconciliationService {
     }
   }
 
+  /**
+   * Create-time issuer bootstrap can be missed (cluster created by another API
+   * instance, or ADMIN_EMAIL unset at the time), leaving endpoints stuck on
+   * plain HTTP — so a missing http-01 issuer is bootstrapped on demand here.
+   * dns-01/wildcard is not self-healed: it needs the DNS-token Secret flow.
+   */
+  private async resolveReadyIssuerOrSelfHeal(
+    endpoint: AppEndpointEntity,
+    cluster: ClusterEntity,
+    certProvider: CertificateProvider,
+  ): Promise<{ issuerName: string } | null> {
+    const initial = await this.resolveReadyIssuerOrNull(endpoint, certProvider);
+    if (initial) return initial;
+
+    const useDns01 =
+      endpoint.certChallenge === CertChallenge.DNS_01 ||
+      endpoint.fqdn.startsWith('*.');
+    if (useDns01) return null;
+
+    const acmeEmail =
+      process.env.ADMIN_EMAIL ||
+      (typeof cluster.metadata?.adminEmail === 'string'
+        ? cluster.metadata.adminEmail
+        : undefined);
+    if (!acmeEmail) {
+      this.logger.warn(
+        `[cert-gate] endpoint=${endpoint.id}: no Ready ClusterIssuer and cannot self-heal — ADMIN_EMAIL not set and cluster ${cluster.id} has no adminEmail`,
+      );
+      return null;
+    }
+
+    this.logger.log(
+      `[cert-gate] endpoint=${endpoint.id}: no Ready ClusterIssuer on cluster ${cluster.id} — bootstrapping HTTP issuers on-demand`,
+    );
+    try {
+      await this.clusterDnsZoneService.bootstrapHttpIssuersForCluster(
+        cluster.id,
+        acmeEmail,
+      );
+    } catch (err) {
+      this.logger.warn(
+        `[cert-gate] endpoint=${endpoint.id}: on-demand issuer bootstrap failed on cluster ${cluster.id}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      return null;
+    }
+
+    for (let attempt = 0; attempt < 5; attempt++) {
+      await new Promise((resolve) => setTimeout(resolve, 3000));
+      const ready = await this.resolveReadyIssuerOrNull(endpoint, certProvider);
+      if (ready) {
+        this.logger.log(
+          `[cert-gate] endpoint=${endpoint.id}: self-healed — ClusterIssuer ${ready.issuerName} is now Ready`,
+        );
+        return ready;
+      }
+    }
+
+    this.logger.warn(
+      `[cert-gate] endpoint=${endpoint.id}: issuers bootstrapped but not Ready yet — TLS deferred to next reconcile`,
+    );
+    return null;
+  }
+
   private emitEndpointCertStatus(
     endpoint: AppEndpointEntity,
     status: CertificateStatus | null,
@@ -260,14 +323,17 @@ export class AppEndpointReconciliationService {
         configuredCertProvider &&
         !usesSharedSecret
       ) {
-        const ready = await this.resolveReadyIssuerOrNull(
+        const ready = await this.resolveReadyIssuerOrSelfHeal(
           endpoint,
+          cluster,
           configuredCertProvider,
         );
         if (!ready) {
           effectiveCertProvider = undefined;
           certGateMessage =
-            'No Ready ClusterIssuer on the target cluster — TLS skipped. DNS record was created; configure a ClusterIssuer (cert-manager) and re-reconcile to enable HTTPS.';
+            endpoint.hostnameMode === HostnameMode.IP
+              ? 'No Ready ClusterIssuer on the target cluster — TLS skipped. The nip.io hostname resolves automatically; configure a ClusterIssuer (cert-manager) and re-reconcile to enable HTTPS.'
+              : 'No Ready ClusterIssuer on the target cluster — TLS skipped. DNS record was created; configure a ClusterIssuer (cert-manager) and re-reconcile to enable HTTPS.';
         }
       }
 
