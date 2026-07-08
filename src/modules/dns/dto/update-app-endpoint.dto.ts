@@ -19,10 +19,12 @@ export class UpdateAppEndpointDto {
   @ApiPropertyOptional({
     description:
       'Reassign to a different DNS zone, or pass null to switch to BYOD mode.',
+    nullable: true,
+    type: String,
   })
   @IsOptional()
   @IsUUID()
-  clusterDnsZoneId?: string;
+  clusterDnsZoneId?: string | null;
 
   @ApiPropertyOptional({
     enum: CertificateProvider,

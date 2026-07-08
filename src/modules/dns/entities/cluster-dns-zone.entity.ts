@@ -7,6 +7,7 @@ import {
   ManyToOne,
   JoinColumn,
   OneToMany,
+  Index,
 } from 'typeorm';
 import { ClusterEntity } from '../../infrastructure/clusters/entities/cluster.entity';
 import { DnsZoneEntity } from './dns-zone.entity';
@@ -15,6 +16,9 @@ import { ReconciliationStatus } from '../../infrastructure/shared/enums/reconcil
 import { AppEndpointEntity } from './app-endpoint.entity';
 
 @Entity('cluster_dns_zones')
+@Index('UQ_cluster_dns_zones_cluster_zone', ['clusterId', 'dnsZoneId'], {
+  unique: true,
+})
 export class ClusterDnsZoneEntity {
   @PrimaryGeneratedColumn('uuid')
   id: string;
