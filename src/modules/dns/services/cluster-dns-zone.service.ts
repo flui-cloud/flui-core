@@ -726,7 +726,31 @@ export class ClusterDnsZoneService {
       );
     }
 
-    await this.applyDnsClusterIssuers(clusterId, kubeconfig, dto.acmeEmail);
+    await this.assertDns01WebhookInstalled(
+      clusterId,
+      kubeconfig,
+      webhookConfig.groupName,
+    );
+
+    await this.setZoneReconciliationStatusByClusterId(
+      clusterId,
+      ReconciliationStatus.RECONCILING,
+    );
+
+    try {
+      await this.applyDnsClusterIssuers(clusterId, kubeconfig, dto.acmeEmail);
+      await this.setZoneReconciliationStatusByClusterId(
+        clusterId,
+        ReconciliationStatus.IN_SYNC,
+      );
+    } catch (err) {
+      await this.setZoneReconciliationStatusByClusterId(
+        clusterId,
+        ReconciliationStatus.ERROR,
+        err?.message ?? String(err),
+      );
+      throw err;
+    }
 
     this.watchIssuers(clusterId, kubeconfig, dto.acmeEmail, [
       ...this.dnsIssuerNames,
@@ -735,6 +759,44 @@ export class ClusterDnsZoneService {
         `[${clusterId}] watchIssuers fatal error: ${err.message}`,
       ),
     );
+  }
+
+  /**
+   * DNS-01 solvers delegate TXT-record writes to a cert-manager webhook that
+   * registers its own API group (e.g. acme.hetzner.com). If the webhook is not
+   * installed, issuers apply cleanly but every challenge stalls with a
+   * "cannot create resource" error — fail fast with an actionable message
+   * instead. The webhook is provider-DNS-specific and independent of the
+   * compute provider, so it can legitimately be missing on BYOS/cross-provider
+   * clusters bootstrapped before it was installed unconditionally.
+   */
+  private async assertDns01WebhookInstalled(
+    clusterId: string,
+    kubeconfig: string,
+    webhookGroupName: string,
+  ): Promise<void> {
+    let apiService: { status?: any } | null = null;
+    try {
+      apiService = await this.kubernetesService.getResource(
+        kubeconfig,
+        'APIService',
+        `v1alpha1.${webhookGroupName}`,
+        '',
+      );
+    } catch (err) {
+      this.logger.warn(
+        `[${clusterId}] DNS-01 webhook APIService check failed: ${err?.message ?? err}`,
+      );
+      return;
+    }
+    if (!apiService) {
+      throw new BadRequestException(
+        `DNS-01 webhook for "${webhookGroupName}" is not installed on the cluster ` +
+          `(APIService v1alpha1.${webhookGroupName} not found). Wildcard certificate ` +
+          `challenges cannot be solved without it — install cert-manager-webhook for ` +
+          `your DNS provider, then retry.`,
+      );
+    }
   }
 
   private async applyDnsIssuers(
@@ -1067,9 +1129,14 @@ export class ClusterDnsZoneService {
     status: ReconciliationStatus,
     errorMessage?: string,
   ): Promise<void> {
-    const assignment = await this.getZoneAssignment(clusterId);
-    if (!assignment) return;
-    await this.updateReconciliationStatus(assignment.id, status, errorMessage);
+    const assignments = await this.getZonesForCluster(clusterId);
+    for (const assignment of assignments) {
+      await this.updateReconciliationStatus(
+        assignment.id,
+        status,
+        errorMessage,
+      );
+    }
   }
 
   async getSystemDnsStatus(
