@@ -112,7 +112,7 @@ export class AcmeCertificateService implements ICertificateProvider {
 
   generateCombinedClusterIssuerManifest(
     config: CertificateIssuerConfig & {
-      zoneName: string;
+      zoneNames: string[];
       dnsProvider: DnsProvider;
     },
   ): string {
@@ -128,12 +128,15 @@ export class AcmeCertificateService implements ICertificateProvider {
       ),
       'utf-8',
     );
+    const dnsZonesBlock = config.zoneNames
+      .map((zone) => `            - "${zone}"`)
+      .join('\n');
     return template
       .replaceAll('{{ISSUER_NAME}}', issuerName)
       .replaceAll('{{ACME_SERVER}}', config.server)
       .replaceAll('{{ACME_EMAIL}}', config.email)
       .replaceAll('{{PRIVATE_KEY_SECRET_REF}}', `${issuerName}-key`)
-      .replaceAll('{{ZONE_NAME}}', config.zoneName)
+      .replaceAll('{{DNS_ZONES}}', dnsZonesBlock)
       .replaceAll('{{WEBHOOK_GROUP_NAME}}', webhookConfig.groupName)
       .replaceAll('{{WEBHOOK_SOLVER_NAME}}', webhookConfig.solverName)
       .replaceAll('{{WEBHOOK_SECRET_NAME}}', webhookConfig.secretName)

@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
+import * as dnsPromises from 'node:dns/promises';
 import { ClusterEntity } from '../../infrastructure/clusters/entities/cluster.entity';
 import { KubernetesService } from '../../infrastructure/shared/services/kubernetes.service';
 import { EncryptionService } from '../../shared/encryption/services/encryption.service';
@@ -323,18 +324,14 @@ export class AppEndpointReconciliationService {
         configuredCertProvider &&
         !usesSharedSecret
       ) {
-        const ready = await this.resolveReadyIssuerOrSelfHeal(
+        const gate = await this.gateCertificateIssuance(
           endpoint,
           cluster,
           configuredCertProvider,
+          dnsRecordValue,
         );
-        if (!ready) {
-          effectiveCertProvider = undefined;
-          certGateMessage =
-            endpoint.hostnameMode === HostnameMode.IP
-              ? 'No Ready ClusterIssuer on the target cluster — TLS skipped. The nip.io hostname resolves automatically; configure a ClusterIssuer (cert-manager) and re-reconcile to enable HTTPS.'
-              : 'No Ready ClusterIssuer on the target cluster — TLS skipped. DNS record was created; configure a ClusterIssuer (cert-manager) and re-reconcile to enable HTTPS.';
-        }
+        effectiveCertProvider = gate.provider;
+        certGateMessage = gate.message;
       }
 
       await this.reconcileService(endpoint, cluster);
@@ -416,13 +413,14 @@ export class AppEndpointReconciliationService {
     try {
       const kubeconfig = await this.getKubeconfig(cluster);
 
-      const ingressName = `${endpoint.k8sServiceName}-ingress`;
+      const ingressName = this.ingressNameFor(endpoint);
       await this.kubernetesService.deleteResource(
         kubeconfig,
         'Ingress',
         ingressName,
         endpoint.k8sNamespace,
       );
+      await this.deleteLegacyIngressIfOwned(kubeconfig, endpoint);
       this.logger.log(
         `Deleted ingress ${ingressName} for endpoint ${endpoint.fqdn}`,
       );
@@ -771,6 +769,117 @@ export class AppEndpointReconciliationService {
     }
   }
 
+  /**
+   * Decides whether a per-host certificate can be requested now. Two gates:
+   * a Ready ClusterIssuer must exist (self-healing the http-01 pair when
+   * missing), and — for zone-managed hostnames — the DNS record must already
+   * be visible on the zone's authoritative nameservers. The DNS gate exists
+   * because the FIRST recursive lookup of a name decides whether an NXDOMAIN
+   * gets negative-cached for the zone's SOA minimum (1h on Hetzner): letting
+   * cert-manager self-check before propagation poisons the cluster's resolver
+   * chain and stalls the ACME challenge for up to an hour.
+   */
+  private async gateCertificateIssuance(
+    endpoint: AppEndpointEntity,
+    cluster: ClusterEntity,
+    configuredCertProvider: CertificateProvider,
+    dnsRecordValue: string | undefined,
+  ): Promise<{
+    provider: CertificateProvider | undefined;
+    message: string | null;
+  }> {
+    const ready = await this.resolveReadyIssuerOrSelfHeal(
+      endpoint,
+      cluster,
+      configuredCertProvider,
+    );
+    if (!ready) {
+      return {
+        provider: undefined,
+        message:
+          endpoint.hostnameMode === HostnameMode.IP
+            ? 'No Ready ClusterIssuer on the target cluster — TLS skipped. The nip.io hostname resolves automatically; configure a ClusterIssuer (cert-manager) and re-reconcile to enable HTTPS.'
+            : 'No Ready ClusterIssuer on the target cluster — TLS skipped. DNS record was created; configure a ClusterIssuer (cert-manager) and re-reconcile to enable HTTPS.',
+      };
+    }
+
+    const zoneName = endpoint.clusterDnsZone?.dnsZone?.zoneName;
+    if (
+      endpoint.hostnameMode !== HostnameMode.IP &&
+      zoneName &&
+      dnsRecordValue
+    ) {
+      const propagated = await this.waitForAuthoritativeDnsPropagation(
+        endpoint.fqdn,
+        zoneName,
+        dnsRecordValue,
+      );
+      if (!propagated) {
+        return {
+          provider: undefined,
+          message:
+            'DNS record not yet visible on the zone authoritative nameservers — ' +
+            'TLS deferred so the ACME self-check cannot negative-cache the name. ' +
+            'Re-reconcile to enable HTTPS.',
+        };
+      }
+    }
+
+    return { provider: configuredCertProvider, message: null };
+  }
+
+  /**
+   * Polls the zone's authoritative nameservers (queried directly, bypassing
+   * every recursive resolver and its cache) until the endpoint's record is
+   * visible. Fail-open on infrastructure errors: the gate protects against
+   * negative caching, it must never become a new way to block issuance.
+   */
+  private async waitForAuthoritativeDnsPropagation(
+    fqdn: string,
+    zoneName: string,
+    expectedValue: string,
+    timeoutMs = 60_000,
+    pollMs = 2_000,
+  ): Promise<boolean> {
+    let servers: string[];
+    try {
+      const nsNames = await dnsPromises.resolveNs(zoneName);
+      const addresses = await Promise.all(
+        nsNames.map((ns) =>
+          dnsPromises.resolve4(ns).catch(() => [] as string[]),
+        ),
+      );
+      servers = addresses.flat();
+    } catch (err) {
+      this.logger.warn(
+        `Cannot resolve authoritative NS for ${zoneName} (${err instanceof Error ? err.message : String(err)}) — skipping DNS propagation gate`,
+      );
+      return true;
+    }
+    if (servers.length === 0) return true;
+
+    const resolver = new dnsPromises.Resolver({ timeout: 3000, tries: 1 });
+    resolver.setServers(servers);
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      try {
+        const answers = await resolver.resolve4(fqdn);
+        if (answers.includes(expectedValue) || answers.length > 0) {
+          return true;
+        }
+      } catch (err) {
+        // Name exists but has no A record (e.g. CNAME): no NXDOMAIN to cache.
+        if ((err as NodeJS.ErrnoException)?.code === 'ENODATA') return true;
+        // ENOTFOUND (NXDOMAIN) or query timeout: not propagated yet.
+      }
+      await new Promise((resolve) => setTimeout(resolve, pollMs));
+    }
+    this.logger.warn(
+      `DNS record for ${fqdn} not visible on authoritative NS of ${zoneName} after ${timeoutMs}ms`,
+    );
+    return false;
+  }
+
   private async reconcileDnsRecord(
     endpoint: AppEndpointEntity,
     clusterDnsZone: ClusterDnsZoneEntity,
@@ -930,7 +1039,7 @@ export class AppEndpointReconciliationService {
     effectiveCertProvider?: CertificateProvider,
   ): Promise<void> {
     const kubeconfig = await this.getKubeconfig(cluster);
-    const ingressName = `${endpoint.k8sServiceName}-ingress`;
+    const ingressName = this.ingressNameFor(endpoint);
 
     // If the existing Ingress points to a different host (fqdn changed),
     // clean up the stale TLS secret and Certificate before reapplying.
@@ -1076,6 +1185,54 @@ export class AppEndpointReconciliationService {
       JSON.stringify(manifest),
     );
     this.logger.log(`Applied Ingress ${ingressName} for ${endpoint.fqdn}`);
+
+    await this.deleteLegacyIngressIfOwned(kubeconfig, endpoint);
+  }
+
+  /**
+   * Ingress name is unique per endpoint (id suffix) so multiple endpoints on
+   * the same service (e.g. apex + www) never overwrite each other's Ingress,
+   * and stable across fqdn edits so the stale-host cleanup keeps working.
+   */
+  private ingressNameFor(endpoint: AppEndpointEntity): string {
+    return `${endpoint.k8sServiceName}-${endpoint.id.split('-')[0]}-ingress`;
+  }
+
+  /**
+   * Pre-multi-endpoint releases named the Ingress `<service>-ingress`, shared
+   * by every endpoint of the service. Remove it only when its host belongs to
+   * this endpoint: the sibling endpoint still routed by the legacy Ingress
+   * keeps working until its own reconcile migrates it.
+   */
+  private async deleteLegacyIngressIfOwned(
+    kubeconfig: string,
+    endpoint: AppEndpointEntity,
+  ): Promise<void> {
+    const legacyName = `${endpoint.k8sServiceName}-ingress`;
+    try {
+      const legacy = await this.kubernetesService.getResource(
+        kubeconfig,
+        'Ingress',
+        legacyName,
+        endpoint.k8sNamespace,
+      );
+      const legacyHost: string | undefined = legacy?.spec?.rules?.[0]?.host;
+      if (legacy && (!legacyHost || legacyHost === endpoint.fqdn)) {
+        await this.kubernetesService.deleteResource(
+          kubeconfig,
+          'Ingress',
+          legacyName,
+          endpoint.k8sNamespace,
+        );
+        this.logger.log(
+          `Deleted legacy Ingress ${legacyName} (superseded by per-endpoint Ingress)`,
+        );
+      }
+    } catch (error) {
+      this.logger.warn(
+        `Legacy Ingress cleanup failed for ${legacyName}: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
   }
 
   /**

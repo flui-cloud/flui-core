@@ -21,7 +21,7 @@ spec:
                 key: {{WEBHOOK_SECRET_KEY}}
         selector:
           dnsZones:
-            - "{{ZONE_NAME}}"
+{{DNS_ZONES}}
       - http01:
           ingress:
             class: traefik

@@ -168,7 +168,35 @@ export class ClusterDnsZoneService {
       reconciliationStatus: ReconciliationStatus.PENDING,
     });
 
-    return await this.clusterDnsZoneRepository.save(assignment);
+    const saved = await this.clusterDnsZoneRepository.save(assignment);
+    await this.refreshWildcardIssuerZones(clusterId, cluster);
+    return saved;
+  }
+
+  /**
+   * Re-applies the wildcard ClusterIssuers so their dns01 solver selector
+   * covers every zone currently assigned to the cluster. Best-effort: called
+   * after a zone assignment, it silently skips clusters that have no wildcard
+   * issuers yet (they get the full zone list when issuers are first
+   * configured) or that are unreachable.
+   */
+  private async refreshWildcardIssuerZones(
+    clusterId: string,
+    cluster: ClusterEntity,
+  ): Promise<void> {
+    try {
+      const issuers = await this.getIssuers(clusterId);
+      const wildcard = issuers.find((i) =>
+        this.dnsIssuerNames.includes(i.name),
+      );
+      if (!wildcard?.email) return;
+      const kubeconfig = await this.getKubeconfig(cluster);
+      await this.applyDnsClusterIssuers(clusterId, kubeconfig, wildcard.email);
+    } catch (err) {
+      this.logger.warn(
+        `Could not refresh wildcard issuer zones for cluster ${clusterId}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
   }
 
   async getZonesForCluster(clusterId: string): Promise<ClusterDnsZoneEntity[]> {
@@ -849,12 +877,20 @@ export class ClusterDnsZoneService {
   ): Promise<void> {
     const assignment = await this.getZoneAssignmentOrFail(clusterId);
     const dnsProvider = assignment.dnsZone?.dnsProvider;
-    const zoneName = assignment.dnsZone?.zoneName;
-    if (!dnsProvider || !zoneName) {
+    if (!dnsProvider || !assignment.dnsZone?.zoneName) {
       throw new Error(
         `Cannot configure DNS issuers for cluster ${clusterId}: DNS provider/zone is missing`,
       );
     }
+
+    // The dns01 solver selector must cover every assigned zone, or challenges
+    // for non-primary zones fail with "no configured challenge solvers".
+    // Scoped to the primary zone's DNS provider — the webhook/token pair is
+    // provider-specific.
+    const assignments = await this.getZonesForCluster(clusterId);
+    const zoneNames = assignments
+      .filter((a) => a.dnsZone?.dnsProvider === dnsProvider)
+      .map((a) => a.dnsZone!.zoneName);
 
     for (const provider of [
       CertificateProvider.LETS_ENCRYPT_STAGING,
@@ -870,12 +906,12 @@ export class ClusterDnsZoneService {
           server: acmeServerUrl,
           privateKeySecretRef: `${wildcardIssuerName}-key`,
           solverType: 'dns01',
-          zoneName,
+          zoneNames,
           dnsProvider,
         });
       await this.kubernetesService.applyManifest(kubeconfig, manifest);
       this.logger.log(
-        `Applied ClusterIssuer ${wildcardIssuerName} (combined dns01+http01) to cluster ${clusterId}`,
+        `Applied ClusterIssuer ${wildcardIssuerName} (combined dns01+http01, zones: ${zoneNames.join(', ')}) to cluster ${clusterId}`,
       );
     }
   }
