@@ -17,6 +17,12 @@ export interface GitBuildSourceConfig {
   framework?: FrameworkType;
   buildMode?: BuildMode;
   dockerfile?: string;
+  /**
+   * Monorepo image segment: the GHCR package is `{repoName}/{subPath}` (not just
+   * `{repoName}`). Set at deploy time when the manifest builds from a subdirectory.
+   * The build watcher must include it when composing the rollout imageRef.
+   */
+  subPath?: string;
   buildPlan?: Record<string, string>;
   lastBuildJobId?: string;
 }

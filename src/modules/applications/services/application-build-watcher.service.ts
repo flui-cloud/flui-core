@@ -12,6 +12,7 @@ import { ApplicationDeployService } from './application-deploy.service';
 import { ApplicationEventsGateway } from '../gateway/application-events.gateway';
 import { ImageRegistryService } from '../../image-registry/services/image-registry.service';
 import { ApplicationEntity } from '../entities/application.entity';
+import { GitBuildSourceConfig } from '../interfaces/source-config.interface';
 import { ApplicationStatus } from '../enums/application-status.enum';
 import {
   InfrastructureOperationEntity,
@@ -210,7 +211,7 @@ export class ApplicationBuildWatcherService {
       run.headSha
     ) {
       const shortSha = run.headSha.slice(0, 7);
-      const imageRef = `ghcr.io/${repository.owner.toLowerCase()}/${repository.repositoryName.toLowerCase()}:${shortSha}`;
+      const imageRef = this.composeImageRef(app, repository, shortSha);
 
       if (app.imageRef === imageRef) {
         return;
@@ -443,11 +444,7 @@ export class ApplicationBuildWatcherService {
     }
 
     const shortSha = run.headSha.slice(0, 7);
-    // Image naming: opinionated 1:1 mapping with the git repo
-    //   ghcr.io/{owner}/{repoName}:{sha}
-    // (Sub-path for monorepos is set at workflow-generation time; the watcher
-    // doesn't know about it here, but the imageRef is the same convention.)
-    const imageRef = `ghcr.io/${repository.owner.toLowerCase()}/${repository.repositoryName.toLowerCase()}:${shortSha}`;
+    const imageRef = this.composeImageRef(app, repository, shortSha);
 
     // Idempotency check: has a deploy already been queued for this exact image?
     const existingOp = await this.operationRepository.findOne({
@@ -581,7 +578,7 @@ export class ApplicationBuildWatcherService {
 
     if (run.conclusion === 'success' && run.headSha) {
       const shortSha = run.headSha.slice(0, 7);
-      const imageRef = `ghcr.io/${repository.owner.toLowerCase()}/${repository.repositoryName.toLowerCase()}:${shortSha}`;
+      const imageRef = this.composeImageRef(app, repository, shortSha);
       await this.markBuildCompleted(app.id, run, imageRef);
 
       if (app.status === ApplicationStatus.AWAITING_BUILD) {
@@ -605,6 +602,28 @@ export class ApplicationBuildWatcherService {
       where: { id: build.id },
     });
     return refreshed ?? build;
+  }
+
+  /**
+   * Compose the rollout imageRef for a completed build. Mirrors the build path:
+   * monorepo apps push to `ghcr.io/{owner}/{repo}/{subPath}:{sha}`, single-app
+   * repos to `ghcr.io/{owner}/{repo}:{sha}`. Reading subPath from sourceConfig
+   * keeps the watcher in sync with what the generated workflow actually pushed —
+   * without it the watcher rolls a non-existent `{repo}:{sha}` → ImagePullBackOff.
+   */
+  private composeImageRef(
+    app: ApplicationEntity,
+    repository: { owner: string; repositoryName: string },
+    shortSha: string,
+  ): string {
+    const owner = repository.owner.toLowerCase();
+    const repo = repository.repositoryName.toLowerCase();
+    const cfg = app.sourceConfig as GitBuildSourceConfig | undefined;
+    const subPath =
+      cfg?.type === 'git_build' && cfg.subPath
+        ? `/${cfg.subPath.toLowerCase()}`
+        : '';
+    return `ghcr.io/${owner}/${repo}${subPath}:${shortSha}`;
   }
 
   private hasTimedOut(app: ApplicationEntity): boolean {
