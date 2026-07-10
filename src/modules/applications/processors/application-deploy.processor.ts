@@ -1046,6 +1046,14 @@ export class ApplicationDeployProcessor {
       const canonical =
         this.kubernetesService.buildLastAppliedConfiguration(specObj);
       const hash = crypto.createHash('sha256').update(canonical).digest('hex');
+      // One row per resource: drop prior rows so the drift reconciler can't
+      // re-apply a stale desiredManifest from an earlier deploy.
+      await this.appResourcesRepository.deleteByK8sIdentity(
+        applicationId,
+        manifest.kind,
+        manifest.name,
+        namespace,
+      );
       const resource = await this.appResourcesRepository.create({
         applicationId,
         kind: manifest.kind,

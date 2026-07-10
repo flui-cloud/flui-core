@@ -68,6 +68,20 @@ export class AppResourcesRepository {
     await this.repository.delete({ applicationId });
   }
 
+  /**
+   * Delete every tracking row for one k8s resource identity. Used on each deploy
+   * to collapse duplicates before re-recording the desired state, so the drift
+   * reconciler never re-applies a stale desiredManifest from an earlier deploy.
+   */
+  async deleteByK8sIdentity(
+    applicationId: string,
+    kind: ApplicationResourceKind,
+    name: string,
+    namespace: string,
+  ): Promise<void> {
+    await this.repository.delete({ applicationId, kind, name, namespace });
+  }
+
   async delete(id: string): Promise<void> {
     await this.repository.delete(id);
   }
