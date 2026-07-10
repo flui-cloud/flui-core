@@ -144,7 +144,10 @@ export class ProviderFeaturesDto {
   nodeProvisioning: boolean;
 }
 
-export class ProviderFirewallDto {
+// Distinct class name: Swagger keys schemas by class name, so a clash with
+// `ProviderFirewallDto` (providers/dto/firewall.dto.ts) would flatten this
+// field to `object` in the generated client.
+export class ProviderFirewallCapabilityDto {
   @ApiProperty({
     enum: ['managed-api', 'host-nftables', 'none'],
     description:
@@ -205,8 +208,8 @@ export class ProviderCapabilitiesDto {
   @ApiProperty({ type: ProviderFeaturesDto })
   features: ProviderFeaturesDto;
 
-  @ApiProperty({ type: ProviderFirewallDto })
-  firewall: ProviderFirewallDto;
+  @ApiProperty({ type: ProviderFirewallCapabilityDto })
+  firewall: ProviderFirewallCapabilityDto;
 
   @ApiProperty({ type: ProviderPricingDto })
   pricing: ProviderPricingDto;
