@@ -179,6 +179,17 @@ export default class AppInit extends Command {
       );
     }
 
+    const monorepo = flags['dry-run']
+      ? null
+      : this.autoFillBuildBlock(targetDir);
+    if (monorepo) {
+      console.log(
+        chalk.dim(
+          `  · flui.yaml build paths set for monorepo subdirectory "${monorepo.rel}" (dockerfile/context are repo-root-relative).`,
+        ),
+      );
+    }
+
     this.printPostCheckResults(framework, targetDir);
 
     this.printNextSteps(targetDir, template, flags['dry-run']);
@@ -217,6 +228,65 @@ export default class AppInit extends Command {
     );
     fs.writeFileSync(fluiYamlPath, patched, 'utf8');
     return { name: sanitized, source: derived.source };
+  }
+
+  /**
+   * Monorepo support: when the target is a subdirectory of the git repository,
+   * rewrite the manifest's build paths to repo-root-relative form (the schema
+   * contract) — `dockerfile: api/Dockerfile`, `context: api`. The templates
+   * ship `./Dockerfile`, which is only correct at the repo root. No-op when
+   * the target IS the repo root or is outside a git repository.
+   */
+  private autoFillBuildBlock(targetDir: string): { rel: string } | null {
+    const fluiYamlPath = path.join(targetDir, 'flui.yaml');
+    if (!fs.existsSync(fluiYamlPath)) return null;
+
+    const resolvedTarget = path.resolve(targetDir);
+    const gitRoot = this.findGitRoot(resolvedTarget);
+    if (!gitRoot) return null;
+    const rel = path
+      .relative(gitRoot, resolvedTarget)
+      .split(path.sep)
+      .join('/');
+    if (!rel || rel.startsWith('..')) return null;
+
+    let raw = fs.readFileSync(fluiYamlPath, 'utf8');
+
+    if (/^\s*dockerfile:/m.test(raw)) {
+      raw = raw.replace(
+        /^(\s*)dockerfile:.*$/m,
+        `$1dockerfile: ${rel}/Dockerfile`,
+      );
+    } else if (/^build:/m.test(raw)) {
+      raw = raw.replace(
+        /^build:.*$/m,
+        (line) => `${line}\n  dockerfile: ${rel}/Dockerfile`,
+      );
+    } else {
+      raw = raw.replace(
+        /^deploy:/m,
+        `build:\n  strategy: dockerfile\n  dockerfile: ${rel}/Dockerfile\n  context: ${rel}\n\ndeploy:`,
+      );
+    }
+
+    if (/^\s*context:/m.test(raw)) {
+      raw = raw.replace(/^(\s*)context:.*$/m, `$1context: ${rel}`);
+    } else {
+      raw = raw.replace(/^(\s*)(dockerfile: .*)$/m, `$1$2\n$1context: ${rel}`);
+    }
+
+    fs.writeFileSync(fluiYamlPath, raw, 'utf8');
+    return { rel };
+  }
+
+  private findGitRoot(dir: string): string | null {
+    let current = dir;
+    for (;;) {
+      if (fs.existsSync(path.join(current, '.git'))) return current;
+      const parent = path.dirname(current);
+      if (parent === current) return null;
+      current = parent;
+    }
   }
 
   private deriveProjectName(
@@ -547,8 +617,11 @@ export default class AppInit extends Command {
         `    #    confirm port=${template.port}, healthcheck=${template.healthcheckPath}, and any env vars your app needs`,
       ),
     );
+    console.log(
+      chalk.dim(`    #    (full field reference: flui app manifest)`),
+    );
     console.log(chalk.dim(`    # 3. Validate the manifest`));
-    console.log(chalk.dim(`    flui catalog validate ./flui.yaml`));
+    console.log(chalk.dim(`    flui deploy --validate-only`));
     console.log(
       chalk.dim(
         `    # 4. Commit and push, then deploy (build runs on GitHub Actions)`,

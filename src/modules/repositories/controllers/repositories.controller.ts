@@ -36,6 +36,7 @@ import {
   RepositoryAnalysisDto,
 } from '../dto/analyze-repository.dto';
 import { PublicRepositoryAnalyzeDto } from '../dto/public-repository-analyze.dto';
+import { RepositoryManifestsDto } from '../dto/repository-manifest.dto';
 import { ExtractEnvDto, ExtractedEnvVarDto } from '../dto/extract-env.dto';
 
 @ApiTags('Repositories')
@@ -205,6 +206,41 @@ export class RepositoriesController {
       userId,
       repository.owner,
       repository.repositoryName,
+    );
+  }
+
+  @Get(':id/manifests')
+  @ApiOperation({
+    summary: 'Discover flui.yaml manifests in the repository (root + subdirs)',
+    description:
+      'Lightweight discovery via GitHub API — no clone. Returns every flui.yaml ' +
+      'found at the repository root and in subdirectories (monorepo: one manifest ' +
+      'per deployable), each validated as a kind: Application flui.cloud/v1beta1 manifest. ' +
+      'Drives the manifest-first deploy flow.',
+  })
+  @ApiQuery({
+    name: 'branch',
+    required: false,
+    description: 'Git ref to read from (defaults to the default branch)',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Manifest discovery completed',
+    type: RepositoryManifestsDto,
+  })
+  @ApiResponse({ status: 404, description: 'Repository not found' })
+  async getManifests(
+    @Req() req: Request,
+    @Param('id') id: string,
+    @Query('branch') branch?: string,
+  ): Promise<RepositoryManifestsDto> {
+    const { userId } = req.user as AuthenticatedUser;
+    const repository = await this.repositoriesService.getRepository(userId, id);
+    return this.repositoriesService.getFluiManifests(
+      userId,
+      repository.owner,
+      repository.repositoryName,
+      branch || repository.defaultBranch,
     );
   }
 

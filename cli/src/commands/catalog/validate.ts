@@ -107,11 +107,19 @@ export default class CatalogValidate extends Command {
         checksum: computeChecksum(manifest),
       };
     }
+    if (manifest.kind === 'Application') {
+      return {
+        kind: 'Application',
+        slug: manifest.metadata.name,
+        version: manifest.apiVersion,
+        appType: manifest.build?.strategy,
+        checksum: computeChecksum(manifest),
+      };
+    }
     return {
-      kind: 'Application',
+      kind: manifest.kind,
       slug: manifest.metadata.name,
       version: manifest.apiVersion,
-      appType: manifest.build?.strategy,
       checksum: computeChecksum(manifest),
     };
   }

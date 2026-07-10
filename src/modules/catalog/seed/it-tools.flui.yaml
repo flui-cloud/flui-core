@@ -1,5 +1,5 @@
 kind: CatalogApp
-apiVersion: flui/v1
+apiVersion: flui.cloud/v1beta1
 
 metadata:
   id: it-tools
@@ -16,8 +16,8 @@ metadata:
     - encoder
     - privacy
   license: GPL-3.0
-  version: "2024.10"
-  maintainedAt: "2026-04-19"
+  version: '2024.10'
+  maintainedAt: '2026-04-19'
   icon: https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/svg/it-tools.svg
   links:
     website: https://it-tools.tech
@@ -41,7 +41,7 @@ spec:
   image:
     registry: docker.io
     repository: corentinth/it-tools
-    tag: "2024.10.22-7ca5933"
+    tag: '2024.10.22-7ca5933'
 
   ports:
     - name: http

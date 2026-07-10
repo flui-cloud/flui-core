@@ -6,7 +6,6 @@ import {
   Inject,
   forwardRef,
 } from '@nestjs/common';
-import * as yaml from 'js-yaml';
 import { ApplicationsRepository } from '../repositories/applications.repository';
 import { RepositoriesRepository } from '../../repositories/repositories/repositories.repository';
 import { GitHubOAuthService } from '../../repositories/services/github-oauth.service';
@@ -17,6 +16,7 @@ import { ApplicationWorkflowService } from './application-workflow.service';
 import { ApplicationService } from './application.service';
 import { ApplicationDeployService } from './application-deploy.service';
 import { ApplicationManifest } from '../interfaces/application-manifest.interface';
+import { validateApplicationManifest } from '../utils/application-manifest.util';
 import {
   DeployFromYamlDto,
   DeployFromYamlResponseDto,
@@ -94,7 +94,14 @@ export class ApplicationSourceDeployService {
       );
     }
 
-    let app = await this.findExistingApp(dto.clusterId, repository.id, branch);
+    const buildPaths = this.resolveBuildPaths(manifest);
+
+    let app = await this.findExistingApp(
+      dto.clusterId,
+      repository.id,
+      branch,
+      manifest.metadata.name,
+    );
 
     // Resolve the imageRef to use when skipping the build:
     //   1. dto.imageRef (explicit) — wins
@@ -108,6 +115,7 @@ export class ApplicationSourceDeployService {
           app,
           owner,
           repoName,
+          subPath: buildPaths.subPath,
         })
       : null;
 
@@ -127,6 +135,9 @@ export class ApplicationSourceDeployService {
       repositoryId: repository.id,
       branch,
       gitUrl: repository.cloneUrl,
+      dockerfile: buildPaths.dockerfile,
+      context: buildPaths.context,
+      ...(buildPaths.subPath ? { subPath: buildPaths.subPath } : {}),
     };
 
     const endpointSpecJson = manifest.deploy.domain
@@ -209,7 +220,13 @@ export class ApplicationSourceDeployService {
       await this.applicationWorkflowService.generateAndCommitWorkflowV3(
         app.id,
         userId,
-        { branch, isFluiManaged: true },
+        {
+          branch,
+          isFluiManaged: true,
+          dockerfilePath: buildPaths.dockerfile,
+          buildContext: buildPaths.context,
+          subPath: buildPaths.subPath,
+        },
       );
 
     return {
@@ -225,54 +242,24 @@ export class ApplicationSourceDeployService {
   }
 
   private parseAndValidate(raw: string): ApplicationManifest {
-    let parsed: unknown;
-    try {
-      parsed = yaml.load(raw);
-    } catch (err) {
-      throw new BadRequestException(`Invalid YAML: ${err.message}`);
+    const { manifest, warnings } = validateApplicationManifest(raw);
+    for (const w of warnings) {
+      this.logger.warn(`manifest ${w.path}: ${w.message}`);
     }
-
-    if (!parsed || typeof parsed !== 'object') {
-      throw new BadRequestException('Manifest must be a YAML object');
-    }
-
-    const doc = parsed as Record<string, unknown>;
-
-    if (doc['kind'] !== 'Application') {
-      throw new BadRequestException(
-        `Expected kind: Application, got: ${doc['kind']}`,
-      );
-    }
-    if (doc['apiVersion'] !== 'flui/v1') {
-      throw new BadRequestException(
-        `Expected apiVersion: flui/v1, got: ${doc['apiVersion']}`,
-      );
-    }
-
-    const metadata = doc['metadata'] as Record<string, unknown> | undefined;
-    if (!metadata?.['name'] || typeof metadata['name'] !== 'string') {
-      throw new BadRequestException(
-        'metadata.name is required and must be a string',
-      );
-    }
-
-    const deploy = doc['deploy'] as Record<string, unknown> | undefined;
-    if (!deploy) {
-      throw new BadRequestException('deploy block is required');
-    }
-    if (!deploy['port'] || typeof deploy['port'] !== 'number') {
-      throw new BadRequestException(
-        'deploy.port is required and must be a number',
-      );
-    }
-
-    return doc as unknown as ApplicationManifest;
+    return manifest;
   }
 
+  /**
+   * App identity for manifest deploys = (cluster, repository, branch, name).
+   * The name is part of the key so a monorepo can host several Applications
+   * on the same branch (one flui.yaml per deployable). Renaming metadata.name
+   * therefore creates a new app — like renaming a Helm release.
+   */
   private async findExistingApp(
     clusterId: string,
     repositoryId: string,
     branch: string,
+    name: string,
   ) {
     const apps = await this.applicationsRepository.findByClusterId(clusterId);
     return (
@@ -285,10 +272,42 @@ export class ApplicationSourceDeployService {
         return (
           cfg?.type === 'git_build' &&
           cfg.repositoryId === repositoryId &&
-          cfg.branch === branch
+          cfg.branch === branch &&
+          a.name === name
         );
       }) ?? null
     );
+  }
+
+  /**
+   * Normalizes manifest build paths to repo-root-relative form and derives the
+   * monorepo sub-path (used for the GHCR image segment and the workflow paths
+   * filter). Single-app repos (context '.', root Dockerfile) yield no subPath.
+   */
+  private resolveBuildPaths(manifest: ApplicationManifest): {
+    dockerfile: string;
+    context: string;
+    subPath?: string;
+  } {
+    const normalize = (p: string): string => {
+      const v = p.replace(/^\.\//, '').replace(/^\/+/, '').replace(/\/+$/, '');
+      return v === '' ? '.' : v;
+    };
+    const context = normalize(manifest.build?.context ?? '.');
+    const dockerfile = normalize(
+      manifest.build?.dockerfile ??
+        (context === '.' ? 'Dockerfile' : `${context}/Dockerfile`),
+    );
+    const dockerfileDir = dockerfile.includes('/')
+      ? dockerfile.slice(0, dockerfile.lastIndexOf('/'))
+      : '.';
+    const subPath =
+      context !== '.'
+        ? context
+        : dockerfileDir !== '.'
+          ? dockerfileDir
+          : undefined;
+    return { dockerfile, context, subPath };
   }
 
   private buildEnvVars(
@@ -325,20 +344,25 @@ export class ApplicationSourceDeployService {
     app: { imageRef?: string | null } | null | undefined;
     owner: string;
     repoName: string;
+    /** Monorepo image segment: package is {repoName}/{subPath} on GHCR. */
+    subPath?: string;
   }): Promise<string> {
-    const { userId, dto, app, owner, repoName } = opts;
+    const { userId, dto, app, owner, repoName, subPath } = opts;
     if (dto.imageRef) return dto.imageRef;
     if (app?.imageRef) return app.imageRef;
 
+    const packageName = subPath
+      ? `${repoName}/${subPath}`.toLowerCase()
+      : repoName;
     const latest = await this.ghcrPackagesService.getLatestTag(
       userId,
       owner,
-      repoName,
+      packageName,
     );
     if (latest) {
-      const ref = `ghcr.io/${owner.toLowerCase()}/${repoName.toLowerCase()}:${latest}`;
+      const ref = `ghcr.io/${owner.toLowerCase()}/${packageName.toLowerCase()}:${latest}`;
       this.logger.log(
-        `skipBuild: app missing/no image — using GHCR latest tag for ${owner}/${repoName}: ${ref}`,
+        `skipBuild: app missing/no image — using GHCR latest tag for ${owner}/${packageName}: ${ref}`,
       );
       return ref;
     }

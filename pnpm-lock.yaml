@@ -17,8 +17,8 @@ importers:
         specifier: ^3.1041.0
         version: 3.1041.0
       '@flui-cloud/spec':
-        specifier: ^0.5.1
-        version: 0.5.1
+        specifier: ^0.7.0
+        version: 0.7.0
       '@kubernetes/client-node':
         specifier: ^1.4.0
         version: 1.4.0(encoding@0.1.13)
@@ -1003,10 +1003,10 @@ packages:
       }
     engines: { node: ^12.22.0 || ^14.17.0 || >=16.0.0 }
 
-  '@flui-cloud/spec@0.5.1':
+  '@flui-cloud/spec@0.7.0':
     resolution:
       {
-        integrity: sha512-OF138q2iqX8rZEy17eK0saZ/pzzKkhxAfEnCiqagqkG2NfQ930NITkd1/S11TxTpuu/wLcwdJFMi4DB96RjIjw==,
+        integrity: sha512-z7qg5kxsdI7SibSALLATADxzKpn2dUfh5HPNPntVkreWlDetgnqbAB7MG2c0O3VZpe8GhEGK53UwWA3hTwA6dA==,
       }
     hasBin: true
 
@@ -10324,7 +10324,7 @@ snapshots:
 
   '@eslint/js@8.57.1': {}
 
-  '@flui-cloud/spec@0.5.1':
+  '@flui-cloud/spec@0.7.0':
     dependencies:
       ajv: 8.17.1
       ajv-formats: 3.0.1(ajv@8.17.1)

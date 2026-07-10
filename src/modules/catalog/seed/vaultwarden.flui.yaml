@@ -1,5 +1,5 @@
 kind: CatalogApp
-apiVersion: flui/v1
+apiVersion: flui.cloud/v1beta1
 
 metadata:
   id: vaultwarden
@@ -15,8 +15,8 @@ metadata:
     - bitwarden-compatible
     - gdpr
   license: AGPL-3.0
-  version: "1.35.7"
-  maintainedAt: "2026-04-23"
+  version: '1.35.7'
+  maintainedAt: '2026-04-23'
   icon: https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/svg/vaultwarden.svg
   links:
     website: https://github.com/dani-garcia/vaultwarden
@@ -39,7 +39,7 @@ spec:
   image:
     registry: docker.io
     repository: vaultwarden/server
-    tag: "1.35.7"
+    tag: '1.35.7'
 
   ports:
     - name: http
@@ -55,13 +55,13 @@ spec:
 
   env:
     - name: DOMAIN
-      value: "https://{{app.domain}}"
+      value: 'https://{{app.domain}}'
     - name: ADMIN_TOKEN
       valueFrom:
         generate: secret
         length: 48
     - name: SIGNUPS_ALLOWED
-      value: "true"
+      value: 'true'
       userEditable: true
       description: Allow new users to register an account
 
@@ -82,7 +82,7 @@ spec:
       bounds:
         cpu:
           min: 100m
-          max: "1"
+          max: '1'
         memory:
           min: 64Mi
           max: 512Mi

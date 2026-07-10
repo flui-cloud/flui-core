@@ -38,6 +38,12 @@ import {
   BuildScoresDto,
 } from '../dto/analyze-repository.dto';
 import { PublicRepositoryAnalyzeDto } from '../dto/public-repository-analyze.dto';
+import {
+  RepositoryManifestsDto,
+  RepositoryManifestEntryDto,
+} from '../dto/repository-manifest.dto';
+import { validateApplicationManifest } from '../../applications/utils/application-manifest.util';
+import * as yaml from 'js-yaml';
 
 @Injectable()
 export class RepositoriesService {
@@ -831,6 +837,137 @@ export class RepositoriesService {
         `Could not check Dockerfile presence for ${owner}/${repo}: ${error.message}`,
       );
       return { hasDockerfile: false };
+    }
+  }
+
+  /**
+   * Discover and validate flui.yaml manifests in the repository — at the root
+   * and in subdirectories (monorepo: one manifest per deployable). Lightweight
+   * reads via GitHub API, no clone. Drives the manifest-first deploy flow
+   * (dashboard parity with `flui deploy <path>`).
+   */
+  async getFluiManifests(
+    userId: string,
+    owner: string,
+    repo: string,
+    ref: string,
+  ): Promise<RepositoryManifestsDto> {
+    const MAX_DEPTH = 4;
+    const MAX_MANIFESTS = 10;
+
+    let paths: string[];
+    let octokit: Awaited<ReturnType<GitHubTokenResolverService['getOctokit']>>;
+    try {
+      octokit = await this.tokenResolver.getOctokit(userId, owner);
+      const { data: tree } = await octokit.git.getTree({
+        owner,
+        repo,
+        tree_sha: ref,
+        recursive: '1',
+      });
+      paths = (tree.tree ?? [])
+        .filter(
+          (item) =>
+            item.type === 'blob' &&
+            !!item.path &&
+            /(^|\/)flui\.ya?ml$/.test(item.path) &&
+            !item.path.includes('node_modules/') &&
+            item.path.split('/').length <= MAX_DEPTH,
+        )
+        .map((item) => item.path as string)
+        .sort(
+          (a, b) =>
+            a.split('/').length - b.split('/').length || a.localeCompare(b),
+        )
+        .slice(0, MAX_MANIFESTS);
+    } catch (error) {
+      if (error?.status === 404) {
+        // Empty repo or unknown ref — treat as "no manifests".
+        return { branch: ref, manifests: [] };
+      }
+      this.logger.warn(
+        `Could not list flui.yaml manifests for ${owner}/${repo}@${ref}: ${error.message}`,
+      );
+      throw new InternalServerErrorException(
+        `Could not read repository tree for ${owner}/${repo}: ${error.message}`,
+      );
+    }
+
+    const manifests: RepositoryManifestEntryDto[] = [];
+    for (const manifestPath of paths) {
+      const content = await this.readRepoFile(
+        octokit,
+        owner,
+        repo,
+        ref,
+        manifestPath,
+      );
+      if (content === null) continue;
+      manifests.push(this.toManifestEntry(manifestPath, content));
+    }
+
+    return { branch: ref, manifests };
+  }
+
+  private toManifestEntry(
+    manifestPath: string,
+    content: string,
+  ): RepositoryManifestEntryDto {
+    let kind: string | undefined;
+    try {
+      const doc = yaml.load(content) as Record<string, unknown> | null;
+      kind = typeof doc?.['kind'] === 'string' ? doc['kind'] : undefined;
+    } catch {
+      // Invalid YAML — kind stays undefined; the validator below reports it.
+    }
+
+    try {
+      const { manifest, warnings } = validateApplicationManifest(content);
+      return {
+        path: manifestPath,
+        valid: true,
+        kind,
+        name: manifest.metadata.name,
+        port: manifest.deploy.port,
+        content,
+        manifest: manifest as unknown as Record<string, unknown>,
+        warnings: warnings.length
+          ? warnings.map((w) => `${w.path}: ${w.message}`)
+          : undefined,
+      };
+    } catch (error) {
+      return {
+        path: manifestPath,
+        valid: false,
+        kind,
+        content,
+        validationError: error.message,
+      };
+    }
+  }
+
+  private async readRepoFile(
+    octokit: Awaited<ReturnType<GitHubTokenResolverService['getOctokit']>>,
+    owner: string,
+    repo: string,
+    ref: string,
+    filePath: string,
+  ): Promise<string | null> {
+    try {
+      const { data } = await octokit.repos.getContent({
+        owner,
+        repo,
+        path: filePath,
+        ref,
+      });
+      const file = data as { encoding?: string; content?: string };
+      if (file.encoding !== 'base64' || !file.content) return null;
+      return Buffer.from(file.content, 'base64').toString('utf-8');
+    } catch (error) {
+      this.logger.warn(
+        `Could not read ${filePath} from ${owner}/${repo}@${ref}: ${error.message}`,
+      );
+      return null;
     }
   }
 

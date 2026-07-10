@@ -1,5 +1,5 @@
 kind: CatalogApp
-apiVersion: flui/v1
+apiVersion: flui.cloud/v1beta1
 
 metadata:
   id: stirling-pdf
@@ -16,8 +16,8 @@ metadata:
     - privacy
     - document-processing
   license: MIT
-  version: "2.9.2"
-  maintainedAt: "2026-04-19"
+  version: '2.9.2'
+  maintainedAt: '2026-04-19'
   icon: https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/svg/stirling-pdf.svg
   links:
     website: https://stirlingpdf.com
@@ -42,7 +42,7 @@ spec:
   image:
     registry: docker.io
     repository: stirlingtools/stirling-pdf
-    tag: "2.9.2"
+    tag: '2.9.2'
 
   ports:
     - name: http
@@ -62,11 +62,11 @@ spec:
 
   env:
     - name: SYSTEM_DEFAULTLOCALE
-      value: "en-GB"
+      value: 'en-GB'
       userEditable: true
       description: Default interface locale (e.g. en-GB, it-IT, fr-FR)
     - name: SECURITY_ENABLELOGIN
-      value: "false"
+      value: 'false'
       userEditable: true
       description: Enable the built-in login (set true if you want Stirling's native auth instead of the Flui proxy)
 
@@ -74,10 +74,10 @@ spec:
   # 2 CPU cores. See https://docs.stirlingpdf.com/Production-Deployment-Guide/
   resources:
     requests:
-      cpu: "1"
+      cpu: '1'
       memory: 2Gi
     limits:
-      cpu: "2"
+      cpu: '2'
       memory: 4Gi
 
   scaling:
@@ -88,8 +88,8 @@ spec:
       mode: Recreate
       bounds:
         cpu:
-          min: "1"
-          max: "4"
+          min: '1'
+          max: '4'
         memory:
           min: 2Gi
           max: 8Gi

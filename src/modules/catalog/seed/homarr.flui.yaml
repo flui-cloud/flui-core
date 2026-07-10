@@ -1,5 +1,5 @@
 kind: CatalogApp
-apiVersion: flui/v1
+apiVersion: flui.cloud/v1beta1
 
 metadata:
   id: homarr
@@ -17,8 +17,8 @@ metadata:
     - widgets
     - integrations
   license: MIT
-  version: "1.59.2"
-  maintainedAt: "2026-04-23"
+  version: '1.59.2'
+  maintainedAt: '2026-04-23'
   icon: https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/svg/homarr.svg
   links:
     website: https://homarr.dev
@@ -41,7 +41,7 @@ spec:
   image:
     registry: ghcr.io
     repository: homarr-labs/homarr
-    tag: "v1.59.2"
+    tag: 'v1.59.2'
 
   ports:
     - name: http
@@ -67,7 +67,7 @@ spec:
       cpu: 200m
       memory: 384Mi
     limits:
-      cpu: "1"
+      cpu: '1'
       memory: 1Gi
 
   scaling:
@@ -79,7 +79,7 @@ spec:
       bounds:
         cpu:
           min: 200m
-          max: "2"
+          max: '2'
         memory:
           min: 384Mi
           max: 2Gi

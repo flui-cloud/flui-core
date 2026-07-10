@@ -1,5 +1,5 @@
 kind: CatalogApp
-apiVersion: flui/v1
+apiVersion: flui.cloud/v1beta1
 
 metadata:
   id: minio
@@ -18,8 +18,8 @@ metadata:
     - building-block
     - gdpr
   license: AGPL-3.0
-  version: "RELEASE.2025-04-08"
-  maintainedAt: "2026-04-22"
+  version: 'RELEASE.2025-04-08'
+  maintainedAt: '2026-04-22'
   icon: https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/svg/minio.svg
   links:
     website: https://min.io
@@ -41,7 +41,7 @@ spec:
   image:
     registry: docker.io
     repository: minio/minio
-    tag: "RELEASE.2025-04-08T15-41-24Z"
+    tag: 'RELEASE.2025-04-08T15-41-24Z'
 
   # Pin the console to a fixed port so the K8s Service can target it reliably.
   startCommand: minio server /data --console-address ":9001"
@@ -68,7 +68,7 @@ spec:
         userInput:
           label: Admin username
           default: minioadmin
-          pattern: "^[a-zA-Z0-9_-]{3,32}$"
+          pattern: '^[a-zA-Z0-9_-]{3,32}$'
           patternDescription: Letters, numbers, hyphens and underscores, 3-32 chars
           minLength: 3
           maxLength: 32
@@ -78,7 +78,7 @@ spec:
         userInput:
           label: Admin password
           sensitive: true
-          pattern: "^.{8,128}$"
+          pattern: '^.{8,128}$'
           patternDescription: At least 8 characters
           minLength: 8
           maxLength: 128
@@ -90,7 +90,7 @@ spec:
       cpu: 100m
       memory: 256Mi
     limits:
-      cpu: "2"
+      cpu: '2'
       memory: 2Gi
 
   scaling:
@@ -102,7 +102,7 @@ spec:
       bounds:
         cpu:
           min: 100m
-          max: "4"
+          max: '4'
         memory:
           min: 256Mi
           max: 8Gi

@@ -82,24 +82,40 @@ function resolveDocsRoot(): { root: string; ref: string; origin: string } {
   }
 }
 
+// The KB carries both manifest schemas so the assistant can help author either
+// kind. `flui-manifest.schema.json` keeps the CatalogApp schema (legacy name);
+// `flui-application.schema.json` is the source-deploy Application schema.
+const SCHEMA_FILES: Array<{ rel: string; dest: string }> = [
+  {
+    rel: 'schemas/catalog-app.v1beta1.json',
+    dest: 'flui-manifest.schema.json',
+  },
+  {
+    rel: 'schemas/application.v1beta1.json',
+    dest: 'flui-application.schema.json',
+  },
+];
+
 function syncSchema(): { ref: string; origin: string } {
-  const dest = path.join(SRC, 'flui-manifest.schema.json');
-  const rel = 'schemas/catalog-app.v1beta1.json';
   const local = localDir('FLUI_SPEC_DIR', 'flui-spec');
-  if (local && fs.existsSync(path.join(local, rel))) {
-    fs.copyFileSync(path.join(local, rel), dest);
+  if (local && fs.existsSync(path.join(local, SCHEMA_FILES[0].rel))) {
+    for (const { rel, dest } of SCHEMA_FILES) {
+      fs.copyFileSync(path.join(local, rel), path.join(SRC, dest));
+    }
     return { ref: gitRef(local), origin: 'local' };
   }
-  execFileSync(
-    'curl',
-    [
-      '-fsSL',
-      `https://raw.githubusercontent.com/${KNOWLEDGE_SOURCES.specRepo}/${KNOWLEDGE_SOURCES.specRef}/${rel}`,
-      '-o',
-      dest,
-    ],
-    { stdio: 'inherit' },
-  );
+  for (const { rel, dest } of SCHEMA_FILES) {
+    execFileSync(
+      'curl',
+      [
+        '-fsSL',
+        `https://raw.githubusercontent.com/${KNOWLEDGE_SOURCES.specRepo}/${KNOWLEDGE_SOURCES.specRef}/${rel}`,
+        '-o',
+        path.join(SRC, dest),
+      ],
+      { stdio: 'inherit' },
+    );
+  }
   return { ref: KNOWLEDGE_SOURCES.specRef, origin: 'remote' };
 }
 
@@ -140,7 +156,7 @@ function main(): void {
         origin: spec.origin,
       },
     },
-    counts: { concepts, cliProse: cli, schema: 1 },
+    counts: { concepts, cliProse: cli, schema: SCHEMA_FILES.length },
   };
   fs.writeFileSync(
     path.join(SRC, 'SOURCES.lock.json'),

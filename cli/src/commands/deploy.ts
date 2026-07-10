@@ -9,6 +9,7 @@ import { ConfigStorage } from '../lib/config-storage';
 import { resolveCluster } from '../lib/resolve-cluster';
 import { detectFrameworkFromProject } from '../lib/framework-detector';
 import { runFrameworkPostChecks } from '../lib/framework-postchecks';
+import { validate, parseYaml } from '@flui-cloud/spec';
 
 const POLL_INTERVAL_MS = 5000;
 const MAX_WAIT_CATALOG_MS = 600_000; // 10 min for catalog installs
@@ -25,13 +26,6 @@ interface InstallResponse {
   requestedDomain?: string;
   resolvedFqdn?: string;
   errorMessage?: string;
-}
-
-interface ValidateResponse {
-  valid: boolean;
-  errors?: string[];
-  checksum?: string;
-  manifest?: unknown;
 }
 
 // ── Source deploy types ────────────────────────────────────────────────────
@@ -62,7 +56,8 @@ interface ApplicationStatusResponse {
 export default class Deploy extends Command {
   static readonly description =
     'Deploy an application from a flui.yaml manifest to a cluster. ' +
-    'Supports both kind:CatalogApp (pre-built image) and kind:Application (source build via GitHub Actions).';
+    'Supports both kind:CatalogApp (pre-built image) and kind:Application (source build via GitHub Actions). ' +
+    'Author a manifest with `flui app init <framework>`; see every field with `flui app manifest`.';
 
   static readonly examples = [
     '<%= config.bin %> <%= command.id %>',
@@ -160,7 +155,12 @@ export default class Deploy extends Command {
     }),
     'validate-only': Flags.boolean({
       description:
-        'Validate manifest against the flui/v1 schema without deploying',
+        'Validate the manifest locally against the flui.cloud/v1beta1 schema without deploying (no cluster or login needed). Combine with --json for machine-readable output.',
+      default: false,
+    }),
+    json: Flags.boolean({
+      description:
+        'With --validate-only, emit the result as JSON: { valid, kind, errors[], warnings[] }.',
       default: false,
     }),
     'skip-checks': Flags.boolean({
@@ -186,13 +186,31 @@ export default class Deploy extends Command {
 
     const filePath = path.resolve(args.file ?? 'flui.yaml');
     if (!fs.existsSync(filePath)) {
+      if (!args.file) {
+        const found = findManifestsBelow(process.cwd());
+        if (found.length > 0) {
+          this.error(
+            `No flui.yaml in the current directory, but found ${found.length} manifest${found.length === 1 ? '' : 's'} in subdirectories:\n` +
+              found.map((f) => `  • flui deploy ${f}`).join('\n') +
+              `\n  Each flui.yaml is an independently deployable app — pass the one to deploy.`,
+            { exit: 1 },
+          );
+        }
+      }
       this.error(
-        `Manifest not found: ${filePath}\n  Create one with \`flui init\` or point to an existing file.`,
+        `Manifest not found: ${filePath}\n  Scaffold one with \`flui app init <framework>\` (run \`flui app init --list\` for the supported frameworks).`,
         { exit: 1 },
       );
     }
 
     const raw = fs.readFileSync(filePath, 'utf-8');
+
+    // Validation is local-first (the bundled @flui-cloud/spec is the same schema
+    // the server validates against) — no cluster or login required.
+    if (flags['validate-only']) {
+      this.validateManifestLocal(raw, flags.json as boolean);
+      return;
+    }
 
     const configStorage = new ConfigStorage();
     const apiUrl = flags['api-url'] ?? configStorage.getApiUrlOrThrow();
@@ -205,11 +223,6 @@ export default class Deploy extends Command {
 
     // Detect manifest kind
     const kind = this.detectKind(raw);
-
-    if (flags['validate-only']) {
-      await this.validateManifest(apiClient, raw);
-      return;
-    }
 
     if (kind === 'Application') {
       await this.runSourceDeploy(apiClient, raw, flags, filePath);
@@ -624,61 +637,82 @@ export default class Deploy extends Command {
 
   // ── Validation ─────────────────────────────────────────────────────────────
 
-  private async validateManifest(
-    apiClient: ApiClient,
-    raw: string,
-  ): Promise<void> {
-    const kind = this.detectKind(raw);
+  /**
+   * Validate a manifest locally against the bundled @flui-cloud/spec schema —
+   * the same schema (and semantic checks) the server enforces. Covers both
+   * kind:Application and kind:CatalogApp. The server remains the final authority
+   * at actual deploy time.
+   */
+  private validateManifestLocal(raw: string, asJson: boolean): void {
+    let parsed: unknown;
+    try {
+      parsed = parseYaml(raw);
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      this.emitValidation(
+        {
+          valid: false,
+          kind: 'unknown',
+          errors: [{ path: '<root>', message: `Invalid YAML: ${message}` }],
+          warnings: [],
+        },
+        asJson,
+      );
+      return;
+    }
 
-    if (kind === 'Application') {
-      // Local validation — send to deploy-from-yaml with validateOnly flag
-      const spinner = ora('Validating manifest…').start();
-      try {
-        await apiClient.post('/applications/deploy-from-yaml', {
-          yaml: raw,
-          clusterId: '00000000-0000-0000-0000-000000000000',
-          repoFullName: 'validate/only',
-          validateOnly: true,
-        });
-        spinner.stop();
-        console.log(chalk.green('\n  Manifest is valid (kind: Application)\n'));
-      } catch (error: unknown) {
-        spinner.fail('Validation failed');
-        const msg =
-          (error as any).response?.data?.message ?? (error as Error).message;
-        console.log(chalk.red(`\n  Error: ${msg}\n`));
-        this.exit(1);
+    const kind =
+      typeof (parsed as { kind?: unknown })?.kind === 'string'
+        ? (parsed as { kind: string }).kind
+        : 'unknown';
+    const result = validate(parsed);
+    this.emitValidation(
+      {
+        valid: result.valid,
+        kind,
+        errors: result.valid ? [] : result.errors,
+        warnings: result.valid ? result.warnings : [],
+      },
+      asJson,
+    );
+  }
+
+  private emitValidation(
+    r: {
+      valid: boolean;
+      kind: string;
+      errors: { path: string; message: string }[];
+      warnings: { path: string; message: string }[];
+    },
+    asJson: boolean,
+  ): void {
+    if (asJson) {
+      this.log(JSON.stringify(r, null, 2));
+      if (!r.valid) this.exit(1);
+      return;
+    }
+
+    if (r.valid) {
+      console.log(chalk.green(`\n  Manifest is valid (kind: ${r.kind})\n`));
+      for (const w of r.warnings) {
+        console.log(chalk.yellow(`  ⚠ ${w.path}: ${w.message}`));
+      }
+      if (r.warnings.length) {
+        console.log(
+          chalk.dim(
+            '\n  (warnings = spec-accepted fields not yet applied on source deploys)\n',
+          ),
+        );
       }
       return;
     }
 
-    const spinner = ora('Validating manifest…').start();
-    try {
-      const result = await apiClient.post<ValidateResponse>(
-        '/catalog/validate',
-        { yaml: raw },
-      );
-      spinner.stop();
-      if (result.valid) {
-        console.log(chalk.green('\n  Manifest is valid\n'));
-        if (result.checksum) {
-          console.log(chalk.dim(`  Checksum: ${result.checksum}\n`));
-        }
-      } else {
-        console.log(chalk.red('\n  Manifest has errors:\n'));
-        for (const err of result.errors ?? []) {
-          console.log(chalk.red(`    • ${err}`));
-        }
-        console.log('');
-        this.exit(1);
-      }
-    } catch (error: unknown) {
-      spinner.fail('Validation failed');
-      const msg =
-        (error as any).response?.data?.message ?? (error as Error).message;
-      console.log(chalk.red(`\n  Error: ${msg}\n`));
-      this.exit(1);
+    console.log(chalk.red('\n  Manifest has errors:\n'));
+    for (const e of r.errors) {
+      console.log(chalk.red(`    • ${e.path}: ${e.message}`));
     }
+    console.log('');
+    this.exit(1);
   }
 
   // ── Helpers ────────────────────────────────────────────────────────────────
@@ -797,4 +831,44 @@ export default class Deploy extends Command {
       return undefined;
     }
   }
+}
+
+const MANIFEST_SCAN_SKIP = new Set([
+  'node_modules',
+  '.git',
+  'dist',
+  'build',
+  '.next',
+  'out',
+  'coverage',
+  '.turbo',
+  '.cache',
+]);
+
+/** Find flui.yaml manifests in subdirectories (monorepo), up to 3 levels deep. */
+function findManifestsBelow(
+  root: string,
+  dir = root,
+  depth = 0,
+  found: string[] = [],
+): string[] {
+  if (depth > 3 || found.length >= 10) return found;
+  let entries: fs.Dirent[];
+  try {
+    entries = fs.readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return found;
+  }
+  for (const entry of entries) {
+    if (entry.isFile() && entry.name === 'flui.yaml' && dir !== root) {
+      found.push(path.relative(root, path.join(dir, entry.name)));
+    } else if (
+      entry.isDirectory() &&
+      !entry.name.startsWith('.') &&
+      !MANIFEST_SCAN_SKIP.has(entry.name)
+    ) {
+      findManifestsBelow(root, path.join(dir, entry.name), depth + 1, found);
+    }
+  }
+  return found;
 }

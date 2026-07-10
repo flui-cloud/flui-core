@@ -1,5 +1,5 @@
 kind: CatalogApp
-apiVersion: flui/v1
+apiVersion: flui.cloud/v1beta1
 
 metadata:
   id: linkding
@@ -16,8 +16,8 @@ metadata:
     - privacy
     - minimalist
   license: MIT
-  version: "1.45.0"
-  maintainedAt: "2026-04-23"
+  version: '1.45.0'
+  maintainedAt: '2026-04-23'
   icon: https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/svg/linkding.svg
   links:
     website: https://linkding.link
@@ -40,7 +40,7 @@ spec:
   image:
     registry: docker.io
     repository: sissbruecker/linkding
-    tag: "1.45.0"
+    tag: '1.45.0'
 
   ports:
     - name: http
@@ -60,7 +60,7 @@ spec:
         userInput:
           label: Admin username
           default: admin
-          pattern: "^[a-zA-Z0-9_]{3,32}$"
+          pattern: '^[a-zA-Z0-9_]{3,32}$'
           patternDescription: Letters, numbers and underscores, 3-32 chars
           minLength: 3
           maxLength: 32
@@ -71,7 +71,7 @@ spec:
         userInput:
           label: Admin password
           sensitive: true
-          pattern: "^.{12,128}$"
+          pattern: '^.{12,128}$'
           patternDescription: At least 12 characters
           minLength: 12
           maxLength: 128
@@ -96,7 +96,7 @@ spec:
       bounds:
         cpu:
           min: 100m
-          max: "1"
+          max: '1'
         memory:
           min: 192Mi
           max: 1Gi

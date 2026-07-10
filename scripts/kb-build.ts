@@ -66,17 +66,31 @@ function loadDir(dir: string, source: string, prefix: string): Section[] {
 }
 
 function schemaSection(): Section[] {
-  const file = path.join(SRC, 'flui-manifest.schema.json');
-  if (!fs.existsSync(file)) return [];
-  const json = fs.readFileSync(file, 'utf8').trim();
-  return [
+  const schemas: Array<{ file: string; id: string; title: string }> = [
     {
+      file: 'flui-manifest.schema.json',
       id: 'flui-manifest/schema',
-      title: 'flui.yaml manifest — JSON Schema',
-      source: 'flui-spec',
-      body: ['```json', json, '```'].join('\n'),
+      title: 'flui.yaml manifest — kind: CatalogApp JSON Schema',
+    },
+    {
+      file: 'flui-application.schema.json',
+      id: 'flui-application/schema',
+      title: 'flui.yaml manifest — kind: Application JSON Schema',
     },
   ];
+  const sections: Section[] = [];
+  for (const { file, id, title } of schemas) {
+    const full = path.join(SRC, file);
+    if (!fs.existsSync(full)) continue;
+    const json = fs.readFileSync(full, 'utf8').trim();
+    sections.push({
+      id,
+      title,
+      source: 'flui-spec',
+      body: ['```json', json, '```'].join('\n'),
+    });
+  }
+  return sections;
 }
 
 function cliReferenceSection(): Section[] {

@@ -1,5 +1,5 @@
 kind: CatalogApp
-apiVersion: flui/v1
+apiVersion: flui.cloud/v1beta1
 
 metadata:
   id: memos
@@ -16,8 +16,8 @@ metadata:
     - privacy
     - knowledge-base
   license: MIT
-  version: "0.27"
-  maintainedAt: "2026-04-19"
+  version: '0.27'
+  maintainedAt: '2026-04-19'
   icon: https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/svg/memos.svg
   links:
     website: https://usememos.com
@@ -39,7 +39,7 @@ spec:
   image:
     registry: docker.io
     repository: neosmemo/memos
-    tag: "0.27"
+    tag: '0.27'
 
   ports:
     - name: http
@@ -72,7 +72,7 @@ spec:
       bounds:
         cpu:
           min: 50m
-          max: "1"
+          max: '1'
         memory:
           min: 64Mi
           max: 512Mi
