@@ -164,8 +164,9 @@ export class AuthDomainSyncService {
         ZITADEL_SERVICE_ACCOUNT_PAT: pat,
       },
     );
+    process.env.ZITADEL_SERVICE_ACCOUNT_PAT = pat;
     this.logger.log(
-      '✅ ZITADEL_SERVICE_ACCOUNT_PAT injected into flui-secrets. Restart of Flui Api required.',
+      '✅ ZITADEL_SERVICE_ACCOUNT_PAT injected into flui-secrets and process env.',
     );
 
     return { pat, patInjected: true };

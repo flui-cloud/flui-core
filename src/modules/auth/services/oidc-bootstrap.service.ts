@@ -382,6 +382,9 @@ export class OidcBootstrapService {
       'flui-secrets',
       { ZITADEL_SERVICE_ACCOUNT_PAT: pat },
     );
+    // The pod's env predates the secret patch — cache in-process so PAT
+    // consumers (profile sync, SSO wiring) work without a pod restart.
+    process.env.ZITADEL_SERVICE_ACCOUNT_PAT = pat;
     return pat;
   }
 
