@@ -97,10 +97,12 @@ export class GitHubAppWebhookService {
       return { received: true };
     }
 
-    // Only process runs triggered by our workflow (flui.yml)
+    // Only process runs triggered by a Flui workflow — the legacy shared
+    // flui.yml or a per-app flui-<slug>.yml (the workflow name keeps the
+    // "Flui Deploy" prefix in both cases).
     const isFlui =
-      workflowRun.path?.includes('flui.yml') ||
-      workflowRun.name === 'Flui Deploy';
+      /\/flui[^/]*\.ya?ml$/.test(workflowRun.path ?? '') ||
+      (workflowRun.name ?? '').startsWith('Flui Deploy');
     if (!isFlui) {
       this.logger.debug(`Ignoring non-Flui workflow run: ${workflowRun.name}`);
       return { received: true };

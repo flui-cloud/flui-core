@@ -8,6 +8,28 @@ export interface CommitResult {
   sha: string;
 }
 
+/** Legacy shared workflow path (single-app repos, pre multi-app). */
+export const LEGACY_WORKFLOW_PATH = '.github/workflows/flui.yml';
+
+/**
+ * Per-app workflow filename. One workflow per Application so a monorepo can
+ * host several source-built apps on the same branch.
+ */
+export function fluiWorkflowFileName(appSlug: string): string {
+  return `flui-${appSlug}.yml`;
+}
+
+/** True when a workflow run belongs to a Flui-generated workflow (any app). */
+export function isFluiWorkflowRun(run: {
+  path?: string | null;
+  name?: string | null;
+}): boolean {
+  return (
+    /\/flui[^/]*\.ya?ml$/.test(run.path ?? '') ||
+    (run.name ?? '').startsWith('Flui Deploy')
+  );
+}
+
 export interface WorkflowRunStatus {
   runId: string;
   status: 'queued' | 'in_progress' | 'completed';
@@ -137,12 +159,17 @@ export class GitHubWorkflowService {
   }
 
   /**
-   * V3: Commits only .github/workflows/flui.yml (no Dockerfile).
+   * V3: Commits only the workflow file (no Dockerfile).
    *
    * The commit message must NOT contain `[skip ci]`: in V3 the workflow trigger
    * is `on: push: branches: [main]`, so the very commit that adds the workflow
    * is what kicks off the first run. Adding `[skip ci]` would silently swallow
    * the first build and the application would never get a workflowRunId.
+   *
+   * When the app migrates from the legacy shared `flui.yml` to its per-app
+   * file, the legacy file is deleted in the same atomic commit — but only if
+   * it belongs to this app (contains its FLUI_APP_ID), so sibling apps in a
+   * monorepo keep their workflow untouched.
    */
   async commitWorkflowOnly(
     userId: string,
@@ -150,10 +177,14 @@ export class GitHubWorkflowService {
     repo: string,
     branch: string,
     workflowYaml: string,
+    opts?: { workflowFileName?: string; cleanupLegacyForAppId?: string },
   ): Promise<CommitResult> {
     await this.tokenResolver.assertCapability(userId, ['repo', 'workflow']);
 
     const octokit = await this.tokenResolver.getOctokit(userId, owner);
+    const workflowPath = opts?.workflowFileName
+      ? `.github/workflows/${opts.workflowFileName}`
+      : LEGACY_WORKFLOW_PATH;
 
     const { data: refData } = await octokit.git.getRef({
       owner,
@@ -169,18 +200,48 @@ export class GitHubWorkflowService {
     });
     const baseTreeSha = commitData.tree.sha;
 
+    const tree: Array<{
+      path: string;
+      mode: '100644';
+      type: 'blob';
+      content?: string;
+      sha?: string | null;
+    }> = [
+      {
+        path: workflowPath,
+        mode: '100644',
+        type: 'blob',
+        content: workflowYaml,
+      },
+    ];
+
+    if (
+      opts?.cleanupLegacyForAppId &&
+      workflowPath !== LEGACY_WORKFLOW_PATH &&
+      (await this.legacyWorkflowBelongsToApp(
+        octokit,
+        owner,
+        repo,
+        branch,
+        opts.cleanupLegacyForAppId,
+      ))
+    ) {
+      tree.push({
+        path: LEGACY_WORKFLOW_PATH,
+        mode: '100644',
+        type: 'blob',
+        sha: null,
+      });
+      this.logger.log(
+        `Removing superseded legacy ${LEGACY_WORKFLOW_PATH} (app ${opts.cleanupLegacyForAppId}) in the same commit`,
+      );
+    }
+
     const { data: treeData } = await octokit.git.createTree({
       owner,
       repo,
       base_tree: baseTreeSha,
-      tree: [
-        {
-          path: '.github/workflows/flui.yml',
-          mode: '100644',
-          type: 'blob',
-          content: workflowYaml,
-        },
-      ],
+      tree: tree as any,
     });
 
     const { data: newCommit } = await octokit.git.createCommit({
@@ -198,16 +259,50 @@ export class GitHubWorkflowService {
       sha: newCommit.sha,
     });
 
-    const workflowUrl = `https://github.com/${owner}/${repo}/blob/${branch}/.github/workflows/flui.yml`;
+    const workflowUrl = `https://github.com/${owner}/${repo}/blob/${branch}/${workflowPath}`;
     this.logger.log(
-      `V3 workflow committed to ${owner}/${repo}@${branch} (${newCommit.sha.slice(0, 7)})`,
+      `V3 workflow committed to ${owner}/${repo}@${branch} at ${workflowPath} (${newCommit.sha.slice(0, 7)})`,
     );
 
     return { workflowUrl, sha: newCommit.sha };
   }
 
   /**
-   * Get the latest workflow run for flui.yml on a given branch.
+   * True when the legacy shared flui.yml exists on the branch AND was generated
+   * for the given app (its FLUI_APP_ID env matches). Any read failure = false:
+   * cleanup is best-effort and must never block the workflow commit.
+   */
+  private async legacyWorkflowBelongsToApp(
+    octokit: Awaited<ReturnType<GitHubTokenResolverService['getOctokit']>>,
+    owner: string,
+    repo: string,
+    branch: string,
+    appId: string,
+  ): Promise<boolean> {
+    try {
+      const { data } = await octokit.repos.getContent({
+        owner,
+        repo,
+        path: LEGACY_WORKFLOW_PATH,
+        ref: branch,
+      });
+      const file = data as { encoding?: string; content?: string };
+      if (file.encoding !== 'base64' || !file.content) return false;
+      const content = Buffer.from(file.content, 'base64').toString('utf-8');
+      return content.includes(`FLUI_APP_ID: ${appId}`);
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Get the latest Flui workflow run on a given branch.
+   *
+   * When `workflowFileName` is given (per-app workflow), the run for that exact
+   * file wins; a legacy shared `flui.yml` run is accepted as fallback so apps
+   * committed before the per-app split keep resolving. Without a filename, any
+   * Flui-generated workflow run matches (ambiguous in monorepos — callers that
+   * know the app should pass the filename).
    */
   async getLatestWorkflowRun(
     userId: string,
@@ -215,6 +310,7 @@ export class GitHubWorkflowService {
     repo: string,
     branch: string,
     headSha?: string,
+    workflowFileName?: string,
   ): Promise<WorkflowRunStatus | null> {
     const octokit = await this.tokenResolver.getOctokit(userId, owner);
 
@@ -227,9 +323,17 @@ export class GitHubWorkflowService {
         ...(headSha ? { head_sha: headSha } : {}),
       });
 
-      const fluiRun = data.workflow_runs.find(
-        (run) => run.path?.includes('flui.yml') || run.name === 'Flui Deploy',
-      );
+      const runs = data.workflow_runs;
+      const exact = workflowFileName
+        ? runs.find((run) => run.path?.endsWith(`/${workflowFileName}`))
+        : undefined;
+      const fluiRun =
+        exact ??
+        runs.find((run) =>
+          workflowFileName
+            ? run.path?.endsWith(`/flui.yml`)
+            : isFluiWorkflowRun(run),
+        );
 
       if (!fluiRun) return null;
 

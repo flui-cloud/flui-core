@@ -6,6 +6,7 @@ import { RepositoriesRepository } from '../../repositories/repositories/reposito
 import {
   GitHubWorkflowService,
   WorkflowRunStatus,
+  fluiWorkflowFileName,
 } from '../../repositories/services/github-workflow.service';
 import { ApplicationDeployService } from './application-deploy.service';
 import { ApplicationEventsGateway } from '../gateway/application-events.gateway';
@@ -173,6 +174,8 @@ export class ApplicationBuildWatcherService {
         repository.owner,
         repository.repositoryName,
         branch,
+        undefined,
+        fluiWorkflowFileName(app.slug),
       );
     } catch (err) {
       this.logger.warn(
@@ -350,6 +353,7 @@ export class ApplicationBuildWatcherService {
           repository.repositoryName,
           branch,
           activeBuild?.commitSha,
+          fluiWorkflowFileName(app.slug),
         );
         if (run?.runId) {
           this.logger.log(
@@ -554,6 +558,7 @@ export class ApplicationBuildWatcherService {
           repository.repositoryName,
           branch,
           build.commitSha,
+          fluiWorkflowFileName(app.slug),
         );
       }
     } catch (err) {

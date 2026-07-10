@@ -12,6 +12,7 @@ import { RepositoriesRepository } from '../../repositories/repositories/reposito
 import {
   GitHubWorkflowService,
   WorkflowRunStatus,
+  fluiWorkflowFileName,
 } from '../../repositories/services/github-workflow.service';
 import { GitHubTokenResolverService } from '../../repositories/services/github-token-resolver.service';
 import { WorkflowGeneratorService } from '../../repositories/services/workflow-generator.service';
@@ -41,6 +42,12 @@ export interface GenerateWorkflowV3Dto {
   branch: string;
   isFluiManaged?: boolean;
   force?: boolean;
+  /** Dockerfile path relative to repo root (default: Dockerfile). */
+  dockerfilePath?: string;
+  /** Docker build context relative to repo root (default: .). */
+  buildContext?: string;
+  /** Monorepo sub-path: scopes the GHCR image name and the push paths filter. */
+  subPath?: string;
 }
 
 export interface GenerateWorkflowResultDto {
@@ -338,6 +345,7 @@ export class ApplicationWorkflowService {
     const baseUrl = this.configService.get<string>('WEBHOOK_BASE_URL') ?? '';
     const fluiWebhookUrl = `${baseUrl}/api/v1/webhooks/github-actions`;
 
+    const workflowFileName = fluiWorkflowFileName(app.slug);
     const workflowYaml = this.workflowGeneratorService.generateWorkflowV3({
       branchName: dto.branch,
       githubOwner: repository.owner,
@@ -347,6 +355,10 @@ export class ApplicationWorkflowService {
       fluiWebhookUrl,
       fluiWebhookToken: webhookToken,
       backendPollingOnly: this.isBackendPollingOnly(),
+      subPath: dto.subPath,
+      dockerfilePath: dto.dockerfilePath,
+      buildContext: dto.buildContext,
+      workflowFileName,
     });
 
     // V3 originally relied on `secrets.GITHUB_TOKEN` only, which fails with
@@ -366,6 +378,7 @@ export class ApplicationWorkflowService {
       repository.repositoryName,
       dto.branch,
       workflowYaml,
+      { workflowFileName, cleanupLegacyForAppId: appId },
     );
 
     await this.applicationsRepository.update(appId, {
@@ -398,6 +411,7 @@ export class ApplicationWorkflowService {
         repository.repositoryName,
         dto.branch,
         commitResult.sha,
+        workflowFileName,
       );
       if (run) {
         runId = run.runId;
@@ -482,6 +496,7 @@ export class ApplicationWorkflowService {
         repository.repositoryName,
         branch,
         activeBuild?.commitSha,
+        fluiWorkflowFileName(app.slug),
       );
 
       if (run) {

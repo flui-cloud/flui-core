@@ -28,9 +28,16 @@ export interface WorkflowParamsV3 {
   repoName: string;
   /**
    * Optional sub-path for monorepo flows (multiple flui.yaml in the same repo).
-   * When set, the GHCR image becomes `ghcr.io/{owner}/{repoName}/{subPath}:{sha}`.
+   * When set, the GHCR image becomes `ghcr.io/{owner}/{repoName}/{subPath}:{sha}`
+   * and the push trigger is scoped to that path (plus Dockerfile + workflow file).
    */
   subPath?: string;
+  /** Dockerfile path relative to repo root (default: {context}/Dockerfile). */
+  dockerfilePath?: string;
+  /** Docker build context relative to repo root (default: .). */
+  buildContext?: string;
+  /** Workflow filename (e.g. flui-my-app.yml) — used in the paths filter. */
+  workflowFileName?: string;
   appSlug: string;
   fluiAppId: string;
   fluiWebhookUrl: string;
@@ -542,6 +549,37 @@ ENTRYPOINT ["dotnet", "${p.appName}.dll"]
     const subSegment = params.subPath ? `/${params.subPath.toLowerCase()}` : '';
     const imageName = `ghcr.io/${params.githubOwner.toLowerCase()}/${repoSegment}${subSegment}`;
 
+    const buildContext = params.buildContext ?? '.';
+    const dockerfileLine = params.dockerfilePath
+      ? `\n          file: ${params.dockerfilePath}`
+      : '';
+
+    // Monorepo: scope the push trigger to this app's slice of the repo so a
+    // push to a sibling app doesn't rebuild everything. The workflow file
+    // itself is included so the very commit that adds it triggers the first
+    // build. Note: GitHub ANDs `paths` with `tags` too — tag pushes only run
+    // when the tagged commit touches these paths, which is the expected
+    // behavior for per-app release tags in a monorepo.
+    const pathsFilter =
+      params.subPath && params.workflowFileName
+        ? [
+            `${params.subPath}/**`,
+            ...(params.dockerfilePath &&
+            !params.dockerfilePath.startsWith(`${params.subPath}/`)
+              ? [params.dockerfilePath]
+              : []),
+            `.github/workflows/${params.workflowFileName}`,
+          ]
+        : null;
+    const pathsBlock = pathsFilter
+      ? `\n    paths:\n${pathsFilter.map((p) => `      - '${p}'`).join('\n')}`
+      : '';
+
+    // Keep the "Flui Deploy" prefix: webhook + watcher identify Flui runs by it.
+    const workflowName = params.subPath
+      ? `Flui Deploy (${params.appSlug})`
+      : 'Flui Deploy';
+
     // When BACKEND_POLLING_ONLY is enabled, omit the Notify Flui steps
     // entirely — the backend watcher polls GitHub and discovers completion
     // on its own. Reduces workflow complexity and removes the webhook as a
@@ -581,12 +619,12 @@ ENTRYPOINT ["dotnet", "${p.appName}.dll"]
               "status": "failed"
             }'`;
 
-    return `name: Flui Deploy
+    return `name: ${workflowName}
 
 on:
   push:
     branches: [${params.branchName}]
-    tags: ['v*']
+    tags: ['v*']${pathsBlock}
   workflow_dispatch:
 
 env:
@@ -634,7 +672,7 @@ jobs:
       - name: Build and push
         uses: docker/build-push-action@v5
         with:
-          context: .
+          context: ${buildContext}${dockerfileLine}
           push: true
           tags: \${{ steps.meta.outputs.tags }}
           labels: \${{ steps.meta.outputs.labels }}
