@@ -681,7 +681,7 @@ export class ApplicationDeployService {
     applicationId: string,
     imageRef: string,
     userId?: string,
-    extras?: { buildId?: string },
+    extras?: { buildId?: string | null },
   ): Promise<InfrastructureOperationEntity> {
     return this.setDesiredImage(applicationId, imageRef, {
       userId,
@@ -697,7 +697,11 @@ export class ApplicationDeployService {
   async setDesiredImage(
     applicationId: string,
     imageRef: string,
-    opts?: { userId?: string; buildId?: string; expectedGeneration?: number },
+    opts?: {
+      userId?: string;
+      buildId?: string | null;
+      expectedGeneration?: number;
+    },
   ): Promise<InfrastructureOperationEntity> {
     const userId = opts?.userId;
     const app = await this.applicationService.findById(applicationId);

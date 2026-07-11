@@ -229,7 +229,7 @@ export class ApplicationBuildWatcherService {
         return;
       }
 
-      await this.markBuildCompleted(app.id, run, imageRef);
+      const buildId = await this.markBuildCompleted(app.id, run, imageRef);
 
       try {
         await this.imageRegistryService.recordImage({
@@ -259,6 +259,7 @@ export class ApplicationBuildWatcherService {
         app.id,
         imageRef,
         app.userId,
+        { buildId },
       );
     } else if (run.status === 'completed') {
       await this.markBuildEntityFailed(
@@ -474,7 +475,7 @@ export class ApplicationBuildWatcherService {
       timestamp: new Date(),
     });
 
-    await this.markBuildCompleted(app.id, run, imageRef);
+    const buildId = await this.markBuildCompleted(app.id, run, imageRef);
 
     try {
       await this.imageRegistryService.recordImage({
@@ -493,6 +494,7 @@ export class ApplicationBuildWatcherService {
       app.id,
       imageRef,
       app.userId,
+      { buildId },
     );
   }
 
@@ -708,9 +710,9 @@ export class ApplicationBuildWatcherService {
     applicationId: string,
     run: WorkflowRunStatus,
     imageRef: string,
-  ): Promise<void> {
+  ): Promise<string | null> {
     const build = await this.findActiveGithubBuild(applicationId, run.runId);
-    if (!build) return;
+    if (!build) return null;
     await this.appBuildRepository.update(build.id, {
       status: AppBuildStatus.COMPLETED,
       imageRef,
@@ -720,6 +722,7 @@ export class ApplicationBuildWatcherService {
       startedAt: run.runStartedAt ?? build.startedAt,
       completedAt: run.updatedAt ?? new Date(),
     });
+    return build.id;
   }
 
   private async markBuildEntityFailed(
