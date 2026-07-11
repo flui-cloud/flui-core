@@ -144,8 +144,25 @@ export class ApplicationEntity {
   @Column({ type: 'uuid', nullable: true })
   currentRevisionId?: string;
 
+  // The single desired-image authority — what this app SHOULD run. Written only
+  // via DesiredImageService.setDesiredImage. Never re-derived after build.
   @Column({ length: 255, nullable: true })
   imageRef?: string;
+
+  // Fencing token bumped on every desired-image change; carried by the deploy
+  // job so a superseded rollout exits instead of fighting a newer one.
+  @Column({ type: 'int', default: 0 })
+  desiredImageGeneration: number;
+
+  // Provenance: the immutable build that produced the desired image. Null for
+  // docker_image / catalog / raw_manifest apps (no build row).
+  @Column({ type: 'uuid', nullable: true })
+  desiredBuildId?: string | null;
+
+  // Last image confirmed live on the cluster, written only by the reconciler.
+  // desired (imageRef) != observed drives convergence.
+  @Column({ length: 255, nullable: true })
+  observedImageRef?: string | null;
 
   @Column({ type: 'text', nullable: true })
   startCommand?: string;

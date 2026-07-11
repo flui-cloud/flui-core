@@ -253,6 +253,30 @@ export class ApplicationDeployProcessor {
         throw new Error(`Application ${applicationId} not found`);
       }
 
+      // Generation fencing: a deploy enqueued for an older desired image has been
+      // superseded by a newer setDesiredImage. Skip it rather than roll the app
+      // back to a stale image — this is what makes concurrent deploys converge
+      // instead of oscillating. (Jobs enqueued before generations existed carry
+      // no generation and are never fenced.)
+      const jobGeneration = job.data.generation;
+      if (
+        jobGeneration != null &&
+        app.desiredImageGeneration != null &&
+        jobGeneration < app.desiredImageGeneration
+      ) {
+        this.logger.log(
+          `Deploy job for ${app.name} (${applicationId}) superseded: job generation ` +
+            `${jobGeneration} < desired ${app.desiredImageGeneration}; skipping.`,
+        );
+        await this.updateOperation(
+          operationId,
+          OperationStatus.COMPLETED,
+          100,
+          OperationStep.APP_DEPLOY_FINALIZE,
+        );
+        return;
+      }
+
       const cluster = await this.clusterRepository.findOne({
         where: { id: app.clusterId },
       });
@@ -356,6 +380,13 @@ export class ApplicationDeployProcessor {
         `Generated ${manifests.length} manifests for ${app.name}`,
       );
 
+      // Persist the image actually rendered — not a stale app.imageRef, which
+      // desyncs the row from the live Deployment and re-fires the build watcher.
+      const deployedImageRef =
+        (deployType === 'rollback' ? undefined : pinnedImageRef) ??
+        appForManifests.imageRef ??
+        (appForManifests.sourceConfig as DockerImageSourceConfig)?.imageRef;
+
       // Apply manifests
       await this.updateOperation(
         operationId,
@@ -445,16 +476,12 @@ export class ApplicationDeployProcessor {
         eventType,
         actor: { type: AppEventActorType.SYSTEM, id: 'system' },
         changeMetadata: {
-          imageRef:
-            appForManifests.imageRef ||
-            (appForManifests.sourceConfig as DockerImageSourceConfig)?.imageRef,
+          imageRef: deployedImageRef,
           isInitial: deployType === 'initial',
           rollbackFromRevision: rollbackRevisionNumber ?? null,
         },
         revisionNumber,
-        imageRef:
-          appForManifests.imageRef ||
-          (appForManifests.sourceConfig as DockerImageSourceConfig)?.imageRef,
+        imageRef: deployedImageRef,
         sourceConfigSnapshot: appForManifests.sourceConfig,
         envSnapshot: appForManifests.env,
         resourcesSnapshot: appForManifests.resources,
@@ -470,9 +497,8 @@ export class ApplicationDeployProcessor {
         status: ApplicationStatus.RUNNING,
         currentRevisionId: revision.id,
         lastDeployedAt: new Date(),
-        imageRef:
-          app.imageRef ||
-          (app.sourceConfig as DockerImageSourceConfig)?.imageRef,
+        imageRef: deployedImageRef,
+        observedImageRef: deployedImageRef,
       });
 
       await this.updateOperation(
@@ -482,9 +508,7 @@ export class ApplicationDeployProcessor {
         OperationStep.APP_DEPLOY_FINALIZE,
       );
 
-      const finalImageRef =
-        appForManifests.imageRef ||
-        (appForManifests.sourceConfig as DockerImageSourceConfig)?.imageRef;
+      const finalImageRef = deployedImageRef;
       this.eventsGateway.emitOperationCompleted(applicationId, {
         appId: applicationId,
         operationId,

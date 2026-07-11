@@ -59,13 +59,9 @@ export class WebhooksService {
       return { received: true };
     }
 
-    // status === 'success'
-    if (dto.imageRef) {
-      await this.applicationRepository.update(dto.appId, {
-        imageRef: dto.imageRef,
-      });
-    }
-
+    // status === 'success' — the desired image is set exclusively through
+    // setDesiredImage (via triggerDeployWithImage below); never written raw here,
+    // so it always goes through subPath validation + generation fencing.
     this.applicationEventsGateway.emitBuildCompleted(dto.appId, {
       appId: dto.appId,
       buildId: 'github-actions',

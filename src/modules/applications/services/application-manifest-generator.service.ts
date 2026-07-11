@@ -115,11 +115,10 @@ export class ApplicationManifestGeneratorService {
   ): string {
     const source = app.sourceConfig as GitBuildSourceConfig | undefined;
     const isGitBuild = source?.type === 'git_build';
+    // git_build reads ONLY the desired-image authority (app.imageRef, set by
+    // setDesiredImage). docker_image keeps sourceConfig.imageRef as its input.
     const imageRef =
-      override ||
-      (isGitBuild
-        ? app.imageRef || config.imageRef
-        : config.imageRef || app.imageRef);
+      override || (isGitBuild ? app.imageRef : config.imageRef || app.imageRef);
 
     if (isGitBuild && source?.subPath && imageRef) {
       const segment = `/${source.subPath.toLowerCase()}:`;

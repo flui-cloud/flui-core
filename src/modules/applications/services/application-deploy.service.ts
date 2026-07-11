@@ -50,6 +50,11 @@ export interface DeployApplicationJobData {
    * push fans out into several deploys and they must all render the same image.
    */
   imageRef?: string;
+  /**
+   * Desired-image fencing token at enqueue time. A job whose generation is older
+   * than the app's current desiredImageGeneration has been superseded.
+   */
+  generation?: number;
 }
 
 export interface DeleteApplicationJobData {
@@ -671,21 +676,30 @@ export class ApplicationDeployService {
     };
   }
 
-  /**
-   * Called by AppBuildProcessor after a successful build, by the GitHub
-   * Actions webhook, and by the background build watcher (polling fallback).
-   * Updates the application's imageRef and enqueues a deploy job.
-   *
-   * Idempotent: if a pending/in-progress deploy already exists for the same
-   * imageRef, returns that operation instead of queuing a duplicate. This
-   * protects against the webhook and the poller racing on the same build.
-   */
+  /** Back-compat shim — delegates to the single desired-image writer. */
   async triggerDeployWithImage(
     applicationId: string,
     imageRef: string,
     userId?: string,
     extras?: { buildId?: string },
   ): Promise<InfrastructureOperationEntity> {
+    return this.setDesiredImage(applicationId, imageRef, {
+      userId,
+      buildId: extras?.buildId,
+    });
+  }
+
+  /**
+   * The ONE writer of the desired image: validates once, bumps the fencing
+   * generation, sets provenance, and enqueues a single deploy. Idempotent — an
+   * in-flight deploy for the same image is reused rather than stacked.
+   */
+  async setDesiredImage(
+    applicationId: string,
+    imageRef: string,
+    opts?: { userId?: string; buildId?: string; expectedGeneration?: number },
+  ): Promise<InfrastructureOperationEntity> {
+    const userId = opts?.userId;
     const app = await this.applicationService.findById(applicationId);
 
     // Every deploy path funnels through here, so this is the one place to stop a
@@ -730,9 +744,11 @@ export class ApplicationDeployService {
       return existingOp;
     }
 
-    // Update imageRef and sourceConfig directly on the application
+    const nextGeneration = (app.desiredImageGeneration ?? 0) + 1;
     await this.applicationRepository.update(applicationId, {
       imageRef,
+      desiredImageGeneration: nextGeneration,
+      ...(opts?.buildId ? { desiredBuildId: opts.buildId } : {}),
       sourceConfig: {
         ...app.sourceConfig,
         imageRef,
@@ -769,9 +785,10 @@ export class ApplicationDeployService {
         clusterId: app.clusterId,
         deployType,
         imageRef,
+        generation: nextGeneration,
         digest: this.extractDigestFromImageRef(imageRef),
         previousImageRef,
-        buildId: extras?.buildId,
+        buildId: opts?.buildId,
         operationSteps,
       },
     });
@@ -785,6 +802,7 @@ export class ApplicationDeployService {
         applicationId: app.id,
         deployType,
         imageRef,
+        generation: nextGeneration,
       },
       {
         attempts: 2,
@@ -809,9 +827,12 @@ export class ApplicationDeployService {
     if (cfg?.type !== 'git_build' || !cfg.subPath) return imageRef;
     const rewritten = normalizeMonorepoImageRef(imageRef, cfg.subPath);
     if (rewritten !== imageRef) {
+      // Repair kept as a transitional safety net, but log the caller stack so a
+      // remaining bare-ref emitter is attributable instead of silently hidden.
       this.logger.warn(
         `Normalized monorepo imageRef for ${app.slug}: "${imageRef}" → "${rewritten}" ` +
-          `(missing subPath "${cfg.subPath}"). Source handed a bare {repo}:{tag} ref.`,
+          `(missing subPath "${cfg.subPath}"). A caller handed a bare {repo}:{tag} ref.\n` +
+          new Error('bare monorepo imageRef — caller trace').stack,
       );
     }
     return rewritten;

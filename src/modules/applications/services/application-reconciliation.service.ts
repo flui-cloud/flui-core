@@ -513,6 +513,8 @@ export class ApplicationReconciliationService {
         ? this.extractConditionMessage(actual)
         : null;
 
+    await this.recordObservedImage(app, resource.kind, actual);
+
     // 7. Update AppResourceEntity — only overwrite actualHash when we could
     // actually compute one. If the annotation was missing we leave the
     // previously stored value alone rather than nuking it to NULL.
@@ -534,6 +536,31 @@ export class ApplicationReconciliationService {
     // 8. Auto-heal if DRIFT and policy allows
     if (!driftIgnored && reconciliationStatus === ReconciliationStatus.DRIFT) {
       await this.tryAutoHeal(app, resource, kubeconfig, summary);
+    }
+  }
+
+  /**
+   * The reconciler owns observed state: record the live primary-container image
+   * on the app (only on change) so desired (app.imageRef) != observed drives
+   * convergence and the dashboard reflects what is actually running.
+   */
+  private async recordObservedImage(
+    app: ApplicationEntity,
+    kind: string,
+    actual: unknown,
+  ): Promise<void> {
+    if (kind !== 'Deployment' && kind !== 'StatefulSet') return;
+    const liveImage = (
+      actual as {
+        spec?: {
+          template?: { spec?: { containers?: Array<{ image?: string }> } };
+        };
+      }
+    ).spec?.template?.spec?.containers?.[0]?.image;
+    if (liveImage && liveImage !== app.observedImageRef) {
+      await this.applicationsRepository.update(app.id, {
+        observedImageRef: liveImage,
+      });
     }
   }
 
