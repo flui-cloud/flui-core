@@ -60,6 +60,13 @@ export interface ApplicationEnvVar {
   value: string;
   secret?: boolean;
   /**
+   * Provenance, used by a manifest (flui.yaml) deploy to decide ownership: the
+   * deploy is authoritative ONLY over `manifest` keys. `user` (set via `--env` or
+   * the dashboard) and `link` (catalog building-block refs) survive subsequent
+   * deploys and are never clobbered. Legacy entries have no source.
+   */
+  source?: 'manifest' | 'user' | 'link';
+  /**
    * When set, the env var is rendered as a Kubernetes `secretKeyRef` pointing
    * to an externally-managed Secret (e.g. the K8s Secret owned by a catalog
    * building block like postgresql). The `value` field is ignored and no

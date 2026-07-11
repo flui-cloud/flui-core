@@ -30,6 +30,7 @@ import {
   ApplicationSourceConfig,
   ApplicationScaling,
   GitBuildSourceConfig,
+  ApplicationEnvVar,
 } from '../interfaces/source-config.interface';
 import { AppEventType } from '../enums/app-event-type.enum';
 import {
@@ -291,6 +292,41 @@ export class ApplicationService {
     return incoming;
   }
 
+  private static readonly SECRET_MASK = '********';
+
+  /**
+   * Resolve one PATCHed env entry against what's stored. Dashboard reads mask
+   * secrets as `********` and drop `externalSecretRef`; a naive write would then
+   * encrypt the mask (destroying the secret) or turn a building-block link into a
+   * plain value. So: preserve a stored ref/secret when the client sends it back
+   * stripped or masked; encrypt only genuinely new secret values; tag as `user`.
+   */
+  private resolvePatchEnvVar(
+    incoming: ApplicationEnvVar,
+    existingByName: Map<string, ApplicationEnvVar>,
+  ): ApplicationEnvVar {
+    const prev = existingByName.get(incoming.name);
+    const masked =
+      incoming.value === undefined ||
+      incoming.value === '' ||
+      incoming.value === ApplicationService.SECRET_MASK;
+    if (prev?.externalSecretRef && !incoming.externalSecretRef && masked) {
+      return prev;
+    }
+    const tagged: ApplicationEnvVar = {
+      ...incoming,
+      source: incoming.source ?? 'user',
+    };
+    if (tagged.externalSecretRef) return tagged;
+    if (tagged.secret && incoming.value === ApplicationService.SECRET_MASK) {
+      return { ...tagged, value: prev?.value ?? '' };
+    }
+    if (tagged.secret) {
+      return { ...tagged, value: this.encryptionService.encrypt(tagged.value) };
+    }
+    return tagged;
+  }
+
   async update(
     id: string,
     dto: UpdateApplicationDto,
@@ -325,10 +361,15 @@ export class ApplicationService {
     if (dto.exposure !== undefined) updateData.exposure = dto.exposure;
 
     if (dto.env !== undefined) {
-      updateData.env = dto.env.map((e) => ({
-        ...e,
-        value: e.secret ? this.encryptionService.encrypt(e.value) : e.value,
-      }));
+      const existingByName = new Map(
+        ((app.env as ApplicationEnvVar[] | undefined) ?? []).map((e) => [
+          e.name,
+          e,
+        ]),
+      );
+      updateData.env = (dto.env as ApplicationEnvVar[]).map((e) =>
+        this.resolvePatchEnvVar(e, existingByName),
+      );
     }
 
     return this.applicationsRepository.update(id, updateData);
@@ -651,8 +692,12 @@ export class ApplicationService {
     dto.env =
       entity.env?.map((e) => ({
         name: e.name,
-        value: e.secret ? '********' : e.value,
+        value: e.secret ? ApplicationService.SECRET_MASK : e.value,
         secret: e.secret,
+        ...(e.externalSecretRef
+          ? { externalSecretRef: e.externalSecretRef }
+          : {}),
+        ...(e.source ? { source: e.source } : {}),
       })) || [];
     dto.resources = entity.resources;
     dto.scaling = entity.scaling;

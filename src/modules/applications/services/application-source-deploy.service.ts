@@ -17,6 +17,9 @@ import { ApplicationService } from './application.service';
 import { ApplicationDeployService } from './application-deploy.service';
 import { ApplicationManifest } from '../interfaces/application-manifest.interface';
 import { validateApplicationManifest } from '../utils/application-manifest.util';
+import { ApplicationManifestEnvVar } from '@flui-cloud/spec';
+import { ApplicationEnvVar } from '../interfaces/source-config.interface';
+import { mergeAppEnv } from '../utils/env-merge.util';
 import {
   DeployFromYamlDto,
   DeployFromYamlResponseDto,
@@ -119,7 +122,7 @@ export class ApplicationSourceDeployService {
         })
       : null;
 
-    const deployEnv = this.buildEnvVars(manifest, dto.envOverrides);
+    const manifestEnv = this.buildManifestEnv(manifest);
     const resources = this.resolveResources(manifest);
     const healthProbe = manifest.deploy.healthcheck
       ? {
@@ -159,7 +162,7 @@ export class ApplicationSourceDeployService {
           exposure:
             (manifest.deploy.exposure as ApplicationExposure) ??
             ApplicationExposure.PUBLIC,
-          env: deployEnv,
+          env: mergeAppEnv([], manifestEnv, dto.envOverrides),
           resources,
           healthProbe: healthProbe as any,
           startCommand: manifest.deploy.startCommand,
@@ -186,7 +189,11 @@ export class ApplicationSourceDeployService {
         port: manifest.deploy.port,
         exposure:
           (manifest.deploy.exposure as ApplicationExposure) ?? app.exposure,
-        env: deployEnv as any,
+        env: mergeAppEnv(
+          (app.env as ApplicationEnvVar[]) ?? [],
+          manifestEnv,
+          dto.envOverrides,
+        ),
         resources: resources,
         healthProbe: healthProbe as any,
         startCommand: manifest.deploy.startCommand ?? null,
@@ -310,23 +317,44 @@ export class ApplicationSourceDeployService {
     return { dockerfile, context, subPath };
   }
 
-  private buildEnvVars(
-    manifest: ApplicationManifest,
-    overrides?: Record<string, string>,
-  ): Array<{ name: string; value: string; secret?: boolean }> {
-    const base: Array<{ name: string; value: string; secret?: boolean }> = (
-      manifest.deploy.env ?? []
-    )
-      .filter((e) => e.value !== undefined)
-      .map((e) => ({ name: e.name, value: e.value }));
+  /** Env declared by the flui.yaml, tagged `manifest` so a deploy only owns these keys. */
+  private buildManifestEnv(manifest: ApplicationManifest): ApplicationEnvVar[] {
+    return (manifest.deploy.env ?? [])
+      .map((e) => this.manifestEnvVar(e))
+      .filter((e): e is ApplicationEnvVar => e !== null);
+  }
 
-    if (!overrides) return base;
-
-    const map = new Map(base.map((e) => [e.name, e]));
-    for (const [k, v] of Object.entries(overrides)) {
-      map.set(k, { name: k, value: v });
+  private manifestEnvVar(
+    e: ApplicationManifestEnvVar,
+  ): ApplicationEnvVar | null {
+    // `valueFrom.secretRef: "<secretName>/<KEY>"` → a k8s secretKeyRef the pod
+    // reads at runtime; the value never touches Flui's DB or the repo.
+    const ref = e.valueFrom?.secretRef;
+    if (ref) {
+      const slash = ref.lastIndexOf('/');
+      if (slash <= 0 || slash === ref.length - 1) {
+        this.logger.warn(
+          `env "${e.name}": secretRef "${ref}" must be "<secretName>/<KEY>" — ignored`,
+        );
+        return null;
+      }
+      return {
+        name: e.name,
+        value: '',
+        source: 'manifest',
+        externalSecretRef: {
+          secretName: ref.slice(0, slash),
+          key: ref.slice(slash + 1),
+        },
+      };
     }
-    return Array.from(map.values());
+    if (e.value === undefined) return null;
+    return {
+      name: e.name,
+      value: e.value,
+      source: 'manifest',
+      ...(e.secret ? { secret: true } : {}),
+    };
   }
 
   private resolveResources(manifest: ApplicationManifest) {
