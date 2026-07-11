@@ -36,6 +36,7 @@ import { BuildAgentConfigService } from '../../app-builds/services/build-agent-c
 import { DedicatedPlacementService } from './dedicated-placement.service';
 import { findSystemAppByLabel } from '../constants/system-app-catalog';
 import { matchesAnyPattern } from '../utils/version-pattern';
+import { normalizeMonorepoImageRef } from '../utils/image-ref.util';
 
 export interface DeployApplicationJobData {
   operationId: string;
@@ -686,6 +687,11 @@ export class ApplicationDeployService {
     extras?: { buildId?: string },
   ): Promise<InfrastructureOperationEntity> {
     const app = await this.applicationService.findById(applicationId);
+
+    // Every deploy path funnels through here, so this is the one place to stop a
+    // bare monorepo ref (stale fossil, old build record, racing redeploy) from
+    // being persisted to app.imageRef and fighting the build watcher every tick.
+    imageRef = this.normalizeMonorepoImageRef(app, imageRef);
     const lastReleaseOp = await this.operationRepository.findOne({
       where: {
         resourceId: applicationId,
@@ -792,6 +798,23 @@ export class ApplicationDeployService {
     );
 
     return savedOperation;
+  }
+
+  /** Repair a bare monorepo ref before it's persisted or enqueued (see util). */
+  private normalizeMonorepoImageRef(
+    app: ApplicationEntity,
+    imageRef: string,
+  ): string {
+    const cfg = app.sourceConfig as GitBuildSourceConfig | undefined;
+    if (cfg?.type !== 'git_build' || !cfg.subPath) return imageRef;
+    const rewritten = normalizeMonorepoImageRef(imageRef, cfg.subPath);
+    if (rewritten !== imageRef) {
+      this.logger.warn(
+        `Normalized monorepo imageRef for ${app.slug}: "${imageRef}" → "${rewritten}" ` +
+          `(missing subPath "${cfg.subPath}"). Source handed a bare {repo}:{tag} ref.`,
+      );
+    }
+    return rewritten;
   }
 
   private getDeployOperationSteps() {
