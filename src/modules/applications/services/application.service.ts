@@ -29,6 +29,7 @@ import { internalHostingNotAvailableException } from '../../dns/constants/intern
 import {
   ApplicationSourceConfig,
   ApplicationScaling,
+  GitBuildSourceConfig,
 } from '../interfaces/source-config.interface';
 import { AppEventType } from '../enums/app-event-type.enum';
 import {
@@ -268,6 +269,28 @@ export class ApplicationService {
     return this.applicationsRepository.findByClusterId(clusterId, filters);
   }
 
+  /**
+   * Carry the monorepo subPath across a wholesale sourceConfig replacement: a
+   * client PATCHing sourceConfig without it must not silently un-monorepo the app
+   * and break its image ref (`{repo}/{subPath}` → bare `{repo}`).
+   */
+  private preserveMonorepoSubPath(
+    incoming: ApplicationSourceConfig,
+    current: ApplicationSourceConfig | undefined,
+  ): ApplicationSourceConfig {
+    const incomingGit = incoming as GitBuildSourceConfig;
+    const existing = current as GitBuildSourceConfig | undefined;
+    if (
+      incomingGit?.type === 'git_build' &&
+      incomingGit.subPath === undefined &&
+      existing?.type === 'git_build' &&
+      existing.subPath
+    ) {
+      incomingGit.subPath = existing.subPath;
+    }
+    return incoming;
+  }
+
   async update(
     id: string,
     dto: UpdateApplicationDto,
@@ -286,7 +309,10 @@ export class ApplicationService {
     if (dto.name !== undefined) updateData.name = dto.name;
     if (dto.description !== undefined) updateData.description = dto.description;
     if (dto.sourceConfig !== undefined)
-      updateData.sourceConfig = dto.sourceConfig as ApplicationSourceConfig;
+      updateData.sourceConfig = this.preserveMonorepoSubPath(
+        dto.sourceConfig as ApplicationSourceConfig,
+        app.sourceConfig,
+      );
     if (dto.resources !== undefined) updateData.resources = dto.resources;
     if (dto.scaling !== undefined)
       updateData.scaling = dto.scaling as ApplicationScaling;

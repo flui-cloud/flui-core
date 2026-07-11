@@ -32,6 +32,7 @@ export class ApplicationManifestGeneratorService {
   generateForDockerImage(
     app: ApplicationEntity,
     imagePullSecretName?: string,
+    imageRefOverride?: string,
   ): GeneratedManifest[] {
     const config = app.sourceConfig as DockerImageSourceConfig;
     const manifests: GeneratedManifest[] = [];
@@ -67,10 +68,22 @@ export class ApplicationManifestGeneratorService {
 
     if (isStatefulSet) {
       manifests.push(
-        this.generateStatefulSet(app, config, imagePullSecretName),
+        this.generateStatefulSet(
+          app,
+          config,
+          imagePullSecretName,
+          imageRefOverride,
+        ),
       );
     } else {
-      manifests.push(this.generateDeployment(app, config, imagePullSecretName));
+      manifests.push(
+        this.generateDeployment(
+          app,
+          config,
+          imagePullSecretName,
+          imageRefOverride,
+        ),
+      );
     }
 
     if (app.scaling?.enabled && !isStatefulSet) {
@@ -84,12 +97,51 @@ export class ApplicationManifestGeneratorService {
     return manifests;
   }
 
+  /**
+   * Resolve the container image for a deploy. For git_build apps `app.imageRef`
+   * is the authoritative build output; `sourceConfig.imageRef` can be a stale
+   * fossil from an earlier deploy, so it must NOT take precedence (that fossil is
+   * how a monorepo app ends up rolling out a bare `{repo}:{sha}` that never
+   * existed). docker_image apps carry the image in sourceConfig.imageRef.
+   *
+   * Defensive guard: for a monorepo git_build app (subPath set) the GHCR package
+   * is `{repo}/{subPath}`; refuse to deploy an image missing that segment rather
+   * than shipping a guaranteed ImagePullBackOff.
+   */
+  private resolveDeployImageRef(
+    app: ApplicationEntity,
+    config: DockerImageSourceConfig,
+    override?: string,
+  ): string {
+    const source = app.sourceConfig as GitBuildSourceConfig | undefined;
+    const isGitBuild = source?.type === 'git_build';
+    const imageRef =
+      override ||
+      (isGitBuild
+        ? app.imageRef || config.imageRef
+        : config.imageRef || app.imageRef);
+
+    if (isGitBuild && source?.subPath && imageRef) {
+      const segment = `/${source.subPath.toLowerCase()}:`;
+      if (!imageRef.toLowerCase().includes(segment)) {
+        throw new Error(
+          `Refusing to deploy ${app.slug}: image "${imageRef}" is missing the ` +
+            `monorepo subPath "${source.subPath}" — the GHCR package ` +
+            `{repo}/${source.subPath} is what the workflow pushes. This is a ` +
+            `stale/mis-composed imageRef.`,
+        );
+      }
+    }
+    return imageRef;
+  }
+
   private generateDeployment(
     app: ApplicationEntity,
     config: DockerImageSourceConfig,
     imagePullSecretName?: string,
+    imageRefOverride?: string,
   ): GeneratedManifest {
-    const imageRef = config.imageRef || app.imageRef;
+    const imageRef = this.resolveDeployImageRef(app, config, imageRefOverride);
     const labels = this.buildLabels(app);
     const annotations = this.buildAnnotations(app);
 
@@ -154,8 +206,9 @@ export class ApplicationManifestGeneratorService {
     app: ApplicationEntity,
     config: DockerImageSourceConfig,
     imagePullSecretName?: string,
+    imageRefOverride?: string,
   ): GeneratedManifest {
-    const imageRef = config.imageRef || app.imageRef;
+    const imageRef = this.resolveDeployImageRef(app, config, imageRefOverride);
     const labels = this.buildLabels(app);
     const annotations = this.buildAnnotations(app);
 

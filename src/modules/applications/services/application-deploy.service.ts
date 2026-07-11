@@ -43,6 +43,12 @@ export interface DeployApplicationJobData {
   deployType: 'initial' | 'update' | 'rollback';
   rollbackRevisionNumber?: number;
   rollbackReason?: string;
+  /**
+   * The image this deploy was enqueued for. Pinned so the render can't drift to a
+   * stale value re-read from the app row while concurrent deploys race — a single
+   * push fans out into several deploys and they must all render the same image.
+   */
+  imageRef?: string;
 }
 
 export interface DeleteApplicationJobData {
@@ -772,6 +778,7 @@ export class ApplicationDeployService {
         operationId: savedOperation.id,
         applicationId: app.id,
         deployType,
+        imageRef,
       },
       {
         attempts: 2,

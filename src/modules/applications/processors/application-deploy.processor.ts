@@ -217,6 +217,7 @@ export class ApplicationDeployProcessor {
       deployType,
       rollbackRevisionNumber,
       rollbackReason,
+      imageRef: pinnedImageRef,
     } = job.data;
 
     this.logger.log(
@@ -349,6 +350,7 @@ export class ApplicationDeployProcessor {
       const manifests = this.manifestGenerator.generateForDockerImage(
         appForManifests,
         imagePullSecretName,
+        deployType === 'rollback' ? undefined : pinnedImageRef,
       );
       this.logger.log(
         `Generated ${manifests.length} manifests for ${app.name}`,

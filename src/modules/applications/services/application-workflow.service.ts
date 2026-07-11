@@ -18,6 +18,10 @@ import { GitHubTokenResolverService } from '../../repositories/services/github-t
 import { WorkflowGeneratorService } from '../../repositories/services/workflow-generator.service';
 import { GithubAppUserAuthService } from '../../repositories/services/github-app-user-auth.service';
 import { ApplicationStatus } from '../enums/application-status.enum';
+import {
+  ApplicationSourceConfig,
+  GitBuildSourceConfig,
+} from '../interfaces/source-config.interface';
 import { ApplicationBuildWatcherService } from './application-build-watcher.service';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
@@ -381,11 +385,23 @@ export class ApplicationWorkflowService {
       { workflowFileName, cleanupLegacyForAppId: appId },
     );
 
+    // Persist the monorepo subPath into sourceConfig so the build watcher can
+    // compose `{repo}/{subPath}:{sha}` — the exact package this workflow pushes.
+    // Without it the watcher rolls out a bare `{repo}:{sha}` that never existed.
+    const source = (app.sourceConfig ?? {}) as GitBuildSourceConfig;
+    const mergedSourceConfig = {
+      ...source,
+      type: 'git_build',
+      subPath: dto.subPath,
+      ...(dto.dockerfilePath ? { dockerfile: dto.dockerfilePath } : {}),
+    } as ApplicationSourceConfig;
+
     await this.applicationsRepository.update(appId, {
       buildPath: 'github-actions',
       webhookToken,
       isFluiManaged: dto.isFluiManaged ?? false,
       status: ApplicationStatus.AWAITING_BUILD,
+      sourceConfig: mergedSourceConfig,
       buildStartedAt: new Date(),
       workflowRunId: null,
       workflowRunUrl: null,

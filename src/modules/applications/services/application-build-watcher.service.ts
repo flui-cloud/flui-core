@@ -13,6 +13,7 @@ import { ApplicationEventsGateway } from '../gateway/application-events.gateway'
 import { ImageRegistryService } from '../../image-registry/services/image-registry.service';
 import { ApplicationEntity } from '../entities/application.entity';
 import { GitBuildSourceConfig } from '../interfaces/source-config.interface';
+import { composeGhcrImageRef } from '../utils/image-ref.util';
 import { ApplicationStatus } from '../enums/application-status.enum';
 import {
   InfrastructureOperationEntity,
@@ -616,14 +617,13 @@ export class ApplicationBuildWatcherService {
     repository: { owner: string; repositoryName: string },
     shortSha: string,
   ): string {
-    const owner = repository.owner.toLowerCase();
-    const repo = repository.repositoryName.toLowerCase();
     const cfg = app.sourceConfig as GitBuildSourceConfig | undefined;
-    const subPath =
-      cfg?.type === 'git_build' && cfg.subPath
-        ? `/${cfg.subPath.toLowerCase()}`
-        : '';
-    return `ghcr.io/${owner}/${repo}${subPath}:${shortSha}`;
+    return composeGhcrImageRef({
+      owner: repository.owner,
+      repoName: repository.repositoryName,
+      tag: shortSha,
+      subPath: cfg?.type === 'git_build' ? cfg.subPath : undefined,
+    });
   }
 
   private hasTimedOut(app: ApplicationEntity): boolean {
