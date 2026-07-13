@@ -25,6 +25,7 @@ import { ClusterAuthzInstallRepository } from '../../authz/repositories/cluster-
 import { ClusterDnsGateway } from '../gateway/cluster-dns.gateway';
 import { DnsZoneReconciliationService } from './dns-zone-reconciliation.service';
 import { resolveRecordName } from '../utils/resolve-record-name.util';
+import { GatewayMiddlewareCompilerService } from './gateway-middleware-compiler.service';
 
 @Injectable()
 export class AppEndpointReconciliationService {
@@ -44,6 +45,7 @@ export class AppEndpointReconciliationService {
     private readonly sanCertificateService: SanCertificateService,
     private readonly clusterDnsGateway: ClusterDnsGateway,
     private readonly dnsZoneReconciliationService: DnsZoneReconciliationService,
+    private readonly gatewayCompiler: GatewayMiddlewareCompilerService,
   ) {}
 
   private resolveCertProvider(
@@ -452,6 +454,9 @@ export class AppEndpointReconciliationService {
           `Deleted Certificate and TLS Secret for ${endpoint.fqdn}`,
         );
       }
+
+      // Delete the gateway-policy Middlewares (allowlist/ratelimit/sso).
+      await this.deleteGatewayMiddlewares(kubeconfig, endpoint);
 
       // Delete the Traefik ForwardAuth Middleware for internal endpoints.
       if (endpoint.endpointType === EndpointType.INTERNAL) {
@@ -1041,64 +1046,10 @@ export class AppEndpointReconciliationService {
     const kubeconfig = await this.getKubeconfig(cluster);
     const ingressName = this.ingressNameFor(endpoint);
 
-    // If the existing Ingress points to a different host (fqdn changed),
-    // clean up the stale TLS secret and Certificate before reapplying.
-    const existingIngress = await this.kubernetesService.getResource(
-      kubeconfig,
-      'Ingress',
-      ingressName,
-      endpoint.k8sNamespace,
-    );
-    if (existingIngress) {
-      const existingHost: string | undefined =
-        existingIngress.spec?.rules?.[0]?.host;
-      if (existingHost && existingHost !== endpoint.fqdn) {
-        this.logger.log(
-          `fqdn changed from ${existingHost} to ${endpoint.fqdn} — cleaning up stale K8s resources`,
-        );
-        const staleSafeName = existingHost
-          .replaceAll('.', '-')
-          .replaceAll('*', 'wildcard');
-        await this.kubernetesService.deleteResource(
-          kubeconfig,
-          'Certificate',
-          `tls-${staleSafeName}`,
-          endpoint.k8sNamespace,
-        );
-        await this.kubernetesService.deleteResource(
-          kubeconfig,
-          'Secret',
-          `tls-${staleSafeName}`,
-          endpoint.k8sNamespace,
-        );
-      }
-    }
+    await this.cleanupStaleHostResources(kubeconfig, endpoint, ingressName);
 
-    const hasCert = endpoint.certificateRequired && !!effectiveCertProvider;
-    const usesWildcard =
-      !!endpoint.wildcardCertificateId && !!endpoint.tlsSecretName;
-    const usesSan = !!endpoint.sanCertificateId && !!endpoint.tlsSecretName;
-    const usesSharedSecret = usesWildcard || usesSan;
-    const safeName = endpoint.fqdn
-      .replaceAll('.', '-')
-      .replaceAll('*', 'wildcard');
-    const tlsSecretName = usesSharedSecret
-      ? endpoint.tlsSecretName
-      : `tls-${safeName}`;
-    const useDns01 =
-      endpoint.certChallenge === CertChallenge.DNS_01 ||
-      endpoint.fqdn.startsWith('*.');
-    let issuerName: string;
-    if (!effectiveCertProvider) {
-      issuerName = 'letsencrypt-production';
-    } else {
-      const acmeUrl = this.acmeCertificateService.getAcmeServerUrl(
-        effectiveCertProvider,
-      );
-      issuerName = useDns01
-        ? this.acmeCertificateService.getWildcardIssuerName(acmeUrl)
-        : this.acmeCertificateService.getIssuerName(acmeUrl);
-    }
+    const { hasCert, usesSharedSecret, tlsSecretName, issuerName } =
+      this.resolveIngressTlsContext(endpoint, effectiveCertProvider);
 
     const isInternal = endpoint.endpointType === EndpointType.INTERNAL;
 
@@ -1125,6 +1076,15 @@ export class AppEndpointReconciliationService {
       );
     }
 
+    const gateway = await this.reconcileGatewayMiddlewares(
+      kubeconfig,
+      endpoint,
+    );
+    const middlewareRefs = [
+      ...(traefikMiddlewareRef ? [traefikMiddlewareRef] : []),
+      ...gateway.refs,
+    ];
+
     const manifest: Record<string, unknown> = {
       apiVersion: 'networking.k8s.io/v1',
       kind: 'Ingress',
@@ -1137,10 +1097,10 @@ export class AppEndpointReconciliationService {
           ...(hasCert && !usesSharedSecret
             ? { 'cert-manager.io/cluster-issuer': issuerName }
             : {}),
-          ...(traefikMiddlewareRef
+          ...(middlewareRefs.length
             ? {
                 'traefik.ingress.kubernetes.io/router.middlewares':
-                  traefikMiddlewareRef,
+                  middlewareRefs.join(','),
               }
             : {}),
         },
@@ -1164,7 +1124,7 @@ export class AppEndpointReconciliationService {
             http: {
               paths: [
                 {
-                  path: '/',
+                  path: gateway.path,
                   pathType: 'Prefix',
                   backend: {
                     service: {
@@ -1196,6 +1156,163 @@ export class AppEndpointReconciliationService {
    */
   private ingressNameFor(endpoint: AppEndpointEntity): string {
     return `${endpoint.k8sServiceName}-${endpoint.id.split('-')[0]}-ingress`;
+  }
+
+  /**
+   * If the existing Ingress points to a different host (fqdn changed),
+   * clean up the stale TLS secret and Certificate before reapplying.
+   */
+  private async cleanupStaleHostResources(
+    kubeconfig: string,
+    endpoint: AppEndpointEntity,
+    ingressName: string,
+  ): Promise<void> {
+    const existingIngress = await this.kubernetesService.getResource(
+      kubeconfig,
+      'Ingress',
+      ingressName,
+      endpoint.k8sNamespace,
+    );
+    const existingHost: string | undefined =
+      existingIngress?.spec?.rules?.[0]?.host;
+    if (!existingHost || existingHost === endpoint.fqdn) return;
+
+    this.logger.log(
+      `fqdn changed from ${existingHost} to ${endpoint.fqdn} — cleaning up stale K8s resources`,
+    );
+    const staleSafeName = existingHost
+      .replaceAll('.', '-')
+      .replaceAll('*', 'wildcard');
+    await this.kubernetesService.deleteResource(
+      kubeconfig,
+      'Certificate',
+      `tls-${staleSafeName}`,
+      endpoint.k8sNamespace,
+    );
+    await this.kubernetesService.deleteResource(
+      kubeconfig,
+      'Secret',
+      `tls-${staleSafeName}`,
+      endpoint.k8sNamespace,
+    );
+  }
+
+  private resolveIngressTlsContext(
+    endpoint: AppEndpointEntity,
+    effectiveCertProvider?: CertificateProvider,
+  ): {
+    hasCert: boolean;
+    usesSharedSecret: boolean;
+    tlsSecretName: string;
+    issuerName: string;
+  } {
+    const hasCert = endpoint.certificateRequired && !!effectiveCertProvider;
+    const usesWildcard =
+      !!endpoint.wildcardCertificateId && !!endpoint.tlsSecretName;
+    const usesSan = !!endpoint.sanCertificateId && !!endpoint.tlsSecretName;
+    const usesSharedSecret = usesWildcard || usesSan;
+    const safeName = endpoint.fqdn
+      .replaceAll('.', '-')
+      .replaceAll('*', 'wildcard');
+    const tlsSecretName = usesSharedSecret
+      ? endpoint.tlsSecretName
+      : `tls-${safeName}`;
+
+    let issuerName = 'letsencrypt-production';
+    if (effectiveCertProvider) {
+      const useDns01 =
+        endpoint.certChallenge === CertChallenge.DNS_01 ||
+        endpoint.fqdn.startsWith('*.');
+      const acmeUrl = this.acmeCertificateService.getAcmeServerUrl(
+        effectiveCertProvider,
+      );
+      issuerName = useDns01
+        ? this.acmeCertificateService.getWildcardIssuerName(acmeUrl)
+        : this.acmeCertificateService.getIssuerName(acmeUrl);
+    }
+
+    return { hasCert, usesSharedSecret, tlsSecretName, issuerName };
+  }
+
+  /**
+   * Apply the gateway-policy Middlewares for this endpoint and delete the ones
+   * no longer configured. Fail-closed on SSO: when the config asks for SSO but
+   * no forwardAuth address is discoverable, the whole reconcile aborts rather
+   * than exposing the route without the auth gate.
+   */
+  private async reconcileGatewayMiddlewares(
+    kubeconfig: string,
+    endpoint: AppEndpointEntity,
+  ): Promise<{ refs: string[]; path: string }> {
+    const config = endpoint.gatewayConfig;
+
+    let forwardAuthAddress: string | undefined;
+    if (config?.auth?.sso) {
+      forwardAuthAddress = this.resolveGatewayForwardAuthAddress();
+      if (!forwardAuthAddress) {
+        throw new Error(
+          `Refusing to apply Ingress for endpoint ${endpoint.id} (${endpoint.fqdn}): gateway SSO is enabled but no Flui API public URL is discoverable (PUBLIC_API_URL / FLUI_API_ENDPOINT / API_BASE_URL). Failing closed so the route is NOT exposed without its auth gate.`,
+        );
+      }
+    }
+
+    const compiled = this.gatewayCompiler.compile(
+      endpoint,
+      config,
+      forwardAuthAddress,
+    );
+
+    for (const middleware of compiled.middlewares) {
+      await this.kubernetesService.applyManifest(
+        kubeconfig,
+        JSON.stringify(middleware.manifest),
+      );
+    }
+
+    const desired = new Set(compiled.middlewares.map((m) => m.name));
+    await this.deleteGatewayMiddlewares(kubeconfig, endpoint, desired);
+
+    if (compiled.middlewares.length) {
+      this.logger.log(
+        `Applied ${compiled.middlewares.length} gateway middleware(s) for ${endpoint.fqdn}: ${[...desired].join(', ')}`,
+      );
+    }
+
+    return { refs: compiled.refs, path: compiled.path };
+  }
+
+  /** Delete this endpoint's gateway Middlewares, except the ones in `keep`. */
+  private async deleteGatewayMiddlewares(
+    kubeconfig: string,
+    endpoint: AppEndpointEntity,
+    keep?: Set<string>,
+  ): Promise<void> {
+    for (const name of this.gatewayCompiler.allMiddlewareNames(endpoint)) {
+      if (keep?.has(name)) continue;
+      try {
+        await this.kubernetesService.deleteResource(
+          kubeconfig,
+          'Middleware',
+          name,
+          endpoint.k8sNamespace,
+        );
+      } catch (err) {
+        this.logger.warn(
+          `Gateway middleware delete skipped for ${endpoint.k8sNamespace}/${name}: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    }
+  }
+
+  private resolveGatewayForwardAuthAddress(): string | undefined {
+    let fluiApiUrl =
+      process.env.PUBLIC_API_URL ||
+      process.env.FLUI_API_ENDPOINT ||
+      process.env.API_BASE_URL ||
+      process.env.WEBHOOK_BASE_URL ||
+      '';
+    while (fluiApiUrl.endsWith('/')) fluiApiUrl = fluiApiUrl.slice(0, -1);
+    return fluiApiUrl ? `${fluiApiUrl}/api/v1/authz/gateway` : undefined;
   }
 
   /**

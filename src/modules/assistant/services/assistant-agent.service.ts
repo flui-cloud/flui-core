@@ -8,6 +8,7 @@ import { ApplicationService } from '../../applications/services/application.serv
 import { ApplicationDeployService } from '../../applications/services/application-deploy.service';
 import { AppManagementService } from '../../applications/services/app-management.service';
 import { ScheduledJobsService } from '../../applications/services/scheduled-jobs.service';
+import { GatewayService } from '../../applications/services/gateway.service';
 import { ApplicationReleaseService } from '../../applications/services/application-release.service';
 import { ApplicationSourceDeployService } from '../../applications/services/application-source-deploy.service';
 import { TemplatesService } from '../../templates/templates.service';
@@ -112,6 +113,7 @@ export class AssistantAgentService {
     private readonly dbMigration: DbMigrationService,
     private readonly fullMigration: FullMigrationService,
     private readonly scheduledJobs: ScheduledJobsService,
+    private readonly gateway: GatewayService,
     private readonly config: ConfigService,
   ) {}
 
@@ -684,6 +686,7 @@ export class AssistantAgentService {
         dbMigration: this.dbMigration,
         fullMigration: this.fullMigration,
         scheduledJobs: this.scheduledJobs,
+        gateway: this.gateway,
       },
     };
   }

@@ -159,6 +159,21 @@
       },
       "demo": {
         "description": "The self-running cross-provider migration demo (status public; config admin)"
+      },
+      "gateway": {
+        "description": "Manage the L7 gateway: routes and per-route policies (SSO auth, rate limit, IP allowlist)"
+      },
+      "gateway:routes": {
+        "description": "List, add and remove gateway routes"
+      },
+      "gateway:auth": {
+        "description": "Enable/disable the SSO gate on a route"
+      },
+      "gateway:limit": {
+        "description": "Set or clear the rate limit on a route"
+      },
+      "gateway:allow-ip": {
+        "description": "Manage the IP allowlist of a route"
       }
     }
   },

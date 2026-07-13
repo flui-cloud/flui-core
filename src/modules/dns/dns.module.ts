@@ -38,6 +38,7 @@ import { ReflectorInstallerService } from './services/reflector-installer.servic
 import { SystemIngressService } from './services/system-ingress.service';
 import { ClusterDnsCleanupService } from './services/cluster-dns-cleanup.service';
 import { EndpointModeResolverService } from './services/endpoint-mode-resolver.service';
+import { GatewayMiddlewareCompilerService } from './services/gateway-middleware-compiler.service';
 import { DnsZoneReconciliationService } from './services/dns-zone-reconciliation.service';
 import { DnsZoneReplicaService } from './services/dns-zone-replica.service';
 import { DnsZoneReconciliationScheduler } from './schedulers/dns-zone-reconciliation.scheduler';
@@ -89,6 +90,7 @@ import { ClusterDnsGateway } from './gateway/cluster-dns.gateway';
     ClusterAuthzInstallRepository,
     ClusterDnsCleanupService,
     EndpointModeResolverService,
+    GatewayMiddlewareCompilerService,
     DnsZoneReconciliationService,
     DnsZoneReplicaService,
     DnsZoneReconciliationScheduler,
@@ -112,6 +114,7 @@ import { ClusterDnsGateway } from './gateway/cluster-dns.gateway';
     ClusterDnsGateway,
     ClusterDnsCleanupService,
     EndpointModeResolverService,
+    GatewayMiddlewareCompilerService,
   ],
 })
 export class DnsModule {}

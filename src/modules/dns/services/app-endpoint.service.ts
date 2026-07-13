@@ -29,6 +29,7 @@ import { DnsRecordType } from '../../providers/interfaces/dns-provider.interface
 import { CertificateStatus } from '../../providers/interfaces/certificate-provider.interface';
 import { KubernetesService } from '../../infrastructure/shared/services/kubernetes.service';
 import { EncryptionService } from '../../shared/encryption/services/encryption.service';
+import { EndpointGatewayConfig } from '../interfaces/endpoint-gateway-config.interface';
 
 @Injectable()
 export class AppEndpointService {
@@ -428,6 +429,21 @@ export class AppEndpointService {
     this.logger.log(`Deleted app endpoint ${id} (${endpoint.fqdn})`);
   }
 
+  /**
+   * Replace the endpoint's gateway policies (null clears them). Marks the
+   * endpoint DRIFT — the caller triggers reconciliation to compile the config
+   * into Traefik Middlewares and refresh the Ingress.
+   */
+  async updateGatewayConfig(
+    id: string,
+    gatewayConfig: EndpointGatewayConfig | null,
+  ): Promise<AppEndpointEntity> {
+    const endpoint = await this.getEndpoint(id);
+    endpoint.gatewayConfig = gatewayConfig;
+    endpoint.reconciliationStatus = ReconciliationStatus.DRIFT;
+    return await this.endpointRepository.save(endpoint);
+  }
+
   async setWildcardBinding(
     id: string,
     wildcardCertificateId: string | null,
@@ -536,6 +552,7 @@ export class AppEndpointService {
       lastReconciliationAt: endpoint.lastReconciliationAt,
       errorMessage: endpoint.errorMessage,
       metadata: endpoint.metadata,
+      gatewayConfig: endpoint.gatewayConfig ?? null,
       createdAt: endpoint.createdAt,
       updatedAt: endpoint.updatedAt,
     };

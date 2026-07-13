@@ -643,6 +643,64 @@ export class CliAppService {
       `/applications/${appId}/schedules/${encodeURIComponent(name)}/runs/${encodeURIComponent(jobName)}/logs`,
     );
   }
+
+  // ── Gateway (L7 routes + policies) ───────────────────────────
+
+  async listGatewayRoutes(appId: string): Promise<GatewayRoute[]> {
+    return this.apiClient.get<GatewayRoute[]>(
+      `/applications/${appId}/gateway/routes`,
+    );
+  }
+
+  async listClusterGatewayRoutes(
+    clusterId: string,
+  ): Promise<ClusterGatewayRoute[]> {
+    return this.apiClient.get<ClusterGatewayRoute[]>(
+      `/clusters/${clusterId}/gateway/routes`,
+    );
+  }
+
+  async addGatewayRoute(
+    appId: string,
+    body: AddGatewayRouteInput,
+  ): Promise<GatewayRoute> {
+    return this.apiClient.post<GatewayRoute>(
+      `/applications/${appId}/gateway/routes`,
+      body,
+    );
+  }
+
+  async setGatewayPolicy(
+    appId: string,
+    endpointId: string,
+    body: SetGatewayPolicyInput,
+  ): Promise<GatewayRoute> {
+    return this.apiClient.patch<GatewayRoute>(
+      `/applications/${appId}/gateway/routes/${encodeURIComponent(endpointId)}`,
+      body,
+    );
+  }
+
+  async removeGatewayRoute(appId: string, endpointId: string): Promise<void> {
+    await this.apiClient.delete<void>(
+      `/applications/${appId}/gateway/routes/${encodeURIComponent(endpointId)}`,
+    );
+  }
+
+  async reconcileGatewayRoute(
+    appId: string,
+    endpointId: string,
+  ): Promise<GatewayRoute> {
+    return this.apiClient.post<GatewayRoute>(
+      `/applications/${appId}/gateway/routes/${encodeURIComponent(endpointId)}/reconcile`,
+    );
+  }
+
+  async getGatewayStatus(appId: string): Promise<GatewayStatus> {
+    return this.apiClient.get<GatewayStatus>(
+      `/applications/${appId}/gateway/status`,
+    );
+  }
 }
 
 export type CronConcurrencyPolicy = 'Allow' | 'Forbid' | 'Replace';
@@ -684,6 +742,63 @@ export interface ScheduledJobRun {
   manual: boolean;
   startTime?: string | null;
   completionTime?: string | null;
+}
+
+export type GatewayMinRole = 'viewer' | 'editor' | 'manager';
+
+export interface GatewayAuthPolicy {
+  sso: boolean;
+  minRole?: GatewayMinRole;
+}
+
+export interface GatewayRateLimitPolicy {
+  average: number;
+  burst?: number;
+  period?: string;
+}
+
+export interface GatewayRoute {
+  endpointId: string;
+  host: string;
+  path: string;
+  applicationId: string;
+  service: string;
+  endpointType: string;
+  tlsEnabled: boolean;
+  certificateStatus?: string | null;
+  auth?: GatewayAuthPolicy | null;
+  rateLimit?: GatewayRateLimitPolicy | null;
+  allowIps?: string[] | null;
+  reconciliationStatus: string;
+  errorMessage?: string | null;
+}
+
+export interface ClusterGatewayRoute extends GatewayRoute {
+  applicationName?: string | null;
+  applicationSlug?: string | null;
+}
+
+export interface AddGatewayRouteInput {
+  host: string;
+  path?: string;
+  clusterDnsZoneId?: string;
+  certificateRequired?: boolean;
+  auth?: GatewayAuthPolicy;
+  rateLimit?: GatewayRateLimitPolicy;
+  allowIps?: string[];
+}
+
+export interface SetGatewayPolicyInput {
+  path?: string | null;
+  auth?: GatewayAuthPolicy | null;
+  rateLimit?: GatewayRateLimitPolicy | null;
+  allowIps?: string[] | null;
+}
+
+export interface GatewayStatus {
+  total: number;
+  synced: number;
+  routes: GatewayRoute[];
 }
 
 export interface SnapshotResponse {

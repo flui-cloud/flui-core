@@ -20,6 +20,7 @@ import { ReconciliationStatus } from '../../infrastructure/shared/enums/reconcil
 import { EndpointType } from '../enums/endpoint-type.enum';
 import { CertChallenge } from '../enums/cert-challenge.enum';
 import { HostnameMode } from '../enums/hostname-mode.enum';
+import { EndpointGatewayConfig } from '../interfaces/endpoint-gateway-config.interface';
 
 @Entity('app_endpoints')
 @Index(['fqdn'], { unique: true })
@@ -161,6 +162,9 @@ export class AppEndpointEntity {
 
   @Column({ type: 'jsonb', nullable: true })
   metadata: Record<string, string>;
+
+  @Column({ type: 'jsonb', nullable: true })
+  gatewayConfig: EndpointGatewayConfig | null;
 
   @CreateDateColumn({ type: 'timestamptz' })
   createdAt: Date;

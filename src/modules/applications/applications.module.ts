@@ -55,6 +55,11 @@ import { ApplicationsController } from './controllers/applications.controller';
 import { VariablesController } from './controllers/variables.controller';
 import { ScheduledJobsController } from './controllers/scheduled-jobs.controller';
 import { ScheduledJobsService } from './services/scheduled-jobs.service';
+import {
+  ClusterGatewayController,
+  GatewayController,
+} from './controllers/gateway.controller';
+import { GatewayService } from './services/gateway.service';
 import { AppManagementController } from './controllers/app-management.controller';
 import { ApplicationEventsGateway } from './gateway/application-events.gateway';
 import { AppOperationRunner } from './services/app-operation-runner.service';
@@ -104,6 +109,8 @@ import { StorageModule } from '../storage/storage.module';
     VariablesController,
     AppManagementController,
     ScheduledJobsController,
+    GatewayController,
+    ClusterGatewayController,
   ],
   providers: [
     // IAM enforcement (resource-aware app access)
@@ -126,6 +133,7 @@ import { StorageModule } from '../storage/storage.module';
     SystemAppCatalogService,
     AppConfigService,
     ScheduledJobsService,
+    GatewayService,
     AppManagementService,
     ApplicationWorkflowService,
     ApplicationBuildWatcherService,
@@ -163,6 +171,7 @@ import { StorageModule } from '../storage/storage.module';
     DeployConfigService,
     DedicatedPlacementService,
     ScheduledJobsService,
+    GatewayService,
   ],
 })
 export class ApplicationsModule {}

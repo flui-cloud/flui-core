@@ -23,10 +23,24 @@ import {
 import { JwtAuthGuard } from '../../auth/guards/jwt-auth.guard';
 import { AuthenticatedUser } from '../../auth/interfaces/authenticated-user.interface';
 import { InternalAppAuthzService } from '../services/internal-app-authz.service';
+import { GatewayAuthzService } from '../services/gateway-authz.service';
 import {
   InternalAppAuditService,
   InternalAppAuditReason,
 } from '../services/internal-app-audit.service';
+
+interface ForwardAuthRequest {
+  user?: AuthenticatedUser;
+  headers: Record<string, string | string[] | undefined>;
+}
+
+function headerValue(
+  req: ForwardAuthRequest,
+  name: string,
+): string | undefined {
+  const raw = req.headers[name];
+  return Array.isArray(raw) ? raw[0] : raw;
+}
 
 /**
  * ForwardAuth endpoint called by the Ingress controller in front of every
@@ -52,8 +66,48 @@ export class AuthzController {
 
   constructor(
     private readonly authzService: InternalAppAuthzService,
+    private readonly gatewayAuthzService: GatewayAuthzService,
     private readonly auditService: InternalAppAuditService,
   ) {}
+
+  @All('gateway')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'ForwardAuth decision for gateway SSO routes',
+    description:
+      'Called by Traefik on every request to a route whose gateway config enables SSO. Validates the Flui session (JWT in cookie or Bearer), resolves the route from the forwarded host and, when the route sets a minRole, asks the PolicyEngine whether the user holds it on the target application.',
+  })
+  @ApiResponse({
+    status: 200,
+    description:
+      'Access allowed. Response carries `X-Auth-User`, `X-Auth-Email` and `X-Auth-App` headers.',
+  })
+  @ApiResponse({ status: 401, description: 'Missing or invalid session.' })
+  @ApiResponse({
+    status: 403,
+    description: 'Route has no SSO gate or the user lacks the required role.',
+  })
+  @ApiResponse({
+    status: 404,
+    description: 'Forwarded host did not resolve to a known route.',
+  })
+  async gateway(
+    @Req() req: { user?: AuthenticatedUser },
+    @Res({ passthrough: true }) res: Response,
+    @Headers('x-forwarded-host') forwardedHost: string | undefined,
+  ): Promise<void> {
+    const user = req.user;
+    if (!user) throw new UnauthorizedException();
+
+    const { appSlug } = await this.gatewayAuthzService.authorize(
+      user,
+      forwardedHost,
+    );
+
+    res.setHeader('X-Auth-User', user.userId);
+    if (user.email) res.setHeader('X-Auth-Email', user.email);
+    res.setHeader('X-Auth-App', appSlug);
+  }
 
   @All('internal-app')
   @HttpCode(HttpStatus.OK)
@@ -78,21 +132,21 @@ export class AuthzController {
       'Forwarded host did not resolve to a known app (bad sub-domain or app removed).',
   })
   async internalApp(
-    @Req() req: { user?: AuthenticatedUser },
+    @Req() req: ForwardAuthRequest,
     @Res({ passthrough: true }) res: Response,
-    @Headers('x-forwarded-host') forwardedHost: string | undefined,
-    @Headers('x-forwarded-uri') forwardedUri: string | undefined,
-    @Headers('x-forwarded-method') forwardedMethod: string | undefined,
-    @Headers('x-original-url') originalUrl: string | undefined,
-    @Headers('user-agent') userAgent: string | undefined,
     @Ip() clientIp: string,
   ): Promise<void> {
     const startedAt = Date.now();
     const user = req.user;
+    const forwardedHost = headerValue(req, 'x-forwarded-host');
+    const forwardedUri = headerValue(req, 'x-forwarded-uri');
+    const forwardedMethod = headerValue(req, 'x-forwarded-method');
+    const originalUrl = headerValue(req, 'x-original-url');
+    const userAgent = headerValue(req, 'user-agent');
     const path = forwardedUri || originalUrl;
     const method = forwardedMethod;
     this.logger.debug(
-      `[ForwardAuth] host=${forwardedHost} user=${user?.userId ?? 'none'} cookie=${(req as { headers?: { cookie?: string } }).headers?.cookie ? 'present' : 'absent'}`,
+      `[ForwardAuth] host=${forwardedHost} user=${user?.userId ?? 'none'} cookie=${headerValue(req, 'cookie') ? 'present' : 'absent'}`,
     );
 
     if (!user) {

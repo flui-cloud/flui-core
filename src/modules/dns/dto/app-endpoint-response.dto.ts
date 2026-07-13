@@ -6,6 +6,7 @@ import { ReconciliationStatus } from '../../infrastructure/shared/enums/reconcil
 import { EndpointType } from '../enums/endpoint-type.enum';
 import { CertChallenge } from '../enums/cert-challenge.enum';
 import { HostnameMode } from '../enums/hostname-mode.enum';
+import { GatewayConfigDto } from './gateway-config.dto';
 
 export class AppEndpointResponseDto {
   @ApiProperty()
@@ -95,6 +96,13 @@ export class AppEndpointResponseDto {
 
   @ApiPropertyOptional()
   metadata: Record<string, string>;
+
+  @ApiPropertyOptional({
+    type: GatewayConfigDto,
+    description:
+      'Per-route gateway policies (auth/rateLimit/allowIps/path). Null = default behavior (plain route, no policies).',
+  })
+  gatewayConfig: GatewayConfigDto | null;
 
   @ApiProperty()
   createdAt: Date;

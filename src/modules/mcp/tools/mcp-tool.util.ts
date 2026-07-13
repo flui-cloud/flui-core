@@ -6,6 +6,7 @@ import { ApplicationService } from '../../applications/services/application.serv
 import { ApplicationDeployService } from '../../applications/services/application-deploy.service';
 import { AppManagementService } from '../../applications/services/app-management.service';
 import { ScheduledJobsService } from '../../applications/services/scheduled-jobs.service';
+import { GatewayService } from '../../applications/services/gateway.service';
 import { ApplicationReleaseService } from '../../applications/services/application-release.service';
 import { ApplicationSourceDeployService } from '../../applications/services/application-source-deploy.service';
 import { TemplatesService } from '../../templates/templates.service';
@@ -44,6 +45,7 @@ export interface McpServices {
   sourceDeploy: ApplicationSourceDeployService;
   management: AppManagementService;
   scheduledJobs: ScheduledJobsService;
+  gateway: GatewayService;
   releases: ApplicationReleaseService;
   templates: TemplatesService;
   repos: RepositoriesService;
