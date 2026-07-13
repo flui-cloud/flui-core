@@ -1,0 +1,51 @@
+import { Args, Command, Flags } from '@oclif/core';
+import chalk from 'chalk';
+import ora from 'ora';
+import { CliAppService } from '../../../lib/services/cli-app.service';
+import { resolveCluster } from '../../../lib/resolve-cluster';
+
+export default class AppScheduleDelete extends Command {
+  static readonly description =
+    'Delete a scheduled job (cron) from an application.';
+
+  static readonly examples = [
+    '<%= config.bin %> <%= command.id %> my-app nightly-cleanup',
+  ];
+
+  static readonly args = {
+    app: Args.string({
+      description: 'Application name or slug',
+      required: true,
+    }),
+    name: Args.string({
+      description: 'Schedule name',
+      required: true,
+    }),
+  };
+
+  static readonly flags = {
+    cluster: Flags.string({
+      char: 'c',
+      description: 'Cluster name or ID (default: auto-detect)',
+    }),
+  };
+
+  async run(): Promise<void> {
+    const { args, flags } = await this.parse(AppScheduleDelete);
+    const spinner = ora(`Deleting schedule "${args.name}"...`).start();
+    try {
+      const { id: clusterId } = await resolveCluster(flags.cluster);
+      const service = await CliAppService.create(clusterId);
+      const app = await service.getAppByName(args.app);
+      await service.deleteScheduledJob(app.id, args.name);
+      spinner.succeed(`Schedule "${args.name}" deleted`);
+      console.log('');
+    } catch (error: any) {
+      spinner.fail('Failed to delete schedule');
+      const msg =
+        error.response?.data?.message ?? error.message ?? String(error);
+      console.log(chalk.red(`\n  Error: ${msg}\n`));
+      this.exit(1);
+    }
+  }
+}

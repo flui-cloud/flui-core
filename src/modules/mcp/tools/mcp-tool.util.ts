@@ -5,6 +5,7 @@ import { CatalogInstallerService } from '../../catalog/services/catalog-installe
 import { ApplicationService } from '../../applications/services/application.service';
 import { ApplicationDeployService } from '../../applications/services/application-deploy.service';
 import { AppManagementService } from '../../applications/services/app-management.service';
+import { ScheduledJobsService } from '../../applications/services/scheduled-jobs.service';
 import { ApplicationReleaseService } from '../../applications/services/application-release.service';
 import { ApplicationSourceDeployService } from '../../applications/services/application-source-deploy.service';
 import { TemplatesService } from '../../templates/templates.service';
@@ -42,6 +43,7 @@ export interface McpServices {
   deploy: ApplicationDeployService;
   sourceDeploy: ApplicationSourceDeployService;
   management: AppManagementService;
+  scheduledJobs: ScheduledJobsService;
   releases: ApplicationReleaseService;
   templates: TemplatesService;
   repos: RepositoriesService;

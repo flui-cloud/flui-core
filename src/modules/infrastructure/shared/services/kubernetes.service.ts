@@ -336,6 +336,53 @@ export class KubernetesService {
   }
 
   /**
+   * Manually instantiate a Job from a CronJob's jobTemplate — the equivalent of
+   * `kubectl create job --from=cronjob/<name>`. Returns the created Job name.
+   */
+  async createJobFromCronJob(
+    kubeconfigContent: string,
+    cronJobName: string,
+    namespace: string,
+  ): Promise<string> {
+    const kc = this.loadKubeconfig(kubeconfigContent);
+    const client = k8s.KubernetesObjectApi.makeApiClient(kc);
+
+    const read: any = await client.read({
+      apiVersion: 'batch/v1',
+      kind: 'CronJob',
+      metadata: { name: cronJobName, namespace },
+    });
+    const cron = read?.body ?? read;
+    const jobTemplate = cron?.spec?.jobTemplate;
+    if (!jobTemplate?.spec) {
+      throw new Error(`CronJob ${cronJobName} has no jobTemplate to run`);
+    }
+
+    const suffix = Date.now().toString(36).slice(-7);
+    const jobName = `${cronJobName}-manual-${suffix}`.slice(0, 63);
+    const job = {
+      apiVersion: 'batch/v1',
+      kind: 'Job',
+      metadata: {
+        name: jobName,
+        namespace,
+        labels: {
+          ...(jobTemplate.metadata?.labels ?? {}),
+          'flui.cloud/manual-run': 'true',
+        },
+        annotations: { 'cronjob.kubernetes.io/instantiate': 'manual' },
+      },
+      spec: jobTemplate.spec,
+    };
+
+    await client.create(job as unknown as k8s.KubernetesObject);
+    this.logger.log(
+      `Created manual Job ${jobName} from CronJob ${cronJobName} in ${namespace}`,
+    );
+    return jobName;
+  }
+
+  /**
    * Get pod logs
    */
   async getPodLogs(

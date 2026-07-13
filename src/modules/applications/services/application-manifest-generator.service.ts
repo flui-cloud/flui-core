@@ -21,6 +21,23 @@ export interface GeneratedManifest {
   yaml: string;
 }
 
+export type CronConcurrencyPolicy = 'Allow' | 'Forbid' | 'Replace';
+
+export interface CronJobManifestSpec {
+  /** DNS-1123 CronJob resource name (already sanitized; `<slug>-<jobname>`). */
+  name: string;
+  /** Logical job name the user refers to (label + DTO), without the slug prefix. */
+  displayName: string;
+  /** Standard cron expression, e.g. `0 3 * * *`. */
+  schedule: string;
+  /** Shell command run via `/bin/sh -c`. */
+  command: string;
+  /** IANA timezone, e.g. `Europe/Rome`. Omit for the cluster's local time. */
+  timezone?: string;
+  concurrencyPolicy?: CronConcurrencyPolicy;
+  suspend?: boolean;
+}
+
 @Injectable()
 export class ApplicationManifestGeneratorService {
   private readonly logger = new Logger(
@@ -273,6 +290,107 @@ export class ApplicationManifestGeneratorService {
       apiVersion: 'apps/v1',
       yaml,
     };
+  }
+
+  /**
+   * Build a CronJob for a scheduled job attached to an app. Reuses the app's
+   * image, env (referencing the same ConfigMap/Secret as the Deployment, so it
+   * stays in sync when variables change), resources, security context and node
+   * placement — only the command and schedule are per-job. App PVCs are NOT
+   * mounted: a ReadWriteOnce volume held by the running Deployment pod would
+   * multi-attach-fail the cron pod on another node; scheduled jobs talk to the
+   * app's dependencies over the network (env-provided connection strings).
+   *
+   * The pod spec sits two levels deeper than in a Deployment
+   * (jobTemplate.spec.template.spec), so the shared block renderers — which emit
+   * fixed Deployment-depth indentation — are re-indented by +4 spaces.
+   */
+  generateCronJob(
+    app: ApplicationEntity,
+    spec: CronJobManifestSpec,
+    imagePullSecretName?: string,
+    imageRefOverride?: string,
+  ): GeneratedManifest {
+    const config = app.sourceConfig as DockerImageSourceConfig;
+    const imageRef = this.resolveDeployImageRef(app, config, imageRefOverride);
+
+    const labels = {
+      ...this.buildLabels(app),
+      'flui.cloud/resource': 'scheduled-job',
+      'flui.cloud/scheduled-job': spec.displayName,
+    };
+
+    const cpuRequest = app.resources?.cpu?.request ?? '100m';
+    const cpuLimit = app.resources?.cpu?.limit ?? '500m';
+    const memRequest = app.resources?.memory?.request ?? '128Mi';
+    const memLimit = app.resources?.memory?.limit ?? '256Mi';
+
+    const timezoneLine = spec.timezone
+      ? `  timeZone: ${JSON.stringify(spec.timezone)}`
+      : '';
+
+    const escapedCommand = spec.command
+      .replaceAll('\\', '\\\\')
+      .replaceAll('"', '\\"');
+    const commandBlock = [
+      '              command: ["/bin/sh", "-c"]',
+      '              args:',
+      `                - "${escapedCommand}"`,
+    ].join('\n');
+
+    const template = this.loadTemplate('cronjob.yaml');
+    const yaml = template
+      .replaceAll('{{NAME}}', spec.name)
+      .replaceAll('{{SLUG}}', app.slug)
+      .replaceAll('{{NAMESPACE}}', app.k8sNamespace)
+      .replaceAll('{{LABELS_BLOCK}}', this.renderLabelsBlock(labels))
+      .replaceAll('{{JOB_LABELS_BLOCK}}', this.renderLabelsBlock(labels, 8))
+      .replaceAll('{{POD_LABELS_BLOCK}}', this.renderLabelsBlock(labels, 12))
+      .replaceAll('{{SCHEDULE}}', spec.schedule)
+      .replaceAll('{{TIMEZONE_LINE}}', timezoneLine)
+      .replaceAll('{{CONCURRENCY_POLICY}}', spec.concurrencyPolicy ?? 'Forbid')
+      .replaceAll('{{SUSPEND}}', String(spec.suspend ?? false))
+      .replaceAll('{{IMAGE}}', imageRef)
+      .replaceAll('{{PULL_POLICY}}', config.pullPolicy || 'IfNotPresent')
+      .replaceAll(
+        '{{NODE_PLACEMENT_BLOCK}}',
+        this.reindent(this.renderNodePlacementBlock(app), 4),
+      )
+      .replaceAll(
+        '{{POD_SECURITY_CONTEXT_BLOCK}}',
+        this.reindent(this.renderPodSecurityContextBlock(app), 4),
+      )
+      .replaceAll(
+        '{{IMAGE_PULL_SECRETS_BLOCK}}',
+        this.reindent(this.renderImagePullSecretsBlock(imagePullSecretName), 4),
+      )
+      .replaceAll(
+        '{{CONTAINER_SECURITY_CONTEXT_BLOCK}}',
+        this.reindent(this.renderContainerSecurityContextBlock(app), 4),
+      )
+      .replaceAll('{{COMMAND_BLOCK}}', commandBlock)
+      .replaceAll('{{ENV_BLOCK}}', this.reindent(this.renderEnvBlock(app), 4))
+      .replaceAll('{{CPU_REQUEST}}', cpuRequest)
+      .replaceAll('{{CPU_LIMIT}}', cpuLimit)
+      .replaceAll('{{MEMORY_REQUEST}}', memRequest)
+      .replaceAll('{{MEMORY_LIMIT}}', memLimit);
+
+    return {
+      kind: ApplicationResourceKind.CRON_JOB,
+      name: spec.name,
+      apiVersion: 'batch/v1',
+      yaml,
+    };
+  }
+
+  /** Prefix every non-empty line with `extra` spaces; empty blocks stay empty. */
+  private reindent(block: string, extra: number): string {
+    if (!block) return '';
+    const pad = ' '.repeat(extra);
+    return block
+      .split('\n')
+      .map((line) => (line ? pad + line : line))
+      .join('\n');
   }
 
   private generateService(app: ApplicationEntity): GeneratedManifest {

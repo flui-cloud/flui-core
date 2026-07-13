@@ -1,0 +1,46 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{NAME}}
+  namespace: {{NAMESPACE}}
+  labels:
+{{LABELS_BLOCK}}
+  annotations:
+    flui.cloud/scheduled-job: "{{NAME}}"
+spec:
+  schedule: "{{SCHEDULE}}"
+{{TIMEZONE_LINE}}
+  concurrencyPolicy: {{CONCURRENCY_POLICY}}
+  suspend: {{SUSPEND}}
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  startingDeadlineSeconds: 120
+  jobTemplate:
+    metadata:
+      labels:
+{{JOB_LABELS_BLOCK}}
+    spec:
+      backoffLimit: 1
+      template:
+        metadata:
+          labels:
+{{POD_LABELS_BLOCK}}
+        spec:
+          restartPolicy: Never
+{{NODE_PLACEMENT_BLOCK}}
+{{POD_SECURITY_CONTEXT_BLOCK}}
+{{IMAGE_PULL_SECRETS_BLOCK}}
+          containers:
+            - name: {{SLUG}}
+              image: "{{IMAGE}}"
+              imagePullPolicy: {{PULL_POLICY}}
+{{CONTAINER_SECURITY_CONTEXT_BLOCK}}
+{{COMMAND_BLOCK}}
+{{ENV_BLOCK}}
+              resources:
+                requests:
+                  cpu: "{{CPU_REQUEST}}"
+                  memory: "{{MEMORY_REQUEST}}"
+                limits:
+                  cpu: "{{CPU_LIMIT}}"
+                  memory: "{{MEMORY_LIMIT}}"

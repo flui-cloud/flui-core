@@ -381,12 +381,7 @@ export class ClusterDnsZoneService {
     }[] = [];
 
     for (const name of candidateNames) {
-      const resource = await this.kubernetesService.getResource(
-        kubeconfig,
-        'ClusterIssuer',
-        name,
-        '',
-      );
+      const resource = await this.readClusterIssuerResilient(kubeconfig, name);
 
       if (resource) {
         const readyCondition = resource.status?.conditions?.find(
@@ -412,6 +407,46 @@ export class ClusterDnsZoneService {
     }
 
     return result;
+  }
+
+  /**
+   * Read a ClusterIssuer, tolerating transient cluster/API-server blips.
+   *
+   * `getResource` returns null on a clean 404 (issuer genuinely absent) and
+   * throws on anything else (timeout, connection reset, 5xx). A single such
+   * throw would otherwise abort the whole issuer scan and make an existing,
+   * ready wildcard issuer look *missing* — which intermittently gated catalog
+   * installs of building-block databases with "DNS zone not assigned". So we
+   * retry only the thrown (transient) case; a 404 returns immediately (no
+   * retry, no latency), and a persistent failure still surfaces after the
+   * bounded attempts.
+   */
+  private async readClusterIssuerResilient(
+    kubeconfig: string,
+    name: string,
+    attempts = 3,
+    backoffMs = 400,
+  ): Promise<Record<string, any> | null> {
+    let lastErr: unknown;
+    for (let i = 0; i < attempts; i++) {
+      try {
+        return await this.kubernetesService.getResource(
+          kubeconfig,
+          'ClusterIssuer',
+          name,
+          '',
+        );
+      } catch (err) {
+        lastErr = err;
+        if (i < attempts - 1) {
+          this.logger.warn(
+            `Transient error reading ClusterIssuer ${name} (attempt ${i + 1}/${attempts}); retrying: ${err instanceof Error ? err.message : String(err)}`,
+          );
+          await new Promise((r) => setTimeout(r, backoffMs * (i + 1)));
+        }
+      }
+    }
+    throw lastErr;
   }
 
   /**

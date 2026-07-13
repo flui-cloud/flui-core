@@ -9,6 +9,7 @@ import { INFRASTRUCTURE_TOOLS } from './infrastructure.tools';
 import { REPO_TOOLS } from './repo.tools';
 import { BACKUP_TOOLS } from './backup.tools';
 import { MIGRATION_TOOLS } from './migration.tools';
+import { CRON_TOOLS } from './cron.tools';
 
 /**
  * The single source of truth for Flui tools. Consumed by the MCP server (external
@@ -23,6 +24,7 @@ export const ALL_TOOLS: ToolDef[] = [
   ...REPO_TOOLS,
   ...BACKUP_TOOLS,
   ...MIGRATION_TOOLS,
+  ...CRON_TOOLS,
 ];
 
 export function findTool(name: string): ToolDef | undefined {

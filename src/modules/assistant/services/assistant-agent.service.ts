@@ -7,6 +7,7 @@ import { CatalogInstallerService } from '../../catalog/services/catalog-installe
 import { ApplicationService } from '../../applications/services/application.service';
 import { ApplicationDeployService } from '../../applications/services/application-deploy.service';
 import { AppManagementService } from '../../applications/services/app-management.service';
+import { ScheduledJobsService } from '../../applications/services/scheduled-jobs.service';
 import { ApplicationReleaseService } from '../../applications/services/application-release.service';
 import { ApplicationSourceDeployService } from '../../applications/services/application-source-deploy.service';
 import { TemplatesService } from '../../templates/templates.service';
@@ -110,6 +111,7 @@ export class AssistantAgentService {
     private readonly appMigration: AppMigrationService,
     private readonly dbMigration: DbMigrationService,
     private readonly fullMigration: FullMigrationService,
+    private readonly scheduledJobs: ScheduledJobsService,
     private readonly config: ConfigService,
   ) {}
 
@@ -681,6 +683,7 @@ export class AssistantAgentService {
         appMigration: this.appMigration,
         dbMigration: this.dbMigration,
         fullMigration: this.fullMigration,
+        scheduledJobs: this.scheduledJobs,
       },
     };
   }

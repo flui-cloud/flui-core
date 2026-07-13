@@ -30,8 +30,11 @@ export async function validateScalewayCredentials(
         hostname: 'api.scaleway.com',
         path: '/iam/v1alpha1/ssh-keys?page_size=1',
         method: 'GET',
-        headers: { 'X-Auth-Token': secretKey },
+        headers: { 'X-Auth-Token': secretKey, Connection: 'close' },
         timeout: 10_000,
+        // No keep-alive pooling: leave no lingering socket that would keep the
+        // event loop alive and hang the CLI after validation returns.
+        agent: false,
       },
       (res) => {
         res.resume();

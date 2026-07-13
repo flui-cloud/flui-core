@@ -169,7 +169,7 @@ export default class EnvCapacity extends Command {
     );
     console.log(
       chalk.dim(
-        '     • flui env storage expand --size <NGiB>  (grow backing volume)',
+        '     • flui env storage-expand --size <NGiB>  (grow backing volume)',
       ),
     );
     console.log('');

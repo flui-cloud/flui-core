@@ -580,6 +580,110 @@ export class CliAppService {
       { data: { destination } },
     );
   }
+
+  // ── Scheduled jobs (cron) ────────────────────────────────────
+
+  async listScheduledJobs(appId: string): Promise<ScheduledJob[]> {
+    return this.apiClient.get<ScheduledJob[]>(
+      `/applications/${appId}/schedules`,
+    );
+  }
+
+  async createScheduledJob(
+    appId: string,
+    body: CreateScheduledJobInput,
+  ): Promise<ScheduledJob> {
+    return this.apiClient.post<ScheduledJob>(
+      `/applications/${appId}/schedules`,
+      body,
+    );
+  }
+
+  async updateScheduledJob(
+    appId: string,
+    name: string,
+    body: UpdateScheduledJobInput,
+  ): Promise<ScheduledJob> {
+    return this.apiClient.patch<ScheduledJob>(
+      `/applications/${appId}/schedules/${encodeURIComponent(name)}`,
+      body,
+    );
+  }
+
+  async deleteScheduledJob(appId: string, name: string): Promise<void> {
+    await this.apiClient.delete<void>(
+      `/applications/${appId}/schedules/${encodeURIComponent(name)}`,
+    );
+  }
+
+  async triggerScheduledJob(
+    appId: string,
+    name: string,
+  ): Promise<{ jobName: string }> {
+    return this.apiClient.post<{ jobName: string }>(
+      `/applications/${appId}/schedules/${encodeURIComponent(name)}/trigger`,
+    );
+  }
+
+  async listScheduledJobRuns(
+    appId: string,
+    name: string,
+  ): Promise<ScheduledJobRun[]> {
+    return this.apiClient.get<ScheduledJobRun[]>(
+      `/applications/${appId}/schedules/${encodeURIComponent(name)}/runs`,
+    );
+  }
+
+  async getScheduledJobRunLogs(
+    appId: string,
+    name: string,
+    jobName: string,
+  ): Promise<{ jobName: string; logs: string }> {
+    return this.apiClient.get<{ jobName: string; logs: string }>(
+      `/applications/${appId}/schedules/${encodeURIComponent(name)}/runs/${encodeURIComponent(jobName)}/logs`,
+    );
+  }
+}
+
+export type CronConcurrencyPolicy = 'Allow' | 'Forbid' | 'Replace';
+
+export interface ScheduledJob {
+  name: string;
+  resourceName: string;
+  schedule: string;
+  command: string;
+  timezone?: string;
+  concurrencyPolicy: CronConcurrencyPolicy;
+  enabled: boolean;
+  activeRuns: number;
+  lastScheduleTime?: string | null;
+  lastSuccessfulTime?: string | null;
+  createdAt?: string | null;
+}
+
+export interface CreateScheduledJobInput {
+  name: string;
+  schedule: string;
+  command: string;
+  timezone?: string;
+  concurrencyPolicy?: CronConcurrencyPolicy;
+  enabled?: boolean;
+}
+
+export interface UpdateScheduledJobInput {
+  schedule?: string;
+  command?: string;
+  timezone?: string;
+  concurrencyPolicy?: CronConcurrencyPolicy;
+  enabled?: boolean;
+}
+
+export interface ScheduledJobRun {
+  jobName: string;
+  status: 'Running' | 'Succeeded' | 'Failed' | 'Unknown';
+  manual: boolean;
+  startTime?: string | null;
+  completionTime?: string | null;
 }
 
 export interface SnapshotResponse {

@@ -53,6 +53,8 @@ import {
 } from './processors/ghcr-secret-refresh.processor';
 import { ApplicationsController } from './controllers/applications.controller';
 import { VariablesController } from './controllers/variables.controller';
+import { ScheduledJobsController } from './controllers/scheduled-jobs.controller';
+import { ScheduledJobsService } from './services/scheduled-jobs.service';
 import { AppManagementController } from './controllers/app-management.controller';
 import { ApplicationEventsGateway } from './gateway/application-events.gateway';
 import { AppOperationRunner } from './services/app-operation-runner.service';
@@ -101,6 +103,7 @@ import { StorageModule } from '../storage/storage.module';
     ApplicationsController,
     VariablesController,
     AppManagementController,
+    ScheduledJobsController,
   ],
   providers: [
     // IAM enforcement (resource-aware app access)
@@ -122,6 +125,7 @@ import { StorageModule } from '../storage/storage.module';
     ApplicationReconciliationService,
     SystemAppCatalogService,
     AppConfigService,
+    ScheduledJobsService,
     AppManagementService,
     ApplicationWorkflowService,
     ApplicationBuildWatcherService,
@@ -158,6 +162,7 @@ import { StorageModule } from '../storage/storage.module';
     SystemAppCatalogService,
     DeployConfigService,
     DedicatedPlacementService,
+    ScheduledJobsService,
   ],
 })
 export class ApplicationsModule {}
