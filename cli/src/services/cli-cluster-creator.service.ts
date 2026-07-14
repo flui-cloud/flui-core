@@ -783,6 +783,15 @@ export class CliClusterCreatorService {
         opId,
       );
 
+      // Lock the host down by default. Runs last because it needs the API DB
+      // record, the persisted SSH target and the SSH-CA secret all in place so
+      // the reconcile can SSH in to apply the ruleset — and the SSH-CA patch
+      // rollout-restarts flui-api, so the enable rides out that window on retry.
+      // Skipped for local stubs (no reachable API to enable against).
+      if (!byos.localStub) {
+        await this.ensureByosHostFirewall(cluster, decrypted.fluiApiKey, opId);
+      }
+
       operation.status = OperationStatus.COMPLETED;
       operation.currentStepIndex = operation.totalSteps;
       await this.operationRepository.save(operation);
@@ -1202,6 +1211,63 @@ export class CliClusterCreatorService {
         'WARN',
       );
     }
+  }
+
+  /**
+   * Seed and apply the host firewall (nftables) by default on a fresh BYOS
+   * install, through the idempotent enable endpoint: policy drop, with only
+   * 22/80/443 (+ kubelet/flannel/internal) reachable. It creates the managed
+   * ClusterFirewallEntity (editable from the dashboard) and reconciles over
+   * SSH. Retries across the flui-api rollout that the SSH-CA secret patch
+   * triggers — a missed apply would otherwise linger, since the scheduler only
+   * reconciles cross-provider peers, not this. Best-effort: on persistent
+   * failure the operator enables it from the dashboard (cluster → Firewall).
+   */
+  private async ensureByosHostFirewall(
+    cluster: ClusterEntity,
+    fluiApiKey: string,
+    opId: string,
+  ): Promise<void> {
+    const cfg = new ConfigStorage();
+    const baseUrl =
+      cfg.getApiUrl() ||
+      (cluster.masterIpAddress
+        ? `https://api.${buildNipBaseDomain(cluster.masterIpAddress, cluster.nipHostnameToken)}`
+        : '');
+    if (!baseUrl || !fluiApiKey) {
+      this.log(
+        opId,
+        '⚠ Host firewall enable skipped (no API URL or key) — enable it later from the dashboard.',
+        'WARN',
+      );
+      return;
+    }
+
+    const client = new ApiClient({ baseUrl, apiKey: fluiApiKey });
+    const maxAttempts = 6;
+    let lastError = '';
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      if (attempt > 1) await new Promise((r) => setTimeout(r, 15000));
+      try {
+        await client.post(`/api/v1/firewalls/cluster/${cluster.id}/enable`, {});
+        this.log(
+          opId,
+          '✅ Host firewall enabled (nftables policy drop; 22/80/443 open)',
+        );
+        return;
+      } catch (e) {
+        lastError = (e as Error).message;
+        this.log(
+          opId,
+          `↻ Host firewall enable attempt ${attempt}/${maxAttempts} failed (API may be restarting): ${lastError}`,
+        );
+      }
+    }
+    this.log(
+      opId,
+      `⚠ Host firewall not enabled after ${maxAttempts} attempts — enable it from the dashboard (cluster → Firewall): ${lastError}`,
+      'WARN',
+    );
   }
 
   /**
