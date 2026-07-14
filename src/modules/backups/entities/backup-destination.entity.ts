@@ -94,7 +94,7 @@ export class BackupDestinationEntity {
   @Column({ type: 'int', nullable: true })
   costPerGbMonthCents?: number;
 
-  @Column({ type: 'jsonb', default: () => "'{}'::jsonb" })
+  @Column({ type: 'jsonb', default: {} })
   metadata: Record<string, any>;
 
   @CreateDateColumn({ type: 'timestamptz' })

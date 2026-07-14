@@ -31,7 +31,7 @@ export class BackupJobEntity {
   @Column({ type: 'enum', enum: BackupJobTriggerType })
   triggerType: BackupJobTriggerType;
 
-  @Column({ type: 'jsonb', default: () => "'{}'::jsonb" })
+  @Column({ type: 'jsonb', default: {} })
   triggerContext: Record<string, any>;
 
   @Column({ length: 253, nullable: true })
@@ -44,7 +44,7 @@ export class BackupJobEntity {
   })
   status: BackupJobStatus;
 
-  @Column({ type: 'jsonb', default: () => "'{}'::jsonb" })
+  @Column({ type: 'jsonb', default: {} })
   scopeSnapshot: Record<string, any>;
 
   @Column({ type: 'timestamptz', nullable: true })
@@ -59,7 +59,7 @@ export class BackupJobEntity {
   @Column({ type: 'text', nullable: true })
   errorMessage?: string;
 
-  @Column({ type: 'jsonb', default: () => "'{}'::jsonb" })
+  @Column({ type: 'jsonb', default: {} })
   metadata: Record<string, any>;
 
   @CreateDateColumn({ type: 'timestamptz' })

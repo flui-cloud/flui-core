@@ -46,7 +46,7 @@ export class BackupArtifactEntity {
   @Column({ type: 'timestamptz', nullable: true })
   expiresAt?: Date;
 
-  @Column({ type: 'jsonb', default: () => "'{}'::jsonb" })
+  @Column({ type: 'jsonb', default: {} })
   manifestSummary: Record<string, any>;
 
   @Column({
@@ -56,7 +56,7 @@ export class BackupArtifactEntity {
   })
   encryptionMode: EncryptionMode;
 
-  @Column({ type: 'jsonb', default: () => "'{}'::jsonb" })
+  @Column({ type: 'jsonb', default: {} })
   metadata: Record<string, any>;
 
   @OneToMany(() => BackupArtifactLocationEntity, (loc) => loc.artifact, {

@@ -44,7 +44,7 @@ export class RestoreJobEntity {
   @Column({ type: 'enum', enum: RestoreTargetKind })
   targetKind: RestoreTargetKind;
 
-  @Column({ type: 'jsonb', default: () => "'{}'::jsonb" })
+  @Column({ type: 'jsonb', default: {} })
   targetSelector: RestoreTargetSelector;
 
   @Column({

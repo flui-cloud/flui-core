@@ -55,7 +55,7 @@ export class BackupPolicyEntity {
   })
   engineClass: BackupEngineClass;
 
-  @Column({ type: 'jsonb', default: () => "'{}'::jsonb" })
+  @Column({ type: 'jsonb', default: {} })
   scopeSelector: BackupScopeSelector;
 
   @Column({ default: true })
@@ -96,7 +96,7 @@ export class BackupPolicyEntity {
   @Column({ type: 'timestamptz', nullable: true })
   nextRunAt?: Date;
 
-  @Column({ type: 'jsonb', default: () => "'{}'::jsonb" })
+  @Column({ type: 'jsonb', default: {} })
   metadata: Record<string, any>;
 
   @OneToMany(() => BackupPolicyDestinationEntity, (pd) => pd.policy, {
