@@ -378,6 +378,7 @@ export class HetznerDnsService implements IDnsProvider {
         name: config.name,
         value: config.value,
         ttl,
+        labels: config.labels,
       });
     }
 
@@ -401,6 +402,18 @@ export class HetznerDnsService implements IDnsProvider {
         config.type,
         newRecords,
       );
+
+      // setRRSetRecords is delete+recreate, so labels don't survive it. Without
+      // re-applying, label-predicated cleanup can never reclaim the record.
+      if (config.labels) {
+        await this.applyLabels(
+          rrSetsApi,
+          config.zoneId,
+          config.name,
+          config.type,
+          config.labels,
+        );
+      }
     } catch (error) {
       if (error.response?.status === 404) {
         // RRSet doesn't exist, create it
@@ -410,6 +423,7 @@ export class HetznerDnsService implements IDnsProvider {
           name: config.name,
           value: config.value,
           ttl,
+          labels: config.labels,
         });
       }
       throw error;

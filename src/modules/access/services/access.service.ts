@@ -1052,6 +1052,33 @@ export class AccessService {
   }
 
   /**
+   * The cluster's bootstrap key material, or null if it has none yet.
+   *
+   * Keyed strictly on bootstrapKeyId, with no tag-based fallback: the tag search
+   * returns the most recently created key, which on a retry is the one that was
+   * never installed on the node.
+   */
+  async getBootstrapKeyMaterialForCluster(clusterId: string): Promise<{
+    id: string;
+    publicKey: string;
+    privateKey: string;
+  } | null> {
+    const cluster = await this.clusterRepository.findOneBy({ id: clusterId });
+    if (!cluster?.bootstrapKeyId) {
+      return null;
+    }
+    const keyEntity = await this.repository.findKeyById(cluster.bootstrapKeyId);
+    if (!keyEntity) {
+      return null;
+    }
+    return {
+      id: keyEntity.id,
+      publicKey: keyEntity.publicKey,
+      privateKey: await this.keyStorage.retrievePrivateKey(keyEntity.keyPath),
+    };
+  }
+
+  /**
    * Retrieve and decrypt the bootstrap private key for a cluster.
    * First checks cluster.bootstrapKeyId, then falls back to searching
    * by cluster-id/purpose/node-type tags (master node bootstrap key).

@@ -41,6 +41,9 @@ export interface UpdateDnsRecordConfig {
   name: string;
   value: string;
   ttl?: number;
+  /** Re-applied on write. Without this an updated record keeps whatever
+   *  attribution it had — and label-predicated cleanup can never match it. */
+  labels?: Record<string, string>;
 }
 
 export interface IDnsProvider {

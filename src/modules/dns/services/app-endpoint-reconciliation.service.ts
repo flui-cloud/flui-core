@@ -14,7 +14,11 @@ import { SanCertificateService } from './san-certificate.service';
 import { AppEndpointEntity } from '../entities/app-endpoint.entity';
 import { ClusterDnsZoneEntity } from '../entities/cluster-dns-zone.entity';
 import { DnsZoneEntity } from '../entities/dns-zone.entity';
-import { DnsRecordInfo } from '../../providers/interfaces/dns-provider.interface';
+import {
+  DnsRecordInfo,
+  DnsRecordType,
+  IDnsProvider,
+} from '../../providers/interfaces/dns-provider.interface';
 import { CertificateStatus } from '../../providers/interfaces/certificate-provider.interface';
 import { CertificateProvider } from '../../providers/enums/certificate-provider.enum';
 import { ReconciliationStatus } from '../../infrastructure/shared/enums/reconciliation-status.enum';
@@ -934,29 +938,47 @@ export class AppEndpointReconciliationService {
       dnsZone.dnsProvider,
     );
 
-    if (endpoint.dnsRecordId) {
-      const existing = await dnsProvider.getRecord(
-        dnsZone.providerZoneId,
-        endpoint.dnsRecordId,
-      );
+    const labels = {
+      'managed-by': 'flui-cloud',
+      'flui-resource-type': 'dns-record',
+      'flui-cluster-id': cluster.id,
+      'flui-endpoint-id': endpoint.id,
+    };
 
-      if (existing && existing.value !== recordValue) {
-        this.logger.log(
-          `Updating DNS record ${endpoint.dnsRecordId} for ${endpoint.fqdn}`,
-        );
-        return await dnsProvider.updateRecord({
-          recordId: endpoint.dnsRecordId,
-          zoneId: dnsZone.providerZoneId,
-          type: endpoint.dnsRecordType,
-          name: recordName,
-          value: recordValue,
-          ttl,
-        });
-      }
+    // By id when we have one, else by name+type: destroying a cluster cascades
+    // dnsRecordId away, and createRecord *appends* to an existing RRSet, so a
+    // blind create would leave the dead cluster's IP answering alongside the new
+    // one. Adopting re-points it instead.
+    const existing =
+      (endpoint.dnsRecordId
+        ? await dnsProvider.getRecord(
+            dnsZone.providerZoneId,
+            endpoint.dnsRecordId,
+          )
+        : null) ??
+      (await this.findRecordByNameType(
+        dnsProvider,
+        dnsZone,
+        recordName,
+        endpoint.dnsRecordType,
+      ));
 
-      if (existing) {
+    if (existing) {
+      if (existing.value === recordValue) {
         return existing;
       }
+      this.logger.log(
+        `Repointing DNS record ${existing.recordId} for ${endpoint.fqdn}: ${existing.value} → ${recordValue}`,
+      );
+      return await dnsProvider.updateRecord({
+        recordId: existing.recordId,
+        zoneId: dnsZone.providerZoneId,
+        type: endpoint.dnsRecordType,
+        name: recordName,
+        value: recordValue,
+        ttl,
+        labels,
+      });
     }
 
     this.logger.log(
@@ -968,13 +990,40 @@ export class AppEndpointReconciliationService {
       name: recordName,
       value: recordValue,
       ttl,
-      labels: {
-        'managed-by': 'flui-cloud',
-        'flui-resource-type': 'dns-record',
-        'flui-cluster-id': cluster.id,
-        'flui-endpoint-id': endpoint.id,
-      },
+      labels,
     });
+  }
+
+  /** Best-effort: a provider that can't list records falls back to creating. */
+  private async findRecordByNameType(
+    dnsProvider: IDnsProvider,
+    dnsZone: DnsZoneEntity,
+    recordName: string,
+    recordType: DnsRecordType,
+  ): Promise<DnsRecordInfo | null> {
+    try {
+      const records = await dnsProvider.listRecords(dnsZone.providerZoneId);
+      const matches = records.filter(
+        (r) => r.name === recordName && r.type === recordType,
+      );
+      if (matches.length > 1) {
+        // Warn, don't purge: a stale leftover and a deliberate round-robin look
+        // identical from here.
+        this.logger.warn(
+          `${recordName} (${recordType}) in zone ${dnsZone.zoneName} resolves to ${matches.length} values ` +
+            `(${matches.map((r) => r.value).join(', ')}) — adopting ${matches[0].value}; ` +
+            `remove any that no longer belong to a live cluster`,
+        );
+      }
+      return matches[0] ?? null;
+    } catch (error) {
+      this.logger.warn(
+        `Could not list records in zone ${dnsZone.zoneName} to adopt ${recordName}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+      return null;
+    }
   }
 
   private async reconcileService(

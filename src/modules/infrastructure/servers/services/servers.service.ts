@@ -337,13 +337,20 @@ export class ServersService {
           `Server ${config.name} already exists (ID: ${existingServer.id}), skipping creation`,
         );
 
-        // Server already exists, use existing server details
+        // Server already exists, use existing server details. Volumes are
+        // re-resolved rather than skipped: the caller records their ids, and a
+        // cluster that reports none leaks the paid Volume on delete.
         result = {
           serverId: existingServer.id,
           ipAddress:
             existingServer.public_ip || existingServer.private_ip || 'unknown',
           status: existingServer.status,
           actionId: undefined,
+          attachedVolumes: await this.resolveExistingAttachedVolumes(
+            providerService,
+            existingServer.id,
+            config.attachedVolumes,
+          ),
         };
 
         await this.updateOperationStatus(
@@ -648,6 +655,58 @@ export class ServersService {
     this.logger.log(
       `Server ${serverId} validated as Flui-managed (labels: ${JSON.stringify(server.labels)})`,
     );
+  }
+
+  /**
+   * Re-resolve the Volumes a previous attempt already created for this server,
+   * matched by requested name. Best-effort: a provider with no Volume API
+   * reports none, exactly as it would have on the create path.
+   */
+  private async resolveExistingAttachedVolumes(
+    providerService: {
+      listFluiManagedVolumes?: () => Promise<
+        Array<{
+          volumeId: string;
+          name: string;
+          sizeGb: number;
+          attachedServerId?: string | null;
+        }>
+      >;
+    },
+    serverId: string,
+    requested?: Array<{ name: string }>,
+  ): Promise<Array<{ volumeId: string; sizeGb: number }> | undefined> {
+    if (!requested?.length || !providerService.listFluiManagedVolumes) {
+      return undefined;
+    }
+    try {
+      const volumes = await providerService.listFluiManagedVolumes();
+      const resolved = requested
+        .map((req) =>
+          volumes.find(
+            (v) =>
+              v.name === req.name &&
+              String(v.attachedServerId) === String(serverId),
+          ),
+        )
+        .filter((v): v is NonNullable<typeof v> => !!v)
+        .map((v) => ({ volumeId: v.volumeId, sizeGb: v.sizeGb }));
+
+      if (resolved.length < requested.length) {
+        this.logger.warn(
+          `Server ${serverId} already existed but only ${resolved.length}/${requested.length} of its Volumes could be matched — ` +
+            `an unmatched Volume won't be billed or cleaned up with the cluster`,
+        );
+      }
+      return resolved.length ? resolved : undefined;
+    } catch (error) {
+      this.logger.warn(
+        `Could not resolve existing Volumes for server ${serverId}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+      return undefined;
+    }
   }
 
   private async waitForServerReady(
