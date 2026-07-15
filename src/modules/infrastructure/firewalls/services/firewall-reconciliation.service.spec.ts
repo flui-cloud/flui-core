@@ -264,3 +264,60 @@ describe('FirewallReconciliationService.ensureRequiredIngress', () => {
     expect(out.some((r) => r.direction === 'out')).toBe(false);
   });
 });
+
+describe('FirewallReconciliationService.ensureDualStackWildcards', () => {
+  const run = FirewallReconciliationService.ensureDualStackWildcards;
+  const egress = (destinationIps: string[]): FirewallRuleDto => ({
+    description: 'Allow All Outbound',
+    direction: 'out',
+    protocol: 'tcp',
+    destinationIps,
+  });
+
+  // The bug: the dashboard's default egress was 0.0.0.0/0 only, so the provider
+  // dropped IPv6 rather than refusing it. wget sat through the full TCP timeout
+  // on an AAAA-bearing host — 275s of a 395s provision, on one download.
+  it('completes a world-open egress rule to dual-stack', () => {
+    expect(run([egress(['0.0.0.0/0'])])[0].destinationIps).toEqual([
+      '0.0.0.0/0',
+      '::/0',
+    ]);
+  });
+
+  it('completes a world-open ingress rule to dual-stack', () => {
+    const out = run([
+      {
+        description: 'HTTPS (Traefik)',
+        direction: 'in',
+        protocol: 'tcp',
+        port: '443',
+        sourceIps: ['0.0.0.0/0'],
+      },
+    ]);
+    expect(out[0].sourceIps).toEqual(['0.0.0.0/0', '::/0']);
+  });
+
+  // The operator narrowed this deliberately; completing it would widen it.
+  it('leaves a restricted allowlist alone', () => {
+    const rules = [
+      {
+        description: 'SSH Access',
+        direction: 'in' as const,
+        protocol: 'tcp' as const,
+        port: '22',
+        sourceIps: ['203.0.113.9/32'],
+      },
+    ];
+    expect(run(rules)).toEqual(rules);
+  });
+
+  it('is idempotent — a second pass adds nothing', () => {
+    const once = run([egress(['0.0.0.0/0'])]);
+    expect(run(once)).toEqual(once);
+  });
+
+  it('leaves a rule that already names ::/0 untouched', () => {
+    const rules = [egress(['0.0.0.0/0', '::/0'])];
+    expect(run(rules)).toEqual(rules);
+  });
+});

@@ -263,8 +263,8 @@ export class ClusterCreationService {
    * Resolve the firewall rules to seed at cluster creation. An empty input is an
    * explicit deny-all firewall (documented DTO behaviour) and is passed through
    * untouched; when rules are supplied we sanitize the API-server rule and then
-   * enforce the 80/443 and workload-SSH invariants so the same server-side
-   * guarantees hold at create time as on every later update.
+   * enforce the 80/443, workload-SSH and dual-stack invariants so the same
+   * server-side guarantees hold at create time as on every later update.
    */
   private async buildDesiredFirewallRules(
     providedRules: FirewallRuleDto[],
@@ -276,12 +276,14 @@ export class ClusterCreationService {
     // is SSHed into within seconds of this firewall being applied.
     const controlIps =
       await this.firewallReconciliation.resolveControlEgressIps();
-    return FirewallReconciliationService.ensureWorkloadSshFromControl(
-      clusterType,
-      FirewallReconciliationService.ensureRequiredIngress(
-        sanitizeApiServerFirewallRules(providedRules, subnetCidr),
+    return FirewallReconciliationService.ensureDualStackWildcards(
+      FirewallReconciliationService.ensureWorkloadSshFromControl(
+        clusterType,
+        FirewallReconciliationService.ensureRequiredIngress(
+          sanitizeApiServerFirewallRules(providedRules, subnetCidr),
+        ),
+        controlIps,
       ),
-      controlIps,
     );
   }
 

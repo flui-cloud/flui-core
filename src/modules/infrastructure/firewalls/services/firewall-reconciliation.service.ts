@@ -56,12 +56,14 @@ export class FirewallReconciliationService {
       '0.0.0.0/0',
       '::/0',
     ]) as FirewallRuleDto[];
-    const rules = FirewallReconciliationService.ensureWorkloadSshFromControl(
-      cluster.clusterType,
-      FirewallReconciliationService.ensureRequiredIngress(
-        this.normalizeRulesForCapability(cluster.provider, baseRules),
+    const rules = FirewallReconciliationService.ensureDualStackWildcards(
+      FirewallReconciliationService.ensureWorkloadSshFromControl(
+        cluster.clusterType,
+        FirewallReconciliationService.ensureRequiredIngress(
+          this.normalizeRulesForCapability(cluster.provider, baseRules),
+        ),
+        await this.resolveControlEgressIps(),
       ),
-      await this.resolveControlEgressIps(),
     );
 
     this.logger.log(
@@ -249,6 +251,44 @@ export class FirewallReconciliationService {
   }
 
   /**
+   * Server-side invariant: a rule that opens to everyone on IPv4 must open to
+   * everyone on IPv6 too. Nodes are dual-stack, and a provider firewall drops —
+   * not rejects — whatever its rules don't match, so a lone 0.0.0.0/0 turns every
+   * AAAA-bearing host into a blackhole rather than an error.
+   *
+   * Egress is where this bites hardest, and silently: `curl` fails over to IPv4 in
+   * milliseconds, so most of the bootstrap never notices, while `wget` waits out
+   * the full TCP timeout. That difference cost a dashboard-created workload 275s
+   * of its 395s provisioning time on one download, looking for all the world like
+   * a slow boot.
+   *
+   * Only wildcard lists are completed. A list naming specific CIDRs is an operator
+   * restricting a source, and adding ::/0 there would widen what they narrowed.
+   */
+  static ensureDualStackWildcards(rules: FirewallRuleDto[]): FirewallRuleDto[] {
+    const logger = new Logger(FirewallReconciliationService.name);
+    const complete = (ips?: string[]): string[] | undefined =>
+      ips?.includes('0.0.0.0/0') && !ips.includes('::/0')
+        ? [...ips, '::/0']
+        : ips;
+
+    return rules.map((rule) => {
+      const sourceIps = complete(rule.sourceIps);
+      const destinationIps = complete(rule.destinationIps);
+      if (
+        sourceIps === rule.sourceIps &&
+        destinationIps === rule.destinationIps
+      )
+        return rule;
+      const port = rule.port ? ` ${rule.port}` : '';
+      logger.log(
+        `Completing ${rule.direction} ${rule.protocol}${port} to dual-stack: 0.0.0.0/0 without ::/0 blackholes IPv6 instead of refusing it`,
+      );
+      return { ...rule, sourceIps, destinationIps };
+    });
+  }
+
+  /**
    * Update desired rules and apply them atomically.
    * If provider application fails, no changes are saved to the database.
    */
@@ -273,10 +313,12 @@ export class FirewallReconciliationService {
       newRules,
     );
     const requiredRules =
-      FirewallReconciliationService.ensureWorkloadSshFromControl(
-        cluster.clusterType,
-        FirewallReconciliationService.ensureRequiredIngress(normalizedRules),
-        await this.resolveControlEgressIps(),
+      FirewallReconciliationService.ensureDualStackWildcards(
+        FirewallReconciliationService.ensureWorkloadSshFromControl(
+          cluster.clusterType,
+          FirewallReconciliationService.ensureRequiredIngress(normalizedRules),
+          await this.resolveControlEgressIps(),
+        ),
       );
     const canonicalRules =
       this.desiredStateService.canonicalizeRules(requiredRules);
