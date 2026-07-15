@@ -33,13 +33,16 @@ describe('FirewallReconciliationService — host firewall', () => {
     sourceIps: ['10.0.0.0/8'],
   };
 
+  // `find` backs resolveControlEgressIps: no control cluster => no SSH peer IPs
+  // to merge, so these cases exercise the rules exactly as submitted.
   const build = (capabilities: any, overrides: any = {}) =>
     new FirewallReconciliationService(
       overrides.desiredState ?? ({} as any),
       overrides.providerFactory ?? ({} as any),
       capabilities as any,
       overrides.labelService ?? ({} as any),
-      overrides.clusterRepo ?? ({} as any),
+      overrides.clusterRepo ??
+        ({ find: jest.fn().mockResolvedValue([]) } as any),
     );
 
   describe('normalizeRulesForCapability', () => {
@@ -100,6 +103,7 @@ describe('FirewallReconciliationService — host firewall', () => {
         findOne: jest
           .fn()
           .mockResolvedValue({ provider: 'byos', clusterType: 'control' }),
+        find: jest.fn().mockResolvedValue([]),
       };
       const svc = build(makeCapabilities(false), { desiredState, clusterRepo });
       jest.spyOn(svc, 'reconcile').mockResolvedValue({ id: 'fw-new' } as any);
@@ -121,13 +125,81 @@ describe('FirewallReconciliationService — host firewall', () => {
         getFirewallByClusterId: jest.fn().mockRejectedValue(new Error('404')),
         createFirewall: jest.fn(),
       };
-      const clusterRepo = { findOne: jest.fn().mockResolvedValue(null) };
+      const clusterRepo = {
+        findOne: jest.fn().mockResolvedValue(null),
+        find: jest.fn().mockResolvedValue([]),
+      };
       const svc = build(makeCapabilities(false), { desiredState, clusterRepo });
 
       await expect(svc.ensureClusterFirewall('missing')).rejects.toBeInstanceOf(
         BadRequestException,
       );
     });
+  });
+});
+
+describe('FirewallReconciliationService.ensureWorkloadSshFromControl', () => {
+  const ssh = (sourceIps: string[]): FirewallRuleDto => ({
+    description: 'SSH Access',
+    direction: 'in',
+    protocol: 'tcp',
+    port: '22',
+    sourceIps,
+  });
+  const run = (rules: FirewallRuleDto[], ips: string[], type = 'workload') =>
+    FirewallReconciliationService.ensureWorkloadSshFromControl(
+      type as any,
+      rules,
+      ips,
+    );
+
+  it('adds the control plane while keeping the operator allowlisted', () => {
+    const out = run([ssh(['203.0.113.9/32'])], ['198.51.100.7']);
+    expect(out[0].sourceIps).toEqual(['203.0.113.9/32', '198.51.100.7/32']);
+  });
+
+  it('never widens to the world', () => {
+    const out = run([ssh(['203.0.113.9/32'])], ['198.51.100.7']);
+    expect(out[0].sourceIps).not.toContain('0.0.0.0/0');
+  });
+
+  it('leaves the control cluster alone — the CLI drives it from a known IP', () => {
+    const rules = [ssh(['203.0.113.9/32'])];
+    expect(run(rules, ['198.51.100.7'], 'control')).toEqual(rules);
+  });
+
+  it('is idempotent — a second pass adds nothing', () => {
+    const once = run([ssh(['203.0.113.9/32'])], ['198.51.100.7']);
+    expect(run(once, ['198.51.100.7'])).toEqual(once);
+  });
+
+  it('respects an explicit world-open :22 instead of appending to it', () => {
+    const rules = [ssh(['0.0.0.0/0'])];
+    expect(run(rules, ['198.51.100.7'])).toEqual(rules);
+  });
+
+  it('injects :22 when the caller omitted it entirely', () => {
+    const out = run([], ['198.51.100.7']);
+    expect(out).toHaveLength(1);
+    expect(out[0].port).toBe('22');
+    expect(out[0].sourceIps).toEqual(['198.51.100.7/32']);
+  });
+
+  it('is a no-op when the control has no resolvable address', () => {
+    const rules = [ssh(['203.0.113.9/32'])];
+    expect(run(rules, [])).toEqual(rules);
+  });
+
+  it('allowlists every control node, since the API may egress from any of them', () => {
+    const out = run(
+      [ssh(['203.0.113.9/32'])],
+      ['198.51.100.7', '198.51.100.8'],
+    );
+    expect(out[0].sourceIps).toEqual([
+      '203.0.113.9/32',
+      '198.51.100.7/32',
+      '198.51.100.8/32',
+    ]);
   });
 });
 

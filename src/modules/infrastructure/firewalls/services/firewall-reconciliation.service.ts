@@ -11,6 +11,7 @@ import {
 } from '../entities/cluster-firewall.entity';
 import {
   ClusterEntity,
+  ClusterType,
   isControlClusterType,
 } from '../../clusters/entities/cluster.entity';
 import { getFirewallRulesForClusterType } from '../templates/firewall-rules.template';
@@ -55,8 +56,12 @@ export class FirewallReconciliationService {
       '0.0.0.0/0',
       '::/0',
     ]) as FirewallRuleDto[];
-    const rules = FirewallReconciliationService.ensureRequiredIngress(
-      this.normalizeRulesForCapability(cluster.provider, baseRules),
+    const rules = FirewallReconciliationService.ensureWorkloadSshFromControl(
+      cluster.clusterType,
+      FirewallReconciliationService.ensureRequiredIngress(
+        this.normalizeRulesForCapability(cluster.provider, baseRules),
+      ),
+      await this.resolveControlEgressIps(),
     );
 
     this.logger.log(
@@ -152,6 +157,98 @@ export class FirewallReconciliationService {
   }
 
   /**
+   * The addresses flui-api may SSH out from when managing a workload cluster.
+   * BYOS keeps the reachable address in metadata (masterIpAddress can be an
+   * internal Podman address); otherwise the API can sit on any control node, so
+   * every node IP is a candidate egress — not just the master's.
+   */
+  /** Resolve the control cluster the way the peer reconciler does: a real
+   *  CONTROL wins over a legacy OBSERVABILITY row, then the most recent. */
+  async resolveControlEgressIps(): Promise<string[]> {
+    const candidates = await this.clusterRepository.find({
+      where: [
+        { clusterType: ClusterType.CONTROL },
+        { clusterType: ClusterType.OBSERVABILITY },
+      ],
+      relations: ['nodes'],
+    });
+    const control = [...candidates].sort((a, b) => {
+      const rank = (c: ClusterEntity) =>
+        c.clusterType === ClusterType.CONTROL ? 0 : 1;
+      if (rank(a) !== rank(b)) return rank(a) - rank(b);
+      return (b.createdAt?.getTime() ?? 0) - (a.createdAt?.getTime() ?? 0);
+    })[0];
+    return FirewallReconciliationService.controlEgressIps(control);
+  }
+
+  static controlEgressIps(control?: ClusterEntity | null): string[] {
+    if (!control) return [];
+    const byosHost = (control.metadata as { byos?: { host?: string } })?.byos
+      ?.host;
+    if (byosHost) return [byosHost];
+    const ips = [
+      control.masterIpAddress,
+      ...(control.nodes ?? []).map((n) => n.ipAddress),
+    ].filter((ip): ip is string => !!ip);
+    return [...new Set(ips)];
+  }
+
+  /**
+   * Server-side invariant: a workload cluster's inbound TCP 22 must always admit
+   * the control plane. flui-api manages workload nodes over SSH for their whole
+   * life — it fetches the kubeconfig at create time, and cordons/drains/deletes
+   * over SSH on remove-worker — so an allowlist that omits it locks Flui out of
+   * its own cluster: the node boots fine and the operation hangs until it times
+   * out. The operator's own IPs are preserved, and an explicit 0.0.0.0/0 is left
+   * alone; we only ever *add* the control's addresses.
+   *
+   * The control cluster is exempt: it is driven from the operator's machine by
+   * the CLI, which allowlists its own detected IP and SSHes from that same host.
+   */
+  static ensureWorkloadSshFromControl(
+    clusterType: ClusterEntity['clusterType'],
+    rules: FirewallRuleDto[],
+    controlIps: string[],
+  ): FirewallRuleDto[] {
+    if (isControlClusterType(clusterType) || controlIps.length === 0) {
+      return rules;
+    }
+
+    const cidrs = controlIps.map((ip) => (ip.includes('/') ? ip : `${ip}/32`));
+    const isInboundSsh = (r: FirewallRuleDto) =>
+      r.direction === 'in' && r.protocol === 'tcp' && r.port === '22';
+    const logger = new Logger(FirewallReconciliationService.name);
+
+    if (!rules.some((r) => isInboundSsh(r))) {
+      logger.warn(
+        `Inbound TCP 22 missing from workload rules — injected for the control plane (${cidrs.join(', ')}), which manages this cluster over SSH`,
+      );
+      return [
+        ...rules,
+        {
+          description: 'flui:required:ssh-control',
+          direction: 'in',
+          protocol: 'tcp',
+          port: '22',
+          sourceIps: cidrs,
+        },
+      ];
+    }
+
+    return rules.map((rule) => {
+      if (!isInboundSsh(rule)) return rule;
+      const sourceIps = rule.sourceIps ?? [];
+      if (sourceIps.includes('0.0.0.0/0')) return rule;
+      const missing = cidrs.filter((cidr) => !sourceIps.includes(cidr));
+      if (missing.length === 0) return rule;
+      logger.log(
+        `Adding control-plane ${missing.join(', ')} to workload SSH allowlist (Flui manages this cluster over SSH)`,
+      );
+      return { ...rule, sourceIps: [...sourceIps, ...missing] };
+    });
+  }
+
+  /**
    * Update desired rules and apply them atomically.
    * If provider application fails, no changes are saved to the database.
    */
@@ -176,7 +273,11 @@ export class FirewallReconciliationService {
       newRules,
     );
     const requiredRules =
-      FirewallReconciliationService.ensureRequiredIngress(normalizedRules);
+      FirewallReconciliationService.ensureWorkloadSshFromControl(
+        cluster.clusterType,
+        FirewallReconciliationService.ensureRequiredIngress(normalizedRules),
+        await this.resolveControlEgressIps(),
+      );
     const canonicalRules =
       this.desiredStateService.canonicalizeRules(requiredRules);
     const newDesiredHash =

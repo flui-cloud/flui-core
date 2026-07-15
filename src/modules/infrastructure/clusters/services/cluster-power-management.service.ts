@@ -30,6 +30,12 @@ import {
   calculateOperationProgressFromSaved,
 } from '../../operations/helpers/operation-steps.helper';
 
+/** Statuses whose truth is the servers' power state, and nothing else. */
+const RECONCILABLE_POWER_STATUSES: ClusterStatus[] = [
+  ClusterStatus.READY,
+  ClusterStatus.STOPPED,
+];
+
 /**
  * Service for managing cluster power state (stop/start servers)
  * and reconciling cluster status with real provider state
@@ -380,6 +386,27 @@ export class ClusterPowerManagementService {
     const cluster = await this.loadClusterWithNodes(clusterId);
     const previousStatus = cluster.status;
     const actions: string[] = [];
+
+    // This endpoint only resolves the power axis (READY <-> STOPPED) for servers
+    // started/stopped outside Flui. Any other status means an operation owns the
+    // cluster's lifecycle, and provider power state cannot speak to it: a failed
+    // provisioning leaves the VMs happily 'running', so reconciling from that
+    // signal alone would report a cluster that never joined k3s as READY and
+    // silently bury the failure.
+    if (!RECONCILABLE_POWER_STATUSES.includes(cluster.status)) {
+      return {
+        cluster_id: cluster.id,
+        cluster_name: cluster.name,
+        previous_status: previousStatus,
+        new_status: cluster.status,
+        is_synced: true,
+        nodes_reconciled: cluster.nodes.length,
+        actions_taken: [
+          `Cluster is ${cluster.status}; power-state reconciliation only applies ` +
+            `to ${RECONCILABLE_POWER_STATUSES.join('/')} clusters — nothing to reconcile`,
+        ],
+      };
+    }
 
     const provider = this.getCloudProviderOrNull(cluster);
     if (!provider) {

@@ -7,10 +7,12 @@ describe('ClusterCreationService.createCluster — provider policies', () => {
     capabilities,
     observabilityCluster,
     envVnetProvider = CloudProvider.HETZNER,
+    controlEgressIps = [],
   }: {
     capabilities: { vnetRequired: boolean; crossClusterAllowed: boolean };
     observabilityCluster?: unknown;
     envVnetProvider?: CloudProvider;
+    controlEgressIps?: string[];
   }) {
     const clusterRepo = {
       findOne: jest.fn().mockResolvedValue(observabilityCluster ?? null),
@@ -45,6 +47,9 @@ describe('ClusterCreationService.createCluster — provider policies', () => {
         getStaticCapabilities: jest.fn().mockReturnValue(capabilities),
       }),
     };
+    const firewallReconciliation = {
+      resolveControlEgressIps: jest.fn().mockResolvedValue(controlEgressIps),
+    };
     const service = new ClusterCreationService(
       clusterRepo as never,
       operationRepo as never,
@@ -53,6 +58,7 @@ describe('ClusterCreationService.createCluster — provider policies', () => {
       encryption as never,
       firewallIntegration as never,
       capabilitiesFactory as never,
+      firewallReconciliation as never,
     );
     return { service, firewallIntegration };
   }
@@ -119,5 +125,37 @@ describe('ClusterCreationService.createCluster — provider policies', () => {
     await expect(service.createCluster(baseDto as never)).rejects.toThrow(
       BadRequestException,
     );
+  });
+
+  // Regression: the dashboard sends only the operator's IP for :22, but flui-api
+  // SSHes into the master seconds later to fetch the kubeconfig. Without the
+  // control's own address on the allowlist the install hangs until it times out.
+  it('adds the control plane to the workload SSH allowlist without dropping the operator', async () => {
+    const { service, firewallIntegration } = build({
+      capabilities: { vnetRequired: false, crossClusterAllowed: true },
+      controlEgressIps: ['62.238.51.202'],
+    });
+
+    await service.createCluster({
+      ...baseDto,
+      firewallRules: [
+        {
+          description: 'SSH Access',
+          direction: 'in',
+          protocol: 'tcp',
+          port: '22',
+          sourceIps: ['95.246.69.217/32'],
+        },
+      ],
+    } as never);
+
+    const [, rules] =
+      firewallIntegration.createAndReconcileFirewall.mock.calls[0];
+    const ssh = rules.find(
+      (r: { port: string; direction: string }) =>
+        r.port === '22' && r.direction === 'in',
+    );
+    expect(ssh.sourceIps).toEqual(['95.246.69.217/32', '62.238.51.202/32']);
+    expect(ssh.sourceIps).not.toContain('0.0.0.0/0');
   });
 });

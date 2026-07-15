@@ -160,17 +160,10 @@ export class ClusterOrchestrationService {
 
     // Create node record FIRST so we have the node.id for SERVER_ID in cloud-init
     const serverName = `${cluster.name}-master`;
-    const node = this.nodeRepository.create({
-      clusterId: cluster.id,
+    const node = await this.ensureNodeRecord(
+      cluster.id,
       serverName,
-      providerResourceId: '', // Will be updated after server creation
-      nodeType: NodeType.MASTER,
-      status: NodeStatus.CREATING,
-      metadata: {},
-    });
-    await this.nodeRepository.save(node);
-    this.logger.log(
-      `Created node record with ID ${node.id} for master ${serverName}`,
+      NodeType.MASTER,
     );
 
     // Resolve Flui shared storage config (NFS+fscache, see scaling doc §14).
@@ -643,17 +636,11 @@ export class ClusterOrchestrationService {
     );
 
     // Create node record FIRST so we have the node.id for SERVER_ID in cloud-init
-    const node = this.nodeRepository.create({
-      clusterId: cluster.id,
+    const node = await this.ensureNodeRecord(
+      cluster.id,
       serverName,
-      providerResourceId: '',
-      nodeType: NodeType.WORKER,
-      status: NodeStatus.CREATING,
-      metadata: { workerIndex: index },
-    });
-    await this.nodeRepository.save(node);
-    this.logger.log(
-      `Created node record with ID ${node.id} for worker ${serverName}`,
+      NodeType.WORKER,
+      { workerIndex: index },
     );
 
     const controlClusterIp = await this.resolveWorkerObservabilityIp(cluster);
@@ -1297,6 +1284,44 @@ export class ClusterOrchestrationService {
     this.logger.warn('PUBLIC KEY:');
     this.logger.warn(bootstrapKey.publicKey);
     this.logger.warn('='.repeat(80));
+  }
+
+  /**
+   * Idempotent by (clusterId, serverName): the queue re-runs node creation from
+   * the top on retry, while server creation is idempotent by name. A blind insert
+   * would pile up duplicate rows pointing at the same server — inflating the
+   * cluster's recomputed nodeCount — and mint a fresh node.id that no longer
+   * matches the SERVER_ID the already-booted node reports for its metrics.
+   */
+  private async ensureNodeRecord(
+    clusterId: string,
+    serverName: string,
+    nodeType: NodeType,
+    metadata: Record<string, unknown> = {},
+  ): Promise<ClusterNodeEntity> {
+    const existing = await this.nodeRepository.findOne({
+      where: { clusterId, serverName },
+    });
+    if (existing) {
+      this.logger.log(
+        `Reusing node record ${existing.id} for ${nodeType} ${serverName}`,
+      );
+      return existing;
+    }
+    const node = await this.nodeRepository.save(
+      this.nodeRepository.create({
+        clusterId,
+        serverName,
+        providerResourceId: '', // Will be updated after server creation
+        nodeType,
+        status: NodeStatus.CREATING,
+        metadata,
+      }),
+    );
+    this.logger.log(
+      `Created node record with ID ${node.id} for ${nodeType} ${serverName}`,
+    );
+    return node;
   }
 
   private async loadCaKeyPair(): Promise<{

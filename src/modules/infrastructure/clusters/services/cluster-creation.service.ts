@@ -48,6 +48,7 @@ export class ClusterCreationService {
     private readonly encryptionService: EncryptionService,
     private readonly clusterFirewallIntegrationService: ClusterFirewallIntegrationService,
     private readonly capabilitiesFactory: CapabilitiesProviderFactory,
+    private readonly firewallReconciliation: FirewallReconciliationService,
   ) {}
 
   /**
@@ -179,9 +180,10 @@ export class ClusterCreationService {
     // observability ↔ workload metrics traffic flows over the environment VNet.
     let providerFirewallId: string | null = null;
     try {
-      const desiredRules = this.buildDesiredFirewallRules(
+      const desiredRules = await this.buildDesiredFirewallRules(
         dto.firewallRules || [],
         envSubnet.ipRange,
+        clusterType,
       );
 
       providerFirewallId =
@@ -261,16 +263,25 @@ export class ClusterCreationService {
    * Resolve the firewall rules to seed at cluster creation. An empty input is an
    * explicit deny-all firewall (documented DTO behaviour) and is passed through
    * untouched; when rules are supplied we sanitize the API-server rule and then
-   * enforce the 80/443 invariant so the same server-side guarantee holds at
-   * create time as on every later update.
+   * enforce the 80/443 and workload-SSH invariants so the same server-side
+   * guarantees hold at create time as on every later update.
    */
-  private buildDesiredFirewallRules(
+  private async buildDesiredFirewallRules(
     providedRules: FirewallRuleDto[],
     subnetCidr: string,
-  ): FirewallRuleDto[] {
+    clusterType: ClusterType,
+  ): Promise<FirewallRuleDto[]> {
     if (providedRules.length === 0) return providedRules;
-    return FirewallReconciliationService.ensureRequiredIngress(
-      sanitizeApiServerFirewallRules(providedRules, subnetCidr),
+    // Resolved here rather than left to the 5-minute peer reconciler: the master
+    // is SSHed into within seconds of this firewall being applied.
+    const controlIps =
+      await this.firewallReconciliation.resolveControlEgressIps();
+    return FirewallReconciliationService.ensureWorkloadSshFromControl(
+      clusterType,
+      FirewallReconciliationService.ensureRequiredIngress(
+        sanitizeApiServerFirewallRules(providedRules, subnetCidr),
+      ),
+      controlIps,
     );
   }
 
