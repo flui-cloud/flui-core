@@ -39,6 +39,7 @@ import { ApiClient } from '../lib/api-client';
 import { ConfigStorage } from '../lib/config-storage';
 import { CliByosPurgeService } from './cli-byos-purge.service';
 import { resolveClusterSshTarget } from '../lib/cluster-ssh-target';
+import { checkTcpPort } from '../lib/utils/tcp-port';
 
 /**
  * CLI Cluster Creator Service
@@ -868,6 +869,22 @@ export class CliClusterCreatorService {
       operation.currentStep = OperationStep.CLUSTER_REINSTALL_INIT;
       operation.currentStepIndex = 1;
       await this.operationRepository.save(operation);
+
+      // Fail fast with a clear cause instead of a raw ssh timeout several
+      // steps in — port 22 blocked almost always means the Cloud Firewall's
+      // SSH allowlist no longer matches the operator's current IP.
+      const sshPortOpen = await checkTcpPort(
+        sshTarget.host,
+        sshTarget.port,
+        8000,
+      );
+      if (!sshPortOpen) {
+        throw new Error(
+          `SSH port ${sshTarget.port} is not reachable on ${sshTarget.host}. ` +
+            `Check the cluster's firewall SSH allowlist: \`flui env update-firewall --list\`, ` +
+            `then \`flui env update-firewall\` to allow your current IP.`,
+        );
+      }
 
       cluster.status = ClusterStatus.SCALING;
       masterNode.status = NodeStatus.CREATING;

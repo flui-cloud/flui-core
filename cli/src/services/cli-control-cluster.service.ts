@@ -15,9 +15,9 @@ import {
   InfrastructureOperationEntity,
   OperationStatus,
 } from 'src/modules/infrastructure/servers/entities/infrastructure-operations.entity';
-import * as net from 'node:net';
 import * as https from 'node:https';
 import { TLSSocket } from 'node:tls';
+import { checkTcpPort } from '../lib/utils/tcp-port';
 
 /**
  * CLI Control Cluster Service
@@ -438,7 +438,7 @@ export class CliControlClusterService {
     );
 
     while (Date.now() - startTime < timeoutMs) {
-      const isReachable = await this.checkTcpPort(host, port);
+      const isReachable = await checkTcpPort(host, port);
       if (isReachable) {
         this.logger.log(`Port ${port} is reachable on ${host}`);
         return;
@@ -663,37 +663,6 @@ export class CliControlClusterService {
     }
 
     return result;
-  }
-
-  /**
-   * Check if a TCP port is reachable on a host
-   */
-  private checkTcpPort(
-    host: string,
-    port: number,
-    timeout: number = 5000,
-  ): Promise<boolean> {
-    return new Promise((resolve) => {
-      const socket = new net.Socket();
-
-      const timer = setTimeout(() => {
-        socket.destroy();
-        resolve(false);
-      }, timeout);
-
-      socket.on('connect', () => {
-        clearTimeout(timer);
-        socket.destroy();
-        resolve(true);
-      });
-
-      socket.on('error', () => {
-        clearTimeout(timer);
-        resolve(false);
-      });
-
-      socket.connect(port, host);
-    });
   }
 
   /**
