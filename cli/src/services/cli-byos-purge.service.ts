@@ -59,6 +59,15 @@ export class CliByosPurgeService {
       String.raw`  sed -i '\|^/var/lib/flui/storage |d' /etc/exports`,
       '  exportfs -ra 2>/dev/null || true',
       'fi',
+      // This path may be a mounted shared-storage Volume holding in-cluster
+      // Postgres data — wipe+unmount explicitly so `rm -rf` below doesn't just
+      // silently traverse into it and leave orphaned data behind.
+      'if mountpoint -q /var/lib/flui/storage 2>/dev/null; then',
+      '  echo "[flui-purge] wiping shared-storage volume contents..."',
+      '  find /var/lib/flui/storage -mindepth 1 -delete 2>/dev/null || true',
+      '  umount /var/lib/flui/storage 2>/dev/null || true',
+      '  echo "[flui-purge] shared-storage volume wiped and unmounted"',
+      'fi',
       'rm -rf /var/lib/flui /tmp/flui-modules /etc/flui',
       'rm -f /root/.kube/config',
       String.raw`sed -i '\|/etc/rancher/k3s/k3s.yaml|d' /root/.bashrc 2>/dev/null || true`,

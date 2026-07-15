@@ -11,6 +11,7 @@ import {
 import {
   InfrastructureOperationEntity,
   OperationStatus,
+  OperationStep,
 } from 'src/modules/infrastructure/servers/entities/infrastructure-operations.entity';
 import { CliClusterRepository } from '../lib/repositories/cli-cluster.repository';
 import { CliNodeRepository } from '../lib/repositories/cli-node.repository';
@@ -36,6 +37,8 @@ import { CliLoggerService } from './cli-logger.service';
 import { CliVnetRepository } from '../lib/repositories/cli-vnet.repository';
 import { ApiClient } from '../lib/api-client';
 import { ConfigStorage } from '../lib/config-storage';
+import { CliByosPurgeService } from './cli-byos-purge.service';
+import { resolveClusterSshTarget } from '../lib/cluster-ssh-target';
 
 /**
  * CLI Cluster Creator Service
@@ -61,6 +64,7 @@ export class CliClusterCreatorService {
     private readonly sshService: CliSshService,
     private readonly cliLoggerService: CliLoggerService,
     private readonly vnetRepository: CliVnetRepository,
+    private readonly purgeService: CliByosPurgeService,
   ) {}
 
   /** Log to both NestJS stdout and operation log file */
@@ -802,6 +806,228 @@ export class CliClusterCreatorService {
         `BYOS cluster creation failed: ${(error as Error).message}`,
         'ERROR',
       );
+      cluster.status = ClusterStatus.ERROR;
+      await this.clusterRepository.save(cluster);
+      operation.status = OperationStatus.FAILED;
+      operation.metadata = {
+        ...operation.metadata,
+        error: (error as Error).message,
+        errorStack: (error as Error).stack,
+      };
+      await this.operationRepository.save(operation);
+      throw error;
+    }
+  }
+
+  /**
+   * Wipe + re-bootstrap the EXISTING master server over SSH, skipping
+   * provider.createServer/deleteServer entirely — the VM, firewall, VNet and
+   * shared-storage Volume stay untouched. Cloud counterpart of
+   * {@link createClusterSyncByos}. v1: single-node cloud clusters only.
+   */
+  async reinstallControlCluster(
+    cluster: ClusterEntity,
+    operation: InfrastructureOperationEntity,
+  ): Promise<void> {
+    const opId = operation.id;
+    try {
+      if (cluster.provider === CloudProvider.BYOS) {
+        throw new Error(
+          'Reinstall is not supported for BYOS clusters — use `flui env destroy --purge-host` + `flui env create --host` instead.',
+        );
+      }
+      if (cluster.nodeCount > 1) {
+        throw new Error(
+          `Reinstall only supports single-node (master-only) clusters today — this cluster has ${cluster.nodeCount} nodes.`,
+        );
+      }
+
+      operation.status = OperationStatus.IN_PROGRESS;
+      operation.currentStepIndex = 0;
+      await this.operationRepository.save(operation);
+
+      const masterNode = await this.nodeRepository.findOne({
+        where: { clusterId: cluster.id, nodeType: NodeType.MASTER },
+      });
+      if (!masterNode) {
+        throw new Error('No master node record found for this cluster.');
+      }
+      if (!cluster.masterIpAddress) {
+        throw new Error('Cluster has no master IP address on record.');
+      }
+
+      const sshTarget = resolveClusterSshTarget(
+        cluster,
+        cluster.masterIpAddress,
+      );
+
+      this.log(
+        opId,
+        `Reinstalling on ${sshTarget.user}@${sshTarget.host}:${sshTarget.port} ...`,
+      );
+      operation.currentStep = OperationStep.CLUSTER_REINSTALL_INIT;
+      operation.currentStepIndex = 1;
+      await this.operationRepository.save(operation);
+
+      cluster.status = ClusterStatus.SCALING;
+      masterNode.status = NodeStatus.CREATING;
+      await this.clusterRepository.save(cluster);
+      await this.nodeRepository.save(masterNode);
+
+      this.log(opId, 'Purging existing k3s/Flui state...');
+      operation.currentStep = OperationStep.CLUSTER_REINSTALL_PURGE;
+      await this.operationRepository.save(operation);
+      await this.sshService.runScriptWithCert({
+        host: sshTarget.host,
+        port: sshTarget.port,
+        user: sshTarget.user,
+        script: this.purgeService.buildScript(false, null),
+        onData: (chunk) =>
+          this.cliLoggerService.writeLog(opId, chunk.trimEnd(), 'INFO'),
+      });
+      this.log(opId, '✅ Existing install purged');
+
+      const k3sToken = this.encryptionService.decrypt(
+        cluster.k3sTokenEncrypted,
+      );
+      const caPublicKey = await this.caService.getCaPublicKey();
+      const decrypted = this.decryptClusterSecrets(cluster);
+      const clusterMeta = cluster.metadata as any;
+      const envVnet = clusterMeta?.envVnet as
+        | {
+            vnetProviderResourceId: string;
+            vnetIpRange: string;
+            subnetProviderResourceId: string;
+            subnetIpRange: string;
+            subnetType: string;
+            networkZone: string;
+          }
+        | undefined;
+      const sharedStorageEnabled = cluster.sharedStorageEnabled !== false;
+
+      const masterUserData = await this.k3sScriptService.generateMasterScript({
+        serverId: masterNode.id,
+        clusterId: cluster.id,
+        clusterName: cluster.name,
+        k3sToken,
+        instanceId: `${cluster.name}-master`,
+        instanceName: masterNode.serverName,
+        provider: cluster.provider,
+        caPublicKey,
+        operationId: opId,
+        deployObservabilityStack: isControlClusterType(cluster.clusterType),
+        postgresPassword: decrypted.postgresPassword,
+        redisPassword: decrypted.redisPassword,
+        grafanaPassword: decrypted.grafanaPassword,
+        authMode: clusterMeta?.authMode || 'local',
+        jwtSecret: decrypted.jwtSecret,
+        adminEmail: decrypted.adminEmail,
+        adminPassword: decrypted.adminPassword,
+        encryptionKey: decrypted.encryptionKey,
+        zitadelMasterkey: decrypted.zitadelMasterkey,
+        zitadelDbAdminPassword: decrypted.zitadelDbAdminPassword,
+        zitadelDbUserPassword: decrypted.zitadelDbUserPassword,
+        zitadelAdminTempPassword: decrypted.zitadelAdminTempPassword,
+        fluiApiKey: decrypted.fluiApiKey,
+        providerApiKey: decrypted.providerToken,
+        providerScalewayAccessKey: decrypted.providerScalewayAccessKey,
+        providerScalewaySecretKey: decrypted.providerScalewaySecretKey,
+        providerRegions: decrypted.providerRegions,
+        clusterRegion: cluster.region,
+        instanceType: cluster.nodeSize,
+        clusterFirewallId: clusterMeta?.firewallId || '',
+        nipIoCertEnabled: !clusterMeta?.zitadelDomain,
+        acmeStaging: !!clusterMeta?.acmeStaging,
+        useLatest: !!clusterMeta?.useLatest,
+        nipHostnameToken: cluster.nipHostnameToken || null,
+        envVnet: envVnet
+          ? {
+              vnetProviderResourceId: envVnet.vnetProviderResourceId,
+              vnetProvider: cluster.provider,
+              vnetName: 'flui-env-vnet',
+              vnetIpRange: envVnet.vnetIpRange,
+              subnetProviderResourceId: envVnet.subnetProviderResourceId,
+              subnetIpRange: envVnet.subnetIpRange,
+              subnetType: envVnet.subnetType,
+              networkZone: envVnet.networkZone,
+            }
+          : undefined,
+        sharedStorage: sharedStorageEnabled
+          ? {
+              enabled: true,
+              volumeSizeGb: cluster.sharedStorageVolumeSizeGb ?? 20,
+            }
+          : undefined,
+      });
+
+      this.log(opId, 'Running bootstrap install...');
+      operation.currentStep = OperationStep.CLUSTER_REINSTALL_BOOTSTRAP;
+      operation.currentStepIndex = 2;
+      await this.operationRepository.save(operation);
+      await this.sshService.runScriptWithCert({
+        host: sshTarget.host,
+        port: sshTarget.port,
+        user: sshTarget.user,
+        script: masterUserData,
+        onData: (chunk) =>
+          this.cliLoggerService.writeLog(opId, chunk.trimEnd(), 'INFO'),
+      });
+      this.log(opId, `✅ Bootstrap completed on ${cluster.masterIpAddress}`);
+
+      this.log(opId, 'Waiting for control-plane / observability stack...');
+      operation.currentStep = OperationStep.CLUSTER_REINSTALL_OBSERVABILITY;
+      operation.currentStepIndex = 3;
+      await this.operationRepository.save(operation);
+      await this.waitForObservabilityStackReady(
+        cluster.masterIpAddress,
+        1800000,
+        cluster.nipHostnameToken,
+      );
+
+      operation.currentStep = OperationStep.CLUSTER_REINSTALL_FINALIZE;
+      operation.currentStepIndex = 4;
+      await this.operationRepository.save(operation);
+
+      try {
+        const kubeconfig = await this.fetchKubeconfig(cluster.masterIpAddress);
+        cluster.kubeconfigEncrypted =
+          this.encryptionService.encrypt(kubeconfig);
+        this.log(opId, '✅ Kubeconfig fetched');
+      } catch (e) {
+        this.log(
+          opId,
+          `⚠ Kubeconfig fetch skipped: ${(e as Error).message}`,
+          'WARN',
+        );
+      }
+
+      await this.createApiCredentialsSecret(opId, cluster.masterIpAddress, {
+        fluiApiKey: decrypted.fluiApiKey,
+        providerToken: decrypted.providerToken,
+        providerScalewayAccessKey: decrypted.providerScalewayAccessKey,
+        providerScalewaySecretKey: decrypted.providerScalewaySecretKey,
+        providerRegions: decrypted.providerRegions,
+        clusterRegion: cluster.region,
+        instanceType: cluster.nodeSize,
+        provider: cluster.provider,
+        bootstrapNodePrivateIp: masterNode.privateIp,
+        sharedStorageVolumeId: cluster.sharedStorageVolumeId ?? undefined,
+        sharedStorageVolumeSizeGb:
+          cluster.sharedStorageVolumeSizeGb ?? undefined,
+        envVnet,
+      });
+
+      masterNode.status = NodeStatus.READY;
+      await this.nodeRepository.save(masterNode);
+      cluster.status = ClusterStatus.READY;
+      await this.clusterRepository.save(cluster);
+
+      operation.status = OperationStatus.COMPLETED;
+      operation.currentStepIndex = operation.totalSteps;
+      await this.operationRepository.save(operation);
+      this.log(opId, `Cluster ${cluster.name} reinstalled successfully!`);
+    } catch (error) {
+      this.log(opId, `Reinstall failed: ${(error as Error).message}`, 'ERROR');
       cluster.status = ClusterStatus.ERROR;
       await this.clusterRepository.save(cluster);
       operation.status = OperationStatus.FAILED;

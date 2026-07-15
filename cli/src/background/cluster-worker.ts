@@ -44,6 +44,8 @@ async function main() {
       await handleCreateCluster(app, jobData);
     } else if (jobType === 'delete-cluster') {
       await handleDeleteCluster(app, jobData);
+    } else if (jobType === 'reinstall-cluster') {
+      await handleReinstallCluster(app, jobData);
     } else {
       throw new Error(`Unknown job type: ${jobType}`);
     }
@@ -80,15 +82,72 @@ async function handleCreateCluster(app: any, jobData: any) {
     throw new Error(`Operation ${operationId} not found`);
   }
 
-  loggerService.writeLog(operationId, `Background worker started for cluster ${cluster.name}`, 'INFO');
+  loggerService.writeLog(
+    operationId,
+    `Background worker started for cluster ${cluster.name}`,
+    'INFO',
+  );
 
   try {
     // Execute cluster creation synchronously (within this background process)
     await creatorService.createClusterSync(cluster, operation);
 
-    loggerService.writeLog(operationId, `Cluster ${cluster.name} created successfully`, 'INFO');
+    loggerService.writeLog(
+      operationId,
+      `Cluster ${cluster.name} created successfully`,
+      'INFO',
+    );
   } catch (error) {
-    loggerService.writeLog(operationId, `Cluster creation failed: ${error.message}`, 'ERROR');
+    loggerService.writeLog(
+      operationId,
+      `Cluster creation failed: ${error.message}`,
+      'ERROR',
+    );
+    throw error;
+  }
+}
+
+async function handleReinstallCluster(app: any, jobData: any) {
+  const { clusterId, operationId } = jobData;
+
+  logger.log(`Reinstalling cluster ${clusterId} (operation ${operationId})`);
+
+  const clusterRepo = app.get(CliClusterRepository);
+  const operationRepo = app.get(CliOperationRepository);
+  const creatorService = app.get(CliClusterCreatorService);
+  const loggerService = app.get(CliLoggerService);
+
+  const cluster = await clusterRepo.findOne({ where: { id: clusterId } });
+  const operation = await operationRepo.findOne({ where: { id: operationId } });
+
+  if (!cluster) {
+    throw new Error(`Cluster ${clusterId} not found`);
+  }
+
+  if (!operation) {
+    throw new Error(`Operation ${operationId} not found`);
+  }
+
+  loggerService.writeLog(
+    operationId,
+    `Background worker started for reinstall of cluster ${cluster.name}`,
+    'INFO',
+  );
+
+  try {
+    await creatorService.reinstallControlCluster(cluster, operation);
+
+    loggerService.writeLog(
+      operationId,
+      `Cluster ${cluster.name} reinstalled successfully`,
+      'INFO',
+    );
+  } catch (error) {
+    loggerService.writeLog(
+      operationId,
+      `Cluster reinstall failed: ${error.message}`,
+      'ERROR',
+    );
     throw error;
   }
 }

@@ -23,6 +23,7 @@ export enum OperationType {
   // Cluster operations
   CREATE_CLUSTER = 'create_cluster',
   DELETE_CLUSTER = 'delete_cluster',
+  REINSTALL_CLUSTER = 'reinstall_cluster',
   ADD_WORKER = 'add_worker',
   REMOVE_WORKER = 'remove_worker',
   SCALE_NODE = 'scale_node',
@@ -105,6 +106,13 @@ export enum OperationStep {
   CLUSTER_CREATE_KUBECONFIG = 'cluster_create_kubeconfig',
   CLUSTER_CREATE_WORKERS = 'cluster_create_workers',
   CLUSTER_CREATE_FINALIZING = 'cluster_create_finalizing',
+
+  // Cluster reinstall steps (wipe + re-bootstrap an existing provider-owned server)
+  CLUSTER_REINSTALL_INIT = 'cluster_reinstall_init',
+  CLUSTER_REINSTALL_PURGE = 'cluster_reinstall_purge',
+  CLUSTER_REINSTALL_BOOTSTRAP = 'cluster_reinstall_bootstrap',
+  CLUSTER_REINSTALL_OBSERVABILITY = 'cluster_reinstall_observability',
+  CLUSTER_REINSTALL_FINALIZE = 'cluster_reinstall_finalize',
 
   // Cluster deletion steps
   CLUSTER_DELETE_INIT = 'cluster_delete_init',

@@ -211,6 +211,44 @@ export class CliControlClusterService {
   }
 
   /**
+   * Fetch the control cluster and assert it's reinstall-eligible (cloud only,
+   * single-node). Also used by `env reinstall --dry-run` so an ineligible
+   * cluster can't be shown a plan that would never run. Null = no cluster;
+   * throws for any other ineligibility.
+   */
+  async getReinstallableCluster(): Promise<ClusterEntity | null> {
+    const cluster = await this.getControlCluster();
+    if (!cluster) return null;
+    if (cluster.provider === CloudProvider.BYOS) {
+      throw new Error(
+        'Reinstall is not supported for BYOS clusters — use `flui env destroy --purge-host` + `flui env create --host` instead.',
+      );
+    }
+    if (cluster.nodeCount > 1) {
+      throw new Error(
+        `Reinstall only supports single-node (master-only) clusters today — this cluster has ${cluster.nodeCount} nodes.`,
+      );
+    }
+    if (!cluster.masterIpAddress) {
+      throw new Error('Cluster has no master IP address on record.');
+    }
+    return cluster;
+  }
+
+  /**
+   * Reinstall Flui in place on the control cluster's existing master server.
+   * Guards fail fast, before any state is touched, so a rejected request
+   * never creates an operation or queues a job.
+   */
+  async reinstallControlCluster(): Promise<{ operationId: string }> {
+    const cluster = await this.getReinstallableCluster();
+    if (!cluster) {
+      throw new Error('No control cluster found.');
+    }
+    return this.clustersService.reinstallControlCluster(cluster);
+  }
+
+  /**
    * Deploy observability stack (Prometheus, Grafana, Loki)
    */
   async deployObservabilityStack(clusterId: string): Promise<void> {

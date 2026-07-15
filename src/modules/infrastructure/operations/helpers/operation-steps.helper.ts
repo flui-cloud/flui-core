@@ -80,6 +80,36 @@ export function getOperationSteps(
       }
     }
 
+    case OperationType.REINSTALL_CLUSTER: {
+      return [
+        {
+          step: OperationStep.CLUSTER_REINSTALL_INIT,
+          description: 'Validating cluster and resolving SSH access',
+          weight: 5,
+        },
+        {
+          step: OperationStep.CLUSTER_REINSTALL_PURGE,
+          description: 'Wiping k3s and Flui state from the existing server',
+          weight: 20,
+        },
+        {
+          step: OperationStep.CLUSTER_REINSTALL_BOOTSTRAP,
+          description: 'Re-running the bootstrap install',
+          weight: 35,
+        },
+        {
+          step: OperationStep.CLUSTER_REINSTALL_OBSERVABILITY,
+          description: 'Waiting for the observability stack to become ready',
+          weight: 30,
+        },
+        {
+          step: OperationStep.CLUSTER_REINSTALL_FINALIZE,
+          description: 'Fetching kubeconfig and finalizing',
+          weight: 10,
+        },
+      ];
+    }
+
     case OperationType.DELETE_CLUSTER: {
       return [
         {

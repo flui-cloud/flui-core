@@ -247,6 +247,43 @@ export class CliClustersService {
   }
 
   /**
+   * Wipe + re-bootstrap the cluster's existing master over SSH, leaving the
+   * provider-side VM/firewall/volume/VNet untouched. Runs as a detached
+   * background job like `create()` — the bootstrap can take many minutes.
+   */
+  async reinstallControlCluster(
+    cluster: ClusterEntity,
+  ): Promise<{ operationId: string }> {
+    this.logger.log(`Reinstalling control cluster: ${cluster.name}`);
+
+    const operation = this.operationRepository.create({
+      operationType: OperationType.REINSTALL_CLUSTER,
+      status: OperationStatus.PENDING,
+      resourceId: cluster.id,
+      resourceType: 'cluster',
+      resourceName: cluster.name,
+      provider: cluster.provider as any,
+      totalSteps: 5,
+      currentStepIndex: 0,
+      metadata: {
+        clusterId: cluster.id,
+        estimatedDurationInSeconds: 600,
+      },
+    });
+    await this.operationRepository.save(operation);
+
+    cluster.status = ClusterStatus.SCALING;
+    await this.clusterRepository.save(cluster);
+
+    await this.infrastructureQueue.add('reinstall-cluster', {
+      clusterId: cluster.id,
+      operationId: operation.id,
+    });
+
+    return { operationId: operation.id };
+  }
+
+  /**
    * Get cluster by ID
    */
   async findOne(id: string): Promise<ClusterEntity | null> {

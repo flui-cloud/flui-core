@@ -788,6 +788,63 @@ export class CliSshService {
     port?: number;
     onData?: (chunk: string) => void;
   }): Promise<void> {
+    return this.streamScript({
+      host: opts.host,
+      script: opts.script,
+      user: opts.user,
+      port: opts.port,
+      onData: opts.onData,
+      authArgs: ['-i', opts.keyPath],
+    });
+  }
+
+  /**
+   * Like runScriptWithKey but uses an ephemeral CA-signed cert instead of a
+   * stored key — works on any host that already trusts the Flui CA, no local
+   * key file needed. Cert validity is only checked at handshake, so it's safe
+   * for multi-minute scripts even with a short-lived cert.
+   */
+  async runScriptWithCert(opts: {
+    host: string;
+    script: string;
+    user?: string;
+    port?: number;
+    onData?: (chunk: string) => void;
+  }): Promise<void> {
+    const { privateKeyPath, certificatePath, cleanup } =
+      await this.generateEphemeralKeypair();
+    try {
+      await this.streamScript({
+        host: opts.host,
+        script: opts.script,
+        user: opts.user,
+        port: opts.port,
+        onData: opts.onData,
+        authArgs: [
+          '-i',
+          privateKeyPath,
+          '-o',
+          `CertificateFile=${certificatePath}`,
+          '-o',
+          'PasswordAuthentication=no',
+          '-o',
+          'PubkeyAuthentication=yes',
+        ],
+      });
+    } finally {
+      cleanup();
+    }
+  }
+
+  /** Shared streaming implementation behind runScriptWithKey/runScriptWithCert. */
+  private streamScript(opts: {
+    host: string;
+    script: string;
+    user?: string;
+    port?: number;
+    onData?: (chunk: string) => void;
+    authArgs: string[];
+  }): Promise<void> {
     const user = opts.user ?? 'root';
     const runner = user === 'root' ? 'bash -s' : 'sudo -n bash -s';
 
@@ -795,8 +852,7 @@ export class CliSshService {
       const child = spawn(
         'ssh',
         [
-          '-i',
-          opts.keyPath,
+          ...opts.authArgs,
           '-p',
           String(opts.port ?? 22),
           '-o',
@@ -827,7 +883,7 @@ export class CliSshService {
       child.on('error', reject);
       child.on('exit', (code) => {
         if (code === 0) resolve();
-        else reject(new Error(`Bootstrap script exited with code ${code}`));
+        else reject(new Error(`Script exited with code ${code}`));
       });
 
       // Feed the script over stdin, then close so `bash -s` runs it.
