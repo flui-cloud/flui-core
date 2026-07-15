@@ -21,7 +21,10 @@ import {
   SecretsResolveInput,
 } from '../interfaces/secrets-connection';
 import { SecretsConnectionResolver } from './secrets-connection.resolver';
-import { SecretsBootstrapService } from './secrets-bootstrap.service';
+import {
+  SecretsBootstrapService,
+  UnsealReconcileResult,
+} from './secrets-bootstrap.service';
 import { KubePortForwardService } from './kube-port-forward.service';
 import { DbConsoleAuditService } from './db-console-audit.service';
 
@@ -151,6 +154,32 @@ export class SecretsQueryService {
     const errors = e?.response?.data?.errors;
     if (errors?.length) return new BadRequestException(errors.join('; '));
     return err;
+  }
+
+  /**
+   * System auto-unseal for one install (used by the reconcile scheduler): open
+   * the pooled tunnel, re-unseal from the stored key if sealed, close. No audit —
+   * this is a system reconcile, not a user command. Returns the reconcile status.
+   */
+  async ensureUnsealed(appId: string): Promise<UnsealReconcileResult> {
+    const resolved = await this.resolver.resolve({
+      appId,
+      fluiUserId: 'system',
+    });
+    const kubeconfig = await this.clusters.getKubeconfig(
+      resolved.target.clusterId,
+    );
+    const tunnel = await this.portForward.open(
+      kubeconfig,
+      resolved.target.namespace,
+      resolved.target.podLabelSelector,
+      resolved.target.port,
+    );
+    try {
+      return await this.bootstrap.reconcileUnseal(resolved, tunnel.localPort);
+    } finally {
+      await tunnel.dispose();
+    }
   }
 
   private async withConnection<T>(

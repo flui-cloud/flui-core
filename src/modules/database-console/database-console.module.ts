@@ -69,6 +69,7 @@ import { FulltextConnectionResolver } from './services/fulltext-connection.resol
 import { FulltextQueryService } from './services/fulltext-query.service';
 import { FulltextAssistService } from './services/fulltext-assist.service';
 import { KubePortForwardService } from './services/kube-port-forward.service';
+import { OpenbaoUnsealScheduler } from './schedulers/openbao-unseal.scheduler';
 import { OwnerSecretConnectionResolver } from './services/owner-secret-connection.resolver';
 import { AppOwnershipGuard } from './guards/app-ownership.guard';
 import { DbBackupController } from './controllers/db-backup.controller';
@@ -204,6 +205,7 @@ import { DbPitrController } from './controllers/db-pitr.controller';
     SecretsQueryService,
     SecretsConnectionResolver,
     SecretsBootstrapService,
+    OpenbaoUnsealScheduler,
     // Kafka console: standalone multi-broker client lib + kafka-shell runner + copilot.
     KafkaAdapter,
     KafkaConnectionResolver,

@@ -8,6 +8,13 @@ import { ResolvedSecretsConnection } from '../interfaces/secrets-connection';
 const TOKEN_KEY = 'OPENBAO_TOKEN';
 const UNSEAL_KEY = 'BAO_UNSEAL_KEY';
 
+export interface UnsealReconcileResult {
+  initialized: boolean;
+  sealed: boolean;
+  unsealed: boolean;
+  reason: 'uninitialized' | 'already-unsealed' | 'no-key' | 'unsealed';
+}
+
 function clientError(message: string): Error {
   return Object.assign(new Error(message), { clientMessage: message });
 }
@@ -66,6 +73,63 @@ export class SecretsBootstrapService {
     }
     await this.ensureKvMount(http, token, resolved.mount);
     return token;
+  }
+
+  /**
+   * System reconcile (no console access): re-unseal an already-initialised
+   * install from its stored key. Never initialises — an uninitialised install
+   * has no key and no data yet, so it is left for the lazy console bootstrap.
+   * Used by the auto-unseal scheduler so a pod restart self-heals without a user
+   * opening the console. Idempotent.
+   */
+  async reconcileUnseal(
+    resolved: ResolvedSecretsConnection,
+    localPort: number,
+  ): Promise<UnsealReconcileResult> {
+    const http = this.client(resolved, localPort);
+    const health = await http.get('/v1/sys/health', {
+      params: { uninitcode: 200, sealedcode: 200, standbyok: true },
+    });
+    if (!health.data?.initialized) {
+      return {
+        initialized: false,
+        sealed: false,
+        unsealed: false,
+        reason: 'uninitialized',
+      };
+    }
+    if (!health.data?.sealed) {
+      return {
+        initialized: true,
+        sealed: false,
+        unsealed: false,
+        reason: 'already-unsealed',
+      };
+    }
+    const kubeconfig = await this.clusters.getKubeconfig(
+      resolved.target.clusterId,
+    );
+    const stored = await this.readSecret(
+      kubeconfig,
+      resolved.target.namespace,
+      `${resolved.slug}-secret`,
+    );
+    const key = stored[UNSEAL_KEY];
+    if (!key) {
+      return {
+        initialized: true,
+        sealed: true,
+        unsealed: false,
+        reason: 'no-key',
+      };
+    }
+    await this.expect(http.post('/v1/sys/unseal', { key }), 'unseal');
+    return {
+      initialized: true,
+      sealed: true,
+      unsealed: true,
+      reason: 'unsealed',
+    };
   }
 
   private async initialise(

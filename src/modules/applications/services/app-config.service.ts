@@ -210,56 +210,106 @@ export class AppConfigService {
       secrets = [this.secretName(app.slug)];
     }
 
-    const data: Record<string, string> = {};
-    const sensitiveKeys: string[] = [];
-    const resourceVersions: Record<string, string> = {};
-    const usedConfigMaps: string[] = [];
-    const usedSecrets: string[] = [];
+    // Always read the app's own managed Secret (singular — the name the manifest
+    // generator and building-block bootstraps write to), so keys patched
+    // out-of-band (e.g. OpenBao's access token + unseal key) surface as masked
+    // sensitive variables even when nothing references it via env/envFrom.
+    const managedSecret = `${app.slug}-secret`;
+    if (!secrets.includes(managedSecret)) secrets = [...secrets, managedSecret];
 
-    if (type === VariableType.PLAIN || type === VariableType.ALL) {
-      for (const cmName of configMaps) {
-        const resource = await this.kubernetesService.getResource(
-          kubeconfig,
-          'ConfigMap',
-          cmName,
-          app.k8sNamespace,
-        );
-        if (!resource) continue;
-        usedConfigMaps.push(cmName);
-        const rv = resource.metadata?.resourceVersion;
-        if (rv) resourceVersions[cmName] = rv;
-        Object.assign(data, resource.data ?? {});
-      }
-    }
+    const wantPlain = type === VariableType.PLAIN || type === VariableType.ALL;
+    const wantSensitive =
+      type === VariableType.SENSITIVE || type === VariableType.ALL;
 
-    if (type === VariableType.SENSITIVE || type === VariableType.ALL) {
-      for (const secretName of secrets) {
-        const resource = await this.kubernetesService.getResource(
-          kubeconfig,
-          'Secret',
-          secretName,
-          app.k8sNamespace,
-        );
-        if (!resource) continue;
-        usedSecrets.push(secretName);
-        const rv = resource.metadata?.resourceVersion;
-        if (rv) resourceVersions[secretName] = rv;
-        for (const key of Object.keys(resource.data ?? {})) {
-          data[key] = '****';
-          sensitiveKeys.push(key);
-        }
-      }
-    }
+    const cm = wantPlain
+      ? await this.readConfigMapVars(kubeconfig, configMaps, app.k8sNamespace)
+      : {
+          used: [] as string[],
+          data: {} as Record<string, string>,
+          versions: {} as Record<string, string>,
+        };
+    const sec = wantSensitive
+      ? await this.readSecretVars(kubeconfig, secrets, app.k8sNamespace)
+      : {
+          used: [] as string[],
+          data: {} as Record<string, string>,
+          versions: {} as Record<string, string>,
+          sensitiveKeys: [] as string[],
+        };
 
     return {
       name: app.slug,
       type,
       scope: 'app',
-      data,
-      sensitiveKeys,
-      sources: { configMaps: usedConfigMaps, secrets: usedSecrets },
-      resourceVersions,
+      data: { ...cm.data, ...sec.data },
+      sensitiveKeys: sec.sensitiveKeys,
+      sources: { configMaps: cm.used, secrets: sec.used },
+      resourceVersions: { ...cm.versions, ...sec.versions },
     };
+  }
+
+  private async readConfigMapVars(
+    kubeconfig: string,
+    names: string[],
+    namespace: string,
+  ): Promise<{
+    used: string[];
+    data: Record<string, string>;
+    versions: Record<string, string>;
+  }> {
+    const data: Record<string, string> = {};
+    const versions: Record<string, string> = {};
+    const used: string[] = [];
+    for (const name of names) {
+      const resource = await this.kubernetesService.getResource(
+        kubeconfig,
+        'ConfigMap',
+        name,
+        namespace,
+      );
+      if (!resource) continue;
+      used.push(name);
+      const rv = resource.metadata?.resourceVersion;
+      if (rv) versions[name] = rv;
+      Object.assign(data, resource.data ?? {});
+    }
+    return { used, data, versions };
+  }
+
+  private async readSecretVars(
+    kubeconfig: string,
+    names: string[],
+    namespace: string,
+  ): Promise<{
+    used: string[];
+    data: Record<string, string>;
+    versions: Record<string, string>;
+    sensitiveKeys: string[];
+  }> {
+    const data: Record<string, string> = {};
+    const versions: Record<string, string> = {};
+    const used: string[] = [];
+    const sensitiveKeys: string[] = [];
+    for (const name of names) {
+      const resource = await this.kubernetesService.getResource(
+        kubeconfig,
+        'Secret',
+        name,
+        namespace,
+      );
+      if (!resource) continue;
+      used.push(name);
+      const rv = resource.metadata?.resourceVersion;
+      if (rv) versions[name] = rv;
+      for (const key of Object.keys(resource.data ?? {})) {
+        // Skip config-file payloads (Flui stores them as file-<i> keys in the
+        // same Secret) — they are mounted files, not environment variables.
+        if (/^file-\d+$/.test(key)) continue;
+        data[key] = '****';
+        sensitiveKeys.push(key);
+      }
+    }
+    return { used, data, versions, sensitiveKeys };
   }
 
   // ── Cluster-scoped ─────────────────────────────────────────────────────

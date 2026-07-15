@@ -10,6 +10,12 @@ metadata:
     EU server. Open, community-driven fork of HashiCorp Vault. Building block:
     referenced as a dependency by apps that need a secrets backend; managed from
     Flui's built-in secrets console.
+
+    After a restart the server starts locked (sealed) and Flui automatically
+    unlocks it within about a minute — no manual step. The generated access token
+    and unlock key are kept in this app's secrets and shown (masked) under
+    Configuration → Sensitive Variables. They are managed by Flui: don't edit or
+    delete them, or the secrets store can become unrecoverable.
   appKind: APPLICATION
   category: security
   tags:
@@ -43,6 +49,9 @@ spec:
   # Run a production server with file storage (single-node). Re-invoke the
   # image's entrypoint so it sets up the runtime, then start the configured
   # server. Flui's secrets console initialises + unseals it on first use.
+  # There is no seal stanza (KMS/transit auto-unseal): after any pod restart the
+  # server comes up sealed, and the openbao-unseal reconcile scheduler re-unseals
+  # it from the stored BAO_UNSEAL_KEY within ~1 min so consumer apps self-heal.
   command:
     - docker-entrypoint.sh
     - server
@@ -69,7 +78,10 @@ spec:
     fsGroup: 1000
 
   # No env: the access token + unseal key are generated at init time by the
-  # secrets console bootstrap and written into this install's Secret.
+  # secrets console bootstrap and written into this install's Secret
+  # (OPENBAO_TOKEN + BAO_UNSEAL_KEY). getAppVariablesCombined surfaces them
+  # (masked) under Configuration → Sensitive Variables so the user knows they
+  # exist and are Flui-managed.
   env: []
 
   configFiles:
