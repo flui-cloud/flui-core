@@ -2,7 +2,7 @@ import { Args, Command, Flags } from '@oclif/core';
 import chalk from 'chalk';
 import ora from 'ora';
 import { CliAppService } from '../../../lib/services/cli-app.service';
-import { resolveCluster } from '../../../lib/resolve-cluster';
+import { resolveClusterRef } from '../../../lib/resolve-cluster';
 import { confirmPrompt } from '../../../lib/prompts';
 
 export default class AppSnapshotSwap extends Command {
@@ -43,7 +43,7 @@ export default class AppSnapshotSwap extends Command {
   async run(): Promise<void> {
     const { args, flags } = await this.parse(AppSnapshotSwap);
     try {
-      const { id: clusterId } = await resolveCluster(flags.cluster);
+      const { id: clusterId } = await resolveClusterRef(flags.cluster);
       const service = await CliAppService.create(clusterId);
       const app = await service.getAppByName(args.name);
       const volumeName = flags.volume ?? 'data';

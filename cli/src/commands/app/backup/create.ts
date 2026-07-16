@@ -5,7 +5,7 @@ import {
   CliAppService,
   BackupDestinationInput,
 } from '../../../lib/services/cli-app.service';
-import { resolveCluster } from '../../../lib/resolve-cluster';
+import { resolveClusterRef } from '../../../lib/resolve-cluster';
 import { formatBytes } from '../../../lib/format-bytes';
 
 export default class AppBackupCreate extends Command {
@@ -101,7 +101,7 @@ export default class AppBackupCreate extends Command {
       : 'auto-provisioned bucket';
     const spinner = ora(`Backing up "${args.name}" to ${target}...`).start();
     try {
-      const { id: clusterId } = await resolveCluster(flags.cluster);
+      const { id: clusterId } = await resolveClusterRef(flags.cluster);
       const service = await CliAppService.create(clusterId);
       const app = await service.getAppByName(args.name);
       const backup = await service.createAppBackup(app.id, {

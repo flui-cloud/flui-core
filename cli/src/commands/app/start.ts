@@ -2,7 +2,7 @@ import { Args, Command, Flags } from '@oclif/core';
 import chalk from 'chalk';
 import ora from 'ora';
 import { CliAppService } from '../../lib/services/cli-app.service';
-import { resolveCluster } from '../../lib/resolve-cluster';
+import { resolveClusterRef } from '../../lib/resolve-cluster';
 
 export default class AppStart extends Command {
   static readonly description = 'Start a stopped application';
@@ -29,7 +29,7 @@ export default class AppStart extends Command {
     const spinner = ora(`Starting "${args.name}"...`).start();
 
     try {
-      const { id: clusterId } = await resolveCluster(flags.cluster);
+      const { id: clusterId } = await resolveClusterRef(flags.cluster);
       const service = await CliAppService.create(clusterId);
       const app = await service.getAppByName(args.name);
       await service.start(app.id);

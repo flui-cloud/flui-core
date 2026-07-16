@@ -5,7 +5,7 @@ import {
   CliAppService,
   SnapshotResponse,
 } from '../../../lib/services/cli-app.service';
-import { resolveCluster } from '../../../lib/resolve-cluster';
+import { resolveClusterRef } from '../../../lib/resolve-cluster';
 import { formatBytes } from '../../../lib/format-bytes';
 
 export default class AppSnapshotList extends Command {
@@ -39,7 +39,7 @@ export default class AppSnapshotList extends Command {
     const { flags } = await this.parse(AppSnapshotList);
     const spinner = ora('Fetching snapshots...').start();
     try {
-      const { id: clusterId } = await resolveCluster(flags.cluster);
+      const { id: clusterId } = await resolveClusterRef(flags.cluster);
       const service = await CliAppService.create(clusterId);
 
       let items: SnapshotResponse[];

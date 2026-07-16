@@ -5,7 +5,7 @@ import {
   CliAppService,
   ScheduledJobRun,
 } from '../../../lib/services/cli-app.service';
-import { resolveCluster } from '../../../lib/resolve-cluster';
+import { resolveClusterRef } from '../../../lib/resolve-cluster';
 
 export default class AppScheduleLogs extends Command {
   static readonly description =
@@ -43,7 +43,7 @@ export default class AppScheduleLogs extends Command {
     const { args, flags } = await this.parse(AppScheduleLogs);
     const spinner = ora('Fetching run logs...').start();
     try {
-      const { id: clusterId } = await resolveCluster(flags.cluster);
+      const { id: clusterId } = await resolveClusterRef(flags.cluster);
       const service = await CliAppService.create(clusterId);
       const app = await service.getAppByName(args.app);
 

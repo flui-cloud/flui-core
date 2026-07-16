@@ -2,7 +2,7 @@ import { Command, Flags } from '@oclif/core';
 import chalk from 'chalk';
 import ora from 'ora';
 import { CliAppService, AppGroup } from '../../lib/services/cli-app.service';
-import { resolveCluster } from '../../lib/resolve-cluster';
+import { resolveClusterRef } from '../../lib/resolve-cluster';
 
 export default class AppList extends Command {
   static readonly description = 'List all applications in the cluster';
@@ -37,7 +37,7 @@ export default class AppList extends Command {
     const spinner = ora('Fetching applications...').start();
 
     try {
-      const { id: clusterId } = await resolveCluster(flags.cluster);
+      const { id: clusterId } = await resolveClusterRef(flags.cluster);
       const service = await CliAppService.create(clusterId);
       const groups = await service.listAppGroups();
 

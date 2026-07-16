@@ -5,7 +5,7 @@ import {
   CliAppService,
   BackupDestinationInput,
 } from '../../../lib/services/cli-app.service';
-import { resolveCluster } from '../../../lib/resolve-cluster';
+import { resolveClusterRef } from '../../../lib/resolve-cluster';
 import { confirmPrompt } from '../../../lib/prompts';
 
 export default class AppBackupDelete extends Command {
@@ -87,7 +87,7 @@ export default class AppBackupDelete extends Command {
     };
     const spinner = ora(`Deleting backup ${args.exportId}...`).start();
     try {
-      const { id: clusterId } = await resolveCluster(flags.cluster);
+      const { id: clusterId } = await resolveClusterRef(flags.cluster);
       const service = await CliAppService.create(clusterId);
       const app = await service.getAppByName(args.name);
       await service.deleteAppBackup(app.id, args.exportId, destination);

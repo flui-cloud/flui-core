@@ -6,7 +6,7 @@ import path from 'node:path';
 import { execSync } from 'node:child_process';
 import { ApiClient } from '../lib/api-client';
 import { ConfigStorage } from '../lib/config-storage';
-import { resolveCluster } from '../lib/resolve-cluster';
+import { resolveClusterRef } from '../lib/resolve-cluster';
 import { detectFrameworkFromProject } from '../lib/framework-detector';
 import { runFrameworkPostChecks } from '../lib/framework-postchecks';
 import { validate, parseYaml } from '@flui-cloud/spec';
@@ -239,9 +239,9 @@ export default class Deploy extends Command {
     flags: Record<string, unknown>,
     filePath: string,
   ): Promise<void> {
-    let resolved: Awaited<ReturnType<typeof resolveCluster>>;
+    let resolved: Awaited<ReturnType<typeof resolveClusterRef>>;
     try {
-      resolved = await resolveCluster(flags.cluster as string | undefined);
+      resolved = await resolveClusterRef(flags.cluster as string | undefined);
     } catch (error: unknown) {
       this.error((error as Error).message, { exit: 1 });
     }
@@ -493,9 +493,9 @@ export default class Deploy extends Command {
     yaml: string,
     flags: Record<string, unknown>,
   ): Promise<void> {
-    let resolved: Awaited<ReturnType<typeof resolveCluster>>;
+    let resolved: Awaited<ReturnType<typeof resolveClusterRef>>;
     try {
-      resolved = await resolveCluster(flags.cluster as string | undefined);
+      resolved = await resolveClusterRef(flags.cluster as string | undefined);
     } catch (error: unknown) {
       this.error((error as Error).message, { exit: 1 });
     }

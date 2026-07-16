@@ -2,7 +2,7 @@ import { Args, Command, Flags } from '@oclif/core';
 import chalk from 'chalk';
 import ora from 'ora';
 import { CliAppService, AppBuild } from '../../lib/services/cli-app.service';
-import { resolveCluster } from '../../lib/resolve-cluster';
+import { resolveClusterRef } from '../../lib/resolve-cluster';
 
 export default class AppBuilds extends Command {
   static readonly description = 'List recent builds for an application';
@@ -35,7 +35,7 @@ export default class AppBuilds extends Command {
     const spinner = ora(`Fetching builds for "${args.name}"...`).start();
 
     try {
-      const { id: clusterId } = await resolveCluster(flags.cluster);
+      const { id: clusterId } = await resolveClusterRef(flags.cluster);
       const service = await CliAppService.create(clusterId);
       const app = await service.getAppByName(args.name);
       const builds = (await service.listBuilds(app.id)).slice(0, flags.limit);

@@ -5,7 +5,7 @@ import {
   CliAppService,
   DeleteTarget,
 } from '../../lib/services/cli-app.service';
-import { resolveCluster } from '../../lib/resolve-cluster';
+import { resolveClusterRef } from '../../lib/resolve-cluster';
 import { confirmByTypingPrompt } from '../../lib/prompts';
 
 const POLL_INTERVAL_MS = 5000;
@@ -53,7 +53,7 @@ export default class AppDelete extends Command {
 
     let service: CliAppService;
     try {
-      const { id: clusterId } = await resolveCluster(flags.cluster);
+      const { id: clusterId } = await resolveClusterRef(flags.cluster);
       service = await CliAppService.create(clusterId);
     } catch (error: any) {
       spinner.fail('Setup failed');

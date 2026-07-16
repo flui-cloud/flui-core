@@ -1,27 +1,6 @@
 import { isControlClusterType } from 'src/modules/infrastructure/clusters/entities/cluster.entity';
-import { CliClusterRepository } from './repositories/cli-cluster.repository';
-import { ConfigStorage } from './config-storage';
-import { ApiClient } from './api-client';
+import { ClusterSummary, listClusters } from './cluster-listing';
 import { resolveClusterSshTarget, SshTarget } from './cluster-ssh-target';
-
-interface SshCandidateNode {
-  serverName?: string;
-  nodeType?: string;
-  ipAddress?: string;
-}
-
-interface SshCandidateCluster {
-  id: string;
-  name: string;
-  provider?: string;
-  clusterType?: string;
-  // Absent from the API's cluster DTO, so a BYOS *workload* falls back to
-  // <ip>:22 as root. Correct for provisioned providers; revisit if BYOS
-  // workloads ever need addressing over a published port.
-  metadata?: unknown;
-  masterIpAddress?: string;
-  nodes?: SshCandidateNode[];
-}
 
 export interface ResolvedSshTarget {
   target: SshTarget;
@@ -45,7 +24,7 @@ export function parseNodeRef(ref: string): {
   };
 }
 
-function formatClusterList(clusters: SshCandidateCluster[]): string {
+function formatClusterList(clusters: ClusterSummary[]): string {
   return clusters
     .map((c) => {
       const nodes = (c.nodes ?? [])
@@ -58,47 +37,8 @@ function formatClusterList(clusters: SshCandidateCluster[]): string {
     .join('\n');
 }
 
-/**
- * Local store first: it holds the clusters this CLI created (the control
- * cluster), so `flui ssh master` keeps working without a login or a reachable
- * API. Dashboard-created workload clusters only exist in the control cluster's
- * database, so anything not found locally is looked up over the API.
- */
-async function listCandidateClusters(): Promise<{
-  clusters: SshCandidateCluster[];
-  apiError?: string;
-}> {
-  const local =
-    (await new CliClusterRepository().find()) as SshCandidateCluster[];
-
-  try {
-    const storage = new ConfigStorage();
-    const apiUrl = storage.getApiUrlOrThrow();
-    const apiKey = storage.getApiKey();
-    if (!apiKey) {
-      return { clusters: local, apiError: 'not logged in (`flui auth login`)' };
-    }
-    const remote = await new ApiClient({ baseUrl: apiUrl, apiKey }).get<
-      SshCandidateCluster[]
-    >('/infrastructure/clusters');
-
-    const byName = new Map(local.map((c) => [c.name.toLowerCase(), c]));
-    for (const cluster of remote) {
-      if (!byName.has(cluster.name.toLowerCase())) {
-        byName.set(cluster.name.toLowerCase(), cluster);
-      }
-    }
-    return { clusters: [...byName.values()] };
-  } catch (error) {
-    return {
-      clusters: local,
-      apiError: error instanceof Error ? error.message : String(error),
-    };
-  }
-}
-
 function resolveNodeIp(
-  cluster: SshCandidateCluster,
+  cluster: ClusterSummary,
   nodeName: string,
 ): { ip: string; label: string } {
   const nodes = cluster.nodes ?? [];
@@ -150,7 +90,7 @@ export async function resolveSshTarget(
   ref: string,
 ): Promise<ResolvedSshTarget> {
   const { clusterName, nodeName } = parseNodeRef(ref);
-  const { clusters, apiError } = await listCandidateClusters();
+  const { clusters, apiError } = await listClusters();
 
   if (clusters.length === 0) {
     const why = apiError ? ` (API lookup failed: ${apiError})` : '';
