@@ -17,7 +17,10 @@ import {
   OperationStep,
   OperationType,
 } from '../../infrastructure/servers/entities/infrastructure-operations.entity';
-import { ClusterEntity } from '../../infrastructure/clusters/entities/cluster.entity';
+import {
+  ClusterEntity,
+  isControlClusterType,
+} from '../../infrastructure/clusters/entities/cluster.entity';
 import { KubernetesService } from '../../infrastructure/shared/services/kubernetes.service';
 import { EncryptionService } from '../../shared/encryption/services/encryption.service';
 import { ApplicationsRepository } from '../repositories/applications.repository';
@@ -96,8 +99,15 @@ export class ApplicationDeployProcessor {
 
   /**
    * Auto-pin a dedicated app to the worker with the most free capacity, unless
-   * it is already pinned or opted into the master. Fails loudly if no worker
-   * exists. Single chokepoint for both catalog and app deploys.
+   * it is already pinned or opted into the master. Single chokepoint for both
+   * catalog and app deploys.
+   *
+   * With no worker node, the fallback depends on cluster type. A workload
+   * cluster's sole node is a k3s server, but the cluster exists only to host
+   * workloads — there is no Flui control plane on it to protect — so a dedicated
+   * app lands on it automatically, no --allow-master needed. A control cluster's
+   * master runs Flui itself, so that still requires the explicit escape hatch
+   * (app.allowMasterPlacement) and otherwise fails loudly.
    */
   private async ensureDedicatedPlacement(
     app: ApplicationEntity,
@@ -106,23 +116,38 @@ export class ApplicationDeployProcessor {
     if (app.dedicatedNodeName || app.allowMasterPlacement) return app;
 
     const worker = await this.dedicatedPlacement.selectBestWorker(app);
-    if (!worker) {
-      throw new BadRequestException({
-        code: 'NO_WORKER_FOR_DEDICATED_APP',
-        message:
-          `App "${app.slug}" uses dedicated (node-local) storage, which must run on a ` +
-          `worker node, but this cluster has none. Add one with \`flui node add\`, or ` +
-          `redeploy with --allow-master to place it on the control-plane node.`,
+    if (worker) {
+      this.logger.warn(
+        `Dedicated app ${app.slug} auto-pinned to worker ${worker} (most free capacity)`,
+      );
+      const updated = await this.applicationsRepository.update(app.id, {
+        dedicatedNodeName: worker,
       });
+      return updated ?? app;
     }
 
-    this.logger.warn(
-      `Dedicated app ${app.slug} auto-pinned to worker ${worker} (most free capacity)`,
-    );
-    const updated = await this.applicationsRepository.update(app.id, {
-      dedicatedNodeName: worker,
+    const cluster = await this.clusterRepository.findOne({
+      where: { id: app.clusterId },
     });
-    return updated ?? app;
+    if (cluster && !isControlClusterType(cluster.clusterType)) {
+      this.logger.warn(
+        `Dedicated app ${app.slug} placed on the master of workload cluster ` +
+          `${cluster.name} — no worker node, and none is required on a workload cluster`,
+      );
+      const updated = await this.applicationsRepository.update(app.id, {
+        allowMasterPlacement: true,
+      });
+      app.allowMasterPlacement = true;
+      return updated ?? app;
+    }
+
+    throw new BadRequestException({
+      code: 'NO_WORKER_FOR_DEDICATED_APP',
+      message:
+        `App "${app.slug}" uses dedicated (node-local) storage, which must run on a ` +
+        `worker node, but this cluster has none. Add one with \`flui node add\`, or ` +
+        `redeploy with --allow-master to place it on the control-plane node.`,
+    });
   }
 
   /**
