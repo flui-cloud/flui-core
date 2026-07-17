@@ -171,6 +171,8 @@ export interface CatalogLinkedEnv {
 export interface CatalogSpecBuildingBlock {
   type: CatalogAppType.BUILDING_BLOCK;
   image: CatalogImageSource;
+  /** Set only on blocks that ARE a datastore (dbgate/minio and friends are not). */
+  engine?: CatalogDbEngine;
   ports: CatalogPort[];
   volumes?: CatalogVolume[];
   persistence?: CatalogPersistence;
@@ -270,9 +272,32 @@ export interface CatalogPostInstallStep {
   };
 }
 
+/**
+ * The data engine a component/block speaks — drives the dashboard's Access tab and console
+ * routing. Declared, never inferred from the image or the component name: immich's `redis`
+ * component actually runs valkey/valkey, and umami's web image is tagged `postgresql-*`.
+ * Superset of the console-capable `DbEngine`; the rest only get connection details.
+ */
+export type CatalogDbEngine =
+  | 'postgres'
+  | 'mariadb'
+  | 'redis'
+  | 'valkey'
+  | 'ferretdb'
+  | 'garage'
+  | 'opensearch'
+  | 'nats'
+  | 'rabbitmq'
+  | 'memcached'
+  | 'openbao'
+  | 'kafka'
+  | 'meilisearch';
+
 export interface CatalogComponent {
   name: string;
   image: CatalogImageSource;
+  /** Set only on components that ARE a datastore. Omit for web/app components. */
+  engine?: CatalogDbEngine;
   ports?: CatalogPort[];
   volumes?: CatalogVolume[];
   persistence?: CatalogPersistence;

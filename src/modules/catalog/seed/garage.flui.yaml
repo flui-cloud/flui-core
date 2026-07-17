@@ -34,6 +34,7 @@ metadata:
 
 spec:
   type: building-block
+  engine: garage
 
   image:
     registry: docker.io

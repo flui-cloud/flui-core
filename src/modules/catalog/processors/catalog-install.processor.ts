@@ -656,6 +656,9 @@ export class CatalogInstallProcessor {
         'flui.cloud/catalog-app': definition.slug,
         'flui.cloud/catalog-install': install.id,
         'flui.cloud/app-type': definition.appType,
+        // Only a building block can be a datastore; standalone apps never are.
+        ...(spec.type === CatalogAppType.BUILDING_BLOCK &&
+          spec.engine && { 'flui.cloud/db-engine': spec.engine }),
       },
       metadata: {
         catalogInstallId: install.id,
@@ -1448,6 +1451,7 @@ export class CatalogInstallProcessor {
         'flui.cloud/catalog-install': install.id,
         'flui.cloud/app-type': definition.appType,
         'flui.cloud/composed-component': component.name,
+        ...(component.engine && { 'flui.cloud/db-engine': component.engine }),
       },
       metadata: {
         catalogInstallId: install.id,

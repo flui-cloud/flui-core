@@ -25,6 +25,7 @@ metadata:
 
 spec:
   type: building-block
+  engine: postgres
 
   image:
     registry: ghcr.io

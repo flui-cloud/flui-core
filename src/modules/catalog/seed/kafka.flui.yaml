@@ -34,6 +34,7 @@ metadata:
 
 spec:
   type: building-block
+  engine: kafka
 
   # Official Apache Kafka image, KRaft combined mode (broker + controller in one
   # node) — no ZooKeeper. Pinned to the latest stable 4.3.x line.

@@ -27,6 +27,7 @@ metadata:
 
 spec:
   type: building-block
+  engine: valkey
 
   image:
     registry: docker.io

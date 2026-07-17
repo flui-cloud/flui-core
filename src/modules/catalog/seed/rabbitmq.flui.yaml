@@ -34,6 +34,7 @@ metadata:
 
 spec:
   type: building-block
+  engine: rabbitmq
 
   # The -management image bundles the management plugin (HTTP API + UI on 15672),
   # which the Flui messaging console drives for stats, queues, publish and peek.

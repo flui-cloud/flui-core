@@ -49,6 +49,7 @@ spec:
 
   components:
     - name: postgres
+      engine: postgres
       image:
         registry: docker.io
         repository: library/postgres

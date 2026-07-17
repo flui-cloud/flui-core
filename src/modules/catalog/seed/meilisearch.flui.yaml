@@ -28,6 +28,7 @@ metadata:
 
 spec:
   type: building-block
+  engine: meilisearch
 
   image:
     registry: docker.io

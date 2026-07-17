@@ -50,6 +50,7 @@ spec:
 
   components:
     - name: postgres
+      engine: postgres
       image:
         registry: docker.io
         repository: library/postgres
@@ -113,6 +114,7 @@ spec:
         retries: 10
 
     - name: valkey
+      engine: valkey
       image:
         registry: docker.io
         repository: valkey/valkey

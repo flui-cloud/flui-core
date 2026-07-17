@@ -16,6 +16,7 @@ import {
 } from '../interfaces/db-connection';
 import {
   ENGINE_PROFILES,
+  declaredEngineOf,
   detectEngineFromImage,
 } from '../engine/engine-profile';
 
@@ -56,7 +57,10 @@ export class OwnerSecretConnectionResolver implements DbConnectionResolver {
       );
     }
 
-    const engine = detectEngineFromImage(app.imageRef) ?? this.detectByEnv(app);
+    const engine =
+      declaredEngineOf(app.labels) ??
+      detectEngineFromImage(app.imageRef) ??
+      this.detectByEnv(app);
     if (!engine) {
       throw new BadRequestException(
         `Application ${app.id} is not a supported database (unrecognized engine)`,

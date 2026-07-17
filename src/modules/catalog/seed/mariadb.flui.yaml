@@ -28,6 +28,7 @@ metadata:
 
 spec:
   type: building-block
+  engine: mariadb
 
   image:
     registry: docker.io

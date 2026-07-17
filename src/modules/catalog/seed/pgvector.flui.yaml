@@ -30,6 +30,7 @@ metadata:
 
 spec:
   type: building-block
+  engine: postgres
 
   image:
     registry: docker.io

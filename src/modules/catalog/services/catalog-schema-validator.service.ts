@@ -12,6 +12,7 @@ export class CatalogSchemaValidatorService {
     'configFiles',
     'command',
     'defaultCredentials',
+    'engine',
   ];
 
   getSchema(): unknown {

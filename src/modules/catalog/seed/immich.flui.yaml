@@ -48,6 +48,7 @@ spec:
   components:
     # ── 1. Database (pgvector/vectorchord flavour — must be inlined, not linked BB) ──
     - name: database
+      engine: postgres
       image:
         registry: ghcr.io
         repository: immich-app/postgres
@@ -116,6 +117,7 @@ spec:
 
     # ── 2. Cache (Valkey / Redis-compatible) ──────────────────────────────────────
     - name: redis
+      engine: valkey
       image:
         registry: docker.io
         repository: valkey/valkey

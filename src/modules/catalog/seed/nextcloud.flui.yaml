@@ -47,6 +47,7 @@ spec:
 
   components:
     - name: db
+      engine: mariadb
       image:
         registry: docker.io
         repository: library/mariadb
@@ -117,6 +118,7 @@ spec:
         retries: 10
 
     - name: redis
+      engine: redis
       image:
         registry: docker.io
         repository: library/redis

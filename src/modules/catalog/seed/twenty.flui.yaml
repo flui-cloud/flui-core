@@ -48,6 +48,7 @@ spec:
 
   components:
     - name: postgres
+      engine: postgres
       image:
         registry: docker.io
         repository: library/postgres
@@ -109,6 +110,7 @@ spec:
         retries: 10
 
     - name: redis
+      engine: redis
       image:
         registry: docker.io
         repository: library/redis

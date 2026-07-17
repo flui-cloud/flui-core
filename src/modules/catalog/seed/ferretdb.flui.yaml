@@ -49,6 +49,7 @@ spec:
     # first init; only the three POSTGRES_* envs are required. POSTGRES_DB MUST be
     # `postgres` (FerretDB requires that database to exist).
     - name: db
+      engine: postgres
       image:
         registry: ghcr.io
         repository: ferretdb/postgres-documentdb
@@ -120,6 +121,7 @@ spec:
     # mode). FERRETDB_USER/FERRETDB_PASSWORD are surfaced for the Flui document
     # console / `flui db credentials`; FerretDB itself reads creds from the URL.
     - name: ferretdb
+      engine: ferretdb
       dependsOn:
         - db
       image:
