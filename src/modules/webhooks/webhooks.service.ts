@@ -3,6 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { ApplicationEntity } from '../applications/entities/application.entity';
 import { ApplicationDeployService } from '../applications/services/application-deploy.service';
+import { ApplicationSourceDeployService } from '../applications/services/application-source-deploy.service';
 import { ApplicationEventsGateway } from '../applications/gateway/application-events.gateway';
 import { ImageRegistryService } from '../image-registry/services/image-registry.service';
 import { ApplicationStatus } from '../applications/enums/application-status.enum';
@@ -21,6 +22,7 @@ export class WebhooksService {
     @InjectRepository(ApplicationEntity)
     private readonly applicationRepository: Repository<ApplicationEntity>,
     private readonly applicationDeployService: ApplicationDeployService,
+    private readonly applicationSourceDeployService: ApplicationSourceDeployService,
     private readonly applicationEventsGateway: ApplicationEventsGateway,
     private readonly imageRegistryService: ImageRegistryService,
   ) {}
@@ -86,7 +88,16 @@ export class WebhooksService {
       }
     }
 
-    // Trigger K3s deployment with the new image
+    // Re-read flui.yaml at the pushed commit BEFORE deploying, so a `git push`
+    // applies the committed manifest (env, port, resources, …) like `flui deploy`
+    // — not an image swap over stale DB env. Best-effort: never blocks the deploy.
+    await this.applicationSourceDeployService.reapplyManifestAtCommit(
+      dto.appId,
+      dto.commitSha,
+      dto.branch,
+    );
+
+    // Trigger K3s deployment with the new image (carries the refreshed env)
     if (dto.imageRef) {
       await this.applicationDeployService.triggerDeployWithImage(
         dto.appId,

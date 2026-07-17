@@ -1,4 +1,4 @@
-import { mergeAppEnv } from './env-merge.util';
+import { mergeAppEnv, collectEnvShadows } from './env-merge.util';
 import { ApplicationEnvVar } from '../interfaces/source-config.interface';
 
 const names = (env: ApplicationEnvVar[]) => env.map((e) => e.name).sort();
@@ -20,7 +20,7 @@ describe('mergeAppEnv', () => {
     expect(byName(out, 'DATABASE_URL')?.value).toBe('postgres://…');
   });
 
-  it('lets a manifest value update its own key but not a user key', () => {
+  it('reclaims a key it declares, overwriting a pinned user value (git is authoritative)', () => {
     const existing: ApplicationEnvVar[] = [
       { name: 'NODE_ENV', value: 'staging', source: 'manifest' },
       { name: 'API_KEY', value: 'k', source: 'user' },
@@ -31,7 +31,39 @@ describe('mergeAppEnv', () => {
     ];
     const out = mergeAppEnv(existing, manifest);
     expect(byName(out, 'NODE_ENV')?.value).toBe('production');
-    expect(byName(out, 'API_KEY')?.value).toBe('k'); // user wins
+    expect(byName(out, 'API_KEY')?.value).toBe('from-manifest'); // manifest reclaims
+    expect(byName(out, 'API_KEY')?.source).toBe('manifest');
+  });
+
+  it('surfaces the reclaim as a shadow (visibility, never silent)', () => {
+    const existing: ApplicationEnvVar[] = [
+      { name: 'API_URL', value: 'http://old.nip.io', source: 'user' },
+    ];
+    const manifest: ApplicationEnvVar[] = [
+      { name: 'API_URL', value: 'https://api.flui.cloud', source: 'manifest' },
+    ];
+    const shadows = collectEnvShadows(existing, manifest);
+    expect(shadows).toEqual([
+      {
+        name: 'API_URL',
+        previous: 'http://old.nip.io',
+        manifest: 'https://api.flui.cloud',
+      },
+    ]);
+  });
+
+  it('an explicit --env override re-asserts the user value and is not shadowed', () => {
+    const existing: ApplicationEnvVar[] = [
+      { name: 'API_URL', value: 'http://old.nip.io', source: 'user' },
+    ];
+    const manifest: ApplicationEnvVar[] = [
+      { name: 'API_URL', value: 'https://api.flui.cloud', source: 'manifest' },
+    ];
+    const overrides = { API_URL: 'https://custom.example.com' };
+    expect(collectEnvShadows(existing, manifest, overrides)).toEqual([]);
+    const out = mergeAppEnv(existing, manifest, overrides);
+    expect(byName(out, 'API_URL')?.value).toBe('https://custom.example.com');
+    expect(byName(out, 'API_URL')?.source).toBe('user');
   });
 
   it('preserves a legacy untagged link (externalSecretRef) even if the manifest names it', () => {

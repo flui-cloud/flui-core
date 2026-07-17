@@ -16,10 +16,26 @@ import { ApplicationWorkflowService } from './application-workflow.service';
 import { ApplicationService } from './application.service';
 import { ApplicationDeployService } from './application-deploy.service';
 import { ApplicationManifest } from '../interfaces/application-manifest.interface';
-import { validateApplicationManifest } from '../utils/application-manifest.util';
+import {
+  validateApplicationManifest,
+  parseApplicationManifest,
+} from '../utils/application-manifest.util';
 import { ApplicationManifestEnvVar } from '@flui-cloud/spec';
-import { ApplicationEnvVar } from '../interfaces/source-config.interface';
-import { mergeAppEnv } from '../utils/env-merge.util';
+import {
+  ApplicationEnvVar,
+  GitBuildSourceConfig,
+} from '../interfaces/source-config.interface';
+import { RepositoriesService } from '../../repositories/services/repositories.service';
+import { mergeAppEnv, collectEnvShadows } from '../utils/env-merge.util';
+import {
+  applyEnvironmentProfile,
+  normalizeManifestEnv,
+  pickAppManifest,
+  readServiceRef,
+  resolveServiceRefAgainst,
+  ServiceRef,
+  ServiceRefScope,
+} from '../utils/manifest-env.util';
 import {
   DeployFromYamlDto,
   DeployFromYamlResponseDto,
@@ -36,6 +52,12 @@ import { CertificateProvider } from '../../providers/enums/certificate-provider.
 
 const ENDPOINT_SPEC_METADATA_KEY = 'flui.endpoint.spec';
 
+const SERVICE_REF_SKIP_REASON = {
+  'not-found': 'matches no app',
+  'cross-cluster': 'is on another cluster — not reachable in-cluster',
+  'cross-project': 'belongs to a different project',
+} as const;
+
 @Injectable()
 export class ApplicationSourceDeployService {
   private readonly logger = new Logger(ApplicationSourceDeployService.name);
@@ -49,6 +71,7 @@ export class ApplicationSourceDeployService {
     private readonly ghcrPackagesService: GhcrPackagesService,
     private readonly applicationWorkflowService: ApplicationWorkflowService,
     private readonly applicationService: ApplicationService,
+    private readonly repositoriesService: RepositoriesService,
     @Inject(forwardRef(() => ApplicationDeployService))
     private readonly applicationDeployService: ApplicationDeployService,
     @Inject(forwardRef(() => AppEndpointService))
@@ -63,7 +86,7 @@ export class ApplicationSourceDeployService {
     userId: string,
     dto: DeployFromYamlDto,
   ): Promise<DeployFromYamlResponseDto> {
-    const manifest = this.parseAndValidate(dto.yaml);
+    let manifest = this.parseAndValidate(dto.yaml);
 
     if (dto.validateOnly) {
       return {
@@ -78,6 +101,8 @@ export class ApplicationSourceDeployService {
     await this.assertGhcrPatPresent(userId);
 
     const branch = dto.branch ?? 'main';
+    // Overlay the environment bound to this branch (staging/prod), if any.
+    manifest = applyEnvironmentProfile(manifest, branch);
     const [owner, repoName] = dto.repoFullName.split('/');
     if (!owner || !repoName) {
       throw new BadRequestException(
@@ -122,16 +147,12 @@ export class ApplicationSourceDeployService {
         })
       : null;
 
-    const manifestEnv = this.buildManifestEnv(manifest);
+    const manifestEnv = await this.buildManifestEnv(manifest, {
+      clusterId: dto.clusterId,
+      projectId: app?.projectId ?? null,
+    });
     const resources = this.resolveResources(manifest);
-    const healthProbe = manifest.deploy.healthcheck
-      ? {
-          type: 'http' as const,
-          httpPath: manifest.deploy.healthcheck.path,
-          httpPort: manifest.deploy.healthcheck.port ?? manifest.deploy.port,
-          httpScheme: 'HTTP' as const,
-        }
-      : { type: 'none' as const };
+    const healthProbe = this.resolveHealthProbe(manifest);
 
     const sourceConfig = {
       type: 'git_build' as const,
@@ -184,16 +205,15 @@ export class ApplicationSourceDeployService {
           }
         : app.metadata;
 
+      const existingEnv = (app.env as ApplicationEnvVar[]) ?? [];
+      this.warnEnvShadows(existingEnv, manifestEnv, dto.envOverrides);
+
       await this.applicationsRepository.update(app.id, {
         sourceConfig: sourceConfig as any,
         port: manifest.deploy.port,
         exposure:
           (manifest.deploy.exposure as ApplicationExposure) ?? app.exposure,
-        env: mergeAppEnv(
-          (app.env as ApplicationEnvVar[]) ?? [],
-          manifestEnv,
-          dto.envOverrides,
-        ),
+        env: mergeAppEnv(existingEnv, manifestEnv, dto.envOverrides),
         resources: resources,
         healthProbe: healthProbe as any,
         startCommand: manifest.deploy.startCommand ?? null,
@@ -317,11 +337,164 @@ export class ApplicationSourceDeployService {
     return { dockerfile, context, subPath };
   }
 
+  private resolveHealthProbe(manifest: ApplicationManifest) {
+    return manifest.deploy.healthcheck
+      ? {
+          type: 'http' as const,
+          httpPath: manifest.deploy.healthcheck.path,
+          httpPort: manifest.deploy.healthcheck.port ?? manifest.deploy.port,
+          httpScheme: 'HTTP' as const,
+        }
+      : { type: 'none' as const };
+  }
+
+  /**
+   * Re-read the app's flui.yaml at a pushed commit and apply its runtime config
+   * (env, port, exposure, resources, healthcheck, domain) to the existing app,
+   * so a `git push` is git-authoritative like `flui deploy` — not an image swap
+   * over stale DB env. Build configuration is left untouched: the image the
+   * caller is about to deploy was already built from this commit.
+   *
+   * Best-effort: a missing, renamed or invalid manifest is logged and skipped,
+   * never blocking the deploy. Writes only the DB row; the caller triggers the
+   * single rollout that carries the refreshed env (writing env alone starts no
+   * rollout — the reconciler keys off the last deploy's manifest hash).
+   */
+  async reapplyManifestAtCommit(
+    appId: string,
+    commitSha: string,
+    branch?: string,
+  ): Promise<void> {
+    const app = await this.applicationsRepository.findById(appId);
+    if (app?.sourceType !== ApplicationSourceType.GIT_BUILD) return;
+
+    const sourceConfig = app.sourceConfig as GitBuildSourceConfig;
+    if (!sourceConfig?.repositoryId) return;
+    const repository = await this.repositoriesRepository.findById(
+      sourceConfig.repositoryId,
+    );
+    const [owner, repoName] = (repository?.repositoryFullName ?? '').split('/');
+    if (!owner || !repoName) return;
+
+    const short = commitSha.slice(0, 7);
+    let manifest: ApplicationManifest | null = null;
+    try {
+      const { manifests } = await this.repositoriesService.getFluiManifests(
+        app.userId,
+        owner,
+        repoName,
+        commitSha,
+      );
+      const chosen = pickAppManifest(manifests, app.name, sourceConfig.subPath);
+      if (chosen?.content) {
+        manifest = applyEnvironmentProfile(
+          parseApplicationManifest(chosen.content),
+          branch,
+        );
+      }
+    } catch (error) {
+      this.logger.warn(
+        `reapply flui.yaml ${app.slug}@${short}: ${error.message} — deploying with existing env.`,
+      );
+      return;
+    }
+    if (!manifest) {
+      this.logger.warn(
+        `reapply flui.yaml ${app.slug}@${short}: no matching manifest at this commit — deploying with existing env.`,
+      );
+      return;
+    }
+
+    const manifestEnv = await this.buildManifestEnv(manifest, {
+      clusterId: app.clusterId,
+      projectId: app.projectId ?? null,
+    });
+    const existingEnv = (app.env as ApplicationEnvVar[]) ?? [];
+    this.warnEnvShadows(existingEnv, manifestEnv);
+
+    const endpointSpecJson = manifest.deploy.domain
+      ? JSON.stringify(manifest.deploy.domain)
+      : undefined;
+
+    await this.applicationsRepository.update(app.id, {
+      port: manifest.deploy.port,
+      exposure:
+        (manifest.deploy.exposure as ApplicationExposure) ?? app.exposure,
+      env: mergeAppEnv(existingEnv, manifestEnv),
+      resources: this.resolveResources(manifest),
+      healthProbe: this.resolveHealthProbe(manifest) as any,
+      startCommand: manifest.deploy.startCommand ?? null,
+      metadata: endpointSpecJson
+        ? { ...app.metadata, [ENDPOINT_SPEC_METADATA_KEY]: endpointSpecJson }
+        : app.metadata,
+    });
+    this.logger.log(
+      `Re-applied flui.yaml for ${app.slug} at ${short} — git is authoritative on this deploy.`,
+    );
+  }
+
   /** Env declared by the flui.yaml, tagged `manifest` so a deploy only owns these keys. */
-  private buildManifestEnv(manifest: ApplicationManifest): ApplicationEnvVar[] {
-    return (manifest.deploy.env ?? [])
-      .map((e) => this.manifestEnvVar(e))
-      .filter((e): e is ApplicationEnvVar => e !== null);
+  private warnEnvShadows(
+    existing: ApplicationEnvVar[],
+    manifestEnv: ApplicationEnvVar[],
+    overrides?: Record<string, string>,
+  ): void {
+    for (const s of collectEnvShadows(existing, manifestEnv, overrides)) {
+      this.logger.warn(
+        `env "${s.name}": manifest reclaims key — overwriting pinned value ` +
+          `"${s.previous}" (dashboard/--env) with "${s.manifest}" from flui.yaml. ` +
+          `Pass --env ${s.name}=… to keep a different value.`,
+      );
+    }
+  }
+
+  private async buildManifestEnv(
+    manifest: ApplicationManifest,
+    scope: ServiceRefScope,
+  ): Promise<ApplicationEnvVar[]> {
+    const out: ApplicationEnvVar[] = [];
+    for (const e of normalizeManifestEnv(manifest.deploy.env)) {
+      const ref = readServiceRef(e);
+      const resolved = ref
+        ? await this.resolveServiceRef(e.name, ref, scope)
+        : this.manifestEnvVar(e);
+      if (resolved) out.push(resolved);
+    }
+    return out;
+  }
+
+  /**
+   * Resolve a `valueFrom.service` reference to the sibling app's in-cluster
+   * address. The reference is matched by slug within the same cluster (and,
+   * when both apps are assigned to one, the same project). Missing, cross-
+   * cluster or cross-project targets are skipped with a warning rather than
+   * failing the deploy — the var is simply absent, as it was before 0.8.0.
+   */
+  private async resolveServiceRef(
+    name: string,
+    ref: ServiceRef,
+    scope: ServiceRefScope,
+  ): Promise<ApplicationEnvVar | null> {
+    const app = await this.applicationsRepository.findBySlug(ref.service);
+    const sibling = app
+      ? {
+          slug: app.slug,
+          namespace: app.k8sNamespace,
+          port: app.port,
+          clusterId: app.clusterId,
+          projectId: app.projectId,
+          deleted: !!app.deletedAt,
+        }
+      : null;
+
+    const { value, reason } = resolveServiceRefAgainst(ref, scope, sibling);
+    if (reason) {
+      this.logger.warn(
+        `env "${name}": valueFrom.service "${ref.service}" ${SERVICE_REF_SKIP_REASON[reason]}; skipped.`,
+      );
+      return null;
+    }
+    return { name, value, source: 'manifest' };
   }
 
   private manifestEnvVar(
@@ -420,8 +593,11 @@ export class ApplicationSourceDeployService {
       return;
     }
 
-    const result = await this.githubOAuthService.testConnection(userId);
-    if (!result.success) {
+    // PAT mode has no per-user OAuth session, so a live OAuth test always fails
+    // here even when the PAT is configured and healthy. Gate on the stored
+    // connection instead — the same signal `integration status` reports.
+    const status = await this.githubOAuthService.getStatus(userId);
+    if (!status.connected) {
       throw new BadRequestException(
         'GitHub integration is not connected. ' +
           'Connect your GitHub account from the Flui dashboard under Settings → Integrations, ' +
