@@ -21,7 +21,10 @@ import { CloudProvider } from '../../../providers/enums/cloud-provider.enum';
 import { sanitizeApiServerFirewallRules } from '../../firewalls/templates/firewall-rules.template';
 import { FirewallReconciliationService } from '../../firewalls/services/firewall-reconciliation.service';
 import { FirewallRuleDto } from '../../../providers/dto/firewall.dto';
-import { getOperationSteps } from '../../operations/helpers/operation-steps.helper';
+import {
+  estimateCreateDurationSeconds,
+  getOperationSteps,
+} from '../../operations/helpers/operation-steps.helper';
 import { CreateClusterJobData } from '../clusters.service';
 import { VNetSubnetEntity } from '../../vnets/entities/vnet-subnet.entity';
 import {
@@ -229,7 +232,7 @@ export class ClusterCreationService {
       currentStepProgress: 0,
       metadata: {
         clusterConfig: dto,
-        estimatedDurationInSeconds: 900,
+        estimatedDurationInSeconds: estimateCreateDurationSeconds(workerCount),
         providerFirewallId, // Single firewall ID (not array)
         operationSteps: operationSteps, // Fixed: was 'steps', now 'operationSteps'
       },

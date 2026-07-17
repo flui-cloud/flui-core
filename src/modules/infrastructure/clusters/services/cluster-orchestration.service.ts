@@ -16,6 +16,7 @@ import {
   NodeStatus,
 } from '../entities/cluster-node.entity';
 import { K3sScriptService } from './k3s-script.service';
+import { calculateOperationProgressFromSaved } from '../../operations/helpers/operation-steps.helper';
 import { EncryptionService } from '../../../shared/encryption/services/encryption.service';
 import { CloudProvider } from 'src/modules/providers/enums/cloud-provider.enum';
 import { ProviderFactory } from 'src/modules/providers';
@@ -78,7 +79,7 @@ export class ClusterOrchestrationService {
 
     await this.updateOperationProgress(
       operationId,
-      10,
+      5,
       'Creating master node...',
     );
 
@@ -389,7 +390,7 @@ export class ClusterOrchestrationService {
       );
       await this.updateOperationProgress(
         operationId,
-        28,
+        25,
         'Master node attached to VNet',
       );
     }
@@ -419,6 +420,21 @@ export class ClusterOrchestrationService {
         node.ipAddress,
         bootstrapKey.privateKey,
         serverIp,
+        // Paced against how long a bootstrap actually takes, not against the
+        // 15-min deadline: the deadline is the give-up point, and pacing to it
+        // would crawl to a tenth of the bar on a healthy boot. A node that runs
+        // long parks at the ceiling rather than pretending to still be moving.
+        async (elapsedMs) => {
+          const ratio = Math.min(
+            elapsedMs / ClusterOrchestrationService.KUBECONFIG_TYPICAL_WAIT_MS,
+            1,
+          );
+          await this.updateOperationProgress(
+            operationId,
+            30 + Math.round(ratio * 65),
+            'Waiting for K3s to write its kubeconfig...',
+          );
+        },
       );
     } catch (err) {
       this.logger.error(
@@ -445,7 +461,7 @@ export class ClusterOrchestrationService {
     node.status = NodeStatus.READY;
     await this.nodeRepository.save(node);
 
-    await this.updateOperationProgress(operationId, 40, 'Master node ready');
+    await this.updateOperationProgress(operationId, 100, 'Master node ready');
     this.logger.log(
       `[createMasterNode] ✅ Master node ${serverName} fully ready`,
     );
@@ -502,10 +518,9 @@ export class ClusterOrchestrationService {
       const batchWorkers = await Promise.all(batchPromises);
       workers.push(...batchWorkers);
 
-      const progress = 40 + Math.floor(((i + batch) / count) * 50);
       await this.updateOperationProgress(
         operationId,
-        progress,
+        Math.floor(((i + batch) / count) * 100),
         `Created ${i + batch}/${count} worker nodes`,
       );
     }
@@ -1070,26 +1085,48 @@ export class ClusterOrchestrationService {
   /**
    * Update operation progress
    */
+  /**
+   * Report progress *within the step the caller is already in*, resolved from the
+   * operation row rather than passed in — node creation is driven from several
+   * flows (create-cluster master, create-cluster workers, add-worker) that each
+   * sit at a different step index.
+   *
+   * `stepProgress` is 0-100 of the current step, not of the operation. Writing
+   * only the flat `progress` field, as this used to, meant the UI never saw any
+   * of it: the tracker derives its bar from the step weights and
+   * currentStepProgress and ignores `progress` whenever the operation carries
+   * steps. The bar sat at the step's floor for the entire wait — 147s of the 148s
+   * a single-node create takes — and then jumped to done.
+   */
   private async updateOperationProgress(
     operationId: string,
-    progress: number,
+    stepProgress: number,
     message: string,
   ): Promise<void> {
     const operation = await this.operationRepository.findOne({
       where: { id: operationId },
     });
+    if (!operation) return;
 
-    if (operation) {
-      operation.progress = progress;
-      operation.metadata = {
-        ...operation.metadata,
-        message,
-        timestamp: new Date(),
-      };
-      await this.operationRepository.save(operation);
-    }
+    const savedSteps = operation.metadata?.operationSteps ?? [];
+    operation.currentStepProgress = stepProgress;
+    operation.progress = savedSteps.length
+      ? calculateOperationProgressFromSaved(
+          savedSteps,
+          operation.currentStepIndex ?? 0,
+          stepProgress,
+        )
+      : stepProgress;
+    operation.metadata = {
+      ...operation.metadata,
+      message,
+      timestamp: new Date(),
+    };
+    await this.operationRepository.save(operation);
 
-    this.logger.debug(`Operation ${operationId}: ${progress}% - ${message}`);
+    this.logger.debug(
+      `Operation ${operationId}: step ${operation.currentStepIndex} at ${stepProgress}% (overall ${operation.progress}%) - ${message}`,
+    );
   }
 
   /**
@@ -1465,6 +1502,9 @@ export class ClusterOrchestrationService {
    *  under the queue's 30min job timeout, which would re-run the whole handler. */
   private static readonly KUBECONFIG_FETCH_DEADLINE_MS = 15 * 60 * 1000;
   private static readonly KUBECONFIG_FETCH_INTERVAL_MS = 15000;
+  /** Measured on Hetzner hel1: cloud-init reaches k3s.yaml ~106s after the
+   *  server answers. Only paces the progress bar — never gates the fetch. */
+  private static readonly KUBECONFIG_TYPICAL_WAIT_MS = 110_000;
 
   /**
    * Fetch kubeconfig from master node via SSH using the bootstrap key.
@@ -1475,9 +1515,11 @@ export class ClusterOrchestrationService {
     masterIp: string,
     bootstrapPrivateKey: string,
     serverIp: string,
+    onWaiting?: (elapsedMs: number) => Promise<void>,
   ): Promise<string> {
+    const started = Date.now();
     const deadline =
-      Date.now() + ClusterOrchestrationService.KUBECONFIG_FETCH_DEADLINE_MS;
+      started + ClusterOrchestrationService.KUBECONFIG_FETCH_DEADLINE_MS;
     let attempt = 0;
     let lastError = 'never attempted';
 
@@ -1520,6 +1562,7 @@ export class ClusterOrchestrationService {
         this.logger.warn(
           `Kubeconfig fetch attempt ${attempt} failed: ${lastError}`,
         );
+        await onWaiting?.(Date.now() - started);
         await this.sleep(
           Math.min(
             ClusterOrchestrationService.KUBECONFIG_FETCH_INTERVAL_MS,

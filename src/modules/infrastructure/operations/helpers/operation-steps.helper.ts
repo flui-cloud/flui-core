@@ -9,7 +9,35 @@ import {
 export interface OperationStepConfig {
   step: OperationStep;
   description: string;
-  weight: number; // Percentage weight (all steps should sum to 100)
+  /**
+   * Share of the progress bar, summing to 100 across the operation. This is a
+   * share of *time*, not of importance: the tracker advances the bar by these,
+   * so a step weighted above what it costs stalls the bar and one weighted below
+   * makes it jump. Measure before changing them.
+   */
+  weight: number;
+}
+
+/**
+ * ETA shown while a cluster is being created.
+ *
+ * Anchored on a measured single-node create (Hetzner hel1: 148s from queue to
+ * READY — ~41s for the server to boot, ~106s for cloud-init to install k3s and
+ * write the kubeconfig), rounded up to leave room for slower regions and
+ * providers. Workers are provisioned two at a time, so the cost is per batch,
+ * not per worker.
+ *
+ * The 900s this replaced predated the retry and IPv6-egress fixes, when a create
+ * really could grind for a quarter of an hour.
+ */
+export function estimateCreateDurationSeconds(workerCount = 0): number {
+  const MASTER_SECONDS = 240;
+  const WORKER_BATCH_SECONDS = 150;
+  const WORKER_BATCH_SIZE = 2;
+  return (
+    MASTER_SECONDS +
+    Math.ceil(workerCount / WORKER_BATCH_SIZE) * WORKER_BATCH_SECONDS
+  );
 }
 
 /**
@@ -24,6 +52,11 @@ export function getOperationSteps(
     case OperationType.CREATE_CLUSTER: {
       const workerCount = context?.workerCount || 0;
 
+      // The master step owns the whole bootstrap — server create, cloud-init,
+      // k3s, and the kubeconfig fetch all happen inside createMasterNode. The
+      // kubeconfig step that follows only marks what already happened (~25ms),
+      // so it is weighted as the formality it is; the 30 it used to carry made
+      // the bar jump a third of its length in a single frame.
       if (workerCount === 0) {
         // Single-node cluster (no workers)
         return [
@@ -35,12 +68,12 @@ export function getOperationSteps(
           {
             step: OperationStep.CLUSTER_CREATE_MASTER,
             description: 'Creating master node and waiting for K3s',
-            weight: 55,
+            weight: 80,
           },
           {
             step: OperationStep.CLUSTER_CREATE_KUBECONFIG,
             description: 'Fetching kubeconfig from master node',
-            weight: 30,
+            weight: 5,
           },
           {
             step: OperationStep.CLUSTER_CREATE_FINALIZING,
@@ -59,17 +92,17 @@ export function getOperationSteps(
           {
             step: OperationStep.CLUSTER_CREATE_MASTER,
             description: 'Creating master node and waiting for K3s',
-            weight: 20,
+            weight: 35,
           },
           {
             step: OperationStep.CLUSTER_CREATE_KUBECONFIG,
             description: 'Fetching kubeconfig from master node',
-            weight: 30,
+            weight: 5,
           },
           {
             step: OperationStep.CLUSTER_CREATE_WORKERS,
             description: `Creating ${workerCount} worker node${workerCount > 1 ? 's' : ''}`,
-            weight: 35,
+            weight: 45,
           },
           {
             step: OperationStep.CLUSTER_CREATE_FINALIZING,
