@@ -106,6 +106,12 @@ export default class Deploy extends Command {
         'Environment variable override in KEY=VALUE format. Repeatable.',
       multiple: true,
     }),
+    'env-file': Flags.string({
+      description:
+        'Path to a KEY=VALUE file of env overrides (one per line, # comments and ' +
+        'blank lines ignored). Values never appear in the process arguments, so ' +
+        'this is the safe way to pass secrets. --env entries take precedence.',
+    }),
     detach: Flags.boolean({
       description:
         'Return immediately after triggering the build/deploy without waiting for completion. ' +
@@ -263,9 +269,7 @@ export default class Deploy extends Command {
       this.detectGitBranch(path.dirname(filePath)) ??
       'main';
 
-    const envOverrides = this.parseEnvOverrides(
-      (flags.env as string[] | undefined) ?? [],
-    );
+    const envOverrides = this.buildEnvOverrides(flags);
 
     const skipBuild = (flags['no-build'] as boolean) || !!flags.image;
     const explicitImage = flags.image as string | undefined;
@@ -501,16 +505,7 @@ export default class Deploy extends Command {
     }
     const { id: clusterId, name: clusterName } = resolved;
 
-    const envOverrides: Record<string, string> = {};
-    for (const kv of (flags.env as string[] | undefined) ?? []) {
-      const eq = kv.indexOf('=');
-      if (eq < 1) {
-        this.error(`Invalid --env value "${kv}". Expected KEY=VALUE format.`, {
-          exit: 1,
-        });
-      }
-      envOverrides[kv.slice(0, eq)] = kv.slice(eq + 1);
-    }
+    const envOverrides = this.buildEnvOverrides(flags);
 
     console.log(chalk.cyan('\n  Deploy from manifest\n'));
     console.log(`  ${chalk.bold('Cluster:')} ${clusterName}`);
@@ -770,6 +765,46 @@ export default class Deploy extends Command {
         });
       }
       result[kv.slice(0, eq)] = kv.slice(eq + 1);
+    }
+    return result;
+  }
+
+  /**
+   * Merge env overrides from --env-file (if given) and --env, with --env
+   * winning. File values stay off the process argument list, so secrets passed
+   * this way never leak into `ps` output or shell history.
+   */
+  private buildEnvOverrides(
+    flags: Record<string, unknown>,
+  ): Record<string, string> {
+    const fromFile = this.parseEnvFile(flags['env-file'] as string | undefined);
+    const fromArgs = this.parseEnvOverrides(
+      (flags.env as string[] | undefined) ?? [],
+    );
+    return { ...fromFile, ...fromArgs };
+  }
+
+  private parseEnvFile(filePath?: string): Record<string, string> {
+    if (!filePath) return {};
+    let content: string;
+    try {
+      content = fs.readFileSync(filePath, 'utf8');
+    } catch {
+      this.error(`Cannot read --env-file "${filePath}".`, { exit: 1 });
+    }
+    const result: Record<string, string> = {};
+    const lines = content.split('\n');
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i].trim();
+      if (!line || line.startsWith('#')) continue;
+      const eq = line.indexOf('=');
+      if (eq < 1) {
+        this.error(
+          `Invalid line ${i + 1} in --env-file "${filePath}": expected KEY=VALUE.`,
+          { exit: 1 },
+        );
+      }
+      result[line.slice(0, eq).trim()] = line.slice(eq + 1);
     }
     return result;
   }
