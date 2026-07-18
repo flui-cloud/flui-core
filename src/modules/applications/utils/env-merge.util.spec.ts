@@ -108,4 +108,45 @@ describe('mergeAppEnv', () => {
     expect(v?.value).toBe('debug');
     expect(v?.source).toBe('user');
   });
+
+  // A declared key that resolves to nothing (userInput, unresolvable
+  // valueFrom.service, malformed secretRef) is absent from the resolved list.
+  // Without the declared-names set it read as "the manifest dropped this key".
+  it('keeps a manifest-owned value the manifest declares without resolving (userInput)', () => {
+    const existing: ApplicationEnvVar[] = [
+      { name: 'API_URL', value: 'https://api.example.com', source: 'manifest' },
+      { name: 'OIDC_ISSUER', value: 'https://auth.old', source: 'manifest' },
+    ];
+    // Only OIDC_ISSUER carries a literal; API_URL is valueFrom.userInput.
+    const manifest: ApplicationEnvVar[] = [
+      { name: 'OIDC_ISSUER', value: 'https://auth.new', source: 'manifest' },
+    ];
+    const out = mergeAppEnv(existing, manifest, undefined, [
+      'API_URL',
+      'OIDC_ISSUER',
+    ]);
+    expect(names(out)).toEqual(['API_URL', 'OIDC_ISSUER']);
+    expect(byName(out, 'API_URL')?.value).toBe('https://api.example.com');
+    expect(byName(out, 'OIDC_ISSUER')?.value).toBe('https://auth.new');
+  });
+
+  it('still removes a manifest-owned key the manifest stopped declaring', () => {
+    const existing: ApplicationEnvVar[] = [
+      { name: 'RETIRED', value: 'x', source: 'manifest' },
+      { name: 'KEPT', value: 'y', source: 'manifest' },
+    ];
+    const manifest: ApplicationEnvVar[] = [
+      { name: 'KEPT', value: 'y', source: 'manifest' },
+    ];
+    const out = mergeAppEnv(existing, manifest, undefined, ['KEPT']);
+    expect(names(out)).toEqual(['KEPT']);
+  });
+
+  it('keeps a user pin on a declared-but-unresolved key (vops-ops today)', () => {
+    const existing: ApplicationEnvVar[] = [
+      { name: 'API_URL', value: 'http://nip.io', source: 'user' },
+    ];
+    const out = mergeAppEnv(existing, [], undefined, ['API_URL']);
+    expect(byName(out, 'API_URL')?.value).toBe('http://nip.io');
+  });
 });

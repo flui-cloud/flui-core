@@ -29,6 +29,7 @@ import { RepositoriesService } from '../../repositories/services/repositories.se
 import { mergeAppEnv, collectEnvShadows } from '../utils/env-merge.util';
 import {
   applyEnvironmentProfile,
+  manifestDeclaredEnvNames,
   normalizeManifestEnv,
   pickAppManifest,
   readServiceRef,
@@ -213,7 +214,12 @@ export class ApplicationSourceDeployService {
         port: manifest.deploy.port,
         exposure:
           (manifest.deploy.exposure as ApplicationExposure) ?? app.exposure,
-        env: mergeAppEnv(existingEnv, manifestEnv, dto.envOverrides),
+        env: mergeAppEnv(
+          existingEnv,
+          manifestEnv,
+          dto.envOverrides,
+          manifestDeclaredEnvNames(manifest.deploy.env),
+        ),
         resources: resources,
         healthProbe: healthProbe as any,
         startCommand: manifest.deploy.startCommand ?? null,
@@ -420,7 +426,12 @@ export class ApplicationSourceDeployService {
       port: manifest.deploy.port,
       exposure:
         (manifest.deploy.exposure as ApplicationExposure) ?? app.exposure,
-      env: mergeAppEnv(existingEnv, manifestEnv),
+      env: mergeAppEnv(
+        existingEnv,
+        manifestEnv,
+        undefined,
+        manifestDeclaredEnvNames(manifest.deploy.env),
+      ),
       resources: this.resolveResources(manifest),
       healthProbe: this.resolveHealthProbe(manifest) as any,
       startCommand: manifest.deploy.startCommand ?? null,

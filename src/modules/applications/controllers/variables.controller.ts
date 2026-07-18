@@ -84,9 +84,17 @@ export class VariablesController {
     @Query('type') type: VariableType = VariableType.PLAIN,
   ): Promise<AppVariablesCombinedResponseDto> {
     if (type === VariableType.SENSITIVE) {
-      await this.appConfigService.upsertAppSecret(appId, dto.data);
+      await this.appConfigService.upsertAppSecret(
+        appId,
+        dto.data,
+        dto.deleteKeys,
+      );
     } else {
-      await this.appConfigService.upsertAppConfig(appId, dto.data);
+      await this.appConfigService.upsertAppConfig(
+        appId,
+        dto.data,
+        dto.deleteKeys,
+      );
     }
     return this.appConfigService.getAppVariablesCombined(
       appId,

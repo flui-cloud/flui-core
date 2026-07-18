@@ -1,5 +1,11 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsEnum, IsObject, IsOptional } from 'class-validator';
+import {
+  IsArray,
+  IsEnum,
+  IsObject,
+  IsOptional,
+  IsString,
+} from 'class-validator';
 
 export type VariableScope = 'app' | 'system' | 'shared';
 
@@ -20,6 +26,18 @@ export class UpsertVariablesDto {
   })
   @IsObject()
   data: Record<string, string>;
+
+  @ApiPropertyOptional({
+    description:
+      'Keys to remove. Deletion is explicit: a key missing from `data` is left ' +
+      'untouched, so a partial or stale payload can never erase stored config.',
+    example: ['LEGACY_FLAG'],
+    type: [String],
+  })
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  deleteKeys?: string[];
 }
 
 export class AppVariablesResponseDto {

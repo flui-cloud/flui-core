@@ -18,23 +18,38 @@ import { ApplicationEnvVar } from '../interfaces/source-config.interface';
  * This inverts the previous rule (a `user` pin used to beat the manifest
  * forever, invisibly and irreversibly). Now the manifest reclaims its keys, and
  * a pin only survives on a key the manifest does not declare.
+ *
+ * `declaredNames` carries every key the manifest DECLARES, including those that
+ * resolve to no value (`valueFrom.userInput`, an unresolvable `valueFrom.service`,
+ * a malformed `secretRef`) and are therefore absent from `manifestEnv`. The two
+ * lists differ, and the difference matters: a declared-but-unresolved key means
+ * "this var exists, its value comes from outside the manifest" — the stored
+ * value must survive. Only a key the manifest no longer declares at all is a
+ * deliberate removal. Omit the argument and declared collapses to resolved,
+ * which is the pre-existing behaviour.
  */
 export function mergeAppEnv(
   existing: ApplicationEnvVar[],
   manifestEnv: ApplicationEnvVar[],
   overrides?: Record<string, string>,
+  declaredNames?: Iterable<string>,
 ): ApplicationEnvVar[] {
   const manifestByName = new Map(manifestEnv.map((m) => [m.name, m]));
+  const declared = declaredNames
+    ? new Set(declaredNames)
+    : new Set(manifestByName.keys());
   const result = new Map<string, ApplicationEnvVar>();
 
   // 1. Existing entries the manifest does NOT reclaim: user/link keys absent
   //    from the manifest, and linked secrets (kept even when the manifest names
   //    them, so a plain value can't overwrite a secretKeyRef).
   for (const e of existing) {
-    if (e.source === 'manifest') continue; // recreated from the manifest below
-    const declared = manifestByName.has(e.name);
+    const resolved = manifestByName.has(e.name);
     const isLinkedSecret = !!e.externalSecretRef;
-    if (declared && !isLinkedSecret) continue; // manifest reclaims this key
+    if (resolved && !isLinkedSecret) continue; // manifest reclaims it below
+    // A manifest-owned key the manifest stopped declaring is a removal. One it
+    // still declares without a value keeps the value stored here.
+    if (e.source === 'manifest' && !declared.has(e.name)) continue;
     result.set(e.name, e);
   }
 

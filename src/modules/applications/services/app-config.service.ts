@@ -17,6 +17,13 @@ import {
   VariableScope,
   VariableType,
 } from '../dto/app-config.dto';
+import { ApplicationEnvVar } from '../interfaces/source-config.interface';
+import {
+  applyPlainVars,
+  applySensitiveVars,
+  plainEnvData,
+  VarWriteResult,
+} from '../utils/env-write.util';
 
 type VariableScopeFilter = 'app' | 'system' | 'all';
 
@@ -90,18 +97,40 @@ export class AppConfigService {
     };
   }
 
+  /**
+   * Write plain variables to `applications.env` — the source of truth — and
+   * re-render the ConfigMap from it.
+   *
+   * The order is deliberate. The ConfigMap is a derived artifact: every deploy
+   * regenerates it from `applications.env` and the pod reads each key through a
+   * `configMapKeyRef` enumerated from that same list. Writing only the
+   * ConfigMap (as this method used to) produced an edit that looked saved — the
+   * read path reports cluster state — but never reached the DB, so the next
+   * deploy silently reinstated the old value.
+   */
   async upsertAppConfig(
     appId: string,
     data: Record<string, string>,
+    deleteKeys: string[] = [],
   ): Promise<ConfigResult> {
     const { app, kubeconfig } = await this.resolveAppAndKubeconfig(appId);
     const name = this.configMapName(app.slug);
 
+    const { env, skipped } = applyPlainVars(
+      (app.env as ApplicationEnvVar[]) ?? [],
+      data,
+      deleteKeys,
+    );
+    await this.applicationsRepository.update(app.id, { env });
+    this.warnSkipped(appId, skipped);
+
     await this.kubernetesService.replaceManifest(
       kubeconfig,
-      this.buildConfigMapManifest(app, name, data),
+      this.buildConfigMapManifest(app, name, plainEnvData(env)),
     );
-    this.logger.log(`ConfigMap ${name} replaced for app ${appId}`);
+    this.logger.log(
+      `ConfigMap ${name} rendered from applications.env for app ${appId}`,
+    );
 
     const resource = await this.kubernetesService.getResource(
       kubeconfig,
@@ -143,14 +172,30 @@ export class AppConfigService {
     };
   }
 
+  /**
+   * Write sensitive variables to `applications.env` (encrypted at rest) and
+   * mirror them into the Kubernetes Secret. Same source-of-truth reasoning as
+   * {@link upsertAppConfig}.
+   */
   async upsertAppSecret(
     appId: string,
     data: Record<string, string>,
+    deleteKeys: string[] = [],
   ): Promise<SecretResult> {
     const { app, kubeconfig } = await this.resolveAppAndKubeconfig(appId);
     const name = this.secretName(app.slug);
 
-    // Merge with existing secret — never drop keys not included in this payload
+    const { env, skipped } = applySensitiveVars(
+      (app.env as ApplicationEnvVar[]) ?? [],
+      data,
+      deleteKeys,
+      (value) => this.encryptionService.encrypt(value),
+    );
+    await this.applicationsRepository.update(app.id, { env });
+    this.warnSkipped(appId, skipped);
+
+    // Merge with existing secret — keys written out-of-band (a building block's
+    // bootstrap, e.g. OpenBao's unseal key) live here too and must survive.
     const existing = await this.kubernetesService.getResource(
       kubeconfig,
       'Secret',
@@ -159,11 +204,13 @@ export class AppConfigService {
     );
     const existingEncoded: Record<string, string> = existing?.data ?? {};
 
-    // Encode only the new/updated keys and merge on top of existing encoded data
+    const refused = new Set(skipped.map((s) => s.name));
     const mergedData: Record<string, string> = { ...existingEncoded };
     for (const [key, value] of Object.entries(data)) {
+      if (refused.has(key)) continue;
       mergedData[key] = Buffer.from(value).toString('base64');
     }
+    for (const key of deleteKeys) delete mergedData[key];
 
     await this.kubernetesService.replaceManifest(
       kubeconfig,
@@ -592,6 +639,15 @@ export class AppConfigService {
   }
 
   // ── Internal helpers ───────────────────────────────────────────────────
+
+  /** A refused key is a silent data loss unless it is said out loud. */
+  private warnSkipped(appId: string, skipped: VarWriteResult['skipped']): void {
+    for (const s of skipped) {
+      this.logger.warn(
+        `variable "${s.name}" not written for app ${appId}: ${s.reason}.`,
+      );
+    }
+  }
 
   private async resolveAppAndKubeconfig(
     appId: string,

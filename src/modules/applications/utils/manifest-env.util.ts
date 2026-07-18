@@ -39,6 +39,17 @@ export function normalizeManifestEnv(
 }
 
 /**
+ * Every env key the manifest declares — including the ones that resolve to no
+ * value (`valueFrom.userInput`, an unresolvable `valueFrom.service`, a malformed
+ * `secretRef`) and so never reach the resolved env list. `mergeAppEnv` needs
+ * this to tell "the manifest dropped this key" (remove it) apart from "the
+ * manifest declares it but sources the value elsewhere" (keep what is stored).
+ */
+export function manifestDeclaredEnvNames(env: unknown): string[] {
+  return normalizeManifestEnv(env).map((e) => e.name);
+}
+
+/**
  * Overlay the environment profile bound to `branch` onto the base manifest. The
  * `environments` block binds a git branch to a set of overrides: a push on that
  * branch deploys with those values. Only the whitelisted deploy fields
