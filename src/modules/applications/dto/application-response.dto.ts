@@ -340,6 +340,14 @@ export class ApplicationResponseDto {
   autoDeploy: boolean;
 
   @ApiProperty({
+    default: false,
+    description:
+      'Continuous auto-deploy policy (git_build apps): when true, a successful ' +
+      'CI build on a new commit automatically rolls out the new image.',
+  })
+  deployOnPush: boolean;
+
+  @ApiProperty({
     enum: ApplicationExposure,
     default: ApplicationExposure.PUBLIC,
     description:

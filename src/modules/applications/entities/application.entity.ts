@@ -186,6 +186,17 @@ export class ApplicationEntity {
   autoDeploy: boolean;
 
   /**
+   * Continuous auto-deploy policy for git_build apps: when true, a successful
+   * CI build on a new commit (discovered by the build watcher or the GitHub
+   * Actions webhook) automatically rolls out the new image. When false the
+   * image is only recorded as available and a deploy must be triggered
+   * manually. Opt-in — does NOT affect the app's very first deploy. Distinct
+   * from {@link autoDeploy}, which is a one-shot "deploy right after creation".
+   */
+  @Column({ default: false })
+  deployOnPush: boolean;
+
+  /**
    * Controls how the app is reached. `public` generates Ingress + Certificate
    * + DNS on a public hostname. `internal` skips all public exposure: only
    * Deployment + Service ClusterIP are created; the app is reachable only

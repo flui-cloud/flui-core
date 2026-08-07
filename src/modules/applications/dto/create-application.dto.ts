@@ -347,6 +347,19 @@ export class CreateApplicationDto {
   autoDeploy?: boolean;
 
   @ApiPropertyOptional({
+    default: false,
+    description:
+      'Continuous auto-deploy policy (git_build apps). When true, a successful ' +
+      'CI build on a new commit automatically rolls out the new image. When ' +
+      'false (default) the image is only recorded and a deploy must be ' +
+      'triggered manually. Does not affect the very first deploy. Distinct from ' +
+      'autoDeploy, which is a one-shot deploy right after creation.',
+  })
+  @IsOptional()
+  @IsBoolean()
+  deployOnPush?: boolean;
+
+  @ApiPropertyOptional({
     enum: ApplicationExposure,
     default: ApplicationExposure.PUBLIC,
     description:

@@ -152,6 +152,7 @@ export class ApplicationService {
       metadata: dto.metadata || {},
       systemProtected: dto.category === ApplicationCategory.SYSTEM,
       exposure: dto.exposure ?? ApplicationExposure.PUBLIC,
+      deployOnPush: dto.deployOnPush ?? false,
     });
 
     this.logger.log(
@@ -359,6 +360,8 @@ export class ApplicationService {
     if (dto.labels !== undefined) updateData.labels = dto.labels;
     if (dto.metadata !== undefined) updateData.metadata = dto.metadata;
     if (dto.exposure !== undefined) updateData.exposure = dto.exposure;
+    if (dto.deployOnPush !== undefined)
+      updateData.deployOnPush = dto.deployOnPush;
 
     if (dto.env !== undefined) {
       const existingByName = new Map(
@@ -709,6 +712,7 @@ export class ApplicationService {
     dto.userId = entity.userId;
     dto.systemProtected = entity.systemProtected;
     dto.autoDeploy = entity.autoDeploy ?? false;
+    dto.deployOnPush = entity.deployOnPush ?? false;
     dto.exposure = entity.exposure ?? ApplicationExposure.PUBLIC;
     dto.activeRevisionId = entity.currentRevisionId ?? null;
     dto.workloadKind = entity.workloadKind ?? 'Deployment';

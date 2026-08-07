@@ -8,6 +8,7 @@ import { ApplicationEventsGateway } from '../applications/gateway/application-ev
 import { ImageRegistryService } from '../image-registry/services/image-registry.service';
 import { ApplicationStatus } from '../applications/enums/application-status.enum';
 import { GitHubActionsWebhookDto } from './dto/github-actions-webhook.dto';
+import { shouldAutoDeployOnBuild } from './webhooks.util';
 
 /**
  * Handles incoming GitHub Actions build completion webhooks.
@@ -86,6 +87,18 @@ export class WebhooksService {
           `Failed to record image in registry: ${error.message}`,
         );
       }
+    }
+
+    // Auto-deploy on push is opt-in. For an app that is already live, only roll
+    // out the new image when the owner enabled deployOnPush; otherwise the image
+    // stays recorded as an available version for a manual deploy. The very first
+    // deploy is never gated: the app is still in AWAITING_BUILD (not live) at
+    // that point, so it always flows through below.
+    if (!shouldAutoDeployOnBuild(app.status, app.deployOnPush)) {
+      this.logger.log(
+        `Auto-deploy on push disabled for app ${dto.appId}; recorded image ${dto.imageRef ?? '(none)'} without deploying`,
+      );
+      return { received: true };
     }
 
     // Re-read flui.yaml at the pushed commit BEFORE deploying, so a `git push`

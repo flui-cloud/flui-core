@@ -5,6 +5,7 @@ import {
   IsInt,
   IsArray,
   IsObject,
+  IsBoolean,
   Min,
   Max,
   ValidateNested,
@@ -152,4 +153,14 @@ export class UpdateApplicationDto {
   @IsOptional()
   @IsEnum(ApplicationExposure)
   exposure?: ApplicationExposure;
+
+  @ApiPropertyOptional({
+    description:
+      'Enable/disable continuous auto-deploy on push for this git_build app. ' +
+      'When true, a successful CI build on a new commit automatically rolls out ' +
+      'the new image; when false, images are only recorded for manual deploy.',
+  })
+  @IsOptional()
+  @IsBoolean()
+  deployOnPush?: boolean;
 }

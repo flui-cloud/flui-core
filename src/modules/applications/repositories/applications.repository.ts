@@ -150,22 +150,28 @@ export class ApplicationsRepository {
   }
 
   async findLiveGitBuildApps(): Promise<ApplicationEntity[]> {
-    return this.repository
-      .createQueryBuilder('app')
-      .where('app.deletedAt IS NULL')
-      .andWhere('app.status IN (:...statuses)', {
-        statuses: [
-          ApplicationStatus.RUNNING,
-          ApplicationStatus.DEGRADED,
-          ApplicationStatus.UPDATING,
-        ],
-      })
-      .andWhere('app.sourceType = :sourceType', {
-        sourceType: ApplicationSourceType.GIT_BUILD,
-      })
-      .andWhere(`app."sourceConfig"->>'repositoryId' IS NOT NULL`)
-      .andWhere('app.userId IS NOT NULL')
-      .getMany();
+    return (
+      this.repository
+        .createQueryBuilder('app')
+        .where('app.deletedAt IS NULL')
+        .andWhere('app.status IN (:...statuses)', {
+          statuses: [
+            ApplicationStatus.RUNNING,
+            ApplicationStatus.DEGRADED,
+            ApplicationStatus.UPDATING,
+          ],
+        })
+        .andWhere('app.sourceType = :sourceType', {
+          sourceType: ApplicationSourceType.GIT_BUILD,
+        })
+        .andWhere(`app."sourceConfig"->>'repositoryId' IS NOT NULL`)
+        .andWhere('app.userId IS NOT NULL')
+        // Only apps that opted into continuous auto-deploy are polled for new
+        // commits; the initial deploy runs via the AWAITING_BUILD path, which is
+        // not gated here.
+        .andWhere('app.deployOnPush = true')
+        .getMany()
+    );
   }
 
   /**
