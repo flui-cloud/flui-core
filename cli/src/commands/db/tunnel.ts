@@ -5,7 +5,7 @@ import { getNestApp, closeNestApp } from '../../lib/nest-app';
 import { ApiClient } from '../../lib/api-client';
 import { ConfigStorage } from '../../lib/config-storage';
 import { CliAppService } from '../../lib/services/cli-app.service';
-import { resolveCluster } from '../../lib/resolve-cluster';
+import { listClusters, ClusterSummary } from '../../lib/cluster-listing';
 import { CliSshService } from '../../services/cli-ssh.service';
 import { readDbPassword } from '../../lib/db-secret';
 import { engineProfile, CliEngineProfile } from '../../lib/db-engine';
@@ -63,7 +63,8 @@ export default class DbTunnel extends Command {
     const spinner = ora('Resolving database...').start();
 
     try {
-      const cluster = await resolveCluster(flags.cluster);
+      const { clusters, apiError } = await listClusters();
+      const cluster = this.pickCluster(clusters, flags.cluster, apiError);
       const appService = await CliAppService.create(cluster.id);
       const app = await appService.getAppByName(args.app);
 
@@ -87,8 +88,17 @@ export default class DbTunnel extends Command {
       const dbCluster =
         info.clusterId === cluster.id
           ? cluster
-          : await resolveCluster(info.clusterId);
-      const masterIp = dbCluster.entity.masterIpAddress;
+          : clusters.find((c) => c.id === info.clusterId);
+      if (!dbCluster) {
+        spinner.fail(
+          `Cluster hosting ${app.slug} (${info.clusterId}) not found`,
+        );
+        this.exit(1);
+        return;
+      }
+      const masterIp =
+        dbCluster.masterIpAddress ??
+        dbCluster.nodes?.find((n) => n.nodeType === 'master')?.ipAddress;
       if (!masterIp) {
         spinner.fail(`Master IP not available for cluster ${dbCluster.name}`);
         this.exit(1);
@@ -162,6 +172,36 @@ export default class DbTunnel extends Command {
     } finally {
       await closeNestApp();
     }
+  }
+
+  // Dashboard-created workload clusters exist only in the control cluster's
+  // database, so resolve against the API-merged listing — the local store holds
+  // only the clusters this CLI created.
+  private pickCluster(
+    clusters: ClusterSummary[],
+    wanted: string | undefined,
+    apiError: string | undefined,
+  ): ClusterSummary {
+    const available = () =>
+      clusters.map((c) => `  • ${c.name}  (${c.id})`).join('\n') +
+      (apiError ? `\n\n(API listing unavailable: ${apiError})` : '');
+
+    if (wanted) {
+      const match = clusters.find(
+        (c) => c.id === wanted || c.name.toLowerCase() === wanted.toLowerCase(),
+      );
+      if (match) return match;
+      throw new Error(
+        `Cluster "${wanted}" not found. Available clusters:\n${available()}`,
+      );
+    }
+    if (clusters.length === 1) return clusters[0];
+    if (clusters.length === 0) {
+      throw new Error('No clusters found. Create one with `flui env create`.');
+    }
+    throw new Error(
+      `Multiple clusters found. Specify one with --cluster:\n${available()}`,
+    );
   }
 
   // Resolve the DB pod by label on the master and port-forward it on loopback.
