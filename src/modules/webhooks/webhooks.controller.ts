@@ -14,6 +14,11 @@ import { Public } from '../auth/decorators/public.decorator';
 import { WebhooksService } from './webhooks.service';
 import { GitHubAppWebhookService } from './services/github-app-webhook.service';
 import { GitHubActionsWebhookDto } from './dto/github-actions-webhook.dto';
+import { AlertsWebhookService } from './services/alerts-webhook.service';
+import {
+  AlertmanagerWebhookDto,
+  AlertsWebhookResultDto,
+} from './dto/alertmanager-webhook.dto';
 
 @ApiTags('Webhooks')
 @Controller('webhooks')
@@ -21,7 +26,35 @@ export class WebhooksController {
   constructor(
     private readonly webhooksService: WebhooksService,
     private readonly githubAppWebhookService: GitHubAppWebhookService,
+    private readonly alertsWebhookService: AlertsWebhookService,
   ) {}
+
+  @Post('alerts')
+  @Public()
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Receive Alertmanager notifications',
+    description:
+      'Called in-cluster by Alertmanager after grouping, deduplication and inhibition. ' +
+      'Flui resolves each alert to its application or node. Authenticated via X-Flui-Token.',
+  })
+  @ApiHeader({
+    name: 'X-Flui-Token',
+    description: 'Shared secret configured as ALERTS_WEBHOOK_TOKEN',
+    required: true,
+  })
+  @ApiResponse({ status: 200, type: AlertsWebhookResultDto })
+  @ApiResponse({ status: 401, description: 'Invalid or missing token' })
+  async handleAlerts(
+    @Headers('x-flui-token') token: string,
+    @Headers('authorization') authorization: string,
+    @Body() dto: AlertmanagerWebhookDto,
+  ): Promise<AlertsWebhookResultDto> {
+    return this.alertsWebhookService.handle(
+      { header: token, authorization },
+      dto,
+    );
+  }
 
   @Post('github-actions')
   @Public()

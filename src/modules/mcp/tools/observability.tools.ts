@@ -22,8 +22,75 @@ function durationToMs(since: string): number | undefined {
   return value * unitMs[match[2]];
 }
 
-/** Application logs from Loki (read tier). */
+/** Application logs from Loki and edge HTTP traffic from Traefik (read tier). */
 export const OBSERVABILITY_TOOLS: ToolDef[] = [
+  defineTool({
+    name: 'app_traffic',
+    description:
+      'HTTP traffic for one application, measured at the ingress: request rate, status-code breakdown, error percentages and latency. Works for every routable app with no instrumentation — use it to answer "is my API healthy / slow / erroring" and to decide which window to then inspect with app_logs. Pass the application id (from app_list). `window` is the averaging window ("1m", "5m", "1h"); widen it for low-traffic apps, where a short window reads as zero. An app with no public HTTP route returns is_routable=false and null metrics — that is not an error, it simply has no edge traffic. IMPORTANT: when latency.estimates_are_coarse is true, the percentiles are artefacts of a sparse histogram — quote latency.mean_seconds instead and say the percentiles are unreliable until the cluster ships tuned buckets.',
+    scope: MCP_SCOPE.OBS_READ,
+    inputSchema: {
+      id: z.string(),
+      window: z
+        .string()
+        .regex(/^\d+[smhd]$/)
+        .optional(),
+    },
+    run: async (args, ctx) => {
+      const app = await ctx.services.apps.findById(args.id);
+      const window = args.window ?? '5m';
+      const target = {
+        slug: app.slug,
+        namespace: app.k8sNamespace,
+        port: app.port,
+        portProtocol: app.portProtocol,
+      };
+      return {
+        app_id: app.id,
+        app_name: app.slug,
+        namespace: app.k8sNamespace,
+        is_routable: ctx.services.traffic.isRoutable(target),
+        traefik_service: ctx.services.traffic.buildTraefikServiceId(target),
+        window,
+        traffic: await ctx.services.traffic.getTrafficInstant(target, window),
+      };
+    },
+  }),
+  defineTool({
+    name: 'app_alerts',
+    description:
+      'Alert history for one application — what Alertmanager fired for it, newest first, one row per episode (repeats while a condition persists update the row, they do not stack). Pass the application id (from app_list). Use it to answer "has this app been alerting", "is anything wrong right now", or to give context before reading logs. Set firing_only=true for just the active ones. Each alert has: status (firing | resolved), severity, a human summary, and timings. IMPORTANT: when resolved_by is "timeout", the alert stopped reporting without a resolve signal — treat ends_at as approximate ("last seen at", not "recovered at"), do not state the app recovered at that exact time. Absence of alerts means none were recorded, not that the app is necessarily healthy — pair with app_traffic for a live read.',
+    scope: MCP_SCOPE.OBS_READ,
+    inputSchema: {
+      id: z.string(),
+      firing_only: z.boolean().optional(),
+      limit: coerceNumber(z.number().int().positive().max(200)).optional(),
+    },
+    run: async (args, ctx) => {
+      const app = await ctx.services.apps.findById(args.id);
+      const rows = await ctx.services.alertEvents.listByApplication(app.id, {
+        status: args.firing_only ? 'firing' : undefined,
+        limit: args.limit ?? 50,
+      });
+      return {
+        app_id: app.id,
+        app_name: app.slug,
+        firing: rows.filter((r) => r.status === 'firing').length,
+        alerts: rows.map((r) => ({
+          id: r.id,
+          status: r.status,
+          resolved_by: r.resolvedBy ?? null,
+          alertname: r.alertname,
+          severity: r.severity,
+          summary: r.annotations?.summary ?? r.alertname,
+          description: r.annotations?.description ?? null,
+          starts_at: r.startsAt.toISOString(),
+          ends_at: r.endsAt ? r.endsAt.toISOString() : null,
+          last_seen_at: r.lastSeenAt.toISOString(),
+        })),
+      };
+    },
+  }),
   defineTool({
     name: 'log_sources',
     description:

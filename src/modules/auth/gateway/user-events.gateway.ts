@@ -12,6 +12,17 @@ import { Server, Socket } from 'socket.io';
 import { WsAuthService } from '../services/ws-auth.service';
 import { installWsAuth } from '../utils/ws-auth-middleware.util';
 
+export interface AlertNotificationPayload {
+  id: string;
+  kind: 'fired' | 'resolved';
+  alertname: string;
+  severity: string;
+  summary: string;
+  applicationId: string | null;
+  applicationSlug: string | null;
+  startsAt: string;
+}
+
 /**
  * Per-user WebSocket gateway. Clients join the room `user:{fluiUserId}` to
  * receive events scoped to their account (e.g. post-OAuth-callback "refresh
@@ -64,6 +75,18 @@ export class UserEventsGateway implements OnGatewayInit {
     const room = `user:${data.userId}`;
     client.leave(room);
     client.emit('unsubscribed', { room });
+  }
+
+  /**
+   * Fired only on a transition — an alert starting or recovering. Alertmanager repeats
+   * a firing alert every few hours; relaying those would turn the bell into a metronome.
+   */
+  emitAlert(fluiUserId: string, payload: AlertNotificationPayload): void {
+    const room = `user:${fluiUserId}`;
+    this.server.to(room).emit('alert:transition', payload);
+    this.logger.log(
+      `Emitted alert:transition (${payload.kind} ${payload.alertname}) to ${room}`,
+    );
   }
 
   emitGithubConnected(

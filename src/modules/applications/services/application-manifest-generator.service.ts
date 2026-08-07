@@ -1021,14 +1021,13 @@ export class ApplicationManifestGeneratorService {
     app: ApplicationEntity,
     config: DockerImageSourceConfig,
   ): Record<string, string> {
-    const annotations: Record<string, string> = {
+    // No `prometheus.io/scrape` here on purpose: it used to be set for every non-TCP
+    // app pointing at the app's own port, which made vmagent poll `/metrics` on
+    // thousands of ports that serve application traffic. Edge HTTP signals come from
+    // Traefik instead; a per-app opt-in lands with the observability manifest block.
+    return {
       'flui.cloud/config-hash': this.computeConfigHash(app, config),
     };
-    if (app.portProtocol !== 'tcp') {
-      annotations['prometheus.io/scrape'] = 'true';
-      annotations['prometheus.io/port'] = String(app.port ?? 80);
-    }
-    return annotations;
   }
 
   /**

@@ -65,6 +65,7 @@ import { DbMigrationEntity } from '../modules/db-lifecycle/entities/db-migration
 import { AppMigrationEntity } from '../modules/app-migration/entities/app-migration.entity';
 import { FullMigrationEntity } from '../modules/full-migration/entities/full-migration.entity';
 import { DemoConfigEntity } from '../modules/demo/entities/demo-config.entity';
+import { AlertEventEntity } from '../modules/observability/entities/alert-event.entity';
 
 export const entities = [
   SSHKeyEntity,
@@ -128,4 +129,5 @@ export const entities = [
   AppMigrationEntity,
   FullMigrationEntity,
   DemoConfigEntity,
+  AlertEventEntity,
 ];

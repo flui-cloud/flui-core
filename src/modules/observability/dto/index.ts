@@ -4,5 +4,7 @@ export * from './server-logs-query.dto';
 export * from './server-logs-response.dto';
 export * from './cluster-health.dto';
 export * from './application-metrics.dto';
+export * from './application-traffic.dto';
+export * from './alert-event.dto';
 export * from './app-logs-query.dto';
 export * from './app-logs-response.dto';

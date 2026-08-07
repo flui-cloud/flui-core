@@ -8,18 +8,26 @@ import { PrometheusQueryService } from './services/prometheus-query.service';
 import { LokiQueryService } from './services/loki-query.service';
 import { ClusterHealthService } from './services/cluster-health.service';
 import { ApplicationMetricsService } from './services/application-metrics.service';
+import { ApplicationTrafficService } from './services/application-traffic.service';
+import { AlertEventsService } from './services/alert-events.service';
+
+// Schedulers
+import { AlertMaintenanceScheduler } from './schedulers/alert-maintenance.scheduler';
 
 // Controllers
 import { ObservabilityController } from './controllers/observability.controller';
 import { ServerMetricsController } from './controllers/server-metrics.controller';
 import { ClusterHealthController } from './controllers/cluster-health.controller';
 import { ApplicationMetricsController } from './controllers/application-metrics.controller';
+import { ApplicationTrafficController } from './controllers/application-traffic.controller';
 import { ApplicationLogsController } from './controllers/application-logs.controller';
+import { AlertEventsController } from './controllers/alert-events.controller';
 
 // Entities needed for Prometheus Service Discovery
 import { ServerEntity } from '../infrastructure/servers/entities/server.entity';
 import { ClusterNodeEntity } from '../infrastructure/clusters/entities/cluster-node.entity';
 import { ClusterEntity } from '../infrastructure/clusters/entities/cluster.entity';
+import { AlertEventEntity } from './entities/alert-event.entity';
 
 // External modules
 import { ApplicationsModule } from '../applications/applications.module';
@@ -47,7 +55,12 @@ import { ApplicationsModule } from '../applications/applications.module';
 @Module({
   imports: [
     ConfigModule,
-    TypeOrmModule.forFeature([ServerEntity, ClusterNodeEntity, ClusterEntity]),
+    TypeOrmModule.forFeature([
+      ServerEntity,
+      ClusterNodeEntity,
+      ClusterEntity,
+      AlertEventEntity,
+    ]),
     ApplicationsModule,
   ],
   controllers: [
@@ -55,7 +68,9 @@ import { ApplicationsModule } from '../applications/applications.module';
     ServerMetricsController,
     ClusterHealthController,
     ApplicationMetricsController,
+    ApplicationTrafficController,
     ApplicationLogsController,
+    AlertEventsController,
   ],
   providers: [
     PrometheusConfigService,
@@ -63,6 +78,9 @@ import { ApplicationsModule } from '../applications/applications.module';
     LokiQueryService,
     ClusterHealthService,
     ApplicationMetricsService,
+    ApplicationTrafficService,
+    AlertEventsService,
+    AlertMaintenanceScheduler,
   ],
   exports: [
     PrometheusConfigService,
@@ -70,6 +88,8 @@ import { ApplicationsModule } from '../applications/applications.module';
     LokiQueryService,
     ClusterHealthService,
     ApplicationMetricsService,
+    ApplicationTrafficService,
+    AlertEventsService,
   ],
 })
 export class ObservabilityModule {}

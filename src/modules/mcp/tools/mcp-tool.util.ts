@@ -15,6 +15,8 @@ import { GitHubOAuthService } from '../../repositories/services/github-oauth.ser
 import { GithubAppUserAuthService } from '../../repositories/services/github-app-user-auth.service';
 import { GithubAppManifestStateService } from '../../repositories/services/github-app-manifest-state.service';
 import { LokiQueryService } from '../../observability/services/loki-query.service';
+import { ApplicationTrafficService } from '../../observability/services/application-traffic.service';
+import { AlertEventsService } from '../../observability/services/alert-events.service';
 import { ClustersService } from '../../infrastructure/clusters/clusters.service';
 import { InfrastructureOperationsService } from '../../infrastructure/operations/infrastructure-operations.service';
 import { PodDebugService } from '../../scaling/services/pod-debug.service';
@@ -53,6 +55,8 @@ export interface McpServices {
   githubAuth: GithubAppUserAuthService;
   githubManifest: GithubAppManifestStateService;
   loki: LokiQueryService;
+  traffic: ApplicationTrafficService;
+  alertEvents: AlertEventsService;
   clusters: ClustersService;
   operations: InfrastructureOperationsService;
   podDebug: PodDebugService;

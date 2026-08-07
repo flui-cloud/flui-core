@@ -122,6 +122,67 @@ export interface AppMetricsResponse {
   };
 }
 
+export interface AppTrafficResponse {
+  app_id: string;
+  app_name: string;
+  namespace: string;
+  cluster_id: string;
+  traefik_service: string | null;
+  is_routable: boolean;
+  window: string;
+  queried_at: string;
+  traffic: {
+    rate: {
+      requests_per_second: number | null;
+      requests_in_window: number | null;
+    };
+    status: {
+      rate_2xx: number | null;
+      rate_3xx: number | null;
+      rate_4xx: number | null;
+      rate_5xx: number | null;
+      server_error_percent: number | null;
+      client_error_percent: number | null;
+    };
+    latency: {
+      p50_seconds: number | null;
+      p90_seconds: number | null;
+      p95_seconds: number | null;
+      p99_seconds: number | null;
+      mean_seconds: number | null;
+      estimates_are_coarse: boolean;
+      bucket_boundaries_seconds: number[];
+    };
+    by_method: Array<{ method: string; requests_per_second: number | null }>;
+    by_status_code: Array<{ code: string; requests_per_second: number | null }>;
+  };
+}
+
+export interface AppAlert {
+  id: string;
+  status: string;
+  resolved_by?: string | null;
+  alertname: string;
+  severity: string;
+  flui_kind?: string | null;
+  summary: string;
+  description?: string | null;
+  application_id?: string | null;
+  application_slug?: string | null;
+  namespace?: string | null;
+  cluster_id?: string | null;
+  node_instance?: string | null;
+  starts_at: string;
+  ends_at?: string | null;
+  last_seen_at: string;
+}
+
+export interface AppAlertsResponse {
+  alerts: AppAlert[];
+  firing: number;
+  queried_at: string;
+}
+
 export interface AppLogsOptions {
   app?: string;
   namespace?: string;
@@ -394,7 +455,30 @@ export class CliAppService {
 
   async getMetrics(appId: string): Promise<AppMetricsResponse> {
     return this.apiClient.get<AppMetricsResponse>(
-      `/applications/${appId}/metrics`,
+      `/observability/applications/${appId}/metrics`,
+    );
+  }
+
+  async getTraffic(
+    appId: string,
+    window?: string,
+  ): Promise<AppTrafficResponse> {
+    const query = window ? `?window=${encodeURIComponent(window)}` : '';
+    return this.apiClient.get<AppTrafficResponse>(
+      `/observability/applications/${appId}/traffic${query}`,
+    );
+  }
+
+  async getAlerts(
+    appId: string,
+    options: { status?: string; limit?: number } = {},
+  ): Promise<AppAlertsResponse> {
+    const params = new URLSearchParams();
+    if (options.status) params.set('status', options.status);
+    if (options.limit) params.set('limit', String(options.limit));
+    const query = params.toString() ? `?${params.toString()}` : '';
+    return this.apiClient.get<AppAlertsResponse>(
+      `/observability/applications/${appId}/alerts${query}`,
     );
   }
 

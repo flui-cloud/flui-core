@@ -207,6 +207,9 @@
     "transform": {
       "^.+\\.(t|j)s$": "ts-jest"
     },
+    "transformIgnorePatterns": [
+      "node_modules/.pnpm/(?!jose@)"
+    ],
     "collectCoverageFrom": [
       "**/*.(t|j)s"
     ],

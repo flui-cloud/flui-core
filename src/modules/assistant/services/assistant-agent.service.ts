@@ -17,6 +17,8 @@ import { GitHubOAuthService } from '../../repositories/services/github-oauth.ser
 import { GithubAppUserAuthService } from '../../repositories/services/github-app-user-auth.service';
 import { GithubAppManifestStateService } from '../../repositories/services/github-app-manifest-state.service';
 import { LokiQueryService } from '../../observability/services/loki-query.service';
+import { ApplicationTrafficService } from '../../observability/services/application-traffic.service';
+import { AlertEventsService } from '../../observability/services/alert-events.service';
 import { ClustersService } from '../../infrastructure/clusters/clusters.service';
 import { InfrastructureOperationsService } from '../../infrastructure/operations/infrastructure-operations.service';
 import { PodDebugService } from '../../scaling/services/pod-debug.service';
@@ -103,6 +105,8 @@ export class AssistantAgentService {
     private readonly githubAuth: GithubAppUserAuthService,
     private readonly githubManifest: GithubAppManifestStateService,
     private readonly loki: LokiQueryService,
+    private readonly traffic: ApplicationTrafficService,
+    private readonly alertEvents: AlertEventsService,
     private readonly clusters: ClustersService,
     private readonly operations: InfrastructureOperationsService,
     private readonly podDebug: PodDebugService,
@@ -676,6 +680,8 @@ export class AssistantAgentService {
         githubAuth: this.githubAuth,
         githubManifest: this.githubManifest,
         loki: this.loki,
+        traffic: this.traffic,
+        alertEvents: this.alertEvents,
         clusters: this.clusters,
         operations: this.operations,
         podDebug: this.podDebug,
