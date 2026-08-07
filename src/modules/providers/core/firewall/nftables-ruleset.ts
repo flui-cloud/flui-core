@@ -14,6 +14,14 @@ const ANYWHERE = new Set(['0.0.0.0/0', '::/0']);
 
 const COMMENT_PREFIX = '# flui-rules-b64:';
 
+/** k3s default `--service-node-port-range`; Flui does not override it. */
+const NODEPORT_RANGE = '30000-32767';
+/**
+ * After conntrack (-200), ahead of kube-proxy's DNAT (dstnat, -100). The window
+ * between the two is the only place a NodePort is still addressed by its own port.
+ */
+const PREROUTING_PRIORITY = -150;
+
 export function encodeRulesComment(rules: FirewallRule[]): string {
   const json = JSON.stringify(rules);
   return COMMENT_PREFIX + Buffer.from(json, 'utf-8').toString('base64');
@@ -146,6 +154,25 @@ export function renderFluiNftRuleset(
     '',
     '\t\t# Reconciled public ingress rules:',
     ...(inbound.length ? inbound : ['\t\t# (none)']),
+    '\t}',
+    '',
+    '\tchain prerouting {',
+    '\t\t# NodePort traffic never reaches `input`, so the default-drop above does not',
+    '\t\t# cover it: kube-proxy DNATs the packet in prerouting (dstnat, priority -100),',
+    '\t\t# after which it is destined for a pod and gets forwarded, not delivered locally.',
+    '\t\t# Filtering therefore happens here at priority -150 — after conntrack, ahead of',
+    '\t\t# the DNAT, while the original NodePort is still the destination port. Matching',
+    '\t\t# in `forward` would not work: by then the port has been rewritten to the pod one.',
+    `\t\ttype filter hook prerouting priority ${PREROUTING_PRIORITY}; policy accept;`,
+    '',
+    '\t\t# Node-local clients reach services over loopback (Vector ships to the Loki',
+    '\t\t# NodePort on localhost); loopback packets do traverse prerouting, so without',
+    '\t\t# this the drop below would silently cut log shipping.',
+    '\t\tiif "lo" accept',
+    '\t\tct state established,related accept',
+    ...internalLines,
+    '',
+    `\t\ttcp dport ${NODEPORT_RANGE} drop comment "NodePort services are cluster-internal, never public"`,
     '\t}',
     '',
     '\tchain forward {',

@@ -25,6 +25,57 @@ describe('renderFluiNftRuleset', () => {
     expect(out).toContain('hook output priority 0; policy accept;');
   });
 
+  describe('NodePort exposure', () => {
+    // NodePort packets are DNAT'd by kube-proxy in prerouting and then forwarded to a
+    // pod, so they never traverse `input` and the default-drop there does not cover
+    // them. Without this chain every NodePort on the node is reachable from the
+    // internet regardless of the rest of the firewall.
+    it('drops the NodePort range ahead of the DNAT', () => {
+      const out = renderFluiNftRuleset([], HOST_OPTS);
+      expect(out).toContain(
+        'type filter hook prerouting priority -150; policy accept;',
+      );
+      expect(out).toContain('tcp dport 30000-32767 drop');
+    });
+
+    it('accepts loopback before the drop, or node-local shipping breaks', () => {
+      // Vector pushes to the Loki NodePort on localhost, and loopback packets do
+      // traverse prerouting — a drop placed ahead of this accept silently stops
+      // log shipping on every BYOS node.
+      const out = renderFluiNftRuleset([], HOST_OPTS);
+      const chain = out.slice(out.indexOf('chain prerouting {'));
+      const loIdx = chain.indexOf('iif "lo" accept');
+      const dropIdx = chain.indexOf('tcp dport 30000-32767 drop');
+      expect(loIdx).toBeGreaterThanOrEqual(0);
+      expect(dropIdx).toBeGreaterThan(loIdx);
+    });
+
+    it('keeps cluster CIDRs reachable through the prerouting chain', () => {
+      const out = renderFluiNftRuleset([], HOST_OPTS);
+      const chain = out.slice(
+        out.indexOf('chain prerouting {'),
+        out.indexOf('chain forward {'),
+      );
+      expect(chain).toContain('ip saddr 10.42.0.0/16 accept');
+      expect(chain).toContain('ip saddr 10.43.0.0/16 accept');
+      expect(chain).toContain('ct state established,related accept');
+    });
+
+    it('leaves forward permissive — default-dropping it breaks pod routing', () => {
+      const out = renderFluiNftRuleset([], HOST_OPTS);
+      const chain = out.slice(out.indexOf('chain forward {'));
+      const rules = chain
+        .slice(0, chain.indexOf('}'))
+        .split('\n')
+        .map((line) => line.trim())
+        .filter((line) => line && !line.startsWith('#'));
+      expect(rules).toContain(
+        'type filter hook forward priority 0; policy accept;',
+      );
+      expect(rules.some((line) => line.endsWith('drop'))).toBe(false);
+    });
+  });
+
   it('always keeps SSH open via the anti-lockout rule', () => {
     const out = renderFluiNftRuleset([], HOST_OPTS);
     expect(out).toContain('tcp dport 22 accept comment "ssh anti-lockout"');
