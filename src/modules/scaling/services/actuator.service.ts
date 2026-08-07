@@ -65,6 +65,13 @@ export class ActuatorService {
   ): Promise<boolean> {
     if (diagnosis.category !== CrashCategory.OOM_KILLED) return false;
 
+    if (!this.hasKernelOomEvidence(diagnosis)) {
+      this.logger.warn(
+        `Auto-fix skipped for ${app.slug}: diagnosis ${diagnosis.id} is categorised OOM_KILLED but its evidence reports lastTerminationReason=${diagnosis.evidence?.lastTerminationReason ?? 'none'} (exitCode=${diagnosis.evidence?.exitCode ?? 'none'}); raising the memory limit requires a kernel OOM kill`,
+      );
+      return false;
+    }
+
     if (!this.isAutoFixEligible(app)) {
       this.logger.debug(
         `Auto-fix skipped for ${app.slug}: sourceType=${app.sourceType} not eligible`,
@@ -176,6 +183,12 @@ export class ActuatorService {
     }
 
     return true;
+  }
+
+  // Independent of the diagnostic engine on purpose: doubling memory is
+  // irreversible for the user's bill and must never rest on an inference.
+  private hasKernelOomEvidence(diagnosis: CrashDiagnosisEntity): boolean {
+    return diagnosis.evidence?.lastTerminationReason === 'OOMKilled';
   }
 
   private isAutoFixEligible(app: ApplicationEntity): boolean {

@@ -59,7 +59,7 @@ function buildDiagnosis(
     severity: DiagnosisSeverity.CRITICAL,
     title: 'test',
     explanation: 'test',
-    evidence: {},
+    evidence: { exitCode: 137, lastTerminationReason: 'OOMKilled' },
     patternMatchedKey: null,
     suggestedAction: { type: SuggestedActionType.MANUAL, message: 'test' },
     podSnapshot: {},
@@ -115,6 +115,29 @@ describe('ActuatorService', () => {
       buildDiagnosis(CrashCategory.CRASH_LOOP),
       buildApp(),
     );
+    expect(result).toBe(false);
+    expect(triggerDeploy).not.toHaveBeenCalled();
+  });
+
+  it('skips when the evidence is a bare SIGKILL rather than a kernel OOM', async () => {
+    const { service, triggerDeploy, updateApp } = createService();
+    const diagnosis = buildDiagnosis();
+    diagnosis.evidence = { exitCode: 137, lastTerminationReason: 'Error' };
+
+    const result = await service.tryAutoFix(diagnosis, buildApp());
+
+    expect(result).toBe(false);
+    expect(updateApp).not.toHaveBeenCalled();
+    expect(triggerDeploy).not.toHaveBeenCalled();
+  });
+
+  it('skips when the evidence carries no termination reason at all', async () => {
+    const { service, triggerDeploy } = createService();
+    const diagnosis = buildDiagnosis();
+    diagnosis.evidence = {};
+
+    const result = await service.tryAutoFix(diagnosis, buildApp());
+
     expect(result).toBe(false);
     expect(triggerDeploy).not.toHaveBeenCalled();
   });

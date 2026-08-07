@@ -49,6 +49,10 @@ export class DiagnosticEngineService {
     const { pod } = input;
     const podName = pod.metadata?.name ?? 'unknown';
 
+    // A pod with a deletionTimestamp is being drained, typically the previous
+    // revision during a rollout. Its death is expected, not a crash.
+    if (pod.metadata?.deletionTimestamp) return null;
+
     const unschedulable = this.checkUnschedulable(pod);
     if (unschedulable) {
       return this.finalize(podName, null, unschedulable, pod);
@@ -109,9 +113,10 @@ export class DiagnosticEngineService {
 
   private checkOomKilled(cs: k8s.V1ContainerStatus): PartialDiagnosis | null {
     const terminated = cs.state?.terminated ?? null;
-    const isOom =
-      terminated?.reason === 'OOMKilled' || terminated?.exitCode === 137;
-    if (!isOom || !terminated) return null;
+    // Only the kernel's own verdict counts. Exit code 137 alone is any SIGKILL
+    // (most often a container that outlived its termination grace period during
+    // a rollout) and misreading it as OOM makes the actuator inflate memory.
+    if (terminated?.reason !== 'OOMKilled') return null;
 
     return {
       category: CrashCategory.OOM_KILLED,
