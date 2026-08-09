@@ -35,11 +35,37 @@ import { CliFirewallRepository } from '../lib/repositories/cli-firewall.reposito
 import { CliSshService } from './cli-ssh.service';
 import { CliLoggerService } from './cli-logger.service';
 import { CliVnetRepository } from '../lib/repositories/cli-vnet.repository';
-import { ApiClient } from '../lib/api-client';
+import { ApiClient, ApiError } from '../lib/api-client';
 import { ConfigStorage } from '../lib/config-storage';
 import { CliByosPurgeService } from './cli-byos-purge.service';
 import { resolveClusterSshTarget } from '../lib/cluster-ssh-target';
 import { checkTcpPort } from '../lib/utils/tcp-port';
+
+/**
+ * Retry only what a restarting control plane can recover from. A 4xx answers
+ * the same on every attempt, so retrying it just burns the window and hides
+ * the cause; a missing status means the request never got an answer at all.
+ */
+const isRetryableApiFailure = (status?: number): boolean =>
+  status === undefined || status === 408 || status === 429 || status >= 500;
+
+/**
+ * Operator-facing text for a failed host-firewall apply. Names the exposed
+ * ports explicitly so the claim can be verified with a single port scan.
+ */
+function hostFirewallFailureMessage(cause: string): string {
+  return [
+    `Host firewall was NOT applied: ${cause}`,
+    '',
+    '  This server is unprotected: kube-apiserver (6443), kubelet (10250) and',
+    '  NodePorts (30000-32767) may be reachable from the internet right now.',
+    '  Do not put workloads on this cluster before running:',
+    '',
+    '      flui env firewall apply',
+    '',
+    '  Then check it with: flui env firewall status',
+  ].join('\n');
+}
 
 /**
  * CLI Cluster Creator Service
@@ -655,6 +681,7 @@ export class CliClusterCreatorService {
         useLatest: !!clusterMeta?.useLatest,
         nipHostnameToken: cluster.nipHostnameToken || null,
         sharedStorage: undefined,
+        byosSshPort: port,
       });
 
       this.log(opId, `Running bootstrap on ${user}@${byos.host}:${port} ...`);
@@ -763,9 +790,6 @@ export class CliClusterCreatorService {
         }
       }
 
-      cluster.status = ClusterStatus.READY;
-      await this.clusterRepository.save(cluster);
-
       // The API-DB cluster record is seeded in-cluster by the bootstrap and
       // lacks the operator's SSH coordinates, so the dashboard/API can't reach
       // a node on a non-standard SSH port (firewall, etc.). Persist them (best
@@ -796,6 +820,11 @@ export class CliClusterCreatorService {
       if (!byos.localStub) {
         await this.ensureByosHostFirewall(cluster, decrypted.fluiApiKey, opId);
       }
+
+      // READY only once the host is firewalled: an install that leaves the
+      // kube-apiserver open to the internet has not succeeded.
+      cluster.status = ClusterStatus.READY;
+      await this.clusterRepository.save(cluster);
 
       operation.status = OperationStatus.COMPLETED;
       operation.currentStepIndex = operation.totalSteps;
@@ -1382,13 +1411,8 @@ export class CliClusterCreatorService {
     if (!patch) return; // default :22/root — node-IP fallback already works
 
     try {
-      const cfg = new ConfigStorage();
-      const baseUrl =
-        cfg.getApiUrl() ||
-        (cluster.masterIpAddress
-          ? `https://api.${buildNipBaseDomain(cluster.masterIpAddress, cluster.nipHostnameToken)}`
-          : '');
-      if (!baseUrl || !fluiApiKey) {
+      const client = this.buildAdminApiClient(cluster, fluiApiKey);
+      if (!client) {
         this.log(
           opId,
           '⚠ BYOS SSH-target persistence skipped (no API URL or key) — set it later from the dashboard.',
@@ -1396,7 +1420,6 @@ export class CliClusterCreatorService {
         );
         return;
       }
-      const client = new ApiClient({ baseUrl, apiKey: fluiApiKey });
       await client.patch(patch.path, patch.body);
       this.log(
         opId,
@@ -1424,13 +1447,8 @@ export class CliClusterCreatorService {
     opId: string,
   ): Promise<void> {
     try {
-      const cfg = new ConfigStorage();
-      const baseUrl =
-        cfg.getApiUrl() ||
-        (cluster.masterIpAddress
-          ? `https://api.${buildNipBaseDomain(cluster.masterIpAddress, cluster.nipHostnameToken)}`
-          : '');
-      if (!baseUrl || !fluiApiKey) {
+      const client = this.buildAdminApiClient(cluster, fluiApiKey);
+      if (!client) {
         this.log(
           opId,
           '⚠ BYOS VNet registration skipped (no API URL or key) — register it later from the dashboard.',
@@ -1438,7 +1456,6 @@ export class CliClusterCreatorService {
         );
         return;
       }
-      const client = new ApiClient({ baseUrl, apiKey: fluiApiKey });
       const res = await client.post<{ ipRange?: string }>(
         `/api/v1/infrastructure/clusters/${cluster.id}/byos-vnet`,
         ipRange ? { ipRange } : {},
@@ -1471,52 +1488,64 @@ export class CliClusterCreatorService {
     fluiApiKey: string,
     opId: string,
   ): Promise<void> {
-    const cfg = new ConfigStorage();
-    const baseUrl =
-      cfg.getApiUrl() ||
-      (cluster.masterIpAddress
-        ? `https://api.${buildNipBaseDomain(cluster.masterIpAddress, cluster.nipHostnameToken)}`
-        : '');
-    if (!baseUrl || !fluiApiKey) {
-      this.log(
-        opId,
-        '⚠ Host firewall enable skipped (no API URL or key) — enable it later from the dashboard.',
-        'WARN',
+    const client = this.buildAdminApiClient(cluster, fluiApiKey);
+    if (!client) {
+      throw new Error(
+        hostFirewallFailureMessage(
+          'no API URL or key available to reach the control plane',
+        ),
       );
-      return;
     }
 
-    const client = new ApiClient({ baseUrl, apiKey: fluiApiKey });
+    const path = `/api/v1/firewalls/cluster/${cluster.id}/enable`;
     const maxAttempts = 6;
     let lastError = '';
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       if (attempt > 1) await new Promise((r) => setTimeout(r, 15000));
       try {
-        await client.post(`/api/v1/firewalls/cluster/${cluster.id}/enable`, {});
+        await client.post(path, {});
         this.log(
           opId,
           '✅ Host firewall enabled (nftables policy drop; 22/80/443 open)',
         );
         return;
       } catch (e) {
-        lastError = (e as Error).message;
+        const status = e instanceof ApiError ? e.statusCode : undefined;
+        lastError = status
+          ? `HTTP ${status} — ${(e as Error).message}`
+          : (e as Error).message;
+        if (!isRetryableApiFailure(status)) {
+          // Log the resolved URL: a routing 404 and a real "not found" read
+          // identically otherwise.
+          this.log(
+            opId,
+            `✖ Permanent failure on POST ${client.getBaseUrl()}${path}: ${lastError}`,
+            'ERROR',
+          );
+          break;
+        }
         this.log(
           opId,
           `↻ Host firewall enable attempt ${attempt}/${maxAttempts} failed (API may be restarting): ${lastError}`,
         );
       }
     }
-    this.log(
-      opId,
-      `⚠ Host firewall not enabled after ${maxAttempts} attempts — enable it from the dashboard (cluster → Firewall): ${lastError}`,
-      'WARN',
-    );
+    throw new Error(hostFirewallFailureMessage(lastError));
   }
 
   /**
-   * Generate bootstrap SSH key for a node
-   * Returns the SSH key ID from the cloud provider and local key paths
+   * The cluster's own M2M key. Lets a remediation command reach the control
+   * plane in the same conditions the installer had — before, or without, an
+   * interactive `flui auth login`.
    */
+  getClusterApiKey(cluster: ClusterEntity): string | null {
+    try {
+      return this.decryptClusterSecrets(cluster).fluiApiKey || null;
+    } catch {
+      return null;
+    }
+  }
+
   private decryptClusterSecrets(cluster: ClusterEntity): {
     postgresPassword: string;
     redisPassword: string;

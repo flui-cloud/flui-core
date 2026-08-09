@@ -1,0 +1,16 @@
+# SonarScanner CLI on arm64. SonarSource publishes sonar-scanner-cli for amd64
+# only, and the emulated JVM segfaults on Apple Silicon, so the scanner is built
+# on a native JRE base instead.
+FROM docker.io/library/eclipse-temurin:21-jre-alpine
+
+ARG SCANNER_VERSION=7.3.0.5189
+
+RUN apk add --no-cache bash curl unzip \
+    && curl -fsSL -o /tmp/scanner.zip \
+       "https://binaries.sonarsource.com/Distribution/sonar-scanner-cli/sonar-scanner-cli-${SCANNER_VERSION}.zip" \
+    && unzip -q /tmp/scanner.zip -d /opt \
+    && rm /tmp/scanner.zip \
+    && ln -s "/opt/sonar-scanner-${SCANNER_VERSION}/bin/sonar-scanner" /usr/local/bin/sonar-scanner
+
+WORKDIR /usr/src
+ENTRYPOINT ["sonar-scanner"]

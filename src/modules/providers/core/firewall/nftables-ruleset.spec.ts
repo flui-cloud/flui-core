@@ -2,6 +2,7 @@ import {
   renderFluiNftRuleset,
   encodeRulesComment,
   decodeRulesComment,
+  DEFAULT_INTERNAL_CIDRS,
 } from './nftables-ruleset';
 import { FirewallRule } from '../../interfaces/firewall-provider.interface';
 
@@ -15,14 +16,42 @@ describe('renderFluiNftRuleset', () => {
     expect(out).toContain('iif "lo" accept');
     expect(out).toContain('ct state established,related accept');
     expect(out).toContain('ct state invalid drop');
-    // k3s pod + service CIDRs and overlay/kubelet ports must always be allowed.
+    // k3s pod + service CIDRs are always allowed — all ports, from those sources only.
     expect(out).toContain('ip saddr 10.42.0.0/16 accept');
     expect(out).toContain('ip saddr 10.43.0.0/16 accept');
-    expect(out).toContain('udp dport 8472 accept');
-    expect(out).toContain('tcp dport 10250 accept');
     // forward + output never default-drop.
     expect(out).toContain('hook forward priority 0; policy accept;');
     expect(out).toContain('hook output priority 0; policy accept;');
+  });
+
+  it('never opens kubelet or the VXLAN overlay to the internet', () => {
+    // On a host-firewall cluster this ruleset is the only thing filtering, so an
+    // unscoped accept publishes the kubelet API and the unauthenticated overlay.
+    const out = renderFluiNftRuleset([], HOST_OPTS);
+    expect(out).not.toContain('udp dport 8472 accept');
+    expect(out).not.toContain('tcp dport 10250 accept');
+  });
+
+  it('renders anti-lockout on the port Flui actually connects on', () => {
+    const out = renderFluiNftRuleset([], { ...HOST_OPTS, sshPorts: [2222] });
+    expect(out).toContain('tcp dport 2222 accept comment "ssh anti-lockout"');
+    expect(out).not.toContain('tcp dport 22 accept comment "ssh anti-lockout"');
+  });
+
+  it('falls back to 22 when no usable SSH port is given', () => {
+    const out = renderFluiNftRuleset([], {
+      ...HOST_OPTS,
+      sshPorts: [0, 99999],
+    });
+    expect(out).toContain('tcp dport 22 accept comment "ssh anti-lockout"');
+  });
+
+  it('reaches a peer on a public IP only when it is declared internal', () => {
+    const out = renderFluiNftRuleset([], {
+      ...HOST_OPTS,
+      internalCidrs: [...DEFAULT_INTERNAL_CIDRS, '203.0.113.7/32'],
+    });
+    expect(out).toContain('ip saddr 203.0.113.7/32 accept');
   });
 
   describe('NodePort exposure', () => {

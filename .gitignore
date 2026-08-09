@@ -91,6 +91,8 @@ ngrok.yml
 .continue/
 .windsurf/
 .github/copilot-*
+/AGENTS.md
+/docs/CODEX_CONTEXT_MAP.md
 
 # Assistant KB — fetched from pinned refs at build, not committed (only dist/kb.json is)
 src/modules/assistant/knowledge/sources/concepts/

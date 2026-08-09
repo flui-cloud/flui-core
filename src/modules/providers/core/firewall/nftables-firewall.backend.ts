@@ -292,6 +292,9 @@ export class NftablesFirewallBackend implements IFirewallProvider {
     const ruleset = renderFluiNftRuleset(rules, {
       supportsSshAllowlist: false,
       internalCidrs,
+      // The anti-lockout rule has to name the port Flui actually reaches these
+      // hosts on, or reconciling a custom-port host locks us out of it.
+      sshPorts: targets.map((t) => t.port),
     });
     const b64 = Buffer.from(ruleset, 'utf-8').toString('base64');
 

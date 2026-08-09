@@ -5,6 +5,8 @@ import * as os from 'node:os';
 import { CliLoggerService } from './cli-logger.service';
 import { getScriptsBaseUrl } from '../config/bootstrap.config';
 import { resolveEffectiveImageTags } from '../config/release-override';
+import { renderFluiNftRuleset } from '../../../src/modules/providers/core/firewall/nftables-ruleset';
+import { getFirewallRulesForClusterType } from '../../../src/modules/infrastructure/firewalls/templates/firewall-rules.template';
 
 export interface K3sMasterConfig {
   serverId?: string; // Database node ID (ClusterNodeEntity.id) - used for observability metrics
@@ -48,6 +50,9 @@ export interface K3sMasterConfig {
   /** BYOS: operator-provided public IP — drives the nip.io domain when the
    *  node's detected IP isn't the reachable address (NAT / fixed public IP). */
   masterPublicIp?: string;
+  /** BYOS: SSH port Flui reaches this host on. Rendered into the host
+   *  firewall's anti-lockout rule, which is applied before k3s starts. */
+  byosSshPort?: number;
   nipIoCertEnabled?: boolean;
   acmeStaging?: boolean;
   /**
@@ -165,75 +170,84 @@ export class CliK3sScriptService {
       this.log(`Scripts URL: ${scriptsBaseUrl}`, opId);
 
       // Generate bootstrap script that downloads and executes k3s-master-init.sh from GitHub
-      const script = this.generateBootstrapScript('master', {
-        SCRIPTS_BASE_URL: scriptsBaseUrl,
-        MANIFESTS_BASE_URL: scriptsBaseUrl.replace('/scripts', '/manifests'),
-        SERVER_ID: config.serverId || '', // Database node ID for observability
-        INSTANCE_ID: config.instanceId,
-        INSTANCE_NAME: config.instanceName,
-        CLOUD_PROVIDER: config.provider,
-        CLUSTER_ID: config.clusterId,
-        CLUSTER_NAME: config.clusterName,
-        K3S_TOKEN: config.k3sToken,
-        K3S_VERSION: config.k3sVersion || 'v1.35.4+k3s1',
-        // Pinned Flui image tags — consumed by the system manifests via envsubst.
-        FLUI_API_IMAGE_TAG: imageTags.fluiApi,
-        FLUI_WEB_IMAGE_TAG: imageTags.fluiWeb,
-        FLUI_AUTHZ_IMAGE_TAG: imageTags.fluiAuthz,
-        DEPLOY_OBSERVABILITY_STACK: config.deployObservabilityStack
-          ? 'true'
-          : 'false',
-        POSTGRES_PASSWORD: config.postgresPassword,
-        REDIS_PASSWORD: config.redisPassword,
-        GRAFANA_PASSWORD: config.grafanaPassword,
-        AUTH_MODE: config.authMode || 'local',
-        JWT_SECRET: config.jwtSecret || '',
-        ADMIN_EMAIL: config.adminEmail || '',
-        ADMIN_PASSWORD: config.adminPassword || '',
-        ENCRYPTION_KEY: config.encryptionKey || '',
-        ZITADEL_MASTERKEY: config.zitadelMasterkey || '',
-        ZITADEL_DB_ADMIN_PASSWORD: config.zitadelDbAdminPassword || '',
-        ZITADEL_DB_USER_PASSWORD: config.zitadelDbUserPassword || '',
-        ZITADEL_DOMAIN: config.zitadelDomain || '',
-        ZITADEL_ADMIN_EMAIL:
-          config.zitadelAdminEmail || config.adminEmail || '',
-        ZITADEL_ADMIN_TEMP_PASSWORD: config.zitadelAdminTempPassword || '',
-        ZITADEL_AUDIENCE: '',
-        FLUI_CA_PUBLIC_KEY: config.caPublicKey || '',
-        FLUI_NIP_IO_CERT_ENABLED: config.nipIoCertEnabled ? 'true' : '',
-        FLUI_ACME_STAGING: config.acmeStaging ? 'true' : '',
-        // BootstrapSeeder vars — available at envsubst time so API reads them at first boot
-        FLUI_CLI_API_KEY: config.fluiApiKey || '',
-        PROVIDER_HETZNER_API_KEY:
-          config.provider === 'hetzner' ? config.providerApiKey || '' : '',
-        PROVIDER_SCALEWAY_ACCESS_KEY: config.providerScalewayAccessKey || '',
-        PROVIDER_SCALEWAY_SECRET_KEY: config.providerScalewaySecretKey || '',
-        PROVIDER_REGIONS: config.providerRegions || '',
-        CLUSTER_REGION: config.clusterRegion || '',
-        INSTANCE_TYPE: config.instanceType || '',
-        CLUSTER_FIREWALL_ID: config.clusterFirewallId || '',
-        FLUI_MASTER_PUBLIC_IP: config.masterPublicIp || '',
-        FLUI_VNET_PROVIDER_RESOURCE_ID:
-          config.envVnet?.vnetProviderResourceId || '',
-        FLUI_VNET_PROVIDER: config.envVnet?.vnetProvider || '',
-        FLUI_VNET_NAME: config.envVnet?.vnetName || '',
-        FLUI_VNET_IP_RANGE: config.envVnet?.vnetIpRange || '',
-        FLUI_SUBNET_PROVIDER_RESOURCE_ID:
-          config.envVnet?.subnetProviderResourceId || '',
-        FLUI_SUBNET_IP_RANGE: config.envVnet?.subnetIpRange || '',
-        FLUI_SUBNET_TYPE: config.envVnet?.subnetType || '',
-        FLUI_SUBNET_NETWORK_ZONE: config.envVnet?.networkZone || '',
-        NIP_HOSTNAME_TOKEN: config.nipHostnameToken || '',
-        // Flui shared storage (NFS+fscache, scaling doc §14)
-        FLUI_SHARED_STORAGE_ENABLED: config.sharedStorage?.enabled
-          ? 'true'
-          : 'false',
-        FLUI_SHARED_STORAGE_DEVICE:
-          config.sharedStorage?.volumeDevicePath ?? '',
-        FLUI_SHARED_STORAGE_VOLUME_GB: String(
-          config.sharedStorage?.volumeSizeGb ?? 0,
-        ),
-      });
+      const script = this.generateBootstrapScript(
+        'master',
+        {
+          SCRIPTS_BASE_URL: scriptsBaseUrl,
+          MANIFESTS_BASE_URL: scriptsBaseUrl.replace('/scripts', '/manifests'),
+          SERVER_ID: config.serverId || '', // Database node ID for observability
+          INSTANCE_ID: config.instanceId,
+          INSTANCE_NAME: config.instanceName,
+          CLOUD_PROVIDER: config.provider,
+          CLUSTER_ID: config.clusterId,
+          CLUSTER_NAME: config.clusterName,
+          K3S_TOKEN: config.k3sToken,
+          K3S_VERSION: config.k3sVersion || 'v1.35.4+k3s1',
+          // Pinned Flui image tags — consumed by the system manifests via envsubst.
+          FLUI_API_IMAGE_TAG: imageTags.fluiApi,
+          FLUI_WEB_IMAGE_TAG: imageTags.fluiWeb,
+          FLUI_AUTHZ_IMAGE_TAG: imageTags.fluiAuthz,
+          DEPLOY_OBSERVABILITY_STACK: config.deployObservabilityStack
+            ? 'true'
+            : 'false',
+          POSTGRES_PASSWORD: config.postgresPassword,
+          REDIS_PASSWORD: config.redisPassword,
+          GRAFANA_PASSWORD: config.grafanaPassword,
+          AUTH_MODE: config.authMode || 'local',
+          JWT_SECRET: config.jwtSecret || '',
+          ADMIN_EMAIL: config.adminEmail || '',
+          ADMIN_PASSWORD: config.adminPassword || '',
+          ENCRYPTION_KEY: config.encryptionKey || '',
+          ZITADEL_MASTERKEY: config.zitadelMasterkey || '',
+          ZITADEL_DB_ADMIN_PASSWORD: config.zitadelDbAdminPassword || '',
+          ZITADEL_DB_USER_PASSWORD: config.zitadelDbUserPassword || '',
+          ZITADEL_DOMAIN: config.zitadelDomain || '',
+          ZITADEL_ADMIN_EMAIL:
+            config.zitadelAdminEmail || config.adminEmail || '',
+          ZITADEL_ADMIN_TEMP_PASSWORD: config.zitadelAdminTempPassword || '',
+          ZITADEL_AUDIENCE: '',
+          FLUI_CA_PUBLIC_KEY: config.caPublicKey || '',
+          FLUI_NIP_IO_CERT_ENABLED: config.nipIoCertEnabled ? 'true' : '',
+          FLUI_ACME_STAGING: config.acmeStaging ? 'true' : '',
+          // BootstrapSeeder vars — available at envsubst time so API reads them at first boot
+          FLUI_CLI_API_KEY: config.fluiApiKey || '',
+          PROVIDER_HETZNER_API_KEY:
+            config.provider === 'hetzner' ? config.providerApiKey || '' : '',
+          PROVIDER_SCALEWAY_ACCESS_KEY: config.providerScalewayAccessKey || '',
+          PROVIDER_SCALEWAY_SECRET_KEY: config.providerScalewaySecretKey || '',
+          PROVIDER_REGIONS: config.providerRegions || '',
+          CLUSTER_REGION: config.clusterRegion || '',
+          INSTANCE_TYPE: config.instanceType || '',
+          CLUSTER_FIREWALL_ID: config.clusterFirewallId || '',
+          FLUI_MASTER_PUBLIC_IP: config.masterPublicIp || '',
+          FLUI_VNET_PROVIDER_RESOURCE_ID:
+            config.envVnet?.vnetProviderResourceId || '',
+          FLUI_VNET_PROVIDER: config.envVnet?.vnetProvider || '',
+          FLUI_VNET_NAME: config.envVnet?.vnetName || '',
+          FLUI_VNET_IP_RANGE: config.envVnet?.vnetIpRange || '',
+          FLUI_SUBNET_PROVIDER_RESOURCE_ID:
+            config.envVnet?.subnetProviderResourceId || '',
+          FLUI_SUBNET_IP_RANGE: config.envVnet?.subnetIpRange || '',
+          FLUI_SUBNET_TYPE: config.envVnet?.subnetType || '',
+          FLUI_SUBNET_NETWORK_ZONE: config.envVnet?.networkZone || '',
+          NIP_HOSTNAME_TOKEN: config.nipHostnameToken || '',
+          // Flui shared storage (NFS+fscache, scaling doc §14)
+          FLUI_SHARED_STORAGE_ENABLED: config.sharedStorage?.enabled
+            ? 'true'
+            : 'false',
+          FLUI_SHARED_STORAGE_DEVICE:
+            config.sharedStorage?.volumeDevicePath ?? '',
+          FLUI_SHARED_STORAGE_VOLUME_GB: String(
+            config.sharedStorage?.volumeSizeGb ?? 0,
+          ),
+        },
+        // BYOS only: a cloud cluster gets its provider firewall before any node
+        // exists, so its host is never exposed. A BYOS host is, from the moment
+        // k3s binds a port until something closes it.
+        config.provider === 'byos'
+          ? this.buildHostFirewallPreamble(config)
+          : '',
+      );
 
       this.log(`Bootstrap script generated: ${script.length} bytes`, opId);
 
@@ -332,11 +346,67 @@ export class CliK3sScriptService {
   }
 
   /**
+   * Host firewall, applied before k3s binds anything.
+   *
+   * Rendered here with the same renderer the reconcile path uses and written to
+   * the same file that path reads back, so the two converge and the shell never
+   * learns the rule logic — it receives a finished ruleset and only loads it.
+   */
+  private buildHostFirewallPreamble(config: K3sMasterConfig): string {
+    const sshPort = config.byosSshPort ?? 22;
+    const ruleset = renderFluiNftRuleset(
+      getFirewallRulesForClusterType('control', ['0.0.0.0/0', '::/0']),
+      { supportsSshAllowlist: false, sshPorts: [sshPort] },
+    );
+    const b64 = Buffer.from(ruleset, 'utf-8').toString('base64');
+
+    return `
+# ── Flui host firewall — applied before k3s opens a port ────────────────────
+echo "[Bootstrap] Applying host firewall..."
+if ! command -v nft >/dev/null 2>&1; then
+  DEBIAN_FRONTEND=noninteractive apt-get update -qq >/dev/null 2>&1 || true
+  DEBIAN_FRONTEND=noninteractive apt-get install -y -qq nftables >/dev/null 2>&1 || true
+fi
+NFT=$(command -v nft || echo /usr/sbin/nft)
+if [ ! -x "$NFT" ]; then
+  echo "[Bootstrap] ERROR: nftables unavailable — refusing to start k3s on an unprotected host"
+  exit 1
+fi
+mkdir -p /etc/flui
+echo '${b64}' | base64 -d > /etc/flui/flui-firewall.nft
+if ! "$NFT" -c -f /etc/flui/flui-firewall.nft; then
+  echo "[Bootstrap] ERROR: the generated firewall ruleset is invalid"
+  exit 1
+fi
+if ! "$NFT" -f /etc/flui/flui-firewall.nft; then
+  echo "[Bootstrap] ERROR: could not apply the host firewall"
+  exit 1
+fi
+cat > /etc/systemd/system/flui-firewall.service <<'FLUI_UNIT'
+[Unit]
+Description=Flui-managed host firewall (nftables)
+After=network-pre.target
+Wants=network-pre.target
+[Service]
+Type=oneshot
+ExecStart=/usr/sbin/nft -f /etc/flui/flui-firewall.nft
+RemainAfterExit=yes
+[Install]
+WantedBy=multi-user.target
+FLUI_UNIT
+systemctl daemon-reload 2>/dev/null || true
+systemctl enable flui-firewall.service >/dev/null 2>&1 || true
+echo "[Bootstrap] Host firewall active (SSH ${sshPort}, HTTP 80, HTTPS 443)"
+`;
+  }
+
+  /**
    * Generate bootstrap script that downloads and executes K3s init script from GitHub
    */
   private generateBootstrapScript(
     type: 'master' | 'worker',
     vars: Record<string, string>,
+    preamble = '',
   ): string {
     const scriptName =
       type === 'master' ? 'k3s-master-init.sh' : 'k3s-worker-init.sh';
@@ -364,7 +434,7 @@ fi
 export PRIVATE_IP="\${PRIVATE_IP:-}"
 export FLUI_BOOTSTRAP_NODE_PRIVATE_IP="\${PRIVATE_IP:-}"
 echo "[Bootstrap] PRIVATE_IP=\${PRIVATE_IP:-(unresolved)}"
-
+${preamble}
 # Download and execute K3s initialization script
 echo "[Bootstrap] Downloading ${scriptName} from \${SCRIPTS_BASE_URL}..."
 if ! curl -fsSL "\${SCRIPTS_BASE_URL}/${scriptName}" -o /tmp/${scriptName}; then

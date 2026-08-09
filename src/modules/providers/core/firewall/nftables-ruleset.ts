@@ -3,6 +3,12 @@ import { FirewallRule } from '../../interfaces/firewall-provider.interface';
 export interface NftRenderOptions {
   supportsSshAllowlist: boolean;
   internalCidrs?: string[];
+  /**
+   * Ports the operator actually reaches SSH on. Defaults to 22 — rendering the
+   * wrong one locks the host out at the next connection: the live session
+   * survives on conntrack, the one after it does not.
+   */
+  sshPorts?: number[];
 }
 
 export const DEFAULT_INTERNAL_CIDRS = ['10.42.0.0/16', '10.43.0.0/16'];
@@ -11,6 +17,9 @@ const PORT_RE = /^\d{1,5}(-\d{1,5})?$/;
 const IPV4_CIDR_RE = /^(\d{1,3}\.){3}\d{1,3}\/\d{1,2}$/;
 const IPV6_CIDR_RE = /^[0-9a-fA-F:]+\/\d{1,3}$/;
 const ANYWHERE = new Set(['0.0.0.0/0', '::/0']);
+
+const isUsablePort = (p: number): boolean =>
+  Number.isInteger(p) && p > 0 && p < 65536;
 
 const COMMENT_PREFIX = '# flui-rules-b64:';
 
@@ -124,6 +133,12 @@ export function renderFluiNftRuleset(
     internalLines.push(`\t\tip6 saddr ${cidr} accept`);
   }
 
+  const sshPorts = [...new Set((options.sshPorts ?? []).filter(isUsablePort))];
+  if (!sshPorts.length) sshPorts.push(22);
+  const sshLines = sshPorts.map(
+    (p) => `\t\ttcp dport ${p} accept comment "ssh anti-lockout"`,
+  );
+
   const body = [
     '#!/usr/sbin/nft -f',
     '# Flui-managed host firewall — DO NOT EDIT (reconciled by Flui over SSH).',
@@ -141,16 +156,17 @@ export function renderFluiNftRuleset(
     '\t\tct state invalid drop',
     '',
     '\t\t# Anti-lockout: SSH stays reachable (no out-of-band recovery on a host firewall).',
-    '\t\ttcp dport 22 accept comment "ssh anti-lockout"',
+    ...sshLines,
     '',
     '\t\t# Liveness: ICMP / ICMPv6 (ping, path-MTU discovery).',
     '\t\tip protocol icmp accept',
     '\t\tip6 nexthdr ipv6-icmp accept',
     '',
     '\t\t# Intra-cluster k3s traffic — never fence the node off from its own CNI.',
+    '\t\t# Source-scoped on purpose: kubelet (10250) and the flannel VXLAN overlay',
+    '\t\t# (8472/udp) are never opened to the internet. A peer reachable only over',
+    '\t\t# a public IP must be joined with that address in internalCidrs as a /32.',
     ...internalLines,
-    '\t\tudp dport 8472 accept comment "flannel vxlan"',
-    '\t\ttcp dport 10250 accept comment "kubelet"',
     '',
     '\t\t# Reconciled public ingress rules:',
     ...(inbound.length ? inbound : ['\t\t# (none)']),
