@@ -27,32 +27,46 @@ import { TemplateConfig } from './config/template-registry';
 import { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import { Public } from '../auth/decorators/public.decorator';
 
+/** A listed template; the source repository is present only for authenticated callers. */
+type TemplateListItem = Omit<TemplateConfig, 'repo' | 'repoUrl'> &
+  Partial<Pick<TemplateConfig, 'repo' | 'repoUrl'>>;
+
 @ApiTags('Templates')
 @ApiBearerAuth()
 @Controller('templates')
 export class TemplatesController {
   constructor(private readonly templatesService: TemplatesService) {}
 
-  // The registry is static product metadata — the same class of information as
-  // the public catalog, with no tenancy and no user data. Gating it behind a
-  // token means "what can I deploy?" cannot be answered before signing up, by a
-  // person or by an agent evaluating Flui.
+  /**
+   * Open on purpose: "what can I deploy here?" is the first question a new user —
+   * or an agent sizing Flui up — asks, and it comes before any account exists.
+   * The answer is static product metadata with no tenancy and no user data, the
+   * same class of information as the public catalog.
+   *
+   * The source repository is NOT part of that answer. It is only needed once a
+   * template is actually used, which is authenticated either way, so anonymous
+   * callers get the catalogue without it — no reason to publish the org's repo
+   * names, least of all the ones that are still private.
+   */
   @Public()
   @Get()
   @ApiOperation({
     summary: 'List all templates',
-    description: 'List all available framework templates with metadata',
+    description:
+      'List all available framework templates with metadata. Callable without a token; ' +
+      '`repo` and `repoUrl` are included only for authenticated callers.',
   })
   @ApiResponse({
     status: 200,
     description: 'Templates listed',
     type: [TemplateResponseDto],
   })
-  listTemplates(): TemplateConfig[] {
-    return this.templatesService.listTemplates();
+  listTemplates(@Req() req: Request): TemplateListItem[] {
+    const templates = this.templatesService.listTemplates();
+    if (req.user) return templates;
+    return templates.map(({ repo: _repo, repoUrl: _repoUrl, ...rest }) => rest);
   }
 
-  @Public()
   @Get(':framework')
   @ApiOperation({
     summary: 'Get template details',
