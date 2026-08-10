@@ -19,7 +19,17 @@ import { ApplicationManifest } from '../interfaces/application-manifest.interfac
 import {
   validateApplicationManifest,
   parseApplicationManifest,
+  serializeApplicationManifest,
 } from '../utils/application-manifest.util';
+import {
+  applyDeployOverrides,
+  collectOverrideShadows,
+  DeployOverrides,
+  DEPLOY_OVERRIDES_METADATA_KEY,
+  hasDeployOverrides,
+  mergeDeployOverrides,
+  readStoredOverrides,
+} from '../utils/deploy-overrides.util';
 import { ApplicationManifestEnvVar } from '@flui-cloud/spec';
 import {
   ApplicationEnvVar,
@@ -90,12 +100,7 @@ export class ApplicationSourceDeployService {
     let manifest = this.parseAndValidate(dto.yaml);
 
     if (dto.validateOnly) {
-      return {
-        applicationId: '',
-        slug: '',
-        name: manifest.metadata.name,
-        status: 'valid',
-      };
+      return this.buildValidationPreview(manifest, dto);
     }
 
     await this.assertGitHubConnected(userId);
@@ -104,6 +109,12 @@ export class ApplicationSourceDeployService {
     const branch = dto.branch ?? 'main';
     // Overlay the environment bound to this branch (staging/prod), if any.
     manifest = applyEnvironmentProfile(manifest, branch);
+    // The release name is identity-forming, so it must be applied before the
+    // app lookup — the rest of the overrides are merged with the ones stored
+    // on the app we find.
+    if (dto.overrides?.name) {
+      manifest = applyDeployOverrides(manifest, { name: dto.overrides.name });
+    }
     const [owner, repoName] = dto.repoFullName.split('/');
     if (!owner || !repoName) {
       throw new BadRequestException(
@@ -131,6 +142,13 @@ export class ApplicationSourceDeployService {
       branch,
       manifest.metadata.name,
     );
+
+    const effectiveOverrides = this.resolveInstallOverrides(
+      manifest,
+      app?.metadata,
+      dto.overrides,
+    );
+    manifest = applyDeployOverrides(manifest, effectiveOverrides);
 
     // Resolve the imageRef to use when skipping the build:
     //   1. dto.imageRef (explicit) — wins
@@ -165,9 +183,10 @@ export class ApplicationSourceDeployService {
       ...(buildPaths.subPath ? { subPath: buildPaths.subPath } : {}),
     };
 
-    const endpointSpecJson = manifest.deploy.domain
-      ? JSON.stringify(manifest.deploy.domain)
-      : undefined;
+    const manifestMetadata = this.buildManifestMetadata(
+      manifest,
+      effectiveOverrides,
+    );
 
     if (!app) {
       this.logger.log(
@@ -190,21 +209,14 @@ export class ApplicationSourceDeployService {
           startCommand: manifest.deploy.startCommand,
           volumes: (manifest.deploy.volumes as any) ?? [],
           autoDeploy: false,
-          metadata: endpointSpecJson
-            ? { [ENDPOINT_SPEC_METADATA_KEY]: endpointSpecJson }
-            : undefined,
+          metadata: manifestMetadata,
         },
         userId,
       );
     } else {
       this.logger.log(`Updating existing application from manifest: ${app.id}`);
 
-      const updatedMetadata = endpointSpecJson
-        ? {
-            ...app.metadata,
-            [ENDPOINT_SPEC_METADATA_KEY]: endpointSpecJson,
-          }
-        : app.metadata;
+      const updatedMetadata = { ...app.metadata, ...manifestMetadata };
 
       const existingEnv = (app.env as ApplicationEnvVar[]) ?? [];
       this.warnEnvShadows(existingEnv, manifestEnv, dto.envOverrides);
@@ -272,6 +284,73 @@ export class ApplicationSourceDeployService {
         ? `https://github.com/${dto.repoFullName}/actions/runs/${workflowResult.runId}`
         : undefined,
     };
+  }
+
+  /**
+   * The manifest-derived slice of `app.metadata`: the endpoint spec consumed by
+   * `ensurePublicEndpoint`, and the install overrides that must outlive this
+   * deploy. Returns undefined when the manifest carries neither, so an app
+   * without them keeps a clean metadata object.
+   */
+  private buildManifestMetadata(
+    manifest: ApplicationManifest,
+    overrides: DeployOverrides,
+  ): Record<string, any> | undefined {
+    const metadata: Record<string, any> = {};
+    if (manifest.deploy.domain) {
+      metadata[ENDPOINT_SPEC_METADATA_KEY] = JSON.stringify(
+        manifest.deploy.domain,
+      );
+    }
+    if (hasDeployOverrides(overrides)) {
+      metadata[DEPLOY_OVERRIDES_METADATA_KEY] = overrides;
+    }
+    return Object.keys(metadata).length > 0 ? metadata : undefined;
+  }
+
+  /**
+   * Dry run: the manifest as it would be applied, with the branch environment
+   * and the install-time overrides baked in. Lets every surface show (and let
+   * the user download) what a deploy would actually produce.
+   */
+  private buildValidationPreview(
+    manifest: ApplicationManifest,
+    dto: DeployFromYamlDto,
+  ): DeployFromYamlResponseDto {
+    const preview = applyDeployOverrides(
+      applyEnvironmentProfile(manifest, dto.branch ?? 'main'),
+      dto.overrides,
+    );
+    return {
+      applicationId: '',
+      slug: '',
+      name: preview.metadata.name,
+      status: 'valid',
+      effectiveYaml: serializeApplicationManifest(preview),
+    };
+  }
+
+  /**
+   * The overrides this deploy runs with: what was stored on the app, updated by
+   * what the caller passed (see deploy-overrides.util for the precedence rules).
+   * Every manifest value they mask is logged, so the operator can see why the
+   * repo says one thing and the cluster does another.
+   */
+  private resolveInstallOverrides(
+    manifest: ApplicationManifest,
+    storedMetadata: Record<string, any> | null | undefined,
+    incoming?: DeployOverrides,
+  ): DeployOverrides {
+    const effective = mergeDeployOverrides(
+      readStoredOverrides(storedMetadata),
+      incoming,
+    );
+    for (const shadow of collectOverrideShadows(manifest, effective)) {
+      this.logger.warn(
+        `[${manifest.metadata.name}] install override shadows the manifest: ${shadow}`,
+      );
+    }
+    return effective;
   }
 
   private parseAndValidate(raw: string): ApplicationManifest {

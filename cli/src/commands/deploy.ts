@@ -10,6 +10,7 @@ import { resolveClusterRef } from '../lib/resolve-cluster';
 import { detectFrameworkFromProject } from '../lib/framework-detector';
 import { runFrameworkPostChecks } from '../lib/framework-postchecks';
 import { validate, parseYaml } from '@flui-cloud/spec';
+import { DeployOverrides } from '../../../src/modules/applications/utils/deploy-overrides.util';
 
 const POLL_INTERVAL_MS = 5000;
 const MAX_WAIT_CATALOG_MS = 600_000; // 10 min for catalog installs
@@ -98,7 +99,16 @@ export default class Deploy extends Command {
     }),
     name: Flags.string({
       description:
-        'Display name override (default: metadata.name from manifest)',
+        'Release name override (default: metadata.name from the manifest). ' +
+        'Part of the app identity, so passing a new one installs the same repo ' +
+        'and branch a second time instead of updating the first install. ' +
+        'Pass it on every deploy that targets that install.',
+    }),
+    exposure: Flags.string({
+      description:
+        'Override deploy.exposure for this install: public (Ingress + TLS) or ' +
+        'internal (private URL behind Flui authentication).',
+      options: ['public', 'internal'],
     }),
     env: Flags.string({
       char: 'e',
@@ -132,27 +142,27 @@ export default class Deploy extends Command {
         'when the app was deleted from Flui.',
     }),
     'skip-endpoint': Flags.boolean({
-      description: 'Skip DNS and TLS provisioning (kind:CatalogApp only)',
+      description: 'Skip DNS and TLS provisioning for this install',
       default: false,
     }),
     'no-tls': Flags.boolean({
       description:
-        "Provision the endpoint with DNS only, without a per-app TLS certificate (kind:CatalogApp). Overrides the manifest domain.tls. Avoids Let's Encrypt rate limits; the app is served over HTTP.",
+        "Provision the endpoint with DNS only, without a per-app TLS certificate. Overrides the manifest domain.tls. Avoids Let's Encrypt rate limits; the app is served over HTTP.",
       default: false,
     }),
     'cert-challenge': Flags.string({
       description:
-        'ACME challenge for the app endpoint (kind:CatalogApp). http-01 works without a DNS zone and forces a per-host cert; dns-01 needs a cluster DNS zone with a wildcard issuer. Default: derived from cluster config.',
+        'ACME challenge for the app endpoint. http-01 works without a DNS zone and forces a per-host cert; dns-01 needs a cluster DNS zone with a wildcard issuer. Default: derived from cluster config.',
       options: ['http-01', 'dns-01'],
     }),
     'cert-provider': Flags.string({
       description:
-        'Certificate issuer for the app endpoint (kind:CatalogApp). Default: cluster default.',
+        'Certificate issuer for the app endpoint. Default: cluster default.',
       options: ['lets-encrypt', 'lets-encrypt-staging'],
     }),
     hostname: Flags.string({
       description:
-        'How the app is exposed (kind:CatalogApp): ip (nip.io) or domain (cluster DNS zone). Default: derived from manifest/cluster.',
+        'How the app is exposed: ip (nip.io) or domain (cluster DNS zone). Default: derived from manifest/cluster.',
       options: ['ip', 'domain'],
     }),
     'no-wait': Flags.boolean({
@@ -270,6 +280,7 @@ export default class Deploy extends Command {
       'main';
 
     const envOverrides = this.buildEnvOverrides(flags);
+    const overrides = this.buildDeployOverrides(flags);
 
     const skipBuild = (flags['no-build'] as boolean) || !!flags.image;
     const explicitImage = flags.image as string | undefined;
@@ -290,6 +301,7 @@ export default class Deploy extends Command {
       explicitImage,
       skipBuild,
       envOverrides,
+      overrides,
     });
 
     let spinnerLabel: string;
@@ -314,6 +326,7 @@ export default class Deploy extends Command {
           skipBuild,
           ...(explicitImage ? { imageRef: explicitImage } : {}),
           ...(Object.keys(envOverrides).length > 0 ? { envOverrides } : {}),
+          ...(overrides ? { overrides } : {}),
         },
       );
       spinner.succeed(
@@ -817,12 +830,22 @@ export default class Deploy extends Command {
     explicitImage?: string;
     skipBuild: boolean;
     envOverrides: Record<string, string>;
+    overrides?: DeployOverrides;
   }): void {
     console.log(chalk.cyan('\n  Deploy from source\n'));
     console.log(`  ${chalk.bold('File:')}    ${opts.filePath}`);
     console.log(`  ${chalk.bold('Cluster:')} ${opts.clusterName}`);
     console.log(`  ${chalk.bold('Repo:')}    ${opts.repoFullName}`);
     console.log(`  ${chalk.bold('Branch:')}  ${opts.branch}`);
+    if (opts.overrides?.name) {
+      console.log(`  ${chalk.bold('Name:')}    ${opts.overrides.name}`);
+    }
+    if (opts.overrides?.domain?.fqdn) {
+      console.log(`  ${chalk.bold('Domain:')}  ${opts.overrides.domain.fqdn}`);
+    }
+    if (opts.overrides?.exposure) {
+      console.log(`  ${chalk.bold('Expose:')}  ${opts.overrides.exposure}`);
+    }
     if (opts.explicitImage) {
       const mode = chalk.yellow(`--image ${opts.explicitImage}`);
       console.log(`  ${chalk.bold('Mode:')}    ${mode}`);
@@ -836,6 +859,44 @@ export default class Deploy extends Command {
       console.log(`  ${chalk.bold('Env:')}     ${envKeys.join(', ')}`);
     }
     console.log('');
+  }
+
+  /**
+   * Install-time overrides of manifest fields, from the endpoint flags. They
+   * are what lets one repo and branch be installed more than once: the name and
+   * the domain cannot both live in the file the two installs share.
+   */
+  private buildDeployOverrides(
+    flags: Record<string, unknown>,
+  ): DeployOverrides | undefined {
+    const domain: DeployOverrides['domain'] = {
+      ...(flags.domain ? { fqdn: flags.domain as string } : {}),
+      ...(flags['no-tls'] ? { tls: false } : {}),
+      ...(flags['cert-challenge']
+        ? { certChallenge: flags['cert-challenge'] as 'http-01' | 'dns-01' }
+        : {}),
+      ...(flags['cert-provider']
+        ? {
+            certificateProvider: flags['cert-provider'] as
+              | 'lets-encrypt'
+              | 'lets-encrypt-staging',
+          }
+        : {}),
+      ...(flags.hostname
+        ? { hostnameMode: flags.hostname as 'ip' | 'domain' }
+        : {}),
+      ...(flags['skip-endpoint'] ? { auto: false } : {}),
+    };
+
+    const overrides: DeployOverrides = {
+      ...(flags.name ? { name: flags.name as string } : {}),
+      ...(flags.exposure
+        ? { exposure: flags.exposure as 'public' | 'internal' }
+        : {}),
+      ...(Object.keys(domain).length > 0 ? { domain } : {}),
+    };
+
+    return Object.keys(overrides).length > 0 ? overrides : undefined;
   }
 
   private detectGitRemote(cwd: string): string | undefined {

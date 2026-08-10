@@ -5,7 +5,77 @@ import {
   IsUUID,
   IsOptional,
   IsBoolean,
+  IsIn,
+  IsFQDN,
+  ValidateNested,
 } from 'class-validator';
+import { Type } from 'class-transformer';
+
+export class DeployDomainOverrideDto {
+  @ApiPropertyOptional({
+    description: 'Auto-create the AppEndpoint after deploy.',
+  })
+  @IsOptional()
+  @IsBoolean()
+  auto?: boolean;
+
+  @ApiPropertyOptional({ description: 'Provision a TLS certificate.' })
+  @IsOptional()
+  @IsBoolean()
+  tls?: boolean;
+
+  @ApiPropertyOptional({
+    description: 'Explicit FQDN to expose on. Taken verbatim.',
+    example: 'staging.example.com',
+  })
+  @IsOptional()
+  @IsFQDN()
+  fqdn?: string;
+
+  @ApiPropertyOptional({ enum: ['ip', 'domain'] })
+  @IsOptional()
+  @IsIn(['ip', 'domain'])
+  hostnameMode?: 'ip' | 'domain';
+
+  @ApiPropertyOptional({ enum: ['http-01', 'dns-01'] })
+  @IsOptional()
+  @IsIn(['http-01', 'dns-01'])
+  certChallenge?: 'http-01' | 'dns-01';
+
+  @ApiPropertyOptional({ enum: ['lets-encrypt', 'lets-encrypt-staging'] })
+  @IsOptional()
+  @IsIn(['lets-encrypt', 'lets-encrypt-staging'])
+  certificateProvider?: 'lets-encrypt' | 'lets-encrypt-staging';
+}
+
+export class DeployOverridesDto {
+  @ApiPropertyOptional({
+    description:
+      'Release name, overriding metadata.name. Part of the app identity ' +
+      '(cluster, repository, branch, name), so the same repo and branch can be ' +
+      'installed more than once. Not remembered between deploys — pass it every ' +
+      'time you target that install.',
+    example: 'my-app-staging',
+  })
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  name?: string;
+
+  @ApiPropertyOptional({ enum: ['public', 'internal'] })
+  @IsOptional()
+  @IsIn(['public', 'internal'])
+  exposure?: 'public' | 'internal';
+
+  @ApiPropertyOptional({
+    description: 'Endpoint overrides (FQDN, TLS, ACME challenge, issuer).',
+    type: DeployDomainOverrideDto,
+  })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => DeployDomainOverrideDto)
+  domain?: DeployDomainOverrideDto;
+}
 
 export class DeployFromYamlDto {
   @ApiProperty({ description: 'Raw flui.yaml content (kind: Application)' })
@@ -41,7 +111,23 @@ export class DeployFromYamlDto {
   envOverrides?: Record<string, string>;
 
   @ApiPropertyOptional({
-    description: 'Validate manifest without triggering a deploy',
+    description:
+      'Install-time overrides of manifest fields that belong to the installation ' +
+      'rather than to the code (release name, exposure, endpoint/domain). ' +
+      'Persisted on the application and re-applied on every later manifest deploy, ' +
+      'so an install never silently reverts to the manifest value. ' +
+      'Combine with a distinct name to deploy the same repo twice on one cluster.',
+    type: DeployOverridesDto,
+  })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => DeployOverridesDto)
+  overrides?: DeployOverridesDto;
+
+  @ApiPropertyOptional({
+    description:
+      'Validate manifest without triggering a deploy. Returns the effective ' +
+      'manifest (overrides and branch environment applied) in effectiveYaml.',
     default: false,
   })
   @IsOptional()
@@ -83,4 +169,12 @@ export class DeployFromYamlResponseDto {
     description: 'Set when skipBuild=true — track via /operations/:id',
   })
   operationId?: string;
+
+  @ApiPropertyOptional({
+    description:
+      'The manifest actually applied, with the branch environment and the ' +
+      'install-time overrides baked in. Returned on validateOnly requests — ' +
+      'use it to preview or download what a deploy would produce.',
+  })
+  effectiveYaml?: string;
 }

@@ -52,3 +52,14 @@ export function validateApplicationManifest(
 export function parseApplicationManifest(raw: string): ApplicationManifest {
   return validateApplicationManifest(raw).manifest;
 }
+
+/**
+ * Renders a manifest back to YAML — used to hand back the *effective* manifest
+ * (branch environment and install overrides applied) so an operator can read,
+ * download or commit exactly what was deployed.
+ */
+export function serializeApplicationManifest(
+  manifest: ApplicationManifest,
+): string {
+  return yaml.dump(manifest, { lineWidth: 120, noRefs: true, sortKeys: false });
+}
