@@ -183,6 +183,29 @@ export class ClusterDnsZoneController {
     return this.clusterDnsZoneService.toResponseDto(withRelations);
   }
 
+  @Post(':assignmentId/reconcile')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Reconcile one DNS zone assignment',
+    description:
+      'Re-applies the cluster state the zone needs (DNS-01 credential Secrets ' +
+      'and the wildcard ClusterIssuer solvers covering every assigned zone) ' +
+      'and recomputes the reconciliation status of the assignment. Returns ' +
+      'the assignment with its new status; a zone that cannot be reconciled ' +
+      'comes back in ERROR with the reason in errorMessage.',
+  })
+  @ApiParam({ name: 'clusterId', description: 'Cluster ID' })
+  @ApiParam({ name: 'assignmentId', description: 'Assignment ID' })
+  @ApiResponse({ status: 200, type: ClusterDnsZoneResponseDto })
+  @ApiResponse({ status: 404, description: 'Assignment not found' })
+  async reconcileAssignment(
+    @Param('assignmentId') assignmentId: string,
+  ): Promise<ClusterDnsZoneResponseDto> {
+    const assignment =
+      await this.clusterDnsZoneService.reconcileAssignment(assignmentId);
+    return this.clusterDnsZoneService.toResponseDto(assignment);
+  }
+
   @Get('issuers')
   @ApiOperation({
     summary: 'Get cert-manager ClusterIssuers configured in the cluster',

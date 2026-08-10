@@ -19,7 +19,11 @@ import {
   SystemDnsStatusResponseDto,
   SystemAppDnsStatusDto,
 } from '../dto/system-dns-status-response.dto';
-import { CertificateStatus } from '../../providers/interfaces/certificate-provider.interface';
+import {
+  CertificateStatus,
+  Dns01Credential,
+  Dns01SolverSpec,
+} from '../../providers/interfaces/certificate-provider.interface';
 import { ReconciliationStatus } from '../../infrastructure/shared/enums/reconciliation-status.enum';
 import { KubernetesService } from '../../infrastructure/shared/services/kubernetes.service';
 import { EncryptionService } from '../../shared/encryption/services/encryption.service';
@@ -169,33 +173,100 @@ export class ClusterDnsZoneService {
     });
 
     const saved = await this.clusterDnsZoneRepository.save(assignment);
-    await this.refreshWildcardIssuerZones(clusterId, cluster);
+    await this.reconcileAssignment(saved.id);
     return saved;
   }
 
   /**
-   * Re-applies the wildcard ClusterIssuers so their dns01 solver selector
-   * covers every zone currently assigned to the cluster. Best-effort: called
-   * after a zone assignment, it silently skips clusters that have no wildcard
-   * issuers yet (they get the full zone list when issuers are first
-   * configured) or that are unreachable.
+   * Brings one zone assignment to a truthful status, applying whatever cluster
+   * state it needs on the way: the DNS-01 credential Secrets and the wildcard
+   * ClusterIssuers, whose solver selectors must cover every assigned zone or
+   * challenges for the non-primary ones fail with "no configured challenge
+   * solvers".
+   *
+   * Every zone added after the initial issuer setup goes through here —
+   * without it an assignment created as PENDING has no path out of PENDING,
+   * since the issuer-configuration endpoints are the only other writers of
+   * that column.
    */
-  private async refreshWildcardIssuerZones(
+  async reconcileAssignment(
+    assignmentId: string,
+  ): Promise<ClusterDnsZoneEntity> {
+    const assignment = await this.getById(assignmentId);
+    const clusterId = assignment.clusterId;
+
+    await this.updateReconciliationStatus(
+      assignmentId,
+      ReconciliationStatus.RECONCILING,
+    );
+
+    try {
+      await this.applyWildcardIssuersIfConfigured(clusterId);
+      await this.refreshAssignmentStatuses(clusterId);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      this.logger.warn(
+        `Reconcile of DNS zone assignment ${assignmentId} failed: ${message}`,
+      );
+      await this.updateReconciliationStatus(
+        assignmentId,
+        ReconciliationStatus.ERROR,
+        message,
+      );
+    }
+
+    return await this.getById(assignmentId);
+  }
+
+  /**
+   * Re-applies the wildcard ClusterIssuers so their dns01 solvers cover every
+   * zone currently assigned to the cluster. No-op when no zone wants wildcard
+   * TLS or when no ACME email is known yet — those clusters get the full
+   * solver set when the issuers are first configured.
+   */
+  private async applyWildcardIssuersIfConfigured(
     clusterId: string,
-    cluster: ClusterEntity,
   ): Promise<void> {
+    const assignments = await this.getZonesForCluster(clusterId);
+    if (!assignments.some((a) => a.wildcardCertificate)) return;
+
+    const acmeEmail = await this.resolveAcmeEmail(clusterId);
+    if (!acmeEmail) return;
+
+    const cluster = await this.clusterRepository.findOne({
+      where: { id: clusterId },
+    });
+    if (!cluster) throw new NotFoundException(`Cluster ${clusterId} not found`);
+
+    const kubeconfig = await this.getKubeconfig(cluster);
+    await this.applyDnsCredentialSecrets(clusterId, kubeconfig);
+    await this.applyDnsClusterIssuers(clusterId, kubeconfig, acmeEmail);
+    this.watchIssuers(clusterId, kubeconfig, acmeEmail, [
+      ...this.dnsIssuerNames,
+    ]).catch((err) =>
+      this.logger.error(
+        `[${clusterId}] watchIssuers fatal error: ${err.message}`,
+      ),
+    );
+  }
+
+  /**
+   * ACME email for the cluster: what the operator entered on any assignment
+   * first, falling back to the email an existing ClusterIssuer already
+   * registered with. Returns null when the cluster has never been given one.
+   */
+  private async resolveAcmeEmail(clusterId: string): Promise<string | null> {
+    const assignments = await this.getZonesForCluster(clusterId);
+    const fromAssignment = assignments.find((a) => a.acmeEmail)?.acmeEmail;
+    if (fromAssignment) return fromAssignment;
     try {
       const issuers = await this.getIssuers(clusterId);
-      const wildcard = issuers.find((i) =>
-        this.dnsIssuerNames.includes(i.name),
-      );
-      if (!wildcard?.email) return;
-      const kubeconfig = await this.getKubeconfig(cluster);
-      await this.applyDnsClusterIssuers(clusterId, kubeconfig, wildcard.email);
+      return issuers.find((i) => i.email)?.email ?? null;
     } catch (err) {
       this.logger.warn(
-        `Could not refresh wildcard issuer zones for cluster ${clusterId}: ${err instanceof Error ? err.message : String(err)}`,
+        `Could not read issuers of cluster ${clusterId} for the ACME email: ${err instanceof Error ? err.message : String(err)}`,
       );
+      return null;
     }
   }
 
@@ -502,8 +573,8 @@ export class ClusterDnsZoneService {
 
     const kubeconfig = await this.getKubeconfig(cluster);
 
-    const assignment = await this.getZoneAssignment(clusterId);
-    const useDns01 = assignment?.wildcardCertificate === true;
+    const assignments = await this.getZonesForCluster(clusterId);
+    const useDns01 = assignments.some((a) => a.wildcardCertificate);
 
     await this.setZoneReconciliationStatusByClusterId(
       clusterId,
@@ -521,10 +592,7 @@ export class ClusterDnsZoneService {
         // wildcard issuer is Ready, `hasInternalHosting` returns true.
       }
 
-      await this.setZoneReconciliationStatusByClusterId(
-        clusterId,
-        ReconciliationStatus.IN_SYNC,
-      );
+      await this.refreshAssignmentStatuses(clusterId);
 
       // Determine which issuer names to watch based on configuration
       const issuersToWatch = useDns01
@@ -575,10 +643,7 @@ export class ClusterDnsZoneService {
     try {
       if (type === 'http') {
         await this.applyHttpIssuers(clusterId, kubeconfig, dto.acmeEmail);
-        await this.setZoneReconciliationStatusByClusterId(
-          clusterId,
-          ReconciliationStatus.IN_SYNC,
-        );
+        await this.refreshAssignmentStatuses(clusterId);
         this.watchIssuers(clusterId, kubeconfig, dto.acmeEmail, [
           ...this.httpIssuerNames,
         ]).catch((err) =>
@@ -590,10 +655,7 @@ export class ClusterDnsZoneService {
       }
 
       await this.applyDnsIssuers(clusterId, kubeconfig, dto.acmeEmail);
-      await this.setZoneReconciliationStatusByClusterId(
-        clusterId,
-        ReconciliationStatus.IN_SYNC,
-      );
+      await this.refreshAssignmentStatuses(clusterId);
       this.watchIssuers(clusterId, kubeconfig, dto.acmeEmail, [
         ...this.dnsIssuerNames,
       ]).catch((err) =>
@@ -741,10 +803,11 @@ export class ClusterDnsZoneService {
   }
 
   /**
-   * Step 1 of DNS wildcard setup: apply the DNS token Secret and confirm it is
-   * readable before returning. cert-manager validates the Secret at ClusterIssuer
-   * apply time via its informer cache — the Secret must exist and be consistent
-   * before step 2 is called.
+   * Step 1 of DNS wildcard setup: apply the DNS credential Secret of every DNS
+   * provider the cluster's zones live on, and confirm each is readable before
+   * returning. cert-manager validates the Secret at ClusterIssuer apply time
+   * via its informer cache — the Secret must exist and be consistent before
+   * step 2 is called.
    */
   async applyDnsSecret(clusterId: string): Promise<void> {
     const cluster = await this.clusterRepository.findOne({
@@ -754,13 +817,15 @@ export class ClusterDnsZoneService {
       throw new NotFoundException(`Cluster ${clusterId} not found`);
     }
     const kubeconfig = await this.getKubeconfig(cluster);
-    await this.applyDnsTokenSecret(clusterId, kubeconfig);
+    await this.applyDnsCredentialSecrets(clusterId, kubeconfig);
   }
 
   /**
    * Step 2 of DNS wildcard setup: apply the wildcard ClusterIssuers.
-   * Requires the DNS token Secret to already exist (call applyDnsSecret first).
-   * Throws BadRequestException if the Secret is not found.
+   * Requires the DNS credential Secrets to already exist (call applyDnsSecret
+   * first) — a provider missing its Secret is dropped from the solver set, and
+   * a cluster where no provider can solve DNS-01 gets a BadRequest naming the
+   * blocker per zone.
    */
   async applyDnsIssuersOnly(
     clusterId: string,
@@ -774,27 +839,6 @@ export class ClusterDnsZoneService {
     }
     const kubeconfig = await this.getKubeconfig(cluster);
 
-    const webhookConfig = this.acmeCertificateService.getDns01WebhookConfig(
-      await this.getDnsProviderForCluster(clusterId),
-    );
-    const secretReady = await this.kubernetesService.secretExists(
-      kubeconfig,
-      webhookConfig.secretName,
-      'cert-manager',
-    );
-    if (!secretReady) {
-      throw new BadRequestException(
-        `DNS token Secret "${webhookConfig.secretName}" not found in cert-manager namespace. ` +
-          `Call POST configure-issuer/dns-secret first.`,
-      );
-    }
-
-    await this.assertDns01WebhookInstalled(
-      clusterId,
-      kubeconfig,
-      webhookConfig.groupName,
-    );
-
     await this.setZoneReconciliationStatusByClusterId(
       clusterId,
       ReconciliationStatus.RECONCILING,
@@ -802,15 +846,13 @@ export class ClusterDnsZoneService {
 
     try {
       await this.applyDnsClusterIssuers(clusterId, kubeconfig, dto.acmeEmail);
-      await this.setZoneReconciliationStatusByClusterId(
-        clusterId,
-        ReconciliationStatus.IN_SYNC,
-      );
+      await this.refreshAssignmentStatuses(clusterId);
     } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
       await this.setZoneReconciliationStatusByClusterId(
         clusterId,
         ReconciliationStatus.ERROR,
-        err?.message ?? String(err),
+        message,
       );
       throw err;
     }
@@ -825,41 +867,59 @@ export class ClusterDnsZoneService {
   }
 
   /**
-   * DNS-01 solvers delegate TXT-record writes to a cert-manager webhook that
-   * registers its own API group (e.g. acme.hetzner.com). If the webhook is not
-   * installed, issuers apply cleanly but every challenge stalls with a
-   * "cannot create resource" error — fail fast with an actionable message
-   * instead. The webhook is provider-DNS-specific and independent of the
-   * compute provider, so it can legitimately be missing on BYOS/cross-provider
-   * clusters bootstrapped before it was installed unconditionally.
+   * Why a DNS provider cannot solve DNS-01 on this cluster, or null when it
+   * can. DNS-01 solvers delegate TXT-record writes to a cert-manager webhook
+   * that registers its own API group (e.g. acme.hetzner.com): without the
+   * webhook, issuers apply cleanly but every challenge stalls with a "cannot
+   * create resource" error. The webhook is DNS-provider-specific and
+   * independent of the compute provider, so it can legitimately be missing on
+   * BYOS/cross-provider clusters.
    */
-  private async assertDns01WebhookInstalled(
-    clusterId: string,
+  private async dns01BlockReason(
+    dnsProvider: DnsProvider,
     kubeconfig: string,
-    webhookGroupName: string,
-  ): Promise<void> {
+  ): Promise<string | null> {
+    if (!this.acmeCertificateService.supportsDns01(dnsProvider)) {
+      return (
+        `DNS-01 is not supported for DNS provider "${dnsProvider}" ` +
+        `(supported: ${this.acmeCertificateService.listDns01Providers().join(', ')})`
+      );
+    }
+    const webhook =
+      this.acmeCertificateService.getDns01WebhookConfig(dnsProvider);
+
     let apiService: { status?: any } | null = null;
     try {
       apiService = await this.kubernetesService.getResource(
         kubeconfig,
         'APIService',
-        `v1alpha1.${webhookGroupName}`,
+        `v1alpha1.${webhook.groupName}`,
         '',
       );
     } catch (err) {
+      // A transient read failure must not drop a working provider from the
+      // solver set — assume installed and let the challenge surface the truth.
       this.logger.warn(
-        `[${clusterId}] DNS-01 webhook APIService check failed: ${err?.message ?? err}`,
+        `DNS-01 webhook APIService check failed for ${dnsProvider}: ${err instanceof Error ? err.message : String(err)}`,
       );
-      return;
+      return null;
     }
     if (!apiService) {
-      throw new BadRequestException(
-        `DNS-01 webhook for "${webhookGroupName}" is not installed on the cluster ` +
-          `(APIService v1alpha1.${webhookGroupName} not found). Wildcard certificate ` +
-          `challenges cannot be solved without it — install cert-manager-webhook for ` +
-          `your DNS provider, then retry.`,
+      return (
+        `the DNS-01 webhook for "${webhook.groupName}" is not installed on the cluster ` +
+        `(APIService v1alpha1.${webhook.groupName} not found)`
       );
     }
+
+    const secretReady = await this.kubernetesService.secretExists(
+      kubeconfig,
+      webhook.secretName,
+      'cert-manager',
+    );
+    if (!secretReady) {
+      return `the credential Secret "${webhook.secretName}" is missing in the cert-manager namespace`;
+    }
+    return null;
   }
 
   private async applyDnsIssuers(
@@ -867,65 +927,145 @@ export class ClusterDnsZoneService {
     kubeconfig: string,
     acmeEmail: string,
   ): Promise<void> {
-    await this.applyDnsTokenSecret(clusterId, kubeconfig);
+    await this.applyDnsCredentialSecrets(clusterId, kubeconfig);
     await this.applyDnsClusterIssuers(clusterId, kubeconfig, acmeEmail);
   }
 
-  private async applyDnsTokenSecret(
+  /** Distinct DNS providers across the zones assigned to a cluster. */
+  private async getDnsProvidersForCluster(
+    clusterId: string,
+  ): Promise<DnsProvider[]> {
+    const assignments = await this.getZonesForCluster(clusterId);
+    return [
+      ...new Set(
+        assignments
+          .map((a) => a.dnsZone?.dnsProvider)
+          .filter((p): p is DnsProvider => !!p),
+      ),
+    ];
+  }
+
+  /**
+   * Applies one credential Secret per DNS provider present on the cluster.
+   * Best-effort per provider: a provider whose credentials are not configured
+   * is skipped and later reported on its own zones, rather than failing the
+   * whole cluster.
+   */
+  private async applyDnsCredentialSecrets(
     clusterId: string,
     kubeconfig: string,
-  ): Promise<void> {
-    const assignment = await this.getZoneAssignmentOrFail(clusterId);
-    const dnsProvider = assignment.dnsZone?.dnsProvider;
-    if (!dnsProvider) {
-      throw new Error(
-        `Cannot configure DNS secret for cluster ${clusterId}: DNS provider is missing`,
-      );
+  ): Promise<DnsProvider[]> {
+    const applied: DnsProvider[] = [];
+    for (const dnsProvider of await this.getDnsProvidersForCluster(clusterId)) {
+      if (!this.acmeCertificateService.supportsDns01(dnsProvider)) continue;
+      try {
+        const credential = await this.resolveDnsCredential(dnsProvider);
+        const manifest =
+          this.acmeCertificateService.generateDnsCredentialSecretManifest(
+            dnsProvider,
+            credential,
+          );
+        await this.kubernetesService.applyManifest(kubeconfig, manifest);
+
+        const webhook =
+          this.acmeCertificateService.getDns01WebhookConfig(dnsProvider);
+        await this.kubernetesService.waitForSecret(
+          kubeconfig,
+          webhook.secretName,
+          'cert-manager',
+        );
+        applied.push(dnsProvider);
+        this.logger.log(
+          `Applied DNS-01 credential Secret for ${dnsProvider} in cert-manager namespace for cluster ${clusterId}`,
+        );
+      } catch (err) {
+        this.logger.warn(
+          `Could not apply the DNS-01 credential Secret for ${dnsProvider} on cluster ${clusterId}: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
     }
+    return applied;
+  }
 
+  /** Reads the provider credential in the shape its cert-manager webhook expects. */
+  private async resolveDnsCredential(
+    dnsProvider: DnsProvider,
+  ): Promise<Dns01Credential> {
     const cloudProvider = this.mapDnsProviderToCloudProvider(dnsProvider);
-    const token =
-      await this.credentialProvider.getActiveApiToken(cloudProvider);
-    const tokenSecretManifest =
-      this.acmeCertificateService.generateDnsTokenSecretManifest(
-        token,
-        dnsProvider,
-      );
-    await this.kubernetesService.applyManifest(kubeconfig, tokenSecretManifest);
-    this.logger.log(
-      `Applied DNS token Secret for ${dnsProvider} in cert-manager namespace for cluster ${clusterId}`,
-    );
-
-    const webhookConfig =
+    const webhook =
       this.acmeCertificateService.getDns01WebhookConfig(dnsProvider);
-    await this.kubernetesService.waitForSecret(
-      kubeconfig,
-      webhookConfig.secretName,
-      'cert-manager',
-    );
+    if (webhook.credential.kind === 'api_token') {
+      return {
+        kind: 'api_token',
+        token: await this.credentialProvider.getActiveApiToken(cloudProvider),
+      };
+    }
+    const pair =
+      await this.credentialProvider.getActiveAccessKeyPair(cloudProvider);
+    return {
+      kind: 'access_key_pair',
+      accessKey: pair.accessKey,
+      secretKey: pair.secretKey,
+    };
+  }
+
+  /**
+   * Applies the wildcard ClusterIssuers with one dns01 solver per DNS provider
+   * that can actually solve challenges, each selecting its own zones, plus the
+   * http01 catch-all. A cluster whose zones span several providers needs one
+   * solver each: the webhook and its credential Secret are provider-specific, so
+   * a single-provider issuer drops every zone that is not on that provider.
+   */
+  /** Zone names of a cluster bucketed by the DNS provider that serves them. */
+  private async groupZonesByProvider(
+    clusterId: string,
+  ): Promise<Map<DnsProvider, string[]>> {
+    const byProvider = new Map<DnsProvider, string[]>();
+    for (const assignment of await this.getZonesForCluster(clusterId)) {
+      const dnsProvider = assignment.dnsZone?.dnsProvider;
+      const zoneName = assignment.dnsZone?.zoneName;
+      if (!dnsProvider || !zoneName) continue;
+      byProvider.set(dnsProvider, [
+        ...(byProvider.get(dnsProvider) ?? []),
+        zoneName,
+      ]);
+    }
+    return byProvider;
   }
 
   private async applyDnsClusterIssuers(
     clusterId: string,
     kubeconfig: string,
     acmeEmail: string,
-  ): Promise<void> {
-    const assignment = await this.getZoneAssignmentOrFail(clusterId);
-    const dnsProvider = assignment.dnsZone?.dnsProvider;
-    if (!dnsProvider || !assignment.dnsZone?.zoneName) {
-      throw new Error(
-        `Cannot configure DNS issuers for cluster ${clusterId}: DNS provider/zone is missing`,
+  ): Promise<Dns01SolverSpec[]> {
+    const zonesByProvider = await this.groupZonesByProvider(clusterId);
+
+    const solvers: Dns01SolverSpec[] = [];
+    const blocked: string[] = [];
+    for (const [dnsProvider, zoneNames] of zonesByProvider) {
+      const reason = await this.dns01BlockReason(dnsProvider, kubeconfig);
+      if (reason) {
+        blocked.push(`${zoneNames.join(', ')}: ${reason}`);
+        continue;
+      }
+      solvers.push({ dnsProvider, zoneNames });
+    }
+
+    if (solvers.length === 0) {
+      throw new BadRequestException(
+        `No DNS zone assigned to cluster ${clusterId} can solve DNS-01 challenges. ` +
+          (blocked.join('; ') || 'No DNS zone is assigned to this cluster.'),
+      );
+    }
+    if (blocked.length > 0) {
+      this.logger.warn(
+        `[${clusterId}] wildcard issuers exclude some zones — ${blocked.join('; ')}`,
       );
     }
 
-    // The dns01 solver selector must cover every assigned zone, or challenges
-    // for non-primary zones fail with "no configured challenge solvers".
-    // Scoped to the primary zone's DNS provider — the webhook/token pair is
-    // provider-specific.
-    const assignments = await this.getZonesForCluster(clusterId);
-    const zoneNames = assignments
-      .filter((a) => a.dnsZone?.dnsProvider === dnsProvider)
-      .map((a) => a.dnsZone!.zoneName);
+    const solverSummary = solvers
+      .map((s) => `${s.dnsProvider}[${s.zoneNames.join(',')}]`)
+      .join(' ');
 
     for (const provider of [
       CertificateProvider.LETS_ENCRYPT_STAGING,
@@ -939,29 +1079,95 @@ export class ClusterDnsZoneService {
         this.acmeCertificateService.generateCombinedClusterIssuerManifest({
           email: acmeEmail,
           server: acmeServerUrl,
-          privateKeySecretRef: `${wildcardIssuerName}-key`,
-          solverType: 'dns01',
-          zoneNames,
-          dnsProvider,
+          solvers,
         });
       await this.kubernetesService.applyManifest(kubeconfig, manifest);
       this.logger.log(
-        `Applied ClusterIssuer ${wildcardIssuerName} (combined dns01+http01, zones: ${zoneNames.join(', ')}) to cluster ${clusterId}`,
+        `Applied ClusterIssuer ${wildcardIssuerName} (dns01+http01, solvers: ${solverSummary}) to cluster ${clusterId}`,
       );
+    }
+    return solvers;
+  }
+
+  /**
+   * Recomputes the status of every assignment of a cluster from live state.
+   * Status is per zone: a wildcard zone whose DNS provider cannot solve DNS-01
+   * is ERROR with an actionable message instead of being marked IN_SYNC along
+   * with the zones that are actually covered.
+   */
+  private async refreshAssignmentStatuses(clusterId: string): Promise<void> {
+    const assignments = await this.getZonesForCluster(clusterId);
+    if (assignments.length === 0) return;
+
+    let kubeconfig: string | null = null;
+    let wildcardIssuers: Awaited<ReturnType<typeof this.getIssuers>> = [];
+    try {
+      const cluster = await this.clusterRepository.findOne({
+        where: { id: clusterId },
+      });
+      if (cluster) kubeconfig = await this.getKubeconfig(cluster);
+      const issuers = await this.getIssuers(clusterId);
+      wildcardIssuers = issuers.filter((i) =>
+        this.dnsIssuerNames.includes(i.name),
+      );
+    } catch (err) {
+      this.logger.warn(
+        `Could not read cluster ${clusterId} while refreshing DNS zone statuses: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      return;
+    }
+
+    for (const assignment of assignments) {
+      const { status, message } = await this.assignmentStatus(
+        assignment,
+        kubeconfig,
+        wildcardIssuers,
+      );
+      await this.updateReconciliationStatus(assignment.id, status, message);
     }
   }
 
-  private async getDnsProviderForCluster(
-    clusterId: string,
-  ): Promise<DnsProvider> {
-    const assignment = await this.getZoneAssignmentOrFail(clusterId);
-    const dnsProvider = assignment.dnsZone?.dnsProvider;
-    if (!dnsProvider) {
-      throw new Error(
-        `Cannot determine DNS provider for cluster ${clusterId}: DNS provider is missing`,
-      );
+  /** The status one assignment should carry, given the cluster state just read. */
+  private async assignmentStatus(
+    assignment: ClusterDnsZoneEntity,
+    kubeconfig: string | null,
+    wildcardIssuers: Awaited<ReturnType<typeof this.getIssuers>>,
+  ): Promise<{ status: ReconciliationStatus; message?: string }> {
+    if (!assignment.wildcardCertificate) {
+      return { status: ReconciliationStatus.IN_SYNC };
     }
-    return dnsProvider;
+
+    const zoneName = assignment.dnsZone?.zoneName ?? assignment.dnsZoneId;
+    const dnsProvider = assignment.dnsZone?.dnsProvider;
+    const reason =
+      dnsProvider && kubeconfig
+        ? await this.dns01BlockReason(dnsProvider, kubeconfig)
+        : `zone ${zoneName} has no DNS provider`;
+    if (reason) {
+      return {
+        status: ReconciliationStatus.ERROR,
+        message: `Wildcard TLS unavailable for ${zoneName}: ${reason}. Per-host HTTP-01 certificates still work.`,
+      };
+    }
+
+    if (wildcardIssuers.length === 0) {
+      return {
+        status: ReconciliationStatus.PENDING,
+        message:
+          'Wildcard ClusterIssuer not configured yet — set the ACME email to finish the DNS-01 setup.',
+      };
+    }
+
+    if (!wildcardIssuers.some((i) => i.ready)) {
+      return {
+        status: ReconciliationStatus.RECONCILING,
+        message:
+          wildcardIssuers[0].message ??
+          'Waiting for the wildcard ClusterIssuer to register with ACME',
+      };
+    }
+
+    return { status: ReconciliationStatus.IN_SYNC };
   }
 
   private async watchIssuers(
@@ -1023,6 +1229,10 @@ export class ClusterDnsZoneService {
           ready: true,
           email,
         }));
+        // ACME registration is asynchronous: the zone statuses written when the
+        // manifests were applied still say RECONCILING, and nothing else would
+        // ever revisit them.
+        await this.refreshAssignmentStatuses(clusterId);
         this.clusterDnsGateway.emitIssuerConfigured(clusterId, {
           clusterId,
           issuers,
@@ -1035,6 +1245,7 @@ export class ClusterDnsZoneService {
 
     // Timeout: emit failure for any issuer that didn't become ready
     const notReady = issuerNames.filter((n) => !readySet.has(n));
+    await this.refreshAssignmentStatuses(clusterId);
     this.clusterDnsGateway.emitIssuerConfigurationFailed(clusterId, {
       clusterId,
       error: `Issuers not ready after timeout: ${notReady.join(', ')}`,
@@ -1179,6 +1390,9 @@ export class ClusterDnsZoneService {
   ): CloudProvider {
     if (dnsProvider === DnsProvider.HETZNER) {
       return CloudProvider.HETZNER;
+    }
+    if (dnsProvider === DnsProvider.SCALEWAY) {
+      return CloudProvider.SCALEWAY;
     }
     throw new Error(
       `No cloud provider mapping for DNS provider "${dnsProvider}"`,

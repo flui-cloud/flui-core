@@ -1,1 +1,2 @@
 src/modules/applications/templates/k8s/*.yaml
+src/modules/dns/templates/*.yaml

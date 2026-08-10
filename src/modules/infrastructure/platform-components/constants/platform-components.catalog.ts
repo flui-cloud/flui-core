@@ -254,6 +254,13 @@ export const PLATFORM_COMPONENTS_CATALOG: PlatformComponentDefinition[] = [
         workload: true,
         optional: true,
       },
+      {
+        kind: 'Deployment',
+        name: 'scaleway-certmanager-webhook',
+        namespace: 'cert-manager',
+        workload: true,
+        optional: true,
+      },
     ],
   },
   {

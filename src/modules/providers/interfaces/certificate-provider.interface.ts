@@ -25,6 +25,16 @@ export interface CertificateIssuerConfig {
   dnsProvider?: DnsProvider;
 }
 
+/** One dns01 solver of a ClusterIssuer: a DNS provider and the zones it answers for. */
+export interface Dns01SolverSpec {
+  dnsProvider: DnsProvider;
+  zoneNames: string[];
+}
+
+export type Dns01Credential =
+  | { kind: 'api_token'; token: string }
+  | { kind: 'access_key_pair'; accessKey: string; secretKey: string };
+
 export interface CertificateManifestConfig {
   name: string;
   namespace: string;

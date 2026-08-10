@@ -11,17 +11,7 @@ spec:
     privateKeySecretRef:
       name: {{PRIVATE_KEY_SECRET_REF}}
     solvers:
-      - dns01:
-          webhook:
-            groupName: {{WEBHOOK_GROUP_NAME}}
-            solverName: {{WEBHOOK_SOLVER_NAME}}
-            config:
-              tokenSecretKeyRef:
-                name: {{WEBHOOK_SECRET_NAME}}
-                key: {{WEBHOOK_SECRET_KEY}}
-        selector:
-          dnsZones:
-{{DNS_ZONES}}
+{{DNS01_SOLVERS}}
       - http01:
           ingress:
             class: traefik
