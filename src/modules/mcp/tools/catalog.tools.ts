@@ -122,7 +122,7 @@ export const CATALOG_TOOLS: ToolDef[] = [
   defineTool({
     name: 'app_install',
     description:
-      "Install a catalog app on a cluster. Provide the catalog `slug` (from catalog_search) and a `displayName`. clusterId is optional (the sole cluster is used automatically). Optional: domain (a custom FQDN; omitted, Flui auto-assigns one when the cluster has DNS+TLS), authMode, exposure, options (feature toggles), userInputs (answers to the app's required inputs — call catalog_get_app first to see which are required), envOverrides. Inspect catalog_get_app before installing so required userInputs and dependencies are satisfied. Returns immediately with an operationId; the install runs in the background and the user is shown a live progress widget — just tell them it has started, do not wait or report completion yourself.",
+      "Install a catalog app on a cluster. Provide the catalog `slug` (from catalog_search) and a `displayName`. clusterId is optional (the sole cluster is used automatically). Optional: domain (a custom FQDN; omitted, Flui auto-assigns one when the cluster has DNS+TLS), authMode, exposure, options (feature toggles), userInputs (answers to the app's required inputs — call catalog_get_app first to see which are required), envOverrides. Inspect catalog_get_app before installing so required userInputs and dependencies are satisfied. Returns immediately with an operationId; the install then runs in the background. Follow the `note` in the result for what to do next — it is surface-specific.",
     scope: MCP_SCOPE.APP_WRITE,
     inputSchema: {
       slug: z.string(),
@@ -168,7 +168,7 @@ export const CATALOG_TOOLS: ToolDef[] = [
   defineTool({
     name: 'app_uninstall',
     description:
-      'Remove an INSTALLED app by its application id. Find the id with app_list first — the catalog only lists installable definitions, not what is installed. Removes catalog-installed apps (the entire multi-component install) as well as custom apps; you do NOT need to know which it is. Returns immediately with an operationId; removal runs in the background and the user sees a live progress widget — just say it has started, do not wait or report completion yourself. Destructive.',
+      'Remove an INSTALLED app by its application id. Find the id with app_list first — the catalog only lists installable definitions, not what is installed. Removes catalog-installed apps (the entire multi-component install) as well as custom apps; you do NOT need to know which it is. Returns immediately with an operationId; removal then runs in the background. Follow the `note` in the result for what to do next — it is surface-specific. Destructive.',
     scope: MCP_SCOPE.APP_DESTRUCTIVE,
     inputSchema: { id: z.string() },
     run: (args, ctx) => removeApplication(ctx, args.id),

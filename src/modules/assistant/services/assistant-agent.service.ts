@@ -1,6 +1,5 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { z } from 'zod';
 import { AuthenticatedUser } from '../../auth/interfaces/authenticated-user.interface';
 import { CatalogService } from '../../catalog/services/catalog.service';
 import { CatalogInstallerService } from '../../catalog/services/catalog-installer.service';
@@ -32,7 +31,11 @@ import { collectHosts, findUnverifiedUrls } from './url-guard.util';
 import { McpScopeResolver } from '../../mcp/services/mcp-scope.resolver';
 import { McpAuditRepository } from '../../mcp/repositories/mcp-audit.repository';
 import { SCOPE_TIER } from '../../mcp/constants/mcp-scopes';
-import { McpToolContext, ToolDef } from '../../mcp/tools/mcp-tool.util';
+import {
+  McpToolContext,
+  ToolDef,
+  toolInputSchema,
+} from '../../mcp/tools/mcp-tool.util';
 import { InferenceEndpoint } from '../../providers/interfaces/inference-capability';
 import {
   ALL_TOOLS,
@@ -665,6 +668,7 @@ export class AssistantAgentService {
       // when enabled, the per-action pending_action confirmation. Disabled by default:
       // the assistant refuses rather than offering a confirmation it cannot honour.
       allowDestructive: this.destructiveEnabled(),
+      surface: 'assistant',
       audit: this.audit,
       services: {
         catalog: this.catalog,
@@ -826,7 +830,7 @@ export class AssistantAgentService {
 
     let args: unknown;
     try {
-      args = z.object(def.inputSchema).parse(this.parseArgs(tc));
+      args = toolInputSchema(def.inputSchema).parse(this.parseArgs(tc));
     } catch (error) {
       const message = describeError(error);
       await this.recordTool(ctx, name, def, false, message);

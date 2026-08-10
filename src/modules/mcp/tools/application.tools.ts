@@ -19,6 +19,31 @@ import {
 // exists (or deflecting to the CLI) when the url/internalUrl fields are simply absent.
 const NO_ENDPOINT = 'none — app has no endpoint configured';
 
+/**
+ * What to tell the model in place of a URL. "No endpoint" and "the endpoint
+ * failed to come up" look identical from the outside but need opposite advice:
+ * the first is a design choice, the second is a broken app with a fixable cause.
+ * Collapsed into one string, a failed install reads as a healthy one.
+ */
+function urlForModel(app: {
+  url?: string;
+  internalUrl?: string;
+  endpointStatus?: string;
+  endpointError?: string;
+}): string {
+  if (app.url) return app.url;
+  if (app.internalUrl) return app.internalUrl;
+  if (app.endpointStatus === 'ERROR') {
+    return `unreachable — its public endpoint failed to provision, so there is no DNS record or ingress: ${
+      app.endpointError ?? 'no reason recorded'
+    }`;
+  }
+  if (app.endpointStatus && app.endpointStatus !== 'IN_SYNC') {
+    return `not ready yet — the public endpoint is still being provisioned (${app.endpointStatus}); re-check before giving the user a link`;
+  }
+  return NO_ENDPOINT;
+}
+
 /** Operations carry config sub-objects; the model only needs the handle + status. */
 function operationView(data: unknown): unknown {
   const op = data as { id?: string; operationType?: string; status?: string };
@@ -209,6 +234,8 @@ export const APPLICATION_TOOLS: ToolDef[] = [
         kind?: string;
         url?: string;
         internalUrl?: string;
+        endpointStatus?: string;
+        endpointError?: string;
       }>;
       return apps.map((a) => ({
         id: a.id,
@@ -216,7 +243,7 @@ export const APPLICATION_TOOLS: ToolDef[] = [
         slug: a.slug,
         status: a.status,
         kind: a.kind,
-        url: a.url ?? a.internalUrl ?? NO_ENDPOINT,
+        url: urlForModel(a),
       }));
     },
   }),
@@ -255,7 +282,7 @@ export const APPLICATION_TOOLS: ToolDef[] = [
         exposure: d.exposure,
         imageRef: d.imageRef,
         replicas: d.replicas,
-        url: d.url ?? d.internalUrl ?? NO_ENDPOINT,
+        url: urlForModel(d),
         lastOperation: d.lastOperation
           ? {
               type: d.lastOperation.operationType,
@@ -322,7 +349,7 @@ export const APPLICATION_TOOLS: ToolDef[] = [
   defineTool({
     name: 'app_deploy_from_yaml',
     description:
-      'Deploy a CUSTOM application from a flui.yaml manifest (kind: Application) you compose for the user. Validate it first with spec_validate. A real deploy requires a connected GitHub repository (repoFullName as owner/repo) — Flui builds it via GitHub Actions; set validateOnly:true to check the manifest without deploying or needing a repo. clusterId is optional (the sole cluster is used).',
+      'Deploy a CUSTOM application from a flui.yaml manifest (kind: Application) you compose for the user. Validate it first with spec_validate. A real deploy requires a connected GitHub repository (repoFullName as owner/repo) — Flui builds it via GitHub Actions; set validateOnly:true to check the manifest without deploying or needing a repo (the response then carries effectiveYaml, the manifest as it would be applied). clusterId is optional (the sole cluster is used). Use overrides for what belongs to the installation rather than to the code: overrides.name installs the same repo and branch a SECOND time (it is part of the app identity, so pass it on every later deploy of that install), overrides.domain.fqdn gives it its own hostname, overrides.exposure switches public/internal. Overrides are remembered on the app and re-applied on later deploys, so they never silently revert to the manifest.',
     scope: MCP_SCOPE.APP_WRITE,
     inputSchema: {
       yaml: z.string(),
@@ -330,6 +357,27 @@ export const APPLICATION_TOOLS: ToolDef[] = [
       clusterId: z.string().optional(),
       branch: z.string().optional(),
       validateOnly: z.boolean().optional(),
+      envOverrides: z.record(z.string(), z.string()).optional(),
+      overrides: z
+        .object({
+          name: z.string().optional(),
+          exposure: z.enum(['public', 'internal']).optional(),
+          domain: z
+            .object({
+              auto: z.boolean().optional(),
+              tls: z.boolean().optional(),
+              fqdn: z.string().optional(),
+              hostnameMode: z.enum(['ip', 'domain']).optional(),
+              certChallenge: z.enum(['http-01', 'dns-01']).optional(),
+              certificateProvider: z
+                .enum(['lets-encrypt', 'lets-encrypt-staging'])
+                .optional(),
+            })
+            .strict()
+            .optional(),
+        })
+        .strict()
+        .optional(),
     },
     run: async (args, ctx) => {
       const dto: DeployFromYamlDto = {
@@ -338,6 +386,8 @@ export const APPLICATION_TOOLS: ToolDef[] = [
         repoFullName: args.repoFullName ?? '',
         branch: args.branch,
         validateOnly: args.validateOnly,
+        envOverrides: args.envOverrides,
+        overrides: args.overrides,
       };
       return ctx.services.sourceDeploy.deployFromYaml(ctx.user.userId, dto);
     },

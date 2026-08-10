@@ -68,6 +68,13 @@ export interface McpServices {
   fullMigration: FullMigrationService;
 }
 
+/**
+ * Which consumer is running the tool. The two differ in what the caller can see:
+ * the Flui UI renders a progress widget for async operations, an external MCP
+ * client renders nothing. Guidance addressed to the model has to know which.
+ */
+export type ToolSurface = 'mcp' | 'assistant';
+
 /** Per-request context shared by every tool registrar. */
 export interface McpToolContext {
   user: AuthenticatedUser;
@@ -75,6 +82,7 @@ export interface McpToolContext {
   allowDestructive: boolean;
   audit: McpAuditRepository;
   services: McpServices;
+  surface: ToolSurface;
 }
 
 /**
@@ -104,6 +112,26 @@ export function defineTool<Shape extends ZodRawShape>(
   def: ToolDef<Shape>,
 ): ToolDef<Shape> {
   return def;
+}
+
+/**
+ * The validating form of a tool's input contract, strict on purpose.
+ *
+ * A permissive object DROPS unknown keys instead of rejecting them, which is the
+ * worst possible failure for a model-driven caller: a plausible-but-wrong argument
+ * name leaves the real parameter `undefined`, the tool runs unfiltered, and the
+ * agent is handed a confident, successful answer to a question it never asked. An
+ * explicit rejection costs one turn; a silent one poisons the whole chain.
+ */
+export function toolInputSchema<Shape extends ZodRawShape>(shape: Shape) {
+  const keys = Object.keys(shape);
+  const accepted = keys.length ? keys.join(', ') : '(none)';
+  return z.strictObject(shape, {
+    error: (issue) => {
+      if (issue.code !== 'unrecognized_keys') return undefined;
+      return `Unknown argument(s): ${issue.keys.join(', ')}. Accepted argument(s): ${accepted}.`;
+    },
+  });
 }
 
 // LLM tool-calling often encodes every argument as a string ("true", "200").
@@ -158,14 +186,24 @@ export interface OperationOutcome {
   label?: string;
 }
 
-function outcomeNote(status: string, done: boolean): string {
+function outcomeNote(
+  status: string,
+  done: boolean,
+  surface: ToolSurface,
+): string {
   if (status === 'FAILED' || status === 'CANCELLED') {
     return 'The operation FAILED. Tell the user the exact reason in `error` and what to do about it; do NOT retry the same action until that cause is resolved.';
   }
   if (done) {
     return 'The operation completed successfully.';
   }
-  return 'Started — it runs in the background and the user is shown a live progress widget for it, so you do NOT need to wait, re-check, or report completion. Just say it has started; never claim it finished and never promise to notify them.';
+  // Only the Flui UI polls the operation to a progress widget. Telling an external
+  // MCP client the same thing strands the operation: nobody watches it, and a
+  // failure 30s later is never surfaced to anyone.
+  if (surface === 'assistant') {
+    return 'Started — it runs in the background and the user is shown a live progress widget for it, so you do NOT need to wait, re-check, or report completion. Just say it has started; never claim it finished and never promise to notify them.';
+  }
+  return 'Started in the background. Nothing polls it for you on this surface, so YOU must follow it: call operation_status with this operationId until `done` is true, then report the real outcome. Never claim it finished before `done`.';
 }
 
 /**
@@ -190,7 +228,7 @@ export async function readOperationOutcome(
     status: op.status,
     done,
     error: op.errorMessage,
-    note: outcomeNote(op.status, done),
+    note: outcomeNote(op.status, done, ctx.surface),
     label,
   };
 }
@@ -258,6 +296,32 @@ export function jsonResult(data: unknown): ToolResult {
 
 export function errorResult(message: string): ToolResult {
   return { content: [{ type: 'text', text: message }], isError: true };
+}
+
+/**
+ * Whether this principal could actually run the tool, were it to call it now. Both
+ * conditions are fixed for the life of a request, so a `false` here means "never",
+ * not "not yet" — which is what makes it safe to hide the tool rather than offer it.
+ */
+export function isExecutable(ctx: McpToolContext, def: ToolDef): boolean {
+  if (!ctx.scopes.has(def.scope)) return false;
+  return SCOPE_TIER[def.scope] !== 'destructive' || ctx.allowDestructive;
+}
+
+/**
+ * The whole MCP-side execution of one tool: gate, run, project. `forModel` matters
+ * more here than in the assistant loop — an MCP client has no UI to receive the full
+ * DTO, so the model is the only consumer and the compact view is the right payload.
+ */
+export function runTool(
+  ctx: McpToolContext,
+  def: ToolDef,
+  args: unknown,
+): Promise<ToolResult> {
+  return runGated(ctx, def.name, def.scope, async () => {
+    const data = await def.run(args as never, ctx);
+    return def.forModel ? def.forModel(data) : data;
+  });
 }
 
 /**

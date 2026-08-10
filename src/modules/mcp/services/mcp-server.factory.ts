@@ -30,7 +30,12 @@ import { DbMigrationService } from '../../db-lifecycle/services/db-migration.ser
 import { FullMigrationService } from '../../full-migration/services/full-migration.service';
 import { McpAuditRepository } from '../repositories/mcp-audit.repository';
 import { McpScopeResolver } from './mcp-scope.resolver';
-import { McpToolContext, runGated } from '../tools/mcp-tool.util';
+import {
+  McpToolContext,
+  isExecutable,
+  runTool,
+  toolInputSchema,
+} from '../tools/mcp-tool.util';
 import { ALL_TOOLS } from '../tools/tool-registry';
 
 export const MCP_SERVER_NAME = 'flui';
@@ -87,6 +92,7 @@ export class McpServerFactory {
       scopes: this.resolver.resolve(user),
       allowDestructive:
         this.config.get<string>('MCP_ALLOW_DESTRUCTIVE') === 'true',
+      surface: 'mcp',
       audit: this.audit,
       services: {
         catalog: this.catalog,
@@ -119,10 +125,18 @@ export class McpServerFactory {
     };
 
     for (const def of ALL_TOOLS) {
+      // A tool this principal can never execute is not advertised at all: listing it
+      // costs the agent context, invites a plan built around it, and pays back only a
+      // refusal. runGated still guards execution — this only trims what is offered.
+      if (!isExecutable(ctx, def)) continue;
+
       server.registerTool(
         def.name,
-        { description: def.description, inputSchema: def.inputSchema },
-        (args) => runGated(ctx, def.name, def.scope, () => def.run(args, ctx)),
+        {
+          description: def.description,
+          inputSchema: toolInputSchema(def.inputSchema),
+        },
+        (args) => runTool(ctx, def, args),
       );
     }
 

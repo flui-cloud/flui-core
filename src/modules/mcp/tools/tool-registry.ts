@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { ChatTool } from '../../assistant/interfaces/chat-completion';
-import { ToolDef } from './mcp-tool.util';
+import { ToolDef, toolInputSchema } from './mcp-tool.util';
 import { CATALOG_TOOLS } from './catalog.tools';
 import { SPEC_TOOLS } from './spec.tools';
 import { APPLICATION_TOOLS } from './application.tools';
@@ -53,7 +53,7 @@ function sanitizeToolSchema(node: unknown): void {
 
 /** OpenAI function-calling schema for a tool (parameters = JSON Schema from zod). */
 export function toOpenAiTool(def: ToolDef): ChatTool {
-  const parameters = z.toJSONSchema(z.object(def.inputSchema)) as Record<
+  const parameters = z.toJSONSchema(toolInputSchema(def.inputSchema)) as Record<
     string,
     unknown
   >;
