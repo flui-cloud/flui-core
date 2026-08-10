@@ -82,14 +82,18 @@ export default class AppInit extends Command {
     const configStorage = new ConfigStorage();
     const apiUrl = configStorage.getApiUrlOrThrow();
     const apiKey = configStorage.getApiKey();
-    if (!apiKey) {
-      this.error('Not logged in. Run `flui auth login` first.', { exit: 1 });
-    }
     const api = new ApiClient({ baseUrl: apiUrl, apiKey });
 
+    // Listing the supported frameworks reads public product metadata, so it runs
+    // before the login check: "what can I deploy here?" is asked before an account
+    // exists.
     if (flags.list) {
       await this.printList(api);
       return;
+    }
+
+    if (!apiKey) {
+      this.error('Not logged in. Run `flui auth login` first.', { exit: 1 });
     }
 
     if (!args.framework) {

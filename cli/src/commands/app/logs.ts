@@ -62,7 +62,10 @@ export default class AppLogs extends Command {
       const app = await service.getAppByName(args.name);
 
       const result = await service.getLogs({
-        app: app.slug || app.name,
+        // `container` is the deployable's own slug; the `app` label carries the
+        // slug of the INSTALL, which for anything multi-component names the
+        // group rather than this workload and matches no stream at all.
+        container: app.slug || app.name,
         namespace: flags.namespace,
         level: flags.level,
         tail: flags.tail,

@@ -127,14 +127,8 @@
       "env": {
         "description": "Cluster environment lifecycle management"
       },
-      "firewall": {
-        "description": "Firewall rules and configuration"
-      },
       "server-types": {
         "description": "Cloud provider server type information"
-      },
-      "vnet": {
-        "description": "Virtual network management"
       },
       "migrate": {
         "description": "Move apps and managed databases between clusters (workload re-point, DB migration, full-app)"

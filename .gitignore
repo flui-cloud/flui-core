@@ -112,3 +112,7 @@ src/modules/assistant/knowledge/dist/kb.md
 
 # Internal documentation (reference only, not for public repo)
 internal-docs/
+
+# Local MCP server registration: points at a bridge under the operator's home
+# and at whatever endpoint the active CLI profile holds — machine-specific.
+.mcp.json

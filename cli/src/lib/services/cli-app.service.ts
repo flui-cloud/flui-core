@@ -185,6 +185,7 @@ export interface AppAlertsResponse {
 
 export interface AppLogsOptions {
   app?: string;
+  container?: string;
   namespace?: string;
   level?: string;
   tail?: number;
@@ -405,6 +406,7 @@ export class CliAppService {
   async getLogs(options: AppLogsOptions): Promise<AppLogsResponse> {
     const params = new URLSearchParams();
     if (options.app) params.append('app', options.app);
+    if (options.container) params.append('container', options.container);
     if (options.namespace) params.append('namespace', options.namespace);
     if (options.level) params.append('level', options.level);
     if (options.tail) params.append('tail', String(options.tail));

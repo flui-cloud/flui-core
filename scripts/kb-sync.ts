@@ -85,26 +85,23 @@ function resolveDocsRoot(): { root: string; ref: string; origin: string } {
 // The KB carries both manifest schemas so the assistant can help author either
 // kind. `flui-manifest.schema.json` keeps the CatalogApp schema (legacy name);
 // `flui-application.schema.json` is the source-deploy Application schema.
-const SCHEMA_FILES: Array<{ rel: string; dest: string }> = [
+const SCHEMA_FILES: Array<{ rel: string; dest: string; optional?: boolean }> = [
   {
     rel: 'schemas/catalog-app.v1beta1.json',
     dest: 'flui-manifest.schema.json',
   },
   {
+    // Not published yet. Listed so it is picked up the moment the spec ships it,
+    // but optional until then — an unpublished schema must not be able to block
+    // the whole knowledge base, CLI reference included, from ever refreshing.
     rel: 'schemas/application.v1beta1.json',
     dest: 'flui-application.schema.json',
+    optional: true,
   },
 ];
 
-function syncSchema(): { ref: string; origin: string } {
-  const local = localDir('FLUI_SPEC_DIR', 'flui-spec');
-  if (local && fs.existsSync(path.join(local, SCHEMA_FILES[0].rel))) {
-    for (const { rel, dest } of SCHEMA_FILES) {
-      fs.copyFileSync(path.join(local, rel), path.join(SRC, dest));
-    }
-    return { ref: gitRef(local), origin: 'local' };
-  }
-  for (const { rel, dest } of SCHEMA_FILES) {
+function fetchSchema(rel: string, dest: string, optional?: boolean): void {
+  try {
     execFileSync(
       'curl',
       [
@@ -115,8 +112,41 @@ function syncSchema(): { ref: string; origin: string } {
       ],
       { stdio: 'inherit' },
     );
+  } catch (error) {
+    if (!optional) throw error;
+    fs.rmSync(path.join(SRC, dest), { force: true });
+    console.warn(
+      `[kb-sync] ${rel} is not in ${KNOWLEDGE_SOURCES.specRef} either — skipping it (optional) and continuing`,
+    );
   }
-  return { ref: KNOWLEDGE_SOURCES.specRef, origin: 'remote' };
+}
+
+/**
+ * Each schema is resolved on its own. A sibling flui-spec checkout can legitimately
+ * be ahead of, or behind, the published spec — a schema still being drafted simply
+ * is not on disk yet. Deciding for the whole set from the first file lets one
+ * missing schema abort the entire knowledge-base refresh, CLI reference included.
+ */
+function syncSchema(): { ref: string; origin: string } {
+  const local = localDir('FLUI_SPEC_DIR', 'flui-spec');
+  let usedLocal = false;
+  for (const { rel, dest, optional } of SCHEMA_FILES) {
+    const source = local ? path.join(local, rel) : '';
+    if (source && fs.existsSync(source)) {
+      fs.copyFileSync(source, path.join(SRC, dest));
+      usedLocal = true;
+      continue;
+    }
+    if (local) {
+      console.warn(
+        `[kb-sync] ${rel} not in the local flui-spec checkout — fetching ${KNOWLEDGE_SOURCES.specRef} from the published spec instead`,
+      );
+    }
+    fetchSchema(rel, dest, optional);
+  }
+  return usedLocal
+    ? { ref: gitRef(local!), origin: 'local' }
+    : { ref: KNOWLEDGE_SOURCES.specRef, origin: 'remote' };
 }
 
 function gitRef(dir: string): string {

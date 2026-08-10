@@ -25,6 +25,7 @@ import {
 } from './dto/template.dto';
 import { TemplateConfig } from './config/template-registry';
 import { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
+import { Public } from '../auth/decorators/public.decorator';
 
 @ApiTags('Templates')
 @ApiBearerAuth()
@@ -32,6 +33,11 @@ import { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interfa
 export class TemplatesController {
   constructor(private readonly templatesService: TemplatesService) {}
 
+  // The registry is static product metadata — the same class of information as
+  // the public catalog, with no tenancy and no user data. Gating it behind a
+  // token means "what can I deploy?" cannot be answered before signing up, by a
+  // person or by an agent evaluating Flui.
+  @Public()
   @Get()
   @ApiOperation({
     summary: 'List all templates',
@@ -46,6 +52,7 @@ export class TemplatesController {
     return this.templatesService.listTemplates();
   }
 
+  @Public()
   @Get(':framework')
   @ApiOperation({
     summary: 'Get template details',

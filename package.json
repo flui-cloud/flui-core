@@ -76,10 +76,9 @@
     "sonar:down": "podman stop flui-sonarqube",
     "sonar:reset": "podman rm -f flui-sonarqube && podman volume rm -f flui-sonarqube-data flui-sonarqube-logs flui-sonarqube-extensions",
     "sonar:logs": "podman logs -f flui-sonarqube",
-    "sonar:scanner-image": "podman image exists localhost/flui-sonar-scanner:latest || podman build -t localhost/flui-sonar-scanner:latest -f Containerfile.sonar-scanner .",
-    "sonar:scan": "pnpm run sonar:scanner-image && dotenv -e .env.local -- bash -c 'podman run --rm -e SONAR_HOST_URL=http://host.containers.internal:9000 -e SONAR_TOKEN=$SONAR_TOKEN -v \"$PWD:/usr/src:z\" localhost/flui-sonar-scanner:latest -Dproject.settings=internal-docs/sonar/sonar-project.properties'",
-    "sonar:report": "dotenv -e .env.local -- ts-node -r tsconfig-paths/register internal-docs/scripts/sonar-report.ts",
-    "sonar:bulk-mark": "dotenv -e .env.local -- ts-node -r tsconfig-paths/register internal-docs/scripts/sonar-bulk-mark.ts",
+    "sonar:scan": "../sonar/scan.sh -Dproject.settings=internal-docs/sonar/sonar-project.properties",
+    "sonar:report": "dotenv -e ../sonar/.env -- ts-node -r tsconfig-paths/register internal-docs/scripts/sonar-report.ts",
+    "sonar:bulk-mark": "dotenv -e ../sonar/.env -- ts-node -r tsconfig-paths/register internal-docs/scripts/sonar-bulk-mark.ts",
     "sonar:loop": "pnpm run sonar:scan && pnpm run sonar:report",
     "prepare": "husky"
   },
