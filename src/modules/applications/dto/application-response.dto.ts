@@ -363,6 +363,22 @@ export class ApplicationResponseDto {
   url?: string;
 
   @ApiPropertyOptional({
+    enum: ReconciliationStatus,
+    description:
+      'Reconciliation state of the public endpoint that backs `url` — whether the DNS record, the Ingress and the certificate were actually applied. "IN_SYNC" is the only state in which `url` is populated; in any other state the hostname exists but nothing serves it yet, so treat the app as not publicly reachable and show this instead of a link. Undefined for internal apps and for apps with no endpoint.',
+    example: ReconciliationStatus.IN_SYNC,
+  })
+  endpointStatus?: ReconciliationStatus;
+
+  @ApiPropertyOptional({
+    description:
+      'Why the public endpoint is not serving, when `endpointStatus` is ERROR — e.g. a missing DNS-01 ClusterIssuer or an unreachable DNS provider. Safe to show to the user verbatim; it names the misconfiguration to fix.',
+    example:
+      'Cluster has no ready wildcard ClusterIssuer. Configure the DNS-01 issuer before enabling wildcard certificates.',
+  })
+  endpointError?: string;
+
+  @ApiPropertyOptional({
     description:
       'Fully-qualified URL the dashboard should use for the "Open" button when this is an internal app. Composed as `https://<slug>.internal.<clusterZone><entrypointPath>`. Populated only on detail responses (GET /applications/:id and after-create/after-update flows) and only when the cluster currently supports internal hosting (capabilities.hasInternalHosting === true). Undefined for public apps and for internal apps on clusters that do not yet have internal hosting configured — in the latter case the FE must keep the button disabled.',
     example: 'https://pgweb.internal.flui.cloud/',

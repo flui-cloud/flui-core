@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Inject, Injectable, forwardRef } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, IsNull } from 'typeorm';
 import { CatalogInstallEntity } from '../../catalog/entities/catalog-install.entity';
@@ -11,6 +11,11 @@ import {
 } from '../dto/application-group.dto';
 import { ApplicationService } from './application.service';
 import { ApplicationAccessService } from './application-access.service';
+import {
+  AppEndpointService,
+  PrimaryEndpointState,
+} from '../../dns/services/app-endpoint.service';
+import { ReconciliationStatus } from '../../infrastructure/shared/enums/reconciliation-status.enum';
 import { AuthenticatedUser } from '../../auth/interfaces/authenticated-user.interface';
 
 const CATALOG_INSTALL_LABEL = 'flui.cloud/catalog-install';
@@ -36,6 +41,8 @@ export class ApplicationGroupingService {
     @InjectRepository(CatalogInstallEntity)
     private readonly installRepo: Repository<CatalogInstallEntity>,
     private readonly access: ApplicationAccessService,
+    @Inject(forwardRef(() => AppEndpointService))
+    private readonly appEndpointService: AppEndpointService,
   ) {}
 
   async listGroupedByCluster(
@@ -65,10 +72,20 @@ export class ApplicationGroupingService {
       }
     }
 
+    // One batched read for every component, so a group can tell an fqdn that
+    // actually serves from one that was merely reserved (see applyPublicEndpoint).
+    const endpoints = await this.appEndpointService.mapPrimaryEndpoints(
+      apps.map((a) => a.id),
+    );
+
     const groups: ApplicationGroupDto[] = [];
     for (const [installId, components] of byInstall) {
       groups.push(
-        this.toComposedGroup(installById.get(installId)!, components),
+        this.toComposedGroup(
+          installById.get(installId)!,
+          components,
+          endpoints,
+        ),
       );
     }
     for (const app of standalone) {
@@ -87,14 +104,26 @@ export class ApplicationGroupingService {
   private toComposedGroup(
     install: CatalogInstallEntity,
     components: ApplicationEntity[],
+    endpoints: Map<string, PrimaryEndpointState>,
   ): ApplicationGroupDto {
     const primary = this.pickPrimary(install, components);
     const dtos = components.map((c) => {
       const dto = this.applicationService.toResponseDto(c);
       dto.composedAppName = install.displayName;
       dto.isPrimary = c.id === primary?.id;
+      const endpoint = endpoints.get(c.id);
+      if (endpoint) {
+        dto.endpointStatus = endpoint.reconciliationStatus;
+        dto.endpointError = endpoint.errorMessage ?? undefined;
+      }
       return dto;
     });
+    // resolvedFqdn is stamped on the install as soon as the endpoint row exists,
+    // well before anything serves that name — so the group's link follows the
+    // primary component's endpoint, not the stored hostname.
+    const primaryEndpoint = primary ? endpoints.get(primary.id) : undefined;
+    const serving =
+      primaryEndpoint?.reconciliationStatus === ReconciliationStatus.IN_SYNC;
     return {
       id: install.id,
       type: ApplicationGroupType.COMPOSED,
@@ -103,7 +132,10 @@ export class ApplicationGroupingService {
       status: this.aggregateStatus(components.map((c) => c.status)),
       category: (primary ?? components[0]).category,
       clusterId: install.clusterId,
-      url: install.resolvedFqdn ? `https://${install.resolvedFqdn}` : undefined,
+      url:
+        serving && install.resolvedFqdn
+          ? `https://${install.resolvedFqdn}`
+          : undefined,
       catalogSlug: install.definition?.slug,
       catalogInstallId: install.id,
       primaryComponentId: primary?.id,

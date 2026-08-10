@@ -3,6 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import * as crypto from 'node:crypto';
 import { ClusterEntity } from '../../infrastructure/clusters/entities/cluster.entity';
+import { ApplicationEntity } from '../entities/application.entity';
 import { KubernetesService } from '../../infrastructure/shared/services/kubernetes.service';
 import { EncryptionService } from '../../shared/encryption/services/encryption.service';
 import { ApplicationsRepository } from '../repositories/applications.repository';
@@ -20,6 +21,7 @@ import { ApplicationResourceKind } from '../enums/application-resource-kind.enum
 import { ApplicationCategory } from '../enums/application-category.enum';
 import { ApplicationKind } from '../enums/application-kind.enum';
 import { ApplicationStatus } from '../enums/application-status.enum';
+import { ApplicationExposure } from '../enums/application-exposure.enum';
 import { ApplicationResourceStatus } from '../enums/application-resource-status.enum';
 import { ReconciliationStatus } from '../../infrastructure/shared/enums/reconciliation-status.enum';
 
@@ -95,6 +97,7 @@ export class SystemAppCatalogService {
               appDef,
             );
           }
+          await this.convergeExposure(existing, appDef);
           result.skipped.push({
             name: appDef.name,
             reason: 'Already exists in database (imageRef refreshed)',
@@ -145,6 +148,7 @@ export class SystemAppCatalogService {
           k8sNamespace: appDef.k8sNamespace,
           port: resolvedPort,
           status: ApplicationStatus.RUNNING,
+          exposure: appDef.exposure ?? ApplicationExposure.CLUSTER,
           reconciliationStatus: ReconciliationStatus.IN_SYNC,
           lastReconciliationAt: new Date(),
           sourceConfig: {
@@ -285,6 +289,26 @@ export class SystemAppCatalogService {
       resourceCount++;
     }
     return resourceCount;
+  }
+
+  /**
+   * Bring an already-discovered system app in line with its declared exposure.
+   *
+   * Clusters discovered before exposure was declared stored the entity default,
+   * `public`, for every system app — reporting their own Postgres and Redis as
+   * internet-facing on a host whose firewall drops every port they could be
+   * reached on. Converging here rather than in a migration keeps discovery the
+   * single owner of these rows, and it runs on every cluster.
+   */
+  private async convergeExposure(
+    existing: ApplicationEntity,
+    appDef: SystemAppDefinition,
+  ): Promise<void> {
+    const declared = appDef.exposure ?? ApplicationExposure.CLUSTER;
+    if (existing.exposure === declared) return;
+    await this.applicationsRepository.update(existing.id, {
+      exposure: declared,
+    });
   }
 
   private async refreshSystemAppImageRef(

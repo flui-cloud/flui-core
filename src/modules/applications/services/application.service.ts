@@ -24,7 +24,11 @@ import { ApplicationCategory } from '../enums/application-category.enum';
 import { ApplicationKind } from '../enums/application-kind.enum';
 import { ApplicationExposure } from '../enums/application-exposure.enum';
 import { ClusterDnsZoneService } from '../../dns/services/cluster-dns-zone.service';
-import { AppEndpointService } from '../../dns/services/app-endpoint.service';
+import {
+  AppEndpointService,
+  PrimaryEndpointState,
+} from '../../dns/services/app-endpoint.service';
+import { ReconciliationStatus } from '../../infrastructure/shared/enums/reconciliation-status.enum';
 import { internalHostingNotAvailableException } from '../../dns/constants/internal-hosting-error';
 import {
   ApplicationSourceConfig,
@@ -756,8 +760,16 @@ export class ApplicationService {
       const endpoints = await this.appEndpointService.listByApplicationId(
         entity.id,
       );
-      const fqdn = endpoints.find((e) => e.fqdn)?.fqdn;
-      if (fqdn) dto.url = this.publicUrlFromFqdn(entity, fqdn);
+      const primary = endpoints.find((e) => e.fqdn);
+      this.applyPublicEndpoint(
+        dto,
+        entity,
+        primary && {
+          fqdn: primary.fqdn,
+          reconciliationStatus: primary.reconciliationStatus,
+          errorMessage: primary.errorMessage ?? null,
+        },
+      );
     }
     return dto;
   }
@@ -791,7 +803,8 @@ export class ApplicationService {
       ApplicationExposure.INTERNAL;
 
     const publicIds = entities.filter((e) => !isInternal(e)).map((e) => e.id);
-    const fqdns = await this.appEndpointService.mapPrimaryFqdns(publicIds);
+    const endpoints =
+      await this.appEndpointService.mapPrimaryEndpoints(publicIds);
 
     const internalClusterIds = [
       ...new Set(entities.filter(isInternal).map((e) => e.clusterId)),
@@ -814,10 +827,31 @@ export class ApplicationService {
         if (zone) dtos[i].internalUrl = this.internalUrlFromZone(entity, zone);
         return;
       }
-      const fqdn = fqdns.get(entity.id);
-      if (fqdn) dtos[i].url = this.publicUrlFromFqdn(entity, fqdn);
+      this.applyPublicEndpoint(dtos[i], entity, endpoints.get(entity.id));
     });
     return dtos;
+  }
+
+  /**
+   * Attach the public URL and the endpoint's own state to a DTO.
+   *
+   * The URL is withheld until the endpoint actually reconciled. A hostname is
+   * written when the endpoint row is created, minutes before an Ingress or a DNS
+   * record exists — and if reconciliation then fails, that hostname resolves
+   * nowhere forever. `endpointStatus` travels with it so a caller can say why:
+   * an absent URL plus a reason beats a link that does not work.
+   */
+  private applyPublicEndpoint(
+    dto: ApplicationResponseDto,
+    entity: ApplicationEntity,
+    endpoint?: PrimaryEndpointState,
+  ): void {
+    if (!endpoint) return;
+    dto.endpointStatus = endpoint.reconciliationStatus;
+    dto.endpointError = endpoint.errorMessage ?? undefined;
+    if (endpoint.reconciliationStatus === ReconciliationStatus.IN_SYNC) {
+      dto.url = this.publicUrlFromFqdn(entity, endpoint.fqdn);
+    }
   }
 
   /** `https://<slug>.internal.<zoneName><entrypointPath>` — the internal "Open" URL. */

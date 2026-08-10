@@ -30,6 +30,11 @@ import { ClusterDnsGateway } from '../gateway/cluster-dns.gateway';
 import { DnsZoneReconciliationService } from './dns-zone-reconciliation.service';
 import { resolveRecordName } from '../utils/resolve-record-name.util';
 import { GatewayMiddlewareCompilerService } from './gateway-middleware-compiler.service';
+import { describeError } from '../../shared/utils/error.util';
+
+// A full reconcile — including the DNS-propagation gate — stays well under a
+// minute; anything holding the lock for this long is a crashed process, not work.
+const STALE_RECONCILE_LOCK_MS = 10 * 60 * 1000;
 
 @Injectable()
 export class AppEndpointReconciliationService {
@@ -200,7 +205,7 @@ export class AppEndpointReconciliationService {
     // without a lock, so concurrent callers with dnsRecordId=null would
     // create duplicate records. Safety net, not a proper mutex: a caller
     // that wants to force a re-reconcile should wait for completion.
-    if (endpoint.reconciliationStatus === ReconciliationStatus.RECONCILING) {
+    if (this.isReconcileInFlight(endpoint)) {
       this.logger.log(
         `Reconciliation for ${endpointId} already in progress — skipping duplicate trigger`,
       );
@@ -216,71 +221,18 @@ export class AppEndpointReconciliationService {
     );
 
     try {
-      // SAN binding takes precedence over wildcard tiered: when an endpoint
-      // is bound to a SAN cert, the master Secret already covers its fqdn,
-      // so we materialize the replica in the app namespace and skip the
-      // per-host emission and the wildcard tiered flow entirely.
-      if (endpoint.sanCertificateId && endpoint.certificateRequired) {
-        this.logger.log(
-          `[san] endpoint=${endpointId} bound to san=${endpoint.sanCertificateId} fqdn=${endpoint.fqdn} ns=${endpoint.k8sNamespace}`,
-        );
-        const san = await this.sanCertificateService.ensureForEndpoint(
-          endpoint.sanCertificateId,
-          endpoint.k8sNamespace,
-          endpoint.fqdn,
-        );
-        endpoint.tlsSecretName = san.tlsSecretName;
-        await this.appEndpointService.setSanBinding(
-          endpointId,
-          san.sanCertificateId,
-          san.tlsSecretName,
-        );
-        this.logger.log(
-          `[san] endpoint=${endpointId} secret=${san.tlsSecretName} ready=${san.ready}`,
-        );
-      }
-
-      // An explicit http-01 request opts the endpoint out of the shared wildcard.
-      const wildcardEnabled =
-        !endpoint.sanCertificateId &&
-        endpoint.certChallenge !== CertChallenge.HTTP_01 &&
-        this.wildcardCertificateService.isEnabled();
-      this.logger.log(
-        `[wildcard] endpoint=${endpointId} flag=${wildcardEnabled} certRequired=${endpoint.certificateRequired} hasZone=${!!endpoint.clusterDnsZone} fqdn=${endpoint.fqdn}`,
-      );
-      if (
-        wildcardEnabled &&
-        endpoint.certificateRequired &&
-        endpoint.clusterDnsZone
-      ) {
-        this.logger.log(
-          `[wildcard] endpoint=${endpointId} entering wildcard branch; calling ensureForEndpoint(${endpoint.clusterId}, ${endpoint.fqdn}, ${endpoint.k8sNamespace})`,
-        );
-        const wildcard =
-          await this.wildcardCertificateService.ensureForEndpoint(
-            endpoint.clusterId,
-            endpoint.fqdn,
-            endpoint.k8sNamespace,
-          );
-        if (wildcard) {
-          this.logger.log(
-            `[wildcard] endpoint=${endpointId} bound to wildcard=${wildcard.wildcardCertificateId} secret=${wildcard.tlsSecretName} ready=${wildcard.ready}`,
-          );
-          await this.appEndpointService.setWildcardBinding(
-            endpointId,
-            wildcard.wildcardCertificateId,
-            wildcard.tlsSecretName,
-          );
-          endpoint.wildcardCertificateId = wildcard.wildcardCertificateId;
-          endpoint.tlsSecretName = wildcard.tlsSecretName;
-        } else {
-          this.logger.warn(
-            `[wildcard] endpoint=${endpointId} ensureForCluster returned null — falling back to per-host`,
-          );
-        }
-      } else if (wildcardEnabled) {
+      // A certificate is an enhancement over reachability, never a precondition
+      // for it: DNS, Service and Ingress all come later in this method, so letting
+      // a binding failure escape would cost the app its A record and its Ingress
+      // over a TLS problem — the app disappears instead of degrading. The block
+      // below already treats "no wildcard available" (a null return) as a
+      // fall-back to per-host issuance; a throw is the same situation reported
+      // differently, so it takes the same path and the reason is carried to the
+      // endpoint for the user to see.
+      const certBindingFailure = await this.bindSharedCertificate(endpoint);
+      if (certBindingFailure) {
         this.logger.warn(
-          `[wildcard] endpoint=${endpointId} flag on but guards failed (certRequired=${endpoint.certificateRequired}, hasZone=${!!endpoint.clusterDnsZone}) — using per-host`,
+          `[cert] endpoint=${endpointId} shared-certificate binding failed, continuing with per-host issuance: ${certBindingFailure}`,
         );
       }
 
@@ -362,19 +314,20 @@ export class AppEndpointReconciliationService {
         }
       }
 
+      // The binding failure is the more specific of the two: the gate message only
+      // says TLS was skipped, while this says why the shared certificate was
+      // unavailable in the first place.
+      const certMessage = certBindingFailure ?? certGateMessage;
+
       await this.appEndpointService.markReconciliationComplete(
         endpointId,
         dnsRecordId,
         dnsRecordValue,
         certStatus,
-        certGateMessage ?? undefined,
+        certMessage ?? undefined,
       );
 
-      this.emitEndpointCertStatus(
-        endpoint,
-        certStatus ?? null,
-        certGateMessage,
-      );
+      this.emitEndpointCertStatus(endpoint, certStatus ?? null, certMessage);
 
       this.logger.log(
         `Reconciliation completed for endpoint ${endpointId} (${endpoint.fqdn})`,
@@ -391,6 +344,112 @@ export class AppEndpointReconciliationService {
       );
 
       throw error;
+    }
+  }
+
+  /**
+   * Whether another reconciliation is genuinely still running for this endpoint.
+   *
+   * RECONCILING is written before the work starts, so a process that dies
+   * mid-flight leaves the row locked forever — and every later trigger, including
+   * the user's explicit retry, silently no-ops against a lock nobody holds. Past
+   * the deadline the holder cannot still be alive: no step of a reconcile waits
+   * anywhere near that long.
+   */
+  private isReconcileInFlight(endpoint: AppEndpointEntity): boolean {
+    if (endpoint.reconciliationStatus !== ReconciliationStatus.RECONCILING) {
+      return false;
+    }
+    const heldForMs = Date.now() - (endpoint.updatedAt?.getTime() ?? 0);
+    if (heldForMs < STALE_RECONCILE_LOCK_MS) return true;
+    this.logger.warn(
+      `Reconciliation lock for ${endpoint.id} is stale (held ${Math.round(heldForMs / 1000)}s) — taking it over`,
+    );
+    return false;
+  }
+
+  /**
+   * Bind the endpoint to a shared certificate (SAN, else the cluster wildcard),
+   * mutating `endpoint` in place. Returns null on success or when there was
+   * nothing to bind, otherwise the reason the binding could not be made — the
+   * caller degrades to per-host issuance and surfaces the reason rather than
+   * failing the endpoint, since neither DNS nor the Ingress depends on this.
+   */
+  private async bindSharedCertificate(
+    endpoint: AppEndpointEntity,
+  ): Promise<string | null> {
+    const endpointId = endpoint.id;
+    try {
+      // SAN binding takes precedence over wildcard tiered: when an endpoint
+      // is bound to a SAN cert, the master Secret already covers its fqdn,
+      // so we materialize the replica in the app namespace and skip the
+      // per-host emission and the wildcard tiered flow entirely.
+      if (endpoint.sanCertificateId && endpoint.certificateRequired) {
+        this.logger.log(
+          `[san] endpoint=${endpointId} bound to san=${endpoint.sanCertificateId} fqdn=${endpoint.fqdn} ns=${endpoint.k8sNamespace}`,
+        );
+        const san = await this.sanCertificateService.ensureForEndpoint(
+          endpoint.sanCertificateId,
+          endpoint.k8sNamespace,
+          endpoint.fqdn,
+        );
+        endpoint.tlsSecretName = san.tlsSecretName;
+        await this.appEndpointService.setSanBinding(
+          endpointId,
+          san.sanCertificateId,
+          san.tlsSecretName,
+        );
+        this.logger.log(
+          `[san] endpoint=${endpointId} secret=${san.tlsSecretName} ready=${san.ready}`,
+        );
+        return null;
+      }
+
+      // An explicit http-01 request opts the endpoint out of the shared wildcard.
+      const wildcardEnabled =
+        !endpoint.sanCertificateId &&
+        endpoint.certChallenge !== CertChallenge.HTTP_01 &&
+        this.wildcardCertificateService.isEnabled();
+      this.logger.log(
+        `[wildcard] endpoint=${endpointId} flag=${wildcardEnabled} certRequired=${endpoint.certificateRequired} hasZone=${!!endpoint.clusterDnsZone} fqdn=${endpoint.fqdn}`,
+      );
+      if (!wildcardEnabled) return null;
+
+      if (!endpoint.certificateRequired || !endpoint.clusterDnsZone) {
+        this.logger.warn(
+          `[wildcard] endpoint=${endpointId} flag on but guards failed (certRequired=${endpoint.certificateRequired}, hasZone=${!!endpoint.clusterDnsZone}) — using per-host`,
+        );
+        return null;
+      }
+
+      this.logger.log(
+        `[wildcard] endpoint=${endpointId} entering wildcard branch; calling ensureForEndpoint(${endpoint.clusterId}, ${endpoint.fqdn}, ${endpoint.k8sNamespace})`,
+      );
+      const wildcard = await this.wildcardCertificateService.ensureForEndpoint(
+        endpoint.clusterId,
+        endpoint.fqdn,
+        endpoint.k8sNamespace,
+      );
+      if (!wildcard) {
+        this.logger.warn(
+          `[wildcard] endpoint=${endpointId} ensureForCluster returned null — falling back to per-host`,
+        );
+        return null;
+      }
+
+      this.logger.log(
+        `[wildcard] endpoint=${endpointId} bound to wildcard=${wildcard.wildcardCertificateId} secret=${wildcard.tlsSecretName} ready=${wildcard.ready}`,
+      );
+      await this.appEndpointService.setWildcardBinding(
+        endpointId,
+        wildcard.wildcardCertificateId,
+        wildcard.tlsSecretName,
+      );
+      endpoint.wildcardCertificateId = wildcard.wildcardCertificateId;
+      endpoint.tlsSecretName = wildcard.tlsSecretName;
+      return null;
+    } catch (error) {
+      return describeError(error);
     }
   }
 
@@ -1086,6 +1145,24 @@ export class AppEndpointReconciliationService {
     );
   }
 
+  /**
+   * Traefik entrypoints for the Ingress. `websecure` is always bound, with or
+   * without an issued certificate, for two reasons that point the same way:
+   *
+   * - Flui publishes every endpoint as `https://…`, so binding only `web` makes
+   *   the link Flui itself hands out answer 404 while the app is in fact serving.
+   * - An internal endpoint's ForwardAuth session cookie must never cross plain
+   *   HTTP, and without a certificate that is exactly where it would travel.
+   *
+   * Uncertificated, Traefik answers with its default self-signed certificate: a
+   * browser warning, which is both survivable and an accurate signal that TLS is
+   * not ready yet. Internal endpoints drop `web` entirely — they have no ACME
+   * HTTP-01 challenge to serve, so plaintext buys them nothing.
+   */
+  private entrypointsFor(isInternal: boolean, hasTls: boolean): string {
+    return isInternal && !hasTls ? 'websecure' : 'web,websecure';
+  }
+
   private async reconcileIngress(
     endpoint: AppEndpointEntity,
     clusterDnsZone: ClusterDnsZoneEntity | null,
@@ -1142,7 +1219,7 @@ export class AppEndpointReconciliationService {
         namespace: endpoint.k8sNamespace,
         annotations: {
           'traefik.ingress.kubernetes.io/router.entrypoints':
-            hasCert || usesSharedSecret ? 'web,websecure' : 'web',
+            this.entrypointsFor(isInternal, hasCert || usesSharedSecret),
           ...(hasCert && !usesSharedSecret
             ? { 'cert-manager.io/cluster-issuer': issuerName }
             : {}),

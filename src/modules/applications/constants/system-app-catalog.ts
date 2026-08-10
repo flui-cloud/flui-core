@@ -1,5 +1,6 @@
 import { ApplicationSourceType } from '../enums/application-source-type.enum';
 import { ApplicationResourceKind } from '../enums/application-resource-kind.enum';
+import { ApplicationExposure } from '../enums/application-exposure.enum';
 
 export interface SystemAppResourceDef {
   kind: ApplicationResourceKind;
@@ -43,6 +44,14 @@ export interface SystemAppDefinition {
   description: string;
   port?: number;
   imageSource?: SystemAppImageSource;
+  /**
+   * How the app is actually reached on the cluster. Declared, never inferred:
+   * the discovery path has no way to tell a ClusterIP-only datastore from a
+   * front door, and defaulting everything to `public` labels the platform's own
+   * Postgres and Redis as internet-facing when the firewall drops every port
+   * they could be reached on. Omitted means `cluster` — ClusterIP only.
+   */
+  exposure?: ApplicationExposure;
 }
 
 export function findSystemAppByLabel(
@@ -257,6 +266,7 @@ export const SYSTEM_APP_CATALOG: SystemAppDefinition[] = [
   {
     name: 'Flui API',
     k8sAppLabel: 'flui-api',
+    exposure: ApplicationExposure.PUBLIC,
     k8sNamespace: 'flui-system',
     sourceType: ApplicationSourceType.RAW_MANIFEST,
     clusterTypes: ['observability'],
@@ -285,6 +295,7 @@ export const SYSTEM_APP_CATALOG: SystemAppDefinition[] = [
   {
     name: 'Flui Web',
     k8sAppLabel: 'flui-web',
+    exposure: ApplicationExposure.PUBLIC,
     k8sNamespace: 'flui-system',
     sourceType: ApplicationSourceType.RAW_MANIFEST,
     clusterTypes: ['observability'],
@@ -318,6 +329,7 @@ export const SYSTEM_APP_CATALOG: SystemAppDefinition[] = [
   {
     name: 'Zitadel',
     k8sAppLabel: 'zitadel',
+    exposure: ApplicationExposure.PUBLIC,
     k8sNamespace: 'flui-system',
     sourceType: ApplicationSourceType.RAW_MANIFEST,
     clusterTypes: ['observability'],
@@ -356,6 +368,7 @@ export const SYSTEM_APP_CATALOG: SystemAppDefinition[] = [
   {
     name: 'Zitadel Login UI',
     k8sAppLabel: 'zitadel-login',
+    exposure: ApplicationExposure.PUBLIC,
     k8sNamespace: 'flui-system',
     sourceType: ApplicationSourceType.RAW_MANIFEST,
     clusterTypes: ['observability'],

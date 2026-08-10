@@ -31,6 +31,13 @@ import { KubernetesService } from '../../infrastructure/shared/services/kubernet
 import { EncryptionService } from '../../shared/encryption/services/encryption.service';
 import { EndpointGatewayConfig } from '../interfaces/endpoint-gateway-config.interface';
 
+/** An application's primary endpoint, hostname together with whether it serves. */
+export interface PrimaryEndpointState {
+  fqdn: string;
+  reconciliationStatus: ReconciliationStatus;
+  errorMessage: string | null;
+}
+
 @Injectable()
 export class AppEndpointService {
   private readonly logger = new Logger(AppEndpointService.name);
@@ -349,21 +356,29 @@ export class AppEndpointService {
   }
 
   /**
-   * Resolve the primary endpoint hostname of several applications in one query —
-   * used to attach the real public URL to app listings without an N+1 lookup. Maps
-   * each applicationId to its first endpoint fqdn; ids with no endpoint are absent.
+   * Resolve the primary endpoint of several applications in one query — used to
+   * attach the real public URL to app listings without an N+1 lookup. Maps each
+   * applicationId to its first endpoint; ids with no endpoint are absent.
+   *
+   * The reconciliation state travels with the hostname on purpose: an fqdn exists
+   * from the moment the row is inserted, long before anything serves it, so a
+   * caller that reads the hostname alone cannot tell a live URL from a dead one.
    */
-  async mapPrimaryFqdns(
+  async mapPrimaryEndpoints(
     applicationIds: string[],
-  ): Promise<Map<string, string>> {
+  ): Promise<Map<string, PrimaryEndpointState>> {
     if (applicationIds.length === 0) return new Map();
     const endpoints = await this.endpointRepository.find({
       where: { applicationId: In(applicationIds) },
     });
-    const byApp = new Map<string, string>();
+    const byApp = new Map<string, PrimaryEndpointState>();
     for (const endpoint of endpoints) {
       if (endpoint.fqdn && !byApp.has(endpoint.applicationId)) {
-        byApp.set(endpoint.applicationId, endpoint.fqdn);
+        byApp.set(endpoint.applicationId, {
+          fqdn: endpoint.fqdn,
+          reconciliationStatus: endpoint.reconciliationStatus,
+          errorMessage: endpoint.errorMessage ?? null,
+        });
       }
     }
     return byApp;

@@ -7,12 +7,24 @@ jest.mock('jose', () => ({}));
 import { ApplicationService } from './application.service';
 import { ApplicationEntity } from '../entities/application.entity';
 import { ApplicationExposure } from '../enums/application-exposure.enum';
+import { ReconciliationStatus } from '../../infrastructure/shared/enums/reconciliation-status.enum';
+import { PrimaryEndpointState } from '../../dns/services/app-endpoint.service';
 
-type FqdnMap = Map<string, string>;
+type EndpointMap = Map<string, PrimaryEndpointState>;
 
-const makeService = (fqdns: FqdnMap, internalZone: string | null = null) => {
+/** A reconciled endpoint — the only state in which a URL may be published. */
+const serving = (fqdn: string): PrimaryEndpointState => ({
+  fqdn,
+  reconciliationStatus: ReconciliationStatus.IN_SYNC,
+  errorMessage: null,
+});
+
+const makeService = (
+  endpoints: EndpointMap,
+  internalZone: string | null = null,
+) => {
   const appEndpointService = {
-    mapPrimaryFqdns: jest.fn().mockResolvedValue(fqdns),
+    mapPrimaryEndpoints: jest.fn().mockResolvedValue(endpoints),
   };
   const clusterDnsZoneService = {
     getInternalHostingStatus: jest
@@ -46,10 +58,10 @@ const app = (over: Partial<ApplicationEntity>): ApplicationEntity =>
 
 describe('ApplicationService.toResponseDtosWithUrls', () => {
   it('builds the authoritative public URL from the endpoint fqdn (https + root path)', async () => {
-    const fqdns: FqdnMap = new Map([
-      ['a1', 'it-tools-125d30-3l6a9w.203-0-113-7.nip.io'],
+    const endpoints: EndpointMap = new Map([
+      ['a1', serving('it-tools-125d30-3l6a9w.203-0-113-7.nip.io')],
     ]);
-    const { service } = makeService(fqdns);
+    const { service } = makeService(endpoints);
 
     const [dto] = await service.toResponseDtosWithUrls([app({ id: 'a1' })]);
 
@@ -57,8 +69,10 @@ describe('ApplicationService.toResponseDtosWithUrls', () => {
   });
 
   it('honours the catalog entrypointPath when composing the link', async () => {
-    const fqdns: FqdnMap = new Map([['a2', 'jupyter-xy.nip.io']]);
-    const { service } = makeService(fqdns);
+    const endpoints: EndpointMap = new Map([
+      ['a2', serving('jupyter-xy.nip.io')],
+    ]);
+    const { service } = makeService(endpoints);
 
     const [dto] = await service.toResponseDtosWithUrls([
       app({ id: 'a2', metadata: { entrypointPath: '/lab' } }),
@@ -73,6 +87,57 @@ describe('ApplicationService.toResponseDtosWithUrls', () => {
     expect(dto.url).toBeUndefined();
   });
 
+  // An endpoint row carries an fqdn from the moment it is created — minutes
+  // before any Ingress or DNS record exists, and forever if reconciliation
+  // fails.
+  describe('a hostname that does not serve is never published as a URL', () => {
+    const notServing = (
+      status: ReconciliationStatus,
+      errorMessage: string | null = null,
+    ): EndpointMap =>
+      new Map([
+        [
+          'a4',
+          {
+            fqdn: 'blog.example.com',
+            reconciliationStatus: status,
+            errorMessage,
+          },
+        ],
+      ]);
+
+    it('withholds the URL while the endpoint is still reconciling', async () => {
+      const { service } = makeService(
+        notServing(ReconciliationStatus.RECONCILING),
+      );
+      const [dto] = await service.toResponseDtosWithUrls([app({ id: 'a4' })]);
+      expect(dto.url).toBeUndefined();
+      expect(dto.endpointStatus).toBe(ReconciliationStatus.RECONCILING);
+    });
+
+    it('withholds the URL and reports why when the endpoint failed', async () => {
+      const { service } = makeService(
+        notServing(
+          ReconciliationStatus.ERROR,
+          'no ready wildcard ClusterIssuer',
+        ),
+      );
+      const [dto] = await service.toResponseDtosWithUrls([app({ id: 'a4' })]);
+      expect(dto.url).toBeUndefined();
+      expect(dto.endpointStatus).toBe(ReconciliationStatus.ERROR);
+      expect(dto.endpointError).toBe('no ready wildcard ClusterIssuer');
+    });
+
+    it('publishes the URL once the endpoint reconciled', async () => {
+      const { service } = makeService(
+        new Map([['a4', serving('blog.example.com')]]),
+      );
+      const [dto] = await service.toResponseDtosWithUrls([app({ id: 'a4' })]);
+      expect(dto.url).toBe('https://blog.example.com/');
+      expect(dto.endpointStatus).toBe(ReconciliationStatus.IN_SYNC);
+    });
+  });
+
   it('excludes internal apps from the public-URL batch (they use internalUrl)', async () => {
     const { service, appEndpointService } = makeService(new Map());
 
@@ -81,7 +146,9 @@ describe('ApplicationService.toResponseDtosWithUrls', () => {
       app({ id: 'int', slug: 'int', exposure: ApplicationExposure.INTERNAL }),
     ]);
 
-    expect(appEndpointService.mapPrimaryFqdns).toHaveBeenCalledWith(['pub']);
+    expect(appEndpointService.mapPrimaryEndpoints).toHaveBeenCalledWith([
+      'pub',
+    ]);
   });
 
   it('attaches internalUrl to internal apps, resolving the cluster zone once', async () => {
