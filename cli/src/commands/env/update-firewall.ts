@@ -105,6 +105,10 @@ export default class EnvUpdateFirewall extends Command {
       const providerEnum = (
         cluster.provider || ''
       ).toLowerCase() as CloudProvider;
+      if (!firewallFactory.supportsFirewall(providerEnum)) {
+        this.explainNoCloudFirewall(providerEnum);
+        return;
+      }
       const firewallService =
         firewallFactory.getFirewallProviderOrFail(providerEnum);
       const providerLabel = providerEnum.toUpperCase() as
@@ -390,6 +394,35 @@ export default class EnvUpdateFirewall extends Command {
 
     spinner.succeed('Firewall created successfully');
     return sourceCidrs;
+  }
+
+  /**
+   * This command drives a *cloud* firewall (Hetzner/Scaleway security groups) to
+   * change the SSH allowlist. Providers without one are not unprotected — on BYOS
+   * Flui runs a default-drop nftables firewall on the host itself — so the message
+   * names what is actually managed, and where SSH is deliberately left open.
+   */
+  private explainNoCloudFirewall(provider: CloudProvider): void {
+    console.log(
+      chalk.yellow(
+        `\n⚠️  ${provider} has no cloud firewall API, so the SSH allowlist cannot be changed from here.\n`,
+      ),
+    );
+    console.log(
+      chalk.dim(
+        '   Your host firewall is still managed by Flui — a default-drop\n' +
+          '   nftables ruleset applied directly on the server. Inspect it with:',
+      ),
+    );
+    console.log(`   ${chalk.cyan('flui env firewall status')}`);
+    console.log(`   ${chalk.cyan('flui env firewall apply')}\n`);
+    console.log(
+      chalk.dim(
+        '   SSH stays reachable from any address on this backend, on purpose:\n' +
+          '   the host has no out-of-band console, so a bad allowlist would lock\n' +
+          '   you out for good. Restrict port 22 at your provider or in sshd.\n',
+      ),
+    );
   }
 
   private printSummary(

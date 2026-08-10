@@ -408,6 +408,10 @@ export default class EnvCreate extends Command {
       console.log(chalk.dim('─'.repeat(80)));
       console.log(chalk.red(`\n❌ Installation failed: ${err}\n`));
       console.log(chalk.dim(`   Full log: ${logPathStr}\n`));
+      // closeNestApp() runs in a finally and exits the process itself, before
+      // oclif ever sees the ExitError — so the code has to be set here or a
+      // failed install reports success to whatever called it.
+      process.exitCode = 1;
       this.exit(1);
     }
     return false;

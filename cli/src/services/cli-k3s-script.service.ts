@@ -8,6 +8,18 @@ import { resolveEffectiveImageTags } from '../config/release-override';
 import { renderFluiNftRuleset } from '../../../src/modules/providers/core/firewall/nftables-ruleset';
 import { getFirewallRulesForClusterType } from '../../../src/modules/infrastructure/firewalls/templates/firewall-rules.template';
 
+/**
+ * The CA signs SSH certificates for every cluster in the profile, so its blast
+ * radius is wider than the per-cluster secrets this script already carries. It
+ * has to reach the host, but it does not have to survive on the operator's disk.
+ */
+function redactCaPrivateKey(script: string): string {
+  return script.replace(
+    /export SSH_CA_PRIVATE_KEY='[\s\S]*?'\n/,
+    "export SSH_CA_PRIVATE_KEY='<redacted>'\n",
+  );
+}
+
 export interface K3sMasterConfig {
   serverId?: string; // Database node ID (ClusterNodeEntity.id) - used for observability metrics
   clusterId: string;
@@ -18,6 +30,13 @@ export interface K3sMasterConfig {
   instanceName: string;
   provider: string;
   caPublicKey?: string;
+  /**
+   * Seeds SSH_CA_PRIVATE_KEY into flui-secrets at manifest-apply time, so the
+   * flui-api pod starts with the CA already in env. Patching the Secret later
+   * does not reach a running container, leaving the API unable to SSH to its own
+   * host for the rest of the install.
+   */
+  caPrivateKey?: string;
   operationId?: string; // For logging to operation log file
   // Observability stack configuration
   deployObservabilityStack?: boolean;
@@ -207,6 +226,7 @@ export class CliK3sScriptService {
           ZITADEL_ADMIN_TEMP_PASSWORD: config.zitadelAdminTempPassword || '',
           ZITADEL_AUDIENCE: '',
           FLUI_CA_PUBLIC_KEY: config.caPublicKey || '',
+          SSH_CA_PRIVATE_KEY: config.caPrivateKey || '',
           FLUI_NIP_IO_CERT_ENABLED: config.nipIoCertEnabled ? 'true' : '',
           FLUI_ACME_STAGING: config.acmeStaging ? 'true' : '',
           // BootstrapSeeder vars — available at envsubst time so API reads them at first boot
@@ -467,7 +487,7 @@ echo "[Bootstrap] ${scriptName} completed successfully"
       await fs.mkdir(debugDir, { recursive: true });
 
       const debugPath = path.join(debugDir, filename);
-      await fs.writeFile(debugPath, content, 'utf8');
+      await fs.writeFile(debugPath, redactCaPrivateKey(content), 'utf8');
 
       this.log(`💾 Debug script saved: ${debugPath}`, operationId);
     } catch (error) {

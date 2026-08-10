@@ -4,6 +4,7 @@ import {
   ConflictException,
   NotFoundException,
   BadRequestException,
+  ServiceUnavailableException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
@@ -84,15 +85,18 @@ export class CAManagerService {
     }
 
     // 3. Database CA — legacy fallback
+    // 503, not 404: the CA is a dependency of this server, not a resource the
+    // caller asked for. A 404 reads as permanent and stops callers from
+    // retrying while the key is still being seeded.
     const ca = await this.getActiveCA();
     if (!ca) {
-      throw new NotFoundException(
+      throw new ServiceUnavailableException(
         `No active CA found. Set SSH_CA_PRIVATE_KEY env var, place key in ${caKeyPath}, or initialize CA.`,
       );
     }
 
     if (!ca.encryptedPrivateKey) {
-      throw new NotFoundException('CA private key not available.');
+      throw new ServiceUnavailableException('CA private key not available.');
     }
 
     return this.keyStorage.decryptKeyFromString(ca.encryptedPrivateKey);

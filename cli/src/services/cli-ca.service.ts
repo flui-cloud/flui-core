@@ -97,6 +97,14 @@ export class CliCaService {
   }
 
   /**
+   * Get CA private key content
+   */
+  async getCaPrivateKey(): Promise<string> {
+    const { privateKeyPath } = await this.getOrCreateCaCertificate();
+    return fs.readFileSync(privateKeyPath, 'utf8').trim();
+  }
+
+  /**
    * Sign a public key to create an ephemeral certificate
    *
    * @param publicKey - SSH public key to sign

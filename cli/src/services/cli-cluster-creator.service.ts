@@ -27,7 +27,6 @@ import { execFileSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
-import { ProfileManager } from '../lib/profile-manager';
 import * as https from 'node:https';
 
 import { HetznerFirewallService } from 'src/modules/providers/services/hetzner-firewall.service';
@@ -55,11 +54,14 @@ const isRetryableApiFailure = (status?: number): boolean =>
  */
 function hostFirewallFailureMessage(cause: string): string {
   return [
-    `Host firewall was NOT applied: ${cause}`,
+    `Host firewall not registered with the control plane: ${cause}`,
     '',
-    '  This server is unprotected: kube-apiserver (6443), kubelet (10250) and',
-    '  NodePorts (30000-32767) may be reachable from the internet right now.',
-    '  Do not put workloads on this cluster before running:',
+    '  The ruleset applied before k3s started is still active on the host, so',
+    '  6443, 10250 and the NodePort range are not exposed. What is missing is',
+    '  the control plane record: Flui cannot reconcile this firewall or report',
+    '  drift on it until it exists.',
+    '',
+    '  Register it with:',
     '',
     '      flui env firewall apply',
     '',
@@ -168,6 +170,7 @@ export class CliClusterCreatorService {
 
       // Get CA public key for enrollment
       const caPublicKey = await this.caService.getCaPublicKey();
+      const caPrivateKey = await this.caService.getCaPrivateKey();
 
       const decrypted = this.decryptClusterSecrets(cluster);
       const {
@@ -230,6 +233,7 @@ export class CliClusterCreatorService {
         instanceName: masterServerName,
         provider: cluster.provider,
         caPublicKey,
+        caPrivateKey,
         operationId: operation.id,
         deployObservabilityStack: isControlClusterType(cluster.clusterType),
         postgresPassword,
@@ -627,6 +631,7 @@ export class CliClusterCreatorService {
         cluster.k3sTokenEncrypted,
       );
       const caPublicKey = await this.caService.getCaPublicKey();
+      const caPrivateKey = await this.caService.getCaPrivateKey();
       const decrypted = this.decryptClusterSecrets(cluster);
       const clusterMeta = cluster.metadata as any;
 
@@ -658,6 +663,7 @@ export class CliClusterCreatorService {
         instanceName: masterServerName,
         provider: cluster.provider,
         caPublicKey,
+        caPrivateKey,
         operationId: opId,
         deployObservabilityStack: isControlClusterType(cluster.clusterType),
         postgresPassword: decrypted.postgresPassword,
@@ -937,6 +943,7 @@ export class CliClusterCreatorService {
         cluster.k3sTokenEncrypted,
       );
       const caPublicKey = await this.caService.getCaPublicKey();
+      const caPrivateKey = await this.caService.getCaPrivateKey();
       const decrypted = this.decryptClusterSecrets(cluster);
       const clusterMeta = cluster.metadata as any;
       const envVnet = clusterMeta?.envVnet as
@@ -960,6 +967,7 @@ export class CliClusterCreatorService {
         instanceName: masterNode.serverName,
         provider: cluster.provider,
         caPublicKey,
+        caPrivateKey,
         operationId: opId,
         deployObservabilityStack: isControlClusterType(cluster.clusterType),
         postgresPassword: decrypted.postgresPassword,
@@ -1824,16 +1832,8 @@ export class CliClusterCreatorService {
     );
 
     try {
-      // Load CLI CA keys to share with API for unified SSH access.
-      // CA keys are profile-scoped (~/.flui/profiles/<profile>/ca), not global —
-      // the old global path threw ENOENT and silently skipped the whole patch.
-      const caKeyDir = path.join(ProfileManager.getProfileDir(), 'ca');
-      const caPrivateKey = fs
-        .readFileSync(path.join(caKeyDir, 'ca_key'), 'utf8')
-        .trim();
-      const caPublicKey = fs
-        .readFileSync(path.join(caKeyDir, 'ca_key.pub'), 'utf8')
-        .trim();
+      const caPrivateKey = await this.caService.getCaPrivateKey();
+      const caPublicKey = await this.caService.getCaPublicKey();
 
       // Base64-encode for Kubernetes Opaque secret data field
       const b64 = (s: string) => Buffer.from(s).toString('base64');
