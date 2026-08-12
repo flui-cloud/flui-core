@@ -306,7 +306,7 @@ export class HetznerDnsService implements IDnsProvider {
       // Add the new record value to the existing RRSet using set-records
       const newRecords: HetznerRecord[] = [
         ...existingRRSet.records,
-        { value: config.value },
+        { value: txtSafe(config.type, config.value) },
       ];
 
       await this.setRRSetRecords(
@@ -315,6 +315,7 @@ export class HetznerDnsService implements IDnsProvider {
         config.name,
         config.type,
         newRecords,
+        existingRRSet.ttl ?? ttl,
       );
     } else {
       // Create new RRSet
@@ -322,7 +323,7 @@ export class HetznerDnsService implements IDnsProvider {
         name: config.name,
         type: config.type as CreateZoneRequestRrsetsInnerTypeEnum,
         ttl,
-        records: [{ value: config.value }],
+        records: [{ value: txtSafe(config.type, config.value) }],
       };
 
       await rrSetsApi.createZoneRrset(config.zoneId, createRequest);
@@ -393,7 +394,7 @@ export class HetznerDnsService implements IDnsProvider {
 
       const newRecords: HetznerRecord[] = rrset.records
         .filter((r) => r.value !== parsed.value)
-        .concat([{ value: config.value }]);
+        .concat([{ value: txtSafe(config.type, config.value) }]);
 
       await this.setRRSetRecords(
         rrSetsApi,
@@ -401,6 +402,9 @@ export class HetznerDnsService implements IDnsProvider {
         config.name,
         config.type,
         newRecords,
+        // An explicit request wins; otherwise the record keeps the timing it
+        // had, because editing a value is not a request to retime it.
+        config.ttl ?? rrset.ttl ?? ttl,
       );
 
       // setRRSetRecords is delete+recreate, so labels don't survive it. Without
@@ -517,6 +521,7 @@ export class HetznerDnsService implements IDnsProvider {
           first.name,
           first.type,
           allRecords,
+          existingRRSet.ttl ?? ttl,
         );
       } else {
         // Create new RRSet with all values
@@ -606,6 +611,14 @@ export class HetznerDnsService implements IDnsProvider {
     name: string,
     type: string,
     records: HetznerRecord[],
+    /**
+     * Carried explicitly because this is a delete-and-recreate: an RRSet
+     * recreated without one is given the zone default, so every edit silently
+     * retimed the record it was editing. A record written at 300s and then
+     * corrected came back at 3600s, which turns a one-line mistake into an hour
+     * of stale answers — the same trap the labels above document.
+     */
+    ttl: number,
   ): Promise<void> {
     // The generated client doesn't expose set-records directly,
     // so we delete the RRSet and recreate it with the new values
@@ -627,6 +640,7 @@ export class HetznerDnsService implements IDnsProvider {
       const createRequest: CreateZoneRequestRrsetsInner = {
         name,
         type: type as CreateZoneRequestRrsetsInnerTypeEnum,
+        ttl,
         records: records.map((r) => ({ value: r.value })),
       };
 
@@ -684,7 +698,15 @@ export class HetznerDnsService implements IDnsProvider {
         );
       } else {
         // Replace with remaining records
-        await this.setRRSetRecords(rrSetsApi, zoneId, name, type, remaining);
+        // Removing one value from an RRSet must not retime the ones that stay.
+        await this.setRRSetRecords(
+          rrSetsApi,
+          zoneId,
+          name,
+          type,
+          remaining,
+          rrset.ttl ?? 300,
+        );
       }
     } catch (error) {
       if (error.response?.status === 404) {
@@ -761,4 +783,34 @@ export class HetznerDnsService implements IDnsProvider {
       status: zone.status,
     };
   }
+}
+
+/**
+ * Hetzner rejects an unquoted TXT value outright: *"TXT records must be fully
+ * escaped with double quotes"*. It is the API's rule, not the protocol's, so it
+ * is applied here rather than pushed onto every caller — a mail driver should
+ * not have to know which DNS vendor is underneath.
+ *
+ * Values past 255 characters are split as the protocol requires: a TXT record
+ * is a sequence of strings, each at most 255 bytes, and a receiver joins them
+ * with nothing. DKIM keys are routinely longer than that, so a single quoted
+ * blob would be rejected or silently truncated.
+ */
+const ESCAPED_QUOTE = String.raw`\"`;
+
+export function quoteTxtValue(value: string): string {
+  const raw = value.trim();
+  // Already escaped — one quoted string or several. Leave it exactly as it is;
+  // re-quoting would embed the quotes in the published value.
+  if (/^"([^"]*)"(\s+"([^"]*)")*$/.test(raw)) return raw;
+
+  const chunks = raw.match(/.{1,255}/gs) ?? [raw];
+  return chunks
+    .map((chunk) => `"${chunk.replaceAll('"', ESCAPED_QUOTE)}"`)
+    .join(' ');
+}
+
+/** Quote only TXT; every other type is passed through untouched. */
+function txtSafe(type: string, value: string): string {
+  return type === 'TXT' ? quoteTxtValue(value) : value;
 }
