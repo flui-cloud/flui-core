@@ -191,8 +191,10 @@ export class ClusterDnsZoneController {
       'Re-applies the cluster state the zone needs (DNS-01 credential Secrets ' +
       'and the wildcard ClusterIssuer solvers covering every assigned zone) ' +
       'and recomputes the reconciliation status of the assignment. Returns ' +
-      'the assignment with its new status; a zone that cannot be reconciled ' +
-      'comes back in ERROR with the reason in errorMessage.',
+      'immediately with the assignment in RECONCILING — the cluster work runs ' +
+      'in the background. Poll this assignment until it leaves RECONCILING: ' +
+      'a zone that cannot be reconciled lands in ERROR with the reason in ' +
+      'errorMessage.',
   })
   @ApiParam({ name: 'clusterId', description: 'Cluster ID' })
   @ApiParam({ name: 'assignmentId', description: 'Assignment ID' })
@@ -202,7 +204,7 @@ export class ClusterDnsZoneController {
     @Param('assignmentId') assignmentId: string,
   ): Promise<ClusterDnsZoneResponseDto> {
     const assignment =
-      await this.clusterDnsZoneService.reconcileAssignment(assignmentId);
+      await this.clusterDnsZoneService.startReconcileAssignment(assignmentId);
     return this.clusterDnsZoneService.toResponseDto(assignment);
   }
 

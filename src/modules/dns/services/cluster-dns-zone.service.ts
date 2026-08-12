@@ -163,18 +163,52 @@ export class ClusterDnsZoneService {
       );
     }
 
+    const wildcardCertificate = dto.wildcardCertificate ?? true;
     const assignment = this.clusterDnsZoneRepository.create({
       clusterId,
       dnsZoneId: dto.dnsZoneId,
       certificateProvider: dto.certificateProvider ?? null,
       acmeEmail: dto.acmeEmail ?? null,
-      wildcardCertificate: dto.wildcardCertificate ?? true,
-      reconciliationStatus: ReconciliationStatus.PENDING,
+      wildcardCertificate,
+      reconciliationStatus: wildcardCertificate
+        ? ReconciliationStatus.RECONCILING
+        : ReconciliationStatus.PENDING,
     });
 
     const saved = await this.clusterDnsZoneRepository.save(assignment);
-    await this.reconcileAssignment(saved.id);
+    // Reconciling applies Secrets and ClusterIssuers and reads them back: on a
+    // fresh cluster, with cert-manager still warming up, that is minutes of
+    // cluster I/O. The assignment is already persisted, so the caller gets it
+    // immediately in RECONCILING and follows the status instead of holding an
+    // HTTP request open.
+    void this.reconcileAssignment(saved.id).catch((err) =>
+      this.logger.error(
+        `Background reconcile of assignment ${saved.id} failed: ${err instanceof Error ? err.message : String(err)}`,
+      ),
+    );
     return saved;
+  }
+
+  /**
+   * Marks the assignment RECONCILING and does the cluster work in the
+   * background. Same reason as the assign path: applying and reading back
+   * Secrets and ClusterIssuers can take minutes on a cold cluster, and holding
+   * the HTTP request open for it makes a working reconcile look hung.
+   * Callers follow `reconciliationStatus` (and `errorMessage`) instead.
+   */
+  async startReconcileAssignment(
+    assignmentId: string,
+  ): Promise<ClusterDnsZoneEntity> {
+    const assignment = await this.updateReconciliationStatus(
+      assignmentId,
+      ReconciliationStatus.RECONCILING,
+    );
+    void this.reconcileAssignment(assignmentId).catch((err) =>
+      this.logger.error(
+        `Background reconcile of assignment ${assignmentId} failed: ${err instanceof Error ? err.message : String(err)}`,
+      ),
+    );
+    return assignment;
   }
 
   /**
