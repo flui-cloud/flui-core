@@ -7,6 +7,7 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { UserEntity, IdentityRole } from '../entities/user.entity';
+import { InviteMailService } from '../../mail/services/invite-mail.service';
 import {
   CreateIdentityUserInput,
   CreatedIdentityUser,
@@ -24,6 +25,7 @@ export class UserManagementService {
     private readonly directory: IIdentityDirectory,
     @InjectRepository(UserEntity)
     private readonly userRepo: Repository<UserEntity>,
+    private readonly inviteMail: InviteMailService,
   ) {}
 
   createUser(input: CreateIdentityUserInput): Promise<CreatedIdentityUser> {
@@ -90,7 +92,44 @@ export class UserManagementService {
     return this.directory.resetPassword(id, sendInvite);
   }
 
-  createInviteLink(id: string): Promise<InviteLink> {
-    return this.directory.createInviteLink(id);
+  /**
+   * Mint an invite link, and optionally deliver it.
+   *
+   * The link is the product; the email is a convenience. So delivery is opt-in,
+   * its outcome is *reported* rather than thrown, and the link comes back
+   * either way — an administrator who can paste it into a chat window is never
+   * left worse off by a mailer problem than they were before email existed.
+   *
+   * Note that generating a link **rotates** the provider's code, invalidating
+   * any previous one. That is why this does not quietly retry on a failed send:
+   * a second attempt would hand out a link that supersedes the one already on
+   * its way.
+   */
+  async createInviteLink(
+    id: string,
+    options: { send?: boolean; invitedBy?: string } = {},
+  ): Promise<InviteLink & { delivery?: { sent: boolean; reason?: string } }> {
+    const link = await this.directory.createInviteLink(id);
+    if (!options.send)
+      return { ...link, delivery: { sent: false, reason: 'not_requested' } };
+
+    const user = await this.directory.getUser(id);
+    if (!user?.email) {
+      return { ...link, delivery: { sent: false, reason: 'no_address' } };
+    }
+
+    const outcome = await this.inviteMail.sendInvite({
+      to: user.email,
+      inviteLink: link.inviteLink,
+      ...(user.firstName ? { firstName: user.firstName } : {}),
+      ...(options.invitedBy ? { invitedBy: options.invitedBy } : {}),
+    });
+    return {
+      ...link,
+      delivery: {
+        sent: outcome.sent,
+        ...(outcome.reason ? { reason: outcome.reason } : {}),
+      },
+    };
   }
 }

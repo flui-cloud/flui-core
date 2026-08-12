@@ -1,3 +1,4 @@
+import { MailModule } from '../mail/mail.module';
 import { Module } from '@nestjs/common';
 import { BullModule } from '@nestjs/bull';
 import { ConfigModule, ConfigService } from '@nestjs/config';
@@ -57,6 +58,7 @@ import { FirewallsModule } from '../infrastructure/firewalls/firewalls.module';
 @Module({
   imports: [
     ConfigModule,
+    MailModule,
     ThrottlerModule.forRoot([{ ttl: 60000, limit: 100 }]),
     PassportModule.register({ defaultStrategy: 'jwt' }),
     JwtModule.registerAsync({

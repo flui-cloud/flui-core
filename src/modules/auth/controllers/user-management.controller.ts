@@ -35,7 +35,10 @@ import {
   ResetPasswordDto,
   ResetPasswordResultDto,
 } from '../dto/reset-password.dto';
-import { InviteLinkResultDto } from '../dto/invite-link.dto';
+import {
+  InviteLinkRequestDto,
+  InviteLinkResultDto,
+} from '../dto/invite-link.dto';
 import { UserManagementService } from '../services/user-management.service';
 import { IdentityUser } from '../interfaces/identity-directory.interface';
 import { RequireSection } from '../../iam/decorators/require-section.decorator';
@@ -124,11 +127,21 @@ export class UserManagementController {
   @UseGuards(AdminGuard)
   @Admin()
   @ApiOperation({
-    summary:
-      'Generate a copyable invite link for a user (admin) — no email required',
+    summary: 'Generate a copyable invite link for a user (admin)',
+    description:
+      'The link needs no email. Pass `send: true` to have Flui email it as well — the link is ' +
+      'still returned, and `delivery` reports what became of the message. Generating a link ' +
+      'ROTATES the code, so do not regenerate between handing one out and the user opening it.',
   })
   @ApiOkResponse({ type: InviteLinkResultDto })
-  inviteLink(@Param('id') id: string): Promise<InviteLinkResultDto> {
-    return this.users.createInviteLink(id);
+  inviteLink(
+    @Param('id') id: string,
+    @Request() req: { user: AuthenticatedUser },
+    @Body() dto?: InviteLinkRequestDto,
+  ): Promise<InviteLinkResultDto> {
+    return this.users.createInviteLink(id, {
+      ...(dto?.send ? { send: true } : {}),
+      invitedBy: req.user.displayName || req.user.email,
+    });
   }
 }
