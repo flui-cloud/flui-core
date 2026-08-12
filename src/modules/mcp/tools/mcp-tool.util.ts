@@ -26,6 +26,9 @@ import { BackupStatusService } from '../../backups/services/backup-status.servic
 import { AppMigrationService } from '../../app-migration/services/app-migration.service';
 import { DbMigrationService } from '../../db-lifecycle/services/db-migration.service';
 import { FullMigrationService } from '../../full-migration/services/full-migration.service';
+import { MailReadinessService } from '../../mail/services/mail-readiness.service';
+import { MailSendService } from '../../mail/services/mail-send.service';
+import { MailSuppressionService } from '../../mail/services/mail-suppression.service';
 import { CatalogInstallStatus } from '../../catalog/enums/catalog-install-status.enum';
 import { McpAuditRepository } from '../repositories/mcp-audit.repository';
 import { McpScope, SCOPE_TIER } from '../constants/mcp-scopes';
@@ -66,6 +69,9 @@ export interface McpServices {
   appMigration: AppMigrationService;
   dbMigration: DbMigrationService;
   fullMigration: FullMigrationService;
+  mailReadiness: MailReadinessService;
+  mailSend: MailSendService;
+  mailSuppressions: MailSuppressionService;
 }
 
 /**

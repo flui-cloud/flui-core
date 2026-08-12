@@ -10,6 +10,9 @@ export const MCP_SCOPE = {
   OBS_READ: 'mcp:obs:read',
   BACKUP_READ: 'mcp:backup:read',
   MIGRATION_READ: 'mcp:migration:read',
+  // Recipient addresses are personal data, so mail is its own scope rather than
+  // part of obs:read — an agent granted logs does not thereby get everyone's email.
+  MAIL_READ: 'mcp:mail:read',
   SPEC_VALIDATE: 'mcp:spec:validate',
   APP_WRITE: 'mcp:app:write',
   BACKUP_WRITE: 'mcp:backup:write',
@@ -30,6 +33,7 @@ export const TIER_SCOPES: Record<McpTier, McpScope[]> = {
     MCP_SCOPE.OBS_READ,
     MCP_SCOPE.BACKUP_READ,
     MCP_SCOPE.MIGRATION_READ,
+    MCP_SCOPE.MAIL_READ,
   ],
   plan: [MCP_SCOPE.SPEC_VALIDATE],
   write: [
@@ -46,6 +50,7 @@ export const SCOPE_TIER: Record<McpScope, McpTier> = {
   [MCP_SCOPE.OBS_READ]: 'read',
   [MCP_SCOPE.BACKUP_READ]: 'read',
   [MCP_SCOPE.MIGRATION_READ]: 'read',
+  [MCP_SCOPE.MAIL_READ]: 'read',
   [MCP_SCOPE.SPEC_VALIDATE]: 'plan',
   [MCP_SCOPE.APP_WRITE]: 'write',
   [MCP_SCOPE.BACKUP_WRITE]: 'write',

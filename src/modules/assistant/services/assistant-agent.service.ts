@@ -27,6 +27,9 @@ import { BackupStatusService } from '../../backups/services/backup-status.servic
 import { AppMigrationService } from '../../app-migration/services/app-migration.service';
 import { DbMigrationService } from '../../db-lifecycle/services/db-migration.service';
 import { FullMigrationService } from '../../full-migration/services/full-migration.service';
+import { MailReadinessService } from '../../mail/services/mail-readiness.service';
+import { MailSendService } from '../../mail/services/mail-send.service';
+import { MailSuppressionService } from '../../mail/services/mail-suppression.service';
 import { collectHosts, findUnverifiedUrls } from './url-guard.util';
 import { McpScopeResolver } from '../../mcp/services/mcp-scope.resolver';
 import { McpAuditRepository } from '../../mcp/repositories/mcp-audit.repository';
@@ -119,6 +122,9 @@ export class AssistantAgentService {
     private readonly appMigration: AppMigrationService,
     private readonly dbMigration: DbMigrationService,
     private readonly fullMigration: FullMigrationService,
+    private readonly mailReadiness: MailReadinessService,
+    private readonly mailSend: MailSendService,
+    private readonly mailSuppressions: MailSuppressionService,
     private readonly scheduledJobs: ScheduledJobsService,
     private readonly gateway: GatewayService,
     private readonly config: ConfigService,
@@ -695,6 +701,9 @@ export class AssistantAgentService {
         appMigration: this.appMigration,
         dbMigration: this.dbMigration,
         fullMigration: this.fullMigration,
+        mailReadiness: this.mailReadiness,
+        mailSend: this.mailSend,
+        mailSuppressions: this.mailSuppressions,
         scheduledJobs: this.scheduledJobs,
         gateway: this.gateway,
       },

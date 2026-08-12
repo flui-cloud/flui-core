@@ -1,3 +1,4 @@
+import { MailModule } from '../mail/mail.module';
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { InferenceModule } from '../inference/inference.module';
@@ -28,6 +29,7 @@ import { AssistantController } from './controllers/assistant.controller';
 
 @Module({
   imports: [
+    MailModule,
     TypeOrmModule.forFeature([AssistantMessageLogEntity]),
     InferenceModule,
     McpModule,

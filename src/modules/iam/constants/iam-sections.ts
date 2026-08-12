@@ -12,6 +12,7 @@ export const SECTION = {
   FIREWALL: 'firewall',
   PROVIDERS: 'providers',
   BACKUP: 'backup',
+  MAIL: 'mail',
   PROJECTS: 'projects',
   ACCESS: 'access',
   SETTINGS: 'settings',
@@ -83,6 +84,19 @@ export const SECTIONS: SectionDef[] = [
   },
   {
     key: SECTION.BACKUP,
+    gate: {
+      kind: 'permission',
+      permission: IAM_PERMISSION.CLUSTER_MANAGE,
+      scope: 'global',
+    },
+  },
+  // Mail sits with the other platform-admin sections rather than getting a
+  // permission of its own. It shows recipient addresses — other people's
+  // personal data — so the bar should not be lower than this; global cluster
+  // management is already a narrow enough set that it is not a wider door than
+  // the credentials and DNS zones the same holder can already reach.
+  {
+    key: SECTION.MAIL,
     gate: {
       kind: 'permission',
       permission: IAM_PERMISSION.CLUSTER_MANAGE,
