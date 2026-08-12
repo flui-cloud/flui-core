@@ -1,6 +1,9 @@
 import { InitialSchema1000000000000 } from './1000000000000-InitialSchema';
 import { AlertEvents1784400000000 } from './1784400000000-AlertEvents';
 import { AppDeployOnPush1784500000000 } from './1784500000000-AppDeployOnPush';
+import { MailSuppressions1784600000000 } from './1784600000000-MailSuppressions';
+import { MailEvents1784700000000 } from './1784700000000-MailEvents';
+import { MailConnections1784800000000 } from './1784800000000-MailConnections';
 
 // Explicit array, not a dist glob: nest build webpack-bundles to one file,
 // so a `dist/migrations/*.js` glob resolves to nothing at runtime.
@@ -9,4 +12,7 @@ export const migrations = [
   InitialSchema1000000000000,
   AlertEvents1784400000000,
   AppDeployOnPush1784500000000,
+  MailSuppressions1784600000000,
+  MailEvents1784700000000,
+  MailConnections1784800000000,
 ];

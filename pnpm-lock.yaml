@@ -16,6 +16,9 @@ importers:
       '@aws-sdk/s3-request-presigner':
         specifier: ^3.1041.0
         version: 3.1041.0
+      '@flui-cloud/mail':
+        specifier: ^0.1.0
+        version: 0.1.0
       '@flui-cloud/spec':
         specifier: ^0.8.1
         version: 0.8.1
@@ -163,6 +166,9 @@ importers:
       nats:
         specifier: ^2.29.3
         version: 2.29.3
+      nodemailer:
+        specifier: ^9.0.5
+        version: 9.0.5
       passport:
         specifier: ^0.7.0
         version: 0.7.0
@@ -224,6 +230,9 @@ importers:
       '@types/node':
         specifier: ^20.3.1
         version: 20.19.24
+      '@types/nodemailer':
+        specifier: ^8.0.1
+        version: 8.0.1
       '@types/passport-jwt':
         specifier: ^4.0.1
         version: 4.0.1
@@ -1002,6 +1011,13 @@ packages:
         integrity: sha512-d9zaMRSTIKDLhctzH12MtXvJKSSUhaHcjV+2Z+GK+EEY7XKpP5yR4x+N3TAcHTcu963nIr+TMcCb4DBCYX1z6Q==,
       }
     engines: { node: ^12.22.0 || ^14.17.0 || >=16.0.0 }
+
+  '@flui-cloud/mail@0.1.0':
+    resolution:
+      {
+        integrity: sha512-jvg9cG7VzHtwqoi4VJSJbUillsK5ye0zDQHBpTJgCFtFdK1CCyYkRjMDIl/sv3v7VCQ8CkLGeq+l7+yWhqFhhQ==,
+      }
+    engines: { node: '>=20' }
 
   '@flui-cloud/spec@0.8.1':
     resolution:
@@ -3148,6 +3164,12 @@ packages:
     resolution:
       {
         integrity: sha512-GNWcUTRBgIRJD5zj+Tq0fKOJ5XZajIiBroOF0yvj2bSU1WvNdYS/dn9UxwsujGW4JX06dnHyjV2y9rRaybH0iQ==,
+      }
+
+  '@types/nodemailer@8.0.1':
+    resolution:
+      {
+        integrity: sha512-PxpaInm8V1JQDd4j0ds5HfvWQk8JupS1C0Picb96QJsrrRDjBH+DlK7L4ZdNSqNULhiZRQHc40nLVShaGxXAMw==,
       }
 
   '@types/passport-jwt@4.0.1':
@@ -7353,6 +7375,13 @@ packages:
         integrity: sha512-nmh3lCkYZ3grZvqcCH+fjmQ7X+H0OeZgP40OierEaAptX4XofMh5kwNbWh7lBduUzCcV/8kZ+NDLCwm2iorIlA==,
       }
 
+  nodemailer@9.0.5:
+    resolution:
+      {
+        integrity: sha512-wvjiKvjczmsN7U/8006JOdXubgBk2XFAbioDMbT+sM7cPs0QrhJTa6KBRX7P5REGGkDcLUz/EarWidb8G8C1jQ==,
+      }
+    engines: { node: '>=6.0.0' }
+
   nopt@5.0.0:
     resolution:
       {
@@ -10324,6 +10353,8 @@ snapshots:
 
   '@eslint/js@8.57.1': {}
 
+  '@flui-cloud/mail@0.1.0': {}
+
   '@flui-cloud/spec@0.8.1':
     dependencies:
       ajv: 8.17.1
@@ -11879,6 +11910,10 @@ snapshots:
   '@types/node@24.10.1':
     dependencies:
       undici-types: 7.16.0
+
+  '@types/nodemailer@8.0.1':
+    dependencies:
+      '@types/node': 20.19.24
 
   '@types/passport-jwt@4.0.1':
     dependencies:
@@ -14632,6 +14667,8 @@ snapshots:
   node-int64@0.4.0: {}
 
   node-releases@2.0.27: {}
+
+  nodemailer@9.0.5: {}
 
   nopt@5.0.0:
     dependencies:

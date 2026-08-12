@@ -93,6 +93,7 @@
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1041.0",
     "@aws-sdk/s3-request-presigner": "^3.1041.0",
+    "@flui-cloud/mail": "^0.1.0",
     "@flui-cloud/spec": "^0.8.1",
     "@kubernetes/client-node": "^1.4.0",
     "@modelcontextprotocol/sdk": "^1.29.0",
@@ -142,6 +143,7 @@
     "mongodb": "^7.3.0",
     "mysql2": "^3.22.5",
     "nats": "^2.29.3",
+    "nodemailer": "^9.0.5",
     "passport": "^0.7.0",
     "passport-jwt": "^4.0.1",
     "pg": "^8.16.3",
@@ -164,6 +166,7 @@
     "@types/jest": "^29.5.2",
     "@types/js-yaml": "^4.0.9",
     "@types/node": "^20.3.1",
+    "@types/nodemailer": "^8.0.1",
     "@types/passport-jwt": "^4.0.1",
     "@types/supertest": "^6.0.0",
     "@typescript-eslint/eslint-plugin": "^8.0.0",

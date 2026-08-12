@@ -100,6 +100,12 @@ async function bootstrap() {
   const isProduction = process.env.NODE_ENV === 'production';
   const app = await NestFactory.create(AppModule, {
     logger: isProduction ? new ConsoleLogger({ json: true }) : undefined,
+    // Keep the bytes as they arrived, for the webhook handlers that verify a
+    // signature over them. Without it `req.rawBody` is undefined and the only
+    // fallback is re-serialising the parsed body — a different string whenever
+    // key order or spacing differs, which turns a correct signature into a
+    // permanent mismatch.
+    rawBody: true,
   });
 
   // Global prefix

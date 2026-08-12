@@ -8,6 +8,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { InstancesModule } from './modules/instances/instances.moduel';
 import { ManagementModule } from './modules/management/management.module';
 import { InferenceModule } from './modules/inference/inference.module';
+import { MailModule } from './modules/mail/mail.module';
 import { AssistantModule } from './modules/assistant/assistant.module';
 import { McpModule } from './modules/mcp/mcp.module';
 import { InfrastructureModule } from './modules/infrastructure/infrastructure.module';
@@ -94,6 +95,7 @@ import { DemoModule } from './modules/demo/demo.module';
     InstancesModule,
     ManagementModule,
     InferenceModule,
+    MailModule,
     AssistantModule,
     McpModule,
     InfrastructureModule,

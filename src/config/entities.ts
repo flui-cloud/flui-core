@@ -66,6 +66,9 @@ import { AppMigrationEntity } from '../modules/app-migration/entities/app-migrat
 import { FullMigrationEntity } from '../modules/full-migration/entities/full-migration.entity';
 import { DemoConfigEntity } from '../modules/demo/entities/demo-config.entity';
 import { AlertEventEntity } from '../modules/observability/entities/alert-event.entity';
+import { MailSuppressionEntity } from '../modules/mail/entities/mail-suppression.entity';
+import { MailEventEntity } from '../modules/mail/entities/mail-event.entity';
+import { MailConnectionEntity } from '../modules/mail/entities/mail-connection.entity';
 
 export const entities = [
   SSHKeyEntity,
@@ -130,4 +133,7 @@ export const entities = [
   FullMigrationEntity,
   DemoConfigEntity,
   AlertEventEntity,
+  MailSuppressionEntity,
+  MailEventEntity,
+  MailConnectionEntity,
 ];
