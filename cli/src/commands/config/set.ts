@@ -1,5 +1,6 @@
-import { Command, Args } from '@oclif/core';
+import { Command, Args, Flags } from '@oclif/core';
 import chalk from 'chalk';
+import { stdinValue } from '../../lib/stdin-value';
 import { ConfigStorage } from '../../lib/config-storage';
 import { classifyKey, formatKnownKeys } from '../../config/key-router';
 import { PREFERENCES, PreferenceKey } from '../../config/preferences-schema';
@@ -31,12 +32,21 @@ export default class ConfigSet extends Command {
     value: Args.string({
       required: false,
       description:
-        'Value to store. Omit for compound providers (e.g. scaleway) to enter values interactively.',
+        'Value to store. Omit for compound providers (e.g. scaleway) to enter values interactively, or pass --stdin.',
+    }),
+  };
+
+  static readonly flags = {
+    stdin: Flags.boolean({
+      description:
+        'Read the value from standard input instead of the command line. A value passed as an argument is visible to every process on the machine through the process list, which is not acceptable for a credential on a shared or managed host. For compound providers (e.g. scaleway) pass a JSON object of their fields, which is also the only way to configure them without a terminal.',
+      default: false,
     }),
   };
 
   async run(): Promise<void> {
-    const { args } = await this.parse(ConfigSet);
+    const { args, flags } = await this.parse(ConfigSet);
+    const value = flags.stdin ? stdinValue() : args.value;
 
     try {
       const storage = new ConfigStorage();
@@ -44,29 +54,38 @@ export default class ConfigSet extends Command {
 
       switch (kind) {
         case 'preference':
-          if (!args.value) {
+          if (!value) {
             console.log(
               chalk.red(`\nMissing value for preference '${args.key}'\n`),
             );
             this.exit(1);
           }
-          this.setPreference(storage, args.key as PreferenceKey, args.value);
+          this.setPreference(storage, args.key as PreferenceKey, value);
           return;
         case 'provider':
-          await this.setProvider(storage, args.key.toLowerCase(), args.value);
+          await this.setProvider(
+            storage,
+            args.key.toLowerCase(),
+            value,
+            flags.stdin,
+          );
           return;
         case 'system':
-          if (!args.value) {
+          if (!value) {
             console.log(chalk.red(`\nMissing value for '${args.key}'\n`));
             this.exit(1);
           }
-          this.setSystem(storage, args.key.toLowerCase(), args.value);
+          this.setSystem(storage, args.key.toLowerCase(), value);
           return;
         case 'unknown':
           this.failUnknown(args.key);
           return;
       }
     } catch (error) {
+      // `this.exit()` throws, so a deliberate failure with its own message —
+      // "Invalid Secret Key" — would otherwise be relabelled here as an
+      // internal error and the real reason buried above it.
+      if ((error as { code?: string })?.code === 'EEXIT') throw error;
       console.log(chalk.red('\nFailed to save configuration'));
       console.log(
         chalk.gray(
@@ -99,14 +118,24 @@ export default class ConfigSet extends Command {
     storage: ConfigStorage,
     provider: string,
     value: string | undefined,
+    fromStdin = false,
   ): Promise<void> {
     const schema = getCredentialSchema(provider);
 
     if (isCompoundProvider(provider)) {
+      if (value && fromStdin) {
+        await this.setCompoundProviderFromJson(
+          storage,
+          provider,
+          schema,
+          value,
+        );
+        return;
+      }
       if (value) {
         console.log(
           chalk.red(
-            `\n'${provider}' requires an Access Key + Secret Key pair — pass no value and enter them interactively.\n`,
+            `\n'${provider}' requires an Access Key + Secret Key pair — enter them interactively, or pass them as JSON with --stdin.\n`,
           ),
         );
         this.exit(1);
@@ -124,6 +153,60 @@ export default class ConfigSet extends Command {
     console.log(chalk.gray(`Location: ${storage.getConfigPath()}`));
     console.log(chalk.gray('Encryption: AES-256-GCM\n'));
     console.log(chalk.gray(`Next: flui env create\n`));
+  }
+
+  /**
+   * The headless path for a provider that needs more than one value. Validated
+   * against the same schema the prompts use, so a runner cannot store a
+   * half-filled credential that only fails much later, mid-provisioning.
+   */
+  private async setCompoundProviderFromJson(
+    storage: ConfigStorage,
+    provider: string,
+    schema: NonNullable<ReturnType<typeof getCredentialSchema>>,
+    raw: string,
+  ): Promise<void> {
+    let parsed: Record<string, unknown>;
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      console.log(
+        chalk.red(
+          `\n'${provider}' expects a JSON object on standard input, for example: {"${schema.fields
+            .map((f) => f.key)
+            .join('":"...","')}":"..."}\n`,
+        ),
+      );
+      this.exit(1);
+    }
+
+    const collected: Record<string, string> = {};
+    for (const field of schema.fields) {
+      const supplied = parsed[field.key];
+      if (typeof supplied !== 'string' || !supplied.trim()) {
+        console.log(
+          chalk.red(`\nMissing "${field.key}" (${field.label}) in the JSON.\n`),
+        );
+        this.exit(1);
+      }
+      collected[field.key] = supplied.trim();
+    }
+
+    if (provider === 'scaleway') {
+      const result = await validateScalewayCredentials(
+        collected.accessKey,
+        collected.secretKey,
+      );
+      if (!result.success) {
+        console.log(chalk.red(`\n${result.message}\n`));
+        this.exit(1);
+      }
+    }
+
+    storage.saveCredentials(provider, collected);
+    console.log(chalk.green(`\nProvider configured: ${provider}`));
+    console.log(chalk.gray(`Location: ${storage.getConfigPath()}`));
+    console.log(chalk.gray('Encryption: AES-256-GCM\n'));
   }
 
   private async setCompoundProvider(

@@ -202,9 +202,13 @@
       "json",
       "ts"
     ],
-    "rootDir": "src",
+    "rootDir": ".",
+    "roots": [
+      "<rootDir>/src",
+      "<rootDir>/cli/src"
+    ],
     "modulePaths": [
-      "<rootDir>/.."
+      "<rootDir>"
     ],
     "testRegex": ".*\\.spec\\.ts$",
     "transform": {
@@ -216,7 +220,7 @@
     "collectCoverageFrom": [
       "**/*.(t|j)s"
     ],
-    "coverageDirectory": "../coverage",
+    "coverageDirectory": "coverage",
     "testEnvironment": "node"
   }
 }

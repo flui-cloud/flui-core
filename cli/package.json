@@ -100,7 +100,8 @@
       "message": "<%- config.name %> update available: <%- chalk.greenBright(config.version) %> → <%- chalk.greenBright(latest) %>. Run \"npm install -g <%- config.name %>\" to update."
     },
     "hooks": {
-      "command_not_found": "./lib/cli/src/hooks/command_not_found"
+      "command_not_found": "./lib/cli/src/hooks/command_not_found",
+      "init": "./lib/cli/src/hooks/init"
     },
     "topics": {
       "auth": {
@@ -168,6 +169,9 @@
       },
       "gateway:allow-ip": {
         "description": "Manage the IP allowlist of a route"
+      },
+      "vault": {
+        "description": "The vault that protects credentials stored on this machine"
       }
     }
   },

@@ -1,8 +1,33 @@
-import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { join } from 'node:path';
 import { ProfileManager } from './profile-manager';
 import { buildNipBaseDomain } from './nip-base-domain.util';
+import {
+  open as openSealed,
+  seal as sealValue,
+  type ProfileKey,
+} from './vault/vault-crypto';
+import { VaultLockedError, getProfileKey } from './vault/session-key';
+
+/**
+ * The sealing primitives, applied to whichever key is in play — the vault's, or
+ * the retired key file's while a profile is being moved across. Both write the
+ * same `iv:authTag:ciphertext` shape, so the stored format never changes and a
+ * half-migrated profile is still a readable one.
+ */
+function encryptWith(key: Buffer, plaintext: string): string {
+  return sealValue(key as ProfileKey, plaintext);
+}
+
+function decryptWith(key: Buffer, ciphertext: string): string {
+  return openSealed(key as ProfileKey, ciphertext);
+}
 
 /**
  * Lightweight encrypted configuration storage for CLI
@@ -33,17 +58,50 @@ interface ConfigData {
 }
 
 export class ConfigStorage {
-  private readonly encryptionKey: Buffer;
   private readonly configDir: string;
   private readonly configFile: string;
   private readonly encryptionKeyFile: string;
+  private readonly profileName: string;
 
   constructor(profile?: string) {
+    this.profileName = profile ?? ProfileManager.getActiveProfile();
     this.configDir = ProfileManager.getProfileDir(profile);
     this.configFile = join(this.configDir, 'config.json');
     this.encryptionKeyFile = join(this.configDir, '.key');
     this.ensureConfigDir();
-    this.encryptionKey = this.getOrCreateEncryptionKey();
+  }
+
+  /**
+   * The key that opens this profile, resolved only when a secret is actually
+   * touched.
+   *
+   * Lazy on purpose: most commands read a preference or an API URL, which are
+   * plaintext. Resolving eagerly would make `flui config get email` demand a
+   * passphrase, and an operator asked for one at a moment that plainly does not
+   * need it learns to type it without thinking.
+   *
+   * The key file is the pre-vault arrangement, still honoured so an upgrade
+   * does not lock anyone out of credentials they already have. `flui vault
+   * unlock` re-seals those profiles and removes it.
+   */
+  private get encryptionKey(): Buffer {
+    const fromVault = getProfileKey(this.profileName);
+    if (fromVault) return fromVault;
+
+    if (existsSync(this.encryptionKeyFile)) {
+      return readFileSync(this.encryptionKeyFile);
+    }
+
+    throw new VaultLockedError(this.profileName);
+  }
+
+  /** True when this profile still holds secrets sealed under the old key file. */
+  public hasLegacyKeyFile(): boolean {
+    return existsSync(this.encryptionKeyFile);
+  }
+
+  public get profile(): string {
+    return this.profileName;
   }
 
   /**
@@ -56,55 +114,51 @@ export class ConfigStorage {
   }
 
   /**
-   * Get or create encryption key for AES-256-GCM
+   * Re-seals every secret in this profile under the vault, then removes the key
+   * file that used to protect them.
+   *
+   * The key file sat next to the data it protected, so anyone who could read
+   * the profile could read both. Moving a profile across is therefore the whole
+   * point of the vault, and it has to be safe to interrupt: each entry is
+   * rewritten under the new key first, and only once the file has been written
+   * is the old key deleted.
    */
-  private getOrCreateEncryptionKey(): Buffer {
-    if (existsSync(this.encryptionKeyFile)) {
-      return readFileSync(this.encryptionKeyFile);
-    }
+  public adoptVaultKey(vaultKey: Buffer): number {
+    if (!existsSync(this.encryptionKeyFile)) return 0;
 
-    // Generate new 32-byte key for AES-256
-    const key = randomBytes(32);
-    writeFileSync(this.encryptionKeyFile, key, { mode: 0o600 });
-    return key;
+    const legacy = readFileSync(this.encryptionKeyFile);
+    const config = this.readConfig();
+    let moved = 0;
+
+    const reseal = (sealed: string): string => {
+      const plaintext = decryptWith(legacy, sealed);
+      moved += 1;
+      return encryptWith(vaultKey, plaintext);
+    };
+
+    for (const [provider, entry] of Object.entries(config.tokens ?? {})) {
+      config.tokens[provider] = {
+        ...entry,
+        encrypted: reseal(entry.encrypted),
+      };
+    }
+    for (const [provider, sealed] of Object.entries(config.credentials ?? {})) {
+      if (typeof sealed === 'string')
+        config.credentials[provider] = reseal(sealed);
+    }
+    if (config.apiKey) config.apiKey = reseal(config.apiKey);
+
+    this.writeConfig(config);
+    rmSync(this.encryptionKeyFile, { force: true });
+    return moved;
   }
 
-  /**
-   * Encrypt string using AES-256-GCM
-   */
   private encrypt(plaintext: string): string {
-    const iv = randomBytes(16);
-    const cipher = createCipheriv('aes-256-gcm', this.encryptionKey, iv);
-
-    let encrypted = cipher.update(plaintext, 'utf8', 'hex');
-    encrypted += cipher.final('hex');
-
-    const authTag = cipher.getAuthTag();
-
-    // Format: iv:authTag:ciphertext
-    return `${iv.toString('hex')}:${authTag.toString('hex')}:${encrypted}`;
+    return encryptWith(this.encryptionKey, plaintext);
   }
 
-  /**
-   * Decrypt string using AES-256-GCM
-   */
   private decrypt(ciphertext: string): string {
-    const parts = ciphertext.split(':');
-    if (parts.length !== 3) {
-      throw new Error('Invalid ciphertext format');
-    }
-
-    const [ivHex, authTagHex, encryptedHex] = parts;
-    const iv = Buffer.from(ivHex, 'hex');
-    const authTag = Buffer.from(authTagHex, 'hex');
-
-    const decipher = createDecipheriv('aes-256-gcm', this.encryptionKey, iv);
-    decipher.setAuthTag(authTag);
-
-    let decrypted = decipher.update(encryptedHex, 'hex', 'utf8');
-    decrypted += decipher.final('utf8');
-
-    return decrypted;
+    return decryptWith(this.encryptionKey, ciphertext);
   }
 
   /**
@@ -172,6 +226,9 @@ export class ConfigStorage {
     try {
       return this.decrypt(tokenData.encrypted);
     } catch (error) {
+      // A closed vault is not a decryption failure, and saying so sends the
+      // reader looking for corrupt data instead of typing their passphrase.
+      if (error instanceof VaultLockedError) throw error;
       throw new Error(
         `Failed to decrypt token for ${provider}: ${error.message}`,
       );
@@ -238,6 +295,7 @@ export class ConfigStorage {
       const decrypted = this.decrypt(encryptedCredentials);
       return JSON.parse(decrypted);
     } catch (error) {
+      if (error instanceof VaultLockedError) throw error;
       throw new Error(
         `Failed to decrypt credentials for ${provider}: ${error.message}`,
       );
