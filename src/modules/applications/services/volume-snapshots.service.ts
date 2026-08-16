@@ -9,7 +9,7 @@ import { Repository } from 'typeorm';
 import { v4 as uuid } from 'uuid';
 import { ClusterEntity } from '../../infrastructure/clusters/entities/cluster.entity';
 import { CloudProvider } from '../../providers/enums/cloud-provider.enum';
-import { VolumeExportFactory } from '../../providers/core/factories/volume-export.factory';
+import { VolumeExportService } from '../../providers/services/volume-export.service';
 import {
   ExportResult,
   ExportSummary,
@@ -22,6 +22,10 @@ import { AppResourcesRepository } from '../repositories/app-resources.repository
 import { ApplicationResourceKind } from '../enums/application-resource-kind.enum';
 import { AppOperationRunner } from './app-operation-runner.service';
 import { OperationType } from '../../infrastructure/servers/entities/infrastructure-operations.entity';
+import {
+  SnapshotCapability,
+  SnapshotStorageCapabilityService,
+} from './snapshot-storage-capability.service';
 
 export interface CreateSnapshotForAppRequest {
   applicationId: string;
@@ -36,6 +40,10 @@ export interface SnapshotResponse extends ExportSummary {
   providerCapabilities: VolumeExportCapabilities;
 }
 
+export interface SnapshotListResponse extends SnapshotCapability {
+  items: SnapshotResponse[];
+}
+
 @Injectable()
 export class VolumeSnapshotsService {
   private readonly logger = new Logger(VolumeSnapshotsService.name);
@@ -45,7 +53,8 @@ export class VolumeSnapshotsService {
     private readonly clusterRepository: Repository<ClusterEntity>,
     private readonly applicationsRepository: ApplicationsRepository,
     private readonly appResourcesRepository: AppResourcesRepository,
-    private readonly volumeExportFactory: VolumeExportFactory,
+    private readonly volumeExportService: VolumeExportService,
+    private readonly snapshotStorageCapability: SnapshotStorageCapabilityService,
     private readonly encryptionService: EncryptionService,
     private readonly runner: AppOperationRunner,
   ) {}
@@ -56,6 +65,7 @@ export class VolumeSnapshotsService {
     const { app, cluster, kubeconfig, ops, provider } =
       await this.resolveAppContext(request.applicationId);
     const pvcName = await this.resolvePvcName(app.id, request.volumeName);
+    await this.requireSnapshotCapability(app, kubeconfig, [pvcName]);
 
     const { result, operationId } = await this.runner.run(
       {
@@ -105,20 +115,33 @@ export class VolumeSnapshotsService {
     return { ...result, operationId };
   }
 
-  async listForApp(applicationId: string): Promise<SnapshotResponse[]> {
+  async listForApp(applicationId: string): Promise<SnapshotListResponse> {
     const { app, kubeconfig, ops, provider } =
       await this.resolveAppContext(applicationId);
+    const pvcNames = await this.resolvePvcNames(app.id);
+    const capability = await this.getSnapshotCapability(
+      app,
+      kubeconfig,
+      pvcNames,
+    );
+    if (!capability.supported) {
+      return { ...capability, items: [] };
+    }
+
     const items = await ops.listExports({
       kubeconfig,
       sink: 'pvc-clone',
       namespace: app.k8sNamespace,
       labelSelector: `flui-app-id=${app.id}`,
     });
-    return items.map((s) => ({
-      ...s,
-      provider,
-      providerCapabilities: ops.capabilities,
-    }));
+    return {
+      supported: true,
+      items: items.map((s) => ({
+        ...s,
+        provider,
+        providerCapabilities: ops.capabilities,
+      })),
+    };
   }
 
   async listForCluster(clusterId: string): Promise<SnapshotResponse[]> {
@@ -132,7 +155,7 @@ export class VolumeSnapshotsService {
       );
     }
     const provider = cluster.provider as CloudProvider;
-    const ops = this.volumeExportFactory.getOrFail(provider);
+    const ops = this.volumeExportService;
     const kubeconfig = this.encryptionService.decrypt(
       cluster.kubeconfigEncrypted,
     );
@@ -196,6 +219,10 @@ export class VolumeSnapshotsService {
         `Snapshot ${snapshotId} is not ready yet — wait for the copy job to finish`,
       );
     }
+    const sourcePvcNames = source.sourcePvcName
+      ? [source.sourcePvcName]
+      : await this.resolvePvcNames(app.id);
+    await this.requireSnapshotCapability(app, kubeconfig, sourcePvcNames);
 
     const pvcs = await this.appResourcesRepository.findByApplicationId(app.id);
     const dataPvc = pvcs.find(
@@ -247,6 +274,8 @@ export class VolumeSnapshotsService {
   ): Promise<{ operationId: string }> {
     const { app, kubeconfig, ops } =
       await this.resolveAppContext(applicationId);
+    const pvcNames = await this.resolvePvcNames(app.id);
+    await this.requireSnapshotCapability(app, kubeconfig, pvcNames);
     const { operationId } = await this.runner.run(
       {
         appId: app.id,
@@ -292,7 +321,7 @@ export class VolumeSnapshotsService {
       );
     }
     const provider = cluster.provider as CloudProvider;
-    const ops = this.volumeExportFactory.getOrFail(provider);
+    const ops = this.volumeExportService;
     const kubeconfig = this.encryptionService.decrypt(
       cluster.kubeconfigEncrypted,
     );
@@ -314,35 +343,78 @@ export class VolumeSnapshotsService {
     applicationId: string,
     explicitName: string | undefined,
   ): Promise<string> {
-    const resources =
-      await this.appResourcesRepository.findByApplicationId(applicationId);
-    const pvcs = resources.filter(
-      (r) => r.kind === ApplicationResourceKind.PERSISTENT_VOLUME_CLAIM,
-    );
-    if (pvcs.length === 0) {
+    const pvcNames = await this.resolvePvcNames(applicationId);
+    if (pvcNames.length === 0) {
       throw new BadRequestException(
         `Application ${applicationId} has no PersistentVolumeClaim — nothing to snapshot`,
       );
     }
     if (explicitName) {
-      const match = pvcs.find((p) => p.name === explicitName);
-      if (!match) {
+      if (!pvcNames.includes(explicitName)) {
         throw new BadRequestException(
-          `Volume "${explicitName}" not found on application. Available: ${pvcs
-            .map((p) => p.name)
-            .join(', ')}`,
+          `Volume "${explicitName}" not found on application. Available: ${pvcNames.join(', ')}`,
         );
       }
-      return match.name;
+      return explicitName;
     }
-    if (pvcs.length > 1) {
+    if (pvcNames.length > 1) {
       throw new BadRequestException(
-        `Application has multiple volumes; specify --volume <name>. Available: ${pvcs
-          .map((p) => p.name)
-          .join(', ')}`,
+        `Application has multiple volumes; specify --volume <name>. Available: ${pvcNames.join(', ')}`,
       );
     }
-    return pvcs[0].name;
+    return pvcNames[0];
+  }
+
+  private async resolvePvcNames(applicationId: string): Promise<string[]> {
+    const resources =
+      await this.appResourcesRepository.findByApplicationId(applicationId);
+    return resources
+      .filter(
+        (resource) =>
+          resource.kind === ApplicationResourceKind.PERSISTENT_VOLUME_CLAIM,
+      )
+      .map((resource) => resource.name);
+  }
+
+  private async getSnapshotCapability(
+    app: { id: string; k8sNamespace: string },
+    kubeconfig: string,
+    pvcNames: string[],
+  ): Promise<SnapshotCapability> {
+    if (pvcNames.length === 0) {
+      return {
+        supported: false,
+        reason:
+          'Snapshots are not available because this application has no persistent volume.',
+      };
+    }
+
+    let unsupported: SnapshotCapability | undefined;
+    for (const pvcName of pvcNames) {
+      const capability = await this.snapshotStorageCapability.forPvc(
+        kubeconfig,
+        app.k8sNamespace,
+        pvcName,
+      );
+      if (capability.supported) return capability;
+      unsupported ??= capability;
+    }
+    return unsupported!;
+  }
+
+  private async requireSnapshotCapability(
+    app: { id: string; k8sNamespace: string },
+    kubeconfig: string,
+    pvcNames: string[],
+  ): Promise<void> {
+    const capability = await this.getSnapshotCapability(
+      app,
+      kubeconfig,
+      pvcNames,
+    );
+    if (!capability.supported) {
+      throw new BadRequestException(capability.reason);
+    }
   }
 
   private buildSnapshotName(slug: string, description?: string): string {

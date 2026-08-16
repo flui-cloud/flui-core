@@ -1424,7 +1424,16 @@ export class CatalogInstallProcessor {
         secret: e.secret,
         externalSecretRef: e.externalSecretRef,
       })),
-      resources: this.mapResources(component.resources),
+      // A composed install honours the same overrides a standalone one does.
+      // Without this the field was accepted, echoed in the capacity preview and
+      // then quietly dropped, so anyone shrinking a composed app to fit a small
+      // cluster got the manifest's own numbers instead. The ceiling applies to
+      // every component alike — a per-component form would need a per-component
+      // field, which the request shape does not carry.
+      resources: this.applyResourceOverrides(
+        this.mapResources(component.resources),
+        install.resourceOverrides,
+      ),
       scaling: this.mapScaling(component.scaling),
       replicas: component.scaling.horizontal.enabled
         ? (component.scaling.horizontal.min ?? 1)

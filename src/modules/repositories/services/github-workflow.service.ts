@@ -6,7 +6,20 @@ import { GitHubTokenResolverService } from './github-token-resolver.service';
 export interface CommitResult {
   workflowUrl: string;
   sha: string;
+  /** Set when the change was proposed rather than pushed. */
+  pullRequestUrl?: string;
 }
+
+/**
+ * Where the workflow commit lands.
+ *
+ * `push` writes to the branch, which is right when someone connected their own
+ * repository to their own Flui and expects it to just work. `pull-request`
+ * proposes instead, which is the only defensible option when a stranger clicks
+ * a button on a demo: accepting our pull request is consent, whereas writing to
+ * their default branch is an intrusion however loudly it was announced.
+ */
+export type WorkflowDelivery = 'push' | 'pull-request';
 
 /** Legacy shared workflow path (single-app repos, pre multi-app). */
 export const LEGACY_WORKFLOW_PATH = '.github/workflows/flui.yml';
@@ -70,6 +83,7 @@ export class GitHubWorkflowService {
     branch: string,
     workflowYaml: string,
     dockerfile?: string,
+    delivery: WorkflowDelivery = 'push',
   ): Promise<CommitResult> {
     await this.tokenResolver.assertCapability(userId, ['repo', 'workflow']);
 
@@ -142,7 +156,39 @@ export class GitHubWorkflowService {
       parents: [latestCommitSha],
     });
 
-    // 6. Advance the branch ref to the new commit
+    // 6. Deliver: advance the branch, or put the commit on a branch of our own
+    //    and ask for it to be merged.
+    if (delivery === 'pull-request') {
+      const head = `flui/deploy-workflow-${newCommit.sha.slice(0, 7)}`;
+      await octokit.git.createRef({
+        owner,
+        repo,
+        ref: `refs/heads/${head}`,
+        sha: newCommit.sha,
+      });
+      const { data: pr } = await octokit.pulls.create({
+        owner,
+        repo,
+        base: branch,
+        head,
+        title: 'Add the Flui deployment workflow',
+        body:
+          'Flui opened this instead of pushing to your branch.\n\n' +
+          'Merging it lets GitHub Actions build this repository on GitHub-hosted runners and publish the image to your own ghcr.io. ' +
+          'Your code is never built on Flui machines — Flui only runs the resulting image.\n\n' +
+          '**The build uses your Actions minutes.** Close this pull request and nothing happens.',
+      });
+
+      this.logger.log(
+        `Proposed the workflow to ${owner}/${repo} as PR #${pr.number}`,
+      );
+      return {
+        workflowUrl: `https://github.com/${owner}/${repo}/blob/${head}/.github/workflows/flui.yml`,
+        sha: newCommit.sha,
+        pullRequestUrl: pr.html_url,
+      };
+    }
+
     await octokit.git.updateRef({
       owner,
       repo,

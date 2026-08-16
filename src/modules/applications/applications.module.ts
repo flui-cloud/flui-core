@@ -40,6 +40,7 @@ import { GhcrSecretRefreshService } from './services/ghcr-secret-refresh.service
 import { ApplicationVersionsService } from './services/application-versions.service';
 import { ApplicationSourceDeployService } from './services/application-source-deploy.service';
 import { VolumeSnapshotsService } from './services/volume-snapshots.service';
+import { SnapshotStorageCapabilityService } from './services/snapshot-storage-capability.service';
 import { VolumeBackupsService } from './services/volume-backups.service';
 import { DedicatedPlacementService } from './services/dedicated-placement.service';
 import { ApplicationDeployProcessor } from './processors/application-deploy.processor';
@@ -67,6 +68,7 @@ import { ScalingModule } from '../scaling/scaling.module';
 import { DnsModule } from '../dns/dns.module';
 import { WsAuthModule } from '../auth/ws-auth.module';
 import { StorageModule } from '../storage/storage.module';
+import { VolumeExportService } from '../providers/services/volume-export.service';
 
 @Module({
   imports: [
@@ -142,6 +144,8 @@ import { StorageModule } from '../storage/storage.module';
     ApplicationVersionsService,
     ApplicationSourceDeployService,
     VolumeSnapshotsService,
+    SnapshotStorageCapabilityService,
+    VolumeExportService,
     VolumeBackupsService,
     DedicatedPlacementService,
     ApplicationEventsGateway,
