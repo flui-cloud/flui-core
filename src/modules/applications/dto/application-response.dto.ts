@@ -248,6 +248,33 @@ export class AppOperationResponseDto {
   createdAt: Date;
 }
 
+/**
+ * What the caller may do with this application. Reported so the interface can
+ * stop offering doors that are locked — every route behind these tabs is guarded
+ * on its own, and hiding one has never been what stops a request.
+ */
+export class ApplicationAccessDto {
+  @ApiProperty({
+    isArray: true,
+    example: ['overview', 'monitoring', 'logs'],
+    description:
+      'Tabs the caller’s permissions allow on this application. The client intersects this with the tabs that make sense for the application’s shape.',
+  })
+  tabs: string[];
+
+  @ApiProperty({
+    description:
+      'True when the caller may read this application but not change it.',
+  })
+  readOnly: boolean;
+
+  @ApiProperty({
+    description:
+      'True when this application is part of the shared showcase — run by the platform’s operators and shown to others read-only. Label it as such; unlabelled content inside someone’s own space reads as a failure of isolation.',
+  })
+  showcase: boolean;
+}
+
 export class ApplicationResponseDto {
   @ApiProperty()
   id: string;
@@ -507,6 +534,13 @@ export class ApplicationResponseDto {
       'Set only within a composed-app group response: the bundle display name (e.g. "Nextcloud") this component belongs to. Undefined in flat listings.',
   })
   composedAppName?: string;
+
+  @ApiPropertyOptional({
+    type: ApplicationAccessDto,
+    description:
+      'Present on the read paths the interface drives (one application, and a cluster’s list). Absent elsewhere rather than guessed.',
+  })
+  access?: ApplicationAccessDto;
 
   @ApiProperty()
   createdAt: Date;

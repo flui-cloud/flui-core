@@ -81,6 +81,17 @@ export class UpdateApplicationDto {
   @MaxLength(255)
   name?: string;
 
+  @ApiPropertyOptional({
+    type: [String],
+    description:
+      'Labels this application can be selected by in access grants. Administrators only: a tag decides who can see the application, which makes it an access decision rather than a configuration one. `showcase` puts it on display, read-only, to everyone shown the shared showcase.',
+  })
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  @MaxLength(63, { each: true })
+  tags?: string[];
+
   @ApiPropertyOptional({ description: 'Updated description' })
   @IsOptional()
   @IsString()

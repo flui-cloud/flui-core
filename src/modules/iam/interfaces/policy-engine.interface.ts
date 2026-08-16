@@ -29,4 +29,8 @@ export interface PolicyEngine {
     action: string,
     resource?: ResourceAttributes,
   ): boolean;
+  permissionsOn(
+    access: PrincipalAccess,
+    resource: ResourceAttributes,
+  ): Set<string>;
 }

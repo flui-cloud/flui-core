@@ -10,10 +10,20 @@ import {
   ResourceAttributes,
 } from '../../iam/interfaces/iam.types';
 import { IAM_PERMISSION } from '../../iam/constants/iam-permissions';
+import { AppTabKey, tabsForPermissions } from '../../iam/constants/iam-tabs';
+import { isShowcase } from '../../iam/constants/iam-showcase';
 import { AuthenticatedUser } from '../../auth/interfaces/authenticated-user.interface';
 import { ApplicationEntity } from '../entities/application.entity';
 import { ProjectEntity } from '../../projects/entities/project.entity';
 import { ClusterEntity } from '../../infrastructure/clusters/entities/cluster.entity';
+
+/** What one caller may do with one application, as told to the interface. */
+export interface AppAccessSummary {
+  /** Tabs the permissions allow. The client intersects this with the app's shape. */
+  tabs: AppTabKey[];
+  readOnly: boolean;
+  showcase: boolean;
+}
 
 /**
  * Resource-aware authorization for applications. Maps an ApplicationEntity to the
@@ -63,6 +73,41 @@ export class ApplicationAccessService {
     );
   }
 
+  /**
+   * What the caller may do with each of these apps, keyed by app id.
+   *
+   * Computed alongside the list rather than asked for per app: the dashboard
+   * needs it for every row it draws, and one resolution answers for all of them.
+   * Nothing here authorises anything — the routes behind each tab are guarded
+   * independently. This exists so the interface can stop offering doors that are
+   * locked, which is a courtesy, not a control.
+   */
+  async summarise(
+    user: AuthenticatedUser,
+    apps: ApplicationEntity[],
+  ): Promise<Map<string, AppAccessSummary>> {
+    const summaries = new Map<string, AppAccessSummary>();
+    if (apps.length === 0) return summaries;
+
+    const access = await this.policy.resolveAccess(this.principalFrom(user));
+    const { projectSlugById, clusterById } = await this.lookups(apps);
+
+    for (const app of apps) {
+      const resource = this.toResource(
+        app,
+        app.projectId ? projectSlugById.get(app.projectId) : undefined,
+        clusterById.get(app.clusterId),
+      );
+      const permissions = this.policy.permissionsOn(access, resource);
+      summaries.set(app.id, {
+        tabs: tabsForPermissions(permissions),
+        readOnly: !permissions.has(IAM_PERMISSION.APP_WRITE),
+        showcase: isShowcase(app.tags),
+      });
+    }
+    return summaries;
+  }
+
   /** True if the caller may perform `action` on this app. */
   async can(
     user: AuthenticatedUser,
@@ -89,6 +134,9 @@ export class ApplicationAccessService {
 
   // Create-time authority: a scoped grant only authorises creation its selector
   // reaches, so a project-scoped grant can't make a project-less app. Admins pass.
+  // The app being created has no row yet, so its owner is the caller — which is
+  // what makes an `owner` grant self-sufficient: it authorises the creation and
+  // then covers the result.
   async assertCanCreate(
     user: AuthenticatedUser | undefined,
     target: {
@@ -115,6 +163,7 @@ export class ApplicationAccessService {
       provider: cluster?.provider,
       project: target.projectSlug,
       tags: target.tags ?? [],
+      owner: user.userId,
     };
     if (!this.policy.can(access, IAM_PERMISSION.APP_CREATE, resource)) {
       throw new ForbiddenException(
@@ -153,6 +202,7 @@ export class ApplicationAccessService {
       provider: cluster?.provider,
       project: projectSlug,
       tags: app.tags ?? [],
+      owner: app.userId ?? null,
     };
   }
 

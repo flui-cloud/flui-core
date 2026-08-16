@@ -1,4 +1,11 @@
-import { Controller, Get, Param, Query, Logger } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Param,
+  Query,
+  Logger,
+  UseGuards,
+} from '@nestjs/common';
 import {
   ApiTags,
   ApiOperation,
@@ -11,11 +18,17 @@ import { LokiQueryService } from '../services';
 import {
   AppLogsQueryDto,
   AppLogVolumeQueryDto,
+  ApplicationLogsQueryDto,
+  ApplicationLogVolumeQueryDto,
 } from '../dto/app-logs-query.dto';
 import {
   AppLogsResponseDto,
   AppLogVolumeResponseDto,
 } from '../dto/app-logs-response.dto';
+import { ApplicationService } from '../../applications/services/application.service';
+import { AppAccessGuard } from '../../applications/guards/app-access.guard';
+import { AdminGuard } from '../../auth/guards/admin.guard';
+import { Admin } from '../../auth/decorators/admin.decorator';
 
 /**
  * Application Logs Controller
@@ -33,7 +46,10 @@ import {
 export class ApplicationLogsController {
   private readonly logger = new Logger(ApplicationLogsController.name);
 
-  constructor(private readonly lokiQuery: LokiQueryService) {}
+  constructor(
+    private readonly lokiQuery: LokiQueryService,
+    private readonly applicationService: ApplicationService,
+  ) {}
 
   /**
    * Diagnostic endpoint — shows all stream label names Loki has indexed,
@@ -41,6 +57,13 @@ export class ApplicationLogsController {
    * Use this to verify label names before querying.
    */
   @Get('loki/debug')
+  // Returns a real log line drawn from `{cluster_id=~".+"}` — any stream in the
+  // cluster, whoever it belongs to — plus the whole label inventory. It is a
+  // diagnostic for whoever runs the instance, not a route a tenant may call.
+  // AdminGuard only enforces where @Admin() marks the route; without it the
+  // guard is decoration that always returns true.
+  @UseGuards(AdminGuard)
+  @Admin()
   @ApiOperation({
     summary: 'Loki diagnostics',
     description:
@@ -68,6 +91,8 @@ export class ApplicationLogsController {
    * Get application logs filtered by namespace, app, container, pod, level, etc.
    */
   @Get('clusters/:clusterId/apps/logs')
+  @UseGuards(AdminGuard)
+  @Admin()
   @ApiOperation({
     summary: 'Get application logs',
     description:
@@ -147,6 +172,37 @@ export class ApplicationLogsController {
     }
   }
 
+  @Get('applications/:id/logs')
+  @UseGuards(AppAccessGuard)
+  @ApiOperation({
+    summary: 'Get logs for an application',
+    description:
+      'Returns log lines for one application. The namespace and workload identity are derived from the application record.',
+  })
+  @ApiParam({ name: 'id', description: 'Application ID (UUID)' })
+  @ApiResponse({
+    status: 200,
+    description: 'Application log entries',
+    type: AppLogsResponseDto,
+  })
+  async getApplicationLogs(
+    @Param('id') appId: string,
+    @Query() query: ApplicationLogsQueryDto,
+  ): Promise<AppLogsResponseDto> {
+    const app = await this.applicationService.findById(appId);
+    return this.lokiQuery.getAppLogs(app.clusterId, {
+      namespace: app.k8sNamespace,
+      container: app.slug,
+      pod: query.pod,
+      stream: query.stream,
+      level: query.level,
+      search: query.search,
+      tail: query.tail,
+      start: query.start,
+      end: query.end,
+    });
+  }
+
   /**
    * Get log volume aggregated by level over a time range (chart data).
    *
@@ -154,6 +210,8 @@ export class ApplicationLogsController {
    * are fetched. This is the same technique Grafana uses for its log volume panel.
    */
   @Get('clusters/:clusterId/apps/logs/volume')
+  @UseGuards(AdminGuard)
+  @Admin()
   @ApiOperation({
     summary: 'Get log volume over time (chart data)',
     description:
@@ -223,5 +281,33 @@ export class ApplicationLogsController {
       );
       throw error;
     }
+  }
+
+  @Get('applications/:id/logs/volume')
+  @UseGuards(AppAccessGuard)
+  @ApiOperation({
+    summary: 'Get log volume for an application',
+    description:
+      'Returns log volume for one application. The namespace and workload identity are derived from the application record.',
+  })
+  @ApiParam({ name: 'id', description: 'Application ID (UUID)' })
+  @ApiResponse({
+    status: 200,
+    description: 'Log volume time series per level',
+    type: AppLogVolumeResponseDto,
+  })
+  async getApplicationLogVolume(
+    @Param('id') appId: string,
+    @Query() query: ApplicationLogVolumeQueryDto,
+  ): Promise<AppLogVolumeResponseDto> {
+    const app = await this.applicationService.findById(appId);
+    return this.lokiQuery.getAppLogVolume(app.clusterId, {
+      namespace: app.k8sNamespace,
+      container: app.slug,
+      stream: query.stream,
+      start: query.start,
+      end: query.end,
+      step: query.step,
+    });
   }
 }

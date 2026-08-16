@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { PrometheusQueryService } from './prometheus-query.service';
 import { ApplicationService } from '../../applications/services/application.service';
+import { ApplicationEntity } from '../../applications/entities/application.entity';
 import { AppResourcesRepository } from '../../applications/repositories/app-resources.repository';
 import { ApplicationResourceKind } from '../../applications/enums/application-resource-kind.enum';
 import {
@@ -297,13 +298,11 @@ export class ApplicationMetricsService {
   }
 
   /**
-   * Get instant metrics for all applications in a cluster
+   * Get instant metrics for the provided applications
    */
-  async getClusterAppsMetricsInstant(
-    clusterId: string,
+  async getAppsMetricsInstant(
+    apps: ApplicationEntity[],
   ): Promise<AppMetricsDto[]> {
-    const apps = await this.applicationService.findByClusterId(clusterId);
-
     if (apps.length === 0) {
       return [];
     }
@@ -511,16 +510,14 @@ export class ApplicationMetricsService {
   }
 
   /**
-   * Get metrics history for all applications in a cluster
+   * Get metrics history for the provided applications
    */
-  async getClusterAppsMetricsHistory(
-    clusterId: string,
+  async getAppsMetricsHistory(
+    apps: ApplicationEntity[],
     start: number,
     end: number,
     step: string = '60s',
   ): Promise<AppMetricsHistoryDto[]> {
-    const apps = await this.applicationService.findByClusterId(clusterId);
-
     if (apps.length === 0) {
       return [];
     }

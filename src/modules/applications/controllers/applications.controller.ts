@@ -12,6 +12,7 @@ import {
   HttpStatus,
   UseGuards,
   BadRequestException,
+  ForbiddenException,
   Logger,
 } from '@nestjs/common';
 import { Request } from 'express';
@@ -243,7 +244,14 @@ export class ApplicationsController {
       req.user as AuthenticatedUser,
       apps,
     );
-    return visible.map((a) => this.applicationService.toResponseDto(a));
+    const access = await this.applicationAccess.summarise(
+      req.user as AuthenticatedUser,
+      visible,
+    );
+    return visible.map((a) => ({
+      ...this.applicationService.toResponseDto(a),
+      access: access.get(a.id),
+    }));
   }
 
   @Get('clusters/:clusterId/applications/grouped')
@@ -292,13 +300,19 @@ export class ApplicationsController {
   @ApiResponse({ status: 404, description: 'Application not found' })
   async findById(
     @Param('id') id: string,
+    @Req() req: Request,
     @Query('refresh') refresh?: string,
   ): Promise<ApplicationResponseDto> {
     if (refresh === 'true') {
       await this.reconciliationService.reconcileOne(id);
     }
     const app = await this.applicationService.findById(id);
-    return this.applicationService.toResponseDtoWithOperation(app);
+    const dto = await this.applicationService.toResponseDtoWithOperation(app);
+    const access = await this.applicationAccess.summarise(
+      req.user as AuthenticatedUser,
+      [app],
+    );
+    return { ...dto, access: access.get(app.id) };
   }
 
   @Get('applications/:id/operations')
@@ -352,6 +366,17 @@ export class ApplicationsController {
     @Param('id') id: string,
     @Body() dto: UpdateApplicationDto,
   ): Promise<ApplicationResponseDto> {
+    // A tag decides which grants select this application — `showcase` alone puts
+    // it in front of every guest on the instance. That is an access decision, so
+    // holding app:write over the application is not enough to make it.
+    if (dto.tags !== undefined && !(req.user as AuthenticatedUser)?.isAdmin) {
+      throw new ForbiddenException({
+        statusCode: 403,
+        code: 'TAGS_ADMIN_ONLY',
+        message:
+          'Tags decide who can see an application, so only an administrator can change them.',
+      });
+    }
     const app = await this.applicationService.update(id, dto);
 
     const deployableFieldChanged =

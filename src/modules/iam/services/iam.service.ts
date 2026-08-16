@@ -22,6 +22,8 @@ export interface IamResourceDto {
   provider: string;
   project?: string;
   tags: string[];
+  /** The owning user's id, or null when the app belongs to nobody. */
+  owner: string | null;
 }
 
 /** A choosable grantee for the "Who" picker. */
@@ -63,6 +65,10 @@ export class IamService {
       provider: a.cluster?.provider ?? '',
       project: a.project?.slug ?? undefined,
       tags: a.tags ?? [],
+      // Needed for the access screen to evaluate an owner-scoped grant. Without
+      // it the client cannot tell which apps such a grant reaches and counts
+      // them all, which overstates the reach of every tenancy grant there is.
+      owner: a.userId ?? null,
     }));
   }
 

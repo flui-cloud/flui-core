@@ -1,4 +1,4 @@
-import { ApiProperty } from '@nestjs/swagger';
+import { ApiProperty, PickType } from '@nestjs/swagger';
 import { IsOptional, IsInt, Min, Max, IsString } from 'class-validator';
 import { Type } from 'class-transformer';
 
@@ -174,3 +174,18 @@ export class AppLogVolumeQueryDto {
   @IsString()
   step?: string = '5m';
 }
+
+export class ApplicationLogsQueryDto extends PickType(AppLogsQueryDto, [
+  'pod',
+  'stream',
+  'level',
+  'search',
+  'tail',
+  'start',
+  'end',
+] as const) {}
+
+export class ApplicationLogVolumeQueryDto extends PickType(
+  AppLogVolumeQueryDto,
+  ['stream', 'start', 'end', 'step'] as const,
+) {}

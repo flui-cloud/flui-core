@@ -17,6 +17,14 @@ export interface IamSelector {
   provider?: string;
   project?: string;
   tags?: string[];
+  /**
+   * The owning user's id. The only selector that follows the resource instead of
+   * describing where it sits: an app created by this principal matches it the
+   * moment it exists, with nothing to assign afterwards. Without it a tenant can
+   * be given apps but cannot make one — its own creation lands outside every
+   * grant it holds.
+   */
+  owner?: string;
 }
 
 /** The principal the PolicyEngine reasons over, derived from `req.user`. */
@@ -43,6 +51,7 @@ export interface ResourceAttributes {
   provider?: string;
   project?: string;
   tags?: string[];
+  owner?: string | null;
 }
 
 /** One scoped grant's contribution: which permissions, at which scope. */
@@ -63,4 +72,6 @@ export interface PrincipalAccess {
   isAdmin: boolean;
   globalPermissions: ReadonlySet<string>;
   scopedGrants: ScopedGrant[];
+  /** True when any binding carries the sandbox role — see SandboxFenceGuard. */
+  isSandbox: boolean;
 }

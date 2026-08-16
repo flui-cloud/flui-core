@@ -1,4 +1,16 @@
-import { Controller, Get, Param, Query, Logger } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Param,
+  Query,
+  Logger,
+  UseGuards,
+  Req,
+} from '@nestjs/common';
+import { Request } from 'express';
+import { AppAccessGuard } from '../../applications/guards/app-access.guard';
+import { ApplicationAccessService } from '../../applications/services/application-access.service';
+import { AuthenticatedUser } from '../../auth/interfaces/authenticated-user.interface';
 import {
   ApiTags,
   ApiOperation,
@@ -31,12 +43,17 @@ export class ApplicationMetricsController {
   constructor(
     private readonly appMetricsService: ApplicationMetricsService,
     private readonly applicationService: ApplicationService,
+    private readonly applicationAccess: ApplicationAccessService,
   ) {}
 
   /**
    * Get instant metrics for a single application
    */
   @Get('applications/:appId/metrics')
+  // How much CPU and memory an application is using, and how many replicas it
+  // is running, is not public within an instance: the traffic and alert routes
+  // next door have always gated the same shape of question.
+  @UseGuards(AppAccessGuard)
   @ApiOperation({
     summary: 'Get application metrics',
     description:
@@ -79,6 +96,7 @@ export class ApplicationMetricsController {
    * Get metrics history for a single application
    */
   @Get('applications/:appId/metrics/history')
+  @UseGuards(AppAccessGuard)
   @ApiOperation({
     summary: 'Get application metrics history',
     description:
@@ -128,13 +146,13 @@ export class ApplicationMetricsController {
   }
 
   /**
-   * Get instant metrics for all applications in a cluster
+   * Get instant metrics for readable applications in a cluster
    */
   @Get('clusters/:clusterId/applications/metrics')
   @ApiOperation({
-    summary: 'Get metrics for all applications in a cluster',
+    summary: 'Get metrics for readable applications in a cluster',
     description:
-      'Returns instant metrics for every application in the cluster. ' +
+      'Returns instant metrics for applications in the cluster that the caller may read. ' +
       'Fetches the app list from the database, then queries Prometheus for each app in parallel.',
   })
   @ApiParam({ name: 'clusterId', description: 'Cluster ID (UUID)' })
@@ -145,13 +163,19 @@ export class ApplicationMetricsController {
   })
   async getClusterAppsMetrics(
     @Param('clusterId') clusterId: string,
+    @Req() req: Request,
   ): Promise<ClusterAppsMetricsResponseDto> {
     this.logger.debug(
       `Fetching instant metrics for all apps in cluster ${clusterId}`,
     );
 
+    const user = req.user as AuthenticatedUser | undefined;
+    const apps = await this.applicationService.findByClusterId(clusterId);
+    const readable = user
+      ? await this.applicationAccess.filterReadable(user, apps)
+      : [];
     const applications =
-      await this.appMetricsService.getClusterAppsMetricsInstant(clusterId);
+      await this.appMetricsService.getAppsMetricsInstant(readable);
 
     return {
       cluster_id: clusterId,
@@ -161,13 +185,13 @@ export class ApplicationMetricsController {
   }
 
   /**
-   * Get metrics history for all applications in a cluster
+   * Get metrics history for readable applications in a cluster
    */
   @Get('clusters/:clusterId/applications/metrics/history')
   @ApiOperation({
-    summary: 'Get metrics history for all applications in a cluster',
+    summary: 'Get metrics history for readable applications in a cluster',
     description:
-      'Returns historical metrics for every application in the cluster over a time range.',
+      'Returns historical metrics for applications in the cluster that the caller may read.',
   })
   @ApiParam({ name: 'clusterId', description: 'Cluster ID (UUID)' })
   @ApiResponse({
@@ -178,6 +202,7 @@ export class ApplicationMetricsController {
   async getClusterAppsMetricsHistory(
     @Param('clusterId') clusterId: string,
     @Query() query: MetricsHistoryQueryDto,
+    @Req() req: Request,
   ): Promise<ClusterAppsMetricsHistoryResponseDto> {
     const startUnix = Math.floor(new Date(query.start).getTime() / 1000);
     const endUnix = Math.floor(new Date(query.end).getTime() / 1000);
@@ -187,13 +212,17 @@ export class ApplicationMetricsController {
       `Fetching metrics history for all apps in cluster ${clusterId}: ${query.start} -> ${query.end} (step: ${step})`,
     );
 
-    const applications =
-      await this.appMetricsService.getClusterAppsMetricsHistory(
-        clusterId,
-        startUnix,
-        endUnix,
-        step,
-      );
+    const user = req.user as AuthenticatedUser | undefined;
+    const apps = await this.applicationService.findByClusterId(clusterId);
+    const readable = user
+      ? await this.applicationAccess.filterReadable(user, apps)
+      : [];
+    const applications = await this.appMetricsService.getAppsMetricsHistory(
+      readable,
+      startUnix,
+      endUnix,
+      step,
+    );
 
     return {
       cluster_id: clusterId,

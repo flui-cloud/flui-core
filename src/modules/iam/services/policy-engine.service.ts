@@ -12,7 +12,7 @@ import {
   ScopedGrant,
 } from '../interfaces/iam.types';
 import { ALL_PERMISSIONS } from '../constants/iam-permissions';
-import { permissionsForRole } from '../constants/iam-roles';
+import { IAM_ROLE, permissionsForRole } from '../constants/iam-roles';
 import { ALL_SECTION_KEYS, SECTIONS } from '../constants/iam-sections';
 
 /**
@@ -44,6 +44,7 @@ export class PolicyEngineService implements PolicyEngine {
         isAdmin: true,
         globalPermissions: new Set(ALL_PERMISSIONS),
         scopedGrants: [],
+        isSandbox: false,
       };
     }
 
@@ -55,7 +56,9 @@ export class PolicyEngineService implements PolicyEngine {
     const groupNames = await this.resolveGroups(principal.email);
     const bindings = await this.findBindingsFor(principal, groupNames);
     const scopedGrants: ScopedGrant[] = [];
+    let isSandbox = false;
     for (const b of bindings) {
+      if (b.role === IAM_ROLE.SANDBOX) isSandbox = true;
       const permissions = new Set<string>(permissionsForRole(b.role));
       if (b.scopeType === 'global') {
         for (const p of permissions) globalPermissions.add(p);
@@ -69,7 +72,7 @@ export class PolicyEngineService implements PolicyEngine {
       }
     }
 
-    return { isAdmin: false, globalPermissions, scopedGrants };
+    return { isAdmin: false, globalPermissions, scopedGrants, isSandbox };
   }
 
   can(
@@ -82,6 +85,25 @@ export class PolicyEngineService implements PolicyEngine {
     return access.scopedGrants.some(
       (g) => g.permissions.has(action) && this.scopeApplies(g, resource),
     );
+  }
+
+  /**
+   * Everything this principal may do to *one* resource. `can` answers one
+   * question at a time; a caller describing a resource to the user — which tabs
+   * open, whether it is read-only — needs the whole set, and asking `can` once
+   * per permission would re-walk the grants each time.
+   */
+  permissionsOn(
+    access: PrincipalAccess,
+    resource: ResourceAttributes,
+  ): Set<string> {
+    if (access.isAdmin) return new Set<string>(ALL_PERMISSIONS);
+    const perms = new Set<string>(access.globalPermissions);
+    for (const g of access.scopedGrants) {
+      if (!this.scopeApplies(g, resource)) continue;
+      for (const p of g.permissions) perms.add(p);
+    }
+    return perms;
   }
 
   async check(
@@ -150,6 +172,10 @@ export class PolicyEngineService implements PolicyEngine {
 
   /** Mirror of the dashboard predicate: equality AND-ed, slugs IN, tags ALL-of. */
   private matchesSelector(r: ResourceAttributes, s: IamSelector): boolean {
+    // An owner selector must never match a resource that has no owner: unowned
+    // apps (system apps, API-key installs) would otherwise fall to every tenant.
+    if (s.owner && (!r.owner || r.owner !== s.owner)) return false;
+
     const equality: Array<[string | undefined, string | undefined]> = [
       [s.type, r.type],
       [s.kind, r.kind],

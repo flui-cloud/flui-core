@@ -42,7 +42,12 @@ export class AppAccessGuard implements CanActivate {
     if (!user) throw new ForbiddenException('Unauthenticated');
     if (user.isAdmin) return true;
 
-    const id = req.params?.id;
+    // Both spellings appear across the API for the same thing. Reading only
+    // `id` made this guard a no-op wherever a route said `:appId` — it would
+    // find nothing, conclude the route was not app-scoped, and allow the call.
+    // A guard that silently passes is worse than an absent one, because adding
+    // it looks like the problem is solved.
+    const id = req.params?.id ?? req.params?.appId;
     if (!id) return true; // not a single-app route — handler enforces
 
     const action =
