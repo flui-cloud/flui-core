@@ -29,7 +29,10 @@ export function jobName(nodeName: string): string {
     .toLowerCase()
     .replace(/[^a-z0-9-]/g, '-')
     .slice(0, 40);
-  return `flui-ca-enrol-${safe}`.replace(/-+$/, '');
+  const name = `flui-ca-enrol-${safe}`;
+  let end = name.length;
+  while (end > 0 && name[end - 1] === '-') end--;
+  return name.slice(0, end);
 }
 
 export function enrolmentScript(caPublicKey: string): string {
@@ -40,13 +43,13 @@ export function enrolmentScript(caPublicKey: string): string {
     '',
     '# Written whole through a temporary file: a half-written file here is a',
     '# node that trusts a truncated key, which fails closed but silently.',
-    `printf '%s\\n' "$FLUI_CA_PUBLIC_KEY" > "$CA_FILE.new"`,
+    String.raw`printf '%s\n' "$FLUI_CA_PUBLIC_KEY" > "$CA_FILE.new"`,
     'chmod 644 "$CA_FILE.new"',
     'mv "$CA_FILE.new" "$CA_FILE"',
     '',
     '# Appended only if absent. Never rewrite this file: it is the only way in.',
     'if ! grep -q "^TrustedUserCAKeys /etc/ssh/trusted_user_ca_keys" "$CONFIG"; then',
-    '  printf "\\nTrustedUserCAKeys /etc/ssh/trusted_user_ca_keys\\n" >> "$CONFIG"',
+    String.raw`  printf "\nTrustedUserCAKeys /etc/ssh/trusted_user_ca_keys\n" >> "$CONFIG"`,
     '  echo "sshd_config: TrustedUserCAKeys added"',
     'else',
     '  echo "sshd_config: TrustedUserCAKeys already present"',

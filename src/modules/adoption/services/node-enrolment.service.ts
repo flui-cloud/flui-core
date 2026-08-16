@@ -142,5 +142,7 @@ function sleep(ms: number): Promise<void> {
 }
 
 function messageOf(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
+  if (error instanceof Error) return error.message;
+  if (typeof error === 'string') return error;
+  return JSON.stringify(error) ?? 'unknown error';
 }

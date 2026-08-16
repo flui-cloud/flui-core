@@ -82,8 +82,7 @@ export default class EnvAdoptionToken extends Command {
       ),
     );
     this.log(chalk.cyan("   Adopt from the owner's machine with:\n"));
-    this.log(
-      `   ${chalk.cyan(`flui env adopt ${issued.token.slice(0, 18)}…`)}\n`,
-    );
+    const command = `flui env adopt ${issued.token.slice(0, 18)}…`;
+    this.log(`   ${chalk.cyan(command)}\n`);
   }
 }

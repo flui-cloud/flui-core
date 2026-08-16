@@ -65,10 +65,9 @@ describe('findShadowedKeys', () => {
     expect(findShadowedKeys(localPath(), ['OIDC_ISSUER'])).toEqual([]);
   });
 
-  /** The real case: the file that shadowed a live URL with a dead one. */
-  it('catches the provider URL that started this', () => {
+  it('catches a provider admin URL left pointing at a dead installation', () => {
     writeLocal(
-      'OIDC_PROVIDER_ADMIN_URL=https://auth.royal-tapir-zn.167-233-87-6.nip.io\n',
+      'OIDC_PROVIDER_ADMIN_URL=https://auth.example.192-0-2-1.nip.io\n',
     );
     expect(findShadowedKeys(localPath(), ['OIDC_PROVIDER_ADMIN_URL'])).toEqual([
       'OIDC_PROVIDER_ADMIN_URL',
