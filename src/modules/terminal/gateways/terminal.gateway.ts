@@ -11,6 +11,10 @@ import {
 import { Server, Socket } from 'socket.io';
 import { Logger } from '@nestjs/common';
 import { TerminalService } from '../services/terminal.service';
+import {
+  TERMINAL_DISABLED_MESSAGE,
+  TerminalFeatureConfig,
+} from '../terminal-feature.config';
 import { WsAuthService } from '../../auth/services/ws-auth.service';
 import { installWsAuth } from '../../auth/utils/ws-auth-middleware.util';
 
@@ -53,14 +57,28 @@ export class TerminalGateway
   constructor(
     private readonly terminalService: TerminalService,
     private readonly wsAuth: WsAuthService,
+    private readonly feature: TerminalFeatureConfig,
   ) {}
 
   afterInit(server: Server) {
     installWsAuth(server, this.wsAuth, this.logger);
-    this.logger.log('Terminal WebSocket Gateway initialized (auth enforced)');
+    this.feature.noteDisabled();
+    this.logger.log(
+      `Terminal WebSocket Gateway initialized (auth enforced, terminal ${
+        this.feature.enabled ? 'enabled' : 'disabled'
+      })`,
+    );
   }
 
   async handleConnection(socket: Socket) {
+    // Refused at the door rather than deeper in: while the terminal is off the
+    // SSH CA is not in the cluster at all, so there is nothing to sign with.
+    if (!this.feature.enabled) {
+      socket.emit('terminal:error', { message: TERMINAL_DISABLED_MESSAGE });
+      socket.disconnect(true);
+      return;
+    }
+
     const user = socket.data.user;
     this.logger.log(
       `Terminal client connected: ${socket.id} (user=${user?.userId})`,

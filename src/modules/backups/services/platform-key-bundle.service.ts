@@ -6,11 +6,11 @@ import * as path from 'node:path';
 import * as os from 'node:os';
 import { gzipSync } from 'node:zlib';
 import { EncryptionService } from '../../shared/encryption/services/encryption.service';
+import { RETIRED_DEFAULT_KEY_HEX } from '../../access/services/key-storage.service';
 
-// The insecure hardcoded default in KeyStorageService — if this is the live key,
-// the SSH/CA material under /secure/keys is only nominally encrypted.
-const INSECURE_SSH_KEY_DEFAULT =
-  '0000111122223333444455556666777788889999aaaabbbbccccddddeeeeffff';
+// If this is the live key, the SSH/CA material under /secure/keys is only
+// nominally encrypted. Imported rather than copied so the two cannot drift.
+const INSECURE_SSH_KEY_DEFAULT = RETIRED_DEFAULT_KEY_HEX;
 
 interface SecureKeyFile {
   relPath: string;

@@ -10,6 +10,7 @@ import { ConfigStorage } from '../../lib/config-storage';
 import { ClusterStatus } from 'src/modules/infrastructure/clusters/entities/cluster.entity';
 import { resolveClusterSshTarget } from '../../lib/cluster-ssh-target';
 import { updateEnvContent } from '../../lib/utils/env-file';
+import { findShadowedKeys } from '../../lib/env-shadowing';
 import { PreferencesResolver } from '../../config/preferences-resolver';
 import { echoPreferences } from '../../config/preferences-echo';
 import { promptInput } from '../../lib/prompts';
@@ -112,10 +113,6 @@ export default class EnvExportConfig extends Command {
       );
       spinner.succeed('Endpoints resolved');
 
-      // Written to .env.local by `flui dev creds` (reads flui-secrets over SSH+kubectl).
-      const adminEmail = '';
-      const sshCaPublicKey = '';
-
       const authMode =
         endpoints.authMode === 'unknown' ? 'local' : endpoints.authMode;
       const resolvedIssuer = this.resolveIssuer(endpoints);
@@ -170,10 +167,6 @@ export default class EnvExportConfig extends Command {
         : chalk.dim('(flui-web ingress not found)');
       console.log(`   PUBLIC_WEB_URL=${publicWebUrlPreview}`);
       console.log(`   AUTH_MODE=${authMode}`);
-      console.log(`   ADMIN_EMAIL=${adminEmail || chalk.dim('(not set)')}`);
-      console.log(
-        `   SSH_CA_PUBLIC_KEY=${sshCaPublicKey ? chalk.green('(present)') : chalk.dim('(not set)')}`,
-      );
       console.log(
         chalk.dim(
           '\n   Secrets (DB/Redis/JWT/SSH CA private/encryption key) are NOT written here.\n' +
@@ -264,14 +257,17 @@ export default class EnvExportConfig extends Command {
       if (endpoints.fluiWeb.fqdn)
         envVars.PUBLIC_WEB_URL = `https://${endpoints.fluiWeb.fqdn}`;
 
-      const resolvedEmail = adminEmail || preferences.email;
-      if (resolvedEmail) envVars.ADMIN_EMAIL = resolvedEmail;
-      if (sshCaPublicKey) envVars.SSH_CA_PUBLIC_KEY = sshCaPublicKey;
+      // The address the CLI profile already knows. The instance's own is in
+      // flui-secrets and reaches `.env.local` through `flui dev creds`, which
+      // loads first — so this only ever fills the gap before that command runs.
+      if (preferences.email) envVars.ADMIN_EMAIL = preferences.email;
 
       const updatedEnv = updateEnvContent(envContent, envVars);
 
       fs.writeFileSync(envPath, updatedEnv, 'utf-8');
       spinner.succeed('.env file updated successfully');
+
+      this.warnAboutShadowedKeys(apiDir, envVars);
 
       if (!flags['no-dashboard']) {
         await this.syncDashboardConfig({
@@ -373,6 +369,25 @@ export default class EnvExportConfig extends Command {
     }
 
     return out;
+  }
+
+  private warnAboutShadowedKeys(
+    apiDir: string,
+    written: Record<string, string>,
+  ): void {
+    const shadowed = findShadowedKeys(
+      path.join(apiDir, '.env.local'),
+      Object.keys(written),
+    );
+    if (shadowed.length === 0) return;
+
+    console.log(
+      chalk.yellow(
+        `\n⚠️  .env.local also defines ${shadowed.join(', ')}, and it is loaded first.\n` +
+          '   The API will use those values, not the ones just written to .env.\n' +
+          '   Remove them from .env.local, or this export has no effect for them.\n',
+      ),
+    );
   }
 
   private async syncDashboardConfig(opts: {

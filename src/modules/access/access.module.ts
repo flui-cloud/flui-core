@@ -7,6 +7,7 @@ import { SSHKeyGeneratorService } from './services/ssh-key-generator.service';
 import { DefaultAccessRepository } from './repositories/default-access.repository';
 import { SSHKeyEntity } from './entities/ssh-key.entity';
 import { KeyStorageService } from './services/key-storage.service';
+import { SecretRotationService } from './services/secret-rotation.service';
 import { BearerTokenService } from './services/bearerToken.service';
 import { HttpModule } from '@nestjs/axios';
 import { ProviderCredentialsRepository } from './repositories/provider-credentials.repository';
@@ -60,6 +61,7 @@ const apiTokenRepositoryProvider = {
     providerCredentialsRepositoryProvider,
     apiTokenRepositoryProvider,
     KeyStorageService,
+    SecretRotationService,
     BearerTokenService,
     ProviderCredentialsRepository,
     ApiTokenRepository,

@@ -39,6 +39,14 @@ import { ConfigStorage } from '../lib/config-storage';
 import { CliByosPurgeService } from './cli-byos-purge.service';
 import { resolveClusterSshTarget } from '../lib/cluster-ssh-target';
 import { checkTcpPort } from '../lib/utils/tcp-port';
+import { resolveSshMode, revokeAuthorizedKeyCommand } from '../lib/ssh-mode';
+import { emitEvent } from '../lib/progress-events';
+
+interface BootstrapKey {
+  keyId: string;
+  publicKeyPath: string;
+  privateKeyPath: string;
+}
 
 /**
  * Retry only what a restarting control plane can recover from. A 4xx answers
@@ -126,6 +134,13 @@ export class CliClusterCreatorService {
       return this.createClusterSyncByos(cluster, operation);
     }
 
+    const sshMode = resolveSshMode(cluster.metadata);
+    // Every throwaway key minted for this run, and every node it was authorised
+    // on, so the teardown can find them all whether the run ends in a handoff or
+    // in a failure.
+    const bootstrapKeys: BootstrapKey[] = [];
+    const nodeIps: string[] = [];
+
     try {
       // Update operation status
       operation.status = OperationStatus.IN_PROGRESS;
@@ -167,10 +182,19 @@ export class CliClusterCreatorService {
         cluster.id,
         masterServerName,
       );
+      bootstrapKeys.push(masterBootstrapKey);
 
-      // Get CA public key for enrollment
-      const caPublicKey = await this.caService.getCaPublicKey();
-      const caPrivateKey = await this.caService.getCaPrivateKey();
+      // In ephemeral-key mode the getters are not just skipped, they must not be
+      // called at all: they create the CA on this machine as a side effect, and
+      // the whole point of the mode is that no CA comes into existence here.
+      const caPublicKey =
+        sshMode === 'ephemeral-key'
+          ? ''
+          : await this.caService.getCaPublicKey();
+      const caPrivateKey =
+        sshMode === 'ephemeral-key'
+          ? ''
+          : await this.caService.getCaPrivateKey();
 
       const decrypted = this.decryptClusterSecrets(cluster);
       const {
@@ -280,6 +304,15 @@ export class CliClusterCreatorService {
           : undefined,
       });
 
+      // Announced before the call, not after. A run that dies between the
+      // request and its answer has still created a billable server, and the
+      // only way a caller can know that is if we said so first.
+      emitEvent({
+        type: 'resource',
+        kind: 'server',
+        id: null,
+        name: masterServerName,
+      });
       const masterServer = await provider.createServer({
         name: masterServerName,
         image: cluster.image,
@@ -325,6 +358,13 @@ export class CliClusterCreatorService {
       cluster.nodeCount = 1;
       await this.clusterRepository.save(cluster);
 
+      nodeIps.push(masterServer.ipAddress);
+      emitEvent({
+        type: 'resource',
+        kind: 'server',
+        id: String(masterServer.serverId),
+        name: masterServerName,
+      });
       this.log(opId, `Master node created: ${masterServer.ipAddress}`);
 
       // Step 2: Wait for observability stack to be ready
@@ -340,29 +380,44 @@ export class CliClusterCreatorService {
 
       this.log(opId, '✅ Observability stack is fully deployed and ready');
 
+      // With no CA enrolled there is no certificate to present, so the rest of
+      // the run goes over the throwaway key that cloud-init already authorised.
+      const provisioningKeyPath =
+        sshMode === 'ephemeral-key'
+          ? masterBootstrapKey.privateKeyPath
+          : undefined;
+
       // Step 3a: Fetch real kubeconfig from K3s master via SSH
       this.log(opId, 'Fetching kubeconfig from K3s master...');
-      const kubeconfig = await this.fetchKubeconfig(cluster.masterIpAddress);
+      const kubeconfig = await this.fetchKubeconfig(
+        cluster.masterIpAddress,
+        provisioningKeyPath,
+      );
       cluster.kubeconfigEncrypted = this.encryptionService.encrypt(kubeconfig);
       await this.clusterRepository.save(cluster);
       this.log(opId, '✅ Kubeconfig generated and encrypted');
 
       // Step 3b: Patch Kubernetes secret with SSH CA keys + bootstrap seeder vars
-      await this.createApiCredentialsSecret(opId, cluster.masterIpAddress, {
-        fluiApiKey,
-        providerToken,
-        providerScalewayAccessKey,
-        providerScalewaySecretKey,
-        providerRegions,
-        clusterRegion: cluster.region,
-        instanceType: cluster.nodeSize,
-        envVnet,
-        bootstrapNodePrivateIp: masterServer.privateIp,
-        provider: cluster.provider,
-        sharedStorageVolumeId: cluster.sharedStorageVolumeId ?? undefined,
-        sharedStorageVolumeSizeGb:
-          cluster.sharedStorageVolumeSizeGb ?? undefined,
-      });
+      await this.createApiCredentialsSecret(
+        opId,
+        cluster.masterIpAddress,
+        {
+          fluiApiKey,
+          providerToken,
+          providerScalewayAccessKey,
+          providerScalewaySecretKey,
+          providerRegions,
+          clusterRegion: cluster.region,
+          instanceType: cluster.nodeSize,
+          envVnet,
+          bootstrapNodePrivateIp: masterServer.privateIp,
+          provider: cluster.provider,
+          sharedStorageVolumeId: cluster.sharedStorageVolumeId ?? undefined,
+          sharedStorageVolumeSizeGb:
+            cluster.sharedStorageVolumeSizeGb ?? undefined,
+        },
+        provisioningKeyPath ? { keyPath: provisioningKeyPath } : undefined,
+      );
 
       // Step 3c: Informational — Zitadel PAT injected on demand via sync-auth-domain
       if (isControlClusterType(cluster.clusterType)) {
@@ -402,6 +457,7 @@ export class CliClusterCreatorService {
             cluster.id,
             workerServerName,
           );
+          bootstrapKeys.push(workerBootstrapKey);
 
           // Create worker node entity FIRST to get the database ID
           const workerNode = this.nodeRepository.create({
@@ -447,6 +503,12 @@ export class CliClusterCreatorService {
               sharedStorage: workerSharedStorage,
             });
 
+          emitEvent({
+            type: 'resource',
+            kind: 'server',
+            id: null,
+            name: workerServerName,
+          });
           const workerServer = await provider.createServer({
             name: workerServerName,
             image: cluster.image,
@@ -471,6 +533,13 @@ export class CliClusterCreatorService {
             );
           }
 
+          nodeIps.push(workerServer.ipAddress);
+          emitEvent({
+            type: 'resource',
+            kind: 'server',
+            id: String(workerServer.serverId),
+            name: workerServerName,
+          });
           this.log(
             opId,
             `Worker node ${i + 1}/${workerCount} created: ${workerServer.ipAddress}`,
@@ -540,6 +609,12 @@ export class CliClusterCreatorService {
         }
       }
 
+      // Last SSH of the run: after this the cluster answers to nobody until its
+      // owner adopts it. Anything needing a shell has to have happened already.
+      if (sshMode === 'ephemeral-key') {
+        await this.destroyBootstrapKeys(opId, provider, bootstrapKeys, nodeIps);
+      }
+
       // Mark cluster as READY
       cluster.status = ClusterStatus.READY;
       await this.clusterRepository.save(cluster);
@@ -552,6 +627,15 @@ export class CliClusterCreatorService {
       this.log(opId, `Cluster ${cluster.name} created successfully!`);
     } catch (error) {
       this.log(opId, `Failed to create cluster: ${error.message}`, 'ERROR');
+
+      // A failed run is exactly when a throwaway key is most likely to be
+      // forgotten, and the half-built nodes it opens are still standing.
+      if (sshMode === 'ephemeral-key') {
+        const provider = this.providerFactory.getProvider(
+          cluster.provider as any,
+        );
+        await this.destroyBootstrapKeys(opId, provider, bootstrapKeys, nodeIps);
+      }
 
       // Roll back the pre-created firewall. If creation failed before the
       // rename/label step it stays with a temporary name and no
@@ -1669,12 +1753,21 @@ export class CliClusterCreatorService {
 
     this.logger.debug(`Uploading bootstrap key to provider for ${nodeName}...`);
 
+    const keyName = `flui-bootstrap-${clusterId}-${nodeName}`;
+    emitEvent({ type: 'resource', kind: 'ssh-key', id: null, name: keyName });
+
     const sshKey = await provider.createSSHKey(
       `flui-bootstrap-${clusterId}-${nodeName}`,
       publicKeyContent,
       bootstrapLabels,
     );
 
+    emitEvent({
+      type: 'resource',
+      kind: 'ssh-key',
+      id: String(sshKey.id),
+      name: keyName,
+    });
     this.logger.log(`Bootstrap key created for ${nodeName} (ID: ${sshKey.id})`);
 
     return {
@@ -1682,6 +1775,85 @@ export class CliClusterCreatorService {
       publicKeyPath,
       privateKeyPath,
     };
+  }
+
+  /**
+   * Ends the life of every throwaway key minted for a run.
+   *
+   * Three things have to happen, and only all three together mean "destroyed":
+   * the key stops being authorised on the nodes, the provider stops holding a
+   * copy, and the private half stops existing on this machine. Deleting the
+   * provider resource alone is the mistake worth naming — the public key is
+   * already in `authorized_keys` by then, so the account keeps working long
+   * after the provider says the key is gone.
+   *
+   * Revocation on the node comes first, because it is the step that needs SSH.
+   * Nothing here throws: a cluster that is otherwise built must not be reported
+   * as failed because a cleanup call did. What could not be released is named
+   * in the log, precisely enough to finish by hand.
+   */
+  private async destroyBootstrapKeys(
+    opId: string,
+    provider: any,
+    keys: BootstrapKey[],
+    nodeIps: string[],
+  ): Promise<void> {
+    if (keys.length === 0) return;
+
+    for (const key of keys) {
+      let publicKey = '';
+      try {
+        publicKey = fs.readFileSync(key.publicKeyPath, 'utf-8').trim();
+      } catch {
+        publicKey = '';
+      }
+
+      if (publicKey) {
+        for (const ip of nodeIps) {
+          try {
+            await this.sshService.sshExecWithKey({
+              host: ip,
+              command: revokeAuthorizedKeyCommand(publicKey),
+              keyPath: key.privateKeyPath,
+            });
+          } catch (error) {
+            this.log(
+              opId,
+              `Could not revoke the bootstrap key on ${ip}: ${
+                (error as Error).message
+              }. It stays authorised until removed from ~/.ssh/authorized_keys.`,
+              'WARN',
+            );
+          }
+        }
+      }
+
+      try {
+        await provider.deleteSSHKey?.(key.keyId);
+        emitEvent({ type: 'released', name: key.keyId });
+      } catch (error) {
+        this.log(
+          opId,
+          `Could not delete bootstrap key ${key.keyId} at the provider: ${
+            (error as Error).message
+          }. Remove it from the provider console.`,
+          'WARN',
+        );
+      }
+
+      for (const file of [key.privateKeyPath, key.publicKeyPath]) {
+        try {
+          fs.rmSync(file, { force: true });
+        } catch {
+          this.log(opId, `Could not remove ${file}.`, 'WARN');
+        }
+      }
+    }
+
+    this.log(
+      opId,
+      `✅ ${keys.length} bootstrap key(s) revoked on the nodes, deleted at the provider and removed from this machine`,
+    );
   }
 
   /**
@@ -1783,11 +1955,18 @@ export class CliClusterCreatorService {
    * /etc/rancher/k3s/k3s.yaml. We read it and replace 127.0.0.1
    * with the actual master IP so it's accessible remotely.
    */
-  private async fetchKubeconfig(masterIp: string): Promise<string> {
-    const raw = await this.sshService.sshExec(
-      masterIp,
-      'sudo cat /etc/rancher/k3s/k3s.yaml',
-    );
+  private async fetchKubeconfig(
+    masterIp: string,
+    keyPath?: string,
+  ): Promise<string> {
+    const command = 'sudo cat /etc/rancher/k3s/k3s.yaml';
+    const raw = keyPath
+      ? await this.sshService.sshExecWithKey({
+          host: masterIp,
+          command,
+          keyPath,
+        })
+      : await this.sshService.sshExec(masterIp, command);
     // K3s writes server: https://127.0.0.1:6443 — replace with real IP
     return raw.replaceAll('127.0.0.1', masterIp);
   }
@@ -1824,7 +2003,13 @@ export class CliClusterCreatorService {
         networkZone: string;
       };
     },
-    ssh?: { host: string; port: number; user: string },
+    ssh?: {
+      host?: string;
+      port?: number;
+      user?: string;
+      /** Set in ephemeral-key mode: there is no CA to present a certificate from. */
+      keyPath?: string;
+    },
   ): Promise<void> {
     this.log(
       operationId,
@@ -1902,12 +2087,22 @@ export class CliClusterCreatorService {
         ` && (kubectl rollout restart deployment/flui-api -n flui-system 2>/dev/null` +
         ` || kubectl rollout restart deployment/flui-api -n default 2>/dev/null` +
         ` || true)`;
-      await this.sshService.sshExec(
-        ssh?.host ?? masterIp,
-        writeAndPatchCmd,
-        ssh?.user ?? 'root',
-        ssh?.port ?? 22,
-      );
+      if (ssh?.keyPath) {
+        await this.sshService.sshExecWithKey({
+          host: ssh.host ?? masterIp,
+          command: writeAndPatchCmd,
+          user: ssh.user ?? 'root',
+          port: ssh.port ?? 22,
+          keyPath: ssh.keyPath,
+        });
+      } else {
+        await this.sshService.sshExec(
+          ssh?.host ?? masterIp,
+          writeAndPatchCmd,
+          ssh?.user ?? 'root',
+          ssh?.port ?? 22,
+        );
+      }
 
       this.log(
         operationId,

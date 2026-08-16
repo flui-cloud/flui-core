@@ -27,6 +27,7 @@ import {
   CreateClusterResponseDto,
 } from './dto/create-cluster.dto';
 import { ClusterResponseDto } from './dto/cluster-response.dto';
+import { ClusterInventoryDto } from './dto/cluster-inventory.dto';
 import {
   RegisterClusterDto,
   RegisterClusterResponseDto,
@@ -88,6 +89,7 @@ import { ClusterNodeScalingService } from './services/cluster-node-scaling.servi
 import { ScaleNodeDto, ExpandSharedVolumeDto } from './dto/scale-node.dto';
 import { OrphanVolumesService } from './services/orphan-volumes.service';
 import { CloudProvider } from 'src/modules/providers/enums/cloud-provider.enum';
+import { RELEASE } from '../../../config/release.config';
 
 @ApiTags('Infrastructure - Clusters')
 @ApiBearerAuth()
@@ -467,6 +469,43 @@ export class ClustersController {
   })
   async listClusters(): Promise<ClusterResponseDto[]> {
     return this.clustersService.listClusters();
+  }
+
+  /**
+   * How an installation describes itself to a CLI that did not create it.
+   *
+   * This is the customer's side of the managed handoff: `flui env adopt` reads
+   * it to rebuild the local profile, rather than a bundle of state travelling
+   * from app.flui.cloud. The cluster is the authority for its own inventory, so
+   * the answer cannot be stale and the managed plane never holds a copy.
+   *
+   * It returns the map, never the keys: no kubeconfig, no CA material, no
+   * provider credentials.
+   */
+  @Get(':id/inventory')
+  @ApiOperation({ summary: 'Describe a cluster well enough to adopt it' })
+  @ApiResponse({ status: 200, type: ClusterInventoryDto })
+  async getInventory(@Param('id') id: string): Promise<ClusterInventoryDto> {
+    const cluster = await this.clustersService.getClusterEntity(id);
+    const nodes = await this.clustersService.getClusterNodes(id);
+    return {
+      clusterId: cluster.id,
+      name: cluster.name,
+      provider: cluster.provider,
+      region: cluster.region,
+      status: String(cluster.status),
+      endpoint: cluster.metadata?.endpoint ?? null,
+      version: RELEASE.version,
+      sshCaEnrolled: Boolean(cluster.metadata?.sshCaEnrolled),
+      nodes: nodes.map((node) => ({
+        id: node.id,
+        name: node.serverName,
+        type: String(node.nodeType),
+        publicIp: node.ipAddress ?? null,
+        privateIp: node.privateIp ?? null,
+        status: String(node.status),
+      })),
+    };
   }
 
   @Get(':id')

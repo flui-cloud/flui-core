@@ -18,6 +18,7 @@ import {
 import * as https from 'node:https';
 import { TLSSocket } from 'node:tls';
 import { checkTcpPort } from '../lib/utils/tcp-port';
+import { SshMode } from '../lib/ssh-mode';
 
 /**
  * CLI Control Cluster Service
@@ -127,6 +128,7 @@ export class CliControlClusterService {
       sharedStorageEnabled?: boolean;
       sharedStorageVolumeSizeGb?: number;
       useLatest?: boolean;
+      sshMode?: SshMode;
     },
   ): Promise<string> {
     // Pin the install to the CLI release (bootstrap ref + image tags), unless
@@ -153,6 +155,7 @@ export class CliControlClusterService {
         adminEmail,
         acmeStaging,
         useLatest,
+        sshMode: options?.sshMode ?? 'ca',
         platformVersion: release.version,
         componentVersions: release.images,
         bootstrapRef: release.bootstrapRef,

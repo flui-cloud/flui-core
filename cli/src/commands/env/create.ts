@@ -43,6 +43,9 @@ import {
   promptInput,
 } from '../../lib/prompts';
 import { PreferencesResolver } from '../../config/preferences-resolver';
+import { refuseToAsk, setNonInteractive } from '../../lib/non-interactive';
+import { emitEvent } from '../../lib/progress-events';
+import { SshMode } from '../../lib/ssh-mode';
 import { PREFERENCES } from '../../config/preferences-schema';
 
 export default class EnvCreate extends Command {
@@ -100,6 +103,17 @@ export default class EnvCreate extends Command {
     'firewall-ip': Flags.string({
       description:
         'Source IP/CIDR for firewall (comma-separated, default: auto-detect)',
+    }),
+    'non-interactive': Flags.boolean({
+      description:
+        'Never prompt. Any missing answer becomes an error instead of a question — required when driving the CLI from a script or a managed runner, where a prompt would hang forever holding cloud resources.',
+      default: false,
+    }),
+    'ssh-mode': Flags.string({
+      description:
+        'How the cluster is reached while it is built. "ca" (default) enrols this machine\'s SSH certificate authority on every node and leaves it there. "ephemeral-key" creates no CA at all and uses a throwaway key that is revoked on the nodes and deleted at the provider before the run ends — the cluster is then unreachable over SSH until its owner runs "flui env adopt". Use it when provisioning on someone else\'s behalf.',
+      options: ['ca', 'ephemeral-key'],
+      default: 'ca',
     }),
     'auth-mode': Flags.string({
       description: 'Authentication mode (only oidc is supported)',
@@ -314,6 +328,10 @@ export default class EnvCreate extends Command {
         if (r.value) {
           adminEmail = r.value;
         } else {
+          refuseToAsk(
+            'the admin email',
+            'Set it first with "flui config set-preference email <address>".',
+          );
           adminEmail = await promptInput({
             message: "Admin email (used for Let's Encrypt and notifications)",
             validate: PREFERENCES.email.validate,
@@ -420,6 +438,35 @@ export default class EnvCreate extends Command {
   async run(): Promise<void> {
     const { flags } = await this.parse(EnvCreate);
 
+    // Checked before credentials and before any provider call: the default mode
+    // follows the bootstrap log over SSH, and that gate waits for a certificate
+    // this mode never issues. Left alone it does not fail — it hangs for ten
+    // minutes holding paid servers, then gives up.
+    if (
+      flags['ssh-mode'] === 'ephemeral-key' &&
+      !flags.wait &&
+      !flags.detached
+    ) {
+      this.error(
+        '--ssh-mode=ephemeral-key needs --wait or --detached: the default mode follows the bootstrap log over SSH, and this mode enrols no certificate authority to authenticate with.',
+        { exit: 1 },
+      );
+    }
+
+    if (flags['non-interactive']) {
+      setNonInteractive(true);
+      // Auto-detection resolves the *caller's* address. That is right on a
+      // laptop and wrong everywhere else: a managed runner or a CI job would
+      // open the cluster to itself and lock the operator out of their own
+      // machine. Headless callers must say who they are.
+      if (flags['configure-firewall'] && !flags['firewall-ip']) {
+        this.error(
+          'Running non-interactively requires --firewall-ip: auto-detection would open the firewall to whichever machine runs this command, not to you. Pass --no-configure-firewall to skip firewall setup entirely.',
+          { exit: 1 },
+        );
+      }
+    }
+
     if (flags['auth-mode'] !== 'oidc') {
       this.error(
         `Authentication mode '${flags['auth-mode']}' is not supported. Only 'oidc' is available.`,
@@ -445,12 +492,20 @@ export default class EnvCreate extends Command {
       if (configured.length === 1) {
         providerKey = configured[0];
       } else if (configured.length > 1) {
+        refuseToAsk(
+          'which of the configured providers to use',
+          'Pass --provider <hetzner|scaleway>.',
+        );
         const picked = await selectConfiguredProvider(configured);
         if (!picked) this.exit(1);
         providerKey = picked;
       }
     }
     if (!providerKey || !hasCreds(providerKey)) {
+      refuseToAsk(
+        `credentials for ${providerKey ?? 'a provider'}`,
+        `Configure them first with "flui config set ${providerKey ?? '<provider>'}".`,
+      );
       const configured = await runProviderSetupWizard(providerKey);
       if (!configured) {
         console.log(
@@ -503,6 +558,12 @@ export default class EnvCreate extends Command {
       const cacheService = new ServerTypeCacheService();
       const validatorService = new ServerTypeValidatorService();
       spinner.succeed('Services loaded');
+      emitEvent({
+        type: 'phase',
+        phase: 'init',
+        state: 'completed',
+        percent: 5,
+      });
 
       // 3. Resolve admin email (prompt if not set, then persist)
       const emailResolver = new PreferencesResolver(configStorage);
@@ -512,6 +573,10 @@ export default class EnvCreate extends Command {
         adminEmail = emailResult.value;
       } else {
         spinner.stop();
+        refuseToAsk(
+          'the admin email',
+          'Set it first with "flui config set-preference email <address>".',
+        );
         adminEmail = await promptInput({
           message: "Admin email (used for Let's Encrypt and notifications)",
           validate: PREFERENCES.email.validate,
@@ -621,6 +686,10 @@ export default class EnvCreate extends Command {
             );
 
             const oldPrice = nodeSize === 'cx22' ? '7.50' : undefined;
+            refuseToAsk(
+              `whether to accept ${validation.suggestedAlternative.name} instead of ${nodeSize}`,
+              'Pass an available --node-size, or run "flui server-types list" to pick one.',
+            );
             const confirmed = await confirmAlternativeServerType(
               nodeSize,
               validation.suggestedAlternative,
@@ -731,6 +800,12 @@ export default class EnvCreate extends Command {
           );
         } else {
           spinner.succeed('Server type and region validated');
+          emitEvent({
+            type: 'phase',
+            phase: 'validate',
+            state: 'completed',
+            percent: 10,
+          });
         }
       } else {
         spinner.succeed('Server type validation skipped (no data available)');
@@ -831,6 +906,12 @@ export default class EnvCreate extends Command {
           const temporaryFirewallName = `flui-control-firewall-${randomBytes(4).toString('hex')}`;
 
           // Create firewall with temporary name (will be renamed when cluster is ready)
+          emitEvent({
+            type: 'resource',
+            kind: 'firewall',
+            id: null,
+            name: temporaryFirewallName,
+          });
           const result = await firewallService.createFirewall({
             name: temporaryFirewallName,
             labels: [
@@ -843,6 +924,12 @@ export default class EnvCreate extends Command {
           });
 
           firewallId = result.firewallId;
+          emitEvent({
+            type: 'resource',
+            kind: 'firewall',
+            id: firewallId,
+            name: temporaryFirewallName,
+          });
 
           await firewallRepo.save({
             id: firewallId,
@@ -912,10 +999,17 @@ export default class EnvCreate extends Command {
           sharedStorageEnabled: !flags['no-shared-storage'],
           sharedStorageVolumeSizeGb: flags['shared-storage-size'],
           useLatest,
+          sshMode: flags['ssh-mode'] as SshMode,
         },
       );
 
       spinner.succeed('Cluster creation started!');
+      emitEvent({
+        type: 'phase',
+        phase: 'server-create',
+        state: 'started',
+        percent: 12,
+      });
 
       if (firewallId && clusterId) {
         try {
@@ -983,6 +1077,12 @@ export default class EnvCreate extends Command {
         try {
           await controlService.waitForClusterReady(clusterId, 600000);
           spinner.succeed('Cluster is ready!');
+          emitEvent({
+            type: 'phase',
+            phase: 'k3s-install',
+            state: 'completed',
+            percent: 55,
+          });
         } catch (error) {
           spinner.fail('Failed to wait for cluster');
           console.log(chalk.red(`\n❌ Error: ${error.message}\n`));
@@ -1014,14 +1114,36 @@ export default class EnvCreate extends Command {
         );
         console.log(`   ${chalk.cyan('flui env destroy')}  - Delete cluster`);
 
-        console.log(chalk.cyan('\n🔑 SSH Access:\n'));
-        console.log(
-          `   ${chalk.cyan('flui ssh master')}   - SSH to master node`,
-        );
-        if (flags['node-count'] > 0) {
+        if (flags['ssh-mode'] === 'ephemeral-key') {
+          console.log(chalk.cyan('\n🔑 SSH Access:\n'));
           console.log(
-            `   ${chalk.cyan('flui ssh worker-1')} - SSH to worker node`,
+            chalk.dim(
+              '   None. No certificate authority was enrolled and the bootstrap key\n' +
+                '   has been revoked, so nothing can open a shell on these nodes.\n' +
+                '   The owner opens that door with: flui env adopt <token>',
+            ),
           );
+        } else {
+          console.log(chalk.cyan('\n🔑 SSH Access:\n'));
+          console.log(
+            `   ${chalk.cyan('flui ssh master')}   - SSH to master node`,
+          );
+          if (flags['node-count'] > 0) {
+            console.log(
+              `   ${chalk.cyan('flui ssh worker-1')} - SSH to worker node`,
+            );
+          }
+        }
+
+        const readyCluster = await controlService.getControlCluster();
+        if (readyCluster?.masterIpAddress) {
+          emitEvent({
+            type: 'ready',
+            endpoint: buildNipBaseDomain(
+              readyCluster.masterIpAddress,
+              readyCluster.nipHostnameToken,
+            ),
+          });
         }
 
         console.log('');
@@ -1245,6 +1367,12 @@ export default class EnvCreate extends Command {
             10000,
           );
           spinner.succeed('SSH access ready');
+          emitEvent({
+            type: 'phase',
+            phase: 'ssh-ready',
+            state: 'completed',
+            percent: 65,
+          });
         } catch (error) {
           spinner.fail('SSH access did not become ready in time');
           console.log(chalk.red(`\n❌ Error: ${error.message}\n`));
@@ -1330,6 +1458,11 @@ export default class EnvCreate extends Command {
       }
     } catch (error) {
       spinner.fail('Failed to create control cluster');
+      emitEvent({
+        type: 'failed',
+        phase: 'create',
+        message: error instanceof Error ? error.message : String(error),
+      });
 
       if (firewallId) {
         try {
@@ -1341,6 +1474,7 @@ export default class EnvCreate extends Command {
 
           await firewallService.deleteFirewall(firewallId);
           await firewallRepo.delete(firewallId);
+          emitEvent({ type: 'released', name: firewallId });
 
           spinner.succeed('Orphaned firewall cleaned up');
         } catch (cleanupError) {

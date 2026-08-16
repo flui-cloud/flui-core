@@ -8,6 +8,7 @@ import { ProviderCredentialsEntity } from '../access/entities/credentials.entity
 import { ApiTokenEntity } from '../access/entities/api-token.entity';
 import { ClusterEntity } from '../infrastructure/clusters/entities/cluster.entity';
 import { ProviderFirewallsController } from './controllers/provider-firewalls.controller';
+import { ProviderSchemasController } from './controllers/provider-schemas.controller';
 import { AccessModule } from '../access/access.module';
 import { ProviderCoreModule } from './provider-core.module';
 import { CommonModule } from '../common/common.module';
@@ -71,7 +72,7 @@ import { DnsProvider } from './enums/dns-provider.enum';
     ScalewayProviderModule,
     ScalewayObjectStorageModule,
   ],
-  controllers: [ProviderFirewallsController],
+  controllers: [ProviderFirewallsController, ProviderSchemasController],
   providers: [
     ProviderCredentialsRepository,
     ApiTokenRepository,

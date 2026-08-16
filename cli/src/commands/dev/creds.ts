@@ -26,6 +26,13 @@ interface FluiSecrets {
   sshCaPrivateKey?: string;
   sshCaPublicKey?: string;
   zitadelPat?: string;
+  /**
+   * Seals provider credentials and SSH private keys. Without it a local API
+   * falls back to a key published in the source tree — and since local
+   * development runs against the instance's own database, anything it creates
+   * lands there sealed with a key anyone can read.
+   */
+  sshKeyEncryptionKey?: string;
 }
 
 export default class DevCreds extends Command {
@@ -129,6 +136,20 @@ export default class DevCreds extends Command {
 
       this.printSummary(envLocalPath, envVars);
 
+      // Instances installed before the bootstrap started generating this key do
+      // not have one. Saying so is the point: without it the local API seals new
+      // provider credentials with a key published in the source tree, and it
+      // writes them to this instance's own database.
+      if (!fluiSecrets.sshKeyEncryptionKey) {
+        console.log(
+          chalk.yellow(
+            '\n⚠️  SSH_KEY_ENCRYPTION_KEY is not in this instance’s flui-secrets.\n' +
+              '   The local API will seal provider credentials and SSH keys with the\n' +
+              '   retired default key, which is published in the source tree.\n',
+          ),
+        );
+      }
+
       if (fluiSecrets.fluiApiKey) {
         // Mirror existing export-config behavior: keep ~/.flui/config.json
         // in sync so that `flui` commands can call the API right away.
@@ -208,6 +229,8 @@ export default class DevCreds extends Command {
       envVars.SSH_CA_PUBLIC_KEY = fluiSecrets.sshCaPublicKey;
     if (fluiSecrets.zitadelPat)
       envVars.ZITADEL_SERVICE_ACCOUNT_PAT = fluiSecrets.zitadelPat;
+    if (fluiSecrets.sshKeyEncryptionKey)
+      envVars.SSH_KEY_ENCRYPTION_KEY = fluiSecrets.sshKeyEncryptionKey;
     return envVars;
   }
 
@@ -263,6 +286,7 @@ export default class DevCreds extends Command {
         sshCaPrivateKey: decode(data.SSH_CA_PRIVATE_KEY),
         sshCaPublicKey: decode(data.SSH_CA_PUBLIC_KEY),
         zitadelPat: decode(data.ZITADEL_SERVICE_ACCOUNT_PAT),
+        sshKeyEncryptionKey: decode(data.SSH_KEY_ENCRYPTION_KEY),
       };
     } catch {
       return {};
