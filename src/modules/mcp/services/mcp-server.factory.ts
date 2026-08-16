@@ -87,7 +87,7 @@ export class McpServerFactory {
     private readonly gateway: GatewayService,
   ) {}
 
-  build(user: AuthenticatedUser): McpServer {
+  build(user: AuthenticatedUser, isSandbox = false): McpServer {
     const server = new McpServer({
       name: MCP_SERVER_NAME,
       version: MCP_SERVER_VERSION,
@@ -95,7 +95,7 @@ export class McpServerFactory {
 
     const ctx: McpToolContext = {
       user,
-      scopes: this.resolver.resolve(user),
+      scopes: this.resolver.resolve(user, isSandbox),
       allowDestructive:
         this.config.get<string>('MCP_ALLOW_DESTRUCTIVE') === 'true',
       surface: 'mcp',

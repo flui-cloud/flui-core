@@ -388,13 +388,30 @@ export class OidcIdentityDirectory implements IIdentityDirectory {
       .replaceAll('{orgId}', encodeURIComponent(orgId ?? ''));
   }
 
+  /**
+   * Zitadel's default policy demands upper, lower, digit and symbol. Drawing 16
+   * chars uniformly from the pooled set left roughly one creation in eight with
+   * no symbol at all, which the provider rejected — so take one from each class
+   * first, then fill and shuffle.
+   */
   private generatePassword(): string {
-    const charset =
-      'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789!@#$%^&*';
-    const bytes = crypto.randomBytes(16);
-    let out = '';
-    for (let i = 0; i < 16; i++) out += charset[bytes[i] % charset.length];
-    return out;
+    const classes = [
+      'ABCDEFGHJKLMNPQRSTUVWXYZ',
+      'abcdefghijkmnpqrstuvwxyz',
+      '23456789',
+      '!@#$%^&*',
+    ];
+    const all = classes.join('');
+    const pick = (set: string) => set[crypto.randomInt(set.length)];
+
+    const chars = classes.map((set) => pick(set));
+    while (chars.length < 16) chars.push(pick(all));
+
+    for (let i = chars.length - 1; i > 0; i--) {
+      const j = crypto.randomInt(i + 1);
+      [chars[i], chars[j]] = [chars[j], chars[i]];
+    }
+    return chars.join('');
   }
 
   private translateProviderError(err: unknown, op: string): Error {

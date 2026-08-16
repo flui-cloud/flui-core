@@ -69,6 +69,7 @@ import { AlertEventEntity } from '../modules/observability/entities/alert-event.
 import { MailSuppressionEntity } from '../modules/mail/entities/mail-suppression.entity';
 import { MailEventEntity } from '../modules/mail/entities/mail-event.entity';
 import { MailConnectionEntity } from '../modules/mail/entities/mail-connection.entity';
+import { SandboxTenantEntity } from '../modules/sandbox/entities/sandbox-tenant.entity';
 
 export const entities = [
   SSHKeyEntity,
@@ -136,4 +137,5 @@ export const entities = [
   MailSuppressionEntity,
   MailEventEntity,
   MailConnectionEntity,
+  SandboxTenantEntity,
 ];

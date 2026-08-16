@@ -52,6 +52,7 @@ import {
 } from '../../infrastructure/shared/services/kubernetes.service';
 import { ResourceProfilesService } from '../../images/services/resource-profiles.service';
 import { buildUserNamespace } from '../utils/k8s-namespace.util';
+import { assertPlaceableNamespace } from '../utils/reserved-namespace.util';
 import { InfrastructureOperationEntity } from '../../infrastructure/servers/entities/infrastructure-operations.entity';
 
 @Injectable()
@@ -96,6 +97,10 @@ export class ApplicationService {
     userEmail?: string,
   ): Promise<ApplicationEntity> {
     await this.validateSourceConfig(dto);
+
+    if (dto.k8sNamespace) {
+      assertPlaceableNamespace(dto.k8sNamespace);
+    }
 
     if (dto.exposure === ApplicationExposure.INTERNAL) {
       await this.assertInternalHostingReady(clusterId);
@@ -362,6 +367,7 @@ export class ApplicationService {
     if (dto.startCommand !== undefined)
       updateData.startCommand = dto.startCommand ?? null;
     if (dto.labels !== undefined) updateData.labels = dto.labels;
+    if (dto.tags !== undefined) updateData.tags = dto.tags;
     if (dto.metadata !== undefined) updateData.metadata = dto.metadata;
     if (dto.exposure !== undefined) updateData.exposure = dto.exposure;
     if (dto.deployOnPush !== undefined)

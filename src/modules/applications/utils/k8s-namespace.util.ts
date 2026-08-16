@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+
 /**
  * Derives a Kubernetes namespace name from a user's email address.
  *
@@ -16,6 +18,14 @@ export function buildUserNamespace(email: string): string {
     .replaceAll(/[^a-z0-9-]/g, '-')
     .replaceAll(/-+/g, '-')
     .replaceAll(/^-|-$/g, '')
-    .slice(0, 57);
+    .slice(0, 57)
+    .replaceAll(/-$/g, '');
+
+  // A local part made only of symbols ("_@x.com") sanitizes to nothing, which
+  // would yield the invalid namespace "user-". The digest keeps the name both
+  // valid and stable, since callers recompute it from the email every time.
+  if (!sanitized) {
+    return `user-${createHash('sha256').update(email).digest('hex').slice(0, 10)}`;
+  }
   return `user-${sanitized}`;
 }

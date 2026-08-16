@@ -3,6 +3,7 @@ import { Reflector } from '@nestjs/core';
 import { AuthGuard } from '@nestjs/passport';
 import { IS_PUBLIC_KEY } from '../decorators/public.decorator';
 import { ApiKeyStrategy } from '../strategies/api-key.strategy';
+import { extractJwtFromFluiSessionCookie } from '../utils/cookie-extractor.util';
 
 @Injectable()
 export class JwtAuthGuard extends AuthGuard('jwt') {
@@ -24,7 +25,12 @@ export class JwtAuthGuard extends AuthGuard('jwt') {
 
     const request = context.switchToHttp().getRequest();
     const authHeader: string = request.headers['authorization'] || '';
-    const token = authHeader.replace(/^Bearer\s+/i, '');
+    // A sandbox guest is handed its credential as a cookie, because the claim
+    // that creates it is a page navigation, not an XHR that could set a header.
+    const token =
+      authHeader.replace(/^Bearer\s+/i, '') ||
+      extractJwtFromFluiSessionCookie(request) ||
+      '';
 
     // API key M2M — valid for both local and OIDC modes
     if (token.startsWith('flui_')) {

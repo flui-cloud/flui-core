@@ -25,8 +25,12 @@ export interface GatewayAuthzDecision {
   appSlug: string;
 }
 
-/** The permission a route's `minRole` gate maps to on the target app. */
-const MIN_ROLE_PERMISSION: Record<IamRole, string> = {
+/**
+ * The permission a route's `minRole` gate maps to on the target app. `sandbox`
+ * is absent by design — it is a tenancy on the platform, not a tier of access to
+ * a published application, and an unmapped role denies rather than defaults.
+ */
+const MIN_ROLE_PERMISSION: Partial<Record<IamRole, string>> = {
   [IAM_ROLE.VIEWER]: IAM_PERMISSION.APP_READ,
   [IAM_ROLE.EDITOR]: IAM_PERMISSION.APP_WRITE,
   [IAM_ROLE.MANAGER]: IAM_PERMISSION.CLUSTER_MANAGE,
@@ -79,11 +83,14 @@ export class GatewayAuthzService {
     }
 
     if (auth.minRole && !user.isAdmin) {
-      const allowed = await this.policy.check(
-        this.principalFrom(user),
-        MIN_ROLE_PERMISSION[auth.minRole],
-        this.resourceFor(endpoint),
-      );
+      const required = MIN_ROLE_PERMISSION[auth.minRole];
+      const allowed = required
+        ? await this.policy.check(
+            this.principalFrom(user),
+            required,
+            this.resourceFor(endpoint),
+          )
+        : false;
       if (!allowed) {
         this.logger.warn(
           `[gateway-authz] deny user=${user.userId} route=${fqdn} minRole=${auth.minRole}`,

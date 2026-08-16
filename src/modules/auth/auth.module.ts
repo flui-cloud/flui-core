@@ -138,6 +138,7 @@ import { FirewallsModule } from '../infrastructure/firewalls/firewalls.module';
     ApiKeyService,
     ApiKeyStrategy,
     OidcBootstrapService,
+    IDENTITY_DIRECTORY,
   ],
 })
 export class AuthModule {}

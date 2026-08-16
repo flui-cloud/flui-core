@@ -1278,6 +1278,28 @@ export class KubernetesService {
   }
 
   /**
+   * Delete a namespace and everything in it. Idempotent: a namespace that is
+   * already gone (or already terminating) is success, because the caller is a
+   * reaper that must be safe to run again.
+   */
+  async deleteNamespace(
+    kubeconfigContent: string,
+    namespace: string,
+  ): Promise<void> {
+    const { coreApi } = this.getKubeClient(kubeconfigContent);
+    try {
+      await coreApi.deleteNamespace({ name: namespace });
+      this.logger.log(`Namespace ${namespace} deletion requested`);
+    } catch (error) {
+      if (this.httpCode(error) === 404) {
+        this.logger.debug(`Namespace ${namespace} already gone`);
+        return;
+      }
+      throw error;
+    }
+  }
+
+  /**
    * Ensure a Kubernetes namespace exists, creating it if needed.
    * Idempotent — safe to call before every deploy.
    */

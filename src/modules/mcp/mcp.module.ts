@@ -1,3 +1,4 @@
+import { IamModule } from '../iam/iam.module';
 import { MailModule } from '../mail/mail.module';
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
@@ -27,6 +28,7 @@ import { McpToolCallLogEntity } from './entities/mcp-tool-call-log.entity';
  */
 @Module({
   imports: [
+    IamModule,
     MailModule,
     ConfigModule,
     TypeOrmModule.forFeature([McpToolCallLogEntity]),

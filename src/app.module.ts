@@ -2,6 +2,7 @@ import { Module, OnModuleInit, Logger } from '@nestjs/common';
 import { APP_GUARD } from '@nestjs/core';
 import { migrations } from './migrations';
 import { AccessModule } from './modules/access/access.module';
+import { AdoptionModule } from './modules/adoption/adoption.module';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { entities } from './config/entities';
 import { TypeOrmModule } from '@nestjs/typeorm';
@@ -28,6 +29,8 @@ import { AppBuildsModule } from './modules/app-builds/app-builds.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { JwtAuthGuard } from './modules/auth/guards/jwt-auth.guard';
 import { IamModule } from './modules/iam/iam.module';
+import { SandboxModule } from './modules/sandbox/sandbox.module';
+import { SandboxFenceGuard } from './modules/sandbox/guards/sandbox-fence.guard';
 import { PermissionsGuard } from './modules/iam/guards/permissions.guard';
 import { SectionAccessGuard } from './modules/iam/guards/section-access.guard';
 import { WebhooksModule } from './modules/webhooks/webhooks.module';
@@ -92,6 +95,7 @@ import { DemoModule } from './modules/demo/demo.module';
       inject: [ConfigService],
     }),
     AccessModule,
+    AdoptionModule,
     InstancesModule,
     ManagementModule,
     InferenceModule,
@@ -126,12 +130,19 @@ import { DemoModule } from './modules/demo/demo.module';
     DatabaseConsoleModule,
     IamModule,
     ProjectsModule,
+    SandboxModule,
     ScheduleModule.forRoot(),
   ],
   providers: [
     {
       provide: APP_GUARD,
       useClass: JwtAuthGuard,
+    },
+    // Runs before the permission and section gates: a sandbox guest is refused at
+    // the door of an area, not at the ownership check inside it.
+    {
+      provide: APP_GUARD,
+      useClass: SandboxFenceGuard,
     },
     {
       provide: APP_GUARD,

@@ -1,5 +1,6 @@
 import {
   Controller,
+  Inject,
   Delete,
   Get,
   Post,
@@ -11,6 +12,10 @@ import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Request, Response } from 'express';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
+import {
+  POLICY_ENGINE,
+  PolicyEngine,
+} from '../iam/interfaces/policy-engine.interface';
 import { McpServerFactory } from './services/mcp-server.factory';
 
 /**
@@ -23,7 +28,10 @@ import { McpServerFactory } from './services/mcp-server.factory';
 @ApiBearerAuth()
 @Controller('mcp')
 export class McpController {
-  constructor(private readonly factory: McpServerFactory) {}
+  constructor(
+    private readonly factory: McpServerFactory,
+    @Inject(POLICY_ENGINE) private readonly policy: PolicyEngine,
+  ) {}
 
   @Post()
   @ApiOperation({
@@ -59,7 +67,17 @@ export class McpController {
       );
     }
 
-    const server = this.factory.build(user);
+    // Resolved here rather than inside the factory because the fence lives in the
+    // policy engine: an agent must inherit exactly the permissions of the person
+    // it acts for, never a service identity of its own.
+    const access = await this.policy.resolveAccess({
+      userId: user.userId,
+      email: user.email,
+      role: user.role,
+      isAdmin: !!user.isAdmin,
+      scopes: user.scopes,
+    });
+    const server = this.factory.build(user, access.isSandbox);
     const transport = new StreamableHTTPServerTransport({
       sessionIdGenerator: undefined,
       enableJsonResponse: true,

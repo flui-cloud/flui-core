@@ -15,6 +15,9 @@ spec:
       - http01:
           ingress:
             class: traefik
+            # See cluster-issuer.yaml: a NodePort solver Service is both an open
+            # node port and a quota violation in a restricted namespace.
+            serviceType: ClusterIP
             ingressTemplate:
               metadata:
                 annotations:

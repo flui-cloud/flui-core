@@ -18,7 +18,19 @@ import { DEFAULT_SCOPES, expandTier } from '../constants/mcp-scopes';
  */
 @Injectable()
 export class McpScopeResolver {
-  resolve(user: AuthenticatedUser): Set<string> {
+  /**
+   * A sandbox guest gets nothing at all, deliberately.
+   *
+   * The tools do not call the API — they call the services directly, in process,
+   * so neither the sandbox route fence nor the per-application guards are in the
+   * path. Handing a guest even the read tier would therefore hand it the whole
+   * platform, which is precisely the lock-pick the sandbox fence exists to
+   * prevent. Turning this on is a piece of work per tool (each app-scoped tool
+   * asserting ownership), not a scope to widen here.
+   */
+  resolve(user: AuthenticatedUser, isSandbox = false): Set<string> {
+    if (isSandbox) return new Set<string>();
+
     const explicit = new Set<string>();
     for (const scope of user.scopes ?? []) {
       if (scope.startsWith('mcp:')) explicit.add(scope);

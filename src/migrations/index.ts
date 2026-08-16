@@ -4,6 +4,7 @@ import { AppDeployOnPush1784500000000 } from './1784500000000-AppDeployOnPush';
 import { MailSuppressions1784600000000 } from './1784600000000-MailSuppressions';
 import { MailEvents1784700000000 } from './1784700000000-MailEvents';
 import { MailConnections1784800000000 } from './1784800000000-MailConnections';
+import { SandboxTenants1784900000000 } from './1784900000000-SandboxTenants';
 
 // Explicit array, not a dist glob: nest build webpack-bundles to one file,
 // so a `dist/migrations/*.js` glob resolves to nothing at runtime.
@@ -15,4 +16,5 @@ export const migrations = [
   MailSuppressions1784600000000,
   MailEvents1784700000000,
   MailConnections1784800000000,
+  SandboxTenants1784900000000,
 ];
