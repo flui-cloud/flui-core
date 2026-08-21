@@ -13,6 +13,7 @@ import {
   IamScopeType,
   IamSelector,
 } from '../interfaces/iam.types';
+import { ASSIGNABLE_ROLE_KEYS } from '../constants/iam-roles';
 
 // kind: AccessPolicy wire shape — nested form of the flat RoleBinding columns.
 export class PolicyPrincipalDto {
@@ -45,7 +46,7 @@ export class PolicyBindingDto {
   @Type(() => PolicyPrincipalDto)
   principal: PolicyPrincipalDto;
 
-  @IsIn(['viewer', 'editor', 'manager'])
+  @IsIn(ASSIGNABLE_ROLE_KEYS)
   role: string;
 
   @ValidateNested()

@@ -1,14 +1,32 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  ForbiddenException,
+  Inject,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { IsNull, Repository } from 'typeorm';
 import { IamRoleBindingEntity } from '../entities/iam-role-binding.entity';
 import { IamGroupEntity } from '../entities/iam-group.entity';
-import { BUILTIN_ROLES, IamRoleDef } from '../constants/iam-roles';
+import {
+  BUILTIN_ROLES,
+  IamRoleDef,
+  mayAdministerRole,
+  mayConferRole,
+} from '../constants/iam-roles';
 import { CreateGrantDto } from '../dto/create-grant.dto';
 import { CreateGroupDto } from '../dto/create-group.dto';
 import { ApplicationEntity } from '../../applications/entities/application.entity';
 import { UserEntity } from '../../auth/entities/user.entity';
-import { IamPrincipalType } from '../interfaces/iam.types';
+import {
+  IamPrincipal,
+  IamPrincipalType,
+  PrincipalAccess,
+} from '../interfaces/iam.types';
+import {
+  POLICY_ENGINE,
+  PolicyEngine,
+} from '../interfaces/policy-engine.interface';
 
 /** A selectable app, projected to the IAM selector axes (+ id/name for the UI). */
 export interface IamResourceDto {
@@ -33,6 +51,28 @@ export interface IamPrincipalOption {
   displayName: string;
 }
 
+/**
+ * A role as the caller may use it, not just as it is defined.
+ *
+ * `grantable` is answered by the API rather than worked out again in the
+ * browser, because working it out again is how a screen ends up offering a
+ * choice the API refuses: the conferral rule reads a permission at *global*
+ * scope, and `/me/permissions` returns the union across every scope — a
+ * cluster-scoped holder would look eligible there and be refused here.
+ */
+export interface IamRoleView extends IamRoleDef {
+  grantable: boolean;
+  /**
+   * Whether this caller may *remove* a binding carrying the role.
+   *
+   * Not the same question as `grantable`, and the difference is load-bearing on
+   * screen: nobody may create a sandbox grant, yet an access manager has always
+   * been able to delete one. Collapsing the two would either hide a delete
+   * button that works or offer one that answers 403.
+   */
+  revocable: boolean;
+}
+
 /** Management surface for grants (role bindings) and Flui-local groups. */
 @Injectable()
 export class IamService {
@@ -45,6 +85,7 @@ export class IamService {
     private readonly apps: Repository<ApplicationEntity>,
     @InjectRepository(UserEntity)
     private readonly users: Repository<UserEntity>,
+    @Inject(POLICY_ENGINE) private readonly policy: PolicyEngine,
   ) {}
 
   /** Apps across all clusters, projected to selector axes — powers the grant-builder. */
@@ -103,11 +144,32 @@ export class IamService {
     return Object.values(BUILTIN_ROLES);
   }
 
+  /** Every role, each carrying whether *this* caller may confer it. */
+  async listRolesFor(caller: IamPrincipal): Promise<IamRoleView[]> {
+    const access = await this.policy.resolveAccess(caller);
+    return Object.values(BUILTIN_ROLES).map((role) => ({
+      ...role,
+      grantable: mayConferRole(access, role.key),
+      revocable: mayAdministerRole(access, role.key),
+    }));
+  }
+
   listGrants(): Promise<IamRoleBindingEntity[]> {
     return this.bindings.find({ order: { createdAt: 'DESC' } });
   }
 
-  createGrant(dto: CreateGrantDto): Promise<IamRoleBindingEntity> {
+  /**
+   * The single door through which a person creates a binding.
+   *
+   * The sandbox tenancy service writes its two grants straight to the
+   * repository, which is why it is unaffected by the rule below — and why the
+   * rule can be as strict as it needs to be without the platform tripping on it.
+   */
+  async createGrant(
+    dto: CreateGrantDto,
+    caller: IamPrincipal,
+  ): Promise<IamRoleBindingEntity> {
+    await this.assertMayConfer(caller, dto.role);
     const entity = this.bindings.create({
       principalType: dto.principalType,
       principalRef: dto.principalRef,
@@ -119,9 +181,49 @@ export class IamService {
     return this.bindings.save(entity);
   }
 
-  async deleteGrant(id: string): Promise<void> {
-    const res = await this.bindings.delete(id);
-    if (!res.affected) throw new NotFoundException(`Grant ${id} not found`);
+  async deleteGrant(id: string, caller: IamPrincipal): Promise<void> {
+    const existing = await this.bindings.findOne({ where: { id } });
+    if (!existing) throw new NotFoundException(`Grant ${id} not found`);
+    await this.assertMayAdminister(caller, existing.role);
+    await this.bindings.delete(id);
+  }
+
+  /** Throws unless the caller may hand this role out. */
+  async assertMayConfer(caller: IamPrincipal, role: string): Promise<void> {
+    this.assertConferrable(await this.policy.resolveAccess(caller), role);
+  }
+
+  /** Throws unless the caller may remove a binding carrying this role. */
+  async assertMayAdminister(caller: IamPrincipal, role: string): Promise<void> {
+    this.assertAdministrable(await this.policy.resolveAccess(caller), role);
+  }
+
+  /**
+   * The same two rules against an access already resolved.
+   *
+   * Applying a policy asks the question once per binding; resolving the caller
+   * each time would turn one document into one database read per line.
+   */
+  assertConferrable(access: PrincipalAccess, role: string): void {
+    if (mayConferRole(access, role)) return;
+    throw new ForbiddenException(this.refusal(role));
+  }
+
+  assertAdministrable(access: PrincipalAccess, role: string): void {
+    if (mayAdministerRole(access, role)) return;
+    throw new ForbiddenException(this.refusal(role));
+  }
+
+  /** Names the missing permission, so the refusal is actionable rather than mysterious. */
+  private refusal(role: string): string {
+    const def = BUILTIN_ROLES[role as keyof typeof BUILTIN_ROLES];
+    if (def && !def.assignable) {
+      return `Role ${role} is assigned by the platform and cannot be granted`;
+    }
+    const required = def?.conferredBy;
+    return required
+      ? `Granting or revoking ${role} requires ${required} at global scope`
+      : `Role ${role} cannot be granted`;
   }
 
   listGroups(): Promise<IamGroupEntity[]> {

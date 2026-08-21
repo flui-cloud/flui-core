@@ -5,6 +5,8 @@ import { Repository } from 'typeorm';
 import * as bcrypt from 'bcrypt';
 import * as crypto from 'node:crypto';
 import { IdentityRole, UserEntity } from '../entities/user.entity';
+import { IamRoleBindingEntity } from '../../iam/entities/iam-role-binding.entity';
+import { IAM_ROLE } from '../../iam/constants/iam-roles';
 
 const GENERATED_PASSWORD_LENGTH = 24;
 const SAFE_CHARSET =
@@ -27,6 +29,8 @@ export class AdminSeeder implements OnModuleInit {
     private readonly configService: ConfigService,
     @InjectRepository(UserEntity)
     private readonly userRepo: Repository<UserEntity>,
+    @InjectRepository(IamRoleBindingEntity)
+    private readonly bindingRepo: Repository<IamRoleBindingEntity>,
   ) {}
 
   async onModuleInit() {
@@ -55,6 +59,21 @@ export class AdminSeeder implements OnModuleInit {
       isAdmin: true,
       role: IdentityRole.ADMIN,
     });
+
+    // The account's power, said in the way IAM can read. The boolean above is
+    // still what the guards look at today, but it is on its way out, and a
+    // fresh installation seeded without this binding would be the very state the
+    // backfill migration exists to repair — created new, one release later.
+    await this.bindingRepo.save(
+      this.bindingRepo.create({
+        principalType: 'user',
+        principalRef: email,
+        role: IAM_ROLE.OWNER,
+        scopeType: 'global',
+        scopeRef: null,
+        selector: null,
+      }),
+    );
 
     if (isGenerated) {
       this.logger.warn('━'.repeat(60));

@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Inject, Injectable } from '@nestjs/common';
 import { IamService } from './iam.service';
 import { IamRoleBindingEntity } from '../entities/iam-role-binding.entity';
 import { CreateGrantDto } from '../dto/create-grant.dto';
@@ -8,6 +8,11 @@ import {
   ApplyPolicyResult,
   PolicyBindingDto,
 } from '../dto/access-policy.dto';
+import { IamPrincipal } from '../interfaces/iam.types';
+import {
+  POLICY_ENGINE,
+  PolicyEngine,
+} from '../interfaces/policy-engine.interface';
 
 const API_VERSION = 'flui.cloud/v1beta1';
 
@@ -15,7 +20,10 @@ const API_VERSION = 'flui.cloud/v1beta1';
 // back (idempotent; `prune` = full sync). Groups are managed separately.
 @Injectable()
 export class AccessPolicyService {
-  constructor(private readonly iam: IamService) {}
+  constructor(
+    private readonly iam: IamService,
+    @Inject(POLICY_ENGINE) private readonly policy: PolicyEngine,
+  ) {}
 
   async export(): Promise<AccessPolicyDoc> {
     const bindings = await this.iam.listGrants();
@@ -27,38 +35,49 @@ export class AccessPolicyService {
     };
   }
 
-  async apply(doc: ApplyPolicyDto): Promise<ApplyPolicyResult> {
+  /**
+   * Apply a policy document on behalf of a caller.
+   *
+   * The caller is not decoration: this is the third door onto a role binding —
+   * the other two being create and delete — and a document is the one that
+   * mutates in bulk. Every line is checked *before* anything is written, so a
+   * policy that names a role the caller may not confer is refused whole rather
+   * than applied halfway.
+   */
+  async apply(
+    doc: ApplyPolicyDto,
+    caller: IamPrincipal,
+  ): Promise<ApplyPolicyResult> {
     const desired = doc.spec.bindings.map((b) => this.toCreateDto(b));
     const existing = await this.iam.listGrants();
     const existingByKey = new Map(
       existing.map((e) => [this.keyOf(this.entityToDto(e)), e]),
     );
-    const desiredKeys = new Set<string>();
+    const desiredKeys = new Set(desired.map((d) => this.keyOf(d)));
 
-    let created = 0;
-    let unchanged = 0;
-    for (const dto of desired) {
-      const key = this.keyOf(dto);
-      desiredKeys.add(key);
-      if (existingByKey.has(key)) {
-        unchanged++;
-        continue;
-      }
-      await this.iam.createGrant(dto);
-      created++;
+    const toCreate = desired.filter((d) => !existingByKey.has(this.keyOf(d)));
+    const toDelete = doc.prune
+      ? [...existingByKey]
+          .filter(([key]) => !desiredKeys.has(key))
+          .map(([, entity]) => entity)
+      : [];
+
+    const access = await this.policy.resolveAccess(caller);
+    for (const dto of toCreate) this.iam.assertConferrable(access, dto.role);
+    for (const entity of toDelete) {
+      this.iam.assertAdministrable(access, entity.role);
     }
 
-    let deleted = 0;
-    if (doc.prune) {
-      for (const [key, entity] of existingByKey) {
-        if (!desiredKeys.has(key)) {
-          await this.iam.deleteGrant(entity.id);
-          deleted++;
-        }
-      }
-    }
+    for (const dto of toCreate) await this.iam.createGrant(dto, caller);
+    for (const entity of toDelete)
+      await this.iam.deleteGrant(entity.id, caller);
 
-    return { created, unchanged, deleted, desired: desired.length };
+    return {
+      created: toCreate.length,
+      unchanged: desired.length - toCreate.length,
+      deleted: toDelete.length,
+      desired: desired.length,
+    };
   }
 
   private toPolicyBinding(b: IamRoleBindingEntity): PolicyBindingDto {

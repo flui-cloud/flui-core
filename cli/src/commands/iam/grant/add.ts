@@ -51,8 +51,10 @@ export default class IamGrantAdd extends Command {
     }),
     role: Flags.string({
       char: 'r',
-      description: 'Role to grant',
-      options: ['viewer', 'editor', 'manager'],
+      description:
+        'Role to grant. `owner` is the top of the ladder and conferring it ' +
+        'requires iam:manage-users at global scope — i.e. an owner makes an owner.',
+      options: ['viewer', 'editor', 'manager', 'owner'],
       required: true,
     }),
     scope: Flags.string({

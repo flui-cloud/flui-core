@@ -8,6 +8,8 @@ interface IamRoleDef {
   name: string;
   description: string;
   permissions: string[];
+  /** Whether *this* credential may hand the role out; absent on older APIs. */
+  grantable?: boolean;
 }
 
 export default class IamRoles extends Command {
@@ -55,7 +57,10 @@ export default class IamRoles extends Command {
 
     console.log('');
     for (const r of roles) {
-      console.log(`  ${chalk.bold(r.name)} ${chalk.dim(`(${r.key})`)}`);
+      const cannotGrant =
+        r.grantable === false ? chalk.dim(' — you cannot grant this') : '';
+      const key = chalk.dim(`(${r.key})`);
+      console.log(`  ${chalk.bold(r.name)} ${key}${cannotGrant}`);
       console.log(`  ${chalk.dim(r.description)}`);
       console.log(`  ${r.permissions.map((p) => chalk.cyan(p)).join(', ')}`);
       console.log('');
