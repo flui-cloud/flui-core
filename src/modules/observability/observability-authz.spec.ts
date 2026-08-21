@@ -19,6 +19,7 @@ import { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interfa
 import { AdminGuard } from '../auth/guards/admin.guard';
 import { IdentityRole } from '../auth/entities/user.entity';
 import { ClusterEntity } from '../infrastructure/clusters/entities/cluster.entity';
+import { SandboxTenantEntity } from '../sandbox/entities/sandbox-tenant.entity';
 import { IamGroupEntity } from '../iam/entities/iam-group.entity';
 import { IamRoleBindingEntity } from '../iam/entities/iam-role-binding.entity';
 import { POLICY_ENGINE } from '../iam/interfaces/policy-engine.interface';
@@ -218,6 +219,10 @@ describe('observability resource authorization (direct HTTP routes)', () => {
               provider: 'test',
             }),
           },
+        },
+        {
+          provide: getRepositoryToken(SandboxTenantEntity),
+          useValue: { findOne: async () => null },
         },
       ],
     }).compile();

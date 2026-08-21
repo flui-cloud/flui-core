@@ -13,6 +13,8 @@ import {
 } from '../interfaces/policy-engine.interface';
 import { AuthenticatedUser } from '../../auth/interfaces/authenticated-user.interface';
 import { IamPrincipal } from '../interfaces/iam.types';
+import { SANDBOX_GUEST_REQUEST } from '../../sandbox/guards/sandbox-fence.guard';
+import { isSandboxStandInRequest } from '../../sandbox/stand-in/sandbox-stand-in';
 
 /**
  * Global authorization gate. Runs after JwtAuthGuard. Default-deny for routes
@@ -33,9 +35,20 @@ export class PermissionsGuard implements CanActivate {
     );
     if (!required) return true;
 
-    const user = context
-      .switchToHttp()
-      .getRequest<{ user?: AuthenticatedUser }>().user;
+    const req = context.switchToHttp().getRequest<{
+      user?: AuthenticatedUser;
+      method?: string;
+      route?: { path?: string };
+      path?: string;
+      [SANDBOX_GUEST_REQUEST]?: unknown;
+    }>();
+    // Answered from the example world before the handler is reached — there is
+    // no privileged read behind this to protect. Refusing here would close a
+    // section the fence has deliberately opened, which is how a guest ends up
+    // with a menu entry that leads to an error.
+    if (req[SANDBOX_GUEST_REQUEST] && isSandboxStandInRequest(req)) return true;
+
+    const user = req.user;
     if (!user) throw new ForbiddenException('Unauthenticated');
 
     const principal: IamPrincipal = {

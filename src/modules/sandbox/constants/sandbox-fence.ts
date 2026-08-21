@@ -5,197 +5,69 @@
  *
  * It is enforced on the route, never in the interface: hiding a button stops a
  * person, not an agent holding the guest's own credential. The same list is
- * served to the guest as "what is disabled here, and why".
+ * served to the guest as "what is disabled here, and why" — see
+ * `sandbox-areas.ts`, which must be kept saying what these rules do.
+ *
+ * The rules themselves are in three files, split by the promise they make:
+ * what is the guest's own, what is shown to them for real, and what is answered
+ * from the example world. This file only assembles them and answers questions
+ * about them; the order it assembles them in carries no meaning, and there is a
+ * test that keeps it that way — no path may be matched by two rules that grant
+ * different levels.
  */
+import {
+  HttpVerb,
+  SandboxAllowRule,
+  SandboxLevel,
+  routeMatches,
+} from './sandbox-fence-core';
+import { SANDBOX_ALLOW_OWN } from './sandbox-fence-own';
+import { SANDBOX_ALLOW_SHOWN } from './sandbox-fence-shown';
+import { SANDBOX_ALLOW_EXAMPLE } from './sandbox-fence-example';
 
-export type HttpVerb = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
+export {
+  HttpVerb,
+  SandboxAllowRule,
+  SandboxLevel,
+  routeMatches,
+} from './sandbox-fence-core';
+export { SandboxArea, SANDBOX_AREAS } from './sandbox-areas';
 
-export interface SandboxAllowRule {
-  verbs: HttpVerb[];
-  /** Route pattern; `:param` matches one segment, `**` matches the rest. */
-  pattern: string;
-  why: string;
-}
-
-/**
- * Per-application routes are listed as `**` on purpose: each one already passes
- * AppAccessGuard or AppOwnershipGuard, so a guest reaching them can only reach
- * its own application. The fence removes whole areas; ownership does the rest.
- */
 export const SANDBOX_ALLOWLIST: SandboxAllowRule[] = [
-  {
-    verbs: ['GET'],
-    pattern: '/auth/me',
-    why: 'Know who you are signed in as.',
-  },
-  {
-    // `/me/...`, not `/iam/me/...`: MeController is mounted at the root even
-    // though it lives in the IAM module, and the earlier pattern matched no
-    // route at all — which refused a guest the two calls the sidebar and every
-    // permission check in the interface depend on.
-    verbs: ['GET'],
-    pattern: '/me/**',
-    why: 'Resolve which parts of the interface to show.',
-  },
-  { verbs: ['GET'], pattern: '/version', why: 'Show the platform version.' },
-  { verbs: ['GET'], pattern: '/health/**', why: 'Liveness of the instance.' },
-
-  {
-    verbs: ['GET'],
-    pattern: '/clusters/:clusterId/applications',
-    why: 'List the applications you own.',
-  },
-  {
-    verbs: ['POST'],
-    pattern: '/clusters/:clusterId/applications',
-    why: 'Create an application of your own.',
-  },
-  {
-    verbs: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
-    pattern: '/applications/:id/**',
-    why: 'Operate your own application — logs, metrics, deploys, its database console.',
-  },
-  {
-    verbs: ['GET', 'PATCH'],
-    pattern: '/applications/:id',
-    why: 'Read and change your own application.',
-  },
-  {
-    verbs: ['GET'],
-    pattern: '/observability/applications/:id/logs',
-    why: 'Read logs selected from an application you may access.',
-  },
-  {
-    verbs: ['GET'],
-    pattern: '/observability/applications/:id/logs/volume',
-    why: 'Chart log volume for an application you may access.',
-  },
-  {
-    verbs: ['GET'],
-    pattern: '/observability/applications/:id/metrics',
-    why: 'Read resource metrics for an application you may access.',
-  },
-  {
-    verbs: ['GET'],
-    pattern: '/observability/applications/:id/metrics/history',
-    why: 'Chart resource metrics for an application you may access.',
-  },
-  {
-    verbs: ['GET'],
-    pattern: '/observability/applications/:id/traffic',
-    why: 'Read traffic metrics for an application you may access.',
-  },
-  {
-    verbs: ['GET'],
-    pattern: '/observability/applications/:id/traffic/history',
-    why: 'Chart traffic metrics for an application you may access.',
-  },
-  {
-    verbs: ['GET'],
-    pattern: '/observability/applications/:id/alerts',
-    why: 'Read alerts for an application you may access.',
-  },
-  {
-    verbs: ['GET'],
-    pattern: '/observability/clusters/:clusterId/applications/metrics',
-    why: 'Read metrics filtered to applications you may access.',
-  },
-  {
-    verbs: ['GET'],
-    pattern: '/observability/clusters/:clusterId/applications/metrics/history',
-    why: 'Chart metrics filtered to applications you may access.',
-  },
-  {
-    verbs: ['GET'],
-    pattern: '/observability/clusters/:clusterId/traffic',
-    why: 'Read traffic filtered to applications you may access.',
-  },
-
-  {
-    verbs: ['GET'],
-    pattern: '/catalog/**',
-    why: 'Browse what you can install.',
-  },
-  { verbs: ['GET'], pattern: '/catalog', why: 'Browse what you can install.' },
-  {
-    verbs: ['POST'],
-    pattern: '/catalog/:slug/install',
-    why: 'Install a catalog application into your own tenancy.',
-  },
-  {
-    verbs: ['GET'],
-    pattern: '/catalog-installs/**',
-    why: 'Follow an installation you started.',
-  },
-
-  {
-    verbs: ['GET'],
-    pattern: '/infrastructure/operations/:id',
-    why: 'Follow the progress of something you started.',
-  },
-  {
-    verbs: ['GET'],
-    pattern: '/sandbox/**',
-    why: 'Read your own tenancy: what is disabled, and how long you have left.',
-  },
+  ...SANDBOX_ALLOW_OWN,
+  ...SANDBOX_ALLOW_SHOWN,
+  ...SANDBOX_ALLOW_EXAMPLE,
 ];
 
-/**
- * Areas refused wholesale, with the reason a guest is shown. Ordered most-asked
- * first — this is the copy for the "what is disabled" page, not just telemetry.
- */
-export const SANDBOX_DENIED_AREAS: Array<{ area: string; why: string }> = [
-  {
-    area: 'Infrastructure — clusters, servers, nodes, firewalls, providers',
-    why: 'The instance is shared. Changing a node changes it for every guest on it.',
-  },
-  {
-    area: 'DNS zones and custom domains',
-    why: 'Your applications get a name under try.flui.cloud. Pointing a domain you own at a machine you share is a door we keep shut.',
-  },
-  {
-    area: 'Access — users, roles, SSH keys, API keys',
-    why: 'Access control is the wall around your tenancy. It is not something to explore from inside it.',
-  },
-  {
-    area: 'Cluster-wide variables and secrets',
-    why: "Those belong to the platform, not to a tenancy. Your application's own variables are yours to edit.",
-  },
-  {
-    area: 'Backups, snapshots and restores',
-    why: 'Everything here is deleted in 24 hours by design. A backup would outlive what it protects.',
-  },
-  {
-    area: 'Gateway policies and cross-cluster migration',
-    why: 'They act on shared infrastructure. Watch them in the showcase instead.',
-  },
-  {
-    area: 'Mail',
-    why: 'It shows real recipients — other people’s data.',
-  },
-];
-
-const SEGMENTS = (path: string): string[] =>
-  path.split('/').filter((s) => s.length > 0);
-
-/** `:param` matches one segment, `**` matches the remainder (at least one). */
-export function routeMatches(pattern: string, path: string): boolean {
-  const p = SEGMENTS(pattern);
-  const t = SEGMENTS(path);
-
-  for (let i = 0; i < p.length; i++) {
-    if (p[i] === '**') return t.length > i;
-    if (i >= t.length) return false;
-    if (p[i].startsWith(':')) continue;
-    if (p[i] !== t[i]) return false;
-  }
-  return p.length === t.length;
-}
-
-export function isSandboxAllowed(verb: string, path: string): boolean {
-  return SANDBOX_ALLOWLIST.some(
+const matching = (verb: string, path: string) =>
+  SANDBOX_ALLOWLIST.filter(
     (rule) =>
       rule.verbs.includes(verb.toUpperCase() as HttpVerb) &&
       routeMatches(rule.pattern, path),
   );
+
+export function isSandboxAllowed(verb: string, path: string): boolean {
+  return matching(verb, path).length > 0;
 }
+
+/** The level a guest gets on a route, for the declaration on the response. */
+export function sandboxLevelOf(verb: string, path: string): SandboxLevel {
+  const rule = matching(verb, path)[0];
+  return rule ? (rule.level ?? 'full') : 'closed';
+}
+
+/**
+ * Whether this path belongs to an area a guest is shown read-only.
+ *
+ * Used to answer a write there with the section's own wording rather than the
+ * blanket "this is disabled in the sandbox", which contradicts the section open
+ * in front of the person reading it.
+ */
+export function isReadOnlyArea(path: string): boolean {
+  return SANDBOX_ALLOW_SHOWN.some((rule) => routeMatches(rule.pattern, path));
+}
+
+export const SANDBOX_READ_ONLY_WRITE_CODE = 'SANDBOX_READ_ONLY';
+
+export const SANDBOX_READ_ONLY_WRITE_MESSAGE =
+  'You can look at this section here, but not change it. Your own applications and databases are real and yours to change.';

@@ -30,11 +30,20 @@ export class MeController {
     };
   }
 
-  /** Portal sections the current user may enter. Drives the dashboard sidebar. */
+  /**
+   * Portal sections the current user may enter. Drives the dashboard sidebar.
+   *
+   * `readOnlySections` is a subset of `sections`, not a separate list: a section
+   * named there is open, and every control inside it is drawn disabled. Older
+   * callers that read only `sections` therefore keep working — they show the
+   * section, and the API refuses the writes they would otherwise offer.
+   */
   @Get('sections')
-  async sections(
-    @Req() req: Request,
-  ): Promise<{ sections: string[]; isAdmin: boolean }> {
+  async sections(@Req() req: Request): Promise<{
+    sections: string[];
+    readOnlySections: string[];
+    isAdmin: boolean;
+  }> {
     const user = req.user as AuthenticatedUser;
     const principal: IamPrincipal = {
       userId: user.userId,
@@ -43,8 +52,12 @@ export class MeController {
       isAdmin: !!user.isAdmin,
       scopes: user.scopes,
     };
+    const access = await this.policy.resolveSectionAccess(principal);
     return {
-      sections: await this.policy.resolveSections(principal),
+      sections: access.map((s) => s.key),
+      readOnlySections: access
+        .filter((s) => s.level === 'read-only')
+        .map((s) => s.key),
       isAdmin: !!user.isAdmin,
     };
   }

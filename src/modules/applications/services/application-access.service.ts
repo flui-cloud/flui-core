@@ -7,6 +7,7 @@ import {
 } from '../../iam/interfaces/policy-engine.interface';
 import {
   IamPrincipal,
+  PrincipalAccess,
   ResourceAttributes,
 } from '../../iam/interfaces/iam.types';
 import { IAM_PERMISSION } from '../../iam/constants/iam-permissions';
@@ -16,6 +17,12 @@ import { AuthenticatedUser } from '../../auth/interfaces/authenticated-user.inte
 import { ApplicationEntity } from '../entities/application.entity';
 import { ProjectEntity } from '../../projects/entities/project.entity';
 import { ClusterEntity } from '../../infrastructure/clusters/entities/cluster.entity';
+import {
+  SandboxTenantEntity,
+  SandboxTenantState,
+} from '../../sandbox/entities/sandbox-tenant.entity';
+
+export const SANDBOX_CLUSTER_FORBIDDEN_CODE = 'SANDBOX_CLUSTER_NOT_OWNED';
 
 /** What one caller may do with one application, as told to the interface. */
 export interface AppAccessSummary {
@@ -39,6 +46,8 @@ export class ApplicationAccessService {
     private readonly projects: Repository<ProjectEntity>,
     @InjectRepository(ClusterEntity)
     private readonly clusters: Repository<ClusterEntity>,
+    @InjectRepository(SandboxTenantEntity)
+    private readonly sandboxTenants: Repository<SandboxTenantEntity>,
   ) {}
 
   principalFrom(user: AuthenticatedUser): IamPrincipal {
@@ -132,11 +141,16 @@ export class ApplicationAccessService {
     }
   }
 
-  // Create-time authority: a scoped grant only authorises creation its selector
-  // reaches, so a project-scoped grant can't make a project-less app. Admins pass.
-  // The app being created has no row yet, so its owner is the caller — which is
-  // what makes an `owner` grant self-sufficient: it authorises the creation and
-  // then covers the result.
+  /**
+   * Create-time authority: a scoped grant only authorises creation its selector
+   * reaches, so a project-scoped grant can't make a project-less app. Admins pass.
+   * The app being created has no row yet, so its owner is the caller — which is
+   * what makes an `owner` grant self-sufficient: it authorises the creation and
+   * then covers the result.
+   *
+   * Returns the resolved access so the caller can apply sandbox-specific
+   * handling (node-placement fields) without a second resolution.
+   */
   async assertCanCreate(
     user: AuthenticatedUser | undefined,
     target: {
@@ -147,10 +161,18 @@ export class ApplicationAccessService {
       projectSlug?: string;
       tags?: string[];
     },
-  ): Promise<void> {
+  ): Promise<PrincipalAccess> {
     if (!user) throw new ForbiddenException('Unauthenticated');
     const access = await this.policy.resolveAccess(this.principalFrom(user));
-    if (access.isAdmin) return;
+    if (access.isAdmin) return access;
+
+    // A guest's owner-grant carries no cluster constraint, and the fence's
+    // `:clusterId` pattern matches any id: without this pin a guest names any
+    // cluster on the instance as its target.
+    if (access.isSandbox) {
+      await this.assertSandboxTenancyCluster(user.userId, target.clusterId);
+    }
+
     const cluster = target.clusterId
       ? await this.clusters.findOne({ where: { id: target.clusterId } })
       : undefined;
@@ -169,6 +191,32 @@ export class ApplicationAccessService {
       throw new ForbiddenException(
         'Not allowed to create applications in this scope',
       );
+    }
+    return access;
+  }
+
+  /**
+   * A sandbox guest creates only on the cluster its tenancy was built on. The
+   * tenancy row is the one source that binds guest → cluster; an expired or
+   * missing tenancy refuses creation too, since the credential should not
+   * outlive what it opens.
+   */
+  private async assertSandboxTenancyCluster(
+    userId: string,
+    clusterId: string | undefined,
+  ): Promise<void> {
+    const tenant = await this.sandboxTenants.findOne({
+      where: { userId, state: SandboxTenantState.CLAIMED },
+    });
+    const boundTo = tenant?.clusterId;
+    if (boundTo === undefined || boundTo !== clusterId) {
+      throw new ForbiddenException({
+        statusCode: 403,
+        code: SANDBOX_CLUSTER_FORBIDDEN_CODE,
+        message:
+          'A sandbox guest can only create applications on the cluster of its own tenancy.',
+        clusterId: clusterId ?? null,
+      });
     }
   }
 

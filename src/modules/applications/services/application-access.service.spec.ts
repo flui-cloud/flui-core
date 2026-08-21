@@ -1,5 +1,8 @@
 import { PolicyEngineService } from '../../iam/services/policy-engine.service';
-import { ApplicationAccessService } from './application-access.service';
+import {
+  ApplicationAccessService,
+  SANDBOX_CLUSTER_FORBIDDEN_CODE,
+} from './application-access.service';
 import { IdentityRole } from '../../auth/entities/user.entity';
 
 /**
@@ -39,6 +42,13 @@ const clustersRepo = {
   findOne: async () => ({ name: 'prod', provider: 'hetzner' }),
 };
 
+const sandboxTenantsRepoFor = (
+  tenants: Array<{ userId: string; clusterId: string }>,
+) => ({
+  findOne: async ({ where }: { where: { userId: string; state: string } }) =>
+    tenants.find((t) => t.userId === where.userId) ?? null,
+});
+
 const appEntity = (slug: string, projectId: string) =>
   ({
     slug,
@@ -76,6 +86,7 @@ describe('ApplicationAccessService', () => {
       policy as never,
       projectsRepo as never,
       clustersRepo as never,
+      sandboxTenantsRepoFor([]) as never,
     );
     const apps = [
       appEntity('web', 'p1'),
@@ -91,6 +102,7 @@ describe('ApplicationAccessService', () => {
       policyWith([]) as never,
       projectsRepo as never,
       clustersRepo as never,
+      sandboxTenantsRepoFor([]) as never,
     );
     const apps = [appEntity('web', 'p1'), appEntity('api', 'p2')];
     const visible = await svc.filterReadable(
@@ -115,6 +127,7 @@ describe('ApplicationAccessService', () => {
       policy as never,
       projectsRepo as never,
       clustersRepo as never,
+      sandboxTenantsRepoFor([]) as never,
     );
     await expect(
       svc.assertCan(USER as never, 'app:write', appEntity('web', 'p1')),
@@ -130,6 +143,7 @@ describe('ApplicationAccessService', () => {
         policyWith(bindings) as never,
         projectsRepo as never,
         clustersRepo as never,
+        sandboxTenantsRepoFor([]) as never,
       );
 
     it('admin may create anywhere', async () => {
@@ -139,7 +153,7 @@ describe('ApplicationAccessService', () => {
           category: 'user',
           kind: 'APPLICATION',
         }),
-      ).resolves.toBeUndefined();
+      ).resolves.toMatchObject({ isAdmin: true });
     });
 
     it('cluster-scoped editor may create on that cluster, not another', async () => {
@@ -158,7 +172,7 @@ describe('ApplicationAccessService', () => {
           clusterId: 'c1',
           category: 'user',
         }),
-      ).resolves.toBeUndefined();
+      ).resolves.toBeDefined();
       await expect(
         svc.assertCanCreate(USER as never, {
           clusterId: 'c2',
@@ -218,7 +232,67 @@ describe('ApplicationAccessService', () => {
           clusterId: 'c1',
           category: 'user',
         }),
-      ).resolves.toBeUndefined();
+      ).resolves.toBeDefined();
+    });
+  });
+
+  describe('assertCanCreate (sandbox tenancy cluster pinning)', () => {
+    // The exact binding SandboxTenantService.provision writes: an owner-scoped
+    // sandbox grant with no cluster constraint of its own.
+    const SANDBOX_BINDING = [
+      {
+        principalType: 'user',
+        principalRef: 'bob@acme.com',
+        role: 'sandbox',
+        scopeType: 'selector',
+        scopeRef: null,
+        selector: { owner: 'u' },
+      },
+    ];
+
+    const guestSvc = (tenants: Array<{ userId: string; clusterId: string }>) =>
+      new ApplicationAccessService(
+        policyWith(SANDBOX_BINDING) as never,
+        projectsRepo as never,
+        clustersRepo as never,
+        sandboxTenantsRepoFor(tenants) as never,
+      );
+
+    it('may create on its own tenancy cluster, and reports being a guest', async () => {
+      const svc = guestSvc([{ userId: 'u', clusterId: 'c1' }]);
+      await expect(
+        svc.assertCanCreate(USER as never, {
+          clusterId: 'c1',
+          category: 'user',
+        }),
+      ).resolves.toMatchObject({ isSandbox: true });
+    });
+
+    it.each([
+      ['c2', 'a foreign cluster'],
+      [undefined, 'no cluster at all'],
+    ])('is refused on %s (%s)', async (clusterId) => {
+      const svc = guestSvc([{ userId: 'u', clusterId: 'c1' }]);
+      await expect(
+        svc.assertCanCreate(USER as never, {
+          clusterId,
+          category: 'user',
+        }),
+      ).rejects.toMatchObject({
+        response: { code: SANDBOX_CLUSTER_FORBIDDEN_CODE },
+      });
+    });
+
+    it('is refused when no claimed tenancy backs the credential', async () => {
+      const svc = guestSvc([]);
+      await expect(
+        svc.assertCanCreate(USER as never, {
+          clusterId: 'c1',
+          category: 'user',
+        }),
+      ).rejects.toMatchObject({
+        response: { code: SANDBOX_CLUSTER_FORBIDDEN_CODE },
+      });
     });
   });
 });

@@ -52,7 +52,10 @@ import {
 } from '../../infrastructure/shared/services/kubernetes.service';
 import { ResourceProfilesService } from '../../images/services/resource-profiles.service';
 import { buildUserNamespace } from '../utils/k8s-namespace.util';
-import { assertPlaceableNamespace } from '../utils/reserved-namespace.util';
+import {
+  assertNoClientNamespace,
+  assertPlaceableNamespace,
+} from '../utils/reserved-namespace.util';
 import { InfrastructureOperationEntity } from '../../infrastructure/servers/entities/infrastructure-operations.entity';
 
 @Injectable()
@@ -98,9 +101,12 @@ export class ApplicationService {
   ): Promise<ApplicationEntity> {
     await this.validateSourceConfig(dto);
 
-    if (dto.k8sNamespace) {
-      assertPlaceableNamespace(dto.k8sNamespace);
-    }
+    // The DTO no longer declares k8sNamespace, but the validation pipe keeps
+    // undeclared properties: the body can still carry one, and naming a
+    // namespace names someone's tenancy.
+    assertNoClientNamespace((dto as { k8sNamespace?: string }).k8sNamespace);
+    const k8sNamespace = userEmail ? buildUserNamespace(userEmail) : 'default';
+    assertPlaceableNamespace(k8sNamespace);
 
     if (dto.exposure === ApplicationExposure.INTERNAL) {
       await this.assertInternalHostingReady(clusterId);
@@ -136,9 +142,7 @@ export class ApplicationService {
           : ApplicationKind.APPLICATION),
       sourceType: dto.sourceType,
       clusterId,
-      k8sNamespace:
-        dto.k8sNamespace ||
-        (userEmail ? buildUserNamespace(userEmail) : 'default'),
+      k8sNamespace,
       userId,
       sourceConfig: dto.sourceConfig as ApplicationSourceConfig,
       env: envWithEncryptedSecrets,
@@ -328,6 +332,13 @@ export class ApplicationService {
       source: incoming.source ?? 'user',
     };
     if (tagged.externalSecretRef) return tagged;
+    // A key still waiting for a person stays waiting. The editor sends back the
+    // mask (or nothing) for a secret it never held, and without this the flag
+    // would be dropped on the next save — turning a declared "no value yet"
+    // into a configured empty secret nobody chose.
+    if (prev?.pending && masked) {
+      return { ...tagged, secret: true, value: '', pending: true };
+    }
     if (tagged.secret && incoming.value === ApplicationService.SECRET_MASK) {
       return { ...tagged, value: prev?.value ?? '' };
     }
@@ -707,6 +718,7 @@ export class ApplicationService {
         name: e.name,
         value: e.secret ? ApplicationService.SECRET_MASK : e.value,
         secret: e.secret,
+        ...(e.pending ? { pending: true } : {}),
         ...(e.externalSecretRef
           ? { externalSecretRef: e.externalSecretRef }
           : {}),

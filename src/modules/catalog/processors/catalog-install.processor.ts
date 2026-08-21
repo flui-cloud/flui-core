@@ -44,6 +44,7 @@ import {
   CatalogScaling,
   CatalogVolume,
 } from '../interfaces/catalog-manifest.interface';
+import { buildImageRef } from '../utils/image-ref.util';
 import { CatalogAppDefinitionRepository } from '../repositories/catalog-app-definition.repository';
 import { CatalogInstallRepository } from '../repositories/catalog-install.repository';
 import { CatalogInstallEntity } from '../entities/catalog-install.entity';
@@ -66,6 +67,7 @@ import {
   CatalogUninstallJobData,
 } from '../services/catalog-installer.service';
 import { buildUserNamespace } from '../../applications/utils/k8s-namespace.util';
+import { SandboxTenantEntity } from '../../sandbox/entities/sandbox-tenant.entity';
 import { OidcProviderAdminClient } from '../../oidc/services/oidc-provider-admin.service';
 import { ClusterEntity } from '../../infrastructure/clusters/entities/cluster.entity';
 import { buildSystemNipHostname } from '../../dns/utils/nip-hostname.util';
@@ -113,7 +115,33 @@ export class CatalogInstallProcessor {
     private readonly kubernetesService: KubernetesService,
     private readonly encryptionService: EncryptionService,
     private readonly endpointModeResolver: EndpointModeResolverService,
+    @InjectRepository(SandboxTenantEntity)
+    private readonly sandboxTenants: Repository<SandboxTenantEntity>,
   ) {}
+
+  /**
+   * Whether this install's workloads may schedule on the control plane.
+   *
+   * `FLUI_ALLOW_MASTER` is an operator's decision about their own cluster —
+   * usually a single-node one, where the master is the only machine there is. A
+   * sandbox guest is not the operator: the request-time strip already clears
+   * what they asked for, so letting the global flag OR it back would put a
+   * stranger's workload on the node that runs Flui itself.
+   */
+  private async allowMasterPlacementFor(
+    install: CatalogInstallEntity,
+  ): Promise<boolean> {
+    if (install.allowMasterPlacement) return true;
+    if (process.env.FLUI_ALLOW_MASTER !== 'true') return false;
+
+    const namespace = install.userEmail
+      ? buildUserNamespace(install.userEmail)
+      : 'default';
+    const sandbox = await this.sandboxTenants.exists({
+      where: { clusterId: install.clusterId, namespace },
+    });
+    return !sandbox;
+  }
 
   @Process({ name: CATALOG_INSTALL_JOB, concurrency: 5 })
   async handleInstall(job: Job<CatalogInstallJobData>): Promise<void> {
@@ -245,6 +273,7 @@ export class CatalogInstallProcessor {
         spec,
         finalEnv,
         ctx,
+        await this.allowMasterPlacementFor(install),
       );
       const application = await this.applicationService.create(
         install.clusterId,
@@ -578,6 +607,7 @@ export class CatalogInstallProcessor {
     spec: CatalogSpecStandalone | CatalogSpecBuildingBlock,
     env: ResolvedEnv[],
     ctx: TemplateContext,
+    allowMasterPlacement: boolean,
   ): CreateApplicationDto {
     const primaryPort = spec.ports[0];
     const imageRef = this.buildImageRef(spec.image);
@@ -618,7 +648,6 @@ export class CatalogInstallProcessor {
       category: ApplicationCategory.USER,
       kind: definition.appKind ?? mapCatalogCategoryToKind(definition.category),
       sourceType: ApplicationSourceType.DOCKER_IMAGE,
-      k8sNamespace: ctx.app.namespace,
       sourceConfig: {
         type: 'docker_image',
         imageRef,
@@ -638,9 +667,7 @@ export class CatalogInstallProcessor {
       replicas: this.resolveReplicas(spec, install.resourceOverrides),
       port: primaryPort?.internal,
       portProtocol: primaryPort?.protocol,
-      allowMasterPlacement:
-        install.allowMasterPlacement ||
-        process.env.FLUI_ALLOW_MASTER === 'true',
+      allowMasterPlacement,
       healthProbe: this.mapHealthProbe(
         this.resolveHealthcheckTemplates(spec.healthcheck, ctx),
         primaryPort?.internal,
@@ -799,17 +826,7 @@ export class CatalogInstallProcessor {
   }
 
   private buildImageRef(image: CatalogImageSource): string {
-    if (image.source) {
-      throw new Error('Build-from-git images are not supported in Iteration 1');
-    }
-    const registry = image.registry ?? 'docker.io';
-    const repository = image.repository ?? '';
-    const tag = image.tag ?? 'latest';
-    if (!repository) {
-      throw new Error('image.repository is required');
-    }
-    const prefix = registry === 'docker.io' ? '' : `${registry}/`;
-    return `${prefix}${repository}:${tag}`;
+    return buildImageRef(image);
   }
 
   private mapVolumes(
@@ -1197,8 +1214,8 @@ export class CatalogInstallProcessor {
           install,
           component,
           componentSlug,
-          namespace,
           substituted,
+          await this.allowMasterPlacementFor(install),
         );
         application = await this.applicationService.create(
           install.clusterId,
@@ -1395,8 +1412,8 @@ export class CatalogInstallProcessor {
     install: CatalogInstallEntity,
     component: CatalogComponent,
     componentSlug: string,
-    namespace: string,
     env: ResolvedEnv[],
+    allowMasterPlacement: boolean,
   ): CreateApplicationDto {
     const imageRef = this.buildImageRef(component.image);
     const primaryPort = component.ports?.[0];
@@ -1412,7 +1429,6 @@ export class CatalogInstallProcessor {
       category: ApplicationCategory.USER,
       kind: definition.appKind ?? mapCatalogCategoryToKind(definition.category),
       sourceType: ApplicationSourceType.DOCKER_IMAGE,
-      k8sNamespace: namespace,
       sourceConfig: {
         type: 'docker_image',
         imageRef,
@@ -1440,9 +1456,7 @@ export class CatalogInstallProcessor {
         : 1,
       port: primaryPort?.internal,
       portProtocol: primaryPort?.protocol,
-      allowMasterPlacement:
-        install.allowMasterPlacement ||
-        process.env.FLUI_ALLOW_MASTER === 'true',
+      allowMasterPlacement,
       healthProbe: component.healthcheck
         ? this.mapHealthProbe(component.healthcheck, primaryPort?.internal)
         : undefined,

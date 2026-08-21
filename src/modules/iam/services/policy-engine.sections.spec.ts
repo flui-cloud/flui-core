@@ -130,6 +130,99 @@ describe('PolicyEngine.resolveSections (deny-by-default, scope-aware)', () => {
     expect(sections).not.toContain('access');
   });
 
+  it('sandbox guest → management sections appear, at read-only', async () => {
+    const engine = makeEngine([
+      {
+        principalType: 'user',
+        principalRef: USER,
+        role: 'sandbox',
+        scopeType: 'selector',
+        scopeRef: null,
+        selector: { owner: USER },
+      },
+    ]);
+    const access = await engine.resolveSectionAccess(principal());
+    const level = (key: string) => access.find((a) => a.key === key)?.level;
+
+    // The point of the third state: the menu names them, so they can be opened.
+    for (const key of [
+      'clusters',
+      'infrastructure',
+      'firewall',
+      'providers',
+      'backup',
+      'mail',
+      'access',
+    ]) {
+      expect(level(key)).toBe('read-only');
+    }
+    // Its own things stay full, and what has nothing to show stays shut.
+    expect(level('workloads')).toBe('full');
+    expect(level('deploy')).toBe('full');
+    expect(level('settings')).toBe('full');
+    expect(level('projects')).toBeUndefined();
+  });
+
+  it('the read-only entry key alone opens nothing at full', async () => {
+    const engine = makeEngine([
+      {
+        principalType: 'user',
+        principalRef: USER,
+        role: 'sandbox',
+        scopeType: 'selector',
+        scopeRef: null,
+        selector: { owner: USER },
+      },
+    ]);
+    const access = await engine.resolveSectionAccess(principal());
+    const managementFull = access.filter(
+      (a) =>
+        a.level === 'full' &&
+        !['home', 'settings', 'workloads', 'deploy'].includes(a.key),
+    );
+    expect(managementFull).toEqual([]);
+  });
+
+  it('a global manager keeps every management section at full', async () => {
+    const engine = makeEngine([
+      {
+        principalType: 'user',
+        principalRef: USER,
+        role: 'manager',
+        scopeType: 'global',
+        scopeRef: null,
+        selector: null,
+      },
+    ]);
+    const access = await engine.resolveSectionAccess(principal());
+    expect(access.every((a) => a.level === 'full')).toBe(true);
+  });
+
+  /**
+   * What the dashboard now leans on. Until `owner` existed, "sees everything"
+   * was only expressible as `isAdmin`, so the sidebar kept its own `_isAdmin ||
+   * …` shortcut beside the section list. A global owner binding must reach the
+   * same answer through the model — otherwise removing that shortcut hides
+   * sections from the very people who own the installation.
+   */
+  it('global OWNER → every section, all of them at full', async () => {
+    const engine = makeEngine([
+      {
+        principalType: 'user',
+        principalRef: USER,
+        role: 'owner',
+        scopeType: 'global',
+        scopeRef: null,
+        selector: null,
+      },
+    ]);
+    const access = await engine.resolveSectionAccess(principal());
+    expect(access.map((a) => a.key).sort()).toEqual(
+      [...ALL_SECTION_KEYS].sort(),
+    );
+    expect(access.every((a) => a.level === 'full')).toBe(true);
+  });
+
   it('scoped editor → workloads+deploy only (no management sections)', async () => {
     const engine = makeEngine(
       [

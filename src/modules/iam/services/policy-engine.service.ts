@@ -13,7 +13,12 @@ import {
 } from '../interfaces/iam.types';
 import { ALL_PERMISSIONS } from '../constants/iam-permissions';
 import { IAM_ROLE, permissionsForRole } from '../constants/iam-roles';
-import { ALL_SECTION_KEYS, SECTIONS } from '../constants/iam-sections';
+import {
+  ALL_SECTION_KEYS,
+  SECTIONS,
+  SectionAccess,
+  SectionDef,
+} from '../constants/iam-sections';
 
 /**
  * SQL-backed PolicyEngine.
@@ -119,26 +124,52 @@ export class PolicyEngineService implements PolicyEngine {
    * Which portal sections this principal may enter. Derived from the resolved
    * access: a management section requires its governing permission at GLOBAL
    * scope; a workload section accepts it at any scope. Admin → all sections.
+   *
+   * Keys only, at whatever level they were granted — the shape the sidebar and
+   * the older callers ask for. `resolveSectionAccess` carries the level.
    */
   async resolveSections(principal: IamPrincipal): Promise<string[]> {
+    const access = await this.resolveSectionAccess(principal);
+    return access.map((s) => s.key);
+  }
+
+  /**
+   * The same answer with the level attached: `full` where the governing
+   * permission is held, `read-only` where only the entry key is. A section
+   * absent from this list is not enterable at all.
+   */
+  async resolveSectionAccess(
+    principal: IamPrincipal,
+  ): Promise<SectionAccess[]> {
     const access = await this.resolveAccess(principal);
-    if (access.isAdmin) return [...ALL_SECTION_KEYS];
+    if (access.isAdmin) {
+      return ALL_SECTION_KEYS.map((key) => ({ key, level: 'full' as const }));
+    }
 
     const hasGlobal = (perm: string) => access.globalPermissions.has(perm);
     const hasAny = (perm: string) =>
       access.globalPermissions.has(perm) ||
       access.scopedGrants.some((g) => g.permissions.has(perm));
-
-    return SECTIONS.filter((s) => {
-      switch (s.gate.kind) {
+    const opens = (gate: SectionDef['gate']): boolean => {
+      switch (gate.kind) {
         case 'always':
           return true;
         case 'permission':
-          return s.gate.scope === 'global'
-            ? hasGlobal(s.gate.permission)
-            : hasAny(s.gate.permission);
+          return gate.scope === 'global'
+            ? hasGlobal(gate.permission)
+            : hasAny(gate.permission);
       }
-    }).map((s) => s.key);
+    };
+
+    const granted: SectionAccess[] = [];
+    for (const section of SECTIONS) {
+      if (opens(section.gate))
+        granted.push({ key: section.key, level: 'full' });
+      else if (section.view && opens(section.view)) {
+        granted.push({ key: section.key, level: 'read-only' });
+      }
+    }
+    return granted;
   }
 
   async getEffectivePermissions(principal: IamPrincipal): Promise<string[]> {

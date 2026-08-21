@@ -20,14 +20,54 @@ export const SECTION = {
 
 export type SectionKey = (typeof SECTION)[keyof typeof SECTION];
 
+/**
+ * How far into a section a principal gets.
+ *
+ * The model used to be binary — hold the governing permission at global scope
+ * and see the whole section, or not see it at all — and that left no way to say
+ * the thing a demonstration, and a read-only operator, both need: *visible, but
+ * not yours to change*. `read-only` is that third state. It is enforced here and
+ * in SectionAccessGuard, which lets only safe verbs through it; the interface
+ * draws the same section with its controls disabled.
+ */
+export type SectionLevel = 'full' | 'read-only';
+
+export interface SectionAccess {
+  key: SectionKey;
+  level: SectionLevel;
+}
+
 type SectionGate =
   | { kind: 'always' }
   | { kind: 'permission'; permission: IamPermission; scope: 'global' | 'any' };
 
 export interface SectionDef {
   key: SectionKey;
+  /** Opens the section at `full`. */
   gate: SectionGate;
+  /**
+   * Opens the same section at `read-only`, when `gate` does not open it.
+   *
+   * Deliberately one key for every section rather than a read-only twin of each
+   * governing permission: it is a level, not a subject. What it may *reach* is
+   * still decided per route — the guard behind it refuses writes, and for a
+   * sandbox guest the fence refuses every route this list does not name.
+   *
+   * Two of these sections — mail and access — answer with other people's
+   * personal data when the handler actually runs. A guest never reaches that
+   * handler (they are answered from the example world instead), so granting
+   * `section:view` to a *human* role would be a wider door than it looks:
+   * those routes carry no per-tenant projection yet. Until they do, no built-in
+   * role but `sandbox` carries this permission.
+   */
+  view?: SectionGate;
 }
+
+const READ_ONLY_ENTRY: SectionGate = {
+  kind: 'permission',
+  permission: IAM_PERMISSION.SECTION_VIEW,
+  scope: 'any',
+};
 
 export const SECTIONS: SectionDef[] = [
   { key: SECTION.HOME, gate: { kind: 'always' } },
@@ -57,6 +97,7 @@ export const SECTIONS: SectionDef[] = [
       permission: IAM_PERMISSION.CLUSTER_READ,
       scope: 'global',
     },
+    view: READ_ONLY_ENTRY,
   },
   {
     key: SECTION.INFRASTRUCTURE,
@@ -65,6 +106,7 @@ export const SECTIONS: SectionDef[] = [
       permission: IAM_PERMISSION.CLUSTER_MANAGE,
       scope: 'global',
     },
+    view: READ_ONLY_ENTRY,
   },
   {
     key: SECTION.FIREWALL,
@@ -73,6 +115,7 @@ export const SECTIONS: SectionDef[] = [
       permission: IAM_PERMISSION.CLUSTER_MANAGE,
       scope: 'global',
     },
+    view: READ_ONLY_ENTRY,
   },
   {
     key: SECTION.PROVIDERS,
@@ -81,6 +124,7 @@ export const SECTIONS: SectionDef[] = [
       permission: IAM_PERMISSION.CLUSTER_MANAGE,
       scope: 'global',
     },
+    view: READ_ONLY_ENTRY,
   },
   {
     key: SECTION.BACKUP,
@@ -89,6 +133,7 @@ export const SECTIONS: SectionDef[] = [
       permission: IAM_PERMISSION.CLUSTER_MANAGE,
       scope: 'global',
     },
+    view: READ_ONLY_ENTRY,
   },
   // Mail sits with the other platform-admin sections rather than getting a
   // permission of its own. It shows recipient addresses — other people's
@@ -102,6 +147,7 @@ export const SECTIONS: SectionDef[] = [
       permission: IAM_PERMISSION.CLUSTER_MANAGE,
       scope: 'global',
     },
+    view: READ_ONLY_ENTRY,
   },
   {
     key: SECTION.PROJECTS,
@@ -118,7 +164,19 @@ export const SECTIONS: SectionDef[] = [
       permission: IAM_PERMISSION.IAM_ASSIGN_ROLE,
       scope: 'global',
     },
+    view: READ_ONLY_ENTRY,
   },
 ];
 
 export const ALL_SECTION_KEYS: SectionKey[] = SECTIONS.map((s) => s.key);
+
+/**
+ * Verbs a `read-only` section lets through. HEAD and OPTIONS are here because a
+ * browser sends them on its own; refusing them would break a section the level
+ * is meant to open.
+ */
+const SAFE_VERBS = new Set(['GET', 'HEAD', 'OPTIONS']);
+
+export function isSafeVerb(method: string | undefined): boolean {
+  return SAFE_VERBS.has((method ?? '').toUpperCase());
+}

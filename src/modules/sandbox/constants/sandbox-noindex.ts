@@ -11,11 +11,17 @@ export const SANDBOX_NOINDEX_HEADER = {
   'X-Robots-Tag': 'noindex, nofollow, noarchive, nosnippet',
 };
 
+export const SANDBOX_NOINDEX_MIDDLEWARE_NAME = 'sandbox-noindex';
+
+export function sandboxNoindexMiddlewareRef(namespace: string): string {
+  return `${namespace}-${SANDBOX_NOINDEX_MIDDLEWARE_NAME}@kubernetescrd`;
+}
+
 export function buildNoindexMiddleware(namespace: string): string {
   return `apiVersion: traefik.io/v1alpha1
 kind: Middleware
 metadata:
-  name: sandbox-noindex
+  name: ${SANDBOX_NOINDEX_MIDDLEWARE_NAME}
   namespace: ${namespace}
   labels:
     app.kubernetes.io/managed-by: flui

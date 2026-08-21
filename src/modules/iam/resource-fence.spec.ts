@@ -37,6 +37,7 @@ import { ApplicationEntity } from '../applications/entities/application.entity';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { ProjectEntity } from '../projects/entities/project.entity';
 import { ClusterEntity } from '../infrastructure/clusters/entities/cluster.entity';
+import { SandboxTenantEntity } from '../sandbox/entities/sandbox-tenant.entity';
 import { IamRoleBindingEntity } from './entities/iam-role-binding.entity';
 import { IamGroupEntity } from './entities/iam-group.entity';
 
@@ -267,6 +268,10 @@ describe('resource fence (direct API calls)', () => {
             ],
             findOne: async () => ({ name: 'control', provider: 'contabo' }),
           },
+        },
+        {
+          provide: getRepositoryToken(SandboxTenantEntity),
+          useValue: { findOne: async () => null },
         },
         {
           provide: ApplicationService,

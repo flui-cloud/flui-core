@@ -8,14 +8,18 @@ import { ApplicationService } from './application.service';
 import { CreateApplicationDto } from '../dto/create-application.dto';
 import { ApplicationCategory } from '../enums/application-category.enum';
 import { ApplicationSourceType } from '../enums/application-source-type.enum';
-import { RESERVED_NAMESPACE_ERROR_CODE } from '../utils/reserved-namespace.util';
+import { CLIENT_NAMESPACE_ERROR_CODE } from '../utils/reserved-namespace.util';
 
 /**
- * The namespace is the tenancy boundary: an application placed in a
- * platform-owned namespace can mount the platform's own Secrets. `create()` is
- * the one choke point every client path goes through (POST
+ * The namespace is the tenancy boundary: whoever names it chooses whose
+ * Secrets, ConfigMaps and volumes the workload lands beside. `create()` is the
+ * one choke point every client path goes through (POST
  * /clusters/:id/applications, deploy-from-build, manifest deploy), so the
  * refusal is asserted there — and asserted to happen before anything persists.
+ *
+ * The DTO no longer declares the field, but the validation pipe keeps
+ * undeclared properties, so the body can still carry one: the tests inject it
+ * the same way a raw client would.
  */
 describe('ApplicationService.create — namespace placement', () => {
   const created: Array<Record<string, unknown>> = [];
@@ -45,39 +49,42 @@ describe('ApplicationService.create — namespace placement', () => {
     ...new Array(4).fill(undefined),
   );
 
-  const dto = (k8sNamespace?: string): CreateApplicationDto =>
+  const dto = (): CreateApplicationDto =>
     ({
       name: 'probe',
       slug: 'probe',
       category: ApplicationCategory.USER,
       sourceType: ApplicationSourceType.DOCKER_IMAGE,
       sourceConfig: { type: 'docker_image', imageRef: 'nginx:1.25' },
-      k8sNamespace,
     }) as CreateApplicationDto;
 
   beforeEach(() => {
     created.length = 0;
   });
 
-  it.each(['flui-system', 'flui-control', 'kube-system', 'build-agents'])(
-    'refuses a client-named %s and persists nothing',
-    async (ns) => {
-      await expect(
-        service.create('cluster-1', dto(ns), 'u1', 'guest@try.flui.cloud'),
-      ).rejects.toMatchObject({
-        response: { code: RESERVED_NAMESPACE_ERROR_CODE },
-      });
-      expect(created).toHaveLength(0);
-    },
-  );
-
-  it('accepts an ordinary namespace', async () => {
-    await service.create('cluster-1', dto('my-team'), 'u1', 'a@b.com');
-    expect(created[0].k8sNamespace).toBe('my-team');
+  it.each([
+    ['user-guest-1f234701', "another tenant's namespace"],
+    ['my-team', 'an ordinary, non-reserved namespace'],
+    ['flui-system', 'a platform-reserved namespace'],
+    ['', 'an empty string'],
+  ])('refuses a client-named %s (%s) and persists nothing', async (ns) => {
+    const body = dto();
+    (body as { k8sNamespace?: string }).k8sNamespace = ns;
+    await expect(
+      service.create('cluster-1', body, 'u1', 'guest@try.flui.cloud'),
+    ).rejects.toMatchObject({
+      response: { code: CLIENT_NAMESPACE_ERROR_CODE },
+    });
+    expect(created).toHaveLength(0);
   });
 
-  it('falls back to the caller own namespace when none is given', async () => {
+  it('derives the namespace from the caller and never from the request', async () => {
     await service.create('cluster-1', dto(), 'u1', 'guest@try.flui.cloud');
     expect(created[0].k8sNamespace).toBe('user-guest');
+  });
+
+  it('falls back to "default" when the caller has no email', async () => {
+    await service.create('cluster-1', dto(), 'u1', undefined);
+    expect(created[0].k8sNamespace).toBe('default');
   });
 });

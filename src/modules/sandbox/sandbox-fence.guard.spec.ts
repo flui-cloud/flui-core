@@ -138,8 +138,13 @@ describe('SandboxFenceGuard over HTTP', () => {
       await http().post('/clusters/c1/applications').expect(201);
     });
 
+    // Reachable at the route; what comes back is narrowed by
+    // SandboxProjectionInterceptor, which this suite does not install.
+    it('reaches the cluster list, which the projection then narrows', async () => {
+      await http().get('/infrastructure/clusters').expect(200);
+    });
+
     it.each([
-      ['/infrastructure/clusters', 'the cluster inventory'],
       ['/access/ssh-keys', 'the SSH key surface'],
       ['/variables/clusters/c1/namespaces/flui-system', 'platform variables'],
     ])('is refused %s (%s)', async (path) => {

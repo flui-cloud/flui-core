@@ -18,6 +18,7 @@ import {
 import { Request } from 'express';
 import { DockerImageSourceConfig } from '../interfaces/source-config.interface';
 import { AuthenticatedUser } from '../../auth/interfaces/authenticated-user.interface';
+import { stripSandboxPlacementFields } from '../utils/sandbox-placement.util';
 import {
   ApiTags,
   ApiOperation,
@@ -125,12 +126,15 @@ export class ApplicationsController {
   ): Promise<CreateApplicationResponseDto> {
     const user = req.user as AuthenticatedUser | undefined;
 
-    await this.applicationAccess.assertCanCreate(user, {
+    const access = await this.applicationAccess.assertCanCreate(user, {
       clusterId,
       category: dto.category,
       kind: dto.kind,
       slug: dto.slug,
     });
+    if (access.isSandbox) {
+      stripSandboxPlacementFields(dto);
+    }
 
     // Create app atomically from a completed standalone build
     if (dto.buildId) {

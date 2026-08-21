@@ -6,13 +6,32 @@ export class SandboxAllowedDto {
 
   @ApiProperty({ example: 'Operate your own application.' })
   why: string;
+
+  @ApiProperty({
+    example: 'full',
+    enum: ['full', 'read-only', 'stand-in', 'closed'],
+  })
+  level: string;
 }
 
-export class SandboxDeniedDto {
-  @ApiProperty({ example: 'Infrastructure — clusters, servers, nodes' })
+/**
+ * One part of the product and how much of it a guest gets. The interface reads
+ * this to caption a section; it is never the text of an error.
+ */
+export class SandboxAreaDto {
+  @ApiProperty({ example: 'cluster' })
+  key: string;
+
+  @ApiProperty({ example: 'The cluster you are on' })
   area: string;
 
-  @ApiProperty({ example: 'The instance is shared.' })
+  @ApiProperty({
+    example: 'read-only',
+    enum: ['full', 'read-only', 'stand-in', 'closed'],
+  })
+  level: string;
+
+  @ApiProperty({ example: 'It is shared with every other guest on it.' })
   why: string;
 }
 
@@ -27,8 +46,8 @@ export class SandboxLimitsDto {
   @ApiProperty({ type: [SandboxAllowedDto] })
   allowed: SandboxAllowedDto[];
 
-  @ApiProperty({ type: [SandboxDeniedDto] })
-  denied: SandboxDeniedDto[];
+  @ApiProperty({ type: [SandboxAreaDto] })
+  areas: SandboxAreaDto[];
 
   @ApiProperty({ type: SandboxQuotaDto })
   quota: SandboxQuotaDto;

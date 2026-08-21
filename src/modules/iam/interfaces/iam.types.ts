@@ -1,4 +1,6 @@
+import { Request } from 'express';
 import { IdentityRole } from '../../auth/entities/user.entity';
+import { AuthenticatedUser } from '../../auth/interfaces/authenticated-user.interface';
 
 export type IamPrincipalType = 'user' | 'group' | 'service_account';
 
@@ -34,6 +36,24 @@ export interface IamPrincipal {
   role: IdentityRole;
   isAdmin: boolean;
   scopes?: string[];
+}
+
+/**
+ * The principal behind a request.
+ *
+ * The guards build this inline; a handler that has to decide something about
+ * its caller — who may confer which role, for instance — needs the same shape,
+ * and copying five field names into a controller is how the two drift apart.
+ */
+export function principalOf(req: Request): IamPrincipal {
+  const user = req.user as AuthenticatedUser | undefined;
+  return {
+    userId: user?.userId ?? '',
+    email: user?.email ?? '',
+    role: user?.role as IdentityRole,
+    isAdmin: !!user?.isAdmin,
+    scopes: user?.scopes,
+  };
 }
 
 /**

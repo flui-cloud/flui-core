@@ -1,9 +1,11 @@
 import {
   isSandboxAllowed,
   routeMatches,
+  sandboxLevelOf,
   SANDBOX_ALLOWLIST,
-  SANDBOX_DENIED_AREAS,
+  SANDBOX_AREAS,
 } from './sandbox-fence';
+import { findSandboxStandIn } from '../stand-in/sandbox-stand-in';
 
 /**
  * The allowlist as a contract. Every route named here was read off the live
@@ -43,7 +45,14 @@ describe('sandbox allowlist', () => {
     it.each([
       ['GET', '/auth/me'],
       ['GET', '/clusters/c1/applications'],
+      ['GET', '/clusters/c1/applications/grouped'],
       ['POST', '/clusters/c1/applications'],
+      ['GET', '/variables/applications/app-1'],
+      ['PUT', '/variables/applications/app-1'],
+      // Allowed at the route and narrowed in the response — see the projection
+      // spec for what a guest actually receives.
+      ['GET', '/infrastructure/clusters'],
+      ['GET', '/projects'],
       ['GET', '/applications/app-1'],
       ['PATCH', '/applications/app-1'],
       ['GET', '/applications/app-1/logs'],
@@ -73,7 +82,6 @@ describe('sandbox allowlist', () => {
     it.each([
       // The management plane. None of these carry authorization of their own,
       // which is exactly why the fence has to be an allowlist.
-      ['GET', '/infrastructure/clusters'],
       ['POST', '/infrastructure/clusters'],
       ['DELETE', '/infrastructure/clusters/c1'],
       ['POST', '/infrastructure/clusters/c1/workers'],
@@ -81,7 +89,6 @@ describe('sandbox allowlist', () => {
       ['GET', '/access/ssh-keys'],
       ['POST', '/access/ssh-keys'],
       ['POST', '/access/bearer'],
-      ['GET', '/auth/users'],
       ['POST', '/auth/users'],
       ['POST', '/auth/api-keys'],
       ['GET', '/iam/bindings'],
@@ -90,7 +97,6 @@ describe('sandbox allowlist', () => {
       ['POST', '/repositories/import'],
       ['GET', '/image-registry'],
       ['GET', '/mail/messages'],
-      ['GET', '/projects'],
       ['POST', '/projects'],
 
       // Reading the platform's own configuration and secrets by namespace —
@@ -131,10 +137,38 @@ describe('sandbox allowlist', () => {
   });
 
   it('explains every refusal it makes wholesale', () => {
-    for (const area of SANDBOX_DENIED_AREAS) {
+    for (const area of SANDBOX_AREAS) {
       expect(area.why.length).toBeGreaterThan(20);
     }
-    expect(SANDBOX_DENIED_AREAS.length).toBeGreaterThanOrEqual(6);
+    expect(SANDBOX_AREAS.length).toBeGreaterThanOrEqual(6);
+  });
+
+  /**
+   * The rules live in three files now, and this file concatenates them. That is
+   * only safe while no path can be matched by two rules granting different
+   * levels — otherwise `sandboxLevelOf` picks the first match, and the order the
+   * three lists happen to be joined in would quietly decide what a guest is told
+   * a section is. This keeps the join meaningless, which is the point.
+   */
+  it('never grants one path two different levels', () => {
+    const asPath = (pattern: string) =>
+      pattern
+        .split('/')
+        .map((s) => (s.startsWith(':') || s === '**' ? 'x' : s))
+        .join('/');
+
+    for (const rule of SANDBOX_ALLOWLIST) {
+      const path = asPath(rule.pattern);
+      for (const verb of rule.verbs) {
+        const levels = new Set(
+          SANDBOX_ALLOWLIST.filter(
+            (other) =>
+              other.verbs.includes(verb) && routeMatches(other.pattern, path),
+          ).map((other) => other.level ?? 'full'),
+        );
+        expect([...levels]).toHaveLength(1);
+      }
+    }
   });
 
   it('gives a reason for every door it leaves open', () => {
@@ -158,10 +192,66 @@ describe('sandbox allowlist', () => {
     expect(isSandboxAllowed('GET', '/sandbox/session')).toBe(true);
   });
 
-  it('still refuses the management side of IAM', () => {
-    expect(isSandboxAllowed('GET', '/iam/grants')).toBe(false);
+  /**
+   * Access is shown rather than shut, and the difference between the two is
+   * where the answer comes from: every read below is served from the example
+   * organisation and never reaches the handler, so no guest ever learns the
+   * other guests' or the operator's accounts. The writes stay refused.
+   */
+  it('shows the access section without opening the real one', () => {
+    for (const path of [
+      '/auth/users',
+      '/iam/roles',
+      '/iam/grants',
+      '/iam/groups',
+      '/iam/resources',
+      '/iam/principals',
+    ]) {
+      expect(isSandboxAllowed('GET', path)).toBe(true);
+      expect(sandboxLevelOf('GET', path)).toBe('stand-in');
+      expect(findSandboxStandIn('GET', path)).toBeDefined();
+    }
+
     expect(isSandboxAllowed('POST', '/iam/grants')).toBe(false);
-    expect(isSandboxAllowed('GET', '/iam/principals')).toBe(false);
+    expect(isSandboxAllowed('DELETE', '/iam/grants/g1')).toBe(false);
+    expect(isSandboxAllowed('POST', '/auth/users')).toBe(false);
+    expect(isSandboxAllowed('GET', '/iam/bindings')).toBe(false);
     expect(isSandboxAllowed('POST', '/me/permissions')).toBe(false);
+  });
+
+  /** Same again for the two sections whose real content is other people's. */
+  it('shows mail and the model settings from the example world only', () => {
+    for (const path of [
+      '/mail/overview',
+      '/mail/connections',
+      '/mail/events',
+      '/mail/suppressions',
+      '/inference/providers',
+      '/inference/connections',
+    ]) {
+      expect(sandboxLevelOf('GET', path)).toBe('stand-in');
+      expect(findSandboxStandIn('GET', path)).toBeDefined();
+    }
+    expect(isSandboxAllowed('POST', '/mail/connections')).toBe(false);
+    expect(isSandboxAllowed('POST', '/inference/connections')).toBe(false);
+  });
+
+  /**
+   * Asked on every screen. Both answer the same thing to everyone and read
+   * nothing of the instance, so they are real reads — and refusing them was
+   * filling a guest's console with errors on pages that had nothing to do with
+   * the assistant.
+   */
+  it('answers the two calls every screen makes', () => {
+    expect(sandboxLevelOf('GET', '/assistant/v1/info')).toBe('read-only');
+    expect(sandboxLevelOf('GET', '/assistant/v1/recommendations')).toBe(
+      'read-only',
+    );
+    expect(findSandboxStandIn('GET', '/assistant/v1/info')).toBeUndefined();
+    // Inference costs the operator money and is not offered.
+    expect(isSandboxAllowed('POST', '/assistant/v1/chat/completions')).toBe(
+      false,
+    );
+    expect(isSandboxAllowed('POST', '/assistant/v1/agent')).toBe(false);
   });
 });

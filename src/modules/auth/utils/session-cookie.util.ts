@@ -63,10 +63,22 @@ function buildBaseCookieOptions(): CookieOptions {
  * `Authorization` header is not available from iframes / cross-origin page
  * loads.
  */
-export function setFluiSessionCookie(res: Response, accessToken: string): void {
+export function setFluiSessionCookie(
+  res: Response,
+  accessToken: string,
+  expiresAt?: Date,
+): void {
   const base = buildBaseCookieOptions();
-  const expSec = decodeJwtExp(accessToken);
   const nowSec = Math.floor(Date.now() / 1000);
+  /**
+   * `expiresAt` is for credentials that carry their expiry out of band. An API
+   * key is not a JWT, so decoding it yields nothing and the hour-long fallback
+   * takes over — which would sign a sandbox guest out sixty minutes into a
+   * twenty-four hour tenancy, with the countdown still promising a day.
+   */
+  const expSec = expiresAt
+    ? Math.floor(expiresAt.getTime() / 1000)
+    : decodeJwtExp(accessToken);
   const ttlSec = expSec && expSec > nowSec ? expSec - nowSec : 3600;
   res.cookie(FLUI_SESSION_COOKIE, accessToken, {
     ...base,

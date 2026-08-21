@@ -160,17 +160,6 @@ export class CreateApplicationDto {
   @IsEnum(ApplicationSourceType)
   sourceType: ApplicationSourceType;
 
-  @ApiPropertyOptional({
-    example: 'default',
-    description:
-      'Kubernetes namespace. Omit to deploy into the caller\'s own namespace ("user-<local part of email>"). ' +
-      'Platform-owned namespaces (kube-*, flui-*, build-agents, cert-manager, velero) are rejected.',
-  })
-  @IsOptional()
-  @IsString()
-  @MaxLength(63)
-  k8sNamespace?: string;
-
   @ApiProperty({
     description: 'Polymorphic source configuration based on sourceType',
     example: {

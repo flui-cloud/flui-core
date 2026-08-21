@@ -2,6 +2,7 @@ import { BadRequestException } from '@nestjs/common';
 
 export const RESERVED_NAMESPACE_ERROR_CODE = 'RESERVED_NAMESPACE';
 export const INVALID_NAMESPACE_ERROR_CODE = 'INVALID_NAMESPACE';
+export const CLIENT_NAMESPACE_ERROR_CODE = 'CLIENT_NAMESPACE_FORBIDDEN';
 
 /**
  * Namespaces owned by Kubernetes itself or by the Flui platform. A workload
@@ -48,9 +49,28 @@ export function isValidNamespaceName(namespace: string): boolean {
 }
 
 /**
- * Single gate for every namespace a client is allowed to name. Rejects both
- * malformed names (which would only fail later, at apply time, with a row
- * already persisted) and platform-owned ones.
+ * A client may not name a namespace at all, reserved or otherwise: the value
+ * says which tenancy the workload lands in, so it is derived from the caller
+ * server-side. The check runs even though the DTO no longer declares the
+ * field, because the validation pipe keeps undeclared properties instead of
+ * stripping them.
+ */
+export function assertNoClientNamespace(namespace: string | undefined): void {
+  if (namespace === undefined) return;
+  throw new BadRequestException({
+    statusCode: 400,
+    code: CLIENT_NAMESPACE_ERROR_CODE,
+    message:
+      `k8sNamespace is not accepted from clients: the namespace is derived ` +
+      `from the caller. Omit it to deploy into your own namespace.`,
+    namespace,
+  });
+}
+
+/**
+ * Validates a server-derived namespace before it is persisted: malformed names
+ * would only fail later, at apply time, with a row already written, and no
+ * platform-owned namespace may ever host an application.
  */
 export function assertPlaceableNamespace(namespace: string): void {
   if (!isValidNamespaceName(namespace)) {

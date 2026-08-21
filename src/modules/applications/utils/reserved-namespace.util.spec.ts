@@ -1,10 +1,12 @@
 import { BadRequestException } from '@nestjs/common';
 import {
+  assertNoClientNamespace,
   assertPlaceableNamespace,
   isReservedNamespace,
   isValidNamespaceName,
   RESERVED_NAMESPACE_ERROR_CODE,
   INVALID_NAMESPACE_ERROR_CODE,
+  CLIENT_NAMESPACE_ERROR_CODE,
 } from './reserved-namespace.util';
 import { buildUserNamespace } from './k8s-namespace.util';
 
@@ -80,6 +82,25 @@ describe('isValidNamespaceName', () => {
   ])('rejects %s', (ns) => {
     expect(isValidNamespaceName(ns)).toBe(false);
   });
+});
+
+describe('assertNoClientNamespace', () => {
+  it('accepts an absent namespace — the caller lets the server derive one', () => {
+    expect(() => assertNoClientNamespace(undefined)).not.toThrow();
+  });
+
+  it.each(['default', 'my-team', 'user-guest-1f234701', 'flui-system', ''])(
+    'refuses a client-named %s: the value names a tenancy',
+    (ns) => {
+      expect(() => assertNoClientNamespace(ns)).toThrowError(
+        expect.objectContaining({
+          response: expect.objectContaining({
+            code: CLIENT_NAMESPACE_ERROR_CODE,
+          }),
+        }),
+      );
+    },
+  );
 });
 
 describe('assertPlaceableNamespace', () => {
