@@ -11,6 +11,7 @@ import { Logger } from '@nestjs/common';
 import { Server, Socket } from 'socket.io';
 import { WsAuthService } from '../services/ws-auth.service';
 import { installWsAuth } from '../utils/ws-auth-middleware.util';
+import { WS_CORS } from '../../../config/cors-origin.config';
 
 export interface AlertNotificationPayload {
   id: string;
@@ -31,7 +32,7 @@ export interface AlertNotificationPayload {
  * Namespace: /user
  */
 @WebSocketGateway({
-  cors: { origin: '*', credentials: true },
+  cors: WS_CORS,
   namespace: '/user',
 })
 export class UserEventsGateway implements OnGatewayInit {

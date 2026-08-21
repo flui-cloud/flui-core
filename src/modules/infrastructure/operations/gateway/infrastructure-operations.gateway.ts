@@ -17,12 +17,11 @@ import {
 } from '../dto/infrastructure-operation-events.dto';
 import { WsAuthService } from '../../../auth/services/ws-auth.service';
 import { installWsAuth } from '../../../auth/utils/ws-auth-middleware.util';
+import { WS_CORS } from '../../../../config/cors-origin.config';
 
 @WebSocketGateway({
   namespace: '/infrastructure',
-  cors: {
-    origin: '*',
-  },
+  cors: WS_CORS,
 })
 export class InfrastructureOperationsGateway
   implements OnGatewayInit, OnGatewayConnection, OnGatewayDisconnect

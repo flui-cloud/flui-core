@@ -24,6 +24,7 @@ import {
   BuildFailedDto,
   ReleaseStatusChangedDto,
 } from '../dto/application-events.dto';
+import { WS_CORS } from '../../../config/cors-origin.config';
 
 /**
  * WebSocket Gateway for real-time application events.
@@ -38,10 +39,7 @@ import {
  * Room naming: application:{appId}
  */
 @WebSocketGateway({
-  cors: {
-    origin: '*',
-    credentials: true,
-  },
+  cors: WS_CORS,
   namespace: '/applications',
 })
 export class ApplicationEventsGateway implements OnGatewayInit {

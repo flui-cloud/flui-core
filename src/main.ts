@@ -1,4 +1,5 @@
 import { NestFactory } from '@nestjs/core';
+import { corsOriginDelegate } from './config/cors-origin.config';
 import { AppModule } from './app.module';
 import * as dotenv from 'dotenv';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
@@ -114,48 +115,8 @@ async function bootstrap() {
   // Validation pipe
   app.useGlobalPipes(new ValidationPipe({ transform: true }));
 
-  // CORS
-  const frontendUrl = (
-    process.env.FRONTEND_URL ||
-    process.env.DASHBOARD_URL ||
-    ''
-  ).replace(/\/+$/, '');
-  const extraOrigins = new Set(
-    (process.env.CORS_ORIGINS || '')
-      .split(',')
-      .map((s) => s.trim().replace(/\/+$/, ''))
-      .filter(Boolean),
-  );
-  const isIpHost = (host: string): boolean =>
-    /^\d{1,3}(\.\d{1,3}){3}$/.test(host) || host.includes(':');
-  let apexDomain = '';
-  try {
-    const { hostname } = new URL(process.env.API_BASE_URL || '');
-    if (!isIpHost(hostname)) {
-      const parts = hostname.split('.');
-      if (parts.length >= 2) apexDomain = parts.slice(-2).join('.');
-    }
-  } catch {
-    /* no-op */
-  }
-  app.enableCors({
-    origin: (
-      origin: string | undefined,
-      callback: (err: Error | null, allow?: boolean | string) => void,
-    ) => {
-      if (!origin) return callback(null, true);
-      const allowed =
-        (frontendUrl && origin === frontendUrl) ||
-        extraOrigins.has(origin) ||
-        (apexDomain &&
-          (origin === `https://${apexDomain}` ||
-            origin.endsWith(`.${apexDomain}`))) ||
-        (process.env.NODE_ENV !== 'production' &&
-          /^https?:\/\/localhost(:\d+)?$/.test(origin));
-      callback(null, allowed ? origin : false);
-    },
-    credentials: true,
-  });
+  // CORS — the same allowlist the websocket gateways use.
+  app.enableCors({ origin: corsOriginDelegate, credentials: true });
 
   // Swagger configuration
   const config = new DocumentBuilder()

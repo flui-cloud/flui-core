@@ -17,6 +17,7 @@ import {
   IssuerDeletedDto,
   IssuerDeletionFailedDto,
 } from '../dto/cluster-events.dto';
+import { WS_CORS } from '../../../config/cors-origin.config';
 
 /**
  * WebSocket Gateway for real-time cluster DNS/certificate events.
@@ -28,10 +29,7 @@ import {
  * Room naming: cluster:{clusterId}
  */
 @WebSocketGateway({
-  cors: {
-    origin: '*',
-    credentials: true,
-  },
+  cors: WS_CORS,
   namespace: '/clusters',
 })
 export class ClusterDnsGateway implements OnGatewayInit {

@@ -17,6 +17,7 @@ import {
 } from '../terminal-feature.config';
 import { WsAuthService } from '../../auth/services/ws-auth.service';
 import { installWsAuth } from '../../auth/utils/ws-auth-middleware.util';
+import { WS_CORS } from '../../../config/cors-origin.config';
 
 interface ConnectPayload {
   serverId: string;
@@ -40,10 +41,7 @@ interface ResizePayload {
 }
 
 @WebSocketGateway({
-  cors: {
-    origin: '*',
-    credentials: true,
-  },
+  cors: WS_CORS,
   transports: ['websocket', 'polling'],
 })
 export class TerminalGateway
