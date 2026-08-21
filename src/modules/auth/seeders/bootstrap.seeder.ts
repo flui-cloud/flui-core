@@ -8,6 +8,7 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { ApiKeyEntity } from '../entities/api-key.entity';
+import { SERVICE_IDENTITY } from '../constants/service-identities';
 import {
   ClusterEntity,
   ClusterStatus,
@@ -277,8 +278,11 @@ export class BootstrapSeeder implements OnModuleInit {
 
     await this.apiKeyRepo.save({
       key: apiKey,
-      name: 'cli-bootstrap',
+      name: SERVICE_IDENTITY.CLI_BOOTSTRAP.keyName,
       revoked: false,
+      // Written so the row says which declared identity it is, instead of
+      // leaving ApiKeyStrategy to infer one from an absent userId.
+      userId: SERVICE_IDENTITY.CLI_BOOTSTRAP.id,
     });
     this.logger.log('✅ CLI API key seeded');
   }

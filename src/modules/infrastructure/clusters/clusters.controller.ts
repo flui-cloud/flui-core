@@ -21,13 +21,13 @@ import {
 } from '@nestjs/swagger';
 import { AdminGuard } from '../../auth/guards/admin.guard';
 import { Admin } from '../../auth/decorators/admin.decorator';
+import { RequireSection } from '../../iam/decorators/require-section.decorator';
 import { ClustersService } from './clusters.service';
 import {
   CreateClusterDto,
   CreateClusterResponseDto,
 } from './dto/create-cluster.dto';
 import { ClusterResponseDto } from './dto/cluster-response.dto';
-import { ClusterInventoryDto } from './dto/cluster-inventory.dto';
 import {
   RegisterClusterDto,
   RegisterClusterResponseDto,
@@ -89,8 +89,25 @@ import { ClusterNodeScalingService } from './services/cluster-node-scaling.servi
 import { ScaleNodeDto, ExpandSharedVolumeDto } from './dto/scale-node.dto';
 import { OrphanVolumesService } from './services/orphan-volumes.service';
 import { CloudProvider } from 'src/modules/providers/enums/cloud-provider.enum';
-import { RELEASE } from '../../../config/release.config';
 
+/**
+ * `@RequireSection(...)` sits on each route instead of on the class, which is
+ * where the sibling controllers (servers, vnets, operations) carry it.
+ *
+ * Not a stylistic choice: four reads here — the cluster list, `:id`, `:id/nodes`
+ * and `:id/resource-availability` — are what the deploy wizard calls, and an
+ * editor holds `app:create` without `cluster:manage`, so a class-level gate
+ * would answer 403 to the deploy flow of every non-admin.
+ *
+ * Every other read that no caller needs now carries its section. What is left
+ * open, and why, is exactly three things:
+ *
+ * - the four deploy-wizard reads above;
+ * - `:id/billing` and `:id/storage`, which the dashboard calls from tabs a
+ *   non-admin can open — gating them takes a screen away, so it is a decision
+ *   rather than a decorator;
+ * - `autoscale/defaults` and `:id/autoscale/status`, see the note above them.
+ */
 @ApiTags('Infrastructure - Clusters')
 @ApiBearerAuth()
 @Controller('infrastructure/clusters')
@@ -114,6 +131,7 @@ export class ClustersController {
   ) {}
 
   @Get('orphan-volumes')
+  @RequireSection('infrastructure')
   @ApiOperation({
     summary: 'List Flui-managed block storage volumes not tied to any cluster',
     description:
@@ -124,6 +142,7 @@ export class ClustersController {
   }
 
   @Delete('orphan-volumes/:provider/:volumeId')
+  @RequireSection('infrastructure')
   @ApiOperation({
     summary: 'Detach and delete an orphan Flui-managed volume',
     description:
@@ -140,6 +159,7 @@ export class ClustersController {
   }
 
   @Post(':id/workers')
+  @RequireSection('infrastructure')
   @ApiOperation({
     summary: 'Add 1..5 worker nodes to an existing cluster',
     description:
@@ -172,6 +192,7 @@ export class ClustersController {
   }
 
   @Delete(':id/workers/:nodeId')
+  @RequireSection('infrastructure')
   @ApiOperation({
     summary: 'Cordon, drain and remove a worker node',
     description:
@@ -203,6 +224,7 @@ export class ClustersController {
   }
 
   @Post(':id/byos-nodes')
+  @RequireSection('infrastructure')
   @ApiOperation({
     summary: 'Register a node joined to a BYOS cluster out-of-band',
     description:
@@ -235,6 +257,7 @@ export class ClustersController {
   }
 
   @Post(':id/byos-vnet')
+  @RequireSection('infrastructure')
   @ApiOperation({
     summary: 'Register/ensure the private network (VNet) of a BYOS cluster',
     description:
@@ -260,6 +283,7 @@ export class ClustersController {
   }
 
   @Post(':id/join-tokens')
+  @RequireSection('infrastructure')
   @ApiOperation({
     summary: 'Issue a short-lived worker join token for a BYOS cluster',
     description:
@@ -317,6 +341,18 @@ export class ClustersController {
     return this.byosNodeJoinService.completeJoin(clusterId, token, dto ?? {});
   }
 
+  /*
+   * These two reads are open on purpose, not by omission.
+   *
+   * The dashboard reaches them from a hand-written HttpClient service rather
+   * than the generated client, which is why a search by generated method name
+   * finds nothing: `cluster-autoscale.service.ts` calls them from the cluster
+   * tabs *and* from the home pulse, which every authenticated person opens. The
+   * pulse swallows the failure (`Promise.allSettled`), so a section here would
+   * not raise an error — it would silently drop the pressure badge for anyone
+   * short of global `cluster:manage`. Which section they should carry, if any,
+   * is a decision about that screen.
+   */
   @Get('autoscale/defaults')
   @ApiOperation({
     summary: 'Get global autoscale default thresholds',
@@ -345,6 +381,7 @@ export class ClustersController {
   }
 
   @Patch(':id/autoscale')
+  @RequireSection('infrastructure')
   @ApiOperation({
     summary: 'Update cluster autoscale configuration',
     description:
@@ -366,6 +403,7 @@ export class ClustersController {
   }
 
   @Patch(':id/vnet')
+  @RequireSection('infrastructure')
   @ApiOperation({
     summary: 'Attach an existing cluster to a VNet/subnet',
     description:
@@ -404,6 +442,7 @@ export class ClustersController {
   }
 
   @Post()
+  @RequireSection('infrastructure')
   @ApiOperation({
     summary: 'Create a new K3s cluster',
     description:
@@ -431,6 +470,7 @@ export class ClustersController {
   }
 
   @Post('register')
+  @RequireSection('infrastructure')
   @UseGuards(AdminGuard)
   @Admin()
   @ApiBearerAuth()
@@ -471,42 +511,14 @@ export class ClustersController {
     return this.clustersService.listClusters();
   }
 
-  /**
-   * How an installation describes itself to a CLI that did not create it.
-   *
-   * This is the customer's side of the managed handoff: `flui env adopt` reads
-   * it to rebuild the local profile, rather than a bundle of state travelling
-   * from app.flui.cloud. The cluster is the authority for its own inventory, so
-   * the answer cannot be stale and the managed plane never holds a copy.
-   *
-   * It returns the map, never the keys: no kubeconfig, no CA material, no
-   * provider credentials.
+  /*
+   * There is no `GET :id/inventory` here. Adoption's inventory lives on
+   * `GET /adoption/inventory`, behind AdoptionTokenGuard, and that is the one
+   * `flui env adopt` calls. This controller carried a second copy of the same
+   * ClusterInventoryDto that nothing called and that could not have served
+   * adoption anyway: it read `metadata.endpoint` and `metadata.sshCaEnrolled`,
+   * two keys nothing in this repository ever writes.
    */
-  @Get(':id/inventory')
-  @ApiOperation({ summary: 'Describe a cluster well enough to adopt it' })
-  @ApiResponse({ status: 200, type: ClusterInventoryDto })
-  async getInventory(@Param('id') id: string): Promise<ClusterInventoryDto> {
-    const cluster = await this.clustersService.getClusterEntity(id);
-    const nodes = await this.clustersService.getClusterNodes(id);
-    return {
-      clusterId: cluster.id,
-      name: cluster.name,
-      provider: cluster.provider,
-      region: cluster.region,
-      status: String(cluster.status),
-      endpoint: cluster.metadata?.endpoint ?? null,
-      version: RELEASE.version,
-      sshCaEnrolled: Boolean(cluster.metadata?.sshCaEnrolled),
-      nodes: nodes.map((node) => ({
-        id: node.id,
-        name: node.serverName,
-        type: String(node.nodeType),
-        publicIp: node.ipAddress ?? null,
-        privateIp: node.privateIp ?? null,
-        status: String(node.status),
-      })),
-    };
-  }
 
   @Get(':id')
   @ApiOperation({
@@ -542,40 +554,15 @@ export class ClustersController {
     return this.clustersService.getCluster(id, shouldIncludeRealStatus);
   }
 
-  @Get(':id/kubeconfig')
-  @ApiOperation({
-    summary: 'Download cluster kubeconfig',
-    description:
-      'Returns the kubeconfig YAML for accessing the K3s cluster with kubectl',
-  })
-  @ApiParam({
-    name: 'id',
-    description: 'Cluster ID',
-    example: 'uuid-cluster-id',
-  })
-  @ApiResponse({
-    status: 200,
-    description: 'Kubeconfig YAML',
-    schema: {
-      type: 'object',
-      properties: {
-        kubeconfig: { type: 'string', description: 'Kubeconfig YAML content' },
-      },
-    },
-  })
-  @ApiResponse({ status: 404, description: 'Cluster not found' })
-  @ApiResponse({
-    status: 400,
-    description: 'Kubeconfig not available yet (cluster still creating)',
-  })
-  async getKubeconfig(
-    @Param('id') id: string,
-  ): Promise<{ kubeconfig: string }> {
-    const kubeconfig = await this.clustersService.getKubeconfig(id);
-    return { kubeconfig };
-  }
+  /*
+   * There is no `GET :id/kubeconfig`. A kubeconfig is the key to the whole
+   * cluster, and it is deliberately not downloadable by anyone — not even an
+   * administrator. It exists for cluster-to-cluster traffic only, which reads it
+   * in-process through `ClustersService.getKubeconfig()`.
+   */
 
   @Get(':id/capacity-plan')
+  @RequireSection('infrastructure')
   @ApiOperation({
     summary: 'Get cluster master capacity & resize candidates',
     description:
@@ -594,6 +581,7 @@ export class ClustersController {
   }
 
   @Get(':id/nodes/:nodeId/scale/preview')
+  @RequireSection('infrastructure')
   @ApiOperation({
     summary: 'Preview impact of a scale-node operation',
     description:
@@ -609,6 +597,7 @@ export class ClustersController {
   }
 
   @Post(':id/nodes/:nodeId/uncordon')
+  @RequireSection('infrastructure')
   @ApiOperation({
     summary: 'Mark a cluster node schedulable again',
     description:
@@ -624,6 +613,7 @@ export class ClustersController {
   }
 
   @Post(':id/nodes/:nodeId/scale')
+  @RequireSection('infrastructure')
   @ApiOperation({
     summary:
       'Vertically scale a cluster node (power-off → change_type → power-on)',
@@ -647,6 +637,7 @@ export class ClustersController {
   }
 
   @Post(':id/storage/expand')
+  @RequireSection('infrastructure')
   @ApiOperation({
     summary: 'Expand the cluster shared-storage backing volume',
     description:
@@ -733,6 +724,7 @@ export class ClustersController {
   }
 
   @Patch(':id/metadata')
+  @RequireSection('infrastructure')
   @ApiOperation({
     summary: 'Update cluster metadata',
     description:
@@ -759,6 +751,7 @@ export class ClustersController {
   }
 
   @Patch(':clusterId/nodes/:nodeId/metadata')
+  @RequireSection('infrastructure')
   @ApiOperation({
     summary: 'Update node metadata',
     description: 'Merges new metadata with existing node metadata.',
@@ -813,6 +806,7 @@ export class ClustersController {
   }
 
   @Delete(':id')
+  @RequireSection('infrastructure')
   @UseGuards(AdminGuard)
   @Admin()
   @ApiOperation({
@@ -875,6 +869,7 @@ export class ClustersController {
    * Get firewall for a cluster
    */
   @Get(':id/firewall')
+  @RequireSection('firewall')
   @ApiOperation({
     summary: 'Get cluster firewall',
     description: 'Retrieve the firewall configuration for a specific cluster',
@@ -912,6 +907,7 @@ export class ClustersController {
   }
 
   @Post(':id/reconcile-tags')
+  @RequireSection('infrastructure')
   @ApiOperation({
     summary: 'Reconcile tags and optionally firewalls for registered cluster',
     description:
@@ -950,6 +946,7 @@ export class ClustersController {
   }
 
   @Post(':id/reconcile-firewalls')
+  @RequireSection('infrastructure')
   @ApiOperation({
     summary: 'Reconcile firewall attachments for registered cluster',
     description:
@@ -984,6 +981,7 @@ export class ClustersController {
   }
 
   @Post(':id/stop')
+  @RequireSection('infrastructure')
   @UseGuards(AdminGuard)
   @Admin()
   @ApiOperation({
@@ -1020,6 +1018,7 @@ export class ClustersController {
   }
 
   @Post(':id/start')
+  @RequireSection('infrastructure')
   @UseGuards(AdminGuard)
   @Admin()
   @ApiOperation({
@@ -1055,6 +1054,7 @@ export class ClustersController {
   }
 
   @Post(':id/reconcile-status')
+  @RequireSection('infrastructure')
   @ApiOperation({
     summary: 'Reconcile cluster status with real provider state',
     description:
@@ -1098,6 +1098,7 @@ export class ClustersController {
   }
 
   @Post(':id/refresh-grafana')
+  @RequireSection('infrastructure')
   @ApiOperation({
     summary: 'Refresh Grafana datasources after IP change',
     description:
@@ -1257,6 +1258,7 @@ export class ClustersController {
   }
 
   @Get(':id/build-resources')
+  @RequireSection('infrastructure')
   @ApiOperation({
     summary: 'Check cluster resource availability for a build job',
     description:

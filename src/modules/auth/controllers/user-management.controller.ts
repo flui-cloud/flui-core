@@ -100,6 +100,11 @@ export class UserManagementController {
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({
     summary: 'Change role for an identity user (requires iam:assign-role)',
+    description:
+      'Confers `user` or `readonly` only. Platform admin is not conferrable here: ' +
+      '`iam:assign-role` is held by the `manager` role, so accepting `admin` would ' +
+      'let a manager promote anyone — itself included. Create an admin account with ' +
+      'POST /auth/users instead, which is admin-only.',
   })
   async setRole(
     @Param('id') id: string,

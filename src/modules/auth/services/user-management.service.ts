@@ -6,7 +6,8 @@ import {
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { UserEntity, IdentityRole } from '../entities/user.entity';
+import { UserEntity } from '../entities/user.entity';
+import { AssignableIdentityRole } from '../constants/assignable-roles';
 import { InviteMailService } from '../../mail/services/invite-mail.service';
 import {
   CreateIdentityUserInput,
@@ -60,9 +61,13 @@ export class UserManagementService {
     await this.directory.deleteUser(id);
   }
 
+  /**
+   * `role` is narrowed to the assignable set: platform admin is not conferrable
+   * from here, and the compiler — not a runtime check — is what says so.
+   */
   async setRole(
     id: string,
-    role: IdentityRole,
+    role: AssignableIdentityRole,
     callerUserId: string,
   ): Promise<void> {
     const target = await this.directory.getUser(id);
@@ -70,12 +75,9 @@ export class UserManagementService {
     const callerLocal = await this.userRepo.findOne({
       where: { id: callerUserId },
     });
-    if (
-      role !== IdentityRole.ADMIN &&
-      (callerLocal?.oidcSub === id || callerLocal?.id === id)
-    ) {
+    if (callerLocal?.oidcSub === id || callerLocal?.id === id) {
       throw new ConflictException(
-        'Cannot demote yourself — ask another admin to change your role',
+        'Cannot change your own role — ask another admin to change it',
       );
     }
     await this.directory.setRole(id, role);

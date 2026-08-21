@@ -1,0 +1,288 @@
+/* eslint-disable sonarjs/assertions-in-tests --
+   The assertion is supertest's own `.expect(status)`, which throws on a
+   mismatch; the rule only recognises a global `expect()`. */
+
+// Same reason as `resource-fence.spec.ts`: the controller's import graph reaches
+// ESM-only packages ts-jest cannot transform, and this suite touches none of them.
+jest.mock('@kubernetes/client-node', () => ({}));
+jest.mock('jwks-rsa', () => ({ JwksClient: jest.fn() }));
+jest.mock('jose', () => ({}));
+jest.mock('ip-cidr', () => ({
+  __esModule: true,
+  default: class {},
+}));
+
+import { INestApplication } from '@nestjs/common';
+import { APP_GUARD } from '@nestjs/core';
+import { Test } from '@nestjs/testing';
+import { getRepositoryToken } from '@nestjs/typeorm';
+import * as request from 'supertest';
+import { ClustersController } from './clusters.controller';
+import { ClustersService } from './clusters.service';
+import { ClusterBillingService } from './services/cluster-billing.service';
+import { ClusterAutoscaleService } from './services/cluster-autoscale.service';
+import { ClusterVNetService } from './services/cluster-vnet.service';
+import { ClusterScalingService } from './services/cluster-scaling.service';
+import { ClusterStorageService } from './services/cluster-storage.service';
+import { ClusterCapacityService } from './services/cluster-capacity.service';
+import { ClusterNodeScalingService } from './services/cluster-node-scaling.service';
+import { OrphanVolumesService } from './services/orphan-volumes.service';
+import { ByosNodeJoinService } from './services/byos-node-join.service';
+import { ByosVNetService } from './services/byos-vnet.service';
+import { FirewallsService } from '../firewalls/services/firewalls.service';
+import { KubernetesService } from '../shared/services/kubernetes.service';
+import { GrafanaDatasourceService } from '../../grafana/services/grafana-datasource.service';
+import { ResourceProfilesService } from '../../images/services/resource-profiles.service';
+import { SectionAccessGuard } from '../../iam/guards/section-access.guard';
+import { PolicyEngineService } from '../../iam/services/policy-engine.service';
+import { POLICY_ENGINE } from '../../iam/interfaces/policy-engine.interface';
+import { IamRoleBindingEntity } from '../../iam/entities/iam-role-binding.entity';
+import { IamGroupEntity } from '../../iam/entities/iam-group.entity';
+import { AuthenticatedUser } from '../../auth/interfaces/authenticated-user.interface';
+import { IdentityRole } from '../../auth/entities/user.entity';
+
+/**
+ * Facts about this controller, each worth a regression test:
+ *
+ * 1. **there is no kubeconfig route.** A kubeconfig is the key to the whole
+ *    cluster and nobody downloads it — the router itself must not know the path;
+ * 2. **the deploy wizard's reads stay open to an editor.** They are why the
+ *    section gate sits on each route instead of on the class, so a class-level
+ *    decorator added later would show up here as a 403;
+ * 3. **the reads no caller needs are gated, and gated selectively.** Each one is
+ *    asserted twice — refused to an editor *and* answered to someone holding the
+ *    section — because a gate that refuses everybody is indistinguishable here
+ *    from a route that has been broken;
+ * 4. **there is no second inventory route.** Adoption's inventory lives on
+ *    `/adoption/inventory` behind its own token guard; the copy that used to sit
+ *    here had no caller and read metadata keys nothing writes;
+ * 5. **the two autoscale reads still answer an editor.** They have a live caller
+ *    the dashboard makes from a hand-written service, and closing them is a
+ *    pending decision — this test is what makes that decision visible.
+ */
+
+const CLUSTER = 'cluster-1';
+
+const EDITOR: AuthenticatedUser = {
+  userId: 'user-editor',
+  email: 'editor@flui.cloud',
+  roles: {},
+  role: IdentityRole.USER,
+  isAdmin: false,
+};
+
+/**
+ * Holds `cluster:manage` at global scope, which is what opens both the
+ * `infrastructure` and the `firewall` sections. Still not an admin: the point is
+ * that the gate is a section, not the boolean.
+ */
+const MANAGER: AuthenticatedUser = {
+  userId: 'user-manager',
+  email: 'manager@flui.cloud',
+  roles: {},
+  role: IdentityRole.USER,
+  isAdmin: false,
+};
+
+const globalBinding = (principalRef: string, role: string) => ({
+  principalType: 'user',
+  principalRef,
+  role,
+  scopeType: 'global',
+  scopeRef: null,
+  selector: null,
+});
+
+// Keyed by email, because that is what a `user` binding is matched on
+// (`PolicyEngineService.findBindingsFor` looks up `principal.email`).
+const BINDINGS: Record<string, unknown[]> = {
+  [EDITOR.email]: [globalBinding(EDITOR.email, 'editor')],
+  [MANAGER.email]: [globalBinding(MANAGER.email, 'manager')],
+};
+
+describe('clusters controller — the fence around the cluster key', () => {
+  let app: INestApplication;
+  let currentUser: AuthenticatedUser = EDITOR;
+
+  beforeAll(async () => {
+    const bindingsRepo = {
+      createQueryBuilder: () => {
+        const qb: Record<string, unknown> = {};
+        const chain = () => qb;
+        qb.where = chain;
+        qb.orWhere = chain;
+        qb.getMany = async () => BINDINGS[currentUser.email] ?? [];
+        return qb;
+      },
+    };
+
+    const moduleRef = await Test.createTestingModule({
+      controllers: [ClustersController],
+      providers: [
+        { provide: APP_GUARD, useClass: SectionAccessGuard },
+        { provide: POLICY_ENGINE, useClass: PolicyEngineService },
+        PolicyEngineService,
+        {
+          provide: getRepositoryToken(IamRoleBindingEntity),
+          useValue: bindingsRepo,
+        },
+        {
+          provide: getRepositoryToken(IamGroupEntity),
+          useValue: { find: async () => [] },
+        },
+        {
+          provide: ClustersService,
+          useValue: {
+            listClusters: async () => [{ id: CLUSTER, name: 'control' }],
+            getClusterNodes: async () => [
+              {
+                id: 'node-1',
+                serverName: 'control-master',
+                nodeType: 'master',
+                ipAddress: '10.0.0.1',
+              },
+            ],
+            checkResourceAvailability: async () => ({ available: true }),
+            getBuildResources: async () => ({ status: 'ok' }),
+          },
+        },
+        {
+          provide: FirewallsService,
+          useValue: {
+            getFirewallByClusterId: async () => ({
+              id: 'fw-1',
+              name: 'control',
+              provider: 'hetzner',
+              rules: [],
+              appliedToServerIds: [],
+              labels: {},
+              createdAt: new Date(),
+              updatedAt: new Date(),
+            }),
+          },
+        },
+        { provide: GrafanaDatasourceService, useValue: {} },
+        { provide: ClusterBillingService, useValue: {} },
+        { provide: ResourceProfilesService, useValue: {} },
+        { provide: KubernetesService, useValue: {} },
+        {
+          provide: ClusterAutoscaleService,
+          useValue: {
+            getDefaults: () => ({ cpuThreshold: 80 }),
+            getStatus: async () => ({ warning: 'NONE' }),
+          },
+        },
+        { provide: ClusterVNetService, useValue: {} },
+        { provide: ClusterScalingService, useValue: {} },
+        { provide: ClusterStorageService, useValue: {} },
+        {
+          provide: ClusterCapacityService,
+          useValue: { getPlan: async () => ({ candidates: [] }) },
+        },
+        {
+          provide: ClusterNodeScalingService,
+          useValue: { previewScaleNode: async () => ({ downtimeMinutes: 4 }) },
+        },
+        {
+          provide: OrphanVolumesService,
+          useValue: { scan: async () => [] },
+        },
+        { provide: ByosNodeJoinService, useValue: {} },
+        { provide: ByosVNetService, useValue: {} },
+      ],
+    }).compile();
+
+    app = moduleRef.createNestApplication();
+    app.use(
+      (req: { user: AuthenticatedUser }, _res: unknown, next: () => void) => {
+        req.user = currentUser;
+        next();
+      },
+    );
+    await app.init();
+  });
+
+  afterAll(async () => {
+    await app.close();
+  });
+
+  beforeEach(() => {
+    currentUser = EDITOR;
+  });
+
+  const http = () => request(app.getHttpServer());
+
+  it('has no route that hands out a kubeconfig', async () => {
+    const res = await http()
+      .get(`/infrastructure/clusters/${CLUSTER}/kubeconfig`)
+      .expect(404);
+    expect(res.body.message).toContain('Cannot GET');
+  });
+
+  it('still answers the reads the deploy wizard makes to an editor', async () => {
+    await http().get('/infrastructure/clusters').expect(200);
+    await http().get(`/infrastructure/clusters/${CLUSTER}/nodes`).expect(200);
+    await http()
+      .get(`/infrastructure/clusters/${CLUSTER}/resource-availability`)
+      .expect(200);
+  });
+
+  it('keeps the writes behind the infrastructure section', async () => {
+    const res = await http()
+      .post(`/infrastructure/clusters/${CLUSTER}/workers`)
+      .send({ count: 1 })
+      .expect(403);
+    expect(res.body.message).toContain('infrastructure');
+  });
+
+  /**
+   * The reads that had no caller. `:id/firewall` carries `firewall` rather than
+   * `infrastructure` because what it returns is a firewall — the same object its
+   * twin `GET /firewalls/cluster/:id` returns from behind that very section.
+   * Both sections are opened by `cluster:manage` at global scope today, so the
+   * choice costs nobody access; it decides which way this route moves if the two
+   * sections ever stop being gated by the same permission.
+   */
+  const GATED: ReadonlyArray<[string, string]> = [
+    ['/infrastructure/clusters/orphan-volumes', 'infrastructure'],
+    [`/infrastructure/clusters/${CLUSTER}/capacity-plan`, 'infrastructure'],
+    [
+      `/infrastructure/clusters/${CLUSTER}/nodes/node-1/scale/preview`,
+      'infrastructure',
+    ],
+    [`/infrastructure/clusters/${CLUSTER}/build-resources`, 'infrastructure'],
+    [`/infrastructure/clusters/${CLUSTER}/firewall`, 'firewall'],
+  ];
+
+  it.each(GATED)('refuses %s to an editor', async (path, section) => {
+    const res = await http().get(path).expect(403);
+    expect(res.body.message).toContain(section);
+  });
+
+  it.each(GATED)('answers %s to whoever holds the section', async (path) => {
+    currentUser = MANAGER;
+    await http().get(path).expect(200);
+  });
+
+  it('has no second inventory route', async () => {
+    const res = await http()
+      .get(`/infrastructure/clusters/${CLUSTER}/inventory`)
+      .expect(404);
+    expect(res.body.message).toContain('Cannot GET');
+  });
+
+  /**
+   * Deliberately still open, and this is the test that says so out loud. The
+   * dashboard calls both from `cluster-autoscale.service.ts` — a hand-written
+   * HttpClient service, invisible to a search by generated method name — and one
+   * of the call sites is the home pulse, which every authenticated person opens.
+   * If this turns red, someone gated them: that is a decision, and it needs the
+   * dashboard changed in the same move.
+   */
+  it('still answers the two autoscale reads to an editor', async () => {
+    await http().get('/infrastructure/clusters/autoscale/defaults').expect(200);
+    await http()
+      .get(`/infrastructure/clusters/${CLUSTER}/autoscale/status`)
+      .expect(200);
+  });
+});
