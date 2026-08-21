@@ -1,5 +1,9 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
 import { CatalogInstallerService } from '../../catalog/services/catalog-installer.service';
+import { ApplicationEntity } from '../../applications/entities/application.entity';
+import { ProjectsService } from '../../projects/projects.service';
 import { CatalogInstallRepository } from '../../catalog/repositories/catalog-install.repository';
 import { CatalogInstallStatus } from '../../catalog/enums/catalog-install-status.enum';
 import { SandboxTenantEntity } from '../entities/sandbox-tenant.entity';
@@ -26,6 +30,9 @@ export class SandboxSeedService {
   constructor(
     private readonly installer: CatalogInstallerService,
     private readonly installs: CatalogInstallRepository,
+    private readonly projects: ProjectsService,
+    @InjectRepository(ApplicationEntity)
+    private readonly applications: Repository<ApplicationEntity>,
     @Inject(SANDBOX_CONFIG) private readonly config: SandboxConfig,
   ) {}
 
@@ -34,7 +41,10 @@ export class SandboxSeedService {
       this.config.seedCatalogSlug,
       {
         clusterId: tenant.clusterId,
-        displayName: 'Live activity (seeded)',
+        // Says when it started, because that is the part a visitor would
+        // otherwise get wrong. It has been running for minutes, not for days —
+        // the records inside it are older than the process that is serving them.
+        displayName: 'Live activity (started for you)',
         // Off by default. A guest's workload on the control-plane node shares a
         // machine with the API, the database and every other tenancy, which is
         // the blast radius the whole fence exists to avoid — a real demo instance
@@ -82,5 +92,45 @@ export class SandboxSeedService {
 
     this.logger.warn(`Seed install ${installId} did not finish in time`);
     return false;
+  }
+
+  /**
+   * Put the seeded workload inside a project of the tenancy's own.
+   *
+   * Not decoration: Projects is a section of the product, and a guest who opens
+   * it to "No projects yet" is being shown an empty feature rather than a
+   * grouped one — the same defect as the empty application list, one screen
+   * further in. One project per tenancy also means the projection over
+   * `GET /projects` has something true to return.
+   *
+   * Failing here must not cost the tenancy: a guest with a running application
+   * and no project is a smaller loss than no tenancy at all.
+   */
+  async groupUnderProject(tenant: SandboxTenantEntity): Promise<void> {
+    try {
+      const apps = await this.applications.find({
+        where: { clusterId: tenant.clusterId, k8sNamespace: tenant.namespace },
+        select: { id: true },
+      });
+      if (apps.length === 0) return;
+
+      const project = await this.projects.create({
+        name: 'Demo',
+        description: 'Started with this area, and not from an empty database.',
+        color: '#3b82f6',
+      });
+      for (const app of apps) {
+        await this.projects.assignApp(project.id, app.id);
+      }
+      this.logger.log(
+        `Grouped ${apps.length} seeded applications of ${tenant.namespace} under project ${project.slug}`,
+      );
+    } catch (error) {
+      this.logger.warn(
+        `Could not group the seed of ${tenant.namespace} under a project: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
   }
 }

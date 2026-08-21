@@ -14,6 +14,15 @@ import {
   SandboxTenantState,
 } from '../entities/sandbox-tenant.entity';
 import { SANDBOX_CONFIG, SandboxConfig } from '../sandbox.config';
+import { SandboxCapacityService } from './sandbox-capacity.service';
+
+/**
+ * How many sweeps ending in the *same* error a tenancy gets before it stops
+ * being retried. The reaper runs every minute, so this is three minutes of
+ * proving the failure is not transient — long enough for a provider hiccup or
+ * a restarting API to pass, short enough that the log does not fill up.
+ */
+export const REAP_ATTEMPTS_BEFORE_HELP = 3;
 
 export interface ClaimResult {
   tenant: SandboxTenantEntity;
@@ -21,8 +30,13 @@ export interface ClaimResult {
 }
 
 /**
- * The reserve: keeping enough warm tenancies that a click assigns instead of
- * creating, and making sure every one of them dies on time.
+ * The tenancy table and the operations on it: handing one out, finding the ones
+ * that are past their deadline, and making sure every one of them dies on time.
+ *
+ * Warm tenancies exist so that a click *assigns* instead of *creating* — a
+ * build takes two minutes, and the entrance promises three seconds. How many to
+ * keep warm is not decided here and is not a setting; see
+ * {@link SandboxCapacityService}.
  *
  * Claiming is the one operation that must never be sloppy. Two visitors landing
  * in the same millisecond must not receive the same tenancy, so the claim is a
@@ -35,6 +49,7 @@ export class SandboxReserveService {
   constructor(
     @InjectRepository(SandboxTenantEntity)
     private readonly tenants: Repository<SandboxTenantEntity>,
+    private readonly capacity: SandboxCapacityService,
     @Inject(SANDBOX_CONFIG) private readonly config: SandboxConfig,
   ) {}
 
@@ -108,12 +123,40 @@ export class SandboxReserveService {
       }
     }
 
+    // Counted, not just refused. How often the door is closed is the one signal
+    // that says the buffer is sized too small, and it is invisible from the
+    // tenancy table: nobody who was turned away leaves a row behind.
+    this.capacity.recordFullRefusal();
     throw new ServiceUnavailableException({
       statusCode: 503,
       code: 'SANDBOX_FULL',
-      message:
-        'Every sandbox is taken right now. They are released continuously — try again in a few minutes.',
+      message: await this.whenToComeBack(),
     });
+  }
+
+  /**
+   * Two different "full", and telling them apart is the difference between a
+   * useful sentence and a brush-off.
+   *
+   * If the cluster still has room, one is already being built and the wait is a
+   * few minutes — say the number, because a visitor who knows it will wait.
+   * If the cluster is at its ceiling, nothing is being built and the wait is for
+   * somebody else to leave, which is hours; promising minutes there would be a
+   * lie that costs the visit anyway.
+   */
+  private async whenToComeBack(): Promise<string> {
+    try {
+      const { ceiling, live, warm, readySeconds } =
+        await this.capacity.snapshot();
+      if (ceiling > live + warm) {
+        const minutes = Math.max(1, Math.ceil(readySeconds / 60));
+        return `Every sandbox is taken right now. Another is being built — try again in about ${minutes} minutes.`;
+      }
+      return `This instance is running as many sandboxes as it can hold. They are released as their ${this.config.ttlHours} hours run out, so a slot opens through the day — try again later.`;
+    } catch {
+      // Never let the shape of the refusal depend on a working cluster read.
+      return 'Every sandbox is taken right now. They are released continuously — try again in a few minutes.';
+    }
   }
 
   /** Tenancies whose deadline has passed. The reaper's work list. */
@@ -168,6 +211,35 @@ export class SandboxReserveService {
     });
   }
 
+  /** Every tenancy the instance knows about, newest first. */
+  async listAll(limit = 200): Promise<SandboxTenantEntity[]> {
+    return this.tenants.find({
+      order: { createdAt: 'DESC' },
+      take: limit,
+    });
+  }
+
+  /**
+   * One tenancy, by id or by namespace. A namespace is what an operator has in
+   * front of them — in a log line, in a listing — so it is accepted here rather
+   * than translated by hand into an id.
+   */
+  async findOneByRef(ref: string): Promise<SandboxTenantEntity | null> {
+    const byNamespace = await this.tenants.findOne({
+      where: { namespace: ref },
+    });
+    if (byNamespace) return byNamespace;
+    // An id lookup on a non-uuid string is a database error, not a miss.
+    if (!/^[0-9a-f-]{36}$/i.test(ref)) return null;
+    return this.tenants.findOne({ where: { id: ref } });
+  }
+
+  async getById(id: string): Promise<SandboxTenantEntity> {
+    const found = await this.tenants.findOne({ where: { id } });
+    if (!found) throw new Error(`Sandbox tenancy ${id} no longer exists`);
+    return found;
+  }
+
   async countByState(): Promise<Record<SandboxTenantState, number>> {
     const rows = await this.tenants
       .createQueryBuilder('t')
@@ -182,18 +254,10 @@ export class SandboxReserveService {
       [SandboxTenantState.CLAIMED]: 0,
       [SandboxTenantState.EXPIRED]: 0,
       [SandboxTenantState.FAILED]: 0,
+      [SandboxTenantState.NEEDS_ATTENTION]: 0,
     };
     for (const row of rows) out[row.state] = Number(row.count);
     return out;
-  }
-
-  /** How many tenancies to build right now to refill the reserve. */
-  async missingFromReserve(): Promise<number> {
-    const counts = await this.countByState();
-    return Math.max(
-      0,
-      this.config.reserveSize - counts[SandboxTenantState.READY],
-    );
   }
 
   async createPending(clusterId: string): Promise<SandboxTenantEntity> {
@@ -245,10 +309,32 @@ export class SandboxReserveService {
     });
   }
 
+  /**
+   * Records a failed sweep, and decides whether it is still worth sweeping.
+   *
+   * The counter only counts *repeats*: a different error resets it, because a
+   * different failure means something moved and the next attempt is not the
+   * same attempt. Three identical ones — three minutes of the same line in the
+   * log — is a standing condition, not a flake, and no number of further
+   * retries will change it. The row parks in NEEDS_ATTENTION, out of the
+   * sweep, where the hourly report can see it.
+   */
   async markFailed(id: string, error: string): Promise<void> {
+    const message = error.slice(0, 2000);
+    const current = await this.tenants.findOne({
+      where: { id },
+      select: { id: true, lastError: true, reapAttempts: true },
+    });
+    const repeated = current?.lastError === message;
+    const attempts = repeated ? (current?.reapAttempts ?? 0) + 1 : 1;
+
     await this.tenants.update(id, {
-      state: SandboxTenantState.FAILED,
-      lastError: error.slice(0, 2000),
+      state:
+        attempts >= REAP_ATTEMPTS_BEFORE_HELP
+          ? SandboxTenantState.NEEDS_ATTENTION
+          : SandboxTenantState.FAILED,
+      lastError: message,
+      reapAttempts: attempts,
     });
   }
 

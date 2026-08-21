@@ -223,6 +223,9 @@ import { DbPitrController } from './controllers/db-pitr.controller';
       useClass: OwnerSecretConnectionResolver,
     },
   ],
-  exports: [DbQueryService],
+  // DbBackupService is exported for the sandbox, which copies a reference
+  // database into every new tenancy through the same logical dump and restore
+  // the console offers — rather than growing a second way to move a database.
+  exports: [DbQueryService, DbBackupService],
 })
 export class DatabaseConsoleModule {}

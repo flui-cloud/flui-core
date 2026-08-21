@@ -1,8 +1,12 @@
-import { Inject, Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { SandboxTenantEntity } from '../entities/sandbox-tenant.entity';
 import { SANDBOX_CONFIG, SandboxConfig } from '../sandbox.config';
+import { ProjectsService } from '../../projects/projects.service';
+import { SandboxBuildTimeline } from './sandbox-build-timeline';
+import { SandboxCapacityService } from './sandbox-capacity.service';
+import { SandboxHistoryService } from './sandbox-history.service';
 import { SandboxReserveService } from './sandbox-reserve.service';
 import { SandboxQuotaService } from './sandbox-quota.service';
 import { SandboxSeedService } from './sandbox-seed.service';
@@ -20,6 +24,8 @@ import { ApplicationEntity } from '../../applications/entities/application.entit
 import { ClusterEntity } from '../../infrastructure/clusters/entities/cluster.entity';
 import { KubernetesService } from '../../infrastructure/shared/services/kubernetes.service';
 import { EncryptionService } from '../../shared/encryption/services/encryption.service';
+import { AppEndpointService } from '../../dns/services/app-endpoint.service';
+import { AppEndpointReconciliationService } from '../../dns/services/app-endpoint-reconciliation.service';
 
 /**
  * Building a tenancy and taking it apart again.
@@ -36,8 +42,10 @@ export class SandboxTenantService {
 
   constructor(
     private readonly reserve: SandboxReserveService,
+    private readonly capacity: SandboxCapacityService,
     private readonly quota: SandboxQuotaService,
     private readonly seed: SandboxSeedService,
+    private readonly history: SandboxHistoryService,
     private readonly k8s: KubernetesService,
     private readonly encryption: EncryptionService,
     @Inject(IDENTITY_DIRECTORY)
@@ -51,9 +59,13 @@ export class SandboxTenantService {
     private readonly applications: Repository<ApplicationEntity>,
     @InjectRepository(ClusterEntity)
     private readonly clusters: Repository<ClusterEntity>,
+    private readonly projects: ProjectsService,
+    private readonly appEndpoints: AppEndpointService,
+    private readonly endpointReconciliation: AppEndpointReconciliationService,
   ) {}
 
   async provision(clusterId: string): Promise<SandboxTenantEntity> {
+    const timeline = new SandboxBuildTimeline();
     const tenant = await this.reserve.createPending(clusterId);
     try {
       const created = await this.directory.createUser({
@@ -83,6 +95,7 @@ export class SandboxTenantService {
         userId: user.id,
         idpUserId: created.id,
       });
+      timeline.mark('identity');
 
       // Two grants, deliberately separate. The first is the tenancy: everything
       // this guest makes, and nothing else. The second is the showcase: read-only
@@ -106,6 +119,7 @@ export class SandboxTenantService {
           selector: SHOWCASE_GRANT.selector,
         }),
       ]);
+      timeline.mark('grants');
 
       const kubeconfig = await this.kubeconfigFor(clusterId);
       await this.k8s.ensureNamespaceExists(kubeconfig, tenant.namespace, {
@@ -123,28 +137,51 @@ export class SandboxTenantService {
         kubeconfig,
         buildNoindexMiddleware(tenant.namespace),
       );
+      timeline.mark('namespace');
 
       // Readiness waits for the seed. A tenancy is only warm once there is
       // something running in it — that is the whole reason the reserve exists.
       const installId = await this.seed.seed({ ...tenant, userId: user.id });
+      timeline.mark('seed queued');
       const seeded = await this.seed.waitUntilSeeded(installId);
       if (!seeded) {
         throw new Error(
           `seed install ${installId} did not reach Running — tenancy not offered`,
         );
       }
+      timeline.mark('seed running');
+
+      // The seed leaves a database with about a minute of rows in it. This is
+      // where the tenancy stops looking newly born: a copy of what the
+      // reference instance has actually accumulated. Done here, on a tenancy
+      // nobody holds yet, rather than during the entrance.
+      await this.history.copyInto({ ...tenant, userId: user.id });
+      timeline.mark('history');
+
+      await this.seed.groupUnderProject(tenant);
+      timeline.mark('project');
 
       await this.reserve.markReady(tenant.id, {
         userId: user.id,
         idpUserId: created.id,
       });
-      this.logger.log(`Sandbox tenancy ${tenant.namespace} is ready`);
+      // Broken down on purpose: this is the number the buffer is sized against,
+      // and a single total would hide that one step is nearly all of it.
+      this.logger.log(
+        `Sandbox tenancy ${tenant.namespace} is ready — ${timeline}`,
+      );
+      // Back into the rule that decides how many to keep warm, so a seed that
+      // gets slower widens the buffer by itself instead of waiting for somebody
+      // to notice and edit a number.
+      this.capacity.recordBuild(timeline.totalMs / 1000);
       return tenant;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       await this.reserve.markFailed(tenant.id, message);
+      // The timeline goes out on the failure too: where a build dies is the
+      // thing that tells a failed provider apart from a slow one.
       this.logger.error(
-        `Provisioning ${tenant.namespace} failed: ${message}. The reaper will clean it up.`,
+        `Provisioning ${tenant.namespace} failed after ${timeline}: ${message}. The reaper will clean it up.`,
       );
       throw error;
     }
@@ -157,19 +194,57 @@ export class SandboxTenantService {
    */
   async reap(tenant: SandboxTenantEntity): Promise<void> {
     const failures: string[] = [];
+    const notes: string[] = [];
 
-    try {
-      const kubeconfig = await this.kubeconfigFor(tenant.clusterId);
-      await this.k8s.deleteNamespace(kubeconfig, tenant.namespace);
-    } catch (error) {
-      failures.push(`namespace: ${this.msg(error)}`);
+    const cluster = await this.clusters.findOne({
+      where: { id: tenant.clusterId },
+    });
+    if (!cluster) {
+      // The cluster this tenancy lived on is no longer registered. Its namespace
+      // went with it, and no credential exists on this side that could delete
+      // one now — so there is nothing here to retry. Recorded rather than
+      // silent, because "we did not check" and "there was nothing" are
+      // different sentences and only one of them is true.
+      notes.push(
+        `namespace: cluster ${tenant.clusterId} is no longer registered, nothing left to delete`,
+      );
+    } else {
+      try {
+        const kubeconfig = await this.kubeconfigFor(tenant.clusterId);
+        await this.k8s.deleteNamespace(kubeconfig, tenant.namespace);
+      } catch (error) {
+        failures.push(`namespace: ${this.msg(error)}`);
+      }
     }
 
     try {
+      await this.deleteEndpoints(tenant);
+    } catch (error) {
+      failures.push(`endpoints: ${this.msg(error)}`);
+    }
+
+    try {
+      // Read the grouping before the applications go: deleting them sets their
+      // projectId to NULL via the foreign key, and a project nothing points at
+      // is a "Demo" row that outlives every tenancy that ever had one.
+      const grouped = await this.applications.find({
+        where: { clusterId: tenant.clusterId, k8sNamespace: tenant.namespace },
+        select: { id: true, projectId: true },
+      });
+      const projectIds = new Set(
+        grouped
+          .map((app) => app.projectId)
+          .filter((id): id is string => typeof id === 'string'),
+      );
+
       await this.applications.delete({
         clusterId: tenant.clusterId,
         k8sNamespace: tenant.namespace,
       });
+
+      for (const projectId of projectIds) {
+        await this.projects.remove(projectId);
+      }
     } catch (error) {
       failures.push(`applications: ${this.msg(error)}`);
     }
@@ -180,6 +255,7 @@ export class SandboxTenantService {
       failures.push(`binding: ${this.msg(error)}`);
     }
 
+    let identityGone = true;
     try {
       const idpUserId =
         tenant.idpUserId ?? (await this.findIdpUserByEmail(tenant.email));
@@ -187,13 +263,33 @@ export class SandboxTenantService {
         await this.directory.deleteUser(idpUserId);
       }
     } catch (error) {
-      failures.push(`idp user: ${this.msg(error)}`);
+      // "Not found" is the outcome we wanted, reported as an error: the account
+      // is not there. Treating it as a failure would keep the local row — and
+      // the retry — forever, for a tenancy that is already fully gone.
+      if (error instanceof NotFoundException) {
+        this.logger.debug(
+          `Identity for ${tenant.namespace} was already gone: ${this.msg(error)}`,
+        );
+      } else {
+        identityGone = false;
+        failures.push(`idp user: ${this.msg(error)}`);
+      }
     }
 
-    try {
-      await this.users.delete({ email: tenant.email });
-    } catch (error) {
-      failures.push(`local user: ${this.msg(error)}`);
+    // The local row is the last thing to go, and only once the account it
+    // mirrors is actually gone. Deleting it first leaves a person in the
+    // identity provider with nothing on this side that remembers to remove them
+    // — a failure that leaves no trace to search for. Keeping the row costs a
+    // dead record until the next sweep retries it; losing it costs an account
+    // nobody knows about.
+    if (identityGone) {
+      try {
+        await this.users.delete({ email: tenant.email });
+      } catch (error) {
+        failures.push(`local user: ${this.msg(error)}`);
+      }
+    } else {
+      failures.push('local user: kept, the identity it mirrors is still there');
     }
 
     if (failures.length > 0) {
@@ -207,7 +303,43 @@ export class SandboxTenantService {
     }
 
     await this.reserve.markExpired(tenant.id);
-    this.logger.log(`Sandbox tenancy ${tenant.namespace} reaped`);
+    this.logger.log(
+      `Sandbox tenancy ${tenant.namespace} reaped` +
+        (notes.length > 0 ? ` (${notes.join('; ')})` : ''),
+    );
+  }
+
+  /**
+   * Reap one tenancy now, on somebody's say-so rather than on a deadline.
+   *
+   * Deliberately the same path the sweep takes: an area that is deleted some
+   * other way leaves the identity-provider account behind, which is a defect
+   * this code has already had once.
+   */
+  async expireNow(tenant: SandboxTenantEntity): Promise<SandboxTenantEntity> {
+    await this.reap(tenant);
+    return this.reserve.getById(tenant.id);
+  }
+
+  private async deleteEndpoints(tenant: SandboxTenantEntity): Promise<void> {
+    const endpoints = await this.appEndpoints.listByNamespace(
+      tenant.clusterId,
+      tenant.namespace,
+    );
+    const failures: string[] = [];
+
+    for (const endpoint of endpoints) {
+      try {
+        await this.endpointReconciliation.deleteEndpointResources(endpoint.id);
+        await this.appEndpoints.deleteEndpoint(endpoint.id);
+      } catch (error) {
+        failures.push(`${endpoint.fqdn}: ${this.msg(error)}`);
+      }
+    }
+
+    if (failures.length > 0) {
+      throw new Error(failures.join('; '));
+    }
   }
 
   /**

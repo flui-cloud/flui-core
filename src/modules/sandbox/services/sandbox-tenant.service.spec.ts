@@ -1,3 +1,4 @@
+import { NotFoundException } from '@nestjs/common';
 // Provisioning now reaches the catalogue installer, whose import graph pulls in
 // ESM-only packages ts-jest cannot transform. The suite drives stubs, so none of
 // them is ever constructed.
@@ -38,7 +39,16 @@ const tenantRow: SandboxTenantEntity = {
 
 const build = (
   breakages: Partial<
-    Record<'namespace' | 'idp' | 'apps' | 'seed', boolean>
+    Record<
+      | 'namespace'
+      | 'idp'
+      | 'idpMissing'
+      | 'apps'
+      | 'seed'
+      | 'endpoint'
+      | 'clusterGone',
+      boolean
+    >
   > = {},
 ) => {
   const calls: string[] = [];
@@ -51,6 +61,13 @@ const build = (
     markExpired: async () => marks.push({ kind: 'expired' }),
     markFailed: async (_id: string, detail: string) =>
       marks.push({ kind: 'failed', detail }),
+    getById: async (id: string) => ({
+      ...tenantRow,
+      id,
+      state: marks.some((m) => m.kind === 'failed')
+        ? SandboxTenantState.FAILED
+        : SandboxTenantState.EXPIRED,
+    }),
   };
   const quota = { apply: async () => calls.push('quota') };
   const seed = {
@@ -61,6 +78,13 @@ const build = (
     waitUntilSeeded: async () => {
       calls.push('wait-seed');
       return !breakages.seed;
+    },
+    groupUnderProject: async () => calls.push('group-project'),
+  };
+  const history = {
+    copyInto: async () => {
+      calls.push('copy-history');
+      return { copied: true, seconds: 1.7 };
     },
   };
   const k8s = {
@@ -86,6 +110,9 @@ const build = (
     },
     deleteUser: async (id: string) => {
       calls.push(`delete-idp:${id}`);
+      if (breakages.idpMissing) {
+        throw new NotFoundException(`User ${id} not found`);
+      }
       if (breakages.idp) throw new Error('idp refused');
     },
   };
@@ -103,19 +130,39 @@ const build = (
     delete: async () => calls.push('delete-binding'),
   };
   const applications = {
+    find: async () => [{ id: 'a1', projectId: 'proj-1' }],
     delete: async () => {
       calls.push('delete-apps');
       if (breakages.apps) throw new Error('fk violation');
     },
   };
+  const projects = {
+    remove: async (id: string) => calls.push(`delete-project:${id}`),
+  };
   const clusters = {
-    findOne: async () => ({ id: 'c1', kubeconfigEncrypted: 'enc' }),
+    findOne: async () =>
+      breakages.clusterGone ? null : { id: 'c1', kubeconfigEncrypted: 'enc' },
+  };
+  const appEndpoints = {
+    listByNamespace: async () => {
+      calls.push('list-endpoints');
+      return [{ id: 'ep-1', fqdn: 'guest.example.test' }];
+    },
+    deleteEndpoint: async (id: string) => calls.push(`delete-endpoint:${id}`),
+  };
+  const endpointReconciliation = {
+    deleteEndpointResources: async (id: string) => {
+      calls.push(`delete-endpoint-resources:${id}`);
+      if (breakages.endpoint) throw new Error('provider refused');
+    },
   };
 
   const service = new SandboxTenantService(
     reserve as never,
+    { recordBuild: () => undefined } as never,
     quota as never,
     seed as never,
+    history as never,
     k8s as never,
     encryption as never,
     directory as never,
@@ -124,6 +171,9 @@ const build = (
     bindings as never,
     applications as never,
     clusters as never,
+    projects as never,
+    appEndpoints as never,
+    endpointReconciliation as never,
   );
   return { service, calls, marks };
 };
@@ -142,6 +192,10 @@ describe('SandboxTenantService.provision', () => {
       'noindex',
       'seed',
       'wait-seed',
+      // After the seed runs and before anyone can hold the tenancy: the copy
+      // is what stops a freshly built area from looking newly born.
+      'copy-history',
+      'group-project',
     ]);
     expect(marks.map((m) => m.kind)).toContain('ready');
   });
@@ -176,7 +230,11 @@ describe('SandboxTenantService.reap', () => {
 
     expect(calls).toEqual([
       'delete-ns',
+      'list-endpoints',
+      'delete-endpoint-resources:ep-1',
+      'delete-endpoint:ep-1',
       'delete-apps',
+      'delete-project:proj-1',
       'delete-binding',
       'delete-idp:idp-1',
       'delete-user',
@@ -204,9 +262,54 @@ describe('SandboxTenantService.reap', () => {
     const { service, calls, marks } = build({ idp: true });
     await service.reap(tenantRow);
 
-    expect(calls).toContain('delete-user');
+    expect(calls).toContain('delete-apps');
+    expect(calls).toContain('delete-binding');
     expect(marks[0].kind).toBe('failed');
     expect(marks[0].detail).toContain('idp user');
+  });
+
+  /**
+   * The local row is the only thing on this side that remembers which
+   * identity-provider account belongs to this tenancy. Deleting it after a
+   * failed identity delete leaves a real person in the provider that nothing
+   * here will ever come back for — a leak with no trace to search by.
+   */
+  it('keeps the local user when the identity could not be deleted', async () => {
+    const { service, calls, marks } = build({ idp: true });
+    await service.reap(tenantRow);
+
+    expect(calls).not.toContain('delete-user');
+    expect(marks[0].detail).toContain('local user: kept');
+  });
+
+  // Reported as a failure, but it is the outcome: nothing to delete. Holding the
+  // local row for it would keep a fully-reaped tenancy retrying forever.
+  it('treats an identity that is already absent as gone', async () => {
+    const { service, calls, marks } = build({ idpMissing: true });
+    await service.reap(tenantRow);
+
+    expect(calls).toContain('delete-user');
+    expect(JSON.stringify(marks)).not.toContain('local user: kept');
+  });
+
+  // A project nothing points at is a "Demo" row that outlives every tenancy that
+  // ever had one — the Projects section fills up with the dead.
+  it('takes the tenancy\u2019s project with it', async () => {
+    const { service, calls } = build({});
+    await service.reap(tenantRow);
+
+    expect(calls).toContain('delete-project:proj-1');
+    expect(calls.indexOf('delete-apps')).toBeLessThan(
+      calls.indexOf('delete-project:proj-1'),
+    );
+  });
+
+  it('deletes the local user once the identity is really gone', async () => {
+    const { service, calls } = build({});
+    await service.reap(tenantRow);
+
+    expect(calls).toContain('delete-idp:idp-1');
+    expect(calls).toContain('delete-user');
   });
 
   it('still deletes the identity when the cluster cannot be reached', async () => {
@@ -224,5 +327,67 @@ describe('SandboxTenantService.reap', () => {
     expect(marks[0].kind).toBe('failed');
     expect(marks[0].detail).toContain('namespace');
     expect(marks[0].detail).toContain('applications');
+  });
+
+  it('keeps the endpoint handle when DNS cleanup fails and retries later', async () => {
+    const { service, calls, marks } = build({ endpoint: true });
+    await service.reap(tenantRow);
+
+    expect(calls).toContain('delete-endpoint-resources:ep-1');
+    expect(calls).not.toContain('delete-endpoint:ep-1');
+    expect(calls).toContain('delete-apps');
+    expect(marks[0]).toMatchObject({ kind: 'failed' });
+    expect(marks[0].detail).toContain('endpoints');
+  });
+});
+
+/**
+ * The seven rows that made this necessary: a tenancy whose cluster had been
+ * removed failed on the same missing kubeconfig every minute. There is nothing
+ * on the other side to delete — the namespace went with the cluster — so
+ * treating it as a failure is what kept them alive.
+ */
+describe('SandboxTenantService.reap, when the cluster is gone', () => {
+  it('finishes instead of failing on a namespace nothing can reach', async () => {
+    const { service, marks, calls } = build({ clusterGone: true });
+
+    await service.reap(tenantRow);
+
+    expect(calls).not.toContain('delete-ns');
+    expect(marks.map((m) => m.kind)).toContain('expired');
+    expect(marks.map((m) => m.kind)).not.toContain('failed');
+  });
+
+  // A cluster that is still registered but unreadable is a different sentence:
+  // it may work in a minute, so it stays a failure and stays in the sweep.
+  it('still fails when the cluster is there and the call does not work', async () => {
+    const { service, marks } = build({ namespace: true });
+
+    await service.reap(tenantRow);
+
+    expect(marks.map((m) => m.kind)).toContain('failed');
+  });
+});
+
+describe('SandboxTenantService.expireNow', () => {
+  // Whatever else changes, this must stay the sweep: an area removed some other
+  // way leaves the identity-provider account behind.
+  it('runs the same teardown the deadline would have run', async () => {
+    const { service, calls } = build();
+
+    const after = await service.expireNow(tenantRow);
+
+    expect(calls).toContain('delete-ns');
+    expect(calls).toContain('delete-idp:idp-1');
+    expect(calls).toContain('delete-binding');
+    expect(after.state).toBe(SandboxTenantState.EXPIRED);
+  });
+
+  it('reports the area as it stands when part of the teardown did not work', async () => {
+    const { service } = build({ idp: true });
+
+    const after = await service.expireNow(tenantRow);
+
+    expect(after.state).toBe(SandboxTenantState.FAILED);
   });
 });

@@ -16,8 +16,14 @@ export enum SandboxTenantState {
   CLAIMED = 'claimed',
   /** Past its deadline, or released early. The reaper owns it now. */
   EXPIRED = 'expired',
-  /** Something went wrong mid-provision or mid-reap; a human should look. */
+  /** Something went wrong mid-provision or mid-reap. The sweep retries it. */
   FAILED = 'failed',
+  /**
+   * The same failure, over and over. Retrying it again would only rewrite the
+   * same line in the log, so the row stops being swept and starts waiting for
+   * a person.
+   */
+  NEEDS_ATTENTION = 'needs_attention',
 }
 
 /**
@@ -78,6 +84,13 @@ export class SandboxTenantEntity {
 
   @Column({ type: 'text', nullable: true })
   lastError: string | null;
+
+  /**
+   * How many sweeps in a row ended in the error above. Reset the moment the
+   * error changes, because a different failure means something moved.
+   */
+  @Column({ type: 'int', default: 0 })
+  reapAttempts: number;
 
   @CreateDateColumn({ type: 'timestamptz' })
   createdAt: Date;

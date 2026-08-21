@@ -6,7 +6,6 @@ export interface SandboxConfig {
   /** Accepting new visitors. Off closes the door without touching who is inside. */
   acceptingClaims: boolean;
   clusterId: string | null;
-  reserveSize: number;
   ttlHours: number;
   ttlMs: number;
   /** Unclaimed tenancies older than this are torn down and rebuilt. */
@@ -15,6 +14,12 @@ export interface SandboxConfig {
   claimWindowMs: number;
   /** Catalogue entry installed into every tenancy as its seed. */
   seedCatalogSlug: string;
+  /**
+   * Where the long-running instance whose accumulated data every new tenancy
+   * receives a copy of lives. A namespace rather than an id, so standing one up
+   * is an ordinary install rather than a change to the API's environment.
+   */
+  historyNamespace: string;
   /** How long provisioning waits for that seed to reach Running. */
   seedTimeoutMs: number;
   /** After this, a tenancy still "provisioning" is treated as abandoned. */
@@ -44,13 +49,18 @@ export function loadSandboxConfig(
     // an incident must not also delete the tenancies of the people already in.
     acceptingClaims: env.SANDBOX_ACCEPTING_CLAIMS !== 'false',
     clusterId: env.SANDBOX_CLUSTER_ID ?? null,
-    reserveSize: num(env.SANDBOX_RESERVE_SIZE, 5),
+    // How many tenancies to keep warm is deliberately absent from here. A
+    // number in the environment cannot know how many visitors are arriving or
+    // how much room the cluster has left, and it was wrong in both directions:
+    // it paid for idle tenancies at night and ran dry under a rush. See
+    // SandboxCapacityService — the answer is arithmetic over two measurements.
     ttlHours,
     ttlMs: hours(ttlHours),
     recycleUnclaimedMs: hours(num(env.SANDBOX_RECYCLE_UNCLAIMED_HOURS, 48)),
     maxClaimsPerIp: num(env.SANDBOX_MAX_CLAIMS_PER_IP, 3),
     claimWindowMs: hours(num(env.SANDBOX_CLAIM_WINDOW_HOURS, 24)),
     seedCatalogSlug: env.SANDBOX_SEED_CATALOG_SLUG ?? 'flui-demo-activity',
+    historyNamespace: env.SANDBOX_HISTORY_NAMESPACE ?? 'flui-sandbox-reference',
     // A first install pulls four images cold; once the pre-pull DaemonSet has
     // warmed a node it is far quicker. This is a background refill, not a
     // visitor waiting, so the timeout is generous.
