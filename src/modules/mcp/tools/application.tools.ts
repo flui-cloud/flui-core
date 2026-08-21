@@ -15,6 +15,9 @@ import {
   ToolDef,
 } from './mcp-tool.util';
 
+/** Path-segment safety: an id from a model is input, not a literal. */
+const enc = encodeURIComponent;
+
 // Explicit sentinel so a weak model reads "no endpoint" rather than guessing one
 // exists (or deflecting to the CLI) when the url/internalUrl fields are simply absent.
 const NO_ENDPOINT = 'none — app has no endpoint configured';
@@ -253,10 +256,11 @@ export const APPLICATION_TOOLS: ToolDef[] = [
       'Get one application by id: status, config, image, replicas, access URL, and any in-flight deploy/rollback operation.',
     scope: MCP_SCOPE.APP_READ,
     inputSchema: { id: z.string() },
-    run: async (args, ctx) => {
-      const app = await ctx.services.apps.findById(args.id);
-      return ctx.services.apps.toResponseDtoWithOperation(app);
-    },
+    // Over the wire: `GET /applications/:id` carries
+    // `AppAccessGuard`, so naming another tenancy's application here is refused
+    // by the guard before the handler loads a row — which the in-process
+    // `apps.findById` could never do, since no guard sits on a service call.
+    run: (args, ctx) => ctx.api.get(`/applications/${enc(args.id)}`),
     // The full DTO (env, resources, metadata, revisions) is large; the model needs
     // identity, health, the real access link, and any in-flight operation.
     forModel: (data) => {
@@ -426,8 +430,14 @@ export const APPLICATION_TOOLS: ToolDef[] = [
       id: z.string(),
       replicas: z.number().int().min(0).max(20),
     },
+    // Over the wire — a write, so the guard derives `app:write` rather than
+    // `app:read`. Note what going over the wire does NOT do:
+    // `AppManagementController` carries no `AppAccessGuard`, so this route is
+    // as open as it was and the conversion inherits exactly that. Calling the
+    // API makes its protection reach the agent; it does not invent protection
+    // the API does not have.
     run: (args, ctx) =>
-      ctx.services.management.updateReplicas(args.id, {
+      ctx.api.patch(`/applications/${enc(args.id)}/replicas`, {
         replicas: args.replicas,
       }),
     forModel: runtimeView,

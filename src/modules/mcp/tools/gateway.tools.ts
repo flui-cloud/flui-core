@@ -8,6 +8,9 @@ import {
   ToolDef,
 } from './mcp-tool.util';
 
+/** Path-segment safety: an id from a model is input, not a literal. */
+const enc = encodeURIComponent;
+
 const minRole = z.enum(['viewer', 'editor', 'manager']);
 
 const rateLimitShape = {
@@ -44,10 +47,18 @@ export const GATEWAY_TOOLS: ToolDef[] = [
       id: z.string().optional(),
       clusterId: z.string().optional(),
     },
+    // Over the wire. The per-application branch lands
+    // on a controller carrying `AppAccessGuard`; the cluster-wide branch is the
+    // read-only global view, gated as the API gates it. `forModel` below is
+    // untouched and still trims the payload — the projection is applied to
+    // whatever `run` returns, and an HTTP body of the same DTO is the same
+    // shape the service returned.
     run: async (args, ctx) => {
-      if (args.id) return ctx.services.gateway.listRoutes(args.id);
+      if (args.id) {
+        return ctx.api.get(`/applications/${enc(args.id)}/gateway/routes`);
+      }
       const clusterId = await resolveClusterId(ctx, args.clusterId);
-      return ctx.services.gateway.listClusterRoutes(clusterId);
+      return ctx.api.get(`/clusters/${enc(clusterId)}/gateway/routes`);
     },
     forModel: (data) => {
       const routes = (data as Array<Record<string, unknown>>) ?? [];
@@ -117,12 +128,19 @@ export const GATEWAY_TOOLS: ToolDef[] = [
       } else if (args.sso !== undefined || args.minRole !== undefined) {
         auth = { sso: args.sso ?? true, minRole: args.minRole };
       }
-      return ctx.services.gateway.setPolicy(args.id, args.endpointId, {
-        path: args.path,
-        auth,
-        rateLimit: args.clearRateLimit ? null : toRateLimit(args.rateLimit),
-        allowIps: args.clearAllowIps ? null : args.allowIps,
-      });
+      // Over the wire: a write on one application,
+      // behind `AppAccessGuard`, which derives `app:write` for a PATCH. An
+      // omitted field stays omitted through JSON, so "unchanged" still means
+      // unchanged and an explicit null still clears.
+      return ctx.api.patch(
+        `/applications/${enc(args.id)}/gateway/routes/${enc(args.endpointId)}`,
+        {
+          path: args.path,
+          auth,
+          rateLimit: args.clearRateLimit ? null : toRateLimit(args.rateLimit),
+          allowIps: args.clearAllowIps ? null : args.allowIps,
+        },
+      );
     },
   }),
   defineTool({
