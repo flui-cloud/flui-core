@@ -5,6 +5,7 @@ import { CatalogInstallerService } from '../../catalog/services/catalog-installe
 import { ApplicationService } from '../../applications/services/application.service';
 import { ApplicationDeployService } from '../../applications/services/application-deploy.service';
 import { AppManagementService } from '../../applications/services/app-management.service';
+import { AppConfigService } from '../../applications/services/app-config.service';
 import { ScheduledJobsService } from '../../applications/services/scheduled-jobs.service';
 import { GatewayService } from '../../applications/services/gateway.service';
 import { ApplicationReleaseService } from '../../applications/services/application-release.service';
@@ -18,6 +19,7 @@ import { LokiQueryService } from '../../observability/services/loki-query.servic
 import { ApplicationTrafficService } from '../../observability/services/application-traffic.service';
 import { AlertEventsService } from '../../observability/services/alert-events.service';
 import { ClustersService } from '../../infrastructure/clusters/clusters.service';
+import { ClusterDnsZoneService } from '../../dns/services/cluster-dns-zone.service';
 import { InfrastructureOperationsService } from '../../infrastructure/operations/infrastructure-operations.service';
 import { PodDebugService } from '../../scaling/services/pod-debug.service';
 import { BackupPoliciesService } from '../../backups/services/backup-policies.service';
@@ -32,7 +34,15 @@ import { MailSuppressionService } from '../../mail/services/mail-suppression.ser
 import { CatalogInstallStatus } from '../../catalog/enums/catalog-install-status.enum';
 import { McpAuditRepository } from '../repositories/mcp-audit.repository';
 import { McpScope, SCOPE_TIER } from '../constants/mcp-scopes';
+import type { ServerContext } from '@modelcontextprotocol/server';
+import {
+  InputRequiredResult,
+  McpRequestRound,
+  isInputRequired,
+  readRound,
+} from '../protocol/mrtr';
 import { describeError } from '../../shared/utils/error.util';
+import { McpApiCaller, McpApiError } from '../services/mcp-api.client';
 
 /** A tool result in MCP's content shape. */
 export interface ToolResult {
@@ -49,6 +59,7 @@ export interface McpServices {
   deploy: ApplicationDeployService;
   sourceDeploy: ApplicationSourceDeployService;
   management: AppManagementService;
+  appConfig: AppConfigService;
   scheduledJobs: ScheduledJobsService;
   gateway: GatewayService;
   releases: ApplicationReleaseService;
@@ -61,6 +72,7 @@ export interface McpServices {
   traffic: ApplicationTrafficService;
   alertEvents: AlertEventsService;
   clusters: ClustersService;
+  clusterDnsZone: ClusterDnsZoneService;
   operations: InfrastructureOperationsService;
   podDebug: PodDebugService;
   backupPolicies: BackupPoliciesService;
@@ -88,7 +100,28 @@ export interface McpToolContext {
   allowDestructive: boolean;
   audit: McpAuditRepository;
   services: McpServices;
+  /**
+   * The Flui API, called over HTTP as the caller's own principal.
+   *
+   * A converted tool uses this and NOT `services`: the guards are decorations on
+   * the controllers, so a service call reached in process walks past every one
+   * of them while a real request cannot. The caller is already bound to the
+   * credential the inbound request carried — no tool body ever sees a token, and
+   * none is minted.
+   *
+   * Conversion is per tool, so both fields are populated while the catalog
+   * is still mixed.
+   */
+  api: McpApiCaller;
   surface: ToolSurface;
+  /**
+   * What the current round of a multi-round-trip call carried (MCP 2026-07-28).
+   * Named after the SDK's own `ctx.mcpReq`, and now filled from it: the package
+   * lifts `inputResponses`/`requestState` off the wire and hands them to the
+   * handler. Absent on a first call, and on the assistant surface, which has no
+   * MCP request at all.
+   */
+  mcpReq?: McpRequestRound;
 }
 
 /**
@@ -323,10 +356,18 @@ export function runTool(
   ctx: McpToolContext,
   def: ToolDef,
   args: unknown,
-): Promise<ToolResult> {
-  return runGated(ctx, def.name, def.scope, async () => {
-    const data = await def.run(args as never, ctx);
-    return def.forModel ? def.forModel(data) : data;
+  sdkCtx?: ServerContext,
+): Promise<ToolResult | InputRequiredResult> {
+  // The round is read per call, not per connection: a retry carrying
+  // inputResponses is a different round of the same conversation, and nothing
+  // about the principal or its scopes changes with it.
+  const scoped: McpToolContext = {
+    ...ctx,
+    mcpReq: readRound(sdkCtx?.mcpReq),
+  };
+  return runGated(scoped, def.name, def.scope, async () => {
+    const data = await def.run(args as never, scoped);
+    return def.forModel && !isInputRequired(data) ? def.forModel(data) : data;
   });
 }
 
@@ -339,7 +380,7 @@ export async function runGated(
   tool: string,
   scope: McpScope,
   fn: () => Promise<unknown>,
-): Promise<ToolResult> {
+): Promise<ToolResult | InputRequiredResult> {
   if (!ctx.scopes.has(scope)) {
     await ctx.audit.record({
       userId: ctx.user.userId,
@@ -348,7 +389,14 @@ export async function runGated(
       allowed: false,
       error: 'missing scope',
     });
-    return errorResult(`Refused: missing required scope '${scope}'.`);
+    // Named as a GRANT problem, because the other refusal an agent meets on
+    // this surface — the one the API's own guards raise — is a PERMISSION
+    // problem, and an agent that cannot tell them apart tells the user the
+    // wrong thing. This one means "the tool was never handed to you"; the other
+    // means "you hold the tool but not this resource".
+    return errorResult(
+      `Refused: missing required scope '${scope}'. This is a GRANT problem, not an access-control one: the agent credential in use does not carry that scope, so no resource will make this call work. Ask for the scope to be granted; do not retry meanwhile.`,
+    );
   }
 
   if (SCOPE_TIER[scope] === 'destructive' && !ctx.allowDestructive) {
@@ -372,14 +420,29 @@ export async function runGated(
       scope,
       allowed: true,
     });
-    return jsonResult(data);
+    // An input-required return is handed back untouched, which is the whole
+    // point of the migration: the 2026-07-28 codec renders it — `resultType`,
+    // the embedded requests, the server identity in `_meta` — and `isError`
+    // never appears, because waiting for a person is a state and an agent that
+    // reads a failure retries. On a 2025-era request the SDK's own legacy shim
+    // takes it from here; neither path is ours to re-render.
+    return isInputRequired(data) ? data : jsonResult(data);
   } catch (error) {
-    const message = describeError(error);
+    // A refusal that came back from the API is not a generic failure and must
+    // not read like one. `describeError` would flatten it to "[403] Not allowed
+    // to app:read on application 'x'", which loses the two things the agent
+    // acts on: that this is the guard and not the scope, and that retrying is
+    // pointless. `agentMessage` carries both.
+    const message =
+      error instanceof McpApiError ? error.agentMessage : describeError(error);
     await ctx.audit.record({
       userId: ctx.user.userId,
       tool,
       scope,
-      allowed: true,
+      // An access refusal from a guard is not "the tool ran": the scope let it
+      // through, the resource did not. Recorded as denied so the audit tells
+      // the two refusals apart the same way the agent does.
+      allowed: !(error instanceof McpApiError && error.isAccessRefusal),
       error: message,
     });
     return errorResult(message);

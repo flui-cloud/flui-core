@@ -7,6 +7,7 @@ import { CatalogModule } from '../catalog/catalog.module';
 import { ApplicationsModule } from '../applications/applications.module';
 import { ObservabilityModule } from '../observability/observability.module';
 import { ClustersModule } from '../infrastructure/clusters/clusters.module';
+import { DnsModule } from '../dns/dns.module';
 import { InfrastructureOperationsModule } from '../infrastructure/operations/infrastructure-operations.module';
 import { TemplatesModule } from '../templates/templates.module';
 import { RepositoriesModule } from '../repositories/repositories.module';
@@ -37,6 +38,7 @@ import { AssistantController } from './controllers/assistant.controller';
     ApplicationsModule,
     ObservabilityModule,
     ClustersModule,
+    DnsModule,
     InfrastructureOperationsModule,
     TemplatesModule,
     RepositoriesModule,

@@ -6,12 +6,14 @@ import { SPEC_TOOLS } from './spec.tools';
 import { APPLICATION_TOOLS } from './application.tools';
 import { OBSERVABILITY_TOOLS } from './observability.tools';
 import { INFRASTRUCTURE_TOOLS } from './infrastructure.tools';
+import { DNS_TOOLS } from './dns.tools';
 import { REPO_TOOLS } from './repo.tools';
 import { BACKUP_TOOLS } from './backup.tools';
 import { MIGRATION_TOOLS } from './migration.tools';
 import { CRON_TOOLS } from './cron.tools';
 import { GATEWAY_TOOLS } from './gateway.tools';
 import { MAIL_TOOLS } from './mail.tools';
+import { VARIABLE_TOOLS } from './variables.tools';
 
 /**
  * The single source of truth for Flui tools. Consumed by the MCP server (external
@@ -21,6 +23,7 @@ export const ALL_TOOLS: ToolDef[] = [
   ...CATALOG_TOOLS,
   ...SPEC_TOOLS,
   ...INFRASTRUCTURE_TOOLS,
+  ...DNS_TOOLS,
   ...APPLICATION_TOOLS,
   ...OBSERVABILITY_TOOLS,
   ...REPO_TOOLS,
@@ -29,6 +32,7 @@ export const ALL_TOOLS: ToolDef[] = [
   ...CRON_TOOLS,
   ...GATEWAY_TOOLS,
   ...MAIL_TOOLS,
+  ...VARIABLE_TOOLS,
 ];
 
 export function findTool(name: string): ToolDef | undefined {

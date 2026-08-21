@@ -15,7 +15,7 @@ import {
   ApiTags,
 } from '@nestjs/swagger';
 import { ConfigService } from '@nestjs/config';
-import { Response } from 'express';
+import { Request as ExpressRequest, Response } from 'express';
 import { AuthenticatedUser } from '../../auth/interfaces/authenticated-user.interface';
 import { describeError } from '../../shared/utils/error.util';
 import { AssistantService } from '../services/assistant.service';
@@ -27,8 +27,9 @@ import { ChatCompletionRequestDto } from '../dto/chat-completion-request.dto';
 import { AgentRequestDto } from '../dto/agent-request.dto';
 import { AssistantRecommendationsDto } from '../dto/assistant-recommendations.dto';
 import { AgentStreamEvent } from '../interfaces/agent-events';
+import { credentialFromRequest } from '../../mcp/services/mcp-api.client';
 
-interface AuthenticatedRequest {
+interface AuthenticatedRequest extends ExpressRequest {
   user: AuthenticatedUser;
 }
 
@@ -94,7 +95,7 @@ export class AssistantController {
     @Request() req: AuthenticatedRequest,
     @Body() dto: AgentRequestDto,
   ) {
-    return this.agent.run(req.user, dto);
+    return this.agent.run(req.user, dto, undefined, credentialFromRequest(req));
   }
 
   @Post('agent/stream')
@@ -119,7 +120,12 @@ export class AssistantController {
       res.write(`data: ${JSON.stringify(event)}\n\n`);
 
     try {
-      const result = await this.agent.run(req.user, dto, send);
+      const result = await this.agent.run(
+        req.user,
+        dto,
+        send,
+        credentialFromRequest(req),
+      );
       send({ type: 'done', result });
     } catch (error) {
       if (error instanceof InferenceProviderException) {

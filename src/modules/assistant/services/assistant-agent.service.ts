@@ -6,6 +6,7 @@ import { CatalogInstallerService } from '../../catalog/services/catalog-installe
 import { ApplicationService } from '../../applications/services/application.service';
 import { ApplicationDeployService } from '../../applications/services/application-deploy.service';
 import { AppManagementService } from '../../applications/services/app-management.service';
+import { AppConfigService } from '../../applications/services/app-config.service';
 import { ScheduledJobsService } from '../../applications/services/scheduled-jobs.service';
 import { GatewayService } from '../../applications/services/gateway.service';
 import { ApplicationReleaseService } from '../../applications/services/application-release.service';
@@ -19,6 +20,7 @@ import { LokiQueryService } from '../../observability/services/loki-query.servic
 import { ApplicationTrafficService } from '../../observability/services/application-traffic.service';
 import { AlertEventsService } from '../../observability/services/alert-events.service';
 import { ClustersService } from '../../infrastructure/clusters/clusters.service';
+import { ClusterDnsZoneService } from '../../dns/services/cluster-dns-zone.service';
 import { InfrastructureOperationsService } from '../../infrastructure/operations/infrastructure-operations.service';
 import { PodDebugService } from '../../scaling/services/pod-debug.service';
 import { BackupPoliciesService } from '../../backups/services/backup-policies.service';
@@ -32,6 +34,10 @@ import { MailSendService } from '../../mail/services/mail-send.service';
 import { MailSuppressionService } from '../../mail/services/mail-suppression.service';
 import { collectHosts, findUnverifiedUrls } from './url-guard.util';
 import { McpScopeResolver } from '../../mcp/services/mcp-scope.resolver';
+import {
+  ForwardedCredential,
+  McpApiClient,
+} from '../../mcp/services/mcp-api.client';
 import { McpAuditRepository } from '../../mcp/repositories/mcp-audit.repository';
 import { SCOPE_TIER } from '../../mcp/constants/mcp-scopes';
 import {
@@ -103,6 +109,7 @@ export class AssistantAgentService {
     private readonly apps: ApplicationService,
     private readonly deploy: ApplicationDeployService,
     private readonly management: AppManagementService,
+    private readonly appConfig: AppConfigService,
     private readonly releases: ApplicationReleaseService,
     private readonly sourceDeploy: ApplicationSourceDeployService,
     private readonly templates: TemplatesService,
@@ -114,6 +121,7 @@ export class AssistantAgentService {
     private readonly traffic: ApplicationTrafficService,
     private readonly alertEvents: AlertEventsService,
     private readonly clusters: ClustersService,
+    private readonly clusterDnsZone: ClusterDnsZoneService,
     private readonly operations: InfrastructureOperationsService,
     private readonly podDebug: PodDebugService,
     private readonly backupPolicies: BackupPoliciesService,
@@ -128,6 +136,7 @@ export class AssistantAgentService {
     private readonly scheduledJobs: ScheduledJobsService,
     private readonly gateway: GatewayService,
     private readonly config: ConfigService,
+    private readonly api: McpApiClient,
   ) {}
 
   private destructiveEnabled(): boolean {
@@ -138,10 +147,11 @@ export class AssistantAgentService {
     user: AuthenticatedUser,
     dto: AgentRequestDto,
     emit?: AgentEmitter,
+    credential: ForwardedCredential = {},
   ): Promise<AgentResult> {
     const { endpoint } = await this.inference.resolveEndpoint(dto);
     const model = await this.inference.resolveModel(dto, endpoint);
-    const ctx = this.buildContext(user);
+    const ctx = this.buildContext(user, credential);
     const approved = new Set(dto.approvedToolCallIds ?? []);
     const conversation: ChatCompletionMessage[] = dto.messages.map((m) => ({
       role: m.role,
@@ -666,9 +676,15 @@ export class AssistantAgentService {
     return ops;
   }
 
-  private buildContext(user: AuthenticatedUser): McpToolContext {
+  private buildContext(
+    user: AuthenticatedUser,
+    credential: ForwardedCredential,
+  ): McpToolContext {
     return {
       user,
+      // Same rule as the MCP surface: a converted tool talks to the API as the
+      // person driving the chat, on the credential their own request carried.
+      api: this.api.for(credential),
       scopes: this.scopes.resolve(user),
       // Destructive ops require BOTH server-wide enablement (MCP_ALLOW_DESTRUCTIVE) and,
       // when enabled, the per-action pending_action confirmation. Disabled by default:
@@ -682,6 +698,7 @@ export class AssistantAgentService {
         apps: this.apps,
         deploy: this.deploy,
         management: this.management,
+        appConfig: this.appConfig,
         releases: this.releases,
         sourceDeploy: this.sourceDeploy,
         templates: this.templates,
@@ -693,6 +710,7 @@ export class AssistantAgentService {
         traffic: this.traffic,
         alertEvents: this.alertEvents,
         clusters: this.clusters,
+        clusterDnsZone: this.clusterDnsZone,
         operations: this.operations,
         podDebug: this.podDebug,
         backupPolicies: this.backupPolicies,

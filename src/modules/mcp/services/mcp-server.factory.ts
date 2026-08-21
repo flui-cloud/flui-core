@@ -1,12 +1,13 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { McpServer } from '@modelcontextprotocol/server';
 import { AuthenticatedUser } from '../../auth/interfaces/authenticated-user.interface';
 import { CatalogService } from '../../catalog/services/catalog.service';
 import { CatalogInstallerService } from '../../catalog/services/catalog-installer.service';
 import { ApplicationService } from '../../applications/services/application.service';
 import { ApplicationDeployService } from '../../applications/services/application-deploy.service';
 import { AppManagementService } from '../../applications/services/app-management.service';
+import { AppConfigService } from '../../applications/services/app-config.service';
 import { ScheduledJobsService } from '../../applications/services/scheduled-jobs.service';
 import { GatewayService } from '../../applications/services/gateway.service';
 import { ApplicationReleaseService } from '../../applications/services/application-release.service';
@@ -20,6 +21,7 @@ import { LokiQueryService } from '../../observability/services/loki-query.servic
 import { ApplicationTrafficService } from '../../observability/services/application-traffic.service';
 import { AlertEventsService } from '../../observability/services/alert-events.service';
 import { ClustersService } from '../../infrastructure/clusters/clusters.service';
+import { ClusterDnsZoneService } from '../../dns/services/cluster-dns-zone.service';
 import { InfrastructureOperationsService } from '../../infrastructure/operations/infrastructure-operations.service';
 import { PodDebugService } from '../../scaling/services/pod-debug.service';
 import { BackupPoliciesService } from '../../backups/services/backup-policies.service';
@@ -33,6 +35,7 @@ import { MailSendService } from '../../mail/services/mail-send.service';
 import { MailSuppressionService } from '../../mail/services/mail-suppression.service';
 import { McpAuditRepository } from '../repositories/mcp-audit.repository';
 import { McpScopeResolver } from './mcp-scope.resolver';
+import { ForwardedCredential, McpApiClient } from './mcp-api.client';
 import {
   McpToolContext,
   isExecutable,
@@ -43,6 +46,8 @@ import { ALL_TOOLS } from '../tools/tool-registry';
 
 export const MCP_SERVER_NAME = 'flui';
 export const MCP_SERVER_VERSION = '0.1.0';
+export const MCP_SERVER_INSTRUCTIONS =
+  'Flui: deploy and operate applications on your own clusters. Tools are gated by the scopes of the principal whose token you are using.';
 
 /**
  * Builds a stateless MCP server scoped to one authenticated principal. Tools are
@@ -55,12 +60,14 @@ export class McpServerFactory {
   constructor(
     private readonly resolver: McpScopeResolver,
     private readonly audit: McpAuditRepository,
+    private readonly api: McpApiClient,
     private readonly config: ConfigService,
     private readonly catalog: CatalogService,
     private readonly installer: CatalogInstallerService,
     private readonly apps: ApplicationService,
     private readonly deploy: ApplicationDeployService,
     private readonly management: AppManagementService,
+    private readonly appConfig: AppConfigService,
     private readonly releases: ApplicationReleaseService,
     private readonly sourceDeploy: ApplicationSourceDeployService,
     private readonly templates: TemplatesService,
@@ -72,6 +79,7 @@ export class McpServerFactory {
     private readonly traffic: ApplicationTrafficService,
     private readonly alertEvents: AlertEventsService,
     private readonly clusters: ClustersService,
+    private readonly clusterDnsZone: ClusterDnsZoneService,
     private readonly operations: InfrastructureOperationsService,
     private readonly podDebug: PodDebugService,
     private readonly backupPolicies: BackupPoliciesService,
@@ -87,11 +95,26 @@ export class McpServerFactory {
     private readonly gateway: GatewayService,
   ) {}
 
-  build(user: AuthenticatedUser, isSandbox = false): McpServer {
-    const server = new McpServer({
-      name: MCP_SERVER_NAME,
-      version: MCP_SERVER_VERSION,
-    });
+  build(
+    user: AuthenticatedUser,
+    credential: ForwardedCredential,
+    isSandbox = false,
+  ): McpServer {
+    const server = new McpServer(
+      { name: MCP_SERVER_NAME, version: MCP_SERVER_VERSION },
+      {
+        // `server/discover` (mandatory from 2026-07-28, which drops the
+        // `initialize` handshake) is answered by the SDK from these two
+        // fields plus the revisions it actually serves. Nothing here names a
+        // revision: the day the package moves, the discovery document moves
+        // with it instead of repeating a date somebody typed.
+        instructions: MCP_SERVER_INSTRUCTIONS,
+        // An assertion, not a default: only tools are registered and nothing on
+        // this server ever publishes a change event, so the list never changes
+        // under a client that cached it.
+        capabilities: { tools: { listChanged: false } },
+      },
+    );
 
     const ctx: McpToolContext = {
       user,
@@ -99,6 +122,10 @@ export class McpServerFactory {
       allowDestructive:
         this.config.get<string>('MCP_ALLOW_DESTRUCTIVE') === 'true',
       surface: 'mcp',
+      // Bound once per request to the credential that arrived with it. The
+      // token never reaches a tool body: what tools get is a caller that
+      // already speaks as the principal.
+      api: this.api.for(credential),
       audit: this.audit,
       services: {
         catalog: this.catalog,
@@ -106,6 +133,7 @@ export class McpServerFactory {
         apps: this.apps,
         deploy: this.deploy,
         management: this.management,
+        appConfig: this.appConfig,
         releases: this.releases,
         sourceDeploy: this.sourceDeploy,
         templates: this.templates,
@@ -117,6 +145,7 @@ export class McpServerFactory {
         traffic: this.traffic,
         alertEvents: this.alertEvents,
         clusters: this.clusters,
+        clusterDnsZone: this.clusterDnsZone,
         operations: this.operations,
         podDebug: this.podDebug,
         backupPolicies: this.backupPolicies,
@@ -145,7 +174,7 @@ export class McpServerFactory {
           description: def.description,
           inputSchema: toolInputSchema(def.inputSchema),
         },
-        (args) => runTool(ctx, def, args),
+        (args, sdkCtx) => runTool(ctx, def, args, sdkCtx),
       );
     }
 
