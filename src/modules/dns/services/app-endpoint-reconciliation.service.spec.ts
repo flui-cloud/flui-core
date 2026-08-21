@@ -27,7 +27,7 @@ describe('AppEndpointReconciliationService.writePrimaryRecord', () => {
     ttl: 300,
   };
 
-  function build(dnsProvider: Record<string, jest.Mock>) {
+  function build(dnsProvider: Record<string, jest.Mock>, sandbox = false) {
     const factory = {
       getDnsProviderOrFail: jest.fn().mockReturnValue(dnsProvider),
     };
@@ -46,6 +46,7 @@ describe('AppEndpointReconciliationService.writePrimaryRecord', () => {
       null as never,
       null as never,
       null as never,
+      { exists: jest.fn().mockResolvedValue(sandbox) } as never,
     );
     return service;
   }
@@ -195,5 +196,235 @@ describe('AppEndpointReconciliationService.writePrimaryRecord', () => {
     expect(provider.updateRecord).toHaveBeenCalledWith(
       expect.objectContaining({ recordId: staleRecord.recordId }),
     );
+  });
+
+  it('references noindex only for endpoints in a sandbox tenancy', async () => {
+    const endpoint = {
+      clusterId: 'cluster-1',
+      k8sNamespace: 'user-guest-abc123',
+    };
+    const resolve = (service: AppEndpointReconciliationService) =>
+      (
+        service as unknown as {
+          sandboxNoindexMiddlewareRef: (
+            value: typeof endpoint,
+          ) => Promise<string | null>;
+        }
+      ).sandboxNoindexMiddlewareRef(endpoint);
+
+    await expect(resolve(build(defaults(), true))).resolves.toBe(
+      'user-guest-abc123-sandbox-noindex@kubernetescrd',
+    );
+    await expect(resolve(build(defaults(), false))).resolves.toBeNull();
+  });
+});
+
+describe('AppEndpointReconciliationService.deleteEndpointResources', () => {
+  function build(deleteRecord: jest.Mock) {
+    const endpoint = {
+      id: 'endpoint-1',
+      clusterId: 'cluster-1',
+      fqdn: 'guest.example.test',
+      k8sNamespace: 'user-guest-abc123',
+      k8sServiceName: 'guest-svc',
+      endpointType: 'public',
+      certificateRequired: false,
+      gatewayConfig: null,
+      dnsRecordId: 'guest/A:192.0.2.10',
+      dnsRecordType: 'A',
+      clusterDnsZone: {
+        dnsZone: {
+          dnsProvider: 'hetzner',
+          providerZoneId: 'zone-1',
+          zoneName: 'example.test',
+        },
+      },
+    };
+    const appEndpoints = {
+      getEndpoint: jest.fn().mockResolvedValue(endpoint),
+      clearDnsRecord: jest.fn().mockResolvedValue(undefined),
+    };
+    const service = new AppEndpointReconciliationService(
+      {
+        findOne: jest
+          .fn()
+          .mockResolvedValue({ id: 'cluster-1', kubeconfigEncrypted: 'enc' }),
+      } as never,
+      {
+        deleteResource: jest.fn().mockResolvedValue(undefined),
+        getResource: jest.fn().mockResolvedValue(null),
+        patchKubeconfigServer: jest.fn().mockReturnValue('kubeconfig'),
+      } as never,
+      { decrypt: jest.fn().mockReturnValue('kubeconfig') } as never,
+      {
+        getDnsProviderOrFail: jest.fn().mockReturnValue({ deleteRecord }),
+      } as never,
+      null as never,
+      appEndpoints as never,
+      null as never,
+      null as never,
+      null as never,
+      null as never,
+      null as never,
+      {
+        fanOutDeleteToReplicas: jest.fn().mockResolvedValue(undefined),
+      } as never,
+      { allMiddlewareNames: jest.fn().mockReturnValue([]) } as never,
+      null as never,
+    );
+    return { service, appEndpoints };
+  }
+
+  it('clears the persisted DNS handle only after provider deletion succeeds', async () => {
+    const deleteRecord = jest.fn().mockResolvedValue(undefined);
+    const { service, appEndpoints } = build(deleteRecord);
+
+    await expect(
+      service.deleteEndpointResources('endpoint-1'),
+    ).resolves.toBeUndefined();
+    expect(deleteRecord).toHaveBeenCalledWith('zone-1', 'guest/A:192.0.2.10');
+    expect(appEndpoints.clearDnsRecord).toHaveBeenCalledWith('endpoint-1');
+  });
+
+  it('fails teardown and preserves the DNS handle when the provider refuses', async () => {
+    const deleteRecord = jest
+      .fn()
+      .mockRejectedValue(new Error('provider down'));
+    const { service, appEndpoints } = build(deleteRecord);
+
+    await expect(service.deleteEndpointResources('endpoint-1')).rejects.toThrow(
+      'provider down',
+    );
+    expect(appEndpoints.clearDnsRecord).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * A per-app A record for a name a zone wildcard already answers for is the same
+ * answer, published the slow way: a brand-new name takes about a minute to
+ * become resolvable, and that minute lands on the screen with the link to the
+ * application on it.
+ */
+describe('AppEndpointReconciliationService.reconcileDnsRecord', () => {
+  const ZONE_ID = 'zone-1';
+  const IP = '109.123.252.6';
+
+  const wildcard = (value = IP): DnsRecordInfo => ({
+    recordId: 'wildcard-record',
+    zoneId: ZONE_ID,
+    type: DnsRecordType.A,
+    name: '*.control-cluster',
+    value,
+    ttl: 300,
+  });
+
+  function build(records: DnsRecordInfo[]) {
+    const createRecord = jest
+      .fn()
+      .mockImplementation(async (c: Record<string, unknown>) => ({
+        ...c,
+        recordId: 'new-record',
+      }));
+    const dnsProvider = {
+      getRecord: jest.fn().mockResolvedValue(null),
+      listRecords: jest.fn().mockResolvedValue(records),
+      createRecord,
+      updateRecord: jest.fn(),
+    };
+    const service = new AppEndpointReconciliationService(
+      null as never,
+      null as never,
+      null as never,
+      { getDnsProviderOrFail: () => dnsProvider } as never,
+      null as never,
+      null as never,
+      null as never,
+      null as never,
+      null as never,
+      null as never,
+      null as never,
+      { fanOutRecordToReplicas: jest.fn() } as never,
+      null as never,
+      { exists: jest.fn().mockResolvedValue(false) } as never,
+    );
+    return { service, createRecord };
+  }
+
+  const reconcile = (
+    service: AppEndpointReconciliationService,
+    fqdn = 'demo-app.control-cluster.dawit.blog',
+  ) =>
+    (
+      service as unknown as {
+        reconcileDnsRecord: (...a: unknown[]) => Promise<DnsRecordInfo>;
+      }
+    ).reconcileDnsRecord(
+      { id: 'ep-1', fqdn, dnsRecordId: null, dnsRecordType: 'A' },
+      {
+        dnsZone: {
+          providerZoneId: ZONE_ID,
+          zoneName: 'dawit.blog',
+          dnsProvider: 'hetzner',
+          recordTtlSeconds: 300,
+        },
+      },
+      { id: 'cluster-1', masterIpAddress: IP },
+    );
+
+  it('writes no per-app record when the zone wildcard already answers', async () => {
+    const { service, createRecord } = build([wildcard()]);
+
+    const result = await reconcile(service);
+
+    expect(createRecord).not.toHaveBeenCalled();
+    expect(result.value).toBe(IP);
+  });
+
+  /**
+   * Teardown deletes what an endpoint owns. Handing back the wildcard's id
+   * would have the first tenancy to expire delete the record every other
+   * tenancy is resolving through.
+   */
+  it('does not claim the wildcard as the endpoint’s own record', async () => {
+    const { service } = build([wildcard()]);
+
+    const result = await reconcile(service);
+
+    expect(result.recordId).toBe('');
+  });
+
+  it('still writes a record when the wildcard points somewhere else', async () => {
+    const { service, createRecord } = build([wildcard('203.0.113.9')]);
+
+    await reconcile(service);
+
+    expect(createRecord).toHaveBeenCalled();
+  });
+
+  // `*.control-cluster` answers for `app.control-cluster`, never for
+  // `a.b.control-cluster` — one label, which is all a DNS wildcard matches.
+  it('does not treat a wildcard as covering a name two labels deep', async () => {
+    const { service, createRecord } = build([wildcard()]);
+
+    await reconcile(service, 'app.team.control-cluster.dawit.blog');
+
+    expect(createRecord).toHaveBeenCalled();
+  });
+
+  // A wildcard answers for names *under* the zone, never for the zone itself.
+  it('does not treat a root wildcard as covering the zone apex', async () => {
+    const { service, createRecord } = build([{ ...wildcard(), name: '*' }]);
+
+    await reconcile(service, 'dawit.blog');
+
+    expect(createRecord).toHaveBeenCalled();
+  });
+
+  it('writes a record when the zone has no wildcard at all', async () => {
+    const { service, createRecord } = build([]);
+
+    await reconcile(service);
+
+    expect(createRecord).toHaveBeenCalled();
   });
 });

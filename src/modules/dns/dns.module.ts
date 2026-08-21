@@ -18,6 +18,7 @@ import { SanCertificateEntity } from './entities/san-certificate.entity';
 import { ClusterEntity } from '../infrastructure/clusters/entities/cluster.entity';
 import { ApplicationEntity } from '../applications/entities/application.entity';
 import { ClusterAuthzInstallEntity } from '../authz/entities/cluster-authz-install.entity';
+import { SandboxTenantEntity } from '../sandbox/entities/sandbox-tenant.entity';
 import { ClusterAuthzInstallRepository } from '../authz/repositories/cluster-authz-install.repository';
 
 import { DnsZoneService } from './services/dns-zone.service';
@@ -63,6 +64,7 @@ import { ClusterDnsGateway } from './gateway/cluster-dns.gateway';
       ClusterEntity,
       ApplicationEntity,
       ClusterAuthzInstallEntity,
+      SandboxTenantEntity,
     ]),
     BullModule.registerQueue({ name: SAN_CERTIFICATE_QUEUE }),
     ProvidersModule,

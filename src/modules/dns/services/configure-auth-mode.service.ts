@@ -17,6 +17,7 @@ import { AppManagementService } from '../../applications/services/app-management
 import { ConfigureAuthModeDto } from '../dto/configure-auth-mode.dto';
 import { ConfigureAuthModeResultDto } from '../dto/configure-auth-mode-result.dto';
 import { ApiKeyService } from '../../auth/services/api-key.service';
+import { SERVICE_IDENTITY } from '../../auth/constants/service-identities';
 
 @Injectable()
 export class ConfigureAuthModeService {
@@ -70,11 +71,12 @@ export class ConfigureAuthModeService {
     // Generate or reuse API key for CLI M2M access (local mode only)
     let apiKey: string | undefined;
     if (dto.authMode === 'local') {
-      apiKey = await this.apiKeyService.getActiveKey('cli-service-account');
+      const identity = SERVICE_IDENTITY.CLI_SERVICE_ACCOUNT;
+      apiKey = await this.apiKeyService.getActiveKey(identity.keyName);
       if (!apiKey) {
         const generated = await this.apiKeyService.generateApiKey(
-          'cli-service-account',
-          'service-account',
+          identity.keyName,
+          identity.id,
         );
         apiKey = generated.plaintext;
         this.logger.log('Generated new CLI service account API key');

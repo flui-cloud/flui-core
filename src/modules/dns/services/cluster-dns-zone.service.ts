@@ -34,6 +34,10 @@ import { CloudProvider } from '../../providers/enums/cloud-provider.enum';
 import { DnsProvider } from '../../providers/enums/dns-provider.enum';
 import { ConfigureIssuerDto } from '../dto/configure-issuer.dto';
 import { ClusterDnsGateway } from '../gateway/cluster-dns.gateway';
+import {
+  ClusterWildcardStatus,
+  DnsZoneReconciliationService,
+} from './dns-zone-reconciliation.service';
 import { InternalHostingMissingRequirement } from '../constants/internal-hosting-error';
 import {
   AcmeChallengeInfoDto,
@@ -89,6 +93,7 @@ export class ClusterDnsZoneService {
     private readonly encryptionService: EncryptionService,
     private readonly acmeCertificateService: AcmeCertificateService,
     private readonly clusterDnsGateway: ClusterDnsGateway,
+    private readonly dnsZoneReconciliationService: DnsZoneReconciliationService,
     @Inject('ICredentialProvider')
     private readonly credentialProvider: ICredentialProvider,
   ) {}
@@ -236,6 +241,12 @@ export class ClusterDnsZoneService {
 
     try {
       await this.applyWildcardIssuersIfConfigured(clusterId);
+      // The DNS half of the same idea, in the same place. The certificate has
+      // always been a wildcard here — one cert for every application on the
+      // cluster — while the records stayed per-application, so each new app
+      // published a name of its own and waited about a minute for a resolver
+      // to see it. The record covers the same set the certificate does.
+      await this.publishClusterWildcardRecord(assignment);
       await this.refreshAssignmentStatuses(clusterId);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -250,6 +261,79 @@ export class ClusterDnsZoneService {
     }
 
     return await this.getById(assignmentId);
+  }
+
+  /** Whether `*.<cluster>` is published on this assignment's zone. */
+  async getClusterWildcardStatus(
+    assignmentId: string,
+  ): Promise<ClusterWildcardStatus> {
+    const assignment = await this.getById(assignmentId);
+    if (!assignment.dnsZone) {
+      return {
+        status: 'unavailable',
+        fqdn: null,
+        hostnamePattern: null,
+        expectedValue: null,
+        actualValue: null,
+      };
+    }
+    return this.dnsZoneReconciliationService.inspectClusterWildcard(
+      assignment,
+      assignment.dnsZone,
+    );
+  }
+
+  /**
+   * Publish it on request, for an assignment that already exists.
+   *
+   * The full reconcile does this too, but it also re-applies credential
+   * Secrets and issuers and takes minutes on a cold cluster. An operator who
+   * can see that one record is missing should be able to ask for that one
+   * record.
+   */
+  async publishClusterWildcard(
+    assignmentId: string,
+  ): Promise<ClusterWildcardStatus> {
+    const assignment = await this.getById(assignmentId);
+    if (!assignment.dnsZone) {
+      throw new BadRequestException(
+        `Assignment ${assignmentId} has no DNS zone to publish into`,
+      );
+    }
+    return this.dnsZoneReconciliationService.ensureClusterWildcardRecord(
+      assignment,
+      assignment.dnsZone,
+    );
+  }
+
+  /**
+   * Publish `*.<cluster>` on the assigned zone, so every application this
+   * cluster hosts resolves the moment it exists instead of a minute later.
+   *
+   * Best-effort by design: a zone assignment whose issuers are in place is
+   * usable without this, only slower per application. Failing the assignment
+   * over an optimisation would trade a working cluster for a fast one.
+   */
+  private async publishClusterWildcardRecord(
+    assignment: ClusterDnsZoneEntity,
+  ): Promise<void> {
+    try {
+      const full = await this.clusterDnsZoneRepository.findOne({
+        where: { id: assignment.id },
+        relations: ['cluster', 'dnsZone'],
+      });
+      if (!full?.dnsZone) return;
+      await this.dnsZoneReconciliationService.ensureClusterWildcardRecord(
+        full,
+        full.dnsZone,
+      );
+    } catch (err) {
+      this.logger.warn(
+        `Could not publish the cluster wildcard record for assignment ${assignment.id}: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+    }
   }
 
   /**

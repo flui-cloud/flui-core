@@ -33,6 +33,7 @@ import { SyncWebDomainDto } from '../dto/sync-web-domain.dto';
 import { WebDomainSyncResultDto } from '../dto/web-domain-sync-result.dto';
 import { AssignDnsZoneDto } from '../dto/assign-dns-zone.dto';
 import { ClusterDnsZoneResponseDto } from '../dto/cluster-dns-zone-response.dto';
+import { ClusterWildcardResponseDto } from '../dto/cluster-wildcard-response.dto';
 import { ConfigureIssuerDto } from '../dto/configure-issuer.dto';
 import { ConfigureSystemIngressDto } from '../dto/configure-system-ingress.dto';
 import { SystemDnsStatusResponseDto } from '../dto/system-dns-status-response.dto';
@@ -189,7 +190,9 @@ export class ClusterDnsZoneController {
     summary: 'Reconcile one DNS zone assignment',
     description:
       'Re-applies the cluster state the zone needs (DNS-01 credential Secrets ' +
-      'and the wildcard ClusterIssuer solvers covering every assigned zone) ' +
+      'and the wildcard ClusterIssuer solvers covering every assigned zone), ' +
+      'publishes the `*.<cluster>` record so applications resolve the moment ' +
+      'they are created rather than a minute later, ' +
       'and recomputes the reconciliation status of the assignment. Returns ' +
       'immediately with the assignment in RECONCILING — the cluster work runs ' +
       'in the background. Poll this assignment until it leaves RECONCILING: ' +
@@ -206,6 +209,37 @@ export class ClusterDnsZoneController {
     const assignment =
       await this.clusterDnsZoneService.startReconcileAssignment(assignmentId);
     return this.clusterDnsZoneService.toResponseDto(assignment);
+  }
+
+  @Get(':assignmentId/wildcard')
+  @ApiOperation({
+    summary: 'Whether one record covers every application on this cluster',
+    description:
+      'Applications are published at `<slug>.<cluster>.<zone>` and all point at the same address, so a single `*.<cluster>` record covers every one of them — including the ones that do not exist yet. That is what makes a newly deployed application reachable immediately instead of waiting for a brand-new name to propagate. Read live from the DNS provider, so a record removed by hand shows as missing here.',
+  })
+  @ApiParam({ name: 'clusterId', description: 'Cluster ID' })
+  @ApiParam({ name: 'assignmentId', description: 'Assignment ID' })
+  @ApiResponse({ status: 200, type: ClusterWildcardResponseDto })
+  async getWildcard(
+    @Param('assignmentId') assignmentId: string,
+  ): Promise<ClusterWildcardResponseDto> {
+    return this.clusterDnsZoneService.getClusterWildcardStatus(assignmentId);
+  }
+
+  @Post(':assignmentId/wildcard')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Publish the record that covers every application on this cluster',
+    description:
+      'Creates `*.<cluster>` pointing at the cluster. Never overwrites: a wildcard already pointing somewhere else is left exactly as it is and comes back as `foreign` — those applications keep getting their own per-app records, which still work, only slower. A full zone reconcile does this as well; this is the narrow version, for when that one record is the only thing missing.',
+  })
+  @ApiParam({ name: 'clusterId', description: 'Cluster ID' })
+  @ApiParam({ name: 'assignmentId', description: 'Assignment ID' })
+  @ApiResponse({ status: 200, type: ClusterWildcardResponseDto })
+  async publishWildcard(
+    @Param('assignmentId') assignmentId: string,
+  ): Promise<ClusterWildcardResponseDto> {
+    return this.clusterDnsZoneService.publishClusterWildcard(assignmentId);
   }
 
   @Get('issuers')

@@ -22,6 +22,50 @@ export interface ExpectedDnsRecord {
   ttl: number;
 }
 
+/**
+ * Whether the one record that makes a cluster's applications resolve instantly
+ * is in place — and, when it is not, which of the reasons it is.
+ *
+ * `foreign` and `absent` are deliberately different: one is somebody else's
+ * record that Flui will not touch, the other is work waiting to be done. An
+ * interface that showed both as "not configured" would invite an operator to
+ * press a button that is going to refuse.
+ */
+export interface ClusterWildcardStatus {
+  status: 'published' | 'absent' | 'foreign' | 'unknown' | 'unavailable';
+  /** `*.<cluster>.<zone>`, or null before the cluster has an address. */
+  fqdn: string | null;
+  /** The same thing said the way a person reads it. */
+  hostnamePattern: string | null;
+  expectedValue: string | null;
+  actualValue: string | null;
+}
+
+/**
+ * The one record that covers every application a cluster publishes under a
+ * zone: `*.<cluster>` → the cluster's address.
+ *
+ * Derived, never configured, because the hostname rule it mirrors is itself
+ * derived — `generateFqdn` builds `<slug>.<cluster.name>.<zone>` and nothing
+ * else. Scoped to the cluster's own subdomain rather than the zone root, so it
+ * can only ever answer for names Flui would have created itself: a zone shared
+ * with a website and a mail server is untouched outside `*.<cluster>`.
+ */
+export function clusterWildcardRecord(
+  assignment: ClusterDnsZoneEntity,
+  zone: DnsZoneEntity,
+): ExpectedDnsRecord | null {
+  const clusterName = assignment.cluster?.name;
+  const value = assignment.cluster?.masterIpAddress;
+  if (!clusterName || !value) return null;
+  return {
+    name: `*.${clusterName}`,
+    type: DnsRecordType.A,
+    value,
+    ttl: zone.recordTtlSeconds,
+  };
+}
+
 /** What a zone SHOULD contain, derived purely from Flui state (no provider labels). */
 export interface ZoneReconcilePlan {
   zoneName: string;
@@ -156,6 +200,101 @@ export class DnsZoneReconciliationService {
     return 'noop';
   }
 
+  /**
+   * Publish the cluster's wildcard on the zone's own provider.
+   *
+   * Needed as its own call because the full zone reconcile only runs for zones
+   * that have a replica — a single-provider zone never gets one, which is most
+   * of them. This is the narrow version: one record, no orphan sweep.
+   *
+   * **Creates, never overwrites.** A wildcard already pointing somewhere else
+   * is somebody's decision, and taking it over would silently redirect whatever
+   * it was serving. Flui says so and leaves it; the endpoint reconciliation
+   * then keeps writing per-app records, because a wildcard with a different
+   * value is not coverage.
+   */
+  async ensureClusterWildcardRecord(
+    assignment: ClusterDnsZoneEntity,
+    zone: DnsZoneEntity,
+  ): Promise<ClusterWildcardStatus> {
+    const state = await this.inspectClusterWildcard(assignment, zone);
+    if (state.status !== 'absent') {
+      if (state.status === 'foreign') {
+        this.logger.warn(
+          `[dns-wildcard] ${state.fqdn} already points at ${state.actualValue}, not ${state.expectedValue} — leaving it alone; applications on this cluster keep their own records`,
+        );
+      }
+      return state;
+    }
+
+    const wanted = clusterWildcardRecord(assignment, zone);
+    if (!wanted) return state;
+
+    const provider = this.dnsProviderFactory.getDnsProviderOrFail(
+      zone.dnsProvider,
+    );
+    await provider.createRecord({
+      zoneId: zone.providerZoneId,
+      type: wanted.type,
+      name: wanted.name,
+      value: wanted.value,
+      ttl: wanted.ttl,
+    });
+    this.logger.log(
+      `[dns-wildcard] published ${state.fqdn} → ${wanted.value}; applications on this cluster resolve the moment they are created`,
+    );
+    return { ...state, status: 'published' };
+  }
+
+  /**
+   * The same look, without writing anything — what the interface shows.
+   *
+   * Read live from the provider rather than from a column: a record somebody
+   * removed by hand would otherwise keep showing as published, and this is
+   * precisely the screen where a person goes to find out whether it is.
+   */
+  async inspectClusterWildcard(
+    assignment: ClusterDnsZoneEntity,
+    zone: DnsZoneEntity,
+  ): Promise<ClusterWildcardStatus> {
+    const wanted = clusterWildcardRecord(assignment, zone);
+    if (!wanted) {
+      return {
+        status: 'unavailable',
+        fqdn: null,
+        hostnamePattern: null,
+        expectedValue: null,
+        actualValue: null,
+      };
+    }
+
+    const fqdn = `${wanted.name}.${zone.zoneName}`;
+    const base = {
+      fqdn,
+      hostnamePattern: fqdn.replace('*.', '<application>.'),
+      expectedValue: wanted.value,
+    };
+
+    try {
+      const provider = this.dnsProviderFactory.getDnsProviderOrFail(
+        zone.dnsProvider,
+      );
+      const records = await provider.listRecords(zone.providerZoneId);
+      const existing = records.find(
+        (r) => r.name === wanted.name && r.type === wanted.type,
+      );
+      if (!existing) return { ...base, status: 'absent', actualValue: null };
+      return existing.value === wanted.value
+        ? { ...base, status: 'published', actualValue: existing.value }
+        : { ...base, status: 'foreign', actualValue: existing.value };
+    } catch (err) {
+      this.logger.warn(
+        `[dns-wildcard] could not read ${zone.zoneName}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      return { ...base, status: 'unknown', actualValue: null };
+    }
+  }
+
   async deleteRecordByNameType(
     provider: IDnsProvider,
     providerZoneId: string,
@@ -184,6 +323,22 @@ export class DnsZoneReconciliationService {
     for (const assignment of assignments) {
       const masterIp = assignment.cluster?.masterIpAddress;
       if (masterIp) clusterMasterIps.add(masterIp);
+
+      // The cluster's own wildcard, before any endpoint is considered.
+      //
+      // Every application on this cluster is published at
+      // `<slug>.<cluster>.<zone>` — one label under the cluster's subdomain,
+      // always at the same address. One record covers all of them, including
+      // the ones that do not exist yet, which is what makes a new application
+      // reachable the moment it is deployed rather than a minute later.
+      //
+      // It is also what keeps the sweep below honest: without this the record
+      // is an A record pointing at a cluster master IP that no endpoint claims,
+      // which is exactly the definition of an orphan it deletes.
+      const wildcard = clusterWildcardRecord(assignment, zone);
+      if (wildcard) {
+        expected.set(`${wildcard.name}|${wildcard.type}`, wildcard);
+      }
 
       for (const endpoint of assignment.endpoints ?? []) {
         if (endpoint.hostnameMode === HostnameMode.IP) continue;

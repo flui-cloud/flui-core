@@ -31,6 +31,8 @@ import { DnsZoneReconciliationService } from './dns-zone-reconciliation.service'
 import { resolveRecordName } from '../utils/resolve-record-name.util';
 import { GatewayMiddlewareCompilerService } from './gateway-middleware-compiler.service';
 import { describeError } from '../../shared/utils/error.util';
+import { SandboxTenantEntity } from '../../sandbox/entities/sandbox-tenant.entity';
+import { sandboxNoindexMiddlewareRef } from '../../sandbox/constants/sandbox-noindex';
 
 // A full reconcile — including the DNS-propagation gate — stays well under a
 // minute; anything holding the lock for this long is a crashed process, not work.
@@ -55,6 +57,8 @@ export class AppEndpointReconciliationService {
     private readonly clusterDnsGateway: ClusterDnsGateway,
     private readonly dnsZoneReconciliationService: DnsZoneReconciliationService,
     private readonly gatewayCompiler: GatewayMiddlewareCompilerService,
+    @InjectRepository(SandboxTenantEntity)
+    private readonly sandboxTenants: Repository<SandboxTenantEntity>,
   ) {}
 
   private resolveCertProvider(
@@ -256,7 +260,9 @@ export class AppEndpointReconciliationService {
           endpoint.clusterDnsZone,
           cluster,
         );
-        dnsRecordId = result.recordId;
+        // Empty when the zone's wildcard already answers for this name: there
+        // is no per-app record, and nothing for teardown to delete.
+        dnsRecordId = result.recordId || undefined;
         dnsRecordValue = result.value;
       } else if (isIpHostname) {
         this.logger.log(
@@ -570,6 +576,7 @@ export class AppEndpointReconciliationService {
 
     if (endpoint.dnsRecordId && endpoint.clusterDnsZone) {
       const dnsZone = endpoint.clusterDnsZone.dnsZone;
+      let primaryDeleteError: unknown;
       try {
         const dnsProvider = this.dnsProviderFactory.getDnsProviderOrFail(
           dnsZone.dnsProvider,
@@ -581,7 +588,9 @@ export class AppEndpointReconciliationService {
         this.logger.log(
           `Deleted DNS record ${endpoint.dnsRecordId} for ${endpoint.fqdn}`,
         );
+        await this.appEndpointService.clearDnsRecord(endpoint.id);
       } catch (error) {
+        primaryDeleteError = error;
         this.logger.warn(
           `Failed to delete DNS record for endpoint ${endpointId}: ${error.message}`,
         );
@@ -593,6 +602,10 @@ export class AppEndpointReconciliationService {
         resolveRecordName(endpoint.fqdn, dnsZone.zoneName),
         endpoint.dnsRecordType,
       );
+
+      if (primaryDeleteError) {
+        throw primaryDeleteError;
+      }
     }
   }
 
@@ -965,6 +978,26 @@ export class AppEndpointReconciliationService {
     const recordName = resolveRecordName(endpoint.fqdn, dnsZone.zoneName);
     const ttl = dnsZone.recordTtlSeconds;
 
+    // A wildcard the zone already publishes answers for this name today, with
+    // no propagation to wait for. Writing a per-app record next to it would be
+    // a second way of saying the same thing, and the *slow* way: a brand new
+    // name takes about a minute to become resolvable, and that minute is spent
+    // on the one screen that matters — the link to the application.
+    const covered = await this.wildcardCoveringRecord(
+      dnsZone,
+      recordName,
+      endpoint.dnsRecordType,
+      recordValue,
+    );
+    if (covered) {
+      this.logger.log(
+        `${endpoint.fqdn} is already covered by ${covered.name} in ${dnsZone.zoneName} → ${covered.value} — no per-app record needed`,
+      );
+      // Deliberately without the wildcard's own id: this endpoint does not own
+      // that record, and teardown deletes what an endpoint owns.
+      return { ...covered, recordId: '' };
+    }
+
     const primary = await this.writePrimaryRecord(
       endpoint,
       dnsZone,
@@ -1054,6 +1087,60 @@ export class AppEndpointReconciliationService {
   }
 
   /** Best-effort: a provider that can't list records falls back to creating. */
+  /**
+   * The zone's own wildcard, when it already answers for this name with exactly
+   * the value we would have written.
+   *
+   * Two conditions, and both matter. **One label**, because that is all a DNS
+   * wildcard matches: `*.control-cluster` answers for `app.control-cluster` and
+   * not for `a.b.control-cluster`. **The same value**, because a wildcard
+   * pointing somewhere else is not coverage — it is a different answer, and
+   * skipping the per-app record then would send the application's visitors to
+   * the wrong host. When both hold, the per-app record is redundant by
+   * construction: with it or without it, the name resolves to the same address.
+   *
+   * Nothing to configure. Publish the wildcard on the zone and Flui stops
+   * writing per-app records; remove it and they come back on the next
+   * reconcile.
+   */
+  private async wildcardCoveringRecord(
+    dnsZone: DnsZoneEntity,
+    recordName: string,
+    recordType: DnsRecordType,
+    recordValue: string,
+  ): Promise<DnsRecordInfo | null> {
+    // `*.example.com` answers for `www.example.com` and never for
+    // `example.com` itself. The apex has no wildcard that can cover it.
+    if (recordName === '@') return null;
+
+    const labels = recordName.split('.');
+    const wildcardName = ['*', ...labels.slice(1)].join('.');
+
+    try {
+      const dnsProvider = this.dnsProviderFactory.getDnsProviderOrFail(
+        dnsZone.dnsProvider,
+      );
+      const records = await dnsProvider.listRecords(dnsZone.providerZoneId);
+      return (
+        records.find(
+          (r) =>
+            r.name === wildcardName &&
+            r.type === recordType &&
+            r.value === recordValue,
+        ) ?? null
+      );
+    } catch (error) {
+      // A provider we cannot read is not a zone without a wildcard, but the
+      // safe assumption is the one that still publishes a working name.
+      this.logger.warn(
+        `Could not check ${dnsZone.zoneName} for a wildcard covering ${recordName}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+      return null;
+    }
+  }
+
   private async findRecordByNameType(
     dnsProvider: IDnsProvider,
     dnsZone: DnsZoneEntity,
@@ -1206,8 +1293,11 @@ export class AppEndpointReconciliationService {
       kubeconfig,
       endpoint,
     );
+    const noindexMiddlewareRef =
+      await this.sandboxNoindexMiddlewareRef(endpoint);
     const middlewareRefs = [
       ...(traefikMiddlewareRef ? [traefikMiddlewareRef] : []),
+      ...(noindexMiddlewareRef ? [noindexMiddlewareRef] : []),
       ...gateway.refs,
     ];
 
@@ -1273,6 +1363,18 @@ export class AppEndpointReconciliationService {
     this.logger.log(`Applied Ingress ${ingressName} for ${endpoint.fqdn}`);
 
     await this.deleteLegacyIngressIfOwned(kubeconfig, endpoint);
+  }
+
+  private async sandboxNoindexMiddlewareRef(
+    endpoint: AppEndpointEntity,
+  ): Promise<string | null> {
+    const sandbox = await this.sandboxTenants.exists({
+      where: {
+        clusterId: endpoint.clusterId,
+        namespace: endpoint.k8sNamespace,
+      },
+    });
+    return sandbox ? sandboxNoindexMiddlewareRef(endpoint.k8sNamespace) : null;
   }
 
   /**

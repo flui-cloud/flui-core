@@ -342,6 +342,16 @@ export class AppEndpointService {
     });
   }
 
+  async listByNamespace(
+    clusterId: string,
+    k8sNamespace: string,
+  ): Promise<AppEndpointEntity[]> {
+    return await this.endpointRepository.find({
+      where: { clusterId, k8sNamespace },
+      relations: ['cluster', 'clusterDnsZone', 'clusterDnsZone.dnsZone'],
+    });
+  }
+
   /**
    * Of the given candidate hostnames, return those that are real app endpoint fqdns —
    * the source of truth used to tell a genuine app URL from a model-fabricated one.
@@ -442,6 +452,13 @@ export class AppEndpointService {
     const endpoint = await this.getEndpoint(id);
     await this.endpointRepository.remove(endpoint);
     this.logger.log(`Deleted app endpoint ${id} (${endpoint.fqdn})`);
+  }
+
+  async clearDnsRecord(id: string): Promise<void> {
+    await this.endpointRepository.update(id, {
+      dnsRecordId: null,
+      dnsRecordValue: null,
+    });
   }
 
   /**
