@@ -1,15 +1,11 @@
 import {
   Body,
   Controller,
-  Delete,
   ForbiddenException,
   Get,
   HttpCode,
   HttpStatus,
-  HttpException,
-  NotFoundException,
   NotImplementedException,
-  Param,
   Post,
   Put,
   Request,
@@ -24,7 +20,6 @@ import {
   ApiCreatedResponse,
   ApiOkResponse,
   ApiOperation,
-  ApiParam,
   ApiResponse,
   ApiTags,
   ApiUnauthorizedResponse,
@@ -47,12 +42,6 @@ import {
 import { ConfigureAuthModeService } from '../../dns/services/configure-auth-mode.service';
 import { ConfigureAuthModeDto } from '../../dns/dto/configure-auth-mode.dto';
 import { ConfigureAuthModeResultDto } from '../../dns/dto/configure-auth-mode-result.dto';
-import { ApiKeyService } from '../services/api-key.service';
-import { CreateApiKeyDto } from '../dto/create-api-key.dto';
-import {
-  ApiKeyResponseDto,
-  CreateApiKeyResultDto,
-} from '../dto/api-key-response.dto';
 import { OidcBootstrapService } from '../services/oidc-bootstrap.service';
 import { OidcProfileSyncService } from '../services/oidc-profile-sync.service';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -65,7 +54,6 @@ export class AuthController {
   constructor(
     private readonly localAuthService: LocalAuthService,
     private readonly configureAuthModeService: ConfigureAuthModeService,
-    private readonly apiKeyService: ApiKeyService,
     private readonly oidcBootstrapService: OidcBootstrapService,
     private readonly profileSync: OidcProfileSyncService,
     @InjectRepository(UserEntity)
@@ -79,18 +67,18 @@ export class AuthController {
   @Post('register')
   @Public()
   @ApiOperation({
-    summary: 'Register a new user (local auth mode only)',
+    summary: 'Register the first user (local auth mode only)',
     description:
-      'First call is open (creates the admin). Subsequent calls require an authenticated admin.',
+      'Bootstrap only: refused once the instance has any user at all. Accounts on an ' +
+      'initialised instance are created with POST /auth/users, which is admin-only.',
   })
   @ApiBody({ type: RegisterDto })
   @ApiCreatedResponse({ type: RegisterResponseDto })
   @ApiResponse({
     status: 403,
-    description: 'Only admins can create new accounts',
+    description: 'The instance is already initialised',
   })
   async register(
-    @Request() req: { user?: AuthenticatedUser },
     @Body() dto: RegisterDto,
     @Res({ passthrough: true }) res: Response,
   ): Promise<RegisterResponseDto> {
@@ -99,9 +87,15 @@ export class AuthController {
         'Registration is not available in OIDC mode',
       );
     }
+    // `@Public()` admits the request before any strategy runs, so there is no
+    // principal here to admit: an `isAdmin` check on this route can never be
+    // true, and reading the token back would re-open exactly the door
+    // `setRole` had open. The route is the bootstrap, nothing else.
     const userCount = await this.localAuthService.countUsers();
-    if (userCount > 0 && !req.user?.isAdmin) {
-      throw new ForbiddenException('Only admins can create new accounts');
+    if (userCount > 0) {
+      throw new ForbiddenException(
+        'This instance is already initialised — create accounts with POST /auth/users',
+      );
     }
     const result = await this.localAuthService.register(dto);
     setFluiSessionCookie(res, result.access_token);
@@ -373,76 +367,6 @@ export class AuthController {
   @ApiOkResponse({ description: '{ mcpClientId: string }' })
   async provisionMcpApp(): Promise<{ mcpClientId: string }> {
     return this.oidcBootstrapService.provisionMcpApp();
-  }
-
-  @Post('api-keys')
-  @UseGuards(JwtAuthGuard)
-  @HttpCode(HttpStatus.CREATED)
-  @ApiBearerAuth()
-  @ApiOperation({ summary: 'Create a new API key (OIDC mode only)' })
-  @ApiBody({ type: CreateApiKeyDto })
-  @ApiResponse({ status: 201, type: CreateApiKeyResultDto })
-  @ApiResponse({ status: 501, description: 'Not supported in this auth mode' })
-  async createApiKey(
-    @Request() req: { user: AuthenticatedUser },
-    @Body() dto: CreateApiKeyDto,
-  ): Promise<CreateApiKeyResultDto> {
-    if (process.env.AUTH_MODE !== 'oidc') {
-      throw new HttpException(
-        'API keys are only supported in OIDC auth mode.',
-        HttpStatus.NOT_IMPLEMENTED,
-      );
-    }
-    const expiresAt = dto.expiresAt ? new Date(dto.expiresAt) : undefined;
-    const { entity, plaintext } = await this.apiKeyService.generateApiKey(
-      dto.name,
-      req.user.userId,
-      expiresAt,
-    );
-    return {
-      id: entity.id,
-      name: entity.name,
-      revoked: entity.revoked,
-      createdAt: entity.createdAt,
-      expiresAt: entity.expiresAt ?? null,
-      key: plaintext,
-    };
-  }
-
-  @Get('api-keys')
-  @UseGuards(JwtAuthGuard)
-  @ApiBearerAuth()
-  @ApiOperation({ summary: 'List API keys for the authenticated user' })
-  @ApiResponse({ status: 200, type: [ApiKeyResponseDto] })
-  async listApiKeys(
-    @Request() req: { user: AuthenticatedUser },
-  ): Promise<ApiKeyResponseDto[]> {
-    const keys = await this.apiKeyService.listForUser(req.user.userId);
-    return keys.map((k) => ({
-      id: k.id,
-      name: k.name,
-      revoked: k.revoked,
-      createdAt: k.createdAt,
-      expiresAt: k.expiresAt ?? null,
-    }));
-  }
-
-  @Delete('api-keys/:id')
-  @UseGuards(JwtAuthGuard)
-  @HttpCode(HttpStatus.OK)
-  @ApiBearerAuth()
-  @ApiOperation({ summary: 'Revoke an API key' })
-  @ApiParam({ name: 'id' })
-  @ApiOkResponse({ description: '{ success: true }' })
-  async revokeApiKey(
-    @Param('id') id: string,
-    @Request() req: { user: AuthenticatedUser },
-  ): Promise<{ success: boolean }> {
-    const revoked = await this.apiKeyService.revokeById(id, req.user.userId);
-    if (!revoked) {
-      throw new NotFoundException(`API key ${id} not found`);
-    }
-    return { success: true };
   }
 
   @Post('configure-mode')

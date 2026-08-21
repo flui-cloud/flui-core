@@ -11,6 +11,7 @@ export default class AuthGenerateApiKey extends Command {
   static readonly examples = [
     '<%= config.bin %> <%= command.id %> --token <zitadel-jwt>',
     '<%= config.bin %> <%= command.id %> --name ci-pipeline --expires 365',
+    '<%= config.bin %> <%= command.id %> --name agent --scope mcp:app:read --scope mcp:obs:read',
     'FLUI_SESSION_TOKEN=<jwt> <%= config.bin %> <%= command.id %>',
   ];
 
@@ -24,6 +25,13 @@ export default class AuthGenerateApiKey extends Command {
     }),
     expires: Flags.integer({
       description: 'Expiry in days from now (omit for no expiry)',
+    }),
+    scope: Flags.string({
+      description:
+        'Scope granted to the key (repeatable). Omit for an unscoped key, ' +
+        'which carries your full weight. A scope you do not hold yourself is ' +
+        'refused, not trimmed.',
+      multiple: true,
     }),
     profile: Flags.string({
       description: 'Profile to save the key into (default: active profile)',
@@ -56,7 +64,13 @@ export default class AuthGenerateApiKey extends Command {
     this.log(chalk.dim(`API URL: ${baseUrl}`));
     this.log(chalk.dim(`Profile: ${profile}`));
 
-    let result: { id: string; name: string; key: string; expiresAt?: string };
+    let result: {
+      id: string;
+      name: string;
+      key: string;
+      expiresAt?: string;
+      scopes?: string[] | null;
+    };
     try {
       const res = await fetch(`${baseUrl}/auth/api-keys`, {
         method: 'POST',
@@ -64,7 +78,11 @@ export default class AuthGenerateApiKey extends Command {
           Authorization: `Bearer ${sessionToken}`,
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ name: flags.name, expiresAt }),
+        body: JSON.stringify({
+          name: flags.name,
+          expiresAt,
+          ...(flags.scope?.length ? { scopes: flags.scope } : {}),
+        }),
       });
 
       const body = (await res.json()) as Record<string, unknown>;
@@ -88,6 +106,13 @@ export default class AuthGenerateApiKey extends Command {
     if (result.expiresAt) {
       this.log(`  ${chalk.bold('Expires:')}  ${result.expiresAt}`);
     }
+    this.log(
+      `  ${chalk.bold('Scopes:')}   ${
+        result.scopes?.length
+          ? result.scopes.join(' ')
+          : chalk.dim('(unscoped — your full weight)')
+      }`,
+    );
     this.log('');
     this.log(
       chalk.yellow(

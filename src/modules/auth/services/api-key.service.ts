@@ -15,6 +15,7 @@ export class ApiKeyService {
     name: string,
     userId: string,
     expiresAt?: Date,
+    scopes?: string[],
   ): Promise<{ entity: ApiKeyEntity; plaintext: string }> {
     const key = `flui_${crypto.randomUUID()}`;
     const entity = await this.apiKeyRepo.save({
@@ -23,6 +24,9 @@ export class ApiKeyService {
       revoked: false,
       userId,
       expiresAt: expiresAt ?? null,
+      // Null, not an empty array: "nothing was declared" and "declared as
+      // nothing" are read differently by the scope resolver.
+      scopes: scopes?.length ? scopes : null,
     });
     return { entity, plaintext: key };
   }
@@ -38,7 +42,15 @@ export class ApiKeyService {
     return this.apiKeyRepo.find({
       where: { userId },
       order: { createdAt: 'DESC' },
-      select: ['id', 'name', 'revoked', 'createdAt', 'expiresAt', 'userId'],
+      select: [
+        'id',
+        'name',
+        'revoked',
+        'createdAt',
+        'expiresAt',
+        'userId',
+        'scopes',
+      ],
     });
   }
 

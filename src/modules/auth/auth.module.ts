@@ -12,6 +12,7 @@ import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { AdminGuard } from './guards/admin.guard';
 import { ScopeGuard } from './guards/scope.guard';
 import { AuthController } from './controllers/auth.controller';
+import { ApiKeysController } from './controllers/api-keys.controller';
 import { UserEntity } from './entities/user.entity';
 import { RefreshTokenEntity } from './entities/refresh-token.entity';
 import { ApiKeyEntity } from './entities/api-key.entity';
@@ -38,6 +39,7 @@ import { IDENTITY_BRANDING } from './interfaces/identity-branding.interface';
 import { AdminSeeder } from './seeders/admin.seeder';
 import { BootstrapSeeder } from './seeders/bootstrap.seeder';
 import { ConfigureAuthModeService } from '../dns/services/configure-auth-mode.service';
+import { IamModule } from '../iam/iam.module';
 import { ClusterEntity } from '../infrastructure/clusters/entities/cluster.entity';
 import { ClusterNodeEntity } from '../infrastructure/clusters/entities/cluster-node.entity';
 import { NodeBillableIntervalEntity } from '../infrastructure/clusters/entities/node-billable-interval.entity';
@@ -49,6 +51,7 @@ import { ApplicationEntity } from '../applications/entities/application.entity';
 import { FirewallEntity } from '../infrastructure/firewalls/entities/firewall.entity';
 import { VNetEntity } from '../infrastructure/vnets/entities/vnet.entity';
 import { VNetSubnetEntity } from '../infrastructure/vnets/entities/vnet-subnet.entity';
+import { IamRoleBindingEntity } from '../iam/entities/iam-role-binding.entity';
 import { SharedInfrastructureModule } from '../infrastructure/shared/shared-infrastructure.module';
 import { EncryptionModule } from '../shared/encryption/encryption.module';
 import { ApplicationsModule } from '../applications/applications.module';
@@ -83,6 +86,7 @@ import { FirewallsModule } from '../infrastructure/firewalls/firewalls.module';
       FirewallEntity,
       VNetEntity,
       VNetSubnetEntity,
+      IamRoleBindingEntity,
     ]),
     SharedInfrastructureModule,
     EncryptionModule,
@@ -91,6 +95,7 @@ import { FirewallsModule } from '../infrastructure/firewalls/firewalls.module';
     FirewallsModule,
     BullModule.registerQueue({ name: OIDC_BOOTSTRAP_QUEUE }),
     OidcModule,
+    IamModule,
   ],
   providers: [
     JwtStrategy,
@@ -129,7 +134,12 @@ import { FirewallsModule } from '../infrastructure/firewalls/firewalls.module';
       inject: [OidcIdentityBranding, LocalIdentityBranding],
     },
   ],
-  controllers: [AuthController, UserManagementController, BrandingController],
+  controllers: [
+    AuthController,
+    ApiKeysController,
+    UserManagementController,
+    BrandingController,
+  ],
   exports: [
     PassportModule,
     JwtAuthGuard,
