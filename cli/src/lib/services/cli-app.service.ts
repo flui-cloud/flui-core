@@ -53,6 +53,21 @@ export interface AppRuntime {
   }>;
 }
 
+/**
+ * The variables of one application, as the API reports them.
+ *
+ * `data` carries the plain values and, for every configured sensitive key, the
+ * mask `****` — there is no call anywhere that returns the real one. A key in
+ * `pendingKeys` is declared and NOT yet delivered: it appears in neither `data`
+ * nor `sensitiveKeys`, because there is nothing to mask.
+ */
+export interface AppVariablesView {
+  name: string;
+  data: Record<string, string>;
+  sensitiveKeys: string[];
+  pendingKeys: string[];
+}
+
 export interface AppLogEntry {
   timestamp: string;
   level?: string;
@@ -423,6 +438,42 @@ export class CliAppService {
     return this.apiClient.patch<AppRuntime>(`/applications/${appId}/replicas`, {
       replicas,
     });
+  }
+
+  async getVariables(appId: string): Promise<AppVariablesView> {
+    return this.apiClient.get<AppVariablesView>(
+      `/variables/applications/${appId}`,
+    );
+  }
+
+  /**
+   * Deliver one sensitive value.
+   *
+   * The value goes in the request BODY and nowhere else — not the path, not a
+   * query string, not a log line. It is a merge, so the other keys of the app
+   * are untouched, and the response is the ordinary masked view: nothing here
+   * can read a value back, including the one just sent.
+   */
+  async setSensitiveVariable(
+    appId: string,
+    key: string,
+    value: string,
+  ): Promise<AppVariablesView> {
+    return this.apiClient.put<AppVariablesView>(
+      `/variables/applications/${appId}?type=sensitive`,
+      { data: { [key]: value } },
+    );
+  }
+
+  /** Record a sensitive key as awaiting a value, carrying no value at all. */
+  async requestSensitiveVariable(
+    appId: string,
+    key: string,
+  ): Promise<AppVariablesView> {
+    return this.apiClient.put<AppVariablesView>(
+      `/variables/applications/${appId}?type=sensitive`,
+      { data: {}, requestKeys: [key] },
+    );
   }
 
   async restart(appId: string): Promise<void> {

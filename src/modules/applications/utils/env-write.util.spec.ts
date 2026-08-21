@@ -1,7 +1,10 @@
 import {
   applyPlainVars,
   applySensitiveVars,
+  pendingEnvKeys,
   plainEnvData,
+  renderableEnv,
+  requestSensitiveVars,
 } from './env-write.util';
 import { ApplicationEnvVar } from '../interfaces/source-config.interface';
 
@@ -167,5 +170,119 @@ describe('plainEnvData', () => {
       },
     ];
     expect(plainEnvData(env)).toEqual({ PLAIN: 'x' });
+  });
+});
+
+/**
+ * "Missing a value" is a state, not an error — the whole hand-off rests on it.
+ * These prove the state is durable, that declaring it can never destroy a value
+ * that already exists, and that nothing pending reaches a container.
+ */
+describe('requestSensitiveVars — declaring a value that has not arrived', () => {
+  it('records the key with no value at all', () => {
+    const { env } = requestSensitiveVars([], ['STRIPE_SECRET_KEY']);
+    expect(byName(env, 'STRIPE_SECRET_KEY')).toEqual({
+      name: 'STRIPE_SECRET_KEY',
+      value: '',
+      secret: true,
+      pending: true,
+      source: 'user',
+    });
+  });
+
+  // The dangerous case: an agent asking for "the API key" of an app that
+  // already has one must not be able to wipe a working credential.
+  it('leaves a configured key untouched and says why', () => {
+    const existing: ApplicationEnvVar[] = [
+      { name: 'TOKEN', value: 'encrypted', secret: true, source: 'user' },
+    ];
+    const { env, skipped } = requestSensitiveVars(existing, ['TOKEN']);
+    expect(byName(env, 'TOKEN')?.value).toBe('encrypted');
+    expect(byName(env, 'TOKEN')?.pending).toBeUndefined();
+    expect(skipped).toEqual([{ name: 'TOKEN', reason: 'already configured' }]);
+  });
+
+  it('refuses a key linked to a building block, which has no value of ours to wait for', () => {
+    const existing: ApplicationEnvVar[] = [
+      {
+        name: 'DB_PASSWORD',
+        value: '',
+        source: 'link',
+        externalSecretRef: { secretName: 'pg-secret', key: 'password' },
+      },
+    ];
+    const { env, skipped } = requestSensitiveVars(existing, ['DB_PASSWORD']);
+    expect(byName(env, 'DB_PASSWORD')?.externalSecretRef).toBeDefined();
+    expect(skipped[0].reason).toContain('building-block');
+  });
+
+  it('refuses to turn an existing plain variable into a pending secret', () => {
+    const existing: ApplicationEnvVar[] = [
+      { name: 'LOG_LEVEL', value: 'info', source: 'user' },
+    ];
+    const { env, skipped } = requestSensitiveVars(existing, ['LOG_LEVEL']);
+    expect(byName(env, 'LOG_LEVEL')?.secret).toBeUndefined();
+    expect(skipped[0].reason).toContain('plain');
+  });
+
+  it('re-declaring a key already awaiting a value changes nothing and refuses nothing', () => {
+    const first = requestSensitiveVars([], ['TOKEN']).env;
+    const { env, skipped } = requestSensitiveVars(first, ['TOKEN']);
+    expect(names(env)).toEqual(['TOKEN']);
+    expect(skipped).toEqual([]);
+  });
+});
+
+describe('delivery clears the waiting state', () => {
+  it('replaces the pending entry with the encrypted value and drops the flag', () => {
+    const pending = requestSensitiveVars([], ['TOKEN']).env;
+    const { env } = applySensitiveVars(
+      pending,
+      { TOKEN: 'the-real-thing' },
+      [],
+      (v) => `enc(${v})`,
+    );
+    expect(byName(env, 'TOKEN')).toEqual({
+      name: 'TOKEN',
+      value: 'enc(the-real-thing)',
+      secret: true,
+      source: 'user',
+    });
+    expect(pendingEnvKeys(env)).toEqual([]);
+  });
+
+  it('withdraws a declaration through the ordinary explicit deletion', () => {
+    const pending = requestSensitiveVars([], ['TOKEN']).env;
+    const { env } = applySensitiveVars(pending, {}, ['TOKEN']);
+    expect(names(env)).toEqual([]);
+  });
+
+  // The editor sends the mask back for a secret it never held. Writing it would
+  // replace the credential with the placeholder.
+  it('still refuses the display mask as a value', () => {
+    const pending = requestSensitiveVars([], ['TOKEN']).env;
+    const { env, skipped } = applySensitiveVars(pending, { TOKEN: '****' });
+    expect(byName(env, 'TOKEN')?.pending).toBe(true);
+    expect(skipped[0].reason).toContain('mask');
+  });
+});
+
+describe('nothing pending reaches a container', () => {
+  const env: ApplicationEnvVar[] = [
+    { name: 'PLAIN', value: 'x', source: 'user' },
+    { name: 'SET', value: 'enc', secret: true, source: 'user' },
+    { name: 'WAITING', value: '', secret: true, pending: true, source: 'user' },
+  ];
+
+  it('keeps a pending key out of the renderable set', () => {
+    expect(names(renderableEnv(env))).toEqual(['PLAIN', 'SET']);
+  });
+
+  it('keeps it out of the ConfigMap projection too', () => {
+    expect(plainEnvData(env)).toEqual({ PLAIN: 'x' });
+  });
+
+  it('reads the waiting keys back by name', () => {
+    expect(pendingEnvKeys(env)).toEqual(['WAITING']);
   });
 });

@@ -21,7 +21,9 @@ import { ApplicationEnvVar } from '../interfaces/source-config.interface';
 import {
   applyPlainVars,
   applySensitiveVars,
+  pendingEnvKeys,
   plainEnvData,
+  requestSensitiveVars,
   VarWriteResult,
 } from '../utils/env-write.util';
 
@@ -53,6 +55,15 @@ interface SecretResult {
   scope: VariableScope;
   keys: string[];
   resourceVersion?: string;
+}
+
+/** What a configured sensitive value looks like on the way out. Never the value. */
+const SENSITIVE_MASK = '****';
+
+/** The outcome of declaring keys as awaiting a value. Refusals are states, not errors. */
+export interface SecretRequestResult {
+  requested: string[];
+  skipped: Array<{ name: string; reason: string }>;
 }
 
 @Injectable()
@@ -226,6 +237,43 @@ export class AppConfigService {
     };
   }
 
+  /**
+   * Declare sensitive keys as awaiting a value, carrying no value at all.
+   *
+   * This is the half of the hand-off an agent is allowed to perform. It writes
+   * only to `applications.env` — the source of truth — and deliberately does not
+   * touch the cluster: there is nothing to write there. A pending key produces
+   * no Secret entry and no `secretKeyRef`, so nothing that reaches a container
+   * changes until a person delivers the value through {@link upsertAppSecret}.
+   *
+   * Refused keys come back in `skipped` rather than as an exception. "Already
+   * configured" is a state, and an agent that reads a failure retries — which on
+   * this path would mean asking a person for a value they already gave.
+   */
+  async requestAppSecrets(
+    appId: string,
+    keys: string[],
+  ): Promise<SecretRequestResult> {
+    const app = await this.applicationsRepository.findById(appId);
+    if (!app) throw new NotFoundException(`Application ${appId} not found`);
+
+    const before = (app.env as ApplicationEnvVar[]) ?? [];
+    const { env, skipped } = requestSensitiveVars(before, keys);
+    await this.applicationsRepository.update(app.id, { env });
+    this.warnSkipped(appId, skipped);
+
+    const refused = new Set(skipped.map((entry) => entry.name));
+    const requested = keys.filter((key) => !refused.has(key));
+    if (requested.length) {
+      // Key names only. A pending variable has no value to leak, and the log
+      // line must stay that way when one is delivered later.
+      this.logger.log(
+        `awaiting a value for ${requested.join(', ')} on app ${appId}`,
+      );
+    }
+    return { requested, skipped };
+  }
+
   // ── App-scoped combined (plain + masked sensitive) ────────────────────
 
   async getAppVariablesCombined(
@@ -284,12 +332,42 @@ export class AppConfigService {
           sensitiveKeys: [] as string[],
         };
 
+    // Which sensitive keys exist is answered by `applications.env` FIRST, and
+    // only then by the cluster.
+    //
+    // Believing the cluster alone loses a key between its delivery and the next
+    // deploy: the Secret is patched, but the workload only picks the new value
+    // up when it is next rolled. A key delivered a second ago would come back
+    // as neither configured nor missing, which is the one answer that is simply
+    // false.
+    //
+    // The union is kept, not replaced, because keys written out of band — a
+    // building block's bootstrap, e.g. OpenBao's unseal key — exist only in the
+    // cluster and are just as configured.
+    const env = (app.env as ApplicationEnvVar[]) ?? [];
+    const pending = wantSensitive ? pendingEnvKeys(env) : [];
+    const isPending = new Set(pending);
+    const declared = wantSensitive
+      ? env
+          .filter((e) => e.secret && !e.pending && !e.externalSecretRef)
+          .map((e) => e.name)
+      : [];
+
+    const data = { ...cm.data, ...sec.data };
+    for (const key of declared) data[key] = SENSITIVE_MASK;
+    for (const key of isPending) delete data[key];
+
+    const sensitiveKeys = [
+      ...new Set([...sec.sensitiveKeys, ...declared]),
+    ].filter((key) => !isPending.has(key));
+
     return {
       name: app.slug,
       type,
       scope: 'app',
-      data: { ...cm.data, ...sec.data },
-      sensitiveKeys: sec.sensitiveKeys,
+      data,
+      sensitiveKeys,
+      pendingKeys: pending,
       sources: { configMaps: cm.used, secrets: sec.used },
       resourceVersions: { ...cm.versions, ...sec.versions },
     };
@@ -352,7 +430,7 @@ export class AppConfigService {
         // Skip config-file payloads (Flui stores them as file-<i> keys in the
         // same Secret) — they are mounted files, not environment variables.
         if (/^file-\d+$/.test(key)) continue;
-        data[key] = '****';
+        data[key] = SENSITIVE_MASK;
         sensitiveKeys.push(key);
       }
     }
@@ -582,8 +660,14 @@ export class AppConfigService {
     return `${slug}-config`;
   }
 
+  /**
+   * Singular, and the whole product agrees: the catalog dependency resolver,
+   * the catalog linker, the database-console engine profiles and the messaging
+   * resolver all bind `<slug>-secret`, and so does the manifest generator that
+   * mounts it into the pod.
+   */
   secretName(slug: string): string {
-    return `${slug}-secrets`;
+    return `${slug}-secret`;
   }
 
   // ── Manifest builders ──────────────────────────────────────────────────

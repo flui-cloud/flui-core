@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Controller,
   Get,
   Put,
@@ -7,6 +8,7 @@ import {
   Query,
   HttpCode,
   HttpStatus,
+  UseGuards,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -17,6 +19,7 @@ import {
   ApiQuery,
 } from '@nestjs/swagger';
 import { AppConfigService } from '../services/app-config.service';
+import { AppAccessGuard } from '../guards/app-access.guard';
 import {
   UpsertVariablesDto,
   UpsertClusterVariablesDto,
@@ -37,14 +40,21 @@ export class VariablesController {
   //  GET  /variables/applications/:appId?type=all|plain|sensitive
   //  PUT  /variables/applications/:appId?type=plain|sensitive
 
+  // Resource-aware, like every other single-application route: without it any
+  // authenticated caller could read the configuration of any application by id,
+  // which is another tenancy's data even when the sensitive values are masked.
   @Get('applications/:appId')
+  @UseGuards(AppAccessGuard)
   @ApiOperation({
     summary: 'Read application variables',
     description:
       'Returns the variables for an application discovered from the K8s Deployment spec. ' +
       'type=all (default): plain values + sensitive keys masked as "****". ' +
       'type=plain: only ConfigMap values. ' +
-      'type=sensitive: only Secret keys masked as "****".',
+      'type=sensitive: only Secret keys masked as "****". ' +
+      'Sensitive keys declared but not yet delivered come back in `pendingKeys` ' +
+      'and appear in neither `data` nor `sensitiveKeys`: this read says WHICH ' +
+      'keys are configured and which are still missing, never what any of them is.',
   })
   @ApiParam({ name: 'appId', description: 'Application ID' })
   @ApiQuery({
@@ -62,13 +72,16 @@ export class VariablesController {
   }
 
   @Put('applications/:appId')
+  @UseGuards(AppAccessGuard)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Upsert application variables',
     description:
-      'Replaces variables for an application directly on K8s (full replace — keys not in the payload are removed). ' +
+      'Writes variables to `applications.env` (the source of truth) and re-renders the cluster resource. ' +
+      'Merge, not replace: a key absent from `data` is left alone, and removal is explicit via `deleteKeys`. ' +
       'type=plain → ConfigMap (<slug>-config); type=sensitive → Secret (<slug>-secrets, values base64-encoded). ' +
-      'Returns the combined view after the upsert.',
+      '`requestKeys` (type=sensitive only) declares a key as AWAITING a value without carrying one — ' +
+      'the agent-safe half of a secret hand-off. Returns the combined view, which never echoes a value back.',
   })
   @ApiParam({ name: 'appId', description: 'Application ID' })
   @ApiQuery({
@@ -84,12 +97,34 @@ export class VariablesController {
     @Query('type') type: VariableType = VariableType.PLAIN,
   ): Promise<AppVariablesCombinedResponseDto> {
     if (type === VariableType.SENSITIVE) {
-      await this.appConfigService.upsertAppSecret(
-        appId,
-        dto.data,
-        dto.deleteKeys,
-      );
+      // A payload that only declares has nothing to write to the cluster: a
+      // pending key produces no Secret entry. Calling the upsert anyway would
+      // replace the Secret with itself, and would create an empty one for an
+      // application that has not been deployed yet.
+      const writes =
+        Object.keys(dto.data ?? {}).length > 0 || !!dto.deleteKeys?.length;
+      if (writes) {
+        await this.appConfigService.upsertAppSecret(
+          appId,
+          dto.data,
+          dto.deleteKeys,
+        );
+      }
+      // Delivery first, declaration second: a key given a value in this very
+      // call is then "already configured" and the declaration is refused, so
+      // the two can never race into a key that is both set and pending.
+      if (dto.requestKeys?.length) {
+        await this.appConfigService.requestAppSecrets(appId, dto.requestKeys);
+      }
     } else {
+      if (dto.requestKeys?.length) {
+        // Refused rather than ignored: a plain variable has no delivery step to
+        // wait for, and silently dropping the field would report success for a
+        // hand-off that was never recorded.
+        throw new BadRequestException(
+          '`requestKeys` applies to sensitive variables only — call this route with type=sensitive.',
+        );
+      }
       await this.appConfigService.upsertAppConfig(
         appId,
         dto.data,

@@ -13,6 +13,7 @@ import {
 import { getProjectPath } from '../../../common/utils/project-root.util';
 import { FrameworkType } from '../../frameworks/framework-core/enums/framework-type.enum';
 import { EncryptionService } from '../../shared/encryption/services/encryption.service';
+import { renderableEnv } from '../utils/env-write.util';
 
 export interface GeneratedManifest {
   kind: ApplicationResourceKind;
@@ -57,12 +58,14 @@ export class ApplicationManifestGeneratorService {
     // Apply order matters: dependencies (ConfigMap/Secret/PVC) must exist
     // before the Deployment so that the scheduler doesn't fail the first
     // placement attempt and enter exponential backoff.
-    if (app.env?.some((e) => !e.secret && !e.externalSecretRef)) {
+    const rendered = renderableEnv(app.env);
+
+    if (rendered.some((e) => !e.secret && !e.externalSecretRef)) {
       manifests.push(this.generateConfigMap(app));
     }
 
     if (
-      app.env?.some((e) => e.secret && !e.externalSecretRef) ||
+      rendered.some((e) => e.secret && !e.externalSecretRef) ||
       app.configFiles?.length
     ) {
       manifests.push(this.generateSecret(app));
@@ -431,8 +434,9 @@ export class ApplicationManifestGeneratorService {
 
   private generateConfigMap(app: ApplicationEntity): GeneratedManifest {
     const labels = this.buildLabels(app);
-    const nonSecretEnv =
-      app.env?.filter((e) => !e.secret && !e.externalSecretRef) || [];
+    const nonSecretEnv = renderableEnv(app.env).filter(
+      (e) => !e.secret && !e.externalSecretRef,
+    );
 
     const template = this.loadTemplate('configmap.yaml');
     const yaml = template
@@ -454,8 +458,9 @@ export class ApplicationManifestGeneratorService {
 
   private generateSecret(app: ApplicationEntity): GeneratedManifest {
     const labels = this.buildLabels(app);
-    const secretEnv =
-      app.env?.filter((e) => e.secret && !e.externalSecretRef) || [];
+    const secretEnv = renderableEnv(app.env).filter(
+      (e) => e.secret && !e.externalSecretRef,
+    );
 
     const secretData = [
       this.renderSecretDataBlock(secretEnv),
@@ -692,9 +697,14 @@ export class ApplicationManifestGeneratorService {
   }
 
   private renderEnvBlock(app: ApplicationEntity): string {
-    if (!app.env?.length) return '';
+    // A pending key is skipped rather than bound: `secretKeyRef` to a key that
+    // is not in the Secret puts the pod in CreateContainerConfigError, and
+    // writing it as an empty string would hand the container a credential that
+    // is blank but present. Neither is what "waiting for a person" means.
+    const env = renderableEnv(app.env);
+    if (!env.length) return '';
     const lines: string[] = ['          env:'];
-    for (const e of app.env) {
+    for (const e of env) {
       lines.push(`            - name: ${e.name}`, `              valueFrom:`);
       if (e.externalSecretRef) {
         lines.push(

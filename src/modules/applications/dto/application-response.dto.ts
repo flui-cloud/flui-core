@@ -328,7 +328,13 @@ export class ApplicationResponseDto {
   sourceConfig: Record<string, any>;
 
   @ApiProperty()
-  env: Array<{ name: string; value: string; secret?: boolean }>;
+  env: Array<{
+    name: string;
+    value: string;
+    secret?: boolean;
+    /** Declared but not delivered yet — the masked value is a placeholder, not a stored secret. */
+    pending?: boolean;
+  }>;
 
   @ApiProperty()
   resources: Record<string, any>;

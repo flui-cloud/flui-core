@@ -7,6 +7,9 @@ import { ApplicationEnvVar } from '../interfaces/source-config.interface';
  */
 const SECRET_MASKS = new Set(['****', '********']);
 
+/** Why a key is left alone: the catalog wiring owns it, not this editor. */
+const LINKED_TO_BUILDING_BLOCK = 'linked to a building-block secret';
+
 export interface VarWriteResult {
   /** The new `applications.env`, the source of truth. */
   env: ApplicationEnvVar[];
@@ -48,7 +51,7 @@ export function applyPlainVars(
     const prev = i === undefined ? undefined : env[i];
 
     if (prev?.externalSecretRef) {
-      skipped.push({ name, reason: 'linked to a building-block secret' });
+      skipped.push({ name, reason: LINKED_TO_BUILDING_BLOCK });
       continue;
     }
     if (prev?.secret) {
@@ -92,7 +95,7 @@ export function applySensitiveVars(
     const prev = i === undefined ? undefined : env[i];
 
     if (prev?.externalSecretRef) {
-      skipped.push({ name, reason: 'linked to a building-block secret' });
+      skipped.push({ name, reason: LINKED_TO_BUILDING_BLOCK });
       continue;
     }
     if (SECRET_MASKS.has(value)) {
@@ -138,7 +141,80 @@ function applyDeletes(
 export function plainEnvData(env: ApplicationEnvVar[]): Record<string, string> {
   return Object.fromEntries(
     env
-      .filter((e) => !e.secret && !e.externalSecretRef)
+      .filter((e) => !e.secret && !e.externalSecretRef && !e.pending)
       .map((e) => [e.name, e.value ?? '']),
   );
+}
+
+/**
+ * Declare sensitive keys as awaiting a value, without carrying one.
+ *
+ * This is the half of the hand-off an agent may perform: it names the key and
+ * stops. The entry is written to `applications.env` with an empty value and
+ * `pending: true`, so the missing value is a durable, declared state rather
+ * than something inferred later from an absence.
+ *
+ * Refusals are deliberate and each is a state, not a failure:
+ *   - a key already carrying a value is left alone. Clearing a working
+ *     credential is a destructive act, and an agent asking for "the API key"
+ *     of an app that already has one must not be able to wipe it;
+ *   - a key linked to a building block's Secret has no value of ours to wait for;
+ *   - a plain key of the same name would change type behind the editor's back.
+ */
+export function requestSensitiveVars(
+  existing: ApplicationEnvVar[],
+  keys: string[],
+): VarWriteResult {
+  const env = [...existing];
+  const skipped: VarWriteResult['skipped'] = [];
+  const at = indexOf(env);
+
+  for (const name of keys) {
+    const i = at.get(name);
+    const prev = i === undefined ? undefined : env[i];
+
+    if (prev?.externalSecretRef) {
+      skipped.push({ name, reason: LINKED_TO_BUILDING_BLOCK });
+      continue;
+    }
+    if (prev && !prev.secret) {
+      skipped.push({ name, reason: 'already exists as a plain variable' });
+      continue;
+    }
+    if (prev?.secret && !prev.pending && prev.value) {
+      skipped.push({ name, reason: 'already configured' });
+      continue;
+    }
+
+    const next: ApplicationEnvVar = {
+      name,
+      value: '',
+      secret: true,
+      pending: true,
+      source: 'user',
+    };
+    if (i === undefined) {
+      at.set(name, env.length);
+      env.push(next);
+    } else {
+      env[i] = next;
+    }
+  }
+
+  return { env, skipped };
+}
+
+/** The keys still waiting for a person — the "missing a value" state, read back. */
+export function pendingEnvKeys(env: ApplicationEnvVar[]): string[] {
+  return env.filter((e) => e.pending).map((e) => e.name);
+}
+
+/**
+ * The entries a deploy may render. A pending key is deliberately absent from
+ * both the Secret and the container's env: see {@link ApplicationEnvVar.pending}.
+ */
+export function renderableEnv(
+  env: ApplicationEnvVar[] | undefined | null,
+): ApplicationEnvVar[] {
+  return (env ?? []).filter((e) => !e.pending);
 }

@@ -78,6 +78,18 @@ export interface ApplicationEnvVar {
     secretName: string;
     key: string;
   };
+  /**
+   * The key is declared but its value has not been delivered yet: a sensitive
+   * variable an agent asked for and a person still has to supply.
+   *
+   * This is a STATE, not an error. `value` is empty and stays empty until a
+   * human delivers it out of band (`flui app env set`, or the browser form).
+   * Nothing renders a pending var into the cluster — no Secret entry and no
+   * `secretKeyRef` — because an empty credential the container accepts is worse
+   * than a missing one it refuses: `POSTGRES_PASSWORD=""` is an open door,
+   * while an absent variable fails loudly at boot.
+   */
+  pending?: boolean;
 }
 
 export interface ApplicationResources {

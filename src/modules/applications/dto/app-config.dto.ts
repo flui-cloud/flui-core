@@ -38,6 +38,20 @@ export class UpsertVariablesDto {
   @IsArray()
   @IsString({ each: true })
   deleteKeys?: string[];
+
+  @ApiPropertyOptional({
+    description:
+      'Sensitive keys declared as AWAITING a value (type=sensitive only). No ' +
+      'value travels with this field and none is invented: the key is recorded ' +
+      'as missing until a person delivers it (`flui app env set`, or the ' +
+      'browser form). A key that already holds a value is left untouched.',
+    example: ['STRIPE_SECRET_KEY'],
+    type: [String],
+  })
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  requestKeys?: string[];
 }
 
 export class AppVariablesResponseDto {
@@ -105,6 +119,17 @@ export class AppVariablesCombinedResponseDto {
     example: ['DB_PASSWORD', 'REDIS_PASSWORD'],
   })
   sensitiveKeys: string[];
+
+  @ApiProperty({
+    description:
+      'Sensitive keys declared but NOT yet delivered — the "missing a value" ' +
+      'state. They are absent from `data` and from `sensitiveKeys` on purpose: ' +
+      'a key here is not configured, and nothing about it is masked because ' +
+      'there is nothing to mask. This is a state, not an error.',
+    type: [String],
+    example: ['STRIPE_SECRET_KEY'],
+  })
+  pendingKeys: string[];
 
   @ApiProperty({ type: () => AppVariableSourcesDto })
   sources: AppVariableSourcesDto;
