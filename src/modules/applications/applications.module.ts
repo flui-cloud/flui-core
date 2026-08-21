@@ -16,6 +16,7 @@ import { AppAccessGuard } from './guards/app-access.guard';
 import { RepositoryCredentialEntity } from '../repositories/entities/repository-credential.entity';
 import { AppBuildEntity } from '../app-builds/entities/app-build.entity';
 import { CatalogInstallEntity } from '../catalog/entities/catalog-install.entity';
+import { SandboxTenantEntity } from '../sandbox/entities/sandbox-tenant.entity';
 import { SharedInfrastructureModule } from '../infrastructure/shared/shared-infrastructure.module';
 import { EncryptionModule } from '../shared/encryption/encryption.module';
 import { BuildAgentConfigModule } from '../app-builds/build-agent-config.module';
@@ -53,6 +54,8 @@ import {
   GHCR_SECRET_REFRESH_QUEUE,
 } from './processors/ghcr-secret-refresh.processor';
 import { ApplicationsController } from './controllers/applications.controller';
+import { ShowcaseController } from './controllers/showcase.controller';
+import { ShowcaseService } from './services/showcase.service';
 import { VariablesController } from './controllers/variables.controller';
 import { ScheduledJobsController } from './controllers/scheduled-jobs.controller';
 import { ScheduledJobsService } from './services/scheduled-jobs.service';
@@ -88,6 +91,9 @@ import { VolumeExportService } from '../providers/services/volume-export.service
       // We bind the entity at TypeORM level (not via CatalogModule) to avoid
       // a circular module dependency.
       CatalogInstallEntity,
+      // Bound at TypeORM level for the same reason: ApplicationAccessService
+      // pins sandbox guests to their tenancy cluster.
+      SandboxTenantEntity,
     ]),
     BullModule.registerQueue({ name: 'application-deploy' }),
     BullModule.registerQueue({ name: 'app-build' }),
@@ -113,8 +119,10 @@ import { VolumeExportService } from '../providers/services/volume-export.service
     ScheduledJobsController,
     GatewayController,
     ClusterGatewayController,
+    ShowcaseController,
   ],
   providers: [
+    ShowcaseService,
     // IAM enforcement (resource-aware app access)
     ApplicationAccessService,
     AppAccessGuard,
@@ -158,6 +166,7 @@ import { VolumeExportService } from '../providers/services/volume-export.service
   ],
   exports: [
     ApplicationAccessService,
+    AppConfigService,
     ApplicationService,
     ApplicationDeployService,
     ApplicationMaterializerService,

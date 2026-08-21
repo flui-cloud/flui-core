@@ -24,6 +24,7 @@ import { ApplicationsModule } from '../applications/applications.module';
 import { DnsModule } from '../dns/dns.module';
 import { OidcModule } from '../oidc/oidc.module';
 import { ClusterEntity } from '../infrastructure/clusters/entities/cluster.entity';
+import { SandboxTenantEntity } from '../sandbox/entities/sandbox-tenant.entity';
 import { ClustersModule } from '../infrastructure/clusters/clusters.module';
 import { SharedInfrastructureModule } from '../infrastructure/shared/shared-infrastructure.module';
 import { EncryptionModule } from '../shared/encryption/encryption.module';
@@ -35,6 +36,7 @@ import { EncryptionModule } from '../shared/encryption/encryption.module';
       CatalogInstallEntity,
       InfrastructureOperationEntity,
       ClusterEntity,
+      SandboxTenantEntity,
     ]),
     BullModule.registerQueue({ name: CATALOG_INSTALL_QUEUE }),
     ApplicationsModule,

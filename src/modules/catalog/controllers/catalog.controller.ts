@@ -23,6 +23,7 @@ import {
 import { AuthenticatedUser } from '../../auth/interfaces/authenticated-user.interface';
 import { Public } from '../../auth/decorators/public.decorator';
 import { ApplicationAccessService } from '../../applications/services/application-access.service';
+import { stripSandboxInstallPlacement } from '../../applications/utils/sandbox-placement.util';
 import { CatalogService } from '../services/catalog.service';
 import { CatalogInstallerService } from '../services/catalog-installer.service';
 import { CatalogDependencyResolverService } from '../services/catalog-dependency-resolver.service';
@@ -283,9 +284,12 @@ export class CatalogController {
     @Req() req: Request,
   ): Promise<CatalogInstallResponseDto> {
     const user = req.user as AuthenticatedUser | undefined;
-    await this.applicationAccess.assertCanCreate(user, {
+    const access = await this.applicationAccess.assertCanCreate(user, {
       clusterId: dto.clusterId,
     });
+    if (access.isSandbox) {
+      stripSandboxInstallPlacement(dto);
+    }
     // The requirements↔cluster gate (incl. internal-hosting) now lives in
     // installer.install(), so every caller (HTTP, install-from-yaml, MCP) shares it.
     const { install } = await this.installer.install(
