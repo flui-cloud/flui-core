@@ -40,6 +40,7 @@ function toRateLimit(rl?: {
 export const GATEWAY_TOOLS: ToolDef[] = [
   defineTool({
     name: 'gateway_list_routes',
+    routes: ['GET /applications/:id/gateway/routes'],
     description:
       'List the gateway routes of an application (pass id) or of the whole cluster (pass clusterId, read-only global view). Each route is host+path → app service with its policies (auth/rateLimit/allowIps), TLS and reconciliation status.',
     scope: MCP_SCOPE.APP_READ,
@@ -78,6 +79,7 @@ export const GATEWAY_TOOLS: ToolDef[] = [
   }),
   defineTool({
     name: 'gateway_route_add',
+    routes: ['POST /applications/:id/gateway/routes'],
     description:
       'Add a gateway route to an application: host (fqdn) [+ path prefix] pointing at the app service, with optional policies (sso/minRole, rate limit, IP allowlist). DNS, TLS and Ingress reconcile in the background — check gateway_status afterwards. The DNS zone is auto-matched from the host; unmatched hosts require the user to point DNS at the cluster themselves.',
     scope: MCP_SCOPE.APP_WRITE,
@@ -92,7 +94,7 @@ export const GATEWAY_TOOLS: ToolDef[] = [
       certificateRequired: coerceBoolean().optional(),
     },
     run: (args, ctx) =>
-      ctx.services.gateway.addRoute(args.id, {
+      ctx.api.post(`/applications/${enc(args.id)}/gateway/routes`, {
         host: args.host,
         path: args.path,
         certificateRequired: args.certificateRequired,
@@ -103,6 +105,7 @@ export const GATEWAY_TOOLS: ToolDef[] = [
   }),
   defineTool({
     name: 'gateway_set_policy',
+    routes: ['PATCH /applications/:id/gateway/routes/:endpointId'],
     description:
       'Set or clear gateway policies on a route of an application. Identify the route by endpointId (from gateway_list_routes). Omitted fields are unchanged; to clear a policy pass clearAuth/clearRateLimit/clearAllowIps=true. sso=true gates the route behind Flui SSO; minRole additionally requires that IAM role on the app.',
     scope: MCP_SCOPE.APP_WRITE,
@@ -145,29 +148,39 @@ export const GATEWAY_TOOLS: ToolDef[] = [
   }),
   defineTool({
     name: 'gateway_status',
+    routes: ['GET /applications/:id/gateway/status'],
     description:
       'Reconciliation status of the gateway routes of an application: synced / reconciling / error per route, with error messages. Use after gateway mutations to confirm the change landed.',
     scope: MCP_SCOPE.APP_READ,
     inputSchema: { id: z.string() },
-    run: (args, ctx) => ctx.services.gateway.status(args.id),
+    run: (args, ctx) =>
+      ctx.api.get(`/applications/${enc(args.id)}/gateway/status`),
   }),
   defineTool({
     name: 'gateway_route_compiled',
+    routes: ['GET /applications/:id/gateway/routes/:endpointId/compiled'],
     description:
       'Preview the compiled Traefik resources (Middleware CRDs + Ingress annotation) for a route without applying them. Useful to explain what a policy change will do.',
     scope: MCP_SCOPE.APP_READ,
     inputSchema: { id: z.string(), endpointId: z.string() },
     run: (args, ctx) =>
-      ctx.services.gateway.compiledRoute(args.id, args.endpointId),
+      ctx.api.get(
+        `/applications/${enc(args.id)}/gateway/routes/${enc(
+          args.endpointId,
+        )}/compiled`,
+      ),
   }),
   defineTool({
     name: 'gateway_route_remove',
+    routes: ['DELETE /applications/:id/gateway/routes/:endpointId'],
     description:
       'Remove a gateway route from an application by endpointId, cleaning up its DNS record, certificate, Ingress and middlewares. Destructive.',
     scope: MCP_SCOPE.APP_DESTRUCTIVE,
     inputSchema: { id: z.string(), endpointId: z.string() },
     run: async (args, ctx) => {
-      await ctx.services.gateway.removeRoute(args.id, args.endpointId);
+      await ctx.api.delete(
+        `/applications/${enc(args.id)}/gateway/routes/${enc(args.endpointId)}`,
+      );
       return { deleted: true, endpointId: args.endpointId };
     },
   }),

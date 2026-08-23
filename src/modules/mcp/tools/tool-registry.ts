@@ -14,6 +14,7 @@ import { CRON_TOOLS } from './cron.tools';
 import { GATEWAY_TOOLS } from './gateway.tools';
 import { MAIL_TOOLS } from './mail.tools';
 import { VARIABLE_TOOLS } from './variables.tools';
+import { IAM_TOOLS } from './iam.tools';
 
 /**
  * The single source of truth for Flui tools. Consumed by the MCP server (external
@@ -33,6 +34,7 @@ export const ALL_TOOLS: ToolDef[] = [
   ...GATEWAY_TOOLS,
   ...MAIL_TOOLS,
   ...VARIABLE_TOOLS,
+  ...IAM_TOOLS,
 ];
 
 export function findTool(name: string): ToolDef | undefined {

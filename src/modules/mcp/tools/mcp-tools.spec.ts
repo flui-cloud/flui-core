@@ -14,14 +14,46 @@ const find = (tools: ToolDef[], name: string): ToolDef => {
   return tool;
 };
 
-const ctxWith = (services: Record<string, unknown>): McpToolContext =>
-  ({
+interface Recorded {
+  method: string;
+  path: string;
+  payload?: unknown;
+}
+
+/**
+ * The API as a tool sees it. There is no `services` on the context any more, so
+ * a stub of one would not even be reachable: whatever a tool does, it does as a
+ * request, and this records which.
+ */
+const apiCtx = (
+  reply: (call: Recorded) => unknown,
+  calls: Recorded[] = [],
+): McpToolContext & { calls: Recorded[] } => {
+  const send = (method: string, path: string, payload?: unknown) => {
+    const call = { method, path, payload };
+    calls.push(call);
+    return Promise.resolve(reply(call));
+  };
+  return {
     user: { userId: 'u1', email: 'e@x' },
     scopes: new Set<string>(),
     allowDestructive: true,
     audit: { record: jest.fn() },
-    services,
-  }) as unknown as McpToolContext;
+    surface: 'mcp',
+    calls,
+    api: {
+      get: (path: string, query?: unknown) => send('GET', path, query),
+      post: (path: string, payload?: unknown) => send('POST', path, payload),
+      put: (path: string, payload?: unknown) => send('PUT', path, payload),
+      patch: (path: string, payload?: unknown) => send('PATCH', path, payload),
+      delete: (path: string) => send('DELETE', path),
+    },
+  } as unknown as McpToolContext & { calls: Recorded[] };
+};
+
+/** One cluster on the instance, so `resolveClusterId` settles without an argument. */
+const oneCluster = (call: Recorded): unknown =>
+  call.path === '/infrastructure/clusters' ? [{ id: 'c1' }] : undefined;
 
 // run() argument types are validated at the MCP layer, not here.
 const run = (tool: ToolDef, args: unknown, ctx: McpToolContext): unknown =>
@@ -31,33 +63,30 @@ describe('MCP agent-facing tool surface', () => {
   describe('app_list', () => {
     const appList = find(APPLICATION_TOOLS, 'app_list');
 
-    it('returns the URL-enriched DTOs (one batched query, no per-app lookup)', async () => {
+    it('reads the cluster listing route, which is the one carrying the URLs', async () => {
       const enriched = [{ id: 'a1', name: 'it-tools', url: 'https://x/' }];
-      const apps = {
-        toResponseDtosWithUrls: jest.fn().mockResolvedValue(enriched),
-      };
-      const ctx = ctxWith({
-        clusters: { listClusters: jest.fn().mockResolvedValue([{ id: 'c1' }]) },
-        apps: {
-          findByClusterId: jest.fn().mockResolvedValue([{ id: 'a1' }]),
-          toResponseDtosWithUrls: apps.toResponseDtosWithUrls,
-        },
-      });
+      const ctx = apiCtx((call) =>
+        call.path === '/clusters/c1/applications' ? enriched : oneCluster(call),
+      );
 
-      const out = await run(appList, {}, ctx);
+      const out = await run(appList, { status: 'running' }, ctx);
 
       expect(out).toBe(enriched);
-      expect(apps.toResponseDtosWithUrls).toHaveBeenCalledTimes(1);
+      expect(ctx.calls.map((c) => `${c.method} ${c.path}`)).toEqual([
+        'GET /infrastructure/clusters',
+        'GET /clusters/c1/applications',
+      ]);
+      expect(ctx.calls[1].payload).toMatchObject({ status: 'running' });
     });
 
-    it('self-corrects an invalid enum filter instead of hitting a DB error', async () => {
-      const ctx = ctxWith({
-        clusters: { listClusters: jest.fn().mockResolvedValue([{ id: 'c1' }]) },
-        apps: { findByClusterId: jest.fn(), toResponseDtosWithUrls: jest.fn() },
-      });
+    it('self-corrects an invalid enum filter instead of reaching the API at all', async () => {
+      const ctx = apiCtx(oneCluster);
       // "database" is a kind, not a category — the model's common mistake.
       await expect(run(appList, { category: 'database' }, ctx)).rejects.toThrow(
         /Invalid category/,
+      );
+      expect(ctx.calls.some((c) => c.path.includes('/applications'))).toBe(
+        false,
       );
     });
 
@@ -190,20 +219,16 @@ describe('MCP agent-facing tool surface', () => {
     const install = find(CATALOG_TOOLS, 'app_install');
 
     it('returns immediately with an operationId + done:false + a human label', async () => {
-      const ctx = ctxWith({
-        clusters: { listClusters: jest.fn().mockResolvedValue([{ id: 'c1' }]) },
-        installer: {
-          install: jest.fn().mockResolvedValue({
-            install: { id: 'i1', displayName: 'MariaDB' },
-            operation: { id: 'op1' },
-          }),
-        },
-        operations: {
-          getOperationDetails: jest
-            .fn()
-            .mockResolvedValue({ status: 'IN_PROGRESS' }),
-        },
-      });
+      const ctx = apiCtx((call) =>
+        call.path === '/catalog/mariadb/install'
+          ? {
+              id: 'i1',
+              displayName: 'MariaDB',
+              status: 'PENDING',
+              operationId: 'op1',
+            }
+          : oneCluster(call),
+      );
 
       const out = (await run(
         install,
@@ -216,81 +241,85 @@ describe('MCP agent-facing tool surface', () => {
       expect(out.label).toBe('Install MariaDB');
       expect(out.installId).toBe('i1');
     });
+
+    // The handle is built from the install response, so nothing is read back:
+    // the follow-up read used to cost a round trip and, on the infrastructure
+    // route, a refusal for anyone but an administrator.
+    it('does not go back to the API to describe what it just started', async () => {
+      const ctx = apiCtx((call) =>
+        call.path === '/catalog/mariadb/install'
+          ? { id: 'i1', displayName: 'MariaDB', status: 'PENDING' }
+          : oneCluster(call),
+      );
+
+      await run(install, { slug: 'mariadb', displayName: 'MariaDB' }, ctx);
+
+      expect(ctx.calls.map((c) => `${c.method} ${c.path}`)).toEqual([
+        'GET /infrastructure/clusters',
+        'POST /catalog/mariadb/install',
+      ]);
+    });
   });
 
   describe('app_uninstall / app_delete routing (removeApplication)', () => {
     const uninstall = find(CATALOG_TOOLS, 'app_uninstall');
 
-    const baseApp = { id: 'a1', name: 'immich-web', clusterId: 'c1' };
-
-    it('routes a catalog-installed app to a whole-install uninstall', async () => {
-      const installerUninstall = jest
-        .fn()
-        .mockResolvedValue({ operation: { id: 'op2' } });
-      const ctx = ctxWith({
-        apps: { findById: jest.fn().mockResolvedValue(baseApp) },
-        installer: {
-          findInstallByApplicationId: jest.fn().mockResolvedValue({
-            id: 'inst1',
-            status: 'INSTALLED',
-            displayName: 'Immich',
-          }),
-          uninstall: installerUninstall,
-        },
-        operations: {
-          getOperationDetails: jest
-            .fn()
-            .mockResolvedValue({ status: 'IN_PROGRESS' }),
-        },
-      });
+    // The routing itself now lives on the route (AppRemovalController) and is
+    // covered by its own spec. What matters here is that the tool asks ONCE,
+    // asks the removal route, and relays what came back — the four reads it
+    // used to interleave are gone, and with them the window between deciding
+    // and removing.
+    it('asks the removal route once and relays the whole-install answer', async () => {
+      const ctx = apiCtx(() => ({
+        removed: 'catalog-install',
+        operationId: 'op2',
+        status: 'IN_PROGRESS',
+        done: false,
+        label: 'Uninstall Immich',
+      }));
 
       const out = (await run(uninstall, { id: 'a1' }, ctx)) as Record<
         string,
         unknown
       >;
+      expect(ctx.calls).toEqual([
+        {
+          method: 'DELETE',
+          path: '/applications/a1/install',
+          payload: undefined,
+        },
+      ]);
       expect(out.removed).toBe('catalog-install');
       expect(out.label).toBe('Uninstall Immich');
-      expect(installerUninstall).toHaveBeenCalledTimes(1);
+      expect(out.done).toBe(false);
     });
 
-    it('is idempotent: a removal already underway does not re-trigger uninstall', async () => {
-      const installerUninstall = jest.fn();
-      const ctx = ctxWith({
-        apps: { findById: jest.fn().mockResolvedValue(baseApp) },
-        installer: {
-          findInstallByApplicationId: jest.fn().mockResolvedValue({
-            id: 'inst1',
-            status: 'UNINSTALLING',
-            displayName: 'Immich',
-            operationId: 'op-prev',
-          }),
-          uninstall: installerUninstall,
-        },
-      });
+    it('is idempotent: a removal already underway comes back as a state, not a second uninstall', async () => {
+      const ctx = apiCtx(() => ({
+        removed: 'catalog-install',
+        operationId: 'op-prev',
+        status: 'IN_PROGRESS',
+        done: false,
+        alreadyUnderway: true,
+      }));
 
       const out = (await run(uninstall, { id: 'a1' }, ctx)) as Record<
         string,
         unknown
       >;
-      expect(out.removed).toBe('catalog-install');
       expect(out.done).toBe(false);
-      expect(installerUninstall).not.toHaveBeenCalled();
+      expect(out.note).toContain('already being removed');
+      expect(ctx.calls).toHaveLength(1);
     });
 
-    it('routes a custom app (no install) to a single-app delete', async () => {
-      const deleteApplication = jest.fn().mockResolvedValue({ id: 'op3' });
-      const ctx = ctxWith({
-        apps: { findById: jest.fn().mockResolvedValue(baseApp) },
-        installer: {
-          findInstallByApplicationId: jest.fn().mockResolvedValue(null),
-        },
-        deploy: { deleteApplication },
-        operations: {
-          getOperationDetails: jest
-            .fn()
-            .mockResolvedValue({ status: 'IN_PROGRESS' }),
-        },
-      });
+    it('relays a single-app delete the same way', async () => {
+      const ctx = apiCtx(() => ({
+        removed: 'application',
+        operationId: 'op3',
+        status: 'PENDING',
+        done: false,
+        label: 'Delete immich-web',
+      }));
 
       const out = (await run(uninstall, { id: 'a1' }, ctx)) as Record<
         string,
@@ -298,7 +327,6 @@ describe('MCP agent-facing tool surface', () => {
       >;
       expect(out.removed).toBe('application');
       expect(out.label).toBe('Delete immich-web');
-      expect(deleteApplication).toHaveBeenCalledTimes(1);
     });
   });
 
@@ -333,21 +361,27 @@ describe('MCP agent-facing tool surface', () => {
 });
 
 describe('resolveClusterId (deterministic cluster selection)', () => {
+  // Over the wire now, so what comes back is what THIS caller may see: "the
+  // sole cluster" means the only one they can act on, not the only one there is.
   const ctx = (clusters: Array<{ id: string; name?: string }>) =>
     ({
-      services: {
-        clusters: { listClusters: jest.fn().mockResolvedValue(clusters) },
-      },
+      api: { get: jest.fn().mockResolvedValue(clusters) },
     }) as unknown as McpToolContext;
 
   it('auto-selects the sole cluster (no cluster_list round-trip needed)', async () => {
     await expect(resolveClusterId(ctx([{ id: 'c1' }]))).resolves.toBe('c1');
   });
 
+  it('asks the API, and asks it for the cluster listing', async () => {
+    const c = ctx([{ id: 'c1' }]);
+    await resolveClusterId(c);
+    expect(c.api.get).toHaveBeenCalledWith('/infrastructure/clusters');
+  });
+
   it('honours an explicit id without listing', async () => {
     const c = ctx([]);
     await expect(resolveClusterId(c, 'given')).resolves.toBe('given');
-    expect(c.services.clusters.listClusters).not.toHaveBeenCalled();
+    expect(c.api.get).not.toHaveBeenCalled();
   });
 
   it('throws an actionable message when none exist', async () => {

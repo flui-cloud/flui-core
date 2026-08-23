@@ -1,38 +1,12 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { McpServer } from '@modelcontextprotocol/server';
+import {
+  McpServer,
+  createRequestStateCodec,
+  type RequestStateCodec,
+} from '@modelcontextprotocol/server';
+import { EncryptionService } from '../../shared/encryption/services/encryption.service';
 import { AuthenticatedUser } from '../../auth/interfaces/authenticated-user.interface';
-import { CatalogService } from '../../catalog/services/catalog.service';
-import { CatalogInstallerService } from '../../catalog/services/catalog-installer.service';
-import { ApplicationService } from '../../applications/services/application.service';
-import { ApplicationDeployService } from '../../applications/services/application-deploy.service';
-import { AppManagementService } from '../../applications/services/app-management.service';
-import { AppConfigService } from '../../applications/services/app-config.service';
-import { ScheduledJobsService } from '../../applications/services/scheduled-jobs.service';
-import { GatewayService } from '../../applications/services/gateway.service';
-import { ApplicationReleaseService } from '../../applications/services/application-release.service';
-import { ApplicationSourceDeployService } from '../../applications/services/application-source-deploy.service';
-import { TemplatesService } from '../../templates/templates.service';
-import { RepositoriesService } from '../../repositories/services/repositories.service';
-import { GitHubOAuthService } from '../../repositories/services/github-oauth.service';
-import { GithubAppUserAuthService } from '../../repositories/services/github-app-user-auth.service';
-import { GithubAppManifestStateService } from '../../repositories/services/github-app-manifest-state.service';
-import { LokiQueryService } from '../../observability/services/loki-query.service';
-import { ApplicationTrafficService } from '../../observability/services/application-traffic.service';
-import { AlertEventsService } from '../../observability/services/alert-events.service';
-import { ClustersService } from '../../infrastructure/clusters/clusters.service';
-import { ClusterDnsZoneService } from '../../dns/services/cluster-dns-zone.service';
-import { InfrastructureOperationsService } from '../../infrastructure/operations/infrastructure-operations.service';
-import { PodDebugService } from '../../scaling/services/pod-debug.service';
-import { BackupPoliciesService } from '../../backups/services/backup-policies.service';
-import { BackupJobsService } from '../../backups/services/backup-jobs.service';
-import { BackupStatusService } from '../../backups/services/backup-status.service';
-import { AppMigrationService } from '../../app-migration/services/app-migration.service';
-import { DbMigrationService } from '../../db-lifecycle/services/db-migration.service';
-import { FullMigrationService } from '../../full-migration/services/full-migration.service';
-import { MailReadinessService } from '../../mail/services/mail-readiness.service';
-import { MailSendService } from '../../mail/services/mail-send.service';
-import { MailSuppressionService } from '../../mail/services/mail-suppression.service';
 import { McpAuditRepository } from '../repositories/mcp-audit.repository';
 import { McpScopeResolver } from './mcp-scope.resolver';
 import { ForwardedCredential, McpApiClient } from './mcp-api.client';
@@ -43,6 +17,7 @@ import {
   toolInputSchema,
 } from '../tools/mcp-tool.util';
 import { ALL_TOOLS } from '../tools/tool-registry';
+import { isOfferedToGuest } from './sandbox-tool-visibility';
 
 export const MCP_SERVER_NAME = 'flui';
 export const MCP_SERVER_VERSION = '0.1.0';
@@ -50,10 +25,14 @@ export const MCP_SERVER_INSTRUCTIONS =
   'Flui: deploy and operate applications on your own clusters. Tools are gated by the scopes of the principal whose token you are using.';
 
 /**
- * Builds a stateless MCP server scoped to one authenticated principal. Tools are
- * thin adapters over existing Nest services; the principal's resolved scopes and
- * the destructive-enablement flag are captured per request so every tool gates
- * and audits against the caller, not shared state.
+ * Builds a stateless MCP server scoped to one authenticated principal.
+ *
+ * It injects no domain service any more, and that absence is the point: every
+ * tool reaches the product through `ctx.api`, which is the Flui API called over
+ * HTTP as the caller. What used to be thirty-one constructor arguments — thirty-one
+ * ways to walk past a guard — is now one caller bound to one credential. The
+ * principal's resolved scopes and the destructive-enablement flag are captured
+ * per request so every tool gates and audits against the caller, not shared state.
  */
 @Injectable()
 export class McpServerFactory {
@@ -62,44 +41,45 @@ export class McpServerFactory {
     private readonly audit: McpAuditRepository,
     private readonly api: McpApiClient,
     private readonly config: ConfigService,
-    private readonly catalog: CatalogService,
-    private readonly installer: CatalogInstallerService,
-    private readonly apps: ApplicationService,
-    private readonly deploy: ApplicationDeployService,
-    private readonly management: AppManagementService,
-    private readonly appConfig: AppConfigService,
-    private readonly releases: ApplicationReleaseService,
-    private readonly sourceDeploy: ApplicationSourceDeployService,
-    private readonly templates: TemplatesService,
-    private readonly repos: RepositoriesService,
-    private readonly github: GitHubOAuthService,
-    private readonly githubAuth: GithubAppUserAuthService,
-    private readonly githubManifest: GithubAppManifestStateService,
-    private readonly loki: LokiQueryService,
-    private readonly traffic: ApplicationTrafficService,
-    private readonly alertEvents: AlertEventsService,
-    private readonly clusters: ClustersService,
-    private readonly clusterDnsZone: ClusterDnsZoneService,
-    private readonly operations: InfrastructureOperationsService,
-    private readonly podDebug: PodDebugService,
-    private readonly backupPolicies: BackupPoliciesService,
-    private readonly backupJobs: BackupJobsService,
-    private readonly backupStatus: BackupStatusService,
-    private readonly appMigration: AppMigrationService,
-    private readonly dbMigration: DbMigrationService,
-    private readonly fullMigration: FullMigrationService,
-    private readonly mailReadiness: MailReadinessService,
-    private readonly mailSend: MailSendService,
-    private readonly mailSuppressions: MailSuppressionService,
-    private readonly scheduledJobs: ScheduledJobsService,
-    private readonly gateway: GatewayService,
+    private readonly encryption: EncryptionService,
   ) {}
+
+  /**
+   * The HMAC key for `requestState`: an HKDF subkey of the platform key, not
+   * the platform key itself — one secret, two cryptographic purposes, separated
+   * by domain so a weakness in one is not a weakness in the other.
+   *
+   * Derived once. It is the same on every replica, because `ENCRYPTION_KEY` is
+   * platform-wide — and it must be, since the replica that verifies an echoed
+   * state is rarely the one that minted it.
+   */
+  private readonly requestStateKey =
+    this.encryption.deriveSubkey('mcp.requestState');
+
+  /**
+   * One codec per request, because the binding is the principal of that
+   * request: a state minted for one caller is refused when echoed by another.
+   * The package stores the binding as a domain-separated HMAC tag, so the user
+   * id never travels on the wire.
+   *
+   * What this does NOT change: a tool still reads which application and which
+   * key it is acting on from its validated arguments on every round, never from
+   * the state. Signing removes the sign that said "this looks safe"; it does not
+   * promote the state to a source of authority.
+   */
+  private codecFor(user: AuthenticatedUser): RequestStateCodec {
+    return createRequestStateCodec({
+      key: this.requestStateKey,
+      bind: () => user.userId,
+    });
+  }
 
   build(
     user: AuthenticatedUser,
     credential: ForwardedCredential,
     isSandbox = false,
   ): McpServer {
+    const requestStateCodec = this.codecFor(user);
     const server = new McpServer(
       { name: MCP_SERVER_NAME, version: MCP_SERVER_VERSION },
       {
@@ -112,7 +92,23 @@ export class McpServerFactory {
         // An assertion, not a default: only tools are registered and nothing on
         // this server ever publishes a change event, so the list never changes
         // under a client that cached it.
+        //
+        // It is also the answer to `subscriptions/listen`, which is served and
+        // has no writer behind it. The acknowledgement declares
+        // `notifications: {}` — "you may listen; the set of things I publish is
+        // empty" — which for a conforming client is exactly true. Capping it
+        // instead (`maxSubscriptions: 0`) would answer "Subscription limit
+        // reached", an invitation to retry that is a lie. Between a silent
+        // stream that tells the truth and a refusal that does not, the silent
+        // one. The day `listChanged` becomes true the stream becomes real and
+        // the question disappears by itself.
         capabilities: { tools: { listChanged: false } },
+        // Runs before every handler on every round that echoes a state — the
+        // legacy 2025 shim included — and throws on a tampered, expired or
+        // re-bound value, which the seam answers as the frozen `-32602`. Until
+        // this existed the state came back raw and unverified, deliberately
+        // trusted with nothing.
+        requestState: { verify: requestStateCodec.verify },
       },
     );
 
@@ -127,39 +123,7 @@ export class McpServerFactory {
       // already speaks as the principal.
       api: this.api.for(credential),
       audit: this.audit,
-      services: {
-        catalog: this.catalog,
-        installer: this.installer,
-        apps: this.apps,
-        deploy: this.deploy,
-        management: this.management,
-        appConfig: this.appConfig,
-        releases: this.releases,
-        sourceDeploy: this.sourceDeploy,
-        templates: this.templates,
-        repos: this.repos,
-        github: this.github,
-        githubAuth: this.githubAuth,
-        githubManifest: this.githubManifest,
-        loki: this.loki,
-        traffic: this.traffic,
-        alertEvents: this.alertEvents,
-        clusters: this.clusters,
-        clusterDnsZone: this.clusterDnsZone,
-        operations: this.operations,
-        podDebug: this.podDebug,
-        backupPolicies: this.backupPolicies,
-        backupJobs: this.backupJobs,
-        backupStatus: this.backupStatus,
-        appMigration: this.appMigration,
-        dbMigration: this.dbMigration,
-        fullMigration: this.fullMigration,
-        mailReadiness: this.mailReadiness,
-        mailSend: this.mailSend,
-        mailSuppressions: this.mailSuppressions,
-        scheduledJobs: this.scheduledJobs,
-        gateway: this.gateway,
-      },
+      requestStateCodec,
     };
 
     for (const def of ALL_TOOLS) {
@@ -167,6 +131,11 @@ export class McpServerFactory {
       // costs the agent context, invites a plan built around it, and pays back only a
       // refusal. runGated still guards execution — this only trims what is offered.
       if (!isExecutable(ctx, def)) continue;
+      // The scope says how much of the toolbox; the fence says which of it a
+      // guest would actually be answered with. Both are needed, and only the
+      // second knows that a `200` full of example backups is worse for a model
+      // than a refusal.
+      if (isSandbox && !isOfferedToGuest(def)) continue;
 
       server.registerTool(
         def.name,

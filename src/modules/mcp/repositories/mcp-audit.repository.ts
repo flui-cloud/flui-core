@@ -16,6 +16,7 @@ export class McpAuditRepository {
     scope: string;
     allowed: boolean;
     error?: string | null;
+    outcome?: string | null;
   }): Promise<void> {
     await this.repo.save(
       this.repo.create({
@@ -24,6 +25,7 @@ export class McpAuditRepository {
         scope: data.scope,
         allowed: data.allowed,
         error: data.error ?? null,
+        outcome: data.outcome ?? null,
       }),
     );
   }

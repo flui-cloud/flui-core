@@ -5,16 +5,41 @@ import { rankBySimilarity } from '../../catalog/utils/catalog-fuzzy.util';
 import { MCP_SCOPE } from '../constants/mcp-scopes';
 import {
   defineTool,
-  readOperationOutcome,
   removeApplication,
   resolveClusterId,
+  startedOutcome,
   ToolDef,
 } from './mcp-tool.util';
+
+/** Path-segment safety: a slug from a model is input, not a literal. */
+const enc = encodeURIComponent;
+
+interface CatalogApp {
+  slug: string;
+  name: string;
+  category?: string;
+  description?: string;
+  tags?: string[];
+  alternativeTo?: string[];
+}
+
+/**
+ * A wrong slug comes back as a 404 from the route now, not as a Nest exception
+ * thrown in the same process — so the "did you mean" branch has to recognise
+ * both, or it stops firing the day the last in-process caller goes.
+ */
+function isNotFound(err: unknown): boolean {
+  return (
+    err instanceof NotFoundException ||
+    (err as { status?: number } | undefined)?.status === 404
+  );
+}
 
 /** Catalog discovery tools (read tier) plus gated install (write). */
 export const CATALOG_TOOLS: ToolDef[] = [
   defineTool({
     name: 'catalog_search',
+    routes: ['GET /catalog'],
     description:
       'Search the Flui catalog of installable apps and building blocks by free-text name, category, or tags. The search is tolerant: if no exact match is found it falls back to the closest apps by name similarity, so prefer searching by the app NAME the user said rather than guessing a slug. Results may be near-matches ranked by relevance — read the `name` to pick the right one (confirm with the user if ambiguous).',
     scope: MCP_SCOPE.CATALOG_READ,
@@ -24,14 +49,17 @@ export const CATALOG_TOOLS: ToolDef[] = [
       tags: z.array(z.string()).optional(),
     },
     run: async (args, ctx) => {
-      const results = await ctx.services.catalog.listPublic({
+      const query = {
         search: args.search,
         category: args.category,
         tags: args.tags,
-      });
+      };
+      const results = await ctx.api.get<CatalogApp[]>('/catalog', query);
       if (results.length > 0 || !args.search) return results;
-      // Substring LIKE missed — rank by similarity so a near-name still surfaces.
-      const pool = await ctx.services.catalog.listPublic({
+      // Substring LIKE missed — rank by similarity so a near-name still
+      // surfaces. Two reads of the same open listing, in that order and never
+      // interleaved with a write: nothing here can race with anything.
+      const pool = await ctx.api.get<CatalogApp[]>('/catalog', {
         category: args.category,
         tags: args.tags,
       });
@@ -55,6 +83,7 @@ export const CATALOG_TOOLS: ToolDef[] = [
   }),
   defineTool({
     name: 'catalog_get_app',
+    routes: ['GET /catalog/:slug'],
     description:
       'Get the full detail of one catalog app by slug: required user inputs, dependencies, exposure, and whether it can be installed on the target cluster right now. ALWAYS call this before app_install and check `installable` — if it is false the install will be refused, so tell the user the missing requirement (e.g. the cluster needs DNS + TLS for internal apps) and how to resolve it instead of attempting the install. If the slug is wrong the error lists the closest slugs ("did you mean …") — retry with one of those rather than telling the user the app is absent. The cluster is auto-resolved when there is a single one.',
     scope: MCP_SCOPE.CATALOG_READ,
@@ -74,13 +103,13 @@ export const CATALOG_TOOLS: ToolDef[] = [
         }
       }
       try {
-        return await ctx.services.catalog.getDetailBySlug(args.slug, clusterId);
+        return await ctx.api.get(`/catalog/${enc(args.slug)}`, { clusterId });
       } catch (err) {
         // Surface the closest slugs on a wrong guess so the model retries.
-        if (!(err instanceof NotFoundException)) throw err;
+        if (!isNotFound(err)) throw err;
         const suggestions = rankBySimilarity(
           args.slug,
-          await ctx.services.catalog.listPublic({}),
+          await ctx.api.get<CatalogApp[]>('/catalog', {}),
         );
         if (!suggestions.length) throw err;
         const list = suggestions.map((s) => `${s.slug} (${s.name})`).join(', ');
@@ -121,6 +150,7 @@ export const CATALOG_TOOLS: ToolDef[] = [
   }),
   defineTool({
     name: 'app_install',
+    routes: ['POST /catalog/:slug/install'],
     description:
       "Install a catalog app on a cluster. Provide the catalog `slug` (from catalog_search) and a `displayName`. clusterId is optional (the sole cluster is used automatically). Optional: domain (a custom FQDN; omitted, Flui auto-assigns one when the cluster has DNS+TLS), authMode, exposure, options (feature toggles), userInputs (answers to the app's required inputs — call catalog_get_app first to see which are required), envOverrides. Inspect catalog_get_app before installing so required userInputs and dependencies are satisfied. Returns immediately with an operationId; the install then runs in the background. Follow the `note` in the result for what to do next — it is surface-specific.",
     scope: MCP_SCOPE.APP_WRITE,
@@ -146,29 +176,33 @@ export const CATALOG_TOOLS: ToolDef[] = [
         userInputs: args.userInputs,
         envOverrides: args.envOverrides,
       };
-      const { install, operation } = await ctx.services.installer.install(
-        args.slug,
-        dto,
-        ctx.user.userId,
-        ctx.user.email,
-      );
-      const outcome = await readOperationOutcome(
-        ctx,
-        operation.id,
-        `Install ${install.displayName}`,
-      );
+      // `assertCanCreate` runs on the route, and for a sandbox guest it also
+      // pins the install to the cluster its tenancy was built on — neither of
+      // which an in-process service call ever met.
+      const install = await ctx.api.post<{
+        id: string;
+        displayName: string;
+        status: string;
+        operationId?: string;
+      }>(`/catalog/${enc(args.slug)}/install`, dto);
       return {
         installId: install.id,
         slug: args.slug,
         displayName: install.displayName,
-        ...outcome,
+        ...startedOutcome(
+          ctx,
+          install.operationId ?? '',
+          install.status,
+          `Install ${install.displayName}`,
+        ),
       };
     },
   }),
   defineTool({
     name: 'app_uninstall',
+    routes: ['DELETE /applications/:id/install'],
     description:
-      'Remove an INSTALLED app by its application id. Find the id with app_list first — the catalog only lists installable definitions, not what is installed. Removes catalog-installed apps (the entire multi-component install) as well as custom apps; you do NOT need to know which it is. Returns immediately with an operationId; removal then runs in the background. Follow the `note` in the result for what to do next — it is surface-specific. Destructive.',
+      'Remove an INSTALLED app by its application id, INCLUDING its persistent volumes — the data goes with it and cannot be recovered. Call app_removal_preview first and repeat its `dataWarning` to the person before doing this. Find the id with app_list first — the catalog only lists installable definitions, not what is installed. Removes catalog-installed apps (the entire multi-component install) as well as custom apps; you do NOT need to know which it is. Returns immediately with an operationId; removal then runs in the background. Follow the `note` in the result for what to do next — it is surface-specific. Destructive.',
     scope: MCP_SCOPE.APP_DESTRUCTIVE,
     inputSchema: { id: z.string() },
     run: (args, ctx) => removeApplication(ctx, args.id),

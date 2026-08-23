@@ -26,27 +26,35 @@ function kindOf(event: Record<string, unknown>): string {
 export const MAIL_TOOLS: ToolDef[] = [
   defineTool({
     name: 'mail_readiness',
+    routes: ['GET /mail/readiness'],
     description:
       'What still stands between Flui and a sent message, asked of the mail provider rather than guessed from a failed send. Returns ordered steps, each satisfied / automatable / manual / pending: `credential` (does the connected key cover the provider\'s email service at all), `domain` (is the sending domain registered), `dns` (are SPF and DKIM published and valid), `verification` (has the provider accepted the domain). A `manual` step carries the exact action and a console URL; `pending` means the provider is still working and is NOT an error. Pass `domain` to check a specific sending domain — omitted, only the credential is checked, which is enough to answer "is email set up here at all". Start here for any "mail is not arriving" question: three very different causes look identical from outside, and each sends the operator somewhere different.',
     scope: MCP_SCOPE.MAIL_READ,
     inputSchema: {
       domain: z.string().optional(),
     },
-    run: async (args, ctx) => ctx.services.mailReadiness.scaleway(args.domain),
+    // `GET /mail/readiness` asks whichever provider carries the transactional
+    // scope — it delegates to the Scaleway path when that is the connected one,
+    // so the answer is the same where it used to be right and correct where it
+    // used to be Scaleway-shaped for a provider that is not Scaleway.
+    run: (args, ctx) => ctx.api.get('/mail/readiness', { domain: args.domain }),
   }),
 
   defineTool({
     name: 'mail_events',
+    routes: ['GET /mail/events'],
     description:
       "Delivery outcomes the provider reports for recently sent mail: queued, sent, delivered, deferred, bounced, complained. Each carries the recipient, the subject, the SMTP status code and the receiving server's own words — `550 5.7.1 SPF check failed for example.com` is usually the only text that says WHY, so quote it rather than paraphrasing. This is state, not history: the same message reappears with a changed verdict as it progresses, so match on message_id + recipient rather than counting rows. `since` is an ISO timestamp and is exclusive; the provider filters on when a message was CREATED, so a message sent this morning that bounces this afternoon is still found under this morning — widen the window when chasing a late failure.",
     scope: MCP_SCOPE.MAIL_READ,
     inputSchema: {
       since: z.string().optional(),
     },
-    run: async (args, ctx) =>
-      ctx.services.mailSend.events(
-        args.since ? new Date(args.since) : undefined,
-      ),
+    // The route backfills from the provider and then serves a page from the
+    // store; its page size defaults to 50, so the cap is asked for explicitly.
+    // 200 is the route's maximum, and the projection below already says when
+    // the failures it shows are truncated.
+    run: (args, ctx) =>
+      ctx.api.get('/mail/events', { since: args.since, limit: 200 }),
     forModel: (events: unknown) => {
       const list = (events as Array<Record<string, unknown>>) ?? [];
       // The full list is unbounded and mostly repetition. A model needs the
@@ -67,10 +75,11 @@ export const MAIL_TOOLS: ToolDef[] = [
 
   defineTool({
     name: 'mail_suppressions',
+    routes: ['GET /mail/suppressions'],
     description:
       'Addresses Flui has stopped writing to, and how far each stop reaches. `scope: all` means nothing can be delivered — a mailbox that does not exist, or someone who reported the sender as spam. `scope: bulk` means one-to-many mail only: that person left a mailing list and still receives their password resets, and treating the two the same is how someone gets silently locked out of their account. Check this before concluding that a specific person "never got the email" — a suppression is invisible from the application\'s side. Releasing an address is a write and is not available here; use `flui mail unsuppress` or the API.',
     scope: MCP_SCOPE.MAIL_READ,
     inputSchema: {},
-    run: async (_args, ctx) => ctx.services.mailSuppressions.list(),
+    run: (_args, ctx) => ctx.api.get('/mail/suppressions'),
   }),
 ];

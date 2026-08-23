@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Inject, Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { AuthenticatedUser } from '../../auth/interfaces/authenticated-user.interface';
 import { CatalogService } from '../../catalog/services/catalog.service';
@@ -34,6 +34,11 @@ import { MailSendService } from '../../mail/services/mail-send.service';
 import { MailSuppressionService } from '../../mail/services/mail-suppression.service';
 import { collectHosts, findUnverifiedUrls } from './url-guard.util';
 import { McpScopeResolver } from '../../mcp/services/mcp-scope.resolver';
+import { isOfferedToGuest } from '../../mcp/services/sandbox-tool-visibility';
+import {
+  POLICY_ENGINE,
+  PolicyEngine,
+} from '../../iam/interfaces/policy-engine.interface';
 import {
   ForwardedCredential,
   McpApiClient,
@@ -137,6 +142,7 @@ export class AssistantAgentService {
     private readonly gateway: GatewayService,
     private readonly config: ConfigService,
     private readonly api: McpApiClient,
+    @Inject(POLICY_ENGINE) private readonly policy: PolicyEngine,
   ) {}
 
   private destructiveEnabled(): boolean {
@@ -151,7 +157,17 @@ export class AssistantAgentService {
   ): Promise<AgentResult> {
     const { endpoint } = await this.inference.resolveEndpoint(dto);
     const model = await this.inference.resolveModel(dto, endpoint);
-    const ctx = this.buildContext(user, credential);
+    // The same question the MCP surface asks before it builds a toolbox. Asked
+    // here too because this is the other consumer of the same registry, and a
+    // second path that filters differently is a second answer to give.
+    const { isSandbox } = await this.policy.resolveAccess({
+      userId: user.userId,
+      email: user.email,
+      role: user.role,
+      isAdmin: !!user.isAdmin,
+      scopes: user.scopes,
+    });
+    const ctx = this.buildContext(user, credential, isSandbox);
     const approved = new Set(dto.approvedToolCallIds ?? []);
     const conversation: ChatCompletionMessage[] = dto.messages.map((m) => ({
       role: m.role,
@@ -343,21 +359,25 @@ export class AssistantAgentService {
     const id = typeof args.id === 'string' ? args.id : undefined;
     try {
       if ((name === 'app_uninstall' || name === 'app_delete') && id) {
-        const app = await ctx.services.apps.findById(id);
-        const install = await ctx.services.installer.findInstallByApplicationId(
-          id,
-          app.clusterId,
-        );
-        if (install) {
+        const app = await ctx.api.get<{
+          name?: string;
+          catalogInstallId?: string;
+        }>(`/applications/${encodeURIComponent(id)}`);
+        if (app.catalogInstallId) {
+          const install = await ctx.api.get<{ displayName?: string }>(
+            `/catalog/installs/${encodeURIComponent(app.catalogInstallId)}`,
+          );
           return {
             label: `Uninstall ${install.displayName}`,
-            groupKey: `install:${install.id}`,
+            groupKey: `install:${app.catalogInstallId}`,
           };
         }
         return { label: `Delete ${app.name}`, groupKey: `app:${id}` };
       }
       if (id) {
-        const app = await ctx.services.apps.findById(id);
+        const app = await ctx.api.get<{ name?: string }>(
+          `/applications/${encodeURIComponent(id)}`,
+        );
         const verb: Record<string, string> = {
           app_scale: `Scale ${app.name} to ${typeof args.replicas === 'number' ? args.replicas : '?'} replica(s)`,
           app_restart: `Restart ${app.name}`,
@@ -679,58 +699,38 @@ export class AssistantAgentService {
   private buildContext(
     user: AuthenticatedUser,
     credential: ForwardedCredential,
+    isSandbox: boolean,
   ): McpToolContext {
     return {
       user,
       // Same rule as the MCP surface: a converted tool talks to the API as the
       // person driving the chat, on the credential their own request carried.
       api: this.api.for(credential),
-      scopes: this.scopes.resolve(user),
+      scopes: this.scopes.resolve(user, isSandbox),
+      isSandbox,
       // Destructive ops require BOTH server-wide enablement (MCP_ALLOW_DESTRUCTIVE) and,
       // when enabled, the per-action pending_action confirmation. Disabled by default:
       // the assistant refuses rather than offering a confirmation it cannot honour.
       allowDestructive: this.destructiveEnabled(),
       surface: 'assistant',
       audit: this.audit,
-      services: {
-        catalog: this.catalog,
-        installer: this.installer,
-        apps: this.apps,
-        deploy: this.deploy,
-        management: this.management,
-        appConfig: this.appConfig,
-        releases: this.releases,
-        sourceDeploy: this.sourceDeploy,
-        templates: this.templates,
-        repos: this.repos,
-        github: this.github,
-        githubAuth: this.githubAuth,
-        githubManifest: this.githubManifest,
-        loki: this.loki,
-        traffic: this.traffic,
-        alertEvents: this.alertEvents,
-        clusters: this.clusters,
-        clusterDnsZone: this.clusterDnsZone,
-        operations: this.operations,
-        podDebug: this.podDebug,
-        backupPolicies: this.backupPolicies,
-        backupJobs: this.backupJobs,
-        backupStatus: this.backupStatus,
-        appMigration: this.appMigration,
-        dbMigration: this.dbMigration,
-        fullMigration: this.fullMigration,
-        mailReadiness: this.mailReadiness,
-        mailSend: this.mailSend,
-        mailSuppressions: this.mailSuppressions,
-        scheduledJobs: this.scheduledJobs,
-        gateway: this.gateway,
-      },
     };
   }
 
-  /** Tools the user is allowed to see, as OpenAI function schemas. */
+  /**
+   * Tools the user is allowed to see, as OpenAI function schemas.
+   *
+   * Two questions, not one, and the second is the one this surface used to skip:
+   * the scope says how much of the toolbox, the fence says which of it a guest
+   * would actually be answered with. `/assistant/v1/chat` is not open to a
+   * guest today, so nothing leaked — but the day it opens, one filtered list
+   * and one unfiltered list is exactly the kind of second path the whole move
+   * to a single tool registry was meant to remove.
+   */
   private toolsForUser(ctx: McpToolContext): ChatTool[] {
-    return ALL_TOOLS.filter((d) => ctx.scopes.has(d.scope)).map(toOpenAiTool);
+    return ALL_TOOLS.filter(
+      (d) => ctx.scopes.has(d.scope) && (!ctx.isSandbox || isOfferedToGuest(d)),
+    ).map(toOpenAiTool);
   }
 
   private chatTurns(conversation: ChatCompletionMessage[]): RouteMessage[] {

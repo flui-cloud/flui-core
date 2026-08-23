@@ -2,6 +2,7 @@ import { MailModule } from '../mail/mail.module';
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { InferenceModule } from '../inference/inference.module';
+import { IamModule } from '../iam/iam.module';
 import { McpModule } from '../mcp/mcp.module';
 import { CatalogModule } from '../catalog/catalog.module';
 import { ApplicationsModule } from '../applications/applications.module';
@@ -34,6 +35,7 @@ import { AssistantController } from './controllers/assistant.controller';
     TypeOrmModule.forFeature([AssistantMessageLogEntity]),
     InferenceModule,
     McpModule,
+    IamModule,
     CatalogModule,
     ApplicationsModule,
     ObservabilityModule,

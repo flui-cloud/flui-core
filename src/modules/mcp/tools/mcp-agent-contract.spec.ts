@@ -4,7 +4,7 @@ import {
   ToolDef,
   defineTool,
   isExecutable,
-  readOperationOutcome,
+  startedOutcome,
   runTool,
   toolInputSchema,
 } from './mcp-tool.util';
@@ -18,7 +18,6 @@ const ctxWith = (over: Partial<McpToolContext> = {}): McpToolContext =>
     allowDestructive: true,
     surface: 'mcp',
     audit: { record: jest.fn() },
-    services: {},
     ...over,
   }) as unknown as McpToolContext;
 
@@ -107,38 +106,58 @@ describe('MCP agent contract', () => {
   });
 
   describe('async-operation guidance is addressed to the actual caller', () => {
-    const started = {
-      operations: {
-        getOperationDetails: jest.fn().mockResolvedValue({ status: 'RUNNING' }),
-      },
-    };
-
-    it('tells an MCP client to poll operation_status — nothing else will', async () => {
-      const ctx = ctxWith({ surface: 'mcp', services: started as never });
-      const outcome = await readOperationOutcome(ctx, 'op1');
+    it('tells an MCP client to poll operation_status — nothing else will', () => {
+      const outcome = startedOutcome(
+        ctxWith({ surface: 'mcp' }),
+        'op1',
+        'RUNNING',
+      );
       expect(outcome.note).toContain('operation_status');
       expect(outcome.note).not.toContain('progress widget');
     });
 
-    it('keeps the widget promise for the in-product assistant, where it is true', async () => {
-      const ctx = ctxWith({ surface: 'assistant', services: started as never });
-      const outcome = await readOperationOutcome(ctx, 'op1');
+    it('keeps the widget promise for the in-product assistant, where it is true', () => {
+      const outcome = startedOutcome(
+        ctxWith({ surface: 'assistant' }),
+        'op1',
+        'RUNNING',
+      );
       expect(outcome.note).toContain('progress widget');
     });
 
-    it('reports a failure the same way on both surfaces', async () => {
-      const failed = {
-        operations: {
-          getOperationDetails: jest.fn().mockResolvedValue({
-            status: 'FAILED',
-            errorMessage: 'boom',
-          }),
-        },
-      };
-      const ctx = ctxWith({ surface: 'mcp', services: failed as never });
-      const outcome = await readOperationOutcome(ctx, 'op1');
+    it('reports a failure the same way on both surfaces', () => {
+      const outcome = startedOutcome(
+        ctxWith({ surface: 'mcp' }),
+        'op1',
+        'FAILED',
+        undefined,
+        'boom',
+      );
       expect(outcome.done).toBe(true);
       expect(outcome.note).toContain('FAILED');
+      expect(outcome.error).toBe('boom');
+    });
+
+    // The handle is built from what the creating call answered, never from a
+    // second read of the operation: a converted tool that went back to the API
+    // for it would be one round trip and one refusal away from turning a
+    // successful install into a failed tool call.
+    it('reaches for nothing at all to build the handle', () => {
+      const exploding = new Proxy(
+        {},
+        {
+          get(_t, prop) {
+            throw new Error(`reached for api.${String(prop)}`);
+          },
+        },
+      ) as never;
+      expect(() =>
+        startedOutcome(
+          ctxWith({ surface: 'mcp', api: exploding }),
+          'op1',
+          'PENDING',
+        ),
+      ).not.toThrow();
     });
   });
 });

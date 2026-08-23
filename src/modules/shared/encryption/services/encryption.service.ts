@@ -81,6 +81,33 @@ export class EncryptionService {
     };
   }
 
+  /**
+   * A key for a purpose that is not encryption, derived from the platform key
+   * rather than taken from it.
+   *
+   * The MCP `requestState` needs an HMAC key. Reusing `encryptionKey` raw would
+   * make one secret do two cryptographic jobs, which is how a weakness in one
+   * becomes a weakness in the other; introducing a second secret would be
+   * another thing to distribute, rotate and forget. HKDF-SHA256 with the
+   * purpose as `info` gives each domain its own key material from the one
+   * secret, and two domains can never collide.
+   *
+   * No salt: the input is already a high-entropy platform key, and a fixed
+   * empty salt keeps the derivation reproducible across replicas — which it
+   * must be, since any replica may verify what another minted.
+   */
+  deriveSubkey(domain: string, length = 32): Buffer {
+    return Buffer.from(
+      crypto.hkdfSync(
+        'sha256',
+        this.encryptionKey,
+        Buffer.alloc(0),
+        Buffer.from(`flui.subkey.${domain}`, 'utf8'),
+        length,
+      ),
+    );
+  }
+
   private fingerprintOf(key: Buffer): string {
     return crypto.createHash('sha256').update(key).digest('hex').slice(0, 16);
   }

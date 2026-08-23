@@ -1,40 +1,11 @@
 import { z, ZodRawShape } from 'zod';
 import { AuthenticatedUser } from '../../auth/interfaces/authenticated-user.interface';
-import { CatalogService } from '../../catalog/services/catalog.service';
-import { CatalogInstallerService } from '../../catalog/services/catalog-installer.service';
-import { ApplicationService } from '../../applications/services/application.service';
-import { ApplicationDeployService } from '../../applications/services/application-deploy.service';
-import { AppManagementService } from '../../applications/services/app-management.service';
-import { AppConfigService } from '../../applications/services/app-config.service';
-import { ScheduledJobsService } from '../../applications/services/scheduled-jobs.service';
-import { GatewayService } from '../../applications/services/gateway.service';
-import { ApplicationReleaseService } from '../../applications/services/application-release.service';
-import { ApplicationSourceDeployService } from '../../applications/services/application-source-deploy.service';
-import { TemplatesService } from '../../templates/templates.service';
-import { RepositoriesService } from '../../repositories/services/repositories.service';
-import { GitHubOAuthService } from '../../repositories/services/github-oauth.service';
-import { GithubAppUserAuthService } from '../../repositories/services/github-app-user-auth.service';
-import { GithubAppManifestStateService } from '../../repositories/services/github-app-manifest-state.service';
-import { LokiQueryService } from '../../observability/services/loki-query.service';
-import { ApplicationTrafficService } from '../../observability/services/application-traffic.service';
-import { AlertEventsService } from '../../observability/services/alert-events.service';
-import { ClustersService } from '../../infrastructure/clusters/clusters.service';
-import { ClusterDnsZoneService } from '../../dns/services/cluster-dns-zone.service';
-import { InfrastructureOperationsService } from '../../infrastructure/operations/infrastructure-operations.service';
-import { PodDebugService } from '../../scaling/services/pod-debug.service';
-import { BackupPoliciesService } from '../../backups/services/backup-policies.service';
-import { BackupJobsService } from '../../backups/services/backup-jobs.service';
-import { BackupStatusService } from '../../backups/services/backup-status.service';
-import { AppMigrationService } from '../../app-migration/services/app-migration.service';
-import { DbMigrationService } from '../../db-lifecycle/services/db-migration.service';
-import { FullMigrationService } from '../../full-migration/services/full-migration.service';
-import { MailReadinessService } from '../../mail/services/mail-readiness.service';
-import { MailSendService } from '../../mail/services/mail-send.service';
-import { MailSuppressionService } from '../../mail/services/mail-suppression.service';
-import { CatalogInstallStatus } from '../../catalog/enums/catalog-install-status.enum';
 import { McpAuditRepository } from '../repositories/mcp-audit.repository';
 import { McpScope, SCOPE_TIER } from '../constants/mcp-scopes';
-import type { ServerContext } from '@modelcontextprotocol/server';
+import type {
+  RequestStateCodec,
+  ServerContext,
+} from '@modelcontextprotocol/server';
 import {
   InputRequiredResult,
   McpRequestRound,
@@ -51,41 +22,6 @@ export interface ToolResult {
   [key: string]: unknown;
 }
 
-/** The existing Nest services the thin tools delegate to (no new business logic). */
-export interface McpServices {
-  catalog: CatalogService;
-  installer: CatalogInstallerService;
-  apps: ApplicationService;
-  deploy: ApplicationDeployService;
-  sourceDeploy: ApplicationSourceDeployService;
-  management: AppManagementService;
-  appConfig: AppConfigService;
-  scheduledJobs: ScheduledJobsService;
-  gateway: GatewayService;
-  releases: ApplicationReleaseService;
-  templates: TemplatesService;
-  repos: RepositoriesService;
-  github: GitHubOAuthService;
-  githubAuth: GithubAppUserAuthService;
-  githubManifest: GithubAppManifestStateService;
-  loki: LokiQueryService;
-  traffic: ApplicationTrafficService;
-  alertEvents: AlertEventsService;
-  clusters: ClustersService;
-  clusterDnsZone: ClusterDnsZoneService;
-  operations: InfrastructureOperationsService;
-  podDebug: PodDebugService;
-  backupPolicies: BackupPoliciesService;
-  backupJobs: BackupJobsService;
-  backupStatus: BackupStatusService;
-  appMigration: AppMigrationService;
-  dbMigration: DbMigrationService;
-  fullMigration: FullMigrationService;
-  mailReadiness: MailReadinessService;
-  mailSend: MailSendService;
-  mailSuppressions: MailSuppressionService;
-}
-
 /**
  * Which consumer is running the tool. The two differ in what the caller can see:
  * the Flui UI renders a progress widget for async operations, an external MCP
@@ -99,21 +35,28 @@ export interface McpToolContext {
   scopes: Set<string>;
   allowDestructive: boolean;
   audit: McpAuditRepository;
-  services: McpServices;
   /**
-   * The Flui API, called over HTTP as the caller's own principal.
+   * The Flui API, called over HTTP as the caller's own principal — and the only
+   * way a tool reaches anything at all.
    *
-   * A converted tool uses this and NOT `services`: the guards are decorations on
-   * the controllers, so a service call reached in process walks past every one
-   * of them while a real request cannot. The caller is already bound to the
-   * credential the inbound request carried — no tool body ever sees a token, and
-   * none is minted.
+   * The guards are decorations on the controllers: `AppAccessGuard`, the sandbox
+   * route fence, the section and permission gates sit on the request path and on
+   * nothing else, so a service call reached in process walks past every one of
+   * them while a real request cannot. There is deliberately no second field
+   * holding those services any more — a bypass that is not on the context is one
+   * nobody can reach for by accident.
    *
-   * Conversion is per tool, so both fields are populated while the catalog
-   * is still mixed.
+   * The caller is already bound to the credential the inbound request carried:
+   * no tool body ever sees a token, and none is minted.
    */
   api: McpApiCaller;
   surface: ToolSurface;
+  /**
+   * The caller is a sandbox guest. Set on both surfaces so the visibility
+   * filter has one place to read it from; it hides tools and grants nothing —
+   * every tool still meets the route fence on the way in.
+   */
+  isSandbox?: boolean;
   /**
    * What the current round of a multi-round-trip call carried (MCP 2026-07-28).
    * Named after the SDK's own `ctx.mcpReq`, and now filled from it: the package
@@ -122,6 +65,23 @@ export interface McpToolContext {
    * MCP request at all.
    */
   mcpReq?: McpRequestRound;
+  /**
+   * Seals a correlation payload into the opaque `requestState` a handler hands
+   * back with `inputRequired`. Bound per call by `runTool` to the SDK context,
+   * because the codec's binding is evaluated against the principal of *this*
+   * round — a state minted for one caller is refused when echoed by another.
+   *
+   * Absent on the assistant surface, which has no MCP request and therefore no
+   * round trip through a client to protect.
+   */
+  mintRequestState?: (payload: unknown) => Promise<string>;
+  /**
+   * The HMAC codec for `requestState`, keyed by an HKDF subkey of the platform
+   * key. Set once per request by the MCP factory; `runTool` binds
+   * its `mint` to the round's SDK context. Its `verify` is wired into the
+   * server itself, so a tampered or expired state never reaches a handler.
+   */
+  requestStateCodec?: RequestStateCodec;
 }
 
 /**
@@ -134,6 +94,25 @@ export interface ToolDef<Shape extends ZodRawShape = ZodRawShape> {
   description: string;
   inputSchema: Shape;
   scope: McpScope;
+  /**
+   * The API route the tool's call is decided on, as a fence pattern
+   * (`'POST /applications/:id/deploy'`). Several when the body branches; the
+   * preparatory reads a tool makes on the way — resolving the single cluster,
+   * reading an application before writing it — are not routes it is *about* and
+   * are left out.
+   *
+   * It is a declaration of where the tool goes, never of what it may do: what a
+   * call is allowed to touch stays with the guards on the route. What this
+   * buys is the one question that cannot be answered from a closure — *would
+   * this principal's request be let through, and would it be answered with the
+   * real thing* — which is how `sandbox-tool-visibility.ts` decides what a
+   * guest is offered without a second hand-written list beside the fence.
+   *
+   * Optional in the type and fail-closed in the filter: a tool that declares
+   * nothing is not offered to a guest. `wire-catalog.spec.ts` pins each
+   * declaration against the call the tool actually makes.
+   */
+  routes?: string[];
   run: (
     args: z.infer<z.ZodObject<Shape>>,
     ctx: McpToolContext,
@@ -203,7 +182,12 @@ export async function resolveClusterId(
   clusterId?: string,
 ): Promise<string> {
   if (clusterId) return clusterId;
-  const clusters = await ctx.services.clusters.listClusters();
+  // Over the wire like every other read: `GET /infrastructure/clusters` returns
+  // what THIS caller may see, so "exactly one cluster" now means one the caller
+  // can act on, not one that merely exists on the instance.
+  const clusters = await ctx.api.get<Array<{ id: string; name: string }>>(
+    '/infrastructure/clusters',
+  );
   if (clusters.length === 1) return clusters[0].id;
   if (clusters.length === 0) {
     throw new Error('No clusters exist yet — create one before querying it.');
@@ -245,29 +229,42 @@ function outcomeNote(
   return 'Started in the background. Nothing polls it for you on this surface, so YOU must follow it: call operation_status with this operationId until `done` is true, then report the real outcome. Never claim it finished before `done`.';
 }
 
+const TERMINAL = new Set(['COMPLETED', 'FAILED', 'CANCELLED']);
+
+export function isTerminalStatus(status: string): boolean {
+  return TERMINAL.has(status);
+}
+
 /**
- * Read a just-started async operation ONCE and return its handle immediately — no
- * waiting. The UI renders a non-blocking progress widget that polls the operation to
- * completion, so the tool returns instantly and the model never blocks or fakes a
- * "I'll let you know" promise. Synchronous preflight failures never reach here (they
- * throw before an operation exists and surface as an inline error).
+ * The handle of an operation the call that just returned has started.
+ *
+ * It does NOT read the operation back. The in-process version did — create,
+ * then `getOperationDetails` — for one reason only: to build `note`, which is
+ * computed from the surface and from whether the status is terminal, and a
+ * status that arrived with the creating response is the same status that second
+ * read would have found microseconds later. Over HTTP that read would be a
+ * second round trip, on a route (`/infrastructure/operations/:id`) that an
+ * editor is refused by section — so a successful install would come back to the
+ * agent as a failed tool call. Reporting what the API just said is both
+ * cheaper and truer.
+ *
+ * Synchronous preflight failures never reach here: they throw before an
+ * operation exists and surface as an inline error.
  */
-export async function readOperationOutcome(
+export function startedOutcome(
   ctx: McpToolContext,
   operationId: string,
+  status: string,
   label?: string,
-): Promise<OperationOutcome> {
-  const op = await ctx.services.operations.getOperationDetails(operationId);
-  const done =
-    op.status === 'COMPLETED' ||
-    op.status === 'FAILED' ||
-    op.status === 'CANCELLED';
+  error?: string,
+): OperationOutcome {
+  const done = isTerminalStatus(status);
   return {
     operationId,
-    status: op.status,
+    status,
     done,
-    error: op.errorMessage,
-    note: outcomeNote(op.status, done, ctx.surface),
+    error,
+    note: outcomeNote(status, done, ctx.surface),
     label,
   };
 }
@@ -282,51 +279,35 @@ export async function removeApplication(
   ctx: McpToolContext,
   applicationId: string,
 ): Promise<OperationOutcome & { removed: 'catalog-install' | 'application' }> {
-  const app = await ctx.services.apps.findById(applicationId);
-  const install = await ctx.services.installer.findInstallByApplicationId(
-    applicationId,
-    app.clusterId,
-  );
-  if (install) {
-    // Every component of a multi-component install maps to the SAME install, so a
-    // removal that is already underway/done must not be re-triggered — the model
-    // tends to call remove once per listed component.
-    if (
-      install.status === CatalogInstallStatus.UNINSTALLING ||
-      install.status === CatalogInstallStatus.UNINSTALLED
-    ) {
-      const done = install.status === CatalogInstallStatus.UNINSTALLED;
-      return {
-        removed: 'catalog-install',
-        operationId: install.operationId ?? '',
-        status: done ? 'COMPLETED' : 'IN_PROGRESS',
-        done,
-        note: done
-          ? 'This app and all its components were already removed.'
-          : 'This app is already being removed — all its components go together, so there is nothing more to remove. Do not call remove again for its other components.',
-      };
-    }
-    const { operation } = await ctx.services.installer.uninstall(
-      install.id,
-      ctx.user.userId,
-    );
-    const outcome = await readOperationOutcome(
-      ctx,
-      operation.id,
-      `Uninstall ${install.displayName}`,
-    );
-    return { removed: 'catalog-install', ...outcome };
+  // One call, because the decision has to be atomic. Composed of the routes
+  // that already exist it would be four — read the app, read its install, read
+  // that install's status, then delete — with the model's own retries and its
+  // habit of calling remove once per listed component landing in the gaps. The
+  // route makes the read-and-decide one request; see AppRemovalController.
+  const outcome = await ctx.api.delete<{
+    removed: 'catalog-install' | 'application';
+    operationId: string;
+    status: string;
+    done: boolean;
+    alreadyUnderway?: boolean;
+    label?: string;
+  }>(`/applications/${encodeURIComponent(applicationId)}/install`);
+
+  if (outcome.alreadyUnderway) {
+    return {
+      removed: outcome.removed,
+      operationId: outcome.operationId,
+      status: outcome.status,
+      done: outcome.done,
+      note: outcome.done
+        ? 'This app and all its components were already removed.'
+        : 'This app is already being removed — all its components go together, so there is nothing more to remove. Do not call remove again for its other components.',
+    };
   }
-  const operation = (await ctx.services.deploy.deleteApplication(
-    applicationId,
-    ctx.user.userId,
-  )) as { id: string };
-  const outcome = await readOperationOutcome(
-    ctx,
-    operation.id,
-    `Delete ${app.name}`,
-  );
-  return { removed: 'application', ...outcome };
+  return {
+    removed: outcome.removed,
+    ...startedOutcome(ctx, outcome.operationId, outcome.status, outcome.label),
+  };
 }
 
 export function jsonResult(data: unknown): ToolResult {
@@ -364,6 +345,10 @@ export function runTool(
   const scoped: McpToolContext = {
     ...ctx,
     mcpReq: readRound(sdkCtx?.mcpReq),
+    mintRequestState:
+      ctx.requestStateCodec && sdkCtx
+        ? (payload) => ctx.requestStateCodec.mint(payload, sdkCtx)
+        : undefined,
   };
   return runGated(scoped, def.name, def.scope, async () => {
     const data = await def.run(args as never, scoped);
@@ -419,6 +404,9 @@ export async function runGated(
       tool,
       scope,
       allowed: true,
+      // A turn that stops to ask a person is otherwise written as
+      // `allowed: true, error: null` and reads as a success.
+      outcome: isInputRequired(data) ? 'input_required' : null,
     });
     // An input-required return is handed back untouched, which is the whole
     // point of the migration: the 2026-07-28 codec renders it — `resultType`,

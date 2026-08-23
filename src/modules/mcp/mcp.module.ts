@@ -1,3 +1,4 @@
+import { EncryptionModule } from '../shared/encryption/encryption.module';
 import { IamModule } from '../iam/iam.module';
 import { MailModule } from '../mail/mail.module';
 import { Module } from '@nestjs/common';
@@ -30,6 +31,7 @@ import { McpToolCallLogEntity } from './entities/mcp-tool-call-log.entity';
  */
 @Module({
   imports: [
+    EncryptionModule,
     IamModule,
     MailModule,
     ConfigModule,

@@ -30,19 +30,28 @@ function fake(over: Partial<Fake> = {}): Fake {
       allowDestructive: false,
       surface: 'mcp',
       audit: { record: jest.fn() },
-      services: {
-        apps: { findById: async () => ({ id: 'app-1', slug: 'my-api' }) },
-        appConfig: {
-          getAppVariablesCombined: async () => ({
-            sensitiveKeys: [...configured],
+      // The API as the tool now sees it: the application, the variable view,
+      // and the declaring write — all three routes behind AppAccessGuard. The
+      // write answers with the view AFTER it, which is where the tool reads
+      // whether the key was recorded or refused.
+      api: {
+        get: async (path: string) =>
+          path.startsWith('/variables/')
+            ? {
+                data: {},
+                sensitiveKeys: [...configured],
+                pendingKeys: [...pending],
+              }
+            : { id: 'app-1', slug: 'my-api' },
+        put: async (_path: string, dtoBody: { requestKeys: string[] }) => {
+          const keys = dtoBody.requestKeys;
+          requested.push(keys);
+          if (!over.skip) for (const key of keys) pending.add(key);
+          return {
+            data: over.skip?.reason === 'plain' ? { [keys[0]]: 'x' } : {},
+            sensitiveKeys: [...configured, ...(over.skip ? keys : [])],
             pendingKeys: [...pending],
-          }),
-          requestAppSecrets: async (_id: string, keys: string[]) => {
-            requested.push(keys);
-            if (over.skip) return { requested: [], skipped: [over.skip] };
-            for (const key of keys) pending.add(key);
-            return { requested: keys, skipped: [] };
-          },
+          };
         },
       },
     } as unknown as McpToolContext,
@@ -171,6 +180,9 @@ describe('app_variable_request', () => {
   });
 
   // Asking again for a key that already holds a value must not wipe it.
+  // The route answers with the variable view instead of a `skipped[]`, so the
+  // reason is read back off that view. It cannot disagree with the state,
+  // which a reported reason could.
   it('reports a refusal as a state, not as an error', async () => {
     const f = fake({
       skip: {

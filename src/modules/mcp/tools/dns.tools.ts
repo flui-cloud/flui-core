@@ -1,6 +1,29 @@
 import { z } from 'zod';
 import { MCP_SCOPE } from '../constants/mcp-scopes';
-import { defineTool, resolveClusterId, ToolDef } from './mcp-tool.util';
+import {
+  defineTool,
+  McpToolContext,
+  resolveClusterId,
+  ToolDef,
+} from './mcp-tool.util';
+
+/** Path-segment safety: an id from a model is input, not a literal. */
+const enc = encodeURIComponent;
+
+interface ZoneAssignment {
+  id: string;
+  dnsZone?: { zoneName?: string } | null;
+  wildcardCertificate?: boolean;
+}
+
+function listZoneAssignments(
+  ctx: McpToolContext,
+  clusterId: string,
+): Promise<ZoneAssignment[]> {
+  return ctx.api.get<ZoneAssignment[]>(
+    `/clusters/${enc(clusterId)}/dns-zone/list`,
+  );
+}
 
 /**
  * How a cluster's applications get their names.
@@ -17,21 +40,26 @@ import { defineTool, resolveClusterId, ToolDef } from './mcp-tool.util';
 export const DNS_TOOLS: ToolDef[] = [
   defineTool({
     name: 'dns_wildcard_status',
+    routes: ['GET /clusters/:clusterId/dns-zone/:zoneId/wildcard'],
     description:
       'Check whether one DNS record covers every application on a cluster. Applications are published at <slug>.<cluster>.<zone>; with the wildcard in place a newly deployed application resolves immediately, without it each new name takes about a minute to propagate. Call this when a freshly deployed application\'s URL does not resolve yet — it distinguishes "the name is new" from "something is broken". Returns one entry per DNS zone assigned to the cluster.',
     scope: MCP_SCOPE.APP_READ,
     inputSchema: { clusterId: z.string().optional() },
+    // One read per assigned zone, after one read of the assignments. They are
+    // independent reads of different zones and nothing here writes, so the
+    // fan-out adds no window that the single in-process call did not have: the
+    // provider is queried live either way, and two zones were already two
+    // queries.
     run: async (args, ctx) => {
       const clusterId = await resolveClusterId(ctx, args.clusterId);
-      const assignments =
-        await ctx.services.clusterDnsZone.getZonesForCluster(clusterId);
+      const assignments = await listZoneAssignments(ctx, clusterId);
       return Promise.all(
         assignments.map(async (a) => ({
           zone: a.dnsZone?.zoneName ?? null,
           assignmentId: a.id,
           wildcardCertificate: a.wildcardCertificate,
-          wildcard: await ctx.services.clusterDnsZone.getClusterWildcardStatus(
-            a.id,
+          wildcard: await ctx.api.get(
+            `/clusters/${enc(clusterId)}/dns-zone/${enc(a.id)}/wildcard`,
           ),
         })),
       );
@@ -68,19 +96,23 @@ export const DNS_TOOLS: ToolDef[] = [
 
   defineTool({
     name: 'dns_wildcard_publish',
+    routes: ['POST /clusters/:clusterId/dns-zone/:zoneId/wildcard'],
     description:
       'Publish the DNS record that covers every application on a cluster, so newly deployed applications resolve immediately instead of waiting for their own name to propagate. Creates one record per assigned zone and never overwrites: a wildcard already pointing somewhere else is left exactly as it is and comes back as "foreign". Safe to call more than once.',
     scope: MCP_SCOPE.APP_WRITE,
     inputSchema: { clusterId: z.string().optional() },
+    // One publish per assigned zone. The publish is idempotent and never
+    // overwrites a foreign record, so repeating it — or racing it with another
+    // caller — cannot produce a different outcome than doing it once.
     run: async (args, ctx) => {
       const clusterId = await resolveClusterId(ctx, args.clusterId);
-      const assignments =
-        await ctx.services.clusterDnsZone.getZonesForCluster(clusterId);
+      const assignments = await listZoneAssignments(ctx, clusterId);
       return Promise.all(
         assignments.map(async (a) => ({
           zone: a.dnsZone?.zoneName ?? null,
-          wildcard: await ctx.services.clusterDnsZone.publishClusterWildcard(
-            a.id,
+          wildcard: await ctx.api.post(
+            `/clusters/${enc(clusterId)}/dns-zone/${enc(a.id)}/wildcard`,
+            {},
           ),
         })),
       );

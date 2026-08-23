@@ -11,6 +11,17 @@ import {
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Request, Response } from 'express';
 import { createMcpHandler } from '@modelcontextprotocol/server';
+// The one symbol we take from the node adapter, and the reason `hono` appears
+// in the tree at all. `hono` is an *optional* peer of
+// `@modelcontextprotocol/node`, but a non-optional peer of `@hono/node-server`,
+// which the adapter depends on directly — so pnpm installs it and the lockfile
+// pins it (`hono@4.12.23`, `@hono/node-server@1.19.14`). No file in `src/`
+// imports `hono`: this line is the whole relationship. It stays because the
+// alternatives are worse — hand-rolling the req/res bridge is ~35 lines of SSE
+// framing and backpressure, i.e. the second implementation the package exists
+// to remove, and declaring a direct dependency we never import is a lie in
+// `package.json`. If pnpm's peer resolution ever changes the build fails
+// loudly, and the fix is one line.
 import { toNodeHandler } from '@modelcontextprotocol/node';
 import { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import {
