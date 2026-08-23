@@ -33,6 +33,7 @@ import { GatewayMiddlewareCompilerService } from './gateway-middleware-compiler.
 import { describeError } from '../../shared/utils/error.util';
 import { SandboxTenantEntity } from '../../sandbox/entities/sandbox-tenant.entity';
 import { sandboxNoindexMiddlewareRef } from '../../sandbox/constants/sandbox-noindex';
+import { ENDPOINT_ID_LABEL } from '../constants/endpoint-labels';
 
 // A full reconcile — including the DNS-propagation gate — stays well under a
 // minute; anything holding the lock for this long is a crashed process, not work.
@@ -546,18 +547,25 @@ export class AppEndpointReconciliationService {
         }
       }
 
-      // Delete the K8s Service only if it was created by flui (has managed-by label)
+      // Delete the K8s Service only if THIS endpoint is the one that created it.
+      //
+      // "Created by flui" was the condition and it is far too wide: the
+      // application's own Service is created by flui too, so removing a gateway
+      // route took the application off the air — the Ingress stayed, the
+      // Service under it did not. `reconcileService` stamps the endpoint id on
+      // the Services it creates and skips creation when one is already there,
+      // so that label is exactly the register of "mine to delete". A Service
+      // without it belongs to the application's deployment and is that
+      // deployment's to remove.
       const svc = await this.kubernetesService.getResource(
         kubeconfig,
         'Service',
         endpoint.k8sServiceName,
         endpoint.k8sNamespace,
       );
-      const isFluiManagedService =
-        svc?.metadata?.labels?.['managed-by'] === 'flui-cloud' ||
-        svc?.metadata?.labels?.['app.kubernetes.io/managed-by'] ===
-          'flui-cloud';
-      if (isFluiManagedService) {
+      const createdByThisEndpoint =
+        svc?.metadata?.labels?.[ENDPOINT_ID_LABEL] === endpoint.id;
+      if (createdByThisEndpoint) {
         await this.kubernetesService.deleteResource(
           kubeconfig,
           'Service',
@@ -565,7 +573,12 @@ export class AppEndpointReconciliationService {
           endpoint.k8sNamespace,
         );
         this.logger.log(
-          `Deleted flui-managed Service ${endpoint.k8sServiceName} for endpoint ${endpoint.fqdn}`,
+          `Deleted Service ${endpoint.k8sServiceName}, created for endpoint ${endpoint.fqdn}`,
+        );
+      } else if (svc) {
+        this.logger.log(
+          `Kept Service ${endpoint.k8sServiceName} in ${endpoint.k8sNamespace}: ` +
+            `endpoint ${endpoint.fqdn} did not create it`,
         );
       }
     } catch (error) {
@@ -1034,7 +1047,7 @@ export class AppEndpointReconciliationService {
       'managed-by': 'flui-cloud',
       'flui-resource-type': 'dns-record',
       'flui-cluster-id': cluster.id,
-      'flui-endpoint-id': endpoint.id,
+      [ENDPOINT_ID_LABEL]: endpoint.id,
     };
 
     // By id when we have one, else by name+type: destroying a cluster cascades
@@ -1202,7 +1215,7 @@ export class AppEndpointReconciliationService {
           'managed-by': 'flui-cloud',
           'flui-cluster-id': cluster.id,
           'flui-resource-type': 'app-service',
-          'flui-endpoint-id': endpoint.id,
+          [ENDPOINT_ID_LABEL]: endpoint.id,
         },
       },
       spec: {
@@ -1324,7 +1337,7 @@ export class AppEndpointReconciliationService {
           'managed-by': 'flui-cloud',
           'flui-cluster-id': cluster.id,
           'flui-resource-type': 'dns-ingress',
-          'flui-endpoint-id': endpoint.id,
+          [ENDPOINT_ID_LABEL]: endpoint.id,
           ...(isInternal ? { 'flui-endpoint-type': 'internal' } : {}),
         },
       },

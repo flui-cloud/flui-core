@@ -7,7 +7,6 @@ import {
   Param,
   HttpCode,
   HttpStatus,
-  UseGuards,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -16,8 +15,8 @@ import {
   ApiBearerAuth,
   ApiParam,
 } from '@nestjs/swagger';
-import { AdminGuard } from '../../auth/guards/admin.guard';
-import { Admin } from '../../auth/decorators/admin.decorator';
+import { RequireSection } from '../../iam/decorators/require-section.decorator';
+import { SECTION } from '../../iam/constants/iam-sections';
 import { DnsZoneReplicaService } from '../services/dns-zone-replica.service';
 import { DnsZoneReplicaResponseDto } from '../dto/dns-zone-replica-response.dto';
 import { RegisterDnsReplicaDto } from '../dto/register-dns-replica.dto';
@@ -29,6 +28,9 @@ import { ReplicaDiffReport } from '../services/dns-zone-reconciliation.service';
 export class DnsZoneReplicaController {
   constructor(private readonly replicaService: DnsZoneReplicaService) {}
 
+  // The read stays open, as it was before the gates moved: only the six writes
+  // carried @Admin(). Closing it here would have been a change nobody asked
+  // for, on a route whose callers were never counted.
   @Get()
   @ApiOperation({
     summary: 'List redundancy replicas of a DNS zone',
@@ -46,8 +48,7 @@ export class DnsZoneReplicaController {
   }
 
   @Post()
-  @UseGuards(AdminGuard)
-  @Admin()
+  @RequireSection(SECTION.INFRASTRUCTURE)
   @ApiOperation({
     summary: 'Register a redundancy replica for a zone',
     description:
@@ -75,8 +76,7 @@ export class DnsZoneReplicaController {
   }
 
   @Post(':replicaId/populate')
-  @UseGuards(AdminGuard)
-  @Admin()
+  @RequireSection(SECTION.INFRASTRUCTURE)
   @ApiOperation({
     summary: 'Populate a replica from Flui state',
     description:
@@ -94,8 +94,7 @@ export class DnsZoneReplicaController {
   }
 
   @Post(':replicaId/verify')
-  @UseGuards(AdminGuard)
-  @Admin()
+  @RequireSection(SECTION.INFRASTRUCTURE)
   @ApiOperation({
     summary: 'Dry-run verify a replica against Flui state',
     description:
@@ -113,8 +112,7 @@ export class DnsZoneReplicaController {
   }
 
   @Post(':replicaId/disable')
-  @UseGuards(AdminGuard)
-  @Admin()
+  @RequireSection(SECTION.INFRASTRUCTURE)
   @ApiOperation({
     summary: 'Disable a replica (stop fan-out and reconciliation)',
   })
@@ -134,8 +132,7 @@ export class DnsZoneReplicaController {
   }
 
   @Post(':replicaId/enable')
-  @UseGuards(AdminGuard)
-  @Admin()
+  @RequireSection(SECTION.INFRASTRUCTURE)
   @ApiOperation({ summary: 'Re-enable a disabled replica' })
   @ApiParam({ name: 'zoneId', description: 'DNS zone ID' })
   @ApiParam({ name: 'replicaId', description: 'Replica ID' })
@@ -153,8 +150,7 @@ export class DnsZoneReplicaController {
   }
 
   @Delete(':replicaId')
-  @UseGuards(AdminGuard)
-  @Admin()
+  @RequireSection(SECTION.INFRASTRUCTURE)
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({
     summary: 'Remove a replica registration',

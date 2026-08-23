@@ -220,7 +220,10 @@ describe('AppEndpointReconciliationService.writePrimaryRecord', () => {
 });
 
 describe('AppEndpointReconciliationService.deleteEndpointResources', () => {
-  function build(deleteRecord: jest.Mock) {
+  function build(
+    deleteRecord: jest.Mock,
+    serviceLabels?: Record<string, string>,
+  ) {
     const endpoint = {
       id: 'endpoint-1',
       clusterId: 'cluster-1',
@@ -244,17 +247,22 @@ describe('AppEndpointReconciliationService.deleteEndpointResources', () => {
       getEndpoint: jest.fn().mockResolvedValue(endpoint),
       clearDnsRecord: jest.fn().mockResolvedValue(undefined),
     };
+    const k8s = {
+      deleteResource: jest.fn().mockResolvedValue(undefined),
+      getResource: jest
+        .fn()
+        .mockResolvedValue(
+          serviceLabels ? { metadata: { labels: serviceLabels } } : null,
+        ),
+      patchKubeconfigServer: jest.fn().mockReturnValue('kubeconfig'),
+    };
     const service = new AppEndpointReconciliationService(
       {
         findOne: jest
           .fn()
           .mockResolvedValue({ id: 'cluster-1', kubeconfigEncrypted: 'enc' }),
       } as never,
-      {
-        deleteResource: jest.fn().mockResolvedValue(undefined),
-        getResource: jest.fn().mockResolvedValue(null),
-        patchKubeconfigServer: jest.fn().mockReturnValue('kubeconfig'),
-      } as never,
+      k8s as never,
       { decrypt: jest.fn().mockReturnValue('kubeconfig') } as never,
       {
         getDnsProviderOrFail: jest.fn().mockReturnValue({ deleteRecord }),
@@ -272,8 +280,11 @@ describe('AppEndpointReconciliationService.deleteEndpointResources', () => {
       { allMiddlewareNames: jest.fn().mockReturnValue([]) } as never,
       null as never,
     );
-    return { service, appEndpoints };
+    return { service, appEndpoints, k8s };
   }
+
+  const deletedServices = (k8s: { deleteResource: jest.Mock }) =>
+    k8s.deleteResource.mock.calls.filter((c) => c[1] === 'Service');
 
   it('clears the persisted DNS handle only after provider deletion succeeds', async () => {
     const deleteRecord = jest.fn().mockResolvedValue(undefined);
@@ -296,6 +307,47 @@ describe('AppEndpointReconciliationService.deleteEndpointResources', () => {
       'provider down',
     );
     expect(appEndpoints.clearDnsRecord).not.toHaveBeenCalled();
+  });
+
+  /**
+   * The application's Service and the endpoint's Service can be the same name —
+   * that is the whole of the bug. Removing one gateway route used to delete it,
+   * and the application went off the air with its Ingress still standing.
+   */
+  it('keeps a Service this endpoint did not create', async () => {
+    const { service, k8s } = build(jest.fn().mockResolvedValue(undefined), {
+      'managed-by': 'flui-cloud',
+      'app.kubernetes.io/managed-by': 'flui-cloud',
+      'flui-app-id': 'app-1',
+    });
+
+    await service.deleteEndpointResources('endpoint-1');
+
+    expect(deletedServices(k8s)).toHaveLength(0);
+  });
+
+  it('keeps a Service another endpoint created', async () => {
+    const { service, k8s } = build(jest.fn().mockResolvedValue(undefined), {
+      'managed-by': 'flui-cloud',
+      'flui-endpoint-id': 'endpoint-2',
+    });
+
+    await service.deleteEndpointResources('endpoint-1');
+
+    expect(deletedServices(k8s)).toHaveLength(0);
+  });
+
+  it('deletes the Service it created itself', async () => {
+    const { service, k8s } = build(jest.fn().mockResolvedValue(undefined), {
+      'managed-by': 'flui-cloud',
+      'flui-endpoint-id': 'endpoint-1',
+    });
+
+    await service.deleteEndpointResources('endpoint-1');
+
+    expect(deletedServices(k8s)).toEqual([
+      ['kubeconfig', 'Service', 'guest-svc', 'user-guest-abc123'],
+    ]);
   });
 });
 

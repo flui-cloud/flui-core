@@ -30,6 +30,7 @@ import { CertificateStatus } from '../../providers/interfaces/certificate-provid
 import { KubernetesService } from '../../infrastructure/shared/services/kubernetes.service';
 import { EncryptionService } from '../../shared/encryption/services/encryption.service';
 import { EndpointGatewayConfig } from '../interfaces/endpoint-gateway-config.interface';
+import { EndpointHostGuardService } from './endpoint-host-guard.service';
 
 /** An application's primary endpoint, hostname together with whether it serves. */
 export interface PrimaryEndpointState {
@@ -58,6 +59,7 @@ export class AppEndpointService {
     private readonly clusterDnsZoneService: ClusterDnsZoneService,
     private readonly endpointModeResolver: EndpointModeResolverService,
     private readonly authzInstallRepo: ClusterAuthzInstallRepository,
+    private readonly hostGuard: EndpointHostGuardService,
   ) {}
 
   /**
@@ -217,6 +219,17 @@ export class AppEndpointService {
       slug: application.slug ?? application.name,
     });
     const fqdn = this.normalizeFqdn(resolved.fqdn);
+
+    // Only when the caller named the host. A hostname Flui derives from a slug
+    // is already inside the cluster's own subdomain and unique there; a
+    // hostname somebody asked for is the one that can belong to somebody else.
+    if (dto.fqdn) {
+      await this.hostGuard.assertClaimable(
+        cluster,
+        application.k8sNamespace,
+        fqdn,
+      );
+    }
 
     if (await this.isFqdnTaken(fqdn)) {
       throw new ConflictException({

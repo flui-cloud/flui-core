@@ -6,10 +6,16 @@ import {
   ConnectedSocket,
   OnGatewayInit,
 } from '@nestjs/websockets';
-import { Logger } from '@nestjs/common';
+import { Inject, Logger } from '@nestjs/common';
 import { Server, Socket } from 'socket.io';
 import { WsAuthService } from '../../auth/services/ws-auth.service';
 import { installWsAuth } from '../../auth/utils/ws-auth-middleware.util';
+import { AuthenticatedUser } from '../../auth/interfaces/authenticated-user.interface';
+import { SECTION } from '../../iam/constants/iam-sections';
+import {
+  POLICY_ENGINE,
+  PolicyEngine,
+} from '../../iam/interfaces/policy-engine.interface';
 import {
   IssuerStatusDto,
   IssuerConfiguredDto,
@@ -27,6 +33,17 @@ import { WS_CORS } from '../../../config/cors-origin.config';
  *
  * Namespace: /clusters
  * Room naming: cluster:{clusterId}
+ *
+ * The room is the instance's, not a tenant's: what it carries is the state of
+ * the cluster's ACME issuers and the certificates they mint. It was the last
+ * subscription on any gateway that asked nothing at all — any authenticated
+ * socket, a sandbox guest included, named any cluster id and was joined. It
+ * hands over nobody else's *tenancy*, which is why it is the smallest of the
+ * four, but it is still the operator's plumbing narrated live to whoever asks.
+ *
+ * The question is the area those events belong to, at the level that runs it.
+ * A guest holds `infrastructure` read-only — that is how it sees the section at
+ * all — so a level check is what tells the two apart.
  */
 @WebSocketGateway({
   cors: WS_CORS,
@@ -38,7 +55,10 @@ export class ClusterDnsGateway implements OnGatewayInit {
 
   private readonly logger = new Logger(ClusterDnsGateway.name);
 
-  constructor(private readonly wsAuth: WsAuthService) {}
+  constructor(
+    private readonly wsAuth: WsAuthService,
+    @Inject(POLICY_ENGINE) private readonly policy: PolicyEngine,
+  ) {}
 
   afterInit(server: Server): void {
     installWsAuth(server, this.wsAuth, this.logger);
@@ -47,15 +67,42 @@ export class ClusterDnsGateway implements OnGatewayInit {
   // ── Subscription ───────────────────────────────────────────────────────────
 
   @SubscribeMessage('subscribe:cluster')
-  handleSubscribe(
+  async handleSubscribe(
     @MessageBody() data: { clusterId: string },
     @ConnectedSocket() client: Socket,
-  ): void {
+  ): Promise<void> {
     const { clusterId } = data;
+    const user = client.data.user as AuthenticatedUser | undefined;
+
+    if (!(await this.mayWatchCluster(user))) {
+      this.logger.warn(
+        `Client ${client.id} (user=${user?.userId}) refused cluster ${clusterId}`,
+      );
+      client.emit('subscription:refused', { clusterId, reason: 'not_found' });
+      return;
+    }
+
     const roomName = `cluster:${clusterId}`;
     client.join(roomName);
     this.logger.log(`Client ${client.id} subscribed to cluster ${clusterId}`);
     client.emit('subscribed', { clusterId, room: roomName });
+  }
+
+  private async mayWatchCluster(
+    user: AuthenticatedUser | undefined,
+  ): Promise<boolean> {
+    if (!user) return false;
+    if (user.isAdmin) return true;
+    const sections = await this.policy.resolveSectionAccess({
+      userId: user.userId,
+      email: user.email,
+      role: user.role,
+      isAdmin: false,
+      scopes: user.scopes,
+    });
+    return (
+      sections.find((s) => s.key === SECTION.INFRASTRUCTURE)?.level === 'full'
+    );
   }
 
   @SubscribeMessage('unsubscribe:cluster')

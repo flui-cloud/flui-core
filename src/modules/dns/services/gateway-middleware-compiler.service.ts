@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { AppEndpointEntity } from '../entities/app-endpoint.entity';
 import { EndpointGatewayConfig } from '../interfaces/endpoint-gateway-config.interface';
+import { ENDPOINT_ID_LABEL } from '../constants/endpoint-labels';
 
 export interface CompiledGatewayMiddleware {
   name: string;
@@ -120,7 +121,7 @@ export class GatewayMiddlewareCompilerService {
           labels: {
             'managed-by': 'flui-cloud',
             'flui-resource-type': 'gateway-middleware',
-            'flui-endpoint-id': endpoint.id,
+            [ENDPOINT_ID_LABEL]: endpoint.id,
           },
         },
         spec,

@@ -38,6 +38,8 @@ import { ConfigureIssuerDto } from '../dto/configure-issuer.dto';
 import { ConfigureSystemIngressDto } from '../dto/configure-system-ingress.dto';
 import { SystemDnsStatusResponseDto } from '../dto/system-dns-status-response.dto';
 import { CertDiagnosticsResponseDto } from '../dto/cert-diagnostics-response.dto';
+import { RequirePermission } from '../../iam/decorators/require-permission.decorator';
+import { IAM_PERMISSION } from '../../iam/constants/iam-permissions';
 
 @ApiTags('Cluster DNS Zone')
 @ApiBearerAuth()
@@ -212,6 +214,15 @@ export class ClusterDnsZoneController {
   }
 
   @Get(':assignmentId/wildcard')
+  // The `app:*` pair on the two wildcard routes is not a claim that DNS is
+  // application work — it is what the declared model already says: `mcp:app:read`
+  // carries "the DNS status behind an application" and `mcp:app:write` carries
+  // "publishing the wildcard DNS record" (see `api-key-groups.ts`). Naming a
+  // cluster permission here would put the routes outside the ceiling of the very
+  // scope that calls them, which is the drift decision 82 exists to catch.
+  // Nobody loses either: the controller has no gate at all today, and every
+  // built-in role but `viewer` and `showcase_viewer` holds `app:write`.
+  @RequirePermission(IAM_PERMISSION.APP_READ)
   @ApiOperation({
     summary: 'Whether one record covers every application on this cluster',
     description:
@@ -227,6 +238,7 @@ export class ClusterDnsZoneController {
   }
 
   @Post(':assignmentId/wildcard')
+  @RequirePermission(IAM_PERMISSION.APP_WRITE)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Publish the record that covers every application on this cluster',

@@ -19,6 +19,7 @@ import { ClusterEntity } from '../infrastructure/clusters/entities/cluster.entit
 import { ApplicationEntity } from '../applications/entities/application.entity';
 import { ClusterAuthzInstallEntity } from '../authz/entities/cluster-authz-install.entity';
 import { SandboxTenantEntity } from '../sandbox/entities/sandbox-tenant.entity';
+import { IamModule } from '../iam/iam.module';
 import { ClusterAuthzInstallRepository } from '../authz/repositories/cluster-authz-install.repository';
 
 import { DnsZoneService } from './services/dns-zone.service';
@@ -39,6 +40,7 @@ import { ReflectorInstallerService } from './services/reflector-installer.servic
 import { SystemIngressService } from './services/system-ingress.service';
 import { ClusterDnsCleanupService } from './services/cluster-dns-cleanup.service';
 import { EndpointModeResolverService } from './services/endpoint-mode-resolver.service';
+import { EndpointHostGuardService } from './services/endpoint-host-guard.service';
 import { GatewayMiddlewareCompilerService } from './services/gateway-middleware-compiler.service';
 import { DnsZoneReconciliationService } from './services/dns-zone-reconciliation.service';
 import { DnsZoneReplicaService } from './services/dns-zone-replica.service';
@@ -73,6 +75,7 @@ import { ClusterDnsGateway } from './gateway/cluster-dns.gateway';
     forwardRef(() => ApplicationsModule),
     OidcModule,
     WsAuthModule,
+    IamModule,
   ],
   providers: [
     DnsZoneService,
@@ -92,6 +95,7 @@ import { ClusterDnsGateway } from './gateway/cluster-dns.gateway';
     ClusterAuthzInstallRepository,
     ClusterDnsCleanupService,
     EndpointModeResolverService,
+    EndpointHostGuardService,
     GatewayMiddlewareCompilerService,
     DnsZoneReconciliationService,
     DnsZoneReplicaService,
@@ -116,6 +120,7 @@ import { ClusterDnsGateway } from './gateway/cluster-dns.gateway';
     ClusterDnsGateway,
     ClusterDnsCleanupService,
     EndpointModeResolverService,
+    EndpointHostGuardService,
     GatewayMiddlewareCompilerService,
   ],
 })

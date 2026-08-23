@@ -8,7 +8,6 @@ import {
   Query,
   HttpCode,
   HttpStatus,
-  UseGuards,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -18,8 +17,8 @@ import {
   ApiParam,
   ApiQuery,
 } from '@nestjs/swagger';
-import { AdminGuard } from '../../auth/guards/admin.guard';
-import { Admin } from '../../auth/decorators/admin.decorator';
+import { RequireSection } from '../../iam/decorators/require-section.decorator';
+import { SECTION } from '../../iam/constants/iam-sections';
 import { DnsZoneService } from '../services/dns-zone.service';
 import { Public } from '../../auth/decorators/public.decorator';
 import { CreateDnsZoneDto } from '../dto/create-dns-zone.dto';
@@ -95,8 +94,7 @@ export class DnsZoneController {
   }
 
   @Delete(':id')
-  @UseGuards(AdminGuard)
-  @Admin()
+  @RequireSection(SECTION.INFRASTRUCTURE)
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({
     summary: 'Remove a registered DNS zone',
@@ -122,8 +120,7 @@ export class DnsZoneController {
   }
 
   @Get('/providers/:provider/zones')
-  @UseGuards(AdminGuard)
-  @Admin()
+  @RequireSection(SECTION.INFRASTRUCTURE)
   @ApiBearerAuth()
   @ApiOperation({
     summary: 'List available zones from a DNS provider',
