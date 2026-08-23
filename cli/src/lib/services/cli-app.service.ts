@@ -199,12 +199,13 @@ export interface AppAlertsResponse {
 }
 
 export interface AppLogsOptions {
-  app?: string;
-  container?: string;
-  namespace?: string;
   level?: string;
   tail?: number;
   search?: string;
+  pod?: string;
+  stream?: string;
+  start?: string;
+  end?: string;
 }
 
 export interface AppDetail {
@@ -224,6 +225,33 @@ export interface DeleteTarget {
   status: string;
   appId?: string;
   catalogInstallId?: string;
+  /**
+   * Any component of the group. The removal preview is asked per application
+   * and answers for the whole install, so one component is enough — a composed
+   * target has no application id of its own.
+   */
+  previewApplicationId?: string;
+}
+
+export interface RemovalPreviewVolume {
+  name: string;
+  namespace: string;
+  applicationName: string;
+  requested: string | null;
+  sizeLabel: string;
+  attributedBy: string;
+}
+
+export interface RemovalPreview {
+  removes: 'catalog-install' | 'application';
+  label: string;
+  applications: { id: string; name: string; slug: string }[];
+  volumes: RemovalPreviewVolume[];
+  totalBytes: number;
+  totalLabel: string;
+  volumesKnown: boolean;
+  dataWarning: string | null;
+  note?: string;
 }
 
 export interface UninstallResult {
@@ -392,6 +420,9 @@ export class CliAppService {
         slug: group.slug,
         status: group.status,
         catalogInstallId: group.catalogInstallId ?? group.id,
+        previewApplicationId:
+          group.components.find((c) => c.isPrimary)?.id ??
+          group.components[0]?.id,
       };
     }
     const app =
@@ -402,6 +433,7 @@ export class CliAppService {
       slug: group.slug,
       status: group.status,
       appId: app?.id,
+      previewApplicationId: app?.id,
     };
   }
 
@@ -418,19 +450,35 @@ export class CliAppService {
       : all;
   }
 
-  async getLogs(options: AppLogsOptions): Promise<AppLogsResponse> {
+  /**
+   * Per application, not per cluster. The cluster-wide route reads the logs of
+   * everything running on the cluster and now carries the `infrastructure`
+   * section, which no `editor` holds — so `flui app logs` asked for a right it
+   * did not need and was broken for every non-administrator. This
+   * route carries `AppAccessGuard` instead: it asks whose application it is,
+   * which is the question the command was always really posing.
+   *
+   * Namespace and workload come off the application record, so the
+   * `--namespace` flag has nothing left to override — the route derives what
+   * the flag used to say it auto-detected.
+   */
+  async getLogs(
+    appId: string,
+    options: AppLogsOptions,
+  ): Promise<AppLogsResponse> {
     const params = new URLSearchParams();
-    if (options.app) params.append('app', options.app);
-    if (options.container) params.append('container', options.container);
-    if (options.namespace) params.append('namespace', options.namespace);
     if (options.level) params.append('level', options.level);
     if (options.tail) params.append('tail', String(options.tail));
     if (options.search) params.append('search', options.search);
+    if (options.pod) params.append('pod', options.pod);
+    if (options.stream) params.append('stream', options.stream);
+    if (options.start) params.append('start', options.start);
+    if (options.end) params.append('end', options.end);
 
     const qs = params.toString();
     const qsSuffix = qs ? `?${qs}` : '';
     return this.apiClient.get<AppLogsResponse>(
-      `/observability/clusters/${this.clusterId}/apps/logs${qsSuffix}`,
+      `/observability/applications/${appId}/logs${qsSuffix}`,
     );
   }
 
@@ -542,6 +590,13 @@ export class CliAppService {
   async uninstall(catalogInstallId: string): Promise<UninstallResult> {
     return this.apiClient.delete<UninstallResult>(
       `/catalog/installs/${catalogInstallId}`,
+    );
+  }
+
+  /** What the removal takes away, asked before it is asked to take it. */
+  async getRemovalPreview(applicationId: string): Promise<RemovalPreview> {
+    return this.apiClient.get<RemovalPreview>(
+      `/applications/${applicationId}/removal-preview`,
     );
   }
 

@@ -4,6 +4,7 @@ import ora from 'ora';
 import {
   CliAppService,
   DeleteTarget,
+  RemovalPreview,
 } from '../../lib/services/cli-app.service';
 import { resolveClusterRef } from '../../lib/resolve-cluster';
 import { confirmByTypingPrompt } from '../../lib/prompts';
@@ -86,11 +87,14 @@ export default class AppDelete extends Command {
       this.exit(1);
     }
 
+    const preview = await this.loadPreview(service, target);
+
     const proceed = await this.confirmDeletion(
       target,
       isCatalog,
       isSystemProtected,
       flags.force,
+      preview,
     );
     if (!proceed) return;
 
@@ -124,11 +128,68 @@ export default class AppDelete extends Command {
     await this.waitForUninstall(service, target.catalogInstallId, target.name);
   }
 
+  /**
+   * The volumes this removal takes with it, read from the API so the CLI, the
+   * dashboard and the MCP tool all say the same number.
+   * A preview that cannot be read is reported as unknown and never as "none":
+   * silence is safer than a reassuring lie about someone's data.
+   */
+  private async loadPreview(
+    service: CliAppService,
+    target: DeleteTarget,
+  ): Promise<RemovalPreview | null> {
+    if (!target.previewApplicationId) return null;
+    const spinner = ora('Checking what this removes…').start();
+    try {
+      const preview = await service.getRemovalPreview(
+        target.previewApplicationId,
+      );
+      spinner.stop();
+      return preview;
+    } catch {
+      spinner.stop();
+      return null;
+    }
+  }
+
+  private printDataImpact(preview: RemovalPreview | null): void {
+    if (!preview?.volumesKnown) {
+      console.log(
+        chalk.yellow(
+          '  The volumes this would delete could not be read from the cluster.',
+        ),
+      );
+      console.log(
+        chalk.yellow(
+          '  Assume data will be lost — it is not known to be none.\n',
+        ),
+      );
+      return;
+    }
+
+    if (preview.volumes.length === 0) {
+      console.log(
+        chalk.dim('  No persistent volume is attached to this app.\n'),
+      );
+      return;
+    }
+
+    console.log(chalk.red(`  ${preview.dataWarning}\n`));
+    for (const volume of preview.volumes) {
+      console.log(
+        `    ${chalk.bold(volume.sizeLabel.padEnd(9))} ${volume.namespace}/${volume.name}` +
+          chalk.dim(`  (${volume.applicationName})`),
+      );
+    }
+    console.log('');
+  }
+
   private async confirmDeletion(
     target: DeleteTarget,
     isCatalog: boolean,
     isSystemProtected: boolean,
     force: boolean,
+    preview: RemovalPreview | null,
   ): Promise<boolean> {
     console.log(
       chalk.red(`\n  ${isCatalog ? 'UNINSTALL' : 'DELETE'} Application\n`),
@@ -139,9 +200,13 @@ export default class AppDelete extends Command {
       `  ${chalk.bold('Kind:')}   ${isCatalog ? 'catalog' : 'source-deploy'}${isSystemProtected ? chalk.yellow(' (system-protected)') : ''}`,
     );
     console.log(`  ${chalk.bold('Status:')} ${target.status}`);
-    console.log(
-      chalk.red('\n  ALL DATA AND VOLUMES WILL BE PERMANENTLY DELETED!\n'),
-    );
+    if (preview && preview.applications.length > 1) {
+      console.log(
+        `  ${chalk.bold('Parts:')}  ${preview.applications.map((a) => a.name).join(', ')}`,
+      );
+    }
+    console.log('');
+    this.printDataImpact(preview);
 
     if (force) return true;
 

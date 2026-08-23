@@ -52,6 +52,8 @@ import { ClusterAutoscaleService } from './services/cluster-autoscale.service';
 import { ClusterVNetService } from './services/cluster-vnet.service';
 import { ClusterScalingService } from './services/cluster-scaling.service';
 import { ClusterStorageService } from './services/cluster-storage.service';
+import { OrphanedClaimsService } from './services/orphaned-claims.service';
+import { ClusterOrphanedClaimsController } from './cluster-orphaned-claims.controller';
 import { ClusterCapacityService } from './services/cluster-capacity.service';
 import { ClusterNodeScalingService } from './services/cluster-node-scaling.service';
 import { OrphanVolumesService } from './services/orphan-volumes.service';
@@ -100,7 +102,7 @@ import { ClusterQueueProcessor } from './processors/cluster-queue.processor';
       name: 'infrastructure',
     }),
   ],
-  controllers: [ClustersController],
+  controllers: [ClustersController, ClusterOrphanedClaimsController],
   providers: [
     // Main orchestrator service
     ClustersService,
@@ -121,6 +123,7 @@ import { ClusterQueueProcessor } from './processors/cluster-queue.processor';
     ClusterVNetService,
     ClusterScalingService,
     ClusterStorageService,
+    OrphanedClaimsService,
     ClusterCapacityService,
     ClusterNodeScalingService,
     OrphanVolumesService,

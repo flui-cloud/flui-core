@@ -29,6 +29,8 @@ import {
 
 export interface CreateSnapshotForAppRequest {
   applicationId: string;
+  /** Who asked. Recorded on the operation so its owner can follow it. */
+  userId?: string;
   /** Optional PVC name. If omitted and the app has exactly one PVC, that one is used. */
   volumeName?: string;
   /** Optional human-friendly suffix appended to the generated snapshot id. */
@@ -72,6 +74,7 @@ export class VolumeSnapshotsService {
         appId: app.id,
         operationType: OperationType.APP_SNAPSHOT_CREATE,
         resourceName: app.slug,
+        userId: request.userId,
         metadata: { pvcName, description: request.description },
       },
       async (): Promise<SnapshotResponse> => {
@@ -194,6 +197,7 @@ export class VolumeSnapshotsService {
   async restoreForApp(
     applicationId: string,
     snapshotId: string,
+    userId?: string,
   ): Promise<{
     newPvcName: string;
     sourceSnapshotId: string;
@@ -242,6 +246,7 @@ export class VolumeSnapshotsService {
         appId: app.id,
         operationType: OperationType.APP_SNAPSHOT_RESTORE,
         resourceName: app.slug,
+        userId,
         metadata: { snapshotId, newPvcName },
       },
       async () => {
@@ -271,6 +276,7 @@ export class VolumeSnapshotsService {
   async deleteForApp(
     applicationId: string,
     snapshotId: string,
+    userId?: string,
   ): Promise<{ operationId: string }> {
     const { app, kubeconfig, ops } =
       await this.resolveAppContext(applicationId);
@@ -281,6 +287,7 @@ export class VolumeSnapshotsService {
         appId: app.id,
         operationType: OperationType.APP_SNAPSHOT_DELETE,
         resourceName: app.slug,
+        userId,
         metadata: { snapshotId },
       },
       async () => {

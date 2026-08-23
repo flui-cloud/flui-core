@@ -18,8 +18,11 @@ import {
 } from './services/catalog-installer.service';
 import { CatalogDependencyResolverService } from './services/catalog-dependency-resolver.service';
 import { CatalogLinkingService } from './services/catalog-linking.service';
+import { RemovalPreviewService } from './services/removal-preview.service';
 import { CatalogInstallProcessor } from './processors/catalog-install.processor';
 import { CatalogController } from './controllers/catalog.controller';
+import { AppRemovalController } from './controllers/app-removal.controller';
+import { AppAccessGuard } from '../applications/guards/app-access.guard';
 import { ApplicationsModule } from '../applications/applications.module';
 import { DnsModule } from '../dns/dns.module';
 import { OidcModule } from '../oidc/oidc.module';
@@ -46,7 +49,7 @@ import { EncryptionModule } from '../shared/encryption/encryption.module';
     EncryptionModule,
     forwardRef(() => ClustersModule),
   ],
-  controllers: [CatalogController],
+  controllers: [CatalogController, AppRemovalController],
   providers: [
     CatalogAppDefinitionRepository,
     CatalogInstallRepository,
@@ -59,7 +62,11 @@ import { EncryptionModule } from '../shared/encryption/encryption.module';
     CatalogInstallerService,
     CatalogDependencyResolverService,
     CatalogLinkingService,
+    RemovalPreviewService,
     CatalogInstallProcessor,
+    // Instantiated in this module's injector because AppRemovalController mounts
+    // it; its own dependencies come from the ApplicationsModule imported above.
+    AppAccessGuard,
   ],
   exports: [
     CatalogInstallRepository,

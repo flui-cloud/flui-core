@@ -13,6 +13,11 @@ spec:
   podManagementPolicy: OrderedReady
   updateStrategy:
     type: RollingUpdate
+  # Uninstalling an application takes its data with it; scaling in
+  # is reversible, so a claim outlives the replica that used it.
+  persistentVolumeClaimRetentionPolicy:
+    whenDeleted: Delete
+    whenScaled: Retain
   selector:
     matchLabels:
       app: {{SLUG}}
