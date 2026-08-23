@@ -5,6 +5,7 @@ import { IamRoleBindingEntity } from '../entities/iam-role-binding.entity';
 import { IamGroupEntity } from '../entities/iam-group.entity';
 import { PolicyEngine } from '../interfaces/policy-engine.interface';
 import {
+  IamBinding,
   IamPrincipal,
   IamSelector,
   PrincipalAccess,
@@ -44,7 +45,32 @@ export class PolicyEngineService implements PolicyEngine {
   ) {}
 
   async resolveAccess(principal: IamPrincipal): Promise<PrincipalAccess> {
-    if (principal.isAdmin) {
+    if (principal.isAdmin) return this.accessFrom([], true);
+    return this.accessFrom(await this.bindingsFor(principal));
+  }
+
+  /**
+   * Every binding that reaches this principal — their own, their
+   * service-account's, and the ones addressed to the groups they belong to.
+   *
+   * Public so that a caller can ask the *hypothetical* question — what would
+   * this principal reach if this binding were gone, or if that one existed —
+   * by mutating the list and folding it again through {@link accessFrom}.
+   */
+  async bindingsFor(principal: IamPrincipal): Promise<IamBinding[]> {
+    const groupNames = await this.resolveGroups(principal.email);
+    return this.findBindingsFor(principal, groupNames);
+  }
+
+  /**
+   * The fold: bindings in, resolved access out. No IO, so it answers for a set
+   * of bindings that is not (or not yet) what the database holds.
+   *
+   * DENY-BY-DEFAULT lives here: an empty binding list is an empty access, never
+   * a floor derived from the IdP role.
+   */
+  accessFrom(bindings: IamBinding[], isAdmin = false): PrincipalAccess {
+    if (isAdmin) {
       return {
         isAdmin: true,
         globalPermissions: new Set(ALL_PERMISSIONS),
@@ -52,14 +78,7 @@ export class PolicyEngineService implements PolicyEngine {
         isSandbox: false,
       };
     }
-
-    // (a) deny-by-default: no implicit floor from the IdP role. A non-admin
-    // starts with zero access; it is granted only by explicit bindings below.
     const globalPermissions = new Set<string>();
-
-    // (b) explicit bindings (own + service-account + group).
-    const groupNames = await this.resolveGroups(principal.email);
-    const bindings = await this.findBindingsFor(principal, groupNames);
     const scopedGrants: ScopedGrant[] = [];
     let isSandbox = false;
     for (const b of bindings) {
@@ -76,7 +95,6 @@ export class PolicyEngineService implements PolicyEngine {
         });
       }
     }
-
     return { isAdmin: false, globalPermissions, scopedGrants, isSandbox };
   }
 
@@ -141,7 +159,14 @@ export class PolicyEngineService implements PolicyEngine {
   async resolveSectionAccess(
     principal: IamPrincipal,
   ): Promise<SectionAccess[]> {
-    const access = await this.resolveAccess(principal);
+    return this.sectionAccessFrom(await this.resolveAccess(principal));
+  }
+
+  /**
+   * The same derivation against an access already resolved — no IO, so it can
+   * be asked of a hypothetical access as easily as of the real one.
+   */
+  sectionAccessFrom(access: PrincipalAccess): SectionAccess[] {
     if (access.isAdmin) {
       return ALL_SECTION_KEYS.map((key) => ({ key, level: 'full' as const }));
     }
@@ -173,7 +198,11 @@ export class PolicyEngineService implements PolicyEngine {
   }
 
   async getEffectivePermissions(principal: IamPrincipal): Promise<string[]> {
-    const access = await this.resolveAccess(principal);
+    return this.effectivePermissionsFrom(await this.resolveAccess(principal));
+  }
+
+  /** Every permission this access carries *somewhere*, resource-blind. */
+  effectivePermissionsFrom(access: PrincipalAccess): string[] {
     if (access.isAdmin) return [...ALL_PERMISSIONS];
     const perms = new Set<string>(access.globalPermissions);
     for (const g of access.scopedGrants) {

@@ -171,6 +171,32 @@ export const SECTIONS: SectionDef[] = [
 export const ALL_SECTION_KEYS: SectionKey[] = SECTIONS.map((s) => s.key);
 
 /**
+ * What a section is called when a sentence has to name it.
+ *
+ * Here rather than in the interface because the CLI and an agent have to say
+ * "the Clusters section" too — a warning about what somebody loses is worth
+ * nothing if only the browser can spell it.
+ */
+export const SECTION_LABEL: Record<SectionKey, string> = {
+  [SECTION.HOME]: 'Home',
+  [SECTION.WORKLOADS]: 'Workloads',
+  [SECTION.DEPLOY]: 'Deploy',
+  [SECTION.CLUSTERS]: 'Clusters',
+  [SECTION.INFRASTRUCTURE]: 'Infrastructure',
+  [SECTION.FIREWALL]: 'Firewall',
+  [SECTION.PROVIDERS]: 'Providers',
+  [SECTION.BACKUP]: 'Backup',
+  [SECTION.MAIL]: 'Mail',
+  [SECTION.PROJECTS]: 'Projects',
+  [SECTION.ACCESS]: 'Access',
+  [SECTION.SETTINGS]: 'Settings',
+};
+
+export function sectionLabel(key: string): string {
+  return SECTION_LABEL[key as SectionKey] ?? key;
+}
+
+/**
  * Verbs a `read-only` section lets through. HEAD and OPTIONS are here because a
  * browser sends them on its own; refusing them would break a section the level
  * is meant to open.

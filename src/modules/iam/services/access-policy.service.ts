@@ -9,12 +9,22 @@ import {
   PolicyBindingDto,
 } from '../dto/access-policy.dto';
 import { IamPrincipal } from '../interfaces/iam.types';
+import { BUILTIN_ROLES } from '../constants/iam-roles';
 import {
   POLICY_ENGINE,
   PolicyEngine,
 } from '../interfaces/policy-engine.interface';
 
 const API_VERSION = 'flui.cloud/v1beta1';
+
+/**
+ * A role a person may hold in a document. The platform's own delegations
+ * (`sandbox`, `showcase_viewer`) are declared `assignable: false` and are
+ * neither exported nor pruned — an unknown role is treated as assignable so a
+ * binding written by hand still round-trips instead of vanishing.
+ */
+const isAssignableRole = (role: string): boolean =>
+  BUILTIN_ROLES[role as keyof typeof BUILTIN_ROLES]?.assignable !== false;
 
 // Config-as-Code: export RoleBindings as a kind:AccessPolicy doc and apply one
 // back (idempotent; `prune` = full sync). Groups are managed separately.
@@ -25,13 +35,30 @@ export class AccessPolicyService {
     @Inject(POLICY_ENGINE) private readonly policy: PolicyEngine,
   ) {}
 
+  /**
+   * A configuration document describes an *intention*, not a state.
+   *
+   * The platform writes bindings to itself — the `sandbox` delegation of a
+   * tenancy, `showcase_viewer` — and those are effects: they are born and die on
+   * their own inside the 24 hours of a trial. Exporting them produced a document
+   * that could not be applied back, because `apply` refuses a role nobody may
+   * confer, so export→apply was not a closed loop. They are left
+   * out, and what remains is what people decided.
+   *
+   * If a complete photograph is ever needed for diagnostics, that is a different
+   * route with a different name.
+   */
   async export(): Promise<AccessPolicyDoc> {
     const bindings = await this.iam.listGrants();
     return {
       apiVersion: API_VERSION,
       kind: 'AccessPolicy',
       metadata: { name: 'flui-access' },
-      spec: { bindings: bindings.map((b) => this.toPolicyBinding(b)) },
+      spec: {
+        bindings: bindings
+          .filter((b) => isAssignableRole(b.role))
+          .map((b) => this.toPolicyBinding(b)),
+      },
     };
   }
 
@@ -56,10 +83,16 @@ export class AccessPolicyService {
     const desiredKeys = new Set(desired.map((d) => this.keyOf(d)));
 
     const toCreate = desired.filter((d) => !existingByKey.has(this.keyOf(d)));
+    // `prune` means "remove what the document does not name", and the document
+    // never names a platform binding because the export leaves them out. Taking
+    // their absence for a deletion would make a round trip through export→apply
+    // tear down every live sandbox delegation — the exact thing
+    // `assignable: false` exists to prevent a person from doing by hand.
     const toDelete = doc.prune
       ? [...existingByKey]
           .filter(([key]) => !desiredKeys.has(key))
           .map(([, entity]) => entity)
+          .filter((entity) => isAssignableRole(entity.role))
       : [];
 
     const access = await this.policy.resolveAccess(caller);

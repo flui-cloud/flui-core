@@ -2,6 +2,7 @@ import { Command, Flags } from '@oclif/core';
 import chalk from 'chalk';
 import { ApiClient } from '../../../lib/api-client';
 import { ConfigStorage } from '../../../lib/config-storage';
+import { AccessDelta, printAccessDelta } from '../../../lib/access-delta';
 
 interface IamSelector {
   slugs?: string[];
@@ -92,6 +93,11 @@ export default class IamGrantAdd extends Command {
     selector: Flags.string({
       description: 'Raw selector JSON (overrides individual selector flags)',
     }),
+    'dry-run': Flags.boolean({
+      description:
+        'Say what this grant would open — and what the same change closes — and create nothing',
+      default: false,
+    }),
     output: Flags.string({
       char: 'o',
       description: 'Output format',
@@ -132,9 +138,38 @@ export default class IamGrantAdd extends Command {
     }
     const api = new ApiClient({ baseUrl: apiUrl, apiKey });
 
-    let created: { id: string };
+    // A grant conferred still changes what somebody can reach, so it is asked
+    // the same question a revocation is — `--dry-run` answers it without
+    // writing, which is the form that lets a person look before they decide.
+    if (flags['dry-run']) {
+      const delta = await api.post<AccessDelta>('/iam/access-preview', {
+        principalType: flags.type,
+        principalRef: flags.principal,
+        add: [
+          {
+            role: flags.role,
+            scopeType: flags.scope,
+            scopeRef: body.scopeRef,
+            selector: body.selector,
+          },
+        ],
+      });
+      if (flags.output === 'json') {
+        console.log(JSON.stringify(delta, null, 2));
+        return;
+      }
+      console.log('');
+      printAccessDelta(delta);
+      console.log(chalk.dim('  Dry run — nothing was created.\n'));
+      return;
+    }
+
+    let created: { id: string; delta?: AccessDelta };
     try {
-      created = await api.post<{ id: string }>('/iam/grants', body);
+      created = await api.post<{ id: string; delta?: AccessDelta }>(
+        '/iam/grants',
+        body,
+      );
     } catch (error: unknown) {
       this.error(`Failed to create grant: ${(error as Error).message}`, {
         exit: 1,
@@ -146,9 +181,12 @@ export default class IamGrantAdd extends Command {
       return;
     }
 
+    const principal = chalk.bold(`${flags.type}:${flags.principal}`);
+    const id = chalk.dim(`(${created.id})`);
     console.log(
-      `\n  ${chalk.green('✓')} Granted ${chalk.bold(flags.role)} to ${chalk.bold(`${flags.type}:${flags.principal}`)} ${chalk.dim(`(${created.id})`)}\n`,
+      `\n  ${chalk.green('✓')} Granted ${chalk.bold(flags.role)} to ${principal} ${id}\n`,
     );
+    if (created.delta) printAccessDelta(created.delta);
   }
 
   private buildSelector(flags: {

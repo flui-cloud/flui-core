@@ -55,11 +55,21 @@ describe('the owner role', () => {
     );
   });
 
-  it('carries the two permissions the boolean was covering on its own', () => {
-    expect(OWNER.permissions).toContain(IAM_PERMISSION.CLUSTER_DESTROY);
-    expect(OWNER.permissions).toContain(IAM_PERMISSION.IAM_MANAGE_USERS);
-    expect(MANAGER.permissions).not.toContain(IAM_PERMISSION.CLUSTER_DESTROY);
-    expect(MANAGER.permissions).not.toContain(IAM_PERMISSION.IAM_MANAGE_USERS);
+  it('carries the five permissions the boolean was covering on its own', () => {
+    // Each of these replaced an @Admin() gate. Owner holds them because owner is
+    // what the boolean became; manager must not, or the conversion would have
+    // handed a role that already exists five powers nobody granted it.
+    const onlyOwner = [
+      IAM_PERMISSION.CLUSTER_DESTROY,
+      IAM_PERMISSION.IAM_MANAGE_USERS,
+      IAM_PERMISSION.INTEGRATION_MANAGE,
+      IAM_PERMISSION.SHOWCASE_PUBLISH,
+      IAM_PERMISSION.SANDBOX_OPERATE,
+    ];
+    for (const permission of onlyOwner) {
+      expect(OWNER.permissions).toContain(permission);
+      expect(MANAGER.permissions).not.toContain(permission);
+    }
   });
 });
 

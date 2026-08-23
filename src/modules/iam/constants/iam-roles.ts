@@ -84,6 +84,7 @@ export const BUILTIN_ROLES: Record<IamRole, IamRoleDef> = {
       IAM_PERMISSION.CLUSTER_READ,
       IAM_PERMISSION.CLUSTER_MANAGE,
       IAM_PERMISSION.IAM_ASSIGN_ROLE,
+      IAM_PERMISSION.IAM_READ_ACCESS,
     ],
     assignable: true,
   },
@@ -123,7 +124,11 @@ export const BUILTIN_ROLES: Record<IamRole, IamRoleDef> = {
       IAM_PERMISSION.CLUSTER_DESTROY,
       IAM_PERMISSION.BILLING_READ,
       IAM_PERMISSION.IAM_ASSIGN_ROLE,
+      IAM_PERMISSION.IAM_READ_ACCESS,
       IAM_PERMISSION.IAM_MANAGE_USERS,
+      IAM_PERMISSION.INTEGRATION_MANAGE,
+      IAM_PERMISSION.SHOWCASE_PUBLISH,
+      IAM_PERMISSION.SANDBOX_OPERATE,
     ],
     assignable: true,
     // Only an owner makes an owner. A `manager` holds `iam:assign-role` and can
@@ -149,6 +154,14 @@ export const BUILTIN_ROLES: Record<IamRole, IamRoleDef> = {
       IAM_PERMISSION.APP_WRITE,
       IAM_PERMISSION.APP_CREATE,
       IAM_PERMISSION.APP_DEPLOY,
+      // The one destructive verb a guest holds, and it only ever reaches their
+      // own application: AppAccessGuard asks for `app:delete` on that resource,
+      // and the fence names the route. It is here because the tenancy is a
+      // fixed quota — removing what you no longer need is how you make room for
+      // the next thing, and without it the trial got smaller the more you used
+      // it. `sandbox-areas.ts` has promised "yours to deploy, scale, read and
+      // delete" all along; this is the line that makes the sentence true.
+      IAM_PERMISSION.APP_DELETE,
       // Enters the management sections at their read-only level, so the menu
       // names them and their screens open. It grants no write — the section
       // guard refuses every unsafe verb behind it — and it widens nothing on
@@ -211,9 +224,9 @@ export const ASSIGNABLE_ROLE_KEYS: IamRole[] = Object.values(BUILTIN_ROLES)
  * binding would be able to strip the installation of its administrators one row
  * at a time — the same ladder as promotion, descended instead of climbed.
  *
- * The legacy platform-admin boolean still answers yes, and must: until the 58
- * `@Admin()` sites move over, it is what the people who run live installations
- * actually hold.
+ * The legacy platform-admin boolean still answers yes, and must: the gates now
+ * name permissions, but the boolean still resolves to the whole catalog, and it
+ * is what the installation credentials — which are not rows in `users` — hold.
  */
 export function mayAdministerRole(
   access: PrincipalAccess,

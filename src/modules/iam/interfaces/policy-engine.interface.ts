@@ -1,5 +1,10 @@
 import { SectionAccess } from '../constants/iam-sections';
-import { IamPrincipal, PrincipalAccess, ResourceAttributes } from './iam.types';
+import {
+  IamBinding,
+  IamPrincipal,
+  PrincipalAccess,
+  ResourceAttributes,
+} from './iam.types';
 
 export const POLICY_ENGINE = 'POLICY_ENGINE';
 
@@ -17,6 +22,9 @@ export const POLICY_ENGINE = 'POLICY_ENGINE';
  *   scope). Drives `@RequireSection` gating and the dashboard sidebar.
  * - `resolveSectionAccess` — the same, with the level: a section reached
  *   through its read-only entry key is enterable but refuses every unsafe verb.
+ * - `bindingsFor` + `accessFrom` — the resolution taken apart, so the same
+ *   engine answers the hypothetical question ("what would they reach if this
+ *   binding were gone?") without a second derivation living beside it.
  */
 export interface PolicyEngine {
   getEffectivePermissions(principal: IamPrincipal): Promise<string[]>;
@@ -37,4 +45,12 @@ export interface PolicyEngine {
     access: PrincipalAccess,
     resource: ResourceAttributes,
   ): Set<string>;
+  /** Every binding that reaches this principal, own + service-account + group. */
+  bindingsFor(principal: IamPrincipal): Promise<IamBinding[]>;
+  /** The pure fold: a binding set in, a resolved access out. No IO. */
+  accessFrom(bindings: IamBinding[], isAdmin?: boolean): PrincipalAccess;
+  /** Sections derived from an access already resolved. */
+  sectionAccessFrom(access: PrincipalAccess): SectionAccess[];
+  /** Every permission an access carries somewhere, resource-blind. */
+  effectivePermissionsFrom(access: PrincipalAccess): string[];
 }

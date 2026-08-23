@@ -5,6 +5,7 @@ import { IamGroupEntity } from './entities/iam-group.entity';
 import { PolicyEngineService } from './services/policy-engine.service';
 import { IamService } from './services/iam.service';
 import { AccessPolicyService } from './services/access-policy.service';
+import { AccessDeltaService } from './services/access-delta.service';
 import { POLICY_ENGINE } from './interfaces/policy-engine.interface';
 import { IamController } from './controllers/iam.controller';
 import { MeController } from './controllers/me.controller';
@@ -24,8 +25,9 @@ import { UserEntity } from '../auth/entities/user.entity';
   providers: [
     IamService,
     AccessPolicyService,
+    AccessDeltaService,
     { provide: POLICY_ENGINE, useClass: PolicyEngineService },
   ],
-  exports: [POLICY_ENGINE, IamService],
+  exports: [POLICY_ENGINE, IamService, AccessDeltaService],
 })
 export class IamModule {}

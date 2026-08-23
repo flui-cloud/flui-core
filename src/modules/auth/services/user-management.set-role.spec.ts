@@ -74,6 +74,9 @@ describe('UserManagementService.setRole', () => {
     const service = new UserManagementService(
       directory as unknown as IIdentityDirectory,
       userRepo,
+      {} as never,
+      {} as never,
+      {} as never,
       {} as InviteMailService,
     );
     return { service, directory };

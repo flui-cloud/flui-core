@@ -181,9 +181,15 @@ export class IamService {
     return this.bindings.save(entity);
   }
 
-  async deleteGrant(id: string, caller: IamPrincipal): Promise<void> {
+  /** One binding, or 404. Named so a caller can read it *before* deleting it. */
+  async getGrant(id: string): Promise<IamRoleBindingEntity> {
     const existing = await this.bindings.findOne({ where: { id } });
     if (!existing) throw new NotFoundException(`Grant ${id} not found`);
+    return existing;
+  }
+
+  async deleteGrant(id: string, caller: IamPrincipal): Promise<void> {
+    const existing = await this.getGrant(id);
     await this.assertMayAdminister(caller, existing.role);
     await this.bindings.delete(id);
   }

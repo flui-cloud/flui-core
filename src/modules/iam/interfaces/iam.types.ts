@@ -74,6 +74,23 @@ export interface ResourceAttributes {
   owner?: string | null;
 }
 
+/**
+ * A role binding as the engine reads it — the entity's shape without the entity.
+ *
+ * Named here so the engine can fold a *hypothetical* set of bindings into an
+ * access: previewing what a grant would take away means resolving the same
+ * principal against a binding list that does not exist in the database yet, and
+ * the alternative — re-deriving permissions beside the engine — is the second
+ * copy of the boundary this module exists to avoid.
+ */
+export interface IamBinding {
+  id?: string;
+  role: string;
+  scopeType: IamScopeType;
+  scopeRef: string | null;
+  selector: IamSelector | null;
+}
+
 /** One scoped grant's contribution: which permissions, at which scope. */
 export interface ScopedGrant {
   permissions: ReadonlySet<string>;

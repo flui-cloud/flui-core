@@ -9,6 +9,9 @@ jest.mock('../../mail/services/invite-mail.service', () => ({
 }));
 
 import { UserManagementService } from './user-management.service';
+import { IamRoleBindingEntity } from '../../iam/entities/iam-role-binding.entity';
+import { IamGroupEntity } from '../../iam/entities/iam-group.entity';
+import { ApiKeyService } from './api-key.service';
 import { InviteMailService } from '../../mail/services/invite-mail.service';
 // Type-only: erased at compile time, so the jest.mock above still governs runtime.
 import type { InviteMailOutcome } from '../../mail/services/invite-mail.service';
@@ -36,6 +39,15 @@ async function build(
         useValue: { findOne: jest.fn() },
       },
       { provide: InviteMailService, useValue: { sendInvite } },
+      {
+        provide: getRepositoryToken(IamRoleBindingEntity),
+        useValue: { delete: jest.fn() },
+      },
+      {
+        provide: getRepositoryToken(IamGroupEntity),
+        useValue: { find: jest.fn(async () => []), save: jest.fn() },
+      },
+      { provide: ApiKeyService, useValue: { revokeAllForUser: jest.fn() } },
     ],
   }).compile();
   return { service: moduleRef.get(UserManagementService), sendInvite };

@@ -222,6 +222,49 @@ describe('AccessPolicyService', () => {
     expect(iam.store()).toHaveLength(4);
   });
 
+  /**
+   * The delegation the platform writes to itself when a guest claims a tenancy.
+   * `assignable: false`, so no person may confer it — which is exactly why a
+   * document must neither carry it nor be read as asking for its removal.
+   */
+  const PLATFORM_BINDING: Partial<IamRoleBindingEntity> = {
+    principalType: 'user',
+    principalRef: 'user-guest-abcd1234@sandbox.local',
+    role: 'sandbox',
+    scopeType: 'global',
+  };
+
+  it('leaves the bindings the platform writes to itself out of the document', async () => {
+    const iam = fakeIam([...SEED, PLATFORM_BINDING]);
+    const svc = new AccessPolicyService(
+      iam as never,
+      fakePolicy(OWNER_ACCESS) as never,
+    );
+    const doc = await svc.export();
+    expect(doc.spec.bindings).toHaveLength(SEED.length);
+    expect(doc.spec.bindings.map((b) => b.role)).not.toContain('sandbox');
+  });
+
+  /**
+   * The half that would otherwise be a hole. With the export skipping them, a
+   * `prune` apply sees a live sandbox delegation named nowhere in the document
+   * — and "remove what the document does not name" would tear down every live
+   * tenancy on a round trip.
+   */
+  it('a prune round trip does not take the platform bindings with it', async () => {
+    const iam = fakeIam([...SEED, PLATFORM_BINDING]);
+    const svc = new AccessPolicyService(
+      iam as never,
+      fakePolicy(OWNER_ACCESS) as never,
+    );
+    const doc = (await svc.export()) as ApplyPolicyDto;
+    doc.prune = true;
+    const res = await svc.apply(doc, CALLER);
+    expect(res.deleted).toBe(0);
+    expect(iam.store().map((b) => b.role)).toContain('sandbox');
+    expect(iam.store()).toHaveLength(SEED.length + 1);
+  });
+
   it('without prune, omitted bindings are kept', async () => {
     const iam = fakeIam(SEED);
     const svc = new AccessPolicyService(
