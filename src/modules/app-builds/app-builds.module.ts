@@ -9,11 +9,13 @@ import { BuildJobService } from './services/build-job.service';
 import { AppBuildProcessor } from './processors/app-build.processor';
 import { BuildCacheService } from './services/build-cache.service';
 import { BuildCacheInspectionService } from './services/build-cache-inspection.service';
+import { BuildAccessService } from './services/build-access.service';
 import { BuildCacheSnapshotEntity } from './entities/build-cache-snapshot.entity';
 import { AppBuildsController } from './app-builds.controller';
 import { BuildNamespaceController } from './controllers/build-namespace.controller';
 import { StandaloneBuildsController } from './controllers/standalone-builds.controller';
 import { ApplicationsModule } from '../applications/applications.module';
+import { IamModule } from '../iam/iam.module';
 import { FrameworksModule } from '../frameworks/frameworks.module';
 import { SharedInfrastructureModule } from '../infrastructure/shared/shared-infrastructure.module';
 import { EncryptionModule } from '../shared/encryption/encryption.module';
@@ -51,6 +53,7 @@ import { BuildAgentConfigModule } from './build-agent-config.module';
       },
     }),
     ApplicationsModule,
+    IamModule,
     FrameworksModule,
     SharedInfrastructureModule,
     EncryptionModule,
@@ -69,6 +72,7 @@ import { BuildAgentConfigModule } from './build-agent-config.module';
     AppBuildProcessor,
     BuildCacheService,
     BuildCacheInspectionService,
+    BuildAccessService,
   ],
   exports: [AppBuildService],
 })

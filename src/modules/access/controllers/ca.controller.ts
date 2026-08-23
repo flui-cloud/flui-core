@@ -31,6 +31,9 @@ export class CAController {
     private readonly certificateSigner: CertificateSignerService,
   ) {}
 
+  // An installation-bootstrap route, still gated on the boolean: the same
+  // credential also writes clusters and firewalls, so a `platform:bootstrap`
+  // permission here alone would break `flui env create` halfway through.
   @Post('initialize')
   @UseGuards(AdminGuard)
   @Admin()

@@ -45,6 +45,8 @@ import { SnapshotStorageCapabilityService } from './services/snapshot-storage-ca
 import { VolumeBackupsService } from './services/volume-backups.service';
 import { DedicatedPlacementService } from './services/dedicated-placement.service';
 import { ApplicationDeployProcessor } from './processors/application-deploy.processor';
+import { ApplicationTeardownService } from './processors/application-teardown.service';
+import { ApplicationVolumeClaimsService } from './services/application-volume-claims.service';
 import {
   ApplicationBuildWatchProcessor,
   BUILD_WATCH_QUEUE,
@@ -54,6 +56,8 @@ import {
   GHCR_SECRET_REFRESH_QUEUE,
 } from './processors/ghcr-secret-refresh.processor';
 import { ApplicationsController } from './controllers/applications.controller';
+import { ApplicationReleasesController } from './controllers/application-releases.controller';
+import { ApplicationSnapshotsController } from './controllers/application-snapshots.controller';
 import { ShowcaseController } from './controllers/showcase.controller';
 import { ShowcaseService } from './services/showcase.service';
 import { VariablesController } from './controllers/variables.controller';
@@ -114,6 +118,8 @@ import { VolumeExportService } from '../providers/services/volume-export.service
   ],
   controllers: [
     ApplicationsController,
+    ApplicationReleasesController,
+    ApplicationSnapshotsController,
     VariablesController,
     AppManagementController,
     ScheduledJobsController,
@@ -161,11 +167,17 @@ import { VolumeExportService } from '../providers/services/volume-export.service
 
     // Processors
     ApplicationDeployProcessor,
+    ApplicationTeardownService,
+    ApplicationVolumeClaimsService,
     ApplicationBuildWatchProcessor,
     GhcrSecretRefreshProcessor,
   ],
   exports: [
     ApplicationAccessService,
+    ApplicationVolumeClaimsService,
+    // Exported so controllers outside this module can mount it — the two
+    // `applications/:applicationId/**` controllers in ScalingModule do.
+    AppAccessGuard,
     AppConfigService,
     ApplicationService,
     ApplicationDeployService,

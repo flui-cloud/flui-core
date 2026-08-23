@@ -44,6 +44,7 @@ const build = (
       | 'idp'
       | 'idpMissing'
       | 'apps'
+      | 'apiKeys'
       | 'seed'
       | 'endpoint'
       | 'clusterGone',
@@ -129,6 +130,13 @@ const build = (
     create: (b: unknown) => b,
     delete: async () => calls.push('delete-binding'),
   };
+  const apiKeys = {
+    delete: async (where: { userId: string }) => {
+      calls.push(`delete-api-keys:${where.userId}`);
+      if (breakages.apiKeys) throw new Error('keys locked');
+      return { affected: 2 };
+    },
+  };
   const applications = {
     find: async () => [{ id: 'a1', projectId: 'proj-1' }],
     delete: async () => {
@@ -169,6 +177,7 @@ const build = (
     config,
     users as never,
     bindings as never,
+    apiKeys as never,
     applications as never,
     clusters as never,
     projects as never,
@@ -236,10 +245,22 @@ describe('SandboxTenantService.reap', () => {
       'delete-apps',
       'delete-project:proj-1',
       'delete-binding',
+      // Before the user row, and named on its own: `api_keys` has no foreign
+      // key to `users`, so without this step every credential the guest minted
+      // outlives the person it was issued to.
+      'delete-api-keys:u1',
       'delete-idp:idp-1',
       'delete-user',
     ]);
     expect(marks[0].kind).toBe('expired');
+  });
+
+  it('records a failed key sweep instead of losing it', async () => {
+    const { service, marks } = build({ apiKeys: true });
+    await service.reap(tenantRow);
+
+    expect(marks[0].kind).toBe('failed');
+    expect(marks[0].detail).toContain('api keys');
   });
 
   // Rows written before the identity was recorded still have an account behind

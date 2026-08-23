@@ -23,8 +23,8 @@ import { ClusterEntity } from '../infrastructure/clusters/entities/cluster.entit
 import { ClustersService } from '../infrastructure/clusters/clusters.service';
 import { ClusterInventoryDto } from '../infrastructure/clusters/dto/cluster-inventory.dto';
 import { CAManagerService } from '../access/services/ca-manager.service';
-import { AdminGuard } from '../auth/guards/admin.guard';
-import { Admin } from '../auth/decorators/admin.decorator';
+import { RequireSection } from '../iam/decorators/require-section.decorator';
+import { SECTION } from '../iam/constants/iam-sections';
 import { Public } from '../auth/decorators/public.decorator';
 import { AdoptionTokenService } from './services/adoption-token.service';
 import {
@@ -73,14 +73,13 @@ export class AdoptionController {
   ) {}
 
   @Post('token')
-  @UseGuards(AdminGuard)
-  @Admin()
+  @RequireSection(SECTION.INFRASTRUCTURE)
   @ApiBearerAuth()
   @HttpCode(HttpStatus.CREATED)
   @ApiOperation({
     summary: 'Issue a one-time adoption token for this installation',
     description:
-      'Requires an authenticated admin. The token is shown once, expires in an hour, and can be spent exactly once.',
+      'Requires the infrastructure section. The token is shown once, expires in an hour, and can be spent exactly once.',
   })
   @ApiResponse({ status: 201, type: AdoptionTokenResponseDto })
   async issueToken(): Promise<AdoptionTokenResponseDto> {

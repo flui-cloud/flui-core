@@ -1,5 +1,4 @@
 import {
-  ConflictException,
   Injectable,
   Logger,
   NotFoundException,
@@ -12,7 +11,6 @@ import * as bcrypt from 'bcrypt';
 import * as crypto from 'node:crypto';
 import { UserEntity } from '../entities/user.entity';
 import { RefreshTokenEntity } from '../entities/refresh-token.entity';
-import { RegisterDto } from '../dto/register.dto';
 import { LoginDto } from '../dto/login.dto';
 import { ChangePasswordDto } from '../dto/change-password.dto';
 import { UpdateMeDto } from '../dto/update-me.dto';
@@ -30,41 +28,6 @@ export class LocalAuthService {
     private readonly refreshTokenRepo: Repository<RefreshTokenEntity>,
     private readonly jwtService: JwtService,
   ) {}
-
-  async register(dto: RegisterDto) {
-    const existing = await this.userRepo.findOne({
-      where: { email: dto.email },
-    });
-    if (existing) {
-      throw new ConflictException('Email already in use');
-    }
-
-    const userCount = await this.userRepo.count();
-    const isAdmin = userCount === 0;
-
-    const passwordHash = await bcrypt.hash(dto.password, 12);
-    const user = this.userRepo.create({
-      email: dto.email,
-      passwordHash,
-      name: dto.name,
-      isAdmin,
-    });
-    await this.userRepo.save(user);
-
-    const access_token = this.generateToken(user);
-    const refresh_token = await this.createRefreshToken(user.id);
-
-    return {
-      access_token,
-      refresh_token,
-      user: {
-        id: user.id,
-        email: user.email,
-        name: user.name,
-        isAdmin: user.isAdmin,
-      },
-    };
-  }
 
   async login(dto: LoginDto) {
     this.logger.log(`Login attempt for: ${dto.email}`);
@@ -139,10 +102,6 @@ export class LocalAuthService {
       { userId, revoked: false },
       { revoked: true },
     );
-  }
-
-  async countUsers(): Promise<number> {
-    return this.userRepo.count();
   }
 
   async updateMe(userId: string, dto: UpdateMeDto): Promise<UserEntity> {

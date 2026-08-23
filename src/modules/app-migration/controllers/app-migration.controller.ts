@@ -10,6 +10,8 @@ import {
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Request } from 'express';
 import { RequireSection } from '../../iam/decorators/require-section.decorator';
+import { RequirePermission } from '../../iam/decorators/require-permission.decorator';
+import { IAM_PERMISSION } from '../../iam/constants/iam-permissions';
 import { AppMigrationService } from '../services/app-migration.service';
 import { CreateAppMigrationDto } from '../dto/create-app-migration.dto';
 
@@ -17,6 +19,16 @@ import { CreateAppMigrationDto } from '../dto/create-app-migration.dto';
  * Application migration machine (plan §6 step 2): move a live app's workload to
  * another cluster. Management-plane / admin gated like the rest of the
  * lifecycle infra.
+ *
+ * The permissions on the routes below take nothing from anybody: the `backup`
+ * section already admits only `full`, which is `cluster:manage` at global
+ * scope, and both roles that hold it (`manager`, `owner`) hold
+ * `migration:execute` too. They are here for the credential ceiling, which
+ * reads `@RequirePermission` and `@AppAction` and nothing else —
+ * without them a key scoped to "look at migrations" starts and aborts them
+ * over plain HTTP. `app:read` on the reads and deliberately not `cluster:read`:
+ * the lists answer with the caller's own migrations and a sandbox guest is
+ * shown them for real, holding `app:read` and no cluster permission at all.
  */
 @ApiTags('App Migration')
 @ApiBearerAuth()
@@ -31,6 +43,7 @@ export class AppMigrationController {
   }
 
   @Post()
+  @RequirePermission(IAM_PERMISSION.MIGRATION_EXECUTE)
   @ApiOperation({
     summary: "Migrate an application's workload to another cluster",
   })
@@ -39,16 +52,19 @@ export class AppMigrationController {
   }
 
   @Get()
+  @RequirePermission(IAM_PERMISSION.APP_READ)
   list(@Req() req: Request) {
     return this.service.list(this.userId(req));
   }
 
   @Get(':id')
+  @RequirePermission(IAM_PERMISSION.APP_READ)
   get(@Param('id') id: string) {
     return this.service.findById(id);
   }
 
   @Post(':id/cutover')
+  @RequirePermission(IAM_PERMISSION.MIGRATION_EXECUTE)
   @ApiOperation({
     summary: 'Fire the cutover of a READY manual migration (rebind + DNS flip)',
   })
@@ -57,6 +73,7 @@ export class AppMigrationController {
   }
 
   @Post(':id/destroy-source')
+  @RequirePermission(IAM_PERMISSION.MIGRATION_EXECUTE)
   @ApiOperation({
     summary:
       'Destroy the drained source workload after a completed migration (plan §6 DESTROY)',
@@ -66,6 +83,7 @@ export class AppMigrationController {
   }
 
   @Delete(':id')
+  @RequirePermission(IAM_PERMISSION.MIGRATION_EXECUTE)
   @ApiOperation({
     summary:
       'Abort a pre-cutover migration (tears the destination workload down)',

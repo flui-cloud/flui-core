@@ -56,9 +56,13 @@ import { IdentityRole } from '../../auth/entities/user.entity';
  * 4. **there is no second inventory route.** Adoption's inventory lives on
  *    `/adoption/inventory` behind its own token guard; the copy that used to sit
  *    here had no caller and read metadata keys nothing writes;
- * 5. **the two autoscale reads still answer an editor.** They have a live caller
- *    the dashboard makes from a hand-written service, and closing them is a
- *    pending decision — this test is what makes that decision visible.
+ * 5. **the two autoscale reads carry the `clusters` section.** Decision 18
+ *    expected an `editor` to keep them, on the premise that `editor` holds
+ *    global `cluster:read`. It does not — only `viewer`, `manager` and `owner`
+ *    do (`iam-roles.ts`), so the conversion closes them to an `editor` too.
+ *    That is the reason the dashboard half is not optional: the home pulse runs
+ *    for every authenticated person and must ask `canSee('clusters')` before
+ *    calling. Pinned from both sides below.
  */
 
 const CLUSTER = 'cluster-1';
@@ -84,6 +88,21 @@ const MANAGER: AuthenticatedUser = {
   isAdmin: false,
 };
 
+/**
+ * Scoped to a single application, which is what an application-scoped API key
+ * looks like to the policy engine. Carries `app:*` and *no* global
+ * `cluster:read`, so it fails the `clusters` section — one of the two
+ * principals decision 18 put the autoscale reads out of reach of. The other,
+ * unexpectedly, is the plain `editor`.
+ */
+const APP_SCOPED: AuthenticatedUser = {
+  userId: 'user-app-scoped',
+  email: 'app-scoped@flui.cloud',
+  roles: {},
+  role: IdentityRole.USER,
+  isAdmin: false,
+};
+
 const globalBinding = (principalRef: string, role: string) => ({
   principalType: 'user',
   principalRef,
@@ -98,6 +117,16 @@ const globalBinding = (principalRef: string, role: string) => ({
 const BINDINGS: Record<string, unknown[]> = {
   [EDITOR.email]: [globalBinding(EDITOR.email, 'editor')],
   [MANAGER.email]: [globalBinding(MANAGER.email, 'manager')],
+  [APP_SCOPED.email]: [
+    {
+      principalType: 'user',
+      principalRef: APP_SCOPED.email,
+      role: 'editor',
+      scopeType: 'application',
+      scopeRef: 'app-1',
+      selector: null,
+    },
+  ],
 };
 
 describe('clusters controller — the fence around the cluster key', () => {
@@ -272,17 +301,46 @@ describe('clusters controller — the fence around the cluster key', () => {
   });
 
   /**
-   * Deliberately still open, and this is the test that says so out loud. The
-   * dashboard calls both from `cluster-autoscale.service.ts` — a hand-written
-   * HttpClient service, invisible to a search by generated method name — and one
-   * of the call sites is the home pulse, which every authenticated person opens.
-   * If this turns red, someone gated them: that is a decision, and it needs the
-   * dashboard changed in the same move.
+   * The two autoscale reads now carry `clusters`. The gate is
+   * global `cluster:read`, which an `editor` holds — so watching the editor
+   * alone would have stayed green through the conversion and gone on claiming
+   * to guard something it no longer guards. The pair below watches the boundary
+   * the gate actually draws.
+   *
+   * The dashboard calls both from `cluster-autoscale.service.ts` — a
+   * hand-written HttpClient service, invisible to a search by generated method
+   * name — and one of the call sites is the home pulse, which now asks
+   * `canSee('clusters')` first instead of swallowing a 403.
    */
-  it('still answers the two autoscale reads to an editor', async () => {
-    await http().get('/infrastructure/clusters/autoscale/defaults').expect(200);
-    await http()
-      .get(`/infrastructure/clusters/${CLUSTER}/autoscale/status`)
-      .expect(200);
+  const AUTOSCALE_READS = [
+    '/infrastructure/clusters/autoscale/defaults',
+    `/infrastructure/clusters/${CLUSTER}/autoscale/status`,
+  ];
+
+  it.each(AUTOSCALE_READS)(
+    'answers %s to whoever holds global cluster:read',
+    async (path) => {
+      currentUser = MANAGER;
+      await http().get(path).expect(200);
+    },
+  );
+
+  it.each(AUTOSCALE_READS)(
+    'refuses %s to a principal scoped to one application',
+    async (path) => {
+      currentUser = APP_SCOPED;
+      const res = await http().get(path).expect(403);
+      expect(res.body.message).toContain('clusters');
+    },
+  );
+
+  /**
+   * The half decision 18 did not expect. `editor` carries `app:*` and no
+   * `cluster:read` at all, so the section closes these two to the most common
+   * non-admin role on the instance — the one whose browser opens the home pulse.
+   */
+  it.each(AUTOSCALE_READS)('refuses %s to an editor', async (path) => {
+    const res = await http().get(path).expect(403);
+    expect(res.body.message).toContain('clusters');
   });
 });

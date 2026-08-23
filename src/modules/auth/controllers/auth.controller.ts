@@ -1,7 +1,6 @@
 import {
   Body,
   Controller,
-  ForbiddenException,
   Get,
   HttpCode,
   HttpStatus,
@@ -17,7 +16,6 @@ import { Throttle, ThrottlerGuard } from '@nestjs/throttler';
 import {
   ApiBearerAuth,
   ApiBody,
-  ApiCreatedResponse,
   ApiOkResponse,
   ApiOperation,
   ApiResponse,
@@ -28,7 +26,6 @@ import { JwtAuthGuard } from '../guards/jwt-auth.guard';
 import { AdminGuard } from '../guards/admin.guard';
 import { AuthenticatedUser } from '../interfaces/authenticated-user.interface';
 import { LocalAuthService } from '../services/local-auth.service';
-import { RegisterDto, RegisterResponseDto } from '../dto/register.dto';
 import { LoginDto, LoginResponseDto } from '../dto/login.dto';
 import { RefreshTokenDto, RefreshResponseDto } from '../dto/refresh-token.dto';
 import { ChangePasswordDto } from '../dto/change-password.dto';
@@ -64,43 +61,14 @@ export class AuthController {
     return process.env.AUTH_MODE === 'local';
   }
 
-  @Post('register')
-  @Public()
-  @ApiOperation({
-    summary: 'Register the first user (local auth mode only)',
-    description:
-      'Bootstrap only: refused once the instance has any user at all. Accounts on an ' +
-      'initialised instance are created with POST /auth/users, which is admin-only.',
-  })
-  @ApiBody({ type: RegisterDto })
-  @ApiCreatedResponse({ type: RegisterResponseDto })
-  @ApiResponse({
-    status: 403,
-    description: 'The instance is already initialised',
-  })
-  async register(
-    @Body() dto: RegisterDto,
-    @Res({ passthrough: true }) res: Response,
-  ): Promise<RegisterResponseDto> {
-    if (!this.isLocalMode) {
-      throw new NotImplementedException(
-        'Registration is not available in OIDC mode',
-      );
-    }
-    // `@Public()` admits the request before any strategy runs, so there is no
-    // principal here to admit: an `isAdmin` check on this route can never be
-    // true, and reading the token back would re-open exactly the door
-    // `setRole` had open. The route is the bootstrap, nothing else.
-    const userCount = await this.localAuthService.countUsers();
-    if (userCount > 0) {
-      throw new ForbiddenException(
-        'This instance is already initialised — create accounts with POST /auth/users',
-      );
-    }
-    const result = await this.localAuthService.register(dto);
-    setFluiSessionCookie(res, result.access_token);
-    return result;
-  }
+  /**
+   * There is no `POST register` here any more. Local bootstrap never went
+   * through it: `AdminSeeder` creates the first administrator unconditionally
+   * on module init, before the server listens, so `countUsers()` was never 0
+   * by the time a request could arrive — and in OIDC mode the route was a 501
+   * by construction. No caller anywhere: not the CLI, not the docs, only the
+   * generated Angular client, which nothing called. See decision 24.
+   */
 
   @Post('login')
   @Public()
@@ -321,6 +289,9 @@ export class AuthController {
     return this.oidcBootstrapService.getPublicOidcConfig();
   }
 
+  // An installation-bootstrap route, still gated on the boolean: the same
+  // credential also writes clusters and firewalls, so a `platform:bootstrap`
+  // permission here alone would break `flui env create` halfway through.
   @Post('bootstrap')
   @UseGuards(JwtAuthGuard, AdminGuard)
   @Admin()

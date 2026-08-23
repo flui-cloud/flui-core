@@ -5,6 +5,7 @@ import { ExtractJwt, Strategy } from 'passport-jwt';
 import { IdentityRole } from '../entities/user.entity';
 import { AuthenticatedUser } from '../interfaces/authenticated-user.interface';
 import { extractJwtFromFluiSessionCookie } from '../utils/cookie-extractor.util';
+import { resolveJwtSecret } from '../utils/jwt-secret.util';
 
 interface LocalJwtPayload {
   sub: string;
@@ -21,7 +22,7 @@ export class LocalJwtStrategy extends PassportStrategy(Strategy, 'local-jwt') {
         ExtractJwt.fromAuthHeaderAsBearerToken(),
         extractJwtFromFluiSessionCookie,
       ]),
-      secretOrKey: configService.get<string>('JWT_SECRET', 'changeme'),
+      secretOrKey: resolveJwtSecret(configService),
       algorithms: ['HS256'],
     });
   }

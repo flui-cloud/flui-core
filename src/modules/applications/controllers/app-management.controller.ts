@@ -7,6 +7,7 @@ import {
   Param,
   HttpCode,
   HttpStatus,
+  UseGuards,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -16,6 +17,7 @@ import {
   ApiParam,
 } from '@nestjs/swagger';
 import { AppManagementService } from '../services/app-management.service';
+import { AppAccessGuard } from '../guards/app-access.guard';
 import {
   UpdateResourcesDto,
   UpdateReplicasDto,
@@ -25,6 +27,10 @@ import {
 @ApiTags('Application Management')
 @ApiBearerAuth()
 @Controller('applications/:appId')
+// Every route here names one application and three of the four change it. The
+// guard reads `:appId` as well as `:id`, so mounting it on the class is the
+// whole gate: GET asks app:read, the writes ask app:write.
+@UseGuards(AppAccessGuard)
 export class AppManagementController {
   constructor(private readonly appManagementService: AppManagementService) {}
 

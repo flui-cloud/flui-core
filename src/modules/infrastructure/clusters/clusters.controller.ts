@@ -8,7 +8,6 @@ import {
   Body,
   Query,
   Header,
-  UseGuards,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -19,19 +18,15 @@ import {
   ApiQuery,
   ApiBearerAuth,
 } from '@nestjs/swagger';
-import { AdminGuard } from '../../auth/guards/admin.guard';
-import { Admin } from '../../auth/decorators/admin.decorator';
 import { RequireSection } from '../../iam/decorators/require-section.decorator';
+import { RequirePermission } from '../../iam/decorators/require-permission.decorator';
+import { IAM_PERMISSION } from '../../iam/constants/iam-permissions';
 import { ClustersService } from './clusters.service';
 import {
   CreateClusterDto,
   CreateClusterResponseDto,
 } from './dto/create-cluster.dto';
 import { ClusterResponseDto } from './dto/cluster-response.dto';
-import {
-  RegisterClusterDto,
-  RegisterClusterResponseDto,
-} from './dto/register-cluster.dto';
 import { UpdateClusterMetadataDto } from './dto/update-cluster-metadata.dto';
 import { UpdateNodeMetadataDto } from './dto/update-node-metadata.dto';
 import { FirewallsService } from '../firewalls/services/firewalls.service';
@@ -107,6 +102,16 @@ import { CloudProvider } from 'src/modules/providers/enums/cloud-provider.enum';
  *   non-admin can open — gating them takes a screen away, so it is a decision
  *   rather than a decorator;
  * - `autoscale/defaults` and `:id/autoscale/status`, see the note above them.
+ *
+ * Two of the four deploy-wizard reads — the list and `:id/resource-availability`
+ * — now carry `@RequirePermission(APP_READ)`. Not a section, and not
+ * `cluster:read`, which would be the honest name: an `editor` holds neither
+ * and a sandbox guest holds neither, and both are shown these two
+ * for real, so naming the honest permission would 403 the deploy flow and the
+ * demonstration in one line. `app:read` is what every principal that reaches
+ * them today already holds, so it takes nothing from anybody; what it buys is
+ * that the credential ceiling can see the routes at all, since it reads
+ * `@RequirePermission` and `@AppAction` and nothing else.
  */
 @ApiTags('Infrastructure - Clusters')
 @ApiBearerAuth()
@@ -342,18 +347,21 @@ export class ClustersController {
   }
 
   /*
-   * These two reads are open on purpose, not by omission.
+   * These two reads carry the `clusters` section, which is `cluster:read` —
+   * the same gate the cluster menu entry already sits behind, so `viewer`,
+   * `editor` and `manager` all keep them.
    *
    * The dashboard reaches them from a hand-written HttpClient service rather
    * than the generated client, which is why a search by generated method name
    * finds nothing: `cluster-autoscale.service.ts` calls them from the cluster
    * tabs *and* from the home pulse, which every authenticated person opens. The
-   * pulse swallows the failure (`Promise.allSettled`), so a section here would
-   * not raise an error — it would silently drop the pressure badge for anyone
-   * short of global `cluster:manage`. Which section they should carry, if any,
-   * is a decision about that screen.
+   * pulse swallowed the failure (`Promise.allSettled`), so a section here would
+   * have silently dropped the pressure badge for anyone without the section —
+   * which is why the pulse now asks `canSee('clusters')` before calling at all,
+   * and the two halves had to land together.
    */
   @Get('autoscale/defaults')
+  @RequireSection('clusters')
   @ApiOperation({
     summary: 'Get global autoscale default thresholds',
     description:
@@ -365,6 +373,7 @@ export class ClustersController {
   }
 
   @Get(':id/autoscale/status')
+  @RequireSection('clusters')
   @ApiOperation({
     summary: 'Get cluster autoscale status',
     description:
@@ -469,34 +478,21 @@ export class ClustersController {
     };
   }
 
-  @Post('register')
-  @RequireSection('infrastructure')
-  @UseGuards(AdminGuard)
-  @Admin()
-  @ApiBearerAuth()
-  @ApiOperation({
-    summary: 'Register an existing cluster',
-    description:
-      'Registers an existing cluster (e.g., control cluster) into the database ' +
-      'without creating new infrastructure. This enables metrics monitoring via the API.',
-  })
-  @ApiBody({ type: RegisterClusterDto })
-  @ApiResponse({
-    status: 201,
-    description: 'Cluster successfully registered',
-    type: RegisterClusterResponseDto,
-  })
-  @ApiResponse({
-    status: 400,
-    description: 'Cluster already registered or invalid data',
-  })
-  async registerCluster(
-    @Body() dto: RegisterClusterDto,
-  ): Promise<RegisterClusterResponseDto> {
-    return this.clustersService.registerCluster(dto);
-  }
+  /*
+   * There is no `POST register` here any more. It had no caller: not the CLI
+   * (`flui env create` writes the control-cluster row through its own
+   * repository, in process), not the bootstrap scripts, not the dashboard —
+   * only the generated Angular client, which nothing calls. Adopting an
+   * installation somebody else provisioned goes through `/adoption/*`.
+   *
+   * A dead route is removed rather than decorated: deciding which permission
+   * should guard something nobody calls is an answer to a question nobody
+   * asked. `ClustersService.registerCluster` and the two DTOs are now
+   * unreferenced too — see decision 37.
+   */
 
   @Get()
+  @RequirePermission(IAM_PERMISSION.APP_READ)
   @ApiOperation({
     summary: 'List all active clusters',
     description:
@@ -653,6 +649,7 @@ export class ClustersController {
   }
 
   @Get(':id/storage')
+  @RequireSection('clusters')
   @ApiOperation({
     summary: 'Get cluster shared-storage status',
     description:
@@ -697,6 +694,7 @@ export class ClustersController {
   }
 
   @Get(':id/billing')
+  @RequireSection('clusters')
   @ApiOperation({
     summary: 'Get cluster billing information',
     description:
@@ -805,10 +803,14 @@ export class ClustersController {
     };
   }
 
+  // The only route in the product that carries `cluster:destroy`. The section
+  // says *which area*; this says *how deep*, and deleting a cluster is the most
+  // destructive act Flui has. `stop`/`start` deliberately do not carry it: they
+  // are reversible, and a name that says "destroy" over a reversible action is a
+  // name that lies.
   @Delete(':id')
   @RequireSection('infrastructure')
-  @UseGuards(AdminGuard)
-  @Admin()
+  @RequirePermission(IAM_PERMISSION.CLUSTER_DESTROY)
   @ApiOperation({
     summary: 'Delete a cluster',
     description:
@@ -982,8 +984,6 @@ export class ClustersController {
 
   @Post(':id/stop')
   @RequireSection('infrastructure')
-  @UseGuards(AdminGuard)
-  @Admin()
   @ApiOperation({
     summary: 'Stop all cluster servers (async)',
     description:
@@ -1019,8 +1019,6 @@ export class ClustersController {
 
   @Post(':id/start')
   @RequireSection('infrastructure')
-  @UseGuards(AdminGuard)
-  @Admin()
   @ApiOperation({
     summary: 'Start all cluster servers (async)',
     description:
@@ -1176,6 +1174,7 @@ export class ClustersController {
   }
 
   @Get(':id/resource-availability')
+  @RequirePermission(IAM_PERMISSION.APP_READ)
   @ApiOperation({
     summary: 'Check cluster resource availability',
     description:

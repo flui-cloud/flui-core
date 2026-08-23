@@ -22,6 +22,7 @@ import { SandboxTenantService } from './services/sandbox-tenant.service';
 import { SandboxSchedulerService } from './services/sandbox-scheduler.service';
 import { SandboxTenantEntity } from './entities/sandbox-tenant.entity';
 import { UserEntity } from '../auth/entities/user.entity';
+import { ApiKeyEntity } from '../auth/entities/api-key.entity';
 import { IamRoleBindingEntity } from '../iam/entities/iam-role-binding.entity';
 import { ApplicationEntity } from '../applications/entities/application.entity';
 import { ClusterEntity } from '../infrastructure/clusters/entities/cluster.entity';
@@ -37,6 +38,7 @@ import { MailModule } from '../mail/mail.module';
     TypeOrmModule.forFeature([
       SandboxTenantEntity,
       UserEntity,
+      ApiKeyEntity,
       IamRoleBindingEntity,
       ApplicationEntity,
       ClusterEntity,

@@ -279,6 +279,7 @@ export class AppManagementService {
     appId: string,
     volumeName: string,
     newClaimName: string,
+    userId?: string,
   ): Promise<AppRuntimeResponseDto & { operationId: string }> {
     const { app, kubeconfig } = await this.resolveAppAndKubeconfig(appId);
 
@@ -287,6 +288,7 @@ export class AppManagementService {
         appId,
         operationType: OperationType.APP_VOLUME_SWAP,
         resourceName: app.slug,
+        userId,
         metadata: { volumeName, newClaimName },
       },
       async () => {

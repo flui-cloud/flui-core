@@ -7,6 +7,7 @@ import {
   Req,
   ParseUUIDPipe,
   NotFoundException,
+  UseGuards,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -16,7 +17,11 @@ import {
 } from '@nestjs/swagger';
 import { Request } from 'express';
 import { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
+import { AppAccessGuard } from '../applications/guards/app-access.guard';
+import { IAM_PERMISSION } from '../iam/constants/iam-permissions';
+import { AppBuildEntity } from './entities/app-build.entity';
 import { AppBuildService } from './services/app-build.service';
+import { BuildAccessService } from './services/build-access.service';
 import { ApplicationDeployService } from '../applications/services/application-deploy.service';
 import { TriggerBuildDto } from './dto/trigger-build.dto';
 import {
@@ -25,14 +30,44 @@ import {
 } from './dto/app-build-response.dto';
 import { BuildCheckResponseDto } from './dto/build-check-response.dto';
 
+/**
+ * Builds of one application, mounted on `applications/:applicationId/**`.
+ *
+ * The guard on the class is the whole of the authorization for the routes that
+ * name the application, and it was missing: until it went on, any authenticated
+ * caller could list another tenant's builds, and — worse — start one and deploy
+ * from it. Two sandbox guests proved both halves.
+ *
+ * The three `builds/:buildId` routes underneath are NOT covered by it, and that
+ * is a property of the guard rather than an oversight: it looks for an
+ * application in the path and lets a route without one through to its handler,
+ * on the understanding that the handler enforces. So they do, below — through
+ * `BuildAccessService`, which is where that rule now lives for every door that
+ * asks it.
+ */
 @ApiTags('App Builds')
 @ApiBearerAuth()
+@UseGuards(AppAccessGuard)
 @Controller('applications')
 export class AppBuildsController {
   constructor(
     private readonly appBuildService: AppBuildService,
     private readonly applicationDeployService: ApplicationDeployService,
+    private readonly buildAccess: BuildAccessService,
   ) {}
+
+  /** The build, once the caller is allowed to act on it. */
+  private buildForCaller(
+    buildId: string,
+    req: Request,
+    action: string,
+  ): Promise<AppBuildEntity> {
+    return this.buildAccess.buildForCaller(
+      buildId,
+      req.user as AuthenticatedUser,
+      action,
+    );
+  }
 
   @Post(':applicationId/build')
   @ApiOperation({
@@ -91,7 +126,9 @@ export class AppBuildsController {
   @ApiResponse({ status: 200 })
   async cancelBuild(
     @Param('buildId', ParseUUIDPipe) buildId: string,
+    @Req() req: Request,
   ): Promise<void> {
+    await this.buildForCaller(buildId, req, IAM_PERMISSION.APP_WRITE);
     return this.appBuildService.cancelBuild(buildId);
   }
 
@@ -100,12 +137,9 @@ export class AppBuildsController {
   @ApiResponse({ status: 200, type: AppBuildResponseDto })
   async getBuild(
     @Param('buildId', ParseUUIDPipe) buildId: string,
+    @Req() req: Request,
   ): Promise<AppBuildResponseDto> {
-    const build = await this.appBuildService.findBuildById(buildId);
-    if (!build) {
-      throw new NotFoundException(`Build ${buildId} not found`);
-    }
-    return build;
+    return this.buildForCaller(buildId, req, IAM_PERMISSION.APP_READ);
   }
 
   @Post('builds/:buildId/refresh')
@@ -116,7 +150,9 @@ export class AppBuildsController {
   @ApiResponse({ status: 200, type: AppBuildResponseDto })
   async refreshBuild(
     @Param('buildId', ParseUUIDPipe) buildId: string,
+    @Req() req: Request,
   ): Promise<AppBuildResponseDto> {
+    await this.buildForCaller(buildId, req, IAM_PERMISSION.APP_READ);
     return this.appBuildService.refreshBuildFromProvider(buildId);
   }
 

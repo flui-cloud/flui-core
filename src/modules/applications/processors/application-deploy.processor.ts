@@ -8,7 +8,7 @@ import {
 } from '@nestjs/common';
 import { Job, Queue } from 'bull';
 import { InjectRepository } from '@nestjs/typeorm';
-import { IsNull, Repository } from 'typeorm';
+import { Repository } from 'typeorm';
 import * as crypto from 'node:crypto';
 import * as k8s from '@kubernetes/client-node';
 import {
@@ -43,11 +43,8 @@ import { ReconciliationStatus } from '../../infrastructure/shared/enums/reconcil
 import { AppEventType, AppEventActorType } from '../enums/app-event-type.enum';
 import { ApplicationEventsGateway } from '../gateway/application-events.gateway';
 import { GhcrSecretRefreshService } from '../services/ghcr-secret-refresh.service';
-import { AppEndpointEntity } from '../../dns/entities/app-endpoint.entity'; // used via EntityManager only
 import { DeploymentGuardService } from '../../scaling/services/deployment-guard.service';
 import { DeployConfigService } from '../services/deploy-config.service';
-import { CatalogInstallEntity } from '../../catalog/entities/catalog-install.entity';
-import { CatalogInstallStatus } from '../../catalog/enums/catalog-install-status.enum';
 import { ApplicationExposure } from '../enums/application-exposure.enum';
 import { AppEndpointService } from '../../dns/services/app-endpoint.service';
 import { DockerImageSourceConfig } from '../interfaces/source-config.interface';
@@ -55,8 +52,9 @@ import { AppEndpointReconciliationService } from '../../dns/services/app-endpoin
 import { ApplicationSourceDeployService } from '../services/application-source-deploy.service';
 import { findSystemAppByLabel } from '../constants/system-app-catalog';
 import { ApplicationResourceKind } from '../enums/application-resource-kind.enum';
-import { AppResourceEntity } from '../entities/app-resource.entity';
 import { DedicatedPlacementService } from '../services/dedicated-placement.service';
+import { ApplicationTeardownService } from './application-teardown.service';
+import { writeOperationProgress } from './operation-progress.util';
 
 @Processor('application-deploy')
 export class ApplicationDeployProcessor {
@@ -67,8 +65,6 @@ export class ApplicationDeployProcessor {
     private readonly operationRepository: Repository<InfrastructureOperationEntity>,
     @InjectRepository(ClusterEntity)
     private readonly clusterRepository: Repository<ClusterEntity>,
-    @InjectRepository(CatalogInstallEntity)
-    private readonly catalogInstallRepository: Repository<CatalogInstallEntity>,
     private readonly kubernetesService: KubernetesService,
     private readonly encryptionService: EncryptionService,
     private readonly applicationsRepository: ApplicationsRepository,
@@ -80,6 +76,7 @@ export class ApplicationDeployProcessor {
     private readonly ghcrSecretRefresh: GhcrSecretRefreshService,
     private readonly deployConfig: DeployConfigService,
     private readonly dedicatedPlacement: DedicatedPlacementService,
+    private readonly teardown: ApplicationTeardownService,
     @Optional()
     @Inject(forwardRef(() => DeploymentGuardService))
     private readonly deploymentGuard?: DeploymentGuardService,
@@ -811,275 +808,9 @@ export class ApplicationDeployProcessor {
 
   @Process('delete-application')
   async handleDelete(job: Job<DeleteApplicationJobData>): Promise<void> {
-    const { operationId, applicationId } = job.data;
-    const startedAt = Date.now();
-
-    this.logger.log(
-      `[DELETE] Processor picked up job id=${job.id} name=${job.name} attempt=${job.attemptsMade + 1} op=${operationId} app=${applicationId}`,
-    );
-
-    try {
-      await this.updateOperation(
-        operationId,
-        OperationStatus.IN_PROGRESS,
-        0,
-        OperationStep.APP_DELETE_INIT,
-      );
-      this.eventsGateway.emitOperationProgress(applicationId, {
-        appId: applicationId,
-        operationId,
-        operationType: 'delete',
-        percentage: 0,
-        currentStep: 1,
-        totalSteps: 3,
-        message: 'Initializing deletion...',
-        timestamp: new Date(),
-      });
-
-      const app = await this.applicationsRepository.findById(applicationId);
-
-      // Idempotency: if app is already fully deleted, mark operation complete and exit
-      if (!app) {
-        this.logger.warn(
-          `Application ${applicationId} not found (already deleted) — marking operation complete`,
-        );
-        await this.updateOperation(
-          operationId,
-          OperationStatus.COMPLETED,
-          100,
-          OperationStep.APP_DELETE_FINALIZE,
-        );
-        this.eventsGateway.emitOperationCompleted(applicationId, {
-          appId: applicationId,
-          operationId,
-          operationType: 'delete',
-          duration: Date.now() - startedAt,
-          applicationStatus: ApplicationStatus.DELETED,
-          timestamp: new Date(),
-        });
-        return;
-      }
-
-      const cluster = await this.clusterRepository.findOne({
-        where: { id: app.clusterId },
-      });
-      this.logger.log(
-        `[DELETE] cluster=${cluster?.id ?? 'NOT FOUND'} kubeconfigPresent=${!!cluster?.kubeconfigEncrypted}`,
-      );
-
-      // Remove K8s resources
-      await this.updateOperation(
-        operationId,
-        OperationStatus.IN_PROGRESS,
-        30,
-        OperationStep.APP_DELETE_K8S_RESOURCES,
-      );
-      this.eventsGateway.emitOperationProgress(applicationId, {
-        appId: applicationId,
-        operationId,
-        operationType: 'delete',
-        percentage: 30,
-        currentStep: 2,
-        totalSteps: 3,
-        message: 'Removing Kubernetes resources...',
-        timestamp: new Date(),
-      });
-
-      if (cluster?.kubeconfigEncrypted) {
-        const kubeconfig = this.encryptionService.decrypt(
-          cluster.kubeconfigEncrypted,
-        );
-        const resources =
-          await this.appResourcesRepository.findByApplicationId(applicationId);
-        const failedDeletes: AppResourceEntity[] = [];
-        for (const resource of resources) {
-          try {
-            await this.kubernetesService.deleteResource(
-              kubeconfig,
-              resource.kind,
-              resource.name,
-              resource.namespace,
-            );
-          } catch (err) {
-            this.logger.warn(
-              `Failed to delete K8s resource ${resource.kind}/${resource.name}: ${err.message}`,
-            );
-            failedDeletes.push(resource);
-          }
-        }
-
-        // Sweep finale label-based per tutti i kind che Flui crea. Cattura
-        // sia i fallimenti del loop sopra (apiserver flap, transient error)
-        // sia risorse create fuori dal tracking esplicito (helm hooks,
-        // sidecar che monta volumi al volo). Senza questo sweep le risorse
-        // restano vive nel cluster dopo che AppResourceEntity è stata
-        // cancellata e Flui non sa più che esistono — fenomeno osservato nel
-        // test di saturazione 2026-05-09 con Deployment, PVC e Service.
-        await this.sweepOrphanResources(kubeconfig, app, failedDeletes);
-      }
-
-      await this.appResourcesRepository.deleteByApplicationId(applicationId);
-
-      // Delete app endpoints via the reconciliation service: K8s Ingress +
-      // Certificate + TLS Secret + Middleware + DNS record, then remove the
-      // DB row. Reusing deleteEndpointResources ensures the DNS record is
-      // freed — otherwise the host stays pointed at the cluster and future
-      // re-use of the same fqdn is blocked by the unique constraint.
-      try {
-        const endpoints = await this.clusterRepository.manager.find(
-          AppEndpointEntity,
-          { where: { applicationId } },
-        );
-        this.logger.log(
-          `[DELETE] Found ${endpoints.length} endpoint(s) for application ${applicationId}`,
-        );
-
-        if (endpoints.length > 0 && this.appEndpointReconciliationService) {
-          for (const endpoint of endpoints) {
-            try {
-              await this.appEndpointReconciliationService.deleteEndpointResources(
-                endpoint.id,
-              );
-            } catch (err) {
-              this.logger.warn(
-                `[DELETE] deleteEndpointResources failed for ${endpoint.id}: ${err.message}`,
-              );
-            }
-            await this.clusterRepository.manager
-              .remove(AppEndpointEntity, endpoint)
-              .catch((err) =>
-                this.logger.warn(
-                  `[DELETE] endpoint DB remove failed for ${endpoint.id}: ${err.message}`,
-                ),
-              );
-            this.logger.log(
-              `[DELETE] Endpoint ${endpoint.id} (${endpoint.fqdn}) removed`,
-            );
-          }
-        } else if (endpoints.length > 0) {
-          this.logger.warn(
-            `[DELETE] reconciliation service unavailable — removing endpoint DB rows only (no K8s/DNS cleanup)`,
-          );
-          for (const endpoint of endpoints) {
-            await this.clusterRepository.manager
-              .remove(AppEndpointEntity, endpoint)
-              .catch(() => {});
-          }
-        }
-      } catch (err) {
-        this.logger.warn(
-          `[DELETE] Failed to clean up endpoints for application ${applicationId}: ${err.message}`,
-        );
-      }
-
-      // Finalize
-      await this.updateOperation(
-        operationId,
-        OperationStatus.IN_PROGRESS,
-        90,
-        OperationStep.APP_DELETE_FINALIZE,
-      );
-      this.eventsGateway.emitOperationProgress(applicationId, {
-        appId: applicationId,
-        operationId,
-        operationType: 'delete',
-        percentage: 90,
-        currentStep: 3,
-        totalSteps: 3,
-        message: 'Finalizing deletion...',
-        timestamp: new Date(),
-      });
-
-      await this.appRevisionsRepository.createAuditEvent({
-        applicationId,
-        eventType: AppEventType.DELETE,
-        actor: { type: AppEventActorType.SYSTEM, id: 'system' },
-        changeMetadata: { clusterId: app.clusterId },
-      });
-
-      await this.applicationsRepository.softDelete(applicationId);
-
-      // Cascade to the catalog install parent, if any. An Application owned
-      // by a catalog install carries metadata.catalogInstallId; once the app
-      // is gone the install row must not linger with status=RUNNING/FAILED
-      // and deletedAt=NULL (we'd see phantom installs in the Catalog tab of
-      // the dashboard). Idempotent: already-uninstalled rows are skipped.
-      const catalogInstallId = app.metadata?.catalogInstallId;
-      if (catalogInstallId) {
-        try {
-          await this.catalogInstallRepository.update(
-            { id: catalogInstallId, deletedAt: IsNull() },
-            {
-              status: CatalogInstallStatus.UNINSTALLED,
-              deletedAt: new Date(),
-            },
-          );
-          this.logger.log(
-            `Cascaded delete to catalog install ${catalogInstallId} (app ${applicationId})`,
-          );
-        } catch (err) {
-          // Don't fail the app delete if the cascade update fails — the app
-          // is already gone; an orphan install row is a cosmetic issue we
-          // can reconcile later.
-          this.logger.warn(
-            `Cascade to catalog install ${catalogInstallId} failed: ${
-              err instanceof Error ? err.message : String(err)
-            }`,
-          );
-        }
-      }
-
-      await this.updateOperation(
-        operationId,
-        OperationStatus.COMPLETED,
-        100,
-        OperationStep.APP_DELETE_FINALIZE,
-      );
-      this.eventsGateway.emitOperationCompleted(applicationId, {
-        appId: applicationId,
-        operationId,
-        operationType: 'delete',
-        duration: Date.now() - startedAt,
-        applicationStatus: ApplicationStatus.DELETED,
-        timestamp: new Date(),
-      });
-
-      this.logger.log(
-        `Delete completed for application ${app.name} (${applicationId})`,
-      );
-    } catch (error) {
-      this.logger.error(
-        `Delete failed for application ${applicationId}: ${error.message}`,
-        error.stack,
-      );
-
-      await this.applicationsRepository.updateStatus(
-        applicationId,
-        ApplicationStatus.FAILED,
-      );
-      await this.updateOperation(
-        operationId,
-        OperationStatus.FAILED,
-        undefined,
-        undefined,
-        error.message,
-      );
-      this.eventsGateway.emitOperationFailed(applicationId, {
-        appId: applicationId,
-        operationId,
-        operationType: 'delete',
-        error: error.message,
-        attempt: job.attemptsMade,
-        timestamp: new Date(),
-      });
-    }
+    return this.teardown.handleDelete(job);
   }
 
-  /**
-   * Create or patch the ghcr.io imagePullSecret in the app's namespace so pods
-   * can pull private images built by the build pipeline.
-   * Returns the secret name on success, undefined on failure (non-blocking).
-   */
   private async applyManifests(
     applicationId: string,
     namespace: string,
@@ -1133,87 +864,7 @@ export class ApplicationDeployProcessor {
     }
   }
 
-  private static readonly SWEEPABLE_KINDS: ApplicationResourceKind[] = [
-    ApplicationResourceKind.DEPLOYMENT,
-    ApplicationResourceKind.STATEFUL_SET,
-    ApplicationResourceKind.DAEMON_SET,
-    ApplicationResourceKind.SERVICE,
-    ApplicationResourceKind.INGRESS,
-    ApplicationResourceKind.INGRESS_ROUTE,
-    ApplicationResourceKind.CONFIG_MAP,
-    ApplicationResourceKind.SECRET,
-    ApplicationResourceKind.PERSISTENT_VOLUME_CLAIM,
-    ApplicationResourceKind.HORIZONTAL_POD_AUTOSCALER,
-    ApplicationResourceKind.CERTIFICATE,
-    ApplicationResourceKind.JOB,
-    ApplicationResourceKind.CRON_JOB,
-  ];
-
-  private async sweepOrphanResources(
-    kubeconfig: string,
-    app: ApplicationEntity,
-    failedFromTracking: AppResourceEntity[],
-  ): Promise<void> {
-    const namespace = app.k8sNamespace;
-    const labelSelector = `flui-app-id=${app.id}`;
-
-    const failedByKind = new Map<string, Set<string>>();
-    for (const r of failedFromTracking) {
-      if (!failedByKind.has(r.kind)) failedByKind.set(r.kind, new Set());
-      failedByKind.get(r.kind).add(r.name);
-    }
-
-    let totalDeleted = 0;
-    let totalFailed = 0;
-    for (const kind of ApplicationDeployProcessor.SWEEPABLE_KINDS) {
-      let liveNames: string[] = [];
-      try {
-        const items = await this.kubernetesService.listResourcesByLabel(
-          kubeconfig,
-          kind,
-          namespace,
-          labelSelector,
-        );
-        liveNames = items
-          .map((i: any) => i?.metadata?.name as string)
-          .filter((n) => !!n);
-      } catch (err) {
-        this.logger.warn(
-          `[DELETE] sweep list ${kind} failed for app ${app.slug}: ${err.message}`,
-        );
-      }
-
-      const targets = new Set<string>([
-        ...(failedByKind.get(kind) ?? []),
-        ...liveNames,
-      ]);
-      if (targets.size === 0) continue;
-
-      for (const name of targets) {
-        try {
-          await this.kubernetesService.deleteResource(
-            kubeconfig,
-            kind,
-            name,
-            namespace,
-          );
-          totalDeleted++;
-        } catch (err) {
-          totalFailed++;
-          this.logger.error(
-            `[DELETE] sweep failed to delete ${kind}/${name} in ${namespace}: ${err.message}`,
-          );
-        }
-      }
-    }
-
-    if (totalDeleted > 0 || totalFailed > 0) {
-      this.logger.log(
-        `[DELETE] sweep complete for app ${app.slug}: ${totalDeleted} deleted, ${totalFailed} failed`,
-      );
-    }
-  }
-
+  /** Returns the secret name, or undefined on failure: pulling is non-blocking. */
   private async ensureGhcrPullSecret(
     kubeconfig: string,
     app: ApplicationEntity,
@@ -1247,19 +898,13 @@ export class ApplicationDeployProcessor {
     currentStep?: OperationStep,
     errorMessage?: string,
   ): Promise<void> {
-    const updateData: Partial<InfrastructureOperationEntity> = { status };
-    if (progress !== undefined) updateData.progress = progress;
-    if (currentStep !== undefined) updateData.currentStep = currentStep;
-    if (errorMessage) updateData.errorMessage = errorMessage;
-    if (status === OperationStatus.IN_PROGRESS && !updateData.startedAt) {
-      updateData.startedAt = new Date();
-    }
-    if (
-      status === OperationStatus.COMPLETED ||
-      status === OperationStatus.FAILED
-    ) {
-      updateData.completedAt = new Date();
-    }
-    await this.operationRepository.update(operationId, updateData);
+    await writeOperationProgress(
+      this.operationRepository,
+      operationId,
+      status,
+      progress,
+      currentStep,
+      errorMessage,
+    );
   }
 }

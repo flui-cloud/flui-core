@@ -117,6 +117,23 @@ export class ApplicationAccessService {
     return summaries;
   }
 
+  /**
+   * May this caller decide who *sees* an application?
+   *
+   * Not a question about one application, which is why it takes no resource:
+   * the `showcase` tag is what SHOWCASE_GRANT selects on, so setting it puts the
+   * application in front of everyone on the instance. It is the same right the
+   * two showcase routes ask for — asked here so that `PATCH :id { tags }` is not
+   * their back door.
+   */
+  mayPublishShowcase(user: AuthenticatedUser | undefined): Promise<boolean> {
+    if (!user) return Promise.resolve(false);
+    return this.policy.check(
+      this.principalFrom(user),
+      IAM_PERMISSION.SHOWCASE_PUBLISH,
+    );
+  }
+
   /** True if the caller may perform `action` on this app. */
   async can(
     user: AuthenticatedUser,

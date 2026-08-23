@@ -78,9 +78,23 @@ export const SANDBOX_AREAS: SandboxArea[] = [
   },
   {
     key: 'keys',
-    area: 'SSH keys and API keys',
+    area: 'SSH keys',
     level: 'closed',
-    why: 'A key is a way in. None is shown here, not even an invented one.',
+    why: 'A key into a machine you share is a key into everybody\u2019s. None is shown here, not even an invented one.',
+  },
+  {
+    // The one credential a guest may mint, and the reason the trial has an
+    // agent at all. It is worth no more than the guest: every scope it can
+    // carry is checked against the permissions the guest itself holds, and
+    // every call the agent makes is fenced exactly as the guest's own are.
+    key: 'agent-keys',
+    area: 'Connecting a coding agent',
+    level: 'full',
+    // The address is in the copy on purpose: it is the one thing a guest has to
+    // type into their own editor, and until the key screen exists there is
+    // nowhere else it is written down. The stdio bridge is for clients that
+    // cannot speak streamable HTTP; it reads the same key out of FLUI_MCP_KEY.
+    why: 'Hand an agent a key of your own and let it deploy and operate your applications, with the same limits you have here. Point it at POST /api/v1/mcp on this instance with an `Authorization: Bearer <your key>` header, and switch it off again by revoking the key.',
   },
   {
     key: 'platform-config',
@@ -89,10 +103,16 @@ export const SANDBOX_AREAS: SandboxArea[] = [
     why: "Those belong to the platform, not to a tenancy. Your application's own variables are yours to edit.",
   },
   {
+    // Two different things under one word, and the copy used to name only the
+    // second. Per-application routes and their policies are reached through
+    // `/applications/:id/gateway/**`, which the fence opens: a guest adds a
+    // route on its own application and rate-limits it, and that was true while
+    // this line said `closed`. What is shut is the cluster-wide view — every
+    // route on the machine, whoever owns it.
     key: 'gateway',
-    area: 'Gateway policies',
-    level: 'closed',
-    why: 'They act on shared infrastructure, so one guest\u2019s rule would be everybody\u2019s.',
+    area: 'Gateway routes and policies',
+    level: 'full',
+    why: 'The routes of your own applications are yours to add, protect and remove \u2014 under the subdomain this sandbox serves you from, and never on a name somebody else is already answering for. The cluster-wide list of everybody\u2019s routes is not shown.',
   },
   {
     key: 'migrations',

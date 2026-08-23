@@ -22,6 +22,8 @@ import {
 } from '@nestjs/swagger';
 import { AuthenticatedUser } from '../../auth/interfaces/authenticated-user.interface';
 import { Public } from '../../auth/decorators/public.decorator';
+import { RequirePermission } from '../../iam/decorators/require-permission.decorator';
+import { IAM_PERMISSION } from '../../iam/constants/iam-permissions';
 import { ApplicationAccessService } from '../../applications/services/application-access.service';
 import { stripSandboxInstallPlacement } from '../../applications/utils/sandbox-placement.util';
 import { CatalogService } from '../services/catalog.service';
@@ -179,6 +181,10 @@ export class CatalogController {
 
   @ApiBearerAuth()
   @Post('validate')
+  // Reads a pasted file and answers; it touches no instance. The permission is
+  // here only so the credential ceiling can see the route: every built-in role
+  // holds `app:read` already.
+  @RequirePermission(IAM_PERMISSION.APP_READ)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Validate a raw flui.yaml manifest',
@@ -274,6 +280,12 @@ export class CatalogController {
 
   @ApiBearerAuth()
   @Post(':slug/install')
+  // `assertCanCreate` in the handler already refuses anyone without
+  // `app:create` on the target, so this takes nothing from anybody: the guard
+  // asks the same permission without a resource, which is strictly weaker.
+  // What it adds is the credential ceiling, which reads the decorator and
+  // nothing else — until now a key scoped to reads installed applications.
+  @RequirePermission(IAM_PERMISSION.APP_CREATE)
   @HttpCode(HttpStatus.ACCEPTED)
   @ApiOperation({ summary: 'Install a catalog app on a cluster' })
   @ApiParam({ name: 'slug' })

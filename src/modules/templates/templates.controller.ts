@@ -26,6 +26,8 @@ import {
 import { TemplateConfig } from './config/template-registry';
 import { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import { Public } from '../auth/decorators/public.decorator';
+import { RequirePermission } from '../iam/decorators/require-permission.decorator';
+import { IAM_PERMISSION } from '../iam/constants/iam-permissions';
 
 /** A listed template; the source repository is present only for authenticated callers. */
 type TemplateListItem = Omit<TemplateConfig, 'repo' | 'repoUrl'> &
@@ -68,6 +70,11 @@ export class TemplatesController {
   }
 
   @Get(':framework')
+  // Unlike the list above, this one is not `@Public()`. Every built-in role
+  // holds `app:read`, so nobody loses it; the permission is here because the
+  // credential ceiling reads `@RequirePermission` and `@AppAction` and nothing
+  // else.
+  @RequirePermission(IAM_PERMISSION.APP_READ)
   @ApiOperation({
     summary: 'Get template details',
     description:

@@ -20,8 +20,6 @@ import {
   ApiTags,
 } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../guards/jwt-auth.guard';
-import { AdminGuard } from '../guards/admin.guard';
-import { Admin } from '../decorators/admin.decorator';
 import { RequirePermission } from '../../iam/decorators/require-permission.decorator';
 import { IAM_PERMISSION } from '../../iam/constants/iam-permissions';
 import { AuthenticatedUser } from '../interfaces/authenticated-user.interface';
@@ -51,10 +49,13 @@ import { RequireSection } from '../../iam/decorators/require-section.decorator';
 export class UserManagementController {
   constructor(private readonly users: UserManagementService) {}
 
+  // Not `iam:assign-role`, which the three reads and PATCH :id/role next door
+  // run on and which a `manager` holds: creating and deleting platform accounts
+  // and recomposing anyone's password is a different sentence from assigning a
+  // role, and reusing the permission would have said them both at once.
   @Post()
-  @UseGuards(AdminGuard)
-  @Admin()
-  @ApiOperation({ summary: 'Create a new identity user (admin)' })
+  @RequirePermission(IAM_PERMISSION.IAM_MANAGE_USERS)
+  @ApiOperation({ summary: 'Create a new identity user' })
   @ApiCreatedResponse({ type: CreatedIdentityUserDto })
   create(@Body() dto: CreateIdentityUserDto): Promise<CreatedIdentityUserDto> {
     return this.users.createUser(dto);
@@ -84,8 +85,7 @@ export class UserManagementController {
   }
 
   @Delete(':id')
-  @UseGuards(AdminGuard)
-  @Admin()
+  @RequirePermission(IAM_PERMISSION.IAM_MANAGE_USERS)
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Delete an identity user (admin)' })
   async delete(
@@ -115,8 +115,7 @@ export class UserManagementController {
   }
 
   @Post(':id/reset-password')
-  @UseGuards(AdminGuard)
-  @Admin()
+  @RequirePermission(IAM_PERMISSION.IAM_MANAGE_USERS)
   @ApiOperation({
     summary: 'Reset password / resend invite for an identity user (admin)',
   })
@@ -129,8 +128,7 @@ export class UserManagementController {
   }
 
   @Post(':id/invite-link')
-  @UseGuards(AdminGuard)
-  @Admin()
+  @RequirePermission(IAM_PERMISSION.IAM_MANAGE_USERS)
   @ApiOperation({
     summary: 'Generate a copyable invite link for a user (admin)',
     description:

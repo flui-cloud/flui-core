@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { JwtModule } from '@nestjs/jwt';
+import { resolveJwtSecret } from './utils/jwt-secret.util';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { UserEntity } from './entities/user.entity';
 import { ApiKeyEntity } from './entities/api-key.entity';
@@ -20,7 +21,7 @@ import { WsAuthService } from './services/ws-auth.service';
     JwtModule.registerAsync({
       imports: [ConfigModule],
       useFactory: (config: ConfigService) => ({
-        secret: config.get<string>('JWT_SECRET', 'changeme'),
+        secret: resolveJwtSecret(config),
         signOptions: { expiresIn: '15m', algorithm: 'HS256' },
       }),
       inject: [ConfigService],

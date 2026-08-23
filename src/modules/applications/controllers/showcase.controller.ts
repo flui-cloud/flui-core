@@ -7,7 +7,6 @@ import {
   HttpStatus,
   Param,
   Put,
-  UseGuards,
 } from '@nestjs/common';
 import {
   ApiBearerAuth,
@@ -16,8 +15,8 @@ import {
   ApiResponse,
   ApiTags,
 } from '@nestjs/swagger';
-import { AdminGuard } from '../../auth/guards/admin.guard';
-import { Admin } from '../../auth/decorators/admin.decorator';
+import { RequirePermission } from '../../iam/decorators/require-permission.decorator';
+import { IAM_PERMISSION } from '../../iam/constants/iam-permissions';
 import { PublishShowcaseDto } from '../dto/publish-showcase.dto';
 import { ShowcaseItemDto } from '../dto/showcase-item.dto';
 import { ShowcaseService } from '../services/showcase.service';
@@ -51,8 +50,7 @@ export class ShowcaseController {
   }
 
   @Put(':ref')
-  @UseGuards(AdminGuard)
-  @Admin()
+  @RequirePermission(IAM_PERMISSION.SHOWCASE_PUBLISH)
   @ApiOperation({
     summary: 'Publish one application to the showcase',
     description:
@@ -70,8 +68,7 @@ export class ShowcaseController {
   }
 
   @Delete(':ref')
-  @UseGuards(AdminGuard)
-  @Admin()
+  @RequirePermission(IAM_PERMISSION.SHOWCASE_PUBLISH)
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({
     summary: 'Take one application out of the showcase',

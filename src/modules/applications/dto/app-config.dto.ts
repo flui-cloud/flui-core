@@ -18,14 +18,19 @@ export enum VariableType {
 // ── App-scoped responses ───────────────────────────────────────────────────
 
 export class UpsertVariablesDto {
-  @ApiProperty({
-    description: 'Key-value pairs to store',
+  @ApiPropertyOptional({
+    description:
+      'Key-value pairs to store. Optional: the handler already ignores it when ' +
+      'empty — a payload that only declares has nothing to write to the ' +
+      'cluster — so requiring it made a declare-only or delete-only call answer ' +
+      '400 for a field it was about to throw away.',
     example: { NODE_ENV: 'production', LOG_LEVEL: 'info' },
     type: 'object',
     additionalProperties: { type: 'string' },
   })
+  @IsOptional()
   @IsObject()
-  data: Record<string, string>;
+  data?: Record<string, string>;
 
   @ApiPropertyOptional({
     description:

@@ -7,6 +7,7 @@ import {
   ParseIntPipe,
   Post,
   Query,
+  UseGuards,
 } from '@nestjs/common';
 import {
   ApiBearerAuth,
@@ -18,10 +19,25 @@ import { CrashDiagnosesRepository } from '../repositories/crash-diagnoses.reposi
 import { CrashDiagnosisDto } from '../dto/crash-diagnosis.dto';
 import { CrashDiagnosisEntity } from '../entities/crash-diagnosis.entity';
 import { CrashDiagnosisStatusFilter } from '../enums/crash-diagnosis-status-filter.enum';
+import { AppAccessGuard } from '../../applications/guards/app-access.guard';
 
+/**
+ * The crash history of one application, and the gesture that dismisses an entry.
+ *
+ * Guarded on the class for the same reason as PodDebugController: every route
+ * here names an application in the path, and the diagnosis text quotes the
+ * container's own error output.
+ *
+ * The application is `:id`, like everywhere else. That forced the
+ * nested parameter to stop being `:id` too: two path parameters of the same
+ * name collide, Express keeps the last, and `AppAccessGuard` would have been
+ * handed the diagnosis id to check ownership on. It is `:diagnosisId` now, and
+ * it names what it is.
+ */
 @ApiTags('applications')
 @ApiBearerAuth()
-@Controller('applications/:applicationId/crash-diagnoses')
+@UseGuards(AppAccessGuard)
+@Controller('applications/:id/crash-diagnoses')
 export class CrashDiagnosesController {
   constructor(
     private readonly crashDiagnosesRepository: CrashDiagnosesRepository,
@@ -35,7 +51,7 @@ export class CrashDiagnosesController {
     required: false,
   })
   async list(
-    @Param('applicationId') applicationId: string,
+    @Param('id') applicationId: string,
     @Query('limit', new ParseIntPipe({ optional: true })) limit?: number,
     @Query('offset', new ParseIntPipe({ optional: true })) offset?: number,
     @Query(
@@ -55,11 +71,11 @@ export class CrashDiagnosesController {
     return entries.map((e) => this.toDto(e));
   }
 
-  @Get(':id')
+  @Get(':diagnosisId')
   @ApiOperation({ summary: 'Get a single crash diagnosis' })
   async getOne(
-    @Param('applicationId') applicationId: string,
-    @Param('id') id: string,
+    @Param('id') applicationId: string,
+    @Param('diagnosisId') id: string,
   ): Promise<CrashDiagnosisDto> {
     const entry = await this.crashDiagnosesRepository.findById(id);
     if (entry?.applicationId !== applicationId) {
@@ -68,11 +84,11 @@ export class CrashDiagnosesController {
     return this.toDto(entry);
   }
 
-  @Post(':id/dismiss')
+  @Post(':diagnosisId/dismiss')
   @ApiOperation({ summary: 'Mark a crash diagnosis as resolved' })
   async dismiss(
-    @Param('applicationId') applicationId: string,
-    @Param('id') id: string,
+    @Param('id') applicationId: string,
+    @Param('diagnosisId') id: string,
   ): Promise<CrashDiagnosisDto> {
     const entry = await this.crashDiagnosesRepository.findById(id);
     if (entry?.applicationId !== applicationId) {

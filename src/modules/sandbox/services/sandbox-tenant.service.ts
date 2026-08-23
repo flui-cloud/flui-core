@@ -17,6 +17,7 @@ import {
   IIdentityDirectory,
 } from '../../auth/interfaces/identity-directory.interface';
 import { IdentityRole, UserEntity } from '../../auth/entities/user.entity';
+import { ApiKeyEntity } from '../../auth/entities/api-key.entity';
 import { IamRoleBindingEntity } from '../../iam/entities/iam-role-binding.entity';
 import { IAM_ROLE } from '../../iam/constants/iam-roles';
 import { SHOWCASE_GRANT } from '../../iam/constants/iam-showcase';
@@ -55,6 +56,8 @@ export class SandboxTenantService {
     private readonly users: Repository<UserEntity>,
     @InjectRepository(IamRoleBindingEntity)
     private readonly bindings: Repository<IamRoleBindingEntity>,
+    @InjectRepository(ApiKeyEntity)
+    private readonly apiKeys: Repository<ApiKeyEntity>,
     @InjectRepository(ApplicationEntity)
     private readonly applications: Repository<ApplicationEntity>,
     @InjectRepository(ClusterEntity)
@@ -253,6 +256,21 @@ export class SandboxTenantService {
       await this.bindings.delete({ principalRef: tenant.email });
     } catch (error) {
       failures.push(`binding: ${this.msg(error)}`);
+    }
+
+    // Before the local user row, and explicitly: `api_keys` has no foreign key
+    // to `users`, so deleting the person leaves every credential they minted
+    // behind as a row pointing at nobody. The tenancy's own session credential
+    // is one of those, and so is every key the guest handed to an agent.
+    try {
+      if (tenant.userId) {
+        const removed = await this.apiKeys.delete({ userId: tenant.userId });
+        if (removed.affected) {
+          notes.push(`api keys: removed ${removed.affected}`);
+        }
+      }
+    } catch (error) {
+      failures.push(`api keys: ${this.msg(error)}`);
     }
 
     let identityGone = true;

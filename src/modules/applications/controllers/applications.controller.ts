@@ -49,7 +49,6 @@ import { DeployApplicationDto } from '../dto/deploy-application.dto';
 import { RollbackApplicationDto } from '../dto/rollback-application.dto';
 import {
   ApplicationResponseDto,
-  AppRevisionResponseDto,
   AppResourceResponseDto,
   AppAuditEventSummaryDto,
   CreateApplicationResponseDto,
@@ -59,28 +58,17 @@ import { ApplicationCategory } from '../enums/application-category.enum';
 import { ApplicationKind } from '../enums/application-kind.enum';
 import { ApplicationStatus } from '../enums/application-status.enum';
 import { ApplicationSourceType } from '../enums/application-source-type.enum';
-import { AdminGuard } from '../../auth/guards/admin.guard';
-import { Admin } from '../../auth/decorators/admin.decorator';
-import { AppAccessGuard } from '../guards/app-access.guard';
+import { RequireSection } from '../../iam/decorators/require-section.decorator';
+import { SECTION } from '../../iam/constants/iam-sections';
+import { IAM_PERMISSION } from '../../iam/constants/iam-permissions';
+import { AppAccessGuard, AppAction } from '../guards/app-access.guard';
 import { ApplicationAccessService } from '../services/application-access.service';
 import { DockerHubService } from '../../images/services/dockerhub.service';
-import { ApplicationVersionsService } from '../services/application-versions.service';
-import { AvailableVersionsResponseDto } from '../dto/available-versions.dto';
 import { ApplicationSourceDeployService } from '../services/application-source-deploy.service';
 import {
   DeployFromYamlDto,
   DeployFromYamlResponseDto,
 } from '../dto/deploy-from-yaml.dto';
-import { ApplicationReleaseService } from '../services/application-release.service';
-import {
-  ApplicationReleaseDto,
-  ApplicationReleaseListDto,
-} from '../dto/application-release.dto';
-import { VolumeSnapshotsService } from '../services/volume-snapshots.service';
-import {
-  VolumeBackupsService,
-  BackupDestination,
-} from '../services/volume-backups.service';
 
 @ApiTags('Applications')
 @ApiBearerAuth()
@@ -98,11 +86,7 @@ export class ApplicationsController {
     private readonly appRevisionsRepository: AppRevisionsRepository,
     private readonly dockerHubService: DockerHubService,
     private readonly applicationWorkflowService: ApplicationWorkflowService,
-    private readonly applicationVersionsService: ApplicationVersionsService,
     private readonly applicationSourceDeployService: ApplicationSourceDeployService,
-    private readonly applicationReleaseService: ApplicationReleaseService,
-    private readonly volumeSnapshotsService: VolumeSnapshotsService,
-    private readonly volumeBackupsService: VolumeBackupsService,
     private readonly appManagementService: AppManagementService,
     private readonly applicationGroupingService: ApplicationGroupingService,
   ) {}
@@ -183,9 +167,12 @@ export class ApplicationsController {
 
     // Auto-deploy if requested
     if (dto.autoDeploy) {
+      // The author travels with the release: without it the first release of
+      // every autoDeploy application is recorded as having no one behind it.
       const operation = await this.applicationDeployService.deploy(
         entity.id,
         {},
+        user?.userId,
       );
       return {
         application,
@@ -252,10 +239,12 @@ export class ApplicationsController {
       req.user as AuthenticatedUser,
       visible,
     );
-    return visible.map((a) => ({
-      ...this.applicationService.toResponseDto(a),
-      access: access.get(a.id),
-    }));
+    // Enriched, not plain: `toResponseDto` leaves `url` and `internalUrl` empty,
+    // so every consumer of this list — the dashboard included — was reading
+    // applications with no address at all. The enrichment costs two queries for
+    // the whole page, not one per application.
+    const dtos = await this.applicationService.toResponseDtosWithUrls(visible);
+    return dtos.map((dto) => ({ ...dto, access: access.get(dto.id) }));
   }
 
   @Get('clusters/:clusterId/applications/grouped')
@@ -373,12 +362,17 @@ export class ApplicationsController {
     // A tag decides which grants select this application — `showcase` alone puts
     // it in front of every guest on the instance. That is an access decision, so
     // holding app:write over the application is not enough to make it.
-    if (dto.tags !== undefined && !(req.user as AuthenticatedUser)?.isAdmin) {
+    const tagChangeRefused =
+      dto.tags !== undefined &&
+      !(await this.applicationAccess.mayPublishShowcase(
+        req.user as AuthenticatedUser | undefined,
+      ));
+    if (tagChangeRefused) {
       throw new ForbiddenException({
         statusCode: 403,
         code: 'TAGS_ADMIN_ONLY',
         message:
-          'Tags decide who can see an application, so only an administrator can change them.',
+          'Tags decide who can see an application, so changing them needs showcase:publish.',
       });
     }
     const app = await this.applicationService.update(id, dto);
@@ -423,8 +417,7 @@ export class ApplicationsController {
   }
 
   @Delete('applications/:id')
-  @UseGuards(AdminGuard)
-  @Admin()
+  @AppAction(IAM_PERMISSION.APP_DELETE)
   @HttpCode(HttpStatus.ACCEPTED)
   @ApiOperation({
     summary: 'Delete an application',
@@ -496,13 +489,21 @@ export class ApplicationsController {
   @ApiOperation({ summary: 'Trigger deployment for an application' })
   @ApiParam({ name: 'id', description: 'Application ID' })
   @ApiResponse({ status: 201, description: 'Deploy job queued' })
-  async deploy(@Param('id') id: string, @Body() dto: DeployApplicationDto) {
-    return this.applicationDeployService.deploy(id, dto);
+  async deploy(
+    @Req() req: Request,
+    @Param('id') id: string,
+    @Body() dto: DeployApplicationDto,
+  ) {
+    // `deployedBy` on the release record, and the owner of the operation this
+    // returns. The parameter stays optional in the service: a GitHub webhook
+    // deploys with no person behind it, and inventing one to satisfy a type
+    // would be worse than an honest absence.
+    const userId = (req.user as AuthenticatedUser | undefined)?.userId;
+    return this.applicationDeployService.deploy(id, dto, userId);
   }
 
   @Post('applications/:id/rollback')
-  @UseGuards(AdminGuard)
-  @Admin()
+  @AppAction(IAM_PERMISSION.APP_DEPLOY)
   @ApiOperation({ summary: 'Rollback to a previous revision' })
   @ApiParam({ name: 'id', description: 'Application ID' })
   @ApiResponse({ status: 201, description: 'Rollback job queued' })
@@ -556,34 +557,6 @@ export class ApplicationsController {
     );
   }
 
-  @Get('applications/:id/release')
-  @ApiOperation({
-    summary:
-      'Get the current release (most recent deploy/rollback operation) and its derived status',
-  })
-  @ApiParam({ name: 'id', description: 'Application ID' })
-  @ApiResponse({ status: 200, type: ApplicationReleaseDto })
-  async getCurrentRelease(
-    @Param('id') id: string,
-  ): Promise<ApplicationReleaseDto | null> {
-    await this.applicationReleaseService.assertApplicationExists(id);
-    return this.applicationReleaseService.getCurrentRelease(id);
-  }
-
-  @Get('applications/:id/releases')
-  @ApiOperation({
-    summary: 'List recent releases (deploy/rollback operations) for the app',
-  })
-  @ApiParam({ name: 'id', description: 'Application ID' })
-  @ApiResponse({ status: 200, type: ApplicationReleaseListDto })
-  async listReleases(
-    @Param('id') id: string,
-  ): Promise<ApplicationReleaseListDto> {
-    await this.applicationReleaseService.assertApplicationExists(id);
-    const releases = await this.applicationReleaseService.listReleases(id);
-    return { releases };
-  }
-
   @Get('applications/:id/workflow-status')
   @ApiOperation({ summary: 'Get current GitHub Actions workflow run status' })
   @ApiParam({ name: 'id', description: 'Application ID' })
@@ -596,9 +569,10 @@ export class ApplicationsController {
     return this.applicationWorkflowService.getWorkflowStatus(id, userId);
   }
 
+  // No @AppAction: AppAccessGuard's default for a non-GET is app:write, which is
+  // exactly what `POST :id/start` two methods down has always run on. The same
+  // application with two different masters was the asymmetry, not the gate.
   @Post('applications/:id/stop')
-  @UseGuards(AdminGuard)
-  @Admin()
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Stop an application (scale to 0)' })
   @ApiParam({ name: 'id', description: 'Application ID' })
@@ -635,68 +609,7 @@ export class ApplicationsController {
     return this.applicationService.toResponseDto(app);
   }
 
-  // ── Versioning ────────────────────────────────────────
-
-  @Get('applications/:id/available-versions')
-  @ApiOperation({
-    summary: 'List available image versions',
-    description:
-      'For GIT_BUILD apps returns GHCR versions. For DOCKER_IMAGE apps returns DockerHub tags. Supports pagination for DockerHub.',
-  })
-  @ApiParam({ name: 'id', description: 'Application ID' })
-  @ApiQuery({ name: 'page', required: false, type: Number })
-  @ApiQuery({ name: 'limit', required: false, type: Number })
-  @ApiResponse({ status: 200, type: AvailableVersionsResponseDto })
-  async getAvailableVersions(
-    @Param('id') id: string,
-    @Req() req: Request,
-    @Query('page') page?: string,
-    @Query('limit') limit?: string,
-  ): Promise<AvailableVersionsResponseDto> {
-    const { userId } = req.user as AuthenticatedUser;
-    return this.applicationVersionsService.getAvailableVersions(
-      id,
-      userId,
-      page ? Number.parseInt(page, 10) : 1,
-      limit ? Number.parseInt(limit, 10) : 25,
-    );
-  }
-
-  // ── Resources & Revisions ─────────────────────────────
-
-  @Get('applications/:id/revisions')
-  @ApiOperation({
-    summary: 'List deploy revisions',
-    description:
-      'Returns only DEPLOY and ROLLBACK events, ordered by revision number DESC.',
-  })
-  @ApiParam({ name: 'id', description: 'Application ID' })
-  @ApiResponse({ status: 200, type: [AppRevisionResponseDto] })
-  async getRevisions(
-    @Param('id') id: string,
-  ): Promise<AppRevisionResponseDto[]> {
-    const revisions = await this.applicationService.getRevisions(id);
-    return revisions.map((r) =>
-      this.applicationService.toRevisionResponseDto(r),
-    );
-  }
-
-  @Get('applications/:id/revisions/:revisionId')
-  @ApiOperation({ summary: 'Get revision detail with full snapshots' })
-  @ApiParam({ name: 'id', description: 'Application ID' })
-  @ApiParam({ name: 'revisionId', description: 'Revision ID' })
-  @ApiResponse({ status: 200, type: AppRevisionResponseDto })
-  @ApiResponse({ status: 404, description: 'Revision not found' })
-  async getRevisionById(
-    @Param('id') id: string,
-    @Param('revisionId') revisionId: string,
-  ): Promise<AppRevisionResponseDto> {
-    const revision = await this.applicationService.getRevisionById(
-      id,
-      revisionId,
-    );
-    return this.applicationService.toRevisionResponseDto(revision);
-  }
+  // ── Resources & Events ────────────────────────────────
 
   @Get('applications/:id/events')
   @ApiOperation({
@@ -784,9 +697,10 @@ export class ApplicationsController {
 
   // ── System Apps ────────────────────────────────────────
 
+  // Not app-scoped — AppAccessGuard finds no :id/:appId and steps aside — and it
+  // reaches into a cluster to create records for what it finds there.
   @Post('clusters/:clusterId/system-apps/discover')
-  @UseGuards(AdminGuard)
-  @Admin()
+  @RequireSection(SECTION.INFRASTRUCTURE)
   @ApiOperation({
     summary: 'Discover system apps from K8s cluster',
     description:
@@ -827,167 +741,5 @@ export class ApplicationsController {
   @ApiResponse({ status: 200, description: 'Reconciliation summary' })
   async reconcile(@Param('id') id: string) {
     return this.reconciliationService.reconcileOne(id);
-  }
-
-  // ── Volume snapshots ──────────────────────────────────────
-
-  @Post('applications/:id/snapshots')
-  @HttpCode(HttpStatus.CREATED)
-  @ApiOperation({
-    summary: 'Create a snapshot of the application volume',
-    description:
-      'Creates an in-cluster PVC clone via the copy-pod export primitive. ' +
-      'Returns the snapshot id and provider capabilities so the caller can surface cost expectations.',
-  })
-  @ApiParam({ name: 'id', description: 'Application ID' })
-  async createSnapshot(
-    @Param('id') id: string,
-    @Body()
-    body: { volumeName?: string; description?: string } = {},
-  ) {
-    return this.volumeSnapshotsService.createForApp({
-      applicationId: id,
-      volumeName: body.volumeName,
-      description: body.description,
-    });
-  }
-
-  @Get('applications/:id/snapshots')
-  @ApiOperation({
-    summary: 'List snapshots for an application',
-  })
-  @ApiParam({ name: 'id', description: 'Application ID' })
-  async listSnapshotsForApp(@Param('id') id: string) {
-    return this.volumeSnapshotsService.listForApp(id);
-  }
-
-  @Delete('applications/:id/snapshots/:snapshotId')
-  @HttpCode(HttpStatus.OK)
-  @ApiOperation({
-    summary: 'Delete a snapshot of an application',
-  })
-  @ApiParam({ name: 'id', description: 'Application ID' })
-  @ApiParam({ name: 'snapshotId', description: 'Snapshot identifier' })
-  async deleteSnapshot(
-    @Param('id') id: string,
-    @Param('snapshotId') snapshotId: string,
-  ): Promise<{ operationId: string }> {
-    return this.volumeSnapshotsService.deleteForApp(id, snapshotId);
-  }
-
-  @Post('applications/:id/snapshots/:snapshotId/restore')
-  @HttpCode(HttpStatus.CREATED)
-  @ApiOperation({
-    summary: 'Restore a snapshot into a new side-by-side PVC',
-    description:
-      'Creates a brand new PVC in the application namespace populated with the snapshot contents via a copy-pod Job. ' +
-      'The live application is NOT touched. To make the application use the new PVC, call POST /applications/:id/volumes/:volumeName/swap.',
-  })
-  @ApiParam({ name: 'id', description: 'Application ID' })
-  @ApiParam({ name: 'snapshotId', description: 'Snapshot identifier' })
-  async restoreSnapshot(
-    @Param('id') id: string,
-    @Param('snapshotId') snapshotId: string,
-  ) {
-    return this.volumeSnapshotsService.restoreForApp(id, snapshotId);
-  }
-
-  @Post('applications/:id/volumes/:volumeName/swap')
-  @HttpCode(HttpStatus.OK)
-  @ApiOperation({
-    summary: 'Swap an application volume PVC',
-    description:
-      'Atomically rebinds the application Deployment volume to a different existing PVC. ' +
-      'Typically called after POST /snapshots/:snapshotId/restore to promote the restored PVC. ' +
-      'Old PVC is left intact as a backup; clean it up manually when no longer needed.',
-  })
-  @ApiParam({ name: 'id', description: 'Application ID' })
-  @ApiParam({
-    name: 'volumeName',
-    description: 'Application volume name (matches the entry in app.volumes)',
-  })
-  async swapVolume(
-    @Param('id') id: string,
-    @Param('volumeName') volumeName: string,
-    @Body() body: { newClaimName: string },
-  ) {
-    if (!body?.newClaimName) {
-      throw new BadRequestException('newClaimName is required');
-    }
-    return this.appManagementService.swapVolumeClaim(
-      id,
-      volumeName,
-      body.newClaimName,
-    );
-  }
-
-  @Get('clusters/:clusterId/snapshots')
-  @ApiOperation({
-    summary: 'List snapshots cluster-wide (all apps)',
-    description:
-      'Iterates over namespaces of active applications in the cluster and returns all flui-managed snapshots. ' +
-      'Useful for global audit and orphan detection.',
-  })
-  @ApiParam({ name: 'clusterId', description: 'Cluster ID' })
-  async listSnapshotsForCluster(@Param('clusterId') clusterId: string) {
-    return this.volumeSnapshotsService.listForCluster(clusterId);
-  }
-
-  // ── Volume backups (s3-archive sink) ──────────────────────────
-
-  @Post('applications/:id/backups')
-  @HttpCode(HttpStatus.CREATED)
-  @ApiOperation({
-    summary: 'Archive an application volume to S3-compatible storage',
-    description:
-      'Spawns a copy-pod Job that streams the live PVC contents to S3 via rclone. ' +
-      'When `destination` is omitted the bucket is auto-provisioned via the cluster ' +
-      'provider object storage (Scaleway: full-auto using compute key; Hetzner: ' +
-      'requires Object Storage credentials connected).',
-  })
-  @ApiParam({ name: 'id', description: 'Application ID' })
-  async createBackup(
-    @Param('id') id: string,
-    @Req() req: Request,
-    @Body()
-    body: {
-      volumeName?: string;
-      description?: string;
-      destination?: BackupDestination;
-    } = {},
-  ) {
-    const userId = (req.user as AuthenticatedUser | undefined)?.userId;
-    return this.volumeBackupsService.createForApp({
-      applicationId: id,
-      volumeName: body.volumeName,
-      description: body.description,
-      destination: body.destination,
-      userId,
-    });
-  }
-
-  @Delete('applications/:id/backups/:exportId')
-  @HttpCode(HttpStatus.NO_CONTENT)
-  @ApiOperation({
-    summary: 'Delete an S3 backup of an application',
-  })
-  @ApiParam({ name: 'id', description: 'Application ID' })
-  @ApiParam({
-    name: 'exportId',
-    description: 'Export id (S3 key prefix) returned by create',
-  })
-  async deleteBackup(
-    @Param('id') id: string,
-    @Param('exportId') exportId: string,
-    @Body() body: { destination: BackupDestination },
-  ) {
-    if (!body?.destination?.bucket) {
-      throw new BadRequestException('destination.bucket is required');
-    }
-    await this.volumeBackupsService.deleteForApp({
-      applicationId: id,
-      exportId,
-      destination: body.destination,
-    });
   }
 }

@@ -29,7 +29,17 @@ import { VeleroInstallerService } from '../services/velero-installer.service';
 import { ClusterEntity } from '../../infrastructure/clusters/entities/cluster.entity';
 import { EncryptionService } from '../../shared/encryption/services/encryption.service';
 import { RequireSection } from '../../iam/decorators/require-section.decorator';
+import { RequirePermission } from '../../iam/decorators/require-permission.decorator';
+import { IAM_PERMISSION } from '../../iam/constants/iam-permissions';
 
+/**
+ * The permissions on the routes an agent reaches take nothing from anybody:
+ * entering the `backup` section at `full` is already `cluster:manage` at global
+ * scope, and every role that holds it holds `cluster:read`. They are there for
+ * the credential ceiling, which reads `@RequirePermission` and `@AppAction` and
+ * nothing else — without them a key scoped to "look at backups"
+ * pauses a policy and fires a job over plain HTTP.
+ */
 @ApiTags('Backups')
 @ApiBearerAuth()
 @Controller('backup-policies')
@@ -98,6 +108,7 @@ export class BackupPoliciesController {
   }
 
   @Get()
+  @RequirePermission(IAM_PERMISSION.CLUSTER_READ)
   async list(@Req() req: Request) {
     return this.service.list(this.userId(req));
   }
@@ -113,11 +124,13 @@ export class BackupPoliciesController {
   }
 
   @Post(':id/pause')
+  @RequirePermission(IAM_PERMISSION.CLUSTER_MANAGE)
   async pause(@Param('id') id: string) {
     return this.service.pause(id);
   }
 
   @Post(':id/resume')
+  @RequirePermission(IAM_PERMISSION.CLUSTER_MANAGE)
   async resume(@Param('id') id: string) {
     return this.service.resume(id);
   }

@@ -6,12 +6,11 @@ import {
   Post,
   Put,
   Req,
-  UseGuards,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { Request } from 'express';
-import { Admin } from '../../auth/decorators/admin.decorator';
-import { AdminGuard } from '../../auth/guards/admin.guard';
+import { RequireSection } from '../../iam/decorators/require-section.decorator';
+import { SECTION } from '../../iam/constants/iam-sections';
 import { DemoStateService } from '../services/demo-state.service';
 import { DemoOrchestratorService } from '../services/demo-orchestrator.service';
 import { DemoProberService } from '../services/demo-prober.service';
@@ -20,8 +19,11 @@ import { UpdateDemoConfigDto } from '../dto/update-demo-config.dto';
 
 @ApiTags('demo')
 @ApiBearerAuth()
-@UseGuards(AdminGuard)
-@Admin()
+// `infrastructure`: every route here names clusterAId/clusterBId and triggers a
+// failover between two clusters, which is what cluster:manage already governs. A
+// `demo:operate` of its own would be a permission more for seven routes that
+// touch exactly what that one covers.
+@RequireSection(SECTION.INFRASTRUCTURE)
 @Controller('demo/admin')
 export class DemoAdminController {
   constructor(

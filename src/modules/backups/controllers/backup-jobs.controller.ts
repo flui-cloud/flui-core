@@ -4,6 +4,8 @@ import { Request } from 'express';
 import { BackupJobsService } from '../services/backup-jobs.service';
 import { CreateBackupJobDto } from '../dto/create-backup-job.dto';
 import { RequireSection } from '../../iam/decorators/require-section.decorator';
+import { RequirePermission } from '../../iam/decorators/require-permission.decorator';
+import { IAM_PERMISSION } from '../../iam/constants/iam-permissions';
 
 @ApiTags('Backups')
 @ApiBearerAuth()
@@ -18,6 +20,7 @@ export class BackupJobsController {
   }
 
   @Post()
+  @RequirePermission(IAM_PERMISSION.CLUSTER_MANAGE)
   async create(@Req() req: Request, @Body() dto: CreateBackupJobDto) {
     return this.service.createOnDemand(this.userId(req), dto);
   }

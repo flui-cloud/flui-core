@@ -9,7 +9,6 @@ import {
   Query,
   HttpCode,
   HttpStatus,
-  UseGuards,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -18,8 +17,6 @@ import {
   ApiQuery,
   ApiBearerAuth,
 } from '@nestjs/swagger';
-import { AdminGuard } from '../../../auth/guards/admin.guard';
-import { Admin } from '../../../auth/decorators/admin.decorator';
 import { FirewallsService } from '../services/firewalls.service';
 import {
   ProviderUpdateFirewallRulesDto,
@@ -96,9 +93,11 @@ export class FirewallsController {
   /**
    * Update firewall rules
    */
+  // No gate of its own beyond the class's @RequireSection('firewall'): the two
+  // writes next door — POST :id/apply and POST :id/remove, which push rules onto
+  // live servers — have always run on the section alone, so the boolean here
+  // separated nothing the neighbour did not already grant.
   @Patch(':id/rules')
-  @UseGuards(AdminGuard)
-  @Admin()
   @ApiOperation({
     summary: 'Update firewall rules',
     description:
@@ -133,8 +132,6 @@ export class FirewallsController {
    * Delete firewall
    */
   @Delete(':id')
-  @UseGuards(AdminGuard)
-  @Admin()
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({
     summary: 'Delete firewall',

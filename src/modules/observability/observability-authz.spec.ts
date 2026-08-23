@@ -8,6 +8,7 @@ jest.mock('jwks-rsa', () => ({ JwksClient: jest.fn() }));
 jest.mock('jose', () => ({}));
 
 import { INestApplication, ValidationPipe } from '@nestjs/common';
+import { APP_GUARD } from '@nestjs/core';
 import { Test } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import * as request from 'supertest';
@@ -22,6 +23,7 @@ import { ClusterEntity } from '../infrastructure/clusters/entities/cluster.entit
 import { SandboxTenantEntity } from '../sandbox/entities/sandbox-tenant.entity';
 import { IamGroupEntity } from '../iam/entities/iam-group.entity';
 import { IamRoleBindingEntity } from '../iam/entities/iam-role-binding.entity';
+import { SectionAccessGuard } from '../iam/guards/section-access.guard';
 import { POLICY_ENGINE } from '../iam/interfaces/policy-engine.interface';
 import { PolicyEngineService } from '../iam/services/policy-engine.service';
 import { ProjectEntity } from '../projects/entities/project.entity';
@@ -116,6 +118,9 @@ describe('observability resource authorization (direct HTTP routes)', () => {
         queried_at: new Date(0).toISOString(),
       }),
     ),
+    getLabels: jest.fn(async () => ['cluster_id']),
+    getLabelValues: jest.fn(async () => [CLUSTER_ID]),
+    getSampleStream: jest.fn(async () => null),
   };
 
   beforeAll(async () => {
@@ -179,6 +184,10 @@ describe('observability resource authorization (direct HTTP routes)', () => {
       providers: [
         AppAccessGuard,
         AdminGuard,
+        // The diagnostic route below is gated by @RequireSection now, and that
+        // decorator is enforced by a *global* guard: without it registered here
+        // the route would answer 200 in the test and 403 in the product.
+        { provide: APP_GUARD, useClass: SectionAccessGuard },
         ApplicationAccessService,
         PolicyEngineService,
         { provide: POLICY_ENGINE, useExisting: PolicyEngineService },
@@ -281,6 +290,57 @@ describe('observability resource authorization (direct HTTP routes)', () => {
   // a shape that reads as harmless and is not.
   it('blocks the Loki diagnostic route for a non-admin', async () => {
     await http().get('/observability/loki/debug').expect(403);
+  });
+
+  // The same route, for someone who does hold the infrastructure section. It is
+  // here so that "blocked" above cannot be satisfied by a route that is broken
+  // for everybody — which is what a 500 from an unregistered guard looked like.
+  it('lets the Loki diagnostic route through for global cluster:manage', async () => {
+    bindings = [
+      {
+        principalType: 'user',
+        principalRef: users.tenant.email,
+        role: 'manager',
+        scopeType: 'global',
+        scopeRef: null,
+        selector: null,
+      },
+    ];
+    await http().get('/observability/loki/debug').expect(200);
+  });
+
+  /**
+   * Decision 6 moved the two cluster-wide log routes off the admin boolean and
+   * onto the `infrastructure` section. That *widens* them — global
+   * `cluster:manage` now gets through where only the boolean did — and the
+   * widening is the point: they read the logs of everything on the cluster, so
+   * they belong to whoever runs the instance rather than to whoever happens to
+   * carry a flag. The narrowing half is elsewhere: `flui app logs` no longer
+   * calls them at all.
+   */
+  it('opens the two cluster-wide log routes to global cluster:manage', async () => {
+    bindings = [
+      {
+        principalType: 'user',
+        principalRef: users.tenant.email,
+        role: 'manager',
+        scopeType: 'global',
+        scopeRef: null,
+        selector: null,
+      },
+    ];
+    await http()
+      .get(`/observability/clusters/${CLUSTER_ID}/apps/logs`)
+      .query({ namespace: 'tenant-b' })
+      .expect(200);
+    await http()
+      .get(`/observability/clusters/${CLUSTER_ID}/apps/logs/volume`)
+      .query({
+        namespace: 'tenant-b',
+        start: '2026-08-16T00:00:00.000Z',
+        end: '2026-08-16T01:00:00.000Z',
+      })
+      .expect(200);
   });
 
   it('filters both cluster metric routes and cluster traffic to readable apps', async () => {

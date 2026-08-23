@@ -19,10 +19,6 @@ import { ClusterNodeEntity } from './entities/cluster-node.entity';
 import { InfrastructureOperationEntity } from '../servers/entities/infrastructure-operations.entity';
 import { CreateClusterDto } from './dto/create-cluster.dto';
 import { ClusterResponseDto } from './dto/cluster-response.dto';
-import {
-  RegisterClusterDto,
-  RegisterClusterResponseDto,
-} from './dto/register-cluster.dto';
 
 // Import new modular services
 import { ClusterValidationService } from './services/cluster-validation.service';
@@ -144,15 +140,6 @@ export class ClustersService {
     });
 
     return this.clusterMapperService.mapToDtos(clusters);
-  }
-
-  /**
-   * Register an existing externally-managed cluster
-   */
-  async registerCluster(
-    dto: RegisterClusterDto,
-  ): Promise<RegisterClusterResponseDto> {
-    return await this.clusterOperationsService.registerCluster(dto);
   }
 
   /**

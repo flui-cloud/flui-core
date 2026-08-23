@@ -9,7 +9,6 @@ import {
   Req,
   HttpCode,
   HttpStatus,
-  UseGuards,
 } from '@nestjs/common';
 import {
   ApiBearerAuth,
@@ -19,8 +18,6 @@ import {
   ApiQuery,
 } from '@nestjs/swagger';
 import { Request } from 'express';
-import { AdminGuard } from '../../auth/guards/admin.guard';
-import { Admin } from '../../auth/decorators/admin.decorator';
 import { AuthenticatedUser } from '../../auth/interfaces/authenticated-user.interface';
 import { RepositoriesService } from '../services/repositories.service';
 import { WebhookService } from '../services/webhook.service';
@@ -37,6 +34,8 @@ import {
 } from '../dto/analyze-repository.dto';
 import { PublicRepositoryAnalyzeDto } from '../dto/public-repository-analyze.dto';
 import { RepositoryManifestsDto } from '../dto/repository-manifest.dto';
+import { RequirePermission } from '../../iam/decorators/require-permission.decorator';
+import { IAM_PERMISSION } from '../../iam/constants/iam-permissions';
 import { ExtractEnvDto, ExtractedEnvVarDto } from '../dto/extract-env.dto';
 
 @ApiTags('Repositories')
@@ -67,6 +66,10 @@ export class RepositoriesController {
   }
 
   @Post('import')
+  // Narrows `viewer` and `showcase_viewer`, which can import repositories today
+  // and will not after this: without a permission on the route the credential
+  // ceiling cannot see it, so a key scoped to reads could import too.
+  @RequirePermission(IAM_PERMISSION.APP_WRITE)
   @ApiOperation({ summary: 'Import selected repositories from GitHub' })
   @ApiResponse({
     status: 201,
@@ -86,6 +89,9 @@ export class RepositoriesController {
   }
 
   @Get()
+  // Answers with the caller's own repositories, and every built-in role holds
+  // `app:read`, so nobody loses the list. It is here for the ceiling.
+  @RequirePermission(IAM_PERMISSION.APP_READ)
   @ApiOperation({
     summary: 'List all connected repositories for the current user',
   })
@@ -109,9 +115,13 @@ export class RepositoriesController {
     return this.repositoriesService.getRepository(userId, id);
   }
 
+  // No platform gate, and deliberately: ownership already decides. The service
+  // 404s a repository that is not the caller's (`repositories.service.ts`), so
+  // it does not even reveal that someone else's exists. The admin gate that
+  // used to sit here read "only an administrator may disconnect their *own*
+  // repository" — it protected nothing the 404 was not already protecting, and
+  // refused the legitimate owner. Decision 4.
   @Delete(':id')
-  @UseGuards(AdminGuard)
-  @Admin()
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Disconnect a repository' })
   @ApiResponse({ status: 204, description: 'Repository disconnected' })
@@ -304,9 +314,10 @@ export class RepositoriesController {
     return this.webhookService.createWebhook(userId, id, dto);
   }
 
+  // Same as DELETE :id above: `webhook.service.ts` 404s a repository that is
+  // not the caller's, and every other route on this controller already trusts
+  // that check alone. Decision 4.
   @Delete(':id/webhook')
-  @UseGuards(AdminGuard)
-  @Admin()
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Delete webhook configuration' })
   @ApiResponse({ status: 204, description: 'Webhook deleted' })

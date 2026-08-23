@@ -6,12 +6,11 @@ import {
   NotFoundException,
   Param,
   Post,
-  UseGuards,
 } from '@nestjs/common';
 import { ApiOperation, ApiParam, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { Public } from '../auth/decorators/public.decorator';
-import { AdminGuard } from '../auth/guards/admin.guard';
-import { Admin } from '../auth/decorators/admin.decorator';
+import { RequirePermission } from '../iam/decorators/require-permission.decorator';
+import { IAM_PERMISSION } from '../iam/constants/iam-permissions';
 import { SANDBOX_ALLOWLIST, SANDBOX_AREAS } from './constants/sandbox-fence';
 import { SandboxCapacityDto } from './dto/sandbox-capacity.dto';
 import { SandboxLimitsDto } from './dto/sandbox-limits.dto';
@@ -66,12 +65,12 @@ export class SandboxController {
    *
    * Not public, unlike the limits above: this is the shape of the instance —
    * how much room is left and how busy the door is — and it is the operator's
-   * business rather than the visitor's. Guests cannot reach it in any case,
-   * since it is not on the fence's allowlist.
+   * business rather than the visitor's. A guest is refused by this permission —
+   * the fence's allowlist does *not* stop them, because it names `/sandbox/**`
+   * for reads.
    */
   @Get('capacity')
-  @UseGuards(AdminGuard)
-  @Admin()
+  @RequirePermission(IAM_PERMISSION.SANDBOX_OPERATE)
   @ApiOperation({
     summary: 'How many tenancies are warm, why that number, and the ceiling',
     description:
@@ -87,8 +86,7 @@ export class SandboxController {
    * above: this is the shape of the instance, not a guest's business.
    */
   @Get('tenancies')
-  @UseGuards(AdminGuard)
-  @Admin()
+  @RequirePermission(IAM_PERMISSION.SANDBOX_OPERATE)
   @ApiOperation({
     summary: 'Every guest area this instance is holding, and its state',
     description:
@@ -110,8 +108,7 @@ export class SandboxController {
    * than a shortcut of its own.
    */
   @Post('tenancies/:ref/expire')
-  @UseGuards(AdminGuard)
-  @Admin()
+  @RequirePermission(IAM_PERMISSION.SANDBOX_OPERATE)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Expire one guest area now, through the reaper',

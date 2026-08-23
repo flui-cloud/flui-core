@@ -18,6 +18,12 @@ import {
 import { WsAuthService } from '../../auth/services/ws-auth.service';
 import { installWsAuth } from '../../auth/utils/ws-auth-middleware.util';
 import { WS_CORS } from '../../../config/cors-origin.config';
+import { TerminalTargetResolver } from '../services/terminal-target.resolver';
+import { AuthenticatedUser } from '../../auth/interfaces/authenticated-user.interface';
+
+/** Worded as a miss, not as a refusal: whose a machine is must not be learnable by asking. */
+export const TERMINAL_NO_SUCH_SERVER = 'No such server.';
+export const TERMINAL_NO_SUCH_SERVER_CODE = 'SERVER_NOT_FOUND';
 
 interface ConnectPayload {
   serverId: string;
@@ -56,6 +62,7 @@ export class TerminalGateway
     private readonly terminalService: TerminalService,
     private readonly wsAuth: WsAuthService,
     private readonly feature: TerminalFeatureConfig,
+    private readonly targets: TerminalTargetResolver,
   ) {}
 
   afterInit(server: Server) {
@@ -109,15 +116,34 @@ export class TerminalGateway
     @ConnectedSocket() socket: Socket,
     @MessageBody() payload: ConnectPayload,
   ) {
-    const { serverId, serverIp, rows, cols, useBootstrapKey, clusterId } =
-      payload;
+    const { serverId, rows, cols, useBootstrapKey } = payload;
     const tenantId = payload.tenantId || socket.data.tenantId;
+    const user = socket.data.user as AuthenticatedUser | undefined;
+
+    // Resolved before anything is signed, and it answers two questions at once:
+    // may this principal have a shell on that machine, and — since the address
+    // and the cluster come back from Flui's own row — WHICH machine it will
+    // actually be. The `serverIp` and `clusterId` in the message are ignored
+    // from here on: honouring them would leave the door open behind any id the
+    // caller is entitled to.
+    const target = await this.targets.resolve(user, serverId);
+    if (!target) {
+      this.logger.warn(
+        `terminal:connect refused for socket ${socket.id} (user=${user?.userId}, serverId=${serverId})`,
+      );
+      socket.emit('terminal:error', {
+        message: TERMINAL_NO_SUCH_SERVER,
+        code: TERMINAL_NO_SUCH_SERVER_CODE,
+      });
+      return;
+    }
+    const serverIp = target.serverIp;
+    const clusterId = target.clusterId;
 
     this.logger.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
     this.logger.log(`📥 Received terminal:connect event`);
     this.logger.log(`   Socket ID: ${socket.id}`);
-    this.logger.log(`   Server ID: ${serverId}`);
-    this.logger.log(`   Server IP: ${serverIp}`);
+    this.logger.log(`   Target: ${target.describedAs}`);
     this.logger.log(`   Tenant ID: ${tenantId || 'default'}`);
     this.logger.log(`   Terminal size: ${cols || 80}x${rows || 24}`);
     this.logger.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');

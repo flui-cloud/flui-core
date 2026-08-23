@@ -29,6 +29,9 @@ import {
   PatValidationResultDto,
 } from '../dto/github-oauth.dto';
 
+import { RequirePermission } from '../../iam/decorators/require-permission.decorator';
+import { IAM_PERMISSION } from '../../iam/constants/iam-permissions';
+
 @ApiTags('GitHub OAuth')
 @ApiBearerAuth()
 @Controller('repositories/github')
@@ -85,6 +88,11 @@ export class GitHubOAuthController {
   }
 
   @Get('status')
+  // Answers about the caller's own GitHub connection, and every built-in role
+  // holds `app:read`, so nobody loses it. It is here so the credential ceiling
+  // can see the route, which it does only through `@RequirePermission` and
+  // `@AppAction`.
+  @RequirePermission(IAM_PERMISSION.APP_READ)
   @ApiOperation({
     summary: 'Check GitHub connection status for the current user',
   })

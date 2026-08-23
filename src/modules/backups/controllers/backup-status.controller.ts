@@ -3,6 +3,8 @@ import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { Request } from 'express';
 import { BackupStatusService } from '../services/backup-status.service';
 import { RequireSection } from '../../iam/decorators/require-section.decorator';
+import { RequirePermission } from '../../iam/decorators/require-permission.decorator';
+import { IAM_PERMISSION } from '../../iam/constants/iam-permissions';
 
 @ApiTags('Backups')
 @ApiBearerAuth()
@@ -17,6 +19,7 @@ export class BackupStatusController {
   }
 
   @Get('status')
+  @RequirePermission(IAM_PERMISSION.CLUSTER_READ)
   async status(@Req() req: Request) {
     return this.service.getStatus(this.userId(req));
   }

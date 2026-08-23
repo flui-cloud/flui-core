@@ -23,6 +23,9 @@ import {
 @ApiTags('auth')
 @ApiBearerAuth()
 @Controller('auth/branding')
+// An installation-bootstrap route, still gated on the boolean: the same
+// credential also writes clusters and firewalls, so a `platform:bootstrap`
+// permission here alone would break `flui env create` halfway through.
 @UseGuards(JwtAuthGuard, AdminGuard)
 @Admin()
 export class BrandingController {

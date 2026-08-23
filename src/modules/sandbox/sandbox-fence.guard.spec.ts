@@ -7,7 +7,14 @@ jest.mock('@kubernetes/client-node', () => ({}));
 jest.mock('jwks-rsa', () => ({ JwksClient: jest.fn() }));
 jest.mock('jose', () => ({}));
 
-import { Controller, Get, INestApplication, Post } from '@nestjs/common';
+import {
+  Controller,
+  Delete,
+  Get,
+  INestApplication,
+  Post,
+  Put,
+} from '@nestjs/common';
 import { APP_GUARD } from '@nestjs/core';
 import { Test } from '@nestjs/testing';
 import * as request from 'supertest';
@@ -52,6 +59,31 @@ class Routes {
 
   @Post('auth/api-keys')
   apiKeys() {
+    return { ok: true };
+  }
+
+  @Get('auth/api-keys')
+  listApiKeys() {
+    return { ok: true };
+  }
+
+  @Delete('auth/api-keys/:id')
+  revokeApiKey() {
+    return { ok: true };
+  }
+
+  @Get('auth/api-key-groups')
+  apiKeyGroups() {
+    return { ok: true };
+  }
+
+  @Put('auth/api-keys/:id')
+  renameApiKey() {
+    return { ok: true };
+  }
+
+  @Post('mcp')
+  mcp() {
     return { ok: true };
   }
 }
@@ -153,8 +185,33 @@ describe('SandboxFenceGuard over HTTP', () => {
       expect(res.body.message).toContain('sandbox');
     });
 
-    it('cannot mint itself a credential', async () => {
-      await http().post('/auth/api-keys').expect(403);
+    /**
+     * It may now, and this is the one door the whole trial was built to open.
+     * What keeps it safe is not this list but the two gates behind it: the key
+     * is refused any scope whose permission the guest does not itself hold, and
+     * every call the resulting agent makes arrives back at this guard as the
+     * guest. What a guest still cannot do is mint a key worth more than itself,
+     * and that is `api-key-scopes.ts`, not the fence.
+     */
+    it('may mint itself an agent credential, and reach the agent endpoint', async () => {
+      await http().post('/auth/api-keys').expect(201);
+      await http().get('/auth/api-key-groups').expect(200);
+      await http().post('/mcp').expect(201);
+    });
+
+    /**
+     * And may switch it off again. Routes were named, not a controller, so what
+     * is open is the pair that undoes the mint above — both of which read and
+     * write only the caller's own keys — and nothing else on that controller.
+     */
+    it('may see and revoke the keys it minted', async () => {
+      await http().get('/auth/api-keys').expect(200);
+      await http().delete('/auth/api-keys/k1').expect(200);
+    });
+
+    it('is opened routes of the key surface, not all of it', async () => {
+      const res = await http().put('/auth/api-keys/k1').expect(403);
+      expect(res.body.code).toBe('SANDBOX_ROUTE_FORBIDDEN');
     });
 
     it('names the route it refused, so the refusal is auditable', async () => {

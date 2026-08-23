@@ -11,7 +11,6 @@ import {
   Res,
   HttpCode,
   HttpStatus,
-  UseGuards,
 } from '@nestjs/common';
 import { Response } from 'express';
 import {
@@ -22,8 +21,8 @@ import {
   ApiParam,
   ApiBearerAuth,
 } from '@nestjs/swagger';
-import { AdminGuard } from '../auth/guards/admin.guard';
-import { Admin } from '../auth/decorators/admin.decorator';
+import { RequireSection } from '../iam/decorators/require-section.decorator';
+import { SECTION } from '../iam/constants/iam-sections';
 import { AccessService } from './services/access.service';
 import { CreateSSHKeyDto } from './dto/create-ssh-key.dto';
 import { BearerTokenDto } from './dto/bearer-token.dto';
@@ -171,9 +170,12 @@ export class AccessController {
     return result;
   }
 
+  // `infrastructure`, not `access`: the `access` section is about *people*
+  // (it is gated on iam:assign-role), while an SSH key, a bearer token and a
+  // provider API token are credentials of the machines. The screen that shows
+  // them is mounted under the infrastructure routes, not the access ones.
   @Delete('ssh-keys/:id')
-  @UseGuards(AdminGuard)
-  @Admin()
+  @RequireSection(SECTION.INFRASTRUCTURE)
   @ApiOperation({
     summary: 'Remove SSH key',
     description:
@@ -250,8 +252,7 @@ export class AccessController {
   }
 
   @Delete('bearer/:id')
-  @UseGuards(AdminGuard)
-  @Admin()
+  @RequireSection(SECTION.INFRASTRUCTURE)
   @ApiOperation({ summary: 'Remove bearer token' })
   @ApiResponse({
     status: 200,
@@ -295,8 +296,7 @@ export class AccessController {
   }
 
   @Delete('api-tokens/:id')
-  @UseGuards(AdminGuard)
-  @Admin()
+  @RequireSection(SECTION.INFRASTRUCTURE)
   @ApiOperation({ summary: 'Remove stored API token' })
   @ApiResponse({
     status: 200,

@@ -9,7 +9,6 @@ import {
   ParseUUIDPipe,
   HttpCode,
   HttpStatus,
-  NotFoundException,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -19,20 +18,42 @@ import {
 } from '@nestjs/swagger';
 import { Request } from 'express';
 import { AuthenticatedUser } from '../../auth/interfaces/authenticated-user.interface';
+import { ApplicationAccessService } from '../../applications/services/application-access.service';
+import { IAM_PERMISSION } from '../../iam/constants/iam-permissions';
 import { AppBuildService } from '../services/app-build.service';
+import { BuildAccessService } from '../services/build-access.service';
 import { TriggerStandaloneBuildDto } from '../dto/trigger-standalone-build.dto';
 import { AppBuildResponseDto } from '../dto/app-build-response.dto';
 
+/**
+ * Builds that do not belong to an application yet — the wizard builds a
+ * repository first and creates the application from the finished image.
+ *
+ * Nothing on this controller asked anything until now. A sandbox guest was
+ * refused by the fence, which is a different list for a different reason, and
+ * everybody else — an `editor` scoped to their own applications included —
+ * could read another tenant's build, start one on any cluster, and delete one.
+ * The rule is `BuildAccessService`, the same one the per-application routes ask.
+ */
 @ApiTags('Builds')
 @ApiBearerAuth()
 @Controller('builds')
 export class StandaloneBuildsController {
-  constructor(private readonly appBuildService: AppBuildService) {}
+  constructor(
+    private readonly appBuildService: AppBuildService,
+    private readonly buildAccess: BuildAccessService,
+    private readonly access: ApplicationAccessService,
+  ) {}
 
   /**
    * Trigger a standalone build (no application required).
    * Used in the wizard flow: build first, then create the app from the completed build.
    * Subscribe to WS namespace /applications with subscribe:build { buildId } for real-time events.
+   *
+   * There is no build to ask about yet, so the question is the one this build
+   * is a step towards: may you create an application on that cluster? It is the
+   * same call `POST /clusters/:id/applications` makes, and it pins a sandbox
+   * guest to the cluster of its own tenancy.
    */
   @Post()
   @ApiOperation({ summary: 'Trigger a standalone build (wizard flow)' })
@@ -42,6 +63,9 @@ export class StandaloneBuildsController {
     @Req() req: Request,
   ): Promise<AppBuildResponseDto> {
     const user = req.user as AuthenticatedUser;
+    await this.access.assertCanCreate(user, {
+      clusterId: dto.targetClusterId,
+    });
     const build = await this.appBuildService.triggerStandaloneBuild(
       dto.gitUrl,
       dto.branch,
@@ -60,10 +84,13 @@ export class StandaloneBuildsController {
   @ApiResponse({ status: 200, type: AppBuildResponseDto })
   async getBuild(
     @Param('buildId', ParseUUIDPipe) buildId: string,
+    @Req() req: Request,
   ): Promise<AppBuildResponseDto> {
-    const build = await this.appBuildService.findBuildById(buildId);
-    if (!build) throw new NotFoundException(`Build ${buildId} not found`);
-    return build;
+    return this.buildAccess.buildForCaller(
+      buildId,
+      req.user as AuthenticatedUser,
+      IAM_PERMISSION.APP_READ,
+    );
   }
 
   /**
@@ -78,7 +105,13 @@ export class StandaloneBuildsController {
   @ApiResponse({ status: 204 })
   async deleteStandaloneBuild(
     @Param('buildId', ParseUUIDPipe) buildId: string,
+    @Req() req: Request,
   ): Promise<void> {
+    await this.buildAccess.buildForCaller(
+      buildId,
+      req.user as AuthenticatedUser,
+      IAM_PERMISSION.APP_WRITE,
+    );
     return this.appBuildService.deleteStandaloneBuild(buildId);
   }
 }

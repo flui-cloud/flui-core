@@ -10,6 +10,8 @@ import {
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Request } from 'express';
 import { RequireSection } from '../../iam/decorators/require-section.decorator';
+import { RequirePermission } from '../../iam/decorators/require-permission.decorator';
+import { IAM_PERMISSION } from '../../iam/constants/iam-permissions';
 import { FullMigrationService } from '../services/full-migration.service';
 import { CreateFullMigrationDto } from '../dto/create-full-migration.dto';
 
@@ -17,6 +19,16 @@ import { CreateFullMigrationDto } from '../dto/create-full-migration.dto';
  * Full-app migration orchestrator (MVP-5c): move a live app + its managed
  * Postgres to another cluster and rewire the DB connection. Management-plane
  * gated like the rest of the lifecycle infra.
+ *
+ * The permissions on the routes below take nothing from anybody: the `backup`
+ * section already admits only `full`, which is `cluster:manage` at global
+ * scope, and both roles that hold it (`manager`, `owner`) hold
+ * `migration:execute` too. They are here for the credential ceiling, which
+ * reads `@RequirePermission` and `@AppAction` and nothing else —
+ * without them a key scoped to "look at migrations" starts and aborts them
+ * over plain HTTP. `app:read` on the reads and deliberately not `cluster:read`:
+ * the lists answer with the caller's own migrations and a sandbox guest is
+ * shown them for real, holding `app:read` and no cluster permission at all.
  */
 @ApiTags('Full Migration')
 @ApiBearerAuth()
@@ -31,6 +43,7 @@ export class FullMigrationController {
   }
 
   @Post()
+  @RequirePermission(IAM_PERMISSION.MIGRATION_EXECUTE)
   @ApiOperation({
     summary: 'Migrate a live app together with its managed Postgres',
   })
@@ -39,22 +52,26 @@ export class FullMigrationController {
   }
 
   @Get()
+  @RequirePermission(IAM_PERMISSION.APP_READ)
   list(@Req() req: Request) {
     return this.service.list(this.userId(req));
   }
 
   @Get(':id')
+  @RequirePermission(IAM_PERMISSION.APP_READ)
   get(@Param('id') id: string) {
     return this.service.findById(id);
   }
 
   @Post(':id/cutover')
+  @RequirePermission(IAM_PERMISSION.MIGRATION_EXECUTE)
   @ApiOperation({ summary: 'Fire the joint cutover of a READY full-migration' })
   cutover(@Param('id') id: string) {
     return this.service.cutover(id);
   }
 
   @Post(':id/destroy-source')
+  @RequirePermission(IAM_PERMISSION.MIGRATION_EXECUTE)
   @ApiOperation({
     summary: 'Destroy the drained source app workload after completion',
   })
@@ -63,6 +80,7 @@ export class FullMigrationController {
   }
 
   @Delete(':id')
+  @RequirePermission(IAM_PERMISSION.MIGRATION_EXECUTE)
   @ApiOperation({ summary: 'Abort a pre-cutover full-migration (both legs)' })
   abort(@Param('id') id: string) {
     return this.service.abort(id);

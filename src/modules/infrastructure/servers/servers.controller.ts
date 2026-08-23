@@ -6,7 +6,6 @@ import {
   Query,
   Param,
   Body,
-  UseGuards,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -17,8 +16,6 @@ import {
   ApiBody,
   ApiBearerAuth,
 } from '@nestjs/swagger';
-import { AdminGuard } from '../../auth/guards/admin.guard';
-import { Admin } from '../../auth/decorators/admin.decorator';
 import { ServersService } from './services/servers.service';
 import { ServerResponseDto } from './dto/server-response.dto';
 import {
@@ -130,9 +127,9 @@ export class ServersController {
     };
   }
 
+  // The class already declares @RequireSection('infrastructure'); the boolean on
+  // top of it was a second, narrower gate nobody had named.
   @Delete(':id')
-  @UseGuards(AdminGuard)
-  @Admin()
   @ApiOperation({
     summary: 'Delete a server',
     description: 'Initiates server deletion via queue (async operation)',

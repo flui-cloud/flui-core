@@ -41,9 +41,6 @@ export default class AppLogs extends Command {
       char: 's',
       description: 'Full-text search query',
     }),
-    namespace: Flags.string({
-      description: 'Kubernetes namespace (optional, auto-detected from app)',
-    }),
     output: Flags.string({
       char: 'o',
       description: 'Output format',
@@ -61,12 +58,11 @@ export default class AppLogs extends Command {
       const service = await CliAppService.create(clusterId);
       const app = await service.getAppByName(args.name);
 
-      const result = await service.getLogs({
-        // `container` is the deployable's own slug; the `app` label carries the
-        // slug of the INSTALL, which for anything multi-component names the
-        // group rather than this workload and matches no stream at all.
-        container: app.slug || app.name,
-        namespace: flags.namespace,
+      // Per application: the route derives namespace and workload from the
+      // application record, which is what the old `--namespace` flag claimed to
+      // auto-detect and what the `container`/`app` label juggling above it was
+      // working around.
+      const result = await service.getLogs(app.id, {
         level: flags.level,
         tail: flags.tail,
         search: flags.search,

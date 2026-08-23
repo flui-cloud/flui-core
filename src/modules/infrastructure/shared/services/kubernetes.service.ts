@@ -498,12 +498,17 @@ export class KubernetesService {
     kubeconfigContent: string,
     kind: string,
     namespace?: string,
+    // A kind can live under more than one API group over its lifetime — Traefik
+    // moved from `traefik.containo.us` to `traefik.io` — and the map below
+    // holds one answer per kind. A caller that knows which group this cluster
+    // actually serves says so instead of being told.
+    apiVersionOverride?: string,
   ): Promise<any[]> {
     const kc = this.loadKubeconfig(kubeconfigContent);
     const client = k8s.KubernetesObjectApi.makeApiClient(kc);
 
     try {
-      const apiVersion = this.getApiVersionForKind(kind);
+      const apiVersion = apiVersionOverride ?? this.getApiVersionForKind(kind);
       const response = await client.list(apiVersion, kind, namespace);
       const body = (response as any).body ?? response;
       return body.items ?? [];

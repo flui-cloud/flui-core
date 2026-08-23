@@ -1,5 +1,6 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { resolveJwtSecret } from '../../auth/utils/jwt-secret.util';
 import { createHmac, timingSafeEqual } from 'node:crypto';
 
 /** What a share token authorizes: one object, until it expires. */
@@ -41,7 +42,7 @@ export class ObjectStoreShareService {
   constructor(config: ConfigService) {
     const base =
       config.get<string>('FLUI_OBJECT_SHARE_SECRET') ||
-      config.get<string>('JWT_SECRET', 'changeme');
+      resolveJwtSecret(config);
     this.key = createHmac('sha256', base)
       .update('flui-object-share-v1')
       .digest();

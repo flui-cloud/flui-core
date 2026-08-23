@@ -73,6 +73,11 @@ describe('sandbox allowlist', () => {
       ['POST', '/catalog/gitea/install'],
       ['GET', '/infrastructure/operations/op-1'],
       ['GET', '/sandbox/limits'],
+      ['GET', '/sandbox/session'],
+      ['GET', '/sandbox/resume'],
+      // The one destructive verb a guest holds. Which application is still
+      // AppAccessGuard's answer; this only says the door exists.
+      ['DELETE', '/applications/app-1'],
     ])('allows %s %s', (verb, path) => {
       expect(isSandboxAllowed(verb, path)).toBe(true);
     });
@@ -90,7 +95,6 @@ describe('sandbox allowlist', () => {
       ['POST', '/access/ssh-keys'],
       ['POST', '/access/bearer'],
       ['POST', '/auth/users'],
-      ['POST', '/auth/api-keys'],
       ['GET', '/iam/bindings'],
       ['POST', '/iam/bindings'],
       ['GET', '/repositories'],
@@ -118,8 +122,63 @@ describe('sandbox allowlist', () => {
       // app-scoped route, whose namespace and container come from the app row.
       ['GET', '/observability/clusters/c1/apps/logs'],
       ['GET', '/observability/clusters/c1/apps/logs/volume'],
+
+      // The two reads the `/sandbox/**` wildcard used to carry with it: the
+      // shape of the instance, and every other guest's namespace. Only
+      // `sandbox:operate` was stopping them — one gate where the model wants
+      // two — and neither is what the rule's `why` promises.
+      ['GET', '/sandbox/capacity'],
+      ['GET', '/sandbox/tenancies'],
+      ['POST', '/sandbox/tenancies/user-guest-1/expire'],
     ])('refuses %s %s', (verb, path) => {
       expect(isSandboxAllowed(verb, path)).toBe(false);
+    });
+
+    /**
+     * The key surface is opened by route, not by controller: the taxonomy, then
+     * minting, then the two that switch an agent off again. Consent without the
+     * opposite gesture is not consent, and neither of the two added hands over
+     * anybody else's key — both select on the caller's own id.
+     *
+     * What stays shut is the rest of the controller, and `POST` is still the
+     * only way to make one.
+     */
+    it('opens the key surface a guest needs, and no more of it', () => {
+      expect(isSandboxAllowed('POST', '/auth/api-keys')).toBe(true);
+      expect(isSandboxAllowed('GET', '/auth/api-key-groups')).toBe(true);
+      expect(isSandboxAllowed('GET', '/auth/api-keys')).toBe(true);
+      expect(isSandboxAllowed('DELETE', '/auth/api-keys/k1')).toBe(true);
+      expect(isSandboxAllowed('POST', '/auth/users')).toBe(false);
+      expect(isSandboxAllowed('DELETE', '/auth/api-key-groups')).toBe(false);
+    });
+
+    /**
+     * Two reads and no writes: validating a manifest touches nothing, and
+     * asking whether the cluster has room is the question that stops an install
+     * that was going to fail on the quota. Deploying from a manifest stays shut
+     * — it makes an application outside the route `assertCanCreate` watches.
+     */
+    it('opens the two calls an agent needs before it installs, and not the third', () => {
+      expect(isSandboxAllowed('POST', '/catalog/validate')).toBe(true);
+      expect(
+        isSandboxAllowed(
+          'GET',
+          '/infrastructure/clusters/c1/resource-availability',
+        ),
+      ).toBe(true);
+      expect(isSandboxAllowed('POST', '/applications/deploy-from-yaml')).toBe(
+        false,
+      );
+    });
+
+    /**
+     * Where the agent speaks. Without it the credential above executes nothing,
+     * and the trial's whole promise fails one step after the consent instead of
+     * one step before it.
+     */
+    it('lets the agent endpoint through, and only by POST', () => {
+      expect(isSandboxAllowed('POST', '/mcp')).toBe(true);
+      expect(isSandboxAllowed('GET', '/mcp')).toBe(false);
     });
 
     it('refuses a verb it does not grant on a path it does', () => {
@@ -127,6 +186,16 @@ describe('sandbox allowlist', () => {
         false,
       );
       expect(isSandboxAllowed('POST', '/catalog/gitea')).toBe(false);
+    });
+
+    /**
+     * The reason the wildcard went: a route added under `/sandbox` later must
+     * be closed until someone decides otherwise, which is how `capacity` and
+     * `tenancies` had ended up open in the first place.
+     */
+    it('closes a route added under /sandbox that nobody has named', () => {
+      expect(isSandboxAllowed('GET', '/sandbox/something-new')).toBe(false);
+      expect(isSandboxAllowed('GET', '/sandbox/limits/detail')).toBe(false);
     });
 
     it('is not fooled by a path that merely starts like an allowed one', () => {

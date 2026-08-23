@@ -9,7 +9,6 @@ import {
   NotFoundException,
   BadRequestException,
   Logger,
-  UseGuards,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -19,8 +18,6 @@ import {
   ApiParam,
   ApiBearerAuth,
 } from '@nestjs/swagger';
-import { AdminGuard } from '../../auth/guards/admin.guard';
-import { Admin } from '../../auth/decorators/admin.decorator';
 import { FirewallProviderFactory } from '../services/firewall-provider.factory';
 import { ProviderFirewallResponseDto } from '../dto/provider-firewall-response.dto';
 import { CloudProvider } from '../enums/cloud-provider.enum';
@@ -198,8 +195,6 @@ export class ProviderFirewallsController {
    * Delete firewall from cloud provider (direct provider deletion, no database interaction)
    */
   @Delete(':id')
-  @UseGuards(AdminGuard)
-  @Admin()
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({
     summary: 'Delete firewall from cloud provider',

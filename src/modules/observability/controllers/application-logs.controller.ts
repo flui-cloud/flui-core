@@ -27,8 +27,10 @@ import {
 } from '../dto/app-logs-response.dto';
 import { ApplicationService } from '../../applications/services/application.service';
 import { AppAccessGuard } from '../../applications/guards/app-access.guard';
-import { AdminGuard } from '../../auth/guards/admin.guard';
-import { Admin } from '../../auth/decorators/admin.decorator';
+import { RequireSection } from '../../iam/decorators/require-section.decorator';
+import { RequirePermission } from '../../iam/decorators/require-permission.decorator';
+import { IAM_PERMISSION } from '../../iam/constants/iam-permissions';
+import { SECTION } from '../../iam/constants/iam-sections';
 
 /**
  * Application Logs Controller
@@ -60,10 +62,7 @@ export class ApplicationLogsController {
   // Returns a real log line drawn from `{cluster_id=~".+"}` — any stream in the
   // cluster, whoever it belongs to — plus the whole label inventory. It is a
   // diagnostic for whoever runs the instance, not a route a tenant may call.
-  // AdminGuard only enforces where @Admin() marks the route; without it the
-  // guard is decoration that always returns true.
-  @UseGuards(AdminGuard)
-  @Admin()
+  @RequireSection(SECTION.INFRASTRUCTURE)
   @ApiOperation({
     summary: 'Loki diagnostics',
     description:
@@ -88,11 +87,62 @@ export class ApplicationLogsController {
   }
 
   /**
+   * The exact label values a caller must use to query logs, discoverable rather
+   * than guessed: the selector is exact-match, so a display name silently
+   * returns nothing.
+   *
+   * Same gate as `loki/debug` two methods up, and for the same reason: this is
+   * the label inventory of a whole cluster — every tenant's application and
+   * namespace names — so it belongs to whoever runs the instance. A tenant
+   * reads its own application's logs through
+   * `GET /observability/applications/:id/logs`, which carries AppAccessGuard
+   * and needs no discovery step at all.
+   *
+   * It exists because the MCP tool `log_sources` had no route to call and was
+   * reaching the service in process, which is exactly the bypass strada B
+   * removes. Its gate is the one decision 6 will give the rest of this family.
+   */
+  @Get('clusters/:clusterId/apps/log-sources')
+  @RequireSection(SECTION.INFRASTRUCTURE)
+  // `app:read` on top of the section: the `infrastructure` section admits only
+  // `full`, which is `cluster:manage` at global scope, and every role holding
+  // that holds `app:read` too, so this takes nothing from anybody. It is what
+  // brings the cluster-wide log search inside the credential ceiling, which
+  // reads `@RequirePermission` and `@AppAction` and nothing else.
+  @RequirePermission(IAM_PERMISSION.APP_READ)
+  @ApiOperation({
+    summary: 'List the queryable log sources of a cluster',
+    description:
+      'The distinct `app` and `namespace` label values Loki has indexed for ' +
+      'this cluster over the last 24h. They are lowercase indexed labels, not ' +
+      'display names.',
+  })
+  @ApiParam({ name: 'clusterId', description: 'Cluster ID' })
+  @ApiResponse({ status: 200 })
+  async logSources(
+    @Param('clusterId') clusterId: string,
+  ): Promise<{ apps: string[]; namespaces: string[] }> {
+    return this.lokiQuery.getLogSources(clusterId);
+  }
+
+  /**
    * Get application logs filtered by namespace, app, container, pod, level, etc.
    */
+  // Still the boolean, deliberately: this is the route `flui app logs` calls,
+  // and giving it the infrastructure section would leave the CLI broken for an
+  // editor while looking like the gate had been fixed. The pair — section here
+  // and the CLI moved to the per-application route, which already has
+  // AppAccessGuard — is decision 6, still open.
+  // Cluster-wide: reads the logs of *everything* running on the cluster, so it
+  // belongs to whoever runs the instance — the same gate `loki/debug` and
+  // `log-sources` already carry. This widens rather than narrows: before, only
+  // the boolean got through; now `cluster:manage` at global scope does too, and
+  // that is intended. A tenant reads its own application through
+  // `GET /observability/applications/:id/logs`, which the CLI now uses.
   @Get('clusters/:clusterId/apps/logs')
-  @UseGuards(AdminGuard)
-  @Admin()
+  @RequireSection(SECTION.INFRASTRUCTURE)
+  // Same pair, same reason as `log-sources` above.
+  @RequirePermission(IAM_PERMISSION.APP_READ)
   @ApiOperation({
     summary: 'Get application logs',
     description:
@@ -210,8 +260,7 @@ export class ApplicationLogsController {
    * are fetched. This is the same technique Grafana uses for its log volume panel.
    */
   @Get('clusters/:clusterId/apps/logs/volume')
-  @UseGuards(AdminGuard)
-  @Admin()
+  @RequireSection(SECTION.INFRASTRUCTURE)
   @ApiOperation({
     summary: 'Get log volume over time (chart data)',
     description:

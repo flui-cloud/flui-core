@@ -6,7 +6,6 @@ import {
   Body,
   HttpCode,
   HttpStatus,
-  UseGuards,
   Query,
   Param,
   Req,
@@ -24,8 +23,8 @@ import { ConfigService } from '@nestjs/config';
 import { HttpService } from '@nestjs/axios';
 import { firstValueFrom } from 'rxjs';
 import type { Request, Response } from 'express';
-import { AdminGuard } from '../../auth/guards/admin.guard';
-import { Admin } from '../../auth/decorators/admin.decorator';
+import { RequirePermission } from '../../iam/decorators/require-permission.decorator';
+import { IAM_PERMISSION } from '../../iam/constants/iam-permissions';
 import { Public } from '../../auth/decorators/public.decorator';
 import { AuthenticatedUser } from '../../auth/interfaces/authenticated-user.interface';
 import { GitHubIntegrationConfigService } from '../services/github-integration-config.service';
@@ -69,10 +68,14 @@ export class GitHubSetupController {
     return this.configService.getSetupStatus();
   }
 
+  // `integration:manage`: these are the *instance's* GitHub credentials — one
+  // App and one PAT that everyone who later connects a repository borrows.
+  // Not platform:bootstrap (the App is re-made when it expires or changes
+  // owner, so it is not an act of installation) and not cluster:manage (no
+  // cluster is touched).
   @Get('health')
   @ApiBearerAuth()
-  @UseGuards(AdminGuard)
-  @Admin()
+  @RequirePermission(IAM_PERMISSION.INTEGRATION_MANAGE)
   @ApiOperation({
     summary: 'Live health check of the configured GitHub integration',
     description:
@@ -90,8 +93,7 @@ export class GitHubSetupController {
 
   @Post('pat')
   @ApiBearerAuth()
-  @UseGuards(AdminGuard)
-  @Admin()
+  @RequirePermission(IAM_PERMISSION.INTEGRATION_MANAGE)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Enable Personal Access Token mode',
@@ -110,8 +112,7 @@ export class GitHubSetupController {
 
   @Post('github-app')
   @ApiBearerAuth()
-  @UseGuards(AdminGuard)
-  @Admin()
+  @RequirePermission(IAM_PERMISSION.INTEGRATION_MANAGE)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Configure GitHub App (manual)',
@@ -136,8 +137,7 @@ export class GitHubSetupController {
 
   @Post('github-app/manifest-start')
   @ApiBearerAuth()
-  @UseGuards(AdminGuard)
-  @Admin()
+  @RequirePermission(IAM_PERMISSION.INTEGRATION_MANAGE)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Start GitHub App creation via manifest flow',
@@ -282,8 +282,7 @@ export class GitHubSetupController {
 
   @Delete()
   @ApiBearerAuth()
-  @UseGuards(AdminGuard)
-  @Admin()
+  @RequirePermission(IAM_PERMISSION.INTEGRATION_MANAGE)
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({
     summary: 'Reset GitHub integration configuration',

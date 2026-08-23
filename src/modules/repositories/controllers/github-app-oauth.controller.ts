@@ -15,10 +15,9 @@ import {
   Query,
   Req,
   Res,
-  UseGuards,
 } from '@nestjs/common';
-import { AdminGuard } from '../../auth/guards/admin.guard';
-import { Admin } from '../../auth/decorators/admin.decorator';
+import { RequirePermission } from '../../iam/decorators/require-permission.decorator';
+import { IAM_PERMISSION } from '../../iam/constants/iam-permissions';
 import { GitHubAppService } from '../services/github-app.service';
 import {
   GhcrPatStatusDto,
@@ -48,10 +47,11 @@ export class GithubAppOAuthController {
     private readonly githubAppService: GitHubAppService,
   ) {}
 
+  // The instance's GitHub App installations — same credential, same right as
+  // the setup routes next door.
   @Get('installations')
   @ApiBearerAuth()
-  @UseGuards(AdminGuard)
-  @Admin()
+  @RequirePermission(IAM_PERMISSION.INTEGRATION_MANAGE)
   @ApiOperation({
     summary: 'List all tracked GitHub App installations (admin only)',
     description:
@@ -65,8 +65,7 @@ export class GithubAppOAuthController {
 
   @Delete('installations/:installationId')
   @ApiBearerAuth()
-  @UseGuards(AdminGuard)
-  @Admin()
+  @RequirePermission(IAM_PERMISSION.INTEGRATION_MANAGE)
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({
     summary: 'Remove a tracked GitHub App installation from the database',
@@ -113,6 +112,11 @@ export class GithubAppOAuthController {
 
   @Get('install-url')
   @ApiBearerAuth()
+  // Answers about the caller's own GitHub connection, and every built-in role
+  // holds `app:read`, so nobody loses it. It is here so the credential ceiling
+  // can see the route, which it does only through `@RequirePermission` and
+  // `@AppAction`.
+  @RequirePermission(IAM_PERMISSION.APP_READ)
   @ApiOperation({
     summary: 'Generate a GitHub App connect URL for the current user',
     description:

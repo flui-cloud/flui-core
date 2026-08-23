@@ -47,6 +47,12 @@ export class ApplicationGroupDto {
   url?: string;
 
   @ApiPropertyOptional({
+    description:
+      'Internal URL of the primary component, for a group exposed only inside the cluster.',
+  })
+  internalUrl?: string;
+
+  @ApiPropertyOptional({
     description: 'Catalog slug for catalog-installed groups.',
   })
   catalogSlug?: string;

@@ -44,6 +44,8 @@ import type { AuthenticatedUser } from '../../auth/interfaces/authenticated-user
 import type { MailEventKind } from '../entities/mail-event.entity';
 import type { MailWindow } from '@flui-cloud/mail';
 import { RequireSection } from '../../iam/decorators/require-section.decorator';
+import { RequirePermission } from '../../iam/decorators/require-permission.decorator';
+import { IAM_PERMISSION } from '../../iam/constants/iam-permissions';
 
 const WINDOWS: MailWindow[] = ['24h', '7d', '14d', '30d'];
 
@@ -58,6 +60,13 @@ function asWindow(value: string | undefined): MailWindow {
 // Recipient addresses are other people's personal data, so the whole surface is
 // gated rather than only the writes.
 @RequireSection('mail')
+// The three reads an agent reaches carry `cluster:read` on top. It takes nothing
+// from anybody — the `mail` section admits only `full`, which is
+// `cluster:manage` at global scope, and every role holding that holds
+// `cluster:read`; a sandbox guest is answered from the example world before the
+// guard runs. It is there because the credential ceiling reads
+// `@RequirePermission` and `@AppAction` and nothing else, so
+// until now no agent key could be scoped away from other people's addresses.
 export class MailController {
   constructor(
     private readonly readiness: MailReadinessService,
@@ -70,6 +79,7 @@ export class MailController {
   ) {}
 
   @Get('readiness')
+  @RequirePermission(IAM_PERMISSION.CLUSTER_READ)
   @ApiOperation({
     summary: 'What still stands between Flui and a sent message',
     description:
@@ -157,6 +167,7 @@ export class MailController {
   }
 
   @Get('events')
+  @RequirePermission(IAM_PERMISSION.CLUSTER_READ)
   @ApiOperation({
     summary: 'Delivery outcomes reported by the provider',
     description:
@@ -314,6 +325,7 @@ export class MailController {
   }
 
   @Get('suppressions')
+  @RequirePermission(IAM_PERMISSION.CLUSTER_READ)
   @ApiOperation({
     summary:
       'Addresses Flui has stopped writing to, and how far the stop reaches',

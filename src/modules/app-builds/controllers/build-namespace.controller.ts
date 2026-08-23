@@ -14,6 +14,7 @@ import {
   ApiResponse,
   ApiBearerAuth,
 } from '@nestjs/swagger';
+import { RequireSection } from '../../iam/decorators/require-section.decorator';
 import { AppBuildService } from '../services/app-build.service';
 import { BuildCacheService } from '../services/build-cache.service';
 import {
@@ -28,8 +29,19 @@ import {
   RefreshCacheBreakdownResponseDto,
 } from '../dto/build-cache-breakdown.dto';
 
+/**
+ * The build namespace of one cluster: what is running in `flui-build`, what the
+ * cache holds, and the two ways to empty either. None of it is anybody's
+ * application — it is the machinery every application on the cluster shares —
+ * so it is asked for as the area it belongs to rather than per application.
+ *
+ * It carried no decorator at all. A sandbox guest was refused by the fence, and
+ * everybody else could list another tenant's build Jobs by name and wipe the
+ * cache the whole instance builds against.
+ */
 @ApiTags('Build Namespace')
 @ApiBearerAuth()
+@RequireSection('infrastructure')
 @Controller('clusters/:clusterId/builds')
 export class BuildNamespaceController {
   constructor(

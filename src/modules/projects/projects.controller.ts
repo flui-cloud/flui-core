@@ -8,18 +8,23 @@ import {
   Param,
   Patch,
   Post,
-  UseGuards,
 } from '@nestjs/common';
-import { AdminGuard } from '../auth/guards/admin.guard';
-import { Admin } from '../auth/decorators/admin.decorator';
+import { RequireSection } from '../iam/decorators/require-section.decorator';
+import { SECTION } from '../iam/constants/iam-sections';
 import { ProjectsService } from './projects.service';
 import { CreateProjectDto } from './dto/create-project.dto';
 import { UpdateProjectDto } from './dto/update-project.dto';
 
 /**
  * Reads are auth-only (projects are low-sensitivity reference data, like
- * clusters); mutations are admin-only for now. A `project:manage` permission can
- * replace @Admin once the IAM catalog is extended.
+ * clusters); the five writes ask for the `projects` section, which is
+ * `iam:assign-role` at global scope — the same gate the sidebar entry uses.
+ *
+ * No `project:manage` of its own: a project is an org-and-RBAC grouping, not a
+ * subject with a life of its own, and the section already names exactly the
+ * population that decides who belongs where. The two reads stay open, as they
+ * were: nobody counted their callers, and closing them here would have been a
+ * change nobody asked for.
  */
 @Controller('projects')
 export class ProjectsController {
@@ -36,38 +41,33 @@ export class ProjectsController {
   }
 
   @Post()
-  @UseGuards(AdminGuard)
-  @Admin()
+  @RequireSection(SECTION.PROJECTS)
   create(@Body() dto: CreateProjectDto) {
     return this.projects.create(dto);
   }
 
   @Patch(':id')
-  @UseGuards(AdminGuard)
-  @Admin()
+  @RequireSection(SECTION.PROJECTS)
   update(@Param('id') id: string, @Body() dto: UpdateProjectDto) {
     return this.projects.update(id, dto);
   }
 
   @Delete(':id')
-  @UseGuards(AdminGuard)
-  @Admin()
+  @RequireSection(SECTION.PROJECTS)
   @HttpCode(HttpStatus.NO_CONTENT)
   remove(@Param('id') id: string) {
     return this.projects.remove(id);
   }
 
   @Post(':id/apps/:appId')
-  @UseGuards(AdminGuard)
-  @Admin()
+  @RequireSection(SECTION.PROJECTS)
   @HttpCode(HttpStatus.NO_CONTENT)
   assign(@Param('id') id: string, @Param('appId') appId: string) {
     return this.projects.assignApp(id, appId);
   }
 
   @Delete(':id/apps/:appId')
-  @UseGuards(AdminGuard)
-  @Admin()
+  @RequireSection(SECTION.PROJECTS)
   @HttpCode(HttpStatus.NO_CONTENT)
   unassign(@Param('appId') appId: string) {
     return this.projects.unassignApp(appId);
