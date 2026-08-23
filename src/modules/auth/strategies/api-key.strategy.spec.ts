@@ -14,6 +14,7 @@ type KeyRow = Partial<ApiKeyEntity> & { name: string; userId: string | null };
 function build(record: KeyRow | null, users: Partial<UserEntity>[] = []) {
   const apiKeys = {
     findValid: jest.fn().mockResolvedValue(record),
+    touch: jest.fn(),
   } as unknown as ApiKeyService;
   const userRepo = {
     findOne: jest.fn(({ where }: { where: { id: string } }) =>

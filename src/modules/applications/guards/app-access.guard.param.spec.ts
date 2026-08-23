@@ -72,12 +72,35 @@ describe('AppAccessGuard parameter resolution', () => {
     expect(asked).toEqual(['app-2']);
   });
 
-  it('prefers :id when a route somehow carries both', async () => {
+  it('resolves it from :applicationId too', async () => {
     const { guard, asked } = build();
     await expect(
-      guard.canActivate(contextFor({ id: 'app-1', appId: 'app-2' })),
+      guard.canActivate(contextFor({ applicationId: 'app-3' })),
+    ).rejects.toThrow(ForbiddenException);
+    expect(asked).toEqual(['app-3']);
+  });
+
+  /**
+   * The order changed, and the reason is a route rather than a preference.
+   * Every path that spells the application `:appId` or `:applicationId` — all
+   * seven of them, checked against the route table — nests its sub-resource
+   * under `:id`: on `applications/:applicationId/crash-diagnoses/:id`, `:id` is
+   * the diagnosis. Reading `id` first there would load the wrong row and answer
+   * 404 to a caller who is entitled to the route. No route behind this guard
+   * carries `:appId` or `:applicationId` meaning anything but the application.
+   */
+  it('prefers the explicit spelling when a sub-resource occupies :id', async () => {
+    const { guard, asked } = build();
+    await expect(
+      guard.canActivate(contextFor({ applicationId: 'app-1', id: 'diag-9' })),
     ).rejects.toThrow(ForbiddenException);
     expect(asked).toEqual(['app-1']);
+
+    const second = build();
+    await expect(
+      second.guard.canActivate(contextFor({ appId: 'app-2', id: 'sub-9' })),
+    ).rejects.toThrow(ForbiddenException);
+    expect(second.asked).toEqual(['app-2']);
   });
 
   it('still falls through on a route with no application in its path', async () => {

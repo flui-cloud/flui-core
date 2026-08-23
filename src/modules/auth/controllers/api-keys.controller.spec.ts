@@ -33,6 +33,7 @@ import { IamRoleBindingEntity } from '../../iam/entities/iam-role-binding.entity
 import { IamGroupEntity } from '../../iam/entities/iam-group.entity';
 import { MCP_SCOPE } from '../../mcp/constants/mcp-scopes';
 import { findPermissionGroup } from '../constants/api-key-groups';
+import { CURRENT_API_KEY_ID } from '../strategies/api-key.strategy';
 
 /**
  * A group is the unit of consent, not a second authorization system — so what
@@ -47,6 +48,9 @@ import { findPermissionGroup } from '../constants/api-key-groups';
 const APPS_CHANGE = [
   MCP_SCOPE.CATALOG_READ,
   MCP_SCOPE.APP_READ,
+  // Operating includes reading the logs of what you operated: without this the
+  // group ships a switch that deploys and then goes blind.
+  MCP_SCOPE.OBS_READ,
   MCP_SCOPE.SPEC_VALIDATE,
   MCP_SCOPE.APP_WRITE,
 ];
@@ -75,6 +79,8 @@ interface Harness {
   app: INestApplication;
   /** Swapped per test: the principal every request arrives as. */
   as: (principal: Principal) => void;
+  /** Which key row the request is authenticated by, as JwtAuthGuard would park it. */
+  withKey: (id: string | undefined) => void;
   keys: Array<Record<string, unknown>>;
   generate: jest.Mock;
   http: () => request.SuperTest<request.Test>;
@@ -82,6 +88,7 @@ interface Harness {
 
 async function harness(initial: Principal): Promise<Harness> {
   let current = initial;
+  let currentKeyId: string | undefined;
   const keys: Array<Record<string, unknown>> = [];
 
   const generate = jest.fn(
@@ -162,8 +169,13 @@ async function harness(initial: Principal): Promise<Harness> {
 
   const app = moduleRef.createNestApplication();
   app.use(
-    (req: { user: AuthenticatedUser }, _res: unknown, next: () => void) => {
+    (
+      req: { user: AuthenticatedUser } & Record<symbol, unknown>,
+      _res: unknown,
+      next: () => void,
+    ) => {
       req.user = current.user;
+      req[CURRENT_API_KEY_ID] = currentKeyId;
       next();
     },
   );
@@ -173,6 +185,9 @@ async function harness(initial: Principal): Promise<Harness> {
     app,
     as: (principal) => {
       current = principal;
+    },
+    withKey: (id) => {
+      currentKeyId = id;
     },
     keys,
     generate,
@@ -224,7 +239,7 @@ describe('api keys — issuing by group', () => {
       .expect(201);
 
     expect(res.body.scopes).toEqual(APPS_CHANGE);
-    expect(res.body.groups).toEqual(['apps:change']);
+    expect(res.body.groups).toEqual(['apps:change', 'observability:look']);
     expect(res.body.ungroupedScopes).toEqual([]);
   });
 
@@ -275,15 +290,43 @@ describe('api keys — issuing by group', () => {
     expect(h.generate).not.toHaveBeenCalled();
   });
 
-  it('leaves a key unscoped when neither groups nor scopes are asked for', async () => {
+  /**
+   * The widest credential on the instance is no longer the one nobody asked
+   * for. The screen that mints these keys already refused an
+   * empty request — "A key with nothing switched on would carry your full
+   * weight, so at least one is required" — while the API read the same silence
+   * as consent to everything. Two surfaces of one product, opposite answers.
+   */
+  it('refuses a request naming neither groups nor scopes nor unscoped', async () => {
     const res = await h
       .http()
       .post('/auth/api-keys')
       .send({ name: 'unscoped' })
+      .expect(400);
+
+    expect(res.body.message).toContain('unscoped: true');
+    expect(h.generate).not.toHaveBeenCalled();
+  });
+
+  it('still issues the unscoped key when it is asked for out loud', async () => {
+    const res = await h
+      .http()
+      .post('/auth/api-keys')
+      .send({ name: 'unscoped', unscoped: true })
       .expect(201);
 
     expect(res.body.scopes).toBeNull();
     expect(res.body.groups).toBeNull();
+  });
+
+  it('refuses a request that asks for both at once', async () => {
+    await h
+      .http()
+      .post('/auth/api-keys')
+      .send({ name: 'both', unscoped: true, groups: ['apps:look'] })
+      .expect(400);
+
+    expect(h.generate).not.toHaveBeenCalled();
   });
 });
 
@@ -406,20 +449,31 @@ describe('api keys — the guest', () => {
     expect(deploy.summary.trim().endsWith('.')).toBe(true);
   });
 
-  it('may not switch on anything that deletes, or anything of anybody else’s', async () => {
+  /**
+   * `apps:destroy` left this list when the guest was given `app:delete`.
+   *
+   * It is the rule working rather than being widened: a principal may confer a
+   * group only while holding what it carries, and a guest now holds the delete
+   * on its own applications — which is the point, because a fixed quota makes
+   * removing what you no longer need the way you make room for the next thing.
+   * The reach is unchanged: the four tools the group unlocks go over the wire,
+   * where AppAccessGuard still answers "yours?" and the fence still refuses the
+   * gateway route that is the instance's, not the tenancy's.
+   */
+  it('may not switch on anything of anybody else’s', async () => {
     const res = await h.http().get('/auth/api-key-groups').expect(200);
     const refused = res.body
       .filter((g: { grantable: boolean }) => !g.grantable)
       .map((g: { key: string }) => g.key);
 
     expect(refused).toEqual([
-      'apps:destroy',
       'backups:look',
       'backups:change',
       'migrations:look',
       'migrations:change',
       'migrations:destroy',
       'mail:look',
+      'access:look',
     ]);
   });
 
@@ -432,19 +486,117 @@ describe('api keys — the guest', () => {
 
     const list = await h.http().get('/auth/api-keys').expect(200);
     expect(list.body).toHaveLength(1);
-    expect(list.body[0].groups).toEqual(['apps:change']);
+    // Both names are true of the same key: `apps:change` carries `mcp:obs:read`,
+    // so the derived reading satisfies `observability:look` as well.
+    expect(list.body[0].groups).toEqual(['apps:change', 'observability:look']);
     expect(list.body[0].scopes).toEqual(APPS_CHANGE);
     expect(list.body[0].ungroupedScopes).toEqual([]);
   });
 
-  it('is refused the delete switch whole', async () => {
+  it('may hand its agent the delete of its own applications', async () => {
+    await h
+      .http()
+      .post('/auth/api-keys')
+      .send({ name: 'my-agent-with-delete', groups: ['apps:destroy'] })
+      .expect(201);
+  });
+
+  it('is still refused a switch it does not hold', async () => {
     const res = await h
       .http()
       .post('/auth/api-keys')
-      .send({ name: 'greedy', groups: ['apps:destroy'] })
+      .send({ name: 'greedy', groups: ['migrations:destroy'] })
       .expect(403);
 
-    expect(res.body.message).toContain('apps:destroy');
-    expect(res.body.message).toContain(MCP_SCOPE.APP_DESTRUCTIVE);
+    expect(res.body.message).toContain('migrations:destroy');
+    expect(res.body.message).toContain(MCP_SCOPE.MIGRATION_DESTRUCTIVE);
+  });
+});
+
+/**
+ * The two fields the screen was asking the API for, and the reason each one
+ * cannot be worked out on the client (decisions 70 and 71).
+ */
+describe('api keys — what the listing and the catalogue say', () => {
+  inOidcMode();
+  let h: Harness;
+
+  beforeAll(async () => {
+    h = await harness(GUEST);
+  }, BOOT_MS);
+  afterAll(async () => {
+    await h.app.close();
+  });
+
+  it('marks the row that is serving this very request', async () => {
+    h.withKey(undefined);
+    await h
+      .http()
+      .post('/auth/api-keys')
+      .send({ name: 'first', groups: ['apps:look'] })
+      .expect(201);
+    await h
+      .http()
+      .post('/auth/api-keys')
+      .send({ name: 'second', groups: ['apps:look'] })
+      .expect(201);
+
+    // The names cannot answer this: after `/sandbox/resume` a guest holds
+    // `sandbox-<ns>` and `sandbox-resume-<ns>` and either can be the live one.
+    h.withKey('key-2');
+    const list = await h.http().get('/auth/api-keys').expect(200);
+    expect(list.body.map((k: { current: boolean }) => k.current)).toEqual([
+      false,
+      true,
+    ]);
+  });
+
+  it('marks nothing when the caller did not arrive with an API key', async () => {
+    h.withKey(undefined);
+    const list = await h.http().get('/auth/api-keys').expect(200);
+    expect(list.body.some((k: { current: boolean }) => k.current)).toBe(false);
+  });
+
+  it('never calls a key it has just minted the current one', async () => {
+    h.withKey('key-1');
+    const res = await h
+      .http()
+      .post('/auth/api-keys')
+      .send({ name: 'third', groups: ['apps:look'] })
+      .expect(201);
+    expect(res.body.current).toBe(false);
+  });
+
+  it('names the scopes that put a group out of reach', async () => {
+    const res = await h.http().get('/auth/api-key-groups').expect(200);
+    const groups: Array<{
+      key: string;
+      grantable: boolean;
+      blockedScopes: string[];
+    }> = res.body;
+
+    const refused = groups.filter((g) => !g.grantable);
+    expect(refused.length).toBeGreaterThan(0);
+    for (const g of refused) {
+      // The whole point: a switch shown off is a switch nobody can attempt, so
+      // the precise reason had no way of reaching the person reading it.
+      expect(g.blockedScopes.length).toBeGreaterThan(0);
+      expect(findPermissionGroup(g.key)!.scopes).toEqual(
+        expect.arrayContaining(g.blockedScopes),
+      );
+    }
+    for (const g of groups.filter((x) => x.grantable)) {
+      expect(g.blockedScopes).toEqual([]);
+    }
+  });
+
+  it('passes the last-used trace through untouched', async () => {
+    h.withKey(undefined);
+    const list = await h.http().get('/auth/api-keys').expect(200);
+    // Null is "not seen since the column existed", and the screen must be able
+    // to tell that apart from "never used" — so nothing here invents a date.
+    for (const k of list.body as Array<{ lastUsedAt: string | null }>) {
+      expect(k.lastUsedAt).toBeNull();
+    }
   });
 });

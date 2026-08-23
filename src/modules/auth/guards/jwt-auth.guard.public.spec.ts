@@ -1,17 +1,20 @@
 import { ExecutionContext } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { JwtAuthGuard } from './jwt-auth.guard';
-import { ApiKeyStrategy } from '../strategies/api-key.strategy';
+import {
+  CURRENT_API_KEY_ID,
+  ApiKeyStrategy,
+} from '../strategies/api-key.strategy';
 
 /**
  * A `@Public()` route is let through *before* any strategy runs, so `req.user`
  * stays undefined even when the caller presents a perfectly good credential.
  *
- * This is the fact `POST /auth/register` rests on: its "subsequent calls
- * require an authenticated admin" branch reads `req.user?.isAdmin`, which on a
- * public route can never be true. Anyone tempted to restore admin-gated
- * registration by reading the token here would be re-opening the door the same
- * width as `setRole` had it.
+ * `POST /auth/register` was the route this fact was written for, and it is
+ * gone — but the fact outlives it and guards every remaining
+ * `@Public()` route: a branch that reads `req.user?.isAdmin` here can never be
+ * true. Anyone tempted to gate a public route by reading the token would be
+ * re-opening the door the same width as `setRole` had it.
  */
 describe('JwtAuthGuard — public routes carry no principal', () => {
   function contextWith(headers: Record<string, string>): {
@@ -32,7 +35,7 @@ describe('JwtAuthGuard — public routes carry no principal', () => {
       getAllAndOverride: () => true,
     } as unknown as Reflector;
     const apiKeyStrategy = {
-      validate: jest.fn(),
+      validateWithRecord: jest.fn(),
     } as unknown as ApiKeyStrategy;
     const guard = new JwtAuthGuard(reflector, apiKeyStrategy);
 
@@ -42,7 +45,7 @@ describe('JwtAuthGuard — public routes carry no principal', () => {
 
     await expect(guard.canActivate(ctx)).resolves.toBe(true);
     expect(request.user).toBeUndefined();
-    expect(apiKeyStrategy.validate).not.toHaveBeenCalled();
+    expect(apiKeyStrategy.validateWithRecord).not.toHaveBeenCalled();
   });
 
   it('resolves an API key on a non-public route', async () => {
@@ -51,7 +54,9 @@ describe('JwtAuthGuard — public routes carry no principal', () => {
     } as unknown as Reflector;
     const principal = { userId: 'u1', email: 'a@b.c', isAdmin: false };
     const apiKeyStrategy = {
-      validate: jest.fn().mockResolvedValue(principal),
+      validateWithRecord: jest
+        .fn()
+        .mockResolvedValue({ user: principal, keyId: 'key-1' }),
     } as unknown as ApiKeyStrategy;
     const guard = new JwtAuthGuard(reflector, apiKeyStrategy);
 
@@ -61,5 +66,10 @@ describe('JwtAuthGuard — public routes carry no principal', () => {
 
     await expect(guard.canActivate(ctx)).resolves.toBe(true);
     expect(request.user).toBe(principal);
+    // Which row authenticated the call, parked on the request and not on the
+    // principal — `/auth/me` returns `req.user` verbatim.
+    expect(
+      (request as unknown as Record<symbol, string>)[CURRENT_API_KEY_ID],
+    ).toBe('key-1');
   });
 });

@@ -4,13 +4,13 @@ import { BullModule } from '@nestjs/bull';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { PassportModule } from '@nestjs/passport';
 import { JwtModule } from '@nestjs/jwt';
+import { resolveJwtSecret } from './utils/jwt-secret.util';
 import { ThrottlerModule } from '@nestjs/throttler';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { JwtStrategy } from './strategies/jwt.strategy';
 import { LocalJwtStrategy } from './strategies/local-jwt.strategy';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { AdminGuard } from './guards/admin.guard';
-import { ScopeGuard } from './guards/scope.guard';
 import { AuthController } from './controllers/auth.controller';
 import { ApiKeysController } from './controllers/api-keys.controller';
 import { UserEntity } from './entities/user.entity';
@@ -51,6 +51,7 @@ import { ApplicationEntity } from '../applications/entities/application.entity';
 import { FirewallEntity } from '../infrastructure/firewalls/entities/firewall.entity';
 import { VNetEntity } from '../infrastructure/vnets/entities/vnet.entity';
 import { VNetSubnetEntity } from '../infrastructure/vnets/entities/vnet-subnet.entity';
+import { IamGroupEntity } from '../iam/entities/iam-group.entity';
 import { IamRoleBindingEntity } from '../iam/entities/iam-role-binding.entity';
 import { SharedInfrastructureModule } from '../infrastructure/shared/shared-infrastructure.module';
 import { EncryptionModule } from '../shared/encryption/encryption.module';
@@ -67,7 +68,7 @@ import { FirewallsModule } from '../infrastructure/firewalls/firewalls.module';
     JwtModule.registerAsync({
       imports: [ConfigModule],
       useFactory: (config: ConfigService) => ({
-        secret: config.get<string>('JWT_SECRET', 'changeme'),
+        secret: resolveJwtSecret(config),
         signOptions: { expiresIn: '15m', algorithm: 'HS256' },
       }),
       inject: [ConfigService],
@@ -87,6 +88,7 @@ import { FirewallsModule } from '../infrastructure/firewalls/firewalls.module';
       VNetEntity,
       VNetSubnetEntity,
       IamRoleBindingEntity,
+      IamGroupEntity,
     ]),
     SharedInfrastructureModule,
     EncryptionModule,
@@ -104,7 +106,6 @@ import { FirewallsModule } from '../infrastructure/firewalls/firewalls.module';
     ApiKeyService,
     JwtAuthGuard,
     AdminGuard,
-    ScopeGuard,
     LocalAuthService,
     OidcProfileSyncService,
     AdminSeeder,
@@ -144,7 +145,6 @@ import { FirewallsModule } from '../infrastructure/firewalls/firewalls.module';
     PassportModule,
     JwtAuthGuard,
     AdminGuard,
-    ScopeGuard,
     ApiKeyService,
     ApiKeyStrategy,
     OidcBootstrapService,

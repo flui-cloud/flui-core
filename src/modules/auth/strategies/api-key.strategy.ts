@@ -12,6 +12,22 @@ import { serviceIdentityFor } from '../constants/service-identities';
 const USER_ID =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+/**
+ * The key row that authenticated the request, parked on the request object.
+ *
+ * Deliberately not a field on {@link AuthenticatedUser}: `me()` and
+ * `oidcSession()` return `req.user` verbatim, so anything added there is
+ * inherited for good by every consumer of the type and shows up on two routes
+ * that have no business carrying it. A symbol on the request is read by the one
+ * handler that needs it and by nothing else.
+ */
+export const CURRENT_API_KEY_ID = Symbol('currentApiKeyId');
+
+/** Whichever `id` the row had, and null for anything not authenticated by a key. */
+export interface RequestWithApiKey {
+  [CURRENT_API_KEY_ID]?: string;
+}
+
 @Injectable()
 export class ApiKeyStrategy {
   constructor(
@@ -21,10 +37,31 @@ export class ApiKeyStrategy {
   ) {}
 
   async validate(key: string): Promise<AuthenticatedUser> {
+    return (await this.validateWithRecord(key)).user;
+  }
+
+  /**
+   * The principal plus the id of the row it came from.
+   *
+   * The id was always in hand here and always thrown away. It is the only way
+   * to say which of somebody's keys is serving the request they are making —
+   * and without it the list has to guess, which after `/sandbox/resume` it gets
+   * wrong: that flow mints `sandbox-resume-<ns>` alongside `sandbox-<ns>`, so a
+   * guest holds two rows and either one may be the live one.
+   */
+  async validateWithRecord(
+    key: string,
+  ): Promise<{ user: AuthenticatedUser; keyId: string }> {
     const record = await this.apiKeyService.findValid(key);
     if (!record) {
       throw new UnauthorizedException('Invalid or revoked API key');
     }
+    // Behind a one-write-per-minute threshold and never awaited: see
+    // `ApiKeyService.touch`. Recorded for a key that authenticates, whether or
+    // not the principal behind it still resolves — a key whose owner is gone is
+    // refused below, and "something is still presenting it" is exactly the fact
+    // whoever comes to clean up needs.
+    this.apiKeyService.touch(record.id);
 
     if (record.userId && USER_ID.test(record.userId)) {
       const user = await this.userRepo.findOne({
@@ -32,12 +69,15 @@ export class ApiKeyStrategy {
       });
       if (user) {
         return {
-          userId: user.id,
-          email: user.email,
-          roles: {},
-          role: user.role ?? IdentityRole.USER,
-          isAdmin: user.isAdmin,
-          scopes: record.scopes ?? undefined,
+          user: {
+            userId: user.id,
+            email: user.email,
+            roles: {},
+            role: user.role ?? IdentityRole.USER,
+            isAdmin: user.isAdmin,
+            scopes: record.scopes ?? undefined,
+          },
+          keyId: record.id,
         };
       }
     }
@@ -53,12 +93,15 @@ export class ApiKeyStrategy {
     }
 
     return {
-      userId: identity.id,
-      email: identity.email,
-      roles: {},
-      role: identity.role,
-      isAdmin: identity.isAdmin,
-      scopes: narrowToIdentity(record.scopes, identity.scopes),
+      user: {
+        userId: identity.id,
+        email: identity.email,
+        roles: {},
+        role: identity.role,
+        isAdmin: identity.isAdmin,
+        scopes: narrowToIdentity(record.scopes, identity.scopes),
+      },
+      keyId: record.id,
     };
   }
 }

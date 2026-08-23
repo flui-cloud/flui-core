@@ -8,11 +8,14 @@ export default class AuthGenerateApiKey extends Command {
     'Generate a Flui M2M API key and save it to the active profile (OIDC mode only). ' +
     'Pass your Zitadel session token via --token or FLUI_SESSION_TOKEN.';
 
+  // Three of these four used to omit the scope list, which is to say the
+  // documented default was the widest credential the instance can issue. They
+  // now say `--unscoped` out loud, because that is what they were asking for.
   static readonly examples = [
-    '<%= config.bin %> <%= command.id %> --token <zitadel-jwt>',
-    '<%= config.bin %> <%= command.id %> --name ci-pipeline --expires 365',
+    '<%= config.bin %> <%= command.id %> --token <zitadel-jwt> --unscoped',
+    '<%= config.bin %> <%= command.id %> --name ci-pipeline --expires 365 --unscoped',
     '<%= config.bin %> <%= command.id %> --name agent --scope mcp:app:read --scope mcp:obs:read',
-    'FLUI_SESSION_TOKEN=<jwt> <%= config.bin %> <%= command.id %>',
+    'FLUI_SESSION_TOKEN=<jwt> <%= config.bin %> <%= command.id %> --unscoped',
   ];
 
   static readonly flags = {
@@ -28,10 +31,16 @@ export default class AuthGenerateApiKey extends Command {
     }),
     scope: Flags.string({
       description:
-        'Scope granted to the key (repeatable). Omit for an unscoped key, ' +
-        'which carries your full weight. A scope you do not hold yourself is ' +
-        'refused, not trimmed.',
+        'Scope granted to the key (repeatable). A scope you do not hold ' +
+        'yourself is refused, not trimmed.',
       multiple: true,
+    }),
+    unscoped: Flags.boolean({
+      description:
+        'Issue a key with no scope ceiling, carrying your full weight. Say it ' +
+        'on purpose: it used to be what omitting --scope did quietly.',
+      default: false,
+      exclusive: ['scope'],
     }),
     profile: Flags.string({
       description: 'Profile to save the key into (default: active profile)',
@@ -40,6 +49,20 @@ export default class AuthGenerateApiKey extends Command {
 
   async run(): Promise<void> {
     const { flags } = await this.parse(AuthGenerateApiKey);
+
+    // Asked before anything else, because it is the only question here that can
+    // be answered without a credential, a profile or a network. The API refuses
+    // the same request identically; this is so nobody has to go and find a
+    // session token to be told they had not said what the key is for.
+    if (!flags.scope?.length && !flags.unscoped) {
+      this.error(
+        'Say what this key may do.\n' +
+          '  --scope <mcp:...>   a limited key; repeat the flag for more than one\n' +
+          '  --unscoped          a key carrying your full weight\n' +
+          'Omitting both used to mean --unscoped, silently.',
+        { exit: 2 },
+      );
+    }
 
     const sessionToken = flags.token ?? process.env.FLUI_SESSION_TOKEN;
     if (!sessionToken) {
@@ -81,7 +104,9 @@ export default class AuthGenerateApiKey extends Command {
         body: JSON.stringify({
           name: flags.name,
           expiresAt,
-          ...(flags.scope?.length ? { scopes: flags.scope } : {}),
+          ...(flags.scope?.length
+            ? { scopes: flags.scope }
+            : { unscoped: true }),
         }),
       });
 

@@ -2,7 +2,10 @@ import { ExecutionContext, Injectable } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { AuthGuard } from '@nestjs/passport';
 import { IS_PUBLIC_KEY } from '../decorators/public.decorator';
-import { ApiKeyStrategy } from '../strategies/api-key.strategy';
+import {
+  CURRENT_API_KEY_ID,
+  ApiKeyStrategy,
+} from '../strategies/api-key.strategy';
 import { extractJwtFromFluiSessionCookie } from '../utils/cookie-extractor.util';
 
 @Injectable()
@@ -34,8 +37,11 @@ export class JwtAuthGuard extends AuthGuard('jwt') {
 
     // API key M2M — valid for both local and OIDC modes
     if (token.startsWith('flui_')) {
-      const user = await this.apiKeyStrategy.validate(token);
+      const { user, keyId } =
+        await this.apiKeyStrategy.validateWithRecord(token);
       request.user = user;
+      // On the request, never on the principal: see CURRENT_API_KEY_ID.
+      request[CURRENT_API_KEY_ID] = keyId;
       return true;
     }
 

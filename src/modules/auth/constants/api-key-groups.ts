@@ -26,6 +26,7 @@ export const PERMISSION_AREA = {
   BACKUPS: 'backups',
   MIGRATIONS: 'migrations',
   MAIL: 'mail',
+  ACCESS: 'access',
 } as const;
 
 export type PermissionArea =
@@ -95,6 +96,24 @@ const APPS_LOOK: McpScope[] = [
   MCP_SCOPE.SPEC_VALIDATE,
 ];
 
+/**
+ * Operating includes seeing what you did. An agent handed "Deploy and operate
+ * applications" and nothing else deployed, watched the pod fail, and had no way
+ * to read the line that said why — so the person had to switch on a second
+ * group for the first group to be usable at all, which is the thing this file
+ * says a group must never require.
+ *
+ * The cost, and it is visible: groups are derived from scopes, so a key holding
+ * exactly this set now also reads as `observability:look`. That is true — it
+ * can read logs — and a name for a capability the key genuinely has is the
+ * right kind of surprise.
+ */
+const APPS_CHANGE: McpScope[] = [
+  ...APPS_LOOK,
+  MCP_SCOPE.APP_WRITE,
+  MCP_SCOPE.OBS_READ,
+];
+
 const BACKUPS_LOOK: McpScope[] = [MCP_SCOPE.BACKUP_READ];
 const MIGRATIONS_LOOK: McpScope[] = [MCP_SCOPE.MIGRATION_READ];
 
@@ -114,8 +133,8 @@ export const PERMISSION_GROUPS: PermissionGroupDef[] = [
     depth: PERMISSION_DEPTH.CHANGE,
     label: 'Deploy and operate applications',
     summary:
-      'Deploy, install, scale, restart and stop applications, set up the routes, schedules, wildcard DNS and repository links they need, and ask you in person for a sensitive value it must never hold itself, on top of everything See applications reads — but never delete one.',
-    scopes: [...APPS_LOOK, MCP_SCOPE.APP_WRITE],
+      'Deploy, install, scale, restart and stop applications, set up the routes, schedules, wildcard DNS and repository links they need, read the logs, traffic and alerts of what it is running, and ask you in person for a sensitive value it must never hold itself, on top of everything See applications reads — but never delete one.',
+    scopes: APPS_CHANGE,
   },
   {
     key: 'apps:destroy',
@@ -124,7 +143,7 @@ export const PERMISSION_GROUPS: PermissionGroupDef[] = [
     label: 'Delete applications',
     summary:
       'Everything Deploy and operate applications can do, plus deleting an application, a schedule or a gateway route for good.',
-    scopes: [...APPS_LOOK, MCP_SCOPE.APP_WRITE, MCP_SCOPE.APP_DESTRUCTIVE],
+    scopes: [...APPS_CHANGE, MCP_SCOPE.APP_DESTRUCTIVE],
   },
   {
     key: 'observability:look',
@@ -141,7 +160,7 @@ export const PERMISSION_GROUPS: PermissionGroupDef[] = [
     depth: PERMISSION_DEPTH.LOOK,
     label: 'See backups',
     summary:
-      'Read the backup posture: which policies exist, where they write, and how the recent jobs went.',
+      'Read the backup posture: which policies exist, where they write, how the recent jobs went — and which volumes on a cluster are still being paid for by applications that no longer exist.',
     scopes: BACKUPS_LOOK,
   },
   {
@@ -193,6 +212,15 @@ export const PERMISSION_GROUPS: PermissionGroupDef[] = [
     summary:
       'Read whether mail is set up here, what the provider did with recently sent messages, and which addresses have been suppressed.',
     scopes: [MCP_SCOPE.MAIL_READ],
+  },
+  {
+    key: 'access:look',
+    area: PERMISSION_AREA.ACCESS,
+    depth: PERMISSION_DEPTH.LOOK,
+    label: 'See who has access',
+    summary:
+      'Read who on this instance can reach what, and what removing or changing one of those grants would take away from them — and change none of it.',
+    scopes: [MCP_SCOPE.IAM_READ],
   },
 ];
 

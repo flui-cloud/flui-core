@@ -68,19 +68,22 @@ export class ConfigureAuthModeService {
       `Switching platform auth mode: ${previousAuthMode} → ${dto.authMode}`,
     );
 
-    // Generate or reuse API key for CLI M2M access (local mode only)
+    // A fresh key for CLI M2M access (local mode only), never the previous one
+    // read back: since decision 76 the table holds the digest, so there is
+    // nothing to read back. Rotating is the honest consequence and the safer
+    // one — the new value is written into the Secret and returned to the
+    // caller in the same breath, and the credential it replaces is revoked
+    // rather than left alive alongside it.
     let apiKey: string | undefined;
     if (dto.authMode === 'local') {
       const identity = SERVICE_IDENTITY.CLI_SERVICE_ACCOUNT;
-      apiKey = await this.apiKeyService.getActiveKey(identity.keyName);
-      if (!apiKey) {
-        const generated = await this.apiKeyService.generateApiKey(
-          identity.keyName,
-          identity.id,
-        );
-        apiKey = generated.plaintext;
-        this.logger.log('Generated new CLI service account API key');
-      }
+      await this.apiKeyService.revokeByName(identity.keyName);
+      const generated = await this.apiKeyService.generateApiKey(
+        identity.keyName,
+        identity.id,
+      );
+      apiKey = generated.plaintext;
+      this.logger.log('Minted a new CLI service account API key');
     }
 
     const secretPatched = await this.patchSecret(kubeconfig, dto, apiKey);

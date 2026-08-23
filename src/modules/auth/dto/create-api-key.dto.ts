@@ -6,6 +6,7 @@ import {
   MinLength,
   MaxLength,
   IsArray,
+  IsBoolean,
   ArrayUnique,
 } from 'class-validator';
 import { GRANTABLE_SCOPES } from '../constants/api-key-scopes';
@@ -46,13 +47,40 @@ export class CreateApiKeyDto {
     isArray: true,
     enum: GRANTABLE_SCOPES,
     description:
-      'Scopes granted to this key. Omit both this and `groups` for an unscoped ' +
-      'key, which carries the full weight of the issuer. Every scope must be ' +
-      'one the issuer already holds the permission for, or the request is refused.',
+      'Scopes granted to this key. Every scope must be one the issuer already ' +
+      'holds the permission for, or the request is refused. Combine with ' +
+      '`groups` or use either alone; for a key with no ceiling at all, say ' +
+      '`unscoped: true` instead — omitting all three is refused.',
   })
   @IsOptional()
   @IsArray()
   @ArrayUnique()
   @IsString({ each: true })
   scopes?: string[];
+
+  /**
+   * Asking for the full weight, out loud.
+   *
+   * It exists so that omission can stop meaning it. A request naming neither
+   * `scopes` nor `groups` used to mint a key carrying everything the issuer
+   * could do — the widest credential this product hands out, produced by
+   * silence — while the screen that mints the same keys already refused an
+   * empty request in so many words. Two surfaces of one product said opposite
+   * things about the same request; this is the flag that lets the API say what
+   * the screen says.
+   *
+   * It is not a way to ask for *more*: an unscoped key is still worth exactly
+   * what its issuer is worth, no more, and `ApiKeyStrategy` re-reads the
+   * owner's identity on every call.
+   */
+  @ApiPropertyOptional({
+    type: Boolean,
+    description:
+      'Issue a key with no scope ceiling, carrying the full weight of the ' +
+      'issuer. Mutually exclusive with `scopes` and `groups`; one of the three ' +
+      'is required, because an empty request used to mean this one silently.',
+  })
+  @IsOptional()
+  @IsBoolean()
+  unscoped?: boolean;
 }

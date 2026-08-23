@@ -62,6 +62,7 @@ describe('permission groups — the taxonomy', () => {
     const byName = (a: string, b: string) => a.localeCompare(b);
     expect([...unlocked].sort(byName)).toEqual(
       [
+        'app_alerts',
         'app_debug',
         'app_deploy',
         'app_deploy_from_yaml',
@@ -69,12 +70,15 @@ describe('permission groups — the taxonomy', () => {
         'app_get',
         'app_install',
         'app_list',
+        'app_logs',
         'app_releases',
+        'app_removal_preview',
         'app_restart',
         'app_scale',
         'app_start',
         'app_status',
         'app_stop',
+        'app_traffic',
         'app_variable_request',
         'catalog_get_app',
         'catalog_search',
@@ -90,6 +94,7 @@ describe('permission groups — the taxonomy', () => {
         'github_connect',
         'github_setup',
         'integration_status',
+        'log_sources',
         'operation_status',
         'repo_connect',
         'repo_list',
@@ -169,6 +174,8 @@ describe('expanding groups into scopes', () => {
       MCP_SCOPE.APP_READ,
       MCP_SCOPE.SPEC_VALIDATE,
       MCP_SCOPE.APP_WRITE,
+      // Operating includes reading the logs of what you operated.
+      MCP_SCOPE.OBS_READ,
     ]);
     expect(askedBy.get(MCP_SCOPE.APP_WRITE)).toBe('apps:change');
   });
@@ -190,15 +197,26 @@ describe('expanding groups into scopes', () => {
 describe('reading a key back as groups', () => {
   const groupScopes = (key: string) => [...findPermissionGroup(key)!.scopes];
 
-  it('names the group a key was issued for', () => {
+  /**
+   * Two names for one switch, and both of them true: `apps:change` carries
+   * `mcp:obs:read`, so a key issued for it satisfies `observability:look` as
+   * well. Groups are derived from scopes on purpose — a stored label could lie,
+   * a derived one cannot — and the price of that is this second name, which
+   * describes something the key can genuinely do.
+   */
+  it('names the group a key was issued for, and every other group it satisfies', () => {
     expect(groupsForScopes(groupScopes('apps:change'))).toEqual([
       'apps:change',
+      'observability:look',
     ]);
   });
 
   it('reports only the deepest group held in an area', () => {
     const scopes = groupScopes('apps:destroy');
-    expect(groupsForScopes(scopes)).toEqual(['apps:destroy']);
+    expect(groupsForScopes(scopes)).toEqual([
+      'apps:destroy',
+      'observability:look',
+    ]);
   });
 
   it('names one group per area for a key that spans several', () => {
@@ -208,6 +226,7 @@ describe('reading a key back as groups', () => {
       'backups:change',
       'migrations:destroy',
       'mail:look',
+      'access:look',
     ]);
   });
 

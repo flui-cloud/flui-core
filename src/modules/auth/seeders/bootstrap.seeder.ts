@@ -7,7 +7,7 @@ import {
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { ApiKeyEntity } from '../entities/api-key.entity';
+import { ApiKeyService } from '../services/api-key.service';
 import { SERVICE_IDENTITY } from '../constants/service-identities';
 import {
   ClusterEntity,
@@ -75,8 +75,7 @@ export class BootstrapSeeder implements OnModuleInit {
   private readonly logger = new Logger(BootstrapSeeder.name);
 
   constructor(
-    @InjectRepository(ApiKeyEntity)
-    private readonly apiKeyRepo: Repository<ApiKeyEntity>,
+    private readonly apiKeys: ApiKeyService,
     @InjectRepository(ApiTokenEntity)
     private readonly apiTokenRepo: Repository<ApiTokenEntity>,
     @InjectRepository(ProviderConfigurationEntity)
@@ -270,20 +269,19 @@ export class BootstrapSeeder implements OnModuleInit {
     const apiKey = process.env.FLUI_CLI_API_KEY;
     if (!apiKey) return;
 
-    const exists = await this.apiKeyRepo.findOne({ where: { key: apiKey } });
-    if (exists) {
+    // Through the service, not the repository: the stored value is a digest
+    // and exactly one place is allowed to know that. `userId` is written so the
+    // row says which declared identity it is, instead of leaving
+    // ApiKeyStrategy to infer one from an absent userId.
+    const outcome = await this.apiKeys.adoptExternalKey(
+      apiKey,
+      SERVICE_IDENTITY.CLI_BOOTSTRAP.keyName,
+      SERVICE_IDENTITY.CLI_BOOTSTRAP.id,
+    );
+    if (outcome === 'already-present') {
       this.logger.debug('CLI API key already seeded');
       return;
     }
-
-    await this.apiKeyRepo.save({
-      key: apiKey,
-      name: SERVICE_IDENTITY.CLI_BOOTSTRAP.keyName,
-      revoked: false,
-      // Written so the row says which declared identity it is, instead of
-      // leaving ApiKeyStrategy to infer one from an absent userId.
-      userId: SERVICE_IDENTITY.CLI_BOOTSTRAP.id,
-    });
     this.logger.log('✅ CLI API key seeded');
   }
 

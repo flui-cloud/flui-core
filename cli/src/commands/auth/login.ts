@@ -333,7 +333,11 @@ export default class AuthLogin extends Command {
           Authorization: `Bearer ${tokens.access_token}`,
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ name: flags['key-name'] }),
+        // Said out loud, and without asking: this key IS the person's session,
+        // and full weight is what `flui login` means. The API stopped reading
+        // an empty request as this, so omitting it here would
+        // break the login rather than narrow it.
+        body: JSON.stringify({ name: flags['key-name'], unscoped: true }),
       });
       const body = (await res.json()) as Record<string, unknown>;
       if (!res.ok) {

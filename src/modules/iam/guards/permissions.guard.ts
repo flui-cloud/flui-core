@@ -15,11 +15,26 @@ import { AuthenticatedUser } from '../../auth/interfaces/authenticated-user.inte
 import { IamPrincipal } from '../interfaces/iam.types';
 import { SANDBOX_GUEST_REQUEST } from '../../sandbox/guards/sandbox-fence.guard';
 import { isSandboxStandInRequest } from '../../sandbox/stand-in/sandbox-stand-in';
+import {
+  ceilingRefusal,
+  credentialCeiling,
+} from '../../auth/utils/credential-ceiling.util';
+
+export { CREDENTIAL_CEILING_CODE } from '../../auth/utils/credential-ceiling.util';
 
 /**
  * Global authorization gate. Runs after JwtAuthGuard. Default-deny for routes
  * carrying @RequirePermission; pass-through otherwise (so un-migrated routes keep
  * their current guards during rollout). Only hits the DB when a permission is required.
+ *
+ * Two questions are asked here, and they are not the same question.
+ *
+ * The IAM check asks what the *person* may do. The ceiling asks what the
+ * *credential* may do — an `mcp:*` scoped key is least-privilege even when the
+ * person behind it is an administrator, and until now that was true only of the
+ * MCP toolbox. It is a necessary condition on top of IAM, never a grant: it can
+ * only refuse. A credential declaring no `mcp:*` scope (every interactive
+ * session, the CLI key, the service identities) sees no change at all.
  */
 @Injectable()
 export class PermissionsGuard implements CanActivate {
@@ -50,6 +65,13 @@ export class PermissionsGuard implements CanActivate {
 
     const user = req.user;
     if (!user) throw new ForbiddenException('Unauthenticated');
+
+    // Asked before the IAM check: the credential question and the resource
+    // question have different answers and different repairs.
+    const ceiling = credentialCeiling(user);
+    if (ceiling && !ceiling.has(required)) {
+      throw new ForbiddenException(ceilingRefusal(required));
+    }
 
     const principal: IamPrincipal = {
       userId: user.userId,
