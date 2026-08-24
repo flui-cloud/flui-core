@@ -36,6 +36,15 @@ export interface IamPrincipal {
   role: IdentityRole;
   isAdmin: boolean;
   scopes?: string[];
+  /**
+   * The identity provider's project roles, verbatim from the token claim.
+   *
+   * Carried rather than pre-digested because two different readers want it and
+   * they want different halves: `idpRoleBindings` takes the coarse rungs,
+   * `mcpScopesOf` takes the `mcp:*` keys. Empty in `AUTH_MODE=local`, where both
+   * local strategies populate `roles: {}` and no provider exists to fill it.
+   */
+  roles?: Record<string, unknown>;
 }
 
 /**
@@ -46,13 +55,28 @@ export interface IamPrincipal {
  * and copying five field names into a controller is how the two drift apart.
  */
 export function principalOf(req: Request): IamPrincipal {
-  const user = req.user as AuthenticatedUser | undefined;
+  return principalFromUser(req.user as AuthenticatedUser | undefined);
+}
+
+/**
+ * The same derivation from an already-authenticated principal, for the callers
+ * that hold the user and not the request.
+ *
+ * It exists as one function because it used to exist as six copies of the same
+ * object literal, and a field added to the principal reached only the copies
+ * somebody remembered. That is how a source of role goes quietly missing on one
+ * surface: the failure is silent and it under-grants, so nothing turns red.
+ */
+export function principalFromUser(
+  user: AuthenticatedUser | undefined,
+): IamPrincipal {
   return {
     userId: user?.userId ?? '',
     email: user?.email ?? '',
     role: user?.role as IdentityRole,
     isAdmin: !!user?.isAdmin,
     scopes: user?.scopes,
+    roles: user?.roles,
   };
 }
 

@@ -12,7 +12,7 @@ import {
   PolicyEngine,
 } from '../interfaces/policy-engine.interface';
 import { AuthenticatedUser } from '../../auth/interfaces/authenticated-user.interface';
-import { IamPrincipal } from '../interfaces/iam.types';
+import { IamPrincipal, principalFromUser } from '../interfaces/iam.types';
 import { SANDBOX_GUEST_REQUEST } from '../../sandbox/guards/sandbox-fence.guard';
 import { isSandboxStandInRequest } from '../../sandbox/stand-in/sandbox-stand-in';
 import {
@@ -70,16 +70,10 @@ export class PermissionsGuard implements CanActivate {
     // question have different answers and different repairs.
     const ceiling = credentialCeiling(user);
     if (ceiling && !ceiling.has(required)) {
-      throw new ForbiddenException(ceilingRefusal(required));
+      throw new ForbiddenException(ceilingRefusal(required, user));
     }
 
-    const principal: IamPrincipal = {
-      userId: user.userId,
-      email: user.email,
-      role: user.role,
-      isAdmin: !!user.isAdmin,
-      scopes: user.scopes,
-    };
+    const principal: IamPrincipal = principalFromUser(user);
     if (!(await this.policy.check(principal, required))) {
       throw new ForbiddenException(`Missing required permission: ${required}`);
     }

@@ -64,7 +64,7 @@ function fakeIam(seed: Partial<IamRoleBindingEntity>[] = []) {
   };
 }
 
-/** Whatever an ordinary access-manager holds, plus nothing else. */
+/** Whatever an ordinary access-maintainer holds, plus nothing else. */
 const MANAGER_ACCESS = accessWith([IAM_PERMISSION.IAM_ASSIGN_ROLE]);
 const OWNER_ACCESS = accessWith([
   IAM_PERMISSION.IAM_ASSIGN_ROLE,
@@ -81,14 +81,14 @@ const SEED: Partial<IamRoleBindingEntity>[] = [
   {
     principalType: 'group',
     principalRef: 'fe',
-    role: 'editor',
+    role: 'operator',
     scopeType: 'cluster',
     scopeRef: 'c1',
   },
   {
     principalType: 'user',
     principalRef: 'b@x.com',
-    role: 'manager',
+    role: 'maintainer',
     scopeType: 'selector',
     selector: { project: 'frontend', tags: ['web', 'public'] },
   },

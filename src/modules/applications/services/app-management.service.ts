@@ -7,8 +7,12 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { ClusterEntity } from '../../infrastructure/clusters/entities/cluster.entity';
-import { KubernetesService } from '../../infrastructure/shared/services/kubernetes.service';
+import {
+  KubernetesService,
+  WorkloadCondition,
+} from '../../infrastructure/shared/services/kubernetes.service';
 import { EncryptionService } from '../../shared/encryption/services/encryption.service';
+import { describeQuotaRefusal } from '../../shared/utils/quota-refusal.util';
 import { ApplicationsRepository } from '../repositories/applications.repository';
 import { AppRevisionsRepository } from '../repositories/app-revisions.repository';
 import { AppResourcesRepository } from '../repositories/app-resources.repository';
@@ -409,6 +413,22 @@ export class AppManagementService {
             timestamp: new Date(),
           });
 
+          // A refusal, not a stall. The workload was accepted; its pods were
+          // not, and the only place Kubernetes says so is here. Reporting it now
+          // is the difference between "you have used all 12 pods of your trial"
+          // and a spinner that gives up after the rollout timeout.
+          const refusal = this.quotaRefusalOn(detail?.conditions);
+          if (refusal) {
+            this.gateway.emitRolloutFailed(app.id, {
+              appId: app.id,
+              operation,
+              section,
+              error: refusal,
+              timestamp: new Date(),
+            });
+            return;
+          }
+
           const isComplete = scalingToZero
             ? available === 0 && unavailable === 0
             : ready >= desired;
@@ -447,6 +467,25 @@ export class AppManagementService {
     run().catch((err) =>
       this.logger.error(`[${app.id}] watchRollout fatal error: ${err.message}`),
     );
+  }
+
+  /**
+   * The readable half of a refusal a workload is carrying, or null.
+   *
+   * `ReplicaFailure` is the condition a Deployment gets when its ReplicaSet
+   * cannot create pods; the quota message travels inside it word for word. The
+   * translation itself lives in one place for the whole product — this only
+   * decides where to look.
+   */
+  private quotaRefusalOn(
+    conditions: WorkloadCondition[] | undefined,
+  ): string | null {
+    for (const condition of conditions ?? []) {
+      if (condition.status !== 'True' || !condition.message) continue;
+      const refusal = describeQuotaRefusal(condition.message);
+      if (refusal) return refusal.message;
+    }
+    return null;
   }
 
   // ── Private helpers ────────────────────────────────────────────────────────

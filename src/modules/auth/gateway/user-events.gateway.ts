@@ -12,6 +12,7 @@ import { Server, Socket } from 'socket.io';
 import { WsAuthService } from '../services/ws-auth.service';
 import { installWsAuth } from '../utils/ws-auth-middleware.util';
 import { WS_CORS } from '../../../config/cors-origin.config';
+import { carriesAdminReach } from '../utils/credential-ceiling.util';
 
 export interface AlertNotificationPayload {
   id: string;
@@ -56,7 +57,12 @@ export class UserEventsGateway implements OnGatewayInit {
     if (!auth) {
       throw new WsException('Unauthenticated');
     }
-    if (!auth.isAdmin && data.userId !== auth.userId) {
+    // `carriesAdminReach` and not `isAdmin` (decision 119): an agent key is
+    // issued *as* its principal, so an administrator's read-only key arrived
+    // here with the bypass and could follow anybody's event stream. A key that
+    // declares a ceiling gets only its own principal's room; a browser session
+    // declares none and is unaffected.
+    if (!carriesAdminReach(auth) && data.userId !== auth.userId) {
       this.logger.warn(
         `User ${auth.userId} attempted to subscribe to foreign room user:${data.userId}`,
       );

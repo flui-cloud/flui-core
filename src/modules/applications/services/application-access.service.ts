@@ -9,6 +9,7 @@ import {
   IamPrincipal,
   PrincipalAccess,
   ResourceAttributes,
+  principalFromUser,
 } from '../../iam/interfaces/iam.types';
 import { IAM_PERMISSION } from '../../iam/constants/iam-permissions';
 import { AppTabKey, tabsForPermissions } from '../../iam/constants/iam-tabs';
@@ -51,13 +52,7 @@ export class ApplicationAccessService {
   ) {}
 
   principalFrom(user: AuthenticatedUser): IamPrincipal {
-    return {
-      userId: user.userId,
-      email: user.email,
-      role: user.role,
-      isAdmin: !!user.isAdmin,
-      scopes: user.scopes,
-    };
+    return principalFromUser(user);
   }
 
   /** Keep only the apps the caller may read. One access resolution, in-memory filter. */

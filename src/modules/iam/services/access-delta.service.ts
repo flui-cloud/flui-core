@@ -401,6 +401,17 @@ export class AccessDeltaService {
   ): Promise<{ bindings: IamBinding[]; isAdmin: boolean }> {
     if (target.type === 'user') {
       const row = await this.users.findOne({ where: { email: target.ref } });
+      // KNOWN AND DECLARED: `roles` is deliberately absent, because it is a
+      // token claim and this question is asked *about* somebody who is not the
+      // caller — there is no token here to read. So a rung granted to them in
+      // the identity provider is invisible to the preview, and the preview
+      // therefore OVER-states what removing a Flui grant takes away.
+      //
+      // Over-stating is the safe direction for a warning, and it is not silently
+      // wrong: a delta is a sentence about the bindings this installation holds.
+      // Closing it means asking the provider for that person's grants, which
+      // makes an access preview fail when the provider is down. That trade is
+      // the author's to make, not this method's.
       const principal: IamPrincipal = {
         userId: row?.id ?? '',
         email: target.ref,

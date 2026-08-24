@@ -38,6 +38,7 @@ export class OidcBootstrapSeeder implements OnApplicationBootstrap {
     if (audience) {
       this.logger.debug(`OIDC_AUDIENCE already set — skipping OIDC bootstrap`);
       await this.ensureCliApp();
+      await this.reconcileProjectRoles();
       return;
     }
 
@@ -70,6 +71,28 @@ export class OidcBootstrapSeeder implements OnApplicationBootstrap {
       );
     } catch (err) {
       this.logger.error(`Failed to enqueue OIDC bootstrap job: ${err.message}`);
+    }
+  }
+
+  /**
+   * The roles Flui knows about, made to exist in the provider on an
+   * installation that was bootstrapped before they did.
+   *
+   * `bootstrap()` runs once and never again, so without this a rung or an agent
+   * scope added to the model would be readable by this build and ungrantable on
+   * every instance already in the field. Additive and idempotent — it creates
+   * what is missing and deletes nothing — and warn-only, because a provider
+   * that is down at boot must not stop the API from starting: Flui's own
+   * bindings are unaffected, and the next boot tries again.
+   */
+  private async reconcileProjectRoles(): Promise<void> {
+    try {
+      await this.oidcBootstrapService.reconcileProjectRoles();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      this.logger.warn(
+        `Could not reconcile provider project roles: ${message}`,
+      );
     }
   }
 

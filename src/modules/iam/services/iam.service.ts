@@ -145,13 +145,27 @@ export class IamService {
   }
 
   /** Every role, each carrying whether *this* caller may confer it. */
+  /**
+   * The role catalogue, as a person sees it: the four rungs of the ladder and
+   * nothing else.
+   *
+   * `sandbox` and `showcase_viewer` are filtered out rather than shown greyed
+   * out. They are tenancies the platform writes for itself, not tiers of access
+   * anybody picks — nobody can grant them, and presenting them next to Viewer
+   * and Owner taught whoever read the screen that this product has six roles
+   * when it has four. The screens keep working without them: `isRevocable`
+   * falls back to "yes" for a role the catalogue does not describe, so an
+   * existing sandbox binding is still removable by hand.
+   */
   async listRolesFor(caller: IamPrincipal): Promise<IamRoleView[]> {
     const access = await this.policy.resolveAccess(caller);
-    return Object.values(BUILTIN_ROLES).map((role) => ({
-      ...role,
-      grantable: mayConferRole(access, role.key),
-      revocable: mayAdministerRole(access, role.key),
-    }));
+    return Object.values(BUILTIN_ROLES)
+      .filter((role) => role.assignable)
+      .map((role) => ({
+        ...role,
+        grantable: mayConferRole(access, role.key),
+        revocable: mayAdministerRole(access, role.key),
+      }));
   }
 
   listGrants(): Promise<IamRoleBindingEntity[]> {

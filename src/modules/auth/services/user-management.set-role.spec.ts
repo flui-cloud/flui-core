@@ -22,7 +22,7 @@ import { InviteMailService } from '../../mail/services/invite-mail.service';
 
 /**
  * `PATCH /auth/users/:id/role` runs on `iam:assign-role`, which the built-in
- * `manager` role holds. So the whole safety of the route is that the value
+ * `maintainer` role holds. So the whole safety of the route is that the value
  * `admin` cannot travel through it — proven here at the wire (the DTO) and
  * restated by the type the service accepts.
  */

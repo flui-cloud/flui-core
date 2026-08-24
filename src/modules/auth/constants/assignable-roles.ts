@@ -4,8 +4,8 @@ import { IdentityRole } from '../entities/user.entity';
  * The roles `PATCH /auth/users/:id/role` may confer.
  *
  * `admin` is absent on purpose. That route runs on `iam:assign-role`, a
- * permission the built-in `manager` role holds — so any input type that still
- * contained `admin` would let a manager promote anyone, itself included, to
+ * permission the built-in `maintainer` role holds — so any input type that still
+ * contained `admin` would let a maintainer promote anyone, itself included, to
  * platform administrator. In OIDC mode the promotion is durable: the strategy
  * re-derives `isAdmin` from the claim on every request.
  *

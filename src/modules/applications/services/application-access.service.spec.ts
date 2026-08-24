@@ -117,7 +117,7 @@ describe('ApplicationAccessService', () => {
       {
         principalType: 'user',
         principalRef: 'bob@acme.com',
-        role: 'editor',
+        role: 'operator',
         scopeType: 'selector',
         scopeRef: null,
         selector: { project: 'frontend' },
@@ -156,12 +156,12 @@ describe('ApplicationAccessService', () => {
       ).resolves.toMatchObject({ isAdmin: true });
     });
 
-    it('cluster-scoped editor may create on that cluster, not another', async () => {
+    it('cluster-scoped operator may create on that cluster, not another', async () => {
       const svc = svcWith([
         {
           principalType: 'user',
           principalRef: 'bob@acme.com',
-          role: 'editor',
+          role: 'operator',
           scopeType: 'cluster',
           scopeRef: 'c1',
           selector: null,
@@ -181,12 +181,12 @@ describe('ApplicationAccessService', () => {
       ).rejects.toThrow(/create/i);
     });
 
-    it('project-scoped editor cannot conjure a project-less app', async () => {
+    it('project-scoped operator cannot conjure a project-less app', async () => {
       const svc = svcWith([
         {
           principalType: 'user',
           principalRef: 'bob@acme.com',
-          role: 'editor',
+          role: 'operator',
           scopeType: 'selector',
           scopeRef: null,
           selector: { project: 'frontend' },
@@ -216,12 +216,12 @@ describe('ApplicationAccessService', () => {
       ).rejects.toThrow(/create/i);
     });
 
-    it('global editor may create', async () => {
+    it('global operator may create', async () => {
       const svc = svcWith([
         {
           principalType: 'user',
           principalRef: 'bob@acme.com',
-          role: 'editor',
+          role: 'operator',
           scopeType: 'global',
           scopeRef: null,
           selector: null,

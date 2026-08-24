@@ -166,7 +166,7 @@ export class AccessDeltaDto {
 
 /** One hypothetical binding, in the same shape `POST /iam/grants` takes. */
 export class AccessPreviewBindingDto {
-  @ApiProperty({ example: 'editor' })
+  @ApiProperty({ example: 'operator' })
   @IsString()
   role: string;
 

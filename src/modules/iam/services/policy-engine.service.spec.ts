@@ -101,7 +101,7 @@ describe('PolicyEngineService (P3 resource-aware)', () => {
       {
         principalType: 'user',
         principalRef: 'user@acme.com',
-        role: 'editor',
+        role: 'operator',
         scopeType: 'selector',
         scopeRef: null,
         selector: { kind: 'DATABASE' },
@@ -118,7 +118,7 @@ describe('PolicyEngineService (P3 resource-aware)', () => {
       {
         principalType: 'user',
         principalRef: 'user@acme.com',
-        role: 'editor',
+        role: 'operator',
         scopeType: 'cluster',
         scopeRef: 'c1',
         selector: null,
@@ -133,7 +133,7 @@ describe('PolicyEngineService (P3 resource-aware)', () => {
       {
         principalType: 'user',
         principalRef: 'user@acme.com',
-        role: 'editor',
+        role: 'operator',
         scopeType: 'selector',
         scopeRef: null,
         selector: { tags: ['managed-db', 'internal'] },
@@ -149,7 +149,7 @@ describe('PolicyEngineService (P3 resource-aware)', () => {
       {
         principalType: 'user',
         principalRef: 'user@acme.com',
-        role: 'manager',
+        role: 'maintainer',
         scopeType: 'selector',
         scopeRef: null,
         selector: { slugs: ['ledger-db'] },
@@ -165,7 +165,7 @@ describe('PolicyEngineService (P3 resource-aware)', () => {
         {
           principalType: 'group',
           principalRef: 'dba',
-          role: 'editor',
+          role: 'operator',
           scopeType: 'selector',
           scopeRef: null,
           selector: { kind: 'DATABASE' },
@@ -181,16 +181,16 @@ describe('PolicyEngineService (P3 resource-aware)', () => {
       {
         principalType: 'user',
         principalRef: 'user@acme.com',
-        role: 'editor',
+        role: 'operator',
         scopeType: 'selector',
         scopeRef: null,
         selector: { kind: 'DATABASE' },
       },
     ]);
     const perms = await engine.getEffectivePermissions(principal());
-    expect(perms).toContain('app:read'); // from the scoped editor grant
-    expect(perms).toContain('app:write'); // from the scoped editor grant
-    expect(perms).not.toContain('iam:assign-role'); // nobody granted manager
+    expect(perms).toContain('app:read'); // from the scoped operator grant
+    expect(perms).toContain('app:write'); // from the scoped operator grant
+    expect(perms).not.toContain('iam:assign-role'); // nobody granted maintainer
   });
 
   it('admin getEffectivePermissions returns all', async () => {

@@ -222,6 +222,33 @@ export const PERMISSION_GROUPS: PermissionGroupDef[] = [
       'Read who on this instance can reach what, and what removing or changing one of those grants would take away from them — and change none of it.',
     scopes: [MCP_SCOPE.IAM_READ],
   },
+  /**
+   * The one switch that lets an agent decide what somebody *else* may reach.
+   *
+   * It is a group of its own rather than a scope hidden inside another, and
+   * that is the condition decision 91 was granted on: `mcp:iam:write` appears
+   * in no other group in this file, so it can never ride along with "deploy my
+   * applications" — the only way to hold it is to switch this one on, by name,
+   * having read the sentence. It is off until somebody does, like every other
+   * switch here, and the ladder in `access` makes it read as the deeper of the
+   * two rather than as a second decision.
+   *
+   * A group and not a bare ungrouped scope for a measured reason: the taxonomy
+   * asserts that every grantable scope is reachable by some group ("so nothing
+   * is only available by hand"), and the screen that mints keys renders groups.
+   * A scope in no group at all would be invisible there — not switched off,
+   * absent — which is the opposite of what "you see it in the list, off" asks
+   * for.
+   */
+  {
+    key: 'access:change',
+    area: PERMISSION_AREA.ACCESS,
+    depth: PERMISSION_DEPTH.CHANGE,
+    label: 'Grant and revoke access',
+    summary:
+      'Everything See who has access reads, plus giving somebody a role over this instance or taking one away — an agent holding this decides what other people can reach, and it can never hand out more than you hold yourself.',
+    scopes: [MCP_SCOPE.IAM_READ, MCP_SCOPE.IAM_WRITE],
+  },
 ];
 
 export const PERMISSION_GROUP_KEYS: string[] = PERMISSION_GROUPS.map(

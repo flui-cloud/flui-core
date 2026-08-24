@@ -90,7 +90,8 @@ describe('deleting a person, and what Flui still knew about them', () => {
   /**
    * Both addressings, because a person is named two ways: `user` by email, and
    * `service_account` by their local id. Cleaning only the first leaves the
-   * second — which is the shape the sandbox reaper still has.
+   * second — which was the shape the sandbox reaper had, until it stopped
+   * writing its own cleanup and started calling this one.
    */
   it('removes every role binding that named them, by either name', async () => {
     const { service, bindings } = build();
@@ -135,6 +136,22 @@ describe('deleting a person, and what Flui still knew about them', () => {
       { id: 'local-uuid' },
       { oidcSub: null },
     );
+  });
+
+  /**
+   * The reaper calls this method directly, with a tenancy whose local id may
+   * already be gone. An undefined criterion is not a narrower delete, it is a
+   * delete of every binding on the installation.
+   */
+  it('never asks for a binding by an id it does not have', async () => {
+    const { service, bindings } = build();
+    await service.detachRoleBindings({ id: null, email: 'gone@example.test' });
+
+    expect(bindings.delete).toHaveBeenCalledTimes(1);
+    expect(bindings.delete).toHaveBeenCalledWith({
+      principalType: 'user',
+      principalRef: 'gone@example.test',
+    });
   });
 
   it('does the upstream deletion first, so nothing local is lost to a failure there', async () => {

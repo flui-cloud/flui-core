@@ -47,7 +47,11 @@ import {
   POLICY_ENGINE,
   PolicyEngine,
 } from '../../iam/interfaces/policy-engine.interface';
-import { PrincipalAccess } from '../../iam/interfaces/iam.types';
+import {
+  IamPrincipal,
+  PrincipalAccess,
+  principalFromUser,
+} from '../../iam/interfaces/iam.types';
 import { CreateApiKeyDto } from '../dto/create-api-key.dto';
 import {
   ApiKeyResponseDto,
@@ -143,14 +147,8 @@ export class ApiKeysController {
     });
   }
 
-  private principalOf(user: AuthenticatedUser) {
-    return {
-      userId: user.userId,
-      email: user.email,
-      role: user.role,
-      isAdmin: user.isAdmin ?? false,
-      scopes: user.scopes,
-    };
+  private principalOf(user: AuthenticatedUser): IamPrincipal {
+    return principalFromUser(user);
   }
 
   /** Scopes the credential making the request does not itself carry. */

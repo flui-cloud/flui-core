@@ -74,6 +74,41 @@ export class UserManagementService {
   }
 
   /**
+   * Every IAM role binding that named this person — and a binding can name them
+   * two ways.
+   *
+   * `principalRef` is an email for a human and a local id for a service
+   * account, so a single `delete({ principalRef: email })` removes one of the
+   * two kinds and silently leaves the other. That matters more than a stale
+   * row: a surviving binding is a permission with no holder, and the day
+   * somebody invites that address again the old grants attach themselves to a
+   * new human being.
+   *
+   * Public, and called from both places that take a person apart — the
+   * administrative delete above and the sandbox reaper. The two used to write
+   * this cleanup separately and one of them was already narrower; two routines
+   * with the same purpose diverge at the first change to either.
+   */
+  async detachRoleBindings(principal: {
+    id?: string | null;
+    email: string;
+  }): Promise<number> {
+    const byEmail = await this.bindings.delete({
+      principalType: 'user',
+      principalRef: principal.email,
+    });
+    // Guarded, not merged into one call: a `delete` with an undefined criterion
+    // is a delete of everything.
+    const byServiceAccount = principal.id
+      ? await this.bindings.delete({
+          principalType: 'service_account',
+          principalRef: principal.id,
+        })
+      : { affected: 0 };
+    return (byEmail.affected ?? 0) + (byServiceAccount.affected ?? 0);
+  }
+
+  /**
    * Everything on Flui's side that still pointed at the person the identity
    * provider has just stopped knowing.
    *
@@ -105,14 +140,7 @@ export class UserManagementService {
     if (!local) return;
 
     const revoked = await this.apiKeys.revokeAllForUser(local.id);
-    const byEmail = await this.bindings.delete({
-      principalType: 'user',
-      principalRef: local.email,
-    });
-    const byServiceAccount = await this.bindings.delete({
-      principalType: 'service_account',
-      principalRef: local.id,
-    });
+    const bindingCount = await this.detachRoleBindings(local);
     const groups = await this.groups.find();
     let removedFrom = 0;
     for (const group of groups) {
@@ -125,8 +153,6 @@ export class UserManagementService {
       await this.userRepo.update({ id: local.id }, { oidcSub: null });
     }
 
-    const bindingCount =
-      (byEmail.affected ?? 0) + (byServiceAccount.affected ?? 0);
     this.logger.log(
       `Deleted account ${local.email}: revoked ${revoked} API key(s), ` +
         `removed ${bindingCount} role binding(s) and membership of ${removedFrom} group(s); ` +

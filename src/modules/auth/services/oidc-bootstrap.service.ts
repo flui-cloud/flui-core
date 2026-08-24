@@ -10,6 +10,10 @@ import { EncryptionService } from '../../shared/encryption/services/encryption.s
 import { OidcProviderAdminClient } from '../../oidc/services/oidc-provider-admin.service';
 import { OidcIdentityBranding } from '../../oidc/services/oidc-identity-branding.service';
 import { buildSystemNipHostname } from '../../dns/utils/nip-hostname.util';
+import {
+  IDP_AGENT_SCOPE_ROLES,
+  IDP_COARSE_ROLES,
+} from '../../iam/utils/idp-role-source';
 
 const FLUI_PROJECT_NAME = 'Flui';
 const FLUI_ADMIN_ROLE = 'admin';
@@ -21,22 +25,34 @@ const FLUI_ADMIN_USERNAME_PREFIX = 'flui-admin';
 /**
  * MCP agent scopes, provisioned as Flui project roles. createNativeOidcApp sets
  * accessTokenRoleAssertion, so a token minted for the Flui MCP app carries any
- * granted mcp:* role in its roles claim — which McpScopeResolver maps to scopes.
+ * granted mcp:* role in its roles claim — which McpScopeResolver maps to scopes
+ * and the credential ceiling applies on the HTTP path, without either of them
+ * knowing the grant came from the provider rather than from an api_keys row.
+ *
+ * Derived from the catalogue rather than listed here, because listed here it
+ * had already drifted: six entries against a catalogue of thirteen.
  */
-const FLUI_MCP_ROLES: ReadonlyArray<{ key: string; displayName: string }> = [
-  { key: 'mcp:catalog:read', displayName: 'MCP — catalog read' },
-  { key: 'mcp:app:read', displayName: 'MCP — application read' },
-  { key: 'mcp:obs:read', displayName: 'MCP — observability read' },
-  { key: 'mcp:spec:validate', displayName: 'MCP — spec validate' },
-  { key: 'mcp:app:write', displayName: 'MCP — application write' },
-  { key: 'mcp:app:destructive', displayName: 'MCP — application destructive' },
-];
+const FLUI_MCP_ROLES = IDP_AGENT_SCOPE_ROLES;
 
+/**
+ * The identity roles (`IdentityRole`, read by `JwtStrategy.pickHighestRole`),
+ * plus — since decision 101 — the four rungs of the IAM ladder, so that "this
+ * person is a maintainer" can be stated in the provider and not only in a Flui
+ * row.
+ *
+ * The two sets stay side by side rather than being merged. The triple below
+ * decides `isAdmin` and the local `users.role` column and answers `user` when a
+ * claim names nothing; the four rungs answer *nothing* when a claim names
+ * nothing, which is what lets them be read as access without reinstating the
+ * floor deny-by-default removed. Collapsing them would make one of those two
+ * behaviours overwrite the other.
+ */
 const FLUI_PROJECT_ROLES: ReadonlyArray<{ key: string; displayName: string }> =
   [
     { key: 'admin', displayName: 'Administrator' },
     { key: 'user', displayName: 'User' },
     { key: 'readonly', displayName: 'Read-only / Demo' },
+    ...IDP_COARSE_ROLES,
   ];
 
 /** Frontend dev server URLs registered as additional redirect targets. */
@@ -107,22 +123,45 @@ export class OidcBootstrapService {
   ) {}
 
   /**
-   * Idempotently creates the Flui CLI native OIDC app and stores its clientId
-   * in flui-api-config. Safe to call on existing installs.
+   * Cluster, kubeconfig, PAT and the Host header every provider admin call
+   * needs — resolved once instead of in each entry point.
+   *
+   * For the entry points that run on an installation the bootstrap has already
+   * finished. `bootstrap()` deliberately does NOT use it: it derives the domain
+   * from the cluster's nip hostname because `OIDC_ISSUER` is what it is about to
+   * set, and is empty until it does.
    */
-  async provisionCliApp(): Promise<{ clientId: string }> {
+  async resolveProviderContext(): Promise<{
+    cluster: ClusterEntity;
+    kubeconfig: string;
+    pat: string;
+    providerDomain: string;
+    issuer: string;
+  } | null> {
     const cluster = await this.clusterRepository.findOne({
       where: {
         clusterType: In([ClusterType.CONTROL, ClusterType.OBSERVABILITY]),
       },
     });
-    if (!cluster) {
-      throw new BadRequestException('Control cluster not registered yet');
-    }
-    const kubeconfig = await this.getKubeconfig(cluster);
+    if (!cluster) return null;
     const issuer = process.env.OIDC_ISSUER ?? process.env.ZITADEL_ISSUER ?? '';
     const providerDomain = issuer.replace('https://', '');
+    if (!providerDomain) return null;
+    const kubeconfig = await this.getKubeconfig(cluster);
     const pat = await this.readOrInjectPat(kubeconfig);
+    return { cluster, kubeconfig, pat, providerDomain, issuer };
+  }
+
+  /**
+   * Idempotently creates the Flui CLI native OIDC app and stores its clientId
+   * in flui-api-config. Safe to call on existing installs.
+   */
+  async provisionCliApp(): Promise<{ clientId: string }> {
+    const ctx = await this.resolveProviderContext();
+    if (!ctx) {
+      throw new BadRequestException('Control cluster not registered yet');
+    }
+    const { kubeconfig, pat, providerDomain, issuer } = ctx;
     const project = await this.ensureProject(pat, providerDomain);
     const cliApp = await this.ensureCliApp(pat, providerDomain, project.id);
     await this.patchApiConfigMap(kubeconfig, issuer, cliApp.clientId);
@@ -136,18 +175,11 @@ export class OidcBootstrapService {
    * errors here surface to the caller.
    */
   async provisionMcpApp(): Promise<{ mcpClientId: string }> {
-    const cluster = await this.clusterRepository.findOne({
-      where: {
-        clusterType: In([ClusterType.CONTROL, ClusterType.OBSERVABILITY]),
-      },
-    });
-    if (!cluster) {
+    const ctx = await this.resolveProviderContext();
+    if (!ctx) {
       throw new BadRequestException('Control cluster not registered yet');
     }
-    const kubeconfig = await this.getKubeconfig(cluster);
-    const issuer = process.env.OIDC_ISSUER ?? process.env.ZITADEL_ISSUER ?? '';
-    const providerDomain = issuer.replace('https://', '');
-    const pat = await this.readOrInjectPat(kubeconfig);
+    const { kubeconfig, pat, providerDomain, issuer } = ctx;
     const project = await this.ensureProject(pat, providerDomain);
     await this.ensureMcpRoles(pat, providerDomain, project.id);
     const app = await this.ensureMcpApp(pat, providerDomain, project.id);
@@ -415,14 +447,35 @@ export class OidcBootstrapService {
     hostHeader: string,
     projectId: string,
   ): Promise<void> {
-    for (const role of FLUI_PROJECT_ROLES) {
-      const existing = await this.oidcProvider.findRole(
-        pat,
-        hostHeader,
-        projectId,
-        role.key,
-      );
-      if (existing) continue;
+    await this.ensureProjectRoles(
+      pat,
+      hostHeader,
+      projectId,
+      FLUI_PROJECT_ROLES,
+    );
+  }
+
+  /**
+   * Creates whichever of `wanted` the project does not already carry.
+   *
+   * One search, then only the creates. It used to be one search per role, which
+   * on the full vocabulary — three identity roles, four rungs, thirteen agent
+   * scopes — would be twenty searches to discover that nothing is missing.
+   */
+  private async ensureProjectRoles(
+    pat: string,
+    hostHeader: string,
+    projectId: string,
+    wanted: ReadonlyArray<{ key: string; displayName: string }>,
+  ): Promise<number> {
+    const present = await this.oidcProvider.listRoleKeys(
+      pat,
+      hostHeader,
+      projectId,
+    );
+    let created = 0;
+    for (const role of wanted) {
+      if (present.has(role.key)) continue;
       await this.oidcProvider.createRole(
         pat,
         hostHeader,
@@ -430,8 +483,46 @@ export class OidcBootstrapService {
         role.key,
         role.displayName,
       );
+      created += 1;
       this.logger.log(`Role '${role.key}' created on project ${projectId}`);
     }
+    return created;
+  }
+
+  /**
+   * Brings an already-bootstrapped provider up to the vocabulary this build
+   * knows about, and nothing else.
+   *
+   * It exists because `bootstrap()` runs exactly once — the seeder skips it the
+   * moment `OIDC_AUDIENCE` is set — so a role added to the model after an
+   * installation was created would never appear in its provider, and an
+   * operator would be looking for a rung that is simply not there. Additive by
+   * construction: it creates what is missing and never deletes, so a role
+   * somebody added by hand survives, and so does a Flui role that a later build
+   * stops using.
+   *
+   * Never fatal. The provider being unreachable at boot is an outage of the
+   * *second* source of role, not of the product: Flui's own bindings still
+   * resolve, and `AUTH_MODE=local` never reaches this at all.
+   */
+  async reconcileProjectRoles(): Promise<{ created: number } | null> {
+    if ((process.env.AUTH_MODE ?? '').toLowerCase() !== 'oidc') return null;
+    const ctx = await this.resolveProviderContext();
+    if (!ctx) return null;
+    const { pat, providerDomain } = ctx;
+    const project = await this.ensureProject(pat, providerDomain);
+    const created = await this.ensureProjectRoles(
+      pat,
+      providerDomain,
+      project.id,
+      [...FLUI_PROJECT_ROLES, ...FLUI_MCP_ROLES],
+    );
+    if (created > 0) {
+      this.logger.log(
+        `Provider project roles reconciled: ${created} created on ${project.id}`,
+      );
+    }
+    return { created };
   }
 
   private async ensureOidcApp(
@@ -562,23 +653,7 @@ export class OidcBootstrapService {
     hostHeader: string,
     projectId: string,
   ): Promise<void> {
-    for (const role of FLUI_MCP_ROLES) {
-      const existing = await this.oidcProvider.findRole(
-        pat,
-        hostHeader,
-        projectId,
-        role.key,
-      );
-      if (existing) continue;
-      await this.oidcProvider.createRole(
-        pat,
-        hostHeader,
-        projectId,
-        role.key,
-        role.displayName,
-      );
-      this.logger.log(`MCP role '${role.key}' created on project ${projectId}`);
-    }
+    await this.ensureProjectRoles(pat, hostHeader, projectId, FLUI_MCP_ROLES);
   }
 
   private async ensureMcpApp(

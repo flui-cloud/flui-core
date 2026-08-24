@@ -90,7 +90,7 @@ export class AppAccessGuard implements CanActivate {
     // names its own scopes instead of a 404 that leaks whether the row exists.
     const ceiling = credentialCeiling(user);
     if (ceiling && !ceiling.has(action)) {
-      throw new ForbiddenException(ceilingRefusal(action));
+      throw new ForbiddenException(ceilingRefusal(action, user));
     }
 
     if (user.isAdmin) return true;

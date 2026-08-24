@@ -9,7 +9,7 @@ import { ALL_SECTION_KEYS } from '../constants/iam-sections';
  * Section visibility is derived scope-aware: management sections (clusters,
  * infrastructure, firewall, providers, backup, projects, access) need the
  * governing permission at GLOBAL scope; workload/deploy accept any scope. This
- * is the safety net for the flagged trap — a project-scoped MANAGER carries
+ * is the safety net for the flagged trap — a project-scoped MAINTAINER carries
  * iam:assign-role, but only inside a selector, so Access/Projects stay hidden.
  */
 type Binding = Pick<
@@ -61,19 +61,19 @@ describe('PolicyEngine.resolveSections (deny-by-default, scope-aware)', () => {
     expect(sections.sort()).toEqual(['home', 'settings']);
   });
 
-  it('project-scoped MANAGER → workloads+deploy but NOT access/projects/infra', async () => {
+  it('project-scoped MAINTAINER → workloads+deploy but NOT access/projects/infra', async () => {
     const engine = makeEngine([
       {
         principalType: 'user',
         principalRef: USER,
-        role: 'manager',
+        role: 'maintainer',
         scopeType: 'selector',
         scopeRef: null,
         selector: { project: 'frontend' },
       },
     ]);
     const sections = await engine.resolveSections(principal());
-    // manager carries app:read/create (→ workloads, deploy) and iam:assign-role
+    // maintainer carries app:read/create (→ workloads, deploy) and iam:assign-role
     // + cluster:manage, but all SCOPED — so no management sections.
     expect(sections).toEqual(
       expect.arrayContaining(['home', 'settings', 'workloads', 'deploy']),
@@ -84,12 +84,12 @@ describe('PolicyEngine.resolveSections (deny-by-default, scope-aware)', () => {
     expect(sections).not.toContain('clusters');
   });
 
-  it('GLOBAL manager → all management sections appear', async () => {
+  it('GLOBAL maintainer → all management sections appear', async () => {
     const engine = makeEngine([
       {
         principalType: 'user',
         principalRef: USER,
-        role: 'manager',
+        role: 'maintainer',
         scopeType: 'global',
         scopeRef: null,
         selector: null,
@@ -183,12 +183,12 @@ describe('PolicyEngine.resolveSections (deny-by-default, scope-aware)', () => {
     expect(managementFull).toEqual([]);
   });
 
-  it('a global manager keeps every management section at full', async () => {
+  it('a global maintainer keeps every management section at full', async () => {
     const engine = makeEngine([
       {
         principalType: 'user',
         principalRef: USER,
-        role: 'manager',
+        role: 'maintainer',
         scopeType: 'global',
         scopeRef: null,
         selector: null,
@@ -223,13 +223,13 @@ describe('PolicyEngine.resolveSections (deny-by-default, scope-aware)', () => {
     expect(access.every((a) => a.level === 'full')).toBe(true);
   });
 
-  it('scoped editor → workloads+deploy only (no management sections)', async () => {
+  it('scoped operator → workloads+deploy only (no management sections)', async () => {
     const engine = makeEngine(
       [
         {
           principalType: 'group',
           principalRef: 'front-end',
-          role: 'editor',
+          role: 'operator',
           scopeType: 'selector',
           scopeRef: null,
           selector: { project: 'frontend' },

@@ -1,6 +1,7 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { ForbiddenException, Injectable, Logger } from '@nestjs/common';
 import * as k8s from '@kubernetes/client-node';
 import { Writable, Readable } from 'node:stream';
+import { describeQuotaRefusal } from '../../../shared/utils/quota-refusal.util';
 
 export interface ContainerResources {
   cpu: string | null;
@@ -22,9 +23,26 @@ export interface ReplicaInfo {
   updated?: number;
 }
 
+export interface WorkloadCondition {
+  type: string;
+  status: string;
+  reason?: string;
+  message?: string;
+}
+
 export interface ResourceDetail {
   replicas: ReplicaInfo;
   containers: ContainerDetail[];
+  /**
+   * Read verbatim off the workload.
+   *
+   * A Deployment whose pods are refused by a ResourceQuota is itself accepted —
+   * `spec.replicas` is not admission-checked — and the refusal only ever appears
+   * here, as `ReplicaFailure`. Without it a guest over their pod ceiling watches
+   * a spinner until the rollout times out, which reads as a broken product
+   * rather than as a limit they have reached.
+   */
+  conditions: WorkloadCondition[];
 }
 
 export interface ContainerMetrics {
@@ -36,6 +54,15 @@ export interface PodMetrics {
   name: string;
   containers: ContainerMetrics[];
 }
+
+/**
+ * The label Flui stamps on every namespace it creates, and the selector that
+ * asks for exactly those. Declared once so that "namespaces Flui made" is the
+ * same statement where it is written and where it is read.
+ */
+export const FLUI_NAMESPACE_LABEL = 'managed-by';
+export const FLUI_NAMESPACE_LABEL_VALUE = 'flui-cloud';
+export const FLUI_NAMESPACE_LABEL_SELECTOR = `${FLUI_NAMESPACE_LABEL}=${FLUI_NAMESPACE_LABEL_VALUE}`;
 
 @Injectable()
 export class KubernetesService {
@@ -157,12 +184,35 @@ export class KubernetesService {
           this.logger.error(
             `Failed to apply ${spec.kind}/${spec.metadata?.name}: ${error.message}`,
           );
-          throw error;
+          throw this.asQuotaRefusalIfItIsOne(error);
         }
       }
     }
 
     return results;
+  }
+
+  /**
+   * The one place an admission refusal becomes a sentence.
+   *
+   * Every manifest this product applies goes through `applyManifest`, so a quota
+   * or LimitRange refusal is recognised here once instead of at each of the
+   * callers that would otherwise each have to know what a Kubernetes 403 looks
+   * like. The translated error keeps the refusal's own numbers and carries a
+   * code, so the deploy processor writes a readable sentence into the
+   * application's `errorMessage` and the HTTP filter hands the code to the
+   * interface — neither of them changed to get it.
+   *
+   * Anything that is not a quota refusal is rethrown untouched: a fault must
+   * stay a fault.
+   */
+  private asQuotaRefusalIfItIsOne(error: unknown): unknown {
+    const refusal = describeQuotaRefusal(error);
+    if (!refusal) return error;
+    return new ForbiddenException({
+      message: refusal.message,
+      code: refusal.code,
+    });
   }
 
   /**
@@ -492,6 +542,29 @@ export class KubernetesService {
   }
 
   /**
+   * The namespaces on a cluster, optionally narrowed by label.
+   *
+   * Cluster-scoped, so it does not fit `listResources`, which lists inside one
+   * namespace. Flui stamps every namespace it creates with
+   * `managed-by=flui-cloud` ({@link ensureNamespaceExists}), which is how a
+   * caller can ask for "the namespaces Flui made" rather than guessing from a
+   * name.
+   */
+  async listNamespaces(
+    kubeconfigContent: string,
+    labelSelector?: string,
+  ): Promise<any[]> {
+    const { coreApi } = this.getKubeClient(kubeconfigContent);
+    try {
+      const response = await coreApi.listNamespace({ labelSelector });
+      return response.items ?? [];
+    } catch (error) {
+      this.logger.warn(`Failed to list namespaces: ${error.message}`);
+      return [];
+    }
+  }
+
+  /**
    * List CRD resources (cert-manager Challenges, Orders, etc.) via KubernetesObjectApi.
    */
   async listCrdResources(
@@ -574,6 +647,12 @@ export class KubernetesService {
     const detail: ResourceDetail = {
       replicas: {},
       containers: [],
+      conditions: (resource.status?.conditions ?? []).map((c: any) => ({
+        type: c.type,
+        status: c.status,
+        reason: c.reason ?? undefined,
+        message: c.message ?? undefined,
+      })),
     };
 
     switch (kind) {
@@ -1330,7 +1409,7 @@ export class KubernetesService {
           metadata: {
             name: namespace,
             labels: {
-              'managed-by': 'flui-cloud',
+              [FLUI_NAMESPACE_LABEL]: FLUI_NAMESPACE_LABEL_VALUE,
               ...labels,
             },
           },

@@ -71,8 +71,8 @@ const person = (id: string, role: string): Principal => ({
   role,
 });
 
-const MANAGER = person('user-manager', 'manager');
-const EDITOR = person('user-editor', 'editor');
+const MAINTAINER = person('user-maintainer', 'maintainer');
+const OPERATOR = person('user-operator', 'operator');
 const GUEST = person('user-guest', 'sandbox');
 
 interface Harness {
@@ -220,7 +220,7 @@ describe('api keys — issuing by group', () => {
   let h: Harness;
 
   beforeAll(async () => {
-    h = await harness(MANAGER);
+    h = await harness(MAINTAINER);
   }, BOOT_MS);
   afterAll(async () => {
     await h.app.close();
@@ -228,7 +228,7 @@ describe('api keys — issuing by group', () => {
   beforeEach(() => {
     h.keys.length = 0;
     h.generate.mockClear();
-    h.as(MANAGER);
+    h.as(MAINTAINER);
   });
 
   it('grants exactly the scopes the group names', async () => {
@@ -335,7 +335,7 @@ describe('api keys — the ceiling, refusing whole', () => {
   let h: Harness;
 
   beforeAll(async () => {
-    h = await harness(EDITOR);
+    h = await harness(OPERATOR);
   }, BOOT_MS);
   afterAll(async () => {
     await h.app.close();
@@ -343,7 +343,7 @@ describe('api keys — the ceiling, refusing whole', () => {
   beforeEach(() => {
     h.keys.length = 0;
     h.generate.mockClear();
-    h.as(EDITOR);
+    h.as(OPERATOR);
   });
 
   it('refuses a group above the issuer, and grants nothing at all', async () => {
@@ -361,24 +361,39 @@ describe('api keys — the ceiling, refusing whole', () => {
     expect(h.generate).not.toHaveBeenCalled();
   });
 
-  it('refuses the deep group while the shallow one is still fine', async () => {
+  /**
+   * The depth an operator may hand on, and it reaches the delete.
+   *
+   * It did not, while the rung above the viewer was called `editor` and stopped
+   * short of `app:delete`. That stop was removed on purpose: refusing a trusted
+   * colleague the verb the anonymous guest of the public demo already holds was
+   * not defensible, and what protects an application from a careless removal is
+   * the selector the grant carries, not the amputation of the verb from a whole
+   * role. So `apps:destroy` is now inside an operator's ceiling — and
+   * `backups:change`, one section over, still is not: the ceiling did not
+   * dissolve, it moved by exactly one permission.
+   */
+  it('mints the delete of the applications it reaches, and still not the backups', async () => {
     await h
       .http()
       .post('/auth/api-keys')
       .send({ name: 'delete-please', groups: ['apps:destroy'] })
-      .expect(403);
-    expect(h.generate).not.toHaveBeenCalled();
+      .expect(201);
+    expect(h.generate).toHaveBeenCalledTimes(1);
 
     await h
       .http()
       .post('/auth/api-keys')
-      .send({ name: 'operate-please', groups: ['apps:change'] })
-      .expect(201);
+      .send({ name: 'too-far', groups: ['backups:change'] })
+      .expect(403);
     expect(h.generate).toHaveBeenCalledTimes(1);
   });
 
   it('will not let a scoped credential mint a group it does not itself carry', async () => {
-    h.as({ ...MANAGER, user: { ...MANAGER.user, scopes: [...APPS_CHANGE] } });
+    h.as({
+      ...MAINTAINER,
+      user: { ...MAINTAINER.user, scopes: [...APPS_CHANGE] },
+    });
 
     const res = await h
       .http()
@@ -407,9 +422,15 @@ describe('api keys — the ceiling, refusing whole', () => {
     // api-key-scopes.ts. The group can express a depth the ceiling does not
     // distinguish — which is what a consent unit is for, and is not a claim
     // that IAM is enforcing that line.
+    //
+    // apps:destroy is here because the operator holds `app:delete`, which is the
+    // whole of what the role model changed about this screen: the switch that
+    // says "and it may remove them" is now one a developer can hand to their own
+    // agent, within their own selector, without asking an administrator.
     expect(grantable).toEqual([
       'apps:look',
       'apps:change',
+      'apps:destroy',
       'observability:look',
       'migrations:look',
       'migrations:change',
@@ -474,6 +495,10 @@ describe('api keys — the guest', () => {
       'migrations:destroy',
       'mail:look',
       'access:look',
+      // The switch decision 91 created, seen from the surface it matters most
+      // on: a guest is offered it and cannot turn it on, because conferring a
+      // role asks for `iam:assign-role` and a tenancy holds nothing of the kind.
+      'access:change',
     ]);
   });
 

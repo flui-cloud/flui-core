@@ -95,6 +95,33 @@ export const SCOPE_AUTHORITY: Record<McpScope, ScopeAuthority> = {
     requires: IAM_PERMISSION.IAM_ASSIGN_ROLE,
     allows: [IAM_PERMISSION.IAM_READ_ACCESS],
   },
+  /**
+   * Confer and revoke a delegation — the one scope here that changes who else
+   * can reach the instance.
+   *
+   * Both columns name `iam:assign-role`, and the coincidence is the guarantee
+   * rather than a shortcut. `requires` says an issuer must already administer
+   * access to hand this on, so a key is never worth more than whoever minted
+   * it; `allows` says the resulting key may exercise exactly that permission
+   * and nothing else. Read together: **an agent can never confer a permission
+   * its owner does not hold**, because the mint refuses the scope and, even if
+   * the scope were held, `ApiKeyStrategy` re-reads the owner's identity on
+   * every call and the route's own `iam:assign-role` check still runs. Nothing
+   * had to be added for that; it is how minting already works.
+   *
+   * It names only the write. Reading the grant graph — the list, the revocation
+   * preview — is `mcp:iam:read`, and the `access:change` group carries both, so
+   * an agent that may confer can also see what it is about to take away
+   * (requirement 42). Naming `iam:read-access` here too would make the read
+   * scope pointless as a switch of its own.
+   *
+   * `iam:manage-users` is deliberately not here: creating and deleting people
+   * is a different power from deciding what an existing person may reach.
+   */
+  [MCP_SCOPE.IAM_WRITE]: {
+    requires: IAM_PERMISSION.IAM_ASSIGN_ROLE,
+    allows: [IAM_PERMISSION.IAM_ASSIGN_ROLE],
+  },
   [MCP_SCOPE.SPEC_VALIDATE]: {
     requires: IAM_PERMISSION.APP_READ,
     allows: [IAM_PERMISSION.APP_READ],

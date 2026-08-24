@@ -300,7 +300,7 @@ describe('observability resource authorization (direct HTTP routes)', () => {
       {
         principalType: 'user',
         principalRef: users.tenant.email,
-        role: 'manager',
+        role: 'maintainer',
         scopeType: 'global',
         scopeRef: null,
         selector: null,
@@ -323,7 +323,7 @@ describe('observability resource authorization (direct HTTP routes)', () => {
       {
         principalType: 'user',
         principalRef: users.tenant.email,
-        role: 'manager',
+        role: 'maintainer',
         scopeType: 'global',
         scopeRef: null,
         selector: null,

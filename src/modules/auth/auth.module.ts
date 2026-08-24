@@ -24,6 +24,9 @@ import { OidcModule } from '../oidc/oidc.module';
 import { OidcIdentityBranding } from '../oidc/services/oidc-identity-branding.service';
 import { OidcIdentityDirectory } from '../oidc/services/oidc-identity-directory.service';
 import { OidcBootstrapService } from './services/oidc-bootstrap.service';
+import { AgentIdentityService } from './services/agent-identity.service';
+import { AgentIdentitiesController } from './controllers/agent-identities.controller';
+import { PROVIDER_ADMIN_CONTEXT } from './interfaces/provider-admin-context';
 import {
   OidcBootstrapProcessor,
   OIDC_BOOTSTRAP_QUEUE,
@@ -113,6 +116,8 @@ import { FirewallsModule } from '../infrastructure/firewalls/firewalls.module';
     BillingIntervalsService,
     ConfigureAuthModeService,
     OidcBootstrapService,
+    { provide: PROVIDER_ADMIN_CONTEXT, useExisting: OidcBootstrapService },
+    AgentIdentityService,
     OidcBootstrapProcessor,
     OidcBootstrapSeeder,
     LocalIdentityDirectory,
@@ -138,6 +143,7 @@ import { FirewallsModule } from '../infrastructure/firewalls/firewalls.module';
   controllers: [
     AuthController,
     ApiKeysController,
+    AgentIdentitiesController,
     UserManagementController,
     BrandingController,
   ],
@@ -148,7 +154,11 @@ import { FirewallsModule } from '../infrastructure/firewalls/firewalls.module';
     ApiKeyService,
     ApiKeyStrategy,
     OidcBootstrapService,
+    AgentIdentityService,
     IDENTITY_DIRECTORY,
+    // Exported for the sandbox reaper, which takes a person apart too and now
+    // shares this service's binding cleanup instead of writing its own.
+    UserManagementService,
   ],
 })
 export class AuthModule {}

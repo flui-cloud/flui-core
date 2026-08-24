@@ -160,12 +160,12 @@ describe('IAM regression matrix (deny-by-default)', () => {
     expect(engine.can(access, 'app:write', BACKEND[0])).toBe(false);
   });
 
-  it('selector editor on kind=DATABASE → write the db only, nothing else', async () => {
+  it('selector operator on kind=DATABASE → write the db only, nothing else', async () => {
     const engine = makeEngine([
       {
         principalType: 'user',
         principalRef: USER,
-        role: 'editor',
+        role: 'operator',
         scopeType: 'selector',
         scopeRef: null,
         selector: { kind: 'DATABASE' },
@@ -182,7 +182,7 @@ describe('IAM regression matrix (deny-by-default)', () => {
       {
         principalType: 'user',
         principalRef: USER,
-        role: 'editor',
+        role: 'operator',
         scopeType: 'cluster',
         scopeRef: 'c2',
         selector: null,
@@ -225,12 +225,12 @@ describe('IAM regression matrix (deny-by-default)', () => {
     );
   });
 
-  it('manager on project=frontend → may delete frontend apps but not assign roles elsewhere', async () => {
+  it('maintainer on project=frontend → may delete frontend apps but not assign roles elsewhere', async () => {
     const engine = makeEngine([
       {
         principalType: 'user',
         principalRef: USER,
-        role: 'manager',
+        role: 'maintainer',
         scopeType: 'selector',
         scopeRef: null,
         selector: { project: 'frontend' },
@@ -239,12 +239,12 @@ describe('IAM regression matrix (deny-by-default)', () => {
     const access = await engine.resolveAccess(principal());
     expect(engine.can(access, 'app:delete', FRONTEND[0])).toBe(true);
     expect(engine.can(access, 'app:delete', BACKEND[0])).toBe(false);
-    // manager carries iam:assign-role, but only where the scope reaches
+    // maintainer carries iam:assign-role, but only where the scope reaches
     expect(engine.can(access, 'iam:assign-role', FRONTEND[0])).toBe(true);
     expect(engine.can(access, 'iam:assign-role', BACKEND[0])).toBe(false);
   });
 
-  it('two bindings union: frontend-viewer + db-editor', async () => {
+  it('two bindings union: frontend-viewer + db-operator', async () => {
     const engine = makeEngine(
       [
         {
@@ -258,7 +258,7 @@ describe('IAM regression matrix (deny-by-default)', () => {
         {
           principalType: 'user',
           principalRef: USER,
-          role: 'editor',
+          role: 'operator',
           scopeType: 'selector',
           scopeRef: null,
           selector: { kind: 'DATABASE' },
@@ -270,7 +270,7 @@ describe('IAM regression matrix (deny-by-default)', () => {
       [...FRONTEND.map((a) => a.slug), 'ledger-db'].sort(),
     );
     const access = await engine.resolveAccess(principal());
-    expect(engine.can(access, 'app:write', LEDGER_DB)).toBe(true); // db editor
+    expect(engine.can(access, 'app:write', LEDGER_DB)).toBe(true); // db operator
     expect(engine.can(access, 'app:write', FRONTEND[0])).toBe(false); // frontend viewer
   });
 

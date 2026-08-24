@@ -226,7 +226,7 @@ describe('reading a key back as groups', () => {
       'backups:change',
       'migrations:destroy',
       'mail:look',
-      'access:look',
+      'access:change',
     ]);
   });
 

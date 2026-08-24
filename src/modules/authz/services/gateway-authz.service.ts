@@ -16,6 +16,7 @@ import {
 import {
   IamPrincipal,
   ResourceAttributes,
+  principalFromUser,
 } from '../../iam/interfaces/iam.types';
 import { IAM_PERMISSION } from '../../iam/constants/iam-permissions';
 import { IAM_ROLE, IamRole } from '../../iam/constants/iam-roles';
@@ -32,8 +33,8 @@ export interface GatewayAuthzDecision {
  */
 const MIN_ROLE_PERMISSION: Partial<Record<IamRole, string>> = {
   [IAM_ROLE.VIEWER]: IAM_PERMISSION.APP_READ,
-  [IAM_ROLE.EDITOR]: IAM_PERMISSION.APP_WRITE,
-  [IAM_ROLE.MANAGER]: IAM_PERMISSION.CLUSTER_MANAGE,
+  [IAM_ROLE.OPERATOR]: IAM_PERMISSION.APP_WRITE,
+  [IAM_ROLE.MAINTAINER]: IAM_PERMISSION.CLUSTER_MANAGE,
 };
 
 /**
@@ -114,13 +115,7 @@ export class GatewayAuthzService {
   }
 
   private principalFrom(user: AuthenticatedUser): IamPrincipal {
-    return {
-      userId: user.userId,
-      email: user.email,
-      role: user.role,
-      isAdmin: !!user.isAdmin,
-      scopes: user.scopes,
-    };
+    return principalFromUser(user);
   }
 
   private resourceFor(endpoint: AppEndpointEntity): ResourceAttributes {

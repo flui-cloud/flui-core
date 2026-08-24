@@ -46,30 +46,34 @@ import { IdentityRole } from '../../auth/entities/user.entity';
  *
  * 1. **there is no kubeconfig route.** A kubeconfig is the key to the whole
  *    cluster and nobody downloads it — the router itself must not know the path;
- * 2. **the deploy wizard's reads stay open to an editor.** They are why the
+ * 2. **the deploy wizard's reads stay open to an operator.** They are why the
  *    section gate sits on each route instead of on the class, so a class-level
  *    decorator added later would show up here as a 403;
  * 3. **the reads no caller needs are gated, and gated selectively.** Each one is
- *    asserted twice — refused to an editor *and* answered to someone holding the
+ *    asserted twice — refused to an operator *and* answered to someone holding the
  *    section — because a gate that refuses everybody is indistinguishable here
  *    from a route that has been broken;
  * 4. **there is no second inventory route.** Adoption's inventory lives on
  *    `/adoption/inventory` behind its own token guard; the copy that used to sit
  *    here had no caller and read metadata keys nothing writes;
  * 5. **the two autoscale reads carry the `clusters` section.** Decision 18
- *    expected an `editor` to keep them, on the premise that `editor` holds
- *    global `cluster:read`. It does not — only `viewer`, `manager` and `owner`
- *    do (`iam-roles.ts`), so the conversion closes them to an `editor` too.
- *    That is the reason the dashboard half is not optional: the home pulse runs
- *    for every authenticated person and must ask `canSee('clusters')` before
- *    calling. Pinned from both sides below.
+ *    expected an `operator` to keep them, on the premise that the rung above the
+ *    viewer holds global `cluster:read`. For a while it did not — the ladder had
+ *    drifted, and `viewer` carried a permission the step above it lacked — so
+ *    the conversion closed them to that rung too. The ladder is cumulative
+ *    again, so the premise is true and the reads are open to an `operator`.
+ *    What still closes them is holding no *global* grant at all: a principal
+ *    scoped to one application fails the section, and the dashboard half stays
+ *    non-optional for exactly that person — the home pulse runs for every
+ *    authenticated caller and must ask `canSee('clusters')` before calling.
+ *    Pinned from both sides below.
  */
 
 const CLUSTER = 'cluster-1';
 
-const EDITOR: AuthenticatedUser = {
-  userId: 'user-editor',
-  email: 'editor@flui.cloud',
+const OPERATOR: AuthenticatedUser = {
+  userId: 'user-operator',
+  email: 'operator@flui.cloud',
   roles: {},
   role: IdentityRole.USER,
   isAdmin: false,
@@ -80,9 +84,9 @@ const EDITOR: AuthenticatedUser = {
  * `infrastructure` and the `firewall` sections. Still not an admin: the point is
  * that the gate is a section, not the boolean.
  */
-const MANAGER: AuthenticatedUser = {
-  userId: 'user-manager',
-  email: 'manager@flui.cloud',
+const MAINTAINER: AuthenticatedUser = {
+  userId: 'user-maintainer',
+  email: 'maintainer@flui.cloud',
   roles: {},
   role: IdentityRole.USER,
   isAdmin: false,
@@ -91,9 +95,10 @@ const MANAGER: AuthenticatedUser = {
 /**
  * Scoped to a single application, which is what an application-scoped API key
  * looks like to the policy engine. Carries `app:*` and *no* global
- * `cluster:read`, so it fails the `clusters` section — one of the two
- * principals decision 18 put the autoscale reads out of reach of. The other,
- * unexpectedly, is the plain `editor`.
+ * `cluster:read`, so it fails the `clusters` section — and since the ladder was
+ * repaired it is the *only* built-in shape that does. That is what makes it the
+ * one worth pinning: a gate that no ordinary role trips is a gate nobody
+ * notices breaking.
  */
 const APP_SCOPED: AuthenticatedUser = {
   userId: 'user-app-scoped',
@@ -115,13 +120,13 @@ const globalBinding = (principalRef: string, role: string) => ({
 // Keyed by email, because that is what a `user` binding is matched on
 // (`PolicyEngineService.findBindingsFor` looks up `principal.email`).
 const BINDINGS: Record<string, unknown[]> = {
-  [EDITOR.email]: [globalBinding(EDITOR.email, 'editor')],
-  [MANAGER.email]: [globalBinding(MANAGER.email, 'manager')],
+  [OPERATOR.email]: [globalBinding(OPERATOR.email, 'operator')],
+  [MAINTAINER.email]: [globalBinding(MAINTAINER.email, 'maintainer')],
   [APP_SCOPED.email]: [
     {
       principalType: 'user',
       principalRef: APP_SCOPED.email,
-      role: 'editor',
+      role: 'operator',
       scopeType: 'application',
       scopeRef: 'app-1',
       selector: null,
@@ -131,7 +136,7 @@ const BINDINGS: Record<string, unknown[]> = {
 
 describe('clusters controller — the fence around the cluster key', () => {
   let app: INestApplication;
-  let currentUser: AuthenticatedUser = EDITOR;
+  let currentUser: AuthenticatedUser = OPERATOR;
 
   beforeAll(async () => {
     const bindingsRepo = {
@@ -236,7 +241,7 @@ describe('clusters controller — the fence around the cluster key', () => {
   });
 
   beforeEach(() => {
-    currentUser = EDITOR;
+    currentUser = OPERATOR;
   });
 
   const http = () => request(app.getHttpServer());
@@ -248,7 +253,7 @@ describe('clusters controller — the fence around the cluster key', () => {
     expect(res.body.message).toContain('Cannot GET');
   });
 
-  it('still answers the reads the deploy wizard makes to an editor', async () => {
+  it('still answers the reads the deploy wizard makes to an operator', async () => {
     await http().get('/infrastructure/clusters').expect(200);
     await http().get(`/infrastructure/clusters/${CLUSTER}/nodes`).expect(200);
     await http()
@@ -283,13 +288,13 @@ describe('clusters controller — the fence around the cluster key', () => {
     [`/infrastructure/clusters/${CLUSTER}/firewall`, 'firewall'],
   ];
 
-  it.each(GATED)('refuses %s to an editor', async (path, section) => {
+  it.each(GATED)('refuses %s to an operator', async (path, section) => {
     const res = await http().get(path).expect(403);
     expect(res.body.message).toContain(section);
   });
 
   it.each(GATED)('answers %s to whoever holds the section', async (path) => {
-    currentUser = MANAGER;
+    currentUser = MAINTAINER;
     await http().get(path).expect(200);
   });
 
@@ -301,11 +306,12 @@ describe('clusters controller — the fence around the cluster key', () => {
   });
 
   /**
-   * The two autoscale reads now carry `clusters`. The gate is
-   * global `cluster:read`, which an `editor` holds — so watching the editor
-   * alone would have stayed green through the conversion and gone on claiming
-   * to guard something it no longer guards. The pair below watches the boundary
-   * the gate actually draws.
+   * The two autoscale reads now carry `clusters`. The gate is global
+   * `cluster:read`, which every rung of the ladder holds — so watching an
+   * ordinary role alone would stay green forever and go on claiming to guard
+   * something it no longer guards. The pair below watches the boundary the gate
+   * actually draws: a global grant on one side, an application-scoped one on
+   * the other.
    *
    * The dashboard calls both from `cluster-autoscale.service.ts` — a
    * hand-written HttpClient service, invisible to a search by generated method
@@ -320,7 +326,7 @@ describe('clusters controller — the fence around the cluster key', () => {
   it.each(AUTOSCALE_READS)(
     'answers %s to whoever holds global cluster:read',
     async (path) => {
-      currentUser = MANAGER;
+      currentUser = MAINTAINER;
       await http().get(path).expect(200);
     },
   );
@@ -335,12 +341,17 @@ describe('clusters controller — the fence around the cluster key', () => {
   );
 
   /**
-   * The half decision 18 did not expect. `editor` carries `app:*` and no
-   * `cluster:read` at all, so the section closes these two to the most common
-   * non-admin role on the instance — the one whose browser opens the home pulse.
+   * And the half decision 18 *did* expect, restored.
+   *
+   * It was false for as long as the rung above the viewer lacked `cluster:read`:
+   * the section closed these two to the most common non-admin role on the
+   * instance, the one whose browser opens the home pulse. The ladder now
+   * guarantees an `operator` holds everything a `viewer` holds, so the premise
+   * that reading was written against is true and this is the assertion that
+   * says so. It is the mirror of the one above it: same routes, opposite
+   * answer, and the difference is whether the grant is global.
    */
-  it.each(AUTOSCALE_READS)('refuses %s to an editor', async (path) => {
-    const res = await http().get(path).expect(403);
-    expect(res.body.message).toContain('clusters');
+  it.each(AUTOSCALE_READS)('answers %s to an operator', async (path) => {
+    await http().get(path).expect(200);
   });
 });

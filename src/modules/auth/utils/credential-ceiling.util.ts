@@ -84,21 +84,143 @@ export function credentialCeiling(
 export const CREDENTIAL_CEILING_CODE = 'CREDENTIAL_SCOPE_CEILING';
 
 /**
+ * Whether the ceiling this credential declares arrived from the identity
+ * provider's project roles rather than from a key's own scope list.
+ *
+ * The ceiling itself stays blind to the source, and must: a credential that
+ * declares a ceiling is worth that ceiling wherever it is presented (decision
+ * 74), and a rule that asked where the scopes came from would be two rules.
+ * This asks only so the *refusal* can be legible, which is a different job.
+ */
+export function ceilingCameFromIdpRoles(
+  credential: ScopedCredential | undefined,
+): boolean {
+  return Object.keys(credential?.roles ?? {}).some((k) =>
+    k.startsWith(MCP_SCOPE_PREFIX),
+  );
+}
+
+/**
  * The refusal body, written once because it is raised from two guards.
  *
  * Worded differently from the authorization refusal on purpose: "your
  * credential was never granted this" is fixed by re-issuing the key, while "you
  * are not allowed on this resource" is fixed by IAM. An agent told the wrong
  * one of those two retries forever.
+ *
+ * The second sentence exists because of a surprise that was measured rather
+ * than imagined (decision 112): an `mcp:*` project role granted to a *person*
+ * in the identity provider — by somebody meaning "this is for her agent" — caps
+ * that person's browser session too, and correctly so. The enforcement is
+ * right; what was missing was any way to find out why the dashboard had gone
+ * read-only. Naming the source turns a bewildering 403 into an instruction, and
+ * costs the boundary nothing: it changes no decision, only what the refusal
+ * says it decided.
  */
-export function ceilingRefusal(required: string): {
+export function ceilingRefusal(
+  required: string,
+  credential?: ScopedCredential,
+): {
   statusCode: number;
   code: string;
   message: string;
 } {
+  const fromIdp = ceilingCameFromIdpRoles(credential);
   return {
     statusCode: 403,
     code: CREDENTIAL_CEILING_CODE,
-    message: `This credential's scopes do not carry the permission this call needs: ${required}`,
+    message:
+      `This credential's scopes do not carry the permission this call needs: ${required}` +
+      (fromIdp
+        ? '. They came from `mcp:*` roles on this account in the identity ' +
+          'provider, and they cap every session it opens — a browser session ' +
+          'included. Agent scopes belong on a machine account, not on a person.'
+        : ''),
   };
+}
+
+/** How a human login carries the provider's project roles. */
+const PROJECT_ROLES_CLAIM = 'urn:zitadel:iam:org:project:roles';
+
+/** How a token asked for them by scope carries them: one claim per project. */
+const PROJECT_SCOPED_ROLES_CLAIM = /^urn:zitadel:iam:org:project:[^:]+:roles$/;
+
+/**
+ * The provider's project roles, from every claim they can arrive in.
+ *
+ * There are two, and reading only the first was a silent widening — the one
+ * failure mode a ceiling cannot afford. A browser login carries
+ * `urn:zitadel:iam:org:project:roles`, asserted by the project's own setting. A
+ * token obtained by `client_credentials` — which is what an agent identity
+ * presents — carries nothing at all unless it *asks* for
+ * `urn:zitadel:iam:org:projects:roles`, and when it does the provider answers
+ * under `urn:zitadel:iam:org:project:<projectId>:roles`, a different key.
+ *
+ * Measured against the real provider, not remembered: an agent identity minted
+ * for `mcp:app:read` presented a token carrying exactly that role — under the
+ * project-scoped name — and Flui, reading only the first claim, saw an empty
+ * `roles` and therefore **no ceiling at all**. The scopes the identity was
+ * created with would have been ignored, and it would have arrived with the full
+ * weight of whatever grants it was given rather than the narrow slice somebody
+ * chose. Everything downstream is unchanged: the union is still `roles`, still
+ * read by `mcpScopesOf` and `idpRoleBindings`, and a claim nobody sends leaves
+ * the merge empty exactly as before.
+ */
+export function projectRolesOf(
+  payload: Record<string, unknown> | undefined,
+): Record<string, Record<string, string>> {
+  const merged: Record<string, Record<string, string>> = {};
+  for (const [claim, value] of Object.entries(payload ?? {})) {
+    const isRoles =
+      claim === PROJECT_ROLES_CLAIM || PROJECT_SCOPED_ROLES_CLAIM.test(claim);
+    if (!isRoles || !value || typeof value !== 'object') continue;
+    Object.assign(merged, value as Record<string, Record<string, string>>);
+  }
+  return merged;
+}
+
+/**
+ * Does this credential still carry its principal's administrator reach?
+ *
+ * Every WebSocket gateway opened with `if (user.isAdmin) return true`, and that
+ * line was the whole of decision 119: an agent key minted by an administrator
+ * for `mcp:app:read` arrives on a socket carrying `isAdmin: true`, because a key
+ * is issued *as* its principal. On the HTTP path two guards catch that. On a
+ * socket nothing did — `credentialCeiling` had exactly two callers and both were
+ * HTTP guards — so a read-only key inherited its owner's entire weight on paths
+ * no guard watched.
+ *
+ * The rule is one sentence: **a credential that declares a ceiling is not the
+ * whole person, so it does not inherit the person's admin bypass.** It is a
+ * narrowing and only ever a narrowing — a session declares no ceiling, the CLI
+ * key is unscoped, and neither is touched.
+ *
+ * Measured before applying it, because a ceiling that switches off a working
+ * feature is the error decision 78 exists to remember: **no MCP tool and no
+ * in-product assistant uses a socket at all** — the tools were converted to
+ * call the API over HTTP — and every subscriber to these gateways is the
+ * dashboard, i.e. a browser session. So there is no legitimate agent path this
+ * takes away; there is only the escalation one.
+ */
+export function carriesAdminReach(
+  credential: (ScopedCredential & { isAdmin?: boolean }) | undefined,
+): boolean {
+  if (!credential?.isAdmin) return false;
+  return credentialCeiling(credential) === null;
+}
+
+/**
+ * True when a ceiling is declared and does not carry `permission`.
+ *
+ * Asked *before* the IAM check, like the two HTTP guards and the terminal do: a
+ * ceiling only ever takes away, so asking it first costs a query and answers
+ * with the credential's own scopes instead of leaking whether the resource
+ * exists.
+ */
+export function ceilingWithholds(
+  credential: ScopedCredential | undefined,
+  permission: string,
+): boolean {
+  const ceiling = credentialCeiling(credential);
+  return ceiling !== null && !ceiling.has(permission);
 }

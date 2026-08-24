@@ -27,7 +27,7 @@ import {
  * `applications/builds/:buildId` routes ask this same question in their
  * handlers, because the guard passes anything without an application in the
  * path. The other two controllers asked nothing at all: a sandbox guest was
- * refused at the fence, and everybody else — an `editor` scoped to their own
+ * refused at the fence, and everybody else — an `operator` scoped to their own
  * applications included — could read, start and delete builds that were not
  * theirs.
  */

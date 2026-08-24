@@ -22,7 +22,7 @@ import { CreateAppMigrationDto } from '../dto/create-app-migration.dto';
  *
  * The permissions on the routes below take nothing from anybody: the `backup`
  * section already admits only `full`, which is `cluster:manage` at global
- * scope, and both roles that hold it (`manager`, `owner`) hold
+ * scope, and both roles that hold it (`maintainer`, `owner`) hold
  * `migration:execute` too. They are here for the credential ceiling, which
  * reads `@RequirePermission` and `@AppAction` and nothing else —
  * without them a key scoped to "look at migrations" starts and aborts them

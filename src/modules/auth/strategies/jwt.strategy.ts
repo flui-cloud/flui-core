@@ -11,6 +11,7 @@ import { AuthenticatedUser } from '../interfaces/authenticated-user.interface';
 import { IdentityRole, UserEntity } from '../entities/user.entity';
 import { extractJwtFromFluiSessionCookie } from '../utils/cookie-extractor.util';
 import { OidcProfileSyncService } from '../services/oidc-profile-sync.service';
+import { projectRolesOf } from '../utils/credential-ceiling.util';
 
 const ROLE_PRECEDENCE: IdentityRole[] = [
   IdentityRole.ADMIN,
@@ -80,8 +81,9 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
   }
 
   async validate(payload: JwtPayload): Promise<AuthenticatedUser> {
-    const rawRoles = payload['urn:zitadel:iam:org:project:roles'];
-    const roles = rawRoles ?? {};
+    // Both claim shapes, because a machine identity's token uses the other one
+    // and reading only the human's would drop its ceiling on the floor.
+    const roles = projectRolesOf(payload);
     const claimedRole = this.pickHighestRole(roles);
 
     const user = await this.resolveLocalUser(

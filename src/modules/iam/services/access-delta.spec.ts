@@ -35,7 +35,7 @@ function binding(over: Partial<Row> = {}): Row {
     id: 'g1',
     principalType: 'user',
     principalRef: ALICE,
-    role: IAM_ROLE.EDITOR,
+    role: IAM_ROLE.OPERATOR,
     scopeType: 'global',
     scopeRef: null,
     selector: null,
@@ -126,7 +126,7 @@ describe('the delta on a revocation', () => {
   });
 
   it('closes the sections the role was opening', async () => {
-    const service = build([binding({ role: IAM_ROLE.MANAGER })]);
+    const service = build([binding({ role: IAM_ROLE.MAINTAINER })]);
     const delta = await service.previewRevocation('g1');
 
     expect(new Set(delta.sectionsClosed.map((s) => s.key))).toEqual(
@@ -220,7 +220,7 @@ describe('the delta on a revocation', () => {
    * of it back — which is true of neither half and false of the whole.
    */
   it('reads a role change as one change', async () => {
-    const service = build([binding({ role: IAM_ROLE.MANAGER })]);
+    const service = build([binding({ role: IAM_ROLE.MAINTAINER })]);
     const delta = await service.preview({
       principalType: 'user',
       principalRef: ALICE,

@@ -18,7 +18,6 @@ export const IAM_PERMISSION = {
    * calling them "destroy" would be a name that lies.
    */
   CLUSTER_DESTROY: 'cluster:destroy',
-  BILLING_READ: 'billing:read',
   IAM_ASSIGN_ROLE: 'iam:assign-role',
   /**
    * Read who can reach what — the grant graph, and what a change to it would
@@ -38,20 +37,25 @@ export const IAM_PERMISSION = {
    * confer or revoke the `owner` role itself, which is the only use it has
    * today (see `mayConferRole`).
    *
-   * Separate from `iam:assign-role` on purpose: that one is held by `manager`,
-   * and reusing it would silently turn "a manager assigns roles" into "a manager
+   * Separate from `iam:assign-role` on purpose: that one is held by `maintainer`,
+   * and reusing it would silently turn "a maintainer assigns roles" into "a maintainer
    * creates accounts, resets anyone's password and promotes themselves to the
    * top role".
    */
   IAM_MANAGE_USERS: 'iam:manage-users',
   /**
-   * The instance's own GitHub credentials — the App and the PAT that everyone
-   * who later connects a repository ends up borrowing.
+   * The instance's own credentials to the outside world — the GitHub App and
+   * PAT that everyone who later connects a repository ends up borrowing, and
+   * the model-provider connections every assistant on the installation speaks
+   * through.
    *
    * Not `platform:bootstrap`, because it is not an act of installation: the App
    * is re-made when it expires or changes owner. Not `cluster:manage`, because
-   * it touches no cluster. A repository *belonging to a person* is a different
-   * question and is deliberately not this permission.
+   * it touches no cluster — and because `mcp:backup:write` carries
+   * `cluster:manage`, which would have let a backup agent unplug the model. A
+   * credential *belonging to a person* is a different question and is
+   * deliberately not this permission: a personal GHCR token and a repository
+   * somebody connected are theirs, decided by ownership.
    */
   INTEGRATION_MANAGE: 'integration:manage',
   /**

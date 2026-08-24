@@ -43,14 +43,14 @@ import { ForbiddenException } from '@nestjs/common';
  *
  * A sandbox guest was refused by the route fence, which is a different list for
  * a different reason and covers nobody else. This is the caller the fence never
- * sees: an `editor` scoped to their own applications, holding no infrastructure
+ * sees: an `operator` scoped to their own applications, holding no infrastructure
  * area — the principal the live proof could not be built for, because there is
  * no product verb that makes one.
  */
 
-const editor: AuthenticatedUser = {
-  userId: 'editor-1',
-  email: 'editor@example.test',
+const operator: AuthenticatedUser = {
+  userId: 'operator-1',
+  email: 'operator@example.test',
   roles: {},
   role: IdentityRole.USER,
   isAdmin: false,
@@ -112,7 +112,7 @@ describe('the build routes nobody was gating', () => {
     app = moduleRef.createNestApplication();
     app.use(
       (req: { user: AuthenticatedUser }, _res: unknown, next: () => void) => {
-        req.user = editor;
+        req.user = operator;
         next();
       },
     );

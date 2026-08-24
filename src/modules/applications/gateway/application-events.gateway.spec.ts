@@ -224,3 +224,72 @@ describe('subscribing to an application room', () => {
     });
   });
 });
+
+/**
+ * The administrator's agent key, on the path no HTTP guard watches.
+ *
+ * Decision 119. A key is issued *as* its principal, so a key an administrator
+ * minted for `mcp:app:read` arrives here with `isAdmin: true` — and the line
+ * that used to stand here, `if (user.isAdmin) return true`, handed it that
+ * person's entire weight. `credentialCeiling` had two callers and both were
+ * HTTP guards, so nothing on a socket ever asked.
+ *
+ * The pair below is the whole point: the same administrator, once as a browser
+ * session and once as a scoped key, must not get the same answer.
+ */
+describe('an administrator’s agent key does not inherit the bypass', () => {
+  const gatewayFor = (mayRead: boolean) =>
+    new ApplicationEventsGateway(
+      {} as never,
+      { findOne: jest.fn().mockResolvedValue({ id: 'a1' }) } as never,
+      { can: jest.fn().mockResolvedValue(mayRead) } as never,
+      { findOne: jest.fn() } as never,
+      { findOne: jest.fn() } as never,
+      { resolveSectionAccess: jest.fn().mockResolvedValue([]) } as never,
+    );
+
+  const keyed = (scopes: string[]): AuthenticatedUser => ({
+    ...person('admin', true),
+    scopes,
+  });
+
+  it('admits the administrator when no ceiling is declared', async () => {
+    const client = socket(person('admin', true));
+    await gatewayFor(false).handleSubscribe({ appId: 'a1' }, client as never);
+    expect(client.joined).toEqual(['application:a1']);
+  });
+
+  it('refuses a read-only key on a write action it does not carry', async () => {
+    // `mcp:catalog:read` carries `app:read` and nothing else, so the read is
+    // still allowed — what it must not do is arrive as an administrator.
+    const client = socket(keyed(['mcp:catalog:read']));
+    await gatewayFor(false).handleSubscribe({ appId: 'a1' }, client as never);
+    expect(client.joined).toEqual([]);
+  });
+
+  it('still joins a scoped key whose scopes carry the read and whose IAM says yes', async () => {
+    const client = socket(keyed(['mcp:app:read']));
+    await gatewayFor(true).handleSubscribe({ appId: 'a1' }, client as never);
+    expect(client.joined).toEqual(['application:a1']);
+  });
+
+  it('refuses a key whose scopes do not carry app:read at all, before reading the row', async () => {
+    const applications = { findOne: jest.fn() };
+    const gateway = new ApplicationEventsGateway(
+      {} as never,
+      applications as never,
+      { can: jest.fn().mockResolvedValue(true) } as never,
+      { findOne: jest.fn() } as never,
+      { findOne: jest.fn() } as never,
+      { resolveSectionAccess: jest.fn().mockResolvedValue([]) } as never,
+    );
+    const client = socket(keyed(['mcp:mail:read']));
+
+    await gateway.handleSubscribe({ appId: 'a1' }, client as never);
+
+    expect(client.joined).toEqual([]);
+    // Not read at all: the refusal comes from the credential, so it cannot
+    // reveal whether the application exists.
+    expect(applications.findOne).not.toHaveBeenCalled();
+  });
+});

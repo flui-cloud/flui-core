@@ -20,6 +20,7 @@ import {
   SectionAccess,
   SectionDef,
 } from '../constants/iam-sections';
+import { idpRoleBindings } from '../utils/idp-role-source';
 
 /**
  * SQL-backed PolicyEngine.
@@ -31,9 +32,18 @@ import {
  * filters N rows with no extra IO.
  *
  * DENY-BY-DEFAULT: a non-admin has NO implicit access. Everything comes from
- * explicit bindings (own / group / global). The IdP coarse role no longer acts
- * as a floor — a user with no grants sees nothing, so an admin always knows
- * exactly what access they handed out. Admin/root → allow-all.
+ * explicit bindings (own / group / global) — a user with no grants sees
+ * nothing, so an admin always knows exactly what access they handed out.
+ * Admin/root → allow-all.
+ *
+ * Explicit bindings now arrive from two places and the invariant survives both.
+ * The table holds the ones that name resources; the identity provider holds the
+ * coarse rung, as a project role somebody had to grant there on purpose. What
+ * deny-by-default removed was the *floor* — `pickHighestRole` answers `user`
+ * for a claim that names nothing, and mapping that to a role handed every
+ * authenticated person a rung they were never given. That mapping is still
+ * gone: `idpRoleBindings` reads only the four assignable rungs by name and
+ * returns nothing for anything else, so silence still means no access.
  */
 @Injectable()
 export class PolicyEngineService implements PolicyEngine {
@@ -59,7 +69,18 @@ export class PolicyEngineService implements PolicyEngine {
    */
   async bindingsFor(principal: IamPrincipal): Promise<IamBinding[]> {
     const groupNames = await this.resolveGroups(principal.email);
-    return this.findBindingsFor(principal, groupNames);
+    const stored = await this.findBindingsFor(principal, groupNames);
+    // The identity provider is a second *source* of binding, not a second
+    // authority: what arrives from it is folded through the same `accessFrom`
+    // as everything else, so nothing downstream — including the delta preview,
+    // which asks this method rather than `resolveAccess` — has to learn that a
+    // grant can come from somewhere other than the table.
+    //
+    // There is no precedence rule between the two and there cannot be one: an
+    // IdP claim can only ever say "this identity is <rung>", never "on these
+    // resources", so the sets are disjoint by construction and the fold is a
+    // union. See `idp-role-source.ts`.
+    return [...stored, ...idpRoleBindings(principal.roles)];
   }
 
   /**

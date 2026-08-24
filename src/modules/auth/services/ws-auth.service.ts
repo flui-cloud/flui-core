@@ -16,6 +16,7 @@ import { AuthenticatedUser } from '../interfaces/authenticated-user.interface';
 import { JwtPayload } from '../interfaces/jwt-payload.interface';
 import { IdentityRole, UserEntity } from '../entities/user.entity';
 import { FLUI_SESSION_COOKIE } from '../utils/cookie-extractor.util';
+import { projectRolesOf } from '../utils/credential-ceiling.util';
 
 const ROLE_PRECEDENCE: IdentityRole[] = [
   IdentityRole.ADMIN,
@@ -173,8 +174,14 @@ export class WsAuthService implements OnModuleInit {
       throw new UnauthorizedException('Invalid OIDC JWT');
     }
 
-    const rawRoles = payload['urn:zitadel:iam:org:project:roles'];
-    const roles = rawRoles ?? {};
+    // Both claim shapes, the same way `JwtStrategy` reads them (decision 115).
+    // This door used to read only the human one, and a machine identity — which
+    // is the thing most likely to present a token to a socket — carries its
+    // roles under `urn:zitadel:iam:org:project:<projectId>:roles`. Reading one
+    // of the two left `roles` empty, which is not a narrow answer downstream:
+    // it is *no* answer, and the ceiling derived from it is `null`, meaning no
+    // ceiling at all.
+    const roles = projectRolesOf(payload);
     const claimedRole = this.pickHighestRole(roles);
 
     const user = await this.userRepo.findOne({

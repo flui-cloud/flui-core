@@ -344,10 +344,10 @@ describe('resource fence (direct API calls)', () => {
   });
 
   describe('two guests, each scoped to their own project', () => {
-    const aGrant = grant('guest-a@try.flui.cloud', 'editor', {
+    const aGrant = grant('guest-a@try.flui.cloud', 'operator', {
       selector: { project: 'tenant-a' },
     });
-    const bGrant = grant('guest-b@try.flui.cloud', 'editor', {
+    const bGrant = grant('guest-b@try.flui.cloud', 'operator', {
       selector: { project: 'tenant-b' },
     });
 
@@ -378,12 +378,12 @@ describe('resource fence (direct API calls)', () => {
       ]);
     });
 
-    // app:delete is granted to `manager` but required by nothing: the guard maps
+    // app:delete is granted to `maintainer` but required by nothing: the guard maps
     // every non-GET verb to app:write, and no route declares @AppAction. The real
     // DELETE /applications/:id is admin-only, which is what actually stops an
-    // editor there — not the permission catalog. A sandbox role cannot be fenced
+    // operator there — not the permission catalog. A sandbox role cannot be fenced
     // by withholding app:delete until some route asks for it.
-    it('lets an editor delete through the verb-derived default alone', async () => {
+    it('lets an operator delete through the verb-derived default alone', async () => {
       as('a', [aGrant]);
       await http().delete('/applications/app-a').expect(200);
     });
@@ -436,7 +436,7 @@ describe('resource fence (direct API calls)', () => {
   });
 
   describe('a cluster-wide grant', () => {
-    const clusterGrant = grant('guest-b@try.flui.cloud', 'editor', {
+    const clusterGrant = grant('guest-b@try.flui.cloud', 'operator', {
       scopeType: 'cluster',
       scopeRef: CLUSTER,
     });

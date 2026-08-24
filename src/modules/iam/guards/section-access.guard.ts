@@ -12,7 +12,7 @@ import {
   PolicyEngine,
 } from '../interfaces/policy-engine.interface';
 import { AuthenticatedUser } from '../../auth/interfaces/authenticated-user.interface';
-import { IamPrincipal } from '../interfaces/iam.types';
+import { IamPrincipal, principalFromUser } from '../interfaces/iam.types';
 import { SANDBOX_GUEST_REQUEST } from '../../sandbox/guards/sandbox-fence.guard';
 import { isSandboxStandInRequest } from '../../sandbox/stand-in/sandbox-stand-in';
 import { isSafeVerb } from '../constants/iam-sections';
@@ -68,12 +68,12 @@ export class SectionAccessGuard implements CanActivate {
     if (!user) throw new ForbiddenException('Unauthenticated');
     if (user.isAdmin) return true;
 
+    // `isAdmin: false` is kept explicit even though the line above already
+    // short-circuits administrators: the guard's answer must not change if that
+    // early return ever moves.
     const principal: IamPrincipal = {
-      userId: user.userId,
-      email: user.email,
-      role: user.role,
+      ...principalFromUser(user),
       isAdmin: false,
-      scopes: user.scopes,
     };
     const sections = await this.policy.resolveSectionAccess(principal);
     const granted = sections.find((s) => s.key === required);

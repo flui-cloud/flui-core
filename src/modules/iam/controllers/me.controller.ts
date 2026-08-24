@@ -5,7 +5,7 @@ import {
   PolicyEngine,
 } from '../interfaces/policy-engine.interface';
 import { AuthenticatedUser } from '../../auth/interfaces/authenticated-user.interface';
-import { IamPrincipal } from '../interfaces/iam.types';
+import { IamPrincipal, principalFromUser } from '../interfaces/iam.types';
 
 @Controller('me')
 export class MeController {
@@ -17,13 +17,7 @@ export class MeController {
     @Req() req: Request,
   ): Promise<{ permissions: string[]; isAdmin: boolean }> {
     const user = req.user as AuthenticatedUser;
-    const principal: IamPrincipal = {
-      userId: user.userId,
-      email: user.email,
-      role: user.role,
-      isAdmin: !!user.isAdmin,
-      scopes: user.scopes,
-    };
+    const principal: IamPrincipal = principalFromUser(user);
     return {
       permissions: await this.policy.getEffectivePermissions(principal),
       isAdmin: !!user.isAdmin,
@@ -45,13 +39,7 @@ export class MeController {
     isAdmin: boolean;
   }> {
     const user = req.user as AuthenticatedUser;
-    const principal: IamPrincipal = {
-      userId: user.userId,
-      email: user.email,
-      role: user.role,
-      isAdmin: !!user.isAdmin,
-      scopes: user.scopes,
-    };
+    const principal: IamPrincipal = principalFromUser(user);
     const access = await this.policy.resolveSectionAccess(principal);
     return {
       sections: access.map((s) => s.key),

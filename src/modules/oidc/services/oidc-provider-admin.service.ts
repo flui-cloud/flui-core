@@ -79,6 +79,19 @@ const BRANDING_ASSET_PATHS: Record<BrandingAssetKind, string> = {
   'icon-dark': '/assets/v1/org/policy/label/icon/dark',
 };
 
+/** A non-human identity on the provider — one agent, one login of its own. */
+export interface OidcMachineUser {
+  id: string;
+  userName: string;
+  name?: string;
+}
+
+/** The credential a machine user authenticates with, returned exactly once. */
+export interface OidcMachineSecret {
+  clientId: string;
+  clientSecret: string;
+}
+
 export interface CreateHumanUserParams {
   userName: string;
   email: string;
@@ -165,6 +178,34 @@ export class OidcProviderAdminClient {
     return { id: resp.data.id, name };
   }
 
+  /**
+   * Every role key on the project, in one call.
+   *
+   * `findRole` already fetched the whole list and filtered it in memory, so
+   * asking it once per role meant N searches to answer one question. The
+   * reconcile loop needs the set, not a membership test at a time.
+   *
+   * Throws where `findRole` swallowed: a search that fails is "I do not know
+   * which roles exist", and answering "none" to that would make the caller
+   * create every role again on every boot.
+   */
+  async listRoleKeys(
+    pat: string,
+    hostHeader: string,
+    projectId: string,
+  ): Promise<Set<string>> {
+    const resp = await firstValueFrom(
+      this.httpService.post(
+        `${resolveProviderBaseUrl()}/management/v1/projects/${projectId}/roles/_search`,
+        {},
+        { headers: this.headers(pat, hostHeader) },
+      ),
+    );
+    return new Set<string>(
+      ((resp.data?.result ?? []) as Array<{ key: string }>).map((r) => r.key),
+    );
+  }
+
   async findRole(
     pat: string,
     hostHeader: string,
@@ -172,17 +213,8 @@ export class OidcProviderAdminClient {
     roleKey: string,
   ): Promise<OidcRole | null> {
     try {
-      const resp = await firstValueFrom(
-        this.httpService.post(
-          `${resolveProviderBaseUrl()}/management/v1/projects/${projectId}/roles/_search`,
-          {},
-          { headers: this.headers(pat, hostHeader) },
-        ),
-      );
-      const match = (resp.data?.result ?? []).find(
-        (r: { key: string }) => r.key === roleKey,
-      );
-      return match ? { key: match.key } : null;
+      const keys = await this.listRoleKeys(pat, hostHeader, projectId);
+      return keys.has(roleKey) ? { key: roleKey } : null;
     } catch {
       return null;
     }
@@ -590,6 +622,99 @@ export class OidcProviderAdminClient {
       if (status === 404) return null;
       throw err;
     }
+  }
+
+  /**
+   * A machine (service) user — the identity an agent gets instead of borrowing
+   * a person's.
+   *
+   * `accessTokenType` is pinned to JWT and is not a parameter, because with the
+   * provider's default — an opaque bearer token — the reserved claim
+   * `urn:zitadel:iam:org:project:roles` is **not asserted on the access token
+   * at all**. Every `mcp:*` role granted to this identity would then be
+   * invisible to `mcpScopesOf`, and the agent would arrive carrying no ceiling
+   * rather than the narrow one it was given: a silent widening, which is the
+   * one failure mode a ceiling must not have. Making it an option would make
+   * that failure reachable by getting one argument wrong.
+   */
+  async createMachineUser(
+    pat: string,
+    hostHeader: string,
+    params: { userName: string; name: string; description?: string },
+  ): Promise<OidcMachineUser> {
+    const resp = await firstValueFrom(
+      this.httpService.post(
+        `${resolveProviderBaseUrl()}/management/v1/users/machine`,
+        {
+          userName: params.userName,
+          name: params.name,
+          description: params.description,
+          accessTokenType: 'ACCESS_TOKEN_TYPE_JWT',
+        },
+        { headers: this.headers(pat, hostHeader) },
+      ),
+    );
+    return {
+      id: resp.data.userId,
+      userName: params.userName,
+      name: params.name,
+    };
+  }
+
+  /**
+   * Mints the client-credentials secret for a machine user.
+   *
+   * PUT, not POST, and it replaces whatever was there: calling it twice is how
+   * a leaked agent credential is rotated. The secret comes back once and the
+   * provider never shows it again.
+   */
+  async generateMachineSecret(
+    pat: string,
+    hostHeader: string,
+    userId: string,
+  ): Promise<OidcMachineSecret> {
+    const resp = await firstValueFrom(
+      this.httpService.put(
+        `${resolveProviderBaseUrl()}/management/v1/users/${userId}/secret`,
+        {},
+        { headers: this.headers(pat, hostHeader) },
+      ),
+    );
+    return {
+      clientId: resp.data.clientId,
+      clientSecret: resp.data.clientSecret,
+    };
+  }
+
+  /**
+   * The machine users on the org, and only those.
+   *
+   * The type filter is asserted on the way out rather than trusted: the
+   * provider's gateway discards query fields it does not recognise, so a
+   * misspelled filter comes back as an unfiltered list of *every* user — human
+   * accounts included — with no error to notice. A list of people is not a
+   * harmless wrong answer to "which agents exist".
+   */
+  async listMachineUsers(
+    pat: string,
+    hostHeader: string,
+  ): Promise<OidcMachineUser[]> {
+    const resp = await firstValueFrom(
+      this.httpService.post(
+        `${resolveProviderBaseUrl()}/management/v1/users/_search`,
+        { queries: [{ typeQuery: { type: 'TYPE_MACHINE' } }] },
+        { headers: this.headers(pat, hostHeader) },
+      ),
+    );
+    const rows = (resp.data?.result ?? []) as Array<{
+      id: string;
+      userName: string;
+      machine?: { name?: string };
+      human?: unknown;
+    }>;
+    return rows
+      .filter((r) => !!r.machine && !r.human)
+      .map((r) => ({ id: r.id, userName: r.userName, name: r.machine?.name }));
   }
 
   async deleteUser(

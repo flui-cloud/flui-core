@@ -7,7 +7,11 @@ import {
   POLICY_ENGINE,
   PolicyEngine,
 } from '../../iam/interfaces/policy-engine.interface';
-import { IamPrincipal } from '../../iam/interfaces/iam.types';
+import {
+  IamPrincipal,
+  principalFromUser,
+} from '../../iam/interfaces/iam.types';
+import { credentialCeiling } from '../../auth/utils/credential-ceiling.util';
 import { ClusterNodeEntity } from '../../infrastructure/clusters/entities/cluster-node.entity';
 import { ClusterEntity } from '../../infrastructure/clusters/entities/cluster.entity';
 import { ServerEntity } from '../../infrastructure/servers/entities/server.entity';
@@ -46,6 +50,11 @@ export interface TerminalTarget {
  *    name a machine you may reach, hand over any address you like, and the
  *    certificate is signed for that. The same goes for `clusterId`, which
  *    selects the bootstrap private key to unseal.
+ *
+ * 3. **A capped credential stays capped here too.** The ceiling is enforced by
+ *    two HTTP guards and a socket meets neither, so an agent key scoped to
+ *    `mcp:app:read` used to arrive with its owner's full weight on the one path
+ *    that ends in a root shell.
  *
  * A refusal is worded as an absence, like the two WebSocket gateways repaired
  * before this one: whose a machine is must not be learnable by asking.
@@ -113,13 +122,18 @@ export class TerminalTargetResolver {
     user: AuthenticatedUser,
     resource: { clusterId?: string; clusterName?: string; provider?: string },
   ): Promise<boolean> {
-    const principal: IamPrincipal = {
-      userId: user.userId,
-      email: user.email,
-      role: user.role,
-      isAdmin: !!user.isAdmin,
-      scopes: user.scopes,
-    };
+    // The ceiling a credential declares holds wherever it is presented
+    // (decision 74) — but the two places that enforce it, `PermissionsGuard`
+    // and `AppAccessGuard`, are HTTP guards and neither is on a socket. The
+    // policy engine cannot stand in for them: it never looks at `scopes`, and
+    // it short-circuits on `isAdmin`. So an agent key minted for `mcp:app:read`
+    // by an administrator arrives here carrying that person's whole weight, on
+    // the one path that ends in a root shell. Asked before the grant, because a
+    // ceiling only ever takes away.
+    const ceiling = credentialCeiling(user);
+    if (ceiling && !ceiling.has(IAM_PERMISSION.CLUSTER_MANAGE)) return false;
+
+    const principal: IamPrincipal = principalFromUser(user);
     return this.policy.check(
       principal,
       IAM_PERMISSION.CLUSTER_MANAGE,

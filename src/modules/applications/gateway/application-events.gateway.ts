@@ -38,6 +38,10 @@ import {
   ReleaseStatusChangedDto,
 } from '../dto/application-events.dto';
 import { WS_CORS } from '../../../config/cors-origin.config';
+import {
+  carriesAdminReach,
+  ceilingWithholds,
+} from '../../auth/utils/credential-ceiling.util';
 
 /**
  * WebSocket Gateway for real-time application events.
@@ -127,7 +131,12 @@ export class ApplicationEventsGateway implements OnGatewayInit {
   ): Promise<boolean> {
     const user = client.data.user as AuthenticatedUser | undefined;
     if (!appId || !user) return false;
-    if (user.isAdmin) return true;
+    // Decision 119: a key that declares a ceiling is not the whole person, so
+    // it does not inherit the person's admin bypass. Asked before the row is
+    // read, so a narrow key learns about its own scopes and not about which
+    // applications exist.
+    if (ceilingWithholds(user, IAM_PERMISSION.APP_READ)) return false;
+    if (carriesAdminReach(user)) return true;
     const app = await this.applications.findOne({ where: { id: appId } });
     // An application nobody has and one somebody else has get the same answer.
     if (!app) return false;

@@ -27,6 +27,7 @@ import {
   PolicyEngine,
 } from '../../../iam/interfaces/policy-engine.interface';
 import { mayReadOperation } from '../helpers/operation-ownership.helper';
+import { carriesAdminReach } from '../../../auth/utils/credential-ceiling.util';
 
 @WebSocketGateway({
   namespace: '/infrastructure',
@@ -155,7 +156,11 @@ export class InfrastructureOperationsGateway
     user: AuthenticatedUser | undefined,
   ): Promise<boolean> {
     if (!user || !resourceId) return false;
-    if (user.isAdmin) return true;
+    // Decision 119: a ceiling-bearing key does not inherit the admin bypass.
+    // It still reaches the operations its own principal started, because the
+    // query below keys on `user.userId` and a key is issued as its principal —
+    // so an agent following the deployment it asked for is unaffected.
+    if (carriesAdminReach(user)) return true;
     // One query: do you own an operation on this resource? If you do, the
     // shared rule says yes on the first branch. If you do not — or nothing has
     // happened to this resource yet — it falls through to the operator's

@@ -50,7 +50,7 @@ export class UserManagementController {
   constructor(private readonly users: UserManagementService) {}
 
   // Not `iam:assign-role`, which the three reads and PATCH :id/role next door
-  // run on and which a `manager` holds: creating and deleting platform accounts
+  // run on and which a `maintainer` holds: creating and deleting platform accounts
   // and recomposing anyone's password is a different sentence from assigning a
   // role, and reusing the permission would have said them both at once.
   @Post()
@@ -102,8 +102,8 @@ export class UserManagementController {
     summary: 'Change role for an identity user (requires iam:assign-role)',
     description:
       'Confers `user` or `readonly` only. Platform admin is not conferrable here: ' +
-      '`iam:assign-role` is held by the `manager` role, so accepting `admin` would ' +
-      'let a manager promote anyone — itself included. Create an admin account with ' +
+      '`iam:assign-role` is held by the `maintainer` role, so accepting `admin` would ' +
+      'let a maintainer promote anyone — itself included. Create an admin account with ' +
       'POST /auth/users instead, which is admin-only.',
   })
   async setRole(
