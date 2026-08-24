@@ -28,6 +28,7 @@ import { AgentRequestDto } from '../dto/agent-request.dto';
 import { AssistantRecommendationsDto } from '../dto/assistant-recommendations.dto';
 import { AgentStreamEvent } from '../interfaces/agent-events';
 import { credentialFromRequest } from '../../mcp/services/mcp-api.client';
+import { actorFromRequest } from '../../auth/utils/actor.util';
 
 interface AuthenticatedRequest extends ExpressRequest {
   user: AuthenticatedUser;
@@ -95,7 +96,13 @@ export class AssistantController {
     @Request() req: AuthenticatedRequest,
     @Body() dto: AgentRequestDto,
   ) {
-    return this.agent.run(req.user, dto, undefined, credentialFromRequest(req));
+    return this.agent.run(
+      req.user,
+      dto,
+      undefined,
+      credentialFromRequest(req),
+      actorFromRequest(req),
+    );
   }
 
   @Post('agent/stream')
@@ -125,6 +132,7 @@ export class AssistantController {
         dto,
         send,
         credentialFromRequest(req),
+        actorFromRequest(req),
       );
       send({ type: 'done', result });
     } catch (error) {

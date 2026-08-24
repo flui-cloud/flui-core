@@ -136,7 +136,7 @@ export const OBSERVABILITY_TOOLS: ToolDef[] = [
       // the branch that matters for everyone who is not an administrator. The
       // cluster-wide search below reads every tenant's namespace at once, so it
       // sits behind the boolean; converting this tool to HTTP inherited that
-      // gate and, with it, took the logs away from the editor — and from the
+      // gate and, with it, took the logs away from the operator — and from the
       // sandbox guest — who may operate an application but not search a
       // cluster. Here the namespace and the container come off the application
       // row instead of from the caller, so `AppAccessGuard` on the route can

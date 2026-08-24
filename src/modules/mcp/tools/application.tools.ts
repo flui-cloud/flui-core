@@ -76,7 +76,7 @@ export const APPLICATION_TOOLS: ToolDef[] = [
       applicationId: z.string().optional(),
     },
     // Two routes, and which one is used is not a detail: `GET
-    // /applications/:id/operations` sits behind `AppAccessGuard`, so an editor
+    // /applications/:id/operations` sits behind `AppAccessGuard`, so an operator
     // reads the operations of an application that is theirs; `GET
     // /infrastructure/operations/:id` sits behind the infrastructure section
     // and asks whose the operation is, which serves an administrator, an

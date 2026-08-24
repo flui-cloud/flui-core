@@ -49,7 +49,9 @@ export class KvAssistService {
   ): Promise<KvAssistResult> {
     const summary = await this.kv.summary(input);
 
-    const { endpoint } = await this.inference.resolveEndpoint(selection);
+    const { endpoint } = await this.inference.resolveEndpoint(selection, {
+      userId: input.fluiUserId,
+    });
     const model = await this.inference.resolveModel(selection, endpoint);
 
     const system = [

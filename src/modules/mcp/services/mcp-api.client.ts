@@ -6,6 +6,10 @@ import {
   FLUI_SESSION_COOKIE,
   extractJwtFromFluiSessionCookie,
 } from '../../auth/utils/cookie-extractor.util';
+import {
+  ProposalRefusal,
+  readProposalRefusal,
+} from '../../action-cycle/action-cycle.core';
 
 /**
  * The credential a tool call travels on — **the caller's own, forwarded verbatim**.
@@ -67,14 +71,31 @@ export class McpApiError extends Error {
     readonly path: string,
     readonly code?: string,
     readonly transport?: string,
+    /**
+     * Set only when the refusal was the action cycle asking a person first.
+     *
+     * It is not a failure and must not be rendered as one: the tool layer turns
+     * it into `input_required` with a link to the request, and the agent learns
+     * the answer by retrying the identical call. Kept as a narrow, named shape
+     * rather than a copy of the response body — a general bag would sooner or
+     * later carry something out of a guard that had no business leaving it.
+     */
+    readonly proposal?: ProposalRefusal,
   ) {
     super(detail);
     this.name = 'McpApiError';
   }
 
-  /** True when the refusal came from a Flui guard rather than from a scope. */
+  /**
+   * True when the refusal came from a Flui guard rather than from a scope.
+   *
+   * A pending proposal is deliberately not one, even though it arrives as a
+   * 403: nothing was denied, somebody was asked. Counting it as a denial would
+   * write "the guard refused this agent" into the register for every call that
+   * is merely waiting, which is the row a revoke decision gets made on.
+   */
   get isAccessRefusal(): boolean {
-    return this.status === 403;
+    return this.status === 403 && !this.proposal;
   }
 
   get agentMessage(): string {
@@ -82,6 +103,15 @@ export class McpApiError extends Error {
     const tag = this.code ? ` [code: ${this.code}]` : '';
     if (this.transport) {
       return `The Flui API did not answer this tool call (${this.transport}) on ${where}. A call that never arrived changed nothing, but a mutation that timed out MAY still have been applied: read the current state before repeating it, and never repeat it twice.`;
+    }
+    // A wait, told as a wait. Every surface reaches this string — the assistant
+    // loop has no multi-round-trip channel of its own — and an agent that reads
+    // "refused" abandons the task a person is about to allow.
+    if (this.proposal) {
+      const at = this.proposal.decideUrl
+        ? ` at ${this.proposal.decideUrl}`
+        : '';
+      return `Waiting on a person (HTTP 403) on ${where}: ${this.proposal.sentence}. NOTHING was changed. This is not a permission problem and not a bad argument — the person you act for has been asked to allow it${at}. Tell them what you asked for, then retry the IDENTICAL call once they have answered; varying the arguments raises a second request instead of getting past this one.`;
     }
     switch (true) {
       case this.status === 401:
@@ -232,6 +262,8 @@ export class McpApiClient {
         method.toUpperCase(),
         path,
         codeFrom(res.data),
+        undefined,
+        readProposalRefusal(res.data),
       );
     };
 

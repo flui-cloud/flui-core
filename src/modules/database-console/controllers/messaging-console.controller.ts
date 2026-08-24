@@ -11,6 +11,8 @@ import {
 } from '@nestjs/common';
 import { AuthenticatedUser } from '../../auth/interfaces/authenticated-user.interface';
 import { AppOwnershipGuard } from '../guards/app-ownership.guard';
+import { RequirePermission } from '../../iam/decorators/require-permission.decorator';
+import { IAM_PERMISSION } from '../../iam/constants/iam-permissions';
 import { MessagingQueryService } from '../services/messaging-query.service';
 import {
   JsStream,
@@ -120,6 +122,7 @@ export class MessagingConsoleController {
 
   /** Delete a stream and its stored messages (destructive write). */
   @Delete('streams/:name')
+  @RequirePermission(IAM_PERMISSION.APP_WRITE)
   deleteStream(
     @Param('id') id: string,
     @Param('name') name: string,

@@ -84,7 +84,9 @@ export class DocumentAssistService {
     selection: InferenceSelection = {},
     scope: DocAssistScope = {},
   ): Promise<DocAssistResult> {
-    const { endpoint } = await this.inference.resolveEndpoint(selection);
+    const { endpoint } = await this.inference.resolveEndpoint(selection, {
+      userId: input.fluiUserId,
+    });
     const model = await this.inference.resolveModel(selection, endpoint);
 
     const system = [

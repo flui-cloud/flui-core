@@ -9,11 +9,21 @@ import type {
 import {
   InputRequiredResult,
   McpRequestRound,
+  inputRequired,
   isInputRequired,
   readRound,
 } from '../protocol/mrtr';
 import { describeError } from '../../shared/utils/error.util';
 import { McpApiCaller, McpApiError } from '../services/mcp-api.client';
+import { Actor } from '../../auth/utils/actor-context';
+import {
+  redactToolArgs,
+  startedOperationId,
+} from '../audit/tool-arg-redaction';
+import {
+  PROPOSAL_DECISION_PATH,
+  ProposalRefusal,
+} from '../../action-cycle/action-cycle.core';
 
 /** A tool result in MCP's content shape. */
 export interface ToolResult {
@@ -35,6 +45,16 @@ export interface McpToolContext {
   scopes: Set<string>;
   allowDestructive: boolean;
   audit: McpAuditRepository;
+  /**
+   * Whether a person, a plain key or an agent is driving — and which key row.
+   *
+   * Derived once at the edge of the request (`actorFromRequest`) and carried,
+   * not recomputed: the key id is deliberately absent from `AuthenticatedUser`
+   * (see CURRENT_API_KEY_ID), so a tool that tried to work it out from the
+   * principal would get it wrong. Optional because the assistant surface can be
+   * reached from a test harness with no request behind it.
+   */
+  actor?: Actor;
   /**
    * The Flui API, called over HTTP as the caller's own principal — and the only
    * way a tool reaches anything at all.
@@ -244,7 +264,7 @@ export function isTerminalStatus(status: string): boolean {
  * status that arrived with the creating response is the same status that second
  * read would have found microseconds later. Over HTTP that read would be a
  * second round trip, on a route (`/infrastructure/operations/:id`) that an
- * editor is refused by section — so a successful install would come back to the
+ * operator is refused by section — so a successful install would come back to the
  * agent as a failed tool call. Reporting what the API just said is both
  * cheaper and truer.
  *
@@ -350,10 +370,27 @@ export function runTool(
         ? (payload) => ctx.requestStateCodec.mint(payload, sdkCtx)
         : undefined,
   };
-  return runGated(scoped, def.name, def.scope, async () => {
-    const data = await def.run(args as never, scoped);
-    return def.forModel && !isInputRequired(data) ? def.forModel(data) : data;
-  });
+  return runGated(
+    scoped,
+    def.name,
+    def.scope,
+    async () => {
+      const data = await def.run(args as never, scoped);
+      return def.forModel && !isInputRequired(data) ? def.forModel(data) : data;
+    },
+    { args, shape: def.inputSchema },
+  );
+}
+
+/**
+ * What the audit is told about the call, beside its name and its outcome.
+ *
+ * Optional, and the redactor is fail-closed on its absence: a caller that
+ * passes nothing gets a row with no arguments rather than a row with raw ones.
+ */
+export interface AuditedCall {
+  args?: unknown;
+  shape?: ZodRawShape;
 }
 
 /**
@@ -365,10 +402,18 @@ export async function runGated(
   tool: string,
   scope: McpScope,
   fn: () => Promise<unknown>,
+  call?: AuditedCall,
 ): Promise<ToolResult | InputRequiredResult> {
+  // Redacted once, at the top, and reused by every branch below — a refusal is
+  // as worth recording as a success, and more so: "what did it try to do before
+  // it was stopped" is the question a revoke decision is made on.
+  const args = redactToolArgs(call?.shape, call?.args);
+
   if (!ctx.scopes.has(scope)) {
     await ctx.audit.record({
       userId: ctx.user.userId,
+      actor: ctx.actor,
+      args,
       tool,
       scope,
       allowed: false,
@@ -387,6 +432,8 @@ export async function runGated(
   if (SCOPE_TIER[scope] === 'destructive' && !ctx.allowDestructive) {
     await ctx.audit.record({
       userId: ctx.user.userId,
+      actor: ctx.actor,
+      args,
       tool,
       scope,
       allowed: false,
@@ -401,12 +448,17 @@ export async function runGated(
     const data = await fn();
     await ctx.audit.record({
       userId: ctx.user.userId,
+      actor: ctx.actor,
+      args,
       tool,
       scope,
       allowed: true,
       // A turn that stops to ask a person is otherwise written as
       // `allowed: true, error: null` and reads as a success.
       outcome: isInputRequired(data) ? 'input_required' : null,
+      // The handle of whatever was started, and the only thing read back off a
+      // result — see startedOperationId for why nothing else is.
+      operationId: startedOperationId(data),
     });
     // An input-required return is handed back untouched, which is the whole
     // point of the migration: the 2026-07-28 codec renders it — `resultType`,
@@ -423,16 +475,57 @@ export async function runGated(
     // pointless. `agentMessage` carries both.
     const message =
       error instanceof McpApiError ? error.agentMessage : describeError(error);
+    // The action cycle asking a person is a WAIT, and the protocol has a shape
+    // for exactly that. Returning it as `isError` would be the one mistake the
+    // multi-round-trip pattern exists to prevent: an agent that reads a failure
+    // retries blindly or gives up, and here the right behaviour is neither —
+    // it is to stop, say what was asked for, and retry the identical call once
+    // the answer exists. The person's click does not execute anything; the
+    // retry does, which is what keeps the attribution honest.
+    const waiting = error instanceof McpApiError ? error.proposal : undefined;
     await ctx.audit.record({
       userId: ctx.user.userId,
+      actor: ctx.actor,
+      args,
       tool,
       scope,
       // An access refusal from a guard is not "the tool ran": the scope let it
       // through, the resource did not. Recorded as denied so the audit tells
       // the two refusals apart the same way the agent does.
       allowed: !(error instanceof McpApiError && error.isAccessRefusal),
+      outcome: waiting ? 'input_required' : null,
       error: message,
     });
+    if (waiting) return proposalElicitation(waiting, message);
     return errorResult(message);
   }
+}
+
+/**
+ * A pending request, rendered as the protocol's URL elicitation.
+ *
+ * `elicitUrl` and not a form: what has to happen is a decision on a page that
+ * shows the sentence, the estimate and the two-or-three answers — not a field
+ * the agent fills in. The URL is the one the API stated in its refusal, so
+ * "which page decides a request" is said in one place rather than assembled
+ * again here.
+ *
+ * A client that ignores it loses nothing that matters: the message says the same
+ * thing in words, and the wait is a row either way. That is the property that
+ * makes this work with `curl`.
+ */
+function proposalElicitation(
+  proposal: ProposalRefusal,
+  message: string,
+): InputRequiredResult {
+  const url =
+    proposal.decideUrl ?? `${PROPOSAL_DECISION_PATH}/${proposal.proposalId}`;
+  return inputRequired({
+    inputRequests: {
+      approved: inputRequired.elicitUrl({
+        message: `${message}\n\nRequest: ${proposal.sentence}`,
+        url,
+      }),
+    },
+  });
 }

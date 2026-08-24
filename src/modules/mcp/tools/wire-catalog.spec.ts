@@ -24,6 +24,14 @@ const ARGS: Record<string, Record<string, unknown>> = {
   app_uninstall: { id: 'a1' },
   spec_validate: { yaml: 'kind: Application' },
   access_revocation_preview: { grantId: 'g1' },
+  access_grant_list: {},
+  access_grant_add: {
+    principalType: 'user',
+    principalRef: 'bob@acme.com',
+    role: 'viewer',
+    scopeType: 'global',
+  },
+  access_grant_remove: { grantId: 'g1' },
   cluster_list: {},
   cluster_resources: {},
   cluster_orphaned_volumes: {},
@@ -282,13 +290,16 @@ describe('strada B — the whole tool catalogue goes over the wire', () => {
       'GET /infrastructure/clusters/c1/storage/orphaned-claims',
     ],
     ['access_revocation_preview', 'GET /iam/grants/g1/revocation-preview'],
+    ['access_grant_list', 'GET /iam/grants'],
+    ['access_grant_add', 'POST /iam/grants'],
+    ['access_grant_remove', 'DELETE /iam/grants/g1'],
   ])('%s lands on %s', async (name, expected) => {
     const calls = await pathsOf(name);
     expect(calls.map((c) => `${c.method} ${c.path}`)).toContain(expected);
   });
 
   /**
-   * The route decision 33 made the editor's own: an application's operations,
+   * The route decision 33 made the operator's own: an application's operations,
    * behind AppAccessGuard, instead of the infrastructure one behind a section
    * they do not hold.
    */

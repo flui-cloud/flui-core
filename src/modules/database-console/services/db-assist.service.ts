@@ -64,7 +64,9 @@ export class DbAssistService {
     // resolveEndpoint throws NotFoundException('No inference endpoint configured') when no
     // provider/connection exists — the controller lets it surface so the UI redirects to setup.
     // An empty selection resolves the same default the assistant uses.
-    const { endpoint } = await this.inference.resolveEndpoint(selection);
+    const { endpoint } = await this.inference.resolveEndpoint(selection, {
+      userId: input.fluiUserId,
+    });
     const model = await this.inference.resolveModel(selection, endpoint);
 
     const system = [

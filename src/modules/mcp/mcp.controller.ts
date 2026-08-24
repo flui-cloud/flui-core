@@ -30,6 +30,8 @@ import {
 } from '../iam/interfaces/policy-engine.interface';
 import { McpServerFactory } from './services/mcp-server.factory';
 import { credentialFromRequest } from './services/mcp-api.client';
+import { principalFromUser } from '../iam/interfaces/iam.types';
+import { actorFromRequest } from '../auth/utils/actor.util';
 
 /**
  * Streamable-HTTP MCP endpoint, in-process in flui-api.
@@ -125,13 +127,7 @@ export class McpController {
     // Resolved here rather than inside the factory because the fence lives in the
     // policy engine: an agent must inherit exactly the permissions of the person
     // it acts for, never a service identity of its own.
-    const access = await this.policy.resolveAccess({
-      userId: user.userId,
-      email: user.email,
-      role: user.role,
-      isAdmin: !!user.isAdmin,
-      scopes: user.scopes,
-    });
+    const access = await this.policy.resolveAccess(principalFromUser(user));
 
     // The handler is per request for the same reason the server was: it closes
     // over this principal. `close()` in `finally` releases the modern leg's
@@ -141,8 +137,13 @@ export class McpController {
     // Nothing is minted here: an internally issued impersonation token would be
     // a new credential, which is the surface this whole route exists to avoid.
     const credential = credentialFromRequest(req);
+    // Which key is speaking, not only whom it speaks for. A key is issued *as*
+    // its principal, so without this the audit cannot tell the person from the
+    // agent they minted a credential for — which is the whole distinction a
+    // revoke decision rests on.
+    const actor = actorFromRequest(req);
     const handler = createMcpHandler(() =>
-      this.factory.build(user, credential, access.isSandbox),
+      this.factory.build(user, credential, access.isSandbox, actor),
     );
     try {
       // Nest's body parser already drained the stream, so the parsed body is

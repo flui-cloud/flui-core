@@ -11,7 +11,7 @@ import {
 /** Path-segment safety: an id from a model is input, not a literal. */
 const enc = encodeURIComponent;
 
-const minRole = z.enum(['viewer', 'editor', 'manager']);
+const minRole = z.enum(['viewer', 'operator', 'maintainer']);
 
 const rateLimitShape = {
   average: coerceNumber(z.number().int().min(1)),

@@ -45,6 +45,24 @@ export const MCP_SCOPE = {
   // construction: its `allows` names `iam:read-access` and nothing that writes,
   // so a credential carrying it can describe the grant graph and never edit it.
   IAM_READ: 'mcp:iam:read',
+  /**
+   * Conferring and revoking a delegation — the one scope this catalogue holds
+   * that changes who else can reach the instance.
+   *
+   * It is not in any tier list below, and that is the whole of decision 91's
+   * condition: `expandTier` is what a principal gets when its credential
+   * declares no ceiling of its own, so a scope named there arrives by
+   * *omission* — an administrator's unscoped key, or the dashboard assistant,
+   * would carry it without anybody having decided to hand it over. Switching it
+   * on has to be a gesture, so the only ways to hold it are naming it outright
+   * or switching on the one group that carries it (`access:change`).
+   *
+   * The guarantee that makes it safe is not written here and does not need to
+   * be: `POST/DELETE /iam/grants` ask for `iam:assign-role`, and a key is never
+   * worth more than whoever minted it, so an agent cannot confer a permission
+   * its owner does not already hold.
+   */
+  IAM_WRITE: 'mcp:iam:write',
   SPEC_VALIDATE: 'mcp:spec:validate',
   APP_WRITE: 'mcp:app:write',
   BACKUP_WRITE: 'mcp:backup:write',
@@ -57,7 +75,16 @@ export type McpScope = (typeof MCP_SCOPE)[keyof typeof MCP_SCOPE];
 
 export type McpTier = 'read' | 'plan' | 'write' | 'destructive';
 
-/** The scopes that make up each tier (a tier grants every scope at or below it). */
+/**
+ * The scopes that make up each tier (a tier grants every scope at or below it).
+ *
+ * Not every scope is in here, and the omission is load-bearing rather than an
+ * oversight: a tier is what a credential gets when it declares nothing of its
+ * own, so anything listed below is reachable by silence. `mcp:iam:write` is
+ * deliberately absent from all four — see the note on it in `MCP_SCOPE` and
+ * `iam-write-scope.spec.ts`, which pins the absence so it cannot be "fixed" by
+ * somebody tidying the table.
+ */
 export const TIER_SCOPES: Record<McpTier, McpScope[]> = {
   read: [
     MCP_SCOPE.CATALOG_READ,
@@ -85,6 +112,13 @@ export const SCOPE_TIER: Record<McpScope, McpTier> = {
   [MCP_SCOPE.MIGRATION_READ]: 'read',
   [MCP_SCOPE.MAIL_READ]: 'read',
   [MCP_SCOPE.IAM_READ]: 'read',
+  // `write` and not `destructive`: the criterion is irreversibility, not the
+  // HTTP verb (decision 86). A grant removed is a grant that can be made again,
+  // and `MCP_ALLOW_DESTRUCTIVE` is a server-wide switch about tearing things
+  // down — coupling access administration to it would answer two unrelated
+  // questions with one flag. What `write` does buy is the in-product
+  // assistant's approval step, which pauses before every write-tier tool.
+  [MCP_SCOPE.IAM_WRITE]: 'write',
   [MCP_SCOPE.SPEC_VALIDATE]: 'plan',
   [MCP_SCOPE.APP_WRITE]: 'write',
   [MCP_SCOPE.BACKUP_WRITE]: 'write',

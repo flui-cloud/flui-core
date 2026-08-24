@@ -1,7 +1,10 @@
 import { Injectable, ServiceUnavailableException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { CloudProvider } from '../../providers/enums/cloud-provider.enum';
-import { InferenceResolverService } from '../../inference/services/inference-resolver.service';
+import {
+  InferencePrincipal,
+  InferenceResolverService,
+} from '../../inference/services/inference-resolver.service';
 import { InferenceClientService } from '../../inference/services/inference-client.service';
 import { InferenceEndpoint } from '../../providers/interfaces/inference-capability';
 import { pickChatModel } from '../assistant.constants';
@@ -21,12 +24,22 @@ export class AssistantInferenceService {
     private readonly config: ConfigService,
   ) {}
 
+  /**
+   * The door, and the reason the principal is a second argument rather than a
+   * field of the selection: `sel` is the request body itself on the assistant
+   * routes, so anything read off it is something the caller wrote. Who is
+   * asking has to arrive from the credential, never from the payload.
+   */
   async resolveEndpoint(
     sel: InferenceSelection,
+    principal: InferencePrincipal,
   ): Promise<{ endpoint: InferenceEndpoint; source: string }> {
     if (sel.connectionId) {
       return {
-        endpoint: await this.resolver.resolveConnection(sel.connectionId),
+        endpoint: await this.resolver.resolveConnection(
+          sel.connectionId,
+          principal,
+        ),
         source: `connection:${sel.connectionId}`,
       };
     }
@@ -37,7 +50,7 @@ export class AssistantInferenceService {
       };
     }
     return {
-      endpoint: await this.resolver.resolveDefault(),
+      endpoint: await this.resolver.resolveDefault(principal),
       source: 'default',
     };
   }

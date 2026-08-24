@@ -9,6 +9,8 @@ import {
 } from '@nestjs/common';
 import { AuthenticatedUser } from '../../auth/interfaces/authenticated-user.interface';
 import { AppOwnershipGuard } from '../guards/app-ownership.guard';
+import { RequirePermission } from '../../iam/decorators/require-permission.decorator';
+import { IAM_PERMISSION } from '../../iam/constants/iam-permissions';
 import { SecretsQueryService } from '../services/secrets-query.service';
 import {
   SecretListEntry,
@@ -91,6 +93,7 @@ export class SecretsConsoleController {
   }
 
   @Post('undelete')
+  @RequirePermission(IAM_PERMISSION.APP_WRITE)
   undelete(
     @Param('id') id: string,
     @Body() dto: SecretsUndeleteDto,
@@ -109,6 +112,7 @@ export class SecretsConsoleController {
   }
 
   @Post('delete')
+  @RequirePermission(IAM_PERMISSION.APP_WRITE)
   delete(
     @Param('id') id: string,
     @Body() dto: SecretsDeleteDto,

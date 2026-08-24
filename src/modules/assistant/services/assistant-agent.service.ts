@@ -44,6 +44,12 @@ import {
   McpApiClient,
 } from '../../mcp/services/mcp-api.client';
 import { McpAuditRepository } from '../../mcp/repositories/mcp-audit.repository';
+import { Actor } from '../../auth/utils/actor-context';
+import { actorOf } from '../../auth/utils/actor.util';
+import {
+  redactToolArgs,
+  startedOperationId,
+} from '../../mcp/audit/tool-arg-redaction';
 import { SCOPE_TIER } from '../../mcp/constants/mcp-scopes';
 import {
   McpToolContext,
@@ -79,6 +85,7 @@ import { AssistantLlmService } from './assistant-llm.service';
 import { AssistantGuardService, RouteMessage } from './assistant-guard.service';
 import { KnowledgeService } from './knowledge.service';
 import { AGENT_TOOL_NOTE } from '../policy';
+import { principalFromUser } from '../../iam/interfaces/iam.types';
 
 const MAX_ITERATIONS = 8;
 // Server-wide enablement for destructive (delete/uninstall) tools — same flag as the
@@ -154,20 +161,17 @@ export class AssistantAgentService {
     dto: AgentRequestDto,
     emit?: AgentEmitter,
     credential: ForwardedCredential = {},
+    actor?: Actor,
   ): Promise<AgentResult> {
-    const { endpoint } = await this.inference.resolveEndpoint(dto);
+    const { endpoint } = await this.inference.resolveEndpoint(dto, user);
     const model = await this.inference.resolveModel(dto, endpoint);
     // The same question the MCP surface asks before it builds a toolbox. Asked
     // here too because this is the other consumer of the same registry, and a
     // second path that filters differently is a second answer to give.
-    const { isSandbox } = await this.policy.resolveAccess({
-      userId: user.userId,
-      email: user.email,
-      role: user.role,
-      isAdmin: !!user.isAdmin,
-      scopes: user.scopes,
-    });
-    const ctx = this.buildContext(user, credential, isSandbox);
+    const { isSandbox } = await this.policy.resolveAccess(
+      principalFromUser(user),
+    );
+    const ctx = this.buildContext(user, credential, isSandbox, actor);
     const approved = new Set(dto.approvedToolCallIds ?? []);
     const conversation: ChatCompletionMessage[] = dto.messages.map((m) => ({
       role: m.role,
@@ -700,9 +704,15 @@ export class AssistantAgentService {
     user: AuthenticatedUser,
     credential: ForwardedCredential,
     isSandbox: boolean,
+    actor?: Actor,
   ): McpToolContext {
     return {
       user,
+      // The controller knows which api_keys row authenticated the request and
+      // passes it; the fallback classifies from the principal's own scopes
+      // alone, which is right for every caller that reaches this without a
+      // request — it can say person-or-agent, just not which key.
+      actor: actor ?? actorOf(user),
       // Same rule as the MCP surface: a converted tool talks to the API as the
       // person driving the chat, on the credential their own request carried.
       api: this.api.for(credential),
@@ -796,6 +806,7 @@ export class AssistantAgentService {
           def,
           false,
           DESTRUCTIVE_DISABLED_REASON,
+          { args: this.parseArgs(tc) },
         );
         steps.push({
           toolCallId: tc.id,
@@ -809,7 +820,9 @@ export class AssistantAgentService {
         (tier === 'write' || tier === 'destructive') &&
         !approved.has(tc.id)
       ) {
-        await this.recordTool(ctx, tc.function.name, def, false, 'denied');
+        await this.recordTool(ctx, tc.function.name, def, false, 'denied', {
+          args: this.parseArgs(tc),
+        });
         steps.push({
           toolCallId: tc.id,
           name: tc.function.name,
@@ -835,7 +848,9 @@ export class AssistantAgentService {
       return `Error: unknown tool '${name}'.`;
     }
     if (!ctx.scopes.has(def.scope)) {
-      await this.recordTool(ctx, name, def, false, 'missing scope');
+      await this.recordTool(ctx, name, def, false, 'missing scope', {
+        args: this.parseArgs(tc),
+      });
       steps.push({
         toolCallId: tc.id,
         name,
@@ -845,7 +860,16 @@ export class AssistantAgentService {
       return `Refused: missing required scope '${def.scope}'.`;
     }
     if (SCOPE_TIER[def.scope] === 'destructive' && !ctx.allowDestructive) {
-      await this.recordTool(ctx, name, def, false, DESTRUCTIVE_DISABLED_REASON);
+      await this.recordTool(
+        ctx,
+        name,
+        def,
+        false,
+        DESTRUCTIVE_DISABLED_REASON,
+        {
+          args: this.parseArgs(tc),
+        },
+      );
       steps.push({
         toolCallId: tc.id,
         name,
@@ -860,7 +884,9 @@ export class AssistantAgentService {
       args = toolInputSchema(def.inputSchema).parse(this.parseArgs(tc));
     } catch (error) {
       const message = describeError(error);
-      await this.recordTool(ctx, name, def, false, message);
+      await this.recordTool(ctx, name, def, false, message, {
+        args: this.parseArgs(tc),
+      });
       steps.push({ toolCallId: tc.id, name, ok: false, error: message });
       return `Error: invalid arguments — ${message}`;
     }
@@ -880,14 +906,14 @@ export class AssistantAgentService {
 
     try {
       const data = await def.run(args as never, ctx);
-      await this.recordTool(ctx, name, def, true);
+      await this.recordTool(ctx, name, def, true, undefined, { args, data });
       // Full result → UI (artifact); a compact, bounded view → the model.
       steps.push({ toolCallId: tc.id, name, ok: true, result: data });
       executed.set(key, 'done');
       return this.modelView(def, data);
     } catch (error) {
       const message = describeError(error);
-      await this.recordTool(ctx, name, def, true, message);
+      await this.recordTool(ctx, name, def, true, message, { args });
       steps.push({ toolCallId: tc.id, name, ok: false, error: message });
       return `Error: ${message}`;
     }
@@ -899,13 +925,21 @@ export class AssistantAgentService {
     def: ToolDef,
     allowed: boolean,
     error?: string,
+    call?: { args?: unknown; data?: unknown },
   ): Promise<void> {
     await this.audit.record({
       userId: ctx.user.userId,
+      actor: ctx.actor,
       tool: `assistant:${tool}`,
       scope: def.scope,
       allowed,
       error,
+      // The raw arguments are the model's, and on this surface they arrive
+      // before validation — so they go through the same redactor as the MCP
+      // side, which is fail-closed on anything its schema does not prove is
+      // drawn from a set written in the source.
+      args: redactToolArgs(def.inputSchema, call?.args),
+      operationId: startedOperationId(call?.data),
     });
   }
 

@@ -78,7 +78,9 @@ export class SearchAssistService {
     selection: InferenceSelection = {},
     scope: SearchAssistScope = {},
   ): Promise<SearchAssistResult> {
-    const { endpoint } = await this.inference.resolveEndpoint(selection);
+    const { endpoint } = await this.inference.resolveEndpoint(selection, {
+      userId: input.fluiUserId,
+    });
     const model = await this.inference.resolveModel(selection, endpoint);
 
     const system = [
@@ -128,7 +130,9 @@ export class SearchAssistService {
     selection: InferenceSelection = {},
     scope: SearchAssistScope = {},
   ): Promise<SearchRawAssistResult> {
-    const { endpoint } = await this.inference.resolveEndpoint(selection);
+    const { endpoint } = await this.inference.resolveEndpoint(selection, {
+      userId: input.fluiUserId,
+    });
     const model = await this.inference.resolveModel(selection, endpoint);
 
     const system = [

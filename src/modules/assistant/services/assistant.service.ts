@@ -23,7 +23,10 @@ export class AssistantService {
     user: AuthenticatedUser,
     dto: ChatCompletionRequestDto,
   ): Promise<ChatCompletionResponse> {
-    const { endpoint, source } = await this.inference.resolveEndpoint(dto);
+    const { endpoint, source } = await this.inference.resolveEndpoint(
+      dto,
+      user,
+    );
     const model = await this.inference.resolveModel(dto, endpoint);
 
     // One cheap call gates off-topic AND selects which knowledge to inject, so the

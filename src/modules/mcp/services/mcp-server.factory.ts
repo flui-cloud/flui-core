@@ -7,6 +7,7 @@ import {
 } from '@modelcontextprotocol/server';
 import { EncryptionService } from '../../shared/encryption/services/encryption.service';
 import { AuthenticatedUser } from '../../auth/interfaces/authenticated-user.interface';
+import { Actor } from '../../auth/utils/actor-context';
 import { McpAuditRepository } from '../repositories/mcp-audit.repository';
 import { McpScopeResolver } from './mcp-scope.resolver';
 import { ForwardedCredential, McpApiClient } from './mcp-api.client';
@@ -78,6 +79,7 @@ export class McpServerFactory {
     user: AuthenticatedUser,
     credential: ForwardedCredential,
     isSandbox = false,
+    actor?: Actor,
   ): McpServer {
     const requestStateCodec = this.codecFor(user);
     const server = new McpServer(
@@ -123,6 +125,9 @@ export class McpServerFactory {
       // already speaks as the principal.
       api: this.api.for(credential),
       audit: this.audit,
+      // Passed in rather than derived here: which api_keys row authenticated
+      // the request is on the request and deliberately not on the principal.
+      actor,
       requestStateCodec,
     };
 

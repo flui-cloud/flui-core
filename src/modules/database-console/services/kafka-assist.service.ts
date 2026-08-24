@@ -47,7 +47,9 @@ export class KafkaAssistService {
   ): Promise<KafkaAssistResult> {
     const context = await this.liveContext(input);
 
-    const { endpoint } = await this.inference.resolveEndpoint(selection);
+    const { endpoint } = await this.inference.resolveEndpoint(selection, {
+      userId: input.fluiUserId,
+    });
     const model = await this.inference.resolveModel(selection, endpoint);
 
     const response = await this.llm.chat(endpoint, {

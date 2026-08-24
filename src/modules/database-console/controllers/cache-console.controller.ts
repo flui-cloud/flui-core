@@ -9,6 +9,8 @@ import {
 } from '@nestjs/common';
 import { AuthenticatedUser } from '../../auth/interfaces/authenticated-user.interface';
 import { AppOwnershipGuard } from '../guards/app-ownership.guard';
+import { RequirePermission } from '../../iam/decorators/require-permission.decorator';
+import { IAM_PERMISSION } from '../../iam/constants/iam-permissions';
 import { CacheQueryService } from '../services/cache-query.service';
 import { CacheEntry, CacheServerInfo } from '../engine/cache-engine';
 import { CacheConnectionInfo } from '../interfaces/cache-connection';
@@ -81,6 +83,7 @@ export class CacheConsoleController {
   }
 
   @Post('delete')
+  @RequirePermission(IAM_PERMISSION.APP_WRITE)
   delete(
     @Param('id') id: string,
     @Body() dto: CacheDeleteDto,
@@ -94,6 +97,7 @@ export class CacheConsoleController {
   }
 
   @Post('flush')
+  @RequirePermission(IAM_PERMISSION.APP_WRITE)
   flush(
     @Param('id') id: string,
     @Body() dto: CacheFlushDto,

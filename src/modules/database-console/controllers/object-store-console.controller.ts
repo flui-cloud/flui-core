@@ -39,6 +39,8 @@ import {
 } from '../engine/object-store-engine';
 import { ObjectStoreConnectionInfo } from '../interfaces/object-store-connection';
 import { AppOwnershipGuard } from '../guards/app-ownership.guard';
+import { RequirePermission } from '../../iam/decorators/require-permission.decorator';
+import { IAM_PERMISSION } from '../../iam/constants/iam-permissions';
 
 /** Filename for the download dialog — the last path segment of the key. */
 function fileNameOf(key: string): string {
@@ -94,6 +96,7 @@ export class ObjectStoreConsoleController {
   }
 
   @Delete('buckets/:bucket')
+  @RequirePermission(IAM_PERMISSION.APP_WRITE)
   async deleteBucket(
     @Param('id') id: string,
     @Param('bucket') bucket: string,
@@ -166,6 +169,7 @@ export class ObjectStoreConsoleController {
   }
 
   @Post('delete')
+  @RequirePermission(IAM_PERMISSION.APP_WRITE)
   async delete(
     @Param('id') id: string,
     @Body() dto: OsDeleteDto,
@@ -299,6 +303,7 @@ export class ObjectStoreConsoleController {
 
   /** Revoke a share link immediately (kills it before its expiry). */
   @Post('shares/:shareId/revoke')
+  @RequirePermission(IAM_PERMISSION.APP_WRITE)
   revokeShare(
     @Param('id') id: string,
     @Param('shareId') shareId: string,
