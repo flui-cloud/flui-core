@@ -9,14 +9,16 @@ import { ApplicationEntity } from '../entities/application.entity';
 import { ApplicationExposure } from '../enums/application-exposure.enum';
 import { ReconciliationStatus } from '../../infrastructure/shared/enums/reconciliation-status.enum';
 import { PrimaryEndpointState } from '../../dns/services/app-endpoint.service';
+import { CertificateStatus } from '../../providers/interfaces/certificate-provider.interface';
 
 type EndpointMap = Map<string, PrimaryEndpointState>;
 
-/** A reconciled endpoint — the only state in which a URL may be published. */
+/** A reconciled endpoint with a valid certificate — a URL may be published. */
 const serving = (fqdn: string): PrimaryEndpointState => ({
   fqdn,
   reconciliationStatus: ReconciliationStatus.IN_SYNC,
   errorMessage: null,
+  certificateStatus: CertificateStatus.VALID,
 });
 
 const makeService = (
@@ -102,6 +104,7 @@ describe('ApplicationService.toResponseDtosWithUrls', () => {
             fqdn: 'blog.example.com',
             reconciliationStatus: status,
             errorMessage,
+            certificateStatus: CertificateStatus.VALID,
           },
         ],
       ]);
@@ -135,6 +138,81 @@ describe('ApplicationService.toResponseDtosWithUrls', () => {
       const [dto] = await service.toResponseDtosWithUrls([app({ id: 'a4' })]);
       expect(dto.url).toBe('https://blog.example.com/');
       expect(dto.endpointStatus).toBe(ReconciliationStatus.IN_SYNC);
+    });
+  });
+
+  /**
+   * Reconciliation reports IN_SYNC as soon as the DNS record and the Ingress
+   * are applied. An ACME order takes minutes longer, and the link composed here
+   * is `https://` — publishing it in that window hands the visitor a browser
+   * security warning on the one screen that matters.
+   */
+  describe('a hostname whose certificate has not arrived is not a URL either', () => {
+    const withCertificate = (status: CertificateStatus | null): EndpointMap =>
+      new Map([
+        [
+          'a5',
+          {
+            fqdn: 'blog.example.com',
+            reconciliationStatus: ReconciliationStatus.IN_SYNC,
+            errorMessage: null,
+            certificateStatus: status,
+          },
+        ],
+      ]);
+
+    it('withholds the URL while the certificate is being issued', async () => {
+      const { service } = makeService(
+        withCertificate(CertificateStatus.ISSUING),
+      );
+      const [dto] = await service.toResponseDtosWithUrls([app({ id: 'a5' })]);
+
+      expect(dto.url).toBeUndefined();
+      expect(dto.endpointStatus).toBe(ReconciliationStatus.IN_SYNC);
+      expect(dto.endpointCertificateStatus).toBe(CertificateStatus.ISSUING);
+    });
+
+    it('withholds it while the certificate has not been created yet', async () => {
+      const { service } = makeService(
+        withCertificate(CertificateStatus.PENDING),
+      );
+      const [dto] = await service.toResponseDtosWithUrls([app({ id: 'a5' })]);
+
+      expect(dto.url).toBeUndefined();
+    });
+
+    it('publishes it once the certificate is valid', async () => {
+      const { service } = makeService(withCertificate(CertificateStatus.VALID));
+      const [dto] = await service.toResponseDtosWithUrls([app({ id: 'a5' })]);
+
+      expect(dto.url).toBe('https://blog.example.com/');
+    });
+
+    /**
+     * Every endpoint that predates this field, and every endpoint never asked
+     * for TLS, reports nothing at all. Withholding those would take the link
+     * away from applications that have been serving for months.
+     */
+    it('publishes it when the endpoint never reported a certificate', async () => {
+      const { service } = makeService(withCertificate(null));
+      const [dto] = await service.toResponseDtosWithUrls([app({ id: 'a5' })]);
+
+      expect(dto.url).toBe('https://blog.example.com/');
+    });
+
+    /**
+     * `failed` is not a window that closes. Withholding it would hide the
+     * application for good, and the reason belongs on the screen next to the
+     * link rather than in place of it.
+     */
+    it('still publishes it when the certificate failed, and says so', async () => {
+      const { service } = makeService(
+        withCertificate(CertificateStatus.FAILED),
+      );
+      const [dto] = await service.toResponseDtosWithUrls([app({ id: 'a5' })]);
+
+      expect(dto.url).toBe('https://blog.example.com/');
+      expect(dto.endpointCertificateStatus).toBe(CertificateStatus.FAILED);
     });
   });
 

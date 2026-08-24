@@ -69,5 +69,16 @@ export function isReadOnlyArea(path: string): boolean {
 
 export const SANDBOX_READ_ONLY_WRITE_CODE = 'SANDBOX_READ_ONLY';
 
+/**
+ * The blanket refusal, said to a person instead of to a client.
+ *
+ * The two messages below it were already rewritten for a reader; this one still
+ * pointed at `GET /sandbox/limits`, which is an API route being read out to a
+ * visitor on a screen. A refusal that tells somebody to go and call an endpoint
+ * reads as a fault in the product, which is the whole thing this wording is for.
+ */
+export const SANDBOX_FORBIDDEN_MESSAGE =
+  'This part of Flui is not included in the trial. Your own applications and databases are real and yours to change.';
+
 export const SANDBOX_READ_ONLY_WRITE_MESSAGE =
   'You can look at this section here, but not change it. Your own applications and databases are real and yours to change.';

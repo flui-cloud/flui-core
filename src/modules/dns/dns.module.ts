@@ -41,6 +41,9 @@ import { SystemIngressService } from './services/system-ingress.service';
 import { ClusterDnsCleanupService } from './services/cluster-dns-cleanup.service';
 import { EndpointModeResolverService } from './services/endpoint-mode-resolver.service';
 import { EndpointHostGuardService } from './services/endpoint-host-guard.service';
+import { TenancySubdomainService } from './services/tenancy-subdomain.service';
+import { SandboxSubdomainService } from './services/sandbox-subdomain.service';
+import { SandboxSubdomainConfigService } from './services/sandbox-subdomain-config.service';
 import { GatewayMiddlewareCompilerService } from './services/gateway-middleware-compiler.service';
 import { DnsZoneReconciliationService } from './services/dns-zone-reconciliation.service';
 import { DnsZoneReplicaService } from './services/dns-zone-replica.service';
@@ -96,6 +99,9 @@ import { ClusterDnsGateway } from './gateway/cluster-dns.gateway';
     ClusterDnsCleanupService,
     EndpointModeResolverService,
     EndpointHostGuardService,
+    TenancySubdomainService,
+    SandboxSubdomainService,
+    SandboxSubdomainConfigService,
     GatewayMiddlewareCompilerService,
     DnsZoneReconciliationService,
     DnsZoneReplicaService,
@@ -121,6 +127,8 @@ import { ClusterDnsGateway } from './gateway/cluster-dns.gateway';
     ClusterDnsCleanupService,
     EndpointModeResolverService,
     EndpointHostGuardService,
+    TenancySubdomainService,
+    SandboxSubdomainService,
     GatewayMiddlewareCompilerService,
   ],
 })

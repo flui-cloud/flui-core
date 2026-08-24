@@ -19,6 +19,7 @@ import { APP_GUARD } from '@nestjs/core';
 import { Test } from '@nestjs/testing';
 import * as request from 'supertest';
 import { SandboxFenceGuard } from './guards/sandbox-fence.guard';
+import { SANDBOX_FORBIDDEN_MESSAGE } from './constants/sandbox-fence';
 import { POLICY_ENGINE } from '../iam/interfaces/policy-engine.interface';
 import { PrincipalAccess } from '../iam/interfaces/iam.types';
 import { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
@@ -182,7 +183,11 @@ describe('SandboxFenceGuard over HTTP', () => {
     ])('is refused %s (%s)', async (path) => {
       const res = await http().get(path).expect(403);
       expect(res.body.code).toBe('SANDBOX_ROUTE_FORBIDDEN');
-      expect(res.body.message).toContain('sandbox');
+      // The constant, not a word inside it: the wording is written for a person
+      // and is expected to keep improving. What must not change is that the
+      // refusal carries the fence's own sentence rather than a bare 403.
+      expect(res.body.message).toBe(SANDBOX_FORBIDDEN_MESSAGE);
+      expect(res.body.message).not.toContain('/sandbox/limits');
     });
 
     /**

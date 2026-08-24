@@ -19,6 +19,8 @@ import {
 import { SanCertificateService } from '../services/san-certificate.service';
 import { CreateSanCertificateDto } from '../dto/create-san-certificate.dto';
 import { SanCertificateResponseDto } from '../dto/san-certificate-response.dto';
+import { RequirePermission } from '../../iam/decorators/require-permission.decorator';
+import { IAM_PERMISSION } from '../../iam/constants/iam-permissions';
 
 @ApiTags('SAN Certificates')
 @ApiBearerAuth()
@@ -65,6 +67,7 @@ export class SanCertificateController {
   }
 
   @Delete('san-certificates/:id')
+  @RequirePermission(IAM_PERMISSION.CLUSTER_MANAGE)
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({
     summary:

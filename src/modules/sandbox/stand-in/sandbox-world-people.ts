@@ -45,13 +45,14 @@ export function exampleUsers(now: number) {
 }
 
 /**
- * The role catalogue, as the real one reads minus the two machine roles.
+ * The role catalogue, which is now simply the real one: four rungs.
  *
- * `sandbox` and `showcase_viewer` are how *this* instance holds a guest at
- * arm's length; naming them inside the demonstration would explain the sandbox
- * rather than the product. What is left is the catalogue a customer actually
- * chooses from — `owner` included, because leaving out the top of the ladder
- * would demonstrate a smaller product than the one being shown.
+ * It used to be "the real one minus the two machine roles", because `sandbox`
+ * and `showcase_viewer` were served to everybody and had to be subtracted here
+ * so the demonstration explained the product rather than the sandbox. They are
+ * subtracted at the source now — `listRolesFor` serves only the assignable
+ * roles — so this list and the live one describe the same four things, which is
+ * the whole point of a stand-in.
  *
  * Every entry carries `grantable: false`: a guest may look at the model and
  * change nothing in it, and the screen builds its pickers from that flag. The
@@ -70,26 +71,29 @@ export function exampleIamRoles() {
       revocable: false,
     }),
     mark({
-      key: 'editor',
-      name: 'Editor',
+      key: 'operator',
+      name: 'Operator',
       description:
-        'View, modify, deploy and operate apps. Cannot manage access.',
+        'View, deploy, operate and remove the apps in scope. Cannot manage access or infrastructure.',
       permissions: [
         'app:read',
         'app:write',
         'app:deploy',
         'app:create',
+        'app:delete',
         'scale:execute',
         'migration:execute',
+        'cluster:read',
       ],
       assignable: true,
       grantable: false,
       revocable: false,
     }),
     mark({
-      key: 'manager',
-      name: 'Manager',
-      description: 'Editor + manage access at this scope and below.',
+      key: 'maintainer',
+      name: 'Maintainer',
+      description:
+        'Operator + the installation itself: clusters, access, integrations, the showcase and the demo.',
       permissions: [
         'app:read',
         'app:write',
@@ -101,6 +105,10 @@ export function exampleIamRoles() {
         'cluster:read',
         'cluster:manage',
         'iam:assign-role',
+        'iam:read-access',
+        'integration:manage',
+        'showcase:publish',
+        'sandbox:operate',
       ],
       assignable: true,
       grantable: false,
@@ -122,8 +130,8 @@ export function exampleIamRoles() {
         'cluster:read',
         'cluster:manage',
         'cluster:destroy',
-        'billing:read',
         'iam:assign-role',
+        'iam:read-access',
         'iam:manage-users',
         'integration:manage',
         'showcase:publish',
@@ -146,7 +154,7 @@ export function exampleIamGrants(now: number) {
       id: 'example-grant-1',
       principalType: 'user',
       principalRef: MARTA.email,
-      role: 'manager',
+      role: 'maintainer',
       scopeType: 'global',
       scopeRef: null,
       selector: null,
@@ -156,7 +164,7 @@ export function exampleIamGrants(now: number) {
       id: 'example-grant-2',
       principalType: 'user',
       principalRef: TOMAS.email,
-      role: 'editor',
+      role: 'operator',
       scopeType: 'selector',
       scopeRef: null,
       selector: { project: 'commerce' },
@@ -166,7 +174,7 @@ export function exampleIamGrants(now: number) {
       id: 'example-grant-3',
       principalType: 'user',
       principalRef: AISHA.email,
-      role: 'editor',
+      role: 'operator',
       scopeType: 'selector',
       scopeRef: null,
       selector: { slugs: [APPS[0].slug] },

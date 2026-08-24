@@ -60,9 +60,9 @@ export class ClusterOrphanedClaimsController {
    * somebody's data is the same kind of act.
    *
    * `cluster:manage` and not `cluster:destroy`: this deletes storage inside a
-   * cluster, not the cluster, and `manager` — who already governs the machines
-   * — is the right holder. An `editor`, who holds neither, no longer reaches
-   * it by holding the section.
+   * cluster, not the cluster, and `maintainer` — who already governs the machines
+   * — is the right holder. An `operator` reads the machines and does not manage
+   * them, so it no longer reaches this by holding the section.
    *
    * It also brings the route inside the credential ceiling, which reads
    * `@RequirePermission` and `@AppAction` and nothing else: until now no agent

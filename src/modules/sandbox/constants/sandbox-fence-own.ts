@@ -256,4 +256,39 @@ export const SANDBOX_ALLOW_OWN: SandboxAllowRule[] = [
     pattern: '/mcp',
     why: 'Let the agent you connected act for you, inside these same limits.',
   },
+  {
+    // Answering your own agent's request. Without these lines the guest sees
+    // the request and cannot say yes: deciding is a *write*, so the read-only
+    // third state of a section does not reach it, and the trial stops at the
+    // first thing the agent tries to do. Every row is filtered by owner, so
+    // this opens nobody else's queue.
+    verbs: ['GET'],
+    pattern: '/agent/proposals',
+    why: 'See what your agent is asking you to allow.',
+  },
+  {
+    verbs: ['GET'],
+    pattern: '/agent/proposals/:id',
+    why: 'Read one request, and what allowing it always would concede.',
+  },
+  {
+    verbs: ['POST'],
+    pattern: '/agent/proposals/:id/decide',
+    why: 'Answer your own agent: once, always, or no.',
+  },
+  {
+    verbs: ['GET'],
+    pattern: '/agent/concessions',
+    why: 'See what your agent may already do without asking.',
+  },
+  {
+    verbs: ['GET'],
+    pattern: '/agent/concessions/:id/operations',
+    why: 'See what is still running under a permission before taking it back.',
+  },
+  {
+    verbs: ['DELETE'],
+    pattern: '/agent/concessions/:id',
+    why: 'Take a standing permission back, and ask what it started to stop.',
+  },
 ];

@@ -450,6 +450,7 @@ export class ClusterDnsZoneController {
   }
 
   @Delete('issuers')
+  @RequirePermission(IAM_PERMISSION.CLUSTER_MANAGE)
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({
     summary: 'Delete cert-manager ClusterIssuers from the cluster',
@@ -471,6 +472,7 @@ export class ClusterDnsZoneController {
   }
 
   @Delete('issuers/:type')
+  @RequirePermission(IAM_PERMISSION.CLUSTER_MANAGE)
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({
     summary: 'Delete cert-manager ClusterIssuers by type',
@@ -640,6 +642,7 @@ export class ClusterDnsZoneController {
   }
 
   @Delete()
+  @RequirePermission(IAM_PERMISSION.CLUSTER_MANAGE)
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({
     summary: 'Remove all DNS zone assignments from a cluster',
@@ -655,6 +658,7 @@ export class ClusterDnsZoneController {
   }
 
   @Delete(':assignmentId')
+  @RequirePermission(IAM_PERMISSION.CLUSTER_MANAGE)
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({
     summary: 'Remove a single DNS zone assignment from a cluster',

@@ -11,9 +11,19 @@ import {
   Min,
   ValidateNested,
 } from 'class-validator';
-import { IAM_ROLE, IamRole } from '../../iam/constants/iam-roles';
+import { IamRole, ROLE_LADDER } from '../../iam/constants/iam-roles';
 
-export const GATEWAY_MIN_ROLES: IamRole[] = Object.values(IAM_ROLE);
+/**
+ * The ladder, not every key in `IAM_ROLE`.
+ *
+ * This enum is offered to a person choosing how tightly to gate a published
+ * route, and it used to offer `sandbox` and `showcase_viewer` alongside the
+ * real rungs — two tenancies the platform writes for itself, which nobody can
+ * be granted and which `MIN_ROLE_PERMISSION` does not map, so picking either
+ * built a gate that refused everyone. Roles a person may hold are the only
+ * roles a gate can usefully name.
+ */
+export const GATEWAY_MIN_ROLES: IamRole[] = ROLE_LADDER;
 
 /** IPv4/IPv6 address or CIDR. Shape check only — Traefik validates semantics. */
 export const GATEWAY_CIDR_REGEX = /^[0-9a-fA-F.:]+(\/\d{1,3})?$/;

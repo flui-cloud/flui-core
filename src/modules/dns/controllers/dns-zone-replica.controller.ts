@@ -17,6 +17,8 @@ import {
 } from '@nestjs/swagger';
 import { RequireSection } from '../../iam/decorators/require-section.decorator';
 import { SECTION } from '../../iam/constants/iam-sections';
+import { RequirePermission } from '../../iam/decorators/require-permission.decorator';
+import { IAM_PERMISSION } from '../../iam/constants/iam-permissions';
 import { DnsZoneReplicaService } from '../services/dns-zone-replica.service';
 import { DnsZoneReplicaResponseDto } from '../dto/dns-zone-replica-response.dto';
 import { RegisterDnsReplicaDto } from '../dto/register-dns-replica.dto';
@@ -151,6 +153,7 @@ export class DnsZoneReplicaController {
 
   @Delete(':replicaId')
   @RequireSection(SECTION.INFRASTRUCTURE)
+  @RequirePermission(IAM_PERMISSION.CLUSTER_MANAGE)
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({
     summary: 'Remove a replica registration',

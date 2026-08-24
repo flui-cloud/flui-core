@@ -90,13 +90,6 @@ export class WildcardCertificateService {
       return null;
     }
 
-    const cluster = await this.clusterRepository.findOne({
-      where: { id: clusterId },
-    });
-    if (!cluster) {
-      throw new NotFoundException(`Cluster ${clusterId} not found`);
-    }
-
     const assignment = await this.clusterDnsZoneService.getZoneForFqdn(
       clusterId,
       fqdn,
@@ -122,6 +115,59 @@ export class WildcardCertificateService {
       return null;
     }
 
+    return await this.ensureForScope(clusterId, scope, targetNamespace);
+  }
+
+  /**
+   * The same work, asked for by scope rather than derived from a hostname:
+   * ensure `*.<scope>` exists and its Secret is available in `targetNamespace`.
+   *
+   * A caller that already knows the scope has one thing `ensureForEndpoint`
+   * cannot have — it can ask *before* any name under that scope exists. That is
+   * the only way a wildcard is ready when the first application arrives instead
+   * of minutes after it, and a certificate that arrives after the link does is
+   * a certificate the person never sees working.
+   *
+   * Returns null on the same terms as the endpoint entry point: feature off, no
+   * zone covering the scope, or nothing to wildcard over. A null is "use
+   * per-host", never "this failed".
+   */
+  async ensureForScope(
+    clusterId: string,
+    scope: string,
+    targetNamespace: string,
+  ): Promise<EnsureWildcardResult | null> {
+    if (!this.config.isEnabled()) {
+      return null;
+    }
+
+    const normalizedScope = scope.trim().toLowerCase();
+    if (!normalizedScope) return null;
+
+    const cluster = await this.clusterRepository.findOne({
+      where: { id: clusterId },
+    });
+    if (!cluster) {
+      throw new NotFoundException(`Cluster ${clusterId} not found`);
+    }
+
+    const assignment = await this.clusterDnsZoneService.getZoneForFqdn(
+      clusterId,
+      normalizedScope,
+    );
+    if (!assignment) {
+      this.logger.log(
+        `[wildcard] scope="${normalizedScope}" not covered by any zone assigned to cluster ${clusterId} — delegating to per-host`,
+      );
+      return null;
+    }
+    const zoneName = assignment.dnsZone?.zoneName;
+    if (!zoneName) {
+      throw new BadRequestException(
+        `Cluster ${clusterId} DNS zone assignment ${assignment.id} has no zoneName`,
+      );
+    }
+
     const issuer =
       await this.clusterDnsZoneService.resolveWildcardIssuer(clusterId);
     if (!issuer) {
@@ -134,7 +180,7 @@ export class WildcardCertificateService {
     const entity = await this.upsertEntity({
       clusterId,
       dnsZoneId: assignment.dnsZoneId,
-      scope,
+      scope: normalizedScope,
       issuerName: issuer.issuerName,
       certificateProvider: issuer.certificateProvider,
     });
@@ -142,7 +188,7 @@ export class WildcardCertificateService {
     const kubeconfig = await this.getKubeconfig(cluster);
 
     await this.reflectorInstaller.ensureInstalled(kubeconfig);
-    await this.cleanupStaleAcmeTxt(assignment.dnsZone, scope);
+    await this.cleanupStaleAcmeTxt(assignment.dnsZone, normalizedScope);
     await this.applyMasterCertificate(entity, kubeconfig);
     const ready = await this.waitMasterSecretReady(entity, kubeconfig);
     await this.ensureDistribution(entity, targetNamespace, kubeconfig);
@@ -172,6 +218,60 @@ export class WildcardCertificateService {
 
   async getById(id: string): Promise<WildcardCertificateEntity | null> {
     return await this.repository.findOne({ where: { id } });
+  }
+
+  /** The row for `*.<scope>` on this cluster, or null when none was ever asked for. */
+  async getByScope(
+    clusterId: string,
+    scope: string,
+  ): Promise<WildcardCertificateEntity | null> {
+    return await this.repository.findOne({
+      where: { clusterId, scope: scope.trim().toLowerCase() },
+    });
+  }
+
+  /**
+   * Take `*.<scope>` away: the Certificate and its Secret on the cluster, then
+   * the row. Best-effort on the cluster half — a certificate whose scope no
+   * longer exists is worth removing even from a cluster we cannot reach, and
+   * leaving the row would keep it out of the next issuance's way for nothing.
+   *
+   * The master Secret lives in `flui-system`, so deleting the namespace a
+   * tenancy lived in does *not* take it with it. Nothing else would.
+   */
+  async deleteForScope(clusterId: string, scope: string): Promise<boolean> {
+    const entity = await this.getByScope(clusterId, scope);
+    if (!entity) return false;
+
+    try {
+      const cluster = await this.clusterRepository.findOne({
+        where: { id: clusterId },
+      });
+      if (cluster?.kubeconfigEncrypted) {
+        const kubeconfig = await this.getKubeconfig(cluster);
+        await this.kubernetesService.deleteResource(
+          kubeconfig,
+          'Certificate',
+          entity.masterCertName,
+          entity.masterNamespace,
+        );
+        await this.kubernetesService.deleteResource(
+          kubeconfig,
+          'Secret',
+          entity.masterSecretName,
+          entity.masterNamespace,
+        );
+      }
+    } catch (err) {
+      this.logger.warn(
+        `Failed to delete wildcard Certificate/Secret for scope ${entity.scope}: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+    }
+
+    await this.repository.delete(entity.id);
+    return true;
   }
 
   private async upsertEntity(input: {

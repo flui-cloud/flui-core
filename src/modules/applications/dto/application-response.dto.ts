@@ -5,6 +5,7 @@ import { ApplicationSourceType } from '../enums/application-source-type.enum';
 import { ApplicationStatus } from '../enums/application-status.enum';
 import { ApplicationExposure } from '../enums/application-exposure.enum';
 import { ReconciliationStatus } from '../../infrastructure/shared/enums/reconciliation-status.enum';
+import { CertificateStatus } from '../../providers/interfaces/certificate-provider.interface';
 import { ApplicationResourceKind } from '../enums/application-resource-kind.enum';
 import { ApplicationResourceStatus } from '../enums/application-resource-status.enum';
 import { AppEventType, AppEventActorType } from '../enums/app-event-type.enum';
@@ -398,10 +399,18 @@ export class ApplicationResponseDto {
   @ApiPropertyOptional({
     enum: ReconciliationStatus,
     description:
-      'Reconciliation state of the public endpoint that backs `url` — whether the DNS record, the Ingress and the certificate were actually applied. "IN_SYNC" is the only state in which `url` is populated; in any other state the hostname exists but nothing serves it yet, so treat the app as not publicly reachable and show this instead of a link. Undefined for internal apps and for apps with no endpoint.',
+      'Reconciliation state of the public endpoint that backs `url` — whether the DNS record, the Ingress and the certificate were actually applied. "IN_SYNC" is a precondition for `url` being populated, not a guarantee: a certificate still being issued also withholds it (see `endpointCertificateStatus`). In any other state the hostname exists but nothing serves it yet, so treat the app as not publicly reachable and show this instead of a link. Undefined for internal apps and for apps with no endpoint.',
     example: ReconciliationStatus.IN_SYNC,
   })
   endpointStatus?: ReconciliationStatus;
+
+  @ApiPropertyOptional({
+    enum: CertificateStatus,
+    description:
+      'State of the TLS certificate that fronts `url`. While it is "issuing" or "pending" the hostname resolves but HTTPS is not yet answerable, so `url` is withheld and this says why — the app is minutes away, not broken. Undefined for endpoints that never reported one.',
+    example: CertificateStatus.VALID,
+  })
+  endpointCertificateStatus?: CertificateStatus;
 
   @ApiPropertyOptional({
     description:

@@ -4,6 +4,7 @@ import { ClusterDnsZoneEntity } from '../entities/cluster-dns-zone.entity';
 import { CertChallenge } from '../enums/cert-challenge.enum';
 import { HostnameMode } from '../enums/hostname-mode.enum';
 import { buildAppNipHostname } from '../utils/nip-hostname.util';
+import { buildTenancyFqdn } from '../utils/tenancy-subdomain.util';
 
 export interface ResolveEndpointModeInput {
   cluster: ClusterEntity;
@@ -13,6 +14,13 @@ export interface ResolveEndpointModeInput {
   requestedCertChallenge?: CertChallenge;
   requestedHostnameMode?: HostnameMode;
   slug: string;
+  /**
+   * `<tenancy>.<cluster>.<zone>` when the namespace this endpoint belongs to
+   * has a subdomain of its own *and a valid certificate for it*. Absent means
+   * the shared `<cluster>.<zone>`, which is where every application lives
+   * today — see `TenancySubdomainService` for why the certificate comes first.
+   */
+  tenancySubdomain?: string | null;
 }
 
 export interface ResolvedEndpointMode {
@@ -76,7 +84,13 @@ export class EndpointModeResolverService {
 
     const fqdn =
       requestedFqdn ??
-      this.generateFqdn(hostnameMode, slug, cluster, clusterDnsZone);
+      this.generateFqdn(
+        hostnameMode,
+        slug,
+        cluster,
+        clusterDnsZone,
+        input.tenancySubdomain,
+      );
 
     return { certChallenge, hostnameMode, fqdn };
   }
@@ -86,6 +100,7 @@ export class EndpointModeResolverService {
     slug: string,
     cluster: ClusterEntity,
     clusterDnsZone?: ClusterDnsZoneEntity | null,
+    tenancySubdomain?: string | null,
   ): string {
     if (mode === HostnameMode.IP) {
       const ip = cluster.masterIpAddress;
@@ -97,7 +112,16 @@ export class EndpointModeResolverService {
       return buildAppNipHostname(slug, ip);
     }
     if (clusterDnsZone?.dnsZone) {
-      return `${slug}.${cluster.name}.${clusterDnsZone.dnsZone.zoneName}`;
+      // Only when the tenancy really has that name: `buildTenancyFqdn` refuses
+      // anything its wildcard would not cover — a dotted slug, a hostname past
+      // the length a resolver accepts — and the shared name is then still a
+      // working answer, where a name outside the certificate is not.
+      const own = tenancySubdomain
+        ? buildTenancyFqdn(slug, tenancySubdomain)
+        : null;
+      return (
+        own ?? `${slug}.${cluster.name}.${clusterDnsZone.dnsZone.zoneName}`
+      );
     }
     return `${slug}.${cluster.name}`;
   }

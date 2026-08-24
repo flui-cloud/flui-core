@@ -11,6 +11,8 @@ import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { Request } from 'express';
 import { RequireSection } from '../../iam/decorators/require-section.decorator';
 import { SECTION } from '../../iam/constants/iam-sections';
+import { RequirePermission } from '../../iam/decorators/require-permission.decorator';
+import { IAM_PERMISSION } from '../../iam/constants/iam-permissions';
 import { DemoStateService } from '../services/demo-state.service';
 import { DemoOrchestratorService } from '../services/demo-orchestrator.service';
 import { DemoProberService } from '../services/demo-prober.service';
@@ -24,6 +26,11 @@ import { UpdateDemoConfigDto } from '../dto/update-demo-config.dto';
 // `demo:operate` of its own would be a permission more for seven routes that
 // touch exactly what that one covers.
 @RequireSection(SECTION.INFRASTRUCTURE)
+// The same answer said twice, because two different things read it: the section
+// decides whether a person may open the area, and `@RequirePermission` is the
+// only thing a credential ceiling can see. Without the second line an agent key
+// scoped to reads triggers the failover and resets the counters over plain HTTP.
+@RequirePermission(IAM_PERMISSION.CLUSTER_MANAGE)
 @Controller('demo/admin')
 export class DemoAdminController {
   constructor(

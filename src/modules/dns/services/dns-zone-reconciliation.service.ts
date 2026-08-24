@@ -14,6 +14,8 @@ import { ClusterDnsZoneEntity } from '../entities/cluster-dns-zone.entity';
 import { DnsReplicaStatus } from '../enums/dns-replica-status.enum';
 import { HostnameMode } from '../enums/hostname-mode.enum';
 import { resolveRecordName } from '../utils/resolve-record-name.util';
+import { sharedWildcardRecordName } from '../utils/shared-subdomain.util';
+import { SandboxSubdomainConfigService } from './sandbox-subdomain-config.service';
 
 export interface ExpectedDnsRecord {
   name: string;
@@ -60,6 +62,31 @@ export function clusterWildcardRecord(
   if (!clusterName || !value) return null;
   return {
     name: `*.${clusterName}`,
+    type: DnsRecordType.A,
+    value,
+    ttl: zone.recordTtlSeconds,
+  };
+}
+
+/**
+ * `*.<label>` → the sandbox cluster's address: the one record under which every
+ * application of every sandbox tenancy resolves.
+ *
+ * Separate from `clusterWildcardRecord` because it answers for a different
+ * space and only on one cluster. It has to be in the expected set for the same
+ * reason that one does: it is an A record pointing at a cluster master IP that
+ * no endpoint claims, which is precisely what the orphan sweep deletes.
+ */
+export function sandboxWildcardRecord(
+  assignment: ClusterDnsZoneEntity,
+  zone: DnsZoneEntity,
+  label: string,
+): ExpectedDnsRecord | null {
+  const value = assignment.cluster?.masterIpAddress;
+  const name = sharedWildcardRecordName(label);
+  if (!value || !name) return null;
+  return {
+    name,
     type: DnsRecordType.A,
     value,
     ttl: zone.recordTtlSeconds,
@@ -115,6 +142,7 @@ export class DnsZoneReconciliationService {
     @InjectRepository(ClusterDnsZoneEntity)
     private readonly assignmentRepo: Repository<ClusterDnsZoneEntity>,
     private readonly dnsProviderFactory: DnsProviderFactory,
+    private readonly sandboxSubdomain: SandboxSubdomainConfigService,
   ) {}
 
   // ── Fan-out (write path) ───────────────────────────────────────────────────
@@ -295,6 +323,57 @@ export class DnsZoneReconciliationService {
     }
   }
 
+  /**
+   * Publish one wildcard record on the zone's own provider, whoever it covers
+   * for.
+   *
+   * **Creates, never overwrites**, on the same reasoning as the cluster's own
+   * wildcard: a name already pointing somewhere else is somebody's decision,
+   * and taking it over would silently redirect whatever it was serving. Returns
+   * what it found so the caller can say so.
+   */
+  async ensureWildcardRecord(
+    zone: DnsZoneEntity,
+    wanted: ExpectedDnsRecord,
+  ): Promise<'published' | 'present' | 'foreign' | 'unknown'> {
+    const provider = this.dnsProviderFactory.getDnsProviderOrFail(
+      zone.dnsProvider,
+    );
+
+    let existing: DnsRecordInfo | undefined;
+    try {
+      const records = await provider.listRecords(zone.providerZoneId);
+      existing = records.find(
+        (r) => r.name === wanted.name && r.type === wanted.type,
+      );
+    } catch (err) {
+      this.logger.warn(
+        `[dns-wildcard] could not read ${zone.zoneName}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      return 'unknown';
+    }
+
+    if (existing) {
+      if (existing.value === wanted.value) return 'present';
+      this.logger.warn(
+        `[dns-wildcard] ${wanted.name}.${zone.zoneName} already points at ${existing.value}, not ${wanted.value} — leaving it alone`,
+      );
+      return 'foreign';
+    }
+
+    await provider.createRecord({
+      zoneId: zone.providerZoneId,
+      type: wanted.type,
+      name: wanted.name,
+      value: wanted.value,
+      ttl: wanted.ttl,
+    });
+    this.logger.log(
+      `[dns-wildcard] published ${wanted.name}.${zone.zoneName} → ${wanted.value}`,
+    );
+    return 'published';
+  }
+
   async deleteRecordByNameType(
     provider: IDnsProvider,
     providerZoneId: string,
@@ -338,6 +417,20 @@ export class DnsZoneReconciliationService {
       const wildcard = clusterWildcardRecord(assignment, zone);
       if (wildcard) {
         expected.set(`${wildcard.name}|${wildcard.type}`, wildcard);
+      }
+
+      // And, on the sandbox cluster only, the subdomain its tenancies publish
+      // under. Same argument as above, and the same consequence if it is left
+      // out: the sweep would delete the record hundreds of guest applications
+      // resolve through, and nothing would write it back until the next
+      // tenancy is provisioned.
+      if (this.sandboxSubdomain.ownsCluster(assignment.clusterId)) {
+        const shared = sandboxWildcardRecord(
+          assignment,
+          zone,
+          this.sandboxSubdomain.label(),
+        );
+        if (shared) expected.set(`${shared.name}|${shared.type}`, shared);
       }
 
       for (const endpoint of assignment.endpoints ?? []) {

@@ -7,11 +7,14 @@ import {
   Body,
   Param,
   Query,
+  Req,
   BadRequestException,
+  ForbiddenException,
   HttpCode,
   HttpStatus,
   Logger,
 } from '@nestjs/common';
+import { Request } from 'express';
 import {
   ApiTags,
   ApiOperation,
@@ -19,6 +22,11 @@ import {
   ApiBearerAuth,
   ApiParam,
 } from '@nestjs/swagger';
+import { RequirePermission } from '../../iam/decorators/require-permission.decorator';
+import { IAM_PERMISSION } from '../../iam/constants/iam-permissions';
+import { AuthenticatedUser } from '../../auth/interfaces/authenticated-user.interface';
+import { ApplicationAccessService } from '../../applications/services/application-access.service';
+import { ApplicationsRepository } from '../../applications/repositories/applications.repository';
 import { AppEndpointService } from '../services/app-endpoint.service';
 import { AppEndpointReconciliationService } from '../services/app-endpoint-reconciliation.service';
 import { ClusterDnsGateway } from '../gateway/cluster-dns.gateway';
@@ -37,6 +45,8 @@ export class AppEndpointController {
     private readonly appEndpointService: AppEndpointService,
     private readonly reconciliationService: AppEndpointReconciliationService,
     private readonly clusterDnsGateway: ClusterDnsGateway,
+    private readonly appAccess: ApplicationAccessService,
+    private readonly applications: ApplicationsRepository,
   ) {}
 
   private async refreshCertStatusIfNeeded(endpointId: string): Promise<void> {
@@ -174,7 +184,18 @@ export class AppEndpointController {
     return this.appEndpointService.toResponseDto(endpoint);
   }
 
+  /**
+   * Two gates for two questions, and neither was here before.
+   *
+   * `app:write` is what the ceiling reads — the endpoint is reached from the
+   * application's own DNS tab, so a key minted to look at applications must not
+   * take their address away. The ownership assertion is what decides *whose*
+   * endpoint this is: the handler took an id and removed the row, so any
+   * authenticated account could unpublish somebody else's application by
+   * guessing a uuid, and the DNS record and Ingress went with it.
+   */
   @Delete('endpoints/:id')
+  @RequirePermission(IAM_PERMISSION.APP_WRITE)
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({
     summary: 'Remove an app endpoint',
@@ -183,9 +204,26 @@ export class AppEndpointController {
   })
   @ApiParam({ name: 'id', description: 'Endpoint ID' })
   @ApiResponse({ status: 204, description: 'Endpoint removed' })
-  async deleteEndpoint(@Param('id') id: string): Promise<void> {
+  async deleteEndpoint(
+    @Param('id') id: string,
+    @Req() req: Request,
+  ): Promise<void> {
+    await this.assertMayChangeEndpoint(id, req.user as AuthenticatedUser);
     await this.reconciliationService.deleteEndpointResources(id);
     await this.appEndpointService.deleteEndpoint(id);
+  }
+
+  private async assertMayChangeEndpoint(
+    endpointId: string,
+    user: AuthenticatedUser | undefined,
+  ): Promise<void> {
+    if (!user) throw new ForbiddenException('Unauthenticated');
+    const endpoint = await this.appEndpointService.getEndpoint(endpointId);
+    const app = await this.applications.findById(endpoint.applicationId);
+    // An endpoint whose application is gone is nobody's to keep: the row is
+    // orphaned, and refusing it would leave it unremovable.
+    if (!app) return;
+    await this.appAccess.assertCan(user, IAM_PERMISSION.APP_WRITE, app);
   }
 
   @Post('endpoints/:id/reconcile')

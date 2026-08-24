@@ -75,6 +75,8 @@ import { randomUUID } from 'node:crypto';
 import { KubernetesService } from '../../infrastructure/shared/services/kubernetes.service';
 import { EncryptionService } from '../../shared/encryption/services/encryption.service';
 import { EndpointModeResolverService } from '../../dns/services/endpoint-mode-resolver.service';
+import { TenancySubdomainService } from '../../dns/services/tenancy-subdomain.service';
+import { SandboxSubdomainService } from '../../dns/services/sandbox-subdomain.service';
 
 interface ResolvedEnv {
   name: string;
@@ -115,6 +117,8 @@ export class CatalogInstallProcessor {
     private readonly kubernetesService: KubernetesService,
     private readonly encryptionService: EncryptionService,
     private readonly endpointModeResolver: EndpointModeResolverService,
+    private readonly tenancySubdomains: TenancySubdomainService,
+    private readonly sandboxSubdomains: SandboxSubdomainService,
     @InjectRepository(SandboxTenantEntity)
     private readonly sandboxTenants: Repository<SandboxTenantEntity>,
   ) {}
@@ -1140,6 +1144,22 @@ export class CatalogInstallProcessor {
       : await this.clusterDnsZoneService.getZoneAssignment(install.clusterId);
     const componentFqdns: Record<string, string> = {};
     if (cluster && !install.skipEndpoint && spec.domain?.auto !== false) {
+      // Predicted here so siblings can cross-reference before any of them
+      // deploys, and it has to be predicted the same way the endpoint will
+      // actually be named — otherwise a composed application wires itself to a
+      // hostname nothing ends up serving.
+      const tenancySubdomain = zoneAssignment?.dnsZone?.zoneName
+        ? ((await this.sandboxSubdomains.activeSubdomain(
+            cluster,
+            namespace,
+            zoneAssignment.dnsZone.zoneName,
+          )) ??
+          (await this.tenancySubdomains.activeSubdomain(
+            cluster,
+            namespace,
+            zoneAssignment.dnsZone.zoneName,
+          )))
+        : null;
       for (const c of includedComponents) {
         if (!(c.ports ?? []).some((p) => p.expose)) continue;
         const requestedFqdn =
@@ -1151,6 +1171,7 @@ export class CatalogInstallProcessor {
           clusterDnsZone: zoneAssignment ?? null,
           requestedFqdn,
           slug: `${install.slug}-${c.name}`,
+          tenancySubdomain,
         }).fqdn;
       }
     }

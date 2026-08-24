@@ -1,3 +1,8 @@
+import {
+  SANDBOX_LIMIT_RANGE_NAME,
+  SANDBOX_QUOTA_NAME,
+} from '../../shared/utils/quota-refusal.util';
+
 /**
  * What one guest may consume. Deliberately small: the demo has to prove that a
  * real application runs, not that the instance is generous. The numbers are the
@@ -54,7 +59,7 @@ export function buildSandboxQuotaManifests(
   return `apiVersion: v1
 kind: ResourceQuota
 metadata:
-  name: sandbox-quota
+  name: ${SANDBOX_QUOTA_NAME}
   namespace: ${namespace}
   labels:
     app.kubernetes.io/managed-by: flui
@@ -75,7 +80,7 @@ spec:
 apiVersion: v1
 kind: LimitRange
 metadata:
-  name: sandbox-limits
+  name: ${SANDBOX_LIMIT_RANGE_NAME}
   namespace: ${namespace}
   labels:
     app.kubernetes.io/managed-by: flui

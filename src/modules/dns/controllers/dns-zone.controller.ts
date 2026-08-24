@@ -19,6 +19,8 @@ import {
 } from '@nestjs/swagger';
 import { RequireSection } from '../../iam/decorators/require-section.decorator';
 import { SECTION } from '../../iam/constants/iam-sections';
+import { RequirePermission } from '../../iam/decorators/require-permission.decorator';
+import { IAM_PERMISSION } from '../../iam/constants/iam-permissions';
 import { DnsZoneService } from '../services/dns-zone.service';
 import { Public } from '../../auth/decorators/public.decorator';
 import { CreateDnsZoneDto } from '../dto/create-dns-zone.dto';
@@ -95,6 +97,7 @@ export class DnsZoneController {
 
   @Delete(':id')
   @RequireSection(SECTION.INFRASTRUCTURE)
+  @RequirePermission(IAM_PERMISSION.CLUSTER_MANAGE)
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({
     summary: 'Remove a registered DNS zone',

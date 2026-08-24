@@ -16,6 +16,9 @@ import {
   isDirectChildOf,
   normalizeHost,
 } from '../utils/host-claim.util';
+import { isInsideTenancySubdomain } from '../utils/tenancy-subdomain.util';
+import { TenancySubdomainService } from './tenancy-subdomain.service';
+import { SandboxSubdomainService } from './sandbox-subdomain.service';
 
 export const HOST_NOT_OWNED_CODE = 'endpoint_host_not_yours';
 export const HOST_ALREADY_SERVED_CODE = 'endpoint_host_already_served';
@@ -63,6 +66,8 @@ export class EndpointHostGuardService {
     private readonly clusterDnsZones: Repository<ClusterDnsZoneEntity>,
     private readonly kubernetesService: KubernetesService,
     private readonly encryptionService: EncryptionService,
+    private readonly tenancySubdomains: TenancySubdomainService,
+    private readonly sandboxSubdomains: SandboxSubdomainService,
   ) {}
 
   /**
@@ -82,11 +87,18 @@ export class EndpointHostGuardService {
   }
 
   /**
-   * The subdomain a tenancy's applications are served from:
-   * `<cluster name>.<zone>`, the same string `EndpointModeResolverService`
-   * builds a generated hostname out of. A tenancy has no narrower space of its
-   * own today — see the note in the round diary — so this is as tight as it
-   * goes without a second wildcard certificate.
+   * The space a tenancy may name inside.
+   *
+   * Two answers, and which one applies is decided by a certificate rather than
+   * by a setting. A tenancy that has `*.<tenancy>.<cluster>.<zone>` issued and
+   * valid owns exactly that, and nothing wider: the shared
+   * `<cluster>.<zone>` stops being available to it the moment it has somewhere
+   * of its own. A tenancy without that certificate — every tenancy today, and
+   * every new one for the first minutes of its life — falls back to
+   * `<cluster>.<zone>`, which is the only place it can actually be served.
+   *
+   * The fallback is never *wider* than what a tenancy has today, so this can
+   * only ever refuse more than it used to.
    */
   private async assertInsideTenancySubdomain(
     cluster: ClusterEntity,
@@ -97,6 +109,21 @@ export class EndpointHostGuardService {
       where: { clusterId: cluster.id, namespace },
     });
     if (!isSandbox) return;
+
+    // Both answers to the same question, and in practice only ever one of them:
+    // the shared subdomain is the decided shape, the per-tenancy one is
+    // excluded by decision and off. A tenancy that has either owns exactly
+    // that and no longer the shared `<cluster>.<zone>`.
+    const own = [
+      ...(await this.sandboxSubdomains.activeSubdomains(cluster, namespace)),
+      ...(await this.tenancySubdomains.activeSubdomains(cluster, namespace)),
+    ];
+    if (own.length > 0) {
+      // `isInsideTenancySubdomain` refuses a wildcard itself, so the
+      // claims-everything case below is already covered here.
+      if (own.some((suffix) => isInsideTenancySubdomain(host, suffix))) return;
+      throw this.notOwned(own, host);
+    }
 
     const suffixes = await this.appSubdomains(cluster);
     // A wildcard is one label under the subdomain, so the check below would let
@@ -112,7 +139,11 @@ export class EndpointHostGuardService {
       return;
     }
 
-    throw new ForbiddenException({
+    throw this.notOwned(suffixes, host);
+  }
+
+  private notOwned(suffixes: string[], host: string): ForbiddenException {
+    return new ForbiddenException({
       statusCode: 403,
       code: HOST_NOT_OWNED_CODE,
       message:

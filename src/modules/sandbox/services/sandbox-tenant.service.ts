@@ -17,6 +17,7 @@ import {
   IIdentityDirectory,
 } from '../../auth/interfaces/identity-directory.interface';
 import { IdentityRole, UserEntity } from '../../auth/entities/user.entity';
+import { UserManagementService } from '../../auth/services/user-management.service';
 import { ApiKeyEntity } from '../../auth/entities/api-key.entity';
 import { IamRoleBindingEntity } from '../../iam/entities/iam-role-binding.entity';
 import { IAM_ROLE } from '../../iam/constants/iam-roles';
@@ -27,6 +28,8 @@ import { KubernetesService } from '../../infrastructure/shared/services/kubernet
 import { EncryptionService } from '../../shared/encryption/services/encryption.service';
 import { AppEndpointService } from '../../dns/services/app-endpoint.service';
 import { AppEndpointReconciliationService } from '../../dns/services/app-endpoint-reconciliation.service';
+import { TenancySubdomainService } from '../../dns/services/tenancy-subdomain.service';
+import { SandboxSubdomainService } from '../../dns/services/sandbox-subdomain.service';
 
 /**
  * Building a tenancy and taking it apart again.
@@ -63,8 +66,11 @@ export class SandboxTenantService {
     @InjectRepository(ClusterEntity)
     private readonly clusters: Repository<ClusterEntity>,
     private readonly projects: ProjectsService,
+    private readonly userManagement: UserManagementService,
     private readonly appEndpoints: AppEndpointService,
     private readonly endpointReconciliation: AppEndpointReconciliationService,
+    private readonly tenancySubdomains: TenancySubdomainService,
+    private readonly sandboxSubdomains: SandboxSubdomainService,
   ) {}
 
   async provision(clusterId: string): Promise<SandboxTenantEntity> {
@@ -141,6 +147,27 @@ export class SandboxTenantService {
         buildNoindexMiddleware(tenant.namespace),
       );
       timeline.mark('namespace');
+
+      // Before the seed, because the seed is what creates the endpoints that
+      // will carry the name: an application deployed before the certificate is
+      // valid keeps the shared hostname for as long as it lives, since a
+      // hostname is written once. This is also the only place the wait is free
+      // — a background refill, not a visitor watching a spinner.
+      //
+      // Never fatal: a tenancy without its own certificate is a tenancy on the
+      // shared name, which is where every tenancy is today.
+      const cluster = await this.clusters.findOne({ where: { id: clusterId } });
+      if (cluster) {
+        // The shared subdomain first: it is the decided shape, and it is the
+        // one whose cost does not grow with the number of guests — the first
+        // tenancy pays for the certificate and every one after it reads a row.
+        await this.sandboxSubdomains.ensure(cluster, tenant.namespace);
+        await this.tenancySubdomains.ensureCertificate(
+          cluster,
+          tenant.namespace,
+        );
+        timeline.mark('tenancy certificate');
+      }
 
       // Readiness waits for the seed. A tenancy is only warm once there is
       // something running in it — that is the whole reason the reserve exists.
@@ -226,6 +253,8 @@ export class SandboxTenantService {
       failures.push(`endpoints: ${this.msg(error)}`);
     }
 
+    await this.releaseTenancyCertificate(cluster, tenant, notes, failures);
+
     try {
       // Read the grouping before the applications go: deleting them sets their
       // projectId to NULL via the foreign key, and a project nothing points at
@@ -252,8 +281,14 @@ export class SandboxTenantService {
       failures.push(`applications: ${this.msg(error)}`);
     }
 
+    // The same cleanup the administrative delete performs, not a second one
+    // written here: a binding names a person by email *or* by local id, and the
+    // query this used to run took only the first kind away.
     try {
-      await this.bindings.delete({ principalRef: tenant.email });
+      await this.userManagement.detachRoleBindings({
+        id: tenant.userId,
+        email: tenant.email,
+      });
     } catch (error) {
       failures.push(`binding: ${this.msg(error)}`);
     }
@@ -337,6 +372,30 @@ export class SandboxTenantService {
   async expireNow(tenant: SandboxTenantEntity): Promise<SandboxTenantEntity> {
     await this.reap(tenant);
     return this.reserve.getById(tenant.id);
+  }
+
+  /**
+   * The tenancy's own wildcard certificate. Its master Secret lives in
+   * `flui-system`, so deleting the tenancy's namespace does not take it:
+   * without this, every reaped tenancy leaves behind a certificate that keeps
+   * renewing, forever, for a name nothing serves.
+   */
+  private async releaseTenancyCertificate(
+    cluster: ClusterEntity | null,
+    tenant: SandboxTenantEntity,
+    notes: string[],
+    failures: string[],
+  ): Promise<void> {
+    if (!cluster) return;
+    try {
+      const removed = await this.tenancySubdomains.releaseCertificates(
+        cluster,
+        tenant.namespace,
+      );
+      if (removed) notes.push(`tenancy certificates: removed ${removed}`);
+    } catch (error) {
+      failures.push(`tenancy certificate: ${this.msg(error)}`);
+    }
   }
 
   private async deleteEndpoints(tenant: SandboxTenantEntity): Promise<void> {

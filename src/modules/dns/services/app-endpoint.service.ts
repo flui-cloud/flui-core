@@ -31,12 +31,23 @@ import { KubernetesService } from '../../infrastructure/shared/services/kubernet
 import { EncryptionService } from '../../shared/encryption/services/encryption.service';
 import { EndpointGatewayConfig } from '../interfaces/endpoint-gateway-config.interface';
 import { EndpointHostGuardService } from './endpoint-host-guard.service';
+import { TenancySubdomainService } from './tenancy-subdomain.service';
+import { SandboxSubdomainService } from './sandbox-subdomain.service';
 
 /** An application's primary endpoint, hostname together with whether it serves. */
 export interface PrimaryEndpointState {
   fqdn: string;
   reconciliationStatus: ReconciliationStatus;
   errorMessage: string | null;
+  /**
+   * The certificate in front of that hostname, or null when the endpoint never
+   * reported one — which is the state of every endpoint that predates this
+   * field and of every endpoint that was never asked for TLS. Reconciliation
+   * says IN_SYNC as soon as the DNS record and the Ingress are applied, which
+   * is *before* an ACME order finishes, so this is the only thing that can tell
+   * a hostname that answers `https://` from one that will in a few minutes.
+   */
+  certificateStatus: CertificateStatus | null;
 }
 
 @Injectable()
@@ -60,6 +71,8 @@ export class AppEndpointService {
     private readonly endpointModeResolver: EndpointModeResolverService,
     private readonly authzInstallRepo: ClusterAuthzInstallRepository,
     private readonly hostGuard: EndpointHostGuardService,
+    private readonly tenancySubdomains: TenancySubdomainService,
+    private readonly sandboxSubdomains: SandboxSubdomainService,
   ) {}
 
   /**
@@ -209,6 +222,28 @@ export class AppEndpointService {
       }
     }
 
+    // Only when there is already a valid certificate for that name — otherwise
+    // the shared `<cluster>.<zone>`, which is covered and works. A hostname is
+    // written once and lived with, so a name whose certificate is still being
+    // ordered is a link that shows a warning for as long as the order takes and
+    // a name nobody can move afterwards.
+    //
+    // The installation-wide `<label>.<zone>` comes first because it is the
+    // decided shape; the per-tenancy name below it is excluded by decision and
+    // off — see `SandboxSubdomainService`.
+    const tenancySubdomain = clusterDnsZone?.dnsZone?.zoneName
+      ? ((await this.sandboxSubdomains.activeSubdomain(
+          cluster,
+          application.k8sNamespace,
+          clusterDnsZone.dnsZone.zoneName,
+        )) ??
+        (await this.tenancySubdomains.activeSubdomain(
+          cluster,
+          application.k8sNamespace,
+          clusterDnsZone.dnsZone.zoneName,
+        )))
+      : null;
+
     const resolved = this.endpointModeResolver.resolve({
       cluster,
       clusterDnsZone,
@@ -217,6 +252,7 @@ export class AppEndpointService {
       requestedCertChallenge: dto.certChallenge,
       requestedHostnameMode: dto.hostnameMode,
       slug: application.slug ?? application.name,
+      tenancySubdomain,
     });
     const fqdn = this.normalizeFqdn(resolved.fqdn);
 
@@ -401,6 +437,7 @@ export class AppEndpointService {
           fqdn: endpoint.fqdn,
           reconciliationStatus: endpoint.reconciliationStatus,
           errorMessage: endpoint.errorMessage ?? null,
+          certificateStatus: endpoint.certificateStatus ?? null,
         });
       }
     }

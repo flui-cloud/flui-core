@@ -7,6 +7,7 @@ import {
 } from '@nestjs/common';
 import { Request } from 'express';
 import { AuthenticatedUser } from '../../auth/interfaces/authenticated-user.interface';
+import { principalFromUser } from '../../iam/interfaces/iam.types';
 import {
   POLICY_ENGINE,
   PolicyEngine,
@@ -14,6 +15,7 @@ import {
 import {
   isReadOnlyArea,
   isSandboxAllowed,
+  SANDBOX_FORBIDDEN_MESSAGE,
   SANDBOX_READ_ONLY_WRITE_CODE,
   SANDBOX_READ_ONLY_WRITE_MESSAGE,
 } from '../constants/sandbox-fence';
@@ -61,12 +63,11 @@ export class SandboxFenceGuard implements CanActivate {
     const user = req.user;
     if (!user || user.isAdmin) return true;
 
+    // `isAdmin: false` stays explicit: the line above already lets an
+    // administrator through, and the fence must not start depending on that.
     const access = await this.policy.resolveAccess({
-      userId: user.userId,
-      email: user.email,
-      role: user.role,
+      ...principalFromUser(user),
       isAdmin: false,
-      scopes: user.scopes,
     });
     if (!access.isSandbox) return true;
     req[SANDBOX_GUEST_REQUEST] = { userId: user.userId };
@@ -107,8 +108,7 @@ export class SandboxFenceGuard implements CanActivate {
     throw new ForbiddenException({
       statusCode: 403,
       code: SANDBOX_FORBIDDEN_CODE,
-      message:
-        'This is disabled in the Flui sandbox. See GET /sandbox/limits for what is available here and why.',
+      message: SANDBOX_FORBIDDEN_MESSAGE,
       route: `${req.method} ${path}`,
     });
   }

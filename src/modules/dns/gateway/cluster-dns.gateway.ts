@@ -24,6 +24,11 @@ import {
   IssuerDeletionFailedDto,
 } from '../dto/cluster-events.dto';
 import { WS_CORS } from '../../../config/cors-origin.config';
+import {
+  carriesAdminReach,
+  ceilingWithholds,
+} from '../../auth/utils/credential-ceiling.util';
+import { IAM_PERMISSION } from '../../iam/constants/iam-permissions';
 
 /**
  * WebSocket Gateway for real-time cluster DNS/certificate events.
@@ -92,7 +97,12 @@ export class ClusterDnsGateway implements OnGatewayInit {
     user: AuthenticatedUser | undefined,
   ): Promise<boolean> {
     if (!user) return false;
-    if (user.isAdmin) return true;
+    // Decision 119. `cluster:manage` because that is what the Infrastructure
+    // section gate below already demands, so the ceiling asks the same question
+    // the section does — and `mcp:backup:write`, which carries `cluster:manage`
+    // by construction, still passes.
+    if (ceilingWithholds(user, IAM_PERMISSION.CLUSTER_MANAGE)) return false;
+    if (carriesAdminReach(user)) return true;
     const sections = await this.policy.resolveSectionAccess({
       userId: user.userId,
       email: user.email,

@@ -454,6 +454,23 @@ describe('AppEndpointReconciliationService.reconcileDnsRecord', () => {
   });
 
   // `*.control-cluster` answers for `app.control-cluster`, never for
+  /**
+   * The measurement the sandbox subdomain rests on, and the reason it needed no
+   * new code here: applications under `demo` sit one label under it, exactly as
+   * applications sit one label under the cluster name, so `*.demo` is found by
+   * the same search. Hundreds of guests, not one per-application record.
+   */
+  it('finds the sandbox subdomain wildcard for a name under it', async () => {
+    const { service, createRecord } = build([
+      { ...wildcard(), name: '*.demo' },
+    ]);
+
+    const result = await reconcile(service, 'it-tools.demo.dawit.blog');
+
+    expect(createRecord).not.toHaveBeenCalled();
+    expect(result.name).toBe('*.demo');
+  });
+
   // `a.b.control-cluster` — one label, which is all a DNS wildcard matches.
   it('does not treat a wildcard as covering a name two labels deep', async () => {
     const { service, createRecord } = build([wildcard()]);

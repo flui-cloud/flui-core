@@ -19,6 +19,12 @@ interface Served {
   ingresses?: Record<string, any>[];
   ingressRoutes?: Record<string, any>[];
   throws?: boolean;
+  /**
+   * The subdomains this tenancy has a *valid* certificate for. Empty is every
+   * tenancy today, and every new one until its own certificate lands.
+   */
+  ownSubdomains?: string[];
+  sharedSubdomains?: string[];
 }
 
 function build(opts: { sandbox: boolean } & Served) {
@@ -40,9 +46,63 @@ function build(opts: { sandbox: boolean } & Served) {
       patchKubeconfigServer: jest.fn().mockReturnValue('kubeconfig'),
     } as never,
     { decrypt: jest.fn().mockReturnValue('kubeconfig') } as never,
+    {
+      activeSubdomains: jest.fn().mockResolvedValue(opts.ownSubdomains ?? []),
+    } as never,
+    {
+      activeSubdomains: jest
+        .fn()
+        .mockResolvedValue(opts.sharedSubdomains ?? []),
+    } as never,
   );
   return { service, listCrdResources };
 }
+
+describe('EndpointHostGuardService — the installation-wide sandbox subdomain', () => {
+  const SHARED = ['demo.dawit.blog'];
+
+  it('lets a guest name a host directly under it', async () => {
+    const { service } = build({ sandbox: true, sharedSubdomains: SHARED });
+
+    await expect(
+      service.assertClaimable(CLUSTER, 'user-guest-a', 'proof.demo.dawit.blog'),
+    ).resolves.toBeUndefined();
+  });
+
+  /**
+   * Once the tenancy has somewhere of its own, the cluster-wide space stops
+   * being available to it — that space is where the instance's own
+   * applications live.
+   */
+  it('stops it reaching back into the cluster-wide space', async () => {
+    const { service } = build({ sandbox: true, sharedSubdomains: SHARED });
+
+    await expect(
+      service.assertClaimable(
+        CLUSTER,
+        'user-guest-a',
+        'proof.control-cluster.dawit.blog',
+      ),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+  });
+
+  /** One label under, and no deeper: that is all the single wildcard covers. */
+  it('refuses a name two labels under it', async () => {
+    const { service } = build({ sandbox: true, sharedSubdomains: SHARED });
+
+    await expect(
+      service.assertClaimable(CLUSTER, 'user-guest-a', 'a.b.demo.dawit.blog'),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+  });
+
+  it('refuses the wildcard itself, which is every name at once', async () => {
+    const { service } = build({ sandbox: true, sharedSubdomains: SHARED });
+
+    await expect(
+      service.assertClaimable(CLUSTER, 'user-guest-a', '*.demo.dawit.blog'),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+  });
+});
 
 const ingress = (namespace: string, name: string, ...hosts: string[]) => ({
   metadata: { namespace, name },
@@ -86,6 +146,63 @@ describe('EndpointHostGuardService — a sandbox tenancy', () => {
     await expect(
       service.assertClaimable(CLUSTER, 'user-guest-a', host),
     ).rejects.toBeInstanceOf(ForbiddenException);
+  });
+});
+
+/**
+ * Once `*.<tenancy>.<cluster>.<zone>` is issued and valid, the tenancy's space
+ * *is* that subdomain — and the shared one stops being available to it. The
+ * rule gets narrower as certificates land; it never gets wider.
+ */
+describe('EndpointHostGuardService — a tenancy with a subdomain of its own', () => {
+  const OWN = ['guest-a.control-cluster.dawit.blog'];
+
+  it('allows a name directly under its own subdomain', async () => {
+    const { service } = build({ sandbox: true, ownSubdomains: OWN });
+
+    await expect(
+      service.assertClaimable(
+        CLUSTER,
+        'user-guest-a',
+        'mine.guest-a.control-cluster.dawit.blog',
+      ),
+    ).resolves.toBeUndefined();
+  });
+
+  it.each([
+    // The name it could have taken before it had somewhere of its own.
+    ['the shared cluster subdomain', 'mine.control-cluster.dawit.blog'],
+    ["another tenancy's subdomain", 'mine.guest-b.control-cluster.dawit.blog'],
+    [
+      'a name past what its certificate covers',
+      'a.b.guest-a.control-cluster.dawit.blog',
+    ],
+    [
+      'a wildcard over its own subdomain',
+      '*.guest-a.control-cluster.dawit.blog',
+    ],
+    ['the subdomain itself', 'guest-a.control-cluster.dawit.blog'],
+  ])('refuses %s', async (_case, host) => {
+    const { service } = build({ sandbox: true, ownSubdomains: OWN });
+
+    await expect(
+      service.assertClaimable(CLUSTER, 'user-guest-a', host),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+  });
+
+  it('names the subdomain it does own in the refusal', async () => {
+    const { service } = build({ sandbox: true, ownSubdomains: OWN });
+
+    await expect(
+      service.assertClaimable(CLUSTER, 'user-guest-a', 'proof.example.com'),
+    ).rejects.toMatchObject({
+      response: {
+        code: 'endpoint_host_not_yours',
+        message: expect.stringContaining(
+          '*.guest-a.control-cluster.dawit.blog',
+        ),
+      },
+    });
   });
 });
 

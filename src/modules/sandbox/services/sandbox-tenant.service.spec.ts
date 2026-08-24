@@ -128,7 +128,6 @@ const build = (
       return b;
     },
     create: (b: unknown) => b,
-    delete: async () => calls.push('delete-binding'),
   };
   const apiKeys = {
     delete: async (where: { userId: string }) => {
@@ -147,6 +146,17 @@ const build = (
   const projects = {
     remove: async (id: string) => calls.push(`delete-project:${id}`),
   };
+  // The reaper no longer writes its own binding cleanup: it calls the one the
+  // administrative delete uses, which takes both names a binding can carry.
+  const userManagement = {
+    detachRoleBindings: async (principal: {
+      id?: string | null;
+      email: string;
+    }) => {
+      calls.push(`delete-binding:${principal.email}:${principal.id ?? '-'}`);
+      return 1;
+    },
+  };
   const clusters = {
     findOne: async () =>
       breakages.clusterGone ? null : { id: 'c1', kubeconfigEncrypted: 'enc' },
@@ -162,6 +172,23 @@ const build = (
     deleteEndpointResources: async (id: string) => {
       calls.push(`delete-endpoint-resources:${id}`);
       if (breakages.endpoint) throw new Error('provider refused');
+    },
+  };
+  const tenancySubdomains = {
+    ensureCertificate: async () => {
+      calls.push('tenancy-certificate');
+      return null;
+    },
+    releaseCertificates: async () => {
+      calls.push('release-tenancy-certificate');
+      return 0;
+    },
+  };
+
+  const sandboxSubdomains = {
+    ensure: async () => {
+      calls.push('shared-subdomain');
+      return null;
     },
   };
 
@@ -181,8 +208,11 @@ const build = (
     applications as never,
     clusters as never,
     projects as never,
+    userManagement as never,
     appEndpoints as never,
     endpointReconciliation as never,
+    tenancySubdomains as never,
+    sandboxSubdomains as never,
   );
   return { service, calls, marks };
 };
@@ -199,6 +229,10 @@ describe('SandboxTenantService.provision', () => {
       'quota',
       'netpol',
       'noindex',
+      // Before the seed: the seed creates the endpoints that carry the name,
+      // and a hostname is written once.
+      'shared-subdomain',
+      'tenancy-certificate',
       'seed',
       'wait-seed',
       // After the seed runs and before anyone can hold the tenancy: the copy
@@ -242,9 +276,12 @@ describe('SandboxTenantService.reap', () => {
       'list-endpoints',
       'delete-endpoint-resources:ep-1',
       'delete-endpoint:ep-1',
+      // The master Secret lives in `flui-system`, so deleting the namespace
+      // does not take the tenancy's certificate with it.
+      'release-tenancy-certificate',
       'delete-apps',
       'delete-project:proj-1',
-      'delete-binding',
+      'delete-binding:guest-1@try.flui.cloud:u1',
       // Before the user row, and named on its own: `api_keys` has no foreign
       // key to `users`, so without this step every credential the guest minted
       // outlives the person it was issued to.
@@ -284,7 +321,7 @@ describe('SandboxTenantService.reap', () => {
     await service.reap(tenantRow);
 
     expect(calls).toContain('delete-apps');
-    expect(calls).toContain('delete-binding');
+    expect(calls).toContain('delete-binding:guest-1@try.flui.cloud:u1');
     expect(marks[0].kind).toBe('failed');
     expect(marks[0].detail).toContain('idp user');
   });
@@ -400,7 +437,7 @@ describe('SandboxTenantService.expireNow', () => {
 
     expect(calls).toContain('delete-ns');
     expect(calls).toContain('delete-idp:idp-1');
-    expect(calls).toContain('delete-binding');
+    expect(calls).toContain('delete-binding:guest-1@try.flui.cloud:u1');
     expect(after.state).toBe(SandboxTenantState.EXPIRED);
   });
 

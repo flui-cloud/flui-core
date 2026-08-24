@@ -86,7 +86,7 @@ describe('subscribing to the cluster DNS room', () => {
 
   it('refuses somebody who does not hold the area at all', async () => {
     const gateway = gatewayFor([{ key: 'workloads', level: 'full' }]);
-    const client = socket(person('editor'));
+    const client = socket(person('operator'));
 
     await gateway.handleSubscribe({ clusterId: 'c1' }, client as never);
 
