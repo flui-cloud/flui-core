@@ -13,6 +13,7 @@ import {
 import { v4 as uuidv4 } from 'uuid';
 import { ClusterEntity } from '../../infrastructure/clusters/entities/cluster.entity';
 import { ProjectEntity } from '../../projects/entities/project.entity';
+import { UserEntity } from '../../auth/entities/user.entity';
 import { AppRevisionEntity } from './app-revision.entity';
 import { AppResourceEntity } from './app-resource.entity';
 import { ApplicationCategory } from '../enums/application-category.enum';
@@ -176,8 +177,28 @@ export class ApplicationEntity {
   @Column({ type: 'json', nullable: true })
   securityContext?: ApplicationSecurityContext;
 
-  @Column({ nullable: true })
-  userId?: string;
+  /**
+   * Who owns this application, and now a reference the database enforces.
+   *
+   * It was a bare varchar with nothing holding it: two rows on the live
+   * instance named an owner that no `users` row answered for — one a person the
+   * sandbox reaper had removed, one the install credential's declared principal
+   * — and an `owner:` selector reaches neither. `ON DELETE SET NULL` is what
+   * makes that class impossible instead of merely swept: deleting a person
+   * empties the column rather than leaving it pointing at a ghost, which is
+   * also the only honest reading, since {@link ownerUserIdFor} and
+   * `matchesSelector` already treat a missing owner as "matches nobody".
+   *
+   * NULL therefore has two legitimate readings, both real on this instance: the
+   * platform's own components, which no person created, and an application
+   * whose owner has since been deleted.
+   */
+  @Column({ type: 'uuid', nullable: true })
+  userId?: string | null;
+
+  @ManyToOne(() => UserEntity, { onDelete: 'SET NULL', nullable: true })
+  @JoinColumn({ name: 'userId' })
+  user?: UserEntity;
 
   @Column({ default: false })
   systemProtected: boolean;

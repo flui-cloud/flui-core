@@ -29,6 +29,7 @@ import {
   PrimaryEndpointState,
 } from '../../dns/services/app-endpoint.service';
 import { ReconciliationStatus } from '../../infrastructure/shared/enums/reconciliation-status.enum';
+import { CertificateStatus } from '../../providers/interfaces/certificate-provider.interface';
 import { internalHostingNotAvailableException } from '../../dns/constants/internal-hosting-error';
 import {
   ApplicationSourceConfig,
@@ -52,11 +53,24 @@ import {
 } from '../../infrastructure/shared/services/kubernetes.service';
 import { ResourceProfilesService } from '../../images/services/resource-profiles.service';
 import { buildUserNamespace } from '../utils/k8s-namespace.util';
+import { ownerUserIdFor } from '../utils/application-owner.util';
 import {
   assertNoClientNamespace,
   assertPlaceableNamespace,
 } from '../utils/reserved-namespace.util';
 import { InfrastructureOperationEntity } from '../../infrastructure/servers/entities/infrastructure-operations.entity';
+
+/**
+ * The certificate states that mean "asked for, not arrived yet" — a window
+ * that closes by itself, as opposed to `failed`/`expired`, which do not.
+ */
+function isCertificateStillComing(
+  status: CertificateStatus | null | undefined,
+): boolean {
+  return (
+    status === CertificateStatus.PENDING || status === CertificateStatus.ISSUING
+  );
+}
 
 @Injectable()
 export class ApplicationService {
@@ -143,7 +157,9 @@ export class ApplicationService {
       sourceType: dto.sourceType,
       clusterId,
       k8sNamespace,
-      userId,
+      // Not the principal as authenticated: a service credential's principal is
+      // a declared name, not a `users` row, and the column is a foreign key.
+      userId: ownerUserIdFor(userId),
       sourceConfig: dto.sourceConfig as ApplicationSourceConfig,
       env: envWithEncryptedSecrets,
       resources: resolvedResources,
@@ -786,6 +802,7 @@ export class ApplicationService {
           fqdn: primary.fqdn,
           reconciliationStatus: primary.reconciliationStatus,
           errorMessage: primary.errorMessage ?? null,
+          certificateStatus: primary.certificateStatus ?? null,
         },
       );
     }
@@ -858,6 +875,18 @@ export class ApplicationService {
    * record exists — and if reconciliation then fails, that hostname resolves
    * nowhere forever. `endpointStatus` travels with it so a caller can say why:
    * an absent URL plus a reason beats a link that does not work.
+   *
+   * **And withheld again while the certificate is still coming.** Reconciliation
+   * reports IN_SYNC as soon as the DNS record and the Ingress are applied; an
+   * ACME order takes minutes longer, and the link this composes is `https://`.
+   * Publishing it in that window hands the visitor a browser security warning
+   * on the one screen that matters. `pending` and `issuing` are both that
+   * window and both transient — a refresh resolves them.
+   *
+   * `failed`, `expired` and "never reported" are deliberately *not* withheld.
+   * They are not a window that closes, so withholding would hide the
+   * application for good; and every endpoint that predates this field, plus
+   * every endpoint that was never asked for TLS, reports nothing at all.
    */
   private applyPublicEndpoint(
     dto: ApplicationResponseDto,
@@ -867,7 +896,11 @@ export class ApplicationService {
     if (!endpoint) return;
     dto.endpointStatus = endpoint.reconciliationStatus;
     dto.endpointError = endpoint.errorMessage ?? undefined;
-    if (endpoint.reconciliationStatus === ReconciliationStatus.IN_SYNC) {
+    dto.endpointCertificateStatus = endpoint.certificateStatus ?? undefined;
+    if (
+      endpoint.reconciliationStatus === ReconciliationStatus.IN_SYNC &&
+      !isCertificateStillComing(endpoint.certificateStatus)
+    ) {
       dto.url = this.publicUrlFromFqdn(entity, endpoint.fqdn);
     }
   }

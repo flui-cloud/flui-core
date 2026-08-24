@@ -12,6 +12,7 @@ import {
 } from './terminal.gateway';
 import { TerminalTargetResolver } from '../services/terminal-target.resolver';
 import { IAM_PERMISSION } from '../../iam/constants/iam-permissions';
+import { MCP_SCOPE } from '../../mcp/constants/mcp-scopes';
 
 /**
  * Decision 65. The gateway used to take `serverId`, `serverIp` and `clusterId`
@@ -152,6 +153,82 @@ describe('TerminalTargetResolver — resolve, then ask', () => {
       policy(false) as never,
     );
     await expect(r.resolve(user, 'prov-123')).resolves.toBeNull();
+  });
+
+  it('refuses a credential whose scopes do not carry cluster:manage, even for an admin', async () => {
+    // The ceiling is enforced by two HTTP guards and a socket meets neither;
+    // the policy engine cannot stand in, because it short-circuits on isAdmin.
+    const engine = policy(true);
+    const r = new TerminalTargetResolver(
+      repo({
+        id: 'n1',
+        clusterId: 'c1',
+        serverName: 'worker-1',
+        ipAddress: '10.0.0.7',
+      }) as never,
+      repo({ id: 'c1', name: 'control' }) as never,
+      repo(null) as never,
+      engine as never,
+    );
+
+    const agentKey = {
+      userId: 'u1',
+      email: 'u@x',
+      isAdmin: true,
+      scopes: [MCP_SCOPE.APP_READ],
+    } as never;
+
+    await expect(r.resolve(agentKey, 'prov-123')).resolves.toBeNull();
+    // Refused before the grant is even asked for: a ceiling only takes away.
+    expect(engine.check).not.toHaveBeenCalled();
+  });
+
+  it('lets an uncapped credential through — a session declares no ceiling', async () => {
+    const engine = policy(true);
+    const r = new TerminalTargetResolver(
+      repo({
+        id: 'n1',
+        clusterId: 'c1',
+        serverName: 'worker-1',
+        ipAddress: '10.0.0.7',
+      }) as never,
+      repo({ id: 'c1', name: 'control' }) as never,
+      repo(null) as never,
+      engine as never,
+    );
+
+    await expect(
+      r.resolve({ userId: 'u1', email: 'u@x', isAdmin: false } as never, 'p-1'),
+    ).resolves.toMatchObject({ serverIp: '10.0.0.7' });
+    expect(engine.check).toHaveBeenCalled();
+  });
+
+  it('lets a scope that does carry cluster:manage reach the policy engine', async () => {
+    const engine = policy(true);
+    const r = new TerminalTargetResolver(
+      repo({
+        id: 'n1',
+        clusterId: 'c1',
+        serverName: 'worker-1',
+        ipAddress: '10.0.0.7',
+      }) as never,
+      repo({ id: 'c1', name: 'control' }) as never,
+      repo(null) as never,
+      engine as never,
+    );
+
+    await expect(
+      r.resolve(
+        {
+          userId: 'u1',
+          email: 'u@x',
+          isAdmin: false,
+          scopes: [MCP_SCOPE.BACKUP_WRITE],
+        } as never,
+        'p-1',
+      ),
+    ).resolves.toMatchObject({ serverIp: '10.0.0.7' });
+    expect(engine.check).toHaveBeenCalled();
   });
 
   it('never queries a uuid column with something that is not one', async () => {
