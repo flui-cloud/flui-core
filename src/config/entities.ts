@@ -69,6 +69,8 @@ import { AlertEventEntity } from '../modules/observability/entities/alert-event.
 import { MailSuppressionEntity } from '../modules/mail/entities/mail-suppression.entity';
 import { MailEventEntity } from '../modules/mail/entities/mail-event.entity';
 import { MailConnectionEntity } from '../modules/mail/entities/mail-connection.entity';
+import { ActionProposalEntity } from '../modules/action-cycle/entities/action-proposal.entity';
+import { AgentConcessionEntity } from '../modules/action-cycle/entities/agent-concession.entity';
 import { SandboxTenantEntity } from '../modules/sandbox/entities/sandbox-tenant.entity';
 
 export const entities = [
@@ -138,4 +140,6 @@ export const entities = [
   MailEventEntity,
   MailConnectionEntity,
   SandboxTenantEntity,
+  ActionProposalEntity,
+  AgentConcessionEntity,
 ];

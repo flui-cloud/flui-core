@@ -5,6 +5,7 @@ import * as dotenv from 'dotenv';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { ValidationPipe, Logger, ConsoleLogger } from '@nestjs/common';
 import { HttpExceptionFilter } from './filters/http-exception.filter';
+import { runWithActorContext } from './modules/auth/utils/actor-context';
 import Redis from 'ioredis';
 
 dotenv.config();
@@ -108,6 +109,15 @@ async function bootstrap() {
     // permanent mismatch.
     rawBody: true,
   });
+
+  // Opens the per-request actor context. It has to wrap the whole request —
+  // guards included, since the guard is what fills it — so it is middleware and
+  // not an interceptor: an interceptor returns an Observable that Nest
+  // subscribes to after the interceptor chain has returned, i.e. outside any
+  // AsyncLocalStorage.run() opened around it. See auth/utils/actor-context.
+  app.use((_req: unknown, _res: unknown, next: () => void) =>
+    runWithActorContext(next),
+  );
 
   // Global prefix
   app.setGlobalPrefix('api/v1');

@@ -33,6 +33,8 @@ import { SandboxModule } from './modules/sandbox/sandbox.module';
 import { SandboxFenceGuard } from './modules/sandbox/guards/sandbox-fence.guard';
 import { PermissionsGuard } from './modules/iam/guards/permissions.guard';
 import { SectionAccessGuard } from './modules/iam/guards/section-access.guard';
+import { ActionCycleGuard } from './modules/action-cycle/action-cycle.guard';
+import { ActionCycleModule } from './modules/action-cycle/action-cycle.module';
 import { WebhooksModule } from './modules/webhooks/webhooks.module';
 import { ImageRegistryModule } from './modules/image-registry/image-registry.module';
 import { TemplatesModule } from './modules/templates/templates.module';
@@ -131,6 +133,7 @@ import { DemoModule } from './modules/demo/demo.module';
     IamModule,
     ProjectsModule,
     SandboxModule,
+    ActionCycleModule,
     ScheduleModule.forRoot(),
   ],
   providers: [
@@ -151,6 +154,15 @@ import { DemoModule } from './modules/demo/demo.module';
     {
       provide: APP_GUARD,
       useClass: SectionAccessGuard,
+    },
+    // Fifth, and last, on purpose: by the time an agent's request reaches the
+    // action cycle the fence has decided the route is callable at all and IAM
+    // has decided the person may. A concession can therefore only ever remove
+    // the *pause* on something already permitted — it cannot widen a boundary,
+    // because every boundary has already answered.
+    {
+      provide: APP_GUARD,
+      useClass: ActionCycleGuard,
     },
   ],
 })

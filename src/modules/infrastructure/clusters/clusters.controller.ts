@@ -18,6 +18,7 @@ import {
   ApiQuery,
   ApiBearerAuth,
 } from '@nestjs/swagger';
+import { ActionCycle } from '../../action-cycle/action-cycle.decorator';
 import { RequireSection } from '../../iam/decorators/require-section.decorator';
 import { RequirePermission } from '../../iam/decorators/require-permission.decorator';
 import { IAM_PERMISSION } from '../../iam/constants/iam-permissions';
@@ -91,7 +92,7 @@ import { CloudProvider } from 'src/modules/providers/enums/cloud-provider.enum';
  *
  * Not a stylistic choice: four reads here — the cluster list, `:id`, `:id/nodes`
  * and `:id/resource-availability` — are what the deploy wizard calls, and an
- * editor holds `app:create` without `cluster:manage`, so a class-level gate
+ * operator holds `app:create` without `cluster:manage`, so a class-level gate
  * would answer 403 to the deploy flow of every non-admin.
  *
  * Every other read that no caller needs now carries its section. What is left
@@ -105,13 +106,18 @@ import { CloudProvider } from 'src/modules/providers/enums/cloud-provider.enum';
  *
  * Two of the four deploy-wizard reads — the list and `:id/resource-availability`
  * — now carry `@RequirePermission(APP_READ)`. Not a section, and not
- * `cluster:read`, which would be the honest name: an `editor` holds neither
- * and a sandbox guest holds neither, and both are shown these two
- * for real, so naming the honest permission would 403 the deploy flow and the
- * demonstration in one line. `app:read` is what every principal that reaches
- * them today already holds, so it takes nothing from anybody; what it buys is
- * that the credential ceiling can see the routes at all, since it reads
- * `@RequirePermission` and `@AppAction` and nothing else.
+ * `cluster:read`, which would be the honest name. Every rung of the role ladder
+ * holds `cluster:read` now, but the **sandbox guest does not**, and it reaches
+ * both of these for real through the fence — so naming the honest permission
+ * would take the public demonstration down in one line while looking like a
+ * tidy-up. `app:read` is what every principal that reaches them today already
+ * holds, so it takes nothing from anybody; what it buys is that the credential
+ * ceiling can see the routes at all, since it reads `@RequirePermission` and
+ * `@AppAction` and nothing else.
+ *
+ * Moving them to `cluster:read` to close the gap between the name and the
+ * permission is explicitly *not* the fix: the gap is one guest role wide, and
+ * closing it that way trades a naming blemish for a broken demo.
  */
 @ApiTags('Infrastructure - Clusters')
 @ApiBearerAuth()
@@ -148,6 +154,7 @@ export class ClustersController {
 
   @Delete('orphan-volumes/:provider/:volumeId')
   @RequireSection('infrastructure')
+  @RequirePermission(IAM_PERMISSION.CLUSTER_MANAGE)
   @ApiOperation({
     summary: 'Detach and delete an orphan Flui-managed volume',
     description:
@@ -165,6 +172,16 @@ export class ClustersController {
 
   @Post(':id/workers')
   @RequireSection('infrastructure')
+  // The mockup's own example, and the shape a concession is written in: the
+  // route pattern *plus* `{id}` bound to one cluster. "Allow always" here means
+  // "add nodes to this cluster", never "infrastructure" — which is the whole
+  // difference between opening a door and opening a floor.
+  @ActionCycle({
+    action: 'POST /infrastructure/clusters/:id/workers',
+    bind: ['id'],
+    sentence: 'add worker nodes to cluster {id}',
+    estimate: '/infrastructure/clusters/:id/capacity-plan',
+  })
   @ApiOperation({
     summary: 'Add 1..5 worker nodes to an existing cluster',
     description:
@@ -198,6 +215,7 @@ export class ClustersController {
 
   @Delete(':id/workers/:nodeId')
   @RequireSection('infrastructure')
+  @RequirePermission(IAM_PERMISSION.CLUSTER_MANAGE)
   @ApiOperation({
     summary: 'Cordon, drain and remove a worker node',
     description:
@@ -349,7 +367,7 @@ export class ClustersController {
   /*
    * These two reads carry the `clusters` section, which is `cluster:read` —
    * the same gate the cluster menu entry already sits behind, so `viewer`,
-   * `editor` and `manager` all keep them.
+   * `operator` and `maintainer` all keep them.
    *
    * The dashboard reaches them from a hand-written HttpClient service rather
    * than the generated client, which is why a search by generated method name

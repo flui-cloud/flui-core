@@ -10,6 +10,11 @@ import { OwnerRoleBackfill1785100000000 } from './1785100000000-OwnerRoleBackfil
 import { McpToolCallOutcome1785200000000 } from './1785200000000-McpToolCallOutcome';
 import { ApiKeyHashAtRest1785300000000 } from './1785300000000-ApiKeyHashAtRest';
 import { ApiKeyLastUsed1785400000000 } from './1785400000000-ApiKeyLastUsed';
+import { RenameEditorAndManagerRoles1785500000000 } from './1785500000000-RenameEditorAndManagerRoles';
+import { ApplicationOwnerForeignKey1785600000000 } from './1785600000000-ApplicationOwnerForeignKey';
+import { InferenceConnectionOwner1785700000000 } from './1785700000000-InferenceConnectionOwner';
+import { AgentActorAudit1785800000000 } from './1785800000000-AgentActorAudit';
+import { ActionCycle1785900000000 } from './1785900000000-ActionCycle';
 
 // Explicit array, not a dist glob: nest build webpack-bundles to one file,
 // so a `dist/migrations/*.js` glob resolves to nothing at runtime.
@@ -27,4 +32,9 @@ export const migrations = [
   McpToolCallOutcome1785200000000,
   ApiKeyHashAtRest1785300000000,
   ApiKeyLastUsed1785400000000,
+  RenameEditorAndManagerRoles1785500000000,
+  ApplicationOwnerForeignKey1785600000000,
+  InferenceConnectionOwner1785700000000,
+  AgentActorAudit1785800000000,
+  ActionCycle1785900000000,
 ];

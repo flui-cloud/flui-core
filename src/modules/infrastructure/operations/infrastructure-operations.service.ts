@@ -9,6 +9,10 @@ import {
   calculateOperationProgressFromSaved,
   getStepConfigFromSaved,
 } from './helpers/operation-steps.helper';
+import {
+  haltIfCancelled,
+  requestOperationCancellation,
+} from './helpers/operation-cancellation.helper';
 
 @Injectable()
 export class InfrastructureOperationsService {
@@ -32,6 +36,34 @@ export class InfrastructureOperationsService {
   }
 
   /**
+   * Ask a running operation to stop.
+   *
+   * A request, not an abort. It stops nothing this instant and says so: the
+   * work is honoured at the next step boundary, because killing a ten-step
+   * provisioning halfway through a step leaves resources the person keeps
+   * paying for and cannot see. Idempotent, and terminal operations are left
+   * alone — asking a finished thing to stop is not an error worth raising.
+   */
+  async requestCancellation(operationId: string): Promise<{
+    operationId: string;
+    status: OperationStatus;
+    cancelRequested: boolean;
+  }> {
+    const operation = await this.getOperationDetails(operationId);
+    const running =
+      operation.status === OperationStatus.PENDING ||
+      operation.status === OperationStatus.IN_PROGRESS;
+    if (running && !operation.cancelRequestedAt) {
+      await requestOperationCancellation(this.operationRepository, operationId);
+    }
+    return {
+      operationId,
+      status: operation.status,
+      cancelRequested: running,
+    };
+  }
+
+  /**
    * Update operation step and recalculate progress
    * Uses saved steps from metadata for accurate progress tracking
    */
@@ -41,6 +73,11 @@ export class InfrastructureOperationsService {
     stepProgress: number = 0,
     additionalMetadata: Record<string, any> = {},
   ): Promise<void> {
+    // The cluster family's step boundary. Asked before the write rather than
+    // after it, so a stop takes effect between two steps and never inside one:
+    // a provisioning aborted mid-step is where paid-for orphans come from.
+    await haltIfCancelled(this.operationRepository, operationId);
+
     const operation = await this.operationRepository.findOne({
       where: { id: operationId },
     });

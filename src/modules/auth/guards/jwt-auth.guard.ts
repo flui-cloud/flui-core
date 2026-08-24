@@ -7,6 +7,8 @@ import {
   ApiKeyStrategy,
 } from '../strategies/api-key.strategy';
 import { extractJwtFromFluiSessionCookie } from '../utils/cookie-extractor.util';
+import { setCurrentActor } from '../utils/actor-context';
+import { actorFromRequest, actorOf } from '../utils/actor.util';
 
 @Injectable()
 export class JwtAuthGuard extends AuthGuard('jwt') {
@@ -42,14 +44,20 @@ export class JwtAuthGuard extends AuthGuard('jwt') {
       request.user = user;
       // On the request, never on the principal: see CURRENT_API_KEY_ID.
       request[CURRENT_API_KEY_ID] = keyId;
+      // The one point where both halves of the answer are in hand. Everything
+      // downstream that has to say "a person, or something acting for them"
+      // reads it from here rather than deriving it again.
+      setCurrentActor(actorOf(user, keyId));
       return true;
     }
 
     // JWT strategy selected at runtime based on AUTH_MODE
     const strategy = process.env.AUTH_MODE === 'local' ? 'local-jwt' : 'jwt';
-    return AuthGuard(strategy).prototype.canActivate.call(
+    const allowed = (await AuthGuard(strategy).prototype.canActivate.call(
       this,
       context,
-    ) as Promise<boolean>;
+    )) as boolean;
+    if (allowed) setCurrentActor(actorFromRequest(request));
+    return allowed;
   }
 }

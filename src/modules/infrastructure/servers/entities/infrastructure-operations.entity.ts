@@ -2,12 +2,17 @@
 
 import { CloudProvider } from 'src/modules/providers/enums/cloud-provider.enum';
 import {
+  BeforeInsert,
   Entity,
   PrimaryGeneratedColumn,
   Column,
   CreateDateColumn,
   UpdateDateColumn,
 } from 'typeorm';
+import {
+  currentActor,
+  currentGrantId,
+} from '../../../auth/utils/actor-context';
 import { CreateServerDto } from '../dto/create-server.dto';
 import { DeleteServerDto } from '../dto/delete-server.dto';
 import { CreateClusterDto } from '../../clusters/dto/create-cluster.dto';
@@ -405,6 +410,73 @@ export class InfrastructureOperationEntity {
 
   @Column({ nullable: true })
   userId?: string;
+
+  /**
+   * Whether a person, a plain key or an agent started this operation.
+   *
+   * `userId` cannot answer it. A Flui API key is issued *as* its principal and
+   * carries that principal's `isAdmin`, so "the administrator deleted the
+   * cluster" and "an agent holding a key the administrator minted deleted the
+   * cluster" are today the same row — which is precisely the distinction a
+   * revoke decision has to be made on.
+   */
+  @Column({ type: 'varchar', nullable: true })
+  actorKind?: string | null;
+
+  /** `api_keys.id` when a key started it. No foreign key: the record outlives the credential. */
+  @Column({ type: 'varchar', nullable: true })
+  actorKeyId?: string | null;
+
+  /**
+   * Under which standing concession — or which one-off approval — an agent was
+   * allowed to start this.
+   *
+   * It is the join the revoke dialog is built on. Taking a permission back stops
+   * future departures the instant the row is written, and says nothing at all
+   * about what already left; without this column, "what is still running under
+   * what I am revoking" is a question the product cannot answer, and the person
+   * is asked to decide blind.
+   *
+   * No foreign key, like `actorKeyId` and for the same reason: the record of
+   * what happened has to outlive the permission that allowed it.
+   */
+  @Column({ type: 'varchar', nullable: true })
+  grantId?: string | null;
+
+  /**
+   * When somebody asked this operation to stop.
+   *
+   * A *request*, not a state, and the distinction is the design. `CANCELLED`
+   * existed in the enum above with nothing in the module ever writing it, so
+   * "stop" was a verb with no machine. What was missing is not a status: it is
+   * the honest place to honour one. A ten-step provisioning killed mid-step
+   * leaves paid-for debris behind — `env orphan-volumes` exists *because* that
+   * failure mode exists — so the stop is cooperative and lands at the next step
+   * boundary, where the work is between two consistent points.
+   */
+  @Column({ type: 'timestamptz', nullable: true })
+  cancelRequestedAt?: Date | null;
+
+  /**
+   * Filled from the request's actor at insert, and only when the caller did not
+   * set it itself.
+   *
+   * It is a hook on the entity rather than an argument at the call sites because
+   * of a count: 122 places in 24 files build one of these rows, and an argument
+   * threaded through all of them is 122 chances to forget one — each forgotten
+   * one writing a row that claims a person did what an agent did. Here there is
+   * one place, it cannot be bypassed by a new call site, and outside a request
+   * (a queue worker) there is no actor and the columns stay null, which is the
+   * honest answer rather than an inherited one.
+   */
+  @BeforeInsert()
+  stampActor(): void {
+    const actor = currentActor();
+    if (!actor) return;
+    this.actorKind ??= actor.kind;
+    this.actorKeyId ??= actor.keyId ?? null;
+    this.grantId ??= currentGrantId() ?? null;
+  }
 
   @Column({ type: 'json', default: '{}' })
   metadata: OperationMetadata;

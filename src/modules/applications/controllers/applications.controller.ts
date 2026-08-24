@@ -62,6 +62,7 @@ import { RequireSection } from '../../iam/decorators/require-section.decorator';
 import { SECTION } from '../../iam/constants/iam-sections';
 import { IAM_PERMISSION } from '../../iam/constants/iam-permissions';
 import { AppAccessGuard, AppAction } from '../guards/app-access.guard';
+import { ActionCycle } from '../../action-cycle/action-cycle.decorator';
 import { ApplicationAccessService } from '../services/application-access.service';
 import { DockerHubService } from '../../images/services/dockerhub.service';
 import { ApplicationSourceDeployService } from '../services/application-source-deploy.service';
@@ -94,6 +95,16 @@ export class ApplicationsController {
   // ── CRUD ──────────────────────────────────────────────
 
   @Post('clusters/:clusterId/applications')
+  // The action the trial exists to show, and therefore the first place the
+  // cycle has to hold: an agent's first write raises a request, the person
+  // answers "always: create applications in this cluster", and from there it
+  // flows. People, the CLI and service identities are untouched — only a
+  // credential declaring an `mcp:*` ceiling waits.
+  @ActionCycle({
+    action: 'POST /clusters/:clusterId/applications',
+    bind: ['clusterId'],
+    sentence: 'create applications in cluster {clusterId}',
+  })
   @ApiOperation({
     summary: 'Create a new application in a cluster',
     description:
@@ -486,6 +497,14 @@ export class ApplicationsController {
   // ── Deploy Operations ─────────────────────────────────
 
   @Post('applications/:id/deploy')
+  // Pinned to the one application, not to "deploying": an agent allowed to
+  // redeploy this app forever has been given exactly that, and a second
+  // application asks again.
+  @ActionCycle({
+    action: 'POST /applications/:id/deploy',
+    bind: ['id'],
+    sentence: 'deploy application {id} whenever it asks',
+  })
   @ApiOperation({ summary: 'Trigger deployment for an application' })
   @ApiParam({ name: 'id', description: 'Application ID' })
   @ApiResponse({ status: 201, description: 'Deploy job queued' })
@@ -569,10 +588,13 @@ export class ApplicationsController {
     return this.applicationWorkflowService.getWorkflowStatus(id, userId);
   }
 
-  // No @AppAction: AppAccessGuard's default for a non-GET is app:write, which is
-  // exactly what `POST :id/start` two methods down has always run on. The same
-  // application with two different masters was the asymmetry, not the gate.
+  // `scale:execute`, like `start` below it and like replicas and restart on
+  // AppManagementController: stopping is scaling to zero, and the four of them
+  // are one domain — runtime, with no reach into configuration. They derived
+  // `app:write` from the verb until the permission that names them got a route
+  // to govern.
   @Post('applications/:id/stop')
+  @AppAction(IAM_PERMISSION.SCALE_EXECUTE)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Stop an application (scale to 0)' })
   @ApiParam({ name: 'id', description: 'Application ID' })
@@ -591,6 +613,7 @@ export class ApplicationsController {
   }
 
   @Post('applications/:id/start')
+  @AppAction(IAM_PERMISSION.SCALE_EXECUTE)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Start a stopped application' })
   @ApiParam({ name: 'id', description: 'Application ID' })
