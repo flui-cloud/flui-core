@@ -9,6 +9,7 @@ import {
   Req,
   HttpCode,
   HttpStatus,
+  ForbiddenException,
   NotFoundException,
 } from '@nestjs/common';
 import { Request } from 'express';
@@ -25,6 +26,7 @@ import { Public } from '../../auth/decorators/public.decorator';
 import { RequirePermission } from '../../iam/decorators/require-permission.decorator';
 import { IAM_PERMISSION } from '../../iam/constants/iam-permissions';
 import { ApplicationAccessService } from '../../applications/services/application-access.service';
+import { ApplicationsRepository } from '../../applications/repositories/applications.repository';
 import { stripSandboxInstallPlacement } from '../../applications/utils/sandbox-placement.util';
 import { CatalogService } from '../services/catalog.service';
 import { CatalogInstallerService } from '../services/catalog-installer.service';
@@ -60,6 +62,7 @@ export class CatalogController {
     private readonly installRepo: CatalogInstallRepository,
     private readonly schemaValidator: CatalogSchemaValidatorService,
     private readonly applicationAccess: ApplicationAccessService,
+    private readonly applications: ApplicationsRepository,
   ) {}
 
   @Public()
@@ -373,8 +376,21 @@ export class CatalogController {
     return this.toResponse(install);
   }
 
+  /**
+   * The install-id door onto the same act `DELETE /applications/:id/install`
+   * performs, and until now the two were not guarded alike: that one sits under
+   * `AppAccessGuard` with `@AppAction(APP_DELETE)`, this one asked nothing at
+   * all — `uninstall(installId)` looks the row up by id and proceeds, so any
+   * authenticated account removed anybody's install by guessing a uuid.
+   *
+   * Two answers, because the questions are two. `@RequirePermission` is the one
+   * the credential ceiling can see; the assertion below is the one that decides
+   * *whose* install this is, per application the install owns, which is the only
+   * form a selector-scoped grant can be checked in.
+   */
   @ApiBearerAuth()
   @Delete('installs/:id')
+  @RequirePermission(IAM_PERMISSION.APP_DELETE)
   @ApiOperation({ summary: 'Uninstall a catalog install' })
   @ApiParam({ name: 'id' })
   @HttpCode(HttpStatus.ACCEPTED)
@@ -384,8 +400,41 @@ export class CatalogController {
     @Req() req: Request,
   ): Promise<CatalogInstallResponseDto> {
     const user = req.user as AuthenticatedUser | undefined;
+    await this.assertMayUninstall(id, user);
     const { install } = await this.installer.uninstall(id, user?.userId);
     return this.toResponse(install);
+  }
+
+  /**
+   * Every application this install owns has to be one the caller may delete.
+   *
+   * All of them and not one of them: uninstalling takes the whole composed set
+   * away, so "reaches one component" must not authorise removing its siblings.
+   * An install that names no application yet — one that failed before creating
+   * anything — falls back to who asked for it, since there is no resource to ask
+   * about.
+   */
+  private async assertMayUninstall(
+    installId: string,
+    user: AuthenticatedUser | undefined,
+  ): Promise<void> {
+    if (!user) throw new ForbiddenException('Unauthenticated');
+    const install = await this.installRepo.findById(installId);
+    if (!install) throw new NotFoundException(`Install ${installId} not found`);
+    const apps = await this.applications.findByCatalogInstall(installId);
+    if (!apps.length) {
+      if (!user.isAdmin && install.userId && install.userId !== user.userId) {
+        throw new NotFoundException(`Install ${installId} not found`);
+      }
+      return;
+    }
+    for (const app of apps) {
+      await this.applicationAccess.assertCan(
+        user,
+        IAM_PERMISSION.APP_DELETE,
+        app,
+      );
+    }
   }
 
   private async toResponse(

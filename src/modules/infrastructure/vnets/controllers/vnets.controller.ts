@@ -21,6 +21,8 @@ import { VNetsService } from '../services/vnets.service';
 import { CreateVNetDto, VNetResponseDto, VNetListResponseDto } from '../dto';
 import { AddSubnetDto } from '../dto/add-subnet.dto';
 import { RequireSection } from '../../../iam/decorators/require-section.decorator';
+import { RequirePermission } from '../../../iam/decorators/require-permission.decorator';
+import { IAM_PERMISSION } from '../../../iam/constants/iam-permissions';
 
 @ApiTags('VNets')
 @ApiBearerAuth()
@@ -131,6 +133,7 @@ export class VNetsController {
   }
 
   @Delete(':id')
+  @RequirePermission(IAM_PERMISSION.CLUSTER_MANAGE)
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Delete a VNet' })
   @ApiParam({
@@ -216,6 +219,7 @@ export class VNetsController {
   }
 
   @Delete(':id/subnets/:subnetId')
+  @RequirePermission(IAM_PERMISSION.CLUSTER_MANAGE)
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Delete a subnet from a VNet' })
   @ApiParam({

@@ -23,6 +23,8 @@ import { ProviderFirewallResponseDto } from '../dto/provider-firewall-response.d
 import { CloudProvider } from '../enums/cloud-provider.enum';
 import { FirewallDetails } from '../interfaces/firewall-provider.interface';
 import { RequireSection } from '../../iam/decorators/require-section.decorator';
+import { RequirePermission } from '../../iam/decorators/require-permission.decorator';
+import { IAM_PERMISSION } from '../../iam/constants/iam-permissions';
 
 @ApiTags('Provider Firewalls')
 @ApiBearerAuth()
@@ -195,6 +197,7 @@ export class ProviderFirewallsController {
    * Delete firewall from cloud provider (direct provider deletion, no database interaction)
    */
   @Delete(':id')
+  @RequirePermission(IAM_PERMISSION.CLUSTER_MANAGE)
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({
     summary: 'Delete firewall from cloud provider',

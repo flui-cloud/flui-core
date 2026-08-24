@@ -20,6 +20,7 @@ import { Request } from 'express';
 import { AuthenticatedUser } from '../../auth/interfaces/authenticated-user.interface';
 import { ApplicationAccessService } from '../../applications/services/application-access.service';
 import { IAM_PERMISSION } from '../../iam/constants/iam-permissions';
+import { RequirePermission } from '../../iam/decorators/require-permission.decorator';
 import { AppBuildService } from '../services/app-build.service';
 import { BuildAccessService } from '../services/build-access.service';
 import { TriggerStandaloneBuildDto } from '../dto/trigger-standalone-build.dto';
@@ -31,7 +32,7 @@ import { AppBuildResponseDto } from '../dto/app-build-response.dto';
  *
  * Nothing on this controller asked anything until now. A sandbox guest was
  * refused by the fence, which is a different list for a different reason, and
- * everybody else — an `editor` scoped to their own applications included —
+ * everybody else — an `operator` scoped to their own applications included —
  * could read another tenant's build, start one on any cluster, and delete one.
  * The rule is `BuildAccessService`, the same one the per-application routes ask.
  */
@@ -97,7 +98,12 @@ export class StandaloneBuildsController {
    * Delete a standalone build (only allowed when the build is not yet linked to an application).
    * Cancels the build if still active, then removes the DB record.
    */
+  // `BuildAccessService` already asks for this permission on *this* build, which
+  // is the question that decides. The decorator says the same thing one gate
+  // earlier and resource-blind, because that is the only form a credential
+  // ceiling can read: without it an agent key scoped to reads deletes builds.
   @Delete(':buildId')
+  @RequirePermission(IAM_PERMISSION.APP_WRITE)
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({
     summary: 'Delete a standalone build (only if not yet linked to an app)',

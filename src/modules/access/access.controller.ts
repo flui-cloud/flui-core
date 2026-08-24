@@ -23,6 +23,8 @@ import {
 } from '@nestjs/swagger';
 import { RequireSection } from '../iam/decorators/require-section.decorator';
 import { SECTION } from '../iam/constants/iam-sections';
+import { RequirePermission } from '../iam/decorators/require-permission.decorator';
+import { IAM_PERMISSION } from '../iam/constants/iam-permissions';
 import { AccessService } from './services/access.service';
 import { CreateSSHKeyDto } from './dto/create-ssh-key.dto';
 import { BearerTokenDto } from './dto/bearer-token.dto';
@@ -176,6 +178,7 @@ export class AccessController {
   // them is mounted under the infrastructure routes, not the access ones.
   @Delete('ssh-keys/:id')
   @RequireSection(SECTION.INFRASTRUCTURE)
+  @RequirePermission(IAM_PERMISSION.CLUSTER_MANAGE)
   @ApiOperation({
     summary: 'Remove SSH key',
     description:
@@ -253,6 +256,7 @@ export class AccessController {
 
   @Delete('bearer/:id')
   @RequireSection(SECTION.INFRASTRUCTURE)
+  @RequirePermission(IAM_PERMISSION.CLUSTER_MANAGE)
   @ApiOperation({ summary: 'Remove bearer token' })
   @ApiResponse({
     status: 200,
@@ -297,6 +301,7 @@ export class AccessController {
 
   @Delete('api-tokens/:id')
   @RequireSection(SECTION.INFRASTRUCTURE)
+  @RequirePermission(IAM_PERMISSION.CLUSTER_MANAGE)
   @ApiOperation({ summary: 'Remove stored API token' })
   @ApiResponse({
     status: 200,

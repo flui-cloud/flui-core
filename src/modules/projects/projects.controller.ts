@@ -11,6 +11,8 @@ import {
 } from '@nestjs/common';
 import { RequireSection } from '../iam/decorators/require-section.decorator';
 import { SECTION } from '../iam/constants/iam-sections';
+import { RequirePermission } from '../iam/decorators/require-permission.decorator';
+import { IAM_PERMISSION } from '../iam/constants/iam-permissions';
 import { ProjectsService } from './projects.service';
 import { CreateProjectDto } from './dto/create-project.dto';
 import { UpdateProjectDto } from './dto/update-project.dto';
@@ -54,6 +56,7 @@ export class ProjectsController {
 
   @Delete(':id')
   @RequireSection(SECTION.PROJECTS)
+  @RequirePermission(IAM_PERMISSION.IAM_ASSIGN_ROLE)
   @HttpCode(HttpStatus.NO_CONTENT)
   remove(@Param('id') id: string) {
     return this.projects.remove(id);
@@ -68,6 +71,7 @@ export class ProjectsController {
 
   @Delete(':id/apps/:appId')
   @RequireSection(SECTION.PROJECTS)
+  @RequirePermission(IAM_PERMISSION.IAM_ASSIGN_ROLE)
   @HttpCode(HttpStatus.NO_CONTENT)
   unassign(@Param('appId') appId: string) {
     return this.projects.unassignApp(appId);

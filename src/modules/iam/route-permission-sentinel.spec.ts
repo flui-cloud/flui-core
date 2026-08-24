@@ -206,23 +206,22 @@ describe('the ceiling and the routes say the same thing', () => {
    * needs — either the table is ahead of the product or the permission was
    * renamed on the route and not here.
    *
-   * There is exactly one, and finding it is what this sentinel is for.
-   * `scale:execute` is a real permission held by `editor`, `manager` and
-   * `owner`, and `mcp:app:write` names it so that a "deploy and operate" key
-   * can scale — but **no route asks for it**: `PATCH /applications/:id/replicas`
-   * sits under `AppAccessGuard` with no `@AppAction`, so the action derived
-   * from the verb is `app:write` and the permission is never consulted.
+   * The list is empty, and it took a product decision to empty it. It held
+   * `scale:execute` for as long as the permission existed in three roles and on
+   * no route: replicas, restart, stop and start all sat under `AppAccessGuard`
+   * with no `@AppAction`, so the action derived from the verb was `app:write`
+   * and the permission governed nothing. The four now carry it by name, which
+   * is what makes "can restart and scale, cannot touch variables" a credential
+   * somebody can actually mint.
    *
-   * It is left as it is rather than corrected here, and the reason is
-   * measurable: the `sandbox` role holds `app:write` and does NOT hold
-   * `scale:execute`, so writing `@AppAction(SCALE_EXECUTE)` on the replicas
-   * route would take scaling away from every guest of the demonstration. Which
-   * of the two is wrong — the role or the route — is a product decision, not a
-   * decorator.
+   * Emptying it also cost the `sandbox` role a line: a guest held `app:write`
+   * and not `scale:execute`, so the same commit that moved the routes had to
+   * give it the permission or the public demonstration would have answered 403
+   * to the scaling it promises in `sandbox-areas.ts`.
    */
-  const LENT_BUT_NEVER_ASKED_FOR: string[] = [IAM_PERMISSION.SCALE_EXECUTE];
+  const LENT_BUT_NEVER_ASKED_FOR: string[] = [];
 
-  it('lends no authority that no route asks for, but one', () => {
+  it('lends no authority that no route asks for', () => {
     const demanded = new Set(
       ROUTES.map(ceilingPermission).filter((p): p is string => !!p),
     );
@@ -238,17 +237,24 @@ describe('the ceiling and the routes say the same thing', () => {
    * operating the demonstration. An agent reaching any of these is a decision
    * somebody has to make explicitly, and the way to make it is to widen
    * `allows` — which turns this list red first.
+   *
+   * It did. `iam:assign-role` left the list when `mcp:iam:write` was minted, and
+   * this test is the record of that being a decision rather than a slip: the
+   * author granted it (91) on the condition that the power be a catalogue entry
+   * anybody can switch off, which is what the scope, its lone group
+   * (`access:change`) and its absence from every tier now are. The permission
+   * itself did not move — conferring still asks for it on the route, and a key
+   * is still never worth more than whoever minted it.
    */
   const NO_SCOPE_CARRIES: string[] = [
     IAM_PERMISSION.CLUSTER_DESTROY,
-    IAM_PERMISSION.IAM_ASSIGN_ROLE,
     IAM_PERMISSION.IAM_MANAGE_USERS,
     IAM_PERMISSION.INTEGRATION_MANAGE,
     IAM_PERMISSION.SANDBOX_OPERATE,
     IAM_PERMISSION.SHOWCASE_PUBLISH,
   ];
 
-  it('asks for no permission outside the declaration except the six named here', () => {
+  it('asks for no permission outside the declaration except the five named here', () => {
     const outside = [
       ...new Set(
         ROUTES.map(ceilingPermission)
@@ -352,68 +358,101 @@ describe('destructive routes the ceiling cannot see', () => {
   );
 
   /**
-   * Section-gated, so no ordinary caller reaches them — but a credential
-   * carrying `mcp:*` scopes reaches them exactly as far as the person behind it
-   * does, because no scope names the permission they do not ask for. Twenty-six
-   * routes across the management plane; giving each one the permission its
-   * section already implies is a pass of its own, with its own live check.
+   * Was twenty-six: the whole management plane — deleting a DNS zone, a
+   * firewall, a server, a project, a backup policy — protected by a section and
+   * by nothing a ceiling can read. Each one now also names the permission its
+   * section already demands at GLOBAL scope, so the annotation is strictly
+   * weaker than the gate that was already there and takes nothing from anybody
+   * who reaches the route today.
+   *
+   * Zero, and it stays zero: a new destructive route behind a section only is a
+   * route no agent key can be scoped away from.
    */
-  it('counts the ones a section still protects', () => {
+  it('leaves none protected by a section alone', () => {
     const gated = invisible.filter((r) => r.section);
-    expect(gated).toHaveLength(26);
+    expect(gated.map((r) => `${r.method} ${r.path}`)).toEqual([]);
   });
 
   /**
-   * The ones with no authorization decorator at all — neither a permission, nor
-   * an application action, nor a section, nor `AppAccessGuard`.
+   * Was twenty-five. Three remained after the census, and each is a decision
+   * rather than an omission — which is why they are named here with the reason,
+   * in the shape decision 97 used for the tool the ceiling refuses on purpose.
+   * A fourth has since arrived from decision 104, not from the census: it is
+   * the third instance of the same rule, "switching off a credential you
+   * brought yourself never asks for a permission".
    *
-   * Most are not open: the console family carries `AppOwnershipGuard`, and
-   * several answer 404 for a row that is not the caller's. What they have in
-   * common is that the ceiling cannot see them, so an agent key scoped to reads
-   * deletes through them over plain HTTP. This is a census, not an accusation —
-   * and a number that must not grow by accident.
+   * The other twenty-two split exactly the way the pass expected: most needed a
+   * permission, and four needed the *other* question answered first — not
+   * "which permission" but "whose row is this", which is a lookup and not a
+   * decorator. `DELETE /catalog/installs/:id`, `DELETE /endpoints/:id`,
+   * `DELETE /image-registry/:imageId` and its tag sibling took an id and wrote,
+   * so any authenticated account reached another tenant's row by guessing a
+   * uuid. Those four carry both halves now: the permission the ceiling reads,
+   * and the ownership assertion that decides.
    */
-  it('counts the ones no decorator protects', () => {
-    const ungated = invisible.filter((r) => !r.section);
-    expect(ungated).toHaveLength(25);
+  const OUTSIDE_THE_CEILING_ON_PURPOSE: string[] = [
+    // Answers 405 to every caller and destroys nothing: serving is per request
+    // and the protocol revision this implements has no sessions to end. It is in
+    // the census because the verb is DELETE, which decision 86 already says is
+    // the wrong criterion — irreversibility is, and there is nothing here to
+    // reverse.
+    'DELETE /mcp',
+    // The caller's own credential, and both of them are the same decision.
+    // Neither takes an id belonging to anybody else: the revoke matches on the
+    // caller's own userId and the PAT route has no id at all. Turning a
+    // credential off must never need a permission — a principal who may hold one
+    // and may not revoke it is the worst state a credential model can be in, and
+    // the sandbox fence opens the first of these to a guest for exactly that
+    // reason ("switch off an agent you connected"). The residue is named and
+    // accepted: an agent key can revoke its principal's other keys, or their
+    // GHCR token, which is a nuisance to its owner and never an escalation.
+    'DELETE /auth/api-keys/:id',
+    'DELETE /repositories/github-app/packages-pat',
+    // The fourth, and the same decision as the two above rather than a new one.
+    // Decision 104 splits an inference connection into two levels: the
+    // installation's row, which keeps `integration:manage` on its own
+    // `DELETE /inference/connections/:id`, and a person's own, which anybody
+    // may bring and must therefore be able to take away again. This route
+    // reaches nothing but the caller's own row — the service compares
+    // `owner_user_id` to the caller and answers 404 otherwise — so no
+    // permission could narrow it further and one could only strand somebody
+    // holding a key she may not unplug.
+    //
+    // It is a separate path from the gated one precisely so the gate survives:
+    // an agent scope still cannot unplug the model the installation speaks
+    // through, which is the reason the sibling carries `integration:manage`.
+    'DELETE /inference/connections/mine/:id',
+    // The fifth, and the third instance of the same rule rather than a new
+    // decision: taking back a permission you granted yourself must never ask
+    // for a permission. A concession is not a capability — it only removes the
+    // pause on a route the guards already let through — so revoking one can
+    // only ever narrow what an agent may do, and a principal who could grant
+    // one but not withdraw it is the worst state a consent model can be in.
+    //
+    // It is also the one route in this list that is *narrower* than a
+    // permission could make it: the handler refuses agent credentials outright
+    // (`AGENT_MAY_NOT_DECIDE`) and matches on the caller's own `ownerUserId`,
+    // answering 404 for anybody else's row. The sandbox fence opens it to a
+    // guest for the same reason it opens `DELETE /auth/api-keys/:id`.
+    'DELETE /agent/concessions/:id',
+  ];
+
+  it('leaves only the five named here with no permission at all', () => {
+    const ungated = invisible
+      .filter((r) => !r.section)
+      .map((r) => `${r.method} ${r.path}`)
+      .sort();
+    expect(ungated).toEqual([...OUTSIDE_THE_CEILING_ON_PURPOSE].sort());
   });
 
   it('names the files they live in, so a new one shows up as a new file', () => {
     const files = [...new Set(invisible.map((r) => r.file))].sort();
     expect(files).toEqual([
-      'modules/access/access.controller.ts',
-      'modules/app-builds/controllers/standalone-builds.controller.ts',
+      'modules/action-cycle/action-cycle.controller.ts',
       'modules/auth/controllers/api-keys.controller.ts',
-      'modules/authz/controllers/authz-install.controller.ts',
-      'modules/backups/controllers/backup-destinations.controller.ts',
-      'modules/backups/controllers/backup-policies.controller.ts',
-      'modules/catalog/controllers/catalog.controller.ts',
-      'modules/database-console/controllers/cache-console.controller.ts',
-      'modules/database-console/controllers/messaging-console.controller.ts',
-      'modules/database-console/controllers/object-store-console.controller.ts',
-      'modules/database-console/controllers/secrets-console.controller.ts',
-      'modules/db-lifecycle/controllers/db-lifecycle.controller.ts',
-      'modules/demo/controllers/demo-admin.controller.ts',
-      'modules/dns/controllers/app-endpoint.controller.ts',
-      'modules/dns/controllers/cluster-dns-zone.controller.ts',
-      'modules/dns/controllers/dns-zone-replica.controller.ts',
-      'modules/dns/controllers/dns-zone.controller.ts',
-      'modules/dns/controllers/san-certificate.controller.ts',
-      'modules/image-registry/controllers/image-registry.controller.ts',
       'modules/inference/controllers/inference.controller.ts',
-      'modules/infrastructure/clusters/clusters.controller.ts',
-      'modules/infrastructure/firewalls/controllers/cluster-firewalls.controller.ts',
-      'modules/infrastructure/firewalls/controllers/firewalls.controller.ts',
-      'modules/infrastructure/servers/servers.controller.ts',
-      'modules/infrastructure/vnets/controllers/vnets.controller.ts',
-      'modules/mail/controllers/mail-connections.controller.ts',
-      'modules/mail/controllers/mail.controller.ts',
-      'modules/management/controllers/management.controller.ts',
       'modules/mcp/mcp.controller.ts',
-      'modules/projects/projects.controller.ts',
-      'modules/providers/controllers/provider-firewalls.controller.ts',
       'modules/repositories/controllers/github-app-oauth.controller.ts',
-      'modules/repositories/controllers/repositories.controller.ts',
     ]);
   });
 });
@@ -432,7 +471,7 @@ describe('the ground the annotation pass stood on', () => {
   const holds = (role: IamRole, permission: string): boolean =>
     (BUILTIN_ROLES[role].permissions as readonly string[]).includes(permission);
 
-  const REACH_MANAGEMENT: IamRole[] = [IAM_ROLE.MANAGER, IAM_ROLE.OWNER];
+  const REACH_MANAGEMENT: IamRole[] = [IAM_ROLE.MAINTAINER, IAM_ROLE.OWNER];
 
   it('gives every built-in role app:read, which is why app:read takes nothing', () => {
     for (const role of Object.keys(BUILTIN_ROLES) as IamRole[]) {
@@ -468,26 +507,37 @@ describe('the ground the annotation pass stood on', () => {
 
   /**
    * The reason the migration lists, the cluster list and `resource-availability`
-   * say `app:read` and not `cluster:read`, which would be the honest name: an
-   * `editor` and a sandbox guest hold neither `cluster:read` nor
-   * `cluster:manage`, and both reach all four for real.
+   * still say `app:read` and not `cluster:read`, which would be the honest name.
+   *
+   * It used to be that neither an `editor` nor a sandbox guest held any cluster
+   * permission, and both reached all four for real. Half of that is now false:
+   * `operator` carries `cluster:read`, because the rung above the viewer could
+   * not hold less than the viewer. The other half is what still decides the
+   * annotation — a guest holds neither, calls all four through the fence, and
+   * naming the honest permission would take the public demonstration down.
    */
-  it('withholds every cluster permission from the editor and the guest', () => {
-    for (const role of [IAM_ROLE.EDITOR, IAM_ROLE.SANDBOX]) {
-      expect({
-        role,
-        clusterRead: holds(role, IAM_PERMISSION.CLUSTER_READ),
-        clusterManage: holds(role, IAM_PERMISSION.CLUSTER_MANAGE),
-        appRead: holds(role, IAM_PERMISSION.APP_READ),
-        appCreate: holds(role, IAM_PERMISSION.APP_CREATE),
-      }).toEqual({
-        role,
-        clusterRead: false,
-        clusterManage: false,
-        appRead: true,
-        appCreate: true,
-      });
-    }
+  it('withholds every cluster permission from the guest, who reaches those routes anyway', () => {
+    expect({
+      clusterRead: holds(IAM_ROLE.SANDBOX, IAM_PERMISSION.CLUSTER_READ),
+      clusterManage: holds(IAM_ROLE.SANDBOX, IAM_PERMISSION.CLUSTER_MANAGE),
+      appRead: holds(IAM_ROLE.SANDBOX, IAM_PERMISSION.APP_READ),
+      appCreate: holds(IAM_ROLE.SANDBOX, IAM_PERMISSION.APP_CREATE),
+    }).toEqual({
+      clusterRead: false,
+      clusterManage: false,
+      appRead: true,
+      appCreate: true,
+    });
+  });
+
+  /**
+   * And the guest scales, which four routes now ask for by name. This is the
+   * assertion that would have caught the regression the annotation pass could
+   * have shipped: `scale:execute` on the routes without `scale:execute` on the
+   * role is a silent 403 on the one verb the demo copy advertises.
+   */
+  it('gives the guest the permission the runtime routes now ask for', () => {
+    expect(holds(IAM_ROLE.SANDBOX, IAM_PERMISSION.SCALE_EXECUTE)).toBe(true);
   });
 
   /**
@@ -500,5 +550,62 @@ describe('the ground the annotation pass stood on', () => {
       appWrite: holds(IAM_ROLE.VIEWER, IAM_PERMISSION.APP_WRITE),
       appCreate: holds(IAM_ROLE.VIEWER, IAM_PERMISSION.APP_CREATE),
     }).toEqual({ appWrite: false, appCreate: false });
+  });
+
+  /**
+   * The narrowings the second pass took, stated rather than discovered later.
+   *
+   * Everything the *sections* imply cost nobody anything: the permission asked
+   * of those routes is the one their section already demands at global scope, so
+   * it is strictly weaker than the gate in front of it. These are the routes
+   * that carried **no** gate at all, where naming an honest permission does take
+   * something away from somebody who could call them yesterday.
+   *
+   * Removing a cluster's DNS zone, its ACME issuers or a SAN certificate breaks
+   * TLS for every application on that cluster, and the neighbouring
+   * `DELETE /dns/zones/:id` has always sat in the `infrastructure` section. An
+   * `operator` — defined as "cannot manage access or infrastructure" — reached
+   * all of them through the cluster page, and no longer does.
+   *
+   * The inference connection is the instance's own credential to a model
+   * provider: one unowned row every assistant borrows, offered on a settings
+   * screen shown to everybody. `integration:manage` and not `cluster:manage`,
+   * because it touches no cluster and because no agent scope carries it.
+   */
+  it('takes the cluster DNS and certificate deletes away from the two lower rungs', () => {
+    for (const role of [IAM_ROLE.VIEWER, IAM_ROLE.OPERATOR]) {
+      expect({
+        role,
+        holds: holds(role, IAM_PERMISSION.CLUSTER_MANAGE),
+      }).toEqual({ role, holds: false });
+    }
+    for (const role of REACH_MANAGEMENT) {
+      expect({
+        role,
+        holds: holds(role, IAM_PERMISSION.CLUSTER_MANAGE),
+      }).toEqual({ role, holds: true });
+    }
+  });
+
+  it('takes the instance model credential away from everyone below maintainer', () => {
+    expect(
+      Object.keys(BUILTIN_ROLES).filter((role) =>
+        holds(role as IamRole, IAM_PERMISSION.INTEGRATION_MANAGE),
+      ),
+    ).toEqual([IAM_ROLE.MAINTAINER, IAM_ROLE.OWNER]);
+  });
+
+  /**
+   * And the guest keeps everything the console family now asks for by name.
+   *
+   * Seven console routes — flushing a cache, dropping a stream, deleting a
+   * bucket or an object or a secret — stopped being invisible and now ask for
+   * `app:write`. The guest reaches them for real (they are not on the fence's
+   * refusal list and `AppOwnershipGuard` answers for its own applications), so a
+   * permission it did not hold would be a 403 in the middle of the public
+   * demonstration.
+   */
+  it('gives the guest the permission the console routes now ask for', () => {
+    expect(holds(IAM_ROLE.SANDBOX, IAM_PERMISSION.APP_WRITE)).toBe(true);
   });
 });

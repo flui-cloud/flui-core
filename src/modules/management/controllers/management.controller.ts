@@ -40,6 +40,8 @@ import { NodeSizeOptionDto } from '../dto/node-size-option.dto';
 import { PricingQueryDto } from '../dto/pricing-query.dto';
 import { PricingResponseDto } from '../dto/pricing-response.dto';
 import { RequireSection } from '../../iam/decorators/require-section.decorator';
+import { RequirePermission } from '../../iam/decorators/require-permission.decorator';
+import { IAM_PERMISSION } from '../../iam/constants/iam-permissions';
 
 @ApiTags('Provider Management')
 @Controller('management')
@@ -296,6 +298,7 @@ export class ManagementController {
   }
 
   @Delete('configurations/:id')
+  @RequirePermission(IAM_PERMISSION.CLUSTER_MANAGE)
   @ApiOperation({ summary: 'Remove provider configuration' })
   @ApiParam({ name: 'id', description: 'Configuration ID' })
   @ApiResponse({
@@ -383,6 +386,7 @@ export class ManagementController {
   }
 
   @Delete('cache/providers/:provider/node-sizes')
+  @RequirePermission(IAM_PERMISSION.CLUSTER_MANAGE)
   @ApiOperation({ summary: 'Clear node sizes cache for provider' })
   @ApiParam({
     name: 'provider',

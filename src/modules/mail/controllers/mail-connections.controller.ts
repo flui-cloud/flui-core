@@ -37,6 +37,8 @@ import {
 import { toMailHttpError } from '../utils/mail-error.util';
 import type { AuthenticatedUser } from '../../auth/interfaces/authenticated-user.interface';
 import { RequireSection } from '../../iam/decorators/require-section.decorator';
+import { RequirePermission } from '../../iam/decorators/require-permission.decorator';
+import { IAM_PERMISSION } from '../../iam/constants/iam-permissions';
 
 @ApiTags('Mail')
 @Controller('mail/connections')
@@ -222,6 +224,7 @@ export class MailConnectionsController {
   }
 
   @Delete(':id')
+  @RequirePermission(IAM_PERMISSION.CLUSTER_MANAGE)
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({
     summary: 'Disconnect a provider',

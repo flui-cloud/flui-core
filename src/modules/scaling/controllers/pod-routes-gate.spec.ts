@@ -35,7 +35,7 @@ const context = (
 /**
  * A guard that reads the wrong parameter name is worse than no guard: it finds
  * no id, decides the route is not app-scoped, and lets the call through. That
- * is how these two controllers were reachable — an editor read the pods,
+ * is how these two controllers were reachable — an operator read the pods,
  * containers, restart counts and Kubernetes events of a *guest's* application.
  * Mounting the guard and teaching it the third spelling only work together.
  */

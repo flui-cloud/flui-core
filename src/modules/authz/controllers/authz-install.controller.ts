@@ -22,6 +22,8 @@ import { AuthzInstallService } from '../services/authz-install.service';
 import { InstallAuthzDto } from '../dto/install-authz.dto';
 import { AuthzInstallResponseDto } from '../dto/authz-install-response.dto';
 import { ClusterAuthzInstallEntity } from '../entities/cluster-authz-install.entity';
+import { RequirePermission } from '../../iam/decorators/require-permission.decorator';
+import { IAM_PERMISSION } from '../../iam/constants/iam-permissions';
 
 @ApiTags('authz')
 @Controller('authz/install')
@@ -59,7 +61,11 @@ export class AuthzInstallController {
     return this.toResponse(await this.service.findOne(id));
   }
 
+  // Nothing asked anything here: any logged-in account could tear the auth proxy
+  // off any cluster. The screen that offers it is already administrator-only, so
+  // naming the permission the rest of that plane uses takes nothing from anybody.
   @Delete(':id')
+  @RequirePermission(IAM_PERMISSION.CLUSTER_MANAGE)
   @HttpCode(HttpStatus.ACCEPTED)
   @ApiOperation({ summary: 'Uninstall flui-authz from cluster' })
   @ApiResponse({ status: 202, type: AuthzInstallResponseDto })

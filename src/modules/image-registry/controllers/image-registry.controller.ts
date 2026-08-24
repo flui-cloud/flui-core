@@ -10,6 +10,8 @@ import {
   HttpCode,
   HttpStatus,
   ParseIntPipe,
+  ForbiddenException,
+  NotFoundException,
 } from '@nestjs/common';
 import {
   ApiBearerAuth,
@@ -27,12 +29,40 @@ import {
 import { GhcrTagDto } from '../dto/ghcr.dto';
 import { ImageEntity } from '../entities/image.entity';
 import { AuthenticatedUser } from '../../auth/interfaces/authenticated-user.interface';
+import { RequirePermission } from '../../iam/decorators/require-permission.decorator';
+import { IAM_PERMISSION } from '../../iam/constants/iam-permissions';
+import { ApplicationAccessService } from '../../applications/services/application-access.service';
+import { ApplicationsRepository } from '../../applications/repositories/applications.repository';
 
 @ApiTags('Image Registry')
 @ApiBearerAuth()
 @Controller('image-registry')
 export class ImageRegistryController {
-  constructor(private readonly imageRegistryService: ImageRegistryService) {}
+  constructor(
+    private readonly imageRegistryService: ImageRegistryService,
+    private readonly appAccess: ApplicationAccessService,
+    private readonly applications: ApplicationsRepository,
+  ) {}
+
+  /**
+   * Whose image this is.
+   *
+   * An image row names the application it was built for, and every other route
+   * in this controller that touches one — the GHCR pair — resolves that
+   * application and refuses somebody else's. These two did not: they took an id
+   * and wrote, so any authenticated account could delete another tenant's image
+   * record, or strip the `stable` tag off it, by guessing a uuid.
+   */
+  private async assertMayChangeImage(
+    imageId: string,
+    user: AuthenticatedUser | undefined,
+  ): Promise<void> {
+    if (!user) throw new ForbiddenException('Unauthenticated');
+    const image = await this.imageRegistryService.getImage(imageId);
+    const app = await this.applications.findById(image.appId);
+    if (!app) throw new NotFoundException(`Image ${imageId} not found`);
+    await this.appAccess.assertCan(user, IAM_PERMISSION.APP_WRITE, app);
+  }
 
   @Get()
   @ApiOperation({
@@ -95,6 +125,7 @@ export class ImageRegistryController {
   }
 
   @Delete(':imageId/tags/:tag')
+  @RequirePermission(IAM_PERMISSION.APP_WRITE)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Remove a Flui tag from an image' })
   @ApiResponse({
@@ -106,7 +137,9 @@ export class ImageRegistryController {
   async removeFluiTag(
     @Param('imageId') imageId: string,
     @Param('tag') tag: string,
+    @Req() req: Request,
   ): Promise<ImageEntity> {
+    await this.assertMayChangeImage(imageId, req.user as AuthenticatedUser);
     return this.imageRegistryService.removeFluiTag(imageId, tag);
   }
 
@@ -129,6 +162,7 @@ export class ImageRegistryController {
   }
 
   @Delete(':imageId')
+  @RequirePermission(IAM_PERMISSION.APP_WRITE)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Delete an image',
@@ -139,7 +173,9 @@ export class ImageRegistryController {
   @ApiResponse({ status: 404, description: 'Image not found' })
   async deleteImage(
     @Param('imageId') imageId: string,
+    @Req() req: Request,
   ): Promise<{ deleted: boolean }> {
+    await this.assertMayChangeImage(imageId, req.user as AuthenticatedUser);
     await this.imageRegistryService.deleteImage(imageId);
     return { deleted: true };
   }
@@ -167,6 +203,7 @@ export class ImageRegistryController {
   }
 
   @Delete('apps/:appId/ghcr/:versionId')
+  @RequirePermission(IAM_PERMISSION.APP_WRITE)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Delete a GHCR image version',

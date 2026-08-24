@@ -147,6 +147,7 @@ export class BackupPoliciesController {
   }
 
   @Delete(':id')
+  @RequirePermission(IAM_PERMISSION.CLUSTER_MANAGE)
   async remove(@Param('id') id: string) {
     await this.service.delete(id);
     return { ok: true };

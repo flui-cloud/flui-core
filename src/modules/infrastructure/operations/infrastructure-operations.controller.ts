@@ -4,6 +4,7 @@ import {
   Inject,
   NotFoundException,
   Param,
+  Post,
   Req,
 } from '@nestjs/common';
 import { Request } from 'express';
@@ -72,6 +73,35 @@ export class InfrastructureOperationsController {
     // The same 404 a missing id gets: an operation that is not yours must not
     // be distinguishable from one that does not exist.
     throw new NotFoundException(`Operation ${operationId} not found`);
+  }
+
+  @Post(':operationId/cancel')
+  // The same permission and the same ownership rule as reading it: whoever may
+  // watch an operation may ask it to stop. It is not a destructive verb — it
+  // asks the work to end between two consistent steps rather than removing
+  // anything.
+  @RequirePermission(IAM_PERMISSION.APP_READ)
+  @ApiOperation({
+    summary: 'Ask a running operation to stop',
+    description:
+      'Records the request; the operation ends at its next step boundary and ' +
+      'never mid-step, because a provisioning cut in half leaves paid-for ' +
+      'resources orphaned. Already-finished operations are left alone.',
+  })
+  @ApiParam({ name: 'operationId', description: 'Operation ID' })
+  @ApiResponse({ status: 201, description: 'Cancellation requested' })
+  @ApiResponse({ status: 404, description: 'Operation not found' })
+  async cancelOperation(
+    @Param('operationId') operationId: string,
+    @Req() req: Request,
+  ) {
+    const operation =
+      await this.operationsService.getOperationDetails(operationId);
+    const user = req.user as AuthenticatedUser | undefined;
+    if (!(await this.mayRead(operation, user))) {
+      throw new NotFoundException(`Operation ${operationId} not found`);
+    }
+    return this.operationsService.requestCancellation(operationId);
   }
 
   /** The rule itself lives next to the WebSocket door that asks it too. */

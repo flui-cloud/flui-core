@@ -121,7 +121,12 @@ export class RepositoriesController {
   // used to sit here read "only an administrator may disconnect their *own*
   // repository" — it protected nothing the 404 was not already protecting, and
   // refused the legitimate owner. Decision 4.
+  // Ownership already decides *which* row — `repositories.service.ts` answers 404
+  // for somebody else's, which is why decision 4 removed the admin gate. What was
+  // still missing is the other half: with no permission named, the ceiling could
+  // not see the route, so a key minted to read applications disconnected them.
   @Delete(':id')
+  @RequirePermission(IAM_PERMISSION.APP_WRITE)
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Disconnect a repository' })
   @ApiResponse({ status: 204, description: 'Repository disconnected' })
@@ -318,6 +323,7 @@ export class RepositoriesController {
   // not the caller's, and every other route on this controller already trusts
   // that check alone. Decision 4.
   @Delete(':id/webhook')
+  @RequirePermission(IAM_PERMISSION.APP_WRITE)
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Delete webhook configuration' })
   @ApiResponse({ status: 204, description: 'Webhook deleted' })

@@ -12,6 +12,8 @@ import { Request } from 'express';
 import { BackupDestinationsService } from '../services/backup-destinations.service';
 import { CreateBackupDestinationDto } from '../dto/create-backup-destination.dto';
 import { RequireSection } from '../../iam/decorators/require-section.decorator';
+import { RequirePermission } from '../../iam/decorators/require-permission.decorator';
+import { IAM_PERMISSION } from '../../iam/constants/iam-permissions';
 
 @ApiTags('Backups')
 @ApiBearerAuth()
@@ -52,6 +54,7 @@ export class BackupDestinationsController {
   }
 
   @Delete(':id')
+  @RequirePermission(IAM_PERMISSION.CLUSTER_MANAGE)
   async remove(@Param('id') id: string) {
     await this.service.delete(id);
     return { ok: true };

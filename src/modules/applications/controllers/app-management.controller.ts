@@ -17,7 +17,8 @@ import {
   ApiParam,
 } from '@nestjs/swagger';
 import { AppManagementService } from '../services/app-management.service';
-import { AppAccessGuard } from '../guards/app-access.guard';
+import { AppAccessGuard, AppAction } from '../guards/app-access.guard';
+import { IAM_PERMISSION } from '../../iam/constants/iam-permissions';
 import {
   UpdateResourcesDto,
   UpdateReplicasDto,
@@ -29,7 +30,15 @@ import {
 @Controller('applications/:appId')
 // Every route here names one application and three of the four change it. The
 // guard reads `:appId` as well as `:id`, so mounting it on the class is the
-// whole gate: GET asks app:read, the writes ask app:write.
+// whole gate: GET asks app:read, and each write says which permission it means.
+//
+// Two of them mean `scale:execute`, not `app:write`. Changing how many copies
+// run, or replacing the running ones, touches no configuration and no secret —
+// it is the runbook half of operating an application, and the credential a
+// runbook or an agent should carry for it is "can restart and scale, cannot
+// touch variables". Deriving `app:write` from the verb made that credential
+// impossible to describe. `resources` stays `app:write` on purpose: CPU and
+// memory limits are configuration.
 @UseGuards(AppAccessGuard)
 export class AppManagementController {
   constructor(private readonly appManagementService: AppManagementService) {}
@@ -65,6 +74,7 @@ export class AppManagementController {
   }
 
   @Patch('replicas')
+  @AppAction(IAM_PERMISSION.SCALE_EXECUTE)
   @ApiOperation({
     summary: 'Scale replica count',
     description:
@@ -80,6 +90,7 @@ export class AppManagementController {
   }
 
   @Post('restart')
+  @AppAction(IAM_PERMISSION.SCALE_EXECUTE)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Rolling restart',

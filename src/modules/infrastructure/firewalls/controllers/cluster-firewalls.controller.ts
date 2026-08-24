@@ -29,6 +29,8 @@ import {
 import { ImportFirewallDto } from '../dto/import-firewall.dto';
 import { HetznerFirewallService } from '../../../providers/services/hetzner-firewall.service';
 import { RequireSection } from '../../../iam/decorators/require-section.decorator';
+import { RequirePermission } from '../../../iam/decorators/require-permission.decorator';
+import { IAM_PERMISSION } from '../../../iam/constants/iam-permissions';
 
 @ApiTags('Firewalls')
 @ApiBearerAuth()
@@ -289,6 +291,7 @@ export class ClusterFirewallsController {
   }
 
   @Delete(':id')
+  @RequirePermission(IAM_PERMISSION.CLUSTER_MANAGE)
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({
     summary: 'Delete firewall',

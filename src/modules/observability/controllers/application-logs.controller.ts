@@ -130,7 +130,7 @@ export class ApplicationLogsController {
    */
   // Still the boolean, deliberately: this is the route `flui app logs` calls,
   // and giving it the infrastructure section would leave the CLI broken for an
-  // editor while looking like the gate had been fixed. The pair — section here
+  // operator while looking like the gate had been fixed. The pair — section here
   // and the CLI moved to the per-application route, which already has
   // AppAccessGuard — is decision 6, still open.
   // Cluster-wide: reads the logs of *everything* running on the cluster, so it

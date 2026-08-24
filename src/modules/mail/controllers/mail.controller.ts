@@ -247,6 +247,7 @@ export class MailController {
   }
 
   @Delete('domains/:domain')
+  @RequirePermission(IAM_PERMISSION.CLUSTER_MANAGE)
   @ApiOperation({
     summary: 'Hand a sending domain back to the provider',
     description:
@@ -339,6 +340,7 @@ export class MailController {
   }
 
   @Delete('suppressions/:address')
+  @RequirePermission(IAM_PERMISSION.CLUSTER_MANAGE)
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({
     summary: 'Start writing to an address again',

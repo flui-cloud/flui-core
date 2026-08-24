@@ -1,6 +1,8 @@
 import { Body, Controller, Delete, Get, Param, Post } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { RequireSection } from '../../iam/decorators/require-section.decorator';
+import { RequirePermission } from '../../iam/decorators/require-permission.decorator';
+import { IAM_PERMISSION } from '../../iam/constants/iam-permissions';
 import { DbReplicationService } from '../services/db-replication.service';
 import { ReplicateDto } from '../dto/replicate.dto';
 
@@ -64,6 +66,7 @@ export class DbLifecycleController {
   }
 
   @Delete('links/:id')
+  @RequirePermission(IAM_PERMISSION.CLUSTER_MANAGE)
   @ApiOperation({
     summary: 'Abort a link: tear down subscription, slot and publication',
   })

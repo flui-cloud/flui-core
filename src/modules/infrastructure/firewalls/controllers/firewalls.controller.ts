@@ -24,6 +24,8 @@ import {
 } from '../../../providers/dto/firewall.dto';
 import { FirewallEntity } from '../entities/firewall.entity';
 import { RequireSection } from '../../../iam/decorators/require-section.decorator';
+import { RequirePermission } from '../../../iam/decorators/require-permission.decorator';
+import { IAM_PERMISSION } from '../../../iam/constants/iam-permissions';
 
 @ApiTags('Firewalls')
 @ApiBearerAuth()
@@ -132,6 +134,7 @@ export class FirewallsController {
    * Delete firewall
    */
   @Delete(':id')
+  @RequirePermission(IAM_PERMISSION.CLUSTER_MANAGE)
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({
     summary: 'Delete firewall',
@@ -194,6 +197,7 @@ export class FirewallsController {
    * Remove firewall from servers
    */
   @Post(':id/remove')
+  @RequirePermission(IAM_PERMISSION.CLUSTER_MANAGE)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Remove firewall from servers',

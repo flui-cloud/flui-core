@@ -28,6 +28,8 @@ import {
 } from './dto/delete-server.dto';
 import { CloudProvider } from 'src/modules/providers/enums/cloud-provider.enum';
 import { RequireSection } from '../../iam/decorators/require-section.decorator';
+import { RequirePermission } from '../../iam/decorators/require-permission.decorator';
+import { IAM_PERMISSION } from '../../iam/constants/iam-permissions';
 
 @ApiTags('Infrastructure - Servers')
 @ApiBearerAuth()
@@ -130,6 +132,7 @@ export class ServersController {
   // The class already declares @RequireSection('infrastructure'); the boolean on
   // top of it was a second, narrower gate nobody had named.
   @Delete(':id')
+  @RequirePermission(IAM_PERMISSION.CLUSTER_MANAGE)
   @ApiOperation({
     summary: 'Delete a server',
     description: 'Initiates server deletion via queue (async operation)',
