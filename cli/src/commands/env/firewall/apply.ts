@@ -3,10 +3,11 @@ import chalk from 'chalk';
 import ora from 'ora';
 import { getNestApp, closeNestApp } from '../../../lib/nest-app';
 import { printContextBanner } from '../../../lib/context-banner';
-import { CliControlClusterService } from '../../../services/cli-control-cluster.service';
-import { CliClusterCreatorService } from '../../../services/cli-cluster-creator.service';
-import { ConfigStorage } from '../../../lib/config-storage';
-import { ApiClient, ApiError } from '../../../lib/api-client';
+import {
+  ControlPlaneError,
+  openControlPlane,
+} from '../../../lib/control-plane-api';
+import { ApiError } from '../../../lib/api-client';
 import { ClusterStatus } from 'src/modules/infrastructure/clusters/entities/cluster.entity';
 
 interface FirewallRule {
@@ -50,36 +51,9 @@ export default class EnvFirewallApply extends Command {
   async run(): Promise<void> {
     printContextBanner();
     const spinner = ora('Loading cluster...').start();
-    let app: any;
 
     try {
-      app = await getNestApp();
-      const controlService = app.get(CliControlClusterService);
-      const cluster = await controlService.getControlCluster();
-      if (!cluster) {
-        spinner.fail('No control cluster found');
-        console.log(chalk.dim('\nCreate one with:'));
-        console.log(`   ${chalk.cyan('flui env create')}\n`);
-        this.exit(1);
-        return;
-      }
-
-      const cfg = new ConfigStorage();
-      const apiKey =
-        cfg.getApiKey() ||
-        app.get(CliClusterCreatorService).getClusterApiKey(cluster);
-      if (!apiKey) {
-        spinner.fail('No credentials to reach the control plane');
-        console.log(
-          chalk.dim(`\nRun ${chalk.cyan('flui auth login')} first.\n`),
-        );
-        this.exit(1);
-        return;
-      }
-      const api = new ApiClient({
-        baseUrl: cfg.getApiUrlOrThrow(),
-        apiKey,
-      });
+      const { cluster, api } = await openControlPlane(await getNestApp());
 
       spinner.text = `Applying host firewall to ${cluster.name}...`;
       const firewall = await api.post<FirewallResponse>(
@@ -116,7 +90,9 @@ export default class EnvFirewallApply extends Command {
       spinner.fail('Failed to apply the host firewall');
       const status = error instanceof ApiError ? error.statusCode : undefined;
       console.log(chalk.red(`\n❌ ${(error as Error).message}\n`));
-      if (status === 401 || status === 403) {
+      if (error instanceof ControlPlaneError) {
+        if (error.hint) console.log(chalk.dim(`   ${error.hint}\n`));
+      } else if (status === 401 || status === 403) {
         console.log(
           chalk.dim(
             `   Re-authenticate with ${chalk.cyan('flui auth login')}.\n`,

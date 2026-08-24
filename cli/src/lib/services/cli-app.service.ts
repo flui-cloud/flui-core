@@ -453,7 +453,7 @@ export class CliAppService {
   /**
    * Per application, not per cluster. The cluster-wide route reads the logs of
    * everything running on the cluster and now carries the `infrastructure`
-   * section, which no `editor` holds — so `flui app logs` asked for a right it
+   * section, which no `operator` holds — so `flui app logs` asked for a right it
    * did not need and was broken for every non-administrator. This
    * route carries `AppAccessGuard` instead: it asks whose application it is,
    * which is the question the command was always really posing.
@@ -936,7 +936,7 @@ export interface ScheduledJobRun {
   completionTime?: string | null;
 }
 
-export type GatewayMinRole = 'viewer' | 'editor' | 'manager';
+export type GatewayMinRole = 'viewer' | 'operator' | 'maintainer';
 
 export interface GatewayAuthPolicy {
   sso: boolean;

@@ -3,9 +3,10 @@ import chalk from 'chalk';
 import ora from 'ora';
 import { getNestApp, closeNestApp } from '../../../lib/nest-app';
 import { printContextBanner } from '../../../lib/context-banner';
-import { CliControlClusterService } from '../../../services/cli-control-cluster.service';
-import { CliClusterCreatorService } from '../../../services/cli-cluster-creator.service';
-import { ConfigStorage } from '../../../lib/config-storage';
+import {
+  ControlPlaneError,
+  openControlPlane,
+} from '../../../lib/control-plane-api';
 import { ApiClient, ApiError } from '../../../lib/api-client';
 
 interface FirewallRule {
@@ -109,30 +110,7 @@ export default class EnvFirewallStatus extends Command {
     const spinner = ora('Loading firewall...').start();
 
     try {
-      const app = await getNestApp();
-      const cluster = await app
-        .get(CliControlClusterService)
-        .getControlCluster();
-      if (!cluster) {
-        spinner.fail('No control cluster found');
-        this.exit(1);
-        return;
-      }
-
-      const cfg = new ConfigStorage();
-      const apiKey =
-        cfg.getApiKey() ||
-        app.get(CliClusterCreatorService).getClusterApiKey(cluster);
-      if (!apiKey) {
-        spinner.fail('No credentials to reach the control plane');
-        console.log(
-          chalk.dim(`\nRun ${chalk.cyan('flui auth login')} first.\n`),
-        );
-        this.exit(1);
-        return;
-      }
-
-      const api = new ApiClient({ baseUrl: cfg.getApiUrlOrThrow(), apiKey });
+      const { cluster, api } = await openControlPlane(await getNestApp());
       const firewall = await this.fetchFirewall(api, cluster.id);
       if (!firewall) {
         spinner.stop();
@@ -157,6 +135,9 @@ export default class EnvFirewallStatus extends Command {
       if ((error as { oclif?: unknown }).oclif) throw error;
       spinner.fail('Failed to read the host firewall');
       console.log(chalk.red(`\n❌ ${(error as Error).message}\n`));
+      if (error instanceof ControlPlaneError && error.hint) {
+        console.log(chalk.dim(`   ${error.hint}\n`));
+      }
       this.exit(1);
     } finally {
       await closeNestApp();

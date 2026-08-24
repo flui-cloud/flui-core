@@ -2,8 +2,10 @@ import { Command } from '@oclif/core';
 import chalk from 'chalk';
 import ora from 'ora';
 import { getNestApp, closeNestApp } from '../../lib/nest-app';
-import { CliControlClusterService } from '../../services/cli-control-cluster.service';
-import { ClusterStorageService } from 'src/modules/infrastructure/clusters/services/cluster-storage.service';
+import {
+  openControlPlane,
+  printControlPlaneError,
+} from '../../lib/control-plane-api';
 import {
   ClusterStorageStatus,
   ClusterStorageStatusDto,
@@ -21,30 +23,15 @@ export default class EnvStorage extends Command {
     const spinner = ora('Inspecting shared storage...').start();
 
     try {
-      const app = await getNestApp();
-      const controlService = app.get(CliControlClusterService);
-      const storageService = app.get(ClusterStorageService);
-
-      const cluster = await controlService.getControlCluster();
-      if (!cluster) {
-        spinner.fail('No control cluster found');
-        console.log(
-          chalk.yellow(
-            '\n⚠️  Create a cluster first: ' + chalk.cyan('flui env create\n'),
-          ),
-        );
-        return;
-      }
-
-      const status = await storageService.getStatus(cluster.id);
+      const { cluster, api } = await openControlPlane(await getNestApp());
+      const status = await api.get<ClusterStorageStatusDto>(
+        `/infrastructure/clusters/${cluster.id}/storage`,
+      );
       spinner.succeed('Storage status retrieved');
       this.render(status);
     } catch (error) {
       spinner.fail('Failed to retrieve storage status');
-      console.log(chalk.red('\n❌ Error:\n'));
-      console.log(
-        `   ${error instanceof Error ? error.message : String(error)}\n`,
-      );
+      printControlPlaneError(error);
       this.exit(1);
     } finally {
       await closeNestApp();

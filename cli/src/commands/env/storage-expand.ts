@@ -3,11 +3,19 @@ import chalk from 'chalk';
 import ora from 'ora';
 import { getNestApp, closeNestApp } from '../../lib/nest-app';
 import { printContextBanner } from '../../lib/context-banner';
-import { CliControlClusterService } from '../../services/cli-control-cluster.service';
-import { ClusterNodeScalingService } from 'src/modules/infrastructure/clusters/services/cluster-node-scaling.service';
-import { ClusterStorageService } from 'src/modules/infrastructure/clusters/services/cluster-storage.service';
-import { ClusterCapacityService } from 'src/modules/infrastructure/clusters/services/cluster-capacity.service';
+import {
+  openControlPlane,
+  printControlPlaneError,
+} from '../../lib/control-plane-api';
+import type { ClusterCapacityPlanDto } from 'src/modules/infrastructure/clusters/dto/cluster-capacity-plan.dto';
+import type { ClusterStorageStatusDto } from 'src/modules/infrastructure/clusters/dto/cluster-storage.dto';
 import { confirmByTypingPrompt } from '../../lib/prompts';
+
+interface ExpandOperation {
+  id: string;
+  status: string;
+  metadata?: { fsResizeWarning?: string };
+}
 
 export default class EnvStorageExpand extends Command {
   static readonly description =
@@ -38,21 +46,12 @@ export default class EnvStorageExpand extends Command {
     const spinner = ora('Inspecting current storage...').start();
 
     try {
-      const app = await getNestApp();
-      const controlService = app.get(CliControlClusterService);
-      const storageService = app.get(ClusterStorageService);
-      const capacityService = app.get(ClusterCapacityService);
-      const scalingService = app.get(ClusterNodeScalingService);
-
-      const cluster = await controlService.getControlCluster();
-      if (!cluster) {
-        spinner.fail('No control cluster found');
-        return;
-      }
-      const storage = await storageService.getStatus(cluster.id);
-      let plan: Awaited<ReturnType<typeof capacityService.getPlan>> | undefined;
+      const { cluster, api } = await openControlPlane(await getNestApp());
+      const base = `/infrastructure/clusters/${cluster.id}`;
+      const storage = await api.get<ClusterStorageStatusDto>(`${base}/storage`);
+      let plan: ClusterCapacityPlanDto | undefined;
       try {
-        plan = await capacityService.getPlan(cluster.id);
+        plan = await api.get<ClusterCapacityPlanDto>(`${base}/capacity-plan`);
       } catch (err) {
         this.warn(
           `Capacity plan unavailable (${(err as Error).message}). ` +
@@ -129,7 +128,7 @@ export default class EnvStorageExpand extends Command {
         color: 'yellow',
       }).start();
       try {
-        const op = await scalingService.expandSharedVolume(cluster.id, {
+        const op = await api.post<ExpandOperation>(`${base}/storage/expand`, {
           targetSizeGb: targetSize,
         });
         run.succeed(`Volume expanded. Operation ${op.id} → ${op.status}`);
@@ -146,10 +145,7 @@ export default class EnvStorageExpand extends Command {
       }
       console.log('');
     } catch (error) {
-      console.log(chalk.red('\n❌ Error:\n'));
-      console.log(
-        `   ${error instanceof Error ? error.message : String(error)}\n`,
-      );
+      printControlPlaneError(error);
       this.exit(1);
     } finally {
       await closeNestApp();

@@ -2,9 +2,11 @@ import { Command, Flags } from '@oclif/core';
 import chalk from 'chalk';
 import ora from 'ora';
 import { getNestApp, closeNestApp } from '../../lib/nest-app';
-import { CliControlClusterService } from '../../services/cli-control-cluster.service';
-import { ClusterCapacityService } from 'src/modules/infrastructure/clusters/services/cluster-capacity.service';
 import {
+  openControlPlane,
+  printControlPlaneError,
+} from '../../lib/control-plane-api';
+import type {
   ClusterCapacityPlanDto,
   CapacityCandidateDto,
 } from 'src/modules/infrastructure/clusters/dto/cluster-capacity-plan.dto';
@@ -41,30 +43,15 @@ export default class EnvCapacity extends Command {
     const spinner = ora('Computing capacity plan...').start();
 
     try {
-      const app = await getNestApp();
-      const controlService = app.get(CliControlClusterService);
-      const capacityService = app.get(ClusterCapacityService);
-
-      const cluster = await controlService.getControlCluster();
-      if (!cluster) {
-        spinner.fail('No control cluster found');
-        console.log(
-          chalk.yellow(
-            '\n⚠️  Create a cluster first: ' + chalk.cyan('flui env create\n'),
-          ),
-        );
-        return;
-      }
-
-      const plan = await capacityService.getPlan(cluster.id);
+      const { cluster, api } = await openControlPlane(await getNestApp());
+      const plan = await api.get<ClusterCapacityPlanDto>(
+        `/infrastructure/clusters/${cluster.id}/capacity-plan`,
+      );
       spinner.succeed('Capacity plan computed');
       this.render(plan, flags.top, flags.direction);
     } catch (error) {
       spinner.fail('Failed to compute capacity plan');
-      console.log(chalk.red('\n❌ Error:\n'));
-      console.log(
-        `   ${error instanceof Error ? error.message : String(error)}\n`,
-      );
+      printControlPlaneError(error);
       this.exit(1);
     } finally {
       await closeNestApp();

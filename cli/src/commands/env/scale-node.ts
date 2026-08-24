@@ -3,11 +3,24 @@ import chalk from 'chalk';
 import ora from 'ora';
 import { getNestApp, closeNestApp } from '../../lib/nest-app';
 import { printContextBanner } from '../../lib/context-banner';
-import { CliControlClusterService } from '../../services/cli-control-cluster.service';
-import { ClusterNodeScalingService } from 'src/modules/infrastructure/clusters/services/cluster-node-scaling.service';
-import { ClusterCapacityService } from 'src/modules/infrastructure/clusters/services/cluster-capacity.service';
-import { CliNodeRepository } from '../../lib/repositories/cli-node.repository';
+import {
+  openControlPlane,
+  printControlPlaneError,
+} from '../../lib/control-plane-api';
+import { findClusterNode } from '../../lib/cluster-nodes';
+import type { ClusterCapacityPlanDto } from 'src/modules/infrastructure/clusters/dto/cluster-capacity-plan.dto';
 import { confirmByTypingPrompt } from '../../lib/prompts';
+
+interface ScaleNodePreview {
+  node: { currentServerType: string };
+  affectedDedicatedApps: Array<{ slug: string }>;
+  expectedDowntimeMs: number;
+}
+
+interface OperationSummary {
+  id: string;
+  status: string;
+}
 
 export default class EnvScaleNode extends Command {
   static readonly description =
@@ -48,26 +61,12 @@ export default class EnvScaleNode extends Command {
     const spinner = ora('Preparing scale-node plan...').start();
 
     try {
-      const app = await getNestApp();
-      const controlService = app.get(CliControlClusterService);
-      const nodeRepo = app.get(CliNodeRepository);
-      const capacityService = app.get(ClusterCapacityService);
-      const scalingService = app.get(ClusterNodeScalingService);
-
-      const cluster = await controlService.getControlCluster();
-      if (!cluster) {
-        spinner.fail('No control cluster found');
-        return;
-      }
-      const nodes = await nodeRepo.find({ where: { clusterId: cluster.id } });
-      const target = nodes.find((n) => n.serverName === args.name);
-      if (!target) {
-        spinner.fail(`Node "${args.name}" not found`);
-        return;
-      }
+      const { cluster, api } = await openControlPlane(await getNestApp());
+      const base = `/infrastructure/clusters/${cluster.id}`;
+      const target = await findClusterNode(api, cluster.id, args.name);
       const [preview, plan] = await Promise.all([
-        scalingService.previewScaleNode(cluster.id, target.id),
-        capacityService.getPlan(cluster.id),
+        api.get<ScaleNodePreview>(`${base}/nodes/${target.id}/scale/preview`),
+        api.get<ClusterCapacityPlanDto>(`${base}/capacity-plan`),
       ]);
       spinner.succeed('Plan computed');
 
@@ -145,10 +144,13 @@ export default class EnvScaleNode extends Command {
         color: 'yellow',
       }).start();
       try {
-        const op = await scalingService.scaleNode(cluster.id, target.id, {
-          targetServerType: targetType,
-          upgradeDisk: flags.upgradeDisk,
-        });
+        const op = await api.post<OperationSummary>(
+          `${base}/nodes/${target.id}/scale`,
+          {
+            targetServerType: targetType,
+            upgradeDisk: flags.upgradeDisk,
+          },
+        );
         run.succeed(`Node scaled. Operation ${op.id} → ${op.status}`);
       } catch (error) {
         run.fail('Scale-node failed');
@@ -156,10 +158,7 @@ export default class EnvScaleNode extends Command {
       }
       console.log('');
     } catch (error) {
-      console.log(chalk.red('\n❌ Error:\n'));
-      console.log(
-        `   ${error instanceof Error ? error.message : String(error)}\n`,
-      );
+      printControlPlaneError(error);
       this.exit(1);
     } finally {
       await closeNestApp();

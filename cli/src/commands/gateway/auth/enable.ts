@@ -18,7 +18,7 @@ export default class GatewayAuthEnable extends Command {
 
   static readonly examples = [
     '<%= config.bin %> <%= command.id %> my-app api.example.com',
-    '<%= config.bin %> <%= command.id %> my-app api.example.com --min-role editor',
+    '<%= config.bin %> <%= command.id %> my-app api.example.com --min-role operator',
   ];
 
   static readonly args = {
@@ -38,8 +38,8 @@ export default class GatewayAuthEnable extends Command {
       description: 'Cluster name or ID (default: auto-detect)',
     }),
     'min-role': Flags.string({
-      description: 'Minimum IAM role required (viewer < editor < manager)',
-      options: ['viewer', 'editor', 'manager'],
+      description: 'Minimum IAM role required (viewer < operator < maintainer)',
+      options: ['viewer', 'operator', 'maintainer'],
     }),
   };
 

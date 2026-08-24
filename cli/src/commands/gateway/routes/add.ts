@@ -46,7 +46,7 @@ export default class GatewayRoutesAdd extends Command {
     }),
     'min-role': Flags.string({
       description: 'Minimum IAM role required to pass the SSO gate',
-      options: ['viewer', 'editor', 'manager'],
+      options: ['viewer', 'operator', 'maintainer'],
       dependsOn: ['sso'],
     }),
     average: Flags.integer({

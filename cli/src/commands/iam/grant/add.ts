@@ -31,10 +31,10 @@ export default class IamGrantAdd extends Command {
     'over app attributes (kind/project/provider/tags/slugs — AND-ed; tags match ALL).';
 
   static readonly examples = [
-    '<%= config.bin %> <%= command.id %> -p alice@acme.com -r manager',
+    '<%= config.bin %> <%= command.id %> -p alice@acme.com -r maintainer',
     '<%= config.bin %> <%= command.id %> -t group -p platform -r viewer -s cluster --cluster c1',
-    '<%= config.bin %> <%= command.id %> -p bob@acme.com -r editor -s selector --kind DATABASE',
-    '<%= config.bin %> <%= command.id %> -p ci-deployer -t service_account -r editor -s selector --app acme-api --app acme-web',
+    '<%= config.bin %> <%= command.id %> -p bob@acme.com -r operator -s selector --kind DATABASE',
+    '<%= config.bin %> <%= command.id %> -p ci-deployer -t service_account -r operator -s selector --app acme-api --app acme-web',
   ];
 
   static readonly flags = {
@@ -55,7 +55,7 @@ export default class IamGrantAdd extends Command {
       description:
         'Role to grant. `owner` is the top of the ladder and conferring it ' +
         'requires iam:manage-users at global scope — i.e. an owner makes an owner.',
-      options: ['viewer', 'editor', 'manager', 'owner'],
+      options: ['viewer', 'operator', 'maintainer', 'owner'],
       required: true,
     }),
     scope: Flags.string({
