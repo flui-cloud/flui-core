@@ -116,11 +116,12 @@ export class GitHubOAuthService {
   }
 
   async getStatus(userId: string): Promise<GitHubOAuthStatusResponseDto> {
-    // In GitHub App mode, check for any active installation.
-    // The installation webhook doesn't carry the Flui userId (it comes from
-    // GitHub, not the dashboard), so we check all installations globally.
+    // In GitHub App mode, report only installations this user reaches.
+    // Reading the table globally used to answer "connected as <someone
+    // else's account>" to anyone authenticated.
     if (await this.githubAppService.isEnabled()) {
-      const installations = await this.githubAppService.listInstallations();
+      const installations =
+        await this.githubAppService.listReachableInstallations(userId);
       if (installations.length > 0) {
         return {
           connected: true,

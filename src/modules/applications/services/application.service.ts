@@ -52,7 +52,7 @@ import {
   PodMetrics,
 } from '../../infrastructure/shared/services/kubernetes.service';
 import { ResourceProfilesService } from '../../images/services/resource-profiles.service';
-import { buildUserNamespace } from '../utils/k8s-namespace.util';
+import { ownerNamespaceFor } from '../utils/k8s-namespace.util';
 import { ownerUserIdFor } from '../utils/application-owner.util';
 import {
   assertNoClientNamespace,
@@ -107,11 +107,21 @@ export class ApplicationService {
     }
   }
 
+  /**
+   * `userId` and `userEmail` are required parameters of a nullable type, not
+   * optional ones. The difference is the whole point: an optional `userEmail`
+   * let `ApplicationSourceDeployService` call this with three arguments and
+   * land every manifest deploy in `default`, silently, for the life of the
+   * product. Required means a caller that forgets it does not compile;
+   * nullable means a caller that genuinely holds nothing (an old
+   * `catalog_installs` row with no `userEmail`) still type-checks and is
+   * refused out loud by `ownerNamespaceFor` instead of being placed nowhere.
+   */
   async create(
     clusterId: string,
     dto: CreateApplicationDto,
-    userId?: string,
-    userEmail?: string,
+    userId: string | undefined,
+    userEmail: string | undefined,
   ): Promise<ApplicationEntity> {
     await this.validateSourceConfig(dto);
 
@@ -119,7 +129,7 @@ export class ApplicationService {
     // undeclared properties: the body can still carry one, and naming a
     // namespace names someone's tenancy.
     assertNoClientNamespace((dto as { k8sNamespace?: string }).k8sNamespace);
-    const k8sNamespace = userEmail ? buildUserNamespace(userEmail) : 'default';
+    const k8sNamespace = ownerNamespaceFor(userEmail);
     assertPlaceableNamespace(k8sNamespace);
 
     if (dto.exposure === ApplicationExposure.INTERNAL) {

@@ -7,6 +7,7 @@ import { GitHubIntegrationConfigService } from './github-integration-config.serv
 import { EncryptionService } from '../../shared/encryption/services/encryption.service';
 import { GitHubAppInstallationEntity } from '../entities/github-app-installation.entity';
 import { GitHubAuthMethod } from '../enums/github-auth-method.enum';
+import { GitHubInstallationAccessService } from './github-installation-access.service';
 
 interface CachedToken {
   token: string;
@@ -23,6 +24,7 @@ export class GitHubAppService {
     private readonly encryptionService: EncryptionService,
     @InjectRepository(GitHubAppInstallationEntity)
     private readonly installationRepo: Repository<GitHubAppInstallationEntity>,
+    private readonly installationAccess: GitHubInstallationAccessService,
   ) {}
 
   async isEnabled(): Promise<boolean> {
@@ -32,47 +34,62 @@ export class GitHubAppService {
     );
   }
 
-  async getInstallationOctokit(owner: string): Promise<Octokit> {
-    const token = await this.getInstallationToken(owner);
+  async getInstallationOctokit(
+    userId: string,
+    owner: string,
+  ): Promise<Octokit> {
+    const token = await this.getInstallationToken(userId, owner);
     return new Octokit({ auth: token });
   }
 
-  async getInstallationToken(owner: string): Promise<string> {
-    const installationId = await this.resolveInstallationId(owner);
+  async getInstallationToken(userId: string, owner: string): Promise<string> {
+    const installationId = await this.resolveInstallationId(userId, owner);
     return this.getOrRefreshToken(installationId);
   }
 
-  async resolveInstallationId(owner: string): Promise<number> {
-    const installation = await this.installationRepo.findOne({
-      where: { accountLogin: owner.toLowerCase() },
-    });
+  /**
+   * An installation token is minted only for a caller GitHub itself places on
+   * that installation. An owner the caller does not reach is reported as not
+   * installed — the same answer an unknown account gets, so the refusal never
+   * confirms that some other tenant onboarded that account here.
+   */
+  async resolveInstallationId(userId: string, owner: string): Promise<number> {
+    const installation = await this.installationAccess.findReachableByOwner(
+      userId,
+      owner,
+    );
     if (!installation) {
       throw new NotFoundException(
         `GitHub App is not installed for account "${owner}". ` +
-          `Please install the app at https://github.com/apps/${await this.getAppSlug()}/installations/new`,
+          `Please install the app at ${await this.getInstallUrl()}`,
       );
     }
     return installation.installationId;
   }
 
+  /** Instance-wide, for the admin routes only. Never for token resolution. */
   async listInstallations(): Promise<GitHubAppInstallationEntity[]> {
     return this.installationRepo.find({ order: { createdAt: 'DESC' } });
   }
 
-  async listInstallationsByUser(
+  /** The installations this user reaches, as GitHub sees it. */
+  async listReachableInstallations(
     userId: string,
   ): Promise<GitHubAppInstallationEntity[]> {
-    return this.installationRepo.find({
-      where: { userId },
-      order: { createdAt: 'DESC' },
-    });
+    return this.installationAccess.listReachable(userId);
   }
 
   // ── Installation lifecycle (webhook handlers) ──
 
+  /**
+   * `fluiUserId` is the user the installation was discovered *for*. The webhook
+   * has no such user — it only knows who clicked Install on GitHub — and passes
+   * nothing: the row is written unattributed and the OAuth discovery attributes
+   * it when that user connects.
+   */
   async handleInstallationCreated(
     payload: any,
-    fluiUserId: string,
+    fluiUserId?: string | null,
   ): Promise<GitHubAppInstallationEntity> {
     const installation = payload.installation;
     const accountLogin = installation.account.login.toLowerCase();
@@ -91,7 +108,8 @@ export class GitHubAppService {
       installationId: installation.id,
       accountLogin,
       accountType: installation.account.type as 'User' | 'Organization',
-      userId: fluiUserId,
+      userId: fluiUserId ?? null,
+      installedByLogin: payload.sender?.login ?? null,
       repositorySelection: installation.repository_selection ?? 'all',
     });
 
@@ -175,6 +193,11 @@ export class GitHubAppService {
       `Refreshed installation token for ${installationId}, expires at ${expiresAt.toISOString()}`,
     );
     return result.token;
+  }
+
+  /** Where a caller with no reachable installation is sent. */
+  async getInstallUrl(): Promise<string> {
+    return `https://github.com/apps/${await this.getAppSlug()}/installations/new`;
   }
 
   private async getAppSlug(): Promise<string> {

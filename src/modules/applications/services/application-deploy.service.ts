@@ -555,8 +555,8 @@ export class ApplicationDeployService {
   async createFromBuild(
     clusterId: string,
     dto: CreateApplicationDto,
-    userId?: string,
-    userEmail?: string,
+    userId: string | undefined,
+    userEmail: string | undefined,
   ): Promise<CreateApplicationResponseDto> {
     const buildId = dto.buildId;
 

@@ -171,11 +171,14 @@ export class RepositoriesService {
     let repos: any[];
 
     if (await this.githubAppService.isEnabled()) {
-      // GitHub App mode: list repos accessible to each installation
-      const installations = await this.githubAppService.listInstallations();
+      // GitHub App mode: only the installations this user reaches — listing
+      // every installation on the instance hands one tenant another's repos.
+      const installations =
+        await this.githubAppService.listReachableInstallations(userId);
       repos = [];
       for (const installation of installations) {
         const octokit = await this.githubAppService.getInstallationOctokit(
+          userId,
           installation.accountLogin,
         );
         const { data } = await octokit.apps.listReposAccessibleToInstallation({

@@ -22,9 +22,21 @@ export class GitHubAppInstallationEntity {
   @Column({ name: 'account_type', type: 'varchar' })
   accountType: 'User' | 'Organization';
 
-  @Column({ name: 'user_id', type: 'varchar' })
+  /**
+   * The Flui user this installation was discovered for, or null when nobody
+   * has connected it yet. Cached proof only, never an authorization: an
+   * installation on an organization serves everyone GitHub says it serves, so
+   * reachability is asked of GitHubInstallationAccessService, not of this
+   * column. Rows written by the webhook before it stopped guessing carry a
+   * GitHub login here instead of a Flui id — never filter on it.
+   */
+  @Column({ name: 'user_id', type: 'varchar', nullable: true })
   @Index()
-  userId: string;
+  userId: string | null;
+
+  /** Which GitHub account clicked Install. Diagnostic, never an identity. */
+  @Column({ name: 'installed_by_login', type: 'varchar', nullable: true })
+  installedByLogin: string | null;
 
   @Column({ name: 'repository_selection', type: 'varchar', default: 'all' })
   repositorySelection: string;

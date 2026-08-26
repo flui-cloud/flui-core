@@ -78,11 +78,20 @@ export class TemplatesService {
 
     if (!targetOwner) {
       if (await this.githubAppService.isEnabled()) {
-        // In GitHub App mode, use the first installation's account login as default owner
-        const installations = await this.githubAppService.listInstallations();
-        if (installations.length > 0) {
-          targetOwner = installations[0].accountLogin;
+        // The default owner is picked among the accounts this caller reaches.
+        // The first row of the table belongs to whoever onboarded first — an
+        // operator, or another tenant — and it travelled from here into the
+        // error messages below, which the caller reads.
+        const reachable =
+          await this.githubAppService.listReachableInstallations(userId);
+        if (reachable.length === 0) {
+          throw new NotFoundException(
+            'GitHub App is not installed for any account you can reach. ' +
+              `Install it at ${await this.githubAppService.getInstallUrl()} ` +
+              'and retry, or name an "owner" you already have it on.',
+          );
         }
+        targetOwner = reachable[0].accountLogin;
       } else {
         const credential =
           await this.githubOAuthService.getActiveCredential(userId);

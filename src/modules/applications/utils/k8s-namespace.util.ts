@@ -1,3 +1,4 @@
+import { InternalServerErrorException } from '@nestjs/common';
 import { createHash } from 'node:crypto';
 
 /**
@@ -28,4 +29,40 @@ export function buildUserNamespace(email: string): string {
     return `user-${createHash('sha256').update(email).digest('hex').slice(0, 10)}`;
   }
   return `user-${sanitized}`;
+}
+
+export const NAMESPACE_OWNER_UNKNOWN_ERROR_CODE = 'NAMESPACE_OWNER_UNKNOWN';
+
+/**
+ * The namespace an application created by this caller must land in.
+ *
+ * There is no fallback on purpose. `default` is a namespace no tenancy owns,
+ * and everything that makes a tenant a tenant hangs off the namespace of the
+ * row: the `ResourceQuota` and `LimitRange` applied to it, the `NetworkPolicy`
+ * that isolates it, the `noindex` middleware, the sandbox branch of
+ * `EndpointHostGuardService` (which asks `sandboxTenants.exists({clusterId,
+ * namespace})` before it constrains a hostname), and the expiry sweep, which
+ * deletes by `k8sNamespace`. An application quietly placed in `default` keeps
+ * running after the tenancy that asked for it is gone.
+ *
+ * Every authenticated principal carries an email — interactive users, OIDC
+ * subjects (synthesised as `oidc-<sub>@flui.invalid`) and the declared service
+ * identities alike — so an absent one is a caller that dropped it on the way
+ * down, not a caller that never had one. That is a server defect and is
+ * reported as one.
+ */
+export function ownerNamespaceFor(
+  userEmail: string | undefined | null,
+): string {
+  if (!userEmail) {
+    throw new InternalServerErrorException({
+      statusCode: 500,
+      code: NAMESPACE_OWNER_UNKNOWN_ERROR_CODE,
+      message:
+        'Cannot place an application: the caller carries no email, so the ' +
+        'owning namespace cannot be derived. This is a wiring defect in the ' +
+        'creating code path, not something the request can fix.',
+    });
+  }
+  return buildUserNamespace(userEmail);
 }

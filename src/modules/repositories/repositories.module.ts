@@ -18,6 +18,7 @@ import { WebhookService } from './services/webhook.service';
 import { GitHubOAuthService } from './services/github-oauth.service';
 import { GitHubIntegrationConfigService } from './services/github-integration-config.service';
 import { GitHubAppService } from './services/github-app.service';
+import { GitHubInstallationAccessService } from './services/github-installation-access.service';
 import { GitHubTokenResolverService } from './services/github-token-resolver.service';
 import { GithubAppInstallStateService } from './services/github-app-install-state.service';
 import { GithubAppManifestStateService } from './services/github-app-manifest-state.service';
@@ -66,6 +67,7 @@ import { WsAuthModule } from '../auth/ws-auth.module';
     GitHubOAuthService,
     GitHubIntegrationConfigService,
     GitHubAppService,
+    GitHubInstallationAccessService,
     GitHubTokenResolverService,
     GithubAppInstallStateService,
     GithubAppManifestStateService,

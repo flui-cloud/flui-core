@@ -93,9 +93,17 @@ export class ApplicationSourceDeployService {
     private readonly clusterDnsZoneService: ClusterDnsZoneService,
   ) {}
 
+  /**
+   * `userEmail` is required, not optional: it is what places the application in
+   * the caller's namespace. Until it was threaded through, this path called
+   * `create()` with three arguments and every manifest deploy landed in
+   * `default` — outside the caller's quota, network policy and expiry sweep.
+   * Keeping it non-optional is what stops that from silently returning.
+   */
   async deployFromYaml(
     userId: string,
     dto: DeployFromYamlDto,
+    userEmail: string,
   ): Promise<DeployFromYamlResponseDto> {
     let manifest = this.parseAndValidate(dto.yaml);
 
@@ -212,6 +220,7 @@ export class ApplicationSourceDeployService {
           metadata: manifestMetadata,
         },
         userId,
+        userEmail,
       );
     } else {
       this.logger.log(`Updating existing application from manifest: ${app.id}`);
@@ -672,7 +681,8 @@ export class ApplicationSourceDeployService {
 
   private async assertGitHubConnected(userId: string): Promise<void> {
     if (await this.githubAppService.isEnabled()) {
-      const installations = await this.githubAppService.listInstallations();
+      const installations =
+        await this.githubAppService.listReachableInstallations(userId);
       if (installations.length === 0) {
         throw new BadRequestException(
           'GitHub integration is not connected. ' +

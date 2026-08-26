@@ -11,11 +11,20 @@ import { ApplicationsRepository } from '../repositories/applications.repository'
 import { RepositoriesRepository } from '../../repositories/repositories/repositories.repository';
 import {
   GitHubWorkflowService,
+  WorkflowDelivery,
   WorkflowRunStatus,
   fluiWorkflowFileName,
 } from '../../repositories/services/github-workflow.service';
+import {
+  WorkflowConsent,
+  buildWorkflowConsent,
+  resolveWorkflowDelivery,
+} from '../../repositories/services/workflow-consent';
 import { GitHubTokenResolverService } from '../../repositories/services/github-token-resolver.service';
-import { WorkflowGeneratorService } from '../../repositories/services/workflow-generator.service';
+import {
+  FLUI_WEBHOOK_SECRET,
+  WorkflowGeneratorService,
+} from '../../repositories/services/workflow-generator.service';
 import { GithubAppUserAuthService } from '../../repositories/services/github-app-user-auth.service';
 import { ApplicationStatus } from '../enums/application-status.enum';
 import {
@@ -27,6 +36,12 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { AppBuildEntity } from '../../app-builds/entities/app-build.entity';
 import { AppBuildStatus } from '../../app-builds/enums/app-build-status.enum';
+import {
+  BuildExpectation,
+  durationsOf,
+  noBuildExpectation,
+  summariseBuildDurations,
+} from '../../app-builds/services/build-expectation';
 import { BuildProvider } from '../../app-builds/enums/build-provider.enum';
 
 export interface GenerateWorkflowDto {
@@ -52,12 +67,25 @@ export interface GenerateWorkflowV3Dto {
   buildContext?: string;
   /** Monorepo sub-path: scopes the GHCR image name and the push paths filter. */
   subPath?: string;
+  /**
+   * Where the commit lands. Ignored for a sandbox guest, who always gets a
+   * pull request — see resolveWorkflowDelivery.
+   */
+  delivery?: WorkflowDelivery;
 }
 
 export interface GenerateWorkflowResultDto {
   committed: boolean;
   workflowUrl: string;
   runId?: string;
+  /** Set when the workflow was proposed instead of pushed. */
+  pullRequestUrl?: string;
+  /**
+   * Whether anything is building right now. False after a pull request: the
+   * branch has not moved, so no run exists and the application must not be
+   * shown as awaiting one.
+   */
+  buildStarted: boolean;
 }
 
 /**
@@ -116,6 +144,41 @@ export class ApplicationWorkflowService {
       }
     }
     return null;
+  }
+
+  /**
+   * Puts the webhook credential into the repository's secrets, before the file
+   * that reads it exists.
+   *
+   * Unlike the GHCR secret this one is not best-effort. That header is a deploy
+   * trigger, so it cannot travel as text in the committed file; and a workflow
+   * committed without the secret it reads is a file we left in somebody else's
+   * repository that cannot work. If the secret cannot be written, the workflow
+   * is not committed at all.
+   */
+  private async saveWebhookSecret(
+    userId: string,
+    owner: string,
+    repo: string,
+    token: string,
+  ): Promise<void> {
+    try {
+      await this.githubWorkflowService.saveRepoSecret(
+        userId,
+        owner,
+        repo,
+        FLUI_WEBHOOK_SECRET,
+        token,
+      );
+    } catch (err) {
+      this.logger.error(
+        `Failed to save ${FLUI_WEBHOOK_SECRET} on ${owner}/${repo}: ${err.message}`,
+        err.stack,
+      );
+      throw new BadRequestException(
+        `Flui could not write the ${FLUI_WEBHOOK_SECRET} repository secret to ${owner}/${repo}, so it did not commit the workflow. The workflow reads that secret to report the build back, and Flui will not leave a file that cannot work in your repository. Check that the GitHub connection is allowed to manage this repository's secrets, then try again.`,
+      );
+    }
   }
 
   private async saveFluiGhcrSecret(
@@ -218,7 +281,6 @@ export class ApplicationWorkflowService {
       repoName: repository.repositoryName,
       fluiAppId: appId,
       fluiWebhookUrl,
-      fluiWebhookToken: webhookToken,
       framework: dto.framework,
       packageManager: dto.packageManager,
       nodeVersion: dto.nodeVersion,
@@ -237,6 +299,18 @@ export class ApplicationWorkflowService {
       appName: dto.appName,
       buildTool: dto.buildTool,
     });
+
+    // The secret must exist before the workflow that reads it can run, and the
+    // commit is what makes it runnable — so this comes first, and a failure
+    // here means no commit at all.
+    if (!this.isBackendPollingOnly()) {
+      await this.saveWebhookSecret(
+        userId,
+        repository.owner,
+        repository.repositoryName,
+        webhookToken,
+      );
+    }
 
     // The generated workflow logs into GHCR with
     //   password: ${{ secrets.FLUI_GHCR_TOKEN || secrets.GITHUB_TOKEN }}
@@ -326,6 +400,79 @@ export class ApplicationWorkflowService {
       committed: true,
       workflowUrl: commitResult.workflowUrl,
       runId,
+      buildStarted: true,
+    };
+  }
+
+  /**
+   * Everything the V3 commit would write, rendered before writing any of it.
+   *
+   * Reads nothing the commit does not read and writes nothing at all, so the
+   * screen it feeds can be opened as many times as somebody wants to reread it.
+   * The workflow body is the real generator's output — a preview produced by a
+   * second code path would be a description of the commit rather than the
+   * commit itself, and would drift the first time one of the two changed.
+   */
+  async previewWorkflowV3(
+    appId: string,
+    userId: string,
+    dto: GenerateWorkflowV3Dto,
+    isSandboxGuest = false,
+  ): Promise<WorkflowConsent> {
+    const app = await this.applicationsRepository.findById(appId);
+    if (!app) throw new NotFoundException('Application not found');
+
+    const repository = await this.resolveLinkedRepository(app);
+    const workflowFileName = fluiWorkflowFileName(app.slug);
+    const backendPollingOnly = this.isBackendPollingOnly();
+
+    const workflowYaml = this.workflowGeneratorService.generateWorkflowV3(
+      this.workflowParamsV3(app, appId, repository, dto, workflowFileName),
+    );
+
+    return buildWorkflowConsent({
+      owner: repository.owner,
+      repo: repository.repositoryName,
+      branch: dto.branch,
+      delivery: resolveWorkflowDelivery({
+        requested: dto.delivery,
+        isSandboxGuest,
+      }),
+      workflowPath: `.github/workflows/${workflowFileName}`,
+      workflowYaml,
+      // With backend polling on the generated workflow has no Notify steps, so
+      // no secret is written and naming one would point at a line the reader
+      // cannot find.
+      webhookSecretName: backendPollingOnly ? null : FLUI_WEBHOOK_SECRET,
+      writesGhcrSecret: true,
+      ghcrSecretName: 'FLUI_GHCR_TOKEN',
+    });
+  }
+
+  /**
+   * The single description of a V3 workflow, shared by the preview and the
+   * commit. Only the webhook token differs between them.
+   */
+  private workflowParamsV3(
+    app: { slug: string },
+    appId: string,
+    repository: { owner: string; repositoryName: string },
+    dto: GenerateWorkflowV3Dto,
+    workflowFileName: string,
+  ) {
+    const baseUrl = this.configService.get<string>('WEBHOOK_BASE_URL') ?? '';
+    return {
+      branchName: dto.branch,
+      githubOwner: repository.owner,
+      repoName: repository.repositoryName,
+      appSlug: app.slug,
+      fluiAppId: appId,
+      fluiWebhookUrl: `${baseUrl}/api/v1/webhooks/github-actions`,
+      backendPollingOnly: this.isBackendPollingOnly(),
+      subPath: dto.subPath,
+      dockerfilePath: dto.dockerfilePath,
+      buildContext: dto.buildContext,
+      workflowFileName,
     };
   }
 
@@ -337,6 +484,7 @@ export class ApplicationWorkflowService {
     appId: string,
     userId: string,
     dto: GenerateWorkflowV3Dto,
+    isSandboxGuest = false,
   ): Promise<GenerateWorkflowResultDto> {
     this.logger.log(`V3: Generating universal workflow for app ${appId}`);
 
@@ -346,24 +494,25 @@ export class ApplicationWorkflowService {
     const repository = await this.resolveLinkedRepository(app);
 
     const webhookToken = uuidv4();
-    const baseUrl = this.configService.get<string>('WEBHOOK_BASE_URL') ?? '';
-    const fluiWebhookUrl = `${baseUrl}/api/v1/webhooks/github-actions`;
-
     const workflowFileName = fluiWorkflowFileName(app.slug);
-    const workflowYaml = this.workflowGeneratorService.generateWorkflowV3({
-      branchName: dto.branch,
-      githubOwner: repository.owner,
-      repoName: repository.repositoryName,
-      appSlug: app.slug,
-      fluiAppId: appId,
-      fluiWebhookUrl,
-      fluiWebhookToken: webhookToken,
-      backendPollingOnly: this.isBackendPollingOnly(),
-      subPath: dto.subPath,
-      dockerfilePath: dto.dockerfilePath,
-      buildContext: dto.buildContext,
-      workflowFileName,
+    const delivery = resolveWorkflowDelivery({
+      requested: dto.delivery,
+      isSandboxGuest,
     });
+    const workflowYaml = this.workflowGeneratorService.generateWorkflowV3(
+      this.workflowParamsV3(app, appId, repository, dto, workflowFileName),
+    );
+
+    // Same ordering as V1: the credential the workflow reads lands before the
+    // workflow does, and if it cannot land nothing is committed.
+    if (!this.isBackendPollingOnly()) {
+      await this.saveWebhookSecret(
+        userId,
+        repository.owner,
+        repository.repositoryName,
+        webhookToken,
+      );
+    }
 
     // V3 originally relied on `secrets.GITHUB_TOKEN` only, which fails with
     // "Password required" when the repository (or App installation) does not
@@ -382,7 +531,7 @@ export class ApplicationWorkflowService {
       repository.repositoryName,
       dto.branch,
       workflowYaml,
-      { workflowFileName, cleanupLegacyForAppId: appId },
+      { workflowFileName, cleanupLegacyForAppId: appId, delivery },
     );
 
     // Persist the monorepo subPath into sourceConfig so the build watcher can
@@ -396,18 +545,40 @@ export class ApplicationWorkflowService {
       ...(dto.dockerfilePath ? { dockerfile: dto.dockerfilePath } : {}),
     } as ApplicationSourceConfig;
 
+    // A pull request moves no branch, so nothing is queued and nothing is
+    // building. Marking the application AWAITING_BUILD here would put a spinner
+    // on a screen for a run that will not exist until somebody merges — the
+    // build clock would start counting an event that has not happened.
+    const proposed = commitResult.pullRequestUrl !== undefined;
+
     await this.applicationsRepository.update(appId, {
       buildPath: 'github-actions',
       webhookToken,
       isFluiManaged: dto.isFluiManaged ?? false,
-      status: ApplicationStatus.AWAITING_BUILD,
       sourceConfig: mergedSourceConfig,
-      buildStartedAt: new Date(),
+      ...(proposed
+        ? {}
+        : {
+            status: ApplicationStatus.AWAITING_BUILD,
+            buildStartedAt: new Date(),
+          }),
       workflowRunId: null,
       workflowRunUrl: null,
       lastBuildStatus: null,
       lastBuildConclusion: null,
     });
+
+    if (proposed) {
+      this.logger.log(
+        `V3 workflow proposed for app ${appId}. pullRequest=${commitResult.pullRequestUrl}`,
+      );
+      return {
+        committed: true,
+        workflowUrl: commitResult.workflowUrl,
+        pullRequestUrl: commitResult.pullRequestUrl,
+        buildStarted: false,
+      };
+    }
 
     await this.recordExternalBuildStarted({
       applicationId: appId,
@@ -461,7 +632,49 @@ export class ApplicationWorkflowService {
       committed: true,
       workflowUrl: commitResult.workflowUrl,
       runId,
+      buildStarted: true,
     };
+  }
+
+  /**
+   * How long a build here has taken, measured.
+   *
+   * Prefers this application's own finished builds; falls back to the caller's
+   * other applications, which is the widest sample that still contains nothing
+   * but their own work; and when there is neither, says so and gives no number.
+   */
+  async getBuildExpectation(
+    appId: string,
+    userId: string,
+  ): Promise<BuildExpectation> {
+    const own = await this.appBuildRepository.find({
+      where: { applicationId: appId, status: AppBuildStatus.COMPLETED },
+      order: { completedAt: 'DESC' },
+      take: 10,
+      select: ['startedAt', 'completedAt'],
+    });
+    const ownDurations = durationsOf(own);
+    if (ownDurations.length > 0) {
+      return summariseBuildDurations(ownDurations, 'this-application');
+    }
+
+    const mine = await this.appBuildRepository
+      .createQueryBuilder('build')
+      .select(['build.startedAt', 'build.completedAt'])
+      .where('build.status = :status', { status: AppBuildStatus.COMPLETED })
+      .andWhere(
+        'build.applicationId IN (SELECT id FROM applications WHERE "userId" = :userId)',
+        { userId },
+      )
+      .orderBy('build.completedAt', 'DESC')
+      .limit(10)
+      .getMany();
+    const mineDurations = durationsOf(mine);
+    if (mineDurations.length > 0) {
+      return summariseBuildDurations(mineDurations, 'your-recent-builds');
+    }
+
+    return noBuildExpectation();
   }
 
   async getWorkflowStatus(

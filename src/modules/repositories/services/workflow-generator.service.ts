@@ -1,12 +1,19 @@
 import { Injectable } from '@nestjs/common';
 
+/**
+ * Name of the repository secret that carries the per-application webhook
+ * credential. One constant, read by the generator that writes the reference
+ * into the workflow and by the service that writes the value into the
+ * repository, so the two cannot drift into naming different secrets.
+ */
+export const FLUI_WEBHOOK_SECRET = 'FLUI_WEBHOOK_TOKEN';
+
 export interface WorkflowParams {
   branchName: string;
   githubUsername: string;
   repoName: string;
   fluiAppId: string;
   fluiWebhookUrl: string;
-  fluiWebhookToken: string;
   framework: string;
   packageManager?: 'npm' | 'yarn' | 'pnpm';
   nodeVersion?: string;
@@ -41,7 +48,6 @@ export interface WorkflowParamsV3 {
   appSlug: string;
   fluiAppId: string;
   fluiWebhookUrl: string;
-  fluiWebhookToken: string;
   backendPollingOnly?: boolean;
 }
 
@@ -144,20 +150,36 @@ export class WorkflowGeneratorService {
     );
   }
 
-  generateWorkflow(params: WorkflowParams): string {
-    const fw = params.framework.toLowerCase().replaceAll('_', '-');
-    const runtimeSetup = this.getRuntimeSetupStep(fw, params);
-    const imageName = `ghcr.io/${params.githubUsername}/${params.repoName}`;
+  /**
+   * The two steps that tell Flui a build finished.
+   *
+   * `X-Flui-Token` is not a secret that merely leaks when read: it is the
+   * deploy trigger. Whoever holds it can post
+   * `{appId, imageRef, status:"success"}` and have Flui roll out an image of
+   * their choosing on that application. So it travels as a repository secret
+   * and never as text in the file we commit into somebody else's repository.
+   *
+   * Deliberately no `||` fallback, unlike the GHCR login above: an empty token
+   * would call the webhook with no credential, be rejected, and leave nothing
+   * in the log to read a cause out of. The step stops first and says why.
+   */
+  private notifyFluiSteps(
+    webhookUrl: string,
+    labels: { success: string; failure: string },
+  ): string {
+    const guard = `if [ -z "$${FLUI_WEBHOOK_SECRET}" ]; then
+            echo "::error::${FLUI_WEBHOOK_SECRET} is not set on this repository. Flui writes it as a repository secret just before it commits this workflow, so it was removed or never arrived. Re-generate the workflow from Flui to restore it. Not calling the webhook without a credential."
+            exit 1
+          fi`;
 
-    // See generateWorkflowV3: BACKEND_POLLING_ONLY suppresses the webhook
-    // notify steps and relies on the backend build watcher instead.
-    const notifySteps = params.backendPollingOnly
-      ? ''
-      : `
-      - name: Notify Flui on success
+    return `
+      - name: ${labels.success}
         if: success()
         continue-on-error: true
+        env:
+          ${FLUI_WEBHOOK_SECRET}: \${{ secrets.${FLUI_WEBHOOK_SECRET} }}
         run: |
+          ${guard}
           SHORT_SHA=$(echo "\${{ github.sha }}" | cut -c1-7)
           if [[ "\${{ github.ref_type }}" == "tag" ]]; then
             VERSION=$(echo "\${{ github.ref_name }}" | sed 's/^v//')
@@ -167,24 +189,42 @@ export class WorkflowGeneratorService {
           fi
           PAYLOAD=$(printf '{"appId":"%s","imageRef":"%s","commitSha":"%s","branch":"%s","status":"success"}' \\
             "\${{ env.FLUI_APP_ID }}" "$IMAGE_REF" "\${{ github.sha }}" "\${{ github.ref_name }}")
-          curl --fail -X POST ${params.fluiWebhookUrl} \\
+          curl --fail -X POST ${webhookUrl} \\
             -H "Content-Type: application/json" \\
-            -H "X-Flui-Token: ${params.fluiWebhookToken}" \\
+            -H "X-Flui-Token: $${FLUI_WEBHOOK_SECRET}" \\
             -d "$PAYLOAD"
 
-      - name: Notify Flui on failure
+      - name: ${labels.failure}
         if: failure()
         continue-on-error: true
+        env:
+          ${FLUI_WEBHOOK_SECRET}: \${{ secrets.${FLUI_WEBHOOK_SECRET} }}
         run: |
-          curl --fail -X POST ${params.fluiWebhookUrl} \\
+          ${guard}
+          curl --fail -X POST ${webhookUrl} \\
             -H "Content-Type: application/json" \\
-            -H "X-Flui-Token: ${params.fluiWebhookToken}" \\
+            -H "X-Flui-Token: $${FLUI_WEBHOOK_SECRET}" \\
             -d '{
               "appId": "\${{ env.FLUI_APP_ID }}",
               "commitSha": "\${{ github.sha }}",
               "branch": "\${{ github.ref_name }}",
               "status": "failed"
             }'`;
+  }
+
+  generateWorkflow(params: WorkflowParams): string {
+    const fw = params.framework.toLowerCase().replaceAll('_', '-');
+    const runtimeSetup = this.getRuntimeSetupStep(fw, params);
+    const imageName = `ghcr.io/${params.githubUsername}/${params.repoName}`;
+
+    // See generateWorkflowV3: BACKEND_POLLING_ONLY suppresses the webhook
+    // notify steps and relies on the backend build watcher instead.
+    const notifySteps = params.backendPollingOnly
+      ? ''
+      : this.notifyFluiSteps(params.fluiWebhookUrl, {
+          success: 'Notify Flui on success',
+          failure: 'Notify Flui on failure',
+        });
 
     return `name: Flui Deploy
 
@@ -586,38 +626,10 @@ ENTRYPOINT ["dotnet", "${p.appName}.dll"]
     // failure mode.
     const notifySteps = params.backendPollingOnly
       ? ''
-      : `
-      - name: Notify Flui — success
-        if: success()
-        continue-on-error: true
-        run: |
-          SHORT_SHA=$(echo "\${{ github.sha }}" | cut -c1-7)
-          if [[ "\${{ github.ref_type }}" == "tag" ]]; then
-            VERSION=$(echo "\${{ github.ref_name }}" | sed 's/^v//')
-            IMAGE_REF="\${{ env.IMAGE_NAME }}:$VERSION"
-          else
-            IMAGE_REF="\${{ env.IMAGE_NAME }}:$SHORT_SHA"
-          fi
-          PAYLOAD=$(printf '{"appId":"%s","imageRef":"%s","commitSha":"%s","branch":"%s","status":"success"}' \\
-            "\${{ env.FLUI_APP_ID }}" "$IMAGE_REF" "\${{ github.sha }}" "\${{ github.ref_name }}")
-          curl --fail -X POST ${params.fluiWebhookUrl} \\
-            -H "Content-Type: application/json" \\
-            -H "X-Flui-Token: ${params.fluiWebhookToken}" \\
-            -d "$PAYLOAD"
-
-      - name: Notify Flui — failure
-        if: failure()
-        continue-on-error: true
-        run: |
-          curl --fail -X POST ${params.fluiWebhookUrl} \\
-            -H "Content-Type: application/json" \\
-            -H "X-Flui-Token: ${params.fluiWebhookToken}" \\
-            -d '{
-              "appId": "\${{ env.FLUI_APP_ID }}",
-              "commitSha": "\${{ github.sha }}",
-              "branch": "\${{ github.ref_name }}",
-              "status": "failed"
-            }'`;
+      : this.notifyFluiSteps(params.fluiWebhookUrl, {
+          success: 'Notify Flui — success',
+          failure: 'Notify Flui — failure',
+        });
 
     return `name: ${workflowName}
 

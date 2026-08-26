@@ -9,6 +9,7 @@ import { CreateApplicationDto } from '../dto/create-application.dto';
 import { ApplicationCategory } from '../enums/application-category.enum';
 import { ApplicationSourceType } from '../enums/application-source-type.enum';
 import { CLIENT_NAMESPACE_ERROR_CODE } from '../utils/reserved-namespace.util';
+import { NAMESPACE_OWNER_UNKNOWN_ERROR_CODE } from '../utils/k8s-namespace.util';
 
 /**
  * The namespace is the tenancy boundary: whoever names it chooses whose
@@ -83,8 +84,43 @@ describe('ApplicationService.create — namespace placement', () => {
     expect(created[0].k8sNamespace).toBe('user-guest');
   });
 
-  it('falls back to "default" when the caller has no email', async () => {
-    await service.create('cluster-1', dto(), 'u1', undefined);
-    expect(created[0].k8sNamespace).toBe('default');
+  /**
+   * The regression this pins is not a leak, it is a survival: `default` is a
+   * namespace no tenancy owns, so an application quietly placed there escapes
+   * the `ResourceQuota` and `LimitRange` bound to the tenancy namespace, the
+   * `NetworkPolicy` that isolates it, the `noindex` middleware, the sandbox
+   * branch of `EndpointHostGuardService` (which asks
+   * `sandboxTenants.exists({clusterId, namespace})` before it constrains a
+   * hostname) and — the one that outlives everything — the expiry sweep in
+   * `SandboxTenantService`, which deletes rows and namespaces by
+   * `k8sNamespace`. Five protections, disarmed by one silent `: 'default'`.
+   *
+   * So the refusal is asserted twice over: that it happens at all, and that
+   * nothing is written when it does.
+   */
+  it('refuses to place an application when the caller has no email, and never falls back to "default"', async () => {
+    await expect(
+      service.create('cluster-1', dto(), 'u1', undefined),
+    ).rejects.toMatchObject({
+      response: { code: NAMESPACE_OWNER_UNKNOWN_ERROR_CODE },
+    });
+    expect(created).toHaveLength(0);
   });
+
+  it.each([[''], [null]])(
+    'refuses an empty-ish email (%p) the same way, rather than deriving a namespace from it',
+    async (email) => {
+      await expect(
+        service.create(
+          'cluster-1',
+          dto(),
+          'u1',
+          email as unknown as string | undefined,
+        ),
+      ).rejects.toMatchObject({
+        response: { code: NAMESPACE_OWNER_UNKNOWN_ERROR_CODE },
+      });
+      expect(created).toHaveLength(0);
+    },
+  );
 });

@@ -264,19 +264,45 @@ export class GithubAppUserAuthService {
   }> {
     const stored = await this.getValidToken(fluiUserId);
     if (!stored) return { connected: false };
+    let octokit: Octokit;
     try {
-      const octokit = new Octokit({ auth: stored.accessToken });
+      octokit = new Octokit({ auth: stored.accessToken });
       await octokit.users.getAuthenticated();
     } catch {
       return { connected: false };
     }
-    const installationsCount = await this.installationRepo.count();
+    // Counting every row said "you already have an installation" to a user who
+    // had none of their own, so the install prompt never appeared and the
+    // resolver later refused the owner they never installed on.
+    const installationsCount = await this.countReachableInstallations(
+      fluiUserId,
+      octokit,
+    );
     return {
       connected: true,
       login: stored.githubLogin,
       installationId: stored.installationId,
       installationsCount,
     };
+  }
+
+  private async countReachableInstallations(
+    fluiUserId: string,
+    octokit: Octokit,
+  ): Promise<number> {
+    try {
+      const { data } = await octokit.apps.listInstallationsForAuthenticatedUser(
+        { per_page: 100 },
+      );
+      return (data.installations ?? []).length;
+    } catch (err) {
+      this.logger.warn(
+        `Could not count GitHub App installations for user ${fluiUserId}: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+      return this.installationRepo.count({ where: { userId: fluiUserId } });
+    }
   }
 
   private async discoverInstallation(

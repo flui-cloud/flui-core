@@ -57,13 +57,11 @@ export class GitHubAppWebhookService {
   ): Promise<{ received: boolean }> {
     switch (action) {
       case 'created':
-        // For managed Flui, we track the installation.
-        // The userId linkage happens later via the dashboard connect flow.
-        // For now, store with a placeholder userId that gets updated when the user connects.
-        await this.githubAppService.handleInstallationCreated(
-          payload,
-          payload.sender?.login ?? 'unknown',
-        );
+        // No Flui user is known here: the payload carries a GitHub login, and
+        // a GitHub login in `user_id` is a different kind of value from the
+        // Flui id the connect flow writes there. The row is left unattributed
+        // until that flow claims it.
+        await this.githubAppService.handleInstallationCreated(payload);
         break;
       case 'deleted':
         await this.githubAppService.handleInstallationDeleted(payload);

@@ -24,12 +24,16 @@ export class GitHubTokenResolverService {
   /**
    * Returns an authenticated Octokit for operations on a specific owner's repos.
    *
-   * @param userId  Flui user ID (used for OAuth/PAT fallback)
+   * `userId` binds the credential to the caller in BOTH modes. In App mode the
+   * owner comes from a request body, so it is the caller's reach on that
+   * installation — not the mere existence of a row — that decides.
+   *
+   * @param userId  Flui user ID of the caller
    * @param owner   GitHub account (org or user) that owns the repo
    */
   async getOctokit(userId: string, owner: string): Promise<Octokit> {
     if (await this.githubAppService.isEnabled()) {
-      return this.githubAppService.getInstallationOctokit(owner);
+      return this.githubAppService.getInstallationOctokit(userId, owner);
     }
     return this.githubOAuthService.getOctokit(userId);
   }
@@ -39,7 +43,7 @@ export class GitHubTokenResolverService {
    */
   async getAccessToken(userId: string, owner: string): Promise<string> {
     if (await this.githubAppService.isEnabled()) {
-      return this.githubAppService.getInstallationToken(owner);
+      return this.githubAppService.getInstallationToken(userId, owner);
     }
     return this.githubOAuthService.getAccessToken(userId);
   }

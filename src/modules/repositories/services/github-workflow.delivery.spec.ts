@@ -100,4 +100,61 @@ describe('GitHubWorkflowService delivery', () => {
 
     expect(calls[0]).toContain('abcdef1');
   });
+
+  /**
+   * V3 is the path the product calls. Until this block existed, `pull-request`
+   * was reachable only through the V1 method above — the ability to propose was
+   * in the codebase and nowhere in the product.
+   */
+  describe('the per-app workflow, which is the one the product commits', () => {
+    it('pushes by default', async () => {
+      const { service, calls } = build();
+      const result = await service.commitWorkflowOnly(
+        'u1',
+        'o',
+        'r',
+        'main',
+        'on: push',
+        { workflowFileName: 'flui-their-app.yml' },
+      );
+
+      expect(calls).toEqual(['updateRef heads/main']);
+      expect(result.pullRequestUrl).toBeUndefined();
+      expect(result.workflowUrl).toContain(
+        '/blob/main/.github/workflows/flui-their-app.yml',
+      );
+    });
+
+    it('proposes when asked, and leaves the branch where it was', async () => {
+      const { service, calls } = build();
+      const result = await service.commitWorkflowOnly(
+        'u1',
+        'o',
+        'r',
+        'main',
+        'on: push',
+        { workflowFileName: 'flui-their-app.yml', delivery: 'pull-request' },
+      );
+
+      expect(calls.some((c) => c.startsWith('updateRef'))).toBe(false);
+      expect(calls[1]).toBe('pr flui/deploy-workflow-abcdef1 -> main');
+      expect(result.pullRequestUrl).toBe('https://github.com/o/r/pull/7');
+    });
+
+    it('points the file link at the proposed branch, not at one that has no such file', async () => {
+      const { service } = build();
+      const result = await service.commitWorkflowOnly(
+        'u1',
+        'o',
+        'r',
+        'main',
+        'on: push',
+        { workflowFileName: 'flui-their-app.yml', delivery: 'pull-request' },
+      );
+
+      expect(result.workflowUrl).toBe(
+        'https://github.com/o/r/blob/flui/deploy-workflow-abcdef1/.github/workflows/flui-their-app.yml',
+      );
+    });
+  });
 });

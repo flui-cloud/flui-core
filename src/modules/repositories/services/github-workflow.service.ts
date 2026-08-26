@@ -158,13 +158,45 @@ export class GitHubWorkflowService {
 
     // 6. Deliver: advance the branch, or put the commit on a branch of our own
     //    and ask for it to be merged.
+    this.logger.log(
+      `Prepared ${treeItems.length} file(s) for ${owner}/${repo}@${branch} (${newCommit.sha.slice(0, 7)})`,
+    );
+    return this.landCommit(
+      octokit,
+      owner,
+      repo,
+      branch,
+      newCommit.sha,
+      LEGACY_WORKFLOW_PATH,
+      delivery,
+    );
+  }
+
+  /**
+   * The last step of every workflow commit: either the branch moves, or it does
+   * not move and we ask instead.
+   *
+   * One implementation on purpose. The two entry points above drifted for a
+   * while — one could propose, the other could only push — and the one that
+   * could only push is the one the product actually calls, so the ability to
+   * propose existed in the codebase and nowhere in the product.
+   */
+  private async landCommit(
+    octokit: Awaited<ReturnType<GitHubTokenResolverService['getOctokit']>>,
+    owner: string,
+    repo: string,
+    branch: string,
+    commitSha: string,
+    workflowPath: string,
+    delivery: WorkflowDelivery,
+  ): Promise<CommitResult> {
     if (delivery === 'pull-request') {
-      const head = `flui/deploy-workflow-${newCommit.sha.slice(0, 7)}`;
+      const head = `flui/deploy-workflow-${commitSha.slice(0, 7)}`;
       await octokit.git.createRef({
         owner,
         repo,
         ref: `refs/heads/${head}`,
-        sha: newCommit.sha,
+        sha: commitSha,
       });
       const { data: pr } = await octokit.pulls.create({
         owner,
@@ -174,7 +206,7 @@ export class GitHubWorkflowService {
         title: 'Add the Flui deployment workflow',
         body:
           'Flui opened this instead of pushing to your branch.\n\n' +
-          'Merging it lets GitHub Actions build this repository on GitHub-hosted runners and publish the image to your own ghcr.io. ' +
+          `It adds \`${workflowPath}\`. Merging it lets GitHub Actions build this repository on GitHub-hosted runners and publish the image to your own ghcr.io. ` +
           'Your code is never built on Flui machines — Flui only runs the resulting image.\n\n' +
           '**The build uses your Actions minutes.** Close this pull request and nothing happens.',
       });
@@ -183,8 +215,8 @@ export class GitHubWorkflowService {
         `Proposed the workflow to ${owner}/${repo} as PR #${pr.number}`,
       );
       return {
-        workflowUrl: `https://github.com/${owner}/${repo}/blob/${head}/.github/workflows/flui.yml`,
-        sha: newCommit.sha,
+        workflowUrl: `https://github.com/${owner}/${repo}/blob/${head}/${workflowPath}`,
+        sha: commitSha,
         pullRequestUrl: pr.html_url,
       };
     }
@@ -193,15 +225,13 @@ export class GitHubWorkflowService {
       owner,
       repo,
       ref: `heads/${branch}`,
-      sha: newCommit.sha,
+      sha: commitSha,
     });
 
-    const workflowUrl = `https://github.com/${owner}/${repo}/blob/${branch}/.github/workflows/flui.yml`;
-    this.logger.log(
-      `Committed ${treeItems.length} file(s) atomically to ${owner}/${repo}@${branch} (${newCommit.sha.slice(0, 7)})`,
-    );
-
-    return { workflowUrl, sha: newCommit.sha };
+    return {
+      workflowUrl: `https://github.com/${owner}/${repo}/blob/${branch}/${workflowPath}`,
+      sha: commitSha,
+    };
   }
 
   /**
@@ -223,7 +253,11 @@ export class GitHubWorkflowService {
     repo: string,
     branch: string,
     workflowYaml: string,
-    opts?: { workflowFileName?: string; cleanupLegacyForAppId?: string },
+    opts?: {
+      workflowFileName?: string;
+      cleanupLegacyForAppId?: string;
+      delivery?: WorkflowDelivery;
+    },
   ): Promise<CommitResult> {
     await this.tokenResolver.assertCapability(userId, ['repo', 'workflow']);
 
@@ -298,19 +332,19 @@ export class GitHubWorkflowService {
       parents: [latestCommitSha],
     });
 
-    await octokit.git.updateRef({
-      owner,
-      repo,
-      ref: `heads/${branch}`,
-      sha: newCommit.sha,
-    });
-
-    const workflowUrl = `https://github.com/${owner}/${repo}/blob/${branch}/${workflowPath}`;
     this.logger.log(
-      `V3 workflow committed to ${owner}/${repo}@${branch} at ${workflowPath} (${newCommit.sha.slice(0, 7)})`,
+      `V3 workflow prepared for ${owner}/${repo}@${branch} at ${workflowPath} (${newCommit.sha.slice(0, 7)})`,
     );
 
-    return { workflowUrl, sha: newCommit.sha };
+    return this.landCommit(
+      octokit,
+      owner,
+      repo,
+      branch,
+      newCommit.sha,
+      workflowPath,
+      opts?.delivery ?? 'push',
+    );
   }
 
   /**

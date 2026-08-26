@@ -9,6 +9,7 @@ import {
   Req,
   HttpCode,
   HttpStatus,
+  ParseUUIDPipe,
 } from '@nestjs/common';
 import {
   ApiBearerAuth,
@@ -103,13 +104,23 @@ export class RepositoriesController {
     return this.repositoriesService.listRepositories(userId);
   }
 
+  /**
+   * The id is checked before it reaches Postgres, and that is the whole point.
+   *
+   * `repositories.id` is a uuid column, so anything else — a path segment that
+   * was meant to be a sibling route, a probe — reached the driver and came back
+   * as `invalid input syntax for type uuid`, which this API answers as a 500.
+   * The same shape is already documented on the API-key strategy, where a
+   * varchar/uuid mismatch answered 500 instead of 401. A 500 says the server
+   * broke; nothing broke, the id simply cannot name anything.
+   */
   @Get(':id')
   @ApiOperation({ summary: 'Get repository details' })
   @ApiResponse({ status: 200, description: 'Repository details' })
   @ApiResponse({ status: 404, description: 'Repository not found' })
   async getRepository(
     @Req() req: Request,
-    @Param('id') id: string,
+    @Param('id', new ParseUUIDPipe({ errorHttpStatusCode: 404 })) id: string,
   ): Promise<ConnectRepositoryResponseDto> {
     const { userId } = req.user as AuthenticatedUser;
     return this.repositoriesService.getRepository(userId, id);
