@@ -31,6 +31,7 @@ import { HetznerFirewallService } from '../../../providers/services/hetzner-fire
 import { RequireSection } from '../../../iam/decorators/require-section.decorator';
 import { RequirePermission } from '../../../iam/decorators/require-permission.decorator';
 import { IAM_PERMISSION } from '../../../iam/constants/iam-permissions';
+import { ActionCycle } from '../../../action-cycle/action-cycle.decorator';
 
 @ApiTags('Firewalls')
 @ApiBearerAuth()
@@ -202,6 +203,14 @@ export class ClusterFirewallsController {
   }
 
   @Post('cluster/:clusterId/enable')
+  // It decides what can reach the nodes from outside, and it is idempotent, so
+  // "always" is a sentence somebody can reasonably mean here — bound to one
+  // cluster and to nothing else.
+  @ActionCycle({
+    action: 'POST /firewalls/cluster/:clusterId/enable',
+    bind: ['clusterId'],
+    sentence: 'enable and apply the firewall of cluster {clusterId}',
+  })
   @ApiOperation({
     summary: 'Enable firewall for a cluster',
     description:

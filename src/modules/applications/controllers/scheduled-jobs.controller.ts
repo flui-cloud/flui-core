@@ -18,6 +18,7 @@ import {
   ApiTags,
 } from '@nestjs/swagger';
 import { AppAccessGuard } from '../guards/app-access.guard';
+import { ActionCycle } from '../../action-cycle/action-cycle.decorator';
 import { ScheduledJobsService } from '../services/scheduled-jobs.service';
 import {
   CreateScheduledJobDto,
@@ -80,6 +81,13 @@ export class ScheduledJobsController {
   }
 
   @Delete(':name')
+  @ActionCycle({
+    action: 'DELETE /applications/:id/schedules/:name',
+    bind: ['id', 'name'],
+    sentence:
+      'delete the scheduled job {name} of application {id}, so it never runs ' +
+      'again',
+  })
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Delete a scheduled job' })
   @ApiParam({ name: 'id', description: 'Application ID' })

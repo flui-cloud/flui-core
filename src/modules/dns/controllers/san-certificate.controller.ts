@@ -21,6 +21,7 @@ import { CreateSanCertificateDto } from '../dto/create-san-certificate.dto';
 import { SanCertificateResponseDto } from '../dto/san-certificate-response.dto';
 import { RequirePermission } from '../../iam/decorators/require-permission.decorator';
 import { IAM_PERMISSION } from '../../iam/constants/iam-permissions';
+import { ActionCycle } from '../../action-cycle/action-cycle.decorator';
 
 @ApiTags('SAN Certificates')
 @ApiBearerAuth()
@@ -30,6 +31,13 @@ export class SanCertificateController {
 
   @Post('clusters/:clusterId/san-certificates')
   @HttpCode(HttpStatus.ACCEPTED)
+  @ActionCycle({
+    action: 'POST /clusters/:clusterId/san-certificates',
+    bind: ['clusterId'],
+    sentence:
+      'issue a certificate covering several hostnames on cluster {clusterId}',
+    estimate: '/clusters/:clusterId/san-certificates',
+  })
   @ApiOperation({
     summary:
       'Create a SAN certificate covering up to 20 fqdns under a single cert. Returns immediately; reconciliation runs async.',

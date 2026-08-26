@@ -24,6 +24,7 @@ import {
 import { AuthenticatedUser } from '../../auth/interfaces/authenticated-user.interface';
 import { Public } from '../../auth/decorators/public.decorator';
 import { RequirePermission } from '../../iam/decorators/require-permission.decorator';
+import { ActionCycle } from '../../action-cycle/action-cycle.decorator';
 import { IAM_PERMISSION } from '../../iam/constants/iam-permissions';
 import { ApplicationAccessService } from '../../applications/services/application-access.service';
 import { ApplicationsRepository } from '../../applications/repositories/applications.repository';
@@ -391,6 +392,13 @@ export class CatalogController {
   @ApiBearerAuth()
   @Delete('installs/:id')
   @RequirePermission(IAM_PERMISSION.APP_DELETE)
+  @ActionCycle({
+    action: 'DELETE /catalog/installs/:id',
+    bind: ['id'],
+    sentence:
+      'uninstall install {id} for good — every application it owns, and the ' +
+      'data all of them hold',
+  })
   @ApiOperation({ summary: 'Uninstall a catalog install' })
   @ApiParam({ name: 'id' })
   @HttpCode(HttpStatus.ACCEPTED)

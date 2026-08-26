@@ -216,6 +216,15 @@ export class ClustersController {
   @Delete(':id/workers/:nodeId')
   @RequireSection('infrastructure')
   @RequirePermission(IAM_PERMISSION.CLUSTER_MANAGE)
+  // Bound to the node, not to the cluster: "always" here concedes removing
+  // THIS node, which is a permission that spends itself the first time it is
+  // used. The estimate is the capacity plan — what the cluster is left with.
+  @ActionCycle({
+    action: 'DELETE /infrastructure/clusters/:id/workers/:nodeId',
+    bind: ['id', 'nodeId'],
+    sentence: 'drain and delete worker node {nodeId} of cluster {id}',
+    estimate: '/infrastructure/clusters/:id/capacity-plan',
+  })
   @ApiOperation({
     summary: 'Cordon, drain and remove a worker node',
     description:
@@ -409,6 +418,12 @@ export class ClustersController {
 
   @Patch(':id/autoscale')
   @RequireSection('infrastructure')
+  @ActionCycle({
+    action: 'PATCH /infrastructure/clusters/:id/autoscale',
+    bind: ['id'],
+    sentence: 'change how cluster {id} scales itself',
+    estimate: '/infrastructure/clusters/:id/capacity-plan',
+  })
   @ApiOperation({
     summary: 'Update cluster autoscale configuration',
     description:
@@ -470,6 +485,14 @@ export class ClustersController {
 
   @Post()
   @RequireSection('infrastructure')
+  // No `bind`, and that is an answer rather than an omission: the cluster does
+  // not exist yet, so the request cannot state its own edge and is offered only
+  // "allow once". A standing permission to create clusters is a standing
+  // permission to spend.
+  @ActionCycle({
+    action: 'POST /infrastructure/clusters',
+    sentence: 'create a new cluster at a cloud provider',
+  })
   @ApiOperation({
     summary: 'Create a new K3s cluster',
     description:
@@ -612,6 +635,11 @@ export class ClustersController {
 
   @Post(':id/nodes/:nodeId/uncordon')
   @RequireSection('infrastructure')
+  @ActionCycle({
+    action: 'POST /infrastructure/clusters/:id/nodes/:nodeId/uncordon',
+    bind: ['id', 'nodeId'],
+    sentence: 'make node {nodeId} of cluster {id} schedulable again',
+  })
   @ApiOperation({
     summary: 'Mark a cluster node schedulable again',
     description:
@@ -628,6 +656,16 @@ export class ClustersController {
 
   @Post(':id/nodes/:nodeId/scale')
   @RequireSection('infrastructure')
+  // The preview route is the estimate, and it is the one in this file that
+  // prices something other than money: it names the dedicated workloads that go
+  // down and for how long.
+  @ActionCycle({
+    action: 'POST /infrastructure/clusters/:id/nodes/:nodeId/scale',
+    bind: ['id', 'nodeId'],
+    sentence:
+      'resize node {nodeId} of cluster {id}, taking it down while it runs',
+    estimate: '/infrastructure/clusters/:id/nodes/:nodeId/scale/preview',
+  })
   @ApiOperation({
     summary:
       'Vertically scale a cluster node (power-off → change_type → power-on)',
@@ -652,6 +690,16 @@ export class ClustersController {
 
   @Post(':id/storage/expand')
   @RequireSection('infrastructure')
+  // A volume never shrinks again, so the sentence says "grow" and the estimate
+  // is the current size: approving this without knowing what it is today is
+  // approving an unbounded number.
+  @ActionCycle({
+    action: 'POST /infrastructure/clusters/:id/storage/expand',
+    bind: ['id'],
+    sentence:
+      'grow the shared storage of cluster {id}, which can never shrink back',
+    estimate: '/infrastructure/clusters/:id/storage',
+  })
   @ApiOperation({
     summary: 'Expand the cluster shared-storage backing volume',
     description:
@@ -1002,6 +1050,16 @@ export class ClustersController {
 
   @Post(':id/stop')
   @RequireSection('infrastructure')
+  // Reversible, and still the widest blast radius in this file: everything on
+  // the cluster goes dark. The estimate is the bill, because saving it is the
+  // only reason anybody does this.
+  @ActionCycle({
+    action: 'POST /infrastructure/clusters/:id/stop',
+    bind: ['id'],
+    sentence:
+      'power off every server of cluster {id}, taking everything on it offline',
+    estimate: '/infrastructure/clusters/:id/billing',
+  })
   @ApiOperation({
     summary: 'Stop all cluster servers (async)',
     description:
@@ -1037,6 +1095,12 @@ export class ClustersController {
 
   @Post(':id/start')
   @RequireSection('infrastructure')
+  @ActionCycle({
+    action: 'POST /infrastructure/clusters/:id/start',
+    bind: ['id'],
+    sentence: 'power the servers of cluster {id} back on',
+    estimate: '/infrastructure/clusters/:id/billing',
+  })
   @ApiOperation({
     summary: 'Start all cluster servers (async)',
     description:

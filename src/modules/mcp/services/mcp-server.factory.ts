@@ -123,7 +123,7 @@ export class McpServerFactory {
       // Bound once per request to the credential that arrived with it. The
       // token never reaches a tool body: what tools get is a caller that
       // already speaks as the principal.
-      api: this.api.for(credential),
+      api: this.api.for(credential, 'mcp'),
       audit: this.audit,
       // Passed in rather than derived here: which api_keys row authenticated
       // the request is on the request and deliberately not on the principal.

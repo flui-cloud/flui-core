@@ -24,8 +24,26 @@ export async function mayReadOperation(
   user: AuthenticatedUser | undefined,
 ): Promise<boolean> {
   if (!user || !operation) return false;
-  if (user.isAdmin) return true;
   if (operation.userId && operation.userId === user.userId) return true;
+  return readsEveryOperation(policy, user);
+}
+
+/**
+ * The instance half of {@link mayReadOperation}, on its own so a whole page can
+ * be judged with one resolution instead of one per row.
+ *
+ * A register page carries up to two hundred rows, each possibly naming an
+ * operation, and asking the ownership question row by row would resolve the
+ * caller's sections two hundred times for an answer that cannot change inside
+ * one request. Split rather than copied: the two entry points fold into the
+ * same lines, so the rule stays one rule.
+ */
+export async function readsEveryOperation(
+  policy: PolicyEngine,
+  user: AuthenticatedUser | undefined,
+): Promise<boolean> {
+  if (!user) return false;
+  if (user.isAdmin) return true;
   const sections = await policy.resolveSectionAccess({
     userId: user.userId,
     email: user.email,

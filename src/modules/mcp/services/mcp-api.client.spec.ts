@@ -5,6 +5,10 @@ import {
   credentialFromRequest,
   hasCredential,
 } from './mcp-api.client';
+import {
+  AGENT_SURFACE_HEADER,
+  agentSurfaceOf,
+} from '../../auth/utils/actor-surface';
 
 /**
  * The credential seam of strada B.
@@ -49,6 +53,45 @@ describe('McpApiClient — the caller carries the caller credential', () => {
 
       expect(hasCredential(credential)).toBe(false);
       expect(credential.authorization).toBeUndefined();
+    });
+  });
+
+  /**
+   * The one hop the surface has to survive.
+   *
+   * A tool reaches the product by calling this very process over loopback, and
+   * until now only the credential travelled. The credential says *who*; it
+   * cannot say that a model wrote these arguments — and for the portal's
+   * assistant, whose credential is the person's own browser session, that is
+   * the entire question the action cycle needs answered.
+   */
+  describe('the surface travels with the credential', () => {
+    const sent = async (surface?: 'mcp' | 'assistant') => {
+      const client = new McpApiClient({ get: () => undefined } as never);
+      const request = jest.fn().mockResolvedValue({ status: 200, data: {} });
+      (client as unknown as { http: { request: unknown } }).http = { request };
+      await client
+        .for({ authorization: 'Bearer t' }, surface)
+        .post('/applications/app-1/deploy');
+      return (request.mock.calls[0][0] as { headers: Record<string, string> })
+        .headers;
+    };
+
+    it('declares the assistant, and the far side can check it is us', async () => {
+      const headers = await sent('assistant');
+      expect(agentSurfaceOf(headers)).toBe('assistant');
+    });
+
+    it('declares the MCP server the same way', async () => {
+      expect(agentSurfaceOf(await sent('mcp'))).toBe('mcp');
+    });
+
+    it("declares nothing for a caller that is not a tool — the person's own", async () => {
+      // The decision route is reached on exactly such a caller. Declaring a
+      // surface there would make the assistant able to answer its own request.
+      const headers = await sent();
+      expect(headers[AGENT_SURFACE_HEADER]).toBeUndefined();
+      expect(headers.Authorization).toBe('Bearer t');
     });
   });
 

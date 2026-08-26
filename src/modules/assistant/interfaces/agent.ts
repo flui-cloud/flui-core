@@ -1,4 +1,5 @@
 import { McpTier } from '../../mcp/constants/mcp-scopes';
+import { ChatActionRequest } from '../services/action-cycle-reach';
 import { ChatCompletionMessage } from './chat-completion';
 
 /** One executed tool call, surfaced to the UI for rendering. */
@@ -41,6 +42,15 @@ export interface PendingAction {
    * confirmation, but must still approve every toolCallId in the group on confirm.
    */
   groupKey: string;
+  /**
+   * The action cycle's own request, when this call raised one.
+   *
+   * Present exactly where the person's click will be recorded as the answer to
+   * that request, and absent everywhere else. That is not a coincidence in the
+   * rendering, it is the rule: the chat answers for somebody only where it has
+   * shown them what they are answering.
+   */
+  request?: ChatActionRequest;
 }
 
 /**

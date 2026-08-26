@@ -18,6 +18,7 @@ import {
   ApiTags,
 } from '@nestjs/swagger';
 import { AppAccessGuard } from '../guards/app-access.guard';
+import { ActionCycle } from '../../action-cycle/action-cycle.decorator';
 import { GatewayService } from '../services/gateway.service';
 import {
   AddGatewayRouteDto,
@@ -80,6 +81,13 @@ export class GatewayController {
   }
 
   @Delete('routes/:endpointId')
+  @ActionCycle({
+    action: 'DELETE /applications/:id/gateway/routes/:endpointId',
+    bind: ['id', 'endpointId'],
+    sentence:
+      'take route {endpointId} of application {id} off the internet, together ' +
+      'with its DNS record and its certificate',
+  })
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({
     summary: 'Remove a gateway route',

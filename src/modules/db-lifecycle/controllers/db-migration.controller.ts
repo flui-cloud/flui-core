@@ -11,6 +11,7 @@ import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Request } from 'express';
 import { RequireSection } from '../../iam/decorators/require-section.decorator';
 import { RequirePermission } from '../../iam/decorators/require-permission.decorator';
+import { ActionCycle } from '../../action-cycle/action-cycle.decorator';
 import { IAM_PERMISSION } from '../../iam/constants/iam-permissions';
 import { DbMigrationService } from '../services/db-migration.service';
 import { CreateDbMigrationDto } from '../dto/create-db-migration.dto';
@@ -72,6 +73,13 @@ export class DbMigrationController {
 
   @Delete(':id')
   @RequirePermission(IAM_PERMISSION.MIGRATION_EXECUTE)
+  @ActionCycle({
+    action: 'DELETE /db-migrations/:id',
+    bind: ['id'],
+    sentence:
+      'abort database migration {id}, and tear down the destination ' +
+      'database it had already built',
+  })
   @ApiOperation({
     summary: 'Abort a pre-cutover migration (tears the replication link down)',
   })

@@ -3,6 +3,7 @@ import {
   PROPOSAL_STATUS,
   argsDigest,
   bindingOf,
+  composeSentence,
   concessionCovers,
   isProposalLive,
   readProposalRefusal,
@@ -147,6 +148,54 @@ describe('action cycle — the vocabulary a concession is written in', () => {
     expect(renderSentence('deploy {id}', undefined)).toBe('deploy {id}');
   });
 
+  describe('the half of the sentence the route parameters cannot say', () => {
+    const level = (body: unknown) =>
+      (body as { level?: string } | undefined)?.level === 'global'
+        ? 'every tenant reads it'
+        : undefined;
+
+    it('adds what the body says to what the template says', () => {
+      expect(
+        composeSentence('write a note', undefined, level, { level: 'global' }),
+      ).toBe('write a note — every tenant reads it');
+    });
+
+    it('leaves the sentence exactly as declared when there is no clause', () => {
+      expect(
+        composeSentence('deploy {id}', { id: 'a-1' }, undefined, {
+          level: 'global',
+        }),
+      ).toBe('deploy a-1');
+    });
+
+    it('says only what it can when the body does not say', () => {
+      expect(composeSentence('write a note', undefined, level, {})).toBe(
+        'write a note',
+      );
+      expect(composeSentence('write a note', undefined, () => '   ', {})).toBe(
+        'write a note',
+      );
+    });
+
+    /**
+     * Guards run before validation, so the body here is whatever was posted.
+     * Half a sentence is a worse answer than the whole one; refusing the call
+     * because the prose failed would be worse than either.
+     */
+    it('keeps the sentence when the clause throws', () => {
+      expect(
+        composeSentence(
+          'write a note',
+          undefined,
+          () => {
+            throw new Error('unvalidated body');
+          },
+          { level: 42 },
+        ),
+      ).toBe('write a note');
+    });
+  });
+
   it('fills an estimate route, or refuses to invent one', () => {
     expect(
       renderRoute('/infrastructure/clusters/:id/capacity-plan', { id: 'c-1' }),
@@ -206,7 +255,38 @@ describe('action cycle — the vocabulary a concession is written in', () => {
         offersAlways: true,
         decideUrl: 'https://example.test/settings/agents/requests/p-1',
         expiresAt: undefined,
+        estimateWithheld: false,
       });
+    });
+
+    /**
+     * The price reaches the person and not the agent, and the fix is not to
+     * widen the reader by one more field: `estimateRef` is an API path, and a
+     * path handed to a model is an invitation to a call no tool publishes. What
+     * crosses is the bit — there is a price here, you are not seeing it — and
+     * the route stays behind the guard, which is what the narrow reader is for.
+     */
+    it('carries that a price exists, and never the route that serves it', () => {
+      const read = readProposalRefusal({
+        code: ACTION_PROPOSAL_CODE,
+        proposalId: 'p-1',
+        action: 'POST /infrastructure/clusters/:id/workers',
+        sentence: 'add a worker node to cluster c-1',
+        offersAlways: true,
+        estimateRef: '/infrastructure/clusters/c-1/capacity-plan',
+      });
+      expect(read?.estimateWithheld).toBe(true);
+      expect(JSON.stringify(read)).not.toContain('capacity-plan');
+    });
+
+    it('says nothing is withheld when nothing prices the action', () => {
+      const read = readProposalRefusal({
+        code: ACTION_PROPOSAL_CODE,
+        proposalId: 'p-2',
+        sentence: 'enable the firewall on cluster c-1',
+        estimateRef: '',
+      });
+      expect(read?.estimateWithheld).toBe(false);
     });
 
     it('reads nothing off any other refusal', () => {

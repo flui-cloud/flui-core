@@ -11,6 +11,7 @@ import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Request } from 'express';
 import { RequireSection } from '../../iam/decorators/require-section.decorator';
 import { RequirePermission } from '../../iam/decorators/require-permission.decorator';
+import { ActionCycle } from '../../action-cycle/action-cycle.decorator';
 import { IAM_PERMISSION } from '../../iam/constants/iam-permissions';
 import { FullMigrationService } from '../services/full-migration.service';
 import { CreateFullMigrationDto } from '../dto/create-full-migration.dto';
@@ -72,6 +73,13 @@ export class FullMigrationController {
 
   @Post(':id/destroy-source')
   @RequirePermission(IAM_PERMISSION.MIGRATION_EXECUTE)
+  @ActionCycle({
+    action: 'POST /full-migrations/:id/destroy-source',
+    bind: ['id'],
+    sentence:
+      'destroy the source application and database that migration {id} ' +
+      'moved away from — they do not come back',
+  })
   @ApiOperation({
     summary: 'Destroy the drained source app workload after completion',
   })
@@ -81,6 +89,13 @@ export class FullMigrationController {
 
   @Delete(':id')
   @RequirePermission(IAM_PERMISSION.MIGRATION_EXECUTE)
+  @ActionCycle({
+    action: 'DELETE /full-migrations/:id',
+    bind: ['id'],
+    sentence:
+      'abort migration {id}, and tear down the destination application ' +
+      'and database it had already built',
+  })
   @ApiOperation({ summary: 'Abort a pre-cutover full-migration (both legs)' })
   abort(@Param('id') id: string) {
     return this.service.abort(id);

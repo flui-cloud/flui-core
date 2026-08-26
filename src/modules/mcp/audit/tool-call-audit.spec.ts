@@ -1,5 +1,12 @@
 import { CATALOG_TOOLS } from '../tools/catalog.tools';
-import { McpToolContext, ToolDef, runTool } from '../tools/mcp-tool.util';
+import {
+  McpToolContext,
+  ToolDef,
+  runGated,
+  runTool,
+} from '../tools/mcp-tool.util';
+import { McpApiError } from '../services/mcp-api.client';
+import { ACTION_PROPOSAL_CODE } from '../../action-cycle/action-cycle.core';
 import { MCP_SCOPE } from '../constants/mcp-scopes';
 import { REDACTED } from './tool-arg-redaction';
 import { Actor } from '../../auth/utils/actor-context';
@@ -121,6 +128,46 @@ describe('what a tool call leaves behind', () => {
         allowed: false,
         actor: { kind: 'agent', keyId: KEY_ID },
         args: expect.objectContaining({ exposure: 'public' }),
+      }),
+    );
+  });
+
+  /**
+   * The column the read side is entirely built on, and that nobody wrote.
+   * A row that raised a request has to name it: the review
+   * that starts from a question — "what did this request actually cause" —
+   * walks `proposal_id` in one direction and `operation_id` in the other, and
+   * with the write missing the register answered `null` to every reader.
+   *
+   * No foreign key, here or in the entity: a register that loses its rows when
+   * a credential or a request is cleaned up is the opposite of what a revoke
+   * decision needs.
+   */
+  it('records the request it raised when the cycle stopped it to ask', async () => {
+    const { ctx, record } = ctxFor({ kind: 'agent', keyId: KEY_ID });
+    const waiting = new McpApiError(
+      403,
+      'This call needs a person to allow it first.',
+      'POST',
+      '/applications/app-1/deploy',
+      ACTION_PROPOSAL_CODE,
+      undefined,
+      {
+        proposalId: 'p-7',
+        action: 'POST /applications/:id/deploy',
+        sentence: 'deploy application app-1',
+        offersAlways: true,
+        estimateWithheld: false,
+      },
+    );
+    await runGated(ctx, 'app_deploy', MCP_SCOPE.APP_WRITE, () =>
+      Promise.reject(waiting),
+    );
+    expect(record).toHaveBeenCalledWith(
+      expect.objectContaining({
+        allowed: true,
+        outcome: 'input_required',
+        proposalId: 'p-7',
       }),
     );
   });

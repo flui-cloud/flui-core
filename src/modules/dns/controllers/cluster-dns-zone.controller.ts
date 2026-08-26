@@ -40,6 +40,7 @@ import { SystemDnsStatusResponseDto } from '../dto/system-dns-status-response.dt
 import { CertDiagnosticsResponseDto } from '../dto/cert-diagnostics-response.dto';
 import { RequirePermission } from '../../iam/decorators/require-permission.decorator';
 import { IAM_PERMISSION } from '../../iam/constants/iam-permissions';
+import { ActionCycle } from '../../action-cycle/action-cycle.decorator';
 
 @ApiTags('Cluster DNS Zone')
 @ApiBearerAuth()
@@ -417,6 +418,14 @@ export class ClusterDnsZoneController {
 
   @Post('configure-issuer/:type')
   @HttpCode(HttpStatus.NO_CONTENT)
+  // Bound to the issuer type as well as to the cluster: conceding "always
+  // rewrite the http issuers here" must not also concede the wildcard ones.
+  @ActionCycle({
+    action: 'POST /clusters/:clusterId/dns-zone/configure-issuer/:type',
+    bind: ['clusterId', 'type'],
+    sentence: 'rewrite the {type} certificate issuers of cluster {clusterId}',
+    estimate: '/clusters/:clusterId/dns-zone/issuers',
+  })
   @ApiOperation({
     summary: 'Create or update cert-manager ClusterIssuers by type',
     description:

@@ -30,11 +30,46 @@ export class HttpExceptionFilter implements ExceptionFilter {
      */
     const code = typeof body?.code === 'string' ? body.code : undefined;
 
+    /**
+     * The rest of a refusal's contract, carried through by name.
+     *
+     * `code` alone says *what kind* of refusal this is; these say *what to do
+     * about it*, and a refusal that keeps the first and drops the second is a
+     * sentence with its verb removed. The action cycle is the case that proves
+     * it: the guard raises a request and answers with its id, the sentence read
+     * at the yes, whether an "always" is on offer, and the page that decides —
+     * and a client reads exactly those to turn a refusal into a question a
+     * person can answer. Rebuilt from a fixed shape, every one of them was
+     * dropped, so the cycle reached an agent as prose it could only guess at.
+     *
+     * `estimateRef` is carried because the reader turns it into a boolean and
+     * keeps the reference on this side of the guard — the fact that a price
+     * exists crosses, the path to it does not.
+     *
+     * Named one by one rather than spreading the body: an error body is
+     * assembled next to the code that throws it and may hold whatever was in
+     * hand there. This filter is the last thing between that and the wire.
+     */
+    const CARRIED = [
+      'proposalId',
+      'action',
+      'sentence',
+      'offersAlways',
+      'estimateRef',
+      'decideUrl',
+      'expiresAt',
+    ] as const;
+    const carried: Record<string, unknown> = {};
+    for (const field of CARRIED) {
+      if (body?.[field] !== undefined) carried[field] = body[field];
+    }
+
     const errorResponse = {
       statusCode: status,
       message: body ? body.message || exception.message : exception.message,
       error: body ? body.error || 'Error' : 'Error',
       ...(code ? { code } : {}),
+      ...carried,
       timestamp: new Date().toISOString(),
     };
 

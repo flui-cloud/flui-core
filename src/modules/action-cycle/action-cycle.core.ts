@@ -219,6 +219,57 @@ export function renderSentence(
   );
 }
 
+/**
+ * A second clause of the sentence, worked out from the request body.
+ *
+ * `renderSentence` fills from route parameters, and a route parameter is the
+ * only thing some actions are about. Others carry what they do in the body:
+ * `POST /operating-context` has no parameters at all, and the level a note is
+ * written at — the difference between "one cluster reads this" and "every
+ * tenant and every guest of the demonstration reads this" — arrives there. A
+ * person answering that request was being shown the verb and not the blast
+ * radius.
+ *
+ * The contract on whatever is passed here is narrow and it is the reason this
+ * is a function on the declaration rather than a domain lookup in the guard:
+ *
+ *  - it is **pure**. It reads no table and calls nothing. A guard that resolves
+ *    a name to phrase a question is a guard that fails for reasons that have
+ *    nothing to do with the decision — the same reason {@link renderSentence}
+ *    fills in identifiers and never names;
+ *  - it is fed an **unvalidated** body. Guards run before pipes, so the object
+ *    is whatever was posted; a clause that cannot tell what it is looking at
+ *    returns `undefined` and the sentence stays as it was;
+ *  - it is read **once**, here, while the body is still in hand. The body is
+ *    hashed and thrown away, so there is no later moment at which this could be
+ *    recomputed — which is exactly the property wanted: the clause is fixed
+ *    into the stored sentence before anybody reads it, and the concession
+ *    copies that sentence verbatim. What was agreed to cannot be re-derived
+ *    afterwards by a rule that has since changed its mind.
+ *
+ * A clause that throws is treated as a clause that had nothing to say. Losing
+ * half a sentence is a worse answer than the whole one; refusing the call
+ * because the prose failed would be a worse answer than either.
+ */
+export type SentenceClause = (body: unknown) => string | undefined;
+
+export function composeSentence(
+  template: string,
+  binding: ActionBinding | undefined,
+  clause: SentenceClause | undefined,
+  body: unknown,
+): string {
+  const base = renderSentence(template, binding);
+  if (!clause) return base;
+  let extra: string | undefined;
+  try {
+    extra = clause(body);
+  } catch {
+    extra = undefined;
+  }
+  return extra?.trim() ? `${base} — ${extra.trim()}` : base;
+}
+
 /** Fill `:param` placeholders of a route pattern from the request's params. */
 export function renderRoute(
   pattern: string,
@@ -244,6 +295,25 @@ export function renderRoute(
  */
 export const PROPOSAL_DECISION_PATH = '/settings/agents/requests';
 
+/**
+ * What an agent is told when a request carries a price it is not shown.
+ *
+ * The estimate is a **route**, not a number: `estimateRef` names a pricing GET
+ * that nobody has called yet — the guard deliberately never does — so at the
+ * moment the refusal is written there is no figure to hand over, and there
+ * never was one to summarise. What can be said truthfully is that a price
+ * exists and who can see it, and saying that is the difference between an agent
+ * that reports "I asked to add a node" and one that reports "I asked to add a
+ * node, and it costs something I could not read".
+ *
+ * Said once, here, because two surfaces have to say the same thing and they
+ * word their waits separately.
+ */
+export const ESTIMATE_WITHHELD_NOTE =
+  'This request has a cost estimate attached and you are NOT being shown it — ' +
+  'the person deciding reads it on that page. Tell the user this action has a ' +
+  'price you cannot see; do not describe it as free and do not invent a figure.';
+
 /** The fields a refusal carries so a client can present the wait as a wait. */
 export interface ProposalRefusal {
   proposalId: string;
@@ -252,6 +322,17 @@ export interface ProposalRefusal {
   offersAlways: boolean;
   decideUrl?: string;
   expiresAt?: string;
+  /**
+   * True when a price is attached to this request and is not in this object.
+   *
+   * The fact, never the pointer. `estimateRef` is an API path, and a path is
+   * the one value a model turns into a call it cannot make: no tool publishes
+   * an arbitrary GET, and one that did would hand a model every route its
+   * credential can reach, around the tool list that decides what it may reach.
+   * So the reference stays behind the guard and what leaves is the bit a client
+   * can act on — including the agent, whose only honest action is to say so.
+   */
+  estimateWithheld: boolean;
 }
 
 /**
@@ -261,6 +342,10 @@ export interface ProposalRefusal {
  * the fields named here are the ones a client is meant to show a person, and a
  * generic bag would sooner or later carry a body that had no business leaving
  * the guard. Fail-closed: anything missing and this is not a proposal.
+ *
+ * `estimateRef` is read and **not kept**: a field is admitted here by what it
+ * lets a reader do, and the pricing route lets a model do nothing but guess at
+ * a call. Its existence is kept instead — see {@link ESTIMATE_WITHHELD_NOTE}.
  */
 export function readProposalRefusal(
   body: unknown,
@@ -278,6 +363,7 @@ export function readProposalRefusal(
     offersAlways: b.offersAlways === true,
     decideUrl: typeof b.decideUrl === 'string' ? b.decideUrl : undefined,
     expiresAt: typeof b.expiresAt === 'string' ? b.expiresAt : undefined,
+    estimateWithheld: typeof b.estimateRef === 'string' && !!b.estimateRef,
   };
 }
 

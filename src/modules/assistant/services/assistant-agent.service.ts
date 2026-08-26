@@ -41,11 +41,23 @@ import {
 } from '../../iam/interfaces/policy-engine.interface';
 import {
   ForwardedCredential,
+  McpApiCaller,
   McpApiClient,
 } from '../../mcp/services/mcp-api.client';
 import { McpAuditRepository } from '../../mcp/repositories/mcp-audit.repository';
+import { ProposalRefusal } from '../../action-cycle/action-cycle.core';
 import { Actor } from '../../auth/utils/actor-context';
 import { actorOf } from '../../auth/utils/actor.util';
+import {
+  assentInChat,
+  didNotTakeEffect,
+  isStandingRefusal,
+  proposalRefusalOf,
+  standingRefusalMessage,
+  waitMessage,
+  waitingAuditRow,
+} from './agent-pause.util';
+import { unansweredToolCalls } from './turn-transcript.util';
 import {
   redactToolArgs,
   startedOperationId,
@@ -80,6 +92,8 @@ import {
   ChatTool,
   ToolCall,
 } from '../interfaces/chat-completion';
+import { ChatActionRequest, chatActionRequest } from './action-cycle-reach';
+import { ActionCycleRoutes } from './action-cycle-routes.service';
 import { AssistantInferenceService } from './assistant-inference.service';
 import { AssistantLlmService } from './assistant-llm.service';
 import { AssistantGuardService, RouteMessage } from './assistant-guard.service';
@@ -102,15 +116,47 @@ const STATIC_EXTERNAL_HOSTS = new Set(['github.com', 'gitlab.com']);
 // so bulky outputs (logs, long lists) can never overflow the context window.
 const MAX_TOOL_RESULT_CHARS = 6000;
 /**
+ * A call the cycle settled while it was being asked about, so there is nothing
+ * left to confirm.
+ *
+ * Two of the cycle's four answers land here and they are opposites — it ran
+ * because a yes already covered it, or it will never run because a no already
+ * stands — and what they share is the thing that matters to the loop: no card,
+ * and a result that has to be written down. Distinct from "no request" on
+ * purpose: that one means nothing to confirm *because the cycle never looks at
+ * this call*, which is the chat's own question, not the cycle's.
+ */
+interface SettledCall {
+  toolCallId: string;
+  name: string;
+  ok: boolean;
+  result?: unknown;
+  error?: string;
+  /** The tool message for the transcript — the only thing that survives a resume. */
+  content: string;
+}
+/**
  * Flui Assistant as a layered agent: scope gate → KB context → tool-use loop over
  * the shared tool registry. Read/plan tools run transparently; write/destructive
  * tools pause for an explicit confirmation (returned as a pending_action and resumed
  * with the approved tool-call ids). Tools execute in-process under the user's scopes.
  */
+/**
+ * The tool context the assistant loop runs on: everything a tool sees, plus the
+ * one caller a tool never sees.
+ *
+ * `asPerson` is deliberately not on `McpToolContext`. A tool body holding a
+ * caller that speaks as the person rather than as the agent would be a bypass
+ * sitting in reach of every tool ever written; this way it exists only in the
+ * loop, which is the only thing that ever needs it.
+ */
+type AgentRunContext = McpToolContext & { asPerson?: McpApiCaller };
+
 @Injectable()
 export class AssistantAgentService {
   constructor(
     private readonly inference: AssistantInferenceService,
+    private readonly cycleRoutes: ActionCycleRoutes,
     private readonly llm: AssistantLlmService,
     private readonly guard: AssistantGuardService,
     private readonly knowledge: KnowledgeService,
@@ -195,8 +241,11 @@ export class AssistantAgentService {
     // past its KB-grounded decision: skip the router LLM call (already on-topic) and
     // run lean throughout. A fresh turn routes once and gets the full KB corpus for
     // its first decision only.
-    const tail = conversation.at(-1);
-    const isResume = tail?.role === 'assistant' && !!tail.tool_calls?.length;
+    // Not "the last message proposes tool calls" any more: a turn can now come
+    // back having answered some of its own calls and none of the others — see
+    // turn-transcript.util.ts.
+    const resuming = unansweredToolCalls(conversation);
+    const isResume = resuming.length > 0;
     let firstSystem = leanSystem;
     // Doc links for the topics this turn is grounded in — surfaced on the final answer.
     // A resume already made its KB-grounded decision (no router call), so it carries none.
@@ -225,10 +274,10 @@ export class AssistantAgentService {
     // performed (in a prior turn, e.g. the approved install) must never run again —
     // small models re-propose the same action and would install/delete twice.
     const executed = this.executedWriteKeys(conversation);
-    if (isResume && tail.tool_calls) {
+    if (isResume) {
       const before = steps.length;
       await this.resolveToolCalls(
-        tail.tool_calls,
+        resuming,
         ctx,
         approved,
         conversation,
@@ -305,18 +354,23 @@ export class AssistantAgentService {
     return result !== undefined && !this.isFailureResult(result);
   }
 
+  /** Whether the transcript says this call left no effect — see didNotTakeEffect. */
   private isFailureResult(result: string): boolean {
-    return /^(denied|refused|error|action denied)/i.test(result.trim());
+    return didNotTakeEffect(result);
   }
 
-  /** Fresh write/destructive calls needing confirmation — minus ones already performed. */
+  /**
+   * Fresh write/destructive calls needing confirmation — and the ones the cycle
+   * settled instead, which need writing down rather than confirming.
+   */
   private async collectPending(
     toolCalls: ToolCall[],
-    ctx: McpToolContext,
+    ctx: AgentRunContext,
     approved: Set<string>,
     executed: Map<string, string>,
-  ): Promise<PendingAction[]> {
+  ): Promise<{ pending: PendingAction[]; settled: SettledCall[] }> {
     const pending: PendingAction[] = [];
+    const settled: SettledCall[] = [];
     for (const tc of toolCalls) {
       const def = findTool(tc.function.name);
       if (!def || !ctx.scopes.has(def.scope)) continue;
@@ -332,6 +386,14 @@ export class AssistantAgentService {
       if (executed.has(this.cacheKey(tc.function.name, args))) {
         continue;
       }
+      const answer = await this.raiseRequest(tc, def, ctx, executed, approved);
+      // The cycle answered this call outright — it ran under a yes the person
+      // had already given, or it stands refused under a no they had already
+      // given. Either way there is nothing to ask; see raiseRequest.
+      if (answer?.kind === 'settled') {
+        settled.push(answer.settled);
+        continue;
+      }
       const { label, groupKey } = await this.describePending(
         tc.function.name,
         args,
@@ -344,9 +406,114 @@ export class AssistantAgentService {
         tier,
         label,
         groupKey,
+        request: answer?.request,
       });
     }
-    return pending;
+    return { pending, settled };
+  }
+
+  /**
+   * Ask the cycle its question *now*, so the card carries it.
+   *
+   * The chat used to confirm first and meet the cycle afterwards, on the
+   * resume, where it answered `once` for the person — who had therefore agreed
+   * to a sentence nobody had shown them, and to a price nobody had mentioned.
+   * They are the same question, so it is asked once, here, in the cycle's own
+   * words, and the click answers the request it came from.
+   *
+   * **Making the call is how the question gets asked, and it is why the reach
+   * test has to hold first.** Every route this tool can land on carries
+   * `@ActionCycle`, so the guard refuses the call and raises a request instead
+   * of letting anything happen — for these tools the pause *is* the effect.
+   * Where that is not true nothing is called at all, and the chat keeps the
+   * card it always had.
+   *
+   * **The cycle has four answers and the chat now presents all four.** It
+   * raises a request (the card carries it); it lets the call through under a
+   * yes already given — a request for these very arguments approved on the
+   * requests page, or a standing concession, which this surface *can* hold
+   * because `actorOf` gives it the fixed identity `surface:assistant`; it
+   * refuses outright because a no to these very arguments already stands; or it
+   * does not look at this call at all, and the chat keeps its own question.
+   *
+   * The two middle answers are settled: no card, and — this is the part that
+   * was missing — a step and a tool message, because a turn that returns a card
+   * for the *other* calls writes nothing else down, and an effect nobody wrote
+   * down is reported as denied on the resume and done twice if the model tries
+   * again.
+   */
+  private async raiseRequest(
+    tc: ToolCall,
+    def: ToolDef,
+    ctx: AgentRunContext,
+    executed: Map<string, string>,
+    approved: Set<string>,
+  ): Promise<
+    | { kind: 'raised'; request: ChatActionRequest }
+    | { kind: 'settled'; settled: SettledCall }
+    | undefined
+  > {
+    if (!this.cycleRoutes.reaches(def.routes)) return undefined;
+    const name = tc.function.name;
+    let args: unknown;
+    try {
+      args = toolInputSchema(def.inputSchema).parse(this.parseArgs(tc));
+    } catch {
+      // Invalid arguments never reach the API, so there is no request to raise.
+      // execOne reports the schema failure in its own words a moment later.
+      return undefined;
+    }
+    try {
+      const data = await def.run(args as never, ctx);
+      await this.recordTool(ctx, name, def, true, undefined, { args, data });
+      // Both marks, together: `executed` stops the loop repeating it, and the
+      // approval is what lets it reach that check instead of being reported to
+      // the model as refused by a person who in fact allowed it.
+      executed.set(this.cacheKey(name, this.parseArgs(tc)), 'done');
+      approved.add(tc.id);
+      return {
+        kind: 'settled',
+        settled: {
+          toolCallId: tc.id,
+          name,
+          ok: true,
+          result: data,
+          content: this.modelView(def, data),
+        },
+      };
+    } catch (error) {
+      const refusal = proposalRefusalOf(error);
+      if (refusal) {
+        // Recorded exactly as the MCP surface records a stopped turn: `allowed`
+        // stays true because nothing was denied — somebody was asked — and the
+        // two columns come from the one helper, so the register can walk from
+        // the question to the calls it came out of.
+        await this.recordTool(ctx, name, def, true, waitMessage(refusal), {
+          args,
+          waiting: refusal,
+        });
+        return { kind: 'raised', request: chatActionRequest(refusal) };
+      }
+      if (isStandingRefusal(error)) {
+        const message = standingRefusalMessage(describeError(error));
+        // `allowed: false`, as the MCP surface records the same answer: the
+        // scope handed the tool over and the cycle refused the call. The two
+        // surfaces must not disagree about what a settled no looks like in the
+        // register.
+        await this.recordTool(ctx, name, def, false, message, { args });
+        return {
+          kind: 'settled',
+          settled: {
+            toolCallId: tc.id,
+            name,
+            ok: false,
+            error: message,
+            content: message,
+          },
+        };
+      }
+      return undefined;
+    }
   }
 
   /**
@@ -358,7 +525,7 @@ export class AssistantAgentService {
   private async describePending(
     name: string,
     args: Record<string, unknown>,
-    ctx: McpToolContext,
+    ctx: AgentRunContext,
   ): Promise<{ label: string; groupKey: string }> {
     const id = typeof args.id === 'string' ? args.id : undefined;
     try {
@@ -421,7 +588,7 @@ export class AssistantAgentService {
     endpoint: InferenceEndpoint;
     model: string;
     dto: AgentRequestDto;
-    ctx: McpToolContext;
+    ctx: AgentRunContext;
     approved: Set<string>;
     conversation: ChatCompletionMessage[];
     steps: AgentToolStep[];
@@ -704,18 +871,29 @@ export class AssistantAgentService {
     user: AuthenticatedUser,
     credential: ForwardedCredential,
     isSandbox: boolean,
-    actor?: Actor,
-  ): McpToolContext {
+    driver?: Actor,
+  ): AgentRunContext {
     return {
       user,
-      // The controller knows which api_keys row authenticated the request and
-      // passes it; the fallback classifies from the principal's own scopes
-      // alone, which is right for every caller that reaches this without a
-      // request — it can say person-or-agent, just not which key.
-      actor: actor ?? actorOf(user),
+      // **An agent, whoever is driving.** What this context runs are tool calls
+      // whose arguments a model wrote, and that is what the columns behind this
+      // field are asked to tell apart — the register's question is "did she do
+      // this, or did something acting for her", and until now the portal's
+      // assistant answered "she did" for every write it performed. The key row
+      // is the driver's when a key authenticated them, and the assistant's own
+      // identity when nothing did.
+      actor: actorOf(user, driver?.keyId, 'assistant'),
       // Same rule as the MCP surface: a converted tool talks to the API as the
       // person driving the chat, on the credential their own request carried.
-      api: this.api.for(credential),
+      // The surface travels with it, which is what makes the action cycle treat
+      // these calls as an agent's — see actor-surface.ts.
+      api: this.api.for(credential, 'assistant'),
+      // The same credential with NO surface declared: the person, not their
+      // copilot. Exactly one thing is done on it — recording the person's
+      // in-chat yes as an answer to the request the cycle raised — and it goes
+      // through the API's own decision route, so the line that refuses an agent
+      // answering its own request is on this path too.
+      asPerson: this.api.for(credential),
       scopes: this.scopes.resolve(user, isSandbox),
       isSandbox,
       // Destructive ops require BOTH server-wide enablement (MCP_ALLOW_DESTRUCTIVE) and,
@@ -737,7 +915,7 @@ export class AssistantAgentService {
    * and one unfiltered list is exactly the kind of second path the whole move
    * to a single tool registry was meant to remove.
    */
-  private toolsForUser(ctx: McpToolContext): ChatTool[] {
+  private toolsForUser(ctx: AgentRunContext): ChatTool[] {
     return ALL_TOOLS.filter(
       (d) => ctx.scopes.has(d.scope) && (!ctx.isSandbox || isOfferedToGuest(d)),
     ).map(toOpenAiTool);
@@ -764,24 +942,46 @@ export class AssistantAgentService {
    */
   private async resolveToolCalls(
     toolCalls: ToolCall[],
-    ctx: McpToolContext,
+    ctx: AgentRunContext,
     approved: Set<string>,
     conversation: ChatCompletionMessage[],
     steps: AgentToolStep[],
     pendUnapproved = true,
     executed: Map<string, string> = new Map(),
   ): Promise<PendingAction[]> {
+    const settledIds = new Set<string>();
     if (pendUnapproved) {
-      const pending = await this.collectPending(
+      const { pending, settled } = await this.collectPending(
         toolCalls,
         ctx,
         approved,
         executed,
       );
+      // Written down *before* the early return, and that is the whole point:
+      // the conversation is the only thing a resume gets back, so a call the
+      // cycle settled has to be in it even when this turn stops for a card. The
+      // step is what the person sees; the tool message is what the next turn
+      // reads instead of asking again.
+      for (const call of settled) {
+        settledIds.add(call.toolCallId);
+        steps.push({
+          toolCallId: call.toolCallId,
+          name: call.name,
+          ok: call.ok,
+          error: call.error,
+          result: call.result,
+        });
+        conversation.push({
+          role: 'tool',
+          tool_call_id: call.toolCallId,
+          content: call.content,
+        });
+      }
       if (pending.length) return pending;
     }
 
     for (const tc of toolCalls) {
+      if (settledIds.has(tc.id)) continue;
       const content = await this.execOrDeny(tc, ctx, approved, steps, executed);
       conversation.push({ role: 'tool', tool_call_id: tc.id, content });
     }
@@ -791,7 +991,7 @@ export class AssistantAgentService {
   /** A state-changing call the user did not approve is denied; everything else runs. */
   private async execOrDeny(
     tc: ToolCall,
-    ctx: McpToolContext,
+    ctx: AgentRunContext,
     approved: Set<string>,
     steps: AgentToolStep[],
     executed: Map<string, string>,
@@ -832,14 +1032,20 @@ export class AssistantAgentService {
         return `DENIED by the user — '${tc.function.name}' was NOT executed and nothing changed. Tell the user it was cancelled; never claim it was done.`;
       }
     }
-    return this.execOne(tc, ctx, steps, executed);
+    return this.execOne(tc, ctx, steps, executed, approved.has(tc.id));
   }
 
+  /**
+   * @param assented the person confirmed THIS call, with these arguments, in the
+   * chat. It is what the action cycle's request is answered with when the call
+   * turns out to need one — see the catch below.
+   */
   private async execOne(
     tc: ToolCall,
-    ctx: McpToolContext,
+    ctx: AgentRunContext,
     steps: AgentToolStep[],
     executed: Map<string, string>,
+    assented = false,
   ): Promise<string> {
     const name = tc.function.name;
     const def = findTool(name);
@@ -905,12 +1111,15 @@ export class AssistantAgentService {
     }
 
     try {
-      const data = await def.run(args as never, ctx);
-      await this.recordTool(ctx, name, def, true, undefined, { args, data });
-      // Full result → UI (artifact); a compact, bounded view → the model.
-      steps.push({ toolCallId: tc.id, name, ok: true, result: data });
-      executed.set(key, 'done');
-      return this.modelView(def, data);
+      return await this.callTool({
+        tc,
+        ctx,
+        def,
+        args,
+        steps,
+        executed,
+        assented,
+      });
     } catch (error) {
       const message = describeError(error);
       await this.recordTool(ctx, name, def, true, message, { args });
@@ -919,21 +1128,110 @@ export class AssistantAgentService {
     }
   }
 
+  /**
+   * The call itself, and the one refusal that is not a failure.
+   *
+   * A tool of this surface meets the action cycle like any other agent's call —
+   * the loopback request declares the surface it came through, so a decorated
+   * route stops it and raises a request instead of an effect. What happens next
+   * is the whole point of assimilating the two surfaces: the person is already
+   * here, and they already said yes to this exact call in the chat. That yes is
+   * recorded as the answer to the request — through the API's own decision
+   * route, on their own credential — and the identical call is retried once,
+   * which is what executes it.
+   *
+   * **Answering for somebody is only legitimate where they were shown what they
+   * are answering**, and that is what `cycleRoutes.reaches` is doing in the
+   * condition below rather than an optimisation. The card the person clicked
+   * carries the cycle's request — its sentence, and the fact that a price is
+   * attached — precisely for the calls this predicate admits, because it is the
+   * same predicate that decided to raise the request before the card was built.
+   * For anything it does not admit, no request was ever shown, so no answer may
+   * be given on their behalf: the wait stands and is reported as a wait, which
+   * is also what a chat driven by an agent credential gets.
+   *
+   * So it is **one question, asked once**, and unlike the confirmation this
+   * surface had before, it leaves a row: what was asked, in the sentence the
+   * cycle wrote, answered by whom and when.
+   */
+  private async callTool(
+    call: {
+      tc: ToolCall;
+      ctx: AgentRunContext;
+      def: ToolDef;
+      args: unknown;
+      steps: AgentToolStep[];
+      executed: Map<string, string>;
+      assented: boolean;
+    },
+    retried = false,
+  ): Promise<string> {
+    const { tc, ctx, def, args, steps, executed, assented } = call;
+    const name = tc.function.name;
+    const key = this.cacheKey(name, this.parseArgs(tc));
+    try {
+      const data = await def.run(args as never, ctx);
+      await this.recordTool(ctx, name, def, true, undefined, { args, data });
+      // Full result → UI (artifact); a compact, bounded view → the model.
+      steps.push({ toolCallId: tc.id, name, ok: true, result: data });
+      executed.set(key, 'done');
+      return this.modelView(def, data);
+    } catch (error) {
+      const refusal = proposalRefusalOf(error);
+      if (!refusal) throw error;
+      const answered =
+        assented &&
+        !retried &&
+        this.cycleRoutes.reaches(def.routes) &&
+        !!ctx.asPerson &&
+        (await assentInChat(ctx.asPerson, refusal));
+      if (answered) {
+        return this.callTool(
+          { tc, ctx, def, args, steps, executed, assented: false },
+          true,
+        );
+      }
+      const message = waitMessage(refusal);
+      // Recorded as a turn that stopped to ask, exactly as the MCP surface
+      // records it: `allowed` stays true because the tool was granted and the
+      // scope let it through — nothing was denied, somebody was asked. The
+      // refusal is handed over rather than the message, because what the
+      // register classifies on is the outcome column and the request this turn
+      // raised — never the text.
+      await this.recordTool(ctx, name, def, true, message, {
+        args,
+        waiting: refusal,
+      });
+      steps.push({ toolCallId: tc.id, name, ok: false, error: message });
+      // NOT written to `executed`: nothing ran, and the person's answer has to
+      // be able to make the identical call run later.
+      return message;
+    }
+  }
+
   private async recordTool(
-    ctx: McpToolContext,
+    ctx: AgentRunContext,
     tool: string,
     def: ToolDef,
     allowed: boolean,
     error?: string,
-    call?: { args?: unknown; data?: unknown },
+    call?: { args?: unknown; data?: unknown; waiting?: ProposalRefusal },
   ): Promise<void> {
     await this.audit.record({
       userId: ctx.user.userId,
       actor: ctx.actor,
       tool: `assistant:${tool}`,
+      // Said, not left to be inferred from the tool prefix: the column exists so
+      // a row can name the surface it came through, and a row that leaves it
+      // null is indistinguishable from one written before the column did.
+      surface: 'assistant',
       scope: def.scope,
       allowed,
       error,
+      // A turn stopped by the cycle is not a call that did nothing: without
+      // these two the register reads it as `no-operation` — "there was nothing
+      // to permit" — when the fact is "somebody is being asked".
+      ...waitingAuditRow(call?.waiting),
       // The raw arguments are the model's, and on this surface they arrive
       // before validation — so they go through the same redactor as the MCP
       // side, which is fail-closed on anything its schema does not prove is

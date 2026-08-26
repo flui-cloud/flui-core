@@ -29,6 +29,7 @@ import { CatalogInstallStatus } from '../enums/catalog-install-status.enum';
 import { AppRemovalResponseDto } from '../dto/app-removal-response.dto';
 import { RemovalPreviewDto } from '../dto/removal-preview.dto';
 import { RemovalPreviewService } from '../services/removal-preview.service';
+import { ActionCycle } from '../../action-cycle/action-cycle.decorator';
 
 /**
  * Remove an application the way it was installed, decided server-side.
@@ -78,6 +79,13 @@ export class AppRemovalController {
 
   @Delete('install')
   @AppAction(IAM_PERMISSION.APP_DELETE)
+  @ActionCycle({
+    action: 'DELETE /applications/:id/install',
+    bind: ['id'],
+    sentence:
+      'remove application {id} for good — every application installed alongside ' +
+      'it, if it came from the catalog — and the data all of them hold',
+  })
   @HttpCode(HttpStatus.ACCEPTED)
   @ApiOperation({
     summary: 'Remove an application together with whatever it was installed as',

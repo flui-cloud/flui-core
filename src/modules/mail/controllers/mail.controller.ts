@@ -46,6 +46,7 @@ import type { MailWindow } from '@flui-cloud/mail';
 import { RequireSection } from '../../iam/decorators/require-section.decorator';
 import { RequirePermission } from '../../iam/decorators/require-permission.decorator';
 import { IAM_PERMISSION } from '../../iam/constants/iam-permissions';
+import { ActionCycle } from '../../action-cycle/action-cycle.decorator';
 
 const WINDOWS: MailWindow[] = ['24h', '7d', '14d', '30d'];
 
@@ -233,6 +234,15 @@ export class MailController {
 
   @Post('domains/:domain/publish')
   @HttpCode(HttpStatus.OK)
+  // The one route in the mail module an agent can reach that writes anything.
+  // It publishes DNS records and sends nothing — which is exactly why it is
+  // allowed to exist for an agent at all — but claiming a sending domain in
+  // somebody's zone is still theirs to say yes to.
+  @ActionCycle({
+    action: 'POST /mail/domains/:domain/publish',
+    bind: ['domain'],
+    sentence: 'claim {domain} as a sending domain and publish its DNS records',
+  })
   @ApiOperation({
     summary: 'Register a sending domain and publish the records it needs',
     description:

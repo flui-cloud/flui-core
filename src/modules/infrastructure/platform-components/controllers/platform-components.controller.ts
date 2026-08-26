@@ -15,6 +15,7 @@ import {
   RedeployPlatformComponentResponseDto,
 } from '../dto/platform-components.dto';
 import { RequireSection } from '../../../iam/decorators/require-section.decorator';
+import { ActionCycle } from '../../../action-cycle/action-cycle.decorator';
 
 @ApiTags('Infrastructure - Platform Components')
 @ApiBearerAuth()
@@ -104,6 +105,17 @@ export class PlatformComponentsController {
   }
 
   @Post(':componentKey/actions/redeploy')
+  // Bound to the component and not only to the cluster: "always restart
+  // cert-manager on this cluster" is a sentence somebody can mean, "always
+  // restart anything on this cluster" is not.
+  @ActionCycle({
+    action:
+      'POST /infrastructure/clusters/:clusterId/platform-components/:componentKey/actions/redeploy',
+    bind: ['clusterId', 'componentKey'],
+    sentence:
+      'restart platform component {componentKey} on cluster {clusterId}',
+    estimate: '/infrastructure/clusters/:clusterId/platform-components',
+  })
   @ApiOperation({
     summary: 'Redeploy/fix a platform component',
     description:

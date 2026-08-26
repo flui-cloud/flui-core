@@ -28,9 +28,12 @@ export const AGENT_MAY_NOT_DECIDE_CODE = 'AGENT_MAY_NOT_DECIDE';
  *  - **an agent cannot answer its own request.** An agent credential is issued
  *    *as* its principal, so without this line the applicant holds the
  *    approver's pen and the whole cycle is a formality it performs on itself.
- *    The refusal is on the actor kind — derived from the credential's ceiling —
- *    and not on a permission, because the person's permissions are exactly what
- *    the agent is carrying;
+ *    The refusal is on the actor kind — the credential's ceiling, or the
+ *    agentic surface the call came through — and not on a permission, because
+ *    the person's permissions are exactly what the agent is carrying. It is
+ *    also what keeps the portal's assistant on the applicant's side of the
+ *    table: a chat answering its own request is refused here, while the same
+ *    person answering from the dashboard is not;
  *  - **no `@RequireSection`.** A sandbox guest holds no section at all beyond
  *    its own things, and a request it cannot answer is a request that stops the
  *    trial dead. These routes are also listed in the fence's "own" set for the
@@ -140,9 +143,13 @@ export class ActionCycleController {
    *
    * An agent presents its principal's own credential, so every permission check
    * on this route would pass. What separates the applicant from the approver
-   * here is not what the credential may do — it is what it *is*, and that is
-   * read off the `mcp:*` ceiling rather than off anything the caller says about
-   * itself.
+   * here is not what the credential may do — it is what it *is*, read off the
+   * `mcp:*` ceiling and off the surface the call came through, never off
+   * anything the caller says about itself.
+   *
+   * The assistant's own in-chat "yes" reaches this route deliberately on a
+   * caller that declares **no** surface: it is the person answering, not their
+   * copilot, and a caller that got that wrong would be refused right here.
    */
   private refuseAgents(req: Request): void {
     const actor = actorFromRequest(req as Request & RequestWithApiKey);

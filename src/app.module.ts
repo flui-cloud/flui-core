@@ -35,6 +35,7 @@ import { PermissionsGuard } from './modules/iam/guards/permissions.guard';
 import { SectionAccessGuard } from './modules/iam/guards/section-access.guard';
 import { ActionCycleGuard } from './modules/action-cycle/action-cycle.guard';
 import { ActionCycleModule } from './modules/action-cycle/action-cycle.module';
+import { OperatingContextModule } from './modules/operating-context/operating-context.module';
 import { WebhooksModule } from './modules/webhooks/webhooks.module';
 import { ImageRegistryModule } from './modules/image-registry/image-registry.module';
 import { TemplatesModule } from './modules/templates/templates.module';
@@ -134,6 +135,7 @@ import { DemoModule } from './modules/demo/demo.module';
     ProjectsModule,
     SandboxModule,
     ActionCycleModule,
+    OperatingContextModule,
     ScheduleModule.forRoot(),
   ],
   providers: [
@@ -155,11 +157,19 @@ import { DemoModule } from './modules/demo/demo.module';
       provide: APP_GUARD,
       useClass: SectionAccessGuard,
     },
-    // Fifth, and last, on purpose: by the time an agent's request reaches the
-    // action cycle the fence has decided the route is callable at all and IAM
-    // has decided the person may. A concession can therefore only ever remove
-    // the *pause* on something already permitted — it cannot widen a boundary,
-    // because every boundary has already answered.
+    // Fifth, and last of the global chain, on purpose: by the time an agent's
+    // request reaches the action cycle the fence has decided the route is
+    // callable at all and IAM has decided the person may. A concession can
+    // therefore only ever remove the *pause* on something already permitted —
+    // it cannot widen a boundary.
+    //
+    // "Last" means last among these. `AppAccessGuard` is applied per controller
+    // with `@UseGuards`, and Nest runs global guards before controller ones, so
+    // the resource-level answer arrives *after* this. The invariant survives —
+    // a concession removes the pause and that guard still refuses what the
+    // caller may not touch — but a request can be raised for a resource the
+    // agent would have been refused anyway, and a person can be asked to allow
+    // something that then answers 403.
     {
       provide: APP_GUARD,
       useClass: ActionCycleGuard,

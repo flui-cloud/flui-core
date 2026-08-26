@@ -1,5 +1,6 @@
 import { MailModule } from '../mail/mail.module';
 import { Module } from '@nestjs/common';
+import { DiscoveryModule } from '@nestjs/core';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { InferenceModule } from '../inference/inference.module';
 import { IamModule } from '../iam/iam.module';
@@ -25,12 +26,16 @@ import { AssistantGuardService } from './services/assistant-guard.service';
 import { AssistantInferenceService } from './services/assistant-inference.service';
 import { AssistantService } from './services/assistant.service';
 import { AssistantAgentService } from './services/assistant-agent.service';
+import { ActionCycleRoutes } from './services/action-cycle-routes.service';
 import { KnowledgeService } from './services/knowledge.service';
 import { AssistantRecommendationsService } from './services/assistant-recommendations.service';
 import { AssistantController } from './controllers/assistant.controller';
 
 @Module({
   imports: [
+    // Read-only: the chat has to know which routes the action cycle pauses
+    // BEFORE it makes a call, and the decorations are the only honest source.
+    DiscoveryModule,
     MailModule,
     TypeOrmModule.forFeature([AssistantMessageLogEntity]),
     InferenceModule,
@@ -52,6 +57,7 @@ import { AssistantController } from './controllers/assistant.controller';
   ],
   controllers: [AssistantController],
   providers: [
+    ActionCycleRoutes,
     AssistantService,
     AssistantAgentService,
     AssistantInferenceService,

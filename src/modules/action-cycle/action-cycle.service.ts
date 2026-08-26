@@ -21,10 +21,10 @@ import {
   ProposalStatus,
   argsDigest,
   bindingOf,
+  composeSentence,
   concessionCovers,
   isProposalLive,
   renderRoute,
-  renderSentence,
 } from './action-cycle.core';
 import { ActionCycleDecl } from './action-cycle.decorator';
 import {
@@ -215,7 +215,15 @@ export class ActionCycleService {
       return this.proposals.save(existing);
     }
 
-    const sentence = renderSentence(attempt.decl.sentence, binding);
+    // Composed here and stored, so what a person reads is what was written
+    // down: the clause is the only part of the sentence that depends on the
+    // body, and the body is hashed and dropped a line above.
+    const sentence = composeSentence(
+      attempt.decl.sentence,
+      binding,
+      attempt.decl.clause,
+      attempt.body,
+    );
     return this.proposals.save(
       this.proposals.create({
         ownerUserId: attempt.ownerUserId,

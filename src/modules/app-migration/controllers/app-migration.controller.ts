@@ -11,6 +11,7 @@ import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Request } from 'express';
 import { RequireSection } from '../../iam/decorators/require-section.decorator';
 import { RequirePermission } from '../../iam/decorators/require-permission.decorator';
+import { ActionCycle } from '../../action-cycle/action-cycle.decorator';
 import { IAM_PERMISSION } from '../../iam/constants/iam-permissions';
 import { AppMigrationService } from '../services/app-migration.service';
 import { CreateAppMigrationDto } from '../dto/create-app-migration.dto';
@@ -74,6 +75,13 @@ export class AppMigrationController {
 
   @Post(':id/destroy-source')
   @RequirePermission(IAM_PERMISSION.MIGRATION_EXECUTE)
+  @ActionCycle({
+    action: 'POST /app-migrations/:id/destroy-source',
+    bind: ['id'],
+    sentence:
+      'destroy the source workload that application migration {id} moved ' +
+      'away from — it does not come back',
+  })
   @ApiOperation({
     summary:
       'Destroy the drained source workload after a completed migration (plan §6 DESTROY)',
@@ -84,6 +92,13 @@ export class AppMigrationController {
 
   @Delete(':id')
   @RequirePermission(IAM_PERMISSION.MIGRATION_EXECUTE)
+  @ActionCycle({
+    action: 'DELETE /app-migrations/:id',
+    bind: ['id'],
+    sentence:
+      'abort application migration {id}, and tear down the destination ' +
+      'workload it had already built',
+  })
   @ApiOperation({
     summary:
       'Abort a pre-cutover migration (tears the destination workload down)',

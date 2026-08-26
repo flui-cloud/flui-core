@@ -7,9 +7,15 @@ import {
   extractJwtFromFluiSessionCookie,
 } from '../../auth/utils/cookie-extractor.util';
 import {
+  ESTIMATE_WITHHELD_NOTE,
   ProposalRefusal,
   readProposalRefusal,
 } from '../../action-cycle/action-cycle.core';
+import {
+  AGENT_SURFACE_HEADER,
+  AgentSurface,
+  agentSurfaceHeader,
+} from '../../auth/utils/actor-surface';
 
 /**
  * The credential a tool call travels on — **the caller's own, forwarded verbatim**.
@@ -111,7 +117,10 @@ export class McpApiError extends Error {
       const at = this.proposal.decideUrl
         ? ` at ${this.proposal.decideUrl}`
         : '';
-      return `Waiting on a person (HTTP 403) on ${where}: ${this.proposal.sentence}. NOTHING was changed. This is not a permission problem and not a bad argument — the person you act for has been asked to allow it${at}. Tell them what you asked for, then retry the IDENTICAL call once they have answered; varying the arguments raises a second request instead of getting past this one.`;
+      const priced = this.proposal.estimateWithheld
+        ? ` ${ESTIMATE_WITHHELD_NOTE}`
+        : '';
+      return `Waiting on a person (HTTP 403) on ${where}: ${this.proposal.sentence}. NOTHING was changed. This is not a permission problem and not a bad argument — the person you act for has been asked to allow it${at}. Tell them what you asked for, then retry the IDENTICAL call once they have answered; varying the arguments raises a second request instead of getting past this one.${priced}`;
     }
     switch (true) {
       case this.status === 401:
@@ -205,8 +214,20 @@ export class McpApiClient {
     return `http://127.0.0.1:${port}/api/v1`;
   }
 
-  for(credential: ForwardedCredential): McpApiCaller {
+  /**
+   * A caller bound to one credential, and — when the call is a tool's — to the
+   * surface that tool runs on.
+   *
+   * The surface is the second thing the far side needs and the only one it
+   * could not work out for itself: the credential says who, the surface says
+   * that a model chose these arguments. Omitting it is what a person's own
+   * request looks like, which is why every non-tool caller passes nothing.
+   */
+  for(credential: ForwardedCredential, surface?: AgentSurface): McpApiCaller {
     const headers: Record<string, string> = {};
+    if (surface) {
+      headers[AGENT_SURFACE_HEADER] = agentSurfaceHeader(surface);
+    }
     if (credential.authorization) {
       headers.Authorization = credential.authorization;
     }

@@ -1,4 +1,5 @@
 import { SetMetadata } from '@nestjs/common';
+import { SentenceClause } from './action-cycle.core';
 
 export const ACTION_CYCLE_KEY = 'agent:actionCycle';
 
@@ -45,6 +46,18 @@ export interface ActionCycleDecl {
    */
   sentence: string;
   /**
+   * What this action's *body* adds to the sentence, when the route's parameters
+   * do not say the whole of it.
+   *
+   * Declared by the route because only the route knows what its body means, and
+   * a guard that reached into a domain to phrase a question would fail for
+   * reasons that have nothing to do with the decision. What is allowed here is
+   * therefore narrow — see {@link SentenceClause}: a pure function of an
+   * unvalidated body, read once, whose answer is frozen into the stored
+   * sentence and never recomputed.
+   */
+  clause?: SentenceClause;
+  /**
    * A GET route that prices this action, as a pattern to be filled from the
    * same request.
    *
@@ -60,9 +73,11 @@ export interface ActionCycleDecl {
  * Put the route inside the action cycle: an agent gets a proposal instead of an
  * effect, until a person says once or always.
  *
- * People, the CLI and every service identity pass untouched — the guard fires
- * only for `actor.kind === 'agent'`, which is derived from the credential's
- * `mcp:*` ceiling and from nothing the client can assert.
+ * The dashboard's forms, the CLI and every service identity pass untouched —
+ * the guard fires only for `actor.kind === 'agent'`, which is derived from the
+ * credential's `mcp:*` ceiling **or** from the agentic surface the call came
+ * through, and from nothing the client can assert. Both sources say the same
+ * thing: a model, not a person, wrote these arguments.
  */
 export const ActionCycle = (decl: ActionCycleDecl) =>
   SetMetadata(ACTION_CYCLE_KEY, decl);
