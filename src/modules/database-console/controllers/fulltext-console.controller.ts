@@ -9,6 +9,7 @@ import {
 } from '@nestjs/common';
 import { AuthenticatedUser } from '../../auth/interfaces/authenticated-user.interface';
 import { AppOwnershipGuard } from '../guards/app-ownership.guard';
+import { PlatformFoundationGuard } from '../guards/platform-foundation.guard';
 import {
   FulltextIndex,
   FulltextSearchResult,
@@ -32,7 +33,7 @@ import {
  * Full-text (Meilisearch) console: index list + search browse, a raw REST Dev
  * Tools passthrough (writes gated by the read-only flag), and an NL copilot.
  */
-@UseGuards(AppOwnershipGuard)
+@UseGuards(PlatformFoundationGuard, AppOwnershipGuard)
 @Controller('applications/:id/fulltext')
 export class FulltextConsoleController {
   constructor(

@@ -9,6 +9,7 @@ import {
   CacheResolveInput,
   ResolvedCacheConnection,
 } from '../interfaces/cache-connection';
+import { assertNotPlatformFoundation } from '../constants/platform-foundations';
 
 /**
  * Resolves how to reach an installed cache server. No credentials — Memcached is
@@ -25,6 +26,7 @@ export class CacheConnectionResolver {
     if (!app) {
       throw new NotFoundException(`Cache application ${appId} not found`);
     }
+    assertNotPlatformFoundation(app);
     const engine = detectCacheEngine(app.imageRef);
     if (!engine) {
       throw new BadRequestException(

@@ -16,6 +16,7 @@ import {
 } from 'express';
 import { AuthenticatedUser } from '../../auth/interfaces/authenticated-user.interface';
 import { AppOwnershipGuard } from '../guards/app-ownership.guard';
+import { PlatformFoundationGuard } from '../guards/platform-foundation.guard';
 import { DbBackupInfo, DbBackupService } from '../services/db-backup.service';
 
 /**
@@ -23,7 +24,7 @@ import { DbBackupInfo, DbBackupService } from '../services/db-backup.service';
  * supported + a filename; `dump` streams a plain-SQL dump; `restore` streams an uploaded dump
  * into the database (destructive — requires ?confirm=true, plus the client's own confirmation).
  */
-@UseGuards(AppOwnershipGuard)
+@UseGuards(PlatformFoundationGuard, AppOwnershipGuard)
 @Controller('applications/:id/db-backup')
 export class DbBackupController {
   constructor(private readonly backup: DbBackupService) {}

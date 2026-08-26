@@ -4,6 +4,9 @@ import {
   SANDBOX_CLUSTER_FORBIDDEN_CODE,
 } from './application-access.service';
 import { IdentityRole } from '../../auth/entities/user.entity';
+import { IAM_ROLE } from '../../iam/constants/iam-roles';
+import { IAM_PERMISSION } from '../../iam/constants/iam-permissions';
+import { SHOWCASE_GRANT, SHOWCASE_TAG } from '../../iam/constants/iam-showcase';
 
 /**
  * Guards the entity → ResourceAttributes mapping (the part the matrix spec can't
@@ -292,6 +295,126 @@ describe('ApplicationAccessService', () => {
         }),
       ).rejects.toMatchObject({
         response: { code: SANDBOX_CLUSTER_FORBIDDEN_CODE },
+      });
+    });
+  });
+  /**
+   * The showcase, from the permission layer rather than from the route fence.
+   *
+   * A tenancy is written two grants, and this is the pair verbatim: everything
+   * whose owner is this guest, plus everything carrying the showcase tag. The
+   * third state the demo needs — *not yours, and you see it anyway* — is the
+   * second of them, and it is read-only by construction rather than by
+   * convention: `showcase_viewer` carries `app:read` and nothing else, so there
+   * is no write in the set to take away.
+   *
+   * Written from the constants, not from the strings: the whole design rests on
+   * there being one mark, so a test that spelled `showcase` itself would keep
+   * passing after somebody retargeted the grant.
+   */
+  describe('a guest, and what the platform runs beside it', () => {
+    const TENANCY_GRANTS = [
+      {
+        principalType: 'user',
+        principalRef: 'bob@acme.com',
+        role: IAM_ROLE.SANDBOX,
+        scopeType: 'selector',
+        scopeRef: null,
+        selector: { owner: 'u' },
+      },
+      {
+        principalType: 'user',
+        principalRef: 'bob@acme.com',
+        role: SHOWCASE_GRANT.role,
+        scopeType: 'selector',
+        scopeRef: null,
+        selector: SHOWCASE_GRANT.selector,
+      },
+    ];
+
+    const appRow = (
+      slug: string,
+      over: { userId?: string | null; tags?: string[] },
+    ) =>
+      ({
+        id: slug,
+        slug,
+        category: 'user',
+        kind: 'APPLICATION',
+        clusterId: 'c1',
+        projectId: null,
+        tags: [],
+        userId: null,
+        ...over,
+      }) as never;
+
+    const MINE = appRow('my-app', { userId: 'u' });
+    // Owned by the operator, tagged, and therefore shown.
+    const ON_SHOW = appRow('immich', {
+      userId: 'operator',
+      tags: [SHOWCASE_TAG],
+    });
+    // Owned by nobody this guest is, and not tagged: the control case that
+    // keeps the two assertions below from both passing for the wrong reason.
+    const NOT_MINE = appRow('someone-else', { userId: 'other' });
+
+    const guest = () =>
+      new ApplicationAccessService(
+        policyWith(TENANCY_GRANTS) as never,
+        projectsRepo as never,
+        clustersRepo as never,
+        sandboxTenantsRepoFor([{ userId: 'u', clusterId: 'c1' }]) as never,
+      );
+
+    it('sees its own and the showcase, and nothing else on the instance', async () => {
+      const visible = await guest().filterReadable(USER as never, [
+        MINE,
+        ON_SHOW,
+        NOT_MINE,
+      ]);
+      expect(
+        visible.map((a) => a.slug).sort((a, b) => a.localeCompare(b)),
+      ).toEqual(['immich', 'my-app']);
+    });
+
+    it.each([
+      IAM_PERMISSION.APP_WRITE,
+      IAM_PERMISSION.APP_DELETE,
+      IAM_PERMISSION.APP_DEPLOY,
+      IAM_PERMISSION.SCALE_EXECUTE,
+    ])('cannot %s a showcase application', async (action) => {
+      await expect(
+        guest().assertCan(USER as never, action, ON_SHOW),
+      ).rejects.toThrow(/Not allowed/);
+      // The same verb on its own application passes, which is what makes the
+      // refusal above a fence and not a broken grant.
+      await expect(
+        guest().assertCan(USER as never, action, MINE),
+      ).resolves.toBeUndefined();
+    });
+
+    /**
+     * The other direction, and the one that would turn the showcase into a
+     * noticeboard: the tag is the mark, so anybody able to write a tag can put
+     * their own application in front of every other guest on the instance.
+     * `PATCH /applications/:id { tags }` asks this exact question before it
+     * writes, so this is that door seen from the permission side.
+     */
+    it('cannot put itself in the window', async () => {
+      await expect(guest().mayPublishShowcase(USER as never)).resolves.toBe(
+        false,
+      );
+    });
+
+    it('labels the two apart, so nothing unexplained sits in the list', async () => {
+      const summary = await guest().summarise(USER as never, [MINE, ON_SHOW]);
+      expect(summary.get('immich')).toMatchObject({
+        showcase: true,
+        readOnly: true,
+      });
+      expect(summary.get('my-app')).toMatchObject({
+        showcase: false,
+        readOnly: false,
       });
     });
   });

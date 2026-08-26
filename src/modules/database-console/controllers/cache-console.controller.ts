@@ -9,6 +9,7 @@ import {
 } from '@nestjs/common';
 import { AuthenticatedUser } from '../../auth/interfaces/authenticated-user.interface';
 import { AppOwnershipGuard } from '../guards/app-ownership.guard';
+import { PlatformFoundationGuard } from '../guards/platform-foundation.guard';
 import { RequirePermission } from '../../iam/decorators/require-permission.decorator';
 import { IAM_PERMISSION } from '../../iam/constants/iam-permissions';
 import { CacheQueryService } from '../services/cache-query.service';
@@ -27,7 +28,7 @@ import {
  * key. Writes honour the request's read-only flag. Keys may contain characters
  * unsafe in a path, so reads/deletes take the key in the body.
  */
-@UseGuards(AppOwnershipGuard)
+@UseGuards(PlatformFoundationGuard, AppOwnershipGuard)
 @Controller('applications/:id/cache')
 export class CacheConsoleController {
   constructor(private readonly cache: CacheQueryService) {}

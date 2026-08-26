@@ -39,6 +39,7 @@ import {
 } from '../engine/object-store-engine';
 import { ObjectStoreConnectionInfo } from '../interfaces/object-store-connection';
 import { AppOwnershipGuard } from '../guards/app-ownership.guard';
+import { PlatformFoundationGuard } from '../guards/platform-foundation.guard';
 import { RequirePermission } from '../../iam/decorators/require-permission.decorator';
 import { IAM_PERMISSION } from '../../iam/constants/iam-permissions';
 
@@ -53,7 +54,7 @@ function fileNameOf(key: string): string {
  * download, delete, and mint share links. All object I/O is proxied through the
  * backend over an ephemeral tunnel — the store stays cluster-internal.
  */
-@UseGuards(AppOwnershipGuard)
+@UseGuards(PlatformFoundationGuard, AppOwnershipGuard)
 @Controller('applications/:id/object-store')
 export class ObjectStoreConsoleController {
   constructor(

@@ -9,6 +9,7 @@ import {
 } from '@nestjs/common';
 import { AuthenticatedUser } from '../../auth/interfaces/authenticated-user.interface';
 import { AppOwnershipGuard } from '../guards/app-ownership.guard';
+import { PlatformFoundationGuard } from '../guards/platform-foundation.guard';
 import { SearchQueryService } from '../services/search-query.service';
 import {
   SearchAssistService,
@@ -33,7 +34,7 @@ import { SearchConnectionInfo } from '../interfaces/search-connection';
 const DEFAULT_SIZE = 20;
 
 /** Read-only search console (OpenSearch / ES-wire): browse indices + run query DSL. */
-@UseGuards(AppOwnershipGuard)
+@UseGuards(PlatformFoundationGuard, AppOwnershipGuard)
 @Controller('applications/:id/search')
 export class SearchConsoleController {
   constructor(

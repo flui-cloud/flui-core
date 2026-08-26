@@ -1,7 +1,13 @@
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { ApplicationEntity } from '../entities/application.entity';
+import { ApplicationStatus } from '../enums/application-status.enum';
 import { AppEndpointService } from '../../dns/services/app-endpoint.service';
 import { SHOWCASE_TAG, isShowcase } from '../../iam/constants/iam-showcase';
 
@@ -72,11 +78,23 @@ export class ShowcaseService {
    * Adds the tag, and nothing else unless a line is given. Tagging is what puts
    * an application in the showcase everywhere — here, in the grant selector and
    * on the application's own screen.
+   *
+   * Entering the showcase is gated on the application actually running, which
+   * is the one rule that keeps the whole thing honest: the showcase claims that
+   * what is in it is real and has been up for a while, and the only defence
+   * against that becoming a slogan is refusing to admit something that is not
+   * running when it is admitted. Nothing here manufactures the claim — the
+   * status and the date are both read off the row.
+   *
+   * The gate is on the way in only. An application that fails *after* it was
+   * published stays, showing the status it really has: a real failure on a real
+   * instance is the truth, and hiding it would be the dishonest half.
    */
   async publish(applicationId: string, note?: string): Promise<ShowcaseItem> {
     const application = await this.byId(applicationId);
 
     if (!isShowcase(application.tags)) {
+      this.assertRunning(application);
       application.tags = [...(application.tags ?? []), SHOWCASE_TAG];
     }
     if (note?.trim()) {
@@ -125,6 +143,21 @@ export class ShowcaseService {
       );
     }
     throw new NotFoundException(`No application "${ref}"`);
+  }
+
+  /**
+   * `running`, and no near-miss admitted. `provisioning`, `updating` and
+   * `degraded` are all states an application passes through on its way to
+   * working or on its way out of it, and a showcase that accepts them is one
+   * that can be filled with things that never came up. The wait is seconds and
+   * publishing is a one-off act, so the strict reading costs a retry and buys
+   * the claim.
+   */
+  private assertRunning(application: ApplicationEntity): void {
+    if (application.status === ApplicationStatus.RUNNING) return;
+    throw new BadRequestException(
+      `${application.slug} is ${application.status}, not running. The showcase says that what is in it is really running here, so it only takes applications that are — publish it once it is up.`,
+    );
   }
 
   private async byId(id: string): Promise<ApplicationEntity> {

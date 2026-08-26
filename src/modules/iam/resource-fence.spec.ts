@@ -462,12 +462,14 @@ describe('resource fence (direct API calls)', () => {
       await http().get('/applications/app-a/db/query').expect(200);
     });
 
-    // The gap that decides whether a seeded tenant is private: an application with
-    // no owner is readable by every authenticated caller. Anything the sandbox
-    // seeds into a guest namespace must therefore carry that guest's userId.
-    it('lets ANY authenticated caller open the console of an unowned application', async () => {
+    // The gap that decided whether a seeded tenant was private, now closed: an
+    // application with no owner AND no declared provenance is a registration
+    // defect, and it answers absence to everyone but an administrator. Anything
+    // the sandbox seeds into a guest namespace must still carry that guest's
+    // userId — otherwise the guest cannot reach its own.
+    it('answers absence when an application has neither an owner nor a declared provenance', async () => {
       as('nobody');
-      await http().get('/applications/app-orphan/db/query').expect(200);
+      await http().get('/applications/app-orphan/db/query').expect(404);
     });
   });
 

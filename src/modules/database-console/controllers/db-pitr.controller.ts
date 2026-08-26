@@ -10,6 +10,7 @@ import {
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { AuthenticatedUser } from '../../auth/interfaces/authenticated-user.interface';
 import { AppOwnershipGuard } from '../guards/app-ownership.guard';
+import { PlatformFoundationGuard } from '../guards/platform-foundation.guard';
 import {
   DbPitrService,
   DbPitrStatus,
@@ -23,7 +24,7 @@ import { DbPitrRestoreDto } from '../../backups/dto/db-pitr-restore.dto';
  * plane. Backup enablement/policy management stays on the backup-policies plane.
  */
 @ApiTags('Database Console')
-@UseGuards(AppOwnershipGuard)
+@UseGuards(PlatformFoundationGuard, AppOwnershipGuard)
 @Controller('applications/:id/db-pitr')
 export class DbPitrController {
   constructor(private readonly pitr: DbPitrService) {}

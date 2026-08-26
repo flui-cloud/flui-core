@@ -16,6 +16,7 @@ import {
   FulltextResolveInput,
   ResolvedFulltextConnection,
 } from '../interfaces/fulltext-connection';
+import { assertNotPlatformFoundation } from '../constants/platform-foundations';
 
 /**
  * Resolves how to reach an installed full-text engine: cluster, namespace, pod
@@ -37,6 +38,7 @@ export class FulltextConnectionResolver {
     if (!app) {
       throw new NotFoundException(`Search application ${appId} not found`);
     }
+    assertNotPlatformFoundation(app);
     const engine = detectFulltextEngine(app.imageRef);
     if (!engine) {
       throw new BadRequestException(

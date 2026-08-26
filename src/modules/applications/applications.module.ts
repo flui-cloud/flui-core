@@ -173,6 +173,12 @@ import { VolumeExportService } from '../providers/services/volume-export.service
     GhcrSecretRefreshProcessor,
   ],
   exports: [
+    // Re-exported so the guards that hang off this module's repositories can
+    // ask IAM the same question the rest of the product asks it. The alternative
+    // was a second, weaker authority derived beside the engine — which is
+    // exactly the divergence that let a console answer differently from
+    // `GET /applications/:id` about the same id.
+    IamModule,
     ApplicationAccessService,
     ApplicationVolumeClaimsService,
     // Exported so controllers outside this module can mount it — the two

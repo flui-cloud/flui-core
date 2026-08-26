@@ -9,6 +9,7 @@ import {
 } from '@nestjs/common';
 import { AuthenticatedUser } from '../../auth/interfaces/authenticated-user.interface';
 import { AppOwnershipGuard } from '../guards/app-ownership.guard';
+import { PlatformFoundationGuard } from '../guards/platform-foundation.guard';
 import { RequirePermission } from '../../iam/decorators/require-permission.decorator';
 import { IAM_PERMISSION } from '../../iam/constants/iam-permissions';
 import { SecretsQueryService } from '../services/secrets-query.service';
@@ -31,7 +32,7 @@ import {
  * write, and soft-delete/destroy. Writes honour the request's read-only flag.
  * Paths may contain slashes, so they travel in the body, not the URL.
  */
-@UseGuards(AppOwnershipGuard)
+@UseGuards(PlatformFoundationGuard, AppOwnershipGuard)
 @Controller('applications/:id/secrets')
 export class SecretsConsoleController {
   constructor(private readonly secrets: SecretsQueryService) {}

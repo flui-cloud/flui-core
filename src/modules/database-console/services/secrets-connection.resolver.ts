@@ -12,6 +12,7 @@ import {
   ResolvedSecretsConnection,
   SecretsResolveInput,
 } from '../interfaces/secrets-connection';
+import { assertNotPlatformFoundation } from '../constants/platform-foundations';
 
 /**
  * Resolves how to reach an installed secrets server. The access token is NOT
@@ -30,6 +31,7 @@ export class SecretsConnectionResolver {
     if (!app) {
       throw new NotFoundException(`Secrets application ${appId} not found`);
     }
+    assertNotPlatformFoundation(app);
     const engine = detectSecretsEngine(app.imageRef);
     if (!engine) {
       throw new BadRequestException(

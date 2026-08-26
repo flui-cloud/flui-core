@@ -14,6 +14,10 @@ import {
   SystemAppDefinition,
 } from '../constants/system-app-catalog';
 import {
+  OWNER_KIND_LABEL,
+  readDeclaredProvenance,
+} from '../constants/app-provenance';
+import {
   FLUI_CONTROL_NAMESPACE,
   FLUI_LEGACY_CONTROL_NAMESPACE,
 } from '../../infrastructure/clusters/constants';
@@ -88,6 +92,22 @@ export class SystemAppCatalogService {
     for (const catalogDef of catalog) {
       try {
         const appDef = await this.resolveAppNamespace(kubeconfig, catalogDef);
+
+        // Read before the already-exists branch, not after it. The declaration
+        // this row needs lives on the cluster, and rows written before the
+        // columns existed carry nothing — so the resource has to be fetched on
+        // every pass, not only on the pass that creates the row. This is what
+        // makes convergence the migration: no backfill guesses which slugs are
+        // the platform's, the cluster says so on each run.
+        const primaryResource = await this.findResourceOnK8s(
+          kubeconfig,
+          appDef.primaryResourceKind,
+          appDef.expectedResources.find(
+            (r) => r.kind === appDef.primaryResourceKind,
+          )?.name || appDef.k8sAppLabel,
+          appDef.k8sNamespace,
+        );
+
         const existing = existingByLabel.get(appDef.k8sAppLabel);
         if (existing) {
           if (appDef.imageSource) {
@@ -98,6 +118,7 @@ export class SystemAppCatalogService {
             );
           }
           await this.convergeExposure(existing, appDef);
+          await this.convergeProvenance(existing, primaryResource);
           result.skipped.push({
             name: appDef.name,
             reason: 'Already exists in database (imageRef refreshed)',
@@ -105,21 +126,21 @@ export class SystemAppCatalogService {
           continue;
         }
 
-        const primaryResource = await this.findResourceOnK8s(
-          kubeconfig,
-          appDef.primaryResourceKind,
-          appDef.expectedResources.find(
-            (r) => r.kind === appDef.primaryResourceKind,
-          )?.name || appDef.k8sAppLabel,
-          appDef.k8sNamespace,
-        );
-
         if (!primaryResource) {
           result.skipped.push({
             name: appDef.name,
             reason: 'Primary resource not found on K8s',
           });
           continue;
+        }
+
+        const provenance = readDeclaredProvenance(primaryResource);
+        if (!provenance.ownerKind) {
+          this.logger.warn(
+            `${appDef.name} declares no ${OWNER_KIND_LABEL} on ` +
+              `${appDef.primaryResourceKind}/${appDef.k8sAppLabel} in ${appDef.k8sNamespace}: ` +
+              'the row is recorded without provenance and reads as unattributed.',
+          );
         }
 
         const slug = appDef.k8sAppLabel;
@@ -156,6 +177,8 @@ export class SystemAppCatalogService {
             manifests: [],
           } as RawManifestSourceConfig,
           systemProtected: true,
+          ownerKind: provenance.ownerKind,
+          ownerRef: provenance.ownerRef,
           labels: {
             app: appDef.k8sAppLabel,
             'app.kubernetes.io/managed-by': 'flui-cloud',
@@ -309,6 +332,36 @@ export class SystemAppCatalogService {
     await this.applicationsRepository.update(existing.id, {
       exposure: declared,
     });
+  }
+
+  /**
+   * Bring an already-discovered row in line with what the cluster declares.
+   *
+   * Silence is not a denial: a resource that could not be read, or that carries
+   * no `owner-kind`, leaves whatever the row already holds. Overwriting a good
+   * provenance with a blank because one API call missed would make discovery a
+   * source of the very absence it is here to remove.
+   */
+  private async convergeProvenance(
+    existing: ApplicationEntity,
+    primaryResource: unknown,
+  ): Promise<void> {
+    if (!primaryResource) return;
+    const declared = readDeclaredProvenance(primaryResource);
+    if (!declared.ownerKind) return;
+    if (
+      existing.ownerKind === declared.ownerKind &&
+      (existing.ownerRef ?? null) === declared.ownerRef
+    ) {
+      return;
+    }
+    await this.applicationsRepository.update(existing.id, {
+      ownerKind: declared.ownerKind,
+      ownerRef: declared.ownerRef,
+    });
+    this.logger.log(
+      `Converged provenance for ${existing.slug}: ownerKind=${declared.ownerKind} ownerRef=${declared.ownerRef ?? 'null'}`,
+    );
   }
 
   private async refreshSystemAppImageRef(

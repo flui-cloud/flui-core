@@ -200,6 +200,34 @@ export class ApplicationEntity {
   @JoinColumn({ name: 'userId' })
   user?: UserEntity;
 
+  /**
+   * Where this row came from, as the side that created the thing declared it —
+   * `platform` for what the bootstrap installs, `user` for what a person did.
+   *
+   * Read from `flui.cloud/owner-kind` on the Kubernetes resource discovery
+   * finds, never inferred. It exists because {@link userId} was doing two jobs:
+   * NULL meant both "the platform put this here" and "an install credential
+   * recorded no owner", and a rule that cannot tell them apart has to treat the
+   * second like the first. With the declaration in the row, a NULL owner that
+   * also carries no declaration is what it always was — a registration defect —
+   * and can be refused as one.
+   *
+   * Plain varchar and nullable on purpose: an enum type would be a type change
+   * against a live schema, and the vocabulary belongs to the manifests, which
+   * are versioned in another repository and may say something this enum has not
+   * heard of yet. Unknown values are read as no declaration.
+   */
+  @Column({ type: 'varchar', length: 32, nullable: true })
+  ownerKind?: string | null;
+
+  /**
+   * Who declares it, from `flui.cloud/owner-id` — `flui-core` for everything the
+   * bootstrap installs today. Not a foreign key and not a `users.id`: it names a
+   * *side*, not a person, and the side outlives any row that might stand for it.
+   */
+  @Column({ type: 'varchar', length: 253, nullable: true })
+  ownerRef?: string | null;
+
   @Column({ default: false })
   systemProtected: boolean;
 

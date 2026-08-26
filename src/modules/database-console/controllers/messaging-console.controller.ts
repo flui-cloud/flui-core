@@ -11,6 +11,7 @@ import {
 } from '@nestjs/common';
 import { AuthenticatedUser } from '../../auth/interfaces/authenticated-user.interface';
 import { AppOwnershipGuard } from '../guards/app-ownership.guard';
+import { PlatformFoundationGuard } from '../guards/platform-foundation.guard';
 import { RequirePermission } from '../../iam/decorators/require-permission.decorator';
 import { IAM_PERMISSION } from '../../iam/constants/iam-permissions';
 import { MessagingQueryService } from '../services/messaging-query.service';
@@ -34,7 +35,7 @@ const DEFAULT_PEEK_LIMIT = 20;
  * Messaging console (NATS/JetStream): read-only monitor (server stats + streams)
  * plus produce (publish) and non-destructive peek of stored messages.
  */
-@UseGuards(AppOwnershipGuard)
+@UseGuards(PlatformFoundationGuard, AppOwnershipGuard)
 @Controller('applications/:id/messaging')
 export class MessagingConsoleController {
   constructor(private readonly messaging: MessagingQueryService) {}

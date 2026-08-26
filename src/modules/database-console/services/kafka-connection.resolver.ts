@@ -17,6 +17,7 @@ import {
   KafkaResolveInput,
   ResolvedKafkaConnection,
 } from '../interfaces/kafka-connection';
+import { assertNotPlatformFoundation } from '../constants/platform-foundations';
 
 /**
  * Resolves how to reach an installed Kafka broker: the workload cluster, the
@@ -38,6 +39,7 @@ export class KafkaConnectionResolver {
     const app = await this.applicationsRepo.findById(appId);
     if (!app)
       throw new NotFoundException(`Kafka application ${appId} not found`);
+    assertNotPlatformFoundation(app);
     const engine = detectKafkaEngine(app.imageRef);
     if (!engine) {
       throw new BadRequestException(

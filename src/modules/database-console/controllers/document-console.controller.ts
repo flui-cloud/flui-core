@@ -10,6 +10,7 @@ import {
 } from '@nestjs/common';
 import { AuthenticatedUser } from '../../auth/interfaces/authenticated-user.interface';
 import { AppOwnershipGuard } from '../guards/app-ownership.guard';
+import { PlatformFoundationGuard } from '../guards/platform-foundation.guard';
 import {
   DocAssistDto,
   DocCollectionsDto,
@@ -56,7 +57,7 @@ function parseShellQuery(
 }
 
 /** Document (FerretDB / Mongo-wire) console: browse + read-only-gated command. */
-@UseGuards(AppOwnershipGuard)
+@UseGuards(PlatformFoundationGuard, AppOwnershipGuard)
 @Controller('applications/:id/doc')
 export class DocumentConsoleController {
   constructor(

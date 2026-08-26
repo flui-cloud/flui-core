@@ -5,6 +5,7 @@ jest.mock('@kubernetes/client-node', () => ({}));
 import { NotFoundException } from '@nestjs/common';
 import { ShowcaseService } from './showcase.service';
 import { ApplicationEntity } from '../entities/application.entity';
+import { ApplicationStatus } from '../enums/application-status.enum';
 import { SHOWCASE_TAG } from '../../iam/constants/iam-showcase';
 
 /**
@@ -120,6 +121,57 @@ describe('ShowcaseService', () => {
 
     expect(store[0].tags).toEqual([SHOWCASE_TAG]);
     expect(store[0].description).toBe('Already said.');
+  });
+
+  /**
+   * The rule the whole showcase rests on, and the only one that can be enforced
+   * in code: nothing enters it that is not actually running. Everything else in
+   * §7 is an operational promise — real traffic, a real alarm, weeks of real
+   * history — and none of that can be checked from here. This can.
+   */
+  it('refuses to put something in the window that is not running', async () => {
+    const { service, store } = build([
+      app({ status: ApplicationStatus.FAILED, tags: [] }),
+    ]);
+
+    await expect(service.publish('a1')).rejects.toThrow(/not running/);
+    expect(store[0].tags).toEqual([]);
+    await expect(service.list()).resolves.toEqual([]);
+  });
+
+  // Every state on the way to working, and on the way out of it, is refused:
+  // a showcase that took `provisioning` could be filled with things that never
+  // came up.
+  it.each([
+    ApplicationStatus.PENDING,
+    ApplicationStatus.PROVISIONING,
+    ApplicationStatus.UPDATING,
+    ApplicationStatus.DEGRADED,
+    ApplicationStatus.STOPPED,
+  ])('refuses %s too', async (status) => {
+    const { service } = build([app({ status })]);
+    await expect(service.publish('a1')).rejects.toThrow(/not running/);
+  });
+
+  /**
+   * The gate is on the way in only. Something that fails *after* it was
+   * published stays, showing the status it really has — a real failure on a
+   * real instance is the truth, and hiding it would be the dishonest half of
+   * the same rule.
+   */
+  it('keeps what has already failed, and still lets its line be corrected', async () => {
+    const { service, store } = build([
+      app({
+        status: ApplicationStatus.FAILED,
+        tags: [SHOWCASE_TAG],
+        description: 'old line',
+      }),
+    ]);
+
+    await expect(service.publish('a1', 'new line')).resolves.toMatchObject({
+      status: 'failed',
+    });
+    expect(store[0].description).toBe('new line');
   });
 
   it('leaves the application running when it is withdrawn', async () => {

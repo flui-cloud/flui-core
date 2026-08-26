@@ -9,6 +9,7 @@ import {
 } from '@nestjs/common';
 import { AuthenticatedUser } from '../../auth/interfaces/authenticated-user.interface';
 import { AppOwnershipGuard } from '../guards/app-ownership.guard';
+import { PlatformFoundationGuard } from '../guards/platform-foundation.guard';
 import {
   ClusterInfo,
   CommandResult,
@@ -28,7 +29,7 @@ import { KafkaAssistDto, KafkaRunDto } from '../dto/kafka-console.dto';
  * info feed the visualization; `run` executes one command (writes gated by the
  * read-only flag); `assist` turns a prompt into a kafka-shell command.
  */
-@UseGuards(AppOwnershipGuard)
+@UseGuards(PlatformFoundationGuard, AppOwnershipGuard)
 @Controller('applications/:id/kafka')
 export class KafkaConsoleController {
   constructor(

@@ -9,6 +9,7 @@ import {
 } from '@nestjs/common';
 import { AuthenticatedUser } from '../../auth/interfaces/authenticated-user.interface';
 import { AppOwnershipGuard } from '../guards/app-ownership.guard';
+import { PlatformFoundationGuard } from '../guards/platform-foundation.guard';
 import {
   KvScanDto,
   KvReadKeyDto,
@@ -27,7 +28,7 @@ import {
 const DEFAULT_SCAN_COUNT = 100;
 
 /** Key-value (Redis/Valkey) console surface: keyspace browse + a read-only-gated command. */
-@UseGuards(AppOwnershipGuard)
+@UseGuards(PlatformFoundationGuard, AppOwnershipGuard)
 @Controller('applications/:id/kv')
 export class KvConsoleController {
   constructor(

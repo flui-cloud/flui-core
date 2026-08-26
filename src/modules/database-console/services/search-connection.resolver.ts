@@ -12,6 +12,7 @@ import {
   ResolvedSearchConnection,
   SearchResolveInput,
 } from '../interfaces/search-connection';
+import { assertNotPlatformFoundation } from '../constants/platform-foundations';
 
 /**
  * Resolves how to reach an installed search engine + the admin credentials,
@@ -33,6 +34,7 @@ export class SearchConnectionResolver {
     if (!app) {
       throw new NotFoundException(`Search application ${appId} not found`);
     }
+    assertNotPlatformFoundation(app);
     const engine = detectSearchEngine(app.imageRef);
     if (!engine) {
       throw new BadRequestException(

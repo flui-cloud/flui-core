@@ -10,6 +10,7 @@ jest.mock('@kubernetes/client-node', () => ({
   CoreV1Api: class {},
 }));
 
+import { NotFoundException } from '@nestjs/common';
 import { KubePortForwardService } from './kube-port-forward.service';
 import type { KubernetesService } from '../../infrastructure/shared/services/kubernetes.service';
 
@@ -142,7 +143,11 @@ describe('KubePortForwardService (pooling)', () => {
       }),
     } as unknown as KubernetesService;
     const s = new KubePortForwardService(noPodKube);
-    await expect(s.open(KC, NS, SEL, PORT)).rejects.toThrow(/No running pod/);
+    // An absence, and answered as one: this used to be a bare Error, i.e. a 500
+    // on a console whose only problem was that nothing was there to talk to.
+    await expect(s.open(KC, NS, SEL, PORT)).rejects.toBeInstanceOf(
+      NotFoundException,
+    );
     expect((s as any).pool.size).toBe(0);
     await s.onModuleDestroy();
   });

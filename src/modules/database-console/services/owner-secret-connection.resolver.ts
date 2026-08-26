@@ -19,6 +19,7 @@ import {
   declaredEngineOf,
   detectEngineFromImage,
 } from '../engine/engine-profile';
+import { assertNotPlatformFoundation } from '../constants/platform-foundations';
 
 function envValue(app: ApplicationEntity, name: string): string | undefined {
   return app.env?.find((e) => e.name === name)?.value;
@@ -56,6 +57,7 @@ export class OwnerSecretConnectionResolver implements DbConnectionResolver {
         `Database application ${dbInstallId} not found`,
       );
     }
+    assertNotPlatformFoundation(app);
 
     const engine =
       declaredEngineOf(app.labels) ??

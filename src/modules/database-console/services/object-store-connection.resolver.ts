@@ -15,6 +15,7 @@ import {
   ObjectStoreResolveInput,
   ResolvedObjectStoreConnection,
 } from '../interfaces/object-store-connection';
+import { assertNotPlatformFoundation } from '../constants/platform-foundations';
 
 /**
  * Resolves how to reach an installed object store + the S3 credentials to sign
@@ -40,6 +41,7 @@ export class ObjectStoreConnectionResolver {
         `Object store application ${appId} not found`,
       );
     }
+    assertNotPlatformFoundation(app);
     const engine = detectObjectStoreEngine(app.imageRef);
     if (!engine) {
       throw new BadRequestException(

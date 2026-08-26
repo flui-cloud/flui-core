@@ -1,8 +1,17 @@
-import { Injectable, Logger, OnModuleDestroy } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  NotFoundException,
+  OnModuleDestroy,
+} from '@nestjs/common';
 import * as net from 'node:net';
 import * as crypto from 'node:crypto';
 import * as k8s from '@kubernetes/client-node';
 import { KubernetesService } from '../../infrastructure/shared/services/kubernetes.service';
+import {
+  CONSOLE_TARGET_ABSENT,
+  platformFoundationAtTarget,
+} from '../constants/platform-foundations';
 
 export interface PortForwardTunnel {
   /** Loopback port a TCP client (e.g. a pg.Pool) connects to. */
@@ -69,6 +78,18 @@ export class KubePortForwardService implements OnModuleDestroy {
     podLabelSelector: string,
     targetPort: number,
   ): Promise<PortForwardTunnel> {
+    // Last of the three depths that close the platform's foundations, and the
+    // only one that reads no name at all: whatever row asked, and whatever it
+    // is called today, a console tunnel that would land on a foundation's port
+    // inside a platform namespace does not open. See PLATFORM_FOUNDATIONS.
+    const foundation = platformFoundationAtTarget(namespace, targetPort);
+    if (foundation) {
+      this.logger.warn(
+        `Refused a console tunnel to the ${foundation.key} foundation (${namespace}:${targetPort})`,
+      );
+      throw new NotFoundException(CONSOLE_TARGET_ABSENT);
+    }
+
     const key = this.keyFor(
       kubeconfig,
       namespace,
@@ -118,9 +139,10 @@ export class KubePortForwardService implements OnModuleDestroy {
       };
     }
 
-    throw new Error(
+    this.logger.warn(
       `port-forward: tunnel for "${podLabelSelector}" in "${namespace}" kept going stale; pod may be unavailable`,
     );
+    throw new NotFoundException(CONSOLE_TARGET_ABSENT);
   }
 
   async onModuleDestroy(): Promise<void> {
@@ -180,9 +202,16 @@ export class KubePortForwardService implements OnModuleDestroy {
     });
     const pod = (pods.items ?? []).find((p) => p.status?.phase === 'Running');
     if (!pod?.metadata?.name) {
-      throw new Error(
+      // An absence, not a fault. `redis` answered 500 here because discovery
+      // labels a bootstrap-created pod with nothing Flui coined: the selector
+      // `flui-app-id=<uuid>` cannot match a pod the bootstrap made, so there is
+      // simply no target — the same for an application scaled to zero. The
+      // sentence is the one a missing application gets, so a caller learns
+      // nothing about which of the two it hit.
+      this.logger.warn(
         `No running pod for selector "${selector}" in namespace "${entry.namespace}"`,
       );
+      throw new NotFoundException(CONSOLE_TARGET_ABSENT);
     }
     entry.podName = pod.metadata.name;
 

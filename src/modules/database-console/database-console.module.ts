@@ -72,6 +72,7 @@ import { KubePortForwardService } from './services/kube-port-forward.service';
 import { OpenbaoUnsealScheduler } from './schedulers/openbao-unseal.scheduler';
 import { OwnerSecretConnectionResolver } from './services/owner-secret-connection.resolver';
 import { AppOwnershipGuard } from './guards/app-ownership.guard';
+import { PlatformFoundationGuard } from './guards/platform-foundation.guard';
 import { DbBackupController } from './controllers/db-backup.controller';
 import { DbBackupService } from './services/db-backup.service';
 import { DbDiskController } from './controllers/db-disk.controller';
@@ -108,6 +109,7 @@ import { DbPitrController } from './controllers/db-pitr.controller';
   ],
   providers: [
     AppOwnershipGuard,
+    PlatformFoundationGuard,
     DbBackupService,
     DbDiskService,
     KubePortForwardService,

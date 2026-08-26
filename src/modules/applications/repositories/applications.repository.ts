@@ -1,11 +1,15 @@
-import { Injectable } from '@nestjs/common';
+import { ForbiddenException, Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository as TypeOrmRepository, IsNull } from 'typeorm';
 import { ApplicationEntity } from '../entities/application.entity';
+import { isPlatformOwned } from '../constants/app-provenance';
 import { ApplicationStatus } from '../enums/application-status.enum';
 import { ApplicationSourceType } from '../enums/application-source-type.enum';
 import { ApplicationCategory } from '../enums/application-category.enum';
 import { ApplicationKind } from '../enums/application-kind.enum';
+
+/** Stable code for the refusal below, so a client can recognise it. */
+export const PROJECTION_NOT_REMOVABLE_CODE = 'APP_IS_A_PLATFORM_PROJECTION';
 
 @Injectable()
 export class ApplicationsRepository {
@@ -80,6 +84,7 @@ export class ApplicationsRepository {
   }
 
   async softDelete(id: string): Promise<void> {
+    await this.assertNotAProjection(id);
     await this.repository.update(id, {
       deletedAt: new Date(),
       status: ApplicationStatus.DELETED,
@@ -87,7 +92,42 @@ export class ApplicationsRepository {
   }
 
   async delete(id: string): Promise<void> {
+    await this.assertNotAProjection(id);
     await this.repository.delete(id);
+  }
+
+  /**
+   * Flui does not own the lifecycle of what it discovered.
+   *
+   * A row whose provenance says `platform` is a *projection*: the bootstrap put
+   * the thing on the cluster, discovery mirrored it here so that logs, metrics,
+   * topology and "show the system apps" have something to read. Removing the
+   * projection removes the reading, not the thing — the workload keeps running
+   * and the next discovery pass writes the row back. So the verb is refused,
+   * and refused with the reason that is actually true, instead of with
+   * `systemProtected`, a flag Flui sets on itself and could just as well unset.
+   *
+   * It lives on the repository because that is the one door every removal in the
+   * product passes through, and because the fact it refuses is a fact about the
+   * row. Cluster teardown does not come through here — the applications rows go
+   * with their cluster by `ON DELETE CASCADE`, so nothing that legitimately
+   * destroys the underlying thing is blocked.
+   */
+  private async assertNotAProjection(id: string): Promise<void> {
+    const row = await this.repository.findOne({
+      where: { id },
+      select: { id: true, slug: true, ownerKind: true, ownerRef: true },
+    });
+    if (!row || !isPlatformOwned(row)) return;
+    const declaredBy = row.ownerRef ? ` (declared by ${row.ownerRef})` : '';
+    throw new ForbiddenException({
+      statusCode: 403,
+      code: PROJECTION_NOT_REMOVABLE_CODE,
+      message:
+        `'${row.slug}' was installed by the platform bootstrap${declaredBy}. ` +
+        'Flui mirrors it here so it can be read; it does not own its lifecycle. ' +
+        'Remove it where it was declared, not from this list.',
+    });
   }
 
   async findActiveByCluster(clusterId: string): Promise<ApplicationEntity[]> {

@@ -17,6 +17,7 @@ import {
   MessagingResolveInput,
   ResolvedMessagingConnection,
 } from '../interfaces/messaging-connection';
+import { assertNotPlatformFoundation } from '../constants/platform-foundations';
 
 /**
  * Resolves how to reach an installed messaging server's API. NATS' monitoring
@@ -40,6 +41,7 @@ export class MessagingConnectionResolver {
     if (!app) {
       throw new NotFoundException(`Messaging application ${appId} not found`);
     }
+    assertNotPlatformFoundation(app);
     const engine = detectMessagingEngine(app.imageRef);
     if (!engine) {
       throw new BadRequestException(
