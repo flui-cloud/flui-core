@@ -853,9 +853,21 @@ export default class EnvCreate extends Command {
       try {
         spinner = ora('Provisioning environment VNet/Subnet...').start();
         const vnetService = app.get(VnetProvisioningService);
+        // Announced before the call and retracted after if an existing VNet
+        // was reused. The reverse — announcing only what came back — would
+        // leave a network unaccounted for whenever the process dies mid-create,
+        // and claiming one we merely joined would point a cleanup tool at
+        // somebody else's private network.
+        const envVnetName = `flui-env-${randomBytes(3).toString('hex')}`;
+        emitEvent({
+          type: 'resource',
+          kind: 'network',
+          id: null,
+          name: envVnetName,
+        });
         envVnetInfo = await vnetService.ensureEnvVnet({
           provider: cloudProvider,
-          name: `flui-env-${randomBytes(3).toString('hex')}`,
+          name: envVnetName,
           ipRange: '10.10.0.0/16',
           subnetIpRange: '10.10.1.0/24',
           networkZone:
@@ -867,6 +879,16 @@ export default class EnvCreate extends Command {
               ? validatedRegion
               : undefined,
         });
+        emitEvent(
+          envVnetInfo.created
+            ? {
+                type: 'resource',
+                kind: 'network',
+                id: envVnetInfo.vnetProviderResourceId,
+                name: envVnetInfo.vnetName,
+              }
+            : { type: 'released', name: envVnetName },
+        );
         spinner.succeed(
           `VNet ready: ${envVnetInfo.vnetProviderResourceId} (subnet ${envVnetInfo.subnetIpRange})`,
         );

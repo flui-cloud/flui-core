@@ -15,6 +15,13 @@ import { ApplicationOwnerForeignKey1785600000000 } from './1785600000000-Applica
 import { InferenceConnectionOwner1785700000000 } from './1785700000000-InferenceConnectionOwner';
 import { AgentActorAudit1785800000000 } from './1785800000000-AgentActorAudit';
 import { ActionCycle1785900000000 } from './1785900000000-ActionCycle';
+import { OperatingContext1786000000000 } from './1786000000000-OperatingContext';
+import { AgentSkillVersion1786100000000 } from './1786100000000-AgentSkillVersion';
+import { McpToolCallRaisedProposal1786200000000 } from './1786200000000-McpToolCallRaisedProposal';
+import { GitHubInstallationUnattributed1786300000000 } from './1786300000000-GitHubInstallationUnattributed';
+import { OperatingContextArchivedBy1786400000000 } from './1786400000000-OperatingContextArchivedBy';
+import { McpToolCallSurface1786500000000 } from './1786500000000-McpToolCallSurface';
+import { ApplicationOwnerKind1786600000000 } from './1786600000000-ApplicationOwnerKind';
 
 // Explicit array, not a dist glob: nest build webpack-bundles to one file,
 // so a `dist/migrations/*.js` glob resolves to nothing at runtime.
@@ -37,4 +44,11 @@ export const migrations = [
   InferenceConnectionOwner1785700000000,
   AgentActorAudit1785800000000,
   ActionCycle1785900000000,
+  OperatingContext1786000000000,
+  AgentSkillVersion1786100000000,
+  McpToolCallRaisedProposal1786200000000,
+  GitHubInstallationUnattributed1786300000000,
+  OperatingContextArchivedBy1786400000000,
+  McpToolCallSurface1786500000000,
+  ApplicationOwnerKind1786600000000,
 ];

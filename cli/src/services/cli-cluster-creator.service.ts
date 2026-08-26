@@ -313,6 +313,18 @@ export class CliClusterCreatorService {
         id: null,
         name: masterServerName,
       });
+      // The shared-storage Volume is created inside the same call and survives
+      // the server on every provider, so a caller that only heard about the
+      // server would be left with a paid disk that nothing names.
+      const sharedVolumeName = `${cluster.name}-flui-shared`;
+      if (sharedStorageEnabled) {
+        emitEvent({
+          type: 'resource',
+          kind: 'volume',
+          id: null,
+          name: sharedVolumeName,
+        });
+      }
       const masterServer = await provider.createServer({
         name: masterServerName,
         image: cluster.image,
@@ -326,7 +338,7 @@ export class CliClusterCreatorService {
         attachedVolumes: sharedStorageEnabled
           ? [
               {
-                name: `${cluster.name}-flui-shared`,
+                name: sharedVolumeName,
                 sizeGb: sharedStorageVolumeSizeGb,
                 labels: masterLabels,
               },
@@ -340,6 +352,12 @@ export class CliClusterCreatorService {
           masterServer.attachedVolumes[0].volumeId;
         cluster.sharedStorageVolumeSizeGb =
           masterServer.attachedVolumes[0].sizeGb ?? sharedStorageVolumeSizeGb;
+        emitEvent({
+          type: 'resource',
+          kind: 'volume',
+          id: String(masterServer.attachedVolumes[0].volumeId),
+          name: sharedVolumeName,
+        });
       }
 
       masterNode.providerResourceId = masterServer.serverId;

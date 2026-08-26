@@ -28,6 +28,7 @@ import * as crypto from 'node:crypto';
 import { CAManagerService } from 'src/modules/access/services/ca-manager.service';
 import { InfrastructureOperationsGateway } from '../../operations/gateway/infrastructure-operations.gateway';
 import { CacheService } from 'src/modules/common/cache/cache.service';
+import { ServerRef } from '../utils/provider-server-ref';
 
 export interface CreateServerJobData {
   operationId: string;
@@ -658,9 +659,24 @@ export class ServersService {
   }
 
   /**
-   * Re-resolve the Volumes a previous attempt already created for this server,
-   * matched by requested name. Best-effort: a provider with no Volume API
-   * reports none, exactly as it would have on the create path.
+   * Re-resolve the Volumes a previous attempt already created for this server.
+   *
+   * Two spellings of the same server meet here — the id Flui carries
+   * (`instance:<zone>:<uuid>` on Scaleway) and the one the block API reports a
+   * volume as attached to (the bare uuid) — so the question is asked through
+   * {@link ServerRef}, which normalises both and never hands the strings back.
+   *
+   * What is *not* resolved is split in two, because the two are not equally
+   * harmless:
+   *
+   * - A requested Volume that does not exist at all is a previous attempt that
+   *   died before creating it. Nothing is leaking; the server comes up without
+   *   the storage it asked for and that is logged.
+   * - A Flui-managed Volume that carries the requested name but does not hang
+   *   off this server is a disk that already exists and is already being paid
+   *   for. Claiming it would be a guess, and recording nothing would leave it
+   *   outside this cluster's billing and outside its destroy — an orphan. So
+   *   the attempt is refused and the Volume is named.
    */
   private async resolveExistingAttachedVolumes(
     providerService: {
@@ -679,26 +695,24 @@ export class ServersService {
     if (!requested?.length || !providerService.listFluiManagedVolumes) {
       return undefined;
     }
-    try {
-      const volumes = await providerService.listFluiManagedVolumes();
-      const resolved = requested
-        .map((req) =>
-          volumes.find(
-            (v) =>
-              v.name === req.name &&
-              String(v.attachedServerId) === String(serverId),
-          ),
-        )
-        .filter((v): v is NonNullable<typeof v> => !!v)
-        .map((v) => ({ volumeId: v.volumeId, sizeGb: v.sizeGb }));
 
-      if (resolved.length < requested.length) {
-        this.logger.warn(
-          `Server ${serverId} already existed but only ${resolved.length}/${requested.length} of its Volumes could be matched — ` +
-            `an unmatched Volume won't be billed or cleaned up with the cluster`,
-        );
-      }
-      return resolved.length ? resolved : undefined;
+    const server = ServerRef.parse(serverId);
+    if (!server) {
+      throw new Error(
+        `Cannot re-resolve Volumes for the existing server: its provider id ` +
+          `is unreadable, so no Volume can be attributed to it without ` +
+          `guessing. Refusing rather than leaving a paid disk unaccounted for.`,
+      );
+    }
+
+    let volumes: Array<{
+      volumeId: string;
+      name: string;
+      sizeGb: number;
+      attachedServerId?: string | null;
+    }>;
+    try {
+      volumes = await providerService.listFluiManagedVolumes();
     } catch (error) {
       this.logger.warn(
         `Could not resolve existing Volumes for server ${serverId}: ${
@@ -707,6 +721,43 @@ export class ServersService {
       );
       return undefined;
     }
+
+    const resolved: Array<{ volumeId: string; sizeGb: number }> = [];
+    const strayNames: string[] = [];
+    const missingNames: string[] = [];
+
+    for (const req of requested) {
+      const named = volumes.filter((v) => v.name === req.name);
+      const mine = named.find((v) => server.ownsAttachment(v.attachedServerId));
+      if (mine) {
+        resolved.push({ volumeId: mine.volumeId, sizeGb: mine.sizeGb });
+      } else if (named.length) {
+        strayNames.push(req.name);
+      } else {
+        missingNames.push(req.name);
+      }
+    }
+
+    if (strayNames.length) {
+      throw new Error(
+        `Server ${serverId} already existed, but ${strayNames.length} ` +
+          `Flui-managed Volume(s) named ${strayNames.join(', ')} exist and are ` +
+          `not attached to it. They are already being paid for; attributing ` +
+          `them to this server would be a guess and ignoring them would leave ` +
+          `them outside this cluster's billing and destroy. Detach or delete ` +
+          `the stale Volume(s), then retry.`,
+      );
+    }
+
+    if (missingNames.length) {
+      this.logger.warn(
+        `Server ${serverId} already existed but ${missingNames.length}/${requested.length} ` +
+          `of its Volumes do not exist (${missingNames.join(', ')}) — a previous ` +
+          `attempt died before creating them; the server comes up without them`,
+      );
+    }
+
+    return resolved.length ? resolved : undefined;
   }
 
   private async waitForServerReady(

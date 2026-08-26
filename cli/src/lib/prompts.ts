@@ -428,6 +428,14 @@ export interface PromptInputOptions {
   default?: string;
   /** Returns an error message string when invalid, or null when valid. */
   validate?: (value: string) => string | null;
+  /**
+   * Accept an empty answer and hand back `''`.
+   *
+   * For a question that is genuinely optional — a probe parameter the catalogue
+   * published as not required, say. Without it the loop insists, which turns
+   * "you may leave this out" into a prompt with no way forward.
+   */
+  allowEmpty?: boolean;
 }
 
 /**
@@ -470,6 +478,7 @@ export async function promptInput(opts: PromptInputOptions): Promise<string> {
         raw === '' && opts.default !== undefined ? opts.default : raw;
 
       if (value === '') {
+        if (opts.allowEmpty) return '';
         console.log(chalk.red('  A value is required.'));
         continue;
       }

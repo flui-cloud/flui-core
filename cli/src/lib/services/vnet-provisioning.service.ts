@@ -29,6 +29,12 @@ export interface EnvVnetInfo {
   subnetIpRange: string;
   subnetType: SubnetType;
   networkZone: string;
+  /**
+   * False when an existing VNet was reused. A caller that reports resources to
+   * whoever will have to clean them up must not claim to have created one it
+   * only joined.
+   */
+  created: boolean;
 }
 
 const HETZNER_DEFAULT_NETWORK_ZONE_BY_REGION: Record<string, string> = {
@@ -60,7 +66,7 @@ export class VnetProvisioningService {
       this.logger.log(
         `Reusing existing VNet ${existing.providerResourceId} (subnet ${subnet.providerSubnetId})`,
       );
-      return this.toInfo(existing, subnet);
+      return this.toInfo(existing, subnet, false);
     }
 
     const ipRange = spec.ipRange || '10.10.0.0/16';
@@ -121,6 +127,7 @@ export class VnetProvisioningService {
     return this.toInfo(
       { ...vnetRecord, subnets: [subnetRecord] },
       subnetRecord,
+      true,
     );
   }
 
@@ -172,6 +179,7 @@ export class VnetProvisioningService {
     return this.toInfo(
       { ...vnetRecord, subnets: [subnetRecord] },
       subnetRecord,
+      true,
     );
   }
 
@@ -204,6 +212,7 @@ export class VnetProvisioningService {
       subnets?: VNetSubnetEntity[];
     },
     subnet: VNetSubnetEntity,
+    created: boolean,
   ): EnvVnetInfo {
     return {
       vnetId: vnet.id,
@@ -215,6 +224,7 @@ export class VnetProvisioningService {
       subnetIpRange: subnet.ipRange,
       subnetType: subnet.type,
       networkZone: subnet.networkZone,
+      created,
     };
   }
 }

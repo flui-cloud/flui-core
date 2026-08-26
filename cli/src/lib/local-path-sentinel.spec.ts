@@ -236,6 +236,9 @@ const LOCAL_PATH: Record<string, LocalPathEntry> = {
   'commands/env/orphan-volumes.ts': {
     why: 'Recovers volumes left by past destroys, and computes "orphan" against this machine’s store. Deliberately not converted: it is the tool for after a cluster died, and it must not need that cluster’s API to run.',
   },
+  'commands/env/scrub.ts': {
+    why: 'Cleans up an app.flui.cloud run that never finished, so the control plane it would have called was never installed. Same shape as orphan-volumes and for the same reason — a tool for after the cluster, which must not need that cluster to work.',
+  },
   'commands/env/update-firewall.ts': {
     why: 'Drives the cloud firewall directly so it works when the current IP is locked out. Deliberately not converted: converting the lockout remedy to the door that is locked is a net loss.',
   },
@@ -310,7 +313,7 @@ describe('the local path is a list somebody wrote down', () => {
     .sort();
 
   /**
-   * Thirty-six, counted rather than remembered. A new command that wants the
+   * Thirty-seven, counted rather than remembered. A new command that wants the
    * local path fails here first, and the way to make it pass is to say why —
    * which is the whole mechanism. Removing one is equally loud, so the list
    * cannot rot in the other direction either.
@@ -337,12 +340,12 @@ describe('the local path is a list somebody wrote down', () => {
    * asking the closed door for that service is the net loss. Two more have no
    * route at all.
    */
-  it('has ten of the thirty-six deciding over HTTP', () => {
+  it('has ten of the thirty-seven deciding over HTTP', () => {
     const viaApi = Object.entries(LOCAL_PATH)
       .filter(([, entry]) => entry.viaApi)
       .map(([file]) => file);
     expect({ total: measured.length, viaApi: viaApi.length }).toEqual({
-      total: 36,
+      total: 37,
       viaApi: 10,
     });
   });
@@ -357,8 +360,8 @@ describe('the local path is a list somebody wrote down', () => {
  * front of it at all: `ClusterNodeScalingService.scaleNode` spends the operator's
  * money whether or not anybody may call the route that wraps it.
  *
- * Twelve pairs across eleven files, down from nineteen across fifteen: the four
- * commands converted in step 3 stopped constructing cluster services for
+ * Fourteen pairs across twelve files, down from nineteen across fifteen: the
+ * four commands converted in step 3 stopped constructing cluster services for
  * themselves. Every survivor is a lifecycle, recovery or workstation command
  * from the list above — which is the shape the decision predicted, now checkable.
  */
@@ -376,6 +379,10 @@ describe('what the local path still resolves out of its own container', () => {
       'Performs it, powering that host off mid-operation.',
     'commands/env/orphan-volumes.ts  ::  ProviderFactory':
       'Scans providers for volumes after the cluster that owned them is gone.',
+    'commands/env/scrub.ts  ::  ProviderFactory':
+      'Lists and deletes what an abandoned managed run left on the customer’s account. No cluster ever finished installing, so there is no API to ask.',
+    'commands/env/scrub.ts  ::  FirewallProviderFactory':
+      'The firewall is created before the cluster exists and is the one resource an abandoned run always leaves behind.',
     'commands/env/update-firewall.ts  ::  FirewallProviderFactory':
       'Rewrites the SSH allowlist from outside, which is the point when the allowlist is what locked you out.',
     'commands/server-types/list.ts  ::  ProviderFactory':
