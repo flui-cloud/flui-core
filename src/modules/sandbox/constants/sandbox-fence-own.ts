@@ -291,4 +291,40 @@ export const SANDBOX_ALLOW_OWN: SandboxAllowRule[] = [
     pattern: '/agent/concessions/:id',
     why: 'Take a standing permission back, and ask what it started to stop.',
   },
+  {
+    // The third question the panel asks, and the half of the consent that was
+    // missing. A guest could answer an agent and could take a permission back,
+    // and could not see what either produced — so a revoke was a change of mind
+    // rather than a decision. The register is what makes it the second one.
+    //
+    // It opens nobody else's queue for the same reason the six rules above do
+    // not: the handler resolves how far the caller reaches before it builds a
+    // filter, and a caller without `iam:read-access` — which a guest holds no
+    // section to acquire — is pinned to its own rows. Naming somebody else's
+    // `userId` answers an empty page, never a refusal.
+    //
+    // `full`, not `read-only`. The level is printed as a standing caption on a
+    // section, and "you can look here but not change it" would name a limit
+    // that does not exist: the register has no write route for anybody. It is
+    // written by the act, never by a caller, so a guest is not one step behind
+    // a paying instance here — it is in exactly the same place.
+    verbs: ['GET'],
+    pattern: '/agent/activity',
+    why: 'See what the agent you connected has actually done.',
+  },
+  {
+    // Named on its own even though the `:id` rule below would match it. Nest
+    // declares it first for the same reason — the other way round the path is
+    // parsed as an id — and a rule somebody can find by reading this list is
+    // worth more than one inferred from a wildcard. Both are `full`, so which
+    // one `sandboxLevelOf` picks carries no meaning.
+    verbs: ['GET'],
+    pattern: '/agent/activity/identities',
+    why: 'See which of your credentials has acted, and when each last did.',
+  },
+  {
+    verbs: ['GET'],
+    pattern: '/agent/activity/:id',
+    why: 'Read one call your agent made, and the operation it started.',
+  },
 ];

@@ -18,7 +18,6 @@ import { Throttle, ThrottlerGuard } from '@nestjs/throttler';
 import { ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { Request, Response } from 'express';
 import { Public } from '../auth/decorators/public.decorator';
-import { stripTrailingSlashes } from '../../common/utils/url.util';
 import { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import { ApiKeyService } from '../auth/services/api-key.service';
 import { ApiKeyStrategy } from '../auth/strategies/api-key.strategy';
@@ -33,6 +32,7 @@ import {
   SandboxSessionDto,
 } from './dto/sandbox-session.dto';
 import { SandboxResumeMailService } from './services/sandbox-resume-mail.service';
+import { SandboxEntryService } from './services/sandbox-entry.service';
 import { SandboxTenantEntity } from './entities/sandbox-tenant.entity';
 
 @ApiTags('Sandbox')
@@ -43,6 +43,7 @@ export class SandboxClaimController {
     private readonly apiKeys: ApiKeyService,
     private readonly apiKeyStrategy: ApiKeyStrategy,
     private readonly resumeMail: SandboxResumeMailService,
+    private readonly entry: SandboxEntryService,
     @Inject(SANDBOX_CONFIG) private readonly config: SandboxConfig,
   ) {}
 
@@ -198,7 +199,7 @@ export class SandboxClaimController {
 
     const outcome = await this.resumeMail.sendResumeLink({
       to: email,
-      resumeLink: resumeLink(this.config.baseDomain, plaintext),
+      resumeLink: this.entry.resumeLink(plaintext),
       hoursLeft: (expiresAt.getTime() - Date.now()) / 3_600_000,
     });
 
@@ -227,16 +228,17 @@ export class SandboxClaimController {
     @Query('token') token: string,
     @Res() res: Response,
   ): Promise<void> {
-    const target = loginUrl(this.config.baseDomain);
     const tenant = token ? await this.tenancyForToken(token) : null;
     if (!tenant?.expiresAt) {
-      // Nothing to say about why: a link that no longer works and a link that
-      // was never real must look the same from outside.
-      res.redirect(`${target}/login?sandbox=expired`);
+      // Back to the door, not to `/login`: a guest has no password, so a sign-in
+      // screen is a dead end for the one person who can reach it. What it says
+      // is that the sandbox is gone, which is true whether the link expired or
+      // was never real — the two must look the same from outside.
+      res.redirect(`${this.entry.entryUrl}?expired=1`);
       return;
     }
     setFluiSessionCookie(res, token, tenant.expiresAt);
-    res.redirect(target);
+    res.redirect(this.entry.origin);
   }
 
   private toSession(tenant: SandboxTenantEntity): SandboxSessionDto {
@@ -248,7 +250,7 @@ export class SandboxClaimController {
         Math.floor((expiresAt.getTime() - Date.now()) / 1000),
       ),
       ttlHours: this.config.ttlHours,
-      loginUrl: loginUrl(this.config.baseDomain),
+      loginUrl: this.entry.origin,
     };
   }
 }
@@ -262,29 +264,4 @@ function clientIp(req: Request): string {
   const forwarded = req.headers['x-forwarded-for'];
   const first = Array.isArray(forwarded) ? forwarded[0] : forwarded;
   return (first?.split(',')[0] ?? req.ip ?? 'unknown').trim();
-}
-
-/**
- * Where a guest is sent once the tenancy is theirs.
- *
- * `SANDBOX_BASE_DOMAIN` is normally a bare hostname and the scheme is implied,
- * but a local validation runs the dashboard on `localhost:4200` over plain
- * HTTP — and prepending `https://` there hands the visitor a link that cannot
- * connect. So a value that already carries a scheme is taken as given.
- */
-export function loginUrl(baseDomain: string): string {
-  return /^https?:\/\//.test(baseDomain) ? baseDomain : `https://${baseDomain}`;
-}
-
-/**
- * The link a guest mails themselves.
- *
- * It points at the API rather than at the dashboard: the token has to be turned
- * into an httpOnly cookie, which only the server can set, and the redirect that
- * follows leaves it out of the address bar.
- */
-export function resumeLink(baseDomain: string, token: string): string {
-  const api = stripTrailingSlashes(process.env.API_BASE_URL || '');
-  const base = api || loginUrl(baseDomain);
-  return `${base}/api/v1/sandbox/resume?token=${encodeURIComponent(token)}`;
 }

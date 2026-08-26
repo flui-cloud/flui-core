@@ -11,6 +11,7 @@ import { SandboxClaimController } from './sandbox-claim.controller';
 import { SandboxFenceGuard } from './guards/sandbox-fence.guard';
 import { SandboxProjectionInterceptor } from './interceptors/sandbox-projection.interceptor';
 import { SandboxCapacityService } from './services/sandbox-capacity.service';
+import { SandboxEntryService } from './services/sandbox-entry.service';
 import { SandboxHistoryService } from './services/sandbox-history.service';
 import { SandboxQuotaService } from './services/sandbox-quota.service';
 import { SandboxResumeMailService } from './services/sandbox-resume-mail.service';
@@ -66,6 +67,7 @@ import { MailModule } from '../mail/mail.module';
     // service that lives alongside it.
     { provide: APP_INTERCEPTOR, useClass: SandboxProjectionInterceptor },
     SandboxCapacityService,
+    SandboxEntryService,
     SandboxHistoryService,
     SandboxQuotaService,
     SandboxResumeMailService,
@@ -75,6 +77,11 @@ import { MailModule } from '../mail/mail.module';
     SandboxTenantService,
     SandboxSchedulerService,
   ],
-  exports: [SandboxFenceGuard, SandboxQuotaService, SandboxReserveService],
+  exports: [
+    SandboxFenceGuard,
+    SandboxQuotaService,
+    SandboxReserveService,
+    SandboxEntryService,
+  ],
 })
 export class SandboxModule {}

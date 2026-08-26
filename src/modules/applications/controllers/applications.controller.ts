@@ -41,6 +41,9 @@ import {
   GenerateWorkflowResultDto,
 } from '../services/application-workflow.service';
 import { WorkflowRunStatus } from '../../repositories/services/github-workflow.service';
+import { WorkflowConsent } from '../../repositories/services/workflow-consent';
+import { BuildExpectation } from '../../app-builds/services/build-expectation';
+import { SANDBOX_GUEST_REQUEST } from '../../sandbox/guards/sandbox-fence.guard';
 import { AppRevisionsRepository } from '../repositories/app-revisions.repository';
 import { AppEventType, AppEventActorType } from '../enums/app-event-type.enum';
 import { CreateApplicationDto } from '../dto/create-application.dto';
@@ -429,6 +432,11 @@ export class ApplicationsController {
 
   @Delete('applications/:id')
   @AppAction(IAM_PERMISSION.APP_DELETE)
+  @ActionCycle({
+    action: 'DELETE /applications/:id',
+    bind: ['id'],
+    sentence: 'delete application {id} for good, and the data it holds',
+  })
   @HttpCode(HttpStatus.ACCEPTED)
   @ApiOperation({
     summary: 'Delete an application',
@@ -491,7 +499,11 @@ export class ApplicationsController {
     await this.applicationAccess.assertCanCreate(user, {
       clusterId: dto.clusterId,
     });
-    return this.applicationSourceDeployService.deployFromYaml(user.userId, dto);
+    return this.applicationSourceDeployService.deployFromYaml(
+      user.userId,
+      dto,
+      user.email,
+    );
   }
 
   // ── Deploy Operations ─────────────────────────────────
@@ -553,6 +565,32 @@ export class ApplicationsController {
     );
   }
 
+  @Post('applications/:id/workflow-preview')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'What the V3 workflow commit would write, before writing it',
+    description:
+      'Renders the workflow body in full, names every path the commit touches, ' +
+      'and says whether it would push to the branch or open a pull request. ' +
+      'Writes nothing. The body carries no credentials: the webhook token is a ' +
+      'repository secret, named in `webhookSecretName`.',
+  })
+  @ApiParam({ name: 'id', description: 'Application ID' })
+  @ApiResponse({ status: 200, description: 'The consent record' })
+  async previewWorkflowV3(
+    @Req() req: Request,
+    @Param('id') id: string,
+    @Body() dto: GenerateWorkflowV3Dto,
+  ): Promise<WorkflowConsent> {
+    const { userId } = req.user as AuthenticatedUser;
+    return this.applicationWorkflowService.previewWorkflowV3(
+      id,
+      userId,
+      dto,
+      isSandboxGuest(req),
+    );
+  }
+
   @Post('applications/:id/generate-workflow-v3')
   @ApiOperation({
     summary: 'Generate and commit universal V3 workflow (Dockerfile-first)',
@@ -573,7 +611,27 @@ export class ApplicationsController {
       id,
       userId,
       dto,
+      isSandboxGuest(req),
     );
+  }
+
+  @Get('applications/:id/build-expectation')
+  @ApiOperation({
+    summary: 'How long a build here has taken, measured',
+    description:
+      'Median and slowest of the finished builds we can attribute to the ' +
+      'caller — this application first, their other applications as a fallback. ' +
+      'Returns no figures at all when there is nothing measured, rather than a ' +
+      'constant dressed up as one.',
+  })
+  @ApiParam({ name: 'id', description: 'Application ID' })
+  @ApiResponse({ status: 200, description: 'The measurement, or its absence' })
+  async getBuildExpectation(
+    @Req() req: Request,
+    @Param('id') id: string,
+  ): Promise<BuildExpectation> {
+    const { userId } = req.user as AuthenticatedUser;
+    return this.applicationWorkflowService.getBuildExpectation(id, userId);
   }
 
   @Get('applications/:id/workflow-status')
@@ -765,4 +823,14 @@ export class ApplicationsController {
   async reconcile(@Param('id') id: string) {
     return this.reconciliationService.reconcileOne(id);
   }
+}
+
+/**
+ * Whether the caller is a sandbox guest, read off the marker the global fence
+ * guard already set. Resolving the access a second time here would ask the same
+ * question of the database twice on every deploy.
+ */
+function isSandboxGuest(req: Request): boolean {
+  const marked = req as Request & { [SANDBOX_GUEST_REQUEST]?: unknown };
+  return marked[SANDBOX_GUEST_REQUEST] !== undefined;
 }

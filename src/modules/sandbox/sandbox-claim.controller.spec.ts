@@ -10,11 +10,9 @@ jest.mock('@octokit/auth-app', () => ({ createAppAuth: jest.fn() }));
 jest.mock('libsodium-wrappers', () => ({ ready: Promise.resolve() }));
 
 import { Request, Response } from 'express';
-import {
-  SandboxClaimController,
-  loginUrl,
-  resumeLink,
-} from './sandbox-claim.controller';
+import { SandboxClaimController } from './sandbox-claim.controller';
+import { loginUrl, resumeLink } from './sandbox-entry';
+import { SandboxEntryService } from './services/sandbox-entry.service';
 import { SandboxReserveService } from './services/sandbox-reserve.service';
 import { ApiKeyService } from '../auth/services/api-key.service';
 import { ApiKeyStrategy } from '../auth/strategies/api-key.strategy';
@@ -101,6 +99,7 @@ describe('claiming with a session already in hand', () => {
         apiKeys,
         strategy,
         resumeMail,
+        new SandboxEntryService(config),
         config,
       ),
       resumeMail,
@@ -200,5 +199,75 @@ describe('the resume link', () => {
     expect(resumeLink('http://localhost:4200', 'a b&c=d')).toContain(
       'token=a%20b%26c%3Dd',
     );
+  });
+});
+
+/**
+ * A saved link that no longer works.
+ *
+ * Where it lands matters more than what it says. It used to land on `/login` —
+ * a screen asking for a password from the one kind of visitor who has never had
+ * one, and the only way out of the sandbox was a dead end.
+ */
+describe('following a resume link that is gone', () => {
+  const config = {
+    enabled: true,
+    acceptingClaims: true,
+    ttlHours: 24,
+    baseDomain: 'http://localhost:4200',
+  } as SandboxConfig;
+
+  const build = (validate: jest.Mock, findActiveForUser: jest.Mock) =>
+    new SandboxClaimController(
+      { findActiveForUser } as unknown as SandboxReserveService,
+      {} as unknown as ApiKeyService,
+      { validate } as unknown as ApiKeyStrategy,
+      {} as unknown as SandboxResumeMailService,
+      new SandboxEntryService(config),
+      config,
+    );
+
+  it('sends the visitor back to the door, not to a sign-in screen', async () => {
+    const redirect = jest.fn();
+    const controller = build(
+      jest.fn().mockRejectedValue(new Error('revoked')),
+      jest.fn(),
+    );
+
+    await controller.resume('flui_dead', { redirect } as unknown as Response);
+
+    expect(redirect).toHaveBeenCalledWith(
+      'http://localhost:4200/try?expired=1',
+    );
+  });
+
+  it('says the same thing for a link that was never real', async () => {
+    const redirect = jest.fn();
+    const controller = build(jest.fn(), jest.fn());
+
+    await controller.resume('', { redirect } as unknown as Response);
+
+    expect(redirect).toHaveBeenCalledWith(
+      'http://localhost:4200/try?expired=1',
+    );
+  });
+
+  it('opens the tenancy itself when the link still works', async () => {
+    const redirect = jest.fn();
+    const cookie = jest.fn();
+    const controller = build(
+      jest.fn().mockResolvedValue({ userId: 'guest-1' }),
+      jest.fn().mockResolvedValue({
+        expiresAt: new Date(Date.now() + 3_600_000),
+      } as SandboxTenantEntity),
+    );
+
+    await controller.resume('flui_live', {
+      redirect,
+      cookie,
+    } as unknown as Response);
+
+    expect(cookie).toHaveBeenCalled();
+    expect(redirect).toHaveBeenCalledWith('http://localhost:4200');
   });
 });

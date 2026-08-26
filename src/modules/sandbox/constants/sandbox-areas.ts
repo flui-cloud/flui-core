@@ -12,6 +12,7 @@
  * says. `key` is the stable handle the interface matches on; the wording above
  * it may change freely.
  */
+import { SHOWCASE_BANNER } from '../../applications/constants/showcase-banner';
 import { SandboxLevel } from './sandbox-fence-core';
 
 export interface SandboxArea {
@@ -29,10 +30,46 @@ export const SANDBOX_AREAS: SandboxArea[] = [
     why: 'Yours to deploy, scale, read and delete, exactly as on your own instance.',
   },
   {
+    // Not a section of its own, and deliberately: these applications appear in
+    // the workload list beside the guest's own, each one carrying
+    // `showcase: true` and `readOnly: true`, because that is where a person
+    // looks for a running application. The label is what keeps the two apart —
+    // and the reason it has to be there is the same reason the seed declares
+    // itself: something the visitor did not create, shown unlabelled, reads as
+    // the leftovers of another guest.
+    //
+    // The sentence is the showcase's own, imported rather than restated, so the
+    // showcase and the list of limits cannot end up promising different things.
+    key: 'showcase',
+    area: 'The applications Flui runs here',
+    level: 'read-only',
+    why: SHOWCASE_BANNER,
+  },
+  {
     key: 'catalog',
     area: 'The app catalogue',
     level: 'full',
     why: 'Install anything from it into your own space.',
+  },
+  {
+    // Named even though nothing under `/repositories` is open, because the
+    // list is also the answer to "what is disabled here": a limit nobody
+    // states reads as a missing feature, and a visitor who is offered "deploy
+    // your own application" and finds no way to reach a repository concludes
+    // Flui cannot build from source.
+    //
+    // Not because building is dangerous — it never happens on this instance,
+    // it happens on GitHub's runners. Because of what connecting costs on a
+    // borrowed instance: where the installation runs as a GitHub App every
+    // token is resolved by GitHub account and never by tenancy, so a guest
+    // allowed to connect would be handed the instance's own installation
+    // rather than its own. And what Flui writes back — a workflow carrying a
+    // webhook token in clear text — is a trade to make on an instance you
+    // keep.
+    key: 'repositories',
+    area: 'Building from your own git repository',
+    level: 'closed',
+    why: 'Connecting a repository would put a token on your GitHub account into an instance you are borrowing for a day, and write a workflow file back into your repository. Deploy from the catalogue, or from an image you have already built — both are fully yours here.',
   },
   {
     key: 'cluster',
@@ -137,6 +174,16 @@ export const SANDBOX_AREAS: SandboxArea[] = [
     area: 'The assistant',
     level: 'read-only',
     why: 'You can see what it is and what it knows. Asking it something costs inference the instance pays for, so that stays off here.',
+  },
+  {
+    // Read by a person on the screen and by their agent through the MCP tool,
+    // which is why the wording says "and your agent" out loud: the same notes
+    // travel to both, and a visitor who did not know that would be surprised
+    // by an agent quoting the house rules back at them.
+    key: 'operating-context',
+    area: 'How this installation is run',
+    level: 'read-only',
+    why: 'The notes the operators wrote about how things are done here — the platform’s and this cluster’s. You and your agent can read them; writing one belongs to whoever runs the instance.',
   },
   {
     key: 'credentials',
