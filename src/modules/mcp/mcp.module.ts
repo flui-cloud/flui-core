@@ -23,6 +23,12 @@ import { McpScopeResolver } from './services/mcp-scope.resolver';
 import { McpApiClient } from './services/mcp-api.client';
 import { McpAuditRepository } from './repositories/mcp-audit.repository';
 import { McpToolCallLogEntity } from './entities/mcp-tool-call-log.entity';
+import { AgentActivityController } from './audit/agent-activity.controller';
+import { AgentActivityService } from './audit/agent-activity.service';
+import { AgentCallRegister } from './audit/agent-call-register';
+import { ApiKeyEntity } from '../auth/entities/api-key.entity';
+import { InfrastructureOperationEntity } from '../infrastructure/servers/entities/infrastructure-operations.entity';
+import { AgentConcessionEntity } from '../action-cycle/entities/agent-concession.entity';
 
 /**
  * Segregated MCP surface: a thin, scope-gated adapter over existing Nest
@@ -35,7 +41,17 @@ import { McpToolCallLogEntity } from './entities/mcp-tool-call-log.entity';
     IamModule,
     MailModule,
     ConfigModule,
-    TypeOrmModule.forFeature([McpToolCallLogEntity]),
+    // The register read back needs two rows it does not own: the key's name,
+    // which is not a foreign key because the log outlives the credential, and
+    // the operation a call started, which is where the resource is recorded.
+    // Repositories rather than the owning modules' services, so no import cycle
+    // is created for two lookups.
+    TypeOrmModule.forFeature([
+      McpToolCallLogEntity,
+      ApiKeyEntity,
+      InfrastructureOperationEntity,
+      AgentConcessionEntity,
+    ]),
     CatalogModule,
     ApplicationsModule,
     ObservabilityModule,
@@ -50,13 +66,24 @@ import { McpToolCallLogEntity } from './entities/mcp-tool-call-log.entity';
     AppMigrationModule,
     FullMigrationModule,
   ],
-  controllers: [McpController],
+  controllers: [McpController, AgentActivityController],
   providers: [
     McpServerFactory,
     McpScopeResolver,
     McpAuditRepository,
     McpApiClient,
+    AgentActivityService,
+    AgentCallRegister,
   ],
-  exports: [McpScopeResolver, McpAuditRepository, McpApiClient],
+  // The register is exported for the action cycle's guard, which is registered
+  // as an `APP_GUARD` in `AppModule` and resolves its dependencies from there.
+  // The alternative — a second writer to `mcp_tool_call_logs` living beside the
+  // guard — is the shape decision 162 was about.
+  exports: [
+    McpScopeResolver,
+    McpAuditRepository,
+    McpApiClient,
+    AgentCallRegister,
+  ],
 })
 export class McpModule {}

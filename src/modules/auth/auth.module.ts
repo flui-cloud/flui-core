@@ -13,6 +13,7 @@ import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { AdminGuard } from './guards/admin.guard';
 import { AuthController } from './controllers/auth.controller';
 import { ApiKeysController } from './controllers/api-keys.controller';
+import { AgentSkillController } from './controllers/agent-skill.controller';
 import { UserEntity } from './entities/user.entity';
 import { RefreshTokenEntity } from './entities/refresh-token.entity';
 import { ApiKeyEntity } from './entities/api-key.entity';
@@ -143,6 +144,7 @@ import { FirewallsModule } from '../infrastructure/firewalls/firewalls.module';
   controllers: [
     AuthController,
     ApiKeysController,
+    AgentSkillController,
     AgentIdentitiesController,
     UserManagementController,
     BrandingController,

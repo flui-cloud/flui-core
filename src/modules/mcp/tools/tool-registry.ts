@@ -15,18 +15,27 @@ import { GATEWAY_TOOLS } from './gateway.tools';
 import { MAIL_TOOLS } from './mail.tools';
 import { VARIABLE_TOOLS } from './variables.tools';
 import { IAM_TOOLS } from './iam.tools';
+import { OPERATING_CONTEXT_TOOLS } from './operating-context.tools';
+import { SELF_SERVICE_TOOLS } from './self-service.tools';
+import { INFRASTRUCTURE_OPERATION_TOOLS } from './infrastructure-operations.tools';
 
 /**
  * The single source of truth for Flui tools. Consumed by the MCP server (external
  * agents) and the Flui Assistant agent loop (in-process). A tool is written once.
  */
 export const ALL_TOOLS: ToolDef[] = [
+  // First on purpose. `tools/list` is served in declaration order, and the one
+  // thing an agent should read before it does anything to somebody's
+  // installation is how that installation is run.
+  ...OPERATING_CONTEXT_TOOLS,
   ...CATALOG_TOOLS,
   ...SPEC_TOOLS,
   ...INFRASTRUCTURE_TOOLS,
+  ...INFRASTRUCTURE_OPERATION_TOOLS,
   ...DNS_TOOLS,
   ...APPLICATION_TOOLS,
   ...OBSERVABILITY_TOOLS,
+  ...SELF_SERVICE_TOOLS,
   ...REPO_TOOLS,
   ...BACKUP_TOOLS,
   ...MIGRATION_TOOLS,

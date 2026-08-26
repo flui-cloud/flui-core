@@ -109,8 +109,31 @@ export class ApiKeyService {
         'lastUsedAt',
         'userId',
         'scopes',
+        'skillVersion',
       ],
     });
+  }
+
+  /**
+   * Record which instructions the holder of this key says it is working from.
+   *
+   * Awaited, unlike {@link touch}: this is not on the hot path — it is one call
+   * an agent makes when it starts — and a check-in the caller is told succeeded
+   * while the write was dropped is worse than a slow one. The reply says
+   * `recorded` and has to be telling the truth.
+   */
+  async recordSkillVersion(id: string, version: string): Promise<boolean> {
+    const result = await this.apiKeyRepo.update(
+      { id },
+      {
+        skillVersion: version,
+      },
+    );
+    return (result.affected ?? 0) > 0;
+  }
+
+  async findById(id: string): Promise<ApiKeyEntity | null> {
+    return this.apiKeyRepo.findOne({ where: { id } });
   }
 
   async revokeById(id: string, userId: string): Promise<boolean> {

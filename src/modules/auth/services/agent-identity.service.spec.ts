@@ -82,6 +82,7 @@ function makeService(opts: { canAll?: boolean; machines?: string[] } = {}) {
     provider as never,
     bootstrap as never,
     policy as never,
+    { find: async () => [] } as never,
   );
   return { service, recorded };
 }
@@ -217,10 +218,15 @@ describe('AgentIdentityService', () => {
         resolveProviderContext: async () => null,
         reconcileProjectRoles: async () => null,
       } as never;
-      const service = new AgentIdentityService(provider, bootstrap, {
-        resolveAccess: async () => ({}),
-        can: () => true,
-      } as never);
+      const service = new AgentIdentityService(
+        provider,
+        bootstrap,
+        {
+          resolveAccess: async () => ({}),
+          can: () => true,
+        } as never,
+        { find: async () => [] } as never,
+      );
       await expect(
         service.provision(issuer(), 'bot', [MCP_SCOPE.APP_READ]),
       ).rejects.toThrow(/identity provider/);

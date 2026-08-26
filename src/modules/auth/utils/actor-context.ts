@@ -9,11 +9,14 @@ import { AsyncLocalStorage } from 'node:async_hooks';
  * did something or something acting on their behalf did. The three values are
  * derived, never stored on a credential:
  *
- *  - `agent` — the credential declares an `mcp:*` ceiling. That prefix is
- *    already the discriminant everywhere else (`mcpScopesOf`,
- *    `credentialCeiling`, `McpScopeResolver`), and reusing it means a new
- *    source of agent scopes — the identity provider's project roles, say — is
- *    classified without anybody remembering to set a flag;
+ *  - `agent` — the credential declares an `mcp:*` ceiling, **or** the call came
+ *    through an agentic surface (`actor-surface.ts`). The prefix is already the
+ *    discriminant everywhere else (`mcpScopesOf`, `credentialCeiling`,
+ *    `McpScopeResolver`), and reusing it means a new source of agent scopes —
+ *    the identity provider's project roles, say — is classified without anybody
+ *    remembering to set a flag. The surface is the half the ceiling cannot
+ *    reach: the portal's assistant runs on the person's own session and is an
+ *    agent all the same, because a model wrote the arguments;
  *  - `key` — an API key that declares no ceiling: the CLI key, the service
  *    identities. Not an agent, not a browser either;
  *  - `user` — everything else, i.e. an interactive session.

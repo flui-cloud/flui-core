@@ -4,10 +4,13 @@ import {
   Injectable,
   Logger,
 } from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
+import { In, Repository } from 'typeorm';
 import {
   OidcMachineUser,
   OidcProviderAdminClient,
 } from '../../oidc/services/oidc-provider-admin.service';
+import { UserEntity } from '../entities/user.entity';
 import {
   POLICY_ENGINE,
   PolicyEngine,
@@ -70,6 +73,8 @@ export class AgentIdentityService {
     @Inject(PROVIDER_ADMIN_CONTEXT)
     private readonly bootstrap: ProviderAdminContextSource,
     @Inject(POLICY_ENGINE) private readonly policy: PolicyEngine,
+    @InjectRepository(UserEntity)
+    private readonly users: Repository<UserEntity>,
   ) {}
 
   /**
@@ -166,6 +171,38 @@ export class AgentIdentityService {
       ctx.providerDomain,
     );
     return users.filter((u) => u.userName.startsWith(AGENT_USERNAME_PREFIX));
+  }
+
+  /**
+   * The local account each of these provider identities acts as, keyed by the
+   * provider's own user id.
+   *
+   * Two id spaces meet here and nothing else joined them. A machine identity is
+   * listed by the provider's id; everything it then *does* is recorded against
+   * a Flui `UserEntity` that `JwtStrategy` creates on the identity's first
+   * token, linked only by `oidcSub`. Without this map the panel can list a
+   * connected agent and can list what that agent did, and cannot put the two on
+   * the same row — which is the whole of "who is connected, and when were they
+   * last active".
+   *
+   * Absent rather than null-per-row when the identity has never authenticated:
+   * there is no local account yet, and inventing one to have an id would create
+   * an account for something that has never arrived.
+   */
+  async localAccountIds(
+    providerUserIds: string[],
+  ): Promise<Map<string, string>> {
+    const subs = [...new Set(providerUserIds)].filter(Boolean);
+    if (!subs.length) return new Map();
+    const rows = await this.users.find({
+      where: { oidcSub: In(subs) },
+      select: ['id', 'oidcSub'],
+    });
+    return new Map(
+      rows
+        .filter((u): u is UserEntity & { oidcSub: string } => !!u.oidcSub)
+        .map((u) => [u.oidcSub, u.id]),
+    );
   }
 
   private userNameFor(name: string): string {

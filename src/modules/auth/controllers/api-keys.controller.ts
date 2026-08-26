@@ -185,6 +185,7 @@ export class ApiKeysController {
       expiresAt?: Date | null;
       scopes?: string[] | null;
       lastUsedAt?: Date | null;
+      skillVersion?: string | null;
     },
     currentKeyId?: string,
   ): ApiKeyResponseDto {
@@ -196,6 +197,7 @@ export class ApiKeysController {
       createdAt: entity.createdAt,
       expiresAt: entity.expiresAt ?? null,
       lastUsedAt: entity.lastUsedAt ?? null,
+      skillVersion: entity.skillVersion ?? null,
       scopes,
       groups: scopes ? groupsForScopes(scopes) : null,
       ungroupedScopes: scopes ? ungroupedScopes(scopes) : null,

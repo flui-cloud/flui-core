@@ -27,6 +27,7 @@ export const PERMISSION_AREA = {
   MIGRATIONS: 'migrations',
   MAIL: 'mail',
   ACCESS: 'access',
+  INFRASTRUCTURE: 'infrastructure',
 } as const;
 
 export type PermissionArea =
@@ -81,12 +82,19 @@ export interface PermissionGroupDef {
  * DNS record, adding a gateway route, creating a schedule and connecting a
  * repository. There is no infrastructure scope for those to live in instead.
  *
- * Two consequences, both deliberate: no `infrastructure` area exists here,
- * because nothing would be left in it; and the summaries below say what the
- * scopes really carry rather than what the area is called, since a sentence
- * that under-promises is the one way this file could mislead the person
- * reading it. Narrowing them means splitting the scope catalogue, which is not
- * this file's to split.
+ * Two consequences, both deliberate: the summaries below say what the scopes
+ * really carry rather than what the area is called, since a sentence that
+ * under-promises is the one way this file could mislead the person reading it;
+ * and narrowing them means splitting the scope catalogue, which is not this
+ * file's to split.
+ *
+ * There *is* an `infrastructure` area now, and the sentence that used to say
+ * there could not be ("nothing would be left in it") was true only while no
+ * tool operated a cluster. `mcp:infra:*` is a catalogue of its own precisely so
+ * that the machine room does not ride along inside "deploy my applications":
+ * adding a node, stopping a cluster or expanding its storage is neither what
+ * `apps:change` promises nor something a sandbox guest may confer to its own
+ * agent.
  */
 const APPS_LOOK: McpScope[] = [
   MCP_SCOPE.CATALOG_READ,
@@ -124,7 +132,7 @@ export const PERMISSION_GROUPS: PermissionGroupDef[] = [
     depth: PERMISSION_DEPTH.LOOK,
     label: 'See applications',
     summary:
-      'Read the applications on this instance and their history, together with the catalogue, templates, repositories and clusters behind them — and change nothing.',
+      'Read the applications on this instance, their non-secret configuration and their history, together with the catalogue, templates, repositories and clusters behind them — and change nothing.',
     scopes: APPS_LOOK,
   },
   {
@@ -133,7 +141,7 @@ export const PERMISSION_GROUPS: PermissionGroupDef[] = [
     depth: PERMISSION_DEPTH.CHANGE,
     label: 'Deploy and operate applications',
     summary:
-      'Deploy, install, scale, restart and stop applications, set up the routes, schedules, wildcard DNS and repository links they need, read the logs, traffic and alerts of what it is running, and ask you in person for a sensitive value it must never hold itself, on top of everything See applications reads — but never delete one.',
+      'Deploy, install, scale, restart, stop and roll back applications, change how much CPU and memory they may use, set their non-secret configuration, set up the routes, schedules, wildcard DNS and repository links they need, read the logs, metrics, traffic and alerts of what it is running, and ask you in person for a sensitive value it must never hold itself, on top of everything See applications reads — but never delete one.',
     scopes: APPS_CHANGE,
   },
   {
@@ -151,7 +159,7 @@ export const PERMISSION_GROUPS: PermissionGroupDef[] = [
     depth: PERMISSION_DEPTH.LOOK,
     label: 'Read logs and health',
     summary:
-      'Read the applications on this instance together with their logs, edge traffic and alert history, and change nothing.',
+      'Read the applications on this instance together with their logs, resource metrics, edge traffic and alert history, and change nothing.',
     scopes: [MCP_SCOPE.APP_READ, MCP_SCOPE.OBS_READ],
   },
   {
@@ -248,6 +256,49 @@ export const PERMISSION_GROUPS: PermissionGroupDef[] = [
     summary:
       'Everything See who has access reads, plus giving somebody a role over this instance or taking one away — an agent holding this decides what other people can reach, and it can never hand out more than you hold yourself.',
     scopes: [MCP_SCOPE.IAM_READ, MCP_SCOPE.IAM_WRITE],
+  },
+  {
+    key: 'infrastructure:look',
+    area: PERMISSION_AREA.INFRASTRUCTURE,
+    depth: PERMISSION_DEPTH.LOOK,
+    label: 'See the infrastructure',
+    summary:
+      'Read how this instance is built and what changing it would cost — the capacity plan of a cluster, its nodes and what resizing one would take down, its shared storage, its platform components, its certificate issuers and whether it hosts its own DNS — and change none of it.',
+    scopes: [MCP_SCOPE.INFRA_READ],
+  },
+  /**
+   * The switch that lets an agent act on the machines somebody's applications
+   * run on — and the sentence a person reads before saying yes has to name the
+   * blast radius, not the area.
+   *
+   * Stopping a cluster stops everything on it. Expanding a volume is a one-way
+   * cost. Every route behind this scope carries `@ActionCycle`, so holding the
+   * group is not the approval: the agent still gets a proposal, with the
+   * estimate attached, until somebody answers once or always. The summary says
+   * so, because "it will ask you" is the difference between this switch and a
+   * blank cheque.
+   */
+  {
+    key: 'infrastructure:change',
+    area: PERMISSION_AREA.INFRASTRUCTURE,
+    depth: PERMISSION_DEPTH.CHANGE,
+    label: 'Operate the infrastructure',
+    summary:
+      'Everything See the infrastructure reads, plus acting on it — creating a cluster, adding, resizing and uncordoning its nodes, expanding its shared storage, stopping and starting it, changing its autoscaling, enabling its firewall, redeploying a platform component, configuring its certificate issuers, issuing a SAN certificate and publishing the records a sending domain needs — and every one of those stops to ask you before it happens, with what it costs attached.',
+    scopes: [MCP_SCOPE.INFRA_READ, MCP_SCOPE.INFRA_WRITE],
+  },
+  {
+    key: 'infrastructure:destroy',
+    area: PERMISSION_AREA.INFRASTRUCTURE,
+    depth: PERMISSION_DEPTH.DESTROY,
+    label: 'Remove infrastructure',
+    summary:
+      'Everything Operate the infrastructure can do, plus draining a worker node and deleting the machine at the provider — it cannot delete a cluster, which no agent credential can be given.',
+    scopes: [
+      MCP_SCOPE.INFRA_READ,
+      MCP_SCOPE.INFRA_WRITE,
+      MCP_SCOPE.INFRA_DESTRUCTIVE,
+    ],
   },
 ];
 

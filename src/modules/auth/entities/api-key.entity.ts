@@ -48,4 +48,21 @@ export class ApiKeyEntity {
    */
   @Column({ nullable: true, type: 'timestamptz' })
   lastUsedAt: Date | null;
+
+  /**
+   * The version of the agent skill whoever holds this key last said they were
+   * working from.
+   *
+   * One value, overwritten in place, and that is the whole design: the question
+   * is "what is the thing on the other end reading right now", not "what has it
+   * read since March". A history of check-ins would be a movement log of
+   * somebody's agent kept in a table nobody audits, and the register that
+   * legitimately records what an agent *did* already exists elsewhere.
+   *
+   * Null means the holder has never announced itself, which is a different
+   * statement from "an old version": an agent that has never checked in may
+   * still be calling tools happily with no instructions at all.
+   */
+  @Column({ nullable: true, type: 'varchar' })
+  skillVersion: string | null;
 }

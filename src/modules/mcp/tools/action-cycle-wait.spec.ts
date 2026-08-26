@@ -23,7 +23,7 @@ describe('a pending request, seen from the agent side', () => {
       audit: { record: jest.fn() },
     }) as unknown as McpToolContext;
 
-  const pending = () =>
+  const pending = (estimateWithheld = false) =>
     new McpApiError(
       403,
       'This call needs a person to allow it first.',
@@ -37,6 +37,7 @@ describe('a pending request, seen from the agent side', () => {
         sentence: 'deploy application app-1 whenever it asks',
         offersAlways: true,
         decideUrl: 'https://console.test/settings/agents/requests/p-1',
+        estimateWithheld,
       },
     );
 
@@ -69,8 +70,46 @@ describe('a pending request, seen from the agent side', () => {
       Promise.reject(pending()),
     );
     expect(c.audit.record).toHaveBeenCalledWith(
-      expect.objectContaining({ outcome: 'input_required', allowed: true }),
+      expect.objectContaining({
+        outcome: 'input_required',
+        allowed: true,
+        // What it asked for, not only that it asked: the register walks a
+        // review from a request to the calls it came out of, and without this
+        // the column that does the walking is null on every row.
+        proposalId: 'p-1',
+      }),
     );
+  });
+
+  /**
+   * The estimate is a route the guard never calls, so there is no figure to
+   * hand over — and a route handed to a model is a call it cannot make. What
+   * has to cross is that a price exists, because an agent that says nothing
+   * about it lets the person decide from a summary that reads as free.
+   */
+  it('says a price is attached when one is, instead of staying silent', async () => {
+    const c = ctx();
+    const result = await runGated(c, 'app_deploy', MCP_SCOPE.APP_WRITE, () =>
+      Promise.reject(pending(true)),
+    );
+    const message = (
+      result as unknown as {
+        inputRequests: Record<string, { params: { message: string } }>;
+      }
+    ).inputRequests.approved.params.message;
+    expect(message).toContain('cost estimate attached');
+    expect(message).not.toContain('capacity-plan');
+
+    const silent = await runGated(c, 'app_deploy', MCP_SCOPE.APP_WRITE, () =>
+      Promise.reject(pending(false)),
+    );
+    expect(
+      (
+        silent as unknown as {
+          inputRequests: Record<string, { params: { message: string } }>;
+        }
+      ).inputRequests.approved.params.message,
+    ).not.toContain('cost estimate attached');
   });
 
   it('still tells a client with no round-trip channel what to do, in words', () => {

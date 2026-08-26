@@ -51,6 +51,9 @@ function build(opts: { beyond?: string[]; listed?: unknown[] } = {}) {
       stub.revoked = name;
       return true;
     }),
+    localAccountIds: jest.fn(
+      async (ids: string[]) => new Map(ids.map((id) => [id, `local-${id}`])),
+    ),
     list: jest.fn().mockResolvedValue(
       opts.listed ?? [
         {
@@ -194,8 +197,22 @@ describe('the rest of the surface', () => {
         userId: 'm-1',
         userName: 'flui-agent-release-bot',
         name: 'release-bot',
+        fluiUserId: 'local-m-1',
       },
     ]);
+  });
+
+  /**
+   * The identity is in the provider from the moment it is minted; the account
+   * its calls are recorded against does not exist until it presents a token.
+   * Saying `null` is the honest reading of "connected, never active" — the row
+   * is still listed, and the panel has nothing to join it to yet.
+   */
+  it('says so when a minted identity has never authenticated', async () => {
+    const { controller, agents } = build();
+    agents.localAccountIds.mockResolvedValue(new Map());
+    const [identity] = await controller.list();
+    expect(identity.fluiUserId).toBeNull();
   });
 
   it('revokes by the name it was minted under', async () => {

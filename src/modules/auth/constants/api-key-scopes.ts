@@ -122,6 +122,44 @@ export const SCOPE_AUTHORITY: Record<McpScope, ScopeAuthority> = {
     requires: IAM_PERMISSION.IAM_ASSIGN_ROLE,
     allows: [IAM_PERMISSION.IAM_ASSIGN_ROLE],
   },
+  /**
+   * The machine room, read-only.
+   *
+   * `requires` is `cluster:manage` for the same reason mail and backups are:
+   * the routes sit behind the `infrastructure` section, which admits only a
+   * role holding that permission at global scope, so handing this scope on is a
+   * decision only somebody who administers the infrastructure can make.
+   * `allows` is the read half alone — the pin at the top of this file.
+   */
+  [MCP_SCOPE.INFRA_READ]: {
+    requires: IAM_PERMISSION.CLUSTER_MANAGE,
+    allows: [IAM_PERMISSION.CLUSTER_READ],
+  },
+  /**
+   * Operating the machine room.
+   *
+   * Most of the routes it reaches carry no `@RequirePermission` of their own —
+   * they are section-gated — so this column governs only the ones that do, and
+   * is written as what the `infrastructure` section already demands rather than
+   * as something new. It carries no `cluster:destroy`: see below.
+   */
+  [MCP_SCOPE.INFRA_WRITE]: {
+    requires: IAM_PERMISSION.CLUSTER_MANAGE,
+    allows: [IAM_PERMISSION.CLUSTER_READ, IAM_PERMISSION.CLUSTER_MANAGE],
+  },
+  /**
+   * Removing a worker node, and nothing about the cluster it belongs to.
+   *
+   * `cluster:destroy` is deliberately absent — it is absent from every scope in
+   * this table, pinned by the spec beside it and by the route sentinel — so an
+   * agent credential cannot tear a cluster down however it is assembled. Node
+   * removal asks for `cluster:manage` on its route, and that is what this
+   * names.
+   */
+  [MCP_SCOPE.INFRA_DESTRUCTIVE]: {
+    requires: IAM_PERMISSION.CLUSTER_MANAGE,
+    allows: [IAM_PERMISSION.CLUSTER_MANAGE],
+  },
   [MCP_SCOPE.SPEC_VALIDATE]: {
     requires: IAM_PERMISSION.APP_READ,
     allows: [IAM_PERMISSION.APP_READ],

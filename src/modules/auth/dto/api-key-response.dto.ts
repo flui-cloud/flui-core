@@ -86,6 +86,27 @@ export class ApiKeyResponseDto {
       'ends the caller’s own session.',
   })
   current: boolean;
+
+  /**
+   * Which instructions the thing holding this key says it is working from.
+   *
+   * `lastUsedAt` says a key spoke; this says what it knew when it did. Both are
+   * needed to revoke on purpose rather than on a hunch: an agent still calling
+   * daily off a document two releases old is the case the published knowledge
+   * base already produced once, and from the outside it looks exactly like a
+   * healthy one.
+   *
+   * Null means the holder has never announced itself — not that it is running
+   * something old. An agent that never checked in may be working with no
+   * instructions at all, which the screen has to be able to say differently.
+   */
+  @ApiPropertyOptional({
+    type: String,
+    description:
+      'The agent skill version this key’s holder last declared at check-in. ' +
+      'Null means it has never checked in, which is not the same as out of date.',
+  })
+  skillVersion: string | null;
 }
 
 export class CreateApiKeyResultDto extends ApiKeyResponseDto {

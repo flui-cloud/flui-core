@@ -71,15 +71,21 @@ describe('permission groups — the taxonomy', () => {
         'app_install',
         'app_list',
         'app_logs',
+        'app_metrics',
+        'app_reconcile',
         'app_releases',
         'app_removal_preview',
         'app_restart',
+        'app_rollback',
         'app_scale',
+        'app_set_resources',
         'app_start',
         'app_status',
         'app_stop',
         'app_traffic',
         'app_variable_request',
+        'app_variable_set',
+        'app_variables',
         'catalog_get_app',
         'catalog_search',
         'cluster_list',
@@ -95,6 +101,8 @@ describe('permission groups — the taxonomy', () => {
         'github_setup',
         'integration_status',
         'log_sources',
+        'my_permissions',
+        'operating_context_read',
         'operation_status',
         'repo_connect',
         'repo_list',
@@ -227,6 +235,12 @@ describe('reading a key back as groups', () => {
       'migrations:destroy',
       'mail:look',
       'access:change',
+      // The machine room, added when tools began to operate it. It is the
+      // deepest group of an area of its own rather than a line inside
+      // `apps:*` — which is the whole reason the brittle assertion above did
+      // not move: a key issued to deploy applications is not thereby a key
+      // that can stop the cluster they run on.
+      'infrastructure:destroy',
     ]);
   });
 

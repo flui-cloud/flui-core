@@ -499,6 +499,14 @@ describe('api keys — the guest', () => {
       // on: a guest is offered it and cannot turn it on, because conferring a
       // role asks for `iam:assign-role` and a tenancy holds nothing of the kind.
       'access:change',
+      // The machine room, once tools reached it. All three ask for
+      // `cluster:manage`, which a tenancy does not hold and is not meant to:
+      // the cluster is the thing its applications run on, shared with every
+      // other guest, and a key issued to deploy an application is not for that
+      // reason a key that can power the cluster down.
+      'infrastructure:look',
+      'infrastructure:change',
+      'infrastructure:destroy',
     ]);
   });
 

@@ -119,15 +119,24 @@ export class AgentIdentitiesController {
     description:
       'Read off the provider by the prefix Flui mints under, so an account ' +
       'somebody created there by hand is not reported as one of ours. Empty ' +
-      'when there is no provider to ask.',
+      'when there is no provider to ask. `fluiUserId` is the account each ' +
+      'identity acts as on this instance — the id its calls are recorded ' +
+      'against in the activity register — and is null until the identity has ' +
+      'authenticated at least once.',
   })
   @ApiOkResponse({ type: [AgentIdentityDto] })
   async list(): Promise<AgentIdentityDto[]> {
     const users = await this.agents.list();
+    // The join the panel cannot make for itself: the provider numbers its
+    // machine accounts and Flui numbers the local ones, and only `oidcSub`
+    // links them. Without it "who is connected" and "what they did" are two
+    // lists that cannot be put on the same row.
+    const local = await this.agents.localAccountIds(users.map((u) => u.id));
     return users.map((u) => ({
       userId: u.id,
       userName: u.userName,
       name: u.name,
+      fluiUserId: local.get(u.id) ?? null,
     }));
   }
 

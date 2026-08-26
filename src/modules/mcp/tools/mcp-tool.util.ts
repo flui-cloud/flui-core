@@ -16,6 +16,7 @@ import {
 import { describeError } from '../../shared/utils/error.util';
 import { McpApiCaller, McpApiError } from '../services/mcp-api.client';
 import { Actor } from '../../auth/utils/actor-context';
+import { AgentSurface } from '../../auth/utils/actor-surface';
 import {
   redactToolArgs,
   startedOperationId,
@@ -36,8 +37,12 @@ export interface ToolResult {
  * Which consumer is running the tool. The two differ in what the caller can see:
  * the Flui UI renders a progress widget for async operations, an external MCP
  * client renders nothing. Guidance addressed to the model has to know which.
+ *
+ * The same two names now also travel to the API on every tool call, where they
+ * are what tells the action cycle that a model wrote these arguments — so this
+ * is an alias rather than a second union, and the two cannot drift apart.
  */
-export type ToolSurface = 'mcp' | 'assistant';
+export type ToolSurface = AgentSurface;
 
 /** Per-request context shared by every tool registrar. */
 export interface McpToolContext {
@@ -416,6 +421,7 @@ export async function runGated(
       args,
       tool,
       scope,
+      surface: ctx.surface,
       allowed: false,
       error: 'missing scope',
     });
@@ -436,6 +442,7 @@ export async function runGated(
       args,
       tool,
       scope,
+      surface: ctx.surface,
       allowed: false,
       error: 'destructive disabled',
     });
@@ -452,6 +459,7 @@ export async function runGated(
       args,
       tool,
       scope,
+      surface: ctx.surface,
       allowed: true,
       // A turn that stops to ask a person is otherwise written as
       // `allowed: true, error: null` and reads as a success.
@@ -489,11 +497,17 @@ export async function runGated(
       args,
       tool,
       scope,
+      surface: ctx.surface,
       // An access refusal from a guard is not "the tool ran": the scope let it
       // through, the resource did not. Recorded as denied so the audit tells
       // the two refusals apart the same way the agent does.
       allowed: !(error instanceof McpApiError && error.isAccessRefusal),
       outcome: waiting ? 'input_required' : null,
+      // What it asked for, beside the fact that it asked. The mirror of
+      // `operationId` on the branch above: that one says what a call started,
+      // this one says what it stopped to request — and the register needs both
+      // to walk a review from a question to the calls it came out of.
+      proposalId: waiting?.proposalId ?? null,
       error: message,
     });
     if (waiting) return proposalElicitation(waiting, message);

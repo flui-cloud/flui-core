@@ -96,6 +96,49 @@ const ARGS: Record<string, Record<string, unknown>> = {
   mail_events: {},
   mail_suppressions: {},
   app_variable_request: { applicationId: 'a1', key: 'STRIPE_SECRET_KEY' },
+  operating_context_read: {},
+  my_permissions: {},
+  // An explicit revision on purpose: without one the tool reads the revision
+  // history first, and the stand-in API answers every unlisted path with one
+  // object rather than a list. Choosing the target from that history is pinned
+  // in `self-service.tools.spec.ts`, where the history can be described.
+  app_rollback: { id: 'a1', revisionNumber: 2 },
+  app_set_resources: { id: 'a1', limits: { memory: '512Mi' } },
+  app_reconcile: { id: 'a1' },
+  app_metrics: { id: 'a1' },
+  app_variables: { applicationId: 'a1' },
+  app_variable_set: { applicationId: 'a1', variables: { LOG_LEVEL: 'debug' } },
+  cluster_capacity_plan: {},
+  cluster_node_list: {},
+  cluster_node_scale_preview: { nodeId: 'n1' },
+  cluster_storage_status: {},
+  platform_component_list: {},
+  dns_issuer_list: {},
+  dns_internal_hosting: {},
+  san_certificate_list: {},
+  cluster_create: {
+    name: 'prod',
+    provider: 'hetzner',
+    region: 'fsn1',
+    nodeSize: 'cx22',
+    workerCount: 1,
+  },
+  cluster_node_add: { count: 1 },
+  cluster_node_remove: { nodeId: 'n1' },
+  cluster_node_resize: { nodeId: 'n1', targetServerType: 'cx32' },
+  cluster_node_uncordon: { nodeId: 'n1' },
+  cluster_storage_expand: { targetSizeGb: 100 },
+  cluster_power: { action: 'stop' },
+  cluster_autoscale_set: { autoscalingEnabled: true },
+  cluster_firewall_enable: {},
+  platform_component_redeploy: { componentKey: 'traefik' },
+  dns_issuer_configure: { type: 'http', acmeEmail: 'ops@example.com' },
+  san_certificate_create: {
+    name: 'multi',
+    fqdns: ['a.example.com'],
+    certChallenge: 'http-01',
+  },
+  mail_domain_publish: { domain: 'example.com' },
 };
 
 interface Recorded {
@@ -139,6 +182,17 @@ function replyFor(path: string): unknown {
     };
   }
   if (path === '/catalog') return [{ slug: 'mariadb', name: 'MariaDB' }];
+  // The cluster controller answers its async routes in snake case, which is the
+  // shape the infrastructure-operation tools normalise before reporting a handle.
+  if (
+    /(workers|\/stop|\/start)$/.test(path) ||
+    path === '/infrastructure/clusters'
+  ) {
+    return { operation_id: 'op1', status: 'pending' };
+  }
+  if (path === '/operating-context/advice') {
+    return { preamble: 'p', advice: [], needsReview: [], conflicts: [] };
+  }
   if (path.endsWith('/dns-zone/list')) return [{ id: 'z1', dnsZone: {} }];
   if (path.endsWith('/releases')) return { releases: [] };
   if (path.endsWith('/alerts')) return { alerts: [], firing: 0 };
@@ -293,6 +347,30 @@ describe('strada B — the whole tool catalogue goes over the wire', () => {
     ['access_grant_list', 'GET /iam/grants'],
     ['access_grant_add', 'POST /iam/grants'],
     ['access_grant_remove', 'DELETE /iam/grants/g1'],
+    ['operating_context_read', 'GET /operating-context/advice'],
+    // The machine room. Every write here lands on a route carrying
+    // `@ActionCycle`, which is where the pause is — never in the tool.
+    ['cluster_capacity_plan', 'GET /infrastructure/clusters/c1/capacity-plan'],
+    ['cluster_create', 'POST /infrastructure/clusters'],
+    ['cluster_node_add', 'POST /infrastructure/clusters/c1/workers'],
+    ['cluster_node_remove', 'DELETE /infrastructure/clusters/c1/workers/n1'],
+    ['cluster_power', 'POST /infrastructure/clusters/c1/stop'],
+    [
+      'cluster_storage_expand',
+      'POST /infrastructure/clusters/c1/storage/expand',
+    ],
+    ['cluster_autoscale_set', 'PATCH /infrastructure/clusters/c1/autoscale'],
+    ['cluster_firewall_enable', 'POST /firewalls/cluster/c1/enable'],
+    [
+      'platform_component_redeploy',
+      'POST /infrastructure/clusters/c1/platform-components/traefik/actions/redeploy',
+    ],
+    [
+      'dns_issuer_configure',
+      'POST /clusters/c1/dns-zone/configure-issuer/http',
+    ],
+    ['san_certificate_create', 'POST /clusters/c1/san-certificates'],
+    ['mail_domain_publish', 'POST /mail/domains/example.com/publish'],
   ])('%s lands on %s', async (name, expected) => {
     const calls = await pathsOf(name);
     expect(calls.map((c) => `${c.method} ${c.path}`)).toContain(expected);

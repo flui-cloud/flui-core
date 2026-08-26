@@ -101,4 +101,16 @@ export class AgentIdentityDto {
 
   @ApiPropertyOptional({ type: String })
   name?: string;
+
+  @ApiProperty({
+    type: String,
+    nullable: true,
+    description:
+      'The account on this instance the identity acts as, which is what its ' +
+      'rows in the activity register are keyed by. Null until it has ' +
+      'authenticated once: the local account is created on the first token, ' +
+      'and minting one earlier would invent an account for something that has ' +
+      'never arrived.',
+  })
+  fluiUserId: string | null;
 }

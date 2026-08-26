@@ -63,6 +63,45 @@ export const MCP_SCOPE = {
    * its owner does not already hold.
    */
   IAM_WRITE: 'mcp:iam:write',
+  /**
+   * Reading how a cluster is built, and what changing it would cost.
+   *
+   * A separate area from `mcp:app:read` on purpose. That scope carries "the
+   * clusters behind an application" — the listing, the headroom — and a sandbox
+   * guest may confer it to its own agent. These read the capacity plan, the
+   * node inventory, the shared-storage layer, the platform components and the
+   * certificate issuers: the machine room, not the tenancy. Answering both
+   * questions with one scope would mean a guest's key naming the machine room.
+   */
+  INFRA_READ: 'mcp:infra:read',
+  /**
+   * Operating the machine room: nodes, storage, power, autoscaling, the
+   * cluster firewall, a platform component, the certificate issuers and the
+   * records a sending domain needs.
+   *
+   * Like `mcp:iam:write` it is in **no tier**, and for the same reason spelled
+   * out there: `expandTier` is what a principal gets when its credential
+   * declares no ceiling, so a scope named in a tier arrives by *omission* — an
+   * administrator's unscoped key would carry it without anybody deciding to.
+   * Stopping somebody's cluster is not a power to acquire by silence. The only
+   * ways to hold it are naming it outright or switching on
+   * `infrastructure:change`.
+   *
+   * It is not the approval, and must not be read as one: every route it
+   * reaches carries `@ActionCycle`, so an agent holding this scope still gets a
+   * proposal instead of an effect until a person answers.
+   */
+  INFRA_WRITE: 'mcp:infra:write',
+  /**
+   * Deleting a worker node — the one act in this area that takes a machine
+   * away from under running workloads.
+   *
+   * Destroying a *cluster* is deliberately not here and cannot be: no scope
+   * carries `cluster:destroy`, pinned by `api-key-scopes.spec.ts` and by the
+   * route sentinel's `NO_SCOPE_CARRIES`. That is a decision already taken, and
+   * widening it is a decision for somebody else to take out loud.
+   */
+  INFRA_DESTRUCTIVE: 'mcp:infra:destructive',
   SPEC_VALIDATE: 'mcp:spec:validate',
   APP_WRITE: 'mcp:app:write',
   BACKUP_WRITE: 'mcp:backup:write',
@@ -83,7 +122,9 @@ export type McpTier = 'read' | 'plan' | 'write' | 'destructive';
  * own, so anything listed below is reachable by silence. `mcp:iam:write` is
  * deliberately absent from all four — see the note on it in `MCP_SCOPE` and
  * `iam-write-scope.spec.ts`, which pins the absence so it cannot be "fixed" by
- * somebody tidying the table.
+ * somebody tidying the table. The three `mcp:infra:*` scopes are absent for the
+ * same reason and pinned the same way (`infra-scope.spec.ts`): operating
+ * somebody's machine room is a gesture, never a default.
  */
 export const TIER_SCOPES: Record<McpTier, McpScope[]> = {
   read: [
@@ -119,6 +160,13 @@ export const SCOPE_TIER: Record<McpScope, McpTier> = {
   // questions with one flag. What `write` does buy is the in-product
   // assistant's approval step, which pauses before every write-tier tool.
   [MCP_SCOPE.IAM_WRITE]: 'write',
+  [MCP_SCOPE.INFRA_READ]: 'read',
+  // `write` and not `destructive`, on decision 86's criterion: a node added can
+  // be removed, a cluster stopped can be started, an issuer reconfigured. The
+  // one irreversible act in the area — taking a machine away — has its own
+  // scope below.
+  [MCP_SCOPE.INFRA_WRITE]: 'write',
+  [MCP_SCOPE.INFRA_DESTRUCTIVE]: 'destructive',
   [MCP_SCOPE.SPEC_VALIDATE]: 'plan',
   [MCP_SCOPE.APP_WRITE]: 'write',
   [MCP_SCOPE.BACKUP_WRITE]: 'write',
