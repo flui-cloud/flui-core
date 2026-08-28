@@ -1,5 +1,4 @@
 import { Injectable } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import { In, Not, Repository } from 'typeorm';
 import {
@@ -15,7 +14,6 @@ import { ScalingDecisionEntity } from '../entities/scaling-decision.entity';
 import { ProviderScalingCapability } from '../scaling-capability';
 import { fleetOf, roundEur } from '../engine/engine.core';
 import { clusterNotFound } from '../scaling-errors';
-import { readConcession } from '../concession';
 import { ScalingGroupService } from './scaling-group.service';
 import {
   ClusterScalingRowDto,
@@ -41,7 +39,6 @@ export class ScalingOverviewService {
     @InjectRepository(ClusterNodeEntity)
     private readonly nodes: Repository<ClusterNodeEntity>,
     private readonly groupService: ScalingGroupService,
-    private readonly config: ConfigService,
   ) {}
 
   async rows(): Promise<ClusterScalingRowDto[]> {
@@ -151,12 +148,6 @@ export class ScalingOverviewService {
     groups: ScalingGroupEntity[],
   ): boolean {
     if (!capability.canProvision) return false;
-    if (
-      !readConcession(this.config.get<string>('SCALING_CONCESSION_MONTHLY_EUR'))
-        .granted
-    ) {
-      return false;
-    }
     return groups.some((group) => group.provision === 'automatic');
   }
 

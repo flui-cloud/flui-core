@@ -75,7 +75,6 @@ const group = (
   acts: {
     acts: true,
     says: 'This installation may commit up to €200 a month on its own, and only through groups set to buy automatically.',
-    monthlyEur: 200,
   },
   standingOrders: [
     {
@@ -432,25 +431,12 @@ describe('describeActuation', () => {
         provision: 'automatic',
         acts: {
           acts: false,
-          says: 'Nothing may be bought without being asked: no spending was granted to this installation.',
-          monthlyEur: null,
+          says: 'This group decides and does not act. Set it to buy automatically for anything it decides to reach a provider.',
         },
       }),
     );
     expect(acting?.verdict).toBe('no');
-    expect(acting?.says).toContain('no spending was granted');
-  });
-
-  /** No grant and a grant of nothing are two different instructions. */
-  it('keeps “nothing granted” apart from “granted €0”', () => {
-    const none = describeActuation(
-      group({ acts: { acts: false, says: 'no grant', monthlyEur: null } }),
-    );
-    const zero = describeActuation(
-      group({ acts: { acts: true, says: 'granted nothing', monthlyEur: 0 } }),
-    );
-    expect(none?.grant).toBe(NO_PRICE);
-    expect(zero?.grant).toBe('€0.00/mo');
+    expect(acting?.says).toContain('decides and does not act');
   });
 
   /** An installation one build behind said nothing, which is not "it does nothing". */

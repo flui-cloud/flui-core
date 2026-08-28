@@ -115,17 +115,14 @@ export interface ActuationView {
   verdict: string;
   /** The API's own sentence, carried word for word — it owns the wording. */
   says: string;
-  /** The monthly grant, formatted. `—` is no grant, which is not a grant of €0. */
-  grant: string;
 }
 
 /**
  * Whether anything this group decides would reach a provider.
  *
- * The sentence is the API's and is passed through untouched: two keys turn this
- * lock — the group says it may act, the installation says how much it may
- * commit — and a second copy of that wording in the CLI would be a second
- * answer to the only question worth asking a scaling group.
+ * The sentence is the API's and is passed through untouched: a second copy of
+ * that wording here would be a second answer to the only question worth asking
+ * a scaling group.
  *
  * Null where the API did not send the block at all, which is an installation one
  * build behind rather than a group that does nothing.
@@ -139,7 +136,6 @@ export function describeActuation(
     acts: acts.acts,
     verdict: acts.acts ? 'yes' : 'no',
     says: acts.says,
-    grant: formatEurPerMonth(acts.monthlyEur),
   };
 }
 

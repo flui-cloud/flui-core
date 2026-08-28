@@ -978,7 +978,7 @@ describe('what the descriptions teach a model', () => {
     ['scaling_overview', 'FLOOR and not the bill'],
     ['scaling_overview', 'NAMES the groups its cluster holds'],
     ['scaling_group_get', 'WOULD THIS GROUP DO ANYTHING'],
-    ['scaling_group_get', 'NO GRANT and never as a grant of €0'],
+    ['scaling_group_get', 'a group set only to decide will never make'],
     ['scaling_group_get', 'that order will never proceed'],
     ['scaling_overview', 'is NOT 0'],
     ['scaling_overview', 'rather than as calm'],
@@ -990,8 +990,11 @@ describe('what the descriptions teach a model', () => {
     ['scaling_group_set', 'should hold no nodes'],
     ['scaling_group_set', 'REMOVES the monthly ceiling'],
     ['scaling_group_set', 'retry the identical call'],
-    ['scaling_group_set', 'setting a group to automatic buys nothing at all'],
-    ['scaling_group_set', 'up to that figure a month without being asked'],
+    ['scaling_group_set', 'what makes a group act without asking again'],
+    [
+      'scaling_group_set',
+      'all three on the group, where a reader can see them',
+    ],
   ])('%s says: %s', (name, phrase) => {
     expect(description(name)).toContain(phrase);
   });

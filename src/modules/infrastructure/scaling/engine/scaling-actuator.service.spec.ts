@@ -4,7 +4,6 @@
 jest.mock('ip-cidr', () => ({}));
 jest.mock('@kubernetes/client-node', () => ({}));
 
-import { ConfigService } from '@nestjs/config';
 import { Repository } from 'typeorm';
 import {
   ClusterEntity,
@@ -81,11 +80,7 @@ const assessment = (over: Partial<ScalingAssessment> = {}): ScalingAssessment =>
     ...over,
   }) as ScalingAssessment;
 
-// `null` rather than `undefined`: passing undefined to a parameter with a
-// default takes the default, so a test meaning "nothing was granted" would
-// quietly grant €40 and pass for the wrong reason.
 function harness(
-  granted: string | null = '40',
   capability: ProviderScalingCapability = HETZNER,
   inFlight = 0,
 ) {
@@ -97,7 +92,6 @@ function harness(
     removeWorker: jest.fn().mockResolvedValue({ id: 'op-2' }),
   };
   const groupService = { capabilityOf: jest.fn().mockReturnValue(capability) };
-  const config = { get: jest.fn().mockReturnValue(granted ?? undefined) };
   const registry = new AutoscaleReconcilerRegistry();
 
   const service = new ScalingActuatorService(
@@ -106,7 +100,6 @@ function harness(
     clusterRows as unknown as Repository<ClusterEntity>,
     clusters as unknown as ClusterScalingService,
     groupService as unknown as ScalingGroupService,
-    config as unknown as ConfigService,
     registry,
   );
   return { service, clusters, operations, groups, registry };
@@ -128,15 +121,6 @@ describe('the only thing with hands', () => {
     expect(acted?.asks).toBeNull();
   });
 
-  it('buys nothing without a grant, and says so in the decision', async () => {
-    const h = harness(null);
-
-    const acted = await h.service.act(group(), cluster, assessment());
-
-    expect(h.clusters.addWorkers).not.toHaveBeenCalled();
-    expect(acted?.why).toContain('SCALING_CONCESSION_MONTHLY_EUR');
-  });
-
   it('buys nothing for a group that only decides', async () => {
     const h = harness();
 
@@ -151,7 +135,7 @@ describe('the only thing with hands', () => {
   });
 
   it('leaves an alert-only provider exactly as the engine wrote it', async () => {
-    const h = harness('40', BYOS);
+    const h = harness(BYOS);
 
     const acted = await h.service.act(group(), cluster, assessment());
 
@@ -172,7 +156,7 @@ describe('the only thing with hands', () => {
   });
 
   it('waits for the machine already on its way instead of buying another', async () => {
-    const h = harness('40', HETZNER, 1);
+    const h = harness(HETZNER, 1);
 
     const acted = await h.service.act(group(), cluster, assessment());
 
@@ -217,7 +201,7 @@ describe('the only thing with hands', () => {
   });
 
   it('says the fleet is about to change, not that nothing is bought, when a removal waits', async () => {
-    const h = harness('40', HETZNER, 1);
+    const h = harness(HETZNER, 1);
 
     const acted = await h.service.act(
       group(),
@@ -252,11 +236,6 @@ describe('what a cluster says about itself', () => {
     expect(await h.service.drivesCluster('c-1')).toBe(true);
   });
 
-  it('promises nothing where nothing was granted', async () => {
-    const h = harness(null);
-    expect(await h.service.drivesCluster('c-1')).toBe(false);
-  });
-
   it('promises nothing where every group only decides', async () => {
     const h = harness();
     h.groups.count.mockResolvedValue(0);
@@ -264,7 +243,7 @@ describe('what a cluster says about itself', () => {
   });
 
   it('promises nothing on a provider Flui cannot buy from', async () => {
-    const h = harness('40', BYOS);
+    const h = harness(BYOS);
     expect(await h.service.drivesCluster('c-1')).toBe(false);
   });
 

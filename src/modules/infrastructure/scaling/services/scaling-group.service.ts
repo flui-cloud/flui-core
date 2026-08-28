@@ -1,5 +1,4 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Not, Repository } from 'typeorm';
 import {
@@ -11,7 +10,6 @@ import { CloudProvider } from '../../../providers/enums/cloud-provider.enum';
 import { ScalingGroupEntity } from '../entities/scaling-group.entity';
 import { ScalingDecisionEntity } from '../entities/scaling-decision.entity';
 import { DrainCheck } from '../engine/drain.core';
-import { readConcession } from '../concession';
 import {
   ProviderScalingCapability,
   scalingCapabilityOf,
@@ -57,7 +55,6 @@ export class ScalingGroupService {
     @InjectRepository(ClusterEntity)
     private readonly clusters: Repository<ClusterEntity>,
     private readonly capabilities: CapabilitiesProviderFactory,
-    private readonly config: ConfigService,
   ) {}
 
   capabilityOf(provider: string): ProviderScalingCapability {
@@ -351,44 +348,36 @@ export class ScalingGroupService {
   }
 
   /**
-   * Derived on every read rather than stored, because the grant is not the
-   * product's data: it comes from outside, it can be withdrawn between one
-   * request and the next, and a copy kept in a row would go on claiming a
-   * purchase long after the installation stopped allowing one.
+   * Whether anything this group decides would reach a provider.
+   *
+   * Derived on every read rather than stored: it is a fact about the provider
+   * and one field of the group, and a copy kept in a row would go on claiming a
+   * purchase after somebody set the group back to deciding.
    */
   private actuationOf(
     group: ScalingGroupEntity,
     cluster: ClusterEntity,
   ): ScalingActuationDto {
-    const concession = readConcession(
-      this.config.get<string>('SCALING_CONCESSION_MONTHLY_EUR'),
-    );
     const capability = this.capabilityOf(cluster.provider);
 
     if (!capability.canProvision) {
-      // Null, not the granted figure. The grant governs purchases and this
-      // group makes none — printing it beside "Flui cannot create a server
-      // here" reads as money available to this cluster, which it is not.
       return {
         acts: false,
         says: `Flui cannot create a server on ${cluster.provider}, so this group decides and a person acts. That is the whole of scaling here, not a step toward it.`,
-        monthlyEur: null,
       };
     }
     if (group.provision !== 'automatic') {
       return {
         acts: false,
         says: 'This group decides and does not act. Set it to buy automatically for anything it decides to reach a provider.',
-        monthlyEur: concession.monthlyEur,
       };
-    }
-    if (!concession.granted) {
-      return { acts: false, says: concession.says, monthlyEur: null };
     }
     return {
       acts: true,
-      says: concession.says,
-      monthlyEur: concession.monthlyEur,
+      says:
+        group.maxMonthlyCost === null
+          ? `This group buys through the provider API on its own, up to ${group.maxNodes} nodes. It names no ceiling in money.`
+          : `This group buys through the provider API on its own, up to €${group.maxMonthlyCost} a month and ${group.maxNodes} nodes.`,
     };
   }
 

@@ -1,5 +1,4 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import { In, Repository } from 'typeorm';
 import {
@@ -13,7 +12,6 @@ import {
 } from '../../servers/entities/infrastructure-operations.entity';
 import { ClusterScalingService } from '../../clusters/services/cluster-scaling.service';
 import { AutoscaleReconcilerRegistry } from '../../clusters/services/autoscale-reconciler.registry';
-import { SpendingConcession, readConcession } from '../concession';
 import { ScalingGroupEntity } from '../entities/scaling-group.entity';
 import { ScalingGroupService } from '../services/scaling-group.service';
 import { ScalingAssessment } from './scaling-engine.service';
@@ -58,7 +56,6 @@ export class ScalingActuatorService implements OnModuleInit {
     private readonly clusterRows: Repository<ClusterEntity>,
     private readonly clusters: ClusterScalingService,
     private readonly groupService: ScalingGroupService,
-    private readonly config: ConfigService,
     private readonly reconcilers: AutoscaleReconcilerRegistry,
   ) {}
 
@@ -74,23 +71,15 @@ export class ScalingActuatorService implements OnModuleInit {
     });
   }
 
-  /** What this installation was granted, read fresh: it is not the product's data. */
-  concession(): SpendingConcession {
-    return readConcession(
-      this.config.get<string>('SCALING_CONCESSION_MONTHLY_EUR'),
-    );
-  }
-
   /**
    * Whether a node would actually arrive on this cluster without being asked.
    *
    * What the capacity gate and `autoscale/status` say about a cluster is derived
-   * from this, so the promise can never outlive the thing that keeps it: turn
-   * the grant off, or set every group back to manual, and both surfaces stop
-   * claiming a node appears on its own — with no sentence to go and edit.
+   * from this, so the promise can never outlive the thing that keeps it: set
+   * every group back to manual and both surfaces stop claiming a node appears
+   * on its own — with no sentence to go and edit.
    */
   async drivesCluster(clusterId: string): Promise<boolean> {
-    if (!this.concession().granted) return false;
     const automatic = await this.groups.count({
       where: { clusterId, provision: 'automatic' },
     });
@@ -120,8 +109,8 @@ export class ScalingActuatorService implements OnModuleInit {
     const verdict = mayAct({
       canProvision: capability.canProvision,
       provision: group.provision,
-      concession: this.concession(),
       clusterReady: cluster.status === ClusterStatus.READY,
+      monthlyCap: group.maxMonthlyCost,
       purchaseInFlight: await this.inFlight(cluster.id),
       clusterRegion: cluster.region ?? null,
       intent,
@@ -190,7 +179,7 @@ export class ScalingActuatorService implements OnModuleInit {
     return {
       outcome: 'added',
       did: `Bought a ${shape ?? cluster.nodeSize} in ${cluster.region} and set it to join.`,
-      why: `${assessment.did} ${sayWith(verdict)}`,
+      why: `${assessment.did} ${verdict.because}`,
       asks: null,
       operationId: operation.id,
     };
@@ -213,7 +202,7 @@ export class ScalingActuatorService implements OnModuleInit {
       // undid an overshoot. Told apart here or not at all.
       outcome: completesReplacement ? 'replaced' : 'removed',
       did: assessment.did.replace(/^Would remove/, 'Removed'),
-      why: sayWith(verdict),
+      why: verdict.because,
       asks: null,
       operationId: operation.id,
     };
@@ -239,10 +228,4 @@ export class ScalingActuatorService implements OnModuleInit {
     });
     return count > 0;
   }
-}
-
-function sayWith(verdict: ActuationVerdict): string {
-  return verdict.caveat
-    ? `${verdict.because} ${verdict.caveat}`
-    : verdict.because;
 }

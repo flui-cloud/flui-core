@@ -95,7 +95,6 @@ interface StandingOrderDto {
 interface ActuationDto {
   acts: boolean;
   says: string;
-  monthlyEur: number | null;
 }
 
 interface GroupDto extends ScalingGroupAuthorityFacts {
@@ -201,19 +200,17 @@ function whatAnAgentCanDo(capability: CapabilityDto): 'buy' | 'warn' {
  * What a group authorises, and whether any of it reaches a provider.
  *
  * Two different statements, and a surface carrying only the first is a surface
- * that lies half the time. The bounds and the cap are the group's own opinion of
- * itself and move whenever somebody edits the row; the grant comes from outside
- * the product's data and no API call can widen it. So the group's sentence is
- * derived as it always was, and the installation's own sentence is carried
- * beside it word for word — never a figure written down here, because the only
- * place that knows the figure is the grant.
+ * that lies half the time. The bounds and the cap say what a group may reach;
+ * `acts` says whether anything it decides gets that far, which a group set only
+ * to decide does not. The second sentence is the API's and is carried word for
+ * word rather than reworded here.
  */
 function authorisedBy(group: GroupDto): string {
   const sentence = scalingConsequenceOf(group);
   const acts = group.acts;
   if (!acts) return sentence;
   return acts.acts
-    ? `${sentence}. What actually reaches a provider is bounded by the grant this installation made, not by the group: ${acts.says}`
+    ? `${sentence}. And it acts on that without asking again: ${acts.says}`
     : `${sentence} — and as things stand none of it reaches a provider: ${acts.says}`;
 }
 
@@ -225,7 +222,7 @@ function actuationNote(acts: ActuationDto | undefined): string {
   if (!acts.acts) {
     return 'NOTHING this group decides reaches a provider. It decides, writes the decision down, and a person acts. Say that before offering to change anything here, and never report a configured group as one that will grow the cluster.';
   }
-  return `Decisions by this group DO reach a provider, up to the grant this installation made — €${acts.monthlyEur} a month, over the whole fleet and not per purchase.`;
+  return `Decisions by this group DO reach a provider, within the ceilings the group itself names: ${acts.says} Those ceilings are on the group and are read over the whole fleet, not per purchase.`;
 }
 
 /**
@@ -358,9 +355,9 @@ function actsNote(row: RowDto): string {
     return 'Flui cannot create a server on this provider at all. Scaling here ends in an alarm addressed to a person, and that is the finished behaviour rather than a setting left off.';
   }
   if (row.acts) {
-    return 'A group here is set to buy and this installation granted the spending, so a decision to add a node reaches the provider.';
+    return 'A group here is set to buy automatically, so a decision to add a node reaches the provider.';
   }
-  return 'Flui COULD create a server here and will not: either every group is set only to decide, or no spending was granted to this installation. Do not tell anyone a node is coming. Read the group with scaling_group_get — its `acts.says` names which of the two it is.';
+  return "Flui COULD create a server here and will not: every group on this cluster is set only to decide. Do not tell anyone a node is coming. Read the group with scaling_group_get — its `acts.says` says so in the installation's own words.";
 }
 
 /**
@@ -411,7 +408,7 @@ export const SCALING_TOOLS: ToolDef[] = [
       'GET /infrastructure/clusters/:clusterId/scaling-groups',
     ],
     description:
-      'Read a cluster’s scaling group — what it may buy, how far it may grow, what it may spend and what the provider actually allows. Pass `groupId` for one group, or `clusterId` (or nothing, with a single cluster) for every group a cluster holds. Read the three bounds as three ROLES, not three numbers: `min` is a floor held right now; `desired` is a target approached only opportunistically and is deliberately NOT AWS’s desired capacity — being below it buys nothing on its own; `max` is how far urgency may reach right now. `settleSeconds` is not patience and never waits for a cheaper shape: it waits to be sure a pod is genuinely stuck rather than mid-schedule. `strategy` chooses only among shapes that ALREADY FIT — fitting is a precondition, never a strategy, so no strategy will ever pick a shape the pending pod cannot run on. A `monthlyCapEur` of null is no ceiling at all, never a ceiling of zero. Check `capability` before proposing anything: it is read from flags, never from the provider’s name. Then check `acts`, which answers the only question anybody has here — WOULD THIS GROUP DO ANYTHING — and is a different question from `provision`: two keys turn that lock, the group’s own mode and the spending this installation granted from outside the product, and a group set to `automatic` where nothing was granted decides and buys nothing at all. `acts.says` is the installation’s own sentence; relay it rather than rewording it, and read `acts.monthlyEur: null` as NO GRANT and never as a grant of €0, which is a different instruction. On a `replace` standing order, `drainable` says whether the node it would empty can be emptied: `ok: false` means that order will never proceed, and `null` is no answer at all rather than a yes.',
+      'Read a cluster’s scaling group — what it may buy, how far it may grow, what it may spend and what the provider actually allows. Pass `groupId` for one group, or `clusterId` (or nothing, with a single cluster) for every group a cluster holds. Read the three bounds as three ROLES, not three numbers: `min` is a floor held right now; `desired` is a target approached only opportunistically and is deliberately NOT AWS’s desired capacity — being below it buys nothing on its own; `max` is how far urgency may reach right now. `settleSeconds` is not patience and never waits for a cheaper shape: it waits to be sure a pod is genuinely stuck rather than mid-schedule. `strategy` chooses only among shapes that ALREADY FIT — fitting is a precondition, never a strategy, so no strategy will ever pick a shape the pending pod cannot run on. A `monthlyCapEur` of null is no ceiling at all, never a ceiling of zero. Check `capability` before proposing anything: it is read from flags, never from the provider’s name. Then check `acts`, which answers the only question anybody has here — WOULD THIS GROUP DO ANYTHING — and is not the same as `capability`: the provider may allow a purchase that a group set only to decide will never make. `acts.says` is the API’s own sentence; relay it rather than rewording it. On a `replace` standing order, `drainable` says whether the node it would empty can be emptied: `ok: false` means that order will never proceed, and `null` is no answer at all rather than a yes.',
     scope: MCP_SCOPE.INFRA_READ,
     inputSchema: {
       groupId: z
@@ -484,7 +481,7 @@ export const SCALING_TOOLS: ToolDef[] = [
       'GET /infrastructure/clusters/:clusterId/scaling-groups',
     ],
     description:
-      'What was decided on a cluster, and — the half that matters — what was DECLINED, newest first. Ask it of the CLUSTER: pass `clusterId` (or nothing, with a single cluster) and every group answers, each decision naming the group that took it. Pass `groupId` only to narrow it to one group. Never pick a group in order to ask why nothing happened — on a cluster with two groups that answers about the wrong fleet. Read this before ever proposing to scale anything: if the recent decisions are declines, nothing was scaled for the reason each `why` gives, and proposing the same thing again produces the same decline. Declines and alarms are first-class decisions here, not noise: `outcome: "declined"` carries the whole answer in `why`, and `outcome: "alerted"` carries `asks` — the sentence addressed to a person, which nothing in Flui will clear on its own. `considered` lists the candidates walked past with the reason each lost, and two of those reasons must not be collapsed: `over-budget` means the shape cost too much, `refused-by-limit` means it was available and affordable and this group’s own rules excluded it anyway. `outcome: "added"` and `outcome: "removed"` are decisions that reached a provider — a machine was bought, or a node was drained and given back — and their `why` names the gate that let it through and what it committed against the installation’s grant. Relay `why` in full on every outcome: where a purchase was refused it says WHICH gate refused it, in words — the group is set to decide and not act, the installation granted no spending, the amount would pass the grant, a machine is already on its way, the shape carries no price, the region is outside the cluster’s network — and those are six different situations with six different fixes. Never flatten one of them to "scaling did not work". An empty list means the group has decided nothing yet, NOT that it looked and found nothing to do.',
+      'What was decided on a cluster, and — the half that matters — what was DECLINED, newest first. Ask it of the CLUSTER: pass `clusterId` (or nothing, with a single cluster) and every group answers, each decision naming the group that took it. Pass `groupId` only to narrow it to one group. Never pick a group in order to ask why nothing happened — on a cluster with two groups that answers about the wrong fleet. Read this before ever proposing to scale anything: if the recent decisions are declines, nothing was scaled for the reason each `why` gives, and proposing the same thing again produces the same decline. Declines and alarms are first-class decisions here, not noise: `outcome: "declined"` carries the whole answer in `why`, and `outcome: "alerted"` carries `asks` — the sentence addressed to a person, which nothing in Flui will clear on its own. `considered` lists the candidates walked past with the reason each lost, and two of those reasons must not be collapsed: `over-budget` means the shape cost too much, `refused-by-limit` means it was available and affordable and this group’s own rules excluded it anyway. `outcome: "added"` and `outcome: "removed"` are decisions that reached a provider — a machine was bought, or a node was drained and given back — and their `why` names the gate that let it through. Relay `why` in full on every outcome: where a purchase was refused it says WHICH gate refused it, in words — the group is set to decide and not act, a machine is already on its way, the cluster is not ready, the shape carries no price against a ceiling the group named, the region is outside the cluster’s network — and those are different situations with different fixes. Never flatten one of them to "scaling did not work". An empty list means the group has decided nothing yet, NOT that it looked and found nothing to do.',
     scope: MCP_SCOPE.INFRA_READ,
     inputSchema: {
       groupId: z
@@ -576,7 +573,7 @@ export const SCALING_TOOLS: ToolDef[] = [
       'PATCH /infrastructure/scaling-groups/:id',
     ],
     description:
-      'Write or change a cluster’s scaling group — the standing authority for how large it may grow and how much it may spend unattended. Pass `groupId` to change an existing group, or `clusterId` (or nothing, with a single cluster) plus `name` and `bounds` to write a new one. THIS ASKS A PERSON: the route is inside Flui’s action cycle, so the call comes back as a request carrying the figure it derived from your own bounds and limits — "up to 5 nodes, up to €40 a month, without asking you" — and you must stop, tell the user exactly what was asked for, and retry the identical call once they have answered. `bounds` is replaced whole and so is `limits`: sending `limits` without `maxMonthlyCost` REMOVES the monthly ceiling, it does not leave it alone, so restate the cap every time. `provision: "automatic"` is refused wherever `capability.canProvision` is false — read scaling_group_get first and do not retry it there. Where there is no catalogue, `shapes` and `regions` are refused and `requirement` (what a machine must hold) is required instead; where there is one, the reverse. A standing order may only name a shape and a region the group is already allowed to buy, or it is a wait that can never end. `bounds.max: 0` is accepted and means a fleet that should hold no nodes — a statement, not a group switched off — and it needs `min` and `desired` at 0 as well. `provision: "automatic"` is HALF of what makes a group act: the other half is the spending this installation granted from outside the product, which no call here can widen. With no grant, setting a group to automatic buys nothing at all — it decides, writes the decision down and asks a person, exactly as `manual` would. With one, it may commit up to that figure a month without being asked again. The answer carries `acts` and `acts.says` for this group; read them and tell the user which of the two they now have, and never state a monthly figure that is not the one `acts` came back with.',
+      'Write or change a cluster’s scaling group — the standing authority for how large it may grow and how much it may spend unattended. Pass `groupId` to change an existing group, or `clusterId` (or nothing, with a single cluster) plus `name` and `bounds` to write a new one. THIS ASKS A PERSON: the route is inside Flui’s action cycle, so the call comes back as a request carrying the figure it derived from your own bounds and limits — "up to 5 nodes, up to €40 a month, without asking you" — and you must stop, tell the user exactly what was asked for, and retry the identical call once they have answered. `bounds` is replaced whole and so is `limits`: sending `limits` without `maxMonthlyCost` REMOVES the monthly ceiling, it does not leave it alone, so restate the cap every time. `provision: "automatic"` is refused wherever `capability.canProvision` is false — read scaling_group_get first and do not retry it there. Where there is no catalogue, `shapes` and `regions` are refused and `requirement` (what a machine must hold) is required instead; where there is one, the reverse. A standing order may only name a shape and a region the group is already allowed to buy, or it is a wait that can never end. `bounds.max: 0` is accepted and means a fleet that should hold no nodes — a statement, not a group switched off — and it needs `min` and `desired` at 0 as well. `provision: "automatic"` is what makes a group act without asking again, and `maxMonthlyCost` with `bounds.max` are the ceilings it acts within — all three on the group, where a reader can see them. The answer carries `acts` and `acts.says`; relay that sentence rather than rewording it, and never state a monthly figure that is not the one the group itself carries.',
     scope: MCP_SCOPE.INFRA_WRITE,
     inputSchema: {
       groupId: z
@@ -730,9 +727,7 @@ function written(
     group,
     // What a person just agreed to, said back in the same words the request
     // asked it in — and, where nothing can be bought, said as the alarm it
-    // really is rather than as a purchase that will never happen. The grant is
-    // the half the group cannot state about itself: `automatic` with nothing
-    // granted is a group that looks armed and buys nothing at all.
+    // really is rather than as a purchase that will never happen.
     note: `Tell the user what this now authorises: ${authorisedBy(group)}. ${actuationNote(group.acts)}`,
   };
 }
@@ -750,7 +745,7 @@ function silenceNote(
   groups?: GroupDto[],
 ): string {
   if (rows.length) {
-    return 'A decline is an answer, not a gap. Relay the `why` of the most recent decision rather than proposing the action it already refused, and relay `asks` verbatim on an alarm — nothing here clears one. On `added` and `removed` a machine actually changed and `why` names the gate that let it through, including what it committed against the grant; on a decline the same field names the gate that stopped it. Relay `why` in full either way, and never summarise it as "nothing happened".';
+    return 'A decline is an answer, not a gap. Relay the `why` of the most recent decision rather than proposing the action it already refused, and relay `asks` verbatim on an alarm — nothing here clears one. On `added` and `removed` a machine actually changed and `why` names the gate that let it through; on a decline the same field names the gate that stopped it. Relay `why` in full either way, and never summarise it as "nothing happened".';
   }
   if (asked === 'cluster' && groups && !groups.length) {
     return 'This cluster has no scaling group, so nothing has been decided for it. It will not grow and it will raise no alarm — say that, rather than reporting that no scaling was needed.';

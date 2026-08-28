@@ -153,10 +153,9 @@ export class StandingOrderResponseDto {
 /**
  * Whether anything this group decides would reach a provider, and why not.
  *
- * Two keys turn this lock and a screen showing one of them is a screen that
- * lies half the time: the group says it may act, the installation says how much
- * it may commit, and either alone leaves a group that looks armed and buys
- * nothing — or, worse, looks idle and spends.
+ * Separate from `capability.canProvision` on purpose: that says what the
+ * *provider* permits, and a group set only to decide would otherwise read as
+ * one that buys.
  */
 export class ScalingActuationDto {
   @ApiProperty({
@@ -168,13 +167,6 @@ export class ScalingActuationDto {
     description: 'What stands between this group and a purchase, in one line',
   })
   says: string;
-
-  @ApiProperty({
-    nullable: true,
-    description:
-      'The monthly ceiling this installation granted. Null when nothing was granted — never 0, which is a grant of nothing and a different instruction.',
-  })
-  monthlyEur: number | null;
 }
 
 export class ScalingGroupResponseDto {
@@ -415,7 +407,7 @@ export class ClusterScalingRowDto {
 
   @ApiProperty({
     description:
-      'Whether any group of this cluster would actually reach the provider — the group set to act AND the installation having granted the spending. False beside a provider Flui can buy from is the case worth naming: it looks armed and buys nothing.',
+      'Whether any group of this cluster is set to act, not merely to decide. False beside a provider Flui can buy from is the case worth naming: the provider allows a purchase that no group here will make.',
   })
   acts: boolean;
 

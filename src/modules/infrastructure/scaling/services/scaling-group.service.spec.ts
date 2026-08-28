@@ -3,7 +3,6 @@ import {
   ConflictException,
   NotFoundException,
 } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
 import { Repository } from 'typeorm';
 import { ScalingGroupService } from './scaling-group.service';
 import { ScalingGroupEntity } from '../entities/scaling-group.entity';
@@ -73,7 +72,6 @@ const cluster = (provider: string): ClusterEntity =>
 
 interface Fakes {
   service: ScalingGroupService;
-  config: { get: jest.Mock };
   groups: { [K in keyof Repository<ScalingGroupEntity>]?: jest.Mock };
   decisions: { [K in keyof Repository<ScalingDecisionEntity>]?: jest.Mock };
   clusters: { findOne: jest.Mock };
@@ -102,9 +100,6 @@ const make = (provider = 'hetzner', existing: unknown[] = []): Fakes => {
       getStaticCapabilities: () => DECLARED[p],
     }),
   } as unknown as CapabilitiesProviderFactory;
-  // No grant: the default state of an installation nobody has told what it may
-  // spend, and the one every assertion below should be read against.
-  const config = { get: jest.fn().mockReturnValue(undefined) };
 
   return {
     service: new ScalingGroupService(
@@ -112,12 +107,10 @@ const make = (provider = 'hetzner', existing: unknown[] = []): Fakes => {
       decisions as unknown as Repository<ScalingDecisionEntity>,
       clusters as unknown as Repository<ClusterEntity>,
       factory,
-      config as unknown as ConfigService,
     ),
     groups,
     decisions,
     clusters,
-    config,
     saved: () => groups.save.mock.calls[0][0] as ScalingGroupEntity,
   };
 };
@@ -416,43 +409,42 @@ describe('reading a group back', () => {
     expect(order.drainable).toBeNull();
   });
 
-  it('says a group will not act while the installation has granted nothing', async () => {
+  it('says a group that only decides will not act, and why', async () => {
     const { service, groups } = make();
-    groups.findOne?.mockResolvedValue(stored());
-    const dto = await service.get('g-1');
-    expect(dto.acts.acts).toBe(false);
-    expect(dto.acts.says).toContain('SCALING_CONCESSION_MONTHLY_EUR');
-    // Never 0: a grant of nothing and no grant at all are different instructions.
-    expect(dto.acts.monthlyEur).toBeNull();
-  });
-
-  it('needs the group to be set to act as well as the grant', async () => {
-    const { service, groups, config } = make();
-    config.get.mockReturnValue('40');
     groups.findOne?.mockResolvedValue(stored({ provision: 'manual' }));
     const dto = await service.get('g-1');
     expect(dto.acts.acts).toBe(false);
     expect(dto.acts.says).toContain('decides and does not act');
   });
 
-  it('acts only when both keys turn', async () => {
-    const { service, groups, config } = make();
-    config.get.mockReturnValue('40');
-    groups.findOne?.mockResolvedValue(stored());
+  it('acts once the group is set to buy, and quotes its own ceilings', async () => {
+    const { service, groups } = make();
+    groups.findOne?.mockResolvedValue(
+      stored({ provision: 'automatic', maxMonthlyCost: 40, maxNodes: 5 }),
+    );
     const dto = await service.get('g-1');
-    expect(dto.acts).toMatchObject({ acts: true, monthlyEur: 40 });
+    expect(dto.acts.acts).toBe(true);
+    // Its own ceilings, on the group, where a reader can see them — not a
+    // figure held somewhere outside the product.
+    expect(dto.acts.says).toContain('€40 a month');
+    expect(dto.acts.says).toContain('5 nodes');
+  });
+
+  it('says plainly when a group named no ceiling in money', async () => {
+    const { service, groups } = make();
+    groups.findOne?.mockResolvedValue(
+      stored({ provision: 'automatic', maxMonthlyCost: null }),
+    );
+    const dto = await service.get('g-1');
+    expect(dto.acts.says).toContain('no ceiling in money');
   });
 
   it('never claims a group acts where nothing can create a server', async () => {
-    const { service, groups, config } = make('byos');
-    config.get.mockReturnValue('40');
-    groups.findOne?.mockResolvedValue(stored());
+    const { service, groups } = make('byos');
+    groups.findOne?.mockResolvedValue(stored({ provision: 'automatic' }));
     const dto = await service.get('g-1');
     expect(dto.acts.acts).toBe(false);
     expect(dto.acts.says).toContain('cannot create a server');
-    // And it does not quote the installation's grant beside that sentence: the
-    // grant governs purchases, and this group will never make one.
-    expect(dto.acts.monthlyEur).toBeNull();
   });
 
   it('carries the drain the last pass found onto the order it belongs to', async () => {

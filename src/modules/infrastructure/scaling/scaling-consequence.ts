@@ -121,19 +121,13 @@ export function scalingConsequenceOf(
 /**
  * What a person is agreeing to when they let this be written.
  *
- * It must hold in both worlds, because it cannot see which one it is in: an
- * action cycle's consequence is a fixed sentence, and the spending grant lives
- * outside the product's data where no request body reaches it. The earlier
- * wording — *"where Flui can buy servers it buys within it"* — promised a
- * purchase that an installation with no grant never makes, which is the wrong
- * half of the two to be wrong about: it invites consent to spending that either
- * happens or does not, on a fact this sentence cannot check.
+ * It has to hold in both worlds, because it cannot see which one it is in: an
+ * action cycle's consequence is a fixed sentence, and whether this group buys
+ * depends on a field in the very body being written.
  */
 export const SCALING_CONSEQUENCE =
   'This becomes the standing limit the cluster is sized and billed against. ' +
-  'Whether anything is actually bought against it needs two things that are ' +
-  'not in this request: the group set to buy automatically, and a spending ' +
-  'grant made to this installation outside the product. With either missing ' +
-  'the group decides, writes down what it would have bought, and stops — and ' +
-  'where the provider has no create API at all, this is simply the figure an ' +
-  'alarm quotes to a person.';
+  'A group set to buy automatically acts on it without asking again, up to ' +
+  'the ceilings it names in nodes and in money; one set to decide writes down ' +
+  'what it would have bought and stops. Where the provider has no create API ' +
+  'at all, this is simply the figure an alarm quotes to a person.';

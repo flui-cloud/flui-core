@@ -160,8 +160,7 @@ export default class ScalingGet extends Command {
     const verdict = acting.acts
       ? chalk.green(acting.verdict)
       : chalk.yellow(acting.verdict);
-    const grant = chalk.dim('grant ' + acting.grant);
-    console.log(`  ${'acts'.padEnd(11)}${verdict}   ${grant}`);
+    console.log(`  ${'acts'.padEnd(11)}${verdict}`);
     console.log(`  ${' '.repeat(11)}${chalk.dim(acting.says)}`);
   }
 

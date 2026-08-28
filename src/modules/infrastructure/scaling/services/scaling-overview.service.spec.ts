@@ -1,5 +1,4 @@
 import { NotFoundException } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
 import { Repository } from 'typeorm';
 import { ScalingOverviewService } from './scaling-overview.service';
 import { ScalingGroupService } from './scaling-group.service';
@@ -94,8 +93,6 @@ const make = (opts: {
   latest?: Record<string, ScalingDecisionEntity>;
   nodes?: ClusterNodeEntity[];
   capability?: ProviderScalingCapability;
-  /** What the installation granted. Absent is the default: nothing. */
-  granted?: string;
 }) => {
   const decisions = {
     findOne: jest.fn(async (query: { where: { groupId: string } }) => {
@@ -117,7 +114,6 @@ const make = (opts: {
     {
       capabilityOf: () => opts.capability ?? HETZNER,
     } as unknown as ScalingGroupService,
-    { get: () => opts.granted } as unknown as ConfigService,
   );
   return { service, decisions };
 };
@@ -418,33 +414,20 @@ describe('an alarm nobody has acted on', () => {
 });
 
 describe('whether the cluster will actually be given a node', () => {
-  it('does not claim a cluster buys while nothing was granted to the installation', async () => {
-    const { service } = make({
-      clusters: [cluster({})],
-      groups: [group({ provision: 'automatic' })],
-    });
-    const [row] = await service.rows();
-
-    expect(row.capability.canProvision).toBe(true);
-    expect(row.acts).toBe(false);
-  });
-
   it('does not claim it buys while every group is set only to decide', async () => {
     const { service } = make({
       clusters: [cluster({})],
       groups: [group({ provision: 'manual' })],
-      granted: '40',
     });
     const [row] = await service.rows();
 
     expect(row.acts).toBe(false);
   });
 
-  it('says it buys once the group is set to act and the grant is there', async () => {
+  it('says it buys once a group is set to act', async () => {
     const { service } = make({
       clusters: [cluster({})],
       groups: [group({ provision: 'automatic' })],
-      granted: '40',
     });
     const [row] = await service.rows();
 
@@ -455,7 +438,6 @@ describe('whether the cluster will actually be given a node', () => {
     const { service } = make({
       clusters: [cluster({ provider: 'byos' })],
       groups: [group({ provision: 'automatic' })],
-      granted: '40',
       capability: {
         provider: 'byos',
         canProvision: false,
@@ -479,7 +461,6 @@ describe('one cluster on its own', () => {
       {} as unknown as Repository<ScalingDecisionEntity>,
       {} as unknown as Repository<ClusterNodeEntity>,
       {} as unknown as ScalingGroupService,
-      {} as unknown as ConfigService,
     );
 
     await expect(service.rowFor('nope')).rejects.toBeInstanceOf(

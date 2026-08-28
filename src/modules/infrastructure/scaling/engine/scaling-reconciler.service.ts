@@ -25,7 +25,7 @@ const REPEAT_SECONDS = 3600;
 
 /**
  * One pass over every scaling group: it decides, it writes down what it decided,
- * and — where an installation has granted it — it acts.
+ * and — where a group was set to act rather than to decide — it acts.
  *
  * The two halves stay separate all the way down. The engine cannot spend: it
  * produces words and, at most, an intent. Only the actuator can act on one, and
