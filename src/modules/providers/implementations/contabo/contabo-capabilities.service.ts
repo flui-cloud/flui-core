@@ -236,7 +236,6 @@ export class ContaboCapabilitiesService
       supportedRegions: [],
       credentialType: 'user_password',
       features: {
-        autoScaling: false,
         loadBalancers: false,
         privateNetworking: true,
         snapshots: true,

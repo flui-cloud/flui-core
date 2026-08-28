@@ -65,7 +65,6 @@ export class ByosCapabilitiesService implements IProviderCapabilitiesService {
       supportedRegions: [],
       credentialType: 'ssh',
       features: {
-        autoScaling: false, // dedicated manual-workload flow later
         loadBalancers: false, // k3s ServiceLB / Traefik
         privateNetworking: true, // but manual (operator-wired), see vnetTopology
         snapshots: false, // no provider volume snapshots

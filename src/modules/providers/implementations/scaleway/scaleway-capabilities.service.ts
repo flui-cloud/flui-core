@@ -193,7 +193,6 @@ export class ScalewayCapabilitiesService
       supportedRegions: [],
       credentialType: 'api_key',
       features: {
-        autoScaling: true, // Native Instance Scaling Groups with metrics-based policies
         loadBalancers: true,
         privateNetworking: true,
         snapshots: true,

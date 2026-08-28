@@ -5,6 +5,7 @@ import { InfrastructureOperationsModule } from './operations/infrastructure-oper
 import { ControlClusterModule } from './control-cluster/control-cluster.module';
 import { VNetsModule } from './vnets/vnets.module';
 import { PlatformComponentsModule } from './platform-components/platform-components.module';
+import { ScalingModule } from './scaling/scaling.module';
 import { ConfigModule } from '@nestjs/config';
 
 @Module({
@@ -16,6 +17,7 @@ import { ConfigModule } from '@nestjs/config';
     ControlClusterModule,
     VNetsModule,
     PlatformComponentsModule,
+    ScalingModule,
     // FirewallsModule (future)
   ],
   exports: [
@@ -25,6 +27,7 @@ import { ConfigModule } from '@nestjs/config';
     ControlClusterModule,
     VNetsModule,
     PlatformComponentsModule,
+    ScalingModule,
   ],
 })
 export class InfrastructureModule {}

@@ -198,7 +198,6 @@ export class HetznerCapabilitiesService
       supportedRegions: [],
       credentialType: 'api_key',
       features: {
-        autoScaling: false,
         loadBalancers: true,
         privateNetworking: true,
         snapshots: true,

@@ -83,7 +83,6 @@ export interface ProviderCapabilities {
     | 'user_password'
     | 'ssh';
   features: {
-    autoScaling: boolean;
     loadBalancers: boolean;
     privateNetworking: boolean;
     snapshots: boolean;

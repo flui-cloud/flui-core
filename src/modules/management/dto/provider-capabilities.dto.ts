@@ -120,9 +120,6 @@ export class ProviderRegionDto {
 
 export class ProviderFeaturesDto {
   @ApiProperty()
-  autoScaling: boolean;
-
-  @ApiProperty()
   loadBalancers: boolean;
 
   @ApiProperty()
