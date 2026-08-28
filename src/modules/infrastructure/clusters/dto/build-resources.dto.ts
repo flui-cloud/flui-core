@@ -1,4 +1,4 @@
-import { ApiProperty } from '@nestjs/swagger';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
 export type BuildResourceStatus =
   | 'ok'
@@ -17,7 +17,8 @@ export class BuildResourcesResponseDto {
   /**
    * Synthetic status the frontend uses to decide which UI state to render:
    *   - ok                  → enough resources, proceed
-   *   - autoscaling_required → not enough now, autoscaling will add a node
+   *   - autoscaling_required → not enough now, autoscaling is on; `message` says
+   *                             whether a node will actually appear
    *   - insufficient        → not enough, autoscaling disabled — user must act
    */
   @ApiProperty({
@@ -55,4 +56,12 @@ export class BuildResourcesResponseDto {
     description: 'Whether the cluster has autoscaling enabled',
   })
   autoscalingEnabled: boolean;
+
+  @ApiPropertyOptional({
+    nullable: true,
+    description:
+      'Plain sentence for the status above, including whether a node will ' +
+      'actually appear. null when the build job fits.',
+  })
+  message: string | null;
 }

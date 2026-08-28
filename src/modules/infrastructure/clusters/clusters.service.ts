@@ -27,6 +27,11 @@ import { ClusterDeletionService } from './services/cluster-deletion.service';
 import { ClusterMapperService } from './services/cluster-mapper.service';
 import { ClusterOperationsService } from './services/cluster-operations.service';
 import { ClusterPowerManagementService } from './services/cluster-power-management.service';
+import { AutoscaleActuationService } from './services/autoscale-actuation.service';
+import {
+  describeCapacityOutcome,
+  resolveAutoscaleActuation,
+} from './services/autoscale-actuation';
 import { EncryptionService } from '../../shared/encryption/services/encryption.service';
 import {
   ReconcileStatusResponseDto,
@@ -73,6 +78,7 @@ export class ClustersService {
     private readonly clusterPowerManagementService: ClusterPowerManagementService,
     private readonly encryptionService: EncryptionService,
     private readonly kubernetesService: KubernetesService,
+    private readonly actuationService: AutoscaleActuationService,
   ) {}
 
   /**
@@ -331,6 +337,10 @@ export class ClustersService {
       reason = 'insufficient_resources';
     }
 
+    const actuation = resolveAutoscaleActuation(
+      await this.actuationService.resolveFacts(cluster.provider, cluster.id),
+    );
+
     const formatCpu = (mc: number) => `${mc}m`;
     const formatMem = (mi: number) =>
       mi >= 1024 ? `${(mi / 1024).toFixed(1).replace('.0', '')}Gi` : `${mi}Mi`;
@@ -350,6 +360,8 @@ export class ClustersService {
       total: { cpu: formatCpu(total.cpu), memory: formatMem(total.memory) },
       used: { cpu: formatCpu(used.cpu), memory: formatMem(used.memory) },
       autoscalingEnabled,
+      actuation,
+      reasonMessage: reason ? describeCapacityOutcome(actuation, reason) : null,
     };
   }
 
@@ -378,6 +390,7 @@ export class ClustersService {
       total: check.total,
       used: check.used,
       autoscalingEnabled: check.autoscalingEnabled,
+      message: check.reasonMessage,
     };
   }
 }

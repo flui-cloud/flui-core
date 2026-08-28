@@ -27,6 +27,8 @@ export interface AddWorkerJobData {
   clusterId: string;
   count: number;
   providerFirewallIds: string[];
+  /** The shape to buy. Absent means the cluster's own size, as it always was. */
+  serverType?: string | null;
 }
 
 export interface RemoveWorkerJobData {
@@ -64,8 +66,9 @@ export class ClusterScalingService {
       capSvc?.getStaticCapabilities().features.nodeProvisioning ?? false;
     if (!supported) {
       throw new BadRequestException(
-        `Provider "${cluster.provider}" does not support node provisioning. ` +
-          'Node add/remove is only available on Hetzner and Scaleway clusters.',
+        `Provider "${cluster.provider}" has no server-provisioning API, so Flui ` +
+          'cannot add or remove a node here. Attach or detach the machine yourself, ' +
+          'then register or remove it as a node.',
       );
     }
   }
@@ -73,6 +76,7 @@ export class ClusterScalingService {
   async addWorkers(
     clusterId: string,
     count: number = 1,
+    serverType?: string | null,
   ): Promise<InfrastructureOperationEntity> {
     if (count < 1 || count > MAX_WORKERS_PER_CALL) {
       throw new BadRequestException(
@@ -113,6 +117,11 @@ export class ClusterScalingService {
       }
     }
 
+    // Checked here rather than in the queue: a shape the provider does not sell
+    // becomes an error four minutes deep in a job nobody is watching, and on a
+    // loop it becomes that error every time it runs.
+    if (serverType) await this.assertShapeSold(cluster, serverType);
+
     const firewall =
       await this.firewallsService.getFirewallByClusterId(clusterId);
     const providerFirewallIds = firewall ? [firewall.id] : [];
@@ -135,6 +144,7 @@ export class ClusterScalingService {
         clusterId,
         workerCount: count,
         providerFirewallIds,
+        serverType: serverType ?? cluster.nodeSize,
         operationSteps: steps,
         estimatedDurationInSeconds: 240 * count,
       },
@@ -146,6 +156,7 @@ export class ClusterScalingService {
       clusterId,
       count,
       providerFirewallIds,
+      serverType: serverType ?? null,
     };
 
     await this.infrastructureQueue.add('add-worker', jobData, {
@@ -157,6 +168,33 @@ export class ClusterScalingService {
       `Queued add-worker (${count}) for cluster ${clusterId} (operation ${saved.id})`,
     );
     return saved;
+  }
+
+  private async assertShapeSold(
+    cluster: ClusterEntity,
+    serverType: string,
+  ): Promise<void> {
+    const providerEnum = cluster.provider as CloudProvider;
+    if (!this.capabilitiesFactory.isProviderSupported(providerEnum)) return;
+    const capabilities =
+      this.capabilitiesFactory.getCapabilitiesService(providerEnum);
+
+    let sold: string[];
+    try {
+      sold = (await capabilities.getSupportedInstanceTypes()).map(
+        (type) => type.id,
+      );
+    } catch {
+      // An unreachable catalogue is not a verdict on the shape: refusing here
+      // would turn the provider having a bad minute into a shape that does not
+      // exist, and the purchase itself will say so if it really does not.
+      return;
+    }
+    if (!sold.length || sold.includes(serverType)) return;
+
+    throw new BadRequestException(
+      `Provider "${cluster.provider}" does not sell "${serverType}".`,
+    );
   }
 
   async removeWorker(

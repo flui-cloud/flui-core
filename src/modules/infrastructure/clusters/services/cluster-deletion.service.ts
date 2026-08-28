@@ -6,6 +6,8 @@ import {
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
+import { ScalingGroupEntity } from '../../scaling/entities/scaling-group.entity';
+import { ScalingDecisionEntity } from '../../scaling/entities/scaling-decision.entity';
 import { InjectQueue } from '@nestjs/bull';
 import { Queue } from 'bull';
 import {
@@ -41,6 +43,10 @@ export class ClusterDeletionService {
     private readonly clusterFirewallIntegrationService: ClusterFirewallIntegrationService,
     private readonly grafanaDatasourceService: GrafanaDatasourceService,
     private readonly clusterDnsCleanupService: ClusterDnsCleanupService,
+    @InjectRepository(ScalingGroupEntity)
+    private readonly scalingGroupRepository: Repository<ScalingGroupEntity>,
+    @InjectRepository(ScalingDecisionEntity)
+    private readonly scalingDecisionRepository: Repository<ScalingDecisionEntity>,
   ) {}
 
   /**
@@ -151,6 +157,31 @@ export class ClusterDeletionService {
       this.logger.error(
         `Failed to cleanup firewall for cluster ${clusterId}: ${error.message}`,
         error.stack,
+      );
+    }
+  }
+
+  /**
+   * The scaling groups of a cluster that is going away, and their decisions.
+   *
+   * Neither carries a foreign key — the sibling tables do not either — so
+   * nothing removes them on its own. A group whose cluster is gone is not
+   * harmful: the loop skips it and the overview lists clusters, so it never
+   * appears. That is exactly why it has to be swept here — it accumulates
+   * where nobody looks.
+   *
+   * Decisions go with the group, as they already do when a group is deleted on
+   * its own: a decision is a thing the group saw and chose, and it does not
+   * outlive it.
+   */
+  async cleanupClusterScalingGroups(clusterId: string): Promise<void> {
+    const decisions = await this.scalingDecisionRepository.delete({
+      clusterId,
+    });
+    const groups = await this.scalingGroupRepository.delete({ clusterId });
+    if (groups.affected || decisions.affected) {
+      this.logger.log(
+        `Removed ${groups.affected ?? 0} scaling group(s) and ${decisions.affected ?? 0} decision(s) of cluster ${clusterId}`,
       );
     }
   }

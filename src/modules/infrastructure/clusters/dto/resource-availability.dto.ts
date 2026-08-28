@@ -1,4 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { AutoscaleActuation } from '../services/autoscale-actuation';
 
 export type ResourceAvailabilityReason =
   | 'insufficient_resources'
@@ -71,4 +72,21 @@ export class ResourceAvailabilityResponseDto {
 
   @ApiProperty({ example: false })
   autoscalingEnabled: boolean;
+
+  @ApiProperty({
+    enum: AutoscaleActuation,
+    description:
+      'What happens on this provider when the cluster runs out of room. ' +
+      'Derived from provider capability and from whether anything is registered ' +
+      'to add nodes on its own.',
+  })
+  actuation: AutoscaleActuation;
+
+  @ApiPropertyOptional({
+    nullable: true,
+    description:
+      'Plain sentence for the reason above, including whether a node will ' +
+      'actually appear. null when the request fits.',
+  })
+  reasonMessage: string | null;
 }

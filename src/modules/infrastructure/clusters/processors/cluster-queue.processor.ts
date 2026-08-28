@@ -763,6 +763,10 @@ export class ClusterQueueProcessor {
         // Delete DNS records tagged with this cluster's ID
         await this.clusterDeletionService.cleanupClusterDnsRecords(clusterId);
 
+        await this.clusterDeletionService.cleanupClusterScalingGroups(
+          clusterId,
+        );
+
         // Update cluster status to DELETED
         clusterToDelete.status = ClusterStatus.DELETED;
         clusterToDelete.deletedAt = new Date();
@@ -1618,10 +1622,11 @@ export class ClusterQueueProcessor {
 
   @Process('add-worker')
   async handleAddWorker(job: Job<AddWorkerJobData>): Promise<void> {
-    const { operationId, clusterId, count, providerFirewallIds } = job.data;
+    const { operationId, clusterId, count, providerFirewallIds, serverType } =
+      job.data;
     const startedAt = Date.now();
     this.logger.log(
-      `Processing add-worker: cluster=${clusterId} count=${count} (operation ${operationId})`,
+      `Processing add-worker: cluster=${clusterId} count=${count} shape=${serverType ?? 'cluster default'} (operation ${operationId})`,
     );
 
     const preExistingNodeIds = new Set<string>();
@@ -1686,6 +1691,7 @@ export class ClusterQueueProcessor {
         count,
         operationId,
         providerFirewallIds,
+        serverType,
       );
 
       await this.updateOperationStep(operationId, 1, 100, {

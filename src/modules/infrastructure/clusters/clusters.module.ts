@@ -62,6 +62,14 @@ import { InfrastructureOperationsModule } from '../operations/infrastructure-ope
 
 // Processors
 import { ClusterQueueProcessor } from './processors/cluster-queue.processor';
+import { AutoscaleActuationService } from './services/autoscale-actuation.service';
+import { AutoscaleReconcilerRegistry } from './services/autoscale-reconciler.registry';
+import { ScalingGroupEntity } from '../scaling/entities/scaling-group.entity';
+import { ScalingDecisionEntity } from '../scaling/entities/scaling-decision.entity';
+import { NodePriceService } from './services/node-price.service';
+import { NodeShapeBackfillService } from './services/node-shape-backfill.service';
+import { UnschedulablePodsService } from './services/unschedulable-pods.service';
+import { FleetHistoryService } from './services/fleet-history.service';
 
 @Module({
   imports: [
@@ -86,6 +94,10 @@ import { ClusterQueueProcessor } from './processors/cluster-queue.processor';
 
     // Cluster entities
     TypeOrmModule.forFeature([
+      // Swept when a cluster is deleted: neither carries a foreign key, so
+      // nothing removes them on its own.
+      ScalingGroupEntity,
+      ScalingDecisionEntity,
       ClusterEntity,
       ClusterNodeEntity,
       NodeBillableIntervalEntity,
@@ -120,6 +132,12 @@ import { ClusterQueueProcessor } from './processors/cluster-queue.processor';
     ClusterBillingService,
     BillingIntervalsService,
     ClusterAutoscaleService,
+    AutoscaleReconcilerRegistry,
+    AutoscaleActuationService,
+    NodePriceService,
+    NodeShapeBackfillService,
+    UnschedulablePodsService,
+    FleetHistoryService,
     ClusterVNetService,
     ClusterScalingService,
     ClusterStorageService,
@@ -137,9 +155,15 @@ import { ClusterQueueProcessor } from './processors/cluster-queue.processor';
   ],
   exports: [
     ClustersService,
+    AutoscaleReconcilerRegistry,
+    // Exported for the scaling actuator, the one caller outside this module
+    // allowed to add or remove a node without a person asking for it.
+    ClusterScalingService,
     ClusterMapperService, // Export for use in ControlClusterModule
     ClusterBillingService, // Export for use in BackupsModule (BillingEstimatorService)
     BillingIntervalsService,
+    NodePriceService,
+    NodeShapeBackfillService,
   ],
 })
 export class ClustersModule {}
