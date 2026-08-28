@@ -424,7 +424,9 @@ export class ClusterDnsZoneController {
     action: 'POST /clusters/:clusterId/dns-zone/configure-issuer/:type',
     bind: ['clusterId', 'type'],
     sentence: 'rewrite the {type} certificate issuers of cluster {clusterId}',
-    estimate: '/clusters/:clusterId/dns-zone/issuers',
+    // No estimate: that route lists the issuers already configured.
+    consequence:
+      'Certificates for this zone will be issued through this provider from now on.',
   })
   @ApiOperation({
     summary: 'Create or update cert-manager ClusterIssuers by type',

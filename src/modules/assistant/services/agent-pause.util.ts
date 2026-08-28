@@ -63,10 +63,13 @@ export function didNotTakeEffect(result: string): boolean {
 export function waitMessage(refusal: ProposalRefusal): string {
   const where = refusal.decideUrl ? ` at ${refusal.decideUrl}` : '';
   const priced = refusal.estimateWithheld ? ` ${ESTIMATE_WITHHELD_NOTE}` : '';
+  const effect = refusal.consequence
+    ? ` If allowed: ${refusal.consequence}`
+    : '';
   return (
     `${AGENT_WAIT_PREFIX}: this needs you to allow it first — "${refusal.sentence}". ` +
     `NOTHING was changed and nothing failed. Tell the user what was asked for and that ` +
-    `they can allow it${where}; do not retry it in this turn and do not reword it.${priced}`
+    `they can allow it${where}; do not retry it in this turn and do not reword it.${effect}${priced}`
   );
 }
 
@@ -101,17 +104,10 @@ export function isStandingRefusal(error: unknown): boolean {
  * that did not run — while the model has to be told the opposite of what a wait
  * tells it: not "retry once they answer" but "they answered; stop".
  */
-export const AGENT_STANDING_REFUSAL_PREFIX = 'REFUSED, and the answer stands';
-
-/** What the model is told when the person's no to this exact call already stands. */
-export function standingRefusalMessage(detail: string): string {
-  return (
-    `${AGENT_STANDING_REFUSAL_PREFIX}: ${detail} NOTHING was changed and nothing ` +
-    `failed. Do NOT retry it and do NOT reword the arguments to get around it — a ` +
-    `different wording raises a new question instead of changing this answer. Tell ` +
-    `the user what was refused and offer a different course of action.`
-  );
-}
+export {
+  AGENT_STANDING_REFUSAL_PREFIX,
+  standingRefusalMessage,
+} from '../../action-cycle/action-cycle.core';
 
 /**
  * What the register is told about a turn the cycle stopped.

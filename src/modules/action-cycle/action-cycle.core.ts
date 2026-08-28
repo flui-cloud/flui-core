@@ -62,6 +62,35 @@ export const ACTION_PROPOSAL_CODE = 'ACTION_PROPOSAL_PENDING';
 /** Raised when the person answered "no" and the agent tried the same call again. */
 export const ACTION_PROPOSAL_DENIED_CODE = 'ACTION_PROPOSAL_DENIED';
 
+/**
+ * What an agent is told when the person's no to this exact call already stands.
+ *
+ * It lives here, in the cycle's own vocabulary, because **two** surfaces have to
+ * say it and neither may say it differently. The chat had it and the MCP
+ * surface did not: a denial arrives as a plain 403, so
+ * `McpApiError.agentMessage` fell through to "Refused by Flui access control …
+ * access to it has to be granted first" — which sends a coding agent off to ask
+ * for an IAM grant on behalf of somebody who has just decided against the
+ * thing. The comment on `isStandingRefusal` had already named the trap ("both
+ * surfaces present a settled decision as an access-control failure") while
+ * closing it on one of them.
+ *
+ * `didNotTakeEffect` has to read **true** of this string — the assistant's loop
+ * rebuilds what happened from the transcript, and a settled refusal is a call
+ * that never ran — while the instruction to the model is the opposite of the
+ * one a wait carries: not "retry once they answer" but "they answered; stop".
+ */
+export const AGENT_STANDING_REFUSAL_PREFIX = 'REFUSED, and the answer stands';
+
+export function standingRefusalMessage(detail: string): string {
+  return (
+    `${AGENT_STANDING_REFUSAL_PREFIX}: ${detail} NOTHING was changed and nothing ` +
+    `failed. Do NOT retry it and do NOT reword the arguments to get around it — a ` +
+    `different wording raises a new question instead of changing this answer. Tell ` +
+    `the user what was refused and offer a different course of action.`
+  );
+}
+
 /** Routes are declared and matched without the global API prefix. */
 export function stripApiPrefix(path: string): string {
   return path.replace(/^\/api\/v\d+/, '');
@@ -333,6 +362,16 @@ export interface ProposalRefusal {
    * can act on — including the agent, whose only honest action is to say so.
    */
   estimateWithheld: boolean;
+  /**
+   * What happens if the person allows it, when the route said so.
+   *
+   * Kept, where `estimateRef` is deliberately dropped, and the difference is
+   * the rule this reader follows: a field is admitted by what it lets a reader
+   * *do*. A path lets a model do nothing but guess at a call; a sentence lets
+   * it tell the person what it asked for and what that would do — which is the
+   * one thing an agent parked on a wait is actually able to contribute.
+   */
+  consequence?: string;
 }
 
 /**
@@ -364,6 +403,7 @@ export function readProposalRefusal(
     decideUrl: typeof b.decideUrl === 'string' ? b.decideUrl : undefined,
     expiresAt: typeof b.expiresAt === 'string' ? b.expiresAt : undefined,
     estimateWithheld: typeof b.estimateRef === 'string' && !!b.estimateRef,
+    consequence: typeof b.consequence === 'string' ? b.consequence : undefined,
   };
 }
 

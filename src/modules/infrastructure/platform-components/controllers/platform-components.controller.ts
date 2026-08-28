@@ -114,7 +114,10 @@ export class PlatformComponentsController {
     bind: ['clusterId', 'componentKey'],
     sentence:
       'restart platform component {componentKey} on cluster {clusterId}',
-    estimate: '/infrastructure/clusters/:clusterId/platform-components',
+    // No estimate: that route lists the components. It costs nothing; what it
+    // does is interrupt one.
+    consequence:
+      'The component restarts and is briefly unavailable while it does.',
   })
   @ApiOperation({
     summary: 'Redeploy/fix a platform component',

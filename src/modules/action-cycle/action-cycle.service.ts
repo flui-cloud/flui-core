@@ -151,6 +151,7 @@ export class ActionCycleService {
       sentence: proposal.sentence,
       offersAlways: proposal.offersAlways,
       estimateRef: proposal.estimateRef ?? undefined,
+      consequence: proposal.consequence ?? undefined,
       // Where a person answers. Stated by the API rather than assembled by each
       // surface: the MCP server turns this refusal into a URL elicitation, and a
       // second copy of "which page decides a request" would be a second thing
@@ -240,6 +241,7 @@ export class ActionCycleService {
         estimateRef: attempt.decl.estimate
           ? (renderRoute(attempt.decl.estimate, attempt.params) ?? null)
           : null,
+        consequence: attempt.decl.consequence ?? null,
         status: PROPOSAL_STATUS.PENDING,
         expiresAt,
       }),

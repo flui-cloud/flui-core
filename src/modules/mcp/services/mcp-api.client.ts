@@ -7,9 +7,11 @@ import {
   extractJwtFromFluiSessionCookie,
 } from '../../auth/utils/cookie-extractor.util';
 import {
+  ACTION_PROPOSAL_DENIED_CODE,
   ESTIMATE_WITHHELD_NOTE,
   ProposalRefusal,
   readProposalRefusal,
+  standingRefusalMessage,
 } from '../../action-cycle/action-cycle.core';
 import {
   AGENT_SURFACE_HEADER,
@@ -120,7 +122,21 @@ export class McpApiError extends Error {
       const priced = this.proposal.estimateWithheld
         ? ` ${ESTIMATE_WITHHELD_NOTE}`
         : '';
-      return `Waiting on a person (HTTP 403) on ${where}: ${this.proposal.sentence}. NOTHING was changed. This is not a permission problem and not a bad argument — the person you act for has been asked to allow it${at}. Tell them what you asked for, then retry the IDENTICAL call once they have answered; varying the arguments raises a second request instead of getting past this one.${priced}`;
+      // An agent parked on a wait can do exactly one useful thing: tell the
+      // person what it asked for, and what allowing it would do.
+      const effect = this.proposal.consequence
+        ? ` If allowed: ${this.proposal.consequence}`
+        : '';
+      return `Waiting on a person (HTTP 403) on ${where}: ${this.proposal.sentence}. NOTHING was changed. This is not a permission problem and not a bad argument — the person you act for has been asked to allow it${at}. Tell them what you asked for, then retry the IDENTICAL call once they have answered; varying the arguments raises a second request instead of getting past this one.${effect}${priced}`;
+    }
+    // A settled "no", told as a settled no. Without this branch it fell to the
+    // 403 case below, which says the opposite of what happened: that this is an
+    // access-control problem somebody could grant their way out of. It is not —
+    // the person you act for considered this exact call and declined it, and
+    // sending an agent off to request a permission for it wastes their time
+    // arguing with a decision.
+    if (this.code === ACTION_PROPOSAL_DENIED_CODE) {
+      return standingRefusalMessage(`(HTTP 403) on ${where}: ${this.detail}`);
     }
     switch (true) {
       case this.status === 401:

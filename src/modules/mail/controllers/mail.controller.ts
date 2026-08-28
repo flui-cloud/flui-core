@@ -242,6 +242,8 @@ export class MailController {
     action: 'POST /mail/domains/:domain/publish',
     bind: ['domain'],
     sentence: 'claim {domain} as a sending domain and publish its DNS records',
+    consequence:
+      'Records are written into the DNS zone for that domain, replacing any that share their names.',
   })
   @ApiOperation({
     summary: 'Register a sending domain and publish the records it needs',

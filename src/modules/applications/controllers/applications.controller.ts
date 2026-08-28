@@ -107,6 +107,8 @@ export class ApplicationsController {
     action: 'POST /clusters/:clusterId/applications',
     bind: ['clusterId'],
     sentence: 'create applications in cluster {clusterId}',
+    consequence:
+      'The applications are scheduled onto the cluster and start consuming its capacity.',
   })
   @ApiOperation({
     summary: 'Create a new application in a cluster',
@@ -516,6 +518,8 @@ export class ApplicationsController {
     action: 'POST /applications/:id/deploy',
     bind: ['id'],
     sentence: 'deploy application {id} whenever it asks',
+    consequence:
+      'The running version is replaced by the one being built; if that build is broken, the application is down until it is rolled back.',
   })
   @ApiOperation({ summary: 'Trigger deployment for an application' })
   @ApiParam({ name: 'id', description: 'Application ID' })

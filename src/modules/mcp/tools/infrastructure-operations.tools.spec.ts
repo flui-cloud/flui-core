@@ -45,6 +45,7 @@ function controllerFiles(dir: string): string[] {
 interface Declared {
   action: string;
   estimate?: string;
+  consequence?: string;
   bound: boolean;
 }
 
@@ -66,7 +67,8 @@ function actionCycleDeclarations(): Map<string, Declared> {
       if (action) {
         found.set(action, {
           action,
-          estimate: /estimate:\s*'([^']+)'/.exec(block)?.[1],
+          estimate: /\n\s*estimate:\s*'([^']+)'/.exec(block)?.[1],
+          consequence: /consequence:\s*\n?\s*'([^']+)'/.exec(block)?.[1],
           bound: /bind:\s*\[/.test(block),
         });
       }
@@ -83,12 +85,16 @@ const WRITE_SCOPES: string[] = [
   MCP_SCOPE.INFRA_DESTRUCTIVE,
 ];
 
-const writes = INFRASTRUCTURE_OPERATION_TOOLS.filter((t) =>
-  WRITE_SCOPES.includes(t.scope),
-);
-const reads = INFRASTRUCTURE_OPERATION_TOOLS.filter(
-  (t) => t.scope === MCP_SCOPE.INFRA_READ,
-);
+/**
+ * Read off the whole registry rather than off this file, because the area is
+ * what has the property and the area no longer lives in one file: the scaling
+ * group is operated from `scaling.tools.ts` on the same two scopes. Filtering
+ * by the file would have let a machine-room write ship against an undecorated
+ * route simply by being declared next door — which is the exact failure the
+ * second assertion below exists to catch.
+ */
+const writes = ALL_TOOLS.filter((t) => WRITE_SCOPES.includes(t.scope));
+const reads = ALL_TOOLS.filter((t) => t.scope === MCP_SCOPE.INFRA_READ);
 
 describe('operating the infrastructure — the pause is on the route', () => {
   it('sends every write to a route that declares the action cycle', () => {
@@ -194,15 +200,25 @@ describe('what the person is asked, and with what attached', () => {
       '/infrastructure/clusters/:id/nodes/:nodeId/scale/preview',
       'cluster_node_scale_preview',
     ],
-    [
-      'POST /infrastructure/clusters/:id/storage/expand',
-      '/infrastructure/clusters/:id/storage',
-      'cluster_storage_status',
-    ],
   ])('prices %s with %s', (action, estimate, tool) => {
     expect(estimateOf(action)).toBe(estimate);
     const published = ALL_TOOLS.find((t) => t.name === tool);
     expect(published?.routes).toContain(`GET ${estimate}`);
+  });
+
+  /**
+   * `GET .../storage` returns the shared layer's configuration and runtime
+   * status and no figure at all, so it cannot back a price on the expand
+   * action. Asserted here so the pairing is not quietly restored.
+   */
+  it('does not pretend the storage status is a price', () => {
+    expect(
+      estimateOf('POST /infrastructure/clusters/:id/storage/expand'),
+    ).toBeUndefined();
+    expect(
+      CYCLED.get('POST /infrastructure/clusters/:id/storage/expand')
+        ?.consequence,
+    ).toBeTruthy();
   });
 
   /**

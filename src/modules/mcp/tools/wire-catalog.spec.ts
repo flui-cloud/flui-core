@@ -96,6 +96,16 @@ const ARGS: Record<string, Record<string, unknown>> = {
   mail_events: {},
   mail_suppressions: {},
   app_variable_request: { applicationId: 'a1', key: 'STRIPE_SECRET_KEY' },
+  // The delivery hand-offs. Not one of them accepts a value, so there is
+  // nothing here that could stand in for a credential — which is itself the
+  // thing worth noticing about this block.
+  api_key_request: { purpose: 'read the deploy status nightly' },
+  ghcr_token_request: {},
+  mail_provider_request: { provider: 'brevo' },
+  backup_destination_request: { name: 'nightly', bucket: 'flui-backups' },
+  provider_credentials_request: { provider: 'hetzner' },
+  inference_connection_request: {},
+  user_invite_request: { email: 'bob@acme.com' },
   operating_context_read: {},
   my_permissions: {},
   // An explicit revision on purpose: without one the tool reads the revision
@@ -139,6 +149,45 @@ const ARGS: Record<string, Record<string, unknown>> = {
     certChallenge: 'http-01',
   },
   mail_domain_publish: { domain: 'example.com' },
+  scaling_group_get: { groupId: 'g1' },
+  scaling_overview: {},
+  scaling_why: { groupId: 'g1' },
+  scaling_group_set: { groupId: 'g1', bounds: { min: 1, desired: 2, max: 3 } },
+};
+
+/**
+ * A scaling group with its bounds, limits and capability in place.
+ *
+ * The generic reply below has none of those, and the projections do arithmetic
+ * on all three — the sentence they hand a person is derived from them, so an
+ * object without them is not a thinner answer, it is a different tool.
+ */
+const SCALING_GROUP = {
+  id: 'g1',
+  name: 'general',
+  clusterId: 'c1',
+  clusterName: 'one',
+  provider: 'hetzner',
+  capability: {
+    provider: 'hetzner',
+    canProvision: true,
+    hasCatalogue: true,
+    billing: 'hourly',
+  },
+  bounds: { min: 1, desired: 2, max: 5 },
+  regions: ['fsn1'],
+  shapes: ['cx22'],
+  strategy: 'cheapest',
+  settleSeconds: 30,
+  limits: { hourlyBillingOnly: false, maxMonthlyCost: 40 },
+  provision: 'automatic',
+  acts: {
+    acts: true,
+    says: 'This installation may commit up to €200 a month on its own, and only through groups set to buy automatically.',
+    monthlyEur: 200,
+  },
+  standingOrders: [],
+  requirement: null,
 };
 
 interface Recorded {
@@ -152,6 +201,12 @@ const ARRAY_PATHS = [
   /^\/repositories$/,
   /^\/mail\/(events|suppressions)$/,
   /^\/backup-policies$/,
+  /^\/backup-destinations$/,
+  /^\/mail\/connections$/,
+  /^\/inference\/connections$/,
+  /^\/management\/providers$/,
+  /^\/auth\/users(\?|$)/,
+  /^\/auth\/api-keys$/,
   /^\/clusters\/[^/]+\/applications$/,
   /^\/applications\/[^/]+\/(schedules|resources)$/,
   /^\/applications\/[^/]+\/schedules\/[^/]+\/runs$/,
@@ -161,6 +216,11 @@ const ARRAY_PATHS = [
 
 function replyFor(path: string): unknown {
   if (path === '/infrastructure/clusters') return [{ id: 'c1', name: 'one' }];
+  if (path.startsWith('/infrastructure/scaling-groups/')) {
+    return path.endsWith('/decisions') ? [] : SCALING_GROUP;
+  }
+  if (path.startsWith('/infrastructure/scaling')) return [];
+  if (/\/scaling-groups$/.test(path)) return [SCALING_GROUP];
   if (ARRAY_PATHS.some((re) => re.test(path))) return [];
   if (path.endsWith('/storage/orphaned-claims')) {
     return {

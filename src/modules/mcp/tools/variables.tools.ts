@@ -2,28 +2,7 @@ import { z } from 'zod';
 import { MCP_SCOPE } from '../constants/mcp-scopes';
 import { acceptedContent, inputRequired } from '../protocol/mrtr';
 import { defineTool, McpToolContext, ToolDef } from './mcp-tool.util';
-
-/**
- * cli_action — the twin of `ui_action` (see repo.tools.ts), pointing at the
- * terminal instead of the browser.
- *
- * Same rule, different destination: the agent never performs the flow itself.
- * It hands the person a command to run on their own machine, and the value
- * travels from their keyboard to encrypted storage without passing through the
- * model, the agent's context, or anybody's shell history.
- */
-interface CliAction {
-  cliAction: { kind: 'run_command'; command: string; label: string };
-  instructions: string;
-}
-
-function runCommand(command: string, key: string): CliAction {
-  return {
-    cliAction: { kind: 'run_command', command, label: `Deliver ${key}` },
-    instructions:
-      'Relay this command for the person to run in their own terminal. Do not run it yourself, do not fill in a value, and do not ask them to paste the value to you.',
-  };
-}
+import { runCommand } from './handover';
 
 /** Path-segment safety: an id from a model is input, not a literal. */
 const enc = encodeURIComponent;
@@ -139,7 +118,7 @@ export const VARIABLE_TOOLS: ToolDef[] = [
         `/applications/${enc(args.applicationId)}`,
       );
       const command = `flui app env set ${app.slug} ${args.key}`;
-      const action = runCommand(command, args.key);
+      const action = runCommand(command, `Deliver ${args.key}`);
 
       const before = await ctx.api.get<VariablesView>(
         variablesPath(args.applicationId),

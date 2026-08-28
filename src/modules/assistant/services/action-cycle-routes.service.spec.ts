@@ -144,10 +144,30 @@ describe('the tools whose request the chat can show', () => {
   const tiered = (name: string) =>
     SCOPE_TIER[ALL_TOOLS.find((t) => t.name === name)!.scope];
 
-  const writeTools = ALL_TOOLS.filter(
+  const writeTier = ALL_TOOLS.filter(
     (t) =>
       SCOPE_TIER[t.scope] === 'write' || SCOPE_TIER[t.scope] === 'destructive',
   );
+
+  /**
+   * Write-tier scope, every declared route a GET: it hands over, it does not
+   * write.
+   *
+   * The tier is read off the scope, and a scope is chosen to clear the
+   * *route's* permission — so a tool that only looks can still need a write
+   * scope to be allowed to look. `user_invite_request` is the first: listing
+   * the accounts on this instance is gated on `iam:assign-role`, which only
+   * `mcp:iam:write` carries, and the tool's entire purpose is that the
+   * invitation is issued by a person and not by it.
+   *
+   * Excluded by what it declares rather than by name, so the exclusion cannot
+   * rot: the day one of these grows a POST it rejoins the pile and this suite
+   * says so.
+   */
+  const handsOverOnly = writeTier.filter((t) =>
+    (t.routes ?? []).every((r) => r.startsWith('GET ')),
+  );
+  const writeTools = writeTier.filter((t) => !handsOverOnly.includes(t));
   const sorted = () => {
     const inside: string[] = [];
     const outside: string[] = [];
@@ -184,6 +204,10 @@ describe('the tools whose request the chat can show', () => {
     'migration_destroy_source',
     'platform_component_redeploy',
     'san_certificate_create',
+    // A scaling group is not a node, it is the standing figure a cluster may
+    // grow and spend to unattended — which is the class of thing the cycle
+    // exists for even though nothing is bought at the moment it is written.
+    'scaling_group_set',
     'schedule_delete',
   ];
 
@@ -228,9 +252,23 @@ describe('the tools whose request the chat can show', () => {
   it('counts every write the registry publishes, on both sides of the line', () => {
     const { inside, outside } = sorted();
     expect(inside.length + outside.length).toBe(writeTools.length);
+    expect(inside.length + outside.length + handsOverOnly.length).toBe(
+      writeTier.length,
+    );
     expect(writeTools.length).toBeGreaterThan(40);
     // Every tool answers the question — none is left out for want of a route.
-    expect(writeTools.filter((t) => !t.routes?.length)).toEqual([]);
+    expect(writeTier.filter((t) => !t.routes?.length)).toEqual([]);
+  });
+
+  /**
+   * Named so the exclusion is a list somebody reads, not a filter nobody sees.
+   * A second entry appearing here is worth a look; a genuine write appearing
+   * here would mean its declared routes are wrong.
+   */
+  it('excludes only the hand-offs that declare nothing but reads', () => {
+    expect(handsOverOnly.map((t) => t.name).sort()).toEqual([
+      'user_invite_request',
+    ]);
   });
 
   it('never loses a write the cycle already governs', () => {

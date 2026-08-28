@@ -1,32 +1,10 @@
 import { z } from 'zod';
 import { MCP_SCOPE } from '../constants/mcp-scopes';
 import { defineTool, ToolDef } from './mcp-tool.util';
+import { UiOpenUrlAction, UiSubmitFormAction } from './handover';
 
 /** Path-segment safety: a value from a model is input, not a literal. */
 const enc = encodeURIComponent;
-
-/**
- * ui_action convention (surface-agnostic): a tool may return a top-level `uiAction`
- * directive when a step needs the human's browser. Both surfaces consume the SAME
- * tool result — the MCP host shows the URL/payload as text for the user to act on;
- * the dashboard renders it as a button. The agent never performs the browser flow;
- * the URL/manifest is generated server-side.
- *  - kind 'open_url'    → open `url` in a browser (OAuth, install).
- *  - kind 'submit_form' → POST `fields` (e.g. a GitHub App manifest) to `url`.
- */
-interface UiOpenUrlAction {
-  uiAction: { kind: 'open_url'; url?: string; label: string };
-  instructions: string;
-}
-interface UiSubmitFormAction {
-  uiAction: {
-    kind: 'submit_form';
-    url: string;
-    fields: Record<string, string>;
-    label: string;
-  };
-  instructions: string;
-}
 
 /**
  * `owner/repo`, from either of the two things a model hands over. Anything that

@@ -58,15 +58,37 @@ export interface ActionCycleDecl {
    */
   clause?: SentenceClause;
   /**
-   * A GET route that prices this action, as a pattern to be filled from the
-   * same request.
+   * A GET route that prices **this action**, or previews its impact, as a
+   * pattern to be filled from the same request.
    *
    * The guard stores the resolved path and never calls it: a gate that priced
    * its own decision would fail whenever the pricing call failed, which turns
    * a billing question into an availability one. Whoever renders the request
    * has the reference and the caller's own credential.
+   *
+   * **Only a route that answers "what will this cost / what will it disturb"
+   * belongs here.** Six declarations pointed at a current-state read or a plain
+   * list — the storage in use, the current billing period, the components, the
+   * issuers, the certificates — and both readers were misled by it: the person
+   * deciding was offered "the estimate" and handed a list, and the agent was
+   * told, in {@link ESTIMATE_WITHHELD_NOTE}, that *"this action has a price you
+   * cannot see"*, which for those six was simply untrue. What those routes
+   * offered was context, and context has its own field now.
    */
   estimate?: string;
+  /**
+   * What happens if the person says yes, in one plain sentence.
+   *
+   * {@link sentence} says what is being asked for; this says what it does. They
+   * are different questions and were being answered by the same string, which
+   * is why an estimate route kept being pressed into service as a stand-in for
+   * the second one.
+   *
+   * Declared, never derived: the guard cannot know that redeploying a component
+   * interrupts it, and a sentence assembled from the verb and the path would be
+   * a guess dressed as a fact.
+   */
+  consequence?: string;
 }
 
 /**

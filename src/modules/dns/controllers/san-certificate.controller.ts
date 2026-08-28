@@ -36,7 +36,9 @@ export class SanCertificateController {
     bind: ['clusterId'],
     sentence:
       'issue a certificate covering several hostnames on cluster {clusterId}',
-    estimate: '/clusters/:clusterId/san-certificates',
+    // No estimate: that route lists the certificates that exist.
+    consequence:
+      'A certificate is requested from the issuing authority for these names.',
   })
   @ApiOperation({
     summary:

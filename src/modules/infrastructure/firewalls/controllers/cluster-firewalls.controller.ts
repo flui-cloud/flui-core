@@ -210,6 +210,8 @@ export class ClusterFirewallsController {
     action: 'POST /firewalls/cluster/:clusterId/enable',
     bind: ['clusterId'],
     sentence: 'enable and apply the firewall of cluster {clusterId}',
+    consequence:
+      'Traffic that the rules do not permit stops reaching the cluster, including, if the rules are wrong, your own access to it.',
   })
   @ApiOperation({
     summary: 'Enable firewall for a cluster',

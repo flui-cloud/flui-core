@@ -1,5 +1,9 @@
 import type { Request } from 'express';
 import {
+  AGENT_STANDING_REFUSAL_PREFIX,
+  standingRefusalMessage,
+} from '../../action-cycle/action-cycle.core';
+import {
   McpApiClient,
   McpApiError,
   credentialFromRequest,
@@ -121,6 +125,67 @@ describe('McpApiClient — the caller carries the caller credential', () => {
       expect(message).toContain('NOT a scope problem');
       expect(message).toMatch(/Do NOT retry/);
       expect(err(403).isAccessRefusal).toBe(true);
+    });
+
+    /**
+     * The half of A9 the assistant closed for itself and left open here.
+     *
+     * A settled "no" arrives as a plain 403. Without its own branch it fell
+     * through to the access-control sentence above, which tells a coding agent
+     * that somebody has to grant a permission — so the agent goes and asks the
+     * person who has just declined to grant themselves permission to be
+     * overruled. Nothing on the wire separates the two cases; the code does.
+     */
+    it('tells a settled refusal apart from an access-control refusal', () => {
+      const denied = err(
+        403,
+        'The person refused this.',
+        'ACTION_PROPOSAL_DENIED',
+      ).agentMessage;
+
+      expect(denied).toContain(AGENT_STANDING_REFUSAL_PREFIX);
+      expect(denied).toContain('NOTHING was changed');
+      expect(denied).not.toContain('Refused by Flui access control');
+      expect(denied).not.toContain('has to be granted first');
+    });
+
+    /**
+     * One sentence, two surfaces. The chat reads `standingRefusalMessage`
+     * directly; the MCP host reads `agentMessage`. Pinned as equality rather
+     * than as "both mention a refusal", because the failure this closes was
+     * precisely two surfaces answering the same fact differently.
+     */
+    it('says exactly what the chat says about the same refusal', () => {
+      const detail =
+        '(HTTP 403) on GET /applications/a1: The person refused this.';
+      expect(
+        err(403, 'The person refused this.', 'ACTION_PROPOSAL_DENIED')
+          .agentMessage,
+      ).toBe(standingRefusalMessage(detail));
+    });
+
+    /** The same sentence, on the surface a coding agent reads. */
+    it('carries what the action would do, when the route declared it', () => {
+      const waiting = new McpApiError(
+        403,
+        'needs a person',
+        'POST',
+        '/infrastructure/clusters',
+        'ACTION_PROPOSAL_PENDING',
+        undefined,
+        {
+          proposalId: 'p1',
+          action: 'POST /infrastructure/clusters',
+          sentence: 'create a new cluster at a cloud provider',
+          offersAlways: false,
+          estimateWithheld: false,
+          consequence: 'Servers are bought at the provider and billed.',
+        },
+      ).agentMessage;
+
+      expect(waiting).toContain(
+        'If allowed: Servers are bought at the provider and billed.',
+      );
     });
 
     it('keeps the machine-readable code when the API sent one', () => {

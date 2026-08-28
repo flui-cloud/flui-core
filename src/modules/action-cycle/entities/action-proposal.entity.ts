@@ -77,6 +77,17 @@ export class ActionProposalEntity {
   @Column({ type: 'varchar', nullable: true })
   estimateRef?: string | null;
 
+  /**
+   * What happens if this is allowed, as the route declared it.
+   *
+   * Stored beside the sentence rather than rendered from the declaration on
+   * read, for the same reason `offersAlways` is: the register has to show what
+   * the person was actually told at the time, not what the code would say
+   * today.
+   */
+  @Column({ type: 'varchar', nullable: true })
+  consequence?: string | null;
+
   /** The price, once somebody with a credential has fetched it. */
   @Column({ type: 'jsonb', nullable: true })
   estimate?: Record<string, unknown> | null;

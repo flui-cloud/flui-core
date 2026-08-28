@@ -278,3 +278,34 @@ describe('the loop that has to hand the wait over', () => {
     expect(call).toContain('def, false, message');
   });
 });
+
+/**
+ * The half the estimate field kept standing in for.
+ *
+ * `sentence` says what was asked for; `consequence` says what it does. Six
+ * routes had been pointing `estimate` at a plain listing to cover the second
+ * question, which told the person there was a price to read and told the agent,
+ * in so many words, that the action had one. Both surfaces now carry the
+ * sentence instead, and both are pinned here because the failure this closes
+ * was two surfaces answering the same fact differently.
+ */
+describe('what happens if the person says yes', () => {
+  const refusal = (consequence?: string) => ({
+    proposalId: 'p1',
+    action: 'POST /things/:id/go',
+    sentence: 'do the thing',
+    offersAlways: false,
+    estimateWithheld: false,
+    consequence,
+  });
+
+  it('reaches the chat when the route declared it', () => {
+    expect(waitMessage(refusal('Servers start being billed.'))).toContain(
+      'If allowed: Servers start being billed.',
+    );
+  });
+
+  it('says nothing extra when the route declared nothing', () => {
+    expect(waitMessage(refusal())).not.toContain('If allowed:');
+  });
+});
