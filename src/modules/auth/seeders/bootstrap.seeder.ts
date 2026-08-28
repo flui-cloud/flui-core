@@ -562,6 +562,8 @@ export class BootstrapSeeder implements OnModuleInit {
         nipHostnameToken,
         sharedStorageVolumeId,
         sharedStorageVolumeSizeGb,
+        subnetId,
+        masterIp,
       });
       await this.seedKubeconfig(existingCluster);
       return clusterId;
@@ -592,40 +594,25 @@ export class BootstrapSeeder implements OnModuleInit {
       },
     });
 
-    const nodeId = process.env.SERVER_ID;
-    const instanceId = process.env.INSTANCE_ID || '';
-    const instanceName = process.env.INSTANCE_NAME || `${cluster.name}-master`;
+    const master = await this.ensureMasterNodeRecord(cluster, {
+      subnetId,
+      masterIp,
+      privateIp,
+    });
 
-    const resolvedProviderResourceId = await this.resolveProviderResourceId(
-      cluster.provider as CloudProvider,
-      instanceId,
-      instanceName,
-    );
-
-    if (nodeId) {
-      await this.clusterNodeRepo.save({
-        id: nodeId,
-        clusterId,
-        serverName: instanceName,
-        providerResourceId: resolvedProviderResourceId,
-        nodeType: NodeType.MASTER,
-        ipAddress: masterIp,
-        privateIp,
-        subnetId: subnetId || undefined,
-        status: NodeStatus.READY,
-        metadata: { source: 'bootstrap-seeder' },
-      });
+    if (master?.created) {
       await this.billingIntervals.openNodeInterval({
         clusterId,
-        nodeId,
-        serverName: instanceName,
-        providerResourceId: resolvedProviderResourceId,
+        nodeId: master.nodeId,
+        serverName: master.serverName,
+        providerResourceId: master.providerResourceId,
         provider: cluster.provider,
         region: cluster.region,
         serverType: cluster.nodeSize,
         nodeType: NodeType.MASTER,
       });
     }
+    const resolvedProviderResourceId = master?.providerResourceId ?? '';
     if (sharedStorageVolumeId) {
       await this.billingIntervals.openVolumeInterval({
         clusterId,
@@ -658,6 +645,8 @@ export class BootstrapSeeder implements OnModuleInit {
       nipHostnameToken?: string;
       sharedStorageVolumeId?: string;
       sharedStorageVolumeSizeGb?: number;
+      subnetId?: string | null;
+      masterIp?: string;
     },
   ): Promise<void> {
     const {
@@ -666,7 +655,19 @@ export class BootstrapSeeder implements OnModuleInit {
       nipHostnameToken,
       sharedStorageVolumeId,
       sharedStorageVolumeSizeGb,
+      subnetId,
+      masterIp,
     } = opts;
+
+    // The billing backfill at the end of `run()` opens an interval for a node
+    // that has none, so a repaired row does not truncate the interval that
+    // outlived it.
+    await this.ensureMasterNodeRecord(existingCluster, {
+      subnetId: subnetId ?? null,
+      masterIp,
+      privateIp,
+    });
+
     let dirty = false;
     if (vnetConfig && !existingCluster.metadata?.vnetConfig?.vnetId) {
       existingCluster.metadata = {
@@ -716,6 +717,68 @@ export class BootstrapSeeder implements OnModuleInit {
     } else {
       this.logger.debug('Cluster already seeded');
     }
+  }
+
+  /**
+   * The master row is reconciled on every boot, not only on the one that
+   * inserts the cluster. `infrastructure_cluster_nodes` cascades from
+   * `infrastructure_clusters` while `infrastructure_node_billable_intervals`
+   * has no foreign key at all, so a cluster row replaced under the same id
+   * would otherwise leave an open billable interval and no node.
+   *
+   * `created` is false when the row was already there, so the caller opens a
+   * billable interval only for a node it actually wrote.
+   */
+  private async ensureMasterNodeRecord(
+    cluster: ClusterEntity,
+    opts: { subnetId: string | null; masterIp?: string; privateIp?: string },
+  ): Promise<{
+    nodeId: string;
+    serverName: string;
+    providerResourceId: string;
+    created: boolean;
+  } | null> {
+    const nodeId = process.env.SERVER_ID;
+    if (!nodeId) return null;
+
+    const instanceId = process.env.INSTANCE_ID || '';
+    const serverName = process.env.INSTANCE_NAME || `${cluster.name}-master`;
+    const providerResourceId = await this.resolveProviderResourceId(
+      cluster.provider as CloudProvider,
+      instanceId,
+      serverName,
+    );
+
+    const existing = await this.clusterNodeRepo.findOne({
+      where: { id: nodeId },
+    });
+    if (existing) {
+      return { nodeId, serverName, providerResourceId, created: false };
+    }
+
+    // BYOS has no region and no size to record; the seeder's own env carries
+    // the provider's placeholders, which would read here as a real shape.
+    const byos = cluster.provider === CloudProvider.BYOS;
+
+    await this.clusterNodeRepo.save({
+      id: nodeId,
+      clusterId: cluster.id,
+      serverName,
+      providerResourceId,
+      nodeType: NodeType.MASTER,
+      ipAddress: opts.masterIp,
+      privateIp: opts.privateIp,
+      subnetId: opts.subnetId || undefined,
+      status: NodeStatus.READY,
+      provider: cluster.provider,
+      region: byos ? null : cluster.region || null,
+      serverType: byos ? null : cluster.nodeSize || null,
+      hourlyPriceEur: null,
+      metadata: { source: 'bootstrap-seeder' },
+    });
+    this.logger.log(`✅ Master node record ensured: ${serverName} (${nodeId})`);
+
+    return { nodeId, serverName, providerResourceId, created: true };
   }
 
   private async attachServerToSubnet(

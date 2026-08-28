@@ -13,6 +13,7 @@ import { ClusterMapperService } from './cluster-mapper.service';
 import { ClusterResponseDto } from '../dto/cluster-response.dto';
 import { CloudProvider } from '../../../providers/enums/cloud-provider.enum';
 import { ByosVNetService } from './byos-vnet.service';
+import { BillingIntervalsService } from './billing-intervals.service';
 
 /**
  * Service for additional cluster operations
@@ -30,6 +31,7 @@ export class ClusterOperationsService {
     private readonly encryptionService: EncryptionService,
     private readonly clusterMapperService: ClusterMapperService,
     private readonly byosVNetService: ByosVNetService,
+    private readonly billingIntervals: BillingIntervalsService,
   ) {}
 
   async getKubeconfig(clusterId: string): Promise<string> {
@@ -108,6 +110,12 @@ export class ClusterOperationsService {
         serverName: input.serverName,
         nodeType: nodeType as ClusterNodeEntity['nodeType'],
         providerResourceId: input.byos?.host || input.ipAddress || '',
+        // A BYOS machine is the operator's own: Flui knows whose provider it is
+        // and nothing else about its shape or its cost.
+        provider: cluster.provider,
+        region: null,
+        serverType: null,
+        hourlyPriceEur: null,
       });
 
     node.nodeType = nodeType as ClusterNodeEntity['nodeType'];
@@ -117,6 +125,25 @@ export class ClusterOperationsService {
     node.metadata = { ...node.metadata, externallyManaged: true, ...byosMeta };
 
     const saved = await this.nodeRepository.save(node);
+
+    // Only for a node this call brought into being: re-registering an existing
+    // one would close its interval and open a second, splitting one machine's
+    // lifetime in two. The interval carries no price of its own — the fleet
+    // reads it off the node, and a BYOS node's is null, so the machine is
+    // counted as unpriced rather than as free.
+    if (!existing) {
+      await this.billingIntervals.openNodeInterval({
+        clusterId,
+        nodeId: saved.id,
+        serverName: saved.serverName,
+        providerResourceId: saved.providerResourceId,
+        provider: cluster.provider,
+        region: cluster.region,
+        serverType: cluster.nodeSize,
+        nodeType: saved.nodeType,
+        startedAt: saved.createdAt,
+      });
+    }
 
     const total = await this.nodeRepository.count({ where: { clusterId } });
     await this.clusterRepository.update(clusterId, { nodeCount: total });

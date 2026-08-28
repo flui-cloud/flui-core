@@ -73,6 +73,8 @@ import { ActionProposalEntity } from '../modules/action-cycle/entities/action-pr
 import { AgentConcessionEntity } from '../modules/action-cycle/entities/agent-concession.entity';
 import { OperatingContextEntryEntity } from '../modules/operating-context/entities/operating-context-entry.entity';
 import { SandboxTenantEntity } from '../modules/sandbox/entities/sandbox-tenant.entity';
+import { ScalingGroupEntity } from '../modules/infrastructure/scaling/entities/scaling-group.entity';
+import { ScalingDecisionEntity } from '../modules/infrastructure/scaling/entities/scaling-decision.entity';
 
 export const entities = [
   SSHKeyEntity,
@@ -144,4 +146,6 @@ export const entities = [
   ActionProposalEntity,
   AgentConcessionEntity,
   OperatingContextEntryEntity,
+  ScalingGroupEntity,
+  ScalingDecisionEntity,
 ];

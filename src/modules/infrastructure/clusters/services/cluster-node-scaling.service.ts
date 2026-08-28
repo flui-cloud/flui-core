@@ -8,6 +8,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { ClusterEntity } from '../entities/cluster.entity';
 import { ClusterNodeEntity, NodeType } from '../entities/cluster-node.entity';
+import { NodePriceService } from './node-price.service';
 import {
   InfrastructureOperationEntity,
   OperationStatus,
@@ -63,6 +64,7 @@ export class ClusterNodeScalingService {
     private readonly kubernetesService: KubernetesService,
     private readonly encryptionService: EncryptionService,
     private readonly billingIntervals: BillingIntervalsService,
+    private readonly nodePriceService: NodePriceService,
   ) {}
 
   // ─── Impact preview ────────────────────────────────────────────────────────
@@ -265,6 +267,14 @@ export class ClusterNodeScalingService {
         }
       }
       await this.advanceStep(saved.id, 4, 100);
+
+      node.serverType = request.targetServerType;
+      node.hourlyPriceEur = await this.nodePriceService.resolveHourlyEur(
+        cluster.provider,
+        request.targetServerType,
+        cluster.region,
+      );
+      await this.nodeRepository.save(node);
 
       await this.billingIntervals.openNodeInterval({
         clusterId: cluster.id,

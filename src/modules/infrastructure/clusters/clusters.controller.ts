@@ -81,6 +81,8 @@ import { Public } from '../../auth/decorators/public.decorator';
 import { ClusterStorageStatusDto } from './dto/cluster-storage.dto';
 import { ClusterCapacityService } from './services/cluster-capacity.service';
 import { ClusterCapacityPlanDto } from './dto/cluster-capacity-plan.dto';
+import { FleetHistoryDto } from './dto/fleet-history.dto';
+import { FleetHistoryService } from './services/fleet-history.service';
 import { ClusterNodeScalingService } from './services/cluster-node-scaling.service';
 import { ScaleNodeDto, ExpandSharedVolumeDto } from './dto/scale-node.dto';
 import { OrphanVolumesService } from './services/orphan-volumes.service';
@@ -139,6 +141,7 @@ export class ClustersController {
     private readonly orphanVolumesService: OrphanVolumesService,
     private readonly byosNodeJoinService: ByosNodeJoinService,
     private readonly byosVNetService: ByosVNetService,
+    private readonly fleetHistoryService: FleetHistoryService,
   ) {}
 
   @Get('orphan-volumes')
@@ -416,6 +419,48 @@ export class ClustersController {
     return this.clusterAutoscaleService.getStatus(clusterId);
   }
 
+  /*
+   * The same `clusters` section as the two autoscale reads above, and the
+   * permission it already implies written out beside it so the credential
+   * ceiling can see the route at all. `scale:execute` is deliberately not
+   * reused: it guards application scaling, and a key minted to restart an app
+   * has no business reading a cluster's fleet.
+   */
+  @Get(':id/fleet/history')
+  @RequireSection('clusters')
+  @RequirePermission(IAM_PERMISSION.CLUSTER_READ)
+  @ApiOperation({
+    summary: 'Get the fleet over time, one series per node shape',
+    description:
+      'Counts node lifetimes from the billable intervals into a series per ' +
+      'server type, with the fleet cost per hour on the same samples. ' +
+      'Intervals whose node row no longer exists are counted and reported ' +
+      'separately rather than dropped.',
+  })
+  @ApiParam({ name: 'id', description: 'Cluster ID' })
+  @ApiQuery({
+    name: 'days',
+    required: false,
+    description: 'Window length, 1-365, default 30',
+  })
+  @ApiQuery({
+    name: 'stepHours',
+    required: false,
+    description: 'Sampling step, 1-168, default 24',
+  })
+  @ApiResponse({ status: 200, type: FleetHistoryDto })
+  @ApiResponse({ status: 404, description: 'Cluster not found' })
+  async getFleetHistory(
+    @Param('id') clusterId: string,
+    @Query('days') days?: string,
+    @Query('stepHours') stepHours?: string,
+  ): Promise<FleetHistoryDto> {
+    return this.fleetHistoryService.getHistory(clusterId, {
+      days: parsePositive(days),
+      stepHours: parsePositive(stepHours),
+    });
+  }
+
   @Patch(':id/autoscale')
   @RequireSection('infrastructure')
   @ActionCycle({
@@ -492,6 +537,8 @@ export class ClustersController {
   @ActionCycle({
     action: 'POST /infrastructure/clusters',
     sentence: 'create a new cluster at a cloud provider',
+    consequence:
+      'Servers are bought at the provider and billed from the moment they boot.',
   })
   @ApiOperation({
     summary: 'Create a new K3s cluster',
@@ -639,6 +686,8 @@ export class ClustersController {
     action: 'POST /infrastructure/clusters/:id/nodes/:nodeId/uncordon',
     bind: ['id', 'nodeId'],
     sentence: 'make node {nodeId} of cluster {id} schedulable again',
+    consequence:
+      'Workloads start being placed on that node again, including ones that moved off it.',
   })
   @ApiOperation({
     summary: 'Mark a cluster node schedulable again',
@@ -698,7 +747,9 @@ export class ClustersController {
     bind: ['id'],
     sentence:
       'grow the shared storage of cluster {id}, which can never shrink back',
-    estimate: '/infrastructure/clusters/:id/storage',
+    // No estimate: `GET .../storage` reports the storage in use now, which is
+    // not what expanding it will cost.
+    consequence: 'The cluster volume grows and cannot be shrunk again.',
   })
   @ApiOperation({
     summary: 'Expand the cluster shared-storage backing volume',
@@ -734,7 +785,11 @@ export class ClustersController {
   @Get(':id/nodes')
   @ApiOperation({
     summary: 'Get cluster nodes',
-    description: 'Returns all nodes in the cluster',
+    description:
+      'Returns all nodes in the cluster, each with the shape it actually is: ' +
+      'provider, region, serverType and hourlyPriceEur. The last three are null ' +
+      'where the provider records no such thing — a BYOS machine is the ' +
+      "operator's own, so a null price means no price is known, never free.",
   })
   @ApiParam({
     name: 'id',
@@ -754,6 +809,10 @@ export class ClustersController {
       ipAddress: n.ipAddress,
       status: n.status,
       providerResourceId: n.providerResourceId,
+      provider: n.provider,
+      region: n.region ?? null,
+      serverType: n.serverType ?? null,
+      hourlyPriceEur: n.hourlyPriceEur ?? null,
       createdAt: n.createdAt,
       metadata: n.metadata,
     }));
@@ -1058,7 +1117,12 @@ export class ClustersController {
     bind: ['id'],
     sentence:
       'power off every server of cluster {id}, taking everything on it offline',
-    estimate: '/infrastructure/clusters/:id/billing',
+    // No estimate: `GET .../billing` is the current period's spend, and what
+    // this action changes about the bill depends on the provider — some keep
+    // charging for a stopped server. Saying "it has a price you cannot see"
+    // was the wrong half of that.
+    consequence:
+      'Every application on the cluster stops answering until somebody powers it back on.',
   })
   @ApiOperation({
     summary: 'Stop all cluster servers (async)',
@@ -1099,7 +1163,9 @@ export class ClustersController {
     action: 'POST /infrastructure/clusters/:id/start',
     bind: ['id'],
     sentence: 'power the servers of cluster {id} back on',
-    estimate: '/infrastructure/clusters/:id/billing',
+    // No estimate, for the same reason as powering off.
+    consequence:
+      'The servers boot and start being charged again; applications come back as their nodes rejoin.',
   })
   @ApiOperation({
     summary: 'Start all cluster servers (async)',
@@ -1352,4 +1418,11 @@ export class ClustersController {
   ): Promise<BuildResourcesResponseDto> {
     return this.clustersService.getBuildResources(clusterId);
   }
+}
+
+/** Undefined rather than NaN for anything unparseable, so a typo falls back to the default. */
+function parsePositive(raw?: string): number | undefined {
+  if (raw === undefined) return undefined;
+  const value = Number.parseInt(raw, 10);
+  return Number.isFinite(value) && value > 0 ? value : undefined;
 }

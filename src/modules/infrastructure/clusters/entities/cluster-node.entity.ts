@@ -57,6 +57,39 @@ export class ClusterNodeEntity {
   @Column({ type: 'uuid', nullable: true })
   subnetId?: string;
 
+  @Column()
+  provider: string;
+
+  /**
+   * Null where the provider has no such notion — a BYOS machine has no region
+   * and no size, and writing the provider's own name into these (as the
+   * billable intervals do) makes a placeholder look like a shape.
+   */
+  @Column({ nullable: true })
+  region?: string | null;
+
+  @Column({ nullable: true })
+  serverType?: string | null;
+
+  /**
+   * Null, never 0, when no price is known: on BYOS the machine is the
+   * operator's own and a zero would read as "free".
+   */
+  @Column({
+    type: 'decimal',
+    precision: 12,
+    scale: 6,
+    nullable: true,
+    // Postgres hands numeric back as a string; without this the declared
+    // `number` would be a lie at runtime.
+    transformer: {
+      to: (value?: number | null): number | null => value ?? null,
+      from: (value: string | null): number | null =>
+        value === null ? null : Number.parseFloat(value),
+    },
+  })
+  hourlyPriceEur?: number | null;
+
   @Column({
     type: 'enum',
     enum: NodeStatus,

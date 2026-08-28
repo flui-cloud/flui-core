@@ -237,6 +237,9 @@ export class CliClusterCreatorService {
         nodeType: NodeType.MASTER,
         status: NodeStatus.CREATING,
         ipAddress: '', // Will be updated after server creation
+        provider: cluster.provider,
+        region: cluster.region || null,
+        serverType: cluster.nodeSize || null,
         metadata: {},
       });
       await this.nodeRepository.save(masterNode);
@@ -486,6 +489,9 @@ export class CliClusterCreatorService {
             nodeType: NodeType.WORKER,
             status: NodeStatus.CREATING,
             ipAddress: '', // Will be updated after server creation
+            provider: cluster.provider,
+            region: cluster.region || null,
+            serverType: cluster.nodeSize || null,
             metadata: {},
           });
           await this.nodeRepository.save(workerNode);
@@ -751,6 +757,10 @@ export class CliClusterCreatorService {
         status: NodeStatus.CREATING,
         ipAddress: publicIp,
         privateIp: byos.host,
+        // The operator's own machine: no region, no size, no price to record.
+        provider: cluster.provider,
+        region: null,
+        serverType: null,
         metadata: { byosHost: byos.host, byosPort: port },
       });
       await this.nodeRepository.save(masterNode);
@@ -1277,6 +1287,9 @@ export class CliClusterCreatorService {
       status: NodeStatus.JOINING,
       ipAddress: opts.host,
       privateIp,
+      provider: cluster.provider,
+      region: null,
+      serverType: null,
       metadata: { byos: { host: opts.host, port, user } },
     });
     await this.nodeRepository.save(workerNode);

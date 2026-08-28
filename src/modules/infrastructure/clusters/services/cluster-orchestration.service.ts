@@ -38,6 +38,7 @@ import { NativeSSHConnectionService } from 'src/modules/terminal/services/native
 import { KubernetesService } from '../../shared/services/kubernetes.service';
 import { BillingIntervalsService } from './billing-intervals.service';
 import { VolumeBillableKind } from '../entities/volume-billable-interval.entity';
+import { NodePriceService } from './node-price.service';
 import * as crypto from 'node:crypto';
 
 @Injectable()
@@ -65,6 +66,7 @@ export class ClusterOrchestrationService {
     private readonly nativeSsh: NativeSSHConnectionService,
     private readonly kubernetesService: KubernetesService,
     private readonly billingIntervals: BillingIntervalsService,
+    private readonly nodePriceService: NodePriceService,
   ) {}
 
   /**
@@ -93,7 +95,7 @@ export class ClusterOrchestrationService {
     // Create node record FIRST so we have the node.id for SERVER_ID in cloud-init
     const serverName = `${cluster.name}-master`;
     const node = await this.ensureNodeRecord(
-      cluster.id,
+      cluster,
       serverName,
       NodeType.MASTER,
     );
@@ -352,6 +354,11 @@ export class ClusterOrchestrationService {
     node.ipAddress = masterServer.public_ip || masterServer.private_ip;
     node.privateIp = masterServer.private_ip ?? null;
     node.status = NodeStatus.JOINING;
+    node.hourlyPriceEur = await this.nodePriceService.resolveHourlyEur(
+      cluster.provider,
+      node.serverType,
+      masterServer.location ?? cluster.region,
+    );
     if (cluster.metadata?.vnetConfig) {
       node.subnetId = cluster.metadata.vnetConfig.subnetId ?? null;
       node.metadata = {
@@ -477,6 +484,7 @@ export class ClusterOrchestrationService {
     count: number,
     operationId: string,
     providerFirewallIds?: string[],
+    serverType?: string | null,
   ): Promise<ClusterNodeEntity[]> {
     this.logger.log(
       `Creating ${count} worker nodes for cluster ${cluster.name}`,
@@ -495,6 +503,13 @@ export class ClusterOrchestrationService {
       );
     }
 
+    // Numbering continues from the fleet that is already there. Starting from
+    // 1 every time makes the second purchase ask for a name the first one took,
+    // which reuses that node's row and then asks the provider for a duplicate
+    // server — harmless while a person adds workers by hand and rare, fatal on
+    // a loop that adds them by itself.
+    const nextIndex = await this.nextWorkerIndex(cluster);
+
     // Create workers in batches of 2 for better performance
     const batchSize = 2;
     for (let i = 0; i < count; i += batchSize) {
@@ -502,7 +517,7 @@ export class ClusterOrchestrationService {
       const batchPromises = [];
 
       for (let j = 0; j < batch; j++) {
-        const workerIndex = i + j + 1;
+        const workerIndex = nextIndex + i + j;
         batchPromises.push(
           this.createWorkerNode(
             cluster,
@@ -511,6 +526,7 @@ export class ClusterOrchestrationService {
             masterJoinIp,
             operationId,
             providerFirewallIds,
+            serverType,
           ),
         );
       }
@@ -528,6 +544,20 @@ export class ClusterOrchestrationService {
     return workers;
   }
 
+  private async nextWorkerIndex(cluster: ClusterEntity): Promise<number> {
+    const rows = await this.nodeRepository.find({
+      where: { clusterId: cluster.id },
+      select: ['serverName'],
+    });
+    const prefix = `${cluster.name}-worker-`;
+    const highest = rows.reduce((peak, row) => {
+      if (!row.serverName?.startsWith(prefix)) return peak;
+      const index = Number(row.serverName.slice(prefix.length));
+      return Number.isInteger(index) ? Math.max(peak, index) : peak;
+    }, 0);
+    return highest + 1;
+  }
+
   /**
    * Create a single worker node
    */
@@ -538,8 +568,13 @@ export class ClusterOrchestrationService {
     masterIp: string,
     operationId: string,
     providerFirewallIds?: string[],
+    serverType?: string | null,
   ): Promise<ClusterNodeEntity> {
     const serverName = `${cluster.name}-worker-${index}`;
+    // A fleet stops being uniform the moment something chooses a shape per
+    // node, so the shape travels with the request; the cluster's own size is
+    // the default for every caller that never had one to give.
+    const shape = serverType || cluster.nodeSize;
     this.logger.log(`Creating worker node: ${serverName}`);
 
     // Retrieve CA public key for injection into cloud-init
@@ -551,10 +586,11 @@ export class ClusterOrchestrationService {
 
     // Create node record FIRST so we have the node.id for SERVER_ID in cloud-init
     const node = await this.ensureNodeRecord(
-      cluster.id,
+      cluster,
       serverName,
       NodeType.WORKER,
       { workerIndex: index },
+      shape,
     );
 
     const controlClusterIp = await this.resolveWorkerObservabilityIp(cluster);
@@ -660,10 +696,10 @@ export class ClusterOrchestrationService {
         serverConfig: {
           name: serverName,
           provider: cluster.provider as CloudProvider,
-          server_type: cluster.nodeSize,
+          server_type: shape,
           location: cluster.region,
           region: cluster.region,
-          size: cluster.nodeSize,
+          size: shape,
           image: cluster.image || 'ubuntu-22.04',
           sshKeys: [savedBootstrapKey.id],
           labels: labels,
@@ -685,7 +721,7 @@ export class ClusterOrchestrationService {
       config: {
         name: serverName,
         provider: cluster.provider as CloudProvider,
-        server_type: cluster.nodeSize,
+        server_type: shape,
         image: cluster.image || 'ubuntu-24.04',
         location: cluster.region,
         ssh_keys:
@@ -739,6 +775,11 @@ export class ClusterOrchestrationService {
     node.ipAddress = workerServer.public_ip || workerServer.private_ip;
     node.privateIp = workerServer.private_ip ?? null;
     node.status = NodeStatus.READY;
+    node.hourlyPriceEur = await this.nodePriceService.resolveHourlyEur(
+      cluster.provider,
+      node.serverType,
+      workerServer.location ?? cluster.region,
+    );
     if (cluster.metadata?.vnetConfig) {
       if (!workerServer.private_ip) {
         throw new Error(
@@ -1229,11 +1270,14 @@ export class ClusterOrchestrationService {
    * matches the SERVER_ID the already-booted node reports for its metrics.
    */
   private async ensureNodeRecord(
-    clusterId: string,
+    cluster: ClusterEntity,
     serverName: string,
     nodeType: NodeType,
     metadata: Record<string, unknown> = {},
+    serverType?: string | null,
   ): Promise<ClusterNodeEntity> {
+    const shape = serverType || cluster.nodeSize || null;
+    const clusterId = cluster.id;
     const existing = await this.nodeRepository.findOne({
       where: { clusterId, serverName },
     });
@@ -1250,6 +1294,14 @@ export class ClusterOrchestrationService {
         providerResourceId: '', // Will be updated after server creation
         nodeType,
         status: NodeStatus.CREATING,
+        provider: cluster.provider,
+        region: cluster.region || null,
+        serverType: shape,
+        hourlyPriceEur: await this.nodePriceService.resolveHourlyEur(
+          cluster.provider,
+          shape,
+          cluster.region,
+        ),
         metadata,
       }),
     );
