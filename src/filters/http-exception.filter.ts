@@ -44,7 +44,9 @@ export class HttpExceptionFilter implements ExceptionFilter {
      *
      * `estimateRef` is carried because the reader turns it into a boolean and
      * keeps the reference on this side of the guard — the fact that a price
-     * exists crosses, the path to it does not.
+     * exists crosses, the path to it does not. `consequence` crosses whole: it
+     * is a sentence written for a person to read, and it is the one thing an
+     * agent parked on a wait can usefully repeat.
      *
      * Named one by one rather than spreading the body: an error body is
      * assembled next to the code that throws it and may hold whatever was in
@@ -56,6 +58,7 @@ export class HttpExceptionFilter implements ExceptionFilter {
       'sentence',
       'offersAlways',
       'estimateRef',
+      'consequence',
       'decideUrl',
       'expiresAt',
     ] as const;

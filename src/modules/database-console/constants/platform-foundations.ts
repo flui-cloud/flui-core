@@ -56,9 +56,16 @@ export const PLATFORM_FOUNDATIONS: readonly PlatformFoundation[] = [
 ];
 
 /**
- * What a caller is told. The same sentence a genuinely absent application gets,
- * on purpose: a refusal that names its reason teaches a stranger that this id
- * runs something worth reaching, and where.
+ * What a caller is told — by the fence *and* by every other console refusal that
+ * is not "this belongs to somebody else", which is why it lives here rather than
+ * next to any one of them.
+ *
+ * A refusal that names its reason teaches a stranger that this id runs something
+ * worth reaching, and where. So does a refusal that differs from the one next to
+ * it: for a while the fence said this while an absent row said
+ * `Application <id> not found`, and the pair could be told apart by anyone
+ * willing to read the body — which is exactly the probe the fence exists to
+ * defeat. One string, no id echoed back.
  */
 export const CONSOLE_TARGET_ABSENT = 'Application console not found';
 

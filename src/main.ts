@@ -5,6 +5,7 @@ import * as dotenv from 'dotenv';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { ValidationPipe, Logger, ConsoleLogger } from '@nestjs/common';
 import { HttpExceptionFilter } from './filters/http-exception.filter';
+import { MalformedIdentifierFilter } from './filters/malformed-identifier.filter';
 import { runWithActorContext } from './modules/auth/utils/actor-context';
 import Redis from 'ioredis';
 
@@ -151,7 +152,13 @@ async function bootstrap() {
     }),
   );
   SwaggerModule.setup('docs/public', app, publicDocument);
-  app.useGlobalFilters(new HttpExceptionFilter());
+  // Order matters: Nest tries the LAST-registered filter first, and the two
+  // catch disjoint types anyway — `HttpException` and `QueryFailedError`. Both
+  // are listed in one call so a reader sees the whole set in one place.
+  app.useGlobalFilters(
+    new HttpExceptionFilter(),
+    new MalformedIdentifierFilter(),
+  );
   await app.listen(process.env.PORT || 3000);
 }
 bootstrap();

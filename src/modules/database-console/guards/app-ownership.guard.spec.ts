@@ -4,16 +4,28 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { AppOwnershipGuard } from './app-ownership.guard';
+import {
+  assertNotPlatformFoundation,
+  CONSOLE_TARGET_ABSENT,
+} from '../constants/platform-foundations';
+import { MCP_SCOPE } from '../../mcp/constants/mcp-scopes';
 
 function contextFor(
   appId: string | undefined,
-  user: { userId?: string; isAdmin?: boolean } | undefined,
+  user: Caller | undefined,
 ): ExecutionContext {
   const req = { params: appId ? { id: appId } : {}, user };
   return {
     switchToHttp: () => ({ getRequest: () => req }),
   } as unknown as ExecutionContext;
 }
+
+type Caller = {
+  userId?: string;
+  isAdmin?: boolean;
+  scopes?: string[];
+  roles?: Record<string, unknown>;
+};
 
 type Row = {
   id?: string;
@@ -164,5 +176,133 @@ describe('a row the platform declares, and a row nobody registered', () => {
     await expect(
       guard.canActivate(contextFor('a', { userId: 'u1' })),
     ).resolves.toBe(true);
+  });
+});
+
+/**
+ * A live probe against the running instance found this: the fence answered
+ * `Application console not found` while an absent row answered
+ * `Application <id> not found`. Two sentences, told apart by anyone reading the
+ * body — and the second one repeated the id back, confirming the question was
+ * answerable. The guard's own comment claimed the opposite.
+ *
+ * So the equality is pinned here rather than described. Changing either message
+ * without changing the other turns this red, which is the only way a promise
+ * about two separate throw sites stays true.
+ */
+describe('a refusal tells a prober nothing about which refusal it is', () => {
+  async function messageFrom(fn: () => Promise<unknown>): Promise<string> {
+    try {
+      await fn();
+    } catch (error) {
+      return (error as NotFoundException).message;
+    }
+    throw new Error('expected a refusal');
+  }
+
+  it('says the same words for an absent row, a foundation and a row that is neither', async () => {
+    const guard = guardOver({
+      platform: { userId: null, ownerKind: 'platform' },
+      undeclared: { id: 'undeclared', slug: 'umami-db', userId: null },
+    });
+
+    const absent = await messageFrom(() =>
+      guard.canActivate(contextFor('nothing-here', { userId: 'u1' })),
+    );
+    const platform = await messageFrom(() =>
+      guard.canActivate(contextFor('platform', { userId: 'u1' })),
+    );
+    const undeclared = await messageFrom(() =>
+      guard.canActivate(contextFor('undeclared', { userId: 'u1' })),
+    );
+    const foundation = await messageFrom(async () =>
+      assertNotPlatformFoundation({
+        slug: 'zitadel',
+        k8sNamespace: 'flui-system',
+      }),
+    );
+
+    expect(new Set([absent, platform, undeclared, foundation]).size).toBe(1);
+    expect(absent).toBe(CONSOLE_TARGET_ABSENT);
+  });
+
+  it('never repeats the id it was asked about', async () => {
+    const guard = guardOver({});
+    const said = await messageFrom(() =>
+      guard.canActivate(contextFor('9f1c-secret-looking-id', { userId: 'u1' })),
+    );
+    expect(said).not.toContain('9f1c-secret-looking-id');
+  });
+});
+
+/**
+ * The consoles were the one part of the application surface the credential
+ * ceiling never reached. Four of the fourteen controllers carried
+ * `@RequirePermission(app:write)` and got it through `PermissionsGuard`; the
+ * other ten — arbitrary SQL, the object store, every backup and restore route —
+ * carried only this guard, which had never heard of scopes. A key minted for an
+ * agent, held by the application's own owner, passed ownership because it *is*
+ * the owner.
+ */
+describe('the key in the hand, not only the person behind it', () => {
+  const mine = { userId: 'u1' };
+
+  it("refuses a scoped agent key on the owner's own console", async () => {
+    const guard = guardOver({ a: mine });
+    await expect(
+      guard.canActivate(
+        contextFor('a', { userId: 'u1', scopes: [MCP_SCOPE.APP_READ] }),
+      ),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+  });
+
+  it('refuses it to an administrator too — a ceiling is not outgrown', async () => {
+    const guard = guardOver({ a: mine });
+    await expect(
+      guard.canActivate(
+        contextFor('a', {
+          userId: 'admin',
+          isAdmin: true,
+          scopes: [MCP_SCOPE.APP_READ],
+        }),
+      ),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+  });
+
+  it('lets a key through whose scopes do carry the verb', async () => {
+    const guard = guardOver({ a: mine });
+    await expect(
+      guard.canActivate(
+        contextFor('a', { userId: 'u1', scopes: [MCP_SCOPE.APP_WRITE] }),
+      ),
+    ).resolves.toBe(true);
+  });
+
+  /**
+   * `scopes: null` on the row means "nothing declared" and is what every
+   * interactive session, the CLI key and the service identities carry. Reading
+   * that as an empty ceiling would shut the product.
+   */
+  it('changes nothing for a credential that declares no ceiling', async () => {
+    const guard = guardOver({ a: mine });
+    await expect(
+      guard.canActivate(contextFor('a', { userId: 'u1' })),
+    ).resolves.toBe(true);
+  });
+
+  /**
+   * Asked before the row is loaded, so the refusal names the credential's own
+   * scopes instead of telling a prober whether the id resolves to anything.
+   */
+  it('answers the ceiling before it learns whether the application exists', async () => {
+    const guard = guardOver({});
+    await expect(
+      guard.canActivate(
+        contextFor('nothing-here', {
+          userId: 'u1',
+          scopes: [MCP_SCOPE.APP_READ],
+        }),
+      ),
+    ).rejects.toBeInstanceOf(ForbiddenException);
   });
 });
