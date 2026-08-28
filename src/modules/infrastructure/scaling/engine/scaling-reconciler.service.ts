@@ -56,7 +56,12 @@ export class ScalingReconcilerService {
     const clusters = await this.clusters.find({
       where: {
         id: In([...new Set(groups.map((group) => group.clusterId))]),
-        status: Not(ClusterStatus.DELETED),
+        // A cluster on its way out is skipped as firmly as one already gone.
+        // Its groups are swept as part of the teardown, and a pass that read
+        // them a moment earlier would write a decision about a group that no
+        // longer exists — an orphan created by the very tick that should have
+        // stood down.
+        status: Not(In([ClusterStatus.DELETED, ClusterStatus.DELETING])),
       },
     });
     const byId = new Map(clusters.map((cluster) => [cluster.id, cluster]));

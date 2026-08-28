@@ -391,7 +391,7 @@ export class ScalingEngineService {
         outcome: 'declined',
         saw,
         did: 'Nothing.',
-        why: `This group waits to replace ${order.replaces}, and no node of this fleet goes by that name. Nothing is bought for a replacement whose other half does not exist.`,
+        why: `This group waits to replace ${order.replaces}, and no node of this fleet goes by that name — most often because the replacement already happened and the order outlived it. Nothing is bought for a replacement whose other half does not exist: point the order at another node, or take it out.`,
         asks: null,
         shape: rung.shape,
         region: rung.region,

@@ -370,6 +370,10 @@ describe('urgency against the standing order', () => {
     expect(assessment.outcome).toBe('declined');
     expect(assessment.intent).toBeNull();
     expect(assessment.why).toContain('no node of this fleet goes by that name');
+    // Most often the order simply outlived the replacement it asked for, and a
+    // sentence that reads as a misconfiguration sends somebody looking for one.
+    expect(assessment.why).toContain('already happened');
+    expect(assessment.why).toContain('take it out');
   });
 
   it('will not buy on silence: an unanswered cluster is not an empty node', async () => {

@@ -77,6 +77,34 @@ function harness(last: ScalingDecisionEntity | null = null) {
   return { service, decisions, engine, actuator };
 }
 
+describe('a cluster on its way out', () => {
+  it('is skipped, so a tick cannot leave a decision behind a teardown', async () => {
+    const decisions = {
+      findOne: jest.fn().mockResolvedValue(null),
+      create: jest.fn((row: unknown) => row),
+      save: jest.fn().mockResolvedValue(undefined),
+    };
+    const engine = { assess: jest.fn() };
+    // The deletion sweeps the groups; a cluster already filtered out here is
+    // one whose groups a pass can no longer write about.
+    const clusters = { find: jest.fn().mockResolvedValue([]) };
+
+    const service = new ScalingReconcilerService(
+      {
+        find: jest.fn().mockResolvedValue([group]),
+      } as unknown as Repository<ScalingGroupEntity>,
+      clusters as unknown as Repository<ClusterEntity>,
+      decisions as unknown as Repository<ScalingDecisionEntity>,
+      engine as unknown as ScalingEngineService,
+      { act: jest.fn() } as unknown as ScalingActuatorService,
+    );
+
+    expect(await service.reconcileAll()).toBe(0);
+    expect(engine.assess).not.toHaveBeenCalled();
+    expect(decisions.save).not.toHaveBeenCalled();
+  });
+});
+
 describe('the reconciler', () => {
   it('writes down what it decided', async () => {
     const h = harness();
