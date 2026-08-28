@@ -26,6 +26,12 @@ export interface ShapePrice {
 }
 
 /** A shape as the provider's own catalogue describes it. */
+/** Where the provider itself says a shape can be had right now. */
+export interface ShapeUpIn {
+  region: string;
+  up: boolean;
+}
+
 export interface ShapeFact {
   shape: string;
   cores: number;
@@ -33,6 +39,13 @@ export interface ShapeFact {
   deprecated: boolean;
   supportsHourlyBilling: boolean;
   prices: ShapePrice[];
+  /**
+   * The provider's own availability, per region.
+   *
+   * Null where the provider does not publish it — which is not the same as
+   * publishing that nothing is available, and must not be read as a refusal.
+   */
+  availability: ShapeUpIn[] | null;
 }
 
 export interface ShapeFactsReading {
@@ -514,10 +527,33 @@ function reportedDown(
   input: LadderInput,
   candidate: Candidate,
 ): Verdict | null {
+  // The provider's own word comes first, and settles it either way. It is
+  // authenticated, live, and already in the response this pass fetched for
+  // shapes and prices — nothing is saved by preferring a third party's cache.
+  const own = candidate.fact.availability?.find(
+    (entry) => entry.region === candidate.region,
+  );
+  if (own) {
+    return own.up
+      ? null
+      : {
+          outcome: 'unavailable',
+          note: `${input.group.provider} reports ${candidate.shape} unavailable in ${candidate.region} right now.`,
+        };
+  }
+
   const availability: ShapeAvailability | undefined =
     input.catalogue.shapes.find((entry) => entry.shape === candidate.shape);
   if (!availability) return null;
   if (upWhereAllowed(availability, [candidate.region]).length) return null;
+
+  // The provider did not say, and only the outside catalogue did. On the
+  // patient side waiting is the mechanism, so its word is enough to hold off.
+  // With a pod already stuck it is not: a cached reading from a service this
+  // installation may not even reach must not walk urgency past a rung it could
+  // have taken. It informs the ordering; it does not decide.
+  if (input.demand) return null;
+
   return {
     outcome: 'unavailable',
     note: `The availability catalogue reports ${candidate.shape} down in ${candidate.region}${agedBy(input.catalogue)}.`,

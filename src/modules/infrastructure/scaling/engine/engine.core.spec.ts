@@ -33,6 +33,9 @@ const shape = (over: Partial<ShapeFact> & { shape: string }): ShapeFact => ({
   deprecated: false,
   supportsHourlyBilling: true,
   prices: [{ region: 'fsn1', hourlyEur: 0.0074, monthlyEur: 5.4 }],
+  // Null by default: most fixtures are about the ladder, not about who says a
+  // shape is up, and null means "the provider did not say".
+  availability: null,
   ...over,
 });
 
@@ -129,11 +132,50 @@ describe('the urgency ladder', () => {
       }),
     );
 
+    // A pod is waiting, and the only thing saying fsn1 is out is a cached
+    // reading from a service outside this installation. It informs the
+    // ordering; it does not walk urgency past a rung it could have taken.
+    expect(result.chosen).toMatchObject({ step: 1, region: 'fsn1' });
+  });
+
+  it('falls to another region when the PROVIDER says the shape is out at home', () => {
+    const result = walkLadder(
+      input({
+        group: {
+          provider: 'hetzner',
+          regions: ['fsn1', 'hel1'],
+          shapes: ['cpx41'],
+          strategy: 'closest',
+          hourlyBillingOnly: false,
+          maxMonthlyCost: null,
+          requirement: null,
+          capability: HETZNER,
+        },
+        shapes: {
+          read: true,
+          shapes: [
+            shape({
+              shape: 'cpx41',
+              prices: [
+                { region: 'fsn1', hourlyEur: 0.0074, monthlyEur: 5.4 },
+                { region: 'hel1', hourlyEur: 0.0074, monthlyEur: 5.4 },
+              ],
+              availability: [
+                { region: 'fsn1', up: false },
+                { region: 'hel1', up: true },
+              ],
+            }),
+          ],
+        },
+      }),
+    );
+
+    // The provider's own word is authenticated and live, and it settles it.
     expect(result.rungs[0]).toMatchObject({
       outcome: 'unavailable',
       region: 'fsn1',
     });
-    expect(result.rungs[0].note).toContain('read 12s ago');
+    expect(result.rungs[0].note).toContain('hetzner reports');
     expect(result.chosen).toMatchObject({ step: 2, region: 'hel1' });
   });
 
@@ -484,6 +526,9 @@ describe('one shape in one region, for a standing order', () => {
   it('says the catalogue reports it down, and how old that reading is', () => {
     const rung = evaluateShape(
       input({
+        // Nothing is waiting: here the patient side may hold off on the outside
+        // catalogue alone, because waiting is what it is for.
+        demand: null,
         catalogue: reading(
           [
             {

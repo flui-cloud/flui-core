@@ -14,10 +14,11 @@ interface Held {
 /**
  * What each shape holds and what it costs, from the provider's own catalogue.
  *
- * Availability is deliberately not asked for here: the reading that says
- * whether a shape can be had right now belongs to the availability catalogue,
- * and asking the provider for it turns a decision loop into a call per tick on
- * somebody's credentials.
+ * Availability comes with it, and is the authority. It costs nothing extra —
+ * the provider returns it in the same response as the shapes and the prices,
+ * which this pass already fetches — and it is authenticated and live, where the
+ * outside catalogue is neither. Reading one and discarding the other put a
+ * third party's cache in charge of whether a stuck pod could be answered.
  *
  * A catalogue nobody could read comes back as `read: false` and never as an
  * empty one — the difference between "this provider sells nothing that fits"
@@ -63,6 +64,12 @@ function toFact(size: NodeSizeDto): ShapeFact {
     memoryMi: Math.round(size.memory * 1024),
     deprecated: size.deprecated,
     supportsHourlyBilling: size.supportsHourlyBilling,
+    availability: size.availability
+      ? size.availability.map((entry) => ({
+          region: entry.location,
+          up: entry.available,
+        }))
+      : null,
     prices: (size.prices ?? []).map((price) => ({
       region: price.location,
       hourlyEur: euro(price.priceHourly?.net),

@@ -40,6 +40,7 @@ const CX32: ShapeFact = {
   deprecated: false,
   supportsHourlyBilling: true,
   prices: [{ region: 'fsn1', hourlyEur: 0.0074, monthlyEur: 5.4 }],
+  availability: null,
 };
 
 const cluster = (over: Partial<ClusterEntity> = {}): ClusterEntity =>
