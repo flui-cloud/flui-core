@@ -21,7 +21,7 @@ import { createHash } from 'node:crypto';
  * "never a credential inside a skill" rule made structural rather than
  * remembered.
  */
-export const AGENT_SKILL_VERSION = '1.0.0';
+export const AGENT_SKILL_VERSION = '1.2.0';
 
 /** What the agent stores it as. Claude Code and its kin read `SKILL.md`. */
 export const AGENT_SKILL_FILENAME = 'SKILL.md';
@@ -129,6 +129,19 @@ terminal straight to encrypted storage and is never shown to you.
 That call returning \`input_required\` is a **state, not a failure**: park, tell
 the person what to run, and do not retry it unchanged. Reading variables tells
 you which keys are set and which are missing, never what any of them holds.
+
+The same rule covers every other credential this instance keeps, and each one
+has a tool that asks for it without ever carrying it:
+\`api_key_request\` (a key for you to present later — you never mint one),
+\`ghcr_token_request\` (the GitHub token that pulls container images),
+\`mail_provider_request\`, \`backup_destination_request\`,
+\`provider_credentials_request\`, \`inference_connection_request\` and
+\`user_invite_request\`. None of them has an argument that could hold a value.
+Each answers whether the thing is configured and hands back either a command to
+relay or the screen the person opens — three of them have no command yet and
+name a dashboard section instead, which is the whole answer for those, not a
+sign that something is missing. An invite link is itself a credential: it is
+never returned to you and never belongs in a transcript.
 
 ## Destructive tools may not be there at all
 

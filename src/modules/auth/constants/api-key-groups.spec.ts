@@ -53,6 +53,14 @@ describe('permission groups — the taxonomy', () => {
    * person reads before saying yes has to be read again. A red line here is
    * that reminder, not a failure.
    */
+  /**
+   * `api_key_request` joined this list deliberately, not by accident of scope.
+   * The sandbox fence opens `GET /auth/api-keys` to a guest in so many words —
+   * *"See which agents you have given a key to"* — alongside minting and
+   * revoking, because handing a coding agent a credential of your own is part
+   * of what the demonstration is for. A tool that asks a person to mint one
+   * belongs on the same surface as the gesture it asks for.
+   */
   it('unlocks exactly these tools for the switch a guest would turn on', () => {
     const group = findPermissionGroup('apps:change')!;
     const unlocked = ALL_TOOLS.filter((t) =>
@@ -62,6 +70,7 @@ describe('permission groups — the taxonomy', () => {
     const byName = (a: string, b: string) => a.localeCompare(b);
     expect([...unlocked].sort(byName)).toEqual(
       [
+        'api_key_request',
         'app_alerts',
         'app_debug',
         'app_deploy',

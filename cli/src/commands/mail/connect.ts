@@ -3,6 +3,7 @@ import chalk from 'chalk';
 import ora from 'ora';
 import { ApiClient } from '../../lib/api-client';
 import { ConfigStorage } from '../../lib/config-storage';
+import { readSecret, SECRET_FLAG_NOTE } from '../../lib/secret-input';
 
 interface ConnectResult {
   connection: {
@@ -87,9 +88,9 @@ export default class MailConnect extends Command {
     'Connect a mail provider and set up everything that can be set up';
 
   static readonly examples = [
-    '<%= config.bin %> <%= command.id %> brevo --scope bulk --domain news.example.com --secret xkeysib-...',
+    '<%= config.bin %> <%= command.id %> brevo --scope bulk --domain news.example.com',
     '<%= config.bin %> <%= command.id %> scaleway-tem --domain mail.example.com',
-    '<%= config.bin %> <%= command.id %> smtp --host smtp.example.com --port 587 --username postmaster --secret pw --allow-bulk',
+    '<%= config.bin %> <%= command.id %> smtp --host smtp.example.com --port 587 --username postmaster --allow-bulk',
   ];
 
   static readonly args = {
@@ -114,7 +115,13 @@ export default class MailConnect extends Command {
     }),
     secret: Flags.string({
       description:
-        'API key or relay password. Not needed for Scaleway, which reuses the compute key.',
+        'API key or relay password. Not needed for Scaleway, which reuses the compute key. ' +
+        SECRET_FLAG_NOTE,
+    }),
+    stdin: Flags.boolean({
+      description:
+        'Read the credential from standard input rather than prompting.',
+      default: false,
     }),
     label: Flags.string({ description: 'What you call it' }),
     region: Flags.string({
@@ -155,10 +162,18 @@ export default class MailConnect extends Command {
 
     for (const line of unprovenWarning(args.provider)) this.log(line);
 
+    // A provider that needs a credential used to print where to find one and
+    // then stop, telling the person to "re-run with --secret <value>" — the CLI
+    // instructing them, in so many words, to put an API key in their shell
+    // history. It still says where to find the credential; it now asks for it.
     const help = CREDENTIAL_HELP[args.provider];
-    if (help && !flags.secret) {
+    let secret = flags.secret;
+    if (help && !secret) {
       for (const line of credentialHelp(args.provider, help)) this.log(line);
-      return;
+      secret = await readSecret({ label: 'Credential', fromStdin: true });
+      if (!secret) {
+        this.error('No credential supplied; nothing was connected.');
+      }
     }
 
     const spinner = ora('Connecting the provider...').start();
@@ -169,7 +184,7 @@ export default class MailConnect extends Command {
         apiKey,
       }).post<ConnectResult>(
         '/mail/connections',
-        connectBody(args.provider, flags),
+        connectBody(args.provider, { ...flags, secret }),
       );
       spinner.stop();
     } catch (error) {
@@ -187,7 +202,10 @@ export default class MailConnect extends Command {
   }
 }
 
-type ConnectFlags = Record<string, string | boolean | undefined>;
+// `number` belongs here: `--port` is parsed as one. The union said otherwise
+// and only compiled because the parsed-flags object was passed through
+// untouched; the first caller to build a fresh object exposed it.
+type ConnectFlags = Record<string, string | number | boolean | undefined>;
 
 /** Only what was actually given: an absent flag is not a value of `undefined`. */
 function connectBody(
@@ -252,7 +270,10 @@ function credentialHelp(
     `  ${chalk.cyan(help.url)}`,
     ...(help.caveat ? [`  ${chalk.dim(help.caveat)}`] : []),
     '',
-    chalk.dim('  Then re-run with --secret <value>.\n'),
+    chalk.dim(
+      '  Paste it at the prompt below — it is not echoed and does not\n',
+    ),
+    chalk.dim('  enter your shell history. Or pipe it in with --stdin.\n'),
   ];
 }
 

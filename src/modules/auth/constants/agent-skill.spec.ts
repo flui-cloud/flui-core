@@ -35,7 +35,7 @@ describe('the agent skill', () => {
     expect({
       version: AGENT_SKILL_VERSION,
       digest: agentSkillDigest(),
-    }).toEqual({ version: '1.0.0', digest: 'f62a7fd77a9f' });
+    }).toEqual({ version: '1.2.0', digest: '71aeb9cd53fb' });
   });
 
   it('is stable across renders — the digest identifies the instructions, not the installation', () => {
@@ -146,7 +146,7 @@ describe('the agent skill', () => {
     it.each([
       [AGENT_SKILL_VERSION, 'current'],
       ['0.9.0', 'stale'],
-      ['1.0.1', 'ahead'],
+      ['1.2.1', 'ahead'],
       ['whatever', 'unknown'],
       ['', 'undeclared'],
       [null, 'undeclared'],

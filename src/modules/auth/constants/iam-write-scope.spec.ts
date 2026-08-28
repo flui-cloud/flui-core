@@ -164,10 +164,21 @@ describe('mcp:iam:write — switched off unless somebody switched it on', () => 
       (t) => t.name,
     );
 
-    it('unlocks exactly the conferral and the revocation', () => {
+    /**
+     * `user_invite_request` is the third, and it belongs here for a reason the
+     * two assertions above already state: it *reads* the account list, which is
+     * gated on `iam:assign-role` and is exactly what this scope carries, and it
+     * cannot invite anybody, because inviting is gated on `iam:manage-users`
+     * and this scope deliberately does not carry that. It hands the invitation
+     * to a person instead. A tool that could both look and invite would not
+     * belong on this scope, and would fail the assertion above rather than this
+     * one.
+     */
+    it('unlocks the conferral, the revocation, and the invitation hand-off', () => {
       expect([...onWrite].sort()).toEqual([
         'access_grant_add',
         'access_grant_remove',
+        'user_invite_request',
       ]);
     });
 
