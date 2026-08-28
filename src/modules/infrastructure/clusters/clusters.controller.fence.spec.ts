@@ -29,6 +29,7 @@ import { ClusterNodeScalingService } from './services/cluster-node-scaling.servi
 import { OrphanVolumesService } from './services/orphan-volumes.service';
 import { ByosNodeJoinService } from './services/byos-node-join.service';
 import { ByosVNetService } from './services/byos-vnet.service';
+import { FleetHistoryService } from './services/fleet-history.service';
 import { FirewallsService } from '../firewalls/services/firewalls.service';
 import { KubernetesService } from '../shared/services/kubernetes.service';
 import { GrafanaDatasourceService } from '../../grafana/services/grafana-datasource.service';
@@ -223,6 +224,10 @@ describe('clusters controller — the fence around the cluster key', () => {
         },
         { provide: ByosNodeJoinService, useValue: {} },
         { provide: ByosVNetService, useValue: {} },
+        {
+          provide: FleetHistoryService,
+          useValue: { getHistory: async () => ({ points: [] }) },
+        },
       ],
     }).compile();
 

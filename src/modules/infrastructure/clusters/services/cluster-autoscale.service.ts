@@ -18,6 +18,9 @@ import {
   AutoscaleThresholds,
 } from '../config/autoscale-defaults';
 import { PrometheusQueryService } from '../../../observability/services/prometheus-query.service';
+import { AutoscaleActuationService } from './autoscale-actuation.service';
+import { AutoscaleActuation, isAlertOnly } from './autoscale-actuation';
+import { UnschedulablePodsService } from './unschedulable-pods.service';
 
 @Injectable()
 export class ClusterAutoscaleService {
@@ -27,6 +30,8 @@ export class ClusterAutoscaleService {
     @InjectRepository(ClusterEntity)
     private readonly clusterRepository: Repository<ClusterEntity>,
     private readonly prometheusQueryService: PrometheusQueryService,
+    private readonly actuationService: AutoscaleActuationService,
+    private readonly unschedulablePodsService: UnschedulablePodsService,
   ) {}
 
   getDefaults(): AutoscaleThresholds {
@@ -128,11 +133,18 @@ export class ClusterAutoscaleService {
       );
     }
 
+    const actuation = await this.actuationService.describe(
+      cluster.provider,
+      cluster.id,
+    );
+    const unschedulable = await this.unschedulablePodsService.read(cluster);
+
     const warning = this.computeWarning(
       cluster.autoscalingEnabled,
       memoryPct,
       cpuPct,
       effective,
+      actuation.actuation,
     );
 
     return {
@@ -142,8 +154,13 @@ export class ClusterAutoscaleService {
       maxNodes: cluster.maxNodes,
       currentNodes: cluster.nodes?.length ?? cluster.nodeCount ?? 0,
       metrics: { memoryPct, cpuPct },
+      unschedulable,
       warning: warning.level,
       warningMessage: warning.message,
+      actuation: actuation.actuation,
+      actuationMessage: actuation.message,
+      nodeProvisioning: actuation.facts.nodeProvisioning,
+      driven: actuation.facts.driven,
       effectiveThresholds: effective,
     };
   }
@@ -153,6 +170,7 @@ export class ClusterAutoscaleService {
     memoryPct: number | null,
     cpuPct: number | null,
     thresholds: AutoscaleEffectiveThresholdsDto,
+    actuation: AutoscaleActuation,
   ): { level: AutoscaleWarningLevel; message: string | null } {
     const memDanger =
       memoryPct !== null && memoryPct >= thresholds.dangerMemoryPct;
@@ -166,9 +184,10 @@ export class ClusterAutoscaleService {
         : `CPU at ${cpuPct.toFixed(1)}% (>= ${thresholds.dangerCpuPct}%)`;
       return {
         level: AutoscaleWarningLevel.DANGER_NEEDS_SCALE,
-        message: autoscalingEnabled
-          ? `Cluster under heavy load: ${reason}. Autoscaler should react within the cooldown window.`
-          : `Cluster under heavy load: ${reason}. Autoscaling is DISABLED — add a worker or enable autoscaling.`,
+        message: `Cluster under heavy load: ${reason}. ${this.describeRelief(
+          autoscalingEnabled,
+          actuation,
+        )}`,
       };
     }
 
@@ -178,10 +197,30 @@ export class ClusterAutoscaleService {
         : `CPU at ${cpuPct.toFixed(1)}%`;
       return {
         level: AutoscaleWarningLevel.WARN_NEEDS_AUTOSCALE,
-        message: `Sustained pressure detected (${reason}) and autoscaling is disabled. Consider enabling autoscaling.`,
+        message:
+          `Sustained pressure detected (${reason}) and autoscaling is disabled. ` +
+          this.describeRelief(false, actuation),
       };
     }
 
     return { level: AutoscaleWarningLevel.NONE, message: null };
+  }
+
+  /** What would actually relieve the pressure here — never "the autoscaler will". */
+  private describeRelief(
+    autoscalingEnabled: boolean,
+    actuation: AutoscaleActuation,
+  ): string {
+    if (isAlertOnly(actuation)) {
+      return 'Flui cannot create a server on this provider — attach one yourself and connect it, or free capacity.';
+    }
+    if (actuation === AutoscaleActuation.AUTOMATIC) {
+      return autoscalingEnabled
+        ? 'Autoscaler should react within the cooldown window.'
+        : 'Autoscaling is DISABLED — add a worker or enable autoscaling.';
+    }
+    return autoscalingEnabled
+      ? 'Autoscaling is enabled, but nothing adds a node on its own — add a worker.'
+      : 'Autoscaling is DISABLED, and enabling it would not add a node on its own — add a worker.';
   }
 }
