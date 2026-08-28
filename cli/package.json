@@ -149,6 +149,9 @@
       "sandbox": {
         "description": "Guest areas of a demo instance"
       },
+      "scaling": {
+        "description": "Scaling groups: what a cluster may buy for itself, where it must stop, and why it last decided as it did"
+      },
       "showcase": {
         "description": "The applications this instance shows everyone"
       },

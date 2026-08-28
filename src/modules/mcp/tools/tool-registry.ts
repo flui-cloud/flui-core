@@ -14,10 +14,12 @@ import { CRON_TOOLS } from './cron.tools';
 import { GATEWAY_TOOLS } from './gateway.tools';
 import { MAIL_TOOLS } from './mail.tools';
 import { VARIABLE_TOOLS } from './variables.tools';
+import { CREDENTIAL_HANDOVER_TOOLS } from './credential-handover.tools';
 import { IAM_TOOLS } from './iam.tools';
 import { OPERATING_CONTEXT_TOOLS } from './operating-context.tools';
 import { SELF_SERVICE_TOOLS } from './self-service.tools';
 import { INFRASTRUCTURE_OPERATION_TOOLS } from './infrastructure-operations.tools';
+import { SCALING_TOOLS } from './scaling.tools';
 
 /**
  * The single source of truth for Flui tools. Consumed by the MCP server (external
@@ -32,6 +34,7 @@ export const ALL_TOOLS: ToolDef[] = [
   ...SPEC_TOOLS,
   ...INFRASTRUCTURE_TOOLS,
   ...INFRASTRUCTURE_OPERATION_TOOLS,
+  ...SCALING_TOOLS,
   ...DNS_TOOLS,
   ...APPLICATION_TOOLS,
   ...OBSERVABILITY_TOOLS,
@@ -43,6 +46,7 @@ export const ALL_TOOLS: ToolDef[] = [
   ...GATEWAY_TOOLS,
   ...MAIL_TOOLS,
   ...VARIABLE_TOOLS,
+  ...CREDENTIAL_HANDOVER_TOOLS,
   ...IAM_TOOLS,
 ];
 

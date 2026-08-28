@@ -33,6 +33,7 @@ import { ClusterStorageService } from 'src/modules/infrastructure/clusters/servi
 import { ClusterCapacityService } from 'src/modules/infrastructure/clusters/services/cluster-capacity.service';
 import { ClusterNodeScalingService } from 'src/modules/infrastructure/clusters/services/cluster-node-scaling.service';
 import { BillingIntervalsService } from 'src/modules/infrastructure/clusters/services/billing-intervals.service';
+import { NodePriceService } from 'src/modules/infrastructure/clusters/services/node-price.service';
 import { NodeBillableIntervalEntity } from 'src/modules/infrastructure/clusters/entities/node-billable-interval.entity';
 import { VolumeBillableIntervalEntity } from 'src/modules/infrastructure/clusters/entities/volume-billable-interval.entity';
 import { ApplicationEntity } from 'src/modules/applications/entities/application.entity';
@@ -103,6 +104,9 @@ import { CommonModule } from 'src/modules/common/common.module';
       },
     },
     BillingIntervalsService,
+    // What a node costs an hour, asked of the provider's own catalogue. It has
+    // one dependency, the provider factory, which this module already has.
+    NodePriceService,
 
     // CLI-specific services
     CliK3sScriptService,
