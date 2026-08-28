@@ -1,5 +1,10 @@
 import { ContextProbe } from './context-probe';
-import { ProbeParam, probeCards, taken } from './probe-catalog';
+import {
+  ProbeParam,
+  probeCards,
+  requireDeclaredPairs,
+  taken,
+} from './probe-catalog';
 
 const TYPES: Record<string, 'string' | 'number'> = {
   status: 'string',
@@ -151,5 +156,85 @@ describe('reading a declared parameter', () => {
     expect(() => taken({ other: 'x' }, TAKES, 'other')).toThrow(
       /nothing here reads a parameter called other/,
     );
+  });
+});
+
+/**
+ * The gap that was declared open and stayed open for two rounds: a cluster is
+ * named by its id **or** by its name, and the vocabulary could not say it. The
+ * rule lived in a function beside the probe, so the *published card* told a
+ * caller both parameters were optional while the runtime refused a call that
+ * sent neither — a refusal the catalogue had given nobody a way to foresee.
+ *
+ * Closed pairwise and no wider. A third alternative is when to generalise; this
+ * field will not express it, which is how that day announces itself.
+ */
+describe('a parameter that another may stand in for', () => {
+  const PAIR: readonly ProbeParam[] = [
+    { name: 'field', required: true },
+    { name: 'clusterId', required: false, orElse: 'clusterName' },
+    { name: 'clusterName', required: false, orElse: 'clusterId' },
+  ];
+
+  it('accepts either one', () => {
+    expect(() =>
+      requireDeclaredPairs({ clusterId: 'c-1' }, PAIR),
+    ).not.toThrow();
+    expect(() =>
+      requireDeclaredPairs({ clusterName: 'prod' }, PAIR),
+    ).not.toThrow();
+  });
+
+  it('accepts both', () => {
+    expect(() =>
+      requireDeclaredPairs({ clusterId: 'c-1', clusterName: 'prod' }, PAIR),
+    ).not.toThrow();
+  });
+
+  it('refuses neither, naming both', () => {
+    expect(() => requireDeclaredPairs({}, PAIR)).toThrow(
+      'clusterId or clusterName is missing',
+    );
+  });
+
+  /** Whitespace is not an answer — `taken` already trims, and this rides on it. */
+  it('refuses a blank one', () => {
+    expect(() => requireDeclaredPairs({ clusterId: '   ' }, PAIR)).toThrow(
+      'is missing',
+    );
+  });
+
+  /**
+   * A declaration that names an alternative nothing reads is a typo that would
+   * otherwise make the pair unsatisfiable at runtime and perfectly plausible on
+   * the published card.
+   */
+  it('refuses a declaration that names an alternative nobody reads', () => {
+    expect(() =>
+      requireDeclaredPairs({ clusterId: 'c-1' }, [
+        { name: 'clusterId', required: false, orElse: 'clusterNaem' },
+      ]),
+    ).toThrow('nothing here reads clusterNaem');
+  });
+
+  it('says nothing about a declaration with no alternatives', () => {
+    expect(() => requireDeclaredPairs({}, TAKES)).not.toThrow();
+  });
+
+  /** The card publishes it, which is the whole point of moving the rule here. */
+  it('reaches the published card', () => {
+    const probe: ContextProbe = {
+      id: 'cluster.field',
+      describes: 'a field of a cluster',
+      takes: PAIR,
+      answers: () => 'string',
+      run: async () => 'x',
+    };
+    const card = probeCards([probe])[0];
+    expect(card.takes).toContainEqual({
+      name: 'clusterId',
+      required: false,
+      orElse: 'clusterName',
+    });
   });
 });

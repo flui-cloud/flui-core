@@ -6,6 +6,7 @@ import { ClusterEntity } from '../../infrastructure/clusters/entities/cluster.en
 import {
   ContextProbeRegistry,
   ProbeParam,
+  requireDeclaredPairs,
   ProbeValueType,
   taken,
 } from './context-probe';
@@ -72,25 +73,12 @@ const APP_FIELD_TAKES: readonly ProbeParam[] = [
 
 const CLUSTER_FIELD_TAKES: readonly ProbeParam[] = [
   { name: 'field', required: true, oneOf: CLUSTER_READABLE_FIELDS },
-  // Neither is required on its own — the pair is. A cluster is named by id or
-  // by name, and a declaration cannot say "one of these two".
-  { name: 'clusterId', required: false },
-  { name: 'clusterName', required: false },
+  // Neither is required on its own — the pair is, and the declaration now says
+  // so. It used to live in a function beside this list, which meant the
+  // published card told a caller both were optional and the runtime disagreed.
+  { name: 'clusterId', required: false, orElse: 'clusterName' },
+  { name: 'clusterName', required: false, orElse: 'clusterId' },
 ];
-
-/**
- * `cluster.field` is the one probe that takes either of two parameters.
- *
- * The parameter vocabulary cannot say "one of these two" and deliberately does
- * not try — one case does not earn a vocabulary. What it must not do is let the
- * gap through in silence, so the rule lives in one function that both the write
- * path and the run path go through.
- */
-function requireOneCluster(params: Record<string, unknown>): void {
-  const id = taken(params, CLUSTER_FIELD_TAKES, 'clusterId');
-  const named = taken(params, CLUSTER_FIELD_TAKES, 'clusterName');
-  if (!id && !named) throw new Error('clusterId or clusterName is missing');
-}
 
 const APP_COUNT_TAKES: readonly ProbeParam[] = [
   { name: 'clusterId', required: true },
@@ -135,7 +123,7 @@ export class BuiltinProbes implements OnModuleInit {
       // silent lie the strict comparison was fixed for; a premise that cannot
       // be asked has no type to answer in either.
       answers: (p) => {
-        requireOneCluster(p);
+        requireDeclaredPairs(p, CLUSTER_FIELD_TAKES);
         return CLUSTER_FIELD_TYPES[taken(p, CLUSTER_FIELD_TAKES, 'field')];
       },
       run: (p) => this.clusterField(p),
@@ -165,7 +153,7 @@ export class BuiltinProbes implements OnModuleInit {
     params: Record<string, unknown>,
   ): Promise<unknown> {
     const name = taken(params, CLUSTER_FIELD_TAKES, 'field');
-    requireOneCluster(params);
+    requireDeclaredPairs(params, CLUSTER_FIELD_TAKES);
     const id = taken(params, CLUSTER_FIELD_TAKES, 'clusterId');
     const named = taken(params, CLUSTER_FIELD_TAKES, 'clusterName');
     const where = id ? { id } : { name: named };

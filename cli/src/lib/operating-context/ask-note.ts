@@ -92,12 +92,22 @@ export async function askParams(
   }
 
   const answers: Record<string, unknown> = {};
+  const alreadyGiven = (name: string | undefined): boolean =>
+    typeof name === 'string' &&
+    typeof supplied[name] === 'string' &&
+    !!supplied[name];
+
   for (const ask of asks) {
     const already = supplied[ask.name];
     if (typeof already === 'string' && already) {
       answers[ask.name] = already;
       continue;
     }
+    // The pair is already satisfied by its other half, so there is nothing left
+    // to ask. Without this the form asked for a parameter the author had just
+    // answered under its alternative name — and, with no terminal attached,
+    // refused a note that was in fact complete.
+    if (alreadyGiven(ask.orElse)) continue;
     const answer = await askParam(card, ask);
     if (answer) answers[ask.name] = answer;
   }

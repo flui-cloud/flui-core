@@ -17,6 +17,7 @@ import { IamGroupEntity } from '../iam/entities/iam-group.entity';
 import { IAM_ROLE } from '../iam/constants/iam-roles';
 import { ApplicationEntity } from '../applications/entities/application.entity';
 import { READER_PLACEMENTS } from './placement/reader-placements';
+import { CLUSTER_REFERENCES } from './placement/cluster-references';
 import { ApplicationReaderPlacements } from './placement/application-placements';
 import { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import { IdentityRole, UserEntity } from '../auth/entities/user.entity';
@@ -273,6 +274,12 @@ describe('operating context over HTTP', () => {
           useValue: { find: async () => [] },
         },
         { provide: READER_PLACEMENTS, useClass: ApplicationReaderPlacements },
+        // The fence decides who may reach a route, not what a cluster is
+        // called, so this answers with whatever it was given.
+        {
+          provide: CLUSTER_REFERENCES,
+          useValue: { canonicalIdOf: async (r: string) => r },
+        },
         { provide: ENTRY_HANDS, useClass: UserEntryHands },
         {
           provide: getRepositoryToken(UserEntity),

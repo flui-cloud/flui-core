@@ -59,7 +59,14 @@ function asksLines(card: ProbeCard): string[] {
   if (!asks) return [chalk.dim('     it did not publish what it is asked for')];
   if (asks.length === 0) return [chalk.dim('     asked for nothing')];
   return asks.map((ask) => {
-    const need = ask.required ? 'required' : 'optional';
+    // "optional" is the wrong word for half of a pair: neither is required on
+    // its own and one of them is. Saying so here is what keeps somebody from
+    // filling the form correctly and being refused anyway.
+    const need = ask.orElse
+      ? `either this or ${ask.orElse}`
+      : ask.required
+        ? 'required'
+        : 'optional';
     const set = ask.choices ? ` — one of ${ask.choices.join(', ')}` : '';
     return `     ${chalk.cyan(ask.name)}  ${chalk.dim(need)}${set}`;
   });

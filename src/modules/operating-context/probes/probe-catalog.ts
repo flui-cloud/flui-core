@@ -14,6 +14,22 @@ export interface ProbeParam {
   required: boolean;
   /** The values it accepts, when it accepts a fixed set of them. */
   oneOf?: readonly string[];
+  /**
+   * The other parameter that may stand in for this one.
+   *
+   * A cluster is named by its id **or** by its name, and neither is required on
+   * its own. The declaration could not say that, so the rule lived in a
+   * function beside the probe and the published card said only that both were
+   * optional — leaving a caller free to send neither and meet a refusal the
+   * catalogue had given them no way to foresee.
+   *
+   * Deliberately pairwise, and deliberately not a vocabulary of groups. One
+   * case does not earn a general mechanism, and the case that exists is exactly
+   * two names for one thing. A third alternative arriving is when to widen it —
+   * not before, and the widening will be visible because this field will not
+   * express it.
+   */
+  orElse?: string;
 }
 
 /**
@@ -154,6 +170,36 @@ function asked(
  * A parameter that was not declared is a programming mistake here rather than
  * an author's, and says so.
  */
+/**
+ * Every pair a declaration names, enforced together.
+ *
+ * Read off {@link ProbeParam.orElse} rather than written beside the probe, so
+ * the same statement that publishes the alternative to a caller is the one that
+ * refuses a call without it. That is the property the rest of this file already
+ * has and this rule did not: delete the line and the probe stops asking.
+ */
+export function requireDeclaredPairs(
+  params: Record<string, unknown>,
+  takes: readonly ProbeParam[],
+): void {
+  const seen = new Set<string>();
+  for (const declared of takes) {
+    const other = declared.orElse;
+    if (!other) continue;
+    const pair = [declared.name, other].sort().join('|');
+    if (seen.has(pair)) continue;
+    seen.add(pair);
+    if (!takes.some((p) => p.name === other)) {
+      throw new Error(
+        `${declared.name} names ${other} as its alternative, but nothing here reads ${other}`,
+      );
+    }
+    if (!taken(params, takes, declared.name) && !taken(params, takes, other)) {
+      throw new Error(`${declared.name} or ${other} is missing`);
+    }
+  }
+}
+
 export function taken(
   params: Record<string, unknown>,
   takes: readonly ProbeParam[],

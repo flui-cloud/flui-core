@@ -45,6 +45,14 @@ export interface ParamAsk {
   required: boolean;
   /** The accepted values, when the catalogue published a fixed set. */
   choices?: string[];
+  /**
+   * The other parameter that may stand in for this one.
+   *
+   * Neither is `required` on its own, so without this the CLI printed both as
+   * "optional" and a person could satisfy the form and still be refused —
+   * exactly the avoidable refusal the catalogue exists to prevent.
+   */
+  orElse?: string;
 }
 
 /**
@@ -62,6 +70,7 @@ export function asksOf(card: ProbeCard | undefined): ParamAsk[] | null {
     name: p.name,
     required: p.required,
     ...(p.oneOf?.length ? { choices: [...p.oneOf] } : {}),
+    ...(p.orElse ? { orElse: p.orElse } : {}),
   }));
 }
 

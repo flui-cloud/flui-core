@@ -39,6 +39,10 @@ import {
   ReaderPlacements,
 } from './placement/reader-placements';
 import {
+  CLUSTER_REFERENCES,
+  ClusterReferences,
+} from './placement/cluster-references';
+import {
   advisable,
   appliesTo,
   conflictsAmong,
@@ -174,6 +178,8 @@ export class OperatingContextService {
     private readonly probes: ContextProbeRegistry,
     @Inject(READER_PLACEMENTS) private readonly placements: ReaderPlacements,
     @Inject(ENTRY_HANDS) private readonly hands: EntryHands,
+    @Inject(CLUSTER_REFERENCES)
+    private readonly clusterRefs: ClusterReferences,
   ) {}
 
   /**
@@ -301,7 +307,7 @@ export class OperatingContextService {
     principal: IamPrincipal,
     dto: WriteContextEntryDto,
   ): Promise<DeliveredEntry> {
-    const scope = scopeFromDto(dto);
+    const scope = await this.canonical(scopeFromDto(dto));
     const access = await this.assertMayWrite(principal, scope);
     this.assertWellFormed(dto, scope);
     const probeExpected =
@@ -595,6 +601,31 @@ export class OperatingContextService {
       }
       throw e;
     }
+  }
+
+  /**
+   * One spelling per cluster, decided before anything else reads the scope.
+   *
+   * Every rule about who reads a cluster note compares `scopeRef` against
+   * another string, so a cluster recorded once by id and once by name produces
+   * two sets of notes that cannot see each other — which is what the live
+   * instance had: `f94b9c06-…` from the dashboard and `control-cluster` from a
+   * terminal, about the same one node.
+   *
+   * Resolved before {@link assertMayWrite}, deliberately: the permission check
+   * matches the grant's selector against this same reference, so a name that
+   * reached it unresolved would be asking the boundary a question about a
+   * string rather than about a cluster.
+   */
+  private async canonical(scope: EntryScope): Promise<EntryScope> {
+    if (scope.scopeType !== 'cluster' || !scope.scopeRef) return scope;
+    const id = await this.clusterRefs.canonicalIdOf(scope.scopeRef);
+    if (!id) {
+      throw new BadRequestException(
+        `No cluster here answers to “${scope.scopeRef}”.`,
+      );
+    }
+    return { ...scope, scopeRef: id };
   }
 
   private assertWellFormed(dto: WriteContextEntryDto, scope: EntryScope): void {

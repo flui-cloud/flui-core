@@ -8,6 +8,8 @@ import { BuiltinProbes } from './probes/builtin-probes';
 import { IamModule } from '../iam/iam.module';
 import { READER_PLACEMENTS } from './placement/reader-placements';
 import { ApplicationReaderPlacements } from './placement/application-placements';
+import { CLUSTER_REFERENCES } from './placement/cluster-references';
+import { RegistryClusterReferences } from './placement/registry-cluster-references';
 import { ApplicationEntity } from '../applications/entities/application.entity';
 import { ClusterEntity } from '../infrastructure/clusters/entities/cluster.entity';
 import { UserEntity } from '../auth/entities/user.entity';
@@ -42,6 +44,7 @@ import { UserEntryHands } from './hands/user-entry-hands';
     ContextProbeRegistry,
     BuiltinProbes,
     { provide: READER_PLACEMENTS, useClass: ApplicationReaderPlacements },
+    { provide: CLUSTER_REFERENCES, useClass: RegistryClusterReferences },
     { provide: ENTRY_HANDS, useClass: UserEntryHands },
   ],
   exports: [OperatingContextService, ContextProbeRegistry],

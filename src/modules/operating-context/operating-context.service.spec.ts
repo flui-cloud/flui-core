@@ -128,14 +128,21 @@ function build(
         ),
     ),
   };
+  // Every cluster reference in this file is already an id, so the resolver
+  // hands it straight back. Its only job here is to exist: the write asks it
+  // before anything else reads the scope.
+  const clusterRefs = {
+    canonicalIdOf: jest.fn(async (reference: string) => reference),
+  };
   const service = new OperatingContextService(
     repo as never,
     policy as never,
     probes,
     placements,
     hands,
+    clusterRefs,
   );
-  return { service, repo, probes, store, placements, hands };
+  return { service, repo, probes, store, placements, hands, clusterRefs };
 }
 
 describe('what a reader is handed', () => {
@@ -1002,5 +1009,70 @@ describe('who retired a note', () => {
     expect(
       Object.keys(delivery.advice[0] as Record<string, unknown>),
     ).not.toContain('archivedBy');
+  });
+});
+
+/**
+ * Found by running the CLI against the live instance, not by reading.
+ *
+ * `--cluster control-cluster` wrote a note whose `scopeRef` was the *name*,
+ * while the dashboard had been writing the *id*. Both are cluster notes about
+ * one node; neither listing found the other, because every rule that decides
+ * who reads a cluster note compares that string against another string. The
+ * database held both at once and nothing anywhere could tell they were the same
+ * cluster.
+ */
+describe('one spelling per cluster', () => {
+  it('stores the id when the author named the cluster', async () => {
+    const { service, repo, clusterRefs } = build([], operatorAccess());
+    clusterRefs.canonicalIdOf.mockResolvedValue('c-1');
+
+    await service.create(principal('u1'), {
+      scopeType: 'cluster',
+      scopeRef: 'control-cluster',
+      nature: 'practice',
+      topic: 'placement',
+      title: 'One node on purpose',
+      body: 'A second node would hide the placement bugs this surfaces.',
+    } as never);
+
+    expect(clusterRefs.canonicalIdOf).toHaveBeenCalledWith('control-cluster');
+    expect(repo.save).toHaveBeenCalledWith(
+      expect.objectContaining({ scopeRef: 'c-1' }),
+    );
+  });
+
+  /**
+   * A note naming a cluster that does not exist is a note nobody will ever
+   * read. Letting it through spends the author's care on nothing.
+   */
+  it('refuses a cluster nothing here answers to', async () => {
+    const { service, clusterRefs } = build([], operatorAccess());
+    clusterRefs.canonicalIdOf.mockResolvedValue(null);
+
+    await expect(
+      service.create(principal('u1'), {
+        scopeType: 'cluster',
+        scopeRef: 'a-cluster-that-never-was',
+        nature: 'practice',
+        topic: 'placement',
+        title: 'Nowhere',
+        body: 'This names a cluster that is not here at all.',
+      } as never),
+    ).rejects.toThrow('No cluster here answers to');
+  });
+
+  it('leaves a global note alone — it names no cluster to resolve', async () => {
+    const { service, clusterRefs } = build([], operatorAccess());
+
+    await service.create(principal('u1'), {
+      scopeType: 'global',
+      nature: 'practice',
+      topic: 'deploys',
+      title: 'Deploys land on weekday mornings',
+      body: 'Nobody deploys after 16:00, so a failure has somebody awake to see it.',
+    } as never);
+
+    expect(clusterRefs.canonicalIdOf).not.toHaveBeenCalled();
   });
 });
