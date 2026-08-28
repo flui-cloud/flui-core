@@ -263,7 +263,7 @@ export const PERMISSION_GROUPS: PermissionGroupDef[] = [
     depth: PERMISSION_DEPTH.LOOK,
     label: 'See the infrastructure',
     summary:
-      'Read how this instance is built and what changing it would cost — the capacity plan of a cluster, its nodes and what resizing one would take down, its shared storage, its platform components, its certificate issuers and whether it hosts its own DNS — and change none of it.',
+      'Read how this instance is built and what changing it would cost — the capacity plan of a cluster, its nodes and what resizing one would take down, its shared storage, its platform components, its certificate issuers, whether it hosts its own DNS, and the scaling groups that say how large each cluster may grow together with what they decided and declined to decide — and change none of it.',
     scopes: [MCP_SCOPE.INFRA_READ],
   },
   /**
@@ -284,7 +284,7 @@ export const PERMISSION_GROUPS: PermissionGroupDef[] = [
     depth: PERMISSION_DEPTH.CHANGE,
     label: 'Operate the infrastructure',
     summary:
-      'Everything See the infrastructure reads, plus acting on it — creating a cluster, adding, resizing and uncordoning its nodes, expanding its shared storage, stopping and starting it, changing its autoscaling, enabling its firewall, redeploying a platform component, configuring its certificate issuers, issuing a SAN certificate and publishing the records a sending domain needs — and every one of those stops to ask you before it happens, with what it costs attached.',
+      'Everything See the infrastructure reads, plus acting on it — creating a cluster, adding, resizing and uncordoning its nodes, expanding its shared storage, stopping and starting it, changing its autoscaling, enabling its firewall, redeploying a platform component, configuring its certificate issuers, issuing a SAN certificate, publishing the records a sending domain needs and setting the scaling group that says how large a cluster may grow and how much it may spend unattended — and every one of those stops to ask you before it happens, with what it costs attached.',
     scopes: [MCP_SCOPE.INFRA_READ, MCP_SCOPE.INFRA_WRITE],
   },
   {
