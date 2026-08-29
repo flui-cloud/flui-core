@@ -7,6 +7,7 @@ import {
 } from 'src/modules/infrastructure/vnets/entities/vnet-subnet.entity';
 import { VNetStatus } from 'src/modules/infrastructure/vnets/entities/vnet.entity';
 import { CliVnetRepository } from '../repositories/cli-vnet.repository';
+import { contextLabelPair } from '../context-stamp';
 
 export interface EnvVnetSpec {
   provider: CloudProvider;
@@ -100,6 +101,7 @@ export class VnetProvisioningService {
       labels: [
         { key: 'managed-by', value: 'flui-cloud' },
         { key: 'flui-resource-type', value: 'vnet' },
+        contextLabelPair(),
       ],
       subnets: [{ ipRange: subnetIpRange, networkZone }],
     });
@@ -112,6 +114,7 @@ export class VnetProvisioningService {
       labels: [
         { key: 'managed-by', value: 'flui-cloud' },
         { key: 'flui-resource-type', value: 'vnet' },
+        contextLabelPair(),
       ],
       status: VNetStatus.ACTIVE,
       subnets: [],
@@ -151,6 +154,7 @@ export class VnetProvisioningService {
         { key: 'managed-by', value: 'flui-cloud' },
         { key: 'flui-resource-type', value: 'vnet' },
         { key: 'region', value: region },
+        contextLabelPair(),
       ],
       subnets: [{ ipRange: subnetIpRange, networkZone: region }],
     });
@@ -164,6 +168,7 @@ export class VnetProvisioningService {
         { key: 'managed-by', value: 'flui-cloud' },
         { key: 'flui-resource-type', value: 'vnet' },
         { key: 'region', value: region },
+        contextLabelPair(),
       ],
       status: VNetStatus.ACTIVE,
       subnets: [],

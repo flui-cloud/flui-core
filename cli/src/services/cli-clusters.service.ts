@@ -28,6 +28,7 @@ import { CliSshService } from './cli-ssh.service';
 import { CliCaService } from './cli-ca.service';
 import { ProviderFactory } from 'src/modules/providers/services/provider.factory';
 import { FirewallProviderFactory } from 'src/modules/providers/core/factories/firewall-provider.factory';
+import { belongsToContext } from '../lib/context-stamp';
 import { CloudProvider } from 'src/modules/providers/enums/cloud-provider.enum';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
@@ -652,25 +653,33 @@ export class CliClustersService {
           }
         }
 
-        // STEP 1c: Sweep orphaned control firewalls left with a TEMPORARY name.
-        // A firewall created before a failed cluster run keeps its temp name
-        // (`flui-control-firewall` or `flui-control-firewall-<hex>`) and has no
-        // flui-cluster-id label, so neither the label query nor the scoped-name
-        // fallback above can find it. There is exactly one control cluster per
-        // environment, so any such firewall is leftover garbage from a previous
-        // attempt and is safe to remove while tearing down the control cluster.
-        // The regex only matches the temp form (8-hex suffix), never another
-        // cluster's UUID-scoped name.
+        // STEP 1c: Sweep control firewalls this context left behind before a
+        // cluster existed to label them with. Such a firewall carries no
+        // flui-cluster-id, so neither the label query nor the scoped-name
+        // fallback above can find it.
+        //
+        // What makes this safe is the context stamp, and nothing else. One
+        // provider account holds several installations, and a control firewall
+        // belonging to a live one is indistinguishable from a leftover by name
+        // or by any other label: both are `flui-control-firewall-<hex>` with
+        // the same three labels. Deciding by name once matched a production
+        // firewall, and only the provider refusing to delete an in-use one kept
+        // it. An unstamped firewall is therefore never claimed — everything
+        // created before the stamp existed is unstamped, and that population is
+        // exactly the one that must not be guessed at.
         if (isControlClusterType(cluster.clusterType)) {
-          const tempControlFirewall = /^flui-control-firewall(-[0-9a-f]{8})?$/;
           const known = new Set(allFirewalls.map((fw) => fw.id));
           const providerFirewalls = await firewallService.listFirewalls({});
           const orphans = providerFirewalls.filter(
-            (fw) => tempControlFirewall.test(fw.name) && !known.has(fw.id),
+            (fw) =>
+              belongsToContext(fw.labels) &&
+              fw.labels['flui-cluster-type'] === 'control' &&
+              !fw.labels['flui-cluster-id'] &&
+              !known.has(fw.id),
           );
           if (orphans.length > 0) {
             this.logger.log(
-              `Found ${orphans.length} orphaned control firewall(s) with a temporary name:`,
+              `Found ${orphans.length} control firewall(s) of this context with no cluster:`,
             );
             orphans.forEach((fw) =>
               this.logger.log(`  - ${fw.name} (${fw.id})`),

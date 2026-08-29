@@ -22,6 +22,11 @@ import { EncryptionService } from 'src/modules/shared/encryption/services/encryp
 import { CliK3sScriptService } from './cli-k3s-script.service';
 import { buildNipBaseDomain } from '../lib/nip-base-domain.util';
 import { LabelService } from 'src/modules/infrastructure/shared/services/label.service';
+import {
+  CONTEXT_LABEL,
+  contextLabelPair,
+  contextTag,
+} from '../lib/context-stamp';
 import { CliCaService } from './cli-ca.service';
 import { execFileSync } from 'node:child_process';
 import * as fs from 'node:fs';
@@ -174,6 +179,7 @@ export class CliClusterCreatorService {
         { key: 'flui-cluster-id', value: cluster.id },
         { key: 'flui-resource-type', value: 'cluster-node' },
         { key: 'flui-node-type', value: 'master' },
+        contextLabelPair(),
       ];
 
       // Generate bootstrap SSH key for master node
@@ -470,6 +476,7 @@ export class CliClusterCreatorService {
             { key: 'flui-cluster-id', value: cluster.id },
             { key: 'flui-resource-type', value: 'cluster-node' },
             { key: 'flui-node-type', value: 'worker' },
+            contextLabelPair(),
           ];
 
           // Generate bootstrap SSH key for worker node
@@ -1780,6 +1787,7 @@ export class CliClusterCreatorService {
       'flui-cluster-id': clusterId,
       'flui-resource-type': 'ssh-key',
       'flui-ssh-key-name': nodeName,
+      [CONTEXT_LABEL]: contextTag(),
     };
 
     this.logger.debug(`Uploading bootstrap key to provider for ${nodeName}...`);

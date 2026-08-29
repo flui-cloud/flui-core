@@ -47,6 +47,7 @@ import { refuseToAsk, setNonInteractive } from '../../lib/non-interactive';
 import { emitEvent } from '../../lib/progress-events';
 import { SshMode } from '../../lib/ssh-mode';
 import { PREFERENCES } from '../../config/preferences-schema';
+import { contextLabelPair, contextTag } from '../../lib/context-stamp';
 
 export default class EnvCreate extends Command {
   static readonly description = 'Create control cluster infrastructure on K3s';
@@ -858,7 +859,7 @@ export default class EnvCreate extends Command {
         // leave a network unaccounted for whenever the process dies mid-create,
         // and claiming one we merely joined would point a cleanup tool at
         // somebody else's private network.
-        const envVnetName = `flui-env-${randomBytes(3).toString('hex')}`;
+        const envVnetName = `flui-env-${contextTag()}-${randomBytes(3).toString('hex')}`;
         emitEvent({
           type: 'resource',
           kind: 'network',
@@ -925,7 +926,7 @@ export default class EnvCreate extends Command {
           // Unique temporary name to avoid colliding with orphaned firewalls
           // from previous runs; renamed to flui-control-firewall-<clusterId>
           // (by firewallId) once the cluster is ready.
-          const temporaryFirewallName = `flui-control-firewall-${randomBytes(4).toString('hex')}`;
+          const temporaryFirewallName = `flui-control-firewall-${contextTag()}-${randomBytes(4).toString('hex')}`;
 
           // Create firewall with temporary name (will be renamed when cluster is ready)
           emitEvent({
@@ -940,6 +941,7 @@ export default class EnvCreate extends Command {
               { key: 'managed-by', value: 'flui-cloud' },
               { key: 'flui-resource-type', value: 'firewall' },
               { key: 'flui-cluster-type', value: 'control' },
+              contextLabelPair(),
             ],
             rules,
             // Label selector will be applied later when cluster servers exist

@@ -19,6 +19,7 @@ import * as https from 'node:https';
 import { TLSSocket } from 'node:tls';
 import { checkTcpPort } from '../lib/utils/tcp-port';
 import { SshMode } from '../lib/ssh-mode';
+import { contextScopedName } from '../lib/context-stamp';
 
 /**
  * CLI Control Cluster Service
@@ -137,7 +138,7 @@ export class CliControlClusterService {
     const useLatest = options?.useLatest ?? false;
     const release = getEffectiveRelease(useLatest);
     const createDto = {
-      name: 'control-cluster',
+      name: contextScopedName('control-cluster'),
       provider: provider as CloudProvider,
       region,
       nodeSize,
@@ -182,7 +183,7 @@ export class CliControlClusterService {
     const useLatest = opts.useLatest ?? false;
     const release = getEffectiveRelease(useLatest);
     const createDto = {
-      name: 'control-cluster',
+      name: contextScopedName('control-cluster'),
       provider: CloudProvider.BYOS,
       region: 'byos',
       nodeSize: 'byos',
