@@ -1,3 +1,4 @@
+import { ApplicationManifestEnvVar } from '@flui-cloud/spec';
 import { ApplicationEnvVar } from '../interfaces/source-config.interface';
 
 /**
@@ -217,4 +218,38 @@ export function renderableEnv(
   env: ApplicationEnvVar[] | undefined | null,
 ): ApplicationEnvVar[] {
   return (env ?? []).filter((e) => !e.pending);
+}
+
+/**
+ * Give a first-time `secret: true` declaration somewhere to live.
+ *
+ * `manifestEnvVar` returns `null` for such a key on purpose, so `mergeAppEnv`'s
+ * `declaredNames` protection can keep a value already delivered via
+ * `flui app env set` alive across redeploys instead of the manifest reclaiming
+ * and blanking it. That protection has nothing to preserve the first time,
+ * though, so run this once after `mergeAppEnv` to add the same
+ * `{ value: '', secret: true, pending: true }` placeholder `requestSensitiveVars`
+ * writes for a person — never touching a key `env` already has an entry for.
+ */
+export function materializeDeclaredSecrets(
+  env: ApplicationEnvVar[],
+  manifestEnv: ApplicationManifestEnvVar[],
+): ApplicationEnvVar[] {
+  const present = new Set(env.map((e) => e.name));
+  const additions: ApplicationEnvVar[] = manifestEnv
+    .filter(
+      (e) =>
+        e.secret &&
+        e.value === undefined &&
+        !e.valueFrom?.secretRef &&
+        !present.has(e.name),
+    )
+    .map((e) => ({
+      name: e.name,
+      value: '',
+      secret: true,
+      pending: true,
+      source: 'manifest',
+    }));
+  return additions.length ? [...env, ...additions] : env;
 }

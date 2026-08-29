@@ -38,6 +38,7 @@ import {
 } from '../interfaces/source-config.interface';
 import { RepositoriesService } from '../../repositories/services/repositories.service';
 import { mergeAppEnv, collectEnvShadows } from '../utils/env-merge.util';
+import { materializeDeclaredSecrets } from '../utils/env-write.util';
 import {
   applyEnvironmentProfile,
   manifestDeclaredEnvNames,
@@ -226,7 +227,10 @@ export class ApplicationSourceDeployService {
           exposure:
             (manifest.deploy.exposure as ApplicationExposure) ??
             ApplicationExposure.PUBLIC,
-          env: mergeAppEnv([], manifestEnv, dto.envOverrides),
+          env: materializeDeclaredSecrets(
+            mergeAppEnv([], manifestEnv, dto.envOverrides),
+            normalizeManifestEnv(manifest.deploy.env),
+          ),
           resources,
           healthProbe: healthProbe as any,
           startCommand: manifest.deploy.startCommand,
@@ -250,11 +254,14 @@ export class ApplicationSourceDeployService {
         port: manifest.deploy.port,
         exposure:
           (manifest.deploy.exposure as ApplicationExposure) ?? app.exposure,
-        env: mergeAppEnv(
-          existingEnv,
-          manifestEnv,
-          dto.envOverrides,
-          manifestDeclaredEnvNames(manifest.deploy.env),
+        env: materializeDeclaredSecrets(
+          mergeAppEnv(
+            existingEnv,
+            manifestEnv,
+            dto.envOverrides,
+            manifestDeclaredEnvNames(manifest.deploy.env),
+          ),
+          normalizeManifestEnv(manifest.deploy.env),
         ),
         resources: resources,
         healthProbe: healthProbe as any,
@@ -688,11 +695,14 @@ export class ApplicationSourceDeployService {
       port: manifest.deploy.port,
       exposure:
         (manifest.deploy.exposure as ApplicationExposure) ?? app.exposure,
-      env: mergeAppEnv(
-        existingEnv,
-        manifestEnv,
-        undefined,
-        manifestDeclaredEnvNames(manifest.deploy.env),
+      env: materializeDeclaredSecrets(
+        mergeAppEnv(
+          existingEnv,
+          manifestEnv,
+          undefined,
+          manifestDeclaredEnvNames(manifest.deploy.env),
+        ),
+        normalizeManifestEnv(manifest.deploy.env),
       ),
       resources: this.resolveResources(manifest),
       healthProbe: this.resolveHealthProbe(manifest) as any,

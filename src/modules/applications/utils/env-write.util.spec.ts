@@ -1,6 +1,7 @@
 import {
   applyPlainVars,
   applySensitiveVars,
+  materializeDeclaredSecrets,
   pendingEnvKeys,
   plainEnvData,
   renderableEnv,
@@ -284,5 +285,68 @@ describe('nothing pending reaches a container', () => {
 
   it('reads the waiting keys back by name', () => {
     expect(pendingEnvKeys(env)).toEqual(['WAITING']);
+  });
+});
+
+describe('materializeDeclaredSecrets', () => {
+  it('gives a first-time secret declaration a pending entry to be listed by', () => {
+    const env = materializeDeclaredSecrets(
+      [],
+      [{ name: 'API_KEY', secret: true }],
+    );
+    expect(env).toEqual([
+      {
+        name: 'API_KEY',
+        value: '',
+        secret: true,
+        pending: true,
+        source: 'manifest',
+      },
+    ]);
+  });
+
+  it('never touches a key already delivered — the whole point', () => {
+    const delivered: ApplicationEnvVar[] = [
+      { name: 'API_KEY', value: 'enc', secret: true, source: 'user' },
+    ];
+    const env = materializeDeclaredSecrets(delivered, [
+      { name: 'API_KEY', secret: true },
+    ]);
+    expect(env).toBe(delivered);
+  });
+
+  it('never touches an already-pending key either — no double placeholder', () => {
+    const pending: ApplicationEnvVar[] = [
+      {
+        name: 'API_KEY',
+        value: '',
+        secret: true,
+        pending: true,
+        source: 'manifest',
+      },
+    ];
+    const env = materializeDeclaredSecrets(pending, [
+      { name: 'API_KEY', secret: true },
+    ]);
+    expect(env).toBe(pending);
+  });
+
+  it('leaves a valueFrom.secretRef alone — that key resolves through mergeAppEnv already', () => {
+    const env = materializeDeclaredSecrets(
+      [],
+      [
+        {
+          name: 'API_KEY',
+          secret: true,
+          valueFrom: { secretRef: 'other-secret/KEY' },
+        },
+      ],
+    );
+    expect(env).toEqual([]);
+  });
+
+  it('never manufactures a placeholder for a plain (non-secret) key', () => {
+    const env = materializeDeclaredSecrets([], [{ name: 'MODE' }]);
+    expect(env).toEqual([]);
   });
 });
