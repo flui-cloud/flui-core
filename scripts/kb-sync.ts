@@ -82,71 +82,47 @@ function resolveDocsRoot(): { root: string; ref: string; origin: string } {
   }
 }
 
-// The KB carries both manifest schemas so the assistant can help author either
+// The KB carries both manifest contracts so the assistant can author either
 // kind. `flui-manifest.schema.json` keeps the CatalogApp schema (legacy name);
 // `flui-application.schema.json` is the source-deploy Application schema.
-const SCHEMA_FILES: Array<{ rel: string; dest: string; optional?: boolean }> = [
-  {
-    rel: 'schemas/catalog-app.v1beta1.json',
-    dest: 'flui-manifest.schema.json',
-  },
-  {
-    // Not published yet. Listed so it is picked up the moment the spec ships it,
-    // but optional until then — an unpublished schema must not be able to block
-    // the whole knowledge base, CLI reference included, from ever refreshing.
-    rel: 'schemas/application.v1beta1.json',
-    dest: 'flui-application.schema.json',
-    optional: true,
-  },
+const SCHEMA_FILES: Array<{ rel: string; dest: string }> = [
+  { rel: 'catalog-app.v1beta1.json', dest: 'flui-manifest.schema.json' },
+  { rel: 'application.v1beta1.json', dest: 'flui-application.schema.json' },
 ];
 
-function fetchSchema(rel: string, dest: string, optional?: boolean): void {
-  try {
-    execFileSync(
-      'curl',
-      [
-        '-fsSL',
-        `https://raw.githubusercontent.com/${KNOWLEDGE_SOURCES.specRepo}/${KNOWLEDGE_SOURCES.specRef}/${rel}`,
-        '-o',
-        path.join(SRC, dest),
-      ],
-      { stdio: 'inherit' },
-    );
-  } catch (error) {
-    if (!optional) throw error;
-    fs.rmSync(path.join(SRC, dest), { force: true });
-    console.warn(
-      `[kb-sync] ${rel} is not in ${KNOWLEDGE_SOURCES.specRef} either — skipping it (optional) and continuing`,
-    );
-  }
-}
-
 /**
- * Each schema is resolved on its own. A sibling flui-spec checkout can legitimately
- * be ahead of, or behind, the published spec — a schema still being drafted simply
- * is not on disk yet. Deciding for the whole set from the first file lets one
- * missing schema abort the entire knowledge-base refresh, CLI reference included.
+ * The contracts come from the resolved `@flui-cloud/spec`, not from a git ref.
+ *
+ * That package is what the API validates a deploy against, so taking the
+ * schemas from anywhere else lets the knowledge base describe a contract the
+ * platform does not enforce. It is not a hypothetical: the pinned ref was
+ * `v0.5.0`, the newest tag in the spec repo is `v0.5.1`, and at neither of them
+ * does `application.v1beta1.json` exist in git at all — while npm has carried it
+ * for four minor versions. Sourced from the package, the two are the same file
+ * by construction, and pnpm's lockfile is the audit trail.
  */
 function syncSchema(): { ref: string; origin: string } {
-  const local = localDir('FLUI_SPEC_DIR', 'flui-spec');
-  let usedLocal = false;
-  for (const { rel, dest, optional } of SCHEMA_FILES) {
-    const source = local ? path.join(local, rel) : '';
-    if (source && fs.existsSync(source)) {
-      fs.copyFileSync(source, path.join(SRC, dest));
-      usedLocal = true;
-      continue;
+  const pkgJson = require.resolve('@flui-cloud/spec/package.json');
+  const root = path.dirname(pkgJson);
+  const version = (
+    JSON.parse(fs.readFileSync(pkgJson, 'utf8')) as {
+      version: string;
     }
-    if (local) {
-      console.warn(
-        `[kb-sync] ${rel} not in the local flui-spec checkout — fetching ${KNOWLEDGE_SOURCES.specRef} from the published spec instead`,
+  ).version;
+
+  for (const { rel, dest } of SCHEMA_FILES) {
+    const source = path.join(root, 'schemas', rel);
+    if (!fs.existsSync(source)) {
+      throw new Error(
+        `[kb-sync] @flui-cloud/spec@${version} carries no schemas/${rel}. ` +
+          'The knowledge base is not built without both manifest contracts — a ' +
+          'missing one is not an absent answer, it is a confident wrong one.',
       );
     }
-    fetchSchema(rel, dest, optional);
+    fs.copyFileSync(source, path.join(SRC, dest));
   }
-  return usedLocal
-    ? { ref: gitRef(local!), origin: 'local' }
-    : { ref: KNOWLEDGE_SOURCES.specRef, origin: 'remote' };
+
+  return { ref: `@flui-cloud/spec@${version}`, origin: 'npm' };
 }
 
 function gitRef(dir: string): string {

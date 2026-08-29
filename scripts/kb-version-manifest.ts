@@ -12,10 +12,11 @@ import { RELEASE } from '../src/config/release.config';
 
 const ROOT = path.resolve(__dirname, '..');
 const CLI_PKG = path.join(ROOT, 'cli/package.json');
-const SCHEMA = path.join(
-  ROOT,
-  'src/modules/assistant/knowledge/sources/flui-manifest.schema.json',
-);
+const SOURCES = path.join(ROOT, 'src/modules/assistant/knowledge/sources');
+const SCHEMAS: Array<{ key: 'catalogApp' | 'application'; file: string }> = [
+  { key: 'catalogApp', file: 'flui-manifest.schema.json' },
+  { key: 'application', file: 'flui-application.schema.json' },
+];
 const OUT_DIR = path.join(ROOT, 'src/modules/assistant/knowledge/generated');
 const OUT = path.join(OUT_DIR, 'version-manifest.generated.json');
 
@@ -26,18 +27,40 @@ function cliVersion(): string {
   return pkg.version;
 }
 
-function specApiVersion(): { schemaId: string; apiVersion: string } {
-  if (!fs.existsSync(SCHEMA)) {
-    return { schemaId: 'unknown', apiVersion: 'unknown' };
+interface SchemaBinding {
+  schemaId: string;
+  apiVersion: string;
+}
+
+/**
+ * Both contracts, named separately.
+ *
+ * A single `spec` field forced a choice between them, and the choice that was
+ * made reported the catalog schema as though it were the whole spec — so a
+ * reader checking which contract the assistant held was told about the one kind
+ * of manifest it was not being asked about.
+ */
+function specBindings(): Record<string, SchemaBinding> {
+  const bindings: Record<string, SchemaBinding> = {};
+  for (const { key, file } of SCHEMAS) {
+    const full = path.join(SOURCES, file);
+    if (!fs.existsSync(full)) {
+      throw new Error(
+        `kb-version-manifest: ${file} is missing — run \`pnpm kb:sync\` first.`,
+      );
+    }
+    const schema = JSON.parse(fs.readFileSync(full, 'utf8')) as {
+      $id?: string;
+    };
+    const id = schema.$id ?? 'unknown';
+    // .../application/v1beta1.json -> application.v1beta1
+    const match = id.match(/\/([^/]+)\/([^/]+)\.json$/);
+    bindings[key] = {
+      schemaId: id,
+      apiVersion: match ? `${match[1]}.${match[2]}` : 'unknown',
+    };
   }
-  const schema = JSON.parse(fs.readFileSync(SCHEMA, 'utf8')) as {
-    $id?: string;
-  };
-  const id = schema.$id ?? 'unknown';
-  // .../catalog-app/v1beta1.json -> catalog-app.v1beta1
-  const match = id.match(/\/([^/]+)\/([^/]+)\.json$/);
-  const apiVersion = match ? `${match[1]}.${match[2]}` : 'unknown';
-  return { schemaId: id, apiVersion };
+  return bindings;
 }
 
 function main(): void {
@@ -50,13 +73,13 @@ function main(): void {
       bootstrapRef: RELEASE.bootstrapRef,
       images: RELEASE.images,
     },
-    spec: specApiVersion(),
+    spec: specBindings(),
   };
 
   fs.mkdirSync(OUT_DIR, { recursive: true });
   fs.writeFileSync(OUT, JSON.stringify(manifest, null, 2) + '\n');
   console.log(
-    `kb-version-manifest: kbVersion ${cli} · platform ${RELEASE.version} · spec ${manifest.spec.apiVersion}`,
+    `kb-version-manifest: kbVersion ${cli} · platform ${RELEASE.version} · spec ${manifest.spec.application.apiVersion} + ${manifest.spec.catalogApp.apiVersion}`,
   );
 }
 

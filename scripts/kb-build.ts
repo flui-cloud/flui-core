@@ -28,7 +28,10 @@ interface CompiledKb {
   compatibility: {
     cli: string;
     platform: { version: string; bootstrapRef: string; images: unknown };
-    spec: { schemaId: string; apiVersion: string };
+    spec: {
+      application: { schemaId: string; apiVersion: string };
+      catalogApp: { schemaId: string; apiVersion: string };
+    };
     sources: unknown;
   };
   guardrails: string;
@@ -65,6 +68,15 @@ function loadDir(dir: string, source: string, prefix: string): Section[] {
     });
 }
 
+/**
+ * Both manifest contracts, or none at all.
+ *
+ * A skipped schema used to be a `continue`, which compiled a knowledge base that
+ * looked complete and answered `kind: Application` questions with the catalog
+ * contract. An assistant handed the wrong schema does not fall silent — it
+ * writes something plausible and wrong, which is the failure this whole corpus
+ * exists to prevent. So a missing file stops the build.
+ */
 function schemaSection(): Section[] {
   const schemas: Array<{ file: string; id: string; title: string }> = [
     {
@@ -78,19 +90,21 @@ function schemaSection(): Section[] {
       title: 'flui.yaml manifest — kind: Application JSON Schema',
     },
   ];
-  const sections: Section[] = [];
-  for (const { file, id, title } of schemas) {
+  return schemas.map(({ file, id, title }) => {
     const full = path.join(SRC, file);
-    if (!fs.existsSync(full)) continue;
-    const json = fs.readFileSync(full, 'utf8').trim();
-    sections.push({
+    if (!fs.existsSync(full)) {
+      throw new Error(
+        `kb-build: ${file} is missing — run \`pnpm kb:sync\` first. ` +
+          'The knowledge base is not built without both manifest contracts.',
+      );
+    }
+    return {
       id,
       title,
-      source: 'flui-spec',
-      body: ['```json', json, '```'].join('\n'),
-    });
-  }
-  return sections;
+      source: 'flui-spec' as const,
+      body: ['```json', fs.readFileSync(full, 'utf8').trim(), '```'].join('\n'),
+    };
+  });
 }
 
 function cliReferenceSection(): Section[] {
@@ -113,7 +127,10 @@ function main(): void {
     kbVersion: string;
     cli: string;
     platform: { version: string; bootstrapRef: string; images: unknown };
-    spec: { schemaId: string; apiVersion: string };
+    spec: {
+      application: { schemaId: string; apiVersion: string };
+      catalogApp: { schemaId: string; apiVersion: string };
+    };
   };
 
   const sourcesLock = fs.existsSync(path.join(SRC, 'SOURCES.lock.json'))
@@ -152,7 +169,7 @@ function main(): void {
   const md: string[] = [
     `# Flui Assistant knowledge base — v${kb.kbVersion}`,
     '',
-    `> Compiled artifact. CLI \`${kb.compatibility.cli}\` · platform \`${kb.compatibility.platform.version}\` · spec \`${kb.compatibility.spec.apiVersion}\`. Regenerate with \`pnpm kb:build\`.`,
+    `> Compiled artifact. CLI \`${kb.compatibility.cli}\` · platform \`${kb.compatibility.platform.version}\` · spec \`${kb.compatibility.spec.application.apiVersion}\` + \`${kb.compatibility.spec.catalogApp.apiVersion}\`. Regenerate with \`pnpm kb:build\`.`,
     '',
     '## Guardrails',
     '',
@@ -170,7 +187,7 @@ function main(): void {
   fs.writeFileSync(path.join(DIST, 'kb.md'), md.join('\n') + '\n');
 
   console.log(
-    `kb-build: v${kb.kbVersion} · ${sections.length} sections · platform ${kb.compatibility.platform.version} · spec ${kb.compatibility.spec.apiVersion}`,
+    `kb-build: v${kb.kbVersion} · ${sections.length} sections · platform ${kb.compatibility.platform.version} · spec ${kb.compatibility.spec.application.apiVersion} + ${kb.compatibility.spec.catalogApp.apiVersion}`,
   );
 }
 

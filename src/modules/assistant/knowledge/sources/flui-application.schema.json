@@ -1,0 +1,369 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://flui.cloud/schema/application/v1beta1.json",
+  "title": "Flui Application Manifest (v1beta1)",
+  "description": "Deploy a source-code repository (built from its Dockerfile via CI) to a Flui cluster. This is a deliberately broad forward contract: fields tagged \"x-flui-status\": \"planned\" are part of the spec but not yet applied on source deploys — validators accept them and surface a warning (not an error). Fields tagged \"deprecated\" are still accepted and applied, but a newer form is preferred. Untagged fields are implemented. As a planned field ships, its tag flips to \"implemented\" and the warning disappears.",
+  "type": "object",
+  "required": ["kind", "apiVersion", "metadata", "deploy"],
+  "additionalProperties": false,
+  "properties": {
+    "kind": { "const": "Application" },
+    "apiVersion": {
+      "enum": ["flui.cloud/v1beta1", "flui/v1"],
+      "description": "Canonical: flui.cloud/v1beta1. flui/v1 is accepted as a legacy alias."
+    },
+    "metadata": {
+      "type": "object",
+      "required": ["name"],
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^[a-z]([a-z0-9-]{0,61}[a-z0-9])?$",
+          "description": "Stable slug used as the app identifier. Lowercase DNS label: starts with a letter, no leading/trailing dash, max 63 chars."
+        }
+      }
+    },
+    "build": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "How the image is built. INVARIANT across environments: the same built image is promoted from one environment to the next, so nothing here may be overridden per-environment (environments.*.deploy has no build key).",
+      "properties": {
+        "strategy": {
+          "enum": ["dockerfile", "auto"],
+          "default": "dockerfile",
+          "description": "`dockerfile` builds the repo Dockerfile. `auto` lets railpack detect the framework."
+        },
+        "dockerfile": {
+          "type": "string",
+          "default": "./Dockerfile",
+          "description": "Path to the Dockerfile, relative to the repo root. Monorepo: point at the subdir, e.g. `api/Dockerfile`."
+        },
+        "context": {
+          "type": "string",
+          "default": ".",
+          "description": "Docker build context, relative to the repo root. Monorepo: e.g. `api`."
+        },
+        "args": {
+          "type": "object",
+          "propertyNames": { "pattern": "^[A-Za-z_][A-Za-z0-9_]*$" },
+          "additionalProperties": { "type": "string" },
+          "description": "Docker build ARGs passed at image build time (--build-arg NAME=value). Env-INDEPENDENT and baked into the image — use for build-time configuration that is the same in every environment. For anything that differs per environment or must not be compiled into the artifact, use deploy.env instead."
+        }
+      }
+    },
+    "deploy": {
+      "type": "object",
+      "required": ["port"],
+      "additionalProperties": false,
+      "properties": {
+        "port": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535,
+          "description": "The port your app listens on inside the container. MUST match what your code binds (commonly process.env.PORT)."
+        },
+        "exposure": {
+          "enum": ["public", "internal"],
+          "default": "public",
+          "description": "`public` = Ingress + TLS + DNS on a public hostname. `internal` = ClusterIP only, reachable via the dashboard proxy."
+        },
+        "healthcheck": {
+          "type": "object",
+          "required": ["path"],
+          "additionalProperties": false,
+          "properties": {
+            "path": {
+              "type": "string",
+              "pattern": "^/",
+              "description": "HTTP path probed for readiness/liveness. MUST be a real route that returns 2xx — a wrong path (e.g. /health when the route is /api/health) makes every probe fail silently."
+            },
+            "port": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 65535,
+              "description": "Defaults to deploy.port."
+            }
+          }
+        },
+        "resources": { "$ref": "#/definitions/resources" },
+        "scaling": { "$ref": "#/definitions/scaling" },
+        "domain": { "$ref": "#/definitions/domain" },
+        "env": { "$ref": "#/definitions/envBlock" },
+        "volumes": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/volume" }
+        },
+        "startCommand": {
+          "type": "string",
+          "description": "Override the container start command."
+        }
+      }
+    },
+    "environments": {
+      "type": "object",
+      "x-flui-note": "Applied on git-driven deploys: a push (or `flui deploy`) on a branch bound here overlays that profile — env literals plus the whitelisted deploy fields. Resolution is branch-scoped, so a plain validate (no branch) reports the base spec.",
+      "propertyNames": {
+        "pattern": "^[a-z]([a-z0-9-]{0,30}[a-z0-9])?$",
+        "description": "Environment name: production, staging, preview, dev…"
+      },
+      "additionalProperties": { "$ref": "#/definitions/environmentProfile" },
+      "description": "Named per-environment profiles. Each is a partial override merged over the base spec when the app is deployed to that environment. Only env, and a whitelisted subset of deploy, may be overridden — build.* is deliberately excluded so the same built image is promoted across environments."
+    }
+  },
+  "definitions": {
+    "resources": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "profile": {
+          "enum": ["nano", "small", "medium", "large", "xlarge"],
+          "x-flui-status": "planned",
+          "x-flui-note": "Not yet applied on source deploys — set resources.requests/limits explicitly. A profile→requests/limits mapping is the first planned field to land.",
+          "description": "T-shirt size mapped to CPU/memory requests+limits."
+        },
+        "requests": { "$ref": "#/definitions/resourceSpec" },
+        "limits": { "$ref": "#/definitions/resourceSpec" }
+      }
+    },
+    "resourceSpec": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "cpu": { "type": "string", "description": "e.g. \"250m\", \"1\"." },
+        "memory": {
+          "type": "string",
+          "description": "e.g. \"256Mi\", \"1Gi\"."
+        }
+      }
+    },
+    "scaling": {
+      "type": "object",
+      "additionalProperties": false,
+      "x-flui-status": "planned",
+      "x-flui-note": "Not yet applied on source deploys — the manifest scaling block does not configure autoscaling yet. The app runs at a single replica.",
+      "properties": {
+        "min": { "type": "integer", "minimum": 0 },
+        "max": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "domain": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "auto": {
+          "type": "boolean",
+          "default": true,
+          "description": "Auto-create an AppEndpoint after deploy."
+        },
+        "tls": {
+          "type": "boolean",
+          "default": true,
+          "description": "Provision a TLS certificate."
+        },
+        "fqdn": {
+          "type": "string",
+          "description": "Explicit FQDN to expose on (apex, or a subdomain on another zone). Bypasses the cluster's assigned zone; taken verbatim."
+        },
+        "hostnameMode": {
+          "enum": ["ip", "domain"],
+          "description": "`ip` = nip.io hostname against the master IP. `domain` = real DNS zone (needs a configured ClusterDnsZone)."
+        },
+        "certChallenge": {
+          "enum": ["http-01", "dns-01"],
+          "description": "ACME challenge. `dns-01` needs a DNS zone and supports wildcards."
+        },
+        "certificateProvider": {
+          "enum": ["lets-encrypt", "lets-encrypt-staging"],
+          "description": "Use lets-encrypt-staging for testing without hitting rate limits."
+        },
+        "userCustomizable": { "type": "boolean" }
+      }
+    },
+    "envBlock": {
+      "oneOf": [
+        {
+          "type": "array",
+          "items": { "$ref": "#/definitions/envVarLegacy" },
+          "x-flui-status": "deprecated",
+          "x-flui-note": "The array form of env is deprecated in 0.8.0 in favour of the map form { NAME: <value | spec> }. The array is still accepted and applied unchanged; migrate at your convenience.",
+          "description": "Legacy array form: a list of { name, value | valueFrom }. Prefer the map form."
+        },
+        {
+          "type": "object",
+          "propertyNames": {
+            "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+            "description": "The env var name."
+          },
+          "additionalProperties": { "$ref": "#/definitions/envEntry" },
+          "description": "Map of ENV_NAME → value. The key is the variable name; the value is either a literal string (shorthand for { value: … }) or a spec object."
+        }
+      ],
+      "description": "Runtime environment variables. Two accepted forms: the preferred map (ENV_NAME → value) and the deprecated array of { name, value }."
+    },
+    "envEntry": {
+      "oneOf": [
+        {
+          "type": "string",
+          "description": "Shorthand for { value: <this string>, delivery: runtime }."
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "not": { "required": ["value", "valueFrom"] },
+          "properties": {
+            "value": {
+              "type": "string",
+              "description": "Literal runtime value."
+            },
+            "valueFrom": {
+              "$ref": "#/definitions/valueFrom",
+              "x-flui-note": "secretRef (a Kubernetes secretKeyRef) and service (a sibling app's in-cluster address) are applied on source deploys. generate and userInput are planned — see those branches."
+            },
+            "delivery": {
+              "enum": ["runtime", "browser", "build"],
+              "default": "runtime",
+              "x-flui-status": "planned",
+              "x-flui-note": "Not yet applied on source deploys — every value is delivered as a container env var today (runtime). browser/build are accepted but not yet honoured.",
+              "description": "How the value reaches the app. `runtime` = container env var (server-side apps). `browser` = rendered to /flui-env.js at container boot and exposed as window.__FLUI_ENV__ (static/SPA builds that can't read process.env). `build` = Docker build ARG baked into the image; INVARIANT across environments, and rejected on a value sourced from a secret."
+            },
+            "secret": {
+              "type": "boolean",
+              "x-flui-status": "planned",
+              "x-flui-note": "Not yet applied on source deploys — the value is currently injected as a plain env entry regardless.",
+              "description": "Store the resolved value in the app Secret (encrypted), injected via secretKeyRef."
+            },
+            "description": { "type": "string" }
+          }
+        }
+      ]
+    },
+    "envVarLegacy": {
+      "type": "object",
+      "required": ["name"],
+      "additionalProperties": false,
+      "not": { "required": ["value", "valueFrom"] },
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+          "description": "RUNTIME env var injected at container start."
+        },
+        "value": { "type": "string", "description": "Literal runtime value." },
+        "secret": {
+          "type": "boolean",
+          "x-flui-status": "planned",
+          "x-flui-note": "Not yet applied on source deploys — the value is currently injected as a plain env entry regardless."
+        },
+        "valueFrom": {
+          "$ref": "#/definitions/valueFrom",
+          "x-flui-note": "secretRef (a Kubernetes secretKeyRef) and service (a sibling app's in-cluster address) are applied on source deploys. generate and userInput are planned — see those branches."
+        },
+        "userEditable": {
+          "type": "boolean",
+          "x-flui-status": "planned",
+          "x-flui-note": "Not yet applied on source deploys."
+        },
+        "description": { "type": "string" }
+      }
+    },
+    "valueFrom": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["generate", "length"],
+          "additionalProperties": false,
+          "x-flui-status": "planned",
+          "x-flui-note": "Not yet applied on source deploys — a value is not generated today, so the entry is dropped.",
+          "properties": {
+            "generate": { "const": "secret" },
+            "length": { "type": "integer", "minimum": 8, "maximum": 256 },
+            "format": { "enum": ["base64url", "hex"] }
+          }
+        },
+        {
+          "type": "object",
+          "required": ["secretRef"],
+          "additionalProperties": false,
+          "properties": { "secretRef": { "type": "string" } }
+        },
+        {
+          "type": "object",
+          "required": ["service"],
+          "additionalProperties": false,
+          "properties": {
+            "service": {
+              "type": "string",
+              "pattern": "^[a-z]([a-z0-9-]{0,61}[a-z0-9])?$",
+              "description": "Name of another Flui app in the same project. Resolved to that app's in-cluster Service address (the same DNS Flui uses to wire catalog building blocks); app-to-app traffic stays inside the cluster and never round-trips the public ingress. Cross-cluster references are not resolved. Per-environment scoping arrives with the environments block."
+            },
+            "key": {
+              "enum": ["url", "host", "port"],
+              "default": "url",
+              "description": "Which attribute of the referenced service to inject. Defaults to its in-cluster URL (http://<slug>-svc.<namespace>.svc.cluster.local:<port>)."
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": ["userInput"],
+          "additionalProperties": false,
+          "x-flui-status": "planned",
+          "x-flui-note": "Not yet applied on source deploys — the value is not prompted for, so the entry is dropped.",
+          "properties": {
+            "userInput": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "label": { "type": "string" },
+                "default": { "type": "string" },
+                "sensitive": { "type": "boolean" },
+                "placeholder": { "type": "string" },
+                "format": { "enum": ["email", "url", "password", "text"] }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "environmentProfile": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "A partial override merged over the base spec for one environment. build.* is intentionally absent (artifact promotion); env values are literals only (delivery and valueFrom are declared once on the base deploy.env).",
+      "properties": {
+        "branch": {
+          "type": "string",
+          "description": "Git branch bound to this environment. A push on this branch deploys to this environment (the binding lives in git, not in platform state)."
+        },
+        "deploy": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Per-environment deploy overrides. Whitelisted: resources, scaling, domain. build and env delivery are NOT overridable here.",
+          "properties": {
+            "resources": { "$ref": "#/definitions/resources" },
+            "scaling": { "$ref": "#/definitions/scaling" },
+            "domain": { "$ref": "#/definitions/domain" }
+          }
+        },
+        "env": {
+          "type": "object",
+          "propertyNames": {
+            "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+          },
+          "additionalProperties": { "type": "string" },
+          "description": "Per-environment env overrides. LITERAL VALUES ONLY — a key's delivery and any valueFrom are declared once on the base deploy.env and are not overridable per environment. Only the literal value changes between environments."
+        }
+      }
+    },
+    "volume": {
+      "type": "object",
+      "required": ["name", "mountPath"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string" },
+        "mountPath": { "type": "string" },
+        "size": { "type": "string", "description": "e.g. \"1Gi\"." }
+      }
+    }
+  }
+}

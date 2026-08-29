@@ -116,7 +116,7 @@ export class KnowledgeService {
       '# Environment you are assisting',
       `- Flui CLI: ${c.cli}`,
       `- Platform release: ${c.platform.version} (api ${c.platform.images.fluiApi}, web ${c.platform.images.fluiWeb}, authz ${c.platform.images.fluiAuthz}; bootstrap ${c.platform.bootstrapRef})`,
-      `- flui.yaml schema: ${c.spec.apiVersion}`,
+      `- flui.yaml schemas: ${c.spec.application.apiVersion} (source deploys) · ${c.spec.catalogApp.apiVersion} (catalog entries)`,
       `- Knowledge base version: ${KB.kbVersion}`,
     ].join('\n');
   }
