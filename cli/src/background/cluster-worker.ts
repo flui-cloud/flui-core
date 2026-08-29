@@ -16,6 +16,7 @@ import { CliClusterCreatorService } from '../services/cli-cluster-creator.servic
 import { CliClusterRepository } from '../lib/repositories/cli-cluster.repository';
 import { CliOperationRepository } from '../lib/repositories/cli-operation.repository';
 import { CliLoggerService } from '../services/cli-logger.service';
+import { openProfileKey } from '../lib/vault/open-profile-key';
 
 const logger = new Logger('ClusterWorker');
 
@@ -31,6 +32,10 @@ async function main() {
   const jobDataJson = args[1];
 
   logger.log(`Starting background worker: ${jobType}`);
+
+  // Before Nest builds anything that reaches a provider: the key lives in the
+  // spawning command's memory and does not cross a process boundary.
+  await openProfileKey();
 
   // Bootstrap NestJS application context
   const app = await NestFactory.createApplicationContext(CliModule, {

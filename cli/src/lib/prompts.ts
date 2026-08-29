@@ -14,6 +14,9 @@ function makeStdinCleanup(onData: (data: Buffer) => void): () => void {
       process.stdin.setRawMode(false);
     }
     process.stdin.removeListener('data', onData);
+    // Resumed stdin is a referenced handle: without this the event loop stays
+    // alive and the command never exits after its last line of output.
+    process.stdin.pause();
   };
 }
 
@@ -417,6 +420,7 @@ export async function confirmPrompt(
     const cleanup = () => {
       process.stdin.setRawMode(false);
       process.stdin.removeListener('data', onData);
+      process.stdin.pause();
     };
 
     process.stdin.on('data', onData);
