@@ -5,6 +5,25 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execSync } from 'node:child_process';
 import { ApiClient } from '../lib/api-client';
+
+interface LocalValidation {
+  valid: boolean;
+  kind: string;
+  errors: { path: string; message: string }[];
+  warnings: { path: string; message: string }[];
+}
+
+interface ManifestCheck {
+  id: string;
+  status: 'pass' | 'warn' | 'fail' | 'unknown';
+  title: string;
+  detail: string;
+}
+
+/** Either the installation answered, or it says why it did not. */
+type InstallationValidation =
+  | { checks: ManifestCheck[]; wouldDeploy: boolean }
+  | { skipped: string };
 import { ConfigStorage } from '../lib/config-storage';
 import { resolveClusterRef } from '../lib/resolve-cluster';
 import { detectFrameworkFromProject } from '../lib/framework-detector';
@@ -224,7 +243,7 @@ export default class Deploy extends Command {
     // Validation is local-first (the bundled @flui-cloud/spec is the same schema
     // the server validates against) — no cluster or login required.
     if (flags['validate-only']) {
-      this.validateManifestLocal(raw, flags.json as boolean);
+      await this.validateOnly(raw, flags, filePath);
       return;
     }
 
@@ -651,22 +670,18 @@ export default class Deploy extends Command {
    * kind:Application and kind:CatalogApp. The server remains the final authority
    * at actual deploy time.
    */
-  private validateManifestLocal(raw: string, asJson: boolean): void {
+  private validateManifestLocal(raw: string): LocalValidation {
     let parsed: unknown;
     try {
       parsed = parseYaml(raw);
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
-      this.emitValidation(
-        {
-          valid: false,
-          kind: 'unknown',
-          errors: [{ path: '<root>', message: `Invalid YAML: ${message}` }],
-          warnings: [],
-        },
-        asJson,
-      );
-      return;
+      return {
+        valid: false,
+        kind: 'unknown',
+        errors: [{ path: '<root>', message: `Invalid YAML: ${message}` }],
+        warnings: [],
+      };
     }
 
     const kind =
@@ -674,28 +689,101 @@ export default class Deploy extends Command {
         ? (parsed as { kind: string }).kind
         : 'unknown';
     const result = validate(parsed);
-    this.emitValidation(
-      {
-        valid: result.valid,
-        kind,
-        errors: result.valid ? [] : result.errors,
-        warnings: result.valid ? result.warnings : [],
-      },
-      asJson,
-    );
+    return {
+      valid: result.valid,
+      kind,
+      errors: result.valid ? [] : result.errors,
+      warnings: result.valid ? result.warnings : [],
+    };
+  }
+
+  /**
+   * The schema first, then the installation — and the second half is allowed to
+   * be missing.
+   *
+   * The schema pass needs nothing: no cluster, no login, no network. That is the
+   * whole reason it exists, and it stays true. What it cannot answer is whether
+   * the manifest would land *here*, so when there is an installation to ask, it
+   * is asked, and when there is not the output says which half ran rather than
+   * implying the manifest was fully checked.
+   */
+  private async validateOnly(
+    raw: string,
+    flags: Record<string, unknown>,
+    filePath: string,
+  ): Promise<void> {
+    const local = this.validateManifestLocal(raw);
+    const installation =
+      local.valid && local.kind === 'Application'
+        ? await this.askInstallation(raw, flags, filePath)
+        : { skipped: 'the manifest has to pass the schema first' };
+    this.emitValidation(local, flags.json as boolean, installation);
+  }
+
+  /** Never throws: a validation that cannot reach the installation still has an answer. */
+  private async askInstallation(
+    raw: string,
+    flags: Record<string, unknown>,
+    filePath: string,
+  ): Promise<InstallationValidation> {
+    const configStorage = new ConfigStorage();
+    const apiUrl =
+      (flags['api-url'] as string | undefined) ?? configStorage.getApiUrl();
+    const apiKey = configStorage.getApiKey();
+    if (!apiUrl || !apiKey) {
+      return {
+        skipped:
+          'not signed in — the schema was checked, the installation was not (`flui auth login`)',
+      };
+    }
+
+    let clusterId: string;
+    try {
+      clusterId = (await resolveClusterRef(flags.cluster as string | undefined))
+        .id;
+    } catch {
+      return {
+        skipped:
+          'no cluster to check against — name one with --cluster to have this installation weigh the manifest',
+      };
+    }
+
+    const repoFullName =
+      (flags.repo as string | undefined) ??
+      this.detectGitRemote(path.dirname(filePath));
+
+    try {
+      const answer = await new ApiClient({
+        baseUrl: apiUrl,
+        apiKey,
+      }).post<{ checks?: ManifestCheck[]; wouldDeploy?: boolean }>(
+        // Its own route, and a read permission: checking a manifest writes
+        // nothing, and someone who may only read should not be refused it.
+        '/applications/manifest/validate',
+        {
+          yaml: raw,
+          clusterId,
+          repoFullName,
+          branch: (flags.branch as string | undefined) ?? 'main',
+        },
+      );
+      return {
+        checks: answer.checks ?? [],
+        wouldDeploy: answer.wouldDeploy ?? true,
+      };
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      return { skipped: `the installation could not be reached — ${message}` };
+    }
   }
 
   private emitValidation(
-    r: {
-      valid: boolean;
-      kind: string;
-      errors: { path: string; message: string }[];
-      warnings: { path: string; message: string }[];
-    },
+    r: LocalValidation,
     asJson: boolean,
+    installation: InstallationValidation,
   ): void {
     if (asJson) {
-      this.log(JSON.stringify(r, null, 2));
+      this.log(JSON.stringify({ ...r, installation }, null, 2));
       if (!r.valid) this.exit(1);
       return;
     }
@@ -712,6 +800,7 @@ export default class Deploy extends Command {
           ),
         );
       }
+      this.printInstallation(installation);
       return;
     }
 
@@ -721,6 +810,37 @@ export default class Deploy extends Command {
     }
     console.log('');
     this.exit(1);
+  }
+
+  /**
+   * The half a schema cannot answer. A skipped check is stated, not omitted:
+   * silence here reads as "everything was checked", which is the one thing this
+   * output must never imply.
+   */
+  private printInstallation(installation: InstallationValidation): void {
+    if ('skipped' in installation) {
+      console.log(
+        chalk.dim(`  Installation checks skipped: ${installation.skipped}\n`),
+      );
+      return;
+    }
+
+    console.log(chalk.bold('  Against this installation:\n'));
+    for (const check of installation.checks) {
+      const mark = {
+        pass: chalk.green('  ✓'),
+        warn: chalk.yellow('  ⚠'),
+        fail: chalk.red('  ✗'),
+        unknown: chalk.dim('  ?'),
+      }[check.status];
+      console.log(`${mark} ${check.title} — ${check.detail}`);
+    }
+    console.log(
+      installation.wouldDeploy
+        ? chalk.green('\n  Nothing here would stop a deploy.\n')
+        : chalk.red('\n  This would not deploy as it stands.\n'),
+    );
+    if (!installation.wouldDeploy) this.exit(1);
   }
 
   // ── Helpers ────────────────────────────────────────────────────────────────

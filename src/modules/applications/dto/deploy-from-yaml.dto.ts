@@ -158,6 +158,28 @@ export class DeployFromYamlDto {
   imageRef?: string;
 }
 
+export class ManifestCheckDto {
+  @ApiProperty({ example: 'capacity' })
+  id: string;
+
+  @ApiProperty({
+    enum: ['pass', 'warn', 'fail', 'unknown'],
+    description:
+      '`unknown` is not a failure: it says this installation could not answer, ' +
+      'which must never be read as the manifest being wrong.',
+  })
+  status: 'pass' | 'warn' | 'fail' | 'unknown';
+
+  @ApiProperty({ example: 'Room on the cluster' })
+  title: string;
+
+  @ApiProperty({
+    description:
+      'The whole of the answer, in the words the author needs to act on.',
+  })
+  detail: string;
+}
+
 export class DeployFromYamlResponseDto {
   @ApiProperty() applicationId: string;
   @ApiProperty() slug: string;
@@ -177,4 +199,21 @@ export class DeployFromYamlResponseDto {
       'use it to preview or download what a deploy would produce.',
   })
   effectiveYaml?: string;
+
+  @ApiPropertyOptional({
+    type: [ManifestCheckDto],
+    description:
+      'What only this installation can say — target cluster, connected ' +
+      'repository, build credentials, live capacity, what the deploy would do, ' +
+      'how the app is reached. Returned on validateOnly requests. A schema-valid ' +
+      'manifest can still fail every one of these.',
+  })
+  checks?: ManifestCheckDto[];
+
+  @ApiPropertyOptional({
+    description:
+      'True when nothing in `checks` would stop a deploy. An unanswered check ' +
+      'never blocks: not being able to look is not a refusal.',
+  })
+  wouldDeploy?: boolean;
 }

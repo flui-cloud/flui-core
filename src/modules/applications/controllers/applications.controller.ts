@@ -62,6 +62,7 @@ import { ApplicationKind } from '../enums/application-kind.enum';
 import { ApplicationStatus } from '../enums/application-status.enum';
 import { ApplicationSourceType } from '../enums/application-source-type.enum';
 import { RequireSection } from '../../iam/decorators/require-section.decorator';
+import { RequirePermission } from '../../iam/decorators/require-permission.decorator';
 import { SECTION } from '../../iam/constants/iam-sections';
 import { IAM_PERMISSION } from '../../iam/constants/iam-permissions';
 import { AppAccessGuard, AppAction } from '../guards/app-access.guard';
@@ -482,6 +483,38 @@ export class ApplicationsController {
   }
 
   // ── Source Deploy ─────────────────────────────────────
+
+  @Post('applications/manifest/validate')
+  @RequirePermission(IAM_PERMISSION.APP_READ)
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Check a flui.yaml (kind: Application) without deploying it',
+    description:
+      'Runs the deploy up to the point before it acts: the same parse and the ' +
+      'same overlay of branch environment and stored overrides, then the ' +
+      'questions a schema cannot answer — target cluster, connected repository, ' +
+      'build credentials, live capacity against the resources asked for, whether ' +
+      'this creates an application or updates one, and how it is reached. ' +
+      'Returns the effective manifest, the checks, and whether anything would ' +
+      'stop a deploy. A check of `unknown` means this installation could not ' +
+      'answer and never blocks. Writes nothing.',
+  })
+  @ApiResponse({ status: 200, type: DeployFromYamlResponseDto })
+  async validateManifest(
+    @Req() req: Request,
+    @Body() dto: DeployFromYamlDto,
+  ): Promise<DeployFromYamlResponseDto> {
+    const user = req.user as AuthenticatedUser;
+    // Reads, and reads only — the permission above is what a reader already
+    // holds, and the service is entered on the branch that returns before it
+    // creates anything. Sharing that entry point with the deploy is deliberate:
+    // a validator of its own would drift from what the deploy actually does.
+    return this.applicationSourceDeployService.deployFromYaml(
+      user.userId,
+      { ...dto, validateOnly: true },
+      user.email,
+    );
+  }
 
   @Post('applications/deploy-from-yaml')
   @HttpCode(HttpStatus.CREATED)

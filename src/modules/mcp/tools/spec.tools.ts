@@ -8,7 +8,7 @@ export const SPEC_TOOLS: ToolDef[] = [
     name: 'spec_validate',
     routes: ['POST /catalog/validate'],
     description:
-      'Validate a flui.yaml manifest against the catalog schema (the same server-side ajv validation enforced at install). Returns validity plus any errors to fix.',
+      'Validate a `kind: CatalogApp` manifest against the catalog schema (the same server-side ajv validation enforced at install). Returns validity plus any errors to fix. This is the CATALOG contract only: a `kind: Application` manifest — the one a source repository is deployed from — comes back invalid here as the wrong kind, and belongs to `app_manifest_validate`, which also weighs it against the installation.',
     scope: MCP_SCOPE.SPEC_VALIDATE,
     inputSchema: {
       yaml: z.string(),

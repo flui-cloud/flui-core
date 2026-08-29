@@ -18,6 +18,7 @@ import { AppBuildEntity } from '../app-builds/entities/app-build.entity';
 import { CatalogInstallEntity } from '../catalog/entities/catalog-install.entity';
 import { SandboxTenantEntity } from '../sandbox/entities/sandbox-tenant.entity';
 import { SharedInfrastructureModule } from '../infrastructure/shared/shared-infrastructure.module';
+import { ClustersModule } from '../infrastructure/clusters/clusters.module';
 import { EncryptionModule } from '../shared/encryption/encryption.module';
 import { BuildAgentConfigModule } from '../app-builds/build-agent-config.module';
 import { ImageRegistryModule } from '../image-registry/image-registry.module';
@@ -112,6 +113,7 @@ import { VolumeExportService } from '../providers/services/volume-export.service
     forwardRef(() => ImageRegistryModule),
     forwardRef(() => ScalingModule),
     forwardRef(() => DnsModule),
+    forwardRef(() => ClustersModule),
     WsAuthModule,
     StorageModule,
     IamModule,

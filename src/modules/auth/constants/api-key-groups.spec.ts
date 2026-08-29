@@ -78,6 +78,7 @@ describe('permission groups — the taxonomy', () => {
         'app_events',
         'app_get',
         'app_install',
+        'app_manifest_validate',
         'app_list',
         'app_logs',
         'app_metrics',

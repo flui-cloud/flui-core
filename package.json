@@ -216,7 +216,7 @@
       "^.+\\.(t|j)s$": "ts-jest"
     },
     "transformIgnorePatterns": [
-      "node_modules/.pnpm/(?!jose@)"
+      "node_modules/.pnpm/(?!jose@|ip-cidr@)"
     ],
     "collectCoverageFrom": [
       "**/*.(t|j)s"

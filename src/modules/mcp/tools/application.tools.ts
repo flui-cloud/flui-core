@@ -307,10 +307,42 @@ export const APPLICATION_TOOLS: ToolDef[] = [
       }),
   }),
   defineTool({
+    name: 'app_manifest_validate',
+    routes: ['POST /applications/manifest/validate'],
+    description:
+      'Check a flui.yaml you wrote (kind: Application) WITHOUT deploying it. Two halves, and they answer different questions: the schema says the file is well-formed, and `checks` say whether it would land HERE — the target cluster, the connected repository, the credentials the build needs, live capacity against the resources it asks for, whether it would create an application or update one, and how it is reached. A manifest can satisfy the schema perfectly and fail every one of the checks. Read `wouldDeploy` for the verdict, and read each check by its status: `fail` blocks, `warn` is a consequence to relay rather than a problem to fix, and `unknown` means this installation COULD NOT ANSWER — never report an unknown as a failure, and never rewrite a manifest because of one. Deploying onto the control cluster is supported and shows as a `warn`, not an error: it is the normal shape for a single-machine installation. Use this for kind: Application; `spec_validate` is the catalog contract and will reject an Application manifest as the wrong kind. The response also carries `effectiveYaml`, the manifest as it would actually be applied once the branch environment and any stored overrides are merged in.',
+    scope: MCP_SCOPE.APP_READ,
+    inputSchema: {
+      yaml: z.string().describe('The flui.yaml, verbatim.'),
+      clusterId: z
+        .string()
+        .optional()
+        .describe(
+          'Which cluster to weigh it against. Omit with a single cluster.',
+        ),
+      repoFullName: z
+        .string()
+        .optional()
+        .describe(
+          'owner/repo. Omit and the repository check is left unanswered rather than failed.',
+        ),
+      branch: z.string().optional().describe('Default: main.'),
+    },
+    run: async (args, ctx) => {
+      const clusterId = await resolveClusterId(ctx, args.clusterId as string);
+      return ctx.api.post('/applications/manifest/validate', {
+        yaml: args.yaml,
+        clusterId,
+        repoFullName: args.repoFullName,
+        branch: args.branch ?? 'main',
+      });
+    },
+  }),
+  defineTool({
     name: 'app_deploy_from_yaml',
     routes: ['POST /applications/deploy-from-yaml'],
     description:
-      'Deploy a CUSTOM application from a flui.yaml manifest (kind: Application) you compose for the user. Validate it first with spec_validate. A real deploy requires a connected GitHub repository (repoFullName as owner/repo) — Flui builds it via GitHub Actions; set validateOnly:true to check the manifest without deploying or needing a repo (the response then carries effectiveYaml, the manifest as it would be applied). clusterId is optional (the sole cluster is used). Use overrides for what belongs to the installation rather than to the code: overrides.name installs the same repo and branch a SECOND time (it is part of the app identity, so pass it on every later deploy of that install), overrides.domain.fqdn gives it its own hostname, overrides.exposure switches public/internal. Overrides are remembered on the app and re-applied on later deploys, so they never silently revert to the manifest.',
+      'Deploy a CUSTOM application from a flui.yaml manifest (kind: Application) you compose for the user. Validate it first with app_manifest_validate, which checks it against this installation and not only against the schema. A real deploy requires a connected GitHub repository (repoFullName as owner/repo) — Flui builds it via GitHub Actions; set validateOnly:true to check the manifest without deploying or needing a repo (the response then carries effectiveYaml, the manifest as it would be applied). clusterId is optional (the sole cluster is used). Use overrides for what belongs to the installation rather than to the code: overrides.name installs the same repo and branch a SECOND time (it is part of the app identity, so pass it on every later deploy of that install), overrides.domain.fqdn gives it its own hostname, overrides.exposure switches public/internal. Overrides are remembered on the app and re-applied on later deploys, so they never silently revert to the manifest.',
     scope: MCP_SCOPE.APP_WRITE,
     inputSchema: {
       yaml: z.string(),

@@ -11,6 +11,24 @@ export class ComponentImageTagsDto {
   fluiAuthz!: string;
 }
 
+export class ManifestSpecDto {
+  @ApiProperty({ example: '@flui-cloud/spec' })
+  package: string;
+
+  @ApiProperty({
+    example: '0.8.1',
+    description:
+      'The version compiled into this build — what it validates with.',
+  })
+  version: string;
+
+  @ApiProperty({
+    description:
+      'The kind: Application JSON Schema, pinned to that version. The unpinned URL resolves to whatever the registry has today, which is not necessarily what this installation enforces.',
+  })
+  applicationSchemaUrl: string;
+}
+
 export class VersionResponseDto {
   @ApiProperty({
     description:
@@ -31,4 +49,11 @@ export class VersionResponseDto {
     type: ComponentImageTagsDto,
   })
   components!: ComponentImageTagsDto;
+
+  @ApiProperty({
+    description:
+      'The flui.yaml contract this build validates against, pinned to the version compiled in.',
+    type: ManifestSpecDto,
+  })
+  manifestSpec!: ManifestSpecDto;
 }

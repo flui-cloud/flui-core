@@ -5,6 +5,7 @@ import {
   NotFoundException,
   Inject,
   forwardRef,
+  HttpException,
 } from '@nestjs/common';
 import { ApplicationsRepository } from '../repositories/applications.repository';
 import { RepositoriesRepository } from '../../repositories/repositories/repositories.repository';
@@ -57,6 +58,18 @@ import { ApplicationExposure } from '../enums/application-exposure.enum';
 import { AppEndpointService } from '../../dns/services/app-endpoint.service';
 import { AppEndpointReconciliationService } from '../../dns/services/app-endpoint-reconciliation.service';
 import { ClusterDnsZoneService } from '../../dns/services/cluster-dns-zone.service';
+import { ClustersService } from '../../infrastructure/clusters/clusters.service';
+import {
+  ClusterStatus,
+  ClusterType,
+  normalizeClusterType,
+} from '../../infrastructure/clusters/entities/cluster.entity';
+import {
+  checksFor,
+  wouldDeploy,
+  type CapacityFact,
+  type ManifestCheck,
+} from '../manifest-checks.core';
 import { HostnameMode } from '../../dns/enums/hostname-mode.enum';
 import { CertChallenge } from '../../dns/enums/cert-challenge.enum';
 import { CertificateProvider } from '../../providers/enums/certificate-provider.enum';
@@ -91,6 +104,8 @@ export class ApplicationSourceDeployService {
     private readonly appEndpointReconciliationService: AppEndpointReconciliationService,
     @Inject(forwardRef(() => ClusterDnsZoneService))
     private readonly clusterDnsZoneService: ClusterDnsZoneService,
+    @Inject(forwardRef(() => ClustersService))
+    private readonly clustersService: ClustersService,
   ) {}
 
   /**
@@ -108,7 +123,7 @@ export class ApplicationSourceDeployService {
     let manifest = this.parseAndValidate(dto.yaml);
 
     if (dto.validateOnly) {
-      return this.buildValidationPreview(manifest, dto);
+      return this.buildValidationPreview(userId, manifest, dto);
     }
 
     await this.assertGitHubConnected(userId);
@@ -322,21 +337,180 @@ export class ApplicationSourceDeployService {
    * and the install-time overrides baked in. Lets every surface show (and let
    * the user download) what a deploy would actually produce.
    */
-  private buildValidationPreview(
+  /**
+   * A deploy that stops before it acts.
+   *
+   * It runs the same parse and the same overlay the real path runs — that is why
+   * it lives here rather than in a validator of its own — and then asks this
+   * installation the questions a schema cannot answer. An author gets the
+   * effective manifest *and* the reasons it would or would not land, without
+   * having pushed anything.
+   */
+  private async buildValidationPreview(
+    userId: string,
     manifest: ApplicationManifest,
     dto: DeployFromYamlDto,
-  ): DeployFromYamlResponseDto {
+  ): Promise<DeployFromYamlResponseDto> {
     const preview = applyDeployOverrides(
       applyEnvironmentProfile(manifest, dto.branch ?? 'main'),
       dto.overrides,
     );
+    const checks = await this.installationChecks(userId, preview, dto);
     return {
       applicationId: '',
       slug: '',
       name: preview.metadata.name,
       status: 'valid',
       effectiveYaml: serializeApplicationManifest(preview),
+      checks,
+      wouldDeploy: wouldDeploy(checks),
     };
+  }
+
+  /**
+   * Every fact is gathered on its own and a failure to read one is `null`, never
+   * a false. An installation that cannot be reached has refused nothing, and a
+   * check that reported otherwise would send an author rewriting a manifest that
+   * was correct all along.
+   */
+  private async installationChecks(
+    userId: string,
+    manifest: ApplicationManifest,
+    dto: DeployFromYamlDto,
+  ): Promise<ManifestCheck[]> {
+    const branch = dto.branch ?? 'main';
+    const cluster = await this.readCluster(dto.clusterId);
+    const repository = dto.repoFullName
+      ? await this.repositoriesRepository
+          .findByUserIdAndFullName(userId, dto.repoFullName)
+          .catch(() => null)
+      : null;
+
+    const [githubConnected, registryCredential] = await Promise.all([
+      this.canRead(() => this.assertGitHubConnected(userId)),
+      this.canRead(() => this.assertGhcrPatPresent(userId)),
+    ]);
+
+    const existingApp =
+      repository && cluster.found
+        ? await this.findExistingApp(
+            dto.clusterId,
+            repository.id,
+            branch,
+            manifest.metadata.name,
+          ).catch(() => null)
+        : null;
+
+    const zone = await this.clusterDnsZoneService
+      .getZoneAssignment(dto.clusterId)
+      .catch(() => null);
+
+    return checksFor({
+      clusterFound: cluster.found,
+      clusterReady: cluster.ready,
+      clusterName: cluster.name,
+      repositoryConnected: dto.repoFullName ? !!repository : null,
+      repoFullName: dto.repoFullName ?? null,
+      githubConnected,
+      registryCredential,
+      existingApp: existingApp?.slug ?? null,
+      capacity: await this.readCapacity(dto.clusterId, manifest),
+      exposure:
+        manifest.deploy?.exposure === 'internal' ? 'internal' : 'public',
+      dnsZone: zoneName(zone),
+      fqdn: manifest.deploy?.domain?.fqdn ?? null,
+      targetIsControlCluster: cluster.isControl,
+      hasWorkloadCluster: cluster.isControl
+        ? await this.hasWorkloadCluster()
+        : null,
+    });
+  }
+
+  private async readCluster(clusterId: string): Promise<{
+    found: boolean;
+    ready: boolean | null;
+    name: string | null;
+    isControl: boolean;
+  }> {
+    try {
+      const cluster = await this.clustersService.getClusterEntity(clusterId);
+      return {
+        found: true,
+        ready: cluster.status === ClusterStatus.READY,
+        name: cluster.name,
+        isControl:
+          normalizeClusterType(cluster.clusterType) === ClusterType.CONTROL,
+      };
+    } catch (error) {
+      // A missing cluster is an answer; anything else is a failure to look.
+      if (error instanceof NotFoundException) {
+        return { found: false, ready: null, name: null, isControl: false };
+      }
+      return { found: true, ready: null, name: null, isControl: false };
+    }
+  }
+
+  /**
+   * Null when the installation could not be listed. It only softens the wording
+   * of a warning, so guessing would cost nothing and mean nothing.
+   */
+  private async hasWorkloadCluster(): Promise<boolean | null> {
+    try {
+      const clusters = await this.clustersService.listClusters();
+      return clusters.some(
+        (c) => normalizeClusterType(c.clusterType) === ClusterType.WORKLOAD,
+      );
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Weighed only against what the manifest actually declares. A manifest with no
+   * requests is not weightless — the cluster applies its own default — so
+   * inventing a figure here would answer a question nobody asked.
+   */
+  private async readCapacity(
+    clusterId: string,
+    manifest: ApplicationManifest,
+  ): Promise<CapacityFact | null> {
+    const requests = manifest.deploy?.resources?.requests;
+    const cpuMc = cpuToMillicores(requests?.cpu);
+    const memMi = memoryToMi(requests?.memory);
+    if (cpuMc === null || memMi === null) return null;
+
+    // The floor of the scaling range is what the deploy starts with; a manifest
+    // that declares none runs a single replica.
+    const replicas = manifest.deploy?.scaling?.min ?? 1;
+    try {
+      const availability = await this.clustersService.checkResourceAvailability(
+        clusterId,
+        cpuMc,
+        memMi,
+        replicas,
+      );
+      return {
+        fits: availability.canDeploy,
+        requiredCpuMc: cpuMc * replicas,
+        requiredMemoryMi: memMi * replicas,
+        availableCpuMc: cpuToMillicores(availability.available?.cpu),
+        availableMemoryMi: memoryToMi(availability.available?.memory),
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  /** True, false, or null when the question itself could not be put. */
+  private async canRead(
+    probe: () => Promise<unknown>,
+  ): Promise<boolean | null> {
+    try {
+      await probe();
+      return true;
+    } catch (error) {
+      return error instanceof HttpException ? false : null;
+    }
   }
 
   /**
@@ -825,4 +999,46 @@ export class ApplicationSourceDeployService {
       );
     }
   }
+}
+
+/**
+ * Kubernetes quantities as the manifest already writes them. Unparseable is
+ * null rather than a default: a figure nobody wrote is not a figure to weigh a
+ * cluster against.
+ */
+function cpuToMillicores(value?: string | number | null): number | null {
+  if (value === null || value === undefined) return null;
+  const raw = String(value).trim();
+  if (raw.endsWith('m')) {
+    const n = Number.parseFloat(raw.slice(0, -1));
+    return Number.isFinite(n) ? Math.round(n) : null;
+  }
+  const cores = Number.parseFloat(raw);
+  return Number.isFinite(cores) ? Math.round(cores * 1000) : null;
+}
+
+const MEMORY_UNITS: Record<string, number> = {
+  Ki: 1 / 1024,
+  Mi: 1,
+  Gi: 1024,
+  Ti: 1024 * 1024,
+};
+
+function memoryToMi(value?: string | number | null): number | null {
+  if (value === null || value === undefined) return null;
+  const raw = String(value).trim();
+  const match = raw.match(/^([0-9.]+)\s*(Ki|Mi|Gi|Ti)?$/);
+  if (!match) return null;
+  const n = Number.parseFloat(match[1]);
+  if (!Number.isFinite(n)) return null;
+  // No suffix is bytes, which is what Kubernetes means by a bare number.
+  const factor = match[2] ? MEMORY_UNITS[match[2]] : 1 / (1024 * 1024);
+  return Math.round(n * factor);
+}
+
+/** The assignment shape varies by caller; only its zone name is needed here. */
+function zoneName(zone: unknown): string | null {
+  if (!zone || typeof zone !== 'object') return null;
+  const named = zone as { zoneName?: string; name?: string; zone?: string };
+  return named.zoneName ?? named.name ?? named.zone ?? null;
 }
