@@ -36,7 +36,7 @@ describe('a pending request, seen from the agent side', () => {
         action: 'POST /applications/:id/deploy',
         sentence: 'deploy application app-1 whenever it asks',
         offersAlways: true,
-        decideUrl: 'https://console.test/settings/agents/requests/p-1',
+        decideUrl: 'https://console.test/agents/requests/p-1',
         estimateWithheld,
       },
     );
@@ -57,7 +57,7 @@ describe('a pending request, seen from the agent side', () => {
       }
     ).inputRequests;
     expect(requests.approved.params.url).toBe(
-      'https://console.test/settings/agents/requests/p-1',
+      'https://console.test/agents/requests/p-1',
     );
     expect(requests.approved.params.message).toContain(
       'deploy application app-1',

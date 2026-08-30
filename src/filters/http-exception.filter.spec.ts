@@ -92,7 +92,7 @@ describe('HttpExceptionFilter', () => {
         sentence: 'write a new operating-context note',
         offersAlways: false,
         estimateRef: '/infrastructure/clusters/c1/scale-preview',
-        decideUrl: 'http://localhost:4200/settings/agents/requests/p-1',
+        decideUrl: 'http://localhost:4200/agents/requests/p-1',
         expiresAt: '2026-08-26T09:00:00.000Z',
       }),
       host,
@@ -105,7 +105,7 @@ describe('HttpExceptionFilter', () => {
       sentence: 'write a new operating-context note',
       offersAlways: false,
       estimateRef: '/infrastructure/clusters/c1/scale-preview',
-      decideUrl: 'http://localhost:4200/settings/agents/requests/p-1',
+      decideUrl: 'http://localhost:4200/agents/requests/p-1',
       expiresAt: '2026-08-26T09:00:00.000Z',
     });
   });

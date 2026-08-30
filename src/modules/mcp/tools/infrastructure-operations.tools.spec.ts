@@ -360,7 +360,7 @@ describe('a pending request on a machine-room call', () => {
               action: 'POST /infrastructure/clusters/:id/workers',
               sentence: 'add worker nodes to cluster c1',
               offersAlways: true,
-              decideUrl: 'https://console.test/settings/agents/requests/p-9',
+              decideUrl: 'https://console.test/agents/requests/p-9',
               estimateWithheld: true,
             },
           ),
@@ -395,7 +395,7 @@ describe('a pending request on a machine-room call', () => {
       }
     ).inputRequests;
     expect(requests.approved.params.url).toBe(
-      'https://console.test/settings/agents/requests/p-9',
+      'https://console.test/agents/requests/p-9',
     );
   });
 

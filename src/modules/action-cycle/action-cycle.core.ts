@@ -322,7 +322,7 @@ export function renderRoute(
  * agree on it and they are built in different rounds: the refusal that names it
  * and the panel that eventually serves it.
  */
-export const PROPOSAL_DECISION_PATH = '/settings/agents/requests';
+export const PROPOSAL_DECISION_PATH = '/agents/requests';
 
 /**
  * What an agent is told when a request carries a price it is not shown.

@@ -246,14 +246,14 @@ describe('action cycle — the vocabulary a concession is written in', () => {
           action: 'POST /applications/:id/deploy',
           sentence: 'deploy application a-1',
           offersAlways: true,
-          decideUrl: 'https://example.test/settings/agents/requests/p-1',
+          decideUrl: 'https://example.test/agents/requests/p-1',
         }),
       ).toEqual({
         proposalId: 'p-1',
         action: 'POST /applications/:id/deploy',
         sentence: 'deploy application a-1',
         offersAlways: true,
-        decideUrl: 'https://example.test/settings/agents/requests/p-1',
+        decideUrl: 'https://example.test/agents/requests/p-1',
         expiresAt: undefined,
         estimateWithheld: false,
       });

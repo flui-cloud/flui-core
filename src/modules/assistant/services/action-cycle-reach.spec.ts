@@ -19,7 +19,7 @@ const refusal: ProposalRefusal = {
   action: 'POST /applications/:id/deploy',
   sentence: 'deploy application app-1 whenever it asks',
   offersAlways: false,
-  decideUrl: 'https://console.test/settings/agents/requests/p-1',
+  decideUrl: 'https://console.test/agents/requests/p-1',
   estimateWithheld: false,
 };
 
