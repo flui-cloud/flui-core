@@ -11,6 +11,7 @@ import {
   Inject,
   NotFoundException,
   Param,
+  Patch,
   Post,
   Request,
   UseGuards,
@@ -53,6 +54,7 @@ import {
   principalFromUser,
 } from '../../iam/interfaces/iam.types';
 import { CreateApiKeyDto } from '../dto/create-api-key.dto';
+import { UpdateApiKeyApplicationsDto } from '../dto/update-api-key-applications.dto';
 import {
   ApiKeyResponseDto,
   CreateApiKeyResultDto,
@@ -97,6 +99,7 @@ export class ApiKeysController {
       req.user.userId,
       expiresAt,
       scopes,
+      dto.applicationIds,
     );
     return { ...this.describeKey(entity), key: plaintext };
   }
@@ -186,6 +189,7 @@ export class ApiKeysController {
       scopes?: string[] | null;
       lastUsedAt?: Date | null;
       skillVersion?: string | null;
+      applicationIds?: string[] | null;
     },
     currentKeyId?: string,
   ): ApiKeyResponseDto {
@@ -201,6 +205,7 @@ export class ApiKeysController {
       scopes,
       groups: scopes ? groupsForScopes(scopes) : null,
       ungroupedScopes: scopes ? ungroupedScopes(scopes) : null,
+      applicationIds: entity.applicationIds ?? null,
       // A freshly minted key is never the one that minted it.
       current: !!currentKeyId && entity.id === currentKeyId,
     };
@@ -339,5 +344,36 @@ export class ApiKeysController {
       throw new NotFoundException(`API key ${id} not found`);
     }
     return { success: true };
+  }
+
+  @Patch('api-keys/:id/applications')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: 'Change which applications a key may act on, without reissuing it',
+    description:
+      "Replaces the key's application list wholesale — send the complete set " +
+      'you want it to hold, not just the ones being added. Omit ' +
+      '`applicationIds` (or send an empty array) to lift the restriction. The ' +
+      'key itself does not change: whatever already holds it keeps working, ' +
+      'now against the new list.',
+  })
+  @ApiParam({ name: 'id' })
+  @ApiBody({ type: UpdateApiKeyApplicationsDto })
+  @ApiResponse({ status: 200, type: ApiKeyResponseDto })
+  async updateApiKeyApplications(
+    @Param('id') id: string,
+    @Body() dto: UpdateApiKeyApplicationsDto,
+    @Request() req: { user: AuthenticatedUser },
+  ): Promise<ApiKeyResponseDto> {
+    const entity = await this.apiKeyService.updateApplicationIds(
+      id,
+      req.user.userId,
+      dto.applicationIds ?? null,
+    );
+    if (!entity) {
+      throw new NotFoundException(`API key ${id} not found`);
+    }
+    return this.describeKey(entity);
   }
 }

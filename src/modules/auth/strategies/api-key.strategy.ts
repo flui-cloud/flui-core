@@ -76,6 +76,7 @@ export class ApiKeyStrategy {
             role: user.role ?? IdentityRole.USER,
             isAdmin: user.isAdmin,
             scopes: record.scopes ?? undefined,
+            applicationIds: record.applicationIds ?? undefined,
           },
           keyId: record.id,
         };
@@ -100,6 +101,7 @@ export class ApiKeyStrategy {
         role: identity.role,
         isAdmin: identity.isAdmin,
         scopes: narrowToIdentity(record.scopes, identity.scopes),
+        applicationIds: record.applicationIds ?? undefined,
       },
       keyId: record.id,
     };

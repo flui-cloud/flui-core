@@ -9,7 +9,10 @@ import { IdentityRole } from '../../auth/entities/user.entity';
 import { IAM_PERMISSION } from '../../iam/constants/iam-permissions';
 import { MCP_SCOPE } from '../../mcp/constants/mcp-scopes';
 import { findPermissionGroup } from '../../auth/constants/api-key-groups';
-import { CREDENTIAL_CEILING_CODE } from '../../auth/utils/credential-ceiling.util';
+import {
+  APPLICATION_CEILING_CODE,
+  CREDENTIAL_CEILING_CODE,
+} from '../../auth/utils/credential-ceiling.util';
 
 /**
  * The credential ceiling on the guard that actually governs applications.
@@ -206,5 +209,75 @@ describe('AppAccessGuard — the credential ceiling', () => {
     await expect(guard.canActivate(ctx(undefined))).rejects.toThrow(
       ForbiddenException,
     );
+  });
+});
+
+/**
+ * The application ceiling: a key limited to specific applications, on top of
+ * (not instead of) the scope ceiling above and the ownership check below it.
+ * `ctx()` always names `app-1` in the path, so `applicationIds` including or
+ * excluding that one id is the whole of what each case turns on.
+ */
+describe('AppAccessGuard — the application ceiling', () => {
+  it("refuses an application outside the key's list, distinctly from a scope refusal", async () => {
+    const { guard, loaded } = build();
+    await expect(
+      guard.canActivate(
+        ctx(principal({ applicationIds: ['app-2', 'app-3'] }), 'GET'),
+      ),
+    ).rejects.toMatchObject({ response: { code: APPLICATION_CEILING_CODE } });
+    // Refused before the row was ever loaded, same as the scope ceiling above.
+    expect(loaded).toEqual([]);
+  });
+
+  it('lets the application inside the list through', async () => {
+    const { guard, asked } = build();
+    await expect(
+      guard.canActivate(ctx(principal({ applicationIds: ['app-1'] }), 'GET')),
+    ).resolves.toBe(true);
+    expect(asked).toEqual([IAM_PERMISSION.APP_READ]);
+  });
+
+  it('leaves a key with no application list unrestricted', async () => {
+    const { guard, asked } = build();
+    await expect(
+      guard.canActivate(ctx(principal({ applicationIds: undefined }), 'GET')),
+    ).resolves.toBe(true);
+    expect(asked).toEqual([IAM_PERMISSION.APP_READ]);
+  });
+
+  it('caps an administrator holding an application-scoped key', async () => {
+    // Same reasoning as the scope ceiling: the account most likely to mint
+    // these keys, for its own apps, must not be the one case where the
+    // restriction never actually held.
+    const { guard, loaded } = build();
+    await expect(
+      guard.canActivate(
+        ctx(principal({ isAdmin: true, applicationIds: ['app-2'] }), 'GET'),
+      ),
+    ).rejects.toMatchObject({ response: { code: APPLICATION_CEILING_CODE } });
+    expect(loaded).toEqual([]);
+  });
+
+  it('names the requested application id in the refusal message', async () => {
+    const { guard } = build();
+    await expect(
+      guard.canActivate(ctx(principal({ applicationIds: ['app-2'] }), 'GET')),
+    ).rejects.toMatchObject({
+      response: { message: expect.stringContaining('app-1') },
+    });
+  });
+
+  it('is asked before the scope ceiling has anything left to refuse', async () => {
+    // A key that passes the scope ceiling can still be stopped by the
+    // application one — the two compose, neither substitutes for the other.
+    const { guard } = buildWithAction(IAM_PERMISSION.APP_DELETE);
+    await expect(
+      guard.canActivate(
+        ctx(
+          principal({ scopes: [...APPS_DESTROY], applicationIds: ['app-2'] }),
+        ),
+      ),
+    ).rejects.toMatchObject({ response: { code: APPLICATION_CEILING_CODE } });
   });
 });

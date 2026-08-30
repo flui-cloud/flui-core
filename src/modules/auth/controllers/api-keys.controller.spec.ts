@@ -83,6 +83,7 @@ interface Harness {
   withKey: (id: string | undefined) => void;
   keys: Array<Record<string, unknown>>;
   generate: jest.Mock;
+  update: jest.Mock;
   http: () => request.SuperTest<request.Test>;
 }
 
@@ -97,6 +98,7 @@ async function harness(initial: Principal): Promise<Harness> {
       userId: string,
       expiresAt: Date | undefined,
       scopes: string[] | undefined,
+      applicationIds: string[] | undefined,
     ) => {
       const entity = {
         id: `key-${keys.length + 1}`,
@@ -106,9 +108,19 @@ async function harness(initial: Principal): Promise<Harness> {
         createdAt: new Date('2026-01-01T00:00:00.000Z'),
         expiresAt: expiresAt ?? null,
         scopes: scopes?.length ? scopes : null,
+        applicationIds: applicationIds?.length ? applicationIds : null,
       };
       keys.push(entity);
       return { entity, plaintext: 'flui_test-key' };
+    },
+  );
+
+  const update = jest.fn(
+    async (id: string, userId: string, applicationIds: string[] | null) => {
+      const entity = keys.find((k) => k.id === id && k.userId === userId);
+      if (!entity || entity.revoked) return null;
+      entity.applicationIds = applicationIds?.length ? applicationIds : null;
+      return entity;
     },
   );
 
@@ -153,6 +165,8 @@ async function harness(initial: Principal): Promise<Harness> {
             (generate as (...a: unknown[]) => unknown)(...args),
           listForUser: async (userId: string) =>
             keys.filter((k) => k.userId === userId),
+          updateApplicationIds: (...args: unknown[]) =>
+            (update as (...a: unknown[]) => unknown)(...args),
         },
       },
       { provide: LocalAuthService, useValue: {} },
@@ -191,6 +205,7 @@ async function harness(initial: Principal): Promise<Harness> {
     },
     keys,
     generate,
+    update,
     http: () => request(app.getHttpServer()) as never,
   };
 }
@@ -631,5 +646,113 @@ describe('api keys — what the listing and the catalogue say', () => {
     for (const k of list.body as Array<{ lastUsedAt: string | null }>) {
       expect(k.lastUsedAt).toBeNull();
     }
+  });
+});
+
+describe('api keys — which applications a key may act on', () => {
+  inOidcMode();
+  let h: Harness;
+
+  beforeAll(async () => {
+    h = await harness(MAINTAINER);
+  }, BOOT_MS);
+  afterAll(async () => {
+    await h.app.close();
+  });
+  beforeEach(() => {
+    h.keys.length = 0;
+    h.generate.mockClear();
+    h.update.mockClear();
+    h.as(MAINTAINER);
+  });
+
+  it('is null on a key minted without one — unrestricted, unchanged from before this existed', async () => {
+    const res = await h
+      .http()
+      .post('/auth/api-keys')
+      .send({ name: 'agent', groups: ['apps:change'] })
+      .expect(201);
+    expect(res.body.applicationIds).toBeNull();
+  });
+
+  it('carries the list a key was minted with', async () => {
+    const res = await h
+      .http()
+      .post('/auth/api-keys')
+      .send({
+        name: 'agent',
+        groups: ['apps:change'],
+        applicationIds: ['app-1', 'app-2'],
+      })
+      .expect(201);
+    expect(res.body.applicationIds).toEqual(['app-1', 'app-2']);
+  });
+
+  it('widens the same key in place, without a new one', async () => {
+    const created = await h
+      .http()
+      .post('/auth/api-keys')
+      .send({
+        name: 'agent',
+        groups: ['apps:change'],
+        applicationIds: ['app-1'],
+      })
+      .expect(201);
+
+    const patched = await h
+      .http()
+      .patch(`/auth/api-keys/${created.body.id}/applications`)
+      .send({ applicationIds: ['app-1', 'app-2'] })
+      .expect(200);
+
+    expect(patched.body.id).toBe(created.body.id);
+    expect(patched.body.applicationIds).toEqual(['app-1', 'app-2']);
+  });
+
+  it('lifts the restriction when the list is sent empty', async () => {
+    const created = await h
+      .http()
+      .post('/auth/api-keys')
+      .send({
+        name: 'agent',
+        groups: ['apps:change'],
+        applicationIds: ['app-1'],
+      })
+      .expect(201);
+
+    const patched = await h
+      .http()
+      .patch(`/auth/api-keys/${created.body.id}/applications`)
+      .send({ applicationIds: [] })
+      .expect(200);
+
+    expect(patched.body.applicationIds).toBeNull();
+  });
+
+  it('refuses to widen a key that belongs to somebody else', async () => {
+    const created = await h
+      .http()
+      .post('/auth/api-keys')
+      .send({
+        name: 'agent',
+        groups: ['apps:change'],
+        applicationIds: ['app-1'],
+      })
+      .expect(201);
+
+    h.as(OPERATOR);
+    await h
+      .http()
+      .patch(`/auth/api-keys/${created.body.id}/applications`)
+      .send({ applicationIds: ['app-2'] })
+      .expect(404);
+  });
+
+  it('404s a key id nobody has', async () => {
+    await h
+      .http()
+      .patch('/auth/api-keys/key-does-not-exist/applications')
+      .send({ applicationIds: ['app-1'] })
+      .expect(404);
   });
 });

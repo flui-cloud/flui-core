@@ -83,4 +83,20 @@ export class CreateApiKeyDto {
   @IsOptional()
   @IsBoolean()
   unscoped?: boolean;
+
+  @ApiPropertyOptional({
+    isArray: true,
+    type: String,
+    description:
+      'Application ids this key may act on. Omit for a key that may act on ' +
+      'every application its issuer can already reach — the default, ' +
+      'unchanged from before this field existed. Not validated against ' +
+      'ownership at issue time: an id the issuer does not own simply opens ' +
+      'nothing, the same as naming it by hand would.',
+  })
+  @IsOptional()
+  @IsArray()
+  @ArrayUnique()
+  @IsString({ each: true })
+  applicationIds?: string[];
 }

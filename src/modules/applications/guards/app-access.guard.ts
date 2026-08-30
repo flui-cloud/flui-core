@@ -12,6 +12,8 @@ import { IAM_PERMISSION } from '../../iam/constants/iam-permissions';
 import { ApplicationService } from '../services/application.service';
 import { ApplicationAccessService } from '../services/application-access.service';
 import {
+  applicationCeilingRefusal,
+  applicationCeilingWithholds,
   ceilingRefusal,
   credentialCeiling,
 } from '../../auth/utils/credential-ceiling.util';
@@ -91,6 +93,16 @@ export class AppAccessGuard implements CanActivate {
     const ceiling = credentialCeiling(user);
     if (ceiling && !ceiling.has(action)) {
       throw new ForbiddenException(ceilingRefusal(action, user));
+    }
+
+    // Asked before `isAdmin`, for the same reason a scoped key is
+    // least-privilege even for an administrator above: a key limited to
+    // specific applications must stay limited to them regardless of who
+    // minted it, or the account most likely to hand out these keys — an
+    // administrator, on their own apps — would be the one case the ceiling
+    // never actually held.
+    if (applicationCeilingWithholds(user, id)) {
+      throw new ForbiddenException(applicationCeilingRefusal(id));
     }
 
     if (user.isAdmin) return true;

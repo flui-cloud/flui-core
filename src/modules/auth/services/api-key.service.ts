@@ -69,6 +69,7 @@ export class ApiKeyService {
     userId: string,
     expiresAt?: Date,
     scopes?: string[],
+    applicationIds?: string[],
   ): Promise<{ entity: ApiKeyEntity; plaintext: string }> {
     const key = `${API_KEY_PREFIX}${crypto.randomUUID()}`;
     // The only moment the credential exists outside the caller's hands. It is
@@ -83,8 +84,26 @@ export class ApiKeyService {
       // Null, not an empty array: "nothing was declared" and "declared as
       // nothing" are read differently by the scope resolver.
       scopes: scopes?.length ? scopes : null,
+      applicationIds: applicationIds?.length ? applicationIds : null,
     });
     return { entity, plaintext: key };
+  }
+
+  /**
+   * Widen or narrow which applications a key may act on, in place — the same
+   * credential, so nothing holding it has to reconnect. Owner-checked the same
+   * way `revokeById` is: a key belongs to the user who minted it, and only
+   * they may change what it can reach.
+   */
+  async updateApplicationIds(
+    id: string,
+    userId: string,
+    applicationIds: string[] | null,
+  ): Promise<ApiKeyEntity | null> {
+    const key = await this.apiKeyRepo.findOne({ where: { id, userId } });
+    if (!key || key.revoked) return null;
+    key.applicationIds = applicationIds?.length ? applicationIds : null;
+    return this.apiKeyRepo.save(key);
   }
 
   async findValid(key: string): Promise<ApiKeyEntity | null> {
@@ -110,6 +129,7 @@ export class ApiKeyService {
         'userId',
         'scopes',
         'skillVersion',
+        'applicationIds',
       ],
     });
   }

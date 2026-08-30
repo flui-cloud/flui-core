@@ -107,6 +107,15 @@ export class ApiKeyResponseDto {
       'Null means it has never checked in, which is not the same as out of date.',
   })
   skillVersion: string | null;
+
+  @ApiPropertyOptional({
+    isArray: true,
+    type: String,
+    description:
+      'Application ids this key may act on. Null means every application its ' +
+      'holder can already reach.',
+  })
+  applicationIds: string[] | null;
 }
 
 export class CreateApiKeyResultDto extends ApiKeyResponseDto {

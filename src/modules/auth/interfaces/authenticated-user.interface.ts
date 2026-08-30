@@ -12,4 +12,6 @@ export interface AuthenticatedUser {
   isAdmin?: boolean;
   /** OAuth-style granted scopes, when the credential carries them (API key / token claim). */
   scopes?: string[];
+  /** Application ids this credential may act on. Undefined = every application the principal can already reach. */
+  applicationIds?: string[];
 }

@@ -28,6 +28,11 @@ export interface ScopedCredential {
   roles?: Record<string, unknown>;
 }
 
+/** A principal as far as the application ceiling is concerned. */
+export interface AppScopedCredential {
+  applicationIds?: string[];
+}
+
 /**
  * The `mcp:*` scopes on a credential, from either place they can arrive.
  *
@@ -223,4 +228,49 @@ export function ceilingWithholds(
 ): boolean {
   const ceiling = credentialCeiling(credential);
   return ceiling !== null && !ceiling.has(permission);
+}
+
+/** Error code on a refusal from the application ceiling, distinct from {@link CREDENTIAL_CEILING_CODE}. */
+export const APPLICATION_CEILING_CODE = 'CREDENTIAL_APPLICATION_CEILING';
+
+/**
+ * True when a credential names specific applications and `applicationId` is
+ * not one of them.
+ *
+ * `undefined`/`null` means unrestricted — the same convention as the scope
+ * ceiling: nothing declared narrows nothing. A key minted before this ceiling
+ * existed, or minted with no application list, is unaffected.
+ */
+export function applicationCeilingWithholds(
+  credential: AppScopedCredential | undefined,
+  applicationId: string,
+): boolean {
+  const ids = credential?.applicationIds;
+  if (!ids?.length) return false;
+  return !ids.includes(applicationId);
+}
+
+/**
+ * The refusal body for the application ceiling, worded so the two ceilings
+ * cannot be mistaken for one another: a scope refusal is fixed by re-issuing
+ * the key with a wider grant, this one is fixed by extending the SAME key's
+ * application list — re-issuing would hand the agent a new credential to
+ * reconnect with for no reason, when the fix is one field on the row it
+ * already holds. Names exactly where that happens so an agent relays an
+ * instruction instead of retrying or inventing a workaround.
+ */
+export function applicationCeilingRefusal(applicationName: string): {
+  statusCode: number;
+  code: string;
+  message: string;
+} {
+  return {
+    statusCode: 403,
+    code: APPLICATION_CEILING_CODE,
+    message:
+      `This credential's access does not include "${applicationName}". ` +
+      'It is limited to specific applications on purpose — ask the person who ' +
+      "connected you to extend this key's applications in Settings → Agent " +
+      'keys. Re-issuing a new key is not necessary; the same key can be widened.',
+  };
 }

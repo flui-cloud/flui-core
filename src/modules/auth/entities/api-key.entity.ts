@@ -39,6 +39,19 @@ export class ApiKeyEntity {
   scopes: string[] | null;
 
   /**
+   * Application ids this key may act on. Null = every application its
+   * principal can already reach — the pre-existing behaviour, unchanged for
+   * every key minted before this column existed.
+   *
+   * A ceiling, exactly like `scopes`: it only ever narrows. Ownership
+   * (`ApplicationAccessService.assertCan`) is still asked afterward and is
+   * still the real gate — an id here that the principal does not own opens
+   * nothing, so this list is never validated against ownership at write time.
+   */
+  @Column({ type: 'simple-array', nullable: true })
+  applicationIds: string[] | null;
+
+  /**
    * When this key last authenticated a request, to the nearest minute.
    *
    * Null means "not seen since this column existed", which is deliberately not
