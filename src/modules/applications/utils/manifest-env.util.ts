@@ -2,6 +2,7 @@ import {
   ApplicationManifest,
   ApplicationManifestEnvVar,
 } from '@flui-cloud/spec';
+import { ApplicationEnvVar } from '../interfaces/source-config.interface';
 
 /**
  * Normalize `deploy.env` from either wire form into the array shape the deploy
@@ -216,4 +217,55 @@ export function resolveServiceRefAgainst(
     return { value: null, reason: 'cross-project' };
   }
   return { value: serviceRefValue(sibling, ref.key) };
+}
+
+export interface SeedUserInputDefaultsResult {
+  /** `existing`, plus a seeded `user` entry for every default-carrying key that had none. */
+  existing: ApplicationEnvVar[];
+  /**
+   * Keys with `valueFrom.userInput` that have neither a stored value nor a
+   * manifest `default` — the deploy proceeds, but this var reaches the
+   * container empty (or absent) until someone sets it.
+   */
+  missingRequired: string[];
+}
+
+/**
+ * `valueFrom.userInput` never resolves to a manifest value (see
+ * `manifestEnvVar`) — the deployer's own value, once set via the variables
+ * endpoint or `--env`, is a `user`-sourced entry the manifest never declares
+ * as resolved, so `mergeAppEnv` preserves it across every future deploy. This
+ * seeds that same `user` entry from `valueFrom.userInput.default`, but ONLY
+ * the first time — once anything exists at that name, seeding is a no-op, so
+ * a person's later edit is never overwritten by the manifest's default on the
+ * next redeploy. A key with neither a stored value nor a default is named in
+ * `missingRequired` so the deploy can warn instead of shipping it silently.
+ */
+export function seedUserInputDefaults(
+  env: ApplicationManifestEnvVar[],
+  existing: ApplicationEnvVar[],
+): SeedUserInputDefaultsResult {
+  const known = new Set(existing.map((e) => e.name));
+  const seeded: ApplicationEnvVar[] = [];
+  const missingRequired: string[] = [];
+
+  for (const e of env) {
+    const prompt = e.valueFrom?.userInput;
+    if (!prompt || known.has(e.name)) continue;
+    if (prompt.default !== undefined) {
+      seeded.push({
+        name: e.name,
+        value: prompt.default,
+        source: 'user',
+        ...(prompt.sensitive ? { secret: true } : {}),
+      });
+    } else {
+      missingRequired.push(e.name);
+    }
+  }
+
+  return {
+    existing: seeded.length ? [...existing, ...seeded] : existing,
+    missingRequired,
+  };
 }

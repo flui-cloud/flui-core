@@ -46,9 +46,11 @@ import {
   pickAppManifest,
   readServiceRef,
   resolveServiceRefAgainst,
+  seedUserInputDefaults,
   ServiceRef,
   ServiceRefScope,
 } from '../utils/manifest-env.util';
+import { generateRandomSecret } from '../../../common/utils/random-secret.util';
 import {
   DeployFromYamlDto,
   DeployFromYamlResponseDto,
@@ -190,10 +192,15 @@ export class ApplicationSourceDeployService {
         })
       : null;
 
-    const manifestEnv = await this.buildManifestEnv(manifest, {
-      clusterId: dto.clusterId,
-      projectId: app?.projectId ?? null,
-    });
+    const existingEnv = this.seedAndWarnUserInputs(
+      manifest,
+      (app?.env as ApplicationEnvVar[]) ?? [],
+    );
+    const manifestEnv = await this.buildManifestEnv(
+      manifest,
+      { clusterId: dto.clusterId, projectId: app?.projectId ?? null },
+      existingEnv,
+    );
     const resources = this.resolveResources(manifest);
     const healthProbe = this.resolveHealthProbe(manifest);
 
@@ -228,7 +235,7 @@ export class ApplicationSourceDeployService {
             (manifest.deploy.exposure as ApplicationExposure) ??
             ApplicationExposure.PUBLIC,
           env: materializeDeclaredSecrets(
-            mergeAppEnv([], manifestEnv, dto.envOverrides),
+            mergeAppEnv(existingEnv, manifestEnv, dto.envOverrides),
             normalizeManifestEnv(manifest.deploy.env),
           ),
           resources,
@@ -246,7 +253,6 @@ export class ApplicationSourceDeployService {
 
       const updatedMetadata = { ...app.metadata, ...manifestMetadata };
 
-      const existingEnv = (app.env as ApplicationEnvVar[]) ?? [];
       this.warnEnvShadows(existingEnv, manifestEnv, dto.envOverrides);
 
       await this.applicationsRepository.update(app.id, {
@@ -680,11 +686,15 @@ export class ApplicationSourceDeployService {
       return;
     }
 
-    const manifestEnv = await this.buildManifestEnv(manifest, {
-      clusterId: app.clusterId,
-      projectId: app.projectId ?? null,
-    });
-    const existingEnv = (app.env as ApplicationEnvVar[]) ?? [];
+    const existingEnv = this.seedAndWarnUserInputs(
+      manifest,
+      (app.env as ApplicationEnvVar[]) ?? [],
+    );
+    const manifestEnv = await this.buildManifestEnv(
+      manifest,
+      { clusterId: app.clusterId, projectId: app.projectId ?? null },
+      existingEnv,
+    );
     this.warnEnvShadows(existingEnv, manifestEnv);
 
     const endpointSpecJson = manifest.deploy.domain
@@ -734,16 +744,42 @@ export class ApplicationSourceDeployService {
   private async buildManifestEnv(
     manifest: ApplicationManifest,
     scope: ServiceRefScope,
+    existingEnv: ApplicationEnvVar[] = [],
   ): Promise<ApplicationEnvVar[]> {
+    const existingByName = new Map(existingEnv.map((e) => [e.name, e]));
     const out: ApplicationEnvVar[] = [];
     for (const e of normalizeManifestEnv(manifest.deploy.env)) {
       const ref = readServiceRef(e);
       const resolved = ref
         ? await this.resolveServiceRef(e.name, ref, scope)
-        : this.manifestEnvVar(e);
+        : this.manifestEnvVar(e, existingByName.get(e.name));
       if (resolved) out.push(resolved);
     }
     return out;
+  }
+
+  /**
+   * `valueFrom.userInput` vars with no stored value yet: seed the manifest's
+   * `default` (once, as a `user` entry — see `seedUserInputDefaults`) and warn
+   * by name about the rest, so a var this incapable of resolving on its own
+   * never reaches a container silently empty.
+   */
+  private seedAndWarnUserInputs(
+    manifest: ApplicationManifest,
+    existingEnv: ApplicationEnvVar[],
+  ): ApplicationEnvVar[] {
+    const { existing, missingRequired } = seedUserInputDefaults(
+      normalizeManifestEnv(manifest.deploy.env),
+      existingEnv,
+    );
+    for (const name of missingRequired) {
+      this.logger.warn(
+        `env "${name}": valueFrom.userInput has no default and no value has ` +
+          `been set — deploying without it. Set one with PUT /variables/applications/:id ` +
+          `(or --env ${name}=…) before this matters.`,
+      );
+    }
+    return existing;
   }
 
   /**
@@ -782,6 +818,7 @@ export class ApplicationSourceDeployService {
 
   private manifestEnvVar(
     e: ApplicationManifestEnvVar,
+    existing?: ApplicationEnvVar,
   ): ApplicationEnvVar | null {
     // `valueFrom.secretRef: "<secretName>/<KEY>"` → a k8s secretKeyRef the pod
     // reads at runtime; the value never touches Flui's DB or the repo.
@@ -802,6 +839,28 @@ export class ApplicationSourceDeployService {
           secretName: ref.slice(0, slash),
           key: ref.slice(slash + 1),
         },
+      };
+    }
+    // `valueFrom.generate: secret` — created once, here, on the host; kept
+    // stable across every later deploy (see `ApplicationEnvVar.generated`),
+    // because a fresh draw on every redeploy would rotate a running app's own
+    // JWT secret or DB password out from under it.
+    if (e.valueFrom?.generate) {
+      if (existing?.generated && existing.value) {
+        return {
+          name: e.name,
+          value: existing.value,
+          source: 'manifest',
+          secret: true,
+          generated: true,
+        };
+      }
+      return {
+        name: e.name,
+        value: generateRandomSecret(e.valueFrom.length, e.valueFrom.format),
+        source: 'manifest',
+        secret: true,
+        generated: true,
       };
     }
     if (e.value === undefined) return null;

@@ -5,6 +5,7 @@ import {
   serviceRefValue,
   resolveServiceRefAgainst,
   pickAppManifest,
+  seedUserInputDefaults,
   ServiceRefSibling,
 } from './manifest-env.util';
 
@@ -359,5 +360,78 @@ describe('applyEnvironmentProfile', () => {
       strategy: 'dockerfile',
       context: 'x',
     });
+  });
+});
+
+describe('seedUserInputDefaults', () => {
+  const userInput = (
+    opts: {
+      default?: string;
+      sensitive?: boolean;
+    } = {},
+  ) => ({ valueFrom: { userInput: opts } });
+
+  it('seeds the default as a user-sourced entry when nothing exists yet', () => {
+    const { existing, missingRequired } = seedUserInputDefaults(
+      [{ name: 'ADMIN_EMAIL', ...userInput({ default: 'admin@example.com' }) }],
+      [],
+    );
+    expect(existing).toEqual([
+      { name: 'ADMIN_EMAIL', value: 'admin@example.com', source: 'user' },
+    ]);
+    expect(missingRequired).toEqual([]);
+  });
+
+  it('marks a sensitive default as a secret', () => {
+    const { existing } = seedUserInputDefaults(
+      [
+        {
+          name: 'ADMIN_PASSWORD',
+          ...userInput({ default: 'changeme', sensitive: true }),
+        },
+      ],
+      [],
+    );
+    expect(existing).toEqual([
+      {
+        name: 'ADMIN_PASSWORD',
+        value: 'changeme',
+        source: 'user',
+        secret: true,
+      },
+    ]);
+  });
+
+  it('never overwrites a value that is already there — a later human edit sticks', () => {
+    const stored = [
+      {
+        name: 'ADMIN_EMAIL',
+        value: 'real@company.com',
+        source: 'user' as const,
+      },
+    ];
+    const { existing } = seedUserInputDefaults(
+      [{ name: 'ADMIN_EMAIL', ...userInput({ default: 'admin@example.com' }) }],
+      stored,
+    );
+    expect(existing).toBe(stored);
+  });
+
+  it('names a key with no default and no stored value as missing, rather than dropping it silently', () => {
+    const { existing, missingRequired } = seedUserInputDefaults(
+      [{ name: 'ADMIN_PASSWORD', ...userInput() }],
+      [],
+    );
+    expect(existing).toEqual([]);
+    expect(missingRequired).toEqual(['ADMIN_PASSWORD']);
+  });
+
+  it('ignores env entries with no valueFrom.userInput', () => {
+    const { existing, missingRequired } = seedUserInputDefaults(
+      [{ name: 'NODE_ENV', value: 'production' }],
+      [],
+    );
+    expect(existing).toEqual([]);
+    expect(missingRequired).toEqual([]);
   });
 });

@@ -90,6 +90,15 @@ export interface ApplicationEnvVar {
    * while an absent variable fails loudly at boot.
    */
   pending?: boolean;
+  /**
+   * This value was produced by `valueFrom.generate` rather than read from the
+   * manifest. A `manifest`-sourced key is normally reclaimed (and so re-read)
+   * from the manifest on every deploy — but a generated value has nothing to
+   * re-read, only a random draw that must stay put once made, or a redeploy
+   * would rotate a running app's own JWT secret or DB password. `manifestEnvVar`
+   * checks this flag to reuse the stored value instead of drawing a new one.
+   */
+  generated?: boolean;
 }
 
 export interface ApplicationResources {
