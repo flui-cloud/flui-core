@@ -24,7 +24,12 @@ describe('SCOPE_AUTHORITY', () => {
   it('names only real IAM permissions on both sides', () => {
     for (const [scope, a] of Object.entries(SCOPE_AUTHORITY)) {
       expect(ALL_PERMISSIONS).toContain(a.requires);
-      expect(a.allows.length).toBeGreaterThan(0);
+      // mcp:onboarding:read is the one pinned exception: it allows nothing on
+      // the HTTP path by design (see its own doc comment in mcp-scopes.ts) —
+      // a pure MCP-local visibility scope with no IAM permission behind it.
+      if (scope !== MCP_SCOPE.ONBOARDING_READ) {
+        expect(a.allows.length).toBeGreaterThan(0);
+      }
       for (const p of a.allows) {
         expect({ scope, p }).toEqual({ scope, p: expect.any(String) });
         expect(ALL_PERMISSIONS).toContain(p);

@@ -108,6 +108,7 @@ const ARGS: Record<string, Record<string, unknown>> = {
   inference_connection_request: {},
   user_invite_request: { email: 'bob@acme.com' },
   operating_context_read: {},
+  get_started: {},
   my_permissions: {},
   // An explicit revision on purpose: without one the tool reads the revision
   // history first, and the stand-in API answers every unlisted path with one
@@ -410,6 +411,7 @@ describe('strada B — the whole tool catalogue goes over the wire', () => {
     ['access_grant_add', 'POST /iam/grants'],
     ['access_grant_remove', 'DELETE /iam/grants/g1'],
     ['operating_context_read', 'GET /operating-context/advice'],
+    ['get_started', 'GET /auth/agent-skill'],
     // The machine room. Every write here lands on a route carrying
     // `@ActionCycle`, which is where the pause is — never in the tool.
     ['cluster_capacity_plan', 'GET /infrastructure/clusters/c1/capacity-plan'],

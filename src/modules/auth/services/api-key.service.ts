@@ -4,6 +4,7 @@ import { Repository } from 'typeorm';
 import * as crypto from 'node:crypto';
 import { ApiKeyEntity } from '../entities/api-key.entity';
 import { API_KEY_PREFIX, hashApiKey } from '../utils/api-key-hash.util';
+import { MCP_SCOPE } from '../../mcp/constants/mcp-scopes';
 
 /**
  * At most one `lastUsedAt` write per key per minute. **This threshold is the
@@ -70,6 +71,7 @@ export class ApiKeyService {
     expiresAt?: Date,
     scopes?: string[],
     applicationIds?: string[],
+    projectIds?: string[],
   ): Promise<{ entity: ApiKeyEntity; plaintext: string }> {
     const key = `${API_KEY_PREFIX}${crypto.randomUUID()}`;
     // The only moment the credential exists outside the caller's hands. It is
@@ -83,8 +85,16 @@ export class ApiKeyService {
       expiresAt: expiresAt ?? null,
       // Null, not an empty array: "nothing was declared" and "declared as
       // nothing" are read differently by the scope resolver.
-      scopes: scopes?.length ? scopes : null,
+      //
+      // `mcp:onboarding:read` is unioned in whenever a scoped key is minted —
+      // an unscoped key already reaches every tool, so it needs nothing added.
+      // See the scope's own doc comment in `mcp-scopes.ts` for why this is the
+      // one scope granted without being asked for.
+      scopes: scopes?.length
+        ? [...new Set([...scopes, MCP_SCOPE.ONBOARDING_READ])]
+        : null,
       applicationIds: applicationIds?.length ? applicationIds : null,
+      projectIds: projectIds?.length ? projectIds : null,
     });
     return { entity, plaintext: key };
   }
@@ -103,6 +113,18 @@ export class ApiKeyService {
     const key = await this.apiKeyRepo.findOne({ where: { id, userId } });
     if (!key || key.revoked) return null;
     key.applicationIds = applicationIds?.length ? applicationIds : null;
+    return this.apiKeyRepo.save(key);
+  }
+
+  /** Same as {@link updateApplicationIds}, for the project ceiling instead. */
+  async updateProjectIds(
+    id: string,
+    userId: string,
+    projectIds: string[] | null,
+  ): Promise<ApiKeyEntity | null> {
+    const key = await this.apiKeyRepo.findOne({ where: { id, userId } });
+    if (!key || key.revoked) return null;
+    key.projectIds = projectIds?.length ? projectIds : null;
     return this.apiKeyRepo.save(key);
   }
 
@@ -130,6 +152,7 @@ export class ApiKeyService {
         'scopes',
         'skillVersion',
         'applicationIds',
+        'projectIds',
       ],
     });
   }

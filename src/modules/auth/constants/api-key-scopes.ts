@@ -50,6 +50,18 @@ export interface ScopeAuthority {
 }
 
 export const SCOPE_AUTHORITY: Record<McpScope, ScopeAuthority> = {
+  /**
+   * Never actually asked of `requires`: `generateApiKey` unions this scope
+   * into every mint without going through the request/grant path this column
+   * governs, so no issuer's permissions are ever checked against it. It still
+   * needs an honest entry — the type demands one for every {@link McpScope} —
+   * so it names the lowest bar on the instance, `app:read`, which every
+   * account that can mint a key at all already clears.
+   */
+  [MCP_SCOPE.ONBOARDING_READ]: {
+    requires: IAM_PERMISSION.APP_READ,
+    allows: [],
+  },
   [MCP_SCOPE.CATALOG_READ]: {
     requires: IAM_PERMISSION.APP_READ,
     allows: [IAM_PERMISSION.APP_READ],

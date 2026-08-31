@@ -109,9 +109,14 @@ describe('the operating context, delivered to an agent', () => {
      * A tool nobody registered is a tool no agent is ever handed, and every
      * other row in this file would stay green while it happened — they read the
      * definition, not the catalogue.
+     *
+     * Second, not first: `get_started` — how to operate Flui at all — now
+     * leads the catalogue, and these notes are what THIS installation's own
+     * people said about running it, read right after.
      */
-    it('is actually published, and first, where an agent will read it', () => {
-      expect(ALL_TOOLS[0]).toBe(TOOL);
+    it('is actually published, second, right after get_started', () => {
+      expect(ALL_TOOLS[0].name).toBe('get_started');
+      expect(ALL_TOOLS[1]).toBe(TOOL);
     });
   });
 

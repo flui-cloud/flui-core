@@ -4,6 +4,7 @@ import {
   PERMISSION_GROUPS,
   PERMISSION_GROUP_KEYS,
   PermissionArea,
+  UNGROUPED_BASELINE_SCOPES,
   expandPermissionGroups,
   findPermissionGroup,
   groupsForScopes,
@@ -21,14 +22,19 @@ import { ALL_TOOLS } from '../../mcp/tools/tool-registry';
  * one, a summary that has grown into a paragraph nobody reads.
  */
 describe('permission groups — the taxonomy', () => {
-  it('reaches every grantable scope, so nothing is only available by hand', () => {
+  it('reaches every grantable scope except the pinned baseline ones, so nothing opt-in is only available by hand', () => {
     const named = new Set(PERMISSION_GROUPS.flatMap((g) => g.scopes));
-    expect(named).toEqual(new Set(GRANTABLE_SCOPES));
+    const optIn = GRANTABLE_SCOPES.filter(
+      (s) => !(UNGROUPED_BASELINE_SCOPES as string[]).includes(s),
+    );
+    expect(named).toEqual(new Set(optIn));
   });
 
-  it('reaches every scope the tools actually use', () => {
+  it('reaches every scope the tools actually use, except the pinned baseline ones', () => {
     const named = new Set(PERMISSION_GROUPS.flatMap((g) => g.scopes));
-    const used = [...new Set(ALL_TOOLS.map((t) => t.scope))];
+    const used = [...new Set(ALL_TOOLS.map((t) => t.scope))].filter(
+      (s) => !(UNGROUPED_BASELINE_SCOPES as string[]).includes(s),
+    );
     expect(used.filter((s) => !named.has(s as never))).toEqual([]);
   });
 

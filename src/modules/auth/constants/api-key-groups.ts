@@ -1,6 +1,18 @@
 import { MCP_SCOPE, McpScope } from '../../mcp/constants/mcp-scopes';
 
 /**
+ * The one grantable scope with no group, and the one exception to the
+ * "reachable by some group" invariant below — `ungroupedScopes` filters it
+ * out for that reason. It is not part of the taxonomy this file models at
+ * all: nobody switches it on, `ApiKeyService.generateApiKey` unions it into
+ * every scoped key regardless of which groups were picked, so a group
+ * checkbox for it would offer a choice that does not exist.
+ */
+export const UNGROUPED_BASELINE_SCOPES: McpScope[] = [
+  MCP_SCOPE.ONBOARDING_READ,
+];
+
+/**
  * The unit of consent: what a person switches on when they connect an agent.
  *
  * Not a second authorization system. IAM stays the authority and every scope a
@@ -241,12 +253,14 @@ export const PERMISSION_GROUPS: PermissionGroupDef[] = [
    * switch here, and the ladder in `access` makes it read as the deeper of the
    * two rather than as a second decision.
    *
-   * A group and not a bare ungrouped scope for a measured reason: the taxonomy
-   * asserts that every grantable scope is reachable by some group ("so nothing
-   * is only available by hand"), and the screen that mints keys renders groups.
-   * A scope in no group at all would be invisible there — not switched off,
-   * absent — which is the opposite of what "you see it in the list, off" asks
-   * for.
+   * A group and not a bare ungrouped scope for a measured reason: with one
+   * documented exception (`UNGROUPED_BASELINE_SCOPES`, above — granted to
+   * every key regardless of choice, not part of this taxonomy), every
+   * grantable scope this file models is reachable by some group ("so nothing
+   * opt-in is only available by hand"), and the screen that mints keys
+   * renders groups. A scope in no group at all would be invisible there — not
+   * switched off, absent — which is the opposite of what "you see it in the
+   * list, off" asks for.
    */
   {
     key: 'access:change',
@@ -375,9 +389,15 @@ export function groupsForScopes(scopes: string[]): string[] {
  * omission: a key with `mcp:app:write` and nothing else matches no group at
  * all, and a panel showing "no group" without showing that scope would describe
  * it as harmless.
+ *
+ * `UNGROUPED_BASELINE_SCOPES` is filtered out first, and for the opposite
+ * reason: it sits on every key `generateApiKey` has minted since it existed,
+ * so it is never what makes any one of them wider than its name — counting it
+ * here would flag "beyond groups" on every key going forward, permanently,
+ * for a scope nobody chose and none can lack.
  */
 export function ungroupedScopes(scopes: string[]): string[] {
-  const covered = new Set<string>();
+  const covered = new Set<string>(UNGROUPED_BASELINE_SCOPES);
   for (const key of groupsForScopes(scopes)) {
     for (const scope of findPermissionGroup(key)!.scopes) covered.add(scope);
   }

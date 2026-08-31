@@ -33,6 +33,19 @@
  * boundary is the thing this project has learned to avoid.
  */
 export const MCP_SCOPE = {
+  /**
+   * How to operate this instance, read from inside the same MCP session — no
+   * second transport, no bearer header to attach by hand.
+   *
+   * The one scope in this file that is not part of the consent taxonomy in
+   * `api-key-groups.ts`: nobody switches it on, because `ApiKeyService.generateApiKey`
+   * unions it into every scoped key unconditionally, the same content
+   * `GET /auth/agent-skill` already hands to any authenticated caller with no
+   * permission of its own. Read-only, identical for every credential on an
+   * installation, and `allows` nothing on the HTTP path (see `SCOPE_AUTHORITY`)
+   * — there is nothing here to narrow by scoping it, only friction to remove.
+   */
+  ONBOARDING_READ: 'mcp:onboarding:read',
   CATALOG_READ: 'mcp:catalog:read',
   APP_READ: 'mcp:app:read',
   OBS_READ: 'mcp:obs:read',
@@ -128,6 +141,7 @@ export type McpTier = 'read' | 'plan' | 'write' | 'destructive';
  */
 export const TIER_SCOPES: Record<McpTier, McpScope[]> = {
   read: [
+    MCP_SCOPE.ONBOARDING_READ,
     MCP_SCOPE.CATALOG_READ,
     MCP_SCOPE.APP_READ,
     MCP_SCOPE.OBS_READ,
@@ -146,6 +160,7 @@ export const TIER_SCOPES: Record<McpTier, McpScope[]> = {
 };
 
 export const SCOPE_TIER: Record<McpScope, McpTier> = {
+  [MCP_SCOPE.ONBOARDING_READ]: 'read',
   [MCP_SCOPE.CATALOG_READ]: 'read',
   [MCP_SCOPE.APP_READ]: 'read',
   [MCP_SCOPE.OBS_READ]: 'read',

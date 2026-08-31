@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { ChatTool } from '../../assistant/interfaces/chat-completion';
 import { ToolDef, toolInputSchema } from './mcp-tool.util';
+import { ONBOARDING_TOOLS } from './onboarding.tools';
 import { CATALOG_TOOLS } from './catalog.tools';
 import { SPEC_TOOLS } from './spec.tools';
 import { APPLICATION_TOOLS } from './application.tools';
@@ -26,9 +27,12 @@ import { SCALING_TOOLS } from './scaling.tools';
  * agents) and the Flui Assistant agent loop (in-process). A tool is written once.
  */
 export const ALL_TOOLS: ToolDef[] = [
-  // First on purpose. `tools/list` is served in declaration order, and the one
-  // thing an agent should read before it does anything to somebody's
-  // installation is how that installation is run.
+  // First on purpose, both of them. `tools/list` is served in declaration
+  // order: `get_started` is how an agent learns to operate Flui at all, and
+  // has to come before `operating_context_read`, which is what THIS
+  // installation's own people have said about running it — the general
+  // instructions before the specific notes.
+  ...ONBOARDING_TOOLS,
   ...OPERATING_CONTEXT_TOOLS,
   ...CATALOG_TOOLS,
   ...SPEC_TOOLS,
