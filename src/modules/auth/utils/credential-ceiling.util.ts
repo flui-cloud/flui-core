@@ -31,6 +31,7 @@ export interface ScopedCredential {
 /** A principal as far as the application ceiling is concerned. */
 export interface AppScopedCredential {
   applicationIds?: string[];
+  projectIds?: string[];
 }
 
 /**
@@ -248,6 +249,38 @@ export function applicationCeilingWithholds(
   const ids = credential?.applicationIds;
   if (!ids?.length) return false;
   return !ids.includes(applicationId);
+}
+
+/**
+ * The combined form: true unless `applicationId` clears either declared
+ * list. `applicationIds` and `projectIds` are alternatives, not requirements
+ * that both hold — a key scoped to project P also reaching app A outside P
+ * (named individually) must keep reaching A even after A leaves P, which is
+ * exactly what a union and not an intersection gives it. Neither list
+ * declared reads as unrestricted, same as {@link applicationCeilingWithholds}.
+ *
+ * Takes `applicationProjectId` as a parameter rather than loading it itself:
+ * the caller already has the row (or is about to), and the one thing this
+ * check cannot do is decide on its own whether to hit the database — that
+ * choice belongs to {@link AppAccessGuard}, which only pays for the load when
+ * a credential actually declares a project ceiling.
+ */
+export function applicationAccessWithheld(
+  credential: AppScopedCredential | undefined,
+  applicationId: string,
+  applicationProjectId: string | null,
+): boolean {
+  const appIds = credential?.applicationIds;
+  const projectIds = credential?.projectIds;
+  const hasAppCeiling = !!appIds?.length;
+  const hasProjectCeiling = !!projectIds?.length;
+  if (!hasAppCeiling && !hasProjectCeiling) return false;
+  const allowedByApp = hasAppCeiling && appIds!.includes(applicationId);
+  const allowedByProject =
+    hasProjectCeiling &&
+    !!applicationProjectId &&
+    projectIds!.includes(applicationProjectId);
+  return !allowedByApp && !allowedByProject;
 }
 
 /**

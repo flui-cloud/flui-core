@@ -77,6 +77,7 @@ export class ApiKeyStrategy {
             isAdmin: user.isAdmin,
             scopes: record.scopes ?? undefined,
             applicationIds: record.applicationIds ?? undefined,
+            projectIds: record.projectIds ?? undefined,
           },
           keyId: record.id,
         };
@@ -102,6 +103,7 @@ export class ApiKeyStrategy {
         isAdmin: identity.isAdmin,
         scopes: narrowToIdentity(record.scopes, identity.scopes),
         applicationIds: record.applicationIds ?? undefined,
+        projectIds: record.projectIds ?? undefined,
       },
       keyId: record.id,
     };

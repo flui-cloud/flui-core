@@ -52,8 +52,9 @@ const sandboxTenantsRepoFor = (
     tenants.find((t) => t.userId === where.userId) ?? null,
 });
 
-const appEntity = (slug: string, projectId: string) =>
+const appEntity = (slug: string, projectId: string, id?: string) =>
   ({
+    id,
     slug,
     category: 'user',
     kind: 'APPLICATION',
@@ -113,6 +114,74 @@ describe('ApplicationAccessService', () => {
       apps,
     );
     expect(visible).toHaveLength(2);
+  });
+
+  /**
+   * A credential ceiling is enforced everywhere a list of applications comes
+   * from, not only on the single-app routes `AppAccessGuard` covers — a key
+   * scoped to specific apps or projects must not be able to enumerate the
+   * rest of the instance through a list endpoint. `isAdmin: true` here is the
+   * point of each case: the ceiling has to narrow before the admin bypass
+   * gets a chance to return everything, exactly like `AppAccessGuard`.
+   */
+  it('filterReadable withholds apps outside the applicationIds ceiling, even for an admin', async () => {
+    const svc = new ApplicationAccessService(
+      policyWith([]) as never,
+      projectsRepo as never,
+      clustersRepo as never,
+      sandboxTenantsRepoFor([]) as never,
+    );
+    const apps = [
+      appEntity('web', 'p1', 'app-1'),
+      appEntity('api', 'p2', 'app-2'),
+    ];
+    const visible = await svc.filterReadable(
+      { ...USER, isAdmin: true, applicationIds: ['app-1'] } as never,
+      apps,
+    );
+    expect(visible.map((a) => a.slug)).toEqual(['web']);
+  });
+
+  it('filterReadable withholds apps outside the projectIds ceiling, even for an admin', async () => {
+    const svc = new ApplicationAccessService(
+      policyWith([]) as never,
+      projectsRepo as never,
+      clustersRepo as never,
+      sandboxTenantsRepoFor([]) as never,
+    );
+    const apps = [
+      appEntity('web', 'p1', 'app-1'),
+      appEntity('api', 'p2', 'app-2'),
+    ];
+    const visible = await svc.filterReadable(
+      { ...USER, isAdmin: true, projectIds: ['p1'] } as never,
+      apps,
+    );
+    expect(visible.map((a) => a.slug)).toEqual(['web']);
+  });
+
+  it('filterReadable unions applicationIds and projectIds rather than intersecting them', async () => {
+    const svc = new ApplicationAccessService(
+      policyWith([]) as never,
+      projectsRepo as never,
+      clustersRepo as never,
+      sandboxTenantsRepoFor([]) as never,
+    );
+    const apps = [
+      appEntity('web', 'p1', 'app-1'), // reached by applicationIds
+      appEntity('api', 'p2', 'app-2'), // reached by projectIds
+      appEntity('worker', 'p2', 'app-3'), // reached by projectIds too
+    ];
+    const visible = await svc.filterReadable(
+      {
+        ...USER,
+        isAdmin: true,
+        applicationIds: ['app-1'],
+        projectIds: ['p2'],
+      } as never,
+      apps,
+    );
+    expect(visible.map((a) => a.slug).sort()).toEqual(['api', 'web', 'worker']);
   });
 
   it('assertCan allows in-scope writes and throws out of scope', async () => {

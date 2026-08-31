@@ -99,4 +99,20 @@ export class CreateApiKeyDto {
   @ArrayUnique()
   @IsString({ each: true })
   applicationIds?: string[];
+
+  @ApiPropertyOptional({
+    isArray: true,
+    type: String,
+    description:
+      'Project ids this key may act on, alongside `applicationIds` rather ' +
+      'than instead of it — an application is covered the moment either list ' +
+      'reaches it. An app added to a granted project later is covered too, ' +
+      'with nothing to re-issue. Not validated against ownership at issue ' +
+      'time, same as `applicationIds`.',
+  })
+  @IsOptional()
+  @IsArray()
+  @ArrayUnique()
+  @IsString({ each: true })
+  projectIds?: string[];
 }

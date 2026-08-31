@@ -12,6 +12,7 @@ import { IAM_PERMISSION } from '../../iam/constants/iam-permissions';
 import { ApplicationService } from '../services/application.service';
 import { ApplicationAccessService } from '../services/application-access.service';
 import {
+  applicationAccessWithheld,
   applicationCeilingRefusal,
   applicationCeilingWithholds,
   ceilingRefusal,
@@ -101,6 +102,24 @@ export class AppAccessGuard implements CanActivate {
     // minted it, or the account most likely to hand out these keys — an
     // administrator, on their own apps — would be the one case the ceiling
     // never actually held.
+    //
+    // A project ceiling cannot be decided from the id alone — it needs the
+    // application's own projectId, which means loading the row before the
+    // decision instead of after. Every other credential (no `projectIds`
+    // declared, which is every key minted before that ceiling existed, plus
+    // every one minted without it since) keeps the fast path below exactly as
+    // it was: refused without ever touching the database, so the answer
+    // cannot depend on whether the row exists.
+    if (user.projectIds?.length) {
+      const app = await this.apps.findById(id); // 404 if missing
+      if (applicationAccessWithheld(user, id, app.projectId ?? null)) {
+        throw new ForbiddenException(applicationCeilingRefusal(id));
+      }
+      if (user.isAdmin) return true;
+      await this.access.assertCan(user, action, app);
+      return true;
+    }
+
     if (applicationCeilingWithholds(user, id)) {
       throw new ForbiddenException(applicationCeilingRefusal(id));
     }

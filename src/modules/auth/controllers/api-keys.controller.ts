@@ -55,6 +55,7 @@ import {
 } from '../../iam/interfaces/iam.types';
 import { CreateApiKeyDto } from '../dto/create-api-key.dto';
 import { UpdateApiKeyApplicationsDto } from '../dto/update-api-key-applications.dto';
+import { UpdateApiKeyProjectsDto } from '../dto/update-api-key-projects.dto';
 import {
   ApiKeyResponseDto,
   CreateApiKeyResultDto,
@@ -100,6 +101,7 @@ export class ApiKeysController {
       expiresAt,
       scopes,
       dto.applicationIds,
+      dto.projectIds,
     );
     return { ...this.describeKey(entity), key: plaintext };
   }
@@ -190,6 +192,7 @@ export class ApiKeysController {
       lastUsedAt?: Date | null;
       skillVersion?: string | null;
       applicationIds?: string[] | null;
+      projectIds?: string[] | null;
     },
     currentKeyId?: string,
   ): ApiKeyResponseDto {
@@ -206,6 +209,7 @@ export class ApiKeysController {
       groups: scopes ? groupsForScopes(scopes) : null,
       ungroupedScopes: scopes ? ungroupedScopes(scopes) : null,
       applicationIds: entity.applicationIds ?? null,
+      projectIds: entity.projectIds ?? null,
       // A freshly minted key is never the one that minted it.
       current: !!currentKeyId && entity.id === currentKeyId,
     };
@@ -370,6 +374,38 @@ export class ApiKeysController {
       id,
       req.user.userId,
       dto.applicationIds ?? null,
+    );
+    if (!entity) {
+      throw new NotFoundException(`API key ${id} not found`);
+    }
+    return this.describeKey(entity);
+  }
+
+  @Patch('api-keys/:id/projects')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: 'Change which projects a key may act on, without reissuing it',
+    description:
+      "Replaces the key's project list wholesale — send the complete set you " +
+      'want it to hold, not just the ones being added. Omit `projectIds` (or ' +
+      'send an empty array) to lift the restriction. Independent of the ' +
+      'application list on the same key: an application counts as covered ' +
+      'the moment either list reaches it, and an app added to a granted ' +
+      'project later is covered on its next request — nothing to reissue.',
+  })
+  @ApiParam({ name: 'id' })
+  @ApiBody({ type: UpdateApiKeyProjectsDto })
+  @ApiResponse({ status: 200, type: ApiKeyResponseDto })
+  async updateApiKeyProjects(
+    @Param('id') id: string,
+    @Body() dto: UpdateApiKeyProjectsDto,
+    @Request() req: { user: AuthenticatedUser },
+  ): Promise<ApiKeyResponseDto> {
+    const entity = await this.apiKeyService.updateProjectIds(
+      id,
+      req.user.userId,
+      dto.projectIds ?? null,
     );
     if (!entity) {
       throw new NotFoundException(`API key ${id} not found`);

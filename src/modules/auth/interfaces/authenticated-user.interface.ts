@@ -14,4 +14,6 @@ export interface AuthenticatedUser {
   scopes?: string[];
   /** Application ids this credential may act on. Undefined = every application the principal can already reach. */
   applicationIds?: string[];
+  /** Project ids this credential may act on, alongside `applicationIds` rather than instead of it — the ceiling is their union. */
+  projectIds?: string[];
 }

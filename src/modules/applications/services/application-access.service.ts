@@ -15,6 +15,7 @@ import { IAM_PERMISSION } from '../../iam/constants/iam-permissions';
 import { AppTabKey, tabsForPermissions } from '../../iam/constants/iam-tabs';
 import { isShowcase } from '../../iam/constants/iam-showcase';
 import { AuthenticatedUser } from '../../auth/interfaces/authenticated-user.interface';
+import { applicationAccessWithheld } from '../../auth/utils/credential-ceiling.util';
 import { ApplicationEntity } from '../entities/application.entity';
 import { ProjectEntity } from '../../projects/entities/project.entity';
 import { ClusterEntity } from '../../infrastructure/clusters/entities/cluster.entity';
@@ -61,10 +62,24 @@ export class ApplicationAccessService {
     apps: ApplicationEntity[],
   ): Promise<ApplicationEntity[]> {
     if (apps.length === 0) return apps;
+
+    // The credential ceiling first, and — like `AppAccessGuard` — before the
+    // `isAdmin` bypass below: a key scoped to specific applications or
+    // projects must not enumerate the rest of the instance just because it
+    // was minted by an administrator. `AppAccessGuard` only ever sees one
+    // application at a time and cannot enforce this on its own; a list route
+    // reaches every row through this method instead, so the ceiling has to
+    // live here too or a scoped key would be blocked from *acting* on an app
+    // it was never granted while still *seeing* it appear in every list.
+    const withinCeiling = apps.filter(
+      (a) => !applicationAccessWithheld(user, a.id, a.projectId ?? null),
+    );
+    if (withinCeiling.length === 0) return withinCeiling;
+
     const access = await this.policy.resolveAccess(this.principalFrom(user));
-    if (access.isAdmin) return apps;
-    const { projectSlugById, clusterById } = await this.lookups(apps);
-    return apps.filter((a) =>
+    if (access.isAdmin) return withinCeiling;
+    const { projectSlugById, clusterById } = await this.lookups(withinCeiling);
+    return withinCeiling.filter((a) =>
       this.policy.can(
         access,
         IAM_PERMISSION.APP_READ,

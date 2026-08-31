@@ -25,6 +25,7 @@ import { ApplicationOwnerKind1786600000000 } from './1786600000000-ApplicationOw
 import { ClusterNodeShape1786700000000 } from './1786700000000-ClusterNodeShape';
 import { ScalingGroup1786800000000 } from './1786800000000-ScalingGroup';
 import { ApiKeyApplicationScope1786900000000 } from './1786900000000-ApiKeyApplicationScope';
+import { ApiKeyProjectScope1787000000000 } from './1787000000000-ApiKeyProjectScope';
 
 // Explicit array, not a dist glob: nest build webpack-bundles to one file,
 // so a `dist/migrations/*.js` glob resolves to nothing at runtime.
@@ -57,4 +58,5 @@ export const migrations = [
   ClusterNodeShape1786700000000,
   ScalingGroup1786800000000,
   ApiKeyApplicationScope1786900000000,
+  ApiKeyProjectScope1787000000000,
 ];

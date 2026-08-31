@@ -116,6 +116,15 @@ export class ApiKeyResponseDto {
       'holder can already reach.',
   })
   applicationIds: string[] | null;
+
+  @ApiPropertyOptional({
+    isArray: true,
+    type: String,
+    description:
+      'Project ids this key may act on, alongside `applicationIds` rather ' +
+      'than instead of it. Null means no project grant.',
+  })
+  projectIds: string[] | null;
 }
 
 export class CreateApiKeyResultDto extends ApiKeyResponseDto {

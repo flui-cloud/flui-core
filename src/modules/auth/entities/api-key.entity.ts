@@ -52,6 +52,18 @@ export class ApiKeyEntity {
   applicationIds: string[] | null;
 
   /**
+   * Project ids this key may act on, alongside {@link applicationIds} rather
+   * than instead of it: the ceiling is their union, not their intersection.
+   * An app counts as covered the moment its own `projectId` names one of
+   * these — checked live against the row on every request, so moving an app
+   * into or out of a granted project takes effect on the very next call, with
+   * nothing to invalidate. Null = no project grant, the pre-existing
+   * behaviour for every key minted before this column existed.
+   */
+  @Column({ type: 'simple-array', nullable: true })
+  projectIds: string[] | null;
+
+  /**
    * When this key last authenticated a request, to the nearest minute.
    *
    * Null means "not seen since this column existed", which is deliberately not

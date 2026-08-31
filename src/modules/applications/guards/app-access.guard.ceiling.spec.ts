@@ -63,6 +63,32 @@ const build = () => {
   };
 };
 
+/** Same as `build`, but the mocked row belongs to `projectId` (or none, if null). */
+const buildInProject = (projectId: string | null) => {
+  const loaded: string[] = [];
+  const asked: string[] = [];
+  const apps = {
+    findById: async (id: string) => {
+      loaded.push(id);
+      return { id, slug: 'app', userId: 'user-a', projectId };
+    },
+  };
+  const access = {
+    assertCan: async (_u: unknown, action: string) => {
+      asked.push(action);
+    },
+  };
+  return {
+    loaded,
+    asked,
+    guard: new AppAccessGuard(
+      { getAllAndOverride: () => undefined } as never,
+      apps as never,
+      access as never,
+    ),
+  };
+};
+
 /** Same, with an explicit @AppAction on the route. */
 const buildWithAction = (action: string) => {
   const base = build();
@@ -279,5 +305,75 @@ describe('AppAccessGuard — the application ceiling', () => {
         ),
       ),
     ).rejects.toMatchObject({ response: { code: APPLICATION_CEILING_CODE } });
+  });
+});
+
+/**
+ * The project ceiling: unioned with the application ceiling above, not a
+ * replacement for it. `ctx()` always names `app-1` in the path; `buildInProject`
+ * decides which project (if any) that row belongs to, and each case turns on
+ * whether the key's `projectIds` reaches it.
+ */
+describe('AppAccessGuard — the project ceiling', () => {
+  it("refuses an application outside the key's projects, only after loading the row", async () => {
+    const { guard, loaded } = buildInProject('project-a');
+    await expect(
+      guard.canActivate(ctx(principal({ projectIds: ['project-b'] }), 'GET')),
+    ).rejects.toMatchObject({ response: { code: APPLICATION_CEILING_CODE } });
+    // Unlike the pure application ceiling, this one cannot be decided from
+    // the id alone — it needs the row's own projectId.
+    expect(loaded).toEqual(['app-1']);
+  });
+
+  it('lets an application inside a granted project through', async () => {
+    const { guard, asked } = buildInProject('project-a');
+    await expect(
+      guard.canActivate(ctx(principal({ projectIds: ['project-a'] }), 'GET')),
+    ).resolves.toBe(true);
+    expect(asked).toEqual([IAM_PERMISSION.APP_READ]);
+  });
+
+  it('reaches an app named individually even when its own project is not granted — the union', async () => {
+    const { guard } = buildInProject('project-b');
+    await expect(
+      guard.canActivate(
+        ctx(
+          principal({ applicationIds: ['app-1'], projectIds: ['project-a'] }),
+          'GET',
+        ),
+      ),
+    ).resolves.toBe(true);
+  });
+
+  it('refuses an app that belongs to no project at all, when the key is project-scoped', async () => {
+    const { guard } = buildInProject(null);
+    await expect(
+      guard.canActivate(ctx(principal({ projectIds: ['project-a'] }), 'GET')),
+    ).rejects.toMatchObject({ response: { code: APPLICATION_CEILING_CODE } });
+  });
+
+  it('caps an administrator holding a project-scoped key', async () => {
+    const { guard } = buildInProject('project-b');
+    await expect(
+      guard.canActivate(
+        ctx(principal({ isAdmin: true, projectIds: ['project-a'] }), 'GET'),
+      ),
+    ).rejects.toMatchObject({ response: { code: APPLICATION_CEILING_CODE } });
+  });
+
+  it('leaves a key with no project list unrestricted by project, same as before this ceiling existed', async () => {
+    const { guard, asked } = build();
+    await expect(guard.canActivate(ctx(principal({}), 'GET'))).resolves.toBe(
+      true,
+    );
+    expect(asked).toEqual([IAM_PERMISSION.APP_READ]);
+  });
+
+  it('still refuses an application-scoped key without ever loading the row — the branch below is untouched', async () => {
+    const { guard, loaded } = build();
+    await expect(
+      guard.canActivate(ctx(principal({ applicationIds: ['app-2'] }), 'GET')),
+    ).rejects.toMatchObject({ response: { code: APPLICATION_CEILING_CODE } });
+    expect(loaded).toEqual([]);
   });
 });
