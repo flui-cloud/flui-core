@@ -129,8 +129,8 @@ describe('the tools whose request the chat can show', () => {
    * in which it stood on seven routes. So: every write and destructive tool in
    * the registry, sorted into the two piles, every time this suite runs.
    *
-   * At the time of writing: **46 write/destructive tools, 20 inside the cycle,
-   * 26 outside it.** For those 26 a coding agent meets nothing at all, and the
+   * At the time of writing: **47 write/destructive tools, 32 inside the cycle,
+   * 15 outside it.** For those 15 a coding agent meets nothing at all, and the
    * chat's own tier confirmation is the only question asked — which is the half
    * of the assimilation that no lane inside the assistant can close, because
    * closing it means decorating controllers.
@@ -185,9 +185,14 @@ describe('the tools whose request the chat can show', () => {
 
   /** Every write tool the cycle governs today. Losing one of these is a regression. */
   const GOVERNED = [
+    'access_grant_add',
+    'access_grant_remove',
     'app_delete',
     'app_deploy',
+    'app_deploy_from_yaml',
+    'app_stop',
     'app_uninstall',
+    'backup_policy_pause',
     'cluster_autoscale_set',
     'cluster_create',
     'cluster_firewall_enable',
@@ -198,11 +203,17 @@ describe('the tools whose request the chat can show', () => {
     'cluster_power',
     'cluster_storage_expand',
     'dns_issuer_configure',
+    'dns_wildcard_publish',
     'gateway_route_remove',
+    'gateway_set_policy',
     'mail_domain_publish',
+    'migrate_db',
+    'migrate_full',
     'migration_abort',
+    'migration_cutover',
     'migration_destroy_source',
     'platform_component_redeploy',
+    'repo_connect',
     'san_certificate_create',
     // A scaling group is not a node, it is the standing figure a cluster may
     // grow and spend to unattended — which is the class of thing the cycle
@@ -212,18 +223,19 @@ describe('the tools whose request the chat can show', () => {
   ];
 
   /**
-   * Every write tool the cycle does **not** govern today — the open half of
-   * decision 180, named so it can be counted instead of rediscovered.
+   * Every write tool the cycle does **not** govern today — what is left of the
+   * open half of decision 180, named so it can be counted instead of
+   * rediscovered.
    *
-   * Note what the pairs say: `app_deploy` is inside and `app_deploy_from_yaml`
-   * is not; `gateway_route_remove` is inside and `gateway_route_add` is not;
-   * `schedule_delete` is inside and `schedule_create` is not. Whatever decided
-   * these was not a rule about writing.
+   * The pairs this list makes are now the eleven decision 180 named and no
+   * more: `app_stop` is inside and `app_start` is not, `backup_policy_pause` is
+   * inside and `backup_policy_resume` is not, `migrate_db` and `migrate_full`
+   * are inside and `migrate_app` is not, `gateway_set_policy` is inside and
+   * `gateway_route_add` is not. Those asymmetries are what the decision asked
+   * for and not a rule anybody has written down yet — which is the argument for
+   * counting them here rather than reasoning about them from the names.
    */
   const UNGOVERNED = [
-    'access_grant_add',
-    'access_grant_remove',
-    'app_deploy_from_yaml',
     'app_install',
     'app_reconcile',
     'app_restart',
@@ -231,20 +243,12 @@ describe('the tools whose request the chat can show', () => {
     'app_scale',
     'app_set_resources',
     'app_start',
-    'app_stop',
     'app_variable_request',
     'app_variable_set',
-    'backup_policy_pause',
     'backup_policy_resume',
     'backup_run',
-    'dns_wildcard_publish',
     'gateway_route_add',
-    'gateway_set_policy',
     'migrate_app',
-    'migrate_db',
-    'migrate_full',
-    'migration_cutover',
-    'repo_connect',
     'schedule_create',
     'schedule_trigger',
   ];
@@ -295,7 +299,7 @@ describe('the tools whose request the chat can show', () => {
    * cycle, so the chat keeps its own card for it — and, because the predicate
    * says no, must not answer a request on the person's behalf either.
    */
-  it.each(['app_restart', 'app_scale', 'repo_connect'])(
+  it.each(['app_restart', 'app_scale'])(
     '%s stays with the chat’s own confirmation',
     (name) => {
       const tool = ALL_TOOLS.find((t) => t.name === name);

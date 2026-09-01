@@ -67,6 +67,7 @@ import { SECTION } from '../../iam/constants/iam-sections';
 import { IAM_PERMISSION } from '../../iam/constants/iam-permissions';
 import { AppAccessGuard, AppAction } from '../guards/app-access.guard';
 import { ActionCycle } from '../../action-cycle/action-cycle.decorator';
+import { deployFromYamlClause, deployValidatesOnly } from '../deploy-clause';
 import { ApplicationAccessService } from '../services/application-access.service';
 import { DockerHubService } from '../../images/services/dockerhub.service';
 import { ApplicationSourceDeployService } from '../services/application-source-deploy.service';
@@ -518,6 +519,20 @@ export class ApplicationsController {
 
   @Post('applications/deploy-from-yaml')
   @HttpCode(HttpStatus.CREATED)
+  // Every call asks. The application may not exist yet, so there is no id an
+  // "always" could be pinned to, and a standing yes would cover every future
+  // deploy. The clause names the repository and branch, which is the only way
+  // the person deciding can tell which application this is about.
+  @ActionCycle({
+    action: 'POST /applications/deploy-from-yaml',
+    sentence: 'create or replace an application from a manifest and deploy it',
+    clause: deployFromYamlClause,
+    // The same path also answers "would this manifest work", and that call
+    // returns before it acts: see `deployValidatesOnly`.
+    dryRun: deployValidatesOnly,
+    consequence:
+      'A build workflow is committed to the repository and a build and deploy start; where the application already exists, the running version is replaced by what this manifest builds.',
+  })
   @ApiOperation({
     summary: 'Deploy from source using a flui.yaml (kind: Application)',
     description:
@@ -691,6 +706,16 @@ export class ApplicationsController {
   @Post('applications/:id/stop')
   @AppAction(IAM_PERMISSION.SCALE_EXECUTE)
   @HttpCode(HttpStatus.OK)
+  @ActionCycle({
+    action: 'POST /applications/:id/stop',
+    bind: ['id'],
+    sentence: 'stop application {id}',
+    // "At one replica" and not "at the count it had": stopping writes
+    // `replicas: 0` to the row, so `start()` finds nothing to restore and
+    // brings the application back at one however many it was running.
+    consequence:
+      'It scales to zero and stops answering; nothing it holds is deleted, and starting it again brings it back at a single replica, whatever it was running before.',
+  })
   @ApiOperation({ summary: 'Stop an application (scale to 0)' })
   @ApiParam({ name: 'id', description: 'Application ID' })
   @ApiResponse({ status: 200, type: ApplicationResponseDto })

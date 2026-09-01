@@ -12,6 +12,7 @@ import { Request } from 'express';
 import { RequireSection } from '../../iam/decorators/require-section.decorator';
 import { RequirePermission } from '../../iam/decorators/require-permission.decorator';
 import { ActionCycle } from '../../action-cycle/action-cycle.decorator';
+import { dbMigrationClause } from '../migration-clause';
 import { IAM_PERMISSION } from '../../iam/constants/iam-permissions';
 import { DbMigrationService } from '../services/db-migration.service';
 import { CreateDbMigrationDto } from '../dto/create-db-migration.dto';
@@ -44,6 +45,16 @@ export class DbMigrationController {
 
   @Post()
   @RequirePermission(IAM_PERMISSION.MIGRATION_EXECUTE)
+  // Every call asks. The migration does not exist until this call makes it, so
+  // there is no id an "always" could be pinned to, and a standing yes would
+  // cover every future move of any database.
+  @ActionCycle({
+    action: 'POST /db-migrations',
+    sentence: 'start moving a database to another cluster',
+    clause: dbMigrationClause,
+    consequence:
+      'A second database is built on the destination and takes storage there. Unless the request asked for a manual cutover, a live migration then finishes by itself: the application is repointed at the destination and the source stops taking writes, without asking again. A restore-mode migration replicates nothing and repoints nothing — it rebuilds the database from the backup repository beside the live one.',
+  })
   @ApiOperation({
     summary:
       'Migrate a database to another cluster (live replication or restore-from-backup)',
@@ -66,6 +77,13 @@ export class DbMigrationController {
 
   @Post(':id/cutover')
   @RequirePermission(IAM_PERMISSION.MIGRATION_EXECUTE)
+  @ActionCycle({
+    action: 'POST /db-migrations/:id/cutover',
+    bind: ['id'],
+    sentence: 'cut database migration {id} over to its destination',
+    consequence:
+      'The application is repointed at the destination database and the source stops taking writes.',
+  })
   @ApiOperation({ summary: 'Fire the cutover of a SYNCED manual migration' })
   cutover(@Param('id') id: string) {
     return this.service.cutover(id);

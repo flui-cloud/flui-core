@@ -30,6 +30,7 @@ import { ClusterEntity } from '../../infrastructure/clusters/entities/cluster.en
 import { EncryptionService } from '../../shared/encryption/services/encryption.service';
 import { RequireSection } from '../../iam/decorators/require-section.decorator';
 import { RequirePermission } from '../../iam/decorators/require-permission.decorator';
+import { ActionCycle } from '../../action-cycle/action-cycle.decorator';
 import { IAM_PERMISSION } from '../../iam/constants/iam-permissions';
 
 /**
@@ -125,6 +126,15 @@ export class BackupPoliciesController {
 
   @Post(':id/pause')
   @RequirePermission(IAM_PERMISSION.CLUSTER_MANAGE)
+  // An "always" here covers this one policy and no other. Asked of pausing and
+  // not of resuming, because only pausing leaves data unprotected.
+  @ActionCycle({
+    action: 'POST /backup-policies/:id/pause',
+    bind: ['id'],
+    sentence: 'stop backup policy {id} from running',
+    consequence:
+      'No backup is taken under this policy until somebody resumes it, so everything written meanwhile is unprotected.',
+  })
   async pause(@Param('id') id: string) {
     return this.service.pause(id);
   }

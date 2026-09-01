@@ -37,7 +37,7 @@ const controllers = (dir: string): string[] =>
 interface Declaration {
   action: string;
   estimate?: string;
-  consequence: boolean;
+  consequence?: string;
 }
 
 function declarations(): Declaration[] {
@@ -52,11 +52,27 @@ function declarations(): Declaration[] {
       found.push({
         action: action[1],
         estimate: estimate?.[1],
-        consequence: /\n\s*consequence:/.test(body),
+        // One chunk per declared key, so a consequence spread over concatenated
+        // literals is read whole and the field after it is not read as part of
+        // it — the same reading `destructive-cycle.spec.ts` does of `sentence`.
+        consequence: fieldOf(body, 'consequence'),
       });
     }
   }
   return found;
+}
+
+function fieldOf(body: string, key: string): string | undefined {
+  const chunk = body
+    .split(/\n {4}(?=\w+:)/)
+    .find((part) => part.trimStart().startsWith(`${key}:`));
+  if (!chunk) return undefined;
+  const value = chunk.slice(chunk.indexOf(':') + 1).trim();
+  // A declaration may name a shared constant instead of writing the prose
+  // inline; then the expression stands in for it, which is enough to say the
+  // field is not silent.
+  const literals = [...value.matchAll(/'([^']*)'/g)].map((m) => m[1]).join('');
+  return literals || value;
 }
 
 describe('an estimate points at a price, or it is not an estimate', () => {
@@ -120,5 +136,115 @@ describe('an estimate points at a price, or it is not an estimate', () => {
       'POST /operating-context',
       'POST /operating-context/:id/confirm',
     ]);
+  });
+});
+
+/**
+ * The other half of honesty, and the half no machinery can check on its own: a
+ * `consequence` is prose, read once by a person immediately before they say
+ * yes, and nothing downstream ever compares it with the code.
+ *
+ * Three of them said something the code does not do — a stop that restores the
+ * replica count it never kept, and two migrations that described staging while
+ * their own default carries straight on through the cutover. Each case is
+ * pinned here against the source that decides it, so that the day the code
+ * changes its mind the sentence is looked at rather than left behind.
+ */
+describe('a consequence says what the code does', () => {
+  const all = declarations();
+  const consequenceOf = (action: string): string => {
+    const decl = all.find((d) => d.action === action);
+    expect(decl?.consequence).toBeDefined();
+    return decl?.consequence ?? '';
+  };
+  const sourceOf = (...parts: string[]): string =>
+    readFileSync(join(__dirname, '..', ...parts), 'utf8');
+
+  /**
+   * `stop()` scales to zero through `applyReplicas`, which persists the zero;
+   * `start()` then reads that zero back and floors it at one. An application
+   * stopped at three replicas comes back at one, so the sentence must not
+   * promise otherwise.
+   */
+  it('does not promise a stopped application its replica count back', () => {
+    const service = sourceOf(
+      'applications',
+      'services',
+      'app-management.service.ts',
+    );
+    expect(service).toContain(
+      'await this.applicationsRepository.update(appId, { replicas });',
+    );
+    expect(service).toContain('this.applyReplicas(appId, 0)');
+    expect(service).toContain('current.replicas > 0 ? current.replicas : 1');
+
+    const stop = consequenceOf('POST /applications/:id/stop');
+    expect(stop).toContain('a single replica');
+    expect(stop).not.toMatch(/count it had|replica count it/);
+  });
+
+  /**
+   * `cutover` defaults to AUTO on both migrations and the processors park only
+   * on MANUAL, so the default yes to either of these also moves production
+   * onto the destination and takes the source out of service.
+   */
+  it('tells a default migration request that it also cuts over', () => {
+    const dbService = sourceOf(
+      'db-lifecycle',
+      'services',
+      'db-migration.service.ts',
+    );
+    const dbProcessor = sourceOf(
+      'db-lifecycle',
+      'processors',
+      'db-migration.processor.ts',
+    );
+    expect(dbService).toContain('dto.cutover ?? DbCutoverMode.AUTO');
+    expect(dbProcessor).toContain(
+      'if (mig.cutoverMode === DbCutoverMode.MANUAL)',
+    );
+
+    const db = consequenceOf('POST /db-migrations');
+    expect(db).toContain('manual cutover');
+    expect(db).toContain('without asking again');
+
+    const fullService = sourceOf(
+      'full-migration',
+      'services',
+      'full-migration.service.ts',
+    );
+    const fullProcessor = sourceOf(
+      'full-migration',
+      'processors',
+      'full-migration.processor.ts',
+    );
+    expect(fullService).toContain('dto.cutover ?? FullCutoverMode.AUTO');
+    expect(fullProcessor).toContain(
+      'if (fm.cutoverMode === FullCutoverMode.MANUAL)',
+    );
+
+    const full = consequenceOf('POST /full-migrations');
+    expect(full).toContain('manual cutover');
+    expect(full).toContain('without asking again');
+  });
+
+  /**
+   * Restore mode takes a PITR copy out of the backup repository: no replication
+   * link is opened and nothing is repointed at the copy, so a sentence that
+   * says the new database is kept in step with the live one is false for half
+   * the modes this route advertises.
+   */
+  it('does not claim a restore is kept in step with the live database', () => {
+    const processor = sourceOf(
+      'db-lifecycle',
+      'processors',
+      'db-migration.processor.ts',
+    );
+    expect(processor).toContain('if (mig.mode === DbMigrationMode.RESTORE)');
+    expect(processor).toContain('await this.runRestoreMode(mig)');
+
+    const db = consequenceOf('POST /db-migrations');
+    expect(db).toContain('restore-mode');
+    expect(db).not.toContain('kept in step with the live one');
   });
 });

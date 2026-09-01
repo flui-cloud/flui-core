@@ -19,6 +19,8 @@ import { CreateGroupDto } from '../dto/create-group.dto';
 import { ApplyPolicyDto } from '../dto/access-policy.dto';
 import { AccessDeltaDto, AccessPreviewDto } from '../dto/access-delta.dto';
 import { RequireSection } from '../decorators/require-section.decorator';
+import { ActionCycle } from '../../action-cycle/action-cycle.decorator';
+import { grantClauseOf } from '../grant-clause';
 import { principalOf } from '../interfaces/iam.types';
 
 @Controller('iam')
@@ -146,6 +148,17 @@ export class IamController {
    */
   @Post('grants')
   @RequirePermission(IAM_PERMISSION.IAM_ASSIGN_ROLE)
+  // Every call asks. The grant does not exist yet, so there is no id an
+  // "always" could be pinned to, and a standing yes here would cover every
+  // grant that follows — letting an agent hand out roles indefinitely without
+  // anybody being asked again.
+  @ActionCycle({
+    action: 'POST /iam/grants',
+    sentence: 'grant somebody a role on this instance',
+    clause: grantClauseOf,
+    consequence:
+      'Whoever is named gains everything that role carries, everywhere the scope reaches, until the grant is taken back.',
+  })
   async createGrant(@Body() dto: CreateGrantDto, @Req() req: Request) {
     const target = { type: dto.principalType, ref: dto.principalRef };
     const before = await this.delta.resolve(target);
@@ -156,6 +169,16 @@ export class IamController {
   /** Remove a grant, and say what its holder stopped being able to reach. */
   @Delete('grants/:id')
   @RequirePermission(IAM_PERMISSION.IAM_ASSIGN_ROLE)
+  // An "always" here covers this one grant and no other. Without the id every
+  // grant on the instance would share a single question, so one yes would
+  // authorise revoking anybody's access.
+  @ActionCycle({
+    action: 'DELETE /iam/grants/:id',
+    bind: ['id'],
+    sentence: 'take access grant {id} away from whoever holds it',
+    consequence:
+      'They stop reaching every application, portal section and permission that grant was carrying for them, immediately.',
+  })
   async deleteGrant(@Param('id') id: string, @Req() req: Request) {
     const existing = await this.iam.getGrant(id);
     const target = {

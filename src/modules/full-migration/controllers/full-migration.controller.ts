@@ -12,6 +12,7 @@ import { Request } from 'express';
 import { RequireSection } from '../../iam/decorators/require-section.decorator';
 import { RequirePermission } from '../../iam/decorators/require-permission.decorator';
 import { ActionCycle } from '../../action-cycle/action-cycle.decorator';
+import { fullMigrationClause } from '../migration-clause';
 import { IAM_PERMISSION } from '../../iam/constants/iam-permissions';
 import { FullMigrationService } from '../services/full-migration.service';
 import { CreateFullMigrationDto } from '../dto/create-full-migration.dto';
@@ -45,6 +46,17 @@ export class FullMigrationController {
 
   @Post()
   @RequirePermission(IAM_PERMISSION.MIGRATION_EXECUTE)
+  // Every call asks. The migration does not exist until this call makes it, so
+  // there is no id an "always" could be pinned to, and a standing yes would
+  // cover every future move of any application.
+  @ActionCycle({
+    action: 'POST /full-migrations',
+    sentence:
+      'start moving a live application and its database to another cluster',
+    clause: fullMigrationClause,
+    consequence:
+      'A second copy of both is built on the destination and kept in step with the live one, taking capacity there. Unless the request asked for a manual cutover, the migration then finishes by itself: application and database are served from the destination cluster and the source stops taking traffic, without asking again.',
+  })
   @ApiOperation({
     summary: 'Migrate a live app together with its managed Postgres',
   })
@@ -66,6 +78,14 @@ export class FullMigrationController {
 
   @Post(':id/cutover')
   @RequirePermission(IAM_PERMISSION.MIGRATION_EXECUTE)
+  @ActionCycle({
+    action: 'POST /full-migrations/:id/cutover',
+    bind: ['id'],
+    sentence:
+      'cut migration {id} over to its destination, application and database together',
+    consequence:
+      'Both are served from the destination cluster from that moment, and the source keeps its data but stops taking traffic.',
+  })
   @ApiOperation({ summary: 'Fire the joint cutover of a READY full-migration' })
   cutover(@Param('id') id: string) {
     return this.service.cutover(id);

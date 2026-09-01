@@ -66,6 +66,13 @@ export class AppMigrationController {
 
   @Post(':id/cutover')
   @RequirePermission(IAM_PERMISSION.MIGRATION_EXECUTE)
+  @ActionCycle({
+    action: 'POST /app-migrations/:id/cutover',
+    bind: ['id'],
+    sentence: 'cut application migration {id} over to the destination cluster',
+    consequence:
+      'The application is served from the destination cluster and its name is repointed there; the source workload stops taking traffic.',
+  })
   @ApiOperation({
     summary: 'Fire the cutover of a READY manual migration (rebind + DNS flip)',
   })

@@ -64,6 +64,15 @@ export class GatewayController {
   }
 
   @Patch('routes/:endpointId')
+  @ActionCycle({
+    action: 'PATCH /applications/:id/gateway/routes/:endpointId',
+    bind: ['id', 'endpointId'],
+    sentence:
+      'change who may reach route {endpointId} of application {id}, and on ' +
+      'what terms',
+    consequence:
+      'Sign-in, rate limit and IP allowlist on that route become what this call says; a policy it leaves out is unchanged, and one it sets to null is removed.',
+  })
   @ApiOperation({
     summary: 'Set gateway policies on a route',
     description:

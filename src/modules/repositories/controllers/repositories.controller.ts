@@ -36,6 +36,7 @@ import {
 import { PublicRepositoryAnalyzeDto } from '../dto/public-repository-analyze.dto';
 import { RepositoryManifestsDto } from '../dto/repository-manifest.dto';
 import { RequirePermission } from '../../iam/decorators/require-permission.decorator';
+import { ActionCycle } from '../../action-cycle/action-cycle.decorator';
 import { IAM_PERMISSION } from '../../iam/constants/iam-permissions';
 import { ExtractEnvDto, ExtractedEnvVarDto } from '../dto/extract-env.dto';
 
@@ -71,6 +72,15 @@ export class RepositoriesController {
   // and will not after this: without a permission on the route the credential
   // ceiling cannot see it, so a key scoped to reads could import too.
   @RequirePermission(IAM_PERMISSION.APP_WRITE)
+  // Every call asks. Which repositories are being connected is in the body and
+  // not in the path, so there is no id an "always" could be pinned to, and a
+  // standing yes would let any repository be connected from then on.
+  @ActionCycle({
+    action: 'POST /repositories/import',
+    sentence: 'connect GitHub repositories to this instance',
+    consequence:
+      'Each one is stored here together with a credential that can read it, and applications can then be built and deployed from its code.',
+  })
   @ApiOperation({ summary: 'Import selected repositories from GitHub' })
   @ApiResponse({
     status: 201,

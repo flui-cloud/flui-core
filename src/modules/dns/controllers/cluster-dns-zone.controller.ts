@@ -241,6 +241,20 @@ export class ClusterDnsZoneController {
   @Post(':assignmentId/wildcard')
   @RequirePermission(IAM_PERMISSION.APP_WRITE)
   @HttpCode(HttpStatus.OK)
+  // An "always" here covers one zone on one cluster. A cluster can carry
+  // several, and allowing the record on one of them is not allowing it on the
+  // rest.
+  @ActionCycle({
+    action: 'POST /clusters/:clusterId/dns-zone/:assignmentId/wildcard',
+    bind: ['clusterId', 'assignmentId'],
+    sentence:
+      'publish the wildcard record of zone {assignmentId}, which answers for ' +
+      'every application name on cluster {clusterId}',
+    // No estimate: the GET beside this one reports whether the record is there,
+    // which is context and not a price.
+    consequence:
+      'One record answers for every name under the cluster, including names nothing has claimed yet; a wildcard already pointing elsewhere is left exactly as it is.',
+  })
   @ApiOperation({
     summary: 'Publish the record that covers every application on this cluster',
     description:

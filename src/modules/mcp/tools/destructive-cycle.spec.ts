@@ -23,10 +23,10 @@ import { ActionProposalEntity } from '../../action-cycle/entities/action-proposa
  * this assertion — and a second hand-kept list of "what counts as destroying
  * something" never comes into existence.
  *
- * The cut is deliberately narrower than "writes": restarting, stopping,
- * starting, scaling, installing and connecting a repository are not here, and
- * the last block below pins their absence so that widening the cut has to be a
- * decision somebody takes out loud.
+ * The cut is deliberately narrower than "writes": restarting, starting,
+ * scaling and installing are not here, and the last block below pins their
+ * absence — together with what a later round moved in by name — so that
+ * widening the cut has to be a decision somebody takes out loud.
  */
 
 const MODULES = join(__dirname, '..', '..');
@@ -260,34 +260,28 @@ describe('the declarations this round shipped, against the same machinery', () =
  * The other half of the cut, and the half that is easiest to lose.
  *
  * Decision 180 measured that no write tool on an application touched a
- * decorated route. This round moved the destructive ones and deliberately not
- * the rest: restarting, stopping, starting, scaling, installing, connecting a
- * repository, creating a schedule, adding a gateway route, running a backup,
- * starting a migration and administering access all still reach a person only
- * through the surface they were called from. Pinned so that widening the cut is
- * a decision, never a drift.
+ * decorated route. The round that wrote this file moved the destructive ones;
+ * a later one moved eleven more by name — stopping an application, connecting a
+ * repository, setting a gateway policy, pausing a backup policy, starting a
+ * database or a full migration, cutting one over and administering access.
+ * What is still outside is what neither round took: restarting, starting,
+ * scaling, installing, creating or firing a schedule, adding a gateway route,
+ * running a backup and starting an application migration all still reach a
+ * person only through the surface they were called from. Pinned so that
+ * widening the cut is a decision, never a drift.
  */
 describe('and only the destructive ones', () => {
   it.each([
     'app_restart',
     'app_scale',
-    'app_stop',
     'app_start',
     'app_install',
-    'repo_connect',
     'schedule_create',
     'schedule_trigger',
     'gateway_route_add',
-    'gateway_set_policy',
     'backup_run',
-    'backup_policy_pause',
     'backup_policy_resume',
     'migrate_app',
-    'migrate_db',
-    'migrate_full',
-    'migration_cutover',
-    'access_grant_add',
-    'access_grant_remove',
   ])('%s stays outside the cycle', (name) => {
     const tool = ALL_TOOLS.find((t) => t.name === name);
     expect(tool).toBeDefined();
