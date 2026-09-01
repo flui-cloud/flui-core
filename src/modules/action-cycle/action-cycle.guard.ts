@@ -171,6 +171,12 @@ export class ActionCycleGuard implements CanActivate {
     const actor = actorFromRequest(req);
     if (actor.kind !== 'agent') return null;
 
+    // A route with a dry-run mode is two actions on one path and only one of
+    // them writes. The other must not raise a question, because the question
+    // would describe the deploy this call is not doing — and that sentence is
+    // stored verbatim and copied onto whatever is conceded.
+    if (isDryRun(decl, req.body)) return null;
+
     return {
       decl,
       ownerUserId: user.userId,
@@ -192,6 +198,22 @@ type GuardedRequest = Request & {
 
 function requestOf(context: ExecutionContext): GuardedRequest {
   return context.switchToHttp().getRequest<GuardedRequest>();
+}
+
+/**
+ * Does this call's own body say it acts on nothing?
+ *
+ * Fail-closed towards pausing: guards run before pipes, so the body is whatever
+ * was posted, and a predicate that cannot read it — or throws on it — leaves the
+ * call inside the cycle.
+ */
+function isDryRun(decl: ActionCycleDecl, body: unknown): boolean {
+  if (!decl.dryRun) return false;
+  try {
+    return decl.dryRun(body) === true;
+  } catch {
+    return false;
+  }
 }
 
 /** The body a Nest exception carries, when it carries an object at all. */

@@ -58,6 +58,22 @@ export interface ActionCycleDecl {
    */
   clause?: SentenceClause;
   /**
+   * When this route's own body says the call will not act at all.
+   *
+   * A handful of routes are two actions on one path: `deploy-from-yaml` takes
+   * `validateOnly`, returns the manifest it would have applied and writes
+   * nothing, and the tool description tells a model to use exactly that to
+   * check a manifest. Pausing it put a person in front of a sentence — "create
+   * or replace an application from a manifest and deploy it" — that was not
+   * true of the call being made, and stored that sentence verbatim on whatever
+   * they conceded. A gate is only worth what its sentence is worth.
+   *
+   * Same contract as {@link clause}: pure, fed an unvalidated body, read once.
+   * Fail-closed in the direction that pauses — a body this cannot read, or one
+   * that makes it throw, is treated as the real thing.
+   */
+  dryRun?: (body: unknown) => boolean;
+  /**
    * A GET route that prices **this action**, or previews its impact, as a
    * pattern to be filled from the same request.
    *

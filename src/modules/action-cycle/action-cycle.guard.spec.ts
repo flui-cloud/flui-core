@@ -315,6 +315,52 @@ describe('the action cycle', () => {
       expect(proposals.rows).toHaveLength(0);
     });
 
+    /**
+     * `deploy-from-yaml` is two actions on one path: `validateOnly` returns the
+     * manifest it would have applied and writes nothing. Pausing it put a
+     * person in front of "create or replace an application … and deploy it" for
+     * a call that does neither, and stored those words on the concession.
+     */
+    it('lets a call through that its own body says will not act', async () => {
+      const { guard, proposals } = build({
+        ...NO_EDGE,
+        dryRun: (body) =>
+          (body as { validateOnly?: unknown })?.validateOnly === true,
+      });
+      await expect(
+        guard.canActivate(
+          contextFor(agentRequest({ body: { validateOnly: true } })),
+        ),
+      ).resolves.toBe(true);
+      expect(proposals.rows).toHaveLength(0);
+    });
+
+    it('still asks when the same route is asked to deploy for real', async () => {
+      const { guard, proposals } = build({
+        ...NO_EDGE,
+        dryRun: (body) =>
+          (body as { validateOnly?: unknown })?.validateOnly === true,
+      });
+      await refusalOf(
+        guard.canActivate(
+          contextFor(agentRequest({ body: { validateOnly: false } })),
+        ),
+      );
+      expect(proposals.rows).toHaveLength(1);
+    });
+
+    /** Guards run before pipes, so the predicate meets whatever was posted. */
+    it('asks anyway when the dry-run reading throws on the body', async () => {
+      const { guard, proposals } = build({
+        ...NO_EDGE,
+        dryRun: () => {
+          throw new Error('unreadable body');
+        },
+      });
+      await refusalOf(guard.canActivate(contextFor(agentRequest())));
+      expect(proposals.rows).toHaveLength(1);
+    });
+
     it('leaves every undecorated route exactly as it was', async () => {
       const { guard, proposals } = build(undefined);
       await expect(guard.canActivate(contextFor(agentRequest()))).resolves.toBe(
