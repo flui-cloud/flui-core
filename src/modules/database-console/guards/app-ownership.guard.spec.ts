@@ -38,6 +38,7 @@ type Row = {
 function guardOver(
   apps: Record<string, Row>,
   globalPermissions: string[] = [],
+  canOverride?: (user: Caller, app: Row) => boolean,
 ) {
   const repo = {
     findById: jest.fn(async (id: string) => apps[id] ?? null),
@@ -50,7 +51,19 @@ function guardOver(
       isSandbox: false,
     })),
   };
-  return new AppOwnershipGuard(repo as never, policy as never);
+  // Stands in for ApplicationAccessService: by default an owner-selector
+  // grant, same as the real policy engine gives an owner with nothing
+  // explicitly narrowing it.
+  const appAccess = {
+    can: jest.fn(async (user: Caller, _action: string, app: Row) =>
+      canOverride ? canOverride(user, app) : user.userId === app.userId,
+    ),
+  };
+  return new AppOwnershipGuard(
+    repo as never,
+    policy as never,
+    appAccess as never,
+  );
 }
 
 /**
@@ -73,6 +86,20 @@ describe('who may open an application console', () => {
     const guard = guardOver({ a: owned });
     await expect(
       guard.canActivate(contextFor('a', { userId: 'u2' })),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+  });
+
+  /**
+   * Decision 221: the literal owner used to walk past this guard on raw
+   * `app.userId === user.userId` equality, never asking the policy engine at
+   * all. An owner whose grant on this specific app has been explicitly
+   * narrowed away from console access must be refused here exactly as
+   * everywhere else in the product asks the same question.
+   */
+  it("defers to the policy engine even for the app's own owner", async () => {
+    const guard = guardOver({ a: owned }, [], () => false);
+    await expect(
+      guard.canActivate(contextFor('a', { userId: 'u1' })),
     ).rejects.toBeInstanceOf(ForbiddenException);
   });
 

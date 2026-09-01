@@ -451,15 +451,29 @@ describe('resource fence (direct API calls)', () => {
     });
   });
 
-  describe('the console guard, which checks ownership instead of IAM', () => {
+  // Decision 221 took the shortcut out of this guard: it used to open on raw
+  // `app.userId === user.userId` and never asked IAM at all, so a grant narrowed
+  // away from console access applied everywhere in the product except here.
+  describe('the console guard, which asks IAM what every other route asks', () => {
+    const ownGrant = grant('guest-a@try.flui.cloud', 'sandbox', {
+      selector: { owner: 'user-a' },
+    });
+
     it('refuses a console on an application owned by someone else', async () => {
       as('b');
       await http().get('/applications/app-a/db/query').expect(403);
     });
 
-    it('opens the console to its owner without needing any grant', async () => {
-      as('a');
+    it('opens the console to an owner whose grant reaches it', async () => {
+      as('a', [ownGrant]);
       await http().get('/applications/app-a/db/query').expect(200);
+    });
+
+    // Deny-by-default reaches the console too: ownership is what an `owner`
+    // selector matches on, never a grant in itself.
+    it('refuses the literal owner when no grant reaches the application', async () => {
+      as('a');
+      await http().get('/applications/app-a/db/query').expect(403);
     });
 
     // The gap that decided whether a seeded tenant was private, now closed: an

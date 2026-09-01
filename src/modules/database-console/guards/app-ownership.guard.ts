@@ -8,6 +8,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { ApplicationsRepository } from '../../applications/repositories/applications.repository';
+import { ApplicationAccessService } from '../../applications/services/application-access.service';
 import { AuthenticatedUser } from '../../auth/interfaces/authenticated-user.interface';
 import {
   isPlatformOwned,
@@ -19,11 +20,11 @@ import {
   POLICY_ENGINE,
   PolicyEngine,
 } from '../../iam/interfaces/policy-engine.interface';
-import { principalFromUser } from '../../iam/interfaces/iam.types';
 import {
   ceilingRefusal,
   credentialCeiling,
 } from '../../auth/utils/credential-ceiling.util';
+import { holdsPlatformAuthority } from './platform-authority.util';
 
 /**
  * Authorizes console access. The global JwtAuthGuard only authenticates: without
@@ -32,8 +33,15 @@ import {
  *
  * It decides on three different facts, and it used to have only one.
  *
- * **An owned row** belongs to a person: the owner passes, another tenant is
- * refused by name, and that is unchanged.
+ * **An owned row** belongs to a person: the caller passes only if
+ * {@link ApplicationAccessService} says so, the same policy engine every other
+ * app-scoped route asks. Owning an application is not by itself permission to
+ * open its console — it is what an `owner` grant selects on — so an owner
+ * holding no grant that reaches the application is refused here, exactly as
+ * everywhere else. This guard used to decide it by raw
+ * `app.userId === user.userId` equality, which meant a grant revoked or
+ * narrowed away from your own application applied everywhere in the product
+ * except here.
  *
  * **A row the platform declares** — `ownerKind = platform`, read from
  * `flui.cloud/owner-kind` on the resource the bootstrap created — belongs to
@@ -89,6 +97,7 @@ export class AppOwnershipGuard implements CanActivate {
   constructor(
     private readonly applicationsRepo: ApplicationsRepository,
     @Inject(POLICY_ENGINE) private readonly policy: PolicyEngine,
+    private readonly appAccess: ApplicationAccessService,
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
@@ -122,7 +131,7 @@ export class AppOwnershipGuard implements CanActivate {
     if (user?.isAdmin) return true;
 
     if (isPlatformOwned(app)) {
-      if (await this.holdsPlatformAuthority(user)) return true;
+      if (await holdsPlatformAuthority(this.policy, user)) return true;
       throw new NotFoundException(CONSOLE_TARGET_ABSENT);
     }
 
@@ -140,27 +149,14 @@ export class AppOwnershipGuard implements CanActivate {
       throw new NotFoundException(CONSOLE_TARGET_ABSENT);
     }
 
-    if (app.userId !== user?.userId) {
+    if (
+      !user ||
+      !(await this.appAccess.can(user, IAM_PERMISSION.APP_WRITE, app))
+    ) {
       throw new ForbiddenException(
-        "You don't have access to this application's console. It belongs to another user.",
+        "You don't have access to this application's console.",
       );
     }
     return true;
-  }
-
-  /**
-   * Held at GLOBAL scope, not merely held. A grant narrowed by a selector or to
-   * one cluster says what somebody may do *there*; the platform's own components
-   * are not there, they are underneath. `globalPermissions` is exactly the set
-   * IAM already separates for that reason.
-   */
-  private async holdsPlatformAuthority(
-    user: AuthenticatedUser | undefined,
-  ): Promise<boolean> {
-    if (!user) return false;
-    const access = await this.policy.resolveAccess(principalFromUser(user));
-    return (
-      access.isAdmin || access.globalPermissions.has(IAM_PERMISSION.APP_WRITE)
-    );
   }
 }
