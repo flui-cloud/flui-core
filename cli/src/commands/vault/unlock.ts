@@ -7,6 +7,8 @@ import { VaultFile, WrongPassphraseError } from '../../lib/vault/vault-file';
 import { deriveProfileKey } from '../../lib/vault/vault-crypto';
 import { askAgent, socketPath } from '../../lib/vault/vault-agent';
 import {
+  DEFAULT_IDLE_MS,
+  DEFAULT_MAX_MS,
   describeRemaining,
   isOpen,
   resolveLimits,
@@ -33,6 +35,22 @@ export default class VaultUnlock extends Command {
         'Read the passphrase from standard input rather than prompting.',
       default: false,
     }),
+    'idle-minutes': Flags.integer({
+      description:
+        `How long the vault may sit unused before it locks itself again ` +
+        `(default ${DEFAULT_IDLE_MS / 60_000}). Same effect as setting ` +
+        `FLUI_VAULT_IDLE_MINUTES, offered here because that variable has no ` +
+        `way to announce itself.`,
+      min: 1,
+    }),
+    'max-minutes': Flags.integer({
+      description:
+        `Absolute lifetime of the unlock, regardless of activity (default ` +
+        `${DEFAULT_MAX_MS / 60_000}) — the backstop against a long-running ` +
+        `session holding the key open all day just by staying busy. Same ` +
+        `effect as FLUI_VAULT_MAX_MINUTES.`,
+      min: 1,
+    }),
   };
 
   async run(): Promise<void> {
@@ -46,7 +64,17 @@ export default class VaultUnlock extends Command {
           `\n✅ Already unlocked — ${describeRemaining(already.state.idleRemainingMs)} of idle time left.\n`,
         ),
       );
+      if (flags['idle-minutes'] || flags['max-minutes']) {
+        this.warnLimitsIgnored(flags['idle-minutes'], flags['max-minutes']);
+      }
       return;
+    }
+
+    if (flags['idle-minutes']) {
+      process.env['FLUI_VAULT_IDLE_MINUTES'] = String(flags['idle-minutes']);
+    }
+    if (flags['max-minutes']) {
+      process.env['FLUI_VAULT_MAX_MINUTES'] = String(flags['max-minutes']);
     }
 
     const passphrase =
@@ -142,6 +170,22 @@ export default class VaultUnlock extends Command {
     this.error(
       `The vault agent did not start. Expected its socket at ${socketPath()}.`,
       { exit: 1 },
+    );
+  }
+
+  /** The limits only take hold when a session actually starts, so passing
+   * them at an already-open vault is a no-op worth explaining rather than
+   * a silent miss. */
+  private warnLimitsIgnored(idleMinutes?: number, maxMinutes?: number): void {
+    const reunlock = ['flui vault lock && flui vault unlock'];
+    if (idleMinutes) reunlock.push(`--idle-minutes ${idleMinutes}`);
+    if (maxMinutes) reunlock.push(`--max-minutes ${maxMinutes}`);
+    this.log(
+      chalk.yellow(
+        '   The limits you passed only take effect for a NEW unlock — this ' +
+          'one is already running with whatever it started with.\n' +
+          `   Apply them with:  ${reunlock.join(' ')}\n`,
+      ),
     );
   }
 
