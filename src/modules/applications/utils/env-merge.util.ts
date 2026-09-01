@@ -27,17 +27,24 @@ import { ApplicationEnvVar } from '../interfaces/source-config.interface';
  * value must survive. Only a key the manifest no longer declares at all is a
  * deliberate removal. Omit the argument and declared collapses to resolved,
  * which is the pre-existing behaviour.
+ *
+ * `secretNames` marks which of `overrides` came in flagged as sensitive
+ * (`flui deploy --secret KEY`) — without it, every `--env`/`--env-file` value
+ * lands as a plain-text `user` entry no matter what it holds, which is how a
+ * real credential passed at deploy time used to stay a plain value forever.
  */
 export function mergeAppEnv(
   existing: ApplicationEnvVar[],
   manifestEnv: ApplicationEnvVar[],
   overrides?: Record<string, string>,
   declaredNames?: Iterable<string>,
+  secretNames?: Iterable<string>,
 ): ApplicationEnvVar[] {
   const manifestByName = new Map(manifestEnv.map((m) => [m.name, m]));
   const declared = declaredNames
     ? new Set(declaredNames)
     : new Set(manifestByName.keys());
+  const secret = new Set(secretNames ?? []);
   const result = new Map<string, ApplicationEnvVar>();
 
   // 1. Existing entries the manifest does NOT reclaim: user/link keys absent
@@ -61,7 +68,12 @@ export function mergeAppEnv(
 
   // 3. --env overrides are explicit user intent: upsert as user, win every collision.
   for (const [name, value] of Object.entries(overrides ?? {})) {
-    result.set(name, { name, value, source: 'user' });
+    result.set(name, {
+      name,
+      value,
+      source: 'user',
+      ...(secret.has(name) ? { secret: true } : {}),
+    });
   }
 
   return [...result.values()];

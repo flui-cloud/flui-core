@@ -149,4 +149,29 @@ describe('mergeAppEnv', () => {
     const out = mergeAppEnv(existing, [], undefined, ['API_URL']);
     expect(byName(out, 'API_URL')?.value).toBe('http://nip.io');
   });
+
+  it('marks an override named in secretNames as secret, `flui deploy --secret KEY`', () => {
+    const out = mergeAppEnv(
+      [],
+      [],
+      { DATABASE_URL: 'postgres://real', LOG_LEVEL: 'debug' },
+      undefined,
+      ['DATABASE_URL'],
+    );
+    expect(byName(out, 'DATABASE_URL')).toMatchObject({
+      value: 'postgres://real',
+      source: 'user',
+      secret: true,
+    });
+    expect(byName(out, 'LOG_LEVEL')).toMatchObject({
+      value: 'debug',
+      source: 'user',
+    });
+    expect(byName(out, 'LOG_LEVEL')?.secret).toBeUndefined();
+  });
+
+  it('omitting secretNames stores every override as plain, unchanged default', () => {
+    const out = mergeAppEnv([], [], { DATABASE_URL: 'postgres://real' });
+    expect(byName(out, 'DATABASE_URL')?.secret).toBeUndefined();
+  });
 });

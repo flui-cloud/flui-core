@@ -85,6 +85,7 @@ export default class Deploy extends Command {
     '<%= config.bin %> <%= command.id %> --repo acme/my-app --branch main',
     '<%= config.bin %> <%= command.id %> --detach',
     '<%= config.bin %> <%= command.id %> --env DATABASE_URL=postgres://... --env API_KEY=secret',
+    '<%= config.bin %> <%= command.id %> --env-file .env --secret DATABASE_URL --secret API_KEY',
     '<%= config.bin %> <%= command.id %> --validate-only',
     '<%= config.bin %> <%= command.id %> --cluster my-cluster',
   ];
@@ -139,7 +140,17 @@ export default class Deploy extends Command {
       description:
         'Path to a KEY=VALUE file of env overrides (one per line, # comments and ' +
         'blank lines ignored). Values never appear in the process arguments, so ' +
-        'this is the safe way to pass secrets. --env entries take precedence.',
+        'this is the safe way to pass secrets. --env entries take precedence. ' +
+        'Name a key with --secret to also mark it as one.',
+    }),
+    secret: Flags.string({
+      description:
+        'Mark a key from --env/--env-file as a secret (repeatable): stored ' +
+        'encrypted and delivered as a Kubernetes Secret rather than a plain ' +
+        'ConfigMap entry, and never printed by `app status -o json` or ' +
+        '`app env list`. Without this, every --env/--env-file value is stored ' +
+        'as plain text — including one that looks like a credential.',
+      multiple: true,
     }),
     detach: Flags.boolean({
       description:
@@ -299,6 +310,7 @@ export default class Deploy extends Command {
       'main';
 
     const envOverrides = this.buildEnvOverrides(flags);
+    const secretEnvKeys = this.resolveSecretEnvKeys(flags, envOverrides);
     const overrides = this.buildDeployOverrides(flags);
 
     const skipBuild = (flags['no-build'] as boolean) || !!flags.image;
@@ -320,6 +332,7 @@ export default class Deploy extends Command {
       explicitImage,
       skipBuild,
       envOverrides,
+      secretEnvKeys,
       overrides,
     });
 
@@ -345,6 +358,7 @@ export default class Deploy extends Command {
           skipBuild,
           ...(explicitImage ? { imageRef: explicitImage } : {}),
           ...(Object.keys(envOverrides).length > 0 ? { envOverrides } : {}),
+          ...(secretEnvKeys.length > 0 ? { secretEnvKeys } : {}),
           ...(overrides ? { overrides } : {}),
         },
       );
@@ -950,6 +964,7 @@ export default class Deploy extends Command {
     explicitImage?: string;
     skipBuild: boolean;
     envOverrides: Record<string, string>;
+    secretEnvKeys: string[];
     overrides?: DeployOverrides;
   }): void {
     console.log(chalk.cyan('\n  Deploy from source\n'));
@@ -976,9 +991,61 @@ export default class Deploy extends Command {
     }
     const envKeys = Object.keys(opts.envOverrides);
     if (envKeys.length > 0) {
-      console.log(`  ${chalk.bold('Env:')}     ${envKeys.join(', ')}`);
+      const plainKeys = envKeys.filter((k) => !opts.secretEnvKeys.includes(k));
+      const parts = [
+        ...plainKeys,
+        ...opts.secretEnvKeys.map((k) => chalk.yellow(`${k} (secret)`)),
+      ];
+      console.log(`  ${chalk.bold('Env:')}     ${parts.join(', ')}`);
+    }
+    const unmarkedLookLikeCredentials = envKeys.filter(
+      (k) =>
+        !opts.secretEnvKeys.includes(k) && this.looksLikeACredentialName(k),
+    );
+    if (unmarkedLookLikeCredentials.length > 0) {
+      const plural = unmarkedLookLikeCredentials.length > 1;
+      console.log(
+        `  ${chalk.yellow('⚠')}  ${unmarkedLookLikeCredentials.join(', ')} ` +
+          `${plural ? 'look' : 'looks'} like ${plural ? 'credentials' : 'a credential'} but ` +
+          `${plural ? "aren't" : "isn't"} marked --secret — ` +
+          `${plural ? 'they' : 'it'} will be stored and shown in plain text.`,
+      );
     }
     console.log('');
+  }
+
+  /**
+   * A soft nudge, not a gate: named after the same shape the manifest's own
+   * `secret`/`sensitive` fields warn about, so a plain KEY=VALUE deploy of a
+   * real credential doesn't sail through silently just because nobody typed
+   * --secret. Never blocks the deploy — the author may have a real reason.
+   */
+  private looksLikeACredentialName(key: string): boolean {
+    return /(SECRET|PASSWORD|TOKEN|_KEY|API_KEY|PRIVATE)/i.test(key);
+  }
+
+  /**
+   * `--secret KEY` only makes sense for a key actually being deployed this
+   * time — refusing a typo here beats silently deploying the credential in
+   * plain text because the name didn't match.
+   */
+  private resolveSecretEnvKeys(
+    flags: Record<string, unknown>,
+    envOverrides: Record<string, string>,
+  ): string[] {
+    const keys = (flags.secret as string[] | undefined) ?? [];
+    const unknown = keys.filter((k) => !(k in envOverrides));
+    if (unknown.length > 0) {
+      this.error(
+        `--secret named ${unknown.join(', ')}, but --env/--env-file don't declare ${
+          unknown.length > 1 ? 'them' : 'it'
+        }. Pass the value with --env/--env-file too, or drop --secret for ${
+          unknown.length > 1 ? 'these keys' : 'this key'
+        }.`,
+        { exit: 1 },
+      );
+    }
+    return keys;
   }
 
   /**

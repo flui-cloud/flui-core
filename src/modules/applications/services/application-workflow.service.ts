@@ -65,6 +65,13 @@ export interface GenerateWorkflowV3Dto {
   dockerfilePath?: string;
   /** Docker build context relative to repo root (default: .). */
   buildContext?: string;
+  /**
+   * `build.args` from the manifest — baked into the image at build time via
+   * `--build-arg`, never a runtime value. Resolved server-side from the
+   * manifest at generation time, the same way `dockerfilePath`/`buildContext`
+   * already are, rather than parsed by the CI run itself.
+   */
+  buildArgs?: Record<string, string>;
   /** Monorepo sub-path: scopes the GHCR image name and the push paths filter. */
   subPath?: string;
   /**
@@ -472,6 +479,7 @@ export class ApplicationWorkflowService {
       subPath: dto.subPath,
       dockerfilePath: dto.dockerfilePath,
       buildContext: dto.buildContext,
+      buildArgs: dto.buildArgs,
       workflowFileName,
     };
   }

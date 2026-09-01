@@ -112,6 +112,18 @@ export class DeployFromYamlDto {
 
   @ApiPropertyOptional({
     description:
+      'Which keys in envOverrides hold a credential — stored as secret: true ' +
+      '(encrypted, never rendered into the plain ConfigMap) instead of the ' +
+      'plain-text default every other override key gets.',
+    example: ['DATABASE_URL'],
+    type: [String],
+  })
+  @IsOptional()
+  @IsString({ each: true })
+  secretEnvKeys?: string[];
+
+  @ApiPropertyOptional({
+    description:
       'Install-time overrides of manifest fields that belong to the installation ' +
       'rather than to the code (release name, exposure, endpoint/domain). ' +
       'Persisted on the application and re-applied on every later manifest deploy, ' +

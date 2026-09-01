@@ -235,7 +235,13 @@ export class ApplicationSourceDeployService {
             (manifest.deploy.exposure as ApplicationExposure) ??
             ApplicationExposure.PUBLIC,
           env: materializeDeclaredSecrets(
-            mergeAppEnv(existingEnv, manifestEnv, dto.envOverrides),
+            mergeAppEnv(
+              existingEnv,
+              manifestEnv,
+              dto.envOverrides,
+              undefined,
+              dto.secretEnvKeys,
+            ),
             normalizeManifestEnv(manifest.deploy.env),
           ),
           resources,
@@ -266,6 +272,7 @@ export class ApplicationSourceDeployService {
             manifestEnv,
             dto.envOverrides,
             manifestDeclaredEnvNames(manifest.deploy.env),
+            dto.secretEnvKeys,
           ),
           normalizeManifestEnv(manifest.deploy.env),
         ),
@@ -307,6 +314,7 @@ export class ApplicationSourceDeployService {
           isFluiManaged: true,
           dockerfilePath: buildPaths.dockerfile,
           buildContext: buildPaths.context,
+          buildArgs: manifest.build?.args,
           subPath: buildPaths.subPath,
         },
       );

@@ -43,6 +43,8 @@ export interface WorkflowParamsV3 {
   dockerfilePath?: string;
   /** Docker build context relative to repo root (default: .). */
   buildContext?: string;
+  /** `build.args` from the manifest — baked into the image via `--build-arg`. */
+  buildArgs?: Record<string, string>;
   /** Workflow filename (e.g. flui-my-app.yml) — used in the paths filter. */
   workflowFileName?: string;
   appSlug: string;
@@ -593,6 +595,16 @@ ENTRYPOINT ["dotnet", "${p.appName}.dll"]
     const dockerfileLine = params.dockerfilePath
       ? `\n          file: ${params.dockerfilePath}`
       : '';
+    // `build.args` is a build-time value baked into the image — resolved
+    // server-side from the manifest, the same way dockerfilePath/buildContext
+    // already are, so it stays in lockstep with the rest of this generated
+    // step rather than being parsed by the CI run itself.
+    const buildArgLines = Object.entries(params.buildArgs ?? {}).map(
+      ([k, v]) => `            ${k}=${v}`,
+    );
+    const buildArgsBlock = buildArgLines.length
+      ? '\n          build-args: |\n' + buildArgLines.join('\n')
+      : '';
 
     // Monorepo: scope the push trigger to this app's slice of the repo so a
     // push to a sibling app doesn't rebuild everything. The workflow file
@@ -690,7 +702,7 @@ jobs:
           labels: \${{ steps.meta.outputs.labels }}
           annotations: \${{ steps.meta.outputs.annotations }}
           cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-to: type=gha,mode=max${buildArgsBlock}
 ${notifySteps}
 `;
   }
