@@ -2,7 +2,9 @@ import { NotFoundException } from '@nestjs/common';
 import {
   assertNotPlatformFoundation,
   CONSOLE_TARGET_ABSENT,
+  FOUNDATION_REACH,
   FoundationCandidate,
+  foundationReachOf,
   PLATFORM_FOUNDATIONS,
   platformFoundationAtTarget,
   platformFoundationOf,
@@ -201,5 +203,70 @@ describe('how a foundation is refused', () => {
 
   it('lets a missing row through, so absence and fence read alike downstream', () => {
     expect(() => assertNotPlatformFoundation(null)).not.toThrow();
+  });
+});
+
+/**
+ * The carve-out, pinned against the thing it must not become.
+ *
+ * The reach list is the one place the product says how to get at a foundation
+ * at all, and the failure it could turn into is not "the coordinates are
+ * wrong" — it is "somebody widened the fence while adding to this". So these
+ * ask the fence the same questions after the reach exists as before, and they
+ * ask the reach to name only foundations that are still refused.
+ */
+describe('the road that is deliberately open', () => {
+  it('reaches only things the fence still names as foundations', () => {
+    const keys = PLATFORM_FOUNDATIONS.map((f) => f.key);
+    for (const reach of FOUNDATION_REACH) {
+      expect(keys).toContain(reach.key);
+    }
+  });
+
+  it('leaves every target it names refused at the transport', () => {
+    for (const reach of FOUNDATION_REACH) {
+      expect(
+        platformFoundationAtTarget(reach.namespace, reach.remotePort),
+      ).not.toBeNull();
+    }
+  });
+
+  it('still answers a foundation row as absent, reach or no reach', () => {
+    for (const reach of FOUNDATION_REACH) {
+      expect(() =>
+        assertNotPlatformFoundation(
+          row({ slug: 'postgres', k8sNamespace: reach.namespace }),
+        ),
+      ).toThrow(CONSOLE_TARGET_ABSENT);
+    }
+  });
+
+  it('selects the pod by a label the workload controller itself enforces', () => {
+    // `flui-app-id=<id>` is coined by Flui at discovery, so a bootstrap-created
+    // pod cannot carry it — that mistake is why a console answers 500 here.
+    for (const reach of FOUNDATION_REACH) {
+      expect(reach.podLabelSelector).not.toContain('flui-app-id');
+      expect(reach.podLabelSelector).toMatch(/^[a-z0-9./-]+=[a-z0-9.-]+$/);
+    }
+  });
+
+  it('names no Secret and no key — the password keeps its address off the wire', () => {
+    expect(JSON.stringify(FOUNDATION_REACH).toLowerCase()).not.toContain(
+      'secret',
+    );
+    expect(JSON.stringify(FOUNDATION_REACH).toLowerCase()).not.toContain(
+      'password',
+    );
+  });
+
+  it('offers the identity provider its user role and not the role that owns the schema', () => {
+    const identity = foundationReachOf('identity-provider');
+    expect(identity?.user).toBe('zitadel_user');
+  });
+
+  it('answers nothing for a key that names no foundation', () => {
+    expect(foundationReachOf('grafana')).toBeNull();
+    expect(foundationReachOf('')).toBeNull();
+    expect(foundationReachOf(undefined)).toBeNull();
   });
 });
