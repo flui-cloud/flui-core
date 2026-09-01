@@ -26,6 +26,45 @@ function listZoneAssignments(
 }
 
 /**
+ * The one zone this call publishes on, or a message the model can act on.
+ *
+ * Publishing across several zones in one call would ask the person a separate
+ * question per zone. Answer the first and the agent retries: zone A is now
+ * published for real, zone B asks again, and the agent reports "nothing was
+ * changed" about a cluster where a DNS record has just been written. Telling
+ * the user that is the failure worth avoiding, so a cluster carrying more than
+ * one zone is asked which one — the same way `resolveClusterId` resolves the
+ * same ambiguity about clusters.
+ */
+async function resolveZoneAssignment(
+  ctx: McpToolContext,
+  clusterId: string,
+  zone?: string,
+): Promise<ZoneAssignment> {
+  const assignments = await listZoneAssignments(ctx, clusterId);
+  const named = zone
+    ? assignments.filter((a) => a.dnsZone?.zoneName === zone)
+    : assignments;
+  if (named.length === 1) return named[0];
+  const assigned = assignments
+    .map((a) => a.dnsZone?.zoneName ?? a.id)
+    .join(', ');
+  if (assignments.length === 0) {
+    throw new Error(
+      'This cluster has no DNS zone assigned; applications fall back to nip.io hostnames, which resolve immediately and need no wildcard.',
+    );
+  }
+  if (named.length === 0) {
+    throw new Error(
+      `No zone "${zone}" is assigned to this cluster. Assigned: ${assigned}.`,
+    );
+  }
+  throw new Error(
+    `Several DNS zones are assigned to this cluster and each is published on its own — pass zone and repeat the call for the next one. Assigned: ${assigned}.`,
+  );
+}
+
+/**
  * How a cluster's applications get their names.
  *
  * Every application is published at `<slug>.<cluster>.<zone>` and resolves to
@@ -40,7 +79,7 @@ function listZoneAssignments(
 export const DNS_TOOLS: ToolDef[] = [
   defineTool({
     name: 'dns_wildcard_status',
-    routes: ['GET /clusters/:clusterId/dns-zone/:zoneId/wildcard'],
+    routes: ['GET /clusters/:clusterId/dns-zone/:assignmentId/wildcard'],
     description:
       'Check whether one DNS record covers every application on a cluster. Applications are published at <slug>.<cluster>.<zone>; with the wildcard in place a newly deployed application resolves immediately, without it each new name takes about a minute to propagate. Call this when a freshly deployed application\'s URL does not resolve yet — it distinguishes "the name is new" from "something is broken". Returns one entry per DNS zone assigned to the cluster.',
     scope: MCP_SCOPE.APP_READ,
@@ -96,26 +135,29 @@ export const DNS_TOOLS: ToolDef[] = [
 
   defineTool({
     name: 'dns_wildcard_publish',
-    routes: ['POST /clusters/:clusterId/dns-zone/:zoneId/wildcard'],
+    routes: ['POST /clusters/:clusterId/dns-zone/:assignmentId/wildcard'],
     description:
-      'Publish the DNS record that covers every application on a cluster, so newly deployed applications resolve immediately instead of waiting for their own name to propagate. Creates one record per assigned zone and never overwrites: a wildcard already pointing somewhere else is left exactly as it is and comes back as "foreign". Safe to call more than once.',
+      'Publish the DNS record that covers every application on a cluster, so newly deployed applications resolve immediately instead of waiting for their own name to propagate. Never overwrites: a wildcard already pointing somewhere else is left exactly as it is and comes back as "foreign". Safe to call more than once. One zone per call — a cluster carrying several assigned zones asks which one, since each is published separately; dns_wildcard_status names them.',
     scope: MCP_SCOPE.APP_WRITE,
-    inputSchema: { clusterId: z.string().optional() },
-    // One publish per assigned zone. The publish is idempotent and never
+    inputSchema: {
+      clusterId: z.string().optional(),
+      zone: z.string().optional(),
+    },
+    // One publish, and exactly one. The publish is idempotent and never
     // overwrites a foreign record, so repeating it — or racing it with another
     // caller — cannot produce a different outcome than doing it once.
     run: async (args, ctx) => {
       const clusterId = await resolveClusterId(ctx, args.clusterId);
-      const assignments = await listZoneAssignments(ctx, clusterId);
-      return Promise.all(
-        assignments.map(async (a) => ({
-          zone: a.dnsZone?.zoneName ?? null,
+      const assignment = await resolveZoneAssignment(ctx, clusterId, args.zone);
+      return [
+        {
+          zone: assignment.dnsZone?.zoneName ?? null,
           wildcard: await ctx.api.post(
-            `/clusters/${enc(clusterId)}/dns-zone/${enc(a.id)}/wildcard`,
+            `/clusters/${enc(clusterId)}/dns-zone/${enc(assignment.id)}/wildcard`,
             {},
           ),
-        })),
-      );
+        },
+      ];
     },
     forModel: (data) => {
       const rows = (data as Array<Record<string, any>>) ?? [];
