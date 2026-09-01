@@ -7,7 +7,12 @@ import { ConfigStorage } from '../../lib/config-storage';
 import { CliAppService } from '../../lib/services/cli-app.service';
 import { listClusters, ClusterSummary } from '../../lib/cluster-listing';
 import { CliSshService } from '../../services/cli-ssh.service';
-import { readDbPassword } from '../../lib/db-secret';
+import { readSecretKey } from '../../lib/db-secret';
+import { resolveClusterSshTarget } from '../../lib/cluster-ssh-target';
+import {
+  systemDbTarget,
+  SYSTEM_DB_TARGET_NAMES,
+} from '../../lib/system-db-target';
 import { engineProfile, CliEngineProfile } from '../../lib/db-engine';
 
 interface DbConnectionInfo {
@@ -26,16 +31,21 @@ export default class DbTunnel extends Command {
     '(psql/pgAdmin for Postgres, mariadb/DBeaver for MariaDB, an ORM). Flui databases\n' +
     'are not exposed outside the\n' +
     'cluster network — this forwards through the control plane over SSH + in-cluster\n' +
-    'port-forward, so no public endpoint is opened. Stay in foreground; CTRL-C to close.';
+    'port-forward, so no public endpoint is opened. Stay in foreground; CTRL-C to close.\n\n' +
+    "Two reserved names reach the platform's own databases instead of an application:\n" +
+    `${SYSTEM_DB_TARGET_NAMES.join(' and ')}. Both are closed to the web console on purpose;\n` +
+    'this is the only way in, and it needs platform-level authority.';
 
   static readonly examples = [
     '<%= config.bin %> <%= command.id %> postgresql-051f58',
     '<%= config.bin %> <%= command.id %> postgresql-051f58 --local-port 5544',
+    '<%= config.bin %> <%= command.id %> platform-postgres',
+    '<%= config.bin %> <%= command.id %> identity-provider',
   ];
 
   static readonly args = {
     app: Args.string({
-      description: 'Database application name, slug, or id',
+      description: `Database application name, slug, or id — or ${SYSTEM_DB_TARGET_NAMES.join(' / ')}`,
       required: true,
     }),
   };
@@ -63,12 +73,6 @@ export default class DbTunnel extends Command {
     const spinner = ora('Resolving database...').start();
 
     try {
-      const { clusters, apiError } = await listClusters();
-      const cluster = this.pickCluster(clusters, flags.cluster, apiError);
-      const appService = await CliAppService.create(cluster.id);
-      const app = await appService.getAppByName(args.app);
-
-      // Coordinates + owner credentials (admin, audited server-side).
       const configStorage = new ConfigStorage();
       const apiUrl = configStorage.getApiUrlOrThrow();
       const apiKey = configStorage.getApiKey();
@@ -78,21 +82,45 @@ export default class DbTunnel extends Command {
         return;
       }
       const api = new ApiClient({ baseUrl: apiUrl, apiKey });
-      const info = await api.get<DbConnectionInfo>(
-        `/applications/${app.id}/db/connection-info`,
-      );
-      const profile = engineProfile(info.engine);
+      const { clusters, apiError } = await listClusters();
+
+      // A reserved name is answered before any application lookup: the two
+      // foundations are not rows anybody owns, and the web console refuses both.
+      const system = systemDbTarget(args.app);
+      let info: DbConnectionInfo;
+      let label: string;
+      let secretName: string;
+      let secretKeys: string[];
+      let profile: CliEngineProfile;
+
+      if (system) {
+        info = await api.get<DbConnectionInfo>(
+          `/system/db/${system.key}/connection-info`,
+        );
+        label = system.key;
+        secretName = system.secretName;
+        secretKeys = system.secretKeys;
+        profile = engineProfile(info.engine);
+      } else {
+        const cluster = this.pickCluster(clusters, flags.cluster, apiError);
+        const appService = await CliAppService.create(cluster.id);
+        const app = await appService.getAppByName(args.app);
+        // Coordinates + owner credentials (admin, audited server-side).
+        info = await api.get<DbConnectionInfo>(
+          `/applications/${app.id}/db/connection-info`,
+        );
+        label = app.slug;
+        profile = engineProfile(info.engine);
+        secretName = `${app.slug}-secret`;
+        secretKeys = profile.secretPasswordKeys;
+      }
+
       const localPort = flags['local-port'] ?? profile.defaultLocalPort;
 
       // The DB may live on a different cluster than the one used to list apps.
-      const dbCluster =
-        info.clusterId === cluster.id
-          ? cluster
-          : clusters.find((c) => c.id === info.clusterId);
+      const dbCluster = clusters.find((c) => c.id === info.clusterId);
       if (!dbCluster) {
-        spinner.fail(
-          `Cluster hosting ${app.slug} (${info.clusterId}) not found`,
-        );
+        spinner.fail(`Cluster hosting ${label} (${info.clusterId}) not found`);
         this.exit(1);
         return;
       }
@@ -104,7 +132,12 @@ export default class DbTunnel extends Command {
         this.exit(1);
         return;
       }
-      spinner.succeed(`${app.slug} → ${dbCluster.name} (${info.namespace})`);
+      // A BYOS master is rarely root@22 — its real endpoint is in metadata.byos.
+      // The foundations always live on the control cluster, which is the one
+      // most likely to be BYOS; resolving it for both paths is a no-op anywhere
+      // else, since a provisioned cluster resolves to exactly <ip>:22 as root.
+      const sshTarget = resolveClusterSshTarget(dbCluster, masterIp);
+      spinner.succeed(`${label} → ${dbCluster.name} (${info.namespace})`);
 
       const remoteCommand = this.buildRemoteCommand(
         info.namespace,
@@ -117,12 +150,12 @@ export default class DbTunnel extends Command {
       const sshService = app2.get(CliSshService);
 
       // Password comes straight from the cluster Secret over SSH — never from the API.
-      const password = await readDbPassword(
+      const password = await readSecretKey(
         sshService,
-        masterIp,
+        sshTarget,
         info.namespace,
-        app.slug,
-        profile.secretPasswordKeys,
+        secretName,
+        secretKeys,
       );
 
       let attempt = 0;
@@ -142,12 +175,14 @@ export default class DbTunnel extends Command {
           } else {
             console.log(
               chalk.cyan(
-                `\n🔌 Opening tunnel to ${masterIp}. Press CTRL-C to close.\n`,
+                `\n🔌 Opening tunnel to ${sshTarget.host}. Press CTRL-C to close.\n`,
               ),
             );
           }
           const result = await sshService.sshForward({
-            host: masterIp,
+            host: sshTarget.host,
+            username: sshTarget.user,
+            port: sshTarget.port,
             forwards: [{ localPort, remotePort: localPort }],
             remoteCommand,
             expectedForwardLines: 1,
