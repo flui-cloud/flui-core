@@ -1,6 +1,6 @@
 {
   "name": "@flui-cloud/core",
-  "version": "0.0.1",
+  "version": "0.13.0",
   "description": "Open-source platform to deploy applications across cloud providers and your own servers, via the open flui.yaml manifest.",
   "author": "Dawit Abate <hello@flui.cloud>",
   "private": true,
