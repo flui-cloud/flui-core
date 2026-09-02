@@ -7,6 +7,7 @@ import {
   Request,
   UseGuards,
 } from '@nestjs/common';
+import { ApiOkResponse } from '@nestjs/swagger';
 import { AuthenticatedUser } from '../../auth/interfaces/authenticated-user.interface';
 import { AppOwnershipGuard } from '../guards/app-ownership.guard';
 import { PlatformFoundationGuard } from '../guards/platform-foundation.guard';
@@ -14,7 +15,7 @@ import { RunQueryDto } from '../dto/run-query.dto';
 import { DbAssistDto } from '../dto/db-assist.dto';
 import { DbQueryService } from '../services/db-query.service';
 import { DbAssistResult, DbAssistService } from '../services/db-assist.service';
-import { DbConnectionInfo } from '../interfaces/db-connection';
+import { DbConnectionInfoResponseDto } from '../dto/db-connection-info-response.dto';
 import { SchemaTree, SqlQueryResult } from '../engine/sql-engine';
 
 const DEFAULT_STATEMENT_TIMEOUT_MS = 30_000;
@@ -48,14 +49,16 @@ export class DbConsoleController {
   // Non-secret coordinates for reaching the DB (host/port/db/user). The password is
   // never returned here — it's fetched from the cluster Secret via the CLI.
   @Get('connection-info')
+  @ApiOkResponse({ type: DbConnectionInfoResponseDto })
   async connectionInfo(
     @Param('id') id: string,
     @Request() req: { user: AuthenticatedUser },
-  ): Promise<DbConnectionInfo> {
-    return this.queryService.connectionInfo({
+  ): Promise<DbConnectionInfoResponseDto> {
+    const info = await this.queryService.connectionInfo({
       dbInstallId: id,
       fluiUserId: req.user.userId,
     });
+    return new DbConnectionInfoResponseDto(info);
   }
 
   @Get('schema')

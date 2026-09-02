@@ -16,6 +16,8 @@ export interface JwtPayload {
   'urn:zitadel:iam:org:project:roles'?: Record<string, Record<string, string>>;
   /** Standard OAuth2 space-delimited scope claim, when granted on the token. */
   scope?: string;
+  /** Issued-at, added automatically by jsonwebtoken on every decode. */
+  iat?: number;
   /** Every other claim, including the project-scoped role claims above. */
   [claim: string]: unknown;
 }

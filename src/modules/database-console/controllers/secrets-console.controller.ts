@@ -7,17 +7,14 @@ import {
   Request,
   UseGuards,
 } from '@nestjs/common';
+import { ApiOkResponse } from '@nestjs/swagger';
 import { AuthenticatedUser } from '../../auth/interfaces/authenticated-user.interface';
 import { AppOwnershipGuard } from '../guards/app-ownership.guard';
 import { PlatformFoundationGuard } from '../guards/platform-foundation.guard';
 import { RequirePermission } from '../../iam/decorators/require-permission.decorator';
 import { IAM_PERMISSION } from '../../iam/constants/iam-permissions';
 import { SecretsQueryService } from '../services/secrets-query.service';
-import {
-  SecretListEntry,
-  SecretRead,
-  SecretsServerInfo,
-} from '../engine/secrets-engine';
+import { SecretListEntry, SecretsServerInfo } from '../engine/secrets-engine';
 import { SecretsConnectionInfo } from '../interfaces/secrets-connection';
 import {
   SecretsDeleteDto,
@@ -26,6 +23,10 @@ import {
   SecretsUndeleteDto,
   SecretsWriteDto,
 } from '../dto/secrets-console.dto';
+import {
+  SecretReadResponseDto,
+  SecretReadResultDto,
+} from '../dto/secret-read-response.dto';
 
 /**
  * Secrets console (OpenBao KV v2): browse the path tree, read versioned secrets,
@@ -69,14 +70,21 @@ export class SecretsConsoleController {
   }
 
   @Post('read')
+  @ApiOkResponse({ type: SecretReadResultDto })
   read(
     @Param('id') id: string,
     @Body() dto: SecretsReadDto,
     @Request() req: { user: AuthenticatedUser },
-  ): Promise<{ found: boolean; secret: SecretRead | null }> {
+  ): Promise<SecretReadResultDto> {
     return this.secrets
       .read({ appId: id, fluiUserId: req.user.userId }, dto.path, dto.version)
-      .then((secret) => ({ found: secret !== null, secret }));
+      .then(
+        (secret) =>
+          new SecretReadResultDto(
+            secret !== null,
+            secret ? new SecretReadResponseDto(secret) : null,
+          ),
+      );
   }
 
   @Post('write')

@@ -52,6 +52,7 @@ import { TopologyModule } from './modules/topology/topology.module';
 import { DatabaseConsoleModule } from './modules/database-console/database-console.module';
 import { ProjectsModule } from './modules/projects/projects.module';
 import { DemoModule } from './modules/demo/demo.module';
+import { MaskModule } from './modules/mask/mask.module';
 
 @Module({
   imports: [
@@ -136,6 +137,7 @@ import { DemoModule } from './modules/demo/demo.module';
     SandboxModule,
     ActionCycleModule,
     OperatingContextModule,
+    MaskModule,
     ScheduleModule.forRoot(),
   ],
   providers: [

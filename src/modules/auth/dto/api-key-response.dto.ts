@@ -1,4 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { Sensitivity } from '../../mask/decorators/sensitivity.decorator';
 import {
   PERMISSION_AREA,
   PERMISSION_DEPTH,
@@ -6,18 +7,23 @@ import {
 } from '../constants/api-key-groups';
 
 export class ApiKeyResponseDto {
+  @Sensitivity(Sensitivity.PUBLIC)
   @ApiProperty()
   id: string;
 
+  @Sensitivity(Sensitivity.PUBLIC)
   @ApiProperty()
   name: string;
 
+  @Sensitivity(Sensitivity.PUBLIC)
   @ApiProperty()
   revoked: boolean;
 
+  @Sensitivity(Sensitivity.PUBLIC)
   @ApiProperty()
   createdAt: Date;
 
+  @Sensitivity(Sensitivity.PUBLIC)
   @ApiPropertyOptional()
   expiresAt: Date | null;
 
@@ -31,6 +37,7 @@ export class ApiKeyResponseDto {
    * which is why it is not derived from the MCP audit log, that one only sees
    * the toolbox.
    */
+  @Sensitivity(Sensitivity.PUBLIC)
   @ApiPropertyOptional({
     type: Date,
     description:
@@ -39,6 +46,7 @@ export class ApiKeyResponseDto {
   })
   lastUsedAt: Date | null;
 
+  @Sensitivity(Sensitivity.PUBLIC)
   @ApiPropertyOptional({
     isArray: true,
     type: String,
@@ -47,6 +55,7 @@ export class ApiKeyResponseDto {
   })
   scopes: string[] | null;
 
+  @Sensitivity(Sensitivity.PUBLIC)
   @ApiPropertyOptional({
     isArray: true,
     enum: PERMISSION_GROUP_KEYS,
@@ -58,6 +67,7 @@ export class ApiKeyResponseDto {
   })
   groups: string[] | null;
 
+  @Sensitivity(Sensitivity.PUBLIC)
   @ApiPropertyOptional({
     isArray: true,
     type: String,
@@ -80,6 +90,7 @@ export class ApiKeyResponseDto {
    * interactive OIDC bearer token), which is the honest answer: none of these
    * rows is what is holding that session open.
    */
+  @Sensitivity(Sensitivity.PUBLIC)
   @ApiProperty({
     description:
       'True for the key that authenticated this request. Revoking that one ' +
@@ -100,6 +111,7 @@ export class ApiKeyResponseDto {
    * something old. An agent that never checked in may be working with no
    * instructions at all, which the screen has to be able to say differently.
    */
+  @Sensitivity(Sensitivity.PUBLIC)
   @ApiPropertyOptional({
     type: String,
     description:
@@ -108,6 +120,7 @@ export class ApiKeyResponseDto {
   })
   skillVersion: string | null;
 
+  @Sensitivity(Sensitivity.PUBLIC)
   @ApiPropertyOptional({
     isArray: true,
     type: String,
@@ -117,6 +130,7 @@ export class ApiKeyResponseDto {
   })
   applicationIds: string[] | null;
 
+  @Sensitivity(Sensitivity.PUBLIC)
   @ApiPropertyOptional({
     isArray: true,
     type: String,
@@ -128,6 +142,10 @@ export class ApiKeyResponseDto {
 }
 
 export class CreateApiKeyResultDto extends ApiKeyResponseDto {
+  // The one and only moment this plaintext is meant to be shown, so masking
+  // it unconditionally would make the mint flow unusable: `{ conditional }`
+  // keeps the opaque placeholder but gates it on the mask-mode header.
+  @Sensitivity(Sensitivity.CREDENTIAL, { conditional: true })
   @ApiProperty({
     description: 'Plaintext API key — shown only once at creation time.',
   })
@@ -139,24 +157,31 @@ export class CreateApiKeyResultDto extends ApiKeyResponseDto {
  * expands to, and whether the person reading it may hand it on.
  */
 export class PermissionGroupDto {
+  @Sensitivity(Sensitivity.PUBLIC)
   @ApiProperty({ enum: PERMISSION_GROUP_KEYS })
   key: string;
 
+  @Sensitivity(Sensitivity.PUBLIC)
   @ApiProperty({ enum: Object.values(PERMISSION_AREA) })
   area: string;
 
+  @Sensitivity(Sensitivity.PUBLIC)
   @ApiProperty({ enum: Object.values(PERMISSION_DEPTH) })
   depth: string;
 
+  @Sensitivity(Sensitivity.PUBLIC)
   @ApiProperty()
   label: string;
 
+  @Sensitivity(Sensitivity.PUBLIC)
   @ApiProperty({ description: 'One sentence: what saying yes to this means.' })
   summary: string;
 
+  @Sensitivity(Sensitivity.PUBLIC)
   @ApiProperty({ isArray: true, type: String })
   scopes: string[];
 
+  @Sensitivity(Sensitivity.PUBLIC)
   @ApiProperty({
     description:
       'Whether the caller may issue a key for this group. False means at least ' +
@@ -174,6 +199,7 @@ export class PermissionGroupDto {
    * disables never gets attempted. Whoever cannot see why a switch is missing
    * has to go and ask somebody.
    */
+  @Sensitivity(Sensitivity.PUBLIC)
   @ApiProperty({
     isArray: true,
     type: String,

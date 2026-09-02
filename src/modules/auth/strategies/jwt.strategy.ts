@@ -117,6 +117,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       scopes: payload.scope
         ? payload.scope.split(' ').filter(Boolean)
         : undefined,
+      iat: payload.iat,
     };
   }
 

@@ -38,8 +38,8 @@ import {
   InviteLinkResultDto,
 } from '../dto/invite-link.dto';
 import { UserManagementService } from '../services/user-management.service';
-import { IdentityUser } from '../interfaces/identity-directory.interface';
 import { RequireSection } from '../../iam/decorators/require-section.decorator';
+import { IdentityUserResponseDto } from '../dto/identity-user-response.dto';
 
 @ApiTags('auth')
 @ApiBearerAuth()
@@ -64,8 +64,12 @@ export class UserManagementController {
   @Get()
   @RequirePermission(IAM_PERMISSION.IAM_ASSIGN_ROLE)
   @ApiOperation({ summary: 'List identity users (requires iam:assign-role)' })
-  list(@Query() query: ListIdentityUsersQueryDto): Promise<IdentityUser[]> {
-    return this.users.listUsers(query);
+  @ApiOkResponse({ type: [IdentityUserResponseDto] })
+  async list(
+    @Query() query: ListIdentityUsersQueryDto,
+  ): Promise<IdentityUserResponseDto[]> {
+    const users = await this.users.listUsers(query);
+    return users.map((user) => new IdentityUserResponseDto(user));
   }
 
   @Get(':id')
@@ -73,7 +77,8 @@ export class UserManagementController {
   @ApiOperation({
     summary: 'Get identity user details (requires iam:assign-role)',
   })
-  async get(@Param('id') id: string): Promise<IdentityUser> {
+  @ApiOkResponse({ type: IdentityUserResponseDto })
+  async get(@Param('id') id: string): Promise<IdentityUserResponseDto> {
     const user = await this.users.getUser(id);
     if (!user) {
       // 404 thrown via service in delete/setRole; replicate here for direct GET
@@ -81,7 +86,7 @@ export class UserManagementController {
         `User ${id} not found`,
       );
     }
-    return user;
+    return new IdentityUserResponseDto(user);
   }
 
   @Delete(':id')

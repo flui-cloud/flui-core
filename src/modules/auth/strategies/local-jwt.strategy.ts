@@ -12,6 +12,8 @@ interface LocalJwtPayload {
   email: string;
   isAdmin: boolean;
   role?: IdentityRole;
+  /** Issued-at, added automatically by jsonwebtoken on every decode. */
+  iat?: number;
 }
 
 @Injectable()
@@ -36,6 +38,7 @@ export class LocalJwtStrategy extends PassportStrategy(Strategy, 'local-jwt') {
         payload.role ??
         (payload.isAdmin ? IdentityRole.ADMIN : IdentityRole.USER),
       isAdmin: payload.isAdmin,
+      iat: payload.iat,
     };
   }
 }
