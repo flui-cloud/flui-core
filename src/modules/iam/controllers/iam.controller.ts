@@ -22,6 +22,11 @@ import { RequireSection } from '../decorators/require-section.decorator';
 import { ActionCycle } from '../../action-cycle/action-cycle.decorator';
 import { grantClauseOf } from '../grant-clause';
 import { principalOf } from '../interfaces/iam.types';
+import {
+  IamGroupResponseDto,
+  IamPrincipalResponseDto,
+  IamRoleBindingResponseDto,
+} from '../dto/iam-read-response.dto';
 
 @Controller('iam')
 @RequireSection('access')
@@ -84,12 +89,14 @@ export class IamController {
 
   @Get('principals')
   @RequirePermission(IAM_PERMISSION.IAM_READ_ACCESS)
+  @ApiResponse({ status: 200, type: [IamPrincipalResponseDto] })
   listPrincipals() {
     return this.iam.listPrincipals();
   }
 
   @Get('grants')
   @RequirePermission(IAM_PERMISSION.IAM_READ_ACCESS)
+  @ApiResponse({ status: 200, type: [IamRoleBindingResponseDto] })
   listGrants() {
     return this.iam.listGrants();
   }
@@ -195,6 +202,7 @@ export class IamController {
 
   @Get('groups')
   @RequirePermission(IAM_PERMISSION.IAM_ASSIGN_ROLE)
+  @ApiResponse({ status: 200, type: [IamGroupResponseDto] })
   listGroups() {
     return this.iam.listGroups();
   }

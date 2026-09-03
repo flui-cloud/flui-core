@@ -289,6 +289,8 @@ const MASK_EXEMPT: string[] = [
   'AgentRequestDto.messages', // modules/assistant/dto/agent-request.dto.ts
   'AgentRequestDto.model', // modules/assistant/dto/agent-request.dto.ts
   'AgentRequestDto.provider', // modules/assistant/dto/agent-request.dto.ts
+  'AgentRequestDto.surface', // modules/assistant/dto/agent-request.dto.ts
+  'AgentRequestDto.surfaceRevision', // modules/assistant/dto/agent-request.dto.ts
   'AgentRequestDto.temperature', // modules/assistant/dto/agent-request.dto.ts
   'AgentSkillDto.content', // modules/auth/dto/agent-skill.dto.ts
   'AgentSkillDto.digest', // modules/auth/dto/agent-skill.dto.ts
@@ -3611,34 +3613,6 @@ const MASK_EXEMPT: string[] = [
   'VNetConfigDto.autoAssignIp', // modules/infrastructure/clusters/dto/create-cluster.dto.ts
   'VNetConfigDto.subnetId', // modules/infrastructure/clusters/dto/create-cluster.dto.ts
   'VNetConfigDto.vnetId', // modules/infrastructure/clusters/dto/create-cluster.dto.ts
-  'VNetListResponseDto.total', // modules/infrastructure/vnets/dto/vnet-response.dto.ts
-  'VNetListResponseDto.vnets', // modules/infrastructure/vnets/dto/vnet-response.dto.ts
-  'VNetResponseDto.createdAt', // modules/infrastructure/vnets/dto/vnet-response.dto.ts
-  'VNetResponseDto.id', // modules/infrastructure/vnets/dto/vnet-response.dto.ts
-  'VNetResponseDto.ipRange', // modules/infrastructure/vnets/dto/vnet-response.dto.ts
-  'VNetResponseDto.labels', // modules/infrastructure/vnets/dto/vnet-response.dto.ts
-  'VNetResponseDto.metadata', // modules/infrastructure/vnets/dto/vnet-response.dto.ts
-  'VNetResponseDto.name', // modules/infrastructure/vnets/dto/vnet-response.dto.ts
-  'VNetResponseDto.provider', // modules/infrastructure/vnets/dto/vnet-response.dto.ts
-  'VNetResponseDto.providerResourceId', // modules/infrastructure/vnets/dto/vnet-response.dto.ts
-  'VNetResponseDto.routes', // modules/infrastructure/vnets/dto/vnet-response.dto.ts
-  'VNetResponseDto.status', // modules/infrastructure/vnets/dto/vnet-response.dto.ts
-  'VNetResponseDto.subnets', // modules/infrastructure/vnets/dto/vnet-response.dto.ts
-  'VNetResponseDto.updatedAt', // modules/infrastructure/vnets/dto/vnet-response.dto.ts
-  'VNetRouteResponseDto.createdAt', // modules/infrastructure/vnets/dto/vnet-response.dto.ts
-  'VNetRouteResponseDto.destination', // modules/infrastructure/vnets/dto/vnet-response.dto.ts
-  'VNetRouteResponseDto.gateway', // modules/infrastructure/vnets/dto/vnet-response.dto.ts
-  'VNetRouteResponseDto.id', // modules/infrastructure/vnets/dto/vnet-response.dto.ts
-  'VNetRouteResponseDto.updatedAt', // modules/infrastructure/vnets/dto/vnet-response.dto.ts
-  'VNetSubnetResponseDto.attachedServerIds', // modules/infrastructure/vnets/dto/vnet-response.dto.ts
-  'VNetSubnetResponseDto.createdAt', // modules/infrastructure/vnets/dto/vnet-response.dto.ts
-  'VNetSubnetResponseDto.gateway', // modules/infrastructure/vnets/dto/vnet-response.dto.ts
-  'VNetSubnetResponseDto.id', // modules/infrastructure/vnets/dto/vnet-response.dto.ts
-  'VNetSubnetResponseDto.ipRange', // modules/infrastructure/vnets/dto/vnet-response.dto.ts
-  'VNetSubnetResponseDto.networkZone', // modules/infrastructure/vnets/dto/vnet-response.dto.ts
-  'VNetSubnetResponseDto.providerSubnetId', // modules/infrastructure/vnets/dto/vnet-response.dto.ts
-  'VNetSubnetResponseDto.updatedAt', // modules/infrastructure/vnets/dto/vnet-response.dto.ts
-  'VNetSubnetResponseDto.vswitchId', // modules/infrastructure/vnets/dto/vnet-response.dto.ts
   'VNetTopologyDto.scope', // modules/management/dto/provider-capabilities.dto.ts
   'VNetTopologyDto.sharedAddressSpace', // modules/management/dto/provider-capabilities.dto.ts
   'VNetTopologyDto.subnetIpRange', // modules/management/dto/provider-capabilities.dto.ts

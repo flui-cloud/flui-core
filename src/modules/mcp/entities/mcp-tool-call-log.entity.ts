@@ -124,6 +124,25 @@ export class McpToolCallLogEntity {
   @Column({ type: 'varchar', nullable: true })
   grant_id: string | null;
 
+  /**
+   * The Semantic Surface reference for the turn this call happened in, when
+   * one was carried: `{surfaceId, revision, route, entityRefs}`, never the
+   * full snapshot the user was reading — see `McpAuditRepository.record`.
+   *
+   * Not `surface`: that column already means `AgentSurface`, which door the
+   * call came through (`mcp` | `assistant`), a wholly different fact. Null on
+   * every row written before this column existed and on every row whose turn
+   * carried no Surface — the two are indistinguishable on purpose, the same
+   * way every other nullable column here reads "unknown", not "false".
+   */
+  @Column({ type: 'jsonb', nullable: true })
+  semantic_surface_ref: {
+    surfaceId: string;
+    revision: number;
+    route?: string;
+    entityRefs: string[];
+  } | null;
+
   @CreateDateColumn({ type: 'timestamptz' })
   created_at: Date;
 }

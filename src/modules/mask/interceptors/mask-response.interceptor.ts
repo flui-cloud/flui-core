@@ -9,6 +9,7 @@ import { Request } from 'express';
 import { Observable } from 'rxjs';
 import { map } from 'rxjs/operators';
 import { AuthenticatedUser } from '../../auth/interfaces/authenticated-user.interface';
+import { agentSurfaceOf } from '../../auth/utils/actor-surface';
 import { Sensitivity } from '../constants/sensitivity';
 import {
   CREDENTIAL_PLACEHOLDER,
@@ -207,7 +208,19 @@ export class MaskResponseInterceptor implements NestInterceptor {
     const plan = planFor(resolved.type, this.registry);
 
     const request = context.switchToHttp().getRequest<MaskRequest>();
-    const maskOn = headerValue(request, 'x-mask-mode') === 'on';
+    // Two independent reasons this response should be masked, either is enough:
+    // the browser's own screen-share toggle, OR this call arrived over the
+    // loopback socket a tool call makes (`agentSurfaceOf` is the same fail-closed,
+    // token-verified check the action cycle uses — see actor-surface.ts's own
+    // doc comment for why a bare header cannot be spoofed into claiming this).
+    // Every tool result an MCP client or the in-product assistant receives goes
+    // to a model, on every turn, regardless of whether a human currently has the
+    // screen-share toggle on — unlike the browser's own default (off, tuned for
+    // "am I about to share my screen"), there is no reason network-identifier/
+    // tenant-identity data should ever reach that channel unmasked by default.
+    const maskOn =
+      headerValue(request, 'x-mask-mode') === 'on' ||
+      agentSurfaceOf(request.headers as Record<string, unknown>) !== undefined;
     const ctx: MaskRuntimeContext = {
       maskOn,
       // No stable session id reaches an unauthenticated route; one fixed

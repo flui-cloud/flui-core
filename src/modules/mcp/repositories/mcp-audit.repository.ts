@@ -50,6 +50,18 @@ export class McpAuditRepository {
     surface?: string | null;
     /** The answer the writer knew first-hand — see the entity's `grant_id`. */
     grantId?: string | null;
+    /**
+     * The Semantic Surface this call's turn carried, compacted to
+     * `{surfaceId, revision, route, entityRefs}` — never the full snapshot.
+     * Deliberately not `surface`: that name is already `AgentSurface`, which
+     * door the call came through, and the two must never collide.
+     */
+    semanticSurfaceRef?: {
+      surfaceId: string;
+      revision: number;
+      route?: string;
+      entityRefs: string[];
+    } | null;
   }): Promise<void> {
     await this.repo.save(
       this.repo.create({
@@ -66,6 +78,7 @@ export class McpAuditRepository {
         proposal_id: data.proposalId ?? null,
         surface: data.surface ?? null,
         grant_id: data.grantId ?? null,
+        semantic_surface_ref: data.semanticSurfaceRef ?? null,
       }),
     );
   }

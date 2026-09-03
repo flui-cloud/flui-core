@@ -5,6 +5,7 @@ import {
   IsArray,
   IsEnum,
   IsNumber,
+  IsObject,
   IsOptional,
   IsString,
   IsUUID,
@@ -12,6 +13,7 @@ import {
   Min,
   ValidateNested,
 } from 'class-validator';
+import { SurfaceSnapshot } from '@flui-cloud/semantic-surface';
 import { CloudProvider } from '../../providers/enums/cloud-provider.enum';
 import { ToolCall } from '../interfaces/chat-completion';
 
@@ -86,4 +88,27 @@ export class AgentRequestDto {
   @IsOptional()
   @IsUUID()
   connectionId?: string;
+
+  /**
+   * A Semantic Surface snapshot of the page the user is chatting from (spec
+   * §11.1). Untyped past @IsObject() on purpose: it crosses a trust boundary,
+   * so schema and semantic validation happen in the service, which drops it
+   * silently on any defect rather than 400ing a chat message over it.
+   */
+  @ApiPropertyOptional({
+    type: Object,
+    description:
+      'Semantic Surface snapshot of the page the user is chatting from. Invalid or stale snapshots are silently dropped, never rejected.',
+  })
+  @IsOptional()
+  @IsObject()
+  surface?: SurfaceSnapshot;
+
+  @ApiPropertyOptional({
+    description:
+      "The surface.revision in force when the message was sent, echoing the snapshot's own — a mismatch drops the snapshot.",
+  })
+  @IsOptional()
+  @IsNumber()
+  surfaceRevision?: number;
 }

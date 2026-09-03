@@ -3,12 +3,18 @@ import {
   ApiOkResponse,
   ApiProperty,
   ApiPropertyOptional,
+  ApiResponse,
 } from '@nestjs/swagger';
 import { firstValueFrom, of } from 'rxjs';
 import { MaskResponseInterceptor } from './mask-response.interceptor';
 import { SensitivityRegistry } from '../sensitivity.registry';
 import { Sensitivity } from '../decorators/sensitivity.decorator';
 import { CREDENTIAL_PLACEHOLDER } from '../utils/fake-value.util';
+import { IamRoleBindingResponseDto } from '../../iam/dto/iam-read-response.dto';
+import {
+  AGENT_SURFACE_HEADER,
+  agentSurfaceHeader,
+} from '../../auth/utils/actor-surface';
 
 class NestedDto {
   @Sensitivity(Sensitivity.TENANT_IDENTITY)
@@ -71,6 +77,17 @@ class TestController {
   }
 }
 
+// Mirrors the real iam.controller.ts route declaration exactly (see that file's
+// `listGrants`) — used to prove the real-world fix, not a synthetic stand-in.
+@Controller('iam-test')
+class IamTestController {
+  @Get('grants')
+  @ApiResponse({ status: 200, type: [IamRoleBindingResponseDto] })
+  grants() {
+    return null;
+  }
+}
+
 function context(
   handler: () => unknown,
   headerValue?: string,
@@ -82,6 +99,22 @@ function context(
       getRequest: () => ({
         headers:
           headerValue === undefined ? {} : { 'x-mask-mode': headerValue },
+        user: { userId: 'user-1', iat: 1000 },
+      }),
+    }),
+  } as unknown as ExecutionContext;
+}
+
+function contextWithHeaders(
+  handler: () => unknown,
+  headers: Record<string, string>,
+): ExecutionContext {
+  return {
+    getType: () => 'http',
+    getHandler: () => handler,
+    switchToHttp: () => ({
+      getRequest: () => ({
+        headers,
         user: { userId: 'user-1', iat: 1000 },
       }),
     }),
@@ -217,5 +250,82 @@ describe('MaskResponseInterceptor', () => {
     expect(out[0].secret).toBe(CREDENTIAL_PLACEHOLDER);
     expect(out[1].secret).toBe(CREDENTIAL_PLACEHOLDER);
     expect(out[0].ip).not.toBe('1.1.1.1');
+  });
+
+  // Regression test for a real, live leak, not a hypothetical: GET /iam/grants and
+  // /iam/principals had no @ApiResponse type at all, so this interceptor was a total
+  // no-op on them and real emails reached the screen (and the Semantic Surface) even
+  // with mask mode on. Fixed by declaring IamRoleBindingResponseDto/IamPrincipalResponseDto
+  // on the real controller routes — this proves the fix using those real DTOs, not a
+  // synthetic stand-in.
+  it('masks IAM principal/grant refs now that the real routes declare a response type (regression, was a live leak)', async () => {
+    const grantsBody = [
+      {
+        id: 'g1',
+        principalType: 'user',
+        principalRef: 'real.person@customer.example',
+        role: 'admin',
+        scopeType: 'global',
+        scopeRef: null,
+        selector: null,
+        createdAt: '2026-01-01T00:00:00.000Z',
+      },
+    ];
+    const out = (await firstValueFrom(
+      interceptor.intercept(
+        context(IamTestController.prototype.grants, 'on'),
+        next(grantsBody),
+      ),
+    )) as typeof grantsBody;
+
+    expect(out[0].principalRef).not.toBe('real.person@customer.example');
+    expect(out[0].role).toBe('admin'); // PUBLIC fields still pass through
+  });
+
+  // A tool call's own loopback request never carried x-mask-mode at all, so every tool
+  // result reached the model unmasked regardless of the human's own screen-share
+  // toggle. Proven here with the real header-minting function from actor-surface.ts,
+  // not a hand-typed string a spoofed header could also produce — agentSurfaceOf()
+  // only accepts a token minted by this same process.
+  it('masks network-identifier/tenant-identity fields on a tool loopback call, even with x-mask-mode absent (regression, was a live leak on every tool result)', async () => {
+    const body = {
+      id: 'i-1',
+      secret: 's',
+      kv: {},
+      ip: '203.0.113.9',
+      people: [],
+    };
+
+    const out = (await firstValueFrom(
+      interceptor.intercept(
+        contextWithHeaders(TestController.prototype.one, {
+          [AGENT_SURFACE_HEADER]: agentSurfaceHeader('mcp'),
+        }),
+        next(body),
+      ),
+    )) as typeof body;
+
+    expect(out.ip).not.toBe('203.0.113.9');
+  });
+
+  it('does not force masking from an unrelated or forged agent-surface-shaped header', async () => {
+    const body = {
+      id: 'i-1',
+      secret: 's',
+      kv: {},
+      ip: '203.0.113.9',
+      people: [],
+    };
+
+    const out = (await firstValueFrom(
+      interceptor.intercept(
+        contextWithHeaders(TestController.prototype.one, {
+          [AGENT_SURFACE_HEADER]: 'mcp.not-the-real-token',
+        }),
+        next(body),
+      ),
+    )) as typeof body;
+
+    expect(out.ip).toBe('203.0.113.9'); // forged token: read as "no declaration", per actor-surface.ts's own fail-closed rule
   });
 });
