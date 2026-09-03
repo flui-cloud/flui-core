@@ -24,11 +24,11 @@ export interface ReleaseManifest {
 }
 
 export const RELEASE: ReleaseManifest = {
-  version: '0.12.1',
-  bootstrapRef: 'v0.5.4',
+  version: '0.13.0-rc.1',
+  bootstrapRef: '8bdbb6f',
   images: {
-    fluiApi: '0.12.1',
-    fluiWeb: '0.13.0',
+    fluiApi: '0.13.0-rc.1',
+    fluiWeb: '0.13.0-rc.1',
     fluiAuthz: '0.6.0',
   },
 };
