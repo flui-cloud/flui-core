@@ -99,7 +99,9 @@ export default class BackupPlatformInit extends Command {
       try {
         await BackupClient.fromConfig().setPlatformConfig(flags.policy, {
           recipient,
-          heartbeatUrl: flags['heartbeat-url'],
+          ...(flags['heartbeat-url']
+            ? { heartbeatUrl: flags['heartbeat-url'] }
+            : {}),
         });
         spinner.succeed(`Recipient registered on policy ${flags.policy}`);
         if (flags['heartbeat-url']) {

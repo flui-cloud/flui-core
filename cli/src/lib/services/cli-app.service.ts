@@ -701,8 +701,8 @@ export class CliAppService {
     );
   }
 
-  async listAppSnapshots(appId: string): Promise<SnapshotResponse[]> {
-    return this.apiClient.get<SnapshotResponse[]>(
+  async listAppSnapshots(appId: string): Promise<SnapshotListResponse> {
+    return this.apiClient.get<SnapshotListResponse>(
       `/applications/${appId}/snapshots`,
     );
   }
@@ -991,6 +991,14 @@ export interface GatewayStatus {
   total: number;
   synced: number;
   routes: GatewayRoute[];
+}
+
+/** GET /applications/:id/snapshots — unlike the cluster-wide list, this one
+ *  can report why snapshots aren't available for this app at all. */
+export interface SnapshotListResponse {
+  supported: boolean;
+  reason?: string;
+  items: SnapshotResponse[];
 }
 
 export interface SnapshotResponse {

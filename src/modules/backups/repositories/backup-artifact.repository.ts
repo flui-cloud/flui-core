@@ -28,6 +28,14 @@ export class BackupArtifactRepository {
     });
   }
 
+  /** The artifact a completed job produced, if any — a job has at most one. */
+  findByJob(backupJobId: string): Promise<BackupArtifactEntity | null> {
+    return this.artifactRepo.findOne({
+      where: { backupJobId },
+      relations: ['locations'],
+    });
+  }
+
   listForCluster(clusterId: string): Promise<BackupArtifactEntity[]> {
     return this.artifactRepo.find({
       where: { clusterId },

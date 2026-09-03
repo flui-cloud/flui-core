@@ -28,8 +28,8 @@ export default class BackupPolicyList extends Command {
     this.log('');
     for (const p of items) {
       this.log(
-        `   ${chalk.cyan(p.id)}  ${chalk.bold(p.name)}  ${p.profile}/${p.scope}  cluster=${p.clusterId}` +
-          (p.schedule ? ` cron=${p.schedule}` : '') +
+        `   ${chalk.cyan(p.id)}  ${chalk.bold(p.name)}  ${p.engineClass ?? 'volume'}/${p.profile}/${p.scope}  cluster=${p.clusterId}` +
+          (p.cronSchedule ? ` cron=${p.cronSchedule}` : '') +
           (p.enabled === false ? chalk.dim(' [disabled]') : ''),
       );
     }

@@ -203,7 +203,7 @@ export class ReplicateBackupProcessor {
     name: string,
   ): string {
     const base = (pathPrefix ?? '').replaceAll(/^\/+|\/+$/g, '');
-    const tail = `velero/backups/${name}/`;
+    const tail = `backups/${name}/`;
     return base ? `${base}/${tail}` : tail;
   }
 

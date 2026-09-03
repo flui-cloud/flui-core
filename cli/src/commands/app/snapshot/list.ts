@@ -4,6 +4,7 @@ import ora from 'ora';
 import {
   CliAppService,
   SnapshotResponse,
+  SnapshotListResponse,
 } from '../../../lib/services/cli-app.service';
 import { resolveClusterRef } from '../../../lib/resolve-cluster';
 import { formatBytes } from '../../../lib/format-bytes';
@@ -43,9 +44,14 @@ export default class AppSnapshotList extends Command {
       const service = await CliAppService.create(clusterId);
 
       let items: SnapshotResponse[];
+      let unsupportedReason: string | undefined;
       if (flags.app) {
         const app = await service.getAppByName(flags.app);
-        items = await service.listAppSnapshots(app.id);
+        const response: SnapshotListResponse = await service.listAppSnapshots(
+          app.id,
+        );
+        items = response.items;
+        if (!response.supported) unsupportedReason = response.reason;
       } else {
         items = await service.listClusterSnapshots();
       }
@@ -54,6 +60,11 @@ export default class AppSnapshotList extends Command {
 
       if (flags.output === 'json') {
         console.log(JSON.stringify(items, null, 2));
+        return;
+      }
+
+      if (unsupportedReason) {
+        console.log(chalk.yellow(`\n  ${unsupportedReason}\n`));
         return;
       }
 

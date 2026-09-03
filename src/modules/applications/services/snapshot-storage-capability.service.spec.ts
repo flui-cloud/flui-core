@@ -1,113 +1,64 @@
 jest.mock('@kubernetes/client-node', () => ({
   CoreV1Api: class {},
   StorageV1Api: class {},
-  CustomObjectsApi: class {},
 }));
 
-import {
-  decideSnapshotCapability,
-  SnapshotStorageSignals,
-  SnapshotStorageCapabilityService,
-} from './snapshot-storage-capability.service';
-
-describe('decideSnapshotCapability', () => {
-  it.each(['rancher.io/local-path', 'flui.cloud/local-path'])(
-    'marks the non-CSI provisioner %s as unsupported',
-    (provisioner) => {
-      expect(
-        decideSnapshotCapability({
-          provisioner,
-          volumeSnapshotClassDrivers: [],
-        }),
-      ).toEqual({
-        supported: false,
-        reason:
-          "Snapshots are not available because this cluster's storage class does not use a CSI driver.",
-      });
-    },
-  );
-
-  it('supports a CSI provisioner with a matching VolumeSnapshotClass without consulting a cloud provider', () => {
-    const signals: SnapshotStorageSignals = {
-      provisioner: 'driver.longhorn.io',
-      volumeSnapshotClassDrivers: ['driver.longhorn.io'],
-    };
-
-    expect(decideSnapshotCapability(signals)).toEqual({ supported: true });
-    expect(Object.keys(signals)).not.toContain('provider');
-  });
-
-  it('marks a CSI provisioner as unsupported when the VolumeSnapshot API is absent', () => {
-    expect(
-      decideSnapshotCapability({
-        provisioner: 'rbd.csi.ceph.com',
-        volumeSnapshotClassDrivers: null,
-      }),
-    ).toEqual({
-      supported: false,
-      reason:
-        'Snapshots are not available because the cluster does not have the Kubernetes VolumeSnapshot API installed.',
-    });
-  });
-});
+import { SnapshotStorageCapabilityService } from './snapshot-storage-capability.service';
 
 describe('SnapshotStorageCapabilityService', () => {
   function createService(options: {
-    storageClassName: string;
-    provisioner: string;
-    volumeSnapshotClassDrivers?: string[];
-  }): {
-    service: SnapshotStorageCapabilityService;
-    listClusterCustomObject: jest.Mock;
-  } {
+    pvcNotFound?: boolean;
+    storageClassName?: string | null;
+    storageClassNotFound?: boolean;
+  }): SnapshotStorageCapabilityService {
     const coreApi = {
-      readNamespacedPersistentVolumeClaim: jest.fn().mockResolvedValue({
-        spec: { storageClassName: options.storageClassName },
-      }),
+      readNamespacedPersistentVolumeClaim: options.pvcNotFound
+        ? jest.fn().mockRejectedValue({ response: { statusCode: 404 } })
+        : jest.fn().mockResolvedValue({
+            spec: {
+              storageClassName: options.storageClassName ?? 'flui-local',
+            },
+          }),
     };
     const storageApi = {
-      readStorageClass: jest.fn().mockResolvedValue({
-        provisioner: options.provisioner,
-      }),
+      readStorageClass: options.storageClassNotFound
+        ? jest.fn().mockRejectedValue({ response: { statusCode: 404 } })
+        : jest.fn().mockResolvedValue({}),
     };
-    const listClusterCustomObject = jest.fn().mockResolvedValue({
-      items: (options.volumeSnapshotClassDrivers ?? []).map((driver) => ({
-        driver,
-      })),
-    });
     const makeApiClient = jest
       .fn()
       .mockReturnValueOnce(coreApi)
-      .mockReturnValueOnce(storageApi)
-      .mockReturnValueOnce({ listClusterCustomObject });
-    const service = new SnapshotStorageCapabilityService({
+      .mockReturnValueOnce(storageApi);
+    return new SnapshotStorageCapabilityService({
       makeKubeConfig: jest.fn().mockReturnValue({ makeApiClient }),
     } as any);
-
-    return { service, listClusterCustomObject };
   }
 
-  it('resolves a local-path StorageClass as unsupported without querying snapshot classes', async () => {
-    const { service, listClusterCustomObject } = createService({
-      storageClassName: 'local-path',
-      provisioner: 'rancher.io/local-path',
-    });
-
-    await expect(
-      service.forPvc('kubeconfig', 'app-example', 'data'),
-    ).resolves.toMatchObject({ supported: false });
-    expect(listClusterCustomObject).not.toHaveBeenCalled();
-  });
-
-  it('resolves a CSI StorageClass with a matching VolumeSnapshotClass as supported', async () => {
-    const { service } = createService({
-      storageClassName: 'longhorn',
-      provisioner: 'driver.longhorn.io',
-      volumeSnapshotClassDrivers: ['driver.longhorn.io'],
-    });
-
+  it('supports a bound PVC on a local-path StorageClass — the copy-pod primitive never touches CSI', async () => {
+    const service = createService({ storageClassName: 'flui-local' });
     await expect(
       service.forPvc('kubeconfig', 'app-example', 'data'),
     ).resolves.toEqual({ supported: true });
+  });
+
+  it('is unsupported when the PVC no longer exists', async () => {
+    const service = createService({ pvcNotFound: true });
+    await expect(
+      service.forPvc('kubeconfig', 'app-example', 'data'),
+    ).resolves.toMatchObject({ supported: false });
+  });
+
+  it('is unsupported when the PVC has no StorageClass', async () => {
+    const service = createService({ storageClassName: '' });
+    await expect(
+      service.forPvc('kubeconfig', 'app-example', 'data'),
+    ).resolves.toMatchObject({ supported: false });
+  });
+
+  it('is unsupported when the StorageClass no longer exists', async () => {
+    const service = createService({ storageClassNotFound: true });
+    await expect(
+      service.forPvc('kubeconfig', 'app-example', 'data'),
+    ).resolves.toMatchObject({ supported: false });
   });
 });

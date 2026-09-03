@@ -198,6 +198,7 @@ import { DnsProvider } from './enums/dns-provider.enum';
           { provider: CloudProvider.HETZNER, service: universal },
           { provider: CloudProvider.SCALEWAY, service: universal },
           { provider: CloudProvider.CONTABO, service: universal },
+          { provider: CloudProvider.BYOS, service: universal },
         ]),
       inject: [VolumeExportService],
     },

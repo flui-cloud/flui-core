@@ -44,6 +44,19 @@ describe('VolumeSnapshotsService capability gate', () => {
         },
       ]),
     };
+    const volumeClaims = {
+      resolveForApplication: jest.fn().mockResolvedValue([
+        {
+          name: 'data',
+          namespace: 'app-example',
+          requested: null,
+          requestedBytes: 0,
+          storageClass: 'flui-local',
+          phase: 'Bound',
+          attributedBy: 'tracked-resource',
+        },
+      ]),
+    };
     volumeExportService = {
       capabilities: {},
       listExports: jest.fn().mockResolvedValue([
@@ -66,6 +79,7 @@ describe('VolumeSnapshotsService capability gate', () => {
       clusterRepository as any,
       applicationsRepository as any,
       appResourcesRepository as any,
+      volumeClaims as any,
       volumeExportService as any,
       snapshotStorageCapability as any,
       { decrypt: jest.fn().mockReturnValue('kubeconfig') } as any,

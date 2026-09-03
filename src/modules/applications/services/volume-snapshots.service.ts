@@ -19,7 +19,7 @@ import {
 import { EncryptionService } from '../../shared/encryption/services/encryption.service';
 import { ApplicationsRepository } from '../repositories/applications.repository';
 import { AppResourcesRepository } from '../repositories/app-resources.repository';
-import { ApplicationResourceKind } from '../enums/application-resource-kind.enum';
+import { ApplicationVolumeClaimsService } from './application-volume-claims.service';
 import { AppOperationRunner } from './app-operation-runner.service';
 import { OperationType } from '../../infrastructure/servers/entities/infrastructure-operations.entity';
 import {
@@ -55,6 +55,7 @@ export class VolumeSnapshotsService {
     private readonly clusterRepository: Repository<ClusterEntity>,
     private readonly applicationsRepository: ApplicationsRepository,
     private readonly appResourcesRepository: AppResourcesRepository,
+    private readonly volumeClaims: ApplicationVolumeClaimsService,
     private readonly volumeExportService: VolumeExportService,
     private readonly snapshotStorageCapability: SnapshotStorageCapabilityService,
     private readonly encryptionService: EncryptionService,
@@ -66,7 +67,11 @@ export class VolumeSnapshotsService {
   ): Promise<SnapshotResponse & { operationId: string }> {
     const { app, cluster, kubeconfig, ops, provider } =
       await this.resolveAppContext(request.applicationId);
-    const pvcName = await this.resolvePvcName(app.id, request.volumeName);
+    const pvcName = await this.resolvePvcName(
+      kubeconfig,
+      app,
+      request.volumeName,
+    );
     await this.requireSnapshotCapability(app, kubeconfig, [pvcName]);
 
     const { result, operationId } = await this.runner.run(
@@ -121,7 +126,7 @@ export class VolumeSnapshotsService {
   async listForApp(applicationId: string): Promise<SnapshotListResponse> {
     const { app, kubeconfig, ops, provider } =
       await this.resolveAppContext(applicationId);
-    const pvcNames = await this.resolvePvcNames(app.id);
+    const pvcNames = await this.resolvePvcNames(kubeconfig, app);
     const capability = await this.getSnapshotCapability(
       app,
       kubeconfig,
@@ -225,18 +230,22 @@ export class VolumeSnapshotsService {
     }
     const sourcePvcNames = source.sourcePvcName
       ? [source.sourcePvcName]
-      : await this.resolvePvcNames(app.id);
+      : await this.resolvePvcNames(kubeconfig, app);
     await this.requireSnapshotCapability(app, kubeconfig, sourcePvcNames);
 
-    const pvcs = await this.appResourcesRepository.findByApplicationId(app.id);
-    const dataPvc = pvcs.find(
-      (r) =>
-        r.kind === ApplicationResourceKind.PERSISTENT_VOLUME_CLAIM &&
-        r.name === source.sourcePvcName,
+    // The tracked app_resources row never carries storageClassName (nothing
+    // writes it there) — read it from the live claim instead, the same place
+    // resolveForApplication already pulls it from.
+    const tracked = await this.appResourcesRepository
+      .findByApplicationId(app.id)
+      .catch(() => []);
+    const claims = await this.volumeClaims.resolveForApplication(
+      kubeconfig,
+      app,
+      tracked,
     );
-    const storageClass =
-      (dataPvc?.metadata as { storageClassName?: string } | undefined)
-        ?.storageClassName ?? 'local-path';
+    const dataPvc = claims.find((c) => c.name === source.sourcePvcName);
+    const storageClass = dataPvc?.storageClass ?? 'local-path';
     const ts = new Date().toISOString().replaceAll(/[-:T]/g, '').slice(0, 14);
     const naturalName = `${source.sourcePvcName ?? app.slug}-restored-${ts}`;
     const newPvcName = naturalName.slice(0, 63);
@@ -280,7 +289,7 @@ export class VolumeSnapshotsService {
   ): Promise<{ operationId: string }> {
     const { app, kubeconfig, ops } =
       await this.resolveAppContext(applicationId);
-    const pvcNames = await this.resolvePvcNames(app.id);
+    const pvcNames = await this.resolvePvcNames(kubeconfig, app);
     await this.requireSnapshotCapability(app, kubeconfig, pvcNames);
     const { operationId } = await this.runner.run(
       {
@@ -347,13 +356,14 @@ export class VolumeSnapshotsService {
   }
 
   private async resolvePvcName(
-    applicationId: string,
+    kubeconfig: string,
+    app: { id: string; slug: string; k8sNamespace: string },
     explicitName: string | undefined,
   ): Promise<string> {
-    const pvcNames = await this.resolvePvcNames(applicationId);
+    const pvcNames = await this.resolvePvcNames(kubeconfig, app);
     if (pvcNames.length === 0) {
       throw new BadRequestException(
-        `Application ${applicationId} has no PersistentVolumeClaim — nothing to snapshot`,
+        `Application ${app.id} has no PersistentVolumeClaim — nothing to snapshot`,
       );
     }
     if (explicitName) {
@@ -372,15 +382,23 @@ export class VolumeSnapshotsService {
     return pvcNames[0];
   }
 
-  private async resolvePvcNames(applicationId: string): Promise<string[]> {
-    const resources =
-      await this.appResourcesRepository.findByApplicationId(applicationId);
-    return resources
-      .filter(
-        (resource) =>
-          resource.kind === ApplicationResourceKind.PERSISTENT_VOLUME_CLAIM,
-      )
-      .map((resource) => resource.name);
+  // A StatefulSet's volumeClaimTemplates never get a standalone PVC manifest
+  // (and so no app_resources row) — resolveForApplication also matches on the
+  // <template>-<statefulset>-<ordinal> naming Kubernetes itself mints, which is
+  // the only way a database-shaped app's claim is ever found.
+  private async resolvePvcNames(
+    kubeconfig: string,
+    app: { id: string; slug: string; k8sNamespace: string },
+  ): Promise<string[]> {
+    const tracked = await this.appResourcesRepository
+      .findByApplicationId(app.id)
+      .catch(() => []);
+    const claims = await this.volumeClaims.resolveForApplication(
+      kubeconfig,
+      app,
+      tracked,
+    );
+    return claims.map((c) => c.name);
   }
 
   private async getSnapshotCapability(

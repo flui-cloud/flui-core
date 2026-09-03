@@ -82,11 +82,16 @@ export class PlatformBackupService {
     if (!kubeconfig) {
       throw new Error('Control cluster kubeconfig unavailable.');
     }
-    const pgPassword =
-      control.metadata?.observabilityStack?.passwords?.postgres;
+    // cluster.metadata.observabilityStack is only ever written by the legacy
+    // in-process stack deploy (ControlClusterService.deployObservabilityStack);
+    // the real bootstrap-scripts install never calls it, so that field is
+    // reliably empty. The password does live in the pod's own env (fed from
+    // its Secret), same as every other exec-based credential read in this
+    // module — read it from there instead of a field nothing populates.
+    const pgPassword = await this.resolvePgPassword(kubeconfig);
     if (!pgPassword) {
       throw new Error(
-        'Control Postgres password not found in cluster metadata — cannot dump the master DB.',
+        'Control Postgres password not found in the postgres pod environment — cannot dump the master DB.',
       );
     }
 
@@ -97,8 +102,10 @@ export class PlatformBackupService {
     const dek = crypto.randomBytes(32);
     const envId = control.id;
     const ts = new Date().toISOString().replace(/[:.]/g, '-');
-    const prefix = (destEntity.pathPrefix ?? '').replace(/^\/+|\/+$/g, '');
-    const base = `${prefix ? prefix + '/' : ''}platform/${envId}/${ts}`;
+    // Relative to the destination's own pathPrefix: uploadFile() below already
+    // prepends it (via GenericS3Backend.joinPrefix), so baking it in here too
+    // would double it in the object key actually written to S3.
+    const base = `platform/${envId}/${ts}`;
 
     const creds = this.destinationsService.toCredentials(destEntity);
     const backend = this.storageFactory.forProvider(destEntity.provider);
@@ -154,7 +161,7 @@ export class PlatformBackupService {
     const cmd = [
       'sh',
       '-c',
-      `PGPASSWORD=${this.shQuote(pgPassword)} pg_dumpall -U postgres --clean --if-exists`,
+      `PGPASSWORD=${this.shQuote(pgPassword)} pg_dumpall -U "$POSTGRES_USER" --clean --if-exists`,
     ];
     // Collect raw bytes — decoding per WS chunk would corrupt multibyte chars
     // straddling a chunk boundary and silently poison the restore.
@@ -194,7 +201,7 @@ export class PlatformBackupService {
     const cmd = [
       'sh',
       '-c',
-      `PGPASSWORD=${this.shQuote(pgPassword)} psql -U postgres -tAc ` +
+      `PGPASSWORD=${this.shQuote(pgPassword)} psql -U "$POSTGRES_USER" -tAc ` +
         `"SELECT datname FROM pg_database WHERE datistemplate = false"`,
     ];
     try {
@@ -240,7 +247,11 @@ export class PlatformBackupService {
     );
     try {
       await fs.writeFile(tmp, data, { mode: 0o600 });
-      return await backend.uploadFile(creds, key, tmp, contentType);
+      // uploadFile() returns the full (pathPrefix-joined) key it wrote to;
+      // callers that store this as an artifact location's objectKeyPrefix
+      // need the relative key instead (getUsage/listObjects re-join pathPrefix).
+      await backend.uploadFile(creds, key, tmp, contentType);
+      return key;
     } finally {
       await fs.rm(tmp, { force: true });
     }
@@ -249,6 +260,18 @@ export class PlatformBackupService {
   private shQuote(v: string): string {
     const escaped = v.replaceAll("'", String.raw`'\''`);
     return `'${escaped}'`;
+  }
+
+  private async resolvePgPassword(kubeconfig: string): Promise<string | null> {
+    const out = await this.kubernetesService.execInPod(
+      kubeconfig,
+      'flui-system',
+      this.pgSelector(),
+      this.pgContainer(),
+      ['sh', '-c', 'printenv POSTGRES_PASSWORD'],
+    );
+    const pw = out.trim();
+    return pw.length > 0 ? pw : null;
   }
 
   private pgSelector(): string {

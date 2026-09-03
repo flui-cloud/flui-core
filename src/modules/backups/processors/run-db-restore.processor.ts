@@ -9,6 +9,7 @@ import {
   OperationStep,
 } from '../../infrastructure/servers/entities/infrastructure-operations.entity';
 import { ApplicationEntity } from '../../applications/entities/application.entity';
+import { UserEntity } from '../../auth/entities/user.entity';
 import { CatalogInstallerService } from '../../catalog/services/catalog-installer.service';
 import { CatalogInstallEntity } from '../../catalog/entities/catalog-install.entity';
 import { CatalogInstallStatus } from '../../catalog/enums/catalog-install-status.enum';
@@ -50,6 +51,8 @@ export class RunDbRestoreProcessor {
     private readonly appRepo: Repository<ApplicationEntity>,
     @InjectRepository(CatalogInstallEntity)
     private readonly installRepo: Repository<CatalogInstallEntity>,
+    @InjectRepository(UserEntity)
+    private readonly userRepo: Repository<UserEntity>,
     private readonly restoreRepo: RestoreJobRepository,
     private readonly artifactRepo: BackupArtifactRepository,
     private readonly destRepo: BackupDestinationRepository,
@@ -137,6 +140,13 @@ export class RunDbRestoreProcessor {
       };
 
       await setStep(OperationStep.RESTORE_CREATE_VELERO_CR, 30);
+      // installer.install() persists the email onto the install row, and the
+      // owning namespace is derived from it downstream in CatalogInstallProcessor
+      // — a queue processor has no request principal to read it off, so it has
+      // to be looked up here or every restore fails placement.
+      const triggeringUser = await this.userRepo.findOne({
+        where: { id: restore.userId },
+      });
       const { install } = await this.installer.install(
         POSTGRESQL_SLUG,
         {
@@ -145,6 +155,7 @@ export class RunDbRestoreProcessor {
           envOverrides,
         },
         restore.userId,
+        triggeringUser?.email,
       );
       await this.restoreRepo.update(restoreJobId, {
         previewResult: { createdInstallId: install.id },

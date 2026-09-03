@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { BullModule } from '@nestjs/bull';
 import { ApplicationEntity } from '../applications/entities/application.entity';
+import { UserEntity } from '../auth/entities/user.entity';
 import { ClusterEntity } from '../infrastructure/clusters/entities/cluster.entity';
 import { ClusterNodeEntity } from '../infrastructure/clusters/entities/cluster-node.entity';
 import { InfrastructureOperationEntity } from '../infrastructure/servers/entities/infrastructure-operations.entity';
@@ -32,6 +33,7 @@ import { DB_LIFECYCLE_QUEUE } from './db-lifecycle.constants';
       ClusterNodeEntity,
       InfrastructureOperationEntity,
       CatalogInstallEntity,
+      UserEntity,
     ]),
     BullModule.registerQueue({ name: DB_LIFECYCLE_QUEUE }),
     SharedInfrastructureModule,

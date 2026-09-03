@@ -23,9 +23,15 @@ export default class BackupPolicyShow extends Command {
     this.log(`   ${chalk.bold('ID:')}        ${p.id}`);
     this.log(`   ${chalk.bold('Name:')}      ${p.name}`);
     this.log(`   ${chalk.bold('Cluster:')}   ${p.clusterId}`);
+    this.log(`   ${chalk.bold('Engine:')}    ${p.engineClass ?? 'volume'}`);
     this.log(`   ${chalk.bold('Profile:')}   ${p.profile}`);
     this.log(`   ${chalk.bold('Scope:')}     ${p.scope}`);
-    if (p.schedule) this.log(`   ${chalk.bold('Schedule:')}  ${p.schedule}`);
+    if (p.scopeSelector?.applicationIds?.length)
+      this.log(
+        `   ${chalk.bold('Apps:')}      ${p.scopeSelector.applicationIds.join(', ')}`,
+      );
+    if (p.cronSchedule)
+      this.log(`   ${chalk.bold('Schedule:')}  ${p.cronSchedule}`);
     if (typeof p.retentionDays === 'number')
       this.log(`   ${chalk.bold('Retention:')} ${p.retentionDays} days`);
     if (p.destinations?.length) {

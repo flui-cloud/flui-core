@@ -11,6 +11,7 @@ const SCOPES = [
   'label_selector',
 ] as const;
 const PROFILES = ['single', 'mirrored', 'custom'] as const;
+const ENGINE_CLASSES = ['volume', 'database', 'platform'] as const;
 
 export default class BackupPolicyCreate extends Command {
   static readonly description = 'Create a backup policy';
@@ -18,12 +19,19 @@ export default class BackupPolicyCreate extends Command {
   static readonly examples = [
     '<%= config.bin %> <%= command.id %> --name daily-all --cluster <id> --scope cluster_all --schedule "0 2 * * *" --retention-days 14 --destination <destId>',
     '<%= config.bin %> <%= command.id %> --name app-snap --cluster <id> --scope applications --scope-namespaces ns1,ns2 --destination <destId>',
+    '<%= config.bin %> <%= command.id %> --name pg-continuous --cluster <id> --scope applications --scope-apps <appId> --engine-class database --destination <destId>',
   ];
 
   static readonly flags = {
     name: Flags.string({ required: true }),
     cluster: Flags.string({ required: true, description: 'Cluster ID' }),
     scope: Flags.string({ required: true, options: [...SCOPES] }),
+    'engine-class': Flags.string({
+      options: [...ENGINE_CLASSES],
+      default: 'volume',
+      description:
+        'volume = Velero snapshot (default). database = continuous pgbackrest backup for one Postgres app (scope=applications, exactly one --scope-apps id, single destination). platform = the Flui control-plane database itself.',
+    }),
     'scope-namespaces': Flags.string({
       description: 'Comma-separated namespaces (for scope=namespaces)',
     }),
@@ -81,8 +89,12 @@ export default class BackupPolicyCreate extends Command {
         name: flags.name,
         clusterId: flags.cluster,
         scope: flags.scope,
+        engineClass: flags['engine-class'] as
+          | 'volume'
+          | 'database'
+          | 'platform',
         profile: flags.profile,
-        schedule: flags.schedule,
+        cronSchedule: flags.schedule,
         retentionDays: flags['retention-days'],
         retentionMaxCopies: flags['retention-max-copies'],
         enabled: flags.enabled,

@@ -53,6 +53,11 @@ export interface BackupPolicy {
   cronSchedule?: string;
   schedule?: string;
   retentionDays?: number;
+  scopeSelector?: {
+    applicationIds?: string[];
+    namespaces?: string[];
+    [key: string]: unknown;
+  };
   destinations?: Array<{
     destinationId: string;
     role: string;
@@ -74,7 +79,9 @@ export interface CreatePolicyInput {
   clusterId: string;
   scope: string;
   profile: string;
-  schedule?: string;
+  engineClass?: 'volume' | 'database' | 'platform';
+  /** The API's field is cronSchedule — see CreateBackupPolicyDto. */
+  cronSchedule?: string;
   retentionDays?: number;
   retentionMaxCopies?: number;
   enabled?: boolean;

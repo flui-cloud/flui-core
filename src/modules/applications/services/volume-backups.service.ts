@@ -18,7 +18,7 @@ import {
 import { EncryptionService } from '../../shared/encryption/services/encryption.service';
 import { ApplicationsRepository } from '../repositories/applications.repository';
 import { AppResourcesRepository } from '../repositories/app-resources.repository';
-import { ApplicationResourceKind } from '../enums/application-resource-kind.enum';
+import { ApplicationVolumeClaimsService } from './application-volume-claims.service';
 import { ObjectStorageProvisionerFactory } from '../../storage/factories/object-storage-provisioner.factory';
 import { StorageBackendProvider } from '../../storage/enums/storage-backend-provider.enum';
 import { AppOperationRunner } from './app-operation-runner.service';
@@ -82,6 +82,7 @@ export class VolumeBackupsService {
     private readonly clusterRepository: Repository<ClusterEntity>,
     private readonly applicationsRepository: ApplicationsRepository,
     private readonly appResourcesRepository: AppResourcesRepository,
+    private readonly volumeClaims: ApplicationVolumeClaimsService,
     private readonly volumeExportFactory: VolumeExportFactory,
     private readonly encryptionService: EncryptionService,
     private readonly objectStorageProvisionerFactory: ObjectStorageProvisionerFactory,
@@ -93,7 +94,11 @@ export class VolumeBackupsService {
   ): Promise<BackupResponse & { operationId: string }> {
     const { app, cluster, kubeconfig, ops, provider } =
       await this.resolveAppContext(request.applicationId);
-    const pvcName = await this.resolvePvcName(app.id, request.volumeName);
+    const pvcName = await this.resolvePvcName(
+      kubeconfig,
+      app,
+      request.volumeName,
+    );
 
     const destination = await this.resolveDestination(
       request.destination,
@@ -306,38 +311,46 @@ export class VolumeBackupsService {
   }
 
   private async resolvePvcName(
-    applicationId: string,
+    kubeconfig: string,
+    app: { id: string; slug: string; k8sNamespace: string },
     explicitName: string | undefined,
   ): Promise<string> {
-    const resources =
-      await this.appResourcesRepository.findByApplicationId(applicationId);
-    const pvcs = resources.filter(
-      (r) => r.kind === ApplicationResourceKind.PERSISTENT_VOLUME_CLAIM,
+    // A StatefulSet's volumeClaimTemplates never get a standalone PVC manifest
+    // (and so no app_resources row) — resolveForApplication also matches on
+    // the <template>-<statefulset>-<ordinal> naming Kubernetes itself mints,
+    // which is the only way a database-shaped app's claim is ever found.
+    const tracked = await this.appResourcesRepository
+      .findByApplicationId(app.id)
+      .catch(() => []);
+    const claims = await this.volumeClaims.resolveForApplication(
+      kubeconfig,
+      app,
+      tracked,
     );
-    if (pvcs.length === 0) {
+    if (claims.length === 0) {
       throw new BadRequestException(
-        `Application ${applicationId} has no PersistentVolumeClaim — nothing to back up`,
+        `Application ${app.id} has no PersistentVolumeClaim — nothing to back up`,
       );
     }
     if (explicitName) {
-      const match = pvcs.find((p) => p.name === explicitName);
+      const match = claims.find((c) => c.name === explicitName);
       if (!match) {
         throw new BadRequestException(
-          `Volume "${explicitName}" not found on application. Available: ${pvcs
-            .map((p) => p.name)
+          `Volume "${explicitName}" not found on application. Available: ${claims
+            .map((c) => c.name)
             .join(', ')}`,
         );
       }
       return match.name;
     }
-    if (pvcs.length > 1) {
+    if (claims.length > 1) {
       throw new BadRequestException(
-        `Application has multiple volumes; specify --volume <name>. Available: ${pvcs
-          .map((p) => p.name)
+        `Application has multiple volumes; specify --volume <name>. Available: ${claims
+          .map((c) => c.name)
           .join(', ')}`,
       );
     }
-    return pvcs[0].name;
+    return claims[0].name;
   }
 
   private buildKeyPrefix(

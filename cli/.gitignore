@@ -6,6 +6,9 @@
 # local dev harness (not shipped)
 /dev
 
+# throwaway scripts for probing a live install (not shipped)
+/.probe
+
 # Logs
 logs
 *.log

@@ -5,6 +5,7 @@ import { ConfigModule } from '@nestjs/config';
 import { ClusterEntity } from '../infrastructure/clusters/entities/cluster.entity';
 import { InfrastructureOperationEntity } from '../infrastructure/servers/entities/infrastructure-operations.entity';
 import { ApplicationEntity } from '../applications/entities/application.entity';
+import { UserEntity } from '../auth/entities/user.entity';
 import { SharedInfrastructureModule } from '../infrastructure/shared/shared-infrastructure.module';
 import { ClustersModule } from '../infrastructure/clusters/clusters.module';
 import { EncryptionModule } from '../shared/encryption/encryption.module';
@@ -87,6 +88,7 @@ import { BACKUP_QUEUE } from './backups.constants';
       InfrastructureOperationEntity,
       ApplicationEntity,
       CatalogInstallEntity,
+      UserEntity,
     ]),
     BullModule.registerQueue({ name: BACKUP_QUEUE }),
     SharedInfrastructureModule,

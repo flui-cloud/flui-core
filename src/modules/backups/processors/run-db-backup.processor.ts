@@ -117,13 +117,15 @@ export class RunDbBackupProcessor {
       });
       const saved = await this.artifactRepo.saveArtifact(artifact);
 
-      const prefix = (destEntity.pathPrefix ?? '').replace(/^\/+|\/+$/g, '');
       const loc: Partial<BackupArtifactLocationEntity> = {
         artifactId: saved.id,
         destinationId: destEntity.id,
         role: DestinationRole.PRIMARY,
         state: ArtifactLocationState.AVAILABLE,
-        objectKeyPrefix: `${prefix ? prefix + '/' : ''}pgbackrest/${appId}/`,
+        // Relative to pathPrefix — pgbackrest's own repo1-path already
+        // includes it (see PgbackrestService.repoPath), and getUsage()/
+        // listObjects() re-prepend it via joinPrefix, so it must not be here.
+        objectKeyPrefix: `pgbackrest/${appId}/`,
       };
       await this.artifactRepo.saveLocation(loc as BackupArtifactLocationEntity);
 

@@ -13,6 +13,7 @@ import {
 } from '../enums/backup-job.enum';
 import { BackupEngineClass } from '../enums/backup-engine-class.enum';
 import { BackupJobEntity } from '../entities/backup-job.entity';
+import { BackupArtifactEntity } from '../entities/backup-artifact.entity';
 import {
   InfrastructureOperationEntity,
   OperationStatus,
@@ -130,10 +131,19 @@ export class BackupJobsService {
     return { job: saved, operationId: op.id };
   }
 
-  async findById(id: string): Promise<BackupJobEntity> {
+  /**
+   * The job, with the artifact it produced attached — the restore wizard reads
+   * `artifact.id` off this response to know what to restore (spec: a job has no
+   * stored reference to its own artifact, only the artifact has a `backupJobId`
+   * pointing back, so this is the one place that join has to happen).
+   */
+  async findById(
+    id: string,
+  ): Promise<BackupJobEntity & { artifact: BackupArtifactEntity | null }> {
     const job = await this.jobRepo.findById(id);
     if (!job) throw new NotFoundException(`BackupJob ${id} not found`);
-    return job;
+    const artifact = await this.artifactRepo.findByJob(id);
+    return { ...job, artifact };
   }
 
   async listByCluster(clusterId: string): Promise<BackupJobEntity[]> {

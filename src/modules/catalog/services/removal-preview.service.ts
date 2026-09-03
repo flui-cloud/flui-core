@@ -10,7 +10,6 @@ import {
   ApplicationVolumeClaim,
   ApplicationVolumeClaimsService,
 } from '../../applications/services/application-volume-claims.service';
-import { ApplicationResourceKind } from '../../applications/enums/application-resource-kind.enum';
 import { ApplicationEntity } from '../../applications/entities/application.entity';
 import { CatalogInstallerService } from './catalog-installer.service';
 import { formatStorageBytes } from '../../../common/utils/storage-quantity.util';
@@ -142,30 +141,7 @@ export class RemovalPreviewService {
     const tracked = await this.appResources
       .findByApplicationId(app.id)
       .catch(() => []);
-    const statefulSetNames = new Set(
-      tracked
-        .filter((r) => r.kind === ApplicationResourceKind.STATEFUL_SET)
-        .map((r) => r.name),
-    );
-    // A set Flui never recorded still answers to the label it was written with.
-    // The preview has to see it, because the sweep will.
-    for (const name of await this.volumeClaims.listStatefulSetsOwnedBy(
-      kubeconfig,
-      app,
-    )) {
-      statefulSetNames.add(name);
-    }
-
-    return this.volumeClaims.listForApplication(kubeconfig, app, {
-      statefulSetNames,
-      trackedNames: new Set(
-        tracked
-          .filter(
-            (r) => r.kind === ApplicationResourceKind.PERSISTENT_VOLUME_CLAIM,
-          )
-          .map((r) => r.name),
-      ),
-    });
+    return this.volumeClaims.resolveForApplication(kubeconfig, app, tracked);
   }
 
   private toDto(

@@ -105,6 +105,38 @@ export class ApplicationVolumeClaimsService {
   }
 
   /**
+   * The one-call version of {@link listForApplication}: folds in the tracked
+   * `app_resources` rows itself, so backup/snapshot/removal-preview don't each
+   * reimplement the statefulSetNames/trackedNames split. Callers pass whatever
+   * rows they already loaded (or `[]` — a StatefulSet app's claim still
+   * resolves via the volumeClaimTemplate name match, since nothing records it).
+   */
+  async resolveForApplication(
+    kubeconfig: string,
+    app: Pick<ApplicationEntity, 'id' | 'slug' | 'k8sNamespace'>,
+    trackedRows: ReadonlyArray<{ kind: ApplicationResourceKind; name: string }>,
+  ): Promise<ApplicationVolumeClaim[]> {
+    const statefulSetNames = new Set(
+      trackedRows
+        .filter((r) => r.kind === ApplicationResourceKind.STATEFUL_SET)
+        .map((r) => r.name),
+    );
+    for (const name of await this.listStatefulSetsOwnedBy(kubeconfig, app)) {
+      statefulSetNames.add(name);
+    }
+    return this.listForApplication(kubeconfig, app, {
+      statefulSetNames,
+      trackedNames: new Set(
+        trackedRows
+          .filter(
+            (r) => r.kind === ApplicationResourceKind.PERSISTENT_VOLUME_CLAIM,
+          )
+          .map((r) => r.name),
+      ),
+    });
+  }
+
+  /**
    * Who a claim belongs to. A `flui-app-id` label naming somebody else settles
    * it outright — no name heuristic gets a vote after that.
    */

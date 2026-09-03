@@ -144,11 +144,11 @@ export class RunBackupJobProcessor {
         destinationId: primaryDestEntity.id,
         role: DestinationRole.PRIMARY,
         state: ArtifactLocationState.AVAILABLE,
-        objectKeyPrefix:
-          `${primaryDestEntity.pathPrefix ?? ''}/velero/backups/${veleroBackupName}/`.replace(
-            /^\/+/,
-            '',
-          ),
+        // Relative to the destination's own pathPrefix, which Velero's BSL is
+        // configured with directly (toVeleroBSL's `prefix`) and which
+        // GenericS3Backend.getUsage()/listObjects() re-prepend via joinPrefix —
+        // baking pathPrefix in here too would double it.
+        objectKeyPrefix: `backups/${veleroBackupName}/`,
       };
       await this.artifactRepo.saveLocation(
         primaryLoc as BackupArtifactLocationEntity,
@@ -214,7 +214,7 @@ export class RunBackupJobProcessor {
         destinationId: r.destinationId,
         role: DestinationRole.REPLICA,
         state: ArtifactLocationState.PENDING,
-        objectKeyPrefix: `velero/backups/${veleroBackupName}/`,
+        objectKeyPrefix: `backups/${veleroBackupName}/`,
       };
       const savedLoc = await this.artifactRepo.saveLocation(
         replicaLoc as BackupArtifactLocationEntity,

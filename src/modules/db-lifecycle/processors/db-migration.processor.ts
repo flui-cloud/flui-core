@@ -10,6 +10,7 @@ import {
 } from '../../infrastructure/servers/entities/infrastructure-operations.entity';
 import { CatalogInstallerService } from '../../catalog/services/catalog-installer.service';
 import { CatalogInstallEntity } from '../../catalog/entities/catalog-install.entity';
+import { UserEntity } from '../../auth/entities/user.entity';
 import { CatalogInstallStatus } from '../../catalog/enums/catalog-install-status.enum';
 import { RestoreJobsService } from '../../backups/services/restore-jobs.service';
 import { RestoreJobStatus } from '../../backups/enums/restore-job.enum';
@@ -58,6 +59,8 @@ export class DbMigrationProcessor {
     private readonly opRepo: Repository<InfrastructureOperationEntity>,
     @InjectRepository(CatalogInstallEntity)
     private readonly installRepo: Repository<CatalogInstallEntity>,
+    @InjectRepository(UserEntity)
+    private readonly userRepo: Repository<UserEntity>,
     private readonly installer: CatalogInstallerService,
     private readonly repl: DbReplicationService,
     private readonly restoreJobs: RestoreJobsService,
@@ -86,10 +89,18 @@ export class DbMigrationProcessor {
         OperationStep.DB_MIGRATE_PROVISION_TARGET,
         10,
       );
+      // installer.install() persists the email onto the install row, and the
+      // owning namespace is derived from it downstream in CatalogInstallProcessor
+      // — a queue processor has no request principal to read it off, so it has
+      // to be looked up here or the install fails placement.
+      const triggeringUser = await this.userRepo.findOne({
+        where: { id: mig.userId },
+      });
       const { install } = await this.installer.install(
         POSTGRESQL_SLUG,
         { clusterId: mig.targetClusterId, displayName: mig.displayName },
         mig.userId,
+        triggeringUser?.email,
       );
       mig.dstInstallId = install.id;
       await this.migRepo.save(mig);
