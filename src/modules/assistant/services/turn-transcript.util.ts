@@ -1,4 +1,8 @@
 import { ChatCompletionMessage, ToolCall } from '../interfaces/chat-completion';
+import { didNotTakeEffect } from './agent-pause.util';
+import { cacheKey, parseArgs } from './tool-call.util';
+import { findTool } from '../../mcp/tools/tool-registry';
+import { SCOPE_TIER } from '../../mcp/constants/mcp-scopes';
 
 /**
  * What the conversation already says happened — read from the transcript,
@@ -53,4 +57,50 @@ export function unansweredToolCalls(
   if (!proposed) return [];
   const answered = answeredToolCallIds(conversation);
   return proposed.filter((tc) => !answered.has(tc.id));
+}
+
+function toolResultsById(
+  conversation: readonly ChatCompletionMessage[],
+): Map<string, string> {
+  const map = new Map<string, string>();
+  for (const m of conversation) {
+    if (m.role === 'tool' && m.tool_call_id) {
+      map.set(m.tool_call_id, typeof m.content === 'string' ? m.content : '');
+    }
+  }
+  return map;
+}
+
+/** True iff this tool_call is a write/destructive that already executed (not denied/failed). */
+function wasExecutedMutation(
+  tc: ToolCall,
+  resultById: Map<string, string>,
+): boolean {
+  const def = findTool(tc.function.name);
+  if (!def) return false;
+  const tier = SCOPE_TIER[def.scope];
+  if (tier !== 'write' && tier !== 'destructive') return false;
+  const result = resultById.get(tc.id);
+  return result !== undefined && !didNotTakeEffect(result);
+}
+
+/**
+ * Keys (name+args) of write/destructive tool calls that already EXECUTED in this
+ * conversation — an assistant tool_call whose tool result is not a denial/refusal/
+ * error. Seeds the idempotency guard so an already-done action can't repeat.
+ */
+export function executedWriteKeys(
+  conversation: readonly ChatCompletionMessage[],
+): Map<string, string> {
+  const resultById = toolResultsById(conversation);
+  const executed = new Map<string, string>();
+  for (const m of conversation) {
+    if (m.role !== 'assistant' || !m.tool_calls) continue;
+    for (const tc of m.tool_calls) {
+      if (wasExecutedMutation(tc, resultById)) {
+        executed.set(cacheKey(tc.function.name, parseArgs(tc)), 'done');
+      }
+    }
+  }
+  return executed;
 }

@@ -26,6 +26,9 @@ import { AssistantGuardService } from './services/assistant-guard.service';
 import { AssistantInferenceService } from './services/assistant-inference.service';
 import { AssistantService } from './services/assistant.service';
 import { AssistantAgentService } from './services/assistant-agent.service';
+import { AssistantToolExecutionService } from './services/assistant-tool-execution.service';
+import { AssistantPendingActionsService } from './services/assistant-pending-actions.service';
+import { AssistantGenerationService } from './services/assistant-generation.service';
 import { ActionCycleRoutes } from './services/action-cycle-routes.service';
 import { KnowledgeService } from './services/knowledge.service';
 import { AssistantRecommendationsService } from './services/assistant-recommendations.service';
@@ -60,6 +63,9 @@ import { AssistantController } from './controllers/assistant.controller';
     ActionCycleRoutes,
     AssistantService,
     AssistantAgentService,
+    AssistantToolExecutionService,
+    AssistantPendingActionsService,
+    AssistantGenerationService,
     AssistantInferenceService,
     AssistantLlmService,
     ModelParamPolicyService,

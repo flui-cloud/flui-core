@@ -109,21 +109,25 @@ describe('what the person confirming in the chat is shown', () => {
 
 /**
  * The predicate is only worth anything if the loop asks it where it matters,
- * and `assistant-agent.service.ts` cannot be imported here — it pulls the
- * Kubernetes client down its tree and the runner refuses it. So the three
- * call sites are checked the way the route sentinels check theirs, by reading
- * the source. Brittle on purpose: the defect this round closes is a rule that
+ * and neither service below can be imported here — both pull the Kubernetes
+ * client down their tree and the runner refuses it. So the three call sites
+ * are checked the way the route sentinels check theirs, by reading the
+ * source. Brittle on purpose: the defect this round closes is a rule that
  * was built, proved and reached by nobody.
  */
 describe('the loop that has to ask it', () => {
-  const source = readFileSync(
-    join(__dirname, 'assistant-agent.service.ts'),
+  const pendingSource = readFileSync(
+    join(__dirname, 'assistant-pending-actions.service.ts'),
+    'utf8',
+  );
+  const executionSource = readFileSync(
+    join(__dirname, 'assistant-tool-execution.service.ts'),
     'utf8',
   );
 
   it('raises the request before the card is built, not after the click', () => {
-    const collect = source.slice(
-      source.indexOf('private async collectPending'),
+    const collect = pendingSource.slice(
+      pendingSource.indexOf('async collectPending'),
     );
     const body = collect.slice(
       0,
@@ -138,15 +142,21 @@ describe('the loop that has to ask it', () => {
   it('answers for the person only where the request was shown to them', () => {
     // Same predicate on both sides. If the assent could be given on a call the
     // card never carried a request for, the round would have moved the defect
-    // rather than closed it.
-    const branch = source.slice(source.indexOf('const answered ='));
+    // rather than closed it. This one lives in AssistantToolExecutionService's
+    // callTool — the retry after the person assents in chat — not in the
+    // request-raising service above.
+    const branch = executionSource.slice(
+      executionSource.indexOf('const answered ='),
+    );
     const condition = branch.slice(0, branch.indexOf(';'));
     expect(condition).toContain('this.cycleRoutes.reaches(def.routes)');
     expect(condition).toContain('assentInChat(');
   });
 
   it('raises nothing for a tool the cycle does not look at', () => {
-    const raise = source.slice(source.indexOf('private async raiseRequest'));
+    const raise = pendingSource.slice(
+      pendingSource.indexOf('private async raiseRequest'),
+    );
     const guard = raise.slice(0, raise.indexOf('\n', raise.indexOf('return')));
     expect(guard).toContain('!this.cycleRoutes.reaches(def.routes)');
   });

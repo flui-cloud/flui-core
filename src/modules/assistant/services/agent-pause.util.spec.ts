@@ -231,46 +231,63 @@ describe('a refusal that already stands', () => {
  * The one thing a unit test of this file cannot reach: whether the loop calls
  * it.
  *
- * `assistant-agent.service.ts` cannot be imported here — it pulls the
+ * None of the three files below can be imported here — each pulls the
  * Kubernetes client down its tree and the runner refuses it, which is why the
- * rules live in this file at all. So the caller is checked the way the route
- * sentinels check theirs: by reading the source. Brittle on purpose. The defect
- * it stands against is the one this round exists to close — a rule built,
- * proved and reached by nobody — and it had already happened once here, with
- * the wait recorded as a turn that started nothing.
+ * rules live in this file at all. So the callers are checked the way the
+ * route sentinels check theirs: by reading the source. Brittle on purpose.
+ * The defect it stands against is the one this round exists to close — a
+ * rule built, proved and reached by nobody — and it had already happened
+ * once here, with the wait recorded as a turn that started nothing.
  */
 describe('the loop that has to hand the wait over', () => {
-  const source = readFileSync(
-    join(__dirname, 'assistant-agent.service.ts'),
+  const executionSource = readFileSync(
+    join(__dirname, 'assistant-tool-execution.service.ts'),
+    'utf8',
+  );
+  const pendingSource = readFileSync(
+    join(__dirname, 'assistant-pending-actions.service.ts'),
+    'utf8',
+  );
+  const toolCallSource = readFileSync(
+    join(__dirname, 'tool-call.util.ts'),
     'utf8',
   );
 
   it('records the refusal itself, not just the words it turned into', () => {
-    const branch = source.slice(source.indexOf('const message = waitMessage('));
+    const branch = executionSource.slice(
+      executionSource.indexOf('const message = waitMessage('),
+    );
     const call = branch.slice(0, branch.indexOf('steps.push('));
-    expect(call).toContain('this.recordTool(');
+    expect(call).toContain(
+      'recordTool(this.audit, ctx, name, def, true, message',
+    );
     expect(call).toContain('waiting: refusal');
   });
 
   it('derives both columns from the same helper, in one place', () => {
-    expect(source).toContain('waitingAuditRow(call?.waiting)');
+    // recordTool is the one place any tool-call path writes an audit row —
+    // both AssistantToolExecutionService and AssistantPendingActionsService
+    // call it rather than rolling their own.
+    expect(toolCallSource).toContain('waitingAuditRow(call?.waiting)');
     // Not a second, hand-rolled copy of the same two fields somewhere else.
-    expect(source.match(/input_required/g)).toBeNull();
+    const everywhere = executionSource + pendingSource + toolCallSource;
+    expect(everywhere.match(/input_required/g)).toBeNull();
   });
 
   it('never offers a card for a call the cycle has already refused', () => {
     // The chat's own confirmation is driven by the tool's tier, so without this
     // branch a settled no is followed by "Confirm delete".
-    const raise = source.slice(source.indexOf('private async raiseRequest'));
-    const body = raise.slice(0, raise.indexOf('private async describePending'));
-    expect(body).toContain('isStandingRefusal(error)');
-    expect(body).toContain('standingRefusalMessage(');
-    expect(body).toContain("kind: 'settled'");
+    const raise = pendingSource.slice(
+      pendingSource.indexOf('private async raiseRequest'),
+    );
+    expect(raise).toContain('isStandingRefusal(error)');
+    expect(raise).toContain('standingRefusalMessage(');
+    expect(raise).toContain("kind: 'settled'");
   });
 
   it('records a settled refusal the way the MCP surface records it', () => {
-    const branch = source.slice(
-      source.indexOf('if (isStandingRefusal(error))'),
+    const branch = pendingSource.slice(
+      pendingSource.indexOf('if (isStandingRefusal(error))'),
     );
     const call = branch.slice(0, branch.indexOf('return {'));
     // `allowed: false` — the scope handed the tool over and the cycle refused

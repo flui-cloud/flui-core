@@ -97,7 +97,7 @@ describe('what a resume still has to decide', () => {
  * are. Brittle on purpose: a rule nobody calls is precisely the defect this
  * series has met six times.
  */
-describe('the loop that has to write the settled call down', () => {
+describe('the turn that has to decide a resume from the transcript', () => {
   const source = readFileSync(
     join(__dirname, 'assistant-agent.service.ts'),
     'utf8',
@@ -107,6 +107,17 @@ describe('the loop that has to write the settled call down', () => {
     expect(source).toContain('unansweredToolCalls(conversation)');
     expect(source).not.toContain("tail?.role === 'assistant'");
   });
+});
+
+/**
+ * Same rule, moved with the tool-dispatch loop itself into
+ * AssistantToolExecutionService — see that file's own resolveToolCalls.
+ */
+describe('the loop that has to write the settled call down', () => {
+  const source = readFileSync(
+    join(__dirname, 'assistant-tool-execution.service.ts'),
+    'utf8',
+  );
 
   it('writes a settled call into the conversation before it returns a card', () => {
     const body = source.slice(source.indexOf('const settledIds = new Set'));
