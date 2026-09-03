@@ -94,7 +94,7 @@
     "@aws-sdk/client-s3": "^3.1041.0",
     "@aws-sdk/s3-request-presigner": "^3.1041.0",
     "@flui-cloud/mail": "^0.1.0",
-    "@flui-cloud/semantic-surface": "link:../semantic-surface",
+    "@flui-cloud/semantic-surface": "file:vendor/flui-cloud-semantic-surface-0.1.0.tgz",
     "@flui-cloud/spec": "^0.9.0",
     "@kubernetes/client-node": "^1.4.0",
     "@modelcontextprotocol/node": "2.0.0",

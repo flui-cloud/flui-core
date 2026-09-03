@@ -2,6 +2,11 @@ FROM node:22-alpine AS builder
 WORKDIR /app
 RUN corepack enable
 COPY package.json pnpm-lock.yaml .npmrc* ./
+# vendor/ holds local tarball dependencies (file:vendor/*.tgz in package.json,
+# for packages not yet published to npm) — pnpm needs them on disk to resolve
+# the lockfile, so they have to land before install, not with the rest of the
+# source in the next COPY.
+COPY vendor/ ./vendor/
 RUN pnpm install --frozen-lockfile --shamefully-hoist
 COPY . .
 RUN pnpm run build
