@@ -1,7 +1,0 @@
-{
-  "bootstrapRef": "branch:master",
-  "images": {
-    "fluiApi": "latest",
-    "fluiWeb": "latest"
-  }
-}
