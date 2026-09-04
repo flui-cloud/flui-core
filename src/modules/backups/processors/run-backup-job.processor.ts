@@ -27,7 +27,12 @@ import { BackupPolicyStatus } from '../enums/backup-policy-status.enum';
 import { BackupArtifactLocationEntity } from '../entities/backup-artifact-location.entity';
 import { BackupDestinationEntity } from '../entities/backup-destination.entity';
 import { BackupPolicyEntity } from '../entities/backup-policy.entity';
-import { BACKUP_QUEUE, BACKUP_JOB_TYPES } from '../backups.constants';
+import {
+  BACKUP_QUEUE,
+  BACKUP_JOB_TYPES,
+  APP_RESOURCE_LABEL,
+  FLUI_LABELS,
+} from '../backups.constants';
 import { BackupScope } from '../enums/backup-scope.enum';
 
 @Processor(BACKUP_QUEUE)
@@ -121,6 +126,27 @@ export class RunBackupJobProcessor {
       const phase = finalCr?.status?.phase;
       await this.assertBackupUsable(kubeconfig, veleroBackupName, finalCr);
 
+      // A Completed backup says nothing about whether volume data came with it
+      // — record what was actually captured so "the backup succeeded" and "my
+      // database is in it" stop being the same sentence.
+      const coverage = policy?.includePvcs
+        ? await this.veleroClient
+            .summarizeVolumeCoverage(kubeconfig, veleroBackupName, namespaces)
+            .catch((err: any) => {
+              this.logger.warn(
+                `[run-backup] could not measure volume coverage: ${err?.message}`,
+              );
+              return null;
+            })
+        : null;
+      if (coverage?.skipped.length) {
+        this.logger.warn(
+          `[run-backup] ${veleroBackupName}: ${coverage.skipped.length} volume(s) in scope were NOT captured ` +
+            `(Velero's file-system backup cannot read hostPath volumes, which is Flui's dedicated storage class): ` +
+            coverage.skipped.join(', '),
+        );
+      }
+
       await setStep(OperationStep.BACKUP_RUN_RECORD_ARTIFACT, 60);
       const artifact = this.artifactRepo.createArtifact({
         backupJobId,
@@ -135,6 +161,12 @@ export class RunBackupJobProcessor {
           phase,
           startTimestamp: finalCr?.status?.startTimestamp,
           completionTimestamp: finalCr?.status?.completionTimestamp,
+          ...(coverage
+            ? {
+                volumesCaptured: coverage.captured,
+                volumesSkipped: coverage.skipped,
+              }
+            : {}),
         },
       });
       const savedArtifact = await this.artifactRepo.saveArtifact(artifact);
@@ -242,6 +274,19 @@ export class RunBackupJobProcessor {
       policy.scopeSelector?.namespaces
     ) {
       return policy.scopeSelector.namespaces;
+    }
+    // Creation refuses these scopes now, but rows predating that check still
+    // run — and they capture the whole cluster, not what their scope line says.
+    // Say so on every run rather than let the row keep lying quietly.
+    if (
+      policy.scope === BackupScope.APPLICATIONS ||
+      policy.scope === BackupScope.LABEL_SELECTOR
+    ) {
+      this.logger.warn(
+        `[run-backup] policy scope=${policy.scope} is not supported by the Velero ` +
+          'engine and is being backed up as the WHOLE cluster. Recreate it with ' +
+          'scope=namespaces, or protect the application with a database-class policy.',
+      );
     }
     return [];
   }
@@ -360,12 +405,12 @@ export class RunBackupJobProcessor {
         includedNamespaces: [ctx.namespace],
         includePvcs: true,
         labelSelector: ctx.applicationId
-          ? { 'flui.cloud/applicationId': ctx.applicationId }
+          ? { [APP_RESOURCE_LABEL]: ctx.applicationId }
           : undefined,
         extraLabels: {
-          'flui.cloud/scope': 'pre-deploy',
-          'flui.cloud/applicationId': ctx.applicationId ?? '',
-          'flui.cloud/deployId': ctx.deployId ?? '',
+          [FLUI_LABELS.scope]: 'pre-deploy',
+          [FLUI_LABELS.applicationId]: ctx.applicationId ?? '',
+          [FLUI_LABELS.deployId]: ctx.deployId ?? '',
         },
       });
 
@@ -378,10 +423,39 @@ export class RunBackupJobProcessor {
         throw new Error(`Pre-deploy snapshot failed phase=${phase}`);
       }
 
+      // The same blind spot as a scheduled Velero run, and worse here: this
+      // hook can be REQUIRED, so a deploy is gated on a snapshot that captured
+      // the application's objects and none of a database's data. Measuring it
+      // does not close the gap, but it stops the gate from passing silently.
+      const coverage = await this.veleroClient
+        .summarizeVolumeCoverage(kubeconfig, veleroBackupName, [ctx.namespace])
+        .catch((err: any) => {
+          this.logger.warn(
+            `[pre-deploy] could not measure volume coverage: ${err?.message}`,
+          );
+          return null;
+        });
+      if (coverage && coverage.skipped.length > 0) {
+        this.logger.warn(
+          `[pre-deploy] ${veleroBackupName} captured ${coverage.captured.length} volume(s) ` +
+            `and skipped ${coverage.skipped.length}: ${coverage.skipped.join(', ')} — ` +
+            'a deploy gated on this snapshot is not gated on that data',
+        );
+      }
+
       await this.jobsService.update(backupJobId, {
         veleroBackupName,
         status: BackupJobStatus.COMPLETED,
         finishedAt: new Date(),
+        // Merged rather than replaced: the original trigger context says which
+        // deploy asked for this, and that is why the row exists.
+        triggerContext: coverage
+          ? {
+              ...ctx,
+              volumesCaptured: coverage.captured.length,
+              volumesSkipped: coverage.skipped,
+            }
+          : ctx,
       });
 
       await this.opRepo.update(operationId, {

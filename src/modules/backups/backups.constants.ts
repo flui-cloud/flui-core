@@ -11,6 +11,18 @@ export const VELERO_CREDENTIALS_SECRET_NAME = 'velero-cloud-credentials';
 
 export const RCLONE_IMAGE = 'rclone/rclone:1.68';
 
+/**
+ * The label `ApplicationManifestGeneratorService.buildLabels` puts on every
+ * workload resource, and therefore the only one that selects an application's
+ * resources on a cluster. Every Velero label selector must use this.
+ *
+ * `FLUI_LABELS.applicationId` below is a different thing that reads the same:
+ * an annotation Flui stamps on the Backup CR it creates, describing what the
+ * backup was for. It matches no resource and selects nothing.
+ */
+export const APP_RESOURCE_LABEL = 'flui-app-id';
+
+/** Labels Flui stamps on its OWN Velero objects. Not resource selectors. */
 export const FLUI_LABELS = {
   managedBy: 'managed-by',
   managedByValue: 'flui-cloud',
@@ -33,6 +45,7 @@ export const BACKUP_JOB_TYPES = {
   ENABLE_ETCD_SNAPSHOTS: 'enable-etcd-snapshots',
   CREATE_PROVIDER_SNAPSHOT: 'create-provider-snapshot',
   RUN_PLATFORM_BACKUP: 'run-platform-backup',
+  RUN_VOLUME_COPY: 'run-volume-copy',
 } as const;
 
 export const PRE_DEPLOY_SNAPSHOT_TIMEOUT_MS = 5 * 60 * 1000;
