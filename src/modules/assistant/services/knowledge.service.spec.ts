@@ -6,7 +6,7 @@ describe('KnowledgeService.docLinksFor', () => {
   it('maps a concept id to its docs.flui.cloud route (numeric prefix kept)', () => {
     expect(service.docLinksFor(['concepts/03-cluster-as-a-concept'])).toEqual([
       {
-        title: 'Cluster as a concept',
+        title: 'The cluster as a concept',
         url: 'https://docs.flui.cloud/concepts/03-cluster-as-a-concept/',
       },
     ]);
@@ -17,7 +17,7 @@ describe('KnowledgeService.docLinksFor', () => {
       service.docLinksFor(['cli/clusters-and-nodes', 'cli/index']),
     ).toEqual([
       {
-        title: 'Clusters, nodes, and SSH',
+        title: 'Clusters and nodes',
         url: 'https://docs.flui.cloud/cli/clusters-and-nodes/',
       },
       { title: 'CLI Reference', url: 'https://docs.flui.cloud/cli/' },
