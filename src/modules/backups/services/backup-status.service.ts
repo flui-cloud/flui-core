@@ -185,8 +185,8 @@ export class BackupStatusService {
       alerts.push({
         severity: 'warning',
         code: 'CLUSTERS_WITHOUT_BACKUPS',
-        message: `${input.clustersWithoutBackups} cluster su ${input.clustersTotal} non hanno backup attivi. Configurali in 1 click.`,
-        ctaLabel: 'Attiva backup',
+        message: `${input.clustersWithoutBackups} of ${input.clustersTotal} clusters have no backups.`,
+        ctaLabel: 'Enable backups',
         ctaPath: '/clusters',
       });
     }
@@ -194,8 +194,8 @@ export class BackupStatusService {
       alerts.push({
         severity: 'warning',
         code: 'DEGRADED_POLICIES',
-        message: `${input.degradedPolicies} policy in stato degraded — la replica cross-provider sta fallendo. Verifica le credenziali.`,
-        ctaLabel: 'Verifica destinations',
+        message: `${input.degradedPolicies} policy(ies) degraded — cross-provider replication is failing. Check the credentials.`,
+        ctaLabel: 'Check destinations',
         ctaPath: '/backups/destinations',
       });
     }
@@ -203,8 +203,8 @@ export class BackupStatusService {
       alerts.push({
         severity: 'critical',
         code: 'FAILED_DESTINATIONS',
-        message: `${input.failedDestinations} backup destination non raggiungibili. I prossimi backup potrebbero fallire.`,
-        ctaLabel: 'Apri destinations',
+        message: `${input.failedDestinations} destination(s) unreachable. The next backups may fail.`,
+        ctaLabel: 'Open destinations',
         ctaPath: '/backups/destinations',
       });
     }
@@ -212,12 +212,11 @@ export class BackupStatusService {
       alerts.push({
         severity: 'critical',
         code: 'FAILED_JOBS_24H',
-        message: `${input.failedJobsLast24h} backup falliti nelle ultime 24h.`,
-        ctaLabel: 'Apri storico',
+        message: `${input.failedJobsLast24h} backup run(s) failed in the last 24h.`,
+        ctaLabel: 'Open history',
         ctaPath: '/backups/jobs',
       });
     }
-    // Stale: nessun backup completato negli ultimi 36h ma policy attive
     if (
       input.clustersWithBackups > 0 &&
       (!input.lastSuccessfulBackupAt ||
@@ -228,8 +227,8 @@ export class BackupStatusService {
         severity: 'warning',
         code: 'STALE_BACKUPS',
         message:
-          'Nessun backup completato nelle ultime 36 ore. Lo scheduler potrebbe essere fermo o le destinazioni non raggiungibili.',
-        ctaLabel: 'Diagnosi',
+          'No backup has completed in 36 hours. The scheduler may be stopped, or the destinations unreachable.',
+        ctaLabel: 'Diagnose',
         ctaPath: '/backups',
       });
     }
@@ -237,7 +236,7 @@ export class BackupStatusService {
       alerts.push({
         severity: 'ok',
         code: 'ALL_GOOD',
-        message: 'Tutti i backup sono attivi e in salute.',
+        message: 'All backups are active and healthy.',
       });
     }
     return alerts;

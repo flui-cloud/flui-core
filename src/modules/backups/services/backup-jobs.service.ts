@@ -86,6 +86,8 @@ export class BackupJobsService {
         return BACKUP_JOB_TYPES.RUN_DB_BACKUP;
       case BackupEngineClass.PLATFORM:
         return BACKUP_JOB_TYPES.RUN_PLATFORM_BACKUP;
+      case BackupEngineClass.VOLUME_COPY:
+        return BACKUP_JOB_TYPES.RUN_VOLUME_COPY;
       default:
         return BACKUP_JOB_TYPES.RUN_BACKUP;
     }
@@ -148,6 +150,10 @@ export class BackupJobsService {
 
   async listByCluster(clusterId: string): Promise<BackupJobEntity[]> {
     return this.jobRepo.findByCluster(clusterId);
+  }
+
+  async listByPolicy(policyId: string): Promise<BackupJobEntity[]> {
+    return this.jobRepo.findByPolicy(policyId);
   }
 
   async update(id: string, patch: Partial<BackupJobEntity>): Promise<void> {

@@ -30,6 +30,15 @@ export class BackupJobsController {
     return this.service.findById(id);
   }
 
+  /**
+   * The runs of one policy. Scoped like the cluster route above rather than an
+   * unbounded list: the caller always knows which policy it is asking about.
+   */
+  @Get('policy/:policyId')
+  async listByPolicy(@Param('policyId') policyId: string) {
+    return this.service.listByPolicy(policyId);
+  }
+
   @Get('cluster/:clusterId')
   async listByCluster(@Param('clusterId') clusterId: string) {
     return this.service.listByCluster(clusterId);
