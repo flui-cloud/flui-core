@@ -91,6 +91,38 @@ spec:
           - CPUThrottling
         cooldown: 10m
 
+  # Born able to be backed up, the same way the Flui Postgres image is born
+  # with `wal_level=logical` and `archive_mode=on`. `log_bin` is not a dynamic
+  # variable in MariaDB: enabling it later means restarting the database, so a
+  # user who decides to protect an existing instance would pay an outage for
+  # the privilege — on the very database the backup exists to protect.
+  #
+  # The standing cost is small and measured: about 0.4 KB per minute on an idle
+  # server, bounded per file by `max_binlog_size`. Binary logging is also the
+  # prerequisite for live migration, so this is not paid for backup alone.
+  configFiles:
+    - path: /etc/mysql/conf.d/flui.cnf
+      content: |
+        [mariadb]
+        log_bin = /var/lib/mysql/binlog
+        server_id = 1
+
+        # ROW, never MIXED. Statement replay can diverge on non-deterministic
+        # statements, and the way that surfaces is the worst outcome a backup
+        # can have: the restore succeeds and the data is subtly wrong.
+        binlog_format = ROW
+
+        # Bounds how much of the active file has to be re-uploaded each tick,
+        # and how much a single lost file costs.
+        max_binlog_size = 64M
+
+        # The default is ten days of self-purging, on a timer that knows nothing
+        # about what has been shipped. Flui raises this to `0` while a policy is
+        # active and purges only what object storage has confirmed — so a
+        # stalled shipper fills a disk, loudly, instead of quietly eating the
+        # recovery window. Until then the server's own default applies.
+        binlog_expire_logs_seconds = 864000
+
   healthcheck:
     type: exec
     command:

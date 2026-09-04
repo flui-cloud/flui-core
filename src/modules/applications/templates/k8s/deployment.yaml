@@ -39,4 +39,5 @@ spec:
               memory: "{{MEMORY_LIMIT}}"
 {{READINESS_PROBE_BLOCK}}
 {{VOLUME_MOUNTS_BLOCK}}
+{{SIDECARS_BLOCK}}
 {{VOLUMES_BLOCK}}

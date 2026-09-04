@@ -39,6 +39,71 @@ export interface CronJobManifestSpec {
   suspend?: boolean;
 }
 
+/**
+ * A container that rides alongside the application's own, for the length of
+ * the pod's life.
+ *
+ * Introduced for continuous backup of engines that have no equivalent of
+ * Postgres's `archive_command`: MariaDB writes its binary logs and forgets
+ * them, so something has to be reading continuously, and kubelet is the only
+ * supervisor that restarts it, counts the restarts and keeps its logs. Kept
+ * general because the same seam is what an APM agent would need.
+ */
+export interface SidecarSpec {
+  name: string;
+  image: string;
+  command?: string[];
+  env?: Array<{
+    name: string;
+    value?: string;
+    secretRef?: { name: string; key: string };
+  }>;
+  /** Volumes of the pod this sidecar also mounts, by name. */
+  mounts?: Array<{ name: string; mountPath: string; readOnly?: boolean }>;
+  cpuRequest?: string;
+  memoryRequest?: string;
+  cpuLimit?: string;
+  memoryLimit?: string;
+}
+
+function sidecarCommandLines(s: SidecarSpec): string[] {
+  if (!s.command?.length) return [];
+  return [
+    '          command:',
+    ...s.command.map((part) => `            - ${JSON.stringify(part)}`),
+  ];
+}
+
+function sidecarEnvLines(s: SidecarSpec): string[] {
+  if (!s.env?.length) return [];
+  return [
+    '          env:',
+    ...s.env.flatMap((e) => [
+      `            - name: ${e.name}`,
+      ...(e.secretRef
+        ? [
+            '              valueFrom:',
+            '                secretKeyRef:',
+            `                  name: ${e.secretRef.name}`,
+            `                  key: ${e.secretRef.key}`,
+          ]
+        : [`              value: ${JSON.stringify(e.value ?? '')}`]),
+    ]),
+  ];
+}
+
+function sidecarMountLines(s: SidecarSpec): string[] {
+  if (!s.mounts?.length) return [];
+  return [
+    '          volumeMounts:',
+    ...s.mounts.flatMap((m) => [
+      `            - name: ${m.name}`,
+      `              mountPath: ${m.mountPath}`,
+      ...(m.readOnly ? ['              readOnly: true'] : []),
+    ]),
+  ];
+}
+
 @Injectable()
 export class ApplicationManifestGeneratorService {
   private readonly logger = new Logger(
@@ -194,6 +259,7 @@ export class ApplicationManifestGeneratorService {
         this.renderReadinessProbeBlock(app),
       )
       .replaceAll('{{VOLUME_MOUNTS_BLOCK}}', this.renderVolumeMountsBlock(app))
+      .replaceAll('{{SIDECARS_BLOCK}}', this.renderSidecarsBlock(app))
       .replaceAll('{{VOLUMES_BLOCK}}', this.renderVolumesBlock(app))
       .replaceAll(
         '{{IMAGE_PULL_SECRETS_BLOCK}}',
@@ -261,6 +327,7 @@ export class ApplicationManifestGeneratorService {
         this.renderReadinessProbeBlock(app),
       )
       .replaceAll('{{VOLUME_MOUNTS_BLOCK}}', this.renderVolumeMountsBlock(app))
+      .replaceAll('{{SIDECARS_BLOCK}}', this.renderSidecarsBlock(app))
       .replaceAll(
         '{{CONFIG_VOLUMES_BLOCK}}',
         this.renderConfigVolumesBlock(app),
@@ -808,6 +875,37 @@ export class ApplicationManifestGeneratorService {
       `              - key: file-${i}`,
       `                path: ${this.configFileName(f.path, i)}`,
     ]);
+  }
+
+  /**
+   * Renders the sidecars an application declares, as ordinary containers.
+   *
+   * Ordinary rather than native sidecars (`initContainers` with
+   * `restartPolicy: Always`) because the shipper must not gate the workload's
+   * readiness: a database whose backup companion cannot start is still a
+   * database people need, and a backup that keeps a database from starting has
+   * inverted its own purpose. Ordering is the shipper's problem to tolerate,
+   * not the application's problem to wait for.
+   */
+  private renderSidecarsBlock(app: ApplicationEntity): string {
+    const sidecars = (app as { sidecars?: SidecarSpec[] }).sidecars ?? [];
+    if (sidecars.length === 0) return '';
+    return sidecars
+      .flatMap((s) => [
+        `        - name: ${s.name}`,
+        `          image: "${s.image}"`,
+        ...sidecarCommandLines(s),
+        ...sidecarEnvLines(s),
+        '          resources:',
+        '            requests:',
+        `              cpu: "${s.cpuRequest ?? '10m'}"`,
+        `              memory: "${s.memoryRequest ?? '32Mi'}"`,
+        '            limits:',
+        `              cpu: "${s.cpuLimit ?? '250m'}"`,
+        `              memory: "${s.memoryLimit ?? '256Mi'}"`,
+        ...sidecarMountLines(s),
+      ])
+      .join('\n');
   }
 
   private renderVolumeMountsBlock(app: ApplicationEntity): string {
