@@ -7,6 +7,7 @@ import {
   Index,
 } from 'typeorm';
 import {
+  RestorePlacement,
   RestoreJobStatus,
   RestoreTargetKind,
   RestoreStrategy,
@@ -43,6 +44,17 @@ export class RestoreJobEntity {
 
   @Column({ type: 'enum', enum: RestoreTargetKind })
   targetKind: RestoreTargetKind;
+
+  /**
+   * Beside the original, or onto it. Nullable only for rows written before this
+   * existed — every path fills it now.
+   */
+  @Column({
+    type: 'enum',
+    enum: RestorePlacement,
+    nullable: true,
+  })
+  placement?: RestorePlacement;
 
   @Column({ type: 'jsonb', default: {} })
   targetSelector: RestoreTargetSelector;

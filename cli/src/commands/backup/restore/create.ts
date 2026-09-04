@@ -4,13 +4,11 @@ import ora from 'ora';
 import { BackupClient } from '../../../lib/backup-client';
 import { printContextBanner } from '../../../lib/context-banner';
 
-const TARGET_KINDS = [
-  'cluster',
-  'namespace',
-  'application',
-  'observability',
-] as const;
-const STRATEGIES = ['velero_rebuild', 'os_snapshot'] as const;
+const TARGET_KINDS = ['cluster', 'namespace', 'application'] as const;
+// `os_snapshot` is declared in the enum and implemented nowhere — offering it
+// as a choice only invites a restore that silently does the Velero one.
+const STRATEGIES = ['velero_rebuild'] as const;
+const PLACEMENTS = ['new', 'existing'] as const;
 
 export default class BackupRestoreCreate extends Command {
   static readonly description = 'Create a restore job';
@@ -35,6 +33,11 @@ export default class BackupRestoreCreate extends Command {
       multiple: true,
       description:
         'Remap a namespace on restore: "source:target" (repeatable). Enables a same-cluster restore into a new namespace.',
+    }),
+    into: Flags.string({
+      options: [...PLACEMENTS],
+      description:
+        'Where the restore puts things. new = beside the original (needs --map-namespace or a different --target-cluster). existing = replace the objects in place, keeping volumes.',
     }),
     strategy: Flags.string({ options: [...STRATEGIES] }),
   };
@@ -64,6 +67,16 @@ export default class BackupRestoreCreate extends Command {
       );
     }
     const targetSelector = Object.keys(selector).length ? selector : undefined;
+
+    if (!flags.into) {
+      this.error(
+        '--into is required for a cluster snapshot restore:\n' +
+          '  --into new       restore beside the original ' +
+          '(needs --map-namespace src:dst, or another --target-cluster)\n' +
+          '  --into existing  replace the objects in place, keeping volumes',
+      );
+    }
+
     const spinner = ora('Creating restore job...').start();
     try {
       const r = await client.createRestore({
@@ -71,6 +84,7 @@ export default class BackupRestoreCreate extends Command {
         sourceDestinationId: flags['source-destination'],
         targetClusterId: flags['target-cluster'],
         targetKind: flags['target-kind'],
+        placement: flags.into as 'new' | 'existing',
         targetSelector,
         strategy: flags.strategy,
       });

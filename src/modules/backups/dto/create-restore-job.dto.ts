@@ -1,6 +1,10 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { IsEnum, IsISO8601, IsOptional, IsUUID } from 'class-validator';
-import { RestoreTargetKind, RestoreStrategy } from '../enums/restore-job.enum';
+import {
+  RestoreTargetKind,
+  RestoreStrategy,
+  RestorePlacement,
+} from '../enums/restore-job.enum';
 import { RestoreTargetSelector } from '../entities/restore-job.entity';
 
 export class CreateRestoreJobDto {
@@ -19,6 +23,18 @@ export class CreateRestoreJobDto {
   @ApiProperty({ enum: RestoreTargetKind })
   @IsEnum(RestoreTargetKind)
   targetKind: RestoreTargetKind;
+
+  @ApiPropertyOptional({
+    enum: RestorePlacement,
+    description:
+      'Beside the original (`new`) or onto it, replacing what is there (`existing`). ' +
+      'Required for cluster, namespace and application restores, where both are ' +
+      'possible and the old default was neither. Derived for the engines that have ' +
+      'only one meaning: a database PITR always builds a new install.',
+  })
+  @IsOptional()
+  @IsEnum(RestorePlacement)
+  placement?: RestorePlacement;
 
   @ApiPropertyOptional()
   @IsOptional()

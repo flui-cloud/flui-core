@@ -1610,6 +1610,7 @@ const MASK_EXEMPT: string[] = [
   'CreateInstanceDto.regionName', // modules/instances/dto/create-instance.dto.ts
   'CreateInstanceDto.type', // modules/instances/dto/create-instance.dto.ts
   'CreateRestoreJobDto.artifactId', // modules/backups/dto/create-restore-job.dto.ts
+  'CreateRestoreJobDto.placement', // modules/backups/dto/create-restore-job.dto.ts
   'CreateRestoreJobDto.recoveryTargetTime', // modules/backups/dto/create-restore-job.dto.ts
   'CreateRestoreJobDto.sourceDestinationId', // modules/backups/dto/create-restore-job.dto.ts
   'CreateRestoreJobDto.strategy', // modules/backups/dto/create-restore-job.dto.ts

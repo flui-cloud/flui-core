@@ -10,14 +10,20 @@ import {
   OperationStatus,
   OperationStep,
 } from '../../infrastructure/servers/entities/infrastructure-operations.entity';
+import { RestoreJobEntity } from '../entities/restore-job.entity';
 import { RestoreJobRepository } from '../repositories/restore-job.repository';
 import { BackupArtifactRepository } from '../repositories/backup-artifact.repository';
 import { BackupDestinationRepository } from '../repositories/backup-destination.repository';
 import { VeleroClientService } from '../services/velero-client.service';
 import { VeleroInstallerService } from '../services/velero-installer.service';
+import { KubernetesService } from '../../infrastructure/shared/services/kubernetes.service';
 import { ArtifactLocationState } from '../enums/artifact-location-state.enum';
-import { RestoreJobStatus } from '../enums/restore-job.enum';
-import { BACKUP_QUEUE, BACKUP_JOB_TYPES } from '../backups.constants';
+import { RestoreJobStatus, RestorePlacement } from '../enums/restore-job.enum';
+import {
+  BACKUP_QUEUE,
+  BACKUP_JOB_TYPES,
+  APP_RESOURCE_LABEL,
+} from '../backups.constants';
 
 export interface RunRestoreJobData {
   restoreJobId: string;
@@ -39,6 +45,7 @@ export class RunRestoreJobProcessor {
     private readonly destRepo: BackupDestinationRepository,
     private readonly veleroClient: VeleroClientService,
     private readonly installer: VeleroInstallerService,
+    private readonly k8s: KubernetesService,
   ) {}
 
   @Process(BACKUP_JOB_TYPES.RUN_RESTORE)
@@ -113,6 +120,15 @@ export class RunRestoreJobProcessor {
         artifact.veleroBackupName,
       );
 
+      // `existing` means replace, and Velero cannot do that on its own: its
+      // `update` policy patches the fields the backup carries and leaves every
+      // field added since, then fails outright on immutable ones. Empty the
+      // place first, then let the default "skip what exists" mean the right
+      // thing — the volumes we deliberately kept.
+      if (restore.placement === RestorePlacement.EXISTING) {
+        await this.clearBeforeRestore(kubeconfig, restore);
+      }
+
       const restoreName = `flui-restore-${restoreJobId.slice(0, 8)}-${Date.now()}`;
       await setStep(OperationStep.RESTORE_CREATE_VELERO_CR, 50);
       await this.veleroClient.createRestore(kubeconfig, {
@@ -122,7 +138,7 @@ export class RunRestoreJobProcessor {
         includedNamespaces: restore.targetSelector?.namespaces,
         namespaceMapping: restore.targetSelector?.namespaceMapping,
         labelSelector: restore.targetSelector?.applicationId
-          ? { 'flui.cloud/applicationId': restore.targetSelector.applicationId }
+          ? { [APP_RESOURCE_LABEL]: restore.targetSelector.applicationId }
           : undefined,
       });
 
@@ -173,6 +189,72 @@ export class RunRestoreJobProcessor {
         completedAt: new Date(),
       });
       throw err;
+    }
+  }
+
+  /**
+   * Kinds an in-place restore removes before replaying the backup.
+   *
+   * PersistentVolumeClaim is deliberately absent. Velero's file-system backup
+   * cannot read Flui's dedicated volumes at all, so deleting a claim here would
+   * destroy data the restore has no copy of — a replace that silently becomes a
+   * deletion. Claims are kept, and the restore then skips them.
+   */
+  private static readonly REPLACEABLE_KINDS = [
+    'Deployment',
+    'StatefulSet',
+    'DaemonSet',
+    'Service',
+    'Ingress',
+    'ConfigMap',
+    'Secret',
+    'HorizontalPodAutoscaler',
+    'Job',
+    'CronJob',
+  ];
+
+  /**
+   * Removes what the restore is about to replace, scoped to what Flui authored.
+   *
+   * Only objects carrying `flui-app-id` are touched: a namespace can hold
+   * resources somebody applied by hand, and a restore is not a licence to
+   * delete them.
+   */
+  private async clearBeforeRestore(
+    kubeconfig: string,
+    restore: RestoreJobEntity,
+  ): Promise<void> {
+    const namespaces = restore.targetSelector?.namespaces ?? [];
+    if (namespaces.length === 0) {
+      throw new Error(
+        'An in-place restore needs the namespaces it replaces (targetSelector.namespaces).',
+      );
+    }
+    const appId = restore.targetSelector?.applicationId;
+    const selector = appId
+      ? `${APP_RESOURCE_LABEL}=${appId}`
+      : APP_RESOURCE_LABEL;
+
+    for (const namespace of namespaces) {
+      for (const kind of RunRestoreJobProcessor.REPLACEABLE_KINDS) {
+        const items = await this.k8s
+          .listResourcesByLabel(kubeconfig, kind, namespace, selector)
+          .catch(() => [] as any[]);
+        for (const item of items) {
+          const name = item?.metadata?.name as string | undefined;
+          if (!name) continue;
+          await this.k8s
+            .deleteResource(kubeconfig, kind, name, namespace)
+            .catch((err: any) =>
+              this.logger.warn(
+                `[run-restore] could not remove ${kind}/${name} in ${namespace}: ${err?.message}`,
+              ),
+            );
+        }
+      }
+      this.logger.log(
+        `[run-restore] cleared Flui-authored objects in ${namespace} (volumes kept) before replacing them`,
+      );
     }
   }
 }

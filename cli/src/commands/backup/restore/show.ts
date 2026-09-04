@@ -25,6 +25,15 @@ export default class BackupRestoreShow extends Command {
     this.log(
       `   ${chalk.bold('Target:')}     ${r.targetKind} → cluster=${r.targetClusterId}`,
     );
+    let placement = chalk.dim('not recorded (restore predates this field)');
+    if (r.placement === 'existing') {
+      placement = chalk.yellow(
+        'existing — replaced the objects in place, volumes kept',
+      );
+    } else if (r.placement === 'new') {
+      placement = 'new — restored beside the original';
+    }
+    this.log(`   ${chalk.bold('Placement:')}  ${placement}`);
     if (r.strategy) this.log(`   ${chalk.bold('Strategy:')}   ${r.strategy}`);
     if (r.startedAt) this.log(`   ${chalk.bold('Started:')}    ${r.startedAt}`);
     if (r.completedAt)
