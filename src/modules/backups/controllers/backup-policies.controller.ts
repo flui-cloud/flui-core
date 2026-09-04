@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Delete,
@@ -18,6 +19,7 @@ import { BackupJobsService } from '../services/backup-jobs.service';
 import { CreateBackupPolicyDto } from '../dto/create-backup-policy.dto';
 import { SetPlatformConfigDto } from '../dto/set-platform-config.dto';
 import { BackupPolicyEntity } from '../entities/backup-policy.entity';
+import { DestinationRole } from '../enums/destination-role.enum';
 import { BackupEngineClass } from '../enums/backup-engine-class.enum';
 import { BACKUP_QUEUE, BACKUP_JOB_TYPES } from '../backups.constants';
 import {
@@ -27,6 +29,8 @@ import {
 } from '../../infrastructure/servers/entities/infrastructure-operations.entity';
 import { VeleroInstallerService } from '../services/velero-installer.service';
 import { ClusterEntity } from '../../infrastructure/clusters/entities/cluster.entity';
+import { BackupDestinationRepository } from '../repositories/backup-destination.repository';
+import { DeclaredEngineResolver } from '../services/declared-engine.resolver';
 import { EncryptionService } from '../../shared/encryption/services/encryption.service';
 import { RequireSection } from '../../iam/decorators/require-section.decorator';
 import { RequirePermission } from '../../iam/decorators/require-permission.decorator';
@@ -56,11 +60,61 @@ export class BackupPoliciesController {
     private readonly clusterRepo: Repository<ClusterEntity>,
     private readonly installer: VeleroInstallerService,
     private readonly encryption: EncryptionService,
+    private readonly destinations: BackupDestinationRepository,
+    private readonly declaredEngines: DeclaredEngineResolver,
   ) {}
 
   private userId(req: Request): string {
     const u = req.user as { userId?: string; id?: string } | undefined;
     return u?.id ?? u?.userId ?? '00000000-0000-0000-0000-000000000000';
+  }
+
+  /**
+   * Continuous backup for one database, configured before it is recorded.
+   *
+   * Separate from `POST /` because the order differs and the order is the
+   * feature: that path saves the policy and lets the first scheduled run
+   * discover whether the engine works, so a wrong destination or an image
+   * without pgBackRest surfaces hours later as a failed job. This one
+   * configures pgBackRest first, so the failure is the answer to the request
+   * that asked for it, and no policy is left behind describing protection that
+   * was never set up.
+   */
+  @Post('enable-database')
+  async enableDatabase(
+    @Req() req: Request,
+    @Body() dto: CreateBackupPolicyDto,
+  ) {
+    const primary = dto.destinations.find(
+      (d) => d.role === DestinationRole.PRIMARY,
+    );
+    const destination = primary
+      ? await this.destinations.findById(primary.destinationId)
+      : null;
+    if (!destination) {
+      throw new BadRequestException(
+        'A PRIMARY destination is required, and it must exist',
+      );
+    }
+
+    const declaredEngine = await this.declaredEngines.resolveForApp(
+      dto.scopeSelector?.applicationIds?.[0] ?? '',
+    );
+
+    const policy = await this.service.enableDatabase(
+      this.userId(req),
+      { ...dto, engineClass: BackupEngineClass.DATABASE },
+      destination,
+      declaredEngine,
+    );
+
+    // WAL is archiving from the moment the engine was enabled, but WAL alone
+    // restores nothing: it has to be replayed onto a base backup. Taking the
+    // first one now is what makes "enabled" and "recoverable" the same moment.
+    await this.jobsService.createOnDemand(policy.userId, {
+      policyId: policy.id,
+    });
+    return policy;
   }
 
   @Post()

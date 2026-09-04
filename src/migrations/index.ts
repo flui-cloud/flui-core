@@ -27,6 +27,10 @@ import { ScalingGroup1786800000000 } from './1786800000000-ScalingGroup';
 import { ApiKeyApplicationScope1786900000000 } from './1786900000000-ApiKeyApplicationScope';
 import { ApiKeyProjectScope1787000000000 } from './1787000000000-ApiKeyProjectScope';
 import { McpToolCallSemanticSurfaceRef1787100000000 } from './1787100000000-McpToolCallSemanticSurfaceRef';
+import { VolumeCopyLedger1787200000000 } from './1787200000000-VolumeCopyLedger';
+import { RestorePlacement1787300000000 } from './1787300000000-RestorePlacement';
+import { ContinuousBackupEngine1787400000000 } from './1787400000000-ContinuousBackupEngine';
+import { BackfillArtifactApplicationId1787500000000 } from './1787500000000-BackfillArtifactApplicationId';
 
 // Explicit array, not a dist glob: nest build webpack-bundles to one file,
 // so a `dist/migrations/*.js` glob resolves to nothing at runtime.
@@ -61,4 +65,8 @@ export const migrations = [
   ApiKeyApplicationScope1786900000000,
   ApiKeyProjectScope1787000000000,
   McpToolCallSemanticSurfaceRef1787100000000,
+  VolumeCopyLedger1787200000000,
+  RestorePlacement1787300000000,
+  ContinuousBackupEngine1787400000000,
+  BackfillArtifactApplicationId1787500000000,
 ];

@@ -8,14 +8,17 @@ import { BackupPolicyRepository } from '../repositories/backup-policy.repository
 import { CreateBackupPolicyDto } from '../dto/create-backup-policy.dto';
 import { BackupPolicyEntity } from '../entities/backup-policy.entity';
 import { BackupPolicyDestinationEntity } from '../entities/backup-policy-destination.entity';
+import { BackupDestinationEntity } from '../entities/backup-destination.entity';
 import {
   BackupPolicyStatus,
   BackupPolicyProfile,
 } from '../enums/backup-policy-status.enum';
 import { BackupEngineClass } from '../enums/backup-engine-class.enum';
+import { BackupScope } from '../enums/backup-scope.enum';
 import { DestinationRole } from '../enums/destination-role.enum';
 import { DestinationPlacementValidator } from './destination-placement.validator';
 import { PgBackrestService } from './pgbackrest.service';
+import { ContinuousBackupEngineRegistry } from './continuous-backup-engine.registry';
 
 @Injectable()
 export class BackupPoliciesService {
@@ -25,7 +28,74 @@ export class BackupPoliciesService {
     private readonly repo: BackupPolicyRepository,
     private readonly placement: DestinationPlacementValidator,
     private readonly pgbackrest: PgBackrestService,
+    private readonly engines: ContinuousBackupEngineRegistry,
   ) {}
+
+  /**
+   * Turns continuous backup on for one Postgres database, engine first.
+   *
+   * The order is the point. `pgbackrest.enable` writes the config, creates the
+   * stanza and flips `archive_command` — and in doing so validates the whole
+   * chain at once: the binary, the maintenance user, a Postgres accepting
+   * connections, and S3 credentials that actually reach the bucket. Checking a
+   * proxy for any of that and then saving a policy means the first failure
+   * arrives on a schedule, hours later, as a failed job nobody is watching.
+   * Here it arrives now, as the reason the command did not succeed.
+   *
+   * If the row cannot then be written, the engine is turned back off. A
+   * database left shipping WAL to a repository no policy manages keeps
+   * retaining WAL until its own volume fills — an outage of the source.
+   */
+  async enableDatabase(
+    userId: string,
+    dto: CreateBackupPolicyDto,
+    destination: BackupDestinationEntity,
+    /**
+     * The engine the catalog declared for this application. Resolved by the
+     * caller because it comes from the workload, and persisted below because a
+     * disaster restore cannot go back and ask the workload.
+     */
+    declaredEngine?: string,
+  ): Promise<BackupPolicyEntity> {
+    const appId = dto.scopeSelector?.applicationIds?.[0];
+    if (!appId) {
+      throw new BadRequestException(
+        'A database policy targets exactly one application',
+      );
+    }
+
+    // One config file, one `repo1`: a second policy on the same database would
+    // overwrite the first's configuration on every run, and the two would take
+    // turns shipping WAL to different places.
+    const existing = await this.repo.findDbPolicyForApp(appId);
+    if (existing) {
+      throw new BadRequestException(
+        `This database already has continuous backup (policy ${existing.id}). ` +
+          'Change where it goes by deleting that policy and enabling again — ' +
+          'a database can only ship its WAL to one place.',
+      );
+    }
+
+    const engine = this.engines.forEngine(declaredEngine);
+    await engine.enable(appId, destination, {
+      retentionFull: dto.retentionMaxCopies ?? 2,
+    });
+
+    try {
+      return await this.create(userId, {
+        ...dto,
+        engine: engine.engine,
+      } as CreateBackupPolicyDto & { engine: string });
+    } catch (err) {
+      await engine.disable(appId).catch((cleanupErr: any) => {
+        this.logger.error(
+          `[backup-policies] enable rolled back for app=${appId} but WAL shipping ` +
+            `could not be turned off — the database will retain WAL: ${cleanupErr?.message}`,
+        );
+      });
+      throw err;
+    }
+  }
 
   async create(
     userId: string,
@@ -61,6 +131,43 @@ export class BackupPoliciesService {
       );
     }
 
+    if (engineClass === BackupEngineClass.VOLUME_COPY) {
+      const appIds = dto.scopeSelector?.applicationIds ?? [];
+      if (appIds.length !== 1) {
+        throw new BadRequestException(
+          'A volume-copy policy targets exactly one application ' +
+            '(scopeSelector.applicationIds must have one id)',
+        );
+      }
+      // Off the cluster or it is not a backup: an in-cluster clone lives on the
+      // application's own disk and is deleted with the application, so a
+      // schedule of them costs storage nightly and survives nothing.
+      await this.placement.assertOffProvider(
+        dto.clusterId,
+        primaries[0].destinationId,
+      );
+    }
+
+    if (engineClass === BackupEngineClass.VOLUME) {
+      // The Velero engine only ever narrows by namespace: `applications` and
+      // `label_selector` are never translated into the Backup CR, so a policy
+      // asking for either quietly captured the whole cluster — more data, more
+      // cost, and a scope line that lied. Refuse them rather than keep the lie:
+      // per-application protection is what the database and volume-copy
+      // classes are for.
+      if (
+        dto.scope === BackupScope.APPLICATIONS ||
+        dto.scope === BackupScope.LABEL_SELECTOR
+      ) {
+        throw new BadRequestException(
+          `A cluster-class policy cannot narrow by ${dto.scope}: the Velero engine ` +
+            'only selects namespaces, so this would silently back up the entire ' +
+            'cluster. Use scope=namespaces, or protect a single application with a ' +
+            'database-class policy (Postgres) or a volume copy.',
+        );
+      }
+    }
+
     const policy = this.repo.create({
       userId,
       clusterId: dto.clusterId,
@@ -70,6 +177,7 @@ export class BackupPoliciesService {
       scopeSelector: dto.scopeSelector ?? {},
       includePvcs: dto.includePvcs ?? true,
       includeEtcdL1: dto.includeEtcdL1 ?? false,
+      engine: (dto as { engine?: string }).engine,
       cronSchedule: dto.cronSchedule,
       retentionDays: dto.retentionDays ?? 30,
       retentionMaxCopies: dto.retentionMaxCopies,
@@ -186,7 +294,7 @@ export class BackupPoliciesService {
       const appId = policy.scopeSelector?.applicationIds?.[0];
       if (appId) {
         try {
-          await this.pgbackrest.disable(appId);
+          await this.engines.forEngine(policy.engine).disable(appId);
         } catch (err: any) {
           this.logger.warn(
             `[backup-policies] delete ${id}: could not disable WAL shipping on app=${appId}: ${err?.message}`,

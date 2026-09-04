@@ -1,4 +1,9 @@
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { KubernetesService } from '../../infrastructure/shared/services/kubernetes.service';
@@ -6,6 +11,10 @@ import { EncryptionService } from '../../shared/encryption/services/encryption.s
 import { ApplicationEntity } from '../../applications/entities/application.entity';
 import { ClusterEntity } from '../../infrastructure/clusters/entities/cluster.entity';
 import { BackupDestinationEntity } from '../entities/backup-destination.entity';
+import {
+  ArtifactEngineFacts,
+  ContinuousBackupEngine,
+} from './continuous-backup-engine.interface';
 
 const DEFAULT_PGDATA = '/var/lib/postgresql/data/pgdata';
 const PGBACKREST_STANZA = 'main';
@@ -44,7 +53,11 @@ export interface PgBackupInfo {
  * config write + ALTER SYSTEM reload — no restart.
  */
 @Injectable()
-export class PgBackrestService {
+export class PgBackrestService implements ContinuousBackupEngine {
+  readonly engine = 'postgres';
+  readonly catalogSlug = 'postgresql';
+  readonly restoreEnvPrefix = 'FLUI_PG_';
+
   private readonly logger = new Logger(PgBackrestService.name);
 
   constructor(
@@ -55,6 +68,43 @@ export class PgBackrestService {
     @InjectRepository(ClusterEntity)
     private readonly clusterRepo: Repository<ClusterEntity>,
   ) {}
+
+  async requireTooling(appId: string): Promise<void> {
+    await this.requirePgBackrest(await this.resolveTarget(appId));
+  }
+
+  /**
+   * What a restore needs when the source application no longer exists.
+   *
+   * A database restore installs the catalog slug at whatever tag the seed
+   * carries at that moment, and a data directory does not open under a
+   * different major.
+   * Recording the version does not make the restore choose the right image on
+   * its own — it makes the mismatch something Flui can see and refuse on,
+   * rather than something discovered halfway through a recovery.
+   */
+  async describeForArtifact(appId: string): Promise<ArtifactEngineFacts> {
+    const target = await this.resolveTarget(appId);
+    const read = async (script: string): Promise<string | undefined> => {
+      try {
+        return (await this.exec(target, script)).trim().split('\n').pop();
+      } catch {
+        return undefined;
+      }
+    };
+    return {
+      engine: this.engine,
+      engineVersion: await read(
+        `gosu postgres psql -U ${target.pgUser} -d ${target.pgDb} -tAc "SHOW server_version"`,
+      ),
+      tool: 'pgbackrest',
+      toolVersion: await read(
+        String.raw`pgbackrest version | awk "{print \$2}"`,
+      ),
+      catalogSlug: this.catalogSlug,
+      identities: { pgUser: target.pgUser, pgDb: target.pgDb },
+    };
+  }
 
   private envValue(app: ApplicationEntity, name: string): string | undefined {
     return app.env?.find((e) => e.name === name)?.value;
@@ -149,6 +199,44 @@ export class PgBackrestService {
   }
 
   /**
+   * Refuse a database whose image cannot ship WAL, before touching it.
+   *
+   * Continuous backup needs `pgbackrest` inside the Postgres container, which
+   * only Flui's own image carries. Without this check the first sign of trouble
+   * is `stanza-create` failing on a "not found" — after the config file has
+   * already been written into the container, and reported as if the destination
+   * or the credentials were at fault.
+   */
+  private async requirePgBackrest(target: PgBackrestTarget): Promise<void> {
+    // An exec that could not run says nothing about the image. Reporting it as
+    // a missing binary sent the user to fix a thing that was never wrong, so
+    // the two outcomes are kept apart: no pod is its own answer.
+    let found: string;
+    try {
+      found = await this.exec(
+        target,
+        'command -v pgbackrest >/dev/null 2>&1 && echo yes || echo no',
+      );
+    } catch (err: any) {
+      if (/No running pod/i.test(err?.message ?? '')) {
+        throw new BadRequestException(
+          'This database is not running, so continuous backup cannot be set ' +
+            'up on it. Start it and try again.',
+        );
+      }
+      throw err;
+    }
+    if (found.trim().endsWith('yes')) return;
+    throw new BadRequestException(
+      'This database cannot do continuous backup: its image does not ship ' +
+        'pgBackRest. Continuous backup (WAL shipping and point-in-time ' +
+        'recovery) needs a database installed from the Flui catalog. For a ' +
+        'database running from another image, take backups of its volume ' +
+        'instead.',
+    );
+  }
+
+  /**
    * Idempotent: write the pgBackRest config, create the stanza, and flip
    * archive_command to push WAL — all without a restart.
    */
@@ -158,6 +246,7 @@ export class PgBackrestService {
     opts?: { retentionFull?: number },
   ): Promise<void> {
     const target = await this.resolveTarget(appId);
+    await this.requirePgBackrest(target);
     const conf = this.buildConf(dest, target, appId, opts?.retentionFull ?? 2);
     const confB64 = Buffer.from(conf, 'utf-8').toString('base64');
     const archiveCommand = `pgbackrest --config=${target.confPath} --stanza=${PGBACKREST_STANZA} archive-push %p`;

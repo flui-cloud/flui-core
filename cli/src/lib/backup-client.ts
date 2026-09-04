@@ -74,12 +74,38 @@ export interface BackupPolicy {
   updatedAt?: string;
 }
 
+/** A backup that exists, whatever engine produced it. */
+export interface BackupArtifact {
+  id: string;
+  backupJobId: string;
+  clusterId: string;
+  applicationId?: string | null;
+  volumeName?: string | null;
+  engineClass?: string;
+  engineRef?: string | null;
+  veleroBackupName?: string | null;
+  sizeBytes?: string | null;
+  itemCount?: number | null;
+  expiresAt?: string | null;
+  manifestSummary?: Record<string, any>;
+  locations?: Array<{
+    id: string;
+    destinationId: string;
+    role: string;
+    state: string;
+    objectKeyPrefix: string;
+  }>;
+  createdAt?: string;
+}
+
 export interface CreatePolicyInput {
   name: string;
   clusterId: string;
   scope: string;
-  profile: string;
-  engineClass?: 'volume' | 'database' | 'platform';
+  profile?: string;
+  engineClass?: 'volume' | 'database' | 'platform' | 'volume_copy';
+  /** Copy volume contents, not only the Kubernetes objects. Velero engine. */
+  includePvcs?: boolean;
   /** The API's field is cronSchedule — see CreateBackupPolicyDto. */
   cronSchedule?: string;
   retentionDays?: number;
@@ -91,6 +117,7 @@ export interface CreatePolicyInput {
     priority?: number;
   }>;
   scopeSelector?: Record<string, any>;
+  metadata?: Record<string, any>;
 }
 
 export interface BackupJob {
@@ -112,6 +139,7 @@ export interface RestoreJob {
   sourceDestinationId: string;
   targetClusterId: string;
   targetKind: string;
+  placement?: 'new' | 'existing';
   strategy?: string;
   startedAt?: string;
   completedAt?: string;
@@ -181,8 +209,28 @@ export class BackupClient {
     return this.api.get(`/backup-policies/${id}`);
   }
 
+  /** Every backup recorded for one application or one cluster. */
+  async listArtifacts(filter: {
+    applicationId?: string;
+    clusterId?: string;
+  }): Promise<BackupArtifact[]> {
+    const params = new URLSearchParams();
+    if (filter.applicationId) params.set('applicationId', filter.applicationId);
+    if (filter.clusterId) params.set('clusterId', filter.clusterId);
+    return this.api.get(`/backup-artifacts?${params.toString()}`);
+  }
+
   async createPolicy(input: CreatePolicyInput): Promise<BackupPolicy> {
     return this.api.post('/backup-policies', input);
+  }
+
+  /**
+   * Its own endpoint because the order differs: pgBackRest is configured and
+   * proven before the policy row is written, so a failure is the answer to
+   * this call rather than a failed job hours later.
+   */
+  async enableDatabase(input: CreatePolicyInput): Promise<BackupPolicy> {
+    return this.api.post('/backup-policies/enable-database', input);
   }
 
   async pausePolicy(id: string): Promise<BackupPolicy> {
@@ -232,6 +280,8 @@ export class BackupClient {
     sourceDestinationId: string;
     targetClusterId: string;
     targetKind: string;
+    /** Beside the original, or onto it. Required where both are possible. */
+    placement?: 'new' | 'existing';
     targetSelector?: Record<string, any>;
     strategy?: string;
   }): Promise<RestoreJob> {

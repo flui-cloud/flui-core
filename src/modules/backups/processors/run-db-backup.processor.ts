@@ -97,14 +97,29 @@ export class RunDbBackupProcessor {
       // clone when the source app (or its whole cluster) no longer exists —
       // the disaster-recovery case.
       const target = await this.pgbackrest.resolveTarget(appId);
+      // Read from the running server, not assumed from the seed: the restore
+      // installs whatever tag the catalog carries at restore time, and a data
+      // directory does not open under a different major. Recorded here so the
+      // mismatch is visible before a recovery rather than during one.
+      const facts = await this.pgbackrest.describeForArtifact(appId);
       const artifact = this.artifactRepo.createArtifact({
         backupJobId,
         clusterId: backupJob.clusterId,
         engineClass: BackupEngineClass.DATABASE,
+        // On the column, not only inside `manifestSummary`: the ledger's whole
+        // point is that "what protects this application" is one query, and a
+        // database artifact that answers only from a jsonb blob is invisible
+        // to it.
+        applicationId: appId,
+        engine: facts.engine,
+        engineVersion: facts.engineVersion,
         engineRef: label,
         manifestSummary: {
           applicationId: appId,
           backupType: type,
+          tool: facts.tool,
+          toolVersion: facts.toolVersion,
+          catalogSlug: facts.catalogSlug,
           pgUser: target.pgUser,
           pgDb: target.pgDb,
           oldestRecoverable: info.oldestRecoverable,

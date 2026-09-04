@@ -96,6 +96,14 @@ export class BackupPolicyEntity {
   @Column({ type: 'timestamptz', nullable: true })
   nextRunAt?: Date;
 
+  /**
+   * Resolved once at creation from the catalog's declared engine, and never
+   * re-derived: a disaster restore runs when the application is gone, so the
+   * policy has to remember what it was protecting.
+   */
+  @Column({ type: 'varchar', length: 32, nullable: true })
+  engine?: string;
+
   @Column({ type: 'jsonb', default: {} })
   metadata: Record<string, any>;
 
