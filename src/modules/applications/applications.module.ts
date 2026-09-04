@@ -42,6 +42,14 @@ import { GhcrSecretRefreshService } from './services/ghcr-secret-refresh.service
 import { ApplicationVersionsService } from './services/application-versions.service';
 import { ApplicationSourceDeployService } from './services/application-source-deploy.service';
 import { VolumeSnapshotsService } from './services/volume-snapshots.service';
+import { VolumeCopyLedgerService } from './services/volume-copy-ledger.service';
+import { VolumeCopyPreflightService } from './services/volume-copy-preflight.service';
+import { VolumePauseLeaseService } from './services/volume-pause-lease.service';
+import { VolumePauseSweeperService } from './schedulers/volume-pause-sweeper.service';
+import { BackupJobEntity } from '../backups/entities/backup-job.entity';
+import { BackupDestinationEntity } from '../backups/entities/backup-destination.entity';
+import { BackupArtifactEntity } from '../backups/entities/backup-artifact.entity';
+import { BackupArtifactLocationEntity } from '../backups/entities/backup-artifact-location.entity';
 import { SnapshotStorageCapabilityService } from './services/snapshot-storage-capability.service';
 import { VolumeBackupsService } from './services/volume-backups.service';
 import { DedicatedPlacementService } from './services/dedicated-placement.service';
@@ -82,6 +90,13 @@ import { VolumeExportService } from '../providers/services/volume-export.service
   imports: [
     ConfigModule,
     TypeOrmModule.forFeature([
+      // The volume-copy ledger writes backup rows from this module; registering
+      // the entities here keeps that a repository dependency rather than a
+      // module one, so applications and backups stay independent.
+      BackupDestinationEntity,
+      BackupJobEntity,
+      BackupArtifactEntity,
+      BackupArtifactLocationEntity,
       ApplicationEntity,
       AppRevisionEntity,
       AppResourceEntity,
@@ -160,6 +175,10 @@ import { VolumeExportService } from '../providers/services/volume-export.service
     ApplicationVersionsService,
     ApplicationSourceDeployService,
     VolumeSnapshotsService,
+    VolumeCopyLedgerService,
+    VolumeCopyPreflightService,
+    VolumePauseLeaseService,
+    VolumePauseSweeperService,
     SnapshotStorageCapabilityService,
     VolumeExportService,
     VolumeBackupsService,
@@ -183,6 +202,10 @@ import { VolumeExportService } from '../providers/services/volume-export.service
     IamModule,
     ApplicationAccessService,
     ApplicationVolumeClaimsService,
+    // The scheduled volume-copy engine runs this rather than reimplementing
+    // the copy primitive beside it, so the ad-hoc and scheduled paths cannot
+    // drift on the consistency gate they both go through.
+    VolumeBackupsService,
     // Exported so controllers outside this module can mount it — the two
     // `applications/:applicationId/**` controllers in ScalingModule do.
     AppAccessGuard,
