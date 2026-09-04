@@ -19,6 +19,13 @@ export interface CreateVeleroBackupSpec {
   extraLabels?: Record<string, string>;
 }
 
+export interface VolumeCoverage {
+  /** Pod volumes backed by a PVC that Velero actually captured. */
+  captured: number;
+  /** `namespace/pod/volume` that were in scope and produced no PodVolumeBackup. */
+  skipped: string[];
+}
+
 export interface CreateVeleroRestoreSpec {
   restoreName: string;
   restoreJobId: string;
@@ -192,6 +199,65 @@ export class VeleroClientService {
     throw new Error(
       `Velero BackupStorageLocation ${bslName} did not become Available within ${timeoutMs}ms`,
     );
+  }
+
+  /**
+   * What `includePvcs` actually captured on this run.
+   *
+   * Velero reports `Completed` whether or not it could read a volume: its
+   * fs-backup refuses hostPath PersistentVolumes, which is every volume on
+   * Flui's dedicated storage class (`flui-local` — the class databases use),
+   * while the shared default class provisions `local` PVs it captures fine.
+   * A completed backup therefore says nothing about whether a given database's
+   * data is in it. Comparing the pod volumes in scope against the
+   * PodVolumeBackups produced is how the operator finds out.
+   */
+  async summarizeVolumeCoverage(
+    kubeconfig: string,
+    backupName: string,
+    namespaces: string[],
+  ): Promise<VolumeCoverage> {
+    const scope = namespaces.length
+      ? namespaces
+      : (await this.k8s.listNamespaces(kubeconfig))
+          .map((ns: any) => ns?.metadata?.name as string | undefined)
+          .filter((n): n is string => !!n);
+
+    const expected = new Set<string>();
+    for (const namespace of scope) {
+      const pods = await this.k8s
+        .listResources(kubeconfig, 'pods', namespace)
+        .catch(() => [] as any[]);
+      for (const pod of pods) {
+        // Velero legitimately skips pods that are not running; counting them
+        // would drown the real signal in completed Jobs and init containers.
+        if ((pod?.status?.phase ?? '') !== 'Running') continue;
+        for (const volume of pod?.spec?.volumes ?? []) {
+          if (!volume?.persistentVolumeClaim) continue;
+          expected.add(
+            `${namespace}/${pod?.metadata?.name ?? '?'}/${volume.name}`,
+          );
+        }
+      }
+    }
+
+    const produced = await this.k8s.listResourcesByLabel(
+      kubeconfig,
+      'PodVolumeBackup',
+      VELERO_NAMESPACE,
+      `velero.io/backup-name=${backupName}`,
+    );
+    const actual = new Set(
+      produced.map(
+        (pvb) =>
+          `${pvb?.spec?.pod?.namespace ?? '?'}/${pvb?.spec?.pod?.name ?? '?'}/${pvb?.spec?.volume ?? '?'}`,
+      ),
+    );
+
+    const skipped = [...expected]
+      .filter((key) => !actual.has(key))
+      .sort((a, b) => a.localeCompare(b));
+    return { captured: actual.size, skipped };
   }
 
   async listFailedPodVolumeBackups(

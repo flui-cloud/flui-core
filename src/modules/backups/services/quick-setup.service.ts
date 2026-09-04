@@ -82,10 +82,13 @@ export class QuickSetupService {
         estimatedDataSource: singleEst.estimatedDataSource,
         backupScope: {
           k8sResources: true,
-          persistentVolumes: true,
+          // Not the whole truth and it must not read like it: Velero's
+          // file-system backup cannot read hostPath volumes, which is every
+          // volume on the dedicated storage class — the class databases use.
+          persistentVolumes: 'shared-storage-only',
           method: 'velero+kopia',
           notes:
-            'Velero esegue snapshot delle risorse Kubernetes (manifest, ConfigMap, Secret, Deployment, ecc.) e Kopia esegue backup file-system dei dati dei PersistentVolume. Image registries e stato esterno al cluster NON sono inclusi.',
+            'Velero snapshots Kubernetes resources (manifests, ConfigMaps, Secrets, Deployments) and Kopia file-system-backs up volumes on the shared storage class. Volumes on the dedicated class — which is what databases use — are NOT captured: protect those with a database-class policy (Postgres) or a volume copy. Image registries and state outside the cluster are not included.',
         },
         disclaimer: singleEst.disclaimer,
       },

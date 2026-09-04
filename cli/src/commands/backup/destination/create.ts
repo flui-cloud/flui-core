@@ -59,9 +59,6 @@ export default class BackupDestinationCreate extends Command {
     'use-sse': Flags.boolean({
       description: 'Use server-side encryption (SSE-S3) at the provider',
     }),
-    'usable-for-etcd-l1': Flags.boolean({
-      description: 'Allow this destination to receive L1 etcd snapshots',
-    }),
     'cost-per-gb-month-cents': Flags.integer({
       description:
         'Provider cost in cents/GB·month (used for billing estimate)',
@@ -107,7 +104,6 @@ export default class BackupDestinationCreate extends Command {
         encryptionPassphrase: passphrase,
         forcePathStyle: flags['force-path-style'],
         useSse: flags['use-sse'],
-        usableForEtcdL1: flags['usable-for-etcd-l1'],
         costPerGbMonthCents: flags['cost-per-gb-month-cents'],
       });
       spinner.succeed(`Created destination ${chalk.cyan(dest.id)}`);

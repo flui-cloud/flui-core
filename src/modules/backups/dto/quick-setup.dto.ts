@@ -72,7 +72,12 @@ export class SetupOptionsResponse {
     estimatedDataSource?: 'last-backup' | 'pvc-requests';
     backupScope: {
       k8sResources: boolean;
-      persistentVolumes: boolean;
+      /**
+       * Never a plain `true`: Velero's file-system backup cannot read hostPath
+       * volumes, so volumes on the dedicated storage class (what databases use)
+       * are not captured while shared-storage ones are.
+       */
+      persistentVolumes: 'shared-storage-only' | false;
       method: string;
       notes: string;
     };
