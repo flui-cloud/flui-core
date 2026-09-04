@@ -15,6 +15,7 @@ import {
 @Index('idx_backup_jobs_policy_created', ['policyId', 'createdAt'])
 @Index('idx_backup_jobs_cluster_status', ['clusterId', 'status'])
 @Index('idx_backup_jobs_trigger_status', ['triggerType', 'status'])
+@Index('idx_backup_jobs_application', ['applicationId', 'createdAt'])
 export class BackupJobEntity {
   @PrimaryGeneratedColumn('uuid')
   id: string;
@@ -24,6 +25,14 @@ export class BackupJobEntity {
 
   @Column({ type: 'uuid' })
   clusterId: string;
+
+  /** The application this run protects, when it protects exactly one. */
+  @Column({ type: 'uuid', nullable: true })
+  applicationId?: string;
+
+  /** The PVC, for engines that protect one volume rather than a whole app. */
+  @Column({ length: 253, nullable: true })
+  volumeName?: string;
 
   @Column({ type: 'uuid' })
   userId: string;

@@ -4,6 +4,15 @@ import { ApplicationResourceKind } from '../enums/application-resource-kind.enum
 import { ApplicationEntity } from '../entities/application.entity';
 import { parseStorageQuantityToBytes } from '../../../common/utils/storage-quantity.util';
 
+/**
+ * The mark `VolumeExportService` puts on a clone it creates. A clone carries
+ * the application's own `flui-app-id` too — deliberately, so teardown sweeps it
+ * — which would otherwise make it indistinguishable from a real volume of the
+ * application and turn "back up this app's volume" into an ambiguous choice
+ * the moment somebody took a snapshot.
+ */
+const PVC_CLONE_MARKER = 'flui.cloud/pvc-clone-export';
+
 export type ClaimAttribution =
   | 'label'
   | 'tracked-resource'
@@ -24,6 +33,17 @@ export interface ClaimLookup {
   statefulSetNames: Set<string>;
   /** PVC names Flui recorded in `app_resources` for this application. */
   trackedNames?: Set<string>;
+  /**
+   * Leave out clones this application's own snapshots created.
+   *
+   * Off by default, and that default matters: a clone carries the
+   * application's label on purpose so the teardown sweeps it and the removal
+   * preview warns about it — both of those must keep seeing it. Only the
+   * question "which volume of this app should I copy" wants it gone, because
+   * there the answer stops being unambiguous the moment somebody took a
+   * snapshot.
+   */
+  excludeCopies?: boolean;
 }
 
 /**
@@ -79,6 +99,9 @@ export class ApplicationVolumeClaimsService {
     for (const item of items) {
       const name = item?.metadata?.name as string | undefined;
       if (!name) continue;
+      if (lookup.excludeCopies && item?.metadata?.labels?.[PVC_CLONE_MARKER]) {
+        continue;
+      }
 
       const attributedBy = this.attribute(
         name,
@@ -115,6 +138,7 @@ export class ApplicationVolumeClaimsService {
     kubeconfig: string,
     app: Pick<ApplicationEntity, 'id' | 'slug' | 'k8sNamespace'>,
     trackedRows: ReadonlyArray<{ kind: ApplicationResourceKind; name: string }>,
+    options: { excludeCopies?: boolean } = {},
   ): Promise<ApplicationVolumeClaim[]> {
     const statefulSetNames = new Set(
       trackedRows
@@ -126,6 +150,7 @@ export class ApplicationVolumeClaimsService {
     }
     return this.listForApplication(kubeconfig, app, {
       statefulSetNames,
+      excludeCopies: options.excludeCopies,
       trackedNames: new Set(
         trackedRows
           .filter(

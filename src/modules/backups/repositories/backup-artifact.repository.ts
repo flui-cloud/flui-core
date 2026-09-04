@@ -44,6 +44,19 @@ export class BackupArtifactRepository {
     });
   }
 
+  /**
+   * Every artifact protecting one application, newest first — across engines,
+   * so a Postgres app shows its continuous backups and its volume copies in
+   * one list.
+   */
+  listForApplication(applicationId: string): Promise<BackupArtifactEntity[]> {
+    return this.artifactRepo.find({
+      where: { applicationId },
+      relations: ['locations'],
+      order: { createdAt: 'DESC' },
+    });
+  }
+
   /** Newest database-class artifact whose manifest points at the given app. */
   findLatestDbArtifactForApp(
     appId: string,
