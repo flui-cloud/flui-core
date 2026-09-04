@@ -53,13 +53,20 @@ export class ApplicationSnapshotsController {
     @Req() req: Request,
     @Param('id') id: string,
     @Body()
-    body: { volumeName?: string; description?: string } = {},
+    body: {
+      volumeName?: string;
+      description?: string;
+      allowInconsistent?: boolean;
+      pause?: boolean;
+    } = {},
   ) {
     return this.volumeSnapshotsService.createForApp({
       applicationId: id,
       userId: (req.user as AuthenticatedUser | undefined)?.userId,
       volumeName: body.volumeName,
       description: body.description,
+      allowInconsistent: body.allowInconsistent,
+      pause: body.pause,
     });
   }
 
@@ -164,9 +171,12 @@ export class ApplicationSnapshotsController {
     summary: 'Archive an application volume to S3-compatible storage',
     description:
       'Spawns a copy-pod Job that streams the live PVC contents to S3 via rclone. ' +
-      'When `destination` is omitted the bucket is auto-provisioned via the cluster ' +
-      'provider object storage (Scaleway: full-auto using compute key; Hetzner: ' +
-      'requires Object Storage credentials connected).',
+      'Pass `destinationId` to archive into a registered backup destination — the ' +
+      'copy is then linked to it in the ledger and can be listed and restored like ' +
+      'any other backup. Raw `destination` credentials still work. With neither, ' +
+      'the bucket is auto-provisioned via the cluster provider object storage ' +
+      '(Scaleway: full-auto using the compute key; Hetzner: requires Object ' +
+      'Storage credentials connected; BYOS: no provisioner, pass one of the above).',
   })
   @ApiParam({ name: 'id', description: 'Application ID' })
   async createBackup(
@@ -176,7 +186,10 @@ export class ApplicationSnapshotsController {
     body: {
       volumeName?: string;
       description?: string;
+      destinationId?: string;
       destination?: BackupDestination;
+      allowInconsistent?: boolean;
+      pause?: boolean;
     } = {},
   ) {
     const userId = (req.user as AuthenticatedUser | undefined)?.userId;
@@ -184,8 +197,11 @@ export class ApplicationSnapshotsController {
       applicationId: id,
       volumeName: body.volumeName,
       description: body.description,
+      destinationId: body.destinationId,
       destination: body.destination,
       userId,
+      allowInconsistent: body.allowInconsistent,
+      pause: body.pause,
     });
   }
 

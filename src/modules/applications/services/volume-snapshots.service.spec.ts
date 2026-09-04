@@ -75,11 +75,23 @@ describe('VolumeSnapshotsService capability gate', () => {
     };
     runner = { run: jest.fn() };
 
+    const copyLedger = { record: jest.fn().mockResolvedValue(null) };
+    const preflight = {
+      check: jest.fn().mockResolvedValue({
+        facts: { quiesce: 'none', writersAtStart: 0 },
+        paused: [],
+      }),
+    };
+    const pauseLease = { release: jest.fn().mockResolvedValue(undefined) };
+
     service = new VolumeSnapshotsService(
       clusterRepository as any,
       applicationsRepository as any,
       appResourcesRepository as any,
       volumeClaims as any,
+      copyLedger as any,
+      preflight as any,
+      pauseLease as any,
       volumeExportService as any,
       snapshotStorageCapability as any,
       { decrypt: jest.fn().mockReturnValue('kubeconfig') } as any,

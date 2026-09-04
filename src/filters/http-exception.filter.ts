@@ -61,6 +61,13 @@ export class HttpExceptionFilter implements ExceptionFilter {
       'consequence',
       'decideUrl',
       'expiresAt',
+      // A refused volume copy: what was found on the disk, how many processes
+      // were writing, and which overrides exist. The client builds its own
+      // prompt from these — the dashboard a two-choice modal, the CLI the
+      // command to re-run — so dropping them leaves both with only prose.
+      'dataDirectoryDetected',
+      'writersAtStart',
+      'options',
     ] as const;
     const carried: Record<string, unknown> = {};
     for (const field of CARRIED) {

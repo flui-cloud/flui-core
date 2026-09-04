@@ -4,6 +4,7 @@ import ora from 'ora';
 import { CliAppService } from '../../../lib/services/cli-app.service';
 import { resolveClusterRef } from '../../../lib/resolve-cluster';
 import { formatBytes } from '../../../lib/format-bytes';
+import { renderCopyRefusal } from '../../../lib/render-copy-refusal';
 
 export default class AppSnapshotCreate extends Command {
   static readonly description =
@@ -38,6 +39,19 @@ export default class AppSnapshotCreate extends Command {
       char: 'd',
       description: 'Optional human-friendly tag appended to the snapshot id',
     }),
+    pause: Flags.boolean({
+      default: false,
+      description:
+        'Stop the workloads holding the volume, copy it at rest, then start ' +
+        'them again. A deliberate outage for the length of the copy.',
+      exclusive: ['allow-inconsistent'],
+    }),
+    'allow-inconsistent': Flags.boolean({
+      default: false,
+      description:
+        'Copy even though the volume holds a database that is being written to. ' +
+        'The copy may not restore cleanly.',
+    }),
   };
 
   async run(): Promise<void> {
@@ -50,9 +64,15 @@ export default class AppSnapshotCreate extends Command {
       const snap = await service.createAppSnapshot(app.id, {
         volumeName: flags.volume,
         description: flags.description,
+        allowInconsistent: flags['allow-inconsistent'],
+        pause: flags.pause,
       });
 
       spinner.succeed(`Snapshot created: ${snap.exportId}`);
+      if (snap.warning) {
+        console.log('');
+        console.log(chalk.yellow(`  ! ${snap.warning}`));
+      }
       console.log('');
       console.log(`  ${chalk.bold('Provider:')}  ${snap.provider}`);
       console.log(`  ${chalk.bold('Sink:')}      ${snap.sink}`);
@@ -90,6 +110,9 @@ export default class AppSnapshotCreate extends Command {
       console.log('');
     } catch (error: any) {
       spinner.fail('Snapshot creation failed');
+      if (renderCopyRefusal(error, `flui app snapshot create ${args.name}`)) {
+        this.exit(1);
+      }
       const msg =
         error.response?.data?.message ?? error.message ?? String(error);
       console.log(chalk.red(`\n  Error: ${msg}\n`));

@@ -693,7 +693,12 @@ export class CliAppService {
 
   async createAppSnapshot(
     appId: string,
-    body: { volumeName?: string; description?: string } = {},
+    body: {
+      volumeName?: string;
+      description?: string;
+      allowInconsistent?: boolean;
+      pause?: boolean;
+    } = {},
   ): Promise<SnapshotResponse> {
     return this.apiClient.post<SnapshotResponse>(
       `/applications/${appId}/snapshots`,
@@ -751,9 +756,12 @@ export class CliAppService {
   async createAppBackup(
     appId: string,
     body: {
+      destinationId?: string;
       volumeName?: string;
       description?: string;
-      destination: BackupDestinationInput;
+      destination?: BackupDestinationInput;
+      allowInconsistent?: boolean;
+      pause?: boolean;
     },
   ): Promise<BackupResponse> {
     return this.apiClient.post<BackupResponse>(
@@ -1002,6 +1010,8 @@ export interface SnapshotListResponse {
 }
 
 export interface SnapshotResponse {
+  /** Present when the copy may not be consistent (a live database). */
+  warning?: string;
   exportId: string;
   sink: 'pvc-clone' | 's3-archive';
   namespace: string;
@@ -1031,6 +1041,8 @@ export interface BackupDestinationInput {
 }
 
 export interface BackupResponse {
+  /** Present when the copy may not be consistent (a live database). */
+  warning?: string;
   exportId: string;
   appId: string;
   namespace: string;

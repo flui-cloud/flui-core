@@ -16,9 +16,16 @@ import {
   VolumeExportCapabilities,
 } from '../../providers/interfaces/volume-export.interface';
 import { EncryptionService } from '../../shared/encryption/services/encryption.service';
+import {
+  VolumeCopyPreflightService,
+  describeCopyRisk,
+} from './volume-copy-preflight.service';
+import { VolumePauseLeaseService } from './volume-pause-lease.service';
 import { ApplicationsRepository } from '../repositories/applications.repository';
 import { AppResourcesRepository } from '../repositories/app-resources.repository';
 import { ApplicationVolumeClaimsService } from './application-volume-claims.service';
+import { VolumeCopyLedgerService } from './volume-copy-ledger.service';
+import { BackupDestinationEntity } from '../../backups/entities/backup-destination.entity';
 import { ObjectStorageProvisionerFactory } from '../../storage/factories/object-storage-provisioner.factory';
 import { StorageBackendProvider } from '../../storage/enums/storage-backend-provider.enum';
 import { AppOperationRunner } from './app-operation-runner.service';
@@ -47,10 +54,24 @@ export interface CreateBackupForAppRequest {
    */
   destination?: BackupDestination;
   /**
+   * A registered backup destination to archive into. Preferred over passing
+   * raw credentials: the copy is then linked to that destination in the ledger,
+   * so it can be listed, previewed and restored like any other backup.
+   */
+  destinationId?: string;
+  /**
    * Required when destination is auto-provisioned (the user owns the bucket
    * naming/billing scope).
    */
   userId?: string;
+  /** Copy a volume that holds a live database anyway. */
+  allowInconsistent?: boolean;
+  /** Stop the writers, copy at rest, then start them again. */
+  pause?: boolean;
+  /** The policy that scheduled this copy, when one did. */
+  policyId?: string;
+  /** When retention says this copy stops being kept. */
+  expiresAt?: Date;
 }
 
 export interface BackupResponse {
@@ -65,6 +86,8 @@ export interface BackupResponse {
   destination: Omit<BackupDestination, 'accessKeyId' | 'secretAccessKey'>;
   provider: CloudProvider;
   providerCapabilities: VolumeExportCapabilities;
+  /** Set only when there is something true to say about this copy. */
+  warning?: string;
 }
 
 export interface DeleteBackupForAppRequest {
@@ -80,9 +103,14 @@ export class VolumeBackupsService {
   constructor(
     @InjectRepository(ClusterEntity)
     private readonly clusterRepository: Repository<ClusterEntity>,
+    @InjectRepository(BackupDestinationEntity)
+    private readonly destinationRepository: Repository<BackupDestinationEntity>,
     private readonly applicationsRepository: ApplicationsRepository,
     private readonly appResourcesRepository: AppResourcesRepository,
     private readonly volumeClaims: ApplicationVolumeClaimsService,
+    private readonly copyLedger: VolumeCopyLedgerService,
+    private readonly preflight: VolumeCopyPreflightService,
+    private readonly pauseLease: VolumePauseLeaseService,
     private readonly volumeExportFactory: VolumeExportFactory,
     private readonly encryptionService: EncryptionService,
     private readonly objectStorageProvisionerFactory: ObjectStorageProvisionerFactory,
@@ -102,6 +130,7 @@ export class VolumeBackupsService {
 
     const destination = await this.resolveDestination(
       request.destination,
+      request.destinationId,
       provider,
       cluster.id,
       request.userId,
@@ -122,29 +151,59 @@ export class VolumeBackupsService {
         userId: request.userId,
       },
       async (): Promise<BackupResponse> => {
+        const { facts, paused } = await this.preflight.check({
+          kubeconfig,
+          namespace: app.k8sNamespace,
+          pvcName,
+          allowInconsistent: request.allowInconsistent,
+          pause: request.pause,
+        });
         const labels: Record<string, string> = {
           'flui.cloud/managed-by': 'flui-cloud',
           'flui-app-id': app.id,
           'flui.cloud/source-pvc': pvcName,
           'flui.cloud/backup-trigger': 'manual',
         };
-        const exp: ExportResult = await ops.createExport({
-          sink: 's3-archive',
-          kubeconfig,
-          namespace: app.k8sNamespace,
-          sourcePvcName: pvcName,
-          exportName: keyPrefix,
-          bucket: destination.bucket,
-          keyPrefix,
-          endpoint: destination.endpoint,
-          region: destination.region,
-          accessKeyId: destination.accessKeyId,
-          secretAccessKey: destination.secretAccessKey,
-          labels,
-        });
+        let exp: ExportResult;
+        try {
+          exp = await ops.createExport({
+            sink: 's3-archive',
+            kubeconfig,
+            namespace: app.k8sNamespace,
+            sourcePvcName: pvcName,
+            exportName: keyPrefix,
+            bucket: destination.bucket,
+            keyPrefix,
+            endpoint: destination.endpoint,
+            region: destination.region,
+            accessKeyId: destination.accessKeyId,
+            secretAccessKey: destination.secretAccessKey,
+            labels,
+          });
+        } finally {
+          // Before the ledger write and the S3 bookkeeping on purpose: neither
+          // may extend the outage, and a failed copy must still give the app back.
+          await this.pauseLease.release(kubeconfig, paused);
+        }
         this.logger.log(
           `[backup] Archived app=${app.slug} pvc=${pvcName} → s3://${destination.bucket}/${keyPrefix} (size=${exp.sourceSizeGb}GB)`,
         );
+        await this.copyLedger.record({
+          clusterId: cluster.id,
+          applicationId: app.id,
+          applicationSlug: app.slug,
+          volumeName: pvcName,
+          userId: request.userId,
+          exportId: exp.exportId,
+          sink: 's3-archive',
+          sizeBytes: exp.actualBytes,
+          objectKeyPrefix: keyPrefix,
+          bucket: destination.bucket,
+          destinationId: request.destinationId,
+          policyId: request.policyId,
+          expiresAt: request.expiresAt,
+          ...facts,
+        });
         return {
           exportId: exp.exportId,
           appId: app.id,
@@ -162,6 +221,7 @@ export class VolumeBackupsService {
           },
           provider,
           providerCapabilities: ops.capabilities,
+          warning: describeCopyRisk(facts, exp.writesObservedDuringCopy),
         };
       },
     );
@@ -177,11 +237,36 @@ export class VolumeBackupsService {
    */
   private async resolveDestination(
     explicit: BackupDestination | undefined,
+    destinationId: string | undefined,
     cloudProvider: CloudProvider,
     clusterId: string,
     userId: string | undefined,
   ): Promise<BackupDestination> {
     if (explicit) return explicit;
+
+    // A registered destination is the good path: its credentials are already
+    // encrypted at rest, and the copy ends up linked to it in the ledger
+    // instead of pointing at a bucket nothing else knows about.
+    if (destinationId) {
+      const dest = await this.destinationRepository.findOne({
+        where: { id: destinationId },
+      });
+      if (!dest) {
+        throw new NotFoundException(
+          `Backup destination ${destinationId} not found`,
+        );
+      }
+      return {
+        bucket: dest.bucket,
+        endpoint: dest.endpoint,
+        region: dest.region,
+        accessKeyId: this.encryptionService.decrypt(dest.accessKeyEncrypted),
+        secretAccessKey: this.encryptionService.decrypt(
+          dest.secretKeyEncrypted,
+        ),
+        keyPrefix: dest.pathPrefix,
+      };
+    }
 
     const storageProvider = this.cloudToStorageProvider(cloudProvider);
     if (!storageProvider) {
@@ -255,6 +340,7 @@ export class VolumeBackupsService {
         secretAccessKey: request.destination.secretAccessKey,
       },
     });
+    await this.copyLedger.forget(app.id, request.exportId);
     this.logger.log(
       `[backup] Deleted ${request.exportId} from s3://${request.destination.bucket}`,
     );
@@ -269,7 +355,13 @@ export class VolumeBackupsService {
   }
 
   private async resolveAppContext(applicationId: string): Promise<{
-    app: { id: string; slug: string; clusterId: string; k8sNamespace: string };
+    app: {
+      id: string;
+      slug: string;
+      clusterId: string;
+      k8sNamespace: string;
+      kind?: string;
+    };
     cluster: ClusterEntity;
     kubeconfig: string;
     ops: IVolumeExport;
@@ -302,6 +394,7 @@ export class VolumeBackupsService {
         slug: app.slug,
         clusterId: cluster.id,
         k8sNamespace: app.k8sNamespace,
+        kind: app.kind,
       },
       cluster,
       kubeconfig,
@@ -326,6 +419,9 @@ export class VolumeBackupsService {
       kubeconfig,
       app,
       tracked,
+      // Copies are not volumes to copy: without this, taking one snapshot makes
+      // every later "which volume?" ambiguous.
+      { excludeCopies: true },
     );
     if (claims.length === 0) {
       throw new BadRequestException(

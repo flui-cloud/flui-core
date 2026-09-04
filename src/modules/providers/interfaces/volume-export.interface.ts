@@ -95,6 +95,15 @@ export interface ExportResult {
    * typically much smaller than `sourceSizeGb * 1e9`.
    */
   actualBytes?: number;
+  /**
+   * Whether the copy tool reported the source changing under it.
+   *
+   * `true` is proof the copy is torn — and it is not otherwise visible, since
+   * the copy retries and then reports success. `false` means the log was read
+   * and said nothing. Undefined where the sink cannot tell (the tar sink emits
+   * no such warning), which is not the same as `false`.
+   */
+  writesObservedDuringCopy?: boolean;
   /** ISO 8601 timestamp. */
   createdAt: string;
   /** Provider-side ready state — true once the export can be restored from. */

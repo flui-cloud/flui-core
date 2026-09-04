@@ -7,6 +7,7 @@ import {
 } from '../../../lib/services/cli-app.service';
 import { resolveClusterRef } from '../../../lib/resolve-cluster';
 import { formatBytes } from '../../../lib/format-bytes';
+import { renderCopyRefusal } from '../../../lib/render-copy-refusal';
 
 export default class AppBackupCreate extends Command {
   static readonly description =
@@ -42,6 +43,25 @@ export default class AppBackupCreate extends Command {
     description: Flags.string({
       char: 'd',
       description: 'Optional human-friendly tag appended to the key prefix',
+    }),
+    pause: Flags.boolean({
+      default: false,
+      description:
+        'Stop the workloads holding the volume, copy it at rest, then start ' +
+        'them again. A deliberate outage for the length of the copy.',
+      exclusive: ['allow-inconsistent'],
+    }),
+    'allow-inconsistent': Flags.boolean({
+      default: false,
+      description:
+        'Copy even though the volume holds a database that is being written to. ' +
+        'The copy may not restore cleanly.',
+    }),
+    destination: Flags.string({
+      char: 'D',
+      description:
+        'Registered backup destination id (see `flui backup destination list`). Preferred: the copy is recorded against it and shows up in `flui backup list`.',
+      exclusive: ['bucket'],
     }),
     bucket: Flags.string({
       char: 'b',
@@ -96,9 +116,9 @@ export default class AppBackupCreate extends Command {
       };
     }
 
-    const target = destination
-      ? `s3://${destination.bucket}`
-      : 'auto-provisioned bucket';
+    let target = 'auto-provisioned bucket';
+    if (destination) target = `s3://${destination.bucket}`;
+    else if (flags.destination) target = `destination ${flags.destination}`;
     const spinner = ora(`Backing up "${args.name}" to ${target}...`).start();
     try {
       const { id: clusterId } = await resolveClusterRef(flags.cluster);
@@ -107,10 +127,17 @@ export default class AppBackupCreate extends Command {
       const backup = await service.createAppBackup(app.id, {
         volumeName: flags.volume,
         description: flags.description,
+        destinationId: flags.destination,
         destination,
+        allowInconsistent: flags['allow-inconsistent'],
+        pause: flags.pause,
       });
 
       spinner.succeed(`Backup uploaded: ${backup.exportId}`);
+      if (backup.warning) {
+        console.log('');
+        console.log(chalk.yellow(`  ! ${backup.warning}`));
+      }
       console.log('');
       console.log(`  ${chalk.bold('Provider:')}  ${backup.provider}`);
       console.log(`  ${chalk.bold('Namespace:')} ${backup.namespace}`);
@@ -138,6 +165,9 @@ export default class AppBackupCreate extends Command {
       console.log('');
     } catch (error: any) {
       spinner.fail('Backup failed');
+      if (renderCopyRefusal(error, `flui app backup create ${args.name}`)) {
+        this.exit(1);
+      }
       const msg =
         error.response?.data?.message ?? error.message ?? String(error);
       console.log(chalk.red(`\n  Error: ${msg}\n`));

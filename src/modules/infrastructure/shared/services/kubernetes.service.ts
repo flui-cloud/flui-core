@@ -64,6 +64,9 @@ export const FLUI_NAMESPACE_LABEL = 'managed-by';
 export const FLUI_NAMESPACE_LABEL_VALUE = 'flui-cloud';
 export const FLUI_NAMESPACE_LABEL_SELECTOR = `${FLUI_NAMESPACE_LABEL}=${FLUI_NAMESPACE_LABEL_VALUE}`;
 
+/** The only two pod phases from which no further write can come. */
+const TERMINAL_POD_PHASES = new Set(['Succeeded', 'Failed']);
+
 @Injectable()
 export class KubernetesService {
   private readonly logger = new Logger(KubernetesService.name);
@@ -593,6 +596,43 @@ export class KubernetesService {
     }
   }
 
+  /**
+   * The same query across every namespace at once.
+   *
+   * Exists for sweeps that must find a marked object without being told where
+   * to look — recovering a workload some earlier run left scaled down, when
+   * the process that knew about it is gone. Walking namespaces one by one
+   * would work and would cost a request per namespace on a cadence.
+   */
+  async listResourcesByLabelEverywhere(
+    kubeconfigContent: string,
+    kind: string,
+    labelSelector: string,
+  ): Promise<any[]> {
+    const kc = this.loadKubeconfig(kubeconfigContent);
+    const client = k8s.KubernetesObjectApi.makeApiClient(kc);
+    try {
+      const response = await client.list(
+        this.getApiVersionForKind(kind),
+        kind,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        labelSelector,
+      );
+      const body = (response as any).body ?? response;
+      return body.items ?? [];
+    } catch (error) {
+      if (this.httpCode(error) === 404) return [];
+      this.logger.warn(
+        `listResourcesByLabelEverywhere ${kind} (${labelSelector}) failed: ${error.message}`,
+      );
+      return [];
+    }
+  }
+
   async listResourcesByLabel(
     kubeconfigContent: string,
     kind: string,
@@ -938,17 +978,53 @@ export class KubernetesService {
    * Execute a command in a pod and return stdout.
    * Finds the first running pod matching the label selector.
    */
+  /**
+   * The pod with the labels, its own name, and its labels.
+   *
+   * Split out because a caller that already knows *which* pod it means — the
+   * one holding a particular volume — must not be made to guess a selector
+   * that happens to select it. Selecting by shape and hoping is how a command
+   * meant for one replica lands on another.
+   */
+  async describePod(
+    kubeconfigContent: string,
+    namespace: string,
+    podName: string,
+  ): Promise<{ labels: Record<string, string>; container?: string } | null> {
+    const pod = await this.getResource(
+      kubeconfigContent,
+      'Pod',
+      podName,
+      namespace,
+    ).catch(() => null);
+    if (!pod) return null;
+    return {
+      labels: (pod?.metadata?.labels ?? {}) as Record<string, string>,
+      container: pod?.spec?.containers?.[0]?.name as string | undefined,
+    };
+  }
+
   async execInPod(
     kubeconfigContent: string,
     namespace: string,
     labelSelector: string,
     containerName: string,
     command: string[],
+    /** Bypass the selector when the caller already knows the pod it means. */
+    podNameOverride?: string,
   ): Promise<string> {
     const kc = this.loadKubeconfig(kubeconfigContent);
 
     const coreApi = kc.makeApiClient(k8s.CoreV1Api);
-    const pods = await coreApi.listNamespacedPod({ namespace, labelSelector });
+    const pods = podNameOverride
+      ? {
+          items: [
+            await coreApi
+              .readNamespacedPod({ name: podNameOverride, namespace })
+              .catch(() => null),
+          ].filter(Boolean),
+        }
+      : await coreApi.listNamespacedPod({ namespace, labelSelector });
     const pod = (pods.items ?? []).find((p) => p.status?.phase === 'Running');
     if (!pod?.metadata?.name) {
       throw new Error(
@@ -1117,6 +1193,199 @@ export class KubernetesService {
     this.logger.log(
       `${kind} ${name} restart triggered in namespace ${namespace}`,
     );
+  }
+
+  /**
+   * Finds the workloads that mount a PVC, with the replica count they are at.
+   *
+   * Resolved from the workloads rather than from the pods that mount the claim,
+   * for two reasons: a workload already scaled to zero has no pods to walk, and
+   * a StatefulSet's own volumes are minted from `volumeClaimTemplates` and named
+   * `<template>-<set>-<ordinal>`, so they never appear in its pod spec at all —
+   * matching on pod volumes alone would miss every database.
+   */
+  async findWorkloadsMountingPvc(
+    kubeconfigContent: string,
+    namespace: string,
+    pvcName: string,
+  ): Promise<
+    Array<{
+      kind: 'Deployment' | 'StatefulSet';
+      name: string;
+      replicas: number;
+    }>
+  > {
+    const [deployments, statefulSets] = await Promise.all([
+      this.listResources(kubeconfigContent, 'deployments', namespace).catch(
+        () => [] as any[],
+      ),
+      this.listResources(kubeconfigContent, 'statefulsets', namespace).catch(
+        () => [] as any[],
+      ),
+    ]);
+
+    const mountsClaim = (workload: any): boolean =>
+      (workload?.spec?.template?.spec?.volumes ?? []).some(
+        (volume: any) => volume?.persistentVolumeClaim?.claimName === pvcName,
+      );
+
+    const owners: Array<{
+      kind: 'Deployment' | 'StatefulSet';
+      name: string;
+      replicas: number;
+    }> = [];
+
+    for (const deployment of deployments) {
+      const name = deployment?.metadata?.name;
+      if (!name || !mountsClaim(deployment)) continue;
+      owners.push({
+        kind: 'Deployment',
+        name,
+        replicas: deployment?.spec?.replicas ?? 1,
+      });
+    }
+
+    for (const set of statefulSets) {
+      const name = set?.metadata?.name;
+      if (!name) continue;
+      const fromTemplate = (set?.spec?.volumeClaimTemplates ?? []).some(
+        (template: any) => {
+          const prefix = `${template?.metadata?.name}-${name}-`;
+          return (
+            pvcName.startsWith(prefix) &&
+            /^\d+$/.test(pvcName.slice(prefix.length))
+          );
+        },
+      );
+      if (!fromTemplate && !mountsClaim(set)) continue;
+      owners.push({
+        kind: 'StatefulSet',
+        name,
+        replicas: set?.spec?.replicas ?? 1,
+      });
+    }
+
+    return owners;
+  }
+
+  /**
+   * Names the pods that could be writing to a PVC right now.
+   *
+   * Deliberately not the same question as {@link findWorkloadsMountingPvc}: a
+   * workload's replica count says how many pods should exist, not how many are
+   * holding the volume.
+   *
+   * Phases are excluded rather than included, which is the whole point. Only
+   * `Succeeded` and `Failed` are terminal, and everything else can be writing:
+   * a `Pending` pod is running its init containers, which is exactly when
+   * `initdb`, a migration, or a recursive chown touches the volume; an
+   * `Unknown` pod is one the kubelet cannot be reached about, and its container
+   * usually keeps running — and keeps writing to the share — while the API
+   * server says nothing is there. Filtering to `Running` reports zero writers
+   * in both cases, which is the one wrong answer that matters here.
+   */
+  async findPodsMountingPvc(
+    kubeconfigContent: string,
+    namespace: string,
+    pvcName: string,
+  ): Promise<string[]> {
+    const pods = await this.listResources(
+      kubeconfigContent,
+      'pods',
+      namespace,
+    ).catch(() => [] as any[]);
+    return pods
+      .filter(
+        (pod: any) =>
+          !TERMINAL_POD_PHASES.has(pod?.status?.phase ?? '') &&
+          (pod?.spec?.volumes ?? []).some(
+            (volume: any) =>
+              volume?.persistentVolumeClaim?.claimName === pvcName,
+          ),
+      )
+      .map((pod: any) => pod?.metadata?.name as string)
+      .filter((name): name is string => !!name);
+  }
+
+  /**
+   * The pods holding a PVC, each with the controller that could scale it away.
+   *
+   * The owner walk goes one hop further than the pod's own `ownerReferences`
+   * because a Deployment never owns its pods directly — a ReplicaSet sits in
+   * between, and stopping at it would report every Deployment-backed pod as
+   * something Flui cannot stop.
+   */
+  async findPodsMountingPvcDetailed(
+    kubeconfigContent: string,
+    namespace: string,
+    pvcName: string,
+  ): Promise<
+    Array<{
+      name: string;
+      phase: string;
+      ownerRootKind?: string;
+      ownerRootName?: string;
+    }>
+  > {
+    const pods = await this.listResources(
+      kubeconfigContent,
+      'pods',
+      namespace,
+    ).catch(() => [] as any[]);
+    const holders = pods.filter(
+      (pod: any) =>
+        !TERMINAL_POD_PHASES.has(pod?.status?.phase ?? '') &&
+        (pod?.spec?.volumes ?? []).some(
+          (volume: any) => volume?.persistentVolumeClaim?.claimName === pvcName,
+        ),
+    );
+
+    const detailed = [];
+    for (const pod of holders) {
+      const owner = (pod?.metadata?.ownerReferences ?? [])[0];
+      let ownerRootKind = owner?.kind as string | undefined;
+      let ownerRootName = owner?.name as string | undefined;
+      if (ownerRootKind === 'ReplicaSet' && ownerRootName) {
+        const replicaSet = await this.getResource(
+          kubeconfigContent,
+          'ReplicaSet',
+          ownerRootName,
+          namespace,
+        ).catch(() => null);
+        const grandparent = (replicaSet?.metadata?.ownerReferences ?? [])[0];
+        ownerRootKind = grandparent?.kind ?? ownerRootKind;
+        ownerRootName = grandparent?.name ?? ownerRootName;
+      }
+      detailed.push({
+        name: pod?.metadata?.name as string,
+        phase: (pod?.status?.phase ?? '') as string,
+        ownerRootKind,
+        ownerRootName,
+      });
+    }
+    return detailed;
+  }
+
+  /**
+   * Sets or removes labels and annotations on a workload's metadata.
+   *
+   * A `null` value removes the key, which is how a strategic merge patch
+   * deletes a map entry — the lease depends on removal being as reliable as
+   * writing, or a released workload would keep looking paused to every sweep.
+   */
+  async annotateAndLabelWorkload(
+    kubeconfigContent: string,
+    kind: string,
+    namespace: string,
+    name: string,
+    labels: Record<string, string | null>,
+    annotations: Record<string, string | null>,
+  ): Promise<void> {
+    await this.strategicPatchWorkload(kubeconfigContent, {
+      apiVersion: 'apps/v1',
+      kind,
+      metadata: { name, namespace, labels, annotations },
+    });
   }
 
   /** Scale a workload (`kubectl scale <kind>/<name> --replicas=<n>`). */
@@ -1432,6 +1701,10 @@ export class KubernetesService {
       Deployment: 'apps/v1',
       StatefulSet: 'apps/v1',
       DaemonSet: 'apps/v1',
+      // Without this the map's `v1` default would send a ReplicaSet lookup to
+      // the core API, which has no such kind. It is read when walking a pod
+      // back to the Deployment that owns it.
+      ReplicaSet: 'apps/v1',
       Job: 'batch/v1',
       CronJob: 'batch/v1',
       Ingress: 'networking.k8s.io/v1',
@@ -1570,6 +1843,32 @@ export class KubernetesService {
     throw new Error(
       `Secret ${namespace}/${name} not ready after ${timeoutMs}ms`,
     );
+  }
+
+  /**
+   * The Secret's data, base64-decoded. Null when it does not exist — callers
+   * that capture secrets for disaster recovery need "absent" and "unreadable"
+   * to stay distinguishable, so this throws on anything that is not a 404.
+   */
+  async readSecretData(
+    kubeconfigContent: string,
+    name: string,
+    namespace: string,
+  ): Promise<Record<string, string> | null> {
+    const { coreApi } = this.getKubeClient(kubeconfigContent);
+    try {
+      const secret = await coreApi.readNamespacedSecret({ name, namespace });
+      const data = (secret as { data?: Record<string, string> })?.data ?? {};
+      return Object.fromEntries(
+        Object.entries(data).map(([key, value]) => [
+          key,
+          Buffer.from(value, 'base64').toString('utf-8'),
+        ]),
+      );
+    } catch (error) {
+      if (this.httpCode(error) === 404) return null;
+      throw error;
+    }
   }
 
   /**

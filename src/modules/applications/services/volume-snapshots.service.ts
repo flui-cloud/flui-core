@@ -17,9 +17,15 @@ import {
   VolumeExportCapabilities,
 } from '../../providers/interfaces/volume-export.interface';
 import { EncryptionService } from '../../shared/encryption/services/encryption.service';
+import {
+  VolumeCopyPreflightService,
+  describeCopyRisk,
+} from './volume-copy-preflight.service';
+import { VolumePauseLeaseService } from './volume-pause-lease.service';
 import { ApplicationsRepository } from '../repositories/applications.repository';
 import { AppResourcesRepository } from '../repositories/app-resources.repository';
 import { ApplicationVolumeClaimsService } from './application-volume-claims.service';
+import { VolumeCopyLedgerService } from './volume-copy-ledger.service';
 import { AppOperationRunner } from './app-operation-runner.service';
 import { OperationType } from '../../infrastructure/servers/entities/infrastructure-operations.entity';
 import {
@@ -35,11 +41,17 @@ export interface CreateSnapshotForAppRequest {
   volumeName?: string;
   /** Optional human-friendly suffix appended to the generated snapshot id. */
   description?: string;
+  /** Copy a volume that holds a live database anyway. */
+  allowInconsistent?: boolean;
+  /** Stop the writers, copy at rest, then start them again. */
+  pause?: boolean;
 }
 
 export interface SnapshotResponse extends ExportSummary {
   provider: CloudProvider;
   providerCapabilities: VolumeExportCapabilities;
+  /** Set only when there is something true to say about this copy. */
+  warning?: string;
 }
 
 export interface SnapshotListResponse extends SnapshotCapability {
@@ -56,6 +68,9 @@ export class VolumeSnapshotsService {
     private readonly applicationsRepository: ApplicationsRepository,
     private readonly appResourcesRepository: AppResourcesRepository,
     private readonly volumeClaims: ApplicationVolumeClaimsService,
+    private readonly copyLedger: VolumeCopyLedgerService,
+    private readonly preflight: VolumeCopyPreflightService,
+    private readonly pauseLease: VolumePauseLeaseService,
     private readonly volumeExportService: VolumeExportService,
     private readonly snapshotStorageCapability: SnapshotStorageCapabilityService,
     private readonly encryptionService: EncryptionService,
@@ -83,6 +98,13 @@ export class VolumeSnapshotsService {
         metadata: { pvcName, description: request.description },
       },
       async (): Promise<SnapshotResponse> => {
+        const { facts, paused } = await this.preflight.check({
+          kubeconfig,
+          namespace: app.k8sNamespace,
+          pvcName,
+          allowInconsistent: request.allowInconsistent,
+          pause: request.pause,
+        });
         const snapshotName = this.buildSnapshotName(
           app.slug,
           request.description,
@@ -93,17 +115,36 @@ export class VolumeSnapshotsService {
           'flui.cloud/source-pvc': pvcName,
           'flui.cloud/snapshot-trigger': 'manual',
         };
-        const exp: ExportResult = await ops.createExport({
-          sink: 'pvc-clone',
-          kubeconfig,
-          namespace: app.k8sNamespace,
-          sourcePvcName: pvcName,
-          exportName: snapshotName,
-          labels: baseLabels,
-        });
+        let exp: ExportResult;
+        try {
+          exp = await ops.createExport({
+            sink: 'pvc-clone',
+            kubeconfig,
+            namespace: app.k8sNamespace,
+            sourcePvcName: pvcName,
+            exportName: snapshotName,
+            labels: baseLabels,
+          });
+        } finally {
+          // Before the ledger write on purpose: bookkeeping must never extend
+          // the outage, and a failed copy must still give the app back.
+          await this.pauseLease.release(kubeconfig, paused);
+        }
         this.logger.log(
           `[snapshot] Created ${exp.sink} ${exp.exportId} for app=${app.slug} cluster=${cluster.id} (provider=${provider})`,
         );
+        await this.copyLedger.record({
+          clusterId: cluster.id,
+          applicationId: app.id,
+          applicationSlug: app.slug,
+          volumeName: pvcName,
+          userId: request.userId,
+          exportId: exp.exportId,
+          sink: 'pvc-clone',
+          sizeBytes: exp.actualBytes,
+          clonePvcName: snapshotName,
+          ...facts,
+        });
         return {
           exportId: exp.exportId,
           sink: exp.sink,
@@ -117,6 +158,7 @@ export class VolumeSnapshotsService {
           labels: baseLabels,
           provider,
           providerCapabilities: ops.capabilities,
+          warning: describeCopyRisk(facts, exp.writesObservedDuringCopy),
         };
       },
     );
@@ -142,6 +184,17 @@ export class VolumeSnapshotsService {
       namespace: app.k8sNamespace,
       labelSelector: `flui-app-id=${app.id}`,
     });
+
+    // `pvcNames` came back from the same cluster a moment ago, so an empty
+    // `items` here is a real absence of copies rather than a failed call.
+    await this.copyLedger.reconcile(
+      app.clusterId,
+      app.id,
+      app.slug,
+      items,
+      pvcNames.length > 0,
+    );
+
     return {
       supported: true,
       items: items.map((s) => ({
@@ -243,6 +296,7 @@ export class VolumeSnapshotsService {
       kubeconfig,
       app,
       tracked,
+      { excludeCopies: true },
     );
     const dataPvc = claims.find((c) => c.name === source.sourcePvcName);
     const storageClass = dataPvc?.storageClass ?? 'local-path';
@@ -307,6 +361,7 @@ export class VolumeSnapshotsService {
           exportId: snapshotId,
           ignoreNotFound: true,
         });
+        await this.copyLedger.forget(app.id, snapshotId);
         this.logger.log(`[snapshot] Deleted ${snapshotId} for app=${app.slug}`);
       },
     );
@@ -314,7 +369,13 @@ export class VolumeSnapshotsService {
   }
 
   private async resolveAppContext(applicationId: string): Promise<{
-    app: { id: string; slug: string; clusterId: string; k8sNamespace: string };
+    app: {
+      id: string;
+      slug: string;
+      clusterId: string;
+      k8sNamespace: string;
+      kind?: string;
+    };
     cluster: ClusterEntity;
     kubeconfig: string;
     ops: IVolumeExport;
@@ -347,6 +408,7 @@ export class VolumeSnapshotsService {
         slug: app.slug,
         clusterId: cluster.id,
         k8sNamespace: app.k8sNamespace,
+        kind: app.kind,
       },
       cluster,
       kubeconfig,
@@ -397,6 +459,7 @@ export class VolumeSnapshotsService {
       kubeconfig,
       app,
       tracked,
+      { excludeCopies: true },
     );
     return claims.map((c) => c.name);
   }
