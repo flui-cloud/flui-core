@@ -6,11 +6,33 @@ import * as path from 'node:path';
 import * as os from 'node:os';
 import { gzipSync } from 'node:zlib';
 import { EncryptionService } from '../../shared/encryption/services/encryption.service';
+import { KubernetesService } from '../../infrastructure/shared/services/kubernetes.service';
 import { RETIRED_DEFAULT_KEY_HEX } from '../../access/services/key-storage.service';
 
 // If this is the live key, the SSH/CA material under /secure/keys is only
 // nominally encrypted. Imported rather than copied so the two cannot drift.
 const INSECURE_SSH_KEY_DEFAULT = RETIRED_DEFAULT_KEY_HEX;
+
+/**
+ * A Secret that exists only inside the cluster and that a rebuilt installation
+ * cannot regenerate: `zitadel-secrets` holds the masterkey without which a
+ * restored Zitadel database cannot decrypt itself, and the role passwords the
+ * restored dump expects. Captured verbatim so a rebuild can put them back.
+ */
+interface CapturedClusterSecret {
+  namespace: string;
+  name: string;
+  data: Record<string, string>;
+}
+
+/** Where the rebuild-critical secrets live on a Flui control plane. */
+const REBUILD_CRITICAL_SECRETS: ReadonlyArray<{
+  namespace: string;
+  name: string;
+}> = [
+  { namespace: 'flui-system', name: 'zitadel-secrets' },
+  { namespace: 'flui-system', name: 'flui-secrets' },
+];
 
 interface SecureKeyFile {
   relPath: string;
@@ -35,6 +57,7 @@ export interface KeyBundleManifest {
   };
   zitadelPat: string | null;
   zitadelPatSource: string;
+  clusterSecrets: CapturedClusterSecret[];
   secureKeys: SecureKeyFile[];
   databases: string[];
   zitadelCovered: boolean;
@@ -62,6 +85,7 @@ export class PlatformKeyBundleService {
   constructor(
     private readonly configService: ConfigService,
     private readonly encryptionService: EncryptionService,
+    private readonly kubernetesService: KubernetesService,
   ) {}
 
   async assemble(input: {
@@ -70,6 +94,8 @@ export class PlatformKeyBundleService {
     masterEnvId: string;
     databases: string[];
     zitadelCovered: boolean;
+    /** Control-plane kubeconfig — the only way to reach the in-cluster secrets. */
+    kubeconfig?: string;
   }): Promise<AssembledBundle> {
     const insecureDefaults: string[] = [];
 
@@ -93,9 +119,25 @@ export class PlatformKeyBundleService {
     }
 
     const sshCa = this.resolveSshCa();
+    const clusterSecrets = await this.captureClusterSecrets(input.kubeconfig);
     const { pat: zitadelPat, source: zitadelPatSource } =
-      this.resolveZitadelPat();
+      this.resolveZitadelPat(clusterSecrets);
     const secureKeys = await this.readSecureKeysTree();
+
+    // A bundle without the Zitadel masterkey restores a database Zitadel cannot
+    // read: every user and every OIDC client is gone. That is a silent, total
+    // loss of the identity layer, so it is called out rather than logged once.
+    const hasMasterkey = clusterSecrets.some(
+      (s) => s.name === 'zitadel-secrets' && s.data.masterkey,
+    );
+    if (input.zitadelCovered && !hasMasterkey) {
+      insecureDefaults.push('ZITADEL_MASTERKEY_MISSING');
+      this.logger.error(
+        '[platform-backup] the Zitadel masterkey could not be captured — a restore ' +
+          'from this bundle will load the Zitadel database but be unable to decrypt it. ' +
+          'Every user and OIDC client would be unrecoverable.',
+      );
+    }
 
     const manifest: KeyBundleManifest = {
       version: 1,
@@ -109,6 +151,7 @@ export class PlatformKeyBundleService {
       sshCa,
       zitadelPat,
       zitadelPatSource,
+      clusterSecrets,
       secureKeys,
       databases: input.databases,
       zitadelCovered: input.zitadelCovered,
@@ -153,12 +196,55 @@ export class PlatformKeyBundleService {
     }
   }
 
-  private resolveZitadelPat(): { pat: string | null; source: string } {
+  private resolveZitadelPat(clusterSecrets: CapturedClusterSecret[]): {
+    pat: string | null;
+    source: string;
+  } {
     const pat = this.configService.get<string>('ZITADEL_SERVICE_ACCOUNT_PAT');
     if (pat) return { pat, source: 'env' };
-    // The PAT also lives in the flui-secrets K8s Secret / zitadel-bootstrap PVC;
-    // capturing that path requires the control kubeconfig and is a follow-up.
+    // The bootstrap deliberately keeps the PAT out of the API's env (OIDC
+    // provisions it at runtime), so the Secret is the normal source, not a
+    // fallback.
+    const fromSecret = clusterSecrets.find((s) => s.name === 'flui-secrets')
+      ?.data?.ZITADEL_SERVICE_ACCOUNT_PAT;
+    if (fromSecret)
+      return { pat: fromSecret, source: 'flui-system/flui-secrets' };
     return { pat: null, source: 'none' };
+  }
+
+  /**
+   * Reads the Secrets a rebuilt installation cannot regenerate. Best effort per
+   * secret: a control plane in local-auth mode has no `zitadel-secrets`, and
+   * that is not a failure — but an unreadable cluster is reported, because
+   * silently sealing a bundle that is missing the masterkey is exactly the
+   * failure this capture exists to prevent.
+   */
+  private async captureClusterSecrets(
+    kubeconfig?: string,
+  ): Promise<CapturedClusterSecret[]> {
+    if (!kubeconfig) {
+      this.logger.warn(
+        '[platform-backup] no control kubeconfig available — in-cluster secrets ' +
+          '(Zitadel masterkey, role passwords) are NOT in this bundle.',
+      );
+      return [];
+    }
+    const captured: CapturedClusterSecret[] = [];
+    for (const ref of REBUILD_CRITICAL_SECRETS) {
+      try {
+        const data = await this.kubernetesService.readSecretData(
+          kubeconfig,
+          ref.name,
+          ref.namespace,
+        );
+        if (data) captured.push({ ...ref, data });
+      } catch (err: any) {
+        this.logger.error(
+          `[platform-backup] could not read ${ref.namespace}/${ref.name}: ${err?.message}`,
+        );
+      }
+    }
+    return captured;
   }
 
   /** Inline the /secure/keys tree as base64 (KBs — SSH user + CA private keys). */

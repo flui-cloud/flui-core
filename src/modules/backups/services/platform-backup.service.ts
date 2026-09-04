@@ -119,6 +119,7 @@ export class PlatformBackupService {
       masterEnvId: envId,
       databases,
       zitadelCovered,
+      kubeconfig,
     });
     const keysObjectKey = await this.uploadBuffer(
       backend,
@@ -161,7 +162,11 @@ export class PlatformBackupService {
     const cmd = [
       'sh',
       '-c',
-      `PGPASSWORD=${this.shQuote(pgPassword)} pg_dumpall -U "$POSTGRES_USER" --clean --if-exists`,
+      // --no-role-passwords: a rebuilt install has its own generated role
+      // passwords in its own Secret. A dump carrying the OLD hashes overwrites
+      // them on load and locks the new API out of the database it just
+      // restored. The real passwords ride the sealed bundle instead.
+      `PGPASSWORD=${this.shQuote(pgPassword)} pg_dumpall -U "$POSTGRES_USER" --clean --if-exists --no-role-passwords`,
     ];
     // Collect raw bytes — decoding per WS chunk would corrupt multibyte chars
     // straddling a chunk boundary and silently poison the restore.

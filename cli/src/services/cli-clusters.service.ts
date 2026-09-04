@@ -1026,6 +1026,28 @@ export class CliClustersService {
     const keyDir = path.join(os.homedir(), '.flui');
     const keyFilePath = path.join(keyDir, 'encryption.key');
 
+    // A control plane rebuilt from a platform backup has to boot with the key
+    // its restored rows were sealed with, or every encrypted column — provider
+    // tokens, kubeconfigs, app secrets — loads unreadable. Rebuilding from the
+    // original workstation gets that key by accident, from the file below;
+    // rebuilding from anywhere else needs it passed in.
+    // `flui backup platform restore` writes it into install-keys.env under
+    // exactly this name. Deliberately NOT `ENCRYPTION_KEY`: that one is in
+    // flui-core's dev .env, and silently pinning a new cluster to a developer's
+    // local key would be worse than asking for one more word.
+    const fromEnv = process.env.FLUI_RESTORE_ENCRYPTION_KEY?.trim();
+    if (fromEnv) {
+      if (fromEnv.length !== 64) {
+        throw new Error(
+          'FLUI_RESTORE_ENCRYPTION_KEY must be the 64-character hex key from install-keys.env',
+        );
+      }
+      this.logger.log(
+        'Using the encryption key from FLUI_RESTORE_ENCRYPTION_KEY (rebuilding an existing installation)',
+      );
+      return fromEnv;
+    }
+
     // Reuse existing key
     if (fs.existsSync(keyFilePath)) {
       const existingKey = fs.readFileSync(keyFilePath, 'utf-8').trim();

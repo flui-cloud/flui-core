@@ -318,6 +318,13 @@ export class ControlClusterService {
         { clusterType: ClusterType.OBSERVABILITY },
       ],
       relations: ['nodes'],
+      // Deterministic on purpose. A control plane rebuilt from a platform
+      // backup carries the OLD installation's control row in the restored dump
+      // alongside the row the fresh install just seeded — and without an order
+      // this findOne picks whichever Postgres happens to return, which half the
+      // time is a dead master with an unreachable IP. Newest wins: the row this
+      // installation created for itself.
+      order: { createdAt: 'DESC' },
     });
 
     if (clusterByType) {
