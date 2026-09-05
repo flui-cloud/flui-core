@@ -24,12 +24,16 @@ COPY --from=docker.io/rclone/rclone:1.67 /usr/local/bin/rclone /usr/local/bin/rc
 # `gosu` are already in the base, and so is the CA bundle TLS to object storage
 # needs, at /etc/ssl/certs/ca-certificates.crt.
 COPY ship.sh /usr/local/bin/ship.sh
+# The restore half: run as an init container before a fresh server starts, so
+# the volume already holds the recovered state by the time MariaDB boots.
+COPY restore.sh /usr/local/bin/restore.sh
 
 RUN set -eux; \
-    chmod 0755 /usr/local/bin/ship.sh /usr/local/bin/rclone; \
+    chmod 0755 /usr/local/bin/ship.sh /usr/local/bin/restore.sh /usr/local/bin/rclone; \
     rclone version; \
     mariadb-backup --version; \
     mariadb-binlog --version; \
+    mbstream --version 2>/dev/null || true; \
     test -f /etc/ssl/certs/ca-certificates.crt
 
 ENTRYPOINT ["/usr/local/bin/ship.sh"]
