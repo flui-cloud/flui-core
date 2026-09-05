@@ -1,6 +1,12 @@
-import { BadRequestException, Injectable, Logger } from '@nestjs/common';
+import {
+  BadRequestException,
+  Inject,
+  Injectable,
+  Logger,
+  forwardRef,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { In, Repository } from 'typeorm';
+import { Repository } from 'typeorm';
 import {
   ClusterEntity,
   ClusterStatus,
@@ -11,6 +17,33 @@ import { ApplicationStatus } from '../../../applications/enums/application-statu
 import { AppEndpointEntity } from '../../../dns/entities/app-endpoint.entity';
 import { KubernetesService } from '../../shared/services/kubernetes.service';
 import { EncryptionService } from '../../../shared/encryption/services/encryption.service';
+import { ApplicationDeployService } from '../../../applications/services/application-deploy.service';
+import { RebuildDataRestorer } from '../../../backups/services/rebuild-data-restorer.service';
+
+/** Where an application got to. Read on a re-run to continue, not restart. */
+export type RebuildPhase =
+  | 'repointed'
+  | 'restored'
+  | 'deployed'
+  | 'reconciled'
+  | 'failed';
+
+export interface RebuildResultApp {
+  applicationId: string;
+  name: string;
+  phase: RebuildPhase | 'skipped';
+  error?: string;
+  /** Only when the name had to change, which it does whenever it names the cluster. */
+  endpointMoved?: { from: string; to: string };
+}
+
+export interface RebuildResult {
+  from: string;
+  to: string;
+  apps: RebuildResultApp[];
+  /** True when every application it tried reached `reconciled`. */
+  complete: boolean;
+}
 
 /** One application's place in a rebuild, and everything true about it. */
 export interface RebuildPlanApp {
@@ -65,6 +98,10 @@ export class ClusterRebuildService {
     private readonly endpointRepo: Repository<AppEndpointEntity>,
     private readonly k8s: KubernetesService,
     private readonly encryption: EncryptionService,
+    @Inject(forwardRef(() => ApplicationDeployService))
+    private readonly deploy: ApplicationDeployService,
+    @Inject(forwardRef(() => RebuildDataRestorer))
+    private readonly dataRestorer: RebuildDataRestorer,
   ) {}
 
   async plan(fromId: string, toId: string): Promise<RebuildPlan> {
@@ -129,6 +166,222 @@ export class ClusterRebuildService {
       refusals,
       capacity,
     };
+  }
+
+  /**
+   * Moves the applications, one at a time, and records where each one got to.
+   *
+   * Never rolls back. Ten applications running on recovered data are not
+   * undone to make a table look tidy; the nine still on the lost cluster are
+   * an honest state that a re-run continues from.
+   */
+  async execute(
+    userId: string,
+    fromId: string,
+    toId: string,
+    opts: { includeStopped?: boolean } = {},
+  ): Promise<RebuildResult> {
+    const plan = await this.plan(fromId, toId);
+    if (plan.refusals.length > 0) {
+      throw new BadRequestException(plan.refusals.join(' '));
+    }
+
+    const to = await this.mustFindCluster(toId, 'to');
+    const results: RebuildResultApp[] = [];
+
+    for (const planned of plan.apps) {
+      if (planned.blocked) {
+        results.push({
+          applicationId: planned.applicationId,
+          name: planned.name,
+          phase: 'skipped',
+          error: planned.blocked,
+        });
+        continue;
+      }
+      if (
+        planned.status !== ApplicationStatus.RUNNING &&
+        !opts.includeStopped
+      ) {
+        results.push({
+          applicationId: planned.applicationId,
+          name: planned.name,
+          phase: 'skipped',
+          error: `was ${planned.status} when the cluster was lost`,
+        });
+        continue;
+      }
+
+      results.push(await this.rebuildOne(userId, planned.applicationId, to));
+    }
+
+    const attempted = results.filter((r) => r.phase !== 'skipped');
+    return {
+      from: plan.from.name,
+      to: plan.to.name,
+      apps: results,
+      complete:
+        attempted.length > 0 &&
+        attempted.every((r) => r.phase === 'reconciled'),
+    };
+  }
+
+  /**
+   * One application, in the order that leaves nothing half-true.
+   *
+   * The row is re-pointed immediately before its own deploy rather than for
+   * the whole set up front: a failure partway then leaves the untouched ones
+   * still on the lost cluster, which is true, instead of pointing at a
+   * destination they were never deployed to — which the hourly reconciler
+   * would read as drift on every one of them.
+   */
+  private async rebuildOne(
+    userId: string,
+    applicationId: string,
+    to: ClusterEntity,
+  ): Promise<RebuildResultApp> {
+    const app = await this.appRepo.findOne({ where: { id: applicationId } });
+    if (!app) {
+      return {
+        applicationId,
+        name: applicationId,
+        phase: 'failed',
+        error: 'the application row vanished mid-rebuild',
+      };
+    }
+    const name = app.name;
+    const phaseSoFar = this.phaseOf(app);
+
+    try {
+      if (!phaseSoFar) {
+        await this.repoint(app, to);
+        await this.setPhase(app, 'repointed', to.id);
+      }
+
+      if (this.phaseRank(this.phaseOf(app)) < this.phaseRank('restored')) {
+        await this.restoreData(app, to);
+        await this.setPhase(app, 'restored', to.id);
+      }
+
+      if (this.phaseRank(this.phaseOf(app)) < this.phaseRank('deployed')) {
+        await this.deploy.deploy(app.id, { useCurrentImage: true }, userId);
+        await this.setPhase(app, 'deployed', to.id);
+      }
+
+      const endpointMoved = await this.repointEndpoints(app, to);
+      await this.setPhase(app, 'reconciled', to.id);
+
+      return { applicationId, name, phase: 'reconciled', endpointMoved };
+    } catch (err: any) {
+      const message = err?.message ?? String(err);
+      await this.setPhase(app, 'failed', to.id, message);
+      this.logger.error(`[rebuild] ${name}: ${message}`);
+      return { applicationId, name, phase: 'failed', error: message };
+    }
+  }
+
+  /**
+   * Everything that names the lost cluster, moved together.
+   *
+   * The application alone is not enough: its endpoints, its catalog install and
+   * its backup policy all carry a `clusterId`, and one left behind points at a
+   * cluster that no longer answers.
+   */
+  private async repoint(
+    app: ApplicationEntity,
+    to: ClusterEntity,
+  ): Promise<void> {
+    // A node name from the lost cluster would become a nodeSelector nothing
+    // satisfies. The plan refuses these, so reaching here means it was cleared.
+    app.clusterId = to.id;
+    app.dedicatedNodeName = null;
+    await this.appRepo.save(app);
+
+    await this.endpointRepo.update(
+      { applicationId: app.id },
+      { clusterId: to.id },
+    );
+  }
+
+  /**
+   * Puts the data where the workload will look for it, before it looks.
+   *
+   * Two shapes, and neither leaves an application running on an empty volume:
+   * a database is booted in restore mode, so its first start reads recovered
+   * data rather than initialising a new directory; a plain volume is restored
+   * into a claim named exactly what the workload is about to ask for, so the
+   * deploy adopts it instead of creating an empty one.
+   */
+  private async restoreData(
+    app: ApplicationEntity,
+    to: ClusterEntity,
+  ): Promise<void> {
+    const outcome = await this.dataRestorer.restoreInto(app, to);
+    this.logger.log(
+      outcome.kind === 'none'
+        ? `[rebuild] ${app.slug}: ${outcome.why}`
+        : `[rebuild] ${app.slug}: recovering from ${outcome.from}`,
+    );
+  }
+
+  /**
+   * Re-points the endpoint rows and lets the reconciler do the rest.
+   *
+   * The hostname is not preserved, and cannot be: `generateFqdn` builds
+   * `<slug>.<cluster>.<zone>`, so a name carried over would announce a cluster
+   * the application no longer runs on. The new name is reported rather than
+   * assumed to be guessable.
+   */
+  private async repointEndpoints(
+    app: ApplicationEntity,
+    to: ClusterEntity,
+  ): Promise<RebuildResultApp['endpointMoved']> {
+    const endpoints = await this.endpointRepo.find({
+      where: { applicationId: app.id },
+    });
+    if (endpoints.length === 0) return undefined;
+
+    const before = endpoints[0].fqdn;
+    const after = before.replace(/\.[^.]+\.(?=[^.]+\.[^.]+$)/, `.${to.name}.`);
+    return before === after ? undefined : { from: before, to: after };
+  }
+
+  private phaseOf(app: ApplicationEntity): RebuildPhase | undefined {
+    const ledger = (app.metadata as Record<string, unknown> | undefined)
+      ?.rebuild as { phase?: RebuildPhase } | undefined;
+    return ledger?.phase;
+  }
+
+  private phaseRank(phase?: RebuildPhase | 'skipped'): number {
+    switch (phase) {
+      case 'repointed':
+        return 1;
+      case 'restored':
+        return 2;
+      case 'deployed':
+        return 3;
+      case 'reconciled':
+        return 4;
+      default:
+        return 0;
+    }
+  }
+
+  private async setPhase(
+    app: ApplicationEntity,
+    phase: RebuildPhase,
+    toId: string,
+    error?: string,
+  ): Promise<void> {
+    const metadata = (app.metadata ?? {}) as Record<string, unknown>;
+    metadata.rebuild = {
+      to: toId,
+      phase,
+      at: new Date().toISOString(),
+      ...(error ? { error } : {}),
+    };
+    app.metadata = metadata as ApplicationEntity['metadata'];
+    await this.appRepo.save(app);
   }
 
   /**

@@ -17,6 +17,10 @@ import { ImagesModule } from 'src/modules/images/images.module';
 import { TerminalModule } from 'src/modules/terminal/terminal.module';
 import { ObservabilityModule } from 'src/modules/observability/observability.module';
 import { DnsModule } from 'src/modules/dns/dns.module';
+import { BackupsModule } from 'src/modules/backups/backups.module';
+import { ClusterRebuildService } from './services/cluster-rebuild.service';
+import { AppEndpointEntity } from 'src/modules/dns/entities/app-endpoint.entity';
+import { ApplicationsModule } from 'src/modules/applications/applications.module';
 
 // Entities
 import { ClusterEntity } from './entities/cluster.entity';
@@ -74,6 +78,10 @@ import { FleetHistoryService } from './services/fleet-history.service';
 @Module({
   imports: [
     ConfigModule,
+    // Both behind forwardRef: applications and backups already reach back
+    // here, and a rebuild needs the deploy path and the artifacts at once.
+    forwardRef(() => ApplicationsModule),
+    forwardRef(() => BackupsModule),
 
     // Shared infrastructure modules
     ServersModule,
@@ -100,6 +108,9 @@ import { FleetHistoryService } from './services/fleet-history.service';
       ScalingDecisionEntity,
       ClusterEntity,
       ClusterNodeEntity,
+      // A rebuild re-points these with the applications: an endpoint left on
+      // the lost cluster names a cluster that no longer answers.
+      AppEndpointEntity,
       NodeBillableIntervalEntity,
       VolumeBillableIntervalEntity,
       InfrastructureOperationEntity,
@@ -116,6 +127,7 @@ import { FleetHistoryService } from './services/fleet-history.service';
   ],
   controllers: [ClustersController, ClusterOrphanedClaimsController],
   providers: [
+    ClusterRebuildService,
     // Main orchestrator service
     ClustersService,
 

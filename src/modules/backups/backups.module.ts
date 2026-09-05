@@ -74,6 +74,7 @@ import { BackupRetentionSweeper } from './schedulers/backup-retention.sweeper';
 import { RunVolumeCopyProcessor } from './processors/run-volume-copy.processor';
 import { MariadbPitrService } from './services/mariadb-pitr.service';
 import { ContinuousBackupEngineRegistry } from './services/continuous-backup-engine.registry';
+import { RebuildDataRestorer } from './services/rebuild-data-restorer.service';
 import { DeclaredEngineResolver } from './services/declared-engine.resolver';
 import { BackupStatusService } from './services/backup-status.service';
 
@@ -99,7 +100,7 @@ import { BACKUP_QUEUE } from './backups.constants';
     ]),
     BullModule.registerQueue({ name: BACKUP_QUEUE }),
     SharedInfrastructureModule,
-    ClustersModule,
+    forwardRef(() => ClustersModule),
     EncryptionModule,
     StorageModule,
     CatalogModule,
@@ -150,6 +151,7 @@ import { BACKUP_QUEUE } from './backups.constants';
     RunVolumeCopyProcessor,
     MariadbPitrService,
     ContinuousBackupEngineRegistry,
+    RebuildDataRestorer,
     DeclaredEngineResolver,
     BackupStatusService,
     PgBackrestService,
@@ -169,6 +171,7 @@ import { BACKUP_QUEUE } from './backups.constants';
     BillingEstimatorService,
     BackupStatusService,
     DbPitrService,
+    RebuildDataRestorer,
   ],
 })
 export class BackupsModule {}
