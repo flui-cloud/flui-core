@@ -69,6 +69,8 @@ export interface RebuildPlanApp {
   blocked?: string;
   /** True but not disqualifying — the user decides. */
   warnings: string[];
+  /** What will come back, and from where. Empty is a fact, not an omission. */
+  restores: string[];
   /** Where it got to on a previous run, when there was one. */
   phase?: string;
 }
@@ -606,9 +608,17 @@ export class ClusterRebuildService {
 
     // Asked of the same code that will do it, so the plan cannot promise data
     // the rebuild then does not restore.
+    //
+    // Both halves are reported. A plan that listed only the gaps left silence
+    // meaning two different things — "this comes back" and "this application
+    // has no data at all" — and the reader could not tell which, on the one
+    // screen where that is the whole question.
+    const restores: string[] = [];
     for (const outcome of await this.dataRestorer.preview(app)) {
       if (outcome.kind === 'empty') {
         warnings.push(`${outcome.what}: ${outcome.why}`);
+      } else {
+        restores.push(`${outcome.what}: from ${outcome.from}`);
       }
     }
 
@@ -619,6 +629,7 @@ export class ClusterRebuildService {
       status: app.status,
       blocked,
       warnings,
+      restores,
       phase: this.phaseOf(app),
     };
   }
@@ -637,9 +648,16 @@ export class ClusterRebuildService {
     if (!to.kubeconfigEncrypted) {
       throw new Error('the destination has no kubeconfig');
     }
-    const allocatable = await this.k8s.getNodeAllocatable(
-      this.encryption.decrypt(to.kubeconfigEncrypted),
-    );
+    const kubeconfig = this.encryption.decrypt(to.kubeconfigEncrypted);
+    // Both already in the units this reports — `getNodeAllocatable` returns
+    // millicores and MiB, not cores and bytes. Converting them again read a
+    // 2-core node as 2000000m and a 3.7Gi one as 0Mi, which refused every
+    // rebuild for want of memory the destination had.
+    const allocatable = await this.k8s.getNodeAllocatable(kubeconfig);
+    // Minus what is already asked for: allocatable alone is the size of the
+    // cluster, not the room in it, and a destination that is merely large
+    // would pass while having nowhere to put anything.
+    const requested = await this.k8s.getPodResourceRequests(kubeconfig);
 
     let cpu = 0;
     let memory = 0;
@@ -651,8 +669,11 @@ export class ClusterRebuildService {
       memory += parseMemoryMi(r?.memory?.limit) * (app.replicas ?? 1);
     }
 
-    const availableCpuMillis = Math.round(allocatable.cpu * 1000);
-    const availableMemoryMi = Math.round(allocatable.memory / (1024 * 1024));
+    const availableCpuMillis = Math.max(allocatable.cpu - requested.cpu, 0);
+    const availableMemoryMi = Math.max(
+      allocatable.memory - requested.memory,
+      0,
+    );
     return {
       requiredCpuMillis: cpu,
       requiredMemoryMi: memory,

@@ -256,7 +256,14 @@ export class RebuildDataRestorer {
         outcomes.push({
           kind: 'empty',
           what: volume.name,
-          why: 'no object-store copy has been taken, so it comes back empty',
+          // Two different situations wear the same shape. For a database under
+          // continuous backup the absence of a volume copy is correct — its
+          // data comes back through the engine — and reporting that as loss
+          // would send someone to fix what is already working.
+          why: databaseHandled
+            ? "no separate copy of this volume: the database's own data comes " +
+              'back through its engine, anything else stored beside it does not'
+            : 'no object-store copy has been taken, so it comes back empty',
         });
         continue;
       }

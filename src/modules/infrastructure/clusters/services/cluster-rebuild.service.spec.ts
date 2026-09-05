@@ -37,11 +37,18 @@ describe('ClusterRebuildService.plan', () => {
     from?: Record<string, unknown>;
     to?: Record<string, unknown>;
     apps?: Record<string, unknown>[];
-    /** cpu cores / bytes, as getNodeAllocatable reports them */
+    /** millicores / MiB, which is what getNodeAllocatable reports */
     allocatable?: { cpu: number; memory: number };
+    /** millicores / MiB already asked for by pods on the destination */
+    requested?: { cpu: number; memory: number };
     sourceReachable?: boolean;
     /** What the restorer says each application's data will do. */
-    preview?: Array<{ kind: string; what: string; why?: string }>;
+    preview?: Array<{
+      kind: string;
+      what: string;
+      why?: string;
+      from?: string;
+    }>;
   }) {
     const from = cluster({ id: 'from-1', ...(opts.from ?? {}) });
     const to = cluster({
@@ -78,8 +85,11 @@ describe('ClusterRebuildService.plan', () => {
         if (kc === 'from-kc' && !opts.sourceReachable) {
           throw new Error('connect ETIMEDOUT');
         }
-        return opts.allocatable ?? { cpu: 4, memory: 8 * 1024 ** 3 };
+        return opts.allocatable ?? { cpu: 4000, memory: 8192 };
       }),
+      getPodResourceRequests: jest.fn(
+        async () => opts.requested ?? { cpu: 0, memory: 0 },
+      ),
     };
     return service;
   }
@@ -148,7 +158,7 @@ describe('ClusterRebuildService.plan', () => {
           resources: { cpu: { request: '2' }, memory: { limit: '6Gi' } },
         },
       ],
-      allocatable: { cpu: 4, memory: 8 * 1024 ** 3 },
+      allocatable: { cpu: 4000, memory: 8192 },
     }).plan('from-1', 'to-1');
 
     expect(plan.refusals.join(' ')).toMatch(/does not have room for all 2/);
@@ -224,5 +234,50 @@ describe('ClusterRebuildService.plan', () => {
     }).plan('from-1', 'to-1');
 
     expect(plan.apps[0].phase).toBe('restored');
+  });
+
+  it('reads the destination in the units the cluster reports', async () => {
+    // `getNodeAllocatable` answers in millicores and MiB. Converting them a
+    // second time read a 2-core node as 2000000m and a 3.7Gi one as 0Mi, so
+    // every rebuild was refused for want of memory the destination had — seen
+    // against a live cluster, not reasoned about.
+    const plan = await make({
+      from: lostSource,
+      apps: [
+        { resources: { cpu: { request: '250m' }, memory: { limit: '2Gi' } } },
+      ],
+      allocatable: { cpu: 2000, memory: 3700 },
+    }).plan('from-1', 'to-1');
+
+    expect(plan.capacity?.availableCpuMillis).toBe(2000);
+    expect(plan.capacity?.availableMemoryMi).toBe(3700);
+    expect(plan.capacity?.fits).toBe(true);
+  });
+
+  it('counts the room, not the size — what pods already ask for is gone', async () => {
+    const plan = await make({
+      from: lostSource,
+      apps: [
+        { resources: { cpu: { request: '250m' }, memory: { limit: '2Gi' } } },
+      ],
+      allocatable: { cpu: 2000, memory: 3700 },
+      requested: { cpu: 900, memory: 2400 },
+    }).plan('from-1', 'to-1');
+
+    expect(plan.capacity?.availableMemoryMi).toBe(1300);
+    expect(plan.capacity?.fits).toBe(false);
+  });
+
+  it('says what comes back as plainly as what does not', async () => {
+    // Silence used to mean both "this is restored" and "this application has
+    // no data", on the one screen where telling them apart is the question.
+    const plan = await make({
+      from: lostSource,
+      apps: [{ volumes: [{ name: 'data' }] }],
+      preview: [{ kind: 'volume', what: 'data', from: 'flui/cl/app/2026' }],
+    }).plan('from-1', 'to-1');
+
+    expect(plan.apps[0].restores).toEqual(['data: from flui/cl/app/2026']);
+    expect(plan.apps[0].warnings).toEqual([]);
   });
 });

@@ -16,6 +16,7 @@ interface PlanApp {
   status: string;
   blocked?: string;
   warnings: string[];
+  restores: string[];
   phase?: string;
 }
 
@@ -207,6 +208,9 @@ export default class ClusterRebuild extends Command {
         `  ${mark} ${chalk.bold(app.name)} ${chalk.dim(`(${app.status})`)}${app.phase ? chalk.dim(` — resumes at ${app.phase}`) : ''}`,
       );
       if (app.blocked) console.log(chalk.red(`      ${app.blocked}`));
+      for (const r of app.restores ?? []) {
+        console.log(chalk.green(`      ✓ ${r}`));
+      }
       for (const w of app.warnings) console.log(chalk.yellow(`      ${w}`));
     }
 
