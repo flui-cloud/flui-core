@@ -36,6 +36,7 @@ export enum OperationType {
   START_CLUSTER = 'start_cluster',
   STOP_CLUSTER = 'stop_cluster',
   ATTACH_CLUSTER_TO_VNET = 'attach_cluster_to_vnet',
+  REBUILD_CLUSTER = 'rebuild_cluster',
   // Application build operations
   BUILD_APPLICATION = 'build_application',
   // Build cache operations

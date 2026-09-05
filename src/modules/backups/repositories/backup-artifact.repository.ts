@@ -106,6 +106,30 @@ export class BackupArtifactRepository {
     );
   }
 
+  /**
+   * Newest object-store copy of one volume, or null.
+   *
+   * Object store only, deliberately: a `pvc-clone` is a sibling claim on the
+   * cluster the volume lived on, so for a cluster that is gone it names
+   * something that went with it. Restoring from one would mean reaching a
+   * machine that no longer answers.
+   */
+  findLatestVolumeCopyForApp(
+    applicationId: string,
+    volumeName: string,
+  ): Promise<BackupArtifactEntity | null> {
+    return this.artifactRepo
+      .createQueryBuilder('a')
+      .leftJoinAndSelect('a.locations', 'l')
+      .where('a.engineClass = :engine', { engine: 'volume_copy' })
+      .andWhere('a."applicationId" = :applicationId', { applicationId })
+      .andWhere('a."volumeName" = :volumeName', { volumeName })
+      .andWhere(`a."manifestSummary"->>'sink' = 's3-archive'`)
+      .orderBy('a.createdAt', 'DESC')
+      .limit(1)
+      .getOne();
+  }
+
   findLatestWithSizeForCluster(
     clusterId: string,
   ): Promise<BackupArtifactEntity | null> {

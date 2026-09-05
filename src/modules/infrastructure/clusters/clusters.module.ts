@@ -19,7 +19,10 @@ import { ObservabilityModule } from 'src/modules/observability/observability.mod
 import { DnsModule } from 'src/modules/dns/dns.module';
 import { BackupsModule } from 'src/modules/backups/backups.module';
 import { ClusterRebuildService } from './services/cluster-rebuild.service';
+import { ClusterRebuildProcessor } from './processors/cluster-rebuild.processor';
 import { AppEndpointEntity } from 'src/modules/dns/entities/app-endpoint.entity';
+import { CatalogInstallEntity } from 'src/modules/catalog/entities/catalog-install.entity';
+import { BackupPolicyEntity } from 'src/modules/backups/entities/backup-policy.entity';
 import { ApplicationsModule } from 'src/modules/applications/applications.module';
 
 // Entities
@@ -114,6 +117,10 @@ import { FleetHistoryService } from './services/fleet-history.service';
       NodeBillableIntervalEntity,
       VolumeBillableIntervalEntity,
       InfrastructureOperationEntity,
+      // Re-pointed by a cluster rebuild: both name a cluster that must not stay
+      // the lost one, or the install and its schedule keep addressing it.
+      CatalogInstallEntity,
+      BackupPolicyEntity,
       SSHKeyEntity, // For SSH key cleanup service
       VNetSubnetEntity,
       // Read-only access for node-lock check (no module dep on ApplicationsModule)
@@ -128,6 +135,7 @@ import { FleetHistoryService } from './services/fleet-history.service';
   controllers: [ClustersController, ClusterOrphanedClaimsController],
   providers: [
     ClusterRebuildService,
+    ClusterRebuildProcessor,
     // Main orchestrator service
     ClustersService,
 

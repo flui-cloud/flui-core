@@ -166,6 +166,30 @@ function sidecarMountLines(s: SidecarSpec): string[] {
   ];
 }
 
+/**
+ * The claim a running pod asks for, which is not the same as the claim manifest
+ * Flui renders.
+ *
+ * `generatePvc` always writes `<slug>-<volume>`, because that is the object it
+ * owns. What the pod *mounts* can differ twice over: a volume swap points it at
+ * another claim, and a StatefulSet gets its claims from `volumeClaimTemplates`,
+ * so the first replica asks for `<volume>-<set>-0` — the shape
+ * `winningStatefulSet` in ApplicationVolumeClaimsService parses back.
+ *
+ * Exported because a cluster rebuild has to fill exactly this claim before the
+ * pod starts, and a second copy of the rule in another module is a data loss
+ * waiting for whichever copy is edited first: filling the wrong name leaves the
+ * pod creating an empty claim beside the full one, silently.
+ */
+export function claimNameForVolume(
+  app: Pick<ApplicationEntity, 'slug' | 'workloadKind'>,
+  volume: { name: string; claimNameOverride?: string },
+): string {
+  return app.workloadKind === 'StatefulSet'
+    ? `${volume.name}-${app.slug}-0`
+    : (volume.claimNameOverride ?? `${app.slug}-${volume.name}`);
+}
+
 @Injectable()
 export class ApplicationManifestGeneratorService {
   private readonly logger = new Logger(
@@ -1064,7 +1088,7 @@ export class ApplicationManifestGeneratorService {
   private renderVolumesBlock(app: ApplicationEntity): string {
     const lines: string[] = [];
     for (const v of app.volumes ?? []) {
-      const claimName = v.claimNameOverride ?? `${app.slug}-${v.name}`;
+      const claimName = claimNameForVolume(app, v);
       lines.push(
         `        - name: ${v.name}`,
         `          persistentVolumeClaim:`,

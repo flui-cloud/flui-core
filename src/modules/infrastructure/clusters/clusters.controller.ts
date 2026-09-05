@@ -67,6 +67,15 @@ import {
 import { ClusterScalingService } from './services/cluster-scaling.service';
 import { ClusterStorageService } from './services/cluster-storage.service';
 import { AddWorkerDto, AddWorkerResponseDto } from './dto/add-worker.dto';
+import {
+  RebuildClusterDto,
+  RebuildClusterResponseDto,
+  RebuildPlanResponseDto,
+} from './dto/rebuild-cluster.dto';
+import { ClusterRebuildService } from './services/cluster-rebuild.service';
+import { Req } from '@nestjs/common';
+import { Request } from 'express';
+import { AuthenticatedUser } from '../../auth/interfaces/authenticated-user.interface';
 import { RemoveWorkerResponseDto } from './dto/remove-worker.dto';
 import { RegisterByosNodeDto } from './dto/register-byos-node.dto';
 import { EnsureByosVNetDto } from './dto/byos-vnet.dto';
@@ -142,6 +151,7 @@ export class ClustersController {
     private readonly byosNodeJoinService: ByosNodeJoinService,
     private readonly byosVNetService: ByosVNetService,
     private readonly fleetHistoryService: FleetHistoryService,
+    private readonly clusterRebuildService: ClusterRebuildService,
   ) {}
 
   @Get('orphan-volumes')
@@ -255,6 +265,63 @@ export class ClustersController {
       status: 'pending',
       estimated_duration: '2-3 minutes',
       created_at: operation.createdAt,
+    };
+  }
+
+  @Get(':id/rebuild-plan')
+  @RequireSection('infrastructure')
+  @RequirePermission(IAM_PERMISSION.CLUSTER_MANAGE)
+  @ApiOperation({
+    summary: 'What rebuilding this cluster onto another would do',
+    description:
+      'Reads the applications recorded against the lost cluster and says, per ' +
+      'application, whether it can come back and what it will come back with. ' +
+      '`refusals` is empty when the rebuild can start; anything in it stops the ' +
+      'whole operation, including the source still answering — a reachable ' +
+      'cluster is not lost, and moving one is a migration, not a rebuild.',
+  })
+  @ApiParam({ name: 'id', description: 'The lost cluster' })
+  @ApiQuery({ name: 'to', description: 'The destination cluster ID' })
+  @ApiResponse({ status: 200, type: RebuildPlanResponseDto })
+  async rebuildPlan(
+    @Param('id') clusterId: string,
+    @Query('to') to: string,
+  ): Promise<RebuildPlanResponseDto> {
+    return this.clusterRebuildService.plan(clusterId, to);
+  }
+
+  @Post(':id/rebuild')
+  @RequireSection('infrastructure')
+  @RequirePermission(IAM_PERMISSION.CLUSTER_MANAGE)
+  @ApiOperation({
+    summary: 'Re-materialise a lost cluster’s applications onto a live one',
+    description:
+      'Runs the plan first and refuses with 400 if it has any refusal, so a ' +
+      'reason reaches the caller instead of a job. Then, per application: ' +
+      're-point the records, put the data back, deploy, re-point the endpoints. ' +
+      'Never rolls back — a partial rebuild is an honest state a re-run ' +
+      'continues from. Returns an operation to follow.',
+  })
+  @ApiParam({ name: 'id', description: 'The lost cluster' })
+  @ApiBody({ type: RebuildClusterDto })
+  @ApiResponse({ status: 202, type: RebuildClusterResponseDto })
+  @ApiResponse({ status: 400, description: 'The plan refused' })
+  async rebuild(
+    @Req() req: Request,
+    @Param('id') clusterId: string,
+    @Body() dto: RebuildClusterDto,
+  ): Promise<RebuildClusterResponseDto> {
+    const userId = (req.user as AuthenticatedUser | undefined)?.userId ?? '';
+    const operation = await this.clusterRebuildService.start(
+      userId,
+      clusterId,
+      dto.to,
+      { includeStopped: dto.includeStopped },
+    );
+    return {
+      operation_id: operation.id,
+      status: 'pending',
+      applications: operation.totalSteps,
     };
   }
 

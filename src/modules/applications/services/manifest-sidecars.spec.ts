@@ -1,4 +1,7 @@
-import { ApplicationManifestGeneratorService } from './application-manifest-generator.service';
+import {
+  ApplicationManifestGeneratorService,
+  claimNameForVolume,
+} from './application-manifest-generator.service';
 
 describe('ApplicationManifestGeneratorService sidecars', () => {
   const gen = ApplicationManifestGeneratorService.prototype as any;
@@ -187,5 +190,67 @@ describe('ApplicationManifestGeneratorService companion slug token', () => {
 
     expect(yaml).toContain('secretName: mariadb-307f9b-v73l1x-binlog-shipper');
     expect(yaml).not.toContain('{{app.slug}}');
+  });
+});
+
+/**
+ * The one rule two modules read.
+ *
+ * A cluster rebuild fills the claim the pod is about to ask for, and it asks
+ * this function which one that is. A second copy of the rule elsewhere would be
+ * wrong the first time either was edited, and wrong silently: the pod creates
+ * an empty claim beside the full one and the application comes back blank.
+ */
+describe('claimNameForVolume', () => {
+  const volume = { name: 'data' };
+
+  it('is what a Deployment mounts', () => {
+    expect(
+      claimNameForVolume(
+        { slug: 'linkding-7a6d82', workloadKind: 'Deployment' } as never,
+        volume,
+      ),
+    ).toBe('linkding-7a6d82-data');
+  });
+
+  it('is the first replica’s claim for a StatefulSet', () => {
+    // `<template>-<set>-<ordinal>`, the shape ApplicationVolumeClaimsService
+    // parses back when it attributes a claim to an application.
+    expect(
+      claimNameForVolume(
+        { slug: 'pg-1', workloadKind: 'StatefulSet' } as never,
+        volume,
+      ),
+    ).toBe('data-pg-1-0');
+  });
+
+  it('follows a volume swap, which is the whole reason the pod can differ', () => {
+    expect(
+      claimNameForVolume({ slug: 'app', workloadKind: 'Deployment' } as never, {
+        name: 'data',
+        claimNameOverride: 'data-restored-20260101',
+      }),
+    ).toBe('data-restored-20260101');
+  });
+
+  it('is not what the PVC manifest is named — a swap does not rename the object Flui owns', () => {
+    // Two different questions. `generatePvc` names the object Flui creates and
+    // tracks in app_resources; renaming it on a swap would leave the teardown
+    // looking for a claim under a name nothing wrote.
+    const proto = ApplicationManifestGeneratorService.prototype as any;
+    const manifest = proto.generatePvc.call(
+      {
+        buildLabels: () => ({ app: 'app' }),
+        resolveStorageClass: proto.resolveStorageClass,
+        renderLabelsBlock: proto.renderLabelsBlock,
+        loadTemplate: proto.loadTemplate,
+      },
+      { slug: 'app', k8sNamespace: 'ns', workloadKind: 'Deployment' },
+      { name: 'data', claimNameOverride: 'data-restored-20260101' },
+    );
+
+    expect(manifest.name).toBe('app-data');
+    expect(manifest.yaml).toContain('name: app-data');
+    expect(manifest.yaml).not.toContain('data-restored-20260101');
   });
 });

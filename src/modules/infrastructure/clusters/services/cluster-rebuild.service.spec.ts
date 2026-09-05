@@ -40,6 +40,8 @@ describe('ClusterRebuildService.plan', () => {
     /** cpu cores / bytes, as getNodeAllocatable reports them */
     allocatable?: { cpu: number; memory: number };
     sourceReachable?: boolean;
+    /** What the restorer says each application's data will do. */
+    preview?: Array<{ kind: string; what: string; why?: string }>;
   }) {
     const from = cluster({ id: 'from-1', ...(opts.from ?? {}) });
     const to = cluster({
@@ -64,6 +66,9 @@ describe('ClusterRebuildService.plan', () => {
       find: jest.fn(async () => (opts.apps ?? [app()]).map((a) => app(a))),
     };
     (service as unknown as Record<string, unknown>).endpointRepo = {};
+    (service as unknown as Record<string, unknown>).dataRestorer = {
+      preview: jest.fn(async () => opts.preview ?? []),
+    };
     (service as unknown as Record<string, unknown>).encryption = {
       decrypt: (v: string) => v,
     };
@@ -161,7 +166,7 @@ describe('ClusterRebuildService.plan', () => {
     expect(plan.apps[0].blocked).toMatch(/lost-worker-2/);
   });
 
-  it('warns about volumes and about applications that were not running', async () => {
+  it('warns about applications that were not running', async () => {
     const plan = await make({
       from: lostSource,
       apps: [
@@ -169,9 +174,55 @@ describe('ClusterRebuildService.plan', () => {
       ],
     }).plan('from-1', 'to-1');
 
-    expect(plan.apps[0].warnings.join(' ')).toMatch(/has volumes/);
     expect(plan.apps[0].warnings.join(' ')).toMatch(/not running/);
     // A warning is not a refusal: the person decides.
     expect(plan.apps[0].blocked).toBeUndefined();
+  });
+
+  it('says what each volume will actually come back with', async () => {
+    // The plan and the rebuild ask the same code, so the warning is what will
+    // happen rather than a guess about it. A plan that said "has volumes: it
+    // comes back with its last copy, or empty" was true of every application
+    // and told nobody which one they had.
+    const plan = await make({
+      from: lostSource,
+      apps: [{ volumes: [{ name: 'data' }, { name: 'uploads' }] }],
+      preview: [
+        { kind: 'volume', what: 'data' },
+        {
+          kind: 'empty',
+          what: 'uploads',
+          why: 'no object-store copy has been taken, so it comes back empty',
+        },
+      ],
+    }).plan('from-1', 'to-1');
+
+    const warnings = plan.apps[0].warnings.join(' ');
+    expect(warnings).toMatch(/uploads: no object-store copy/);
+    expect(warnings).not.toMatch(/data:/);
+  });
+
+  it('warns when the node-local class has to exist on the destination', async () => {
+    // `flui-local` is installed by a bootstrap step that only warns on
+    // failure, and a claim asking for a class that is not there stays Pending
+    // for as long as anybody waits.
+    const plan = await make({
+      from: lostSource,
+      apps: [{ persistenceScope: 'dedicated' }],
+    }).plan('from-1', 'to-1');
+
+    expect(plan.apps[0].warnings.join(' ')).toMatch(/flui-local/);
+  });
+
+  it('resumes from where a previous run left each application', async () => {
+    // Written under `metadata.rebuild.phase` and read from the same place: an
+    // earlier version read `metadata.rebuildPhase`, so the plan showed every
+    // application as untouched however far a previous run had got.
+    const plan = await make({
+      from: lostSource,
+      apps: [{ metadata: { rebuild: { phase: 'restored' } } }],
+    }).plan('from-1', 'to-1');
+
+    expect(plan.apps[0].phase).toBe('restored');
   });
 });

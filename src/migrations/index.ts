@@ -31,6 +31,7 @@ import { VolumeCopyLedger1787200000000 } from './1787200000000-VolumeCopyLedger'
 import { RestorePlacement1787300000000 } from './1787300000000-RestorePlacement';
 import { ContinuousBackupEngine1787400000000 } from './1787400000000-ContinuousBackupEngine';
 import { ClusterLostStatus1788100000000 } from './1788100000000-ClusterLostStatus';
+import { RebuildClusterOperation1788200000000 } from './1788200000000-RebuildClusterOperation';
 import { CatchUpEntityDrift1788000000000 } from './1788000000000-CatchUpEntityDrift';
 import { ProtectRecordsFromClusterDelete1787900000000 } from './1787900000000-ProtectRecordsFromClusterDelete';
 import { WidenEngineVersion1787800000000 } from './1787800000000-WidenEngineVersion';
@@ -81,4 +82,5 @@ export const migrations = [
   ProtectRecordsFromClusterDelete1787900000000,
   CatchUpEntityDrift1788000000000,
   ClusterLostStatus1788100000000,
+  RebuildClusterOperation1788200000000,
 ];

@@ -41,6 +41,11 @@ export class ContinuousBackupEngineRegistry {
     return found;
   }
 
+  /** Every registered engine — for callers that must sweep all their traces. */
+  all(): ContinuousBackupEngine[] {
+    return [...this.engines.values()];
+  }
+
   supports(engine: string | undefined | null): boolean {
     return this.engines.has(engine ?? 'postgres');
   }

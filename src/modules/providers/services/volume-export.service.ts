@@ -147,6 +147,12 @@ const SOURCE_PVC_LABEL = 'flui.cloud/exported-from';
 const SINK_LABEL = 'flui.cloud/export-sink';
 const COPY_JOB_TIMEOUT_SECONDS = 30 * 60;
 
+/** A Kubernetes label value: alphanumeric ends, `-_.` inside, at most 63. */
+function asLabelValue(raw: string): string {
+  const cleaned = raw.replaceAll(/[^A-Za-z0-9._-]/g, '-').slice(0, 63);
+  return cleaned.replace(/^[^A-Za-z0-9]+/, '').replace(/[^A-Za-z0-9]+$/, '');
+}
+
 /**
  * Universal volume export primitive based on the copy-pod pattern.
  *
@@ -275,9 +281,13 @@ export class VolumeExportService implements IVolumeExport {
   async restoreFromExport(
     input: RestorePvcFromExportInput,
   ): Promise<{ pvcName: string }> {
+    // Never `input.exportId` verbatim. For a pvc-clone it is a PVC name and
+    // passes; for an s3-archive it is the object key prefix — slashes and well
+    // past 63 characters — and the API server rejects the whole object on a
+    // label it cannot parse, before anything is created.
     const newPvcLabels: Record<string, string> = {
       ...input.labels,
-      'flui.cloud/restored-from': input.exportId,
+      'flui.cloud/restored-from': asLabelValue(input.exportId),
     };
     const pvcManifest = this.renderPvcManifest({
       name: input.newPvcName,
@@ -1000,7 +1010,12 @@ export class VolumeExportService implements IVolumeExport {
       '          command:',
       '            - /bin/sh',
       '            - -c',
-      String.raw`            - 'rclone -v --retries 2 --s3-no-check-bucket sync /src "${remote}" && echo FLUI_ACTUAL_BYTES=$(du -sb /src | awk "{print \$1}")'`,
+      // `--metadata` carries uid, gid and mode across as object metadata.
+      // Without it everything comes back owned by whoever ran the restore, and
+      // an application that runs as a non-root user can read its own files but
+      // not write them. Archives written before this flag lack it, and no
+      // restore can invent what was never recorded.
+      String.raw`            - 'rclone -v --retries 2 --metadata --s3-no-check-bucket sync /src "${remote}" && echo FLUI_ACTUAL_BYTES=$(du -sb /src | awk "{print \$1}")'`,
       this.renderS3EnvBlock(args.s3),
       '          volumeMounts:',
       '            - name: src',
@@ -1058,7 +1073,7 @@ export class VolumeExportService implements IVolumeExport {
       '          command:',
       '            - /bin/sh',
       '            - -c',
-      `            - 'rclone sync "${remote}" /dst'`,
+      `            - 'rclone --metadata sync "${remote}" /dst'`,
       this.renderS3EnvBlock(args.s3),
       '          volumeMounts:',
       '            - name: dst',
