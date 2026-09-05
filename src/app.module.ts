@@ -53,6 +53,7 @@ import { DatabaseConsoleModule } from './modules/database-console/database-conso
 import { ProjectsModule } from './modules/projects/projects.module';
 import { DemoModule } from './modules/demo/demo.module';
 import { MaskModule } from './modules/mask/mask.module';
+import { PlatformUpdatesModule } from './modules/platform-updates/platform-updates.module';
 
 @Module({
   imports: [
@@ -138,6 +139,7 @@ import { MaskModule } from './modules/mask/mask.module';
     ActionCycleModule,
     OperatingContextModule,
     MaskModule,
+    PlatformUpdatesModule,
     ScheduleModule.forRoot(),
   ],
   providers: [

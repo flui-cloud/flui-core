@@ -75,6 +75,16 @@ export const IAM_PERMISSION = {
    * whoever runs the trial will not be whoever runs the clusters.
    */
   SANDBOX_OPERATE: 'sandbox:operate',
+  /**
+   * Move this installation to a newer Flui release — the API, the dashboard and
+   * the authorization service, together.
+   *
+   * Its own key rather than `cluster:manage`: it changes no cluster and touches
+   * no workload, it replaces the control plane that is answering the request,
+   * and it applies database migrations a rollback does not undo. Nothing that
+   * manages infrastructure should acquire that by implication.
+   */
+  PLATFORM_UPDATE: 'platform:update',
   // Enter a management section without being able to change anything in it.
   // Not a governing permission: it opens the door at the lowest level the
   // section model has, and SectionAccessGuard refuses every unsafe verb behind

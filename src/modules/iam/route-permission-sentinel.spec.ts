@@ -252,9 +252,14 @@ describe('the ceiling and the routes say the same thing', () => {
     IAM_PERMISSION.INTEGRATION_MANAGE,
     IAM_PERMISSION.SANDBOX_OPERATE,
     IAM_PERMISSION.SHOWCASE_PUBLISH,
+    // Replacing the control plane — and applying migrations a rollback does not
+    // undo — is not something a key should be able to do on its own. The route
+    // is reachable by a session and by an unscoped credential; widening
+    // `allows` to reach it is the decision this line exists to make explicit.
+    IAM_PERMISSION.PLATFORM_UPDATE,
   ];
 
-  it('asks for no permission outside the declaration except the five named here', () => {
+  it('asks for no permission outside the declaration except the six named here', () => {
     const outside = [
       ...new Set(
         ROUTES.map(ceilingPermission)

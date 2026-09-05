@@ -136,6 +136,7 @@ export const BUILTIN_ROLES: Record<IamRole, IamRoleDef> = {
       IAM_PERMISSION.INTEGRATION_MANAGE,
       IAM_PERMISSION.SHOWCASE_PUBLISH,
       IAM_PERMISSION.SANDBOX_OPERATE,
+      IAM_PERMISSION.PLATFORM_UPDATE,
     ],
     assignable: true,
   },
@@ -179,6 +180,7 @@ export const BUILTIN_ROLES: Record<IamRole, IamRoleDef> = {
       IAM_PERMISSION.INTEGRATION_MANAGE,
       IAM_PERMISSION.SHOWCASE_PUBLISH,
       IAM_PERMISSION.SANDBOX_OPERATE,
+      IAM_PERMISSION.PLATFORM_UPDATE,
     ],
     assignable: true,
     // Only an owner makes an owner. A `maintainer` holds `iam:assign-role` and
