@@ -20,6 +20,15 @@ export enum ClusterStatus {
   DELETING = 'deleting',
   DELETION_FAILED = 'deletion_failed',
   DELETED = 'deleted',
+  /**
+   * Unreachable and not coming back — the records of what ran on it are kept
+   * so they can be re-materialised elsewhere.
+   *
+   * Distinct from DELETED, which somebody chose, and from ERROR, which may
+   * still recover: a lost cluster must never be a deploy target again, and its
+   * rows must never be mistaken for a live cluster's.
+   */
+  LOST = 'lost',
 }
 
 export enum ClusterType {
