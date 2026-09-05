@@ -119,6 +119,14 @@ export interface CatalogSpecStandalone {
    */
   configFiles?: CatalogConfigFile[];
   /**
+   * Containers that ride with the app without being it, and the pod volumes
+   * they need — a binary-log shipper, a restore init container.
+   *
+   * Not yet in the published spec, so it travels through the validator's
+   * forward-compatible fields and is checked by the install path instead.
+   */
+  companions?: CatalogCompanions;
+  /**
    * Per-BB linking declarations. The `ref` of each entry must be present in
    * `metadata.clientFor`. At connect time the installer picks the entry whose
    * `ref` matches the target BB's catalog slug and resolves its envMapping.
@@ -185,6 +193,8 @@ export interface CatalogSpecBuildingBlock {
   command?: string[];
   securityContext?: CatalogSecurityContext;
   configFiles?: CatalogConfigFile[];
+  /** Containers that ride with this block without being it. */
+  companions?: CatalogCompanions;
   auth?: CatalogAuth;
   postInstall?: CatalogPostInstallStep[];
   smokeTest?: CatalogSmokeTest;
@@ -597,3 +607,35 @@ export type CatalogSmokeTest =
   | CatalogSmokeTestTcp
   | CatalogSmokeTestScript
   | CatalogSmokeTestSkip;
+
+/** A container declared beside the application's own. */
+export interface CatalogCompanion {
+  name: string;
+  image: string;
+  imagePullPolicy?: 'Always' | 'IfNotPresent' | 'Never';
+  command?: string[];
+  env?: Array<{ name: string; value?: string }>;
+  /**
+   * Give it the application's own environment. A manifest cannot name the
+   * objects that hold it, since they are named after the install.
+   */
+  inheritAppEnv?: boolean;
+  mounts?: Array<{ name: string; mountPath: string; readOnly?: boolean }>;
+  cpuRequest?: string;
+  memoryRequest?: string;
+  cpuLimit?: string;
+  memoryLimit?: string;
+}
+
+/** A pod volume that exists for the companions rather than the application. */
+export interface CatalogCompanionVolume {
+  name: string;
+  secret?: { secretName: string; optional?: boolean };
+  emptyDir?: { sizeLimit?: string };
+}
+
+export interface CatalogCompanions {
+  initContainers?: CatalogCompanion[];
+  sidecars?: CatalogCompanion[];
+  volumes?: CatalogCompanionVolume[];
+}

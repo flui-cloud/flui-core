@@ -31,6 +31,8 @@ import { CertChallenge } from '../../dns/enums/cert-challenge.enum';
 import { HostnameMode } from '../../dns/enums/hostname-mode.enum';
 import { CertificateProvider } from '../../providers/enums/certificate-provider.enum';
 import {
+  CatalogCompanion,
+  CatalogCompanions,
   CatalogDomainSpec,
   CatalogSpecStandalone,
   CatalogSpecBuildingBlock,
@@ -44,6 +46,10 @@ import {
   CatalogScaling,
   CatalogVolume,
 } from '../interfaces/catalog-manifest.interface';
+import {
+  CompanionsSpec,
+  SidecarSpec,
+} from '../../applications/services/application-manifest-generator.service';
 import { buildImageRef } from '../utils/image-ref.util';
 import { CatalogAppDefinitionRepository } from '../repositories/catalog-app-definition.repository';
 import { CatalogInstallRepository } from '../repositories/catalog-install.repository';
@@ -683,6 +689,11 @@ export class CatalogInstallProcessor {
       command: spec.command,
       securityContext: spec.securityContext,
       configFiles: spec.configFiles,
+      companions:
+        this.resolveCompanions(spec.companions, install) ??
+        this.continuousBackupCompanions(
+          (spec as CatalogSpecBuildingBlock).engine,
+        ),
       labels: {
         'flui.cloud/catalog-app': definition.slug,
         'flui.cloud/catalog-install': install.id,
@@ -970,6 +981,155 @@ export class CatalogInstallProcessor {
    * reaches the pod with the literal "{{env.POSTGRES_USER}}" and the probe
    * always fails (pg_isready treats it as a user name).
    */
+  /**
+   * Turns the manifest's companion declaration into the row the generator
+   * renders from, and refuses a malformed one.
+   *
+   * Checked here because the schema validator does not: `companions` is not in
+   * the published spec yet, so it travels through the forward-compatible
+   * fields, stripped and re-attached without validation. A companion with no
+   * image would otherwise reach the cluster as a container spec Kubernetes
+   * rejects, and the install would fail with the manifest's error rather than
+   * the manifest's mistake.
+   */
+  private resolveCompanions(
+    declared: CatalogCompanions | undefined,
+    install: CatalogInstallEntity,
+  ): CompanionsSpec | undefined {
+    if (!declared) return undefined;
+    // `{{app.slug}}` is deliberately NOT resolved here: an install's slug and
+    // the slug of the application it mints are different strings, and the
+    // objects a companion needs are named after the application. The generator
+    // substitutes it, because that is where the application's own slug exists.
+    const container = (c: CatalogCompanion, where: string): SidecarSpec => {
+      if (!c?.name || !c?.image) {
+        throw new Error(
+          `catalog companion in ${where} needs both a name and an image`,
+        );
+      }
+      return {
+        name: c.name,
+        image: c.image,
+        imagePullPolicy: c.imagePullPolicy,
+        command: c.command,
+        env: c.env,
+        inheritAppEnv: c.inheritAppEnv,
+        mounts: c.mounts,
+        cpuRequest: c.cpuRequest,
+        memoryRequest: c.memoryRequest,
+        cpuLimit: c.cpuLimit,
+        memoryLimit: c.memoryLimit,
+      };
+    };
+
+    const resolved: CompanionsSpec = {
+      initContainers: declared.initContainers?.map((c) =>
+        container(c, 'initContainers'),
+      ),
+      sidecars: declared.sidecars?.map((c) => container(c, 'sidecars')),
+      volumes: declared.volumes?.map((v) => {
+        if (!v?.name) throw new Error('catalog companion volume needs a name');
+        if (v.secret) {
+          return {
+            name: v.name,
+            secret: {
+              secretName: v.secret.secretName,
+              optional: v.secret.optional,
+            },
+          };
+        }
+        return { name: v.name, emptyDir: v.emptyDir ?? {} };
+      }),
+    };
+    return resolved;
+  }
+
+  /**
+   * The companions an engine needs to be backed up continuously.
+   *
+   * Attached here rather than declared in the catalog manifest, for two
+   * reasons. The image is Flui's, not the app's, so its reference belongs
+   * where Flui can change it — a self-hosted installation with a private
+   * registry, or a node that side-loads it, must not have to edit a catalog
+   * entry. And `companions` is not in the published spec, so keeping it out of
+   * the seeds avoids fixing a public vocabulary before it has been lived with.
+   *
+   * The configured image is also the gate. Unset, no companion is attached and
+   * `requireTooling` refuses continuous backup with a message that is true.
+   * Set, every MariaDB installed afterwards is born able to be backed up.
+   * That ordering matters: an image reference that cannot be pulled would put
+   * every new install of the engine into ImagePullBackOff, and a pod whose
+   * companion cannot start is not Ready, which takes the database out of its
+   * own Service — a backup companion causing the outage it exists to insure
+   * against.
+   */
+  private continuousBackupCompanions(
+    engine: string | undefined,
+  ): CompanionsSpec | undefined {
+    if (engine !== 'mariadb') {
+      return undefined;
+    }
+    const image = process.env.MARIADB_SHIPPER_IMAGE?.trim();
+    if (!image) return undefined;
+
+    const mounts = (readOnly: boolean) => [
+      // `mariadb-backup` is a physical tool: it reads the data directory's
+      // files directly and `--host` only fetches metadata, so the companion
+      // must have the volume. Read-only is enough — proven, a base backup
+      // streams to completion against a data directory it cannot write.
+      { name: 'data', mountPath: '/var/lib/mysql', readOnly },
+    ];
+    return {
+      initContainers: [
+        {
+          name: 'flui-mariadb-restore',
+          image,
+          command: ['/usr/local/bin/restore.sh'],
+          inheritAppEnv: true,
+          // Writable here: this one exists to put a recovered data directory
+          // on the volume before the server ever looks at it.
+          mounts: mounts(false),
+          memoryLimit: '1Gi',
+        },
+      ],
+      sidecars: [
+        {
+          name: 'flui-binlog-shipper',
+          image,
+          inheritAppEnv: true,
+          mounts: [
+            ...mounts(true),
+            {
+              name: 'flui-shipper-config',
+              mountPath: '/etc/flui/shipper',
+              readOnly: true,
+            },
+            {
+              name: 'flui-shipper-spool',
+              mountPath: '/var/spool/flui-binlog',
+            },
+          ],
+          memoryLimit: '512Mi',
+        },
+      ],
+      volumes: [
+        {
+          name: 'flui-shipper-config',
+          // Absent until a policy exists, and delivered without a restart when
+          // one is created — which is what makes turning backup on a change of
+          // configuration instead of an outage of the database.
+          secret: { secretName: '{{app.slug}}-binlog-shipper', optional: true },
+        },
+        {
+          name: 'flui-shipper-spool',
+          // Bounded: the spool is the container's writable layer, and a node
+          // that runs out of disk evicts the pod, restarting the database.
+          emptyDir: { sizeLimit: '2Gi' },
+        },
+      ],
+    };
+  }
+
   private resolveHealthcheckTemplates(
     hc: CatalogHealthcheck | undefined,
     ctx: TemplateContext,
@@ -1490,6 +1650,11 @@ export class CatalogInstallProcessor {
       startCommand: component.startCommand,
       command: component.command,
       configFiles: component.configFiles,
+      companions:
+        this.resolveCompanions(
+          (component as { companions?: CatalogCompanions }).companions,
+          install,
+        ) ?? this.continuousBackupCompanions(component.engine),
       labels: {
         'flui.cloud/catalog-app': definition.slug,
         'flui.cloud/catalog-install': install.id,

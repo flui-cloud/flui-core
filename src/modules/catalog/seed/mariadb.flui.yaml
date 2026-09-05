@@ -64,6 +64,47 @@ spec:
         generate: secret
         length: 32
 
+    # Restore-bootstrap knobs, empty on a normal install and set by the backups
+    # engine when it creates a point-in-time restore into a new install. They
+    # have to be DECLARED here even though they are always empty: the installer
+    # walks the env this manifest declares and reads an override only for those
+    # names, so an override for a name that is not here is dropped without a
+    # word — and a restore whose environment is dropped does not fail. The
+    # image would initialise an empty data directory, the pod would turn Ready,
+    # and the job would report success over a database containing nothing.
+    - name: FLUI_MARIADB_RESTORE
+      value: ''
+      description: Internal — set to 1 by a point-in-time restore install.
+    - name: FLUI_MARIADB_TARGET_TIME
+      value: ''
+      description: Internal — UTC instant to recover to.
+    - name: FLUI_MARIADB_BASE_LABEL
+      value: ''
+      description: Internal — a specific base backup to restore, as it stood.
+    - name: FLUI_MARIADB_S3_ENDPOINT
+      value: ''
+      description: Internal — repository endpoint (restore).
+    - name: FLUI_MARIADB_S3_BUCKET
+      value: ''
+      description: Internal — repository bucket (restore).
+    - name: FLUI_MARIADB_S3_REGION
+      value: ''
+      description: Internal — repository region (restore).
+    - name: FLUI_MARIADB_S3_PATH
+      value: ''
+      description: Internal — repository path for this application (restore).
+    - name: FLUI_MARIADB_S3_FORCE_PATH_STYLE
+      value: ''
+      description: Internal — path-style addressing for the repository.
+    - name: FLUI_MARIADB_S3_KEY
+      value: ''
+      secret: true
+      description: Internal — repository access key (restore).
+    - name: FLUI_MARIADB_S3_KEY_SECRET
+      value: ''
+      secret: true
+      description: Internal — repository secret key (restore).
+
   resources:
     requests:
       cpu: 250m

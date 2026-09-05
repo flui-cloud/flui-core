@@ -13,6 +13,9 @@ export class CatalogSchemaValidatorService {
     'command',
     'defaultCredentials',
     'engine',
+    // Stripped and re-attached unvalidated until the published spec carries
+    // it; the install path does its own checking of the shape.
+    'companions',
   ];
 
   getSchema(): unknown {

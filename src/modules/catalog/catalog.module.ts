@@ -70,6 +70,7 @@ import { EncryptionModule } from '../shared/encryption/encryption.module';
   ],
   exports: [
     CatalogInstallRepository,
+    CatalogAppDefinitionRepository,
     CatalogService,
     CatalogInstallerService,
     CatalogDependencyResolverService,
