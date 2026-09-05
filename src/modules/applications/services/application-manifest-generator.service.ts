@@ -52,18 +52,67 @@ export interface CronJobManifestSpec {
 export interface SidecarSpec {
   name: string;
   image: string;
+  /**
+   * Left to Kubernetes' own default unless stated.
+   *
+   * Worth being able to state: `IfNotPresent` against a tag that moves keeps
+   * whatever the node already cached, so a rebuilt companion silently does not
+   * arrive — the same trap a moving `:latest` sets from the other side.
+   */
+  imagePullPolicy?: 'Always' | 'IfNotPresent' | 'Never';
   command?: string[];
   env?: Array<{
     name: string;
     value?: string;
     secretRef?: { name: string; key: string };
   }>;
+  /**
+   * Hand this companion the application's own environment, whole.
+   *
+   * The two objects it comes from are named after the application, which a
+   * catalog manifest cannot spell, so it is a flag rather than a reference.
+   * `optional` on both because an application with only plain variables has no
+   * Secret, and one with only secret variables has no ConfigMap — a missing
+   * one must not keep the pod from starting.
+   */
+  inheritAppEnv?: boolean;
   /** Volumes of the pod this sidecar also mounts, by name. */
   mounts?: Array<{ name: string; mountPath: string; readOnly?: boolean }>;
   cpuRequest?: string;
   memoryRequest?: string;
   cpuLimit?: string;
   memoryLimit?: string;
+}
+
+/**
+ * A pod volume that exists for the companions rather than for the application.
+ *
+ * `secret.optional` is the one that carries weight: it lets a pod start before
+ * the Secret exists and be given it later without a restart, which is what
+ * makes turning a backup policy on a change of configuration instead of an
+ * outage of the database it protects. Measured on k3s v1.35: the file appears
+ * about a minute after the Secret is created, and disappears about a minute
+ * after it is deleted.
+ */
+export interface CompanionVolumeSpec {
+  name: string;
+  secret?: { secretName: string; optional?: boolean };
+  emptyDir?: { sizeLimit?: string };
+}
+
+/**
+ * Containers that ride with the application without being it.
+ *
+ * Kept apart from the application's own fields because their lifecycle is
+ * different: they are declared by the catalog, not chosen by the user, and a
+ * redeploy must reproduce them exactly.
+ */
+export interface CompanionsSpec {
+  /** Run to completion, in order, before the application's container starts. */
+  initContainers?: SidecarSpec[];
+  /** Run alongside it for the life of the pod. */
+  sidecars?: SidecarSpec[];
+  volumes?: CompanionVolumeSpec[];
 }
 
 function sidecarCommandLines(s: SidecarSpec): string[] {
@@ -89,6 +138,19 @@ function sidecarEnvLines(s: SidecarSpec): string[] {
           ]
         : [`              value: ${JSON.stringify(e.value ?? '')}`]),
     ]),
+  ];
+}
+
+function sidecarEnvFromLines(s: SidecarSpec, slug: string): string[] {
+  if (!s.inheritAppEnv) return [];
+  return [
+    '          envFrom:',
+    '            - configMapRef:',
+    `                name: ${slug}-config`,
+    '                optional: true',
+    '            - secretRef:',
+    `                name: ${slug}-secret`,
+    '                optional: true',
   ];
 }
 
@@ -260,6 +322,10 @@ export class ApplicationManifestGeneratorService {
       )
       .replaceAll('{{VOLUME_MOUNTS_BLOCK}}', this.renderVolumeMountsBlock(app))
       .replaceAll('{{SIDECARS_BLOCK}}', this.renderSidecarsBlock(app))
+      .replaceAll(
+        '{{INIT_CONTAINERS_BLOCK}}',
+        this.renderInitContainersBlock(app),
+      )
       .replaceAll('{{VOLUMES_BLOCK}}', this.renderVolumesBlock(app))
       .replaceAll(
         '{{IMAGE_PULL_SECRETS_BLOCK}}',
@@ -328,6 +394,10 @@ export class ApplicationManifestGeneratorService {
       )
       .replaceAll('{{VOLUME_MOUNTS_BLOCK}}', this.renderVolumeMountsBlock(app))
       .replaceAll('{{SIDECARS_BLOCK}}', this.renderSidecarsBlock(app))
+      .replaceAll(
+        '{{INIT_CONTAINERS_BLOCK}}',
+        this.renderInitContainersBlock(app),
+      )
       .replaceAll(
         '{{CONFIG_VOLUMES_BLOCK}}',
         this.renderConfigVolumesBlock(app),
@@ -888,14 +958,49 @@ export class ApplicationManifestGeneratorService {
    * not the application's problem to wait for.
    */
   private renderSidecarsBlock(app: ApplicationEntity): string {
-    const sidecars = (app as { sidecars?: SidecarSpec[] }).sidecars ?? [];
-    if (sidecars.length === 0) return '';
-    return sidecars
+    return this.renderCompanionContainers(
+      app,
+      this.companionsOf(app).sidecars ?? [],
+    );
+  }
+
+  /**
+   * Containers that must finish before the application's own starts.
+   *
+   * This is where a restore lives: the database's image knows nothing about
+   * recovering, and its entrypoint initialises an empty data directory the
+   * moment it sees one — so the volume has to already hold the recovered state
+   * by the time it looks. Declared on every install of the engine and inert
+   * unless the restore environment is set, so the path is exercised on every
+   * birth rather than for the first time on the day it is needed.
+   */
+  private renderInitContainersBlock(app: ApplicationEntity): string {
+    const inits = this.companionsOf(app).initContainers ?? [];
+    if (inits.length === 0) return '';
+    return ['      initContainers:', this.renderCompanionContainers(app, inits)]
+      .filter(Boolean)
+      .join('\n');
+  }
+
+  private companionsOf(app: ApplicationEntity): CompanionsSpec {
+    return (app as { companions?: CompanionsSpec }).companions ?? {};
+  }
+
+  private renderCompanionContainers(
+    app: ApplicationEntity,
+    specs: SidecarSpec[],
+  ): string {
+    if (specs.length === 0) return '';
+    return specs
       .flatMap((s) => [
-        `        - name: ${s.name}`,
+        `        - name: ${this.fillSlug(s.name, app)}`,
         `          image: "${s.image}"`,
+        ...(s.imagePullPolicy
+          ? [`          imagePullPolicy: ${s.imagePullPolicy}`]
+          : []),
         ...sidecarCommandLines(s),
         ...sidecarEnvLines(s),
+        ...sidecarEnvFromLines(s, app.slug),
         '          resources:',
         '            requests:',
         `              cpu: "${s.cpuRequest ?? '10m'}"`,
@@ -906,6 +1011,41 @@ export class ApplicationManifestGeneratorService {
         ...sidecarMountLines(s),
       ])
       .join('\n');
+  }
+
+  /**
+   * `{{app.slug}}` is resolved here and not at install time.
+   *
+   * An install's slug and its application's slug are not the same string — a
+   * catalog install mints one application slug per component — and the objects
+   * a companion needs are named after the APPLICATION. Substituting earlier
+   * produced a Secret name the engine that writes it would never use, so the
+   * shipper waited forever for a file that was being written next door.
+   */
+  private fillSlug(value: string, app: ApplicationEntity): string {
+    return value.replaceAll('{{app.slug}}', app.slug);
+  }
+
+  private renderCompanionVolumeLines(app: ApplicationEntity): string[] {
+    return (this.companionsOf(app).volumes ?? []).flatMap((v) => {
+      if (v.secret) {
+        return [
+          `        - name: ${v.name}`,
+          `          secret:`,
+          `            secretName: ${this.fillSlug(v.secret.secretName, app)}`,
+          ...(v.secret.optional === false
+            ? []
+            : ['            optional: true']),
+        ];
+      }
+      return [
+        `        - name: ${v.name}`,
+        `          emptyDir:`,
+        ...(v.emptyDir?.sizeLimit
+          ? [`            sizeLimit: ${v.emptyDir.sizeLimit}`]
+          : ['            {}']),
+      ];
+    });
   }
 
   private renderVolumeMountsBlock(app: ApplicationEntity): string {
@@ -932,12 +1072,20 @@ export class ApplicationManifestGeneratorService {
       );
     }
     lines.push(...this.renderConfigFileVolumeLines(app));
+    lines.push(...this.renderCompanionVolumeLines(app));
     if (!lines.length) return '';
     return ['      volumes:', ...lines].join('\n');
   }
 
+  /**
+   * A StatefulSet's own volumes come from `volumeClaimTemplates`, so this
+   * renders only what is not a claim — the config files and the companions'.
+   */
   private renderConfigVolumesBlock(app: ApplicationEntity): string {
-    const lines = this.renderConfigFileVolumeLines(app);
+    const lines = [
+      ...this.renderConfigFileVolumeLines(app),
+      ...this.renderCompanionVolumeLines(app),
+    ];
     if (!lines.length) return '';
     return ['      volumes:', ...lines].join('\n');
   }

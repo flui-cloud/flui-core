@@ -1462,6 +1462,7 @@ const MASK_EXEMPT: string[] = [
   'CreateApplicationDto.buildId', // modules/applications/dto/create-application.dto.ts
   'CreateApplicationDto.category', // modules/applications/dto/create-application.dto.ts
   'CreateApplicationDto.command', // modules/applications/dto/create-application.dto.ts
+  'CreateApplicationDto.companions', // modules/applications/dto/create-application.dto.ts
   'CreateApplicationDto.configFiles', // modules/applications/dto/create-application.dto.ts
   'CreateApplicationDto.dedicatedNodeName', // modules/applications/dto/create-application.dto.ts
   'CreateApplicationDto.deployOnPush', // modules/applications/dto/create-application.dto.ts

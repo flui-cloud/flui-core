@@ -178,6 +178,7 @@ export class ApplicationService {
       port: dto.port,
       portProtocol: dto.portProtocol ?? null,
       configFiles: dto.configFiles ?? null,
+      companions: dto.companions ?? null,
       healthProbe: dto.healthProbe ?? null,
       volumes: dto.volumes ?? [],
       workloadKind: dto.workloadKind ?? 'Deployment',

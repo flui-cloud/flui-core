@@ -13,6 +13,7 @@ import {
   ValidateNested,
   MaxLength,
 } from 'class-validator';
+import { CompanionsSpec } from '../services/application-manifest-generator.service';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import { ApplicationCategory } from '../enums/application-category.enum';
@@ -227,6 +228,15 @@ export class CreateApplicationDto {
   @IsOptional()
   @IsArray()
   configFiles?: Array<{ path: string; content: string }>;
+
+  @ApiPropertyOptional({
+    description:
+      'Containers that ride with the application without being it, and the ' +
+      'pod volumes they need. Set by the catalog at install; not user input.',
+  })
+  @IsOptional()
+  @IsObject()
+  companions?: CompanionsSpec;
 
   @ApiPropertyOptional({ description: 'K8s-style labels' })
   @IsOptional()

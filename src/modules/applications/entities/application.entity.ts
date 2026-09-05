@@ -10,6 +10,7 @@ import {
   BeforeInsert,
   Index,
 } from 'typeorm';
+import { CompanionsSpec } from '../services/application-manifest-generator.service';
 import { v4 as uuidv4 } from 'uuid';
 import { ClusterEntity } from '../../infrastructure/clusters/entities/cluster.entity';
 import { ProjectEntity } from '../../projects/entities/project.entity';
@@ -78,7 +79,10 @@ export class ApplicationEntity {
   @Column('uuid')
   clusterId: string;
 
-  @ManyToOne(() => ClusterEntity, { onDelete: 'CASCADE' })
+  // RESTRICT, not CASCADE: a lost cluster's applications are the records a
+  // rebuild re-materialises from, and one DELETE on the cluster row must not
+  // be able to erase them.
+  @ManyToOne(() => ClusterEntity, { onDelete: 'RESTRICT' })
   @JoinColumn({ name: 'clusterId' })
   cluster: ClusterEntity;
 
@@ -141,6 +145,18 @@ export class ApplicationEntity {
 
   @Column({ type: 'json', nullable: true })
   configFiles?: Array<{ path: string; content: string }>;
+
+  /**
+   * Containers that ride with this application without being it, and the pod
+   * volumes they need.
+   *
+   * Persisted rather than derived from the catalog at render time, because a
+   * redeploy renders from this row: the catalog is read once, at install. That
+   * also means an application installed before its catalog entry declared a
+   * companion does not acquire one by being redeployed.
+   */
+  @Column({ type: 'jsonb', nullable: true })
+  companions?: CompanionsSpec;
 
   @Column({ type: 'uuid', nullable: true })
   currentRevisionId?: string;

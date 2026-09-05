@@ -22,6 +22,7 @@ spec:
 {{POD_SECURITY_CONTEXT_BLOCK}}
 {{NODE_PLACEMENT_BLOCK}}
 {{IMAGE_PULL_SECRETS_BLOCK}}
+{{INIT_CONTAINERS_BLOCK}}
       containers:
         - name: {{SLUG}}
           image: "{{IMAGE}}"
