@@ -146,6 +146,23 @@ export interface RestoreJob {
   errorMessage?: string;
 }
 
+export interface QuickSetupOptions {
+  currentProvider: string;
+  primary: {
+    provider: string;
+    ready: boolean;
+    needsScalewayConnection?: boolean;
+    reason?: string;
+  };
+}
+
+export interface QuickSetupInput {
+  profile: 'single';
+  cronSchedule?: string | null;
+  retentionDays?: number;
+  runFirstBackup?: boolean;
+}
+
 export class BackupClient {
   private readonly api: ApiClient;
 
@@ -163,6 +180,25 @@ export class BackupClient {
       );
     }
     return new BackupClient(new ApiClient({ baseUrl: apiUrl, apiKey }));
+  }
+
+  // ─── Quick setup ─────────────────────────────────────────────────────────
+
+  /**
+   * What one-click setup would do on this cluster, and whether it can.
+   *
+   * `ready: false` with a reason rather than an error: "Scaleway is not
+   * connected yet" is a thing to go and fix, not a failure of the question.
+   */
+  async getSetupOptions(clusterId: string): Promise<QuickSetupOptions> {
+    return this.api.get(`/clusters/${clusterId}/backups/setup-options`);
+  }
+
+  async startQuickSetup(
+    clusterId: string,
+    input: QuickSetupInput,
+  ): Promise<{ operationId?: string; policyId?: string }> {
+    return this.api.post(`/clusters/${clusterId}/backups/quick-setup`, input);
   }
 
   // ─── Destinations ────────────────────────────────────────────────────────
