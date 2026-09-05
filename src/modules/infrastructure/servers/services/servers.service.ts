@@ -28,6 +28,7 @@ import * as crypto from 'node:crypto';
 import { CAManagerService } from 'src/modules/access/services/ca-manager.service';
 import { InfrastructureOperationsGateway } from '../../operations/gateway/infrastructure-operations.gateway';
 import { CacheService } from 'src/modules/common/cache/cache.service';
+import { FirewallProviderFactory } from '../../../providers/core/factories/firewall-provider.factory';
 import { ServerRef } from '../utils/provider-server-ref';
 
 export interface CreateServerJobData {
@@ -56,7 +57,70 @@ export class ServersService {
     private readonly caManager: CAManagerService,
     private readonly infraGateway: InfrastructureOperationsGateway,
     private readonly cacheService: CacheService,
+    private readonly firewallProviderFactory: FirewallProviderFactory,
   ) {}
+
+  /**
+   * Refuses a same-named server that is not this cluster's.
+   *
+   * The name is not proof of ownership: two Flui installations sharing one
+   * provider account both number their first workload cluster `-1`, so the
+   * names collide by construction. Adopting on a name match alone builds a
+   * cluster on someone else's machine — and attaching our firewall to it would
+   * cut off everything its own installation needs, since a Hetzner server with
+   * no firewall allows all traffic and one with a firewall allows only what it
+   * lists.
+   */
+  private assertServerIsOurs(
+    existingServer: ServerResponseDto,
+    config: CreateServerDto,
+  ): void {
+    const labelOf = (
+      labels: Array<{ key: string; value: string }> | undefined,
+      key: string,
+    ) => labels?.find((l) => l.key === key)?.value;
+
+    const CLUSTER_ID_LABEL = 'flui-cluster-id';
+    const intendedClusterId = labelOf(config.labels, CLUSTER_ID_LABEL);
+    const foundManagedBy = labelOf(existingServer.labels, 'managed-by');
+    const foundClusterId = labelOf(existingServer.labels, CLUSTER_ID_LABEL);
+
+    if (foundManagedBy !== 'flui-cloud') {
+      throw new Error(
+        `A server named "${config.name}" already exists in this provider account ` +
+          'and was not created by Flui. Choose another name, or remove it first.',
+      );
+    }
+    if (intendedClusterId && foundClusterId !== intendedClusterId) {
+      throw new Error(
+        `A server named "${config.name}" already exists in this provider account ` +
+          `but belongs to another Flui cluster (${foundClusterId ?? 'unknown'}). ` +
+          'Two installations sharing one provider account can propose the same ' +
+          'name. Choose another name, or remove that server first.',
+      );
+    }
+  }
+
+  private async applyFirewallsToExistingServer(
+    serverId: string,
+    config: CreateServerDto,
+  ): Promise<void> {
+    if (!config.firewalls?.length) return;
+    const provider = this.firewallProviderFactory.getFirewallProvider(
+      config.provider,
+    );
+    if (!provider) return;
+
+    for (const firewallId of config.firewalls) {
+      try {
+        await provider.applyToServers(firewallId, [String(serverId)]);
+      } catch (err: any) {
+        this.logger.warn(
+          `Could not apply firewall ${firewallId} to reused server ${serverId}: ${err?.message}`,
+        );
+      }
+    }
+  }
 
   private async invalidateInstancesCache(): Promise<void> {
     try {
@@ -334,9 +398,16 @@ export class ServersService {
 
       let result;
       if (existingServer) {
+        this.assertServerIsOurs(existingServer, config);
+
         this.logger.log(
           `Server ${config.name} already exists (ID: ${existingServer.id}), skipping creation`,
         );
+
+        // Only now, and only because the server is this cluster's own: a retry
+        // may have created it and died before its firewall was attached, and
+        // an unattached one reads as a master that never boots.
+        await this.applyFirewallsToExistingServer(existingServer.id, config);
 
         // Server already exists, use existing server details. Volumes are
         // re-resolved rather than skipped: the caller records their ids, and a

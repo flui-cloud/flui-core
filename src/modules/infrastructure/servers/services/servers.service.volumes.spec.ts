@@ -23,6 +23,7 @@ describe('ServersService.resolveExistingAttachedVolumes', () => {
       {} as never,
       {} as never,
       {} as never,
+      {} as never,
     );
     const warnings: string[] = [];
     (service as unknown as { logger: { warn: (m: unknown) => void } }).logger =
@@ -129,6 +130,7 @@ describe('ServersService.resolveExistingAttachedVolumes', () => {
     await expect(
       (
         new ServersService(
+          {} as never,
           {} as never,
           {} as never,
           {} as never,
