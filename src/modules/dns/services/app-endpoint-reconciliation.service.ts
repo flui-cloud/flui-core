@@ -478,6 +478,42 @@ export class AppEndpointReconciliationService {
     }
   }
 
+  /**
+   * Removes the endpoint's DNS record and nothing else.
+   *
+   * {@link deleteEndpointResources} reaches the cluster first, which is the
+   * wrong instrument twice over when an application has just been rebuilt
+   * elsewhere: the cluster the record pointed at no longer answers, and the
+   * endpoint row already names the new one — so it would delete the Ingress
+   * that was just created instead of the record that is now stale.
+   *
+   * Best effort. A record left at the provider is a name that answers with a
+   * dead address; failing the rebuild over it would be worse.
+   */
+  async releaseDnsRecord(endpointId: string): Promise<void> {
+    const endpoint = await this.appEndpointService.getEndpoint(endpointId);
+    if (!endpoint.dnsRecordId || !endpoint.clusterDnsZone) return;
+    const dnsZone = endpoint.clusterDnsZone.dnsZone;
+    try {
+      const dnsProvider = this.dnsProviderFactory.getDnsProviderOrFail(
+        dnsZone.dnsProvider,
+      );
+      await dnsProvider.deleteRecord(
+        dnsZone.providerZoneId,
+        endpoint.dnsRecordId,
+      );
+      this.logger.log(
+        `Released DNS record ${endpoint.dnsRecordId} for ${endpoint.fqdn}`,
+      );
+    } catch (error: any) {
+      this.logger.warn(
+        `Could not release the DNS record for ${endpoint.fqdn}; it will keep ` +
+          `answering with an address nothing serves: ${error?.message}`,
+      );
+    }
+    await this.appEndpointService.clearDnsRecord(endpoint.id);
+  }
+
   async deleteEndpointResources(endpointId: string): Promise<void> {
     const endpoint = await this.appEndpointService.getEndpoint(endpointId);
     const cluster = await this.getCluster(endpoint.clusterId);

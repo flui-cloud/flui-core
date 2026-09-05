@@ -354,4 +354,46 @@ describe('RebuildDataRestorer', () => {
       expect(r.companions.initContainers).toEqual([]);
     });
   });
+
+  describe('how far back the database comes', () => {
+    it('asks for the last archived moment, never for the backup set itself', async () => {
+      // Naming the artifact's label pinned recovery to when that backup was
+      // taken. On a real rebuild the base was 3h51m old, every WAL since was
+      // archived without error, and the database came back missing all of it
+      // and reported success. Both engines read "no target" as "newest base,
+      // then everything after it".
+      const built: unknown[][] = [];
+      const service = make({
+        dbPolicy: { id: 'pol-1', engine: 'postgres' },
+        dbArtifact: {
+          id: 'art-db',
+          engineRef: '20260905-193009F',
+          locations: [{ role: 'primary', destinationId: 'dest-1' }],
+        },
+      });
+      (service as unknown as Record<string, Record<string, unknown>>).engines =
+        {
+          all: () => [{ restoreEnvPrefix: 'FLUI_PG_' }],
+          forEngine: () => ({
+            restoreEnvPrefix: 'FLUI_PG_',
+            buildRestoreEnv: (...args: unknown[]) => {
+              built.push(args);
+              return { FLUI_PG_RESTORE: '1' };
+            },
+          }),
+        };
+
+      const [outcome] = await service.restoreInto(
+        app({ volumes: [] }),
+        {} as never,
+      );
+
+      // third arg = instant, fourth = base label. Both must be absent.
+      expect(built[0][2]).toBeUndefined();
+      expect(built[0][3]).toBeUndefined();
+      expect((outcome as { from: string }).from).toMatch(
+        /every log archived after it/,
+      );
+    });
+  });
 });

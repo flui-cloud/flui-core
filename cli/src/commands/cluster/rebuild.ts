@@ -25,6 +25,7 @@ interface Plan {
   to: { id: string; name: string; status: string };
   apps: PlanApp[];
   refusals: string[];
+  warnings: string[];
   capacity?: {
     requiredCpuMillis: number;
     requiredMemoryMi: number;
@@ -212,6 +213,11 @@ export default class ClusterRebuild extends Command {
         console.log(chalk.green(`      ✓ ${r}`));
       }
       for (const w of app.warnings) console.log(chalk.yellow(`      ${w}`));
+    }
+
+    for (const w of plan.warnings ?? []) {
+      console.log('');
+      console.log(chalk.yellow(`  ⚠ ${w}`));
     }
 
     if (plan.capacity) {

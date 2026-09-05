@@ -192,20 +192,28 @@ export class RebuildDataRestorer {
     }
 
     const engine = this.engines.forEngine(artifact.engine ?? policy.engine);
+    // Neither an instant nor a base label, deliberately: both engines read the
+    // absence as "the newest base, then every log archived after it", which is
+    // the whole point of a continuous backup and the only sensible default for
+    // a disaster.
+    //
+    // Naming the artifact's own label instead pinned recovery to the moment
+    // that backup was taken. Measured on a real rebuild: the base was 3 hours
+    // 51 minutes old, the WAL containing everything since was in the
+    // repository and archived without error, and the database came back
+    // missing all of it — reported as a success. Nothing but a marker written
+    // on purpose would have shown it.
     const restoreEnv = engine.buildRestoreEnv(
       app.id,
       destination,
       undefined,
-      artifact.engineRef ?? undefined,
+      undefined,
       (artifact.manifestSummary?.generation as string | undefined) ?? undefined,
     );
+    const from = `${artifact.engineRef ?? artifact.id} and every log archived after it`;
 
     if (dryRun) {
-      return {
-        kind: 'database',
-        what: 'database',
-        from: artifact.engineRef ?? artifact.id,
-      };
+      return { kind: 'database', what: 'database', from };
     }
 
     // Onto the row, because the row is what the manifest is rendered from. The
@@ -221,11 +229,7 @@ export class RebuildDataRestorer {
       })),
     ] as ApplicationEntity['env'];
 
-    return {
-      kind: 'database',
-      what: 'database',
-      from: artifact.engineRef ?? artifact.id,
-    };
+    return { kind: 'database', what: 'database', from };
   }
 
   /**

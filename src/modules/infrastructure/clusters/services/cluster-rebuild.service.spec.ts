@@ -42,6 +42,8 @@ describe('ClusterRebuildService.plan', () => {
     /** millicores / MiB already asked for by pods on the destination */
     requested?: { cpu: number; memory: number };
     sourceReachable?: boolean;
+    /** The source neither answers nor refuses — packets go nowhere. */
+    sourceSilent?: boolean;
     /** What the restorer says each application's data will do. */
     preview?: Array<{
       kind: string;
@@ -73,6 +75,10 @@ describe('ClusterRebuildService.plan', () => {
       find: jest.fn(async () => (opts.apps ?? [app()]).map((a) => app(a))),
     };
     (service as unknown as Record<string, unknown>).endpointRepo = {};
+    (service as unknown as Record<string, unknown>).endpointReconciliation = {
+      releaseDnsRecord: jest.fn(async () => undefined),
+      reconcile: jest.fn(async () => undefined),
+    };
     (service as unknown as Record<string, unknown>).dataRestorer = {
       preview: jest.fn(async () => opts.preview ?? []),
     };
@@ -82,6 +88,12 @@ describe('ClusterRebuildService.plan', () => {
     (service as unknown as Record<string, unknown>).k8s = {
       getNodeAllocatable: jest.fn(async (kc: string) => {
         // The source is probed with the same call: unreachable means it throws.
+        if (kc === 'from-kc' && opts.sourceSilent) {
+          // A powered-off host swallows the packets rather than refusing, and
+          // the kernel takes minutes to give up. Never resolves, like the real
+          // one — measured at 133 seconds against a cluster stopped at Hetzner.
+          return new Promise(() => {}) as never;
+        }
         if (kc === 'from-kc' && !opts.sourceReachable) {
           throw new Error('connect ETIMEDOUT');
         }
@@ -279,5 +291,47 @@ describe('ClusterRebuildService.plan', () => {
 
     expect(plan.apps[0].restores).toEqual(['data: from flui/cl/app/2026']);
     expect(plan.apps[0].warnings).toEqual([]);
+  });
+
+  it('answers even when the source swallows the connection', async () => {
+    // The case the probe exists for is the case it used to hang on: the plan
+    // took 133 seconds against a stopped cluster and the CLI gave up at 30,
+    // so the one command a recovery starts with could not be run.
+    jest.useFakeTimers();
+    const planning = make({
+      from: lostSource,
+      sourceSilent: true,
+    }).plan('from-1', 'to-1');
+    await jest.advanceTimersByTimeAsync(21_000);
+    const plan = await planning;
+    jest.useRealTimers();
+
+    expect(plan.refusals).toEqual([]);
+    expect(plan.warnings.join(' ')).toMatch(/did not answer within 20/);
+  });
+
+  it('does not present silence as proof the source is gone', async () => {
+    // A control plane cut off from a workload cluster sees exactly this while
+    // the applications there keep running and keep writing. Rebuilding then
+    // makes a second live copy of each, so the plan says so out loud rather
+    // than letting the empty refusals list imply safety.
+    jest.useFakeTimers();
+    const planning = make({
+      from: lostSource,
+      sourceSilent: true,
+    }).plan('from-1', 'to-1');
+    await jest.advanceTimersByTimeAsync(21_000);
+    const plan = await planning;
+    jest.useRealTimers();
+
+    expect(plan.warnings.join(' ')).toMatch(/still running and still writing/);
+  });
+
+  it('says nothing extra when the source refuses outright', async () => {
+    // A refused connection is proof; only silence is ambiguous.
+    const plan = await make({ from: lostSource }).plan('from-1', 'to-1');
+
+    expect(plan.refusals).toEqual([]);
+    expect(plan.warnings).toEqual([]);
   });
 });
