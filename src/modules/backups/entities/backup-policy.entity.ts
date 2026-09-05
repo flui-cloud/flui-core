@@ -38,7 +38,9 @@ export class BackupPolicyEntity {
   @Column({ type: 'uuid' })
   clusterId: string;
 
-  @ManyToOne(() => ClusterEntity, { onDelete: 'CASCADE' })
+  // RESTRICT: deleting a cluster row must not silently drop the record of
+  // what was being protected on it.
+  @ManyToOne(() => ClusterEntity, { onDelete: 'RESTRICT' })
   @JoinColumn({ name: 'clusterId' })
   cluster: ClusterEntity;
 

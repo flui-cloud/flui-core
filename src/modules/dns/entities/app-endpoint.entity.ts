@@ -31,7 +31,9 @@ export class AppEndpointEntity {
   @Column({ type: 'uuid' })
   clusterId: string;
 
-  @ManyToOne(() => ClusterEntity, { onDelete: 'CASCADE' })
+  // RESTRICT: the endpoint row carries the DNS record id, and losing it is
+  // what left a dead cluster's IP answering alongside a live one.
+  @ManyToOne(() => ClusterEntity, { onDelete: 'RESTRICT' })
   @JoinColumn({ name: 'clusterId' })
   cluster: ClusterEntity;
 
