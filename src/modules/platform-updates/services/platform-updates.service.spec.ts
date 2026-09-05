@@ -1,3 +1,5 @@
+jest.mock('@kubernetes/client-node', () => ({}));
+
 import { RELEASE } from '../../../config/release.config';
 import { PlatformUpdatesService } from './platform-updates.service';
 import { PlatformReleaseEntry } from '../interfaces/release-manifest.interface';
@@ -22,6 +24,9 @@ function build(opts: {
   releases?: PlatformReleaseEntry[];
   manifestError?: string;
   webImageRef?: string | null;
+  apiImageRef?: string | null;
+  /** What the control cluster answers per deployment, for components with no row. */
+  clusterImages?: Record<string, string | null>;
 }) {
   const manifest = {
     getManifest: jest.fn().mockImplementation(() => {
@@ -34,28 +39,52 @@ function build(opts: {
   };
   const applications = {
     findByClusterIdAndCategory: jest.fn().mockResolvedValue([
-      {
-        slug: 'flui-web',
-        labels: { app: 'flui-web' },
-        imageRef:
-          opts.webImageRef === undefined
-            ? 'ghcr.io/flui-cloud/dashboard:0.13.0-rc.1'
-            : opts.webImageRef,
-      },
-      {
-        slug: 'flui-authz',
-        labels: { app: 'flui-authz' },
-        imageRef: 'ghcr.io/flui-cloud/flui-authz:0.6.0',
-      },
+      ...(opts.webImageRef === null
+        ? []
+        : [
+            {
+              slug: 'flui-web',
+              labels: { app: 'flui-web' },
+              imageRef:
+                opts.webImageRef ?? 'ghcr.io/flui-cloud/dashboard:0.13.0-rc.1',
+            },
+          ]),
+      ...(opts.apiImageRef === null
+        ? []
+        : [
+            {
+              slug: 'flui-api',
+              labels: { app: 'flui-api' },
+              imageRef:
+                opts.apiImageRef ??
+                `ghcr.io/flui-cloud/core:${RELEASE.images.fluiApi}`,
+            },
+          ]),
     ]),
   };
   const clusters = {
-    findOne: jest.fn().mockResolvedValue({ id: 'control-1' }),
+    findOne: jest
+      .fn()
+      .mockResolvedValue({ id: 'control-1', kubeconfigEncrypted: 'enc' }),
   };
+  const clusterImages: Record<string, string | null> = {
+    'flui-authz': 'ghcr.io/flui-cloud/flui-authz:0.6.0',
+    ...(opts.clusterImages ?? {}),
+  };
+  const kubernetes = {
+    getDeploymentContainerImage: jest
+      .fn()
+      .mockImplementation((_kubeconfig, _ns, deployment: string) =>
+        Promise.resolve(clusterImages[deployment] ?? null),
+      ),
+  };
+  const encryption = { decrypt: jest.fn().mockReturnValue('kubeconfig') };
   return new PlatformUpdatesService(
     manifest as never,
     applications as never,
     clusters as never,
+    kubernetes as never,
+    encryption as never,
   );
 }
 
@@ -137,13 +166,73 @@ describe('PlatformUpdatesService', () => {
     expect(status.advisories[0]).toMatchObject({ level: 'blocker' });
   });
 
-  it('falls back to the compiled pin when a component was never discovered', async () => {
+  it('calls a commit-built component out instead of reading it as a version', async () => {
     const status = await build({
       releases: [entry()],
-      webImageRef: null,
+      webImageRef: 'ghcr.io/flui-cloud/dashboard:ec9f4b1',
     }).getStatus();
 
     const web = status.components.find((c) => c.key === 'fluiWeb');
-    expect(web?.installedVersion).toBe(RELEASE.images.fluiWeb);
+    expect(web?.installedVersion).toBe('ec9f4b1');
+    expect(web?.installedIsRelease).toBe(false);
+    // Uncomparable is not "the same": the release still has somewhere to move it.
+    expect(web?.changed).toBe(true);
+    expect(status.advisories.map((a) => a.title)).toContain(
+      'flui-web is running a build, not a release',
+    );
+  });
+
+  it('warns about a commit build even when there is no release to offer', async () => {
+    const status = await build({
+      releases: [entry({ version: RELEASE.version })],
+      webImageRef: 'ghcr.io/flui-cloud/dashboard:ec9f4b1',
+    }).getStatus();
+
+    expect(status.updateAvailable).toBe(false);
+    expect(
+      status.components.find((c) => c.key === 'fluiWeb')?.installedIsRelease,
+    ).toBe(false);
+    expect(status.advisories.some((a) => a.level === 'warning')).toBe(true);
+  });
+
+  it('reports what the cluster runs for the API, not the build answering the request', async () => {
+    const status = await build({
+      releases: [entry()],
+      apiImageRef: 'ghcr.io/flui-cloud/core:0.12.9',
+    }).getStatus();
+
+    expect(
+      status.components.find((c) => c.key === 'fluiApi')?.installedVersion,
+    ).toBe('0.12.9');
+  });
+
+  it('asks the cluster when a component has no row, rather than trusting a pin', async () => {
+    const status = await build({
+      releases: [entry()],
+      webImageRef: null,
+      clusterImages: { 'flui-web': 'ghcr.io/flui-cloud/dashboard:0.12.9' },
+    }).getStatus();
+
+    const web = status.components.find((c) => c.key === 'fluiWeb');
+    expect(web).toMatchObject({
+      installed: true,
+      observed: true,
+      installedVersion: '0.12.9',
+    });
+  });
+
+  it('reports a component that is on no cluster as not installed, and never invents a version for it', async () => {
+    const status = await build({
+      releases: [entry()],
+      clusterImages: { 'flui-authz': null },
+    }).getStatus();
+
+    // flui-authz has neither a row nor a workload in this fixture.
+    const authz = status.components.find((c) => c.key === 'fluiAuthz');
+    expect(authz).toMatchObject({
+      installed: false,
+      installedVersion: null,
+      changed: false,
+    });
   });
 });

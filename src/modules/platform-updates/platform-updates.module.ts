@@ -6,6 +6,8 @@ import { InfrastructureOperationEntity } from '../infrastructure/servers/entitie
 import { ApplicationEntity } from '../applications/entities/application.entity';
 import { ApplicationsRepository } from '../applications/repositories/applications.repository';
 import { ApplicationsModule } from '../applications/applications.module';
+import { SharedInfrastructureModule } from '../infrastructure/shared/shared-infrastructure.module';
+import { EncryptionModule } from '../shared/encryption/encryption.module';
 import { PlatformUpdatesController } from './controllers/platform-updates.controller';
 import { PlatformUpdatesService } from './services/platform-updates.service';
 import { ReleaseManifestService } from './services/release-manifest.service';
@@ -25,6 +27,8 @@ import { PlatformUpdateProcessor } from './processors/platform-update.processor'
     ]),
     BullModule.registerQueue({ name: PLATFORM_UPDATE_QUEUE }),
     ApplicationsModule,
+    SharedInfrastructureModule,
+    EncryptionModule,
   ],
   controllers: [PlatformUpdatesController],
   providers: [

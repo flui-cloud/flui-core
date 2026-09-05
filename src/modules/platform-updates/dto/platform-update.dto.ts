@@ -16,9 +16,31 @@ export class PlatformComponentUpdateDto {
 
   @Sensitivity(Sensitivity.PUBLIC)
   @ApiProperty({
+    description:
+      'The workload this component is, as it is named on the cluster.',
+    example: 'flui-api',
+  })
+  deploymentName: string;
+
+  @Sensitivity(Sensitivity.PUBLIC)
+  @ApiProperty({
+    description:
+      'Whether the component exists on this installation. False for an optional component that was never installed — flui-authz is the one that is genuinely optional.',
+  })
+  installed: boolean;
+
+  @Sensitivity(Sensitivity.PUBLIC)
+  @ApiProperty({
+    description:
+      'True when the version was read from the cluster. False when the cluster could not be reached and the answer falls back to the pinned tag, which says what would be installed rather than what is.',
+  })
+  observed: boolean;
+
+  @Sensitivity(Sensitivity.PUBLIC)
+  @ApiProperty({
     nullable: true,
     description:
-      'Image tag running on the cluster right now. Null when the component has not been discovered on the control cluster.',
+      'Image tag running on the cluster right now. Null when the component is not installed, or when its image is pinned by digest and carries no tag.',
     example: '0.13.0-rc.1',
   })
   installedVersion: string | null;
@@ -31,6 +53,13 @@ export class PlatformComponentUpdateDto {
     example: '0.14.0',
   })
   targetVersion: string | null;
+
+  @Sensitivity(Sensitivity.PUBLIC)
+  @ApiProperty({
+    description:
+      'False when the running image is pinned to something that is not a release version — a commit build or a moving tag. Such a component is never "on its release version", whatever the version comparison says.',
+  })
+  installedIsRelease: boolean;
 
   @Sensitivity(Sensitivity.PUBLIC)
   @ApiProperty({ description: 'True when the release moves this component.' })

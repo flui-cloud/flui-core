@@ -70,6 +70,16 @@ export function compareVersions(a: string, b: string): number | null {
   return comparePrerelease(pa.prerelease, pb.prerelease);
 }
 
+/**
+ * True when a tag is a release version rather than a commit build or a moving
+ * tag. `ec9f4b1` and `latest` are perfectly valid things to be running — they
+ * are just not versions, and presenting one as if it were is what makes a
+ * dashboard claim an installation is "on its release version" when it is not.
+ */
+export function isReleaseVersion(raw: string | null | undefined): boolean {
+  return !!raw && parse(raw) !== null;
+}
+
 /** True when `candidate` is strictly newer than `installed`. */
 export function isNewerThan(candidate: string, installed: string): boolean {
   return compareVersions(candidate, installed) === 1;

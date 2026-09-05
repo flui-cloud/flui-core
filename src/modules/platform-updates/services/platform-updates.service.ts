@@ -9,6 +9,9 @@ import {
   ClusterEntity,
   ClusterType,
 } from '../../infrastructure/clusters/entities/cluster.entity';
+import { KubernetesService } from '../../infrastructure/shared/services/kubernetes.service';
+import { EncryptionService } from '../../shared/encryption/services/encryption.service';
+import { findSystemAppByLabel as findSystemApp } from '../../applications/constants/system-app-catalog';
 import {
   PLATFORM_UPDATE_COMPONENTS,
   PlatformComponentKey,
@@ -23,7 +26,11 @@ import {
   PlatformUpdateStatusDto,
 } from '../dto/platform-update.dto';
 import { ReleaseManifestService } from './release-manifest.service';
-import { compareVersions, isNewerThan } from '../utils/version-compare';
+import {
+  compareVersions,
+  isNewerThan,
+  isReleaseVersion,
+} from '../utils/version-compare';
 
 /**
  * Answers "is this installation behind, and what would catching up move".
@@ -31,6 +38,15 @@ import { compareVersions, isNewerThan } from '../utils/version-compare';
  * Read-only: it compares what runs against what is published and says what an
  * update would entail. Applying one is a separate, queued operation.
  */
+interface ComponentReading {
+  /** Whether the component exists on this installation at all. */
+  installed: boolean;
+  /** Image tag, when there is one to read. Null for a digest-pinned image. */
+  version: string | null;
+  /** False when the version comes from a pin because the cluster was unreachable. */
+  observed: boolean;
+}
+
 @Injectable()
 export class PlatformUpdatesService {
   private readonly logger = new Logger(PlatformUpdatesService.name);
@@ -40,6 +56,8 @@ export class PlatformUpdatesService {
     private readonly applicationsRepository: ApplicationsRepository,
     @InjectRepository(ClusterEntity)
     private readonly clusterRepository: Repository<ClusterEntity>,
+    private readonly kubernetesService: KubernetesService,
+    private readonly encryptionService: EncryptionService,
   ) {}
 
   async getStatus(force = false): Promise<PlatformUpdateStatusDto> {
@@ -140,39 +158,86 @@ export class PlatformUpdatesService {
   /**
    * What each component is actually running.
    *
-   * The API answers for itself from its own build — that is the one version no
-   * cluster read can contradict. The other two come from the system-app rows,
-   * whose `imageRef` is written by discovery and by every deploy that goes
-   * through `setDesiredImage`; the compiled pins are the fallback for an
-   * installation whose system apps were never discovered.
+   * The cluster is the authority for all three, the API included: this answer
+   * describes the installation, and the build serving the request is not always
+   * the build the installation runs — a local API pointed at a remote cluster is
+   * the everyday case, and reporting its own version there would describe the
+   * developer's laptop. The env pin and the compiled pin are fallbacks, in that
+   * order, for an installation whose system apps were never discovered.
    */
   private async installedTags(): Promise<
-    Record<PlatformComponentKey, string | null>
+    Record<PlatformComponentKey, ComponentReading>
   > {
-    const tags: Record<PlatformComponentKey, string | null> = {
-      fluiApi: process.env.FLUI_API_IMAGE_TAG ?? RELEASE.images.fluiApi,
-      fluiWeb: null,
-      fluiAuthz: null,
-    };
-
     const apps = await this.componentApps();
+    const readings = {} as Record<PlatformComponentKey, ComponentReading>;
     for (const def of PLATFORM_UPDATE_COMPONENTS) {
-      if (def.key === 'fluiApi') continue;
-      const app = apps.get(def.key);
-      tags[def.key] =
-        this.tagOf(app?.imageRef) ?? RELEASE.images[def.key] ?? null;
+      // A row whose imageRef is empty or digest-pinned carries no version to
+      // report, so it falls through to the cluster rather than answering null:
+      // the row proves the component was discovered once, not what it runs now.
+      const tag = this.tagOf(apps.get(def.key)?.imageRef);
+      readings[def.key] = tag
+        ? { installed: true, version: tag, observed: true }
+        : await this.readFromCluster(def);
     }
-    return tags;
+    return readings;
   }
 
-  private async controlClusterSystemApps(): Promise<ApplicationEntity[]> {
+  /**
+   * No system-app row — which is not the same as "not installed": discovery may
+   * simply never have run. So the cluster is asked directly, and only a
+   * Deployment that genuinely is not there reads as absent.
+   *
+   * The pinned tag is used only when the cluster cannot be reached at all, and
+   * is marked as unobserved so nothing downstream presents a pin as a fact. It
+   * is what `flui-authz` on an installation that never installed it needs:
+   * before this, the pin invented a version for a component with no workload
+   * and no row, and the page reported it as up to date.
+   */
+  private async readFromCluster(
+    def: PlatformUpdateComponentDef,
+  ): Promise<ComponentReading> {
+    const pin =
+      def.key === 'fluiApi'
+        ? (process.env.FLUI_API_IMAGE_TAG ?? RELEASE.images.fluiApi)
+        : def.key === 'fluiWeb'
+          ? (process.env.FLUI_WEB_IMAGE_TAG ?? RELEASE.images.fluiWeb)
+          : (process.env.FLUI_AUTHZ_IMAGE_TAG ?? RELEASE.images.fluiAuthz);
+    const catalogEntry = findSystemApp(def.systemAppLabel);
+    const cluster = await this.controlCluster();
+    if (!cluster?.kubeconfigEncrypted || !catalogEntry?.imageSource) {
+      return { installed: true, version: pin, observed: false };
+    }
+    try {
+      const image = await this.kubernetesService.getDeploymentContainerImage(
+        this.encryptionService.decrypt(cluster.kubeconfigEncrypted),
+        catalogEntry.k8sNamespace,
+        catalogEntry.imageSource.deploymentName ?? def.systemAppLabel,
+        catalogEntry.imageSource.containerName,
+      );
+      if (!image) {
+        return { installed: false, version: null, observed: true };
+      }
+      return { installed: true, version: this.tagOf(image), observed: true };
+    } catch (err) {
+      this.logger.debug(
+        `Could not read ${def.systemAppLabel} from the control cluster: ${(err as Error).message}`,
+      );
+      return { installed: true, version: pin, observed: false };
+    }
+  }
+
+  private async controlCluster(): Promise<ClusterEntity | null> {
     // Legacy rows still say `observability` for the control cluster — the same
     // pair every other "which cluster is the control cluster" lookup reads.
-    const control = await this.clusterRepository.findOne({
+    return this.clusterRepository.findOne({
       where: {
         clusterType: In([ClusterType.CONTROL, ClusterType.OBSERVABILITY]),
       },
     });
+  }
+
+  private async controlClusterSystemApps(): Promise<ApplicationEntity[]> {
+    const control = await this.controlCluster();
     if (!control) return [];
     return this.applicationsRepository.findByClusterIdAndCategory(
       control.id,
@@ -192,21 +257,31 @@ export class PlatformUpdatesService {
 
   private describeComponent(
     def: PlatformUpdateComponentDef,
-    installed: Record<PlatformComponentKey, string | null>,
+    installed: Record<PlatformComponentKey, ComponentReading>,
     release: PlatformReleaseEntry | null,
   ): PlatformComponentUpdateDto {
-    const installedVersion = installed[def.key];
+    const reading = installed[def.key];
+    const installedVersion = reading.installed ? reading.version : null;
     const targetVersion = release?.images?.[def.key] ?? null;
+    // An uncomparable pair — a commit build against a release tag — is a
+    // change, not a match: `compareVersions` answers null there, and treating
+    // null as "same" would leave a sha-pinned component behind for good.
+    const changed =
+      reading.installed &&
+      targetVersion !== null &&
+      installedVersion !== null &&
+      compareVersions(targetVersion, installedVersion) !== 0;
     return {
       key: def.key,
       name: def.name,
       role: def.role,
+      deploymentName: def.systemAppLabel,
+      installed: reading.installed,
+      observed: reading.observed,
       installedVersion,
       targetVersion,
-      changed:
-        targetVersion !== null &&
-        installedVersion !== null &&
-        compareVersions(targetVersion, installedVersion) !== 0,
+      installedIsRelease: isReleaseVersion(installedVersion),
+      changed,
       restartsControlPlane: def.restartsControlPlane,
     };
   }
@@ -225,6 +300,21 @@ export class PlatformUpdatesService {
         detail: `The release manifest is unreachable: ${checkError}`,
       });
     }
+
+    // Said whether or not a release is on offer: a component pinned to a commit
+    // build is not on the release train at all, and the rest of this page would
+    // otherwise read as if it were.
+    const offTrain = components.filter(
+      (c) => c.installed && c.installedVersion && !c.installedIsRelease,
+    );
+    for (const component of offTrain) {
+      out.push({
+        level: 'warning',
+        title: `${component.deploymentName} is running a build, not a release`,
+        detail: `Its image is pinned to ${component.installedVersion}, which is not a release version. Applying a release moves it onto the release image.`,
+      });
+    }
+
     if (!release) return out;
 
     if (release.requiresBootstrap) {

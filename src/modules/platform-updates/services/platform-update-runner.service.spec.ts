@@ -1,3 +1,5 @@
+jest.mock('@kubernetes/client-node', () => ({}));
+
 import { BadRequestException, ConflictException } from '@nestjs/common';
 import { RELEASE } from '../../../config/release.config';
 import { PlatformUpdateRunnerService } from './platform-update-runner.service';
@@ -25,6 +27,10 @@ function status(
         key: 'fluiWeb',
         name: 'Flui Web',
         role: 'Dashboard',
+        deploymentName: 'flui-web',
+        installed: true,
+        observed: true,
+        installedIsRelease: true,
         installedVersion: '0.13.0-rc.1',
         targetVersion: TARGET,
         changed: true,
@@ -34,6 +40,10 @@ function status(
         key: 'fluiAuthz',
         name: 'Flui Authz',
         role: 'Authorization service',
+        deploymentName: 'flui-authz',
+        installed: true,
+        observed: true,
+        installedIsRelease: true,
         installedVersion: '0.6.0',
         targetVersion: '0.6.0',
         changed: false,
@@ -43,6 +53,10 @@ function status(
         key: 'fluiApi',
         name: 'Flui API',
         role: 'Control plane API',
+        deploymentName: 'flui-api',
+        installed: true,
+        observed: true,
+        installedIsRelease: true,
         installedVersion: RELEASE.version,
         targetVersion: TARGET,
         changed: true,
