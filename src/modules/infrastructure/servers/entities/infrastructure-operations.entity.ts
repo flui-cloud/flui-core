@@ -81,6 +81,8 @@ export enum OperationType {
   MIGRATE_APPLICATION = 'migrate_application',
   // Full-app lifecycle (app + DB)
   MIGRATE_FULL_APP = 'migrate_full_app',
+  // Platform lifecycle
+  UPDATE_PLATFORM = 'update_platform',
 }
 
 export enum OperationStatus {
@@ -310,6 +312,12 @@ export enum OperationStep {
   FULL_MIGRATE_REWIRE = 'full_migrate_rewire',
   FULL_MIGRATE_APP_START = 'full_migrate_app_start',
   FULL_MIGRATE_DNS_CUTOVER = 'full_migrate_dns_cutover',
+
+  // Platform update
+  PLATFORM_UPDATE_PREFLIGHT = 'platform_update_preflight',
+  PLATFORM_UPDATE_COMPONENTS = 'platform_update_components',
+  PLATFORM_UPDATE_CONTROL_PLANE = 'platform_update_control_plane',
+  PLATFORM_UPDATE_VERIFY = 'platform_update_verify',
 }
 
 // Base metadata interface - allows additional runtime properties
@@ -365,6 +373,31 @@ export interface ClearBuildCacheOperationMetadata
   storage: string;
 }
 
+/**
+ * A platform update moves several images under one operation, so the record has
+ * to carry the plan: which component goes to which tag, and how far it got.
+ *
+ * `awaitingSelfRestart` is the one field without an equivalent anywhere else:
+ * the API rolls itself out last, so the process that wrote this row is gone
+ * before the step can be closed. The pod that replaces it reads this back and
+ * decides the outcome.
+ */
+export interface PlatformUpdateOperationMetadata extends BaseOperationMetadata {
+  fromVersion: string;
+  targetVersion: string;
+  components: Array<{
+    key: string;
+    name: string;
+    fromVersion: string | null;
+    targetVersion: string;
+    imageRef: string;
+    status: 'pending' | 'running' | 'done' | 'skipped' | 'failed';
+  }>;
+  migrations: number;
+  awaitingSelfRestart?: boolean;
+  awaitingSince?: string;
+}
+
 // Union type for all metadata types
 export type OperationMetadata =
   | CreateServerOperationMetadata
@@ -372,6 +405,7 @@ export type OperationMetadata =
   | CreateClusterOperationMetadata
   | DeleteClusterOperationMetadata
   | ClearBuildCacheOperationMetadata
+  | PlatformUpdateOperationMetadata
   | BaseOperationMetadata;
 
 @Entity('infrastructure_operations')
