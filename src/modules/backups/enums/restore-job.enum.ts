@@ -22,6 +22,8 @@ export enum RestoreStrategy {
   VELERO_REBUILD = 'velero_rebuild',
   OS_SNAPSHOT = 'os_snapshot',
   PG_PITR = 'pg_pitr',
+  /** A MariaDB base backup brought forward by its binary logs. */
+  MARIADB_PITR = 'mariadb_pitr',
 }
 
 export enum PreDeploySnapshotPolicy {

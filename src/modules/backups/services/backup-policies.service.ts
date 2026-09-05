@@ -77,14 +77,29 @@ export class BackupPoliciesService {
     }
 
     const engine = this.engines.forEngine(declaredEngine);
+    // Minted before anything is written, and carried on the policy: it names
+    // the life of the data directory this protection covers. An engine whose
+    // log names restart on a fresh volume would otherwise write, into the
+    // prefix its previous life used, file names the repository already holds.
+    const generation = engine.mintGeneration?.();
     await engine.enable(appId, destination, {
       retentionFull: dto.retentionMaxCopies ?? 2,
+      generation,
     });
 
     try {
       return await this.create(userId, {
         ...dto,
         engine: engine.engine,
+        ...(generation
+          ? {
+              metadata: {
+                ...((dto as { metadata?: Record<string, unknown> }).metadata ??
+                  {}),
+                generation,
+              },
+            }
+          : {}),
       } as CreateBackupPolicyDto & { engine: string });
     } catch (err) {
       await engine.disable(appId).catch((cleanupErr: any) => {

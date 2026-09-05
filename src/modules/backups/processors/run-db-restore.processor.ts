@@ -13,32 +13,29 @@ import { UserEntity } from '../../auth/entities/user.entity';
 import { CatalogInstallerService } from '../../catalog/services/catalog-installer.service';
 import { CatalogInstallEntity } from '../../catalog/entities/catalog-install.entity';
 import { CatalogInstallStatus } from '../../catalog/enums/catalog-install-status.enum';
+import { CatalogAppDefinitionRepository } from '../../catalog/repositories/catalog-app-definition.repository';
 import { RestoreJobRepository } from '../repositories/restore-job.repository';
 import { BackupArtifactRepository } from '../repositories/backup-artifact.repository';
 import { BackupDestinationRepository } from '../repositories/backup-destination.repository';
-import {
-  PgBackrestService,
-  PgBackupInfo,
-} from '../services/pgbackrest.service';
-import { KubernetesService } from '../../infrastructure/shared/services/kubernetes.service';
+import { ContinuousBackupEngineRegistry } from '../services/continuous-backup-engine.registry';
+import { ContinuousBackupEngine } from '../services/continuous-backup-engine.interface';
 import { RestoreJobStatus } from '../enums/restore-job.enum';
 import { BackupEngineClass } from '../enums/backup-engine-class.enum';
 import { BACKUP_QUEUE, BACKUP_JOB_TYPES } from '../backups.constants';
 import { RunRestoreJobData } from './run-restore-job.processor';
 
-const POSTGRESQL_SLUG = 'postgresql';
 const INSTALL_POLL_INTERVAL_MS = 5_000;
 const INSTALL_POLL_TIMEOUT_MS = 15 * 60 * 1000;
-// WAL replay keeps running well past the pod turning Ready on big restores.
-const RECONCILE_POLL_INTERVAL_MS = 5_000;
-const RECONCILE_TIMEOUT_MS = 30 * 60 * 1000;
 
 /**
- * PG_PITR restore: recover a database-class backup into a BRAND-NEW catalog
- * install (never in-place). The new postgresql install boots in restore-bootstrap
- * mode (image entrypoint) via injected FLUI_PG_* env, pulls from the source's
- * pgBackRest repo, recovers to the target time, promotes, and reconciles its
- * superuser password to this install's own secret.
+ * Point-in-time restore of a database-class backup into a BRAND-NEW catalog
+ * install, never in-place.
+ *
+ * The engine is read from the artifact, not from the source application: the
+ * case this exists for is the one where that application, and possibly its
+ * whole cluster, is gone. Whichever engine it names installs its own catalog
+ * slug, boots it in restore mode through env it builds itself, and puts the
+ * new install's own credentials back once the data is down.
  */
 @Processor(BACKUP_QUEUE)
 export class RunDbRestoreProcessor {
@@ -56,9 +53,9 @@ export class RunDbRestoreProcessor {
     private readonly restoreRepo: RestoreJobRepository,
     private readonly artifactRepo: BackupArtifactRepository,
     private readonly destRepo: BackupDestinationRepository,
-    private readonly pgbackrest: PgBackrestService,
+    private readonly engines: ContinuousBackupEngineRegistry,
+    private readonly definitionRepo: CatalogAppDefinitionRepository,
     private readonly installer: CatalogInstallerService,
-    private readonly k8s: KubernetesService,
   ) {}
 
   @Process(BACKUP_JOB_TYPES.RUN_DB_RESTORE)
@@ -111,33 +108,51 @@ export class RunDbRestoreProcessor {
       await setStep(OperationStep.RESTORE_SELECT_SOURCE, 10);
 
       const summary: Record<string, any> = artifact.manifestSummary ?? {};
+      const engine = this.engines.forEngine(artifact.engine);
       const effectiveTarget: Date | null = restore.recoveryTargetTime ?? null;
-      const restoreSet = effectiveTarget
-        ? null
-        : await this.deriveRestoreSet(sourceAppId, artifact);
+      // The base is named here, always, and never left to the recovery to
+      // choose for itself. Two reasons, and both are about the same instant:
+      // a recovery that picks its own base from the repository can pick one
+      // the retention sweeper is about to delete — the in-flight guard
+      // protects the artifact this job names, not whatever the container
+      // decided — and a base taken after the moment asked for would replay
+      // nothing and hand back later state under an earlier label.
+      const restoreSet = artifact.engineRef ?? null;
+      if (effectiveTarget && artifact.createdAt > effectiveTarget) {
+        throw new Error(
+          `Backup ${artifact.engineRef ?? artifact.id} was taken at ` +
+            `${artifact.createdAt.toISOString()}, after the ` +
+            `${effectiveTarget.toISOString()} asked for. Restoring it would ` +
+            'return state from after that moment while reporting the moment. ' +
+            'Choose a backup taken before it.',
+        );
+      }
 
-      await this.validateAgainstLiveRepo(sourceAppId, effectiveTarget);
+      await this.validateAgainstLiveRepo(engine, sourceAppId, effectiveTarget);
 
-      const sourceUser =
-        (sourceApp && this.envValue(sourceApp, 'POSTGRES_USER')) ??
-        (summary.pgUser as string | undefined) ??
-        sourceAppId;
-      const sourceDb =
-        (sourceApp && this.envValue(sourceApp, 'POSTGRES_DB')) ??
-        (summary.pgDb as string | undefined) ??
-        sourceUser;
+      const identities = this.resolveIdentities(
+        sourceApp,
+        summary,
+        sourceAppId,
+      );
       const envOverrides: Record<string, string> = {
-        ...this.pgbackrest.buildRestoreEnv(
+        ...engine.buildRestoreEnv(
           sourceAppId,
           dest,
-          effectiveTarget,
-          restoreSet,
+          effectiveTarget ?? undefined,
+          restoreSet ?? undefined,
+          // From the artifact, not from the application's current policy: the
+          // objects being restored were written into the generation that was
+          // current when they were taken, and a database restored more than
+          // once has more than one.
+          summary.generation as string | undefined,
         ),
-        // Boot as the source's role/db (they exist in the restored data); the
-        // password is reconciled to this install's own secret after recovery.
-        POSTGRES_USER: sourceUser,
-        POSTGRES_DB: sourceDb,
+        // Boot as the source's role/db — they are the ones that exist in the
+        // recovered data. The password is put right once the data is down.
+        ...engine.identityEnv(identities),
       };
+
+      await this.requireRestoreAwareCatalogApp(engine);
 
       await setStep(OperationStep.RESTORE_CREATE_VELERO_CR, 30);
       // installer.install() persists the email onto the install row, and the
@@ -148,7 +163,7 @@ export class RunDbRestoreProcessor {
         where: { id: restore.userId },
       });
       const { install } = await this.installer.install(
-        POSTGRESQL_SLUG,
+        engine.catalogSlug,
         {
           clusterId: newInstall.clusterId,
           displayName: newInstall.name,
@@ -175,18 +190,21 @@ export class RunDbRestoreProcessor {
         );
       }
 
-      // The restored roles carry the SOURCE's password. Reconcile the app's own
-      // superuser to THIS install's generated secret from here, not the pod
-      // entrypoint: it survives long WAL replays and container restarts, and a
-      // failure fails the restore job instead of vanishing in a pod log.
+      // The recovered accounts are the SOURCE's, so the new install's own
+      // generated password does not open it. Engines that can only fix this
+      // after boot do it here; the ones that do it during the restore, before
+      // the server ever accepts a connection, have nothing left to do.
       await setStep(OperationStep.RESTORE_POSTPROCESS, 85);
-      await this.reconcilePassword(newAppId);
+      if (engine.reconcileAfterRestore) {
+        await engine.reconcileAfterRestore(newAppId);
+      }
 
-      // The FLUI_PG_* overrides carry live S3 credentials for the SOURCE's
-      // backup repo and are only needed on first boot — drop them from the
+      // The restore overrides carry live S3 credentials for the SOURCE's
+      // repository and are only needed on first boot — drop them from the
       // stored rows so they don't outlive their purpose. (The in-cluster Secret
       // still holds them until the next redeploy regenerates the manifests.)
       await this.stripRestoreEnv(
+        engine.restoreEnvPrefix,
         finalInstall.id,
         finalInstall.applicationIds ?? [],
       );
@@ -229,6 +247,38 @@ export class RunDbRestoreProcessor {
   }
 
   /**
+   * The role and database the restored instance has to boot as.
+   *
+   * From the artifact first, because the source application is exactly what a
+   * disaster restore does not have. `pgUser`/`pgDb` are read after it for
+   * artifacts written before engines existed, when those were the only names
+   * this summary carried; the live application is consulted last and only to
+   * cover rows older still, which recorded neither.
+   */
+  private resolveIdentities(
+    sourceApp: ApplicationEntity | null,
+    summary: Record<string, any>,
+    sourceAppId: string,
+  ): { user: string; database: string } {
+    const recorded = summary.identities as
+      | { user?: string; database?: string }
+      | undefined;
+    const user =
+      recorded?.user ??
+      (summary.pgUser as string | undefined) ??
+      (sourceApp ? this.envValue(sourceApp, 'POSTGRES_USER') : undefined) ??
+      (sourceApp ? this.envValue(sourceApp, 'MARIADB_USER') : undefined) ??
+      sourceAppId;
+    const database =
+      recorded?.database ??
+      (summary.pgDb as string | undefined) ??
+      (sourceApp ? this.envValue(sourceApp, 'POSTGRES_DB') : undefined) ??
+      (sourceApp ? this.envValue(sourceApp, 'MARIADB_DATABASE') : undefined) ??
+      user;
+    return { user, database };
+  }
+
+  /**
    * Restoring an OLD artifact must mean that artifact's state: without a
    * target, recovery replays all WAL to the latest point regardless of which
    * artifact was picked — only the newest artifact means "latest". Pin the
@@ -256,12 +306,14 @@ export class RunDbRestoreProcessor {
    * is not (the DR case), skip: pgBackRest itself fails cleanly on a bad repo.
    */
   private async validateAgainstLiveRepo(
+    engine: ContinuousBackupEngine,
     sourceAppId: string,
     effectiveTarget: Date | null,
   ): Promise<void> {
-    let info: PgBackupInfo;
+    const engineName = engine.engine;
+    let info: Awaited<ReturnType<ContinuousBackupEngine['info']>>;
     try {
-      info = await this.pgbackrest.info(sourceAppId);
+      info = await engine.info(sourceAppId);
     } catch (err: any) {
       this.logger.warn(
         `[run-db-restore] source repo not verifiable via live pod (${err?.message}) — proceeding against S3 directly`,
@@ -269,12 +321,22 @@ export class RunDbRestoreProcessor {
       return;
     }
     if (info.backupCount === 0) {
-      throw new Error('Source pgBackRest repo has no backups');
+      throw new Error('The source repository holds no base backup');
     }
+    // `oldestRecoverable` is a timestamp for one engine and a base label for
+    // another, so it is only compared when it parses as a moment. It silently
+    // did not before: `Date.parse` on a MariaDB label gives NaN, every
+    // comparison against it is false, and a refusal that can never fire reads
+    // exactly like one that never had to.
     if (effectiveTarget && info.oldestRecoverable) {
-      const target = effectiveTarget.getTime();
       const oldest = Date.parse(info.oldestRecoverable);
-      if (target < oldest) {
+      if (Number.isNaN(oldest)) {
+        this.logger.log(
+          `[run-db-restore] the ${engineName} repository reports its window as ` +
+            `"${info.oldestRecoverable}", which is not an instant — the target ` +
+            'is checked against the chosen backup instead',
+        );
+      } else if (effectiveTarget.getTime() < oldest) {
         throw new Error(
           `Recovery target ${effectiveTarget.toISOString()} precedes the oldest recoverable point ${info.oldestRecoverable}`,
         );
@@ -282,49 +344,9 @@ export class RunDbRestoreProcessor {
     }
   }
 
-  /**
-   * Wait out recovery on the restored install, then set the app's superuser
-   * password to this install's own generated secret so the credentials Flui
-   * shows for the clone actually work. Role and password come from the POD'S
-   * OWN env (fed by the app Secret) — the control plane never materializes the
-   * secret, and the encrypted-at-rest app.env copy is never touched.
-   */
-  private async reconcilePassword(newAppId: string): Promise<void> {
-    const target = await this.pgbackrest.resolveTarget(newAppId);
-    const exec = (cmd: string) =>
-      this.k8s.execInPod(
-        target.kubeconfig,
-        target.namespace,
-        target.labelSelector,
-        target.container,
-        ['sh', '-c', cmd],
-      );
-
-    const deadline = Date.now() + RECONCILE_TIMEOUT_MS;
-    for (;;) {
-      const out = await exec(
-        `gosu postgres psql -U "$POSTGRES_USER" -d postgres -tAc 'SELECT NOT pg_is_in_recovery()' 2>/dev/null || true`,
-      ).catch(() => '');
-      if (out.trim() === 't') break;
-      if (Date.now() > deadline) {
-        throw new Error(
-          'Restored postgres did not finish recovery in time — password not reconciled',
-        );
-      }
-      await new Promise((r) => setTimeout(r, RECONCILE_POLL_INTERVAL_MS));
-    }
-
-    // psql interpolates :'pw' (safely quoted) only from stdin/-f, not from -c.
-    await exec(
-      String.raw`printf '%s\n' "ALTER ROLE \"$POSTGRES_USER\" WITH PASSWORD :'pw';" | gosu postgres psql -U "$POSTGRES_USER" -d postgres -v ON_ERROR_STOP=1 -v pw="$POSTGRES_PASSWORD"`,
-    );
-    this.logger.log(
-      `[run-db-restore] reconciled superuser password for app=${newAppId}`,
-    );
-  }
-
-  /** Drop the one-shot FLUI_PG_* restore env from the stored install/app rows. */
+  /** Drop the one-shot restore env from the stored install/app rows. */
   private async stripRestoreEnv(
+    prefix: string,
     installId: string,
     appIds: string[],
   ): Promise<void> {
@@ -334,17 +356,53 @@ export class RunDbRestoreProcessor {
     if (install?.envOverrides) {
       install.envOverrides = Object.fromEntries(
         Object.entries(install.envOverrides).filter(
-          ([k]) => !k.startsWith('FLUI_PG_'),
+          ([k]) => !k.startsWith(prefix),
         ),
       );
       await this.installRepo.save(install);
     }
     for (const appId of appIds) {
       const app = await this.appRepo.findOne({ where: { id: appId } });
-      if (app?.env?.some((e) => e.name.startsWith('FLUI_PG_'))) {
-        app.env = app.env.filter((e) => !e.name.startsWith('FLUI_PG_'));
+      if (app?.env?.some((e) => e.name.startsWith(prefix))) {
+        app.env = app.env.filter((e) => !e.name.startsWith(prefix));
         await this.appRepo.save(app);
       }
+    }
+  }
+
+  /**
+   * Refuse when the catalog app cannot receive the restore switch.
+   *
+   * `resolveEnv` walks the env the manifest DECLARES and reads an override
+   * only for those names — an override for an undeclared name is dropped
+   * without a word. A restore whose environment is dropped does not fail: the
+   * image initialises an empty data directory, the pod turns Ready, and the
+   * job reports success over a database that contains nothing. That is the one
+   * outcome this whole area exists to stop producing, so it is checked before
+   * anything is installed rather than discovered afterwards.
+   */
+  private async requireRestoreAwareCatalogApp(
+    engine: ContinuousBackupEngine,
+  ): Promise<void> {
+    const switchName = `${engine.restoreEnvPrefix}RESTORE`;
+    const definition = await this.definitionRepo.findPublishedBySlug(
+      engine.catalogSlug,
+    );
+    if (!definition) {
+      throw new Error(
+        `Catalog app "${engine.catalogSlug}" is not published, so a ${engine.engine} backup cannot be restored into a new install`,
+      );
+    }
+    const spec = definition.manifest?.spec as
+      | { env?: Array<{ name: string }> }
+      | undefined;
+    if (!spec?.env?.some((e) => e.name === switchName)) {
+      throw new Error(
+        `The "${engine.catalogSlug}" catalog app does not declare ${switchName}, ` +
+          'so the restore environment would be silently dropped and the new ' +
+          'install would come up empty. Restoring this engine needs a catalog ' +
+          'that boots it in restore mode.',
+      );
     }
   }
 

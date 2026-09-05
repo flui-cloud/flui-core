@@ -11,6 +11,7 @@ import { EncryptionService } from '../../shared/encryption/services/encryption.s
 import { ApplicationEntity } from '../../applications/entities/application.entity';
 import { ClusterEntity } from '../../infrastructure/clusters/entities/cluster.entity';
 import { BackupDestinationEntity } from '../entities/backup-destination.entity';
+import { RestoreStrategy } from '../enums/restore-job.enum';
 import {
   ArtifactEngineFacts,
   ContinuousBackupEngine,
@@ -18,6 +19,9 @@ import {
 
 const DEFAULT_PGDATA = '/var/lib/postgresql/data/pgdata';
 const PGBACKREST_STANZA = 'main';
+// WAL replay keeps running well past the pod turning Ready on big restores.
+const RESTORE_RECONCILE_POLL_INTERVAL_MS = 5_000;
+const RESTORE_RECONCILE_TIMEOUT_MS = 30 * 60 * 1000;
 
 export interface PgBackrestTarget {
   kubeconfig: string;
@@ -57,6 +61,8 @@ export class PgBackrestService implements ContinuousBackupEngine {
   readonly engine = 'postgres';
   readonly catalogSlug = 'postgresql';
   readonly restoreEnvPrefix = 'FLUI_PG_';
+  readonly restoreStrategy = RestoreStrategy.PG_PITR;
+  readonly selfPrunesRepository = true;
 
   private readonly logger = new Logger(PgBackrestService.name);
 
@@ -102,8 +108,81 @@ export class PgBackrestService implements ContinuousBackupEngine {
         String.raw`pgbackrest version | awk "{print \$2}"`,
       ),
       catalogSlug: this.catalogSlug,
-      identities: { pgUser: target.pgUser, pgDb: target.pgDb },
+      identities: { user: target.pgUser, database: target.pgDb },
     };
+  }
+
+  artifactObjectPrefix(appId: string): string {
+    return `pgbackrest/${appId}/`;
+  }
+
+  identityEnv(identities: {
+    user: string;
+    database: string;
+  }): Record<string, string> {
+    return { POSTGRES_USER: identities.user, POSTGRES_DB: identities.database };
+  }
+
+  /**
+   * Wait out recovery on the restored install, then set the app's superuser
+   * password to this install's own generated secret so the credentials Flui
+   * shows for the clone actually work.
+   *
+   * Role and password come from the POD'S OWN env (fed by the app Secret) —
+   * the control plane never materializes the secret, and the encrypted-at-rest
+   * `app.env` copy is never touched. Run from here rather than the pod
+   * entrypoint because it survives long WAL replays and container restarts,
+   * and a failure fails the restore job instead of vanishing into a pod log.
+   */
+  async reconcileAfterRestore(newAppId: string): Promise<void> {
+    const target = await this.resolveTarget(newAppId);
+    const run = (cmd: string) =>
+      this.k8s.execInPod(
+        target.kubeconfig,
+        target.namespace,
+        target.labelSelector,
+        target.container,
+        ['sh', '-c', cmd],
+      );
+
+    const deadline = Date.now() + RESTORE_RECONCILE_TIMEOUT_MS;
+    for (;;) {
+      const out = await run(
+        `gosu postgres psql -U "$POSTGRES_USER" -d postgres -tAc 'SELECT NOT pg_is_in_recovery()' 2>/dev/null || true`,
+      ).catch(() => '');
+      if (out.trim() === 't') break;
+      if (Date.now() > deadline) {
+        throw new Error(
+          'Restored postgres did not finish recovery in time — password not reconciled',
+        );
+      }
+      await new Promise((r) =>
+        setTimeout(r, RESTORE_RECONCILE_POLL_INTERVAL_MS),
+      );
+    }
+
+    // psql interpolates :'pw' (safely quoted) only from stdin/-f, not from -c.
+    await run(
+      String.raw`printf '%s\n' "ALTER ROLE \"$POSTGRES_USER\" WITH PASSWORD :'pw';" | gosu postgres psql -U "$POSTGRES_USER" -d postgres -v ON_ERROR_STOP=1 -v pw="$POSTGRES_PASSWORD"`,
+    );
+    this.logger.log(
+      `[pgbackrest] reconciled superuser password for app=${newAppId}`,
+    );
+  }
+
+  /**
+   * Retention counts FULL backups, so an endless incr chain would never expire
+   * and would pin the WAL archive forever — force a new full on a cadence so
+   * the repo can rotate.
+   */
+  async chooseBackupType(
+    appId: string,
+    fullEveryDays: number,
+  ): Promise<'full' | 'incr'> {
+    const info = await this.info(appId);
+    if (info.backupCount === 0 || !info.lastFullAt) return 'full';
+    const ageMs = Date.now() - new Date(info.lastFullAt).getTime();
+    return ageMs >= fullEveryDays * 86_400_000 ? 'full' : 'incr';
   }
 
   private envValue(app: ApplicationEntity, name: string): string | undefined {
@@ -243,7 +322,7 @@ export class PgBackrestService implements ContinuousBackupEngine {
   async enable(
     appId: string,
     dest: BackupDestinationEntity,
-    opts?: { retentionFull?: number },
+    opts?: { retentionFull?: number; generation?: string },
   ): Promise<void> {
     const target = await this.resolveTarget(appId);
     await this.requirePgBackrest(target);

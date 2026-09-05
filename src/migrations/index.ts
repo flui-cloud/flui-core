@@ -30,6 +30,11 @@ import { McpToolCallSemanticSurfaceRef1787100000000 } from './1787100000000-McpT
 import { VolumeCopyLedger1787200000000 } from './1787200000000-VolumeCopyLedger';
 import { RestorePlacement1787300000000 } from './1787300000000-RestorePlacement';
 import { ContinuousBackupEngine1787400000000 } from './1787400000000-ContinuousBackupEngine';
+import { CatchUpEntityDrift1788000000000 } from './1788000000000-CatchUpEntityDrift';
+import { ProtectRecordsFromClusterDelete1787900000000 } from './1787900000000-ProtectRecordsFromClusterDelete';
+import { WidenEngineVersion1787800000000 } from './1787800000000-WidenEngineVersion';
+import { ApplicationCompanions1787700000000 } from './1787700000000-ApplicationCompanions';
+import { MariadbRestoreStrategy1787600000000 } from './1787600000000-MariadbRestoreStrategy';
 import { BackfillArtifactApplicationId1787500000000 } from './1787500000000-BackfillArtifactApplicationId';
 
 // Explicit array, not a dist glob: nest build webpack-bundles to one file,
@@ -69,4 +74,9 @@ export const migrations = [
   RestorePlacement1787300000000,
   ContinuousBackupEngine1787400000000,
   BackfillArtifactApplicationId1787500000000,
+  MariadbRestoreStrategy1787600000000,
+  ApplicationCompanions1787700000000,
+  WidenEngineVersion1787800000000,
+  ProtectRecordsFromClusterDelete1787900000000,
+  CatchUpEntityDrift1788000000000,
 ];

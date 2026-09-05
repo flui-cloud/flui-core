@@ -14,7 +14,7 @@ import {
 
 export default class BackupEnableDatabase extends Command {
   static readonly description =
-    'Protect a Postgres database with continuous backup: every change is ' +
+    'Protect a database with continuous backup: every change is ' +
     'shipped off-cluster as it happens, so it can be restored to any moment ' +
     'in the retained window rather than to the last nightly copy.';
 
@@ -65,7 +65,15 @@ export default class BackupEnableDatabase extends Command {
         profile: profileFor(destinations),
       });
       spinner.succeed('Continuous backup enabled');
-      printEnabled(policy, `${app.slug} (Postgres)`, 'continuously');
+      // The engine the server recorded, not a guess in the client: writing
+      // "Postgres" on a MariaDB was a false line in the one message that
+      // confirms what has just been protected.
+      const engine = (policy as { engine?: string }).engine;
+      printEnabled(
+        policy,
+        engine ? `${app.slug} (${engine})` : app.slug,
+        'continuously',
+      );
       console.log(
         chalk.dim(
           '   The first base backup is running now — until it finishes there is\n' +

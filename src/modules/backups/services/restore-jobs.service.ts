@@ -18,7 +18,6 @@ import { RestoreJobEntity } from '../entities/restore-job.entity';
 import {
   RestoreJobStatus,
   RestoreTargetKind,
-  RestoreStrategy,
   RestorePlacement,
 } from '../enums/restore-job.enum';
 import { BackupEngineClass } from '../enums/backup-engine-class.enum';
@@ -31,6 +30,7 @@ import { BACKUP_QUEUE, BACKUP_JOB_TYPES } from '../backups.constants';
 import { BackupDestinationsService } from './backup-destinations.service';
 import { StorageBackendFactory } from '../../storage/factories/storage-backend.factory';
 import { ArtifactLocationState } from '../enums/artifact-location-state.enum';
+import { ContinuousBackupEngineRegistry } from './continuous-backup-engine.registry';
 
 @Injectable()
 export class RestoreJobsService {
@@ -43,6 +43,7 @@ export class RestoreJobsService {
     private readonly opRepo: Repository<InfrastructureOperationEntity>,
     @InjectQueue(BACKUP_QUEUE) private readonly queue: Queue,
     private readonly destinationsService: BackupDestinationsService,
+    private readonly engines: ContinuousBackupEngineRegistry,
     private readonly storageFactory: StorageBackendFactory,
   ) {}
 
@@ -164,7 +165,12 @@ export class RestoreJobsService {
       targetKind: dto.targetKind,
       placement,
       targetSelector: dto.targetSelector ?? {},
-      strategy: isDb ? RestoreStrategy.PG_PITR : dto.strategy,
+      // What the row will say was done. Read from the artifact's own engine,
+      // because that is the tool the recovery will actually run — a fixed
+      // `pg_pitr` was right only while `database` had one implementation.
+      strategy: isDb
+        ? this.engines.forEngine(artifact.engine).restoreStrategy
+        : dto.strategy,
       recoveryTargetTime: dto.recoveryTargetTime
         ? new Date(dto.recoveryTargetTime)
         : undefined,

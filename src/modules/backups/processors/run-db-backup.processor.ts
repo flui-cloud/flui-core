@@ -15,11 +15,7 @@ import {
 import { BackupPoliciesService } from '../services/backup-policies.service';
 import { BackupArtifactRepository } from '../repositories/backup-artifact.repository';
 import { BackupDestinationRepository } from '../repositories/backup-destination.repository';
-import {
-  PgBackrestService,
-  PgBackupInfo,
-} from '../services/pgbackrest.service';
-import { BackupPolicyEntity } from '../entities/backup-policy.entity';
+import { ContinuousBackupEngineRegistry } from '../services/continuous-backup-engine.registry';
 import { BackupJobStatus } from '../enums/backup-job.enum';
 import { BackupEngineClass } from '../enums/backup-engine-class.enum';
 import { DestinationRole } from '../enums/destination-role.enum';
@@ -38,7 +34,7 @@ export class RunDbBackupProcessor {
     private readonly policiesService: BackupPoliciesService,
     private readonly destRepo: BackupDestinationRepository,
     private readonly artifactRepo: BackupArtifactRepository,
-    private readonly pgbackrest: PgBackrestService,
+    private readonly engines: ContinuousBackupEngineRegistry,
   ) {}
 
   @Process(BACKUP_JOB_TYPES.RUN_DB_BACKUP)
@@ -80,28 +76,38 @@ export class RunDbBackupProcessor {
 
       await setStep(OperationStep.BACKUP_RUN_RESOLVE_SCOPE, 10);
 
+      // By the engine the policy recorded at creation, never re-derived from
+      // the workload: this job can run when that workload is mid-redeploy, and
+      // driving one database's tool against another's is the failure the
+      // registry exists to make impossible.
+      const engine = this.engines.forEngine(policy.engine);
+
       // Idempotent + self-healing: (re)write conf, ensure the stanza exists, flip
       // archive_command. No restart (see D1/D2). Cheap next to the base backup.
-      await this.pgbackrest.enable(appId, destEntity, {
+      // From the policy, never minted here: a new generation on every run
+      // would scatter one database's history across a new prefix each night.
+      const generation = policy.metadata?.generation as string | undefined;
+      await engine.enable(appId, destEntity, {
         retentionFull: policy.retentionMaxCopies ?? 2,
+        generation,
       });
 
-      const before = await this.pgbackrest.info(appId);
-      const type = this.chooseBackupType(before, policy);
+      // Engines with a single kind of base backup do not answer this, and the
+      // answer for them is `full` — a fact about the engine, not a fallback.
+      const fullEveryDays = Number(policy.metadata?.fullEveryDays) || 7;
+      const type = engine.chooseBackupType
+        ? await engine.chooseBackupType(appId, fullEveryDays)
+        : 'full';
 
       await setStep(OperationStep.BACKUP_RUN_RECORD_ARTIFACT, 40);
-      const label = await this.pgbackrest.baseBackup(appId, type);
-      const info = await this.pgbackrest.info(appId);
+      const label = await engine.baseBackup(appId, type);
+      const info = await engine.info(appId);
 
-      // pgUser/pgDb ride the artifact so a restore still knows how to boot the
-      // clone when the source app (or its whole cluster) no longer exists —
-      // the disaster-recovery case.
-      const target = await this.pgbackrest.resolveTarget(appId);
       // Read from the running server, not assumed from the seed: the restore
       // installs whatever tag the catalog carries at restore time, and a data
       // directory does not open under a different major. Recorded here so the
       // mismatch is visible before a recovery rather than during one.
-      const facts = await this.pgbackrest.describeForArtifact(appId);
+      const facts = await engine.describeForArtifact(appId);
       const artifact = this.artifactRepo.createArtifact({
         backupJobId,
         clusterId: backupJob.clusterId,
@@ -112,7 +118,12 @@ export class RunDbBackupProcessor {
         // to it.
         applicationId: appId,
         engine: facts.engine,
-        engineVersion: facts.engineVersion,
+        // Clamped, not trusted to fit. The base backup is already in object
+        // storage by the time this row is written: a version banner one
+        // character too long would fail the insert, mark the job failed, and
+        // leave a real backup that nothing points at. MariaDB's banner is 41
+        // characters against Postgres's 30, which is how that was found.
+        engineVersion: facts.engineVersion?.slice(0, 64),
         engineRef: label,
         manifestSummary: {
           applicationId: appId,
@@ -120,15 +131,30 @@ export class RunDbBackupProcessor {
           tool: facts.tool,
           toolVersion: facts.toolVersion,
           catalogSlug: facts.catalogSlug,
-          pgUser: target.pgUser,
-          pgDb: target.pgDb,
+          // The role and database a restored instance has to boot as. They
+          // ride the artifact because the moment they are needed is the one
+          // where the source application, and possibly its cluster, is gone.
+          identities: facts.identities,
+          // Recorded on the artifact because a restore years from now has to
+          // find the objects, and the policy that knew where they went may be
+          // gone by then.
+          ...(generation ? { generation } : {}),
+          // The same pair under the names the restore read before engines
+          // existed, so an artifact taken today still restores on a Flui that
+          // has not been upgraded. Removable once no such reader is left.
+          ...(facts.engine === 'postgres'
+            ? { pgUser: facts.identities.user, pgDb: facts.identities.database }
+            : {}),
           oldestRecoverable: info.oldestRecoverable,
           newestRecoverable: info.newestRecoverable,
-          backupCount: info.backupCount,
         },
-        expiresAt: policy.retentionDays
-          ? new Date(Date.now() + policy.retentionDays * 86_400_000)
-          : undefined,
+        // Deliberately no `expiresAt`. Retention for this class is counted in
+        // base backups, not days — that is what `repo1-retention-full` means
+        // to pgBackRest and what a chain means for any engine: dropping a base
+        // on a calendar says nothing about how far back recovery reaches,
+        // because the logs between the bases are what fill the gaps. Two
+        // clocks on one policy is how the CLI came to show a number nothing
+        // honoured while the sweeper acted on one nobody set.
       });
       const saved = await this.artifactRepo.saveArtifact(artifact);
 
@@ -137,10 +163,10 @@ export class RunDbBackupProcessor {
         destinationId: destEntity.id,
         role: DestinationRole.PRIMARY,
         state: ArtifactLocationState.AVAILABLE,
-        // Relative to pathPrefix — pgbackrest's own repo1-path already
-        // includes it (see PgbackrestService.repoPath), and getUsage()/
-        // listObjects() re-prepend it via joinPrefix, so it must not be here.
-        objectKeyPrefix: `pgbackrest/${appId}/`,
+        // Relative to pathPrefix — the engine's own repository path already
+        // includes it, and getUsage()/listObjects() re-prepend it via
+        // joinPrefix, so it must not be here.
+        objectKeyPrefix: engine.artifactObjectPrefix(appId, generation),
       };
       await this.artifactRepo.saveLocation(loc as BackupArtifactLocationEntity);
 
@@ -173,20 +199,5 @@ export class RunDbBackupProcessor {
       });
       throw err;
     }
-  }
-
-  /**
-   * Retention counts FULL backups, so an endless incr chain would never expire
-   * and would pin the WAL archive forever — force a new full on a cadence
-   * (policy metadata `fullEveryDays`, default 7) so the repo can rotate.
-   */
-  private chooseBackupType(
-    info: PgBackupInfo,
-    policy: BackupPolicyEntity,
-  ): 'full' | 'incr' {
-    if (info.backupCount === 0 || !info.lastFullAt) return 'full';
-    const fullEveryDays = Number(policy.metadata?.fullEveryDays) || 7;
-    const ageMs = Date.now() - new Date(info.lastFullAt).getTime();
-    return ageMs >= fullEveryDays * 86_400_000 ? 'full' : 'incr';
   }
 }

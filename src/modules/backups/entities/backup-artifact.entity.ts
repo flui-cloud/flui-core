@@ -61,7 +61,7 @@ export class BackupArtifactEntity {
    * and a data directory does not open under a different major. Without this
    * the mismatch is discovered during the recovery instead of before it.
    */
-  @Column({ type: 'varchar', length: 32, nullable: true })
+  @Column({ type: 'varchar', length: 64, nullable: true })
   engineVersion?: string;
 
   @Column({ length: 64, nullable: true })

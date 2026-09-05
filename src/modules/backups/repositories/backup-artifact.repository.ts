@@ -71,6 +71,41 @@ export class BackupArtifactRepository {
       .getOne();
   }
 
+  /**
+   * The newest base backup that had finished by a given instant.
+   *
+   * A point-in-time recovery replays forward from a base, so the base must
+   * predate the moment asked for. Handing back the newest one regardless
+   * looks right and is not: replaying from a position already past the target
+   * applies nothing, and the restore returns state from AFTER the moment it
+   * reports — proven against a repository holding two bases.
+   */
+  findDbArtifactForAppAt(
+    appId: string,
+    at: Date,
+  ): Promise<BackupArtifactEntity | null> {
+    return (
+      this.artifactRepo
+        .createQueryBuilder('a')
+        .leftJoinAndSelect('a.locations', 'l')
+        .where('a.engineClass = :engine', { engine: 'database' })
+        // `::text` on the column, not a bare comparison: the same bound parameter
+        // is compared against a uuid column and against a jsonb text extraction
+        // in one OR, and Postgres has to give it a single type. Without the cast
+        // it infers `text` from the second arm and then finds no `uuid = text`
+        // operator — the query fails outright, which is how this arrived as a
+        // 500 rather than as an empty result.
+        .andWhere(
+          `(a."applicationId"::text = :appId OR a."manifestSummary"->>'applicationId' = :appId)`,
+          { appId },
+        )
+        .andWhere('a.createdAt <= :at', { at })
+        .orderBy('a.createdAt', 'DESC')
+        .limit(1)
+        .getOne()
+    );
+  }
+
   findLatestWithSizeForCluster(
     clusterId: string,
   ): Promise<BackupArtifactEntity | null> {

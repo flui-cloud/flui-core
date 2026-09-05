@@ -1,3 +1,14 @@
+// The registry pulls in the Kubernetes client, which ships ESM while this
+// project's jest transforms only `jose`. Nothing here reaches it: the engine
+// lookup is stubbed below.
+jest.mock('@kubernetes/client-node', () => ({
+  KubeConfig: class {},
+  KubernetesObjectApi: { makeApiClient: () => ({}) },
+  CoreV1Api: class {},
+  Exec: class {},
+  PatchStrategy: { MergePatch: 'application/merge-patch+json' },
+}));
+
 import { BackupRetentionSweeper } from './backup-retention.sweeper';
 import { BackupEngineClass } from '../enums/backup-engine-class.enum';
 
@@ -17,11 +28,23 @@ describe('BackupRetentionSweeper', () => {
       inFlightRestores?: number;
       deleteObjects?: jest.Mock;
       listKeys?: string[];
+      selfPruningEngines?: string[];
+      dbPolicy?: any;
+      dbArtifacts?: any[];
+      newestDbArtifact?: any;
+      engineKeys?: (appId: string, ref: string) => string[];
     } = {},
   ) {
     const deletedArtifacts: string[] = [];
     const artifactRepo = {
-      find: jest.fn(async () => opts.expired ?? []),
+      find: jest.fn(async (q: any) =>
+        q?.where?.engineClass === 'database'
+          ? (opts.dbArtifacts ?? [])
+          : (opts.expired ?? []),
+      ),
+      // A different row by default, so a test is not accidentally exercising
+      // the newest-base refusal when it means to exercise something else.
+      findOne: jest.fn(async () => opts.newestDbArtifact ?? { id: 'a-newest' }),
       count: jest.fn(async () => opts.siblings ?? 5),
       delete: jest.fn(async (q: any) => {
         deletedArtifacts.push(q.id);
@@ -63,6 +86,25 @@ describe('BackupRetentionSweeper', () => {
       destRepo as any,
       destinations as any,
       storage as any,
+      {
+        forEngine: (e: string) => {
+          const known = opts.selfPruningEngines ?? ['postgres'];
+          if (e === 'something-from-the-future') {
+            throw new Error('No continuous-backup engine is registered');
+          }
+          return {
+            selfPrunesRepository: known.includes(e ?? 'postgres'),
+            artifactObjectKeys: opts.engineKeys,
+          };
+        },
+      } as any,
+      {
+        findDbPolicyForApp: jest.fn(async () =>
+          opts.dbPolicy === null
+            ? null
+            : (opts.dbPolicy ?? { id: 'p1', retentionMaxCopies: 2 }),
+        ),
+      } as any,
     );
     return {
       sweeper,
@@ -151,6 +193,113 @@ describe('BackupRetentionSweeper', () => {
     // pgBackRest owns that repository and expires it by its own retention;
     // deleting objects underneath it breaks a chain Flui does not own.
     expect(deleteObjects).not.toHaveBeenCalled();
+    expect(deletedArtifacts).toEqual(['a1']);
+  });
+
+  it('keeps the row of an engine that prunes neither itself nor through here', async () => {
+    // The ninth deletion that must not happen, and the quietest. MariaDB has
+    // no equivalent of `repo1-retention-full`: dropping its row on expiry
+    // would leave the base backup and its binary logs in object storage,
+    // still paid for and pointed at by nothing, while the ledger — built so
+    // that "what protects this application" is one query — answered nothing.
+    const { sweeper, deletedArtifacts, deleteObjects, artifactRepo } = make({
+      expired: [
+        artifact({
+          engineClass: BackupEngineClass.DATABASE,
+          engine: 'mariadb',
+        }),
+      ],
+      selfPruningEngines: ['postgres'],
+    });
+
+    await sweeper.sweep();
+
+    expect(deleteObjects).not.toHaveBeenCalled();
+    expect(deletedArtifacts).toEqual([]);
+    expect(artifactRepo.update).toHaveBeenCalledWith(
+      'a1',
+      expect.objectContaining({
+        metadata: expect.objectContaining({ retentionUnenforced: true }),
+      }),
+    );
+  });
+
+  it('keeps the row of an engine this build has never heard of', async () => {
+    // A backup taken by a version of Flui that supported an engine this one
+    // does not. Keeping both the row and the objects is the only answer that
+    // cannot destroy something it cannot understand.
+    const { sweeper, deletedArtifacts, deleteObjects } = make({
+      expired: [
+        artifact({
+          engineClass: BackupEngineClass.DATABASE,
+          engine: 'something-from-the-future',
+        }),
+      ],
+      selfPruningEngines: [],
+    });
+
+    await sweeper.sweep();
+
+    expect(deleteObjects).not.toHaveBeenCalled();
+    expect(deletedArtifacts).toEqual([]);
+  });
+
+  it('never deletes the newest base of a chain', async () => {
+    // For a pile of independent copies "the last one" is the right unit. For a
+    // chain it is not: deleting the newest keeps the row count healthy and
+    // moves the END of the recoverable window backwards, so the window ends
+    // earlier than the row claims. Shortening retention must shorten the
+    // start, never the end.
+    const { sweeper, deletedArtifacts } = make({
+      expired: [
+        artifact({
+          engineClass: BackupEngineClass.DATABASE,
+          engine: 'mariadb',
+          applicationId: 'app-1',
+          engineRef: 'base-newest',
+        }),
+      ],
+      newestDbArtifact: { id: 'a1' },
+      selfPruningEngines: [],
+    });
+
+    await sweeper.sweep();
+
+    expect(deletedArtifacts).toEqual([]);
+  });
+
+  it('deletes a base backup through its engine, position file first', async () => {
+    // The reverse of the upload order, and the reason it is a contract: a base
+    // becomes visible to a reader when its position file lands, so removing
+    // that first takes the whole base out of view in one operation. The other
+    // order leaves, on any interruption, a base every reader still believes in
+    // and none can fetch.
+    const deleted: string[][] = [];
+    const { sweeper, deletedArtifacts } = make({
+      expired: [
+        artifact({
+          engineClass: BackupEngineClass.DATABASE,
+          engine: 'mariadb',
+          applicationId: 'app-1',
+          engineRef: 'base-old',
+        }),
+      ],
+      selfPruningEngines: [],
+      engineKeys: (appId: string, ref: string) => [
+        `mariadb/${appId}/base/${ref}/binlog_info`,
+        `mariadb/${appId}/base/${ref}/base.mbstream`,
+      ],
+      deleteObjects: jest.fn(async (_c: any, keys: string[]) => {
+        deleted.push(keys);
+      }),
+    });
+
+    await sweeper.sweep();
+
+    expect(deleted).toEqual([
+      ['mariadb/app-1/base/base-old/binlog_info'],
+      ['mariadb/app-1/base/base-old/base.mbstream'],
+    ]);
     expect(deletedArtifacts).toEqual(['a1']);
   });
 

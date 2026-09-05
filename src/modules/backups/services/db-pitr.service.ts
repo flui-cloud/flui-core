@@ -5,7 +5,7 @@ import { ApplicationEntity } from '../../applications/entities/application.entit
 import { BackupArtifactRepository } from '../repositories/backup-artifact.repository';
 import { BackupPolicyRepository } from '../repositories/backup-policy.repository';
 import { RestoreJobsService } from './restore-jobs.service';
-import { PgBackrestService } from './pgbackrest.service';
+import { ContinuousBackupEngineRegistry } from './continuous-backup-engine.registry';
 import { RestoreJobEntity } from '../entities/restore-job.entity';
 import { RestoreTargetKind } from '../enums/restore-job.enum';
 import { DestinationRole } from '../enums/destination-role.enum';
@@ -38,7 +38,7 @@ export class DbPitrService {
     private readonly artifactRepo: BackupArtifactRepository,
     private readonly policyRepo: BackupPolicyRepository,
     private readonly restoreJobs: RestoreJobsService,
-    private readonly pgbackrest: PgBackrestService,
+    private readonly engines: ContinuousBackupEngineRegistry,
   ) {}
 
   async status(appId: string): Promise<DbPitrStatus> {
@@ -46,10 +46,13 @@ export class DbPitrService {
     const artifact = await this.artifactRepo.findLatestDbArtifactForApp(appId);
 
     // The repo window comes from a live pod; tolerate a stopped/absent pod.
+    // Through the engine the policy recorded, because asking pgBackRest about
+    // a MariaDB fails inside the catch below and reports an empty window on a
+    // database that has one — a understatement that reads as "unprotected".
     let backupCount = 0;
     let window: DbPitrStatus['window'] = null;
     try {
-      const info = await this.pgbackrest.info(appId);
+      const info = await this.engines.forEngine(policy?.engine).info(appId);
       backupCount = info.backupCount;
       window = {
         oldest: info.oldestRecoverable,
@@ -84,10 +87,22 @@ export class DbPitrService {
     appId: string,
     dto: DbPitrRestoreDto,
   ): Promise<RestoreJobEntity> {
-    const artifact = await this.artifactRepo.findLatestDbArtifactForApp(appId);
+    // The base a point-in-time recovery replays from has to predate the
+    // moment asked for. Taking the newest one regardless looks right and is
+    // not: the replay would start from a position already past the target,
+    // apply nothing, and hand back state from after the moment it reports.
+    const at = dto.recoveryTargetTime
+      ? new Date(dto.recoveryTargetTime)
+      : undefined;
+    const artifact = at
+      ? await this.artifactRepo.findDbArtifactForAppAt(appId, at)
+      : await this.artifactRepo.findLatestDbArtifactForApp(appId);
     if (!artifact) {
       throw new NotFoundException(
-        'No database backup found for this application',
+        at
+          ? `No database backup of this application had been taken by ${at.toISOString()}. ` +
+            'Recovery cannot reach back before the first one.'
+          : 'No database backup found for this application',
       );
     }
     const sourceDestinationId = this.primaryDestinationOf(artifact);
