@@ -4,7 +4,10 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { IsNull, Repository } from 'typeorm';
 import * as k8s from '@kubernetes/client-node';
 
-import { ClusterEntity } from '../../infrastructure/clusters/entities/cluster.entity';
+import {
+  ClusterEntity,
+  ClusterStatus,
+} from '../../infrastructure/clusters/entities/cluster.entity';
 import {
   ClusterNodeEntity,
   NodeType,
@@ -59,9 +62,16 @@ export class TopologyService {
       where: { deletedAt: IsNull() },
       order: { createdAt: 'ASC' },
     });
+    // A cluster Flui has recorded as lost or stopped will not answer, and
+    // asking costs the whole connect timeout — the packets are swallowed, not
+    // refused — for every caller of this, on every poll.
+    const reachable = clusters.filter(
+      (c) =>
+        c.status !== ClusterStatus.LOST && c.status !== ClusterStatus.STOPPED,
+    );
 
     const clusterDtos = await Promise.all(
-      clusters.map(async (cluster) => this.buildClusterTopology(cluster)),
+      reachable.map(async (cluster) => this.buildClusterTopology(cluster)),
     );
 
     const validClusters = clusterDtos

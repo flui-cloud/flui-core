@@ -55,12 +55,28 @@ export class TopologyEventsService implements OnModuleInit, OnModuleDestroy {
 
   constructor(private readonly topologyService: TopologyService) {}
 
-  async onModuleInit(): Promise<void> {
+  /**
+   * The first snapshot is started, never awaited.
+   *
+   * `onModuleInit` runs before `app.listen()`, and building a topology means
+   * calling the Kubernetes API of every cluster. A powered-off host does not
+   * refuse the connection, it swallows the packets: about 133 seconds before
+   * the kernel gives up, against a liveness probe that kills the pod at 90.
+   * One workload cluster that is down therefore stopped the control plane from
+   * ever starting again — the exact moment somebody needs it to rebuild that
+   * cluster. Seen on a real installation.
+   *
+   * Nothing is lost by not waiting: the poll below refreshes on its own, and
+   * a client that connects before the first snapshot lands gets the next one.
+   */
+  onModuleInit(): void {
     if (this.topologyService.isMockMode()) {
       this.startMockEmitter();
       return;
     }
-    await this.refreshSnapshot();
+    void this.refreshSnapshot().catch((err: Error) => {
+      this.logger.error(`First topology snapshot failed: ${err.message}`);
+    });
     this.pollTimer = setInterval(() => {
       this.refreshSnapshot().catch((err) =>
         this.logger.error(`Topology poll failed: ${(err as Error).message}`),

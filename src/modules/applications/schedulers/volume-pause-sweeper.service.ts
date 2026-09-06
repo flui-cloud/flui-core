@@ -6,8 +6,11 @@ import {
 } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Not, IsNull, Repository } from 'typeorm';
-import { ClusterEntity } from '../../infrastructure/clusters/entities/cluster.entity';
+import { In, Not, IsNull, Repository } from 'typeorm';
+import {
+  ClusterEntity,
+  ClusterStatus,
+} from '../../infrastructure/clusters/entities/cluster.entity';
 import { EncryptionService } from '../../shared/encryption/services/encryption.service';
 import { VolumePauseLeaseService } from '../services/volume-pause-lease.service';
 
@@ -41,8 +44,25 @@ export class VolumePauseSweeperService
     private readonly pauseLease: VolumePauseLeaseService,
   ) {}
 
-  async onApplicationBootstrap(): Promise<void> {
-    await this.sweepEverywhere(true, 'boot');
+  /**
+   * Started, never awaited.
+   *
+   * `onApplicationBootstrap` runs before `app.listen()`, so anything awaited
+   * here is a precondition for the control plane serving at all — and this
+   * sweep talks to every cluster in turn. A powered-off host does not refuse
+   * the connection, it swallows the packets, and the kernel takes about 133
+   * seconds to give up; the liveness probe kills the pod at 90. One workload
+   * cluster that is down therefore stopped the control plane from ever
+   * restarting, which is the exact moment somebody needs it. Observed on a
+   * real installation, not reasoned about.
+   *
+   * The sweep still runs, and still releases everything it finds. It just no
+   * longer decides whether the API answers.
+   */
+  onApplicationBootstrap(): void {
+    void this.sweepEverywhere(true, 'boot').catch((err: Error) => {
+      this.logger.warn(`[pause-sweep] boot sweep failed: ${err.message}`);
+    });
   }
 
   async onApplicationShutdown(): Promise<void> {
@@ -58,7 +78,13 @@ export class VolumePauseSweeperService
     let clusters: ClusterEntity[];
     try {
       clusters = await this.clusterRepository.find({
-        where: { kubeconfigEncrypted: Not(IsNull()) },
+        where: {
+          kubeconfigEncrypted: Not(IsNull()),
+          // A cluster nobody can reach has no lease to release and costs the
+          // full connect timeout to find that out. `LOST` and `STOPPED` are
+          // Flui's own record that it will not answer; believing it is free.
+          status: Not(In([ClusterStatus.LOST, ClusterStatus.STOPPED])),
+        },
       });
     } catch (err: any) {
       this.logger.warn(
