@@ -584,7 +584,10 @@ export class AppEndpointService {
     dnsRecordId?: string,
     dnsRecordValue?: string,
     certificateStatus?: CertificateStatus,
-    certificateMessage?: string,
+    // Null clears it. A reconcile that found nothing wrong must be able to
+    // withdraw what an earlier one said, or the row reads `valid` while still
+    // telling the operator to go configure what is already configured.
+    certificateMessage?: string | null,
     certificateExpiresAt?: Date,
   ): Promise<AppEndpointEntity> {
     const endpoint = await this.getEndpoint(id);
@@ -598,7 +601,7 @@ export class AppEndpointService {
     if (certificateStatus !== undefined)
       endpoint.certificateStatus = certificateStatus;
     if (certificateMessage !== undefined)
-      endpoint.certificateMessage = certificateMessage;
+      endpoint.certificateMessage = certificateMessage as never;
     if (certificateExpiresAt !== undefined)
       endpoint.certificateExpiresAt = certificateExpiresAt;
 

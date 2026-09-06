@@ -159,3 +159,89 @@ describe('ClusterDnsZoneService, an assignment whose cluster cannot be read', ()
     }
   });
 });
+
+describe('ClusterDnsZoneService, assigning a zone before the cluster exists', () => {
+  function make(status: string) {
+    const service = Object.create(
+      ClusterDnsZoneService.prototype,
+    ) as ClusterDnsZoneService;
+    const r = service as unknown as Record<string, unknown>;
+    const saved: Record<string, unknown>[] = [];
+
+    r.logger = { log: jest.fn(), warn: jest.fn(), error: jest.fn() };
+    r.clusterRepository = {
+      findOne: jest.fn(async () => ({ id: 'c-1', status })),
+    };
+    r.dnsZoneRepository = { findOne: jest.fn(async () => ({ id: 'z-1' })) };
+    r.clusterDnsZoneRepository = {
+      findOne: jest.fn(async () => null),
+      create: jest.fn((v: Record<string, unknown>) => v),
+      save: jest.fn(async (v: Record<string, unknown>) => {
+        saved.push(v);
+        return { ...v, id: 'a-1' };
+      }),
+    };
+    r.reconcileAssignment = jest.fn(async () => undefined);
+    return { service, saved, r };
+  }
+
+  it('waits instead of reconciling against a cluster that is not there yet', async () => {
+    // The wizard assigns ~150ms after queueing creation; the cluster is ready
+    // two and a half minutes later. Reconciling now only produced a failure the
+    // operator could not act on, and an invitation to click Reconcile.
+    const h = make('creating');
+
+    await h.service.assignZoneToCluster('c-1', { dnsZoneId: 'z-1' } as never);
+
+    expect(h.saved[0].reconciliationStatus).toBe(ReconciliationStatus.PENDING);
+    expect(h.saved[0].errorMessage).toMatch(/ready/);
+    expect(h.r.reconcileAssignment).not.toHaveBeenCalled();
+  });
+
+  it('still reconciles at once when the cluster is already up', async () => {
+    const h = make('ready');
+
+    await h.service.assignZoneToCluster('c-1', { dnsZoneId: 'z-1' } as never);
+
+    expect(h.saved[0].reconciliationStatus).toBe(
+      ReconciliationStatus.RECONCILING,
+    );
+    expect(h.r.reconcileAssignment).toHaveBeenCalledWith('a-1');
+  });
+});
+
+describe('ClusterDnsZoneService, rows a restart left mid-reconcile', () => {
+  function make() {
+    const service = Object.create(
+      ClusterDnsZoneService.prototype,
+    ) as ClusterDnsZoneService;
+    const r = service as unknown as Record<string, unknown>;
+    const updates: unknown[][] = [];
+    r.logger = { log: jest.fn(), warn: jest.fn(), error: jest.fn() };
+    r.clusterDnsZoneRepository = {
+      update: jest.fn(async (...args: unknown[]) => {
+        updates.push(args);
+        return { affected: 1 };
+      }),
+    };
+    return { service, updates };
+  }
+
+  it('releases only the ones with nothing written down', async () => {
+    // The in-flight marker carries no message; a truthful "waiting for ACME"
+    // always carries the issuer's own text and must survive.
+    const h = make();
+
+    await h.service.onApplicationBootstrap();
+
+    const [where, set] = h.updates[0] as [
+      Record<string, unknown>,
+      Record<string, unknown>,
+    ];
+    expect(where.reconciliationStatus).toBe(ReconciliationStatus.RECONCILING);
+    expect(where.errorMessage).toBeDefined();
+    expect(where.updatedAt).toBeDefined();
+    expect(set.reconciliationStatus).toBe(ReconciliationStatus.ERROR);
+    expect(set.errorMessage).toMatch(/restart/);
+  });
+});

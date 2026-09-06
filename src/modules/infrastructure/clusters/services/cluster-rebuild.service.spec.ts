@@ -460,7 +460,9 @@ describe('ClusterRebuildService endpoint naming, through a rebuild', () => {
     r.dataRestorer = {
       restoreInto: jest.fn(async () => []),
       forget: jest.fn(async () => undefined),
+      rearm: jest.fn(async () => 'policy-1'),
     };
+    r.backupJobs = { createOnDemand: jest.fn(async () => ({ id: 'job-1' })) };
     r.deploy = { deploy: jest.fn(async () => ({ id: 'op-1' })) };
     r.operationRepo = {
       findOne: jest.fn(async () => ({ status: 'COMPLETED' })),
@@ -662,5 +664,187 @@ describe('ClusterRebuildService endpoint naming, through a rebuild', () => {
     expect((result.notes as string[]).join(' ')).toMatch(
       /no assignment for this zone/,
     );
+  });
+});
+
+/**
+ * The image neutralises `archive_command` when it restores — the restored
+ * config names a file that did not come with it — and expects whoever enables
+ * backup to write the real one. A rebuild never enabled: it moved the policy
+ * row and stopped. Thirteen hours after one, the database read `archive_mode
+ * on` with `archive_command '/bin/true'`, `pg_stat_archiver` reported three
+ * segments and zero failures, and the policy read enabled and active.
+ */
+describe('ClusterRebuildService, putting a rebuilt database back under protection', () => {
+  function harness(
+    opts: {
+      rearm?: () => Promise<string | null>;
+    } = {},
+  ) {
+    const service = Object.create(
+      ClusterRebuildService.prototype,
+    ) as ClusterRebuildService;
+    const r = service as unknown as Record<string, unknown>;
+    const order: string[] = [];
+    const application: Record<string, unknown> = {
+      id: 'app-1',
+      name: 'App One',
+      slug: 'app',
+      clusterId: 'from-1',
+      metadata: { rebuild: { phase: 'deployed', to: 'to-1' } },
+    };
+
+    r.logger = { log: jest.fn(), warn: jest.fn(), error: jest.fn() };
+    r.appRepo = {
+      findOne: jest.fn(async () => application),
+      update: jest.fn(async (_c: unknown, patch: Record<string, unknown>) => {
+        Object.assign(application, patch);
+      }),
+    };
+    r.endpointRepo = { find: jest.fn(async () => []), update: jest.fn() };
+    r.zoneAssignmentRepo = {
+      find: jest.fn(async () => []),
+      findOne: jest.fn(),
+    };
+    r.endpointMode = { generateFqdn: jest.fn() };
+    r.endpointReconciliation = {
+      releaseDnsRecord: jest.fn(),
+      reconcile: jest.fn(),
+    };
+    r.dataRestorer = {
+      restoreInto: jest.fn(async () => []),
+      forget: jest.fn(async () => {
+        order.push('forget');
+      }),
+      rearm: jest.fn(async () => {
+        order.push('rearm');
+        return opts.rearm ? await opts.rearm() : 'policy-1';
+      }),
+    };
+    r.backupJobs = {
+      createOnDemand: jest.fn(async () => {
+        order.push('base');
+        return { id: 'job-1' };
+      }),
+    };
+    r.deploy = { deploy: jest.fn() };
+    r.operationRepo = { findOne: jest.fn() };
+
+    const run = () =>
+      (
+        service as unknown as {
+          rebuildOne(
+            u: string,
+            id: string,
+            f: unknown,
+            t: unknown,
+          ): Promise<Record<string, unknown>>;
+        }
+      ).rebuildOne(
+        'user-1',
+        'app-1',
+        { id: 'from-1', name: 'lost' },
+        { id: 'to-1', name: 'live' },
+      );
+
+    return { run, order, application, r };
+  }
+
+  it('re-arms shipping and takes a base, in that order', async () => {
+    // Re-arming alone leaves a hole: the segments written while the database
+    // was restoring went to a no-op and have been recycled, so the old base
+    // and its logs stop at the rebuild.
+    const h = harness();
+
+    const result = await h.run();
+
+    expect(h.order).toEqual(['forget', 'rearm', 'base']);
+    expect(result.phase).toBe('reconciled');
+    expect((result.notes as string[]).join(' ')).toMatch(/re-armed/);
+  });
+
+  it('fails the application rather than calling it rebuilt unprotected', async () => {
+    // A note on a reconciled application is a lie no re-run would revisit.
+    // Failing keeps the phase at `deployed`, so the next run retries this only.
+    const h = harness({
+      rearm: async () => {
+        throw new Error('the policy has no destination');
+      },
+    });
+
+    const result = await h.run();
+
+    expect(result.phase).toBe('failed');
+    expect(result.error).toMatch(/no destination/);
+    expect(
+      (h.application.metadata as { rebuild: { phase: string } }).rebuild.phase,
+    ).toBe('deployed');
+  });
+
+  it('says nothing and takes no base when the application is not a database', async () => {
+    const h = harness({ rearm: async () => null });
+
+    const result = await h.run();
+
+    expect(h.order).toEqual(['forget', 'rearm']);
+    expect(result.notes).toBeUndefined();
+  });
+});
+
+/**
+ * A cluster rebuilt once carries `reconciled` on every application it moved.
+ * Read without checking which destination the ledger names, a second rebuild —
+ * onto a different cluster — looked like a resume of the first: `repoint`
+ * skipped, so the application stayed on the cluster that had just been lost,
+ * and nothing was deployed anywhere. Caught by the plan before a test that
+ * would have proved nothing.
+ */
+describe('ClusterRebuildService, a cluster rebuilt for the second time', () => {
+  function ledgerReader() {
+    const service = Object.create(
+      ClusterRebuildService.prototype,
+    ) as ClusterRebuildService;
+    return service as unknown as {
+      phaseOf(app: unknown, toId?: string): string | undefined;
+      movesOf(app: unknown, toId?: string): unknown;
+      notesOf(app: unknown, toId?: string): string[];
+    };
+  }
+
+  const app = (to: string) => ({
+    metadata: {
+      rebuild: {
+        phase: 'reconciled',
+        to,
+        endpoints: { 'ep-1': { from: 'a', to: 'b' } },
+        notes: ['something earlier'],
+      },
+    },
+  });
+
+  it('does not mistake the previous destination for this one', () => {
+    const r = ledgerReader();
+
+    expect(r.phaseOf(app('to-1'), 'to-2')).toBeUndefined();
+    expect(r.movesOf(app('to-1'), 'to-2')).toBeUndefined();
+    expect(r.notesOf(app('to-1'), 'to-2')).toEqual([]);
+  });
+
+  it('still resumes when the destination is the same one', () => {
+    const r = ledgerReader();
+
+    expect(r.phaseOf(app('to-1'), 'to-1')).toBe('reconciled');
+    expect(r.movesOf(app('to-1'), 'to-1')).toEqual({
+      'ep-1': { from: 'a', to: 'b' },
+    });
+  });
+
+  it('reads a ledger from before destinations were recorded', () => {
+    // Rows written by the first version carry no `to`; refusing them would
+    // restart a rebuild that was halfway through.
+    const r = ledgerReader();
+    const old = { metadata: { rebuild: { phase: 'deployed' } } };
+
+    expect(r.phaseOf(old, 'to-2')).toBe('deployed');
   });
 });

@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, OnApplicationBootstrap } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { InjectRepository } from '@nestjs/typeorm';
 import { LessThanOrEqual, Repository, IsNull, Not } from 'typeorm';
@@ -8,7 +8,7 @@ import { BackupPolicyStatus } from '../enums/backup-policy-status.enum';
 import { BackupJobsService } from '../services/backup-jobs.service';
 
 @Injectable()
-export class BackupPolicyScheduler {
+export class BackupPolicyScheduler implements OnApplicationBootstrap {
   private readonly logger = new Logger(BackupPolicyScheduler.name);
 
   constructor(
@@ -62,9 +62,23 @@ export class BackupPolicyScheduler {
   }
 
   /**
-   * Backfill: compute nextRunAt for any policy with a cron but null nextRunAt.
-   * Runs on app boot via init() helper called from module.
+   * Nothing else ever writes `nextRunAt`: `create` leaves it null and `tick`
+   * only selects rows where it is already due, so a policy is born unable to
+   * become due. Every scheduled backup on an installation waits forever, while
+   * the policy reads enabled and active.
+   *
+   * This used to say it ran "on app boot via init() helper called from module".
+   * There was no such helper and no caller.
    */
+  onApplicationBootstrap(): void {
+    void this.backfillNextRun().catch((err: Error) =>
+      this.logger.error(
+        `[backup-scheduler] backfill of nextRunAt failed: ${err.message}`,
+      ),
+    );
+  }
+
+  /** Computes `nextRunAt` for any policy that has a cron but no next run. */
   async backfillNextRun(): Promise<void> {
     const policies = await this.policyRepo.find({
       where: {

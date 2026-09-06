@@ -27,6 +27,7 @@ import { KubernetesService } from '../../shared/services/kubernetes.service';
 import { EncryptionService } from '../../../shared/encryption/services/encryption.service';
 import { ApplicationDeployService } from '../../../applications/services/application-deploy.service';
 import { RebuildDataRestorer } from '../../../backups/services/rebuild-data-restorer.service';
+import { BackupJobsService } from '../../../backups/services/backup-jobs.service';
 import {
   InfrastructureOperationEntity,
   OperationStatus,
@@ -139,6 +140,8 @@ export class ClusterRebuildService {
     private readonly deploy: ApplicationDeployService,
     @Inject(forwardRef(() => RebuildDataRestorer))
     private readonly dataRestorer: RebuildDataRestorer,
+    @Inject(forwardRef(() => BackupJobsService))
+    private readonly backupJobs: BackupJobsService,
     @Inject(forwardRef(() => AppEndpointReconciliationService))
     private readonly endpointReconciliation: AppEndpointReconciliationService,
     @Inject(forwardRef(() => EndpointModeResolverService))
@@ -205,7 +208,9 @@ export class ClusterRebuildService {
       })
       .orderBy('a.name', 'ASC')
       .getMany();
-    const planned = await Promise.all(apps.map((app) => this.planApp(app)));
+    const planned = await Promise.all(
+      apps.map((app) => this.planApp(app, to.id)),
+    );
 
     const capacity = await this.planCapacity(to, apps).catch((err: Error) => {
       refusals.push(
@@ -414,7 +419,7 @@ export class ClusterRebuildService {
       };
     }
     const name = app.name;
-    const phaseSoFar = this.phaseOf(app);
+    const phaseSoFar = this.phaseOf(app, to.id);
     let notes: string[] = [];
 
     try {
@@ -424,14 +429,18 @@ export class ClusterRebuildService {
         await this.repoint(app, from, to, notes);
       }
 
-      if (this.phaseRank(this.phaseOf(app)) < this.phaseRank('restored')) {
+      if (
+        this.phaseRank(this.phaseOf(app, to.id)) < this.phaseRank('restored')
+      ) {
         notes = [...notes, ...(await this.restoreData(app, to))];
         await this.setPhase(app, 'restored', to.id, undefined, notes);
       } else {
-        notes = this.notesOf(app);
+        notes = this.notesOf(app, to.id);
       }
 
-      if (this.phaseRank(this.phaseOf(app)) < this.phaseRank('deployed')) {
+      if (
+        this.phaseRank(this.phaseOf(app, to.id)) < this.phaseRank('deployed')
+      ) {
         const operation = await this.deploy.deploy(
           app.id,
           { useCurrentImage: true },
@@ -446,6 +455,15 @@ export class ClusterRebuildService {
       await this.dataRestorer.forget(app.id);
 
       const endpointMoved = await this.repointEndpoints(app, from, to);
+
+      // After the name, and allowed to fail the application: the image
+      // neutralises `archive_command` when it restores, so a database that is
+      // not re-armed comes back looking protected and shipping nothing. A note
+      // on a `reconciled` application is a lie no re-run would ever revisit;
+      // failing here keeps the phase at `deployed`, and the next run retries
+      // this and only this.
+      await this.rearmBackups(app, userId, notes);
+
       await this.setPhase(app, 'reconciled', to.id, undefined, notes);
 
       return {
@@ -462,7 +480,7 @@ export class ClusterRebuildService {
       // the restore and the deploy on one already running.
       await this.setPhase(
         app,
-        this.phaseOf(app) ?? 'failed',
+        this.phaseOf(app, to.id) ?? 'failed',
         to.id,
         message,
         notes,
@@ -476,6 +494,26 @@ export class ClusterRebuildService {
         notes: notes.length > 0 ? notes : undefined,
       };
     }
+  }
+
+  /**
+   * The base backup is not optional. Every WAL segment written between the
+   * restore and the re-arm went to a no-op and has been recycled, so the old
+   * base and its logs stop at the rebuild: without one taken now, nothing can
+   * recover any moment after it.
+   */
+  private async rearmBackups(
+    app: ApplicationEntity,
+    userId: string,
+    notes: string[],
+  ): Promise<void> {
+    const policyId = await this.dataRestorer.rearm(app.id);
+    if (!policyId) return;
+    await this.backupJobs.createOnDemand(userId, { policyId });
+    notes.push(
+      'database: WAL shipping re-armed and a new base taken — the logs written ' +
+        'while it was restoring were discarded and cannot be recovered from',
+    );
   }
 
   /**
@@ -662,7 +700,7 @@ export class ClusterRebuildService {
     // whose repoint predates the ledger falls back to deciding now, which is
     // sound only because the source is passed in rather than read off the row.
     const moves =
-      this.movesOf(app) ?? (await this.planEndpointMoves(app, from, to));
+      this.movesOf(app, to.id) ?? (await this.planEndpointMoves(app, from, to));
     // A resumed run skips `repoint`, so this can still name the lost cluster —
     // whose master is the zone reconciler's fallback address.
     const toZone = await this.destinationZoneFor(app, to);
@@ -816,10 +854,42 @@ export class ClusterRebuildService {
     return assignments[0] ?? null;
   }
 
-  private phaseOf(app: ApplicationEntity): RebuildPhase | undefined {
+  /**
+   * Scoped to the destination the ledger names. A cluster rebuilt once carries
+   * `reconciled` forever, and read without that check a second rebuild — onto a
+   * different cluster — looked like a resume of the first: `repoint` skipped,
+   * so the application stayed on the cluster that had just been lost.
+   */
+  private phaseOf(
+    app: ApplicationEntity,
+    toId?: string,
+  ): RebuildPhase | undefined {
+    return this.ledgerOf(app, toId)?.phase;
+  }
+
+  private ledgerOf(
+    app: ApplicationEntity,
+    toId?: string,
+  ):
+    | {
+        phase?: RebuildPhase;
+        to?: string;
+        endpoints?: EndpointMoves;
+        notes?: string[];
+      }
+    | undefined {
     const ledger = (app.metadata as Record<string, unknown> | undefined)
-      ?.rebuild as { phase?: RebuildPhase } | undefined;
-    return ledger?.phase;
+      ?.rebuild as
+      | {
+          phase?: RebuildPhase;
+          to?: string;
+          endpoints?: EndpointMoves;
+          notes?: string[];
+        }
+      | undefined;
+    if (!ledger) return undefined;
+    if (toId && ledger.to && ledger.to !== toId) return undefined;
+    return ledger;
   }
 
   private phaseRank(phase?: RebuildPhase | 'skipped'): number {
@@ -837,10 +907,8 @@ export class ClusterRebuildService {
     }
   }
 
-  private notesOf(app: ApplicationEntity): string[] {
-    const ledger = (app.metadata as Record<string, unknown> | undefined)
-      ?.rebuild as { notes?: string[] } | undefined;
-    return ledger?.notes ?? [];
+  private notesOf(app: ApplicationEntity, toId?: string): string[] {
+    return this.ledgerOf(app, toId)?.notes ?? [];
   }
 
   /**
@@ -901,14 +969,18 @@ export class ClusterRebuildService {
     return metadata;
   }
 
-  private movesOf(app: ApplicationEntity): EndpointMoves | undefined {
-    const ledger = (app.metadata as Record<string, unknown> | undefined)
-      ?.rebuild as { endpoints?: EndpointMoves } | undefined;
-    return ledger?.endpoints;
+  private movesOf(
+    app: ApplicationEntity,
+    toId?: string,
+  ): EndpointMoves | undefined {
+    return this.ledgerOf(app, toId)?.endpoints;
   }
 
   /** What stops it, separated from what the person should know first. */
-  private async planApp(app: ApplicationEntity): Promise<RebuildPlanApp> {
+  private async planApp(
+    app: ApplicationEntity,
+    toId: string,
+  ): Promise<RebuildPlanApp> {
     const warnings: string[] = [];
     let blocked: string | undefined;
 
@@ -954,7 +1026,7 @@ export class ClusterRebuildService {
       blocked,
       warnings,
       restores,
-      phase: this.phaseOf(app),
+      phase: this.phaseOf(app, toId),
     };
   }
 

@@ -2,6 +2,7 @@ import { ForbiddenException, Injectable, Logger } from '@nestjs/common';
 import * as k8s from '@kubernetes/client-node';
 import { Writable, Readable } from 'node:stream';
 import { describeQuotaRefusal } from '../../../shared/utils/quota-refusal.util';
+import { withRequestTimeout } from '../utils/kube-request-timeout.util';
 
 export interface ContainerResources {
   cpu: string | null;
@@ -89,7 +90,7 @@ export class KubernetesService {
   private loadKubeconfig(kubeconfigContent: string): k8s.KubeConfig {
     const kc = new k8s.KubeConfig();
     kc.loadFromString(this.patchKubeconfigServer(kubeconfigContent));
-    return kc;
+    return withRequestTimeout(kc);
   }
 
   /**

@@ -319,6 +319,29 @@ export class PgBackrestService implements ContinuousBackupEngine {
    * Idempotent: write the pgBackRest config, create the stanza, and flip
    * archive_command to push WAL — all without a restart.
    */
+  /**
+   * Readiness is `pg_isready`, which answers while the server is still
+   * replaying in hot standby. `stanza-create` needs a primary, and the script
+   * runs under `set -e`, so re-arming a still-recovering database fails.
+   */
+  async awaitWritable(appId: string): Promise<void> {
+    const target = await this.resolveTarget(appId);
+    const deadline = Date.now() + RESTORE_RECONCILE_TIMEOUT_MS;
+    for (;;) {
+      const out = await this.exec(
+        target,
+        `gosu postgres psql -U "$POSTGRES_USER" -d postgres -tAc 'SELECT NOT pg_is_in_recovery()' 2>/dev/null || true`,
+      ).catch(() => '');
+      if (out.trim() === 't') return;
+      if (Date.now() > deadline) {
+        throw new Error(
+          `${appId} was still replaying WAL after ${Math.round(RESTORE_RECONCILE_TIMEOUT_MS / 60000)} minutes, so WAL shipping could not be re-armed`,
+        );
+      }
+      await new Promise((resolve) => setTimeout(resolve, 5_000));
+    }
+  }
+
   async enable(
     appId: string,
     dest: BackupDestinationEntity,

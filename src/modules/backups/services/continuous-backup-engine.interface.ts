@@ -168,6 +168,16 @@ export interface ContinuousBackupEngine {
    */
   mintGeneration?(): string;
 
+  /**
+   * Resolves once the database can be written to, not merely connected to.
+   *
+   * Readiness is `pg_isready`, which answers while the server is still
+   * replaying WAL in hot standby — and `stanza-create` needs a primary. An
+   * engine whose restore finishes before the container is Ready has nothing to
+   * wait for and may leave this out.
+   */
+  awaitWritable?(appId: string): Promise<void>;
+
   /** The recoverable window, read from what actually reached the repository. */
   info(appId: string): Promise<{
     latestLabel: string | null;

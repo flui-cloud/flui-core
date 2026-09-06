@@ -143,3 +143,72 @@ describe('AppEndpointService.createEndpoint — where an application is publishe
     expect(endpoint.fqdn).toBe('it-tools-125d30.demo.dawit.blog');
   });
 });
+
+/**
+ * A message is a finding, not a fact about the row: the reconcile that made it
+ * must be able to take it back. Live, an endpoint read `valid`, `IN_SYNC`, with
+ * a wildcard bound — and still carried "has no ready wildcard ClusterIssuer.
+ * Configure the DNS-01 issuer", telling the operator to set up what was already
+ * set up.
+ */
+describe('AppEndpointService.markReconciliationComplete, the certificate message', () => {
+  function make(existing: string | null) {
+    const endpoint: Record<string, unknown> = {
+      id: 'ep-1',
+      certificateMessage: existing,
+    };
+    const service = Object.create(
+      AppEndpointService.prototype,
+    ) as AppEndpointService;
+    const r = service as unknown as Record<string, unknown>;
+    r.getEndpoint = jest.fn(async () => endpoint);
+    r.endpointRepository = { save: jest.fn(async (e: unknown) => e) };
+    return { service, endpoint };
+  }
+
+  const complete = (
+    service: AppEndpointService,
+    message: string | null | undefined,
+  ) =>
+    (
+      service as unknown as {
+        markReconciliationComplete(
+          id: string,
+          a?: string,
+          b?: string,
+          c?: unknown,
+          d?: string | null,
+        ): Promise<unknown>;
+      }
+    ).markReconciliationComplete(
+      'ep-1',
+      undefined,
+      undefined,
+      undefined,
+      message,
+    );
+
+  it('withdraws a finding the run no longer makes', async () => {
+    const h = make('has no ready wildcard ClusterIssuer');
+
+    await complete(h.service, null);
+
+    expect(h.endpoint.certificateMessage).toBeNull();
+  });
+
+  it('keeps one the run does make', async () => {
+    const h = make(null);
+
+    await complete(h.service, 'DNS-01 solver missing');
+
+    expect(h.endpoint.certificateMessage).toBe('DNS-01 solver missing');
+  });
+
+  it('leaves it alone when the caller says nothing about it', async () => {
+    const h = make('something earlier');
+
+    await complete(h.service, undefined);
+
+    expect(h.endpoint.certificateMessage).toBe('something earlier');
+  });
+});

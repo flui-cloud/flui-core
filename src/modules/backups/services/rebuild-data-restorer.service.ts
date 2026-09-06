@@ -88,6 +88,59 @@ export class RebuildDataRestorer {
   }
 
   /**
+   * Puts the rebuilt database back under the protection its policy claims.
+   *
+   * The image neutralises `archive_command` after a restore — the restored
+   * config names a file that did not come with it — expecting whoever enables
+   * backup to write the real one. A rebuild never enables: it moves the policy
+   * row and stops. So the database came back with `archive_mode on` and
+   * `archive_command '/bin/true'`, and `pg_stat_archiver` reported success with
+   * zero failures while every segment was discarded, under a policy that read
+   * enabled and active. Measured 13 hours after a rebuild.
+   *
+   * Re-arming alone is not enough: the segments already thrown away are
+   * recycled, so the old base plus its logs cannot reach any moment after the
+   * rebuild. A base taken now is what closes that.
+   */
+  async rearm(applicationId: string): Promise<string | null> {
+    // On existence, not on `enabled`: pausing a database policy is defined as
+    // "keep shipping WAL, stop taking bases", so a paused one still ships.
+    const policy = await this.policyRepo.findDbPolicyForApp(applicationId);
+    if (!policy) return null;
+
+    const destination = await this.destinationOf(policy.destinations);
+    if (!destination) {
+      throw new Error(
+        'the backup policy has no destination Flui holds credentials for, so ' +
+          'WAL shipping cannot be re-armed and this database is not protected',
+      );
+    }
+
+    const engine = this.engines.forEngine(policy.engine);
+    await engine.awaitWritable?.(applicationId);
+
+    // A new one, never the old: the rebuilt server restarts its log numbering,
+    // so writing into the previous prefix overwrites files the earlier bases
+    // point into and makes every one of them unrestorable, silently. Persisted
+    // first — the scheduled run reads it from here, and would otherwise re-arm
+    // tomorrow with the generation this call replaced.
+    const generation = engine.mintGeneration?.();
+    if (generation) {
+      await this.policyRepo.update(policy.id, {
+        metadata: { ...(policy.metadata ?? {}), generation },
+      });
+    }
+
+    await engine.enable(applicationId, destination, {
+      retentionFull: policy.retentionMaxCopies ?? 2,
+      generation:
+        generation ?? (policy.metadata?.generation as string | undefined),
+    });
+    this.logger.log(`[rebuild] ${applicationId}: WAL shipping re-armed`);
+    return policy.id;
+  }
+
+  /**
    * Otherwise a live credential for someone else's repository stays in the
    * application's environment for as long as it exists. The running pod is
    * untouched; the next deploy renders clean.

@@ -497,3 +497,67 @@ describe('AppEndpointReconciliationService.reconcileDnsRecord', () => {
     expect(createRecord).toHaveBeenCalled();
   });
 });
+
+/**
+ * The message an endpoint carries is this run's finding, not a property of the
+ * row. Live, an endpoint read `valid` and `IN_SYNC` with a wildcard bound while
+ * still saying "has no ready wildcard ClusterIssuer. Configure the DNS-01
+ * issuer" — telling the operator to set up what was already set up. The cause
+ * was `certMessage ?? undefined` at the call that completes the reconcile:
+ * `undefined` means "say nothing about it", which preserves the old text.
+ */
+describe('AppEndpointReconciliationService.reconcile, the message it leaves behind', () => {
+  function build(certBindingFailure: string | null) {
+    const service = Object.create(
+      AppEndpointReconciliationService.prototype,
+    ) as AppEndpointReconciliationService;
+    const r = service as unknown as Record<string, unknown>;
+    const completed: unknown[][] = [];
+
+    r.logger = { log: jest.fn(), warn: jest.fn(), error: jest.fn() };
+    r.appEndpointService = {
+      getEndpoint: jest.fn(async () => ({
+        id: 'ep-1',
+        clusterId: 'c-1',
+        fqdn: 'app.example.com',
+        // Skips DNS record management, which needs a provider.
+        hostnameMode: 'ip',
+        certificateRequired: true,
+        // Shared binding, so the per-host gate is not consulted.
+        wildcardCertificateId: 'wc-1',
+      })),
+      updateReconciliationStatus: jest.fn(async () => undefined),
+      markReconciliationComplete: jest.fn(async (...args: unknown[]) => {
+        completed.push(args);
+      }),
+    };
+    r.isReconcileInFlight = jest.fn(() => false);
+    r.getCluster = jest.fn(async () => ({ id: 'c-1' }));
+    r.bindSharedCertificate = jest.fn(async () => certBindingFailure);
+    r.reconcileService = jest.fn(async () => undefined);
+    r.reconcileIngress = jest.fn(async () => undefined);
+    r.resolveCertProvider = jest.fn(() => undefined);
+    r.resolveWildcardEndpointStatus = jest.fn(async () => 'valid');
+    r.emitEndpointCertStatus = jest.fn();
+
+    return { service, completed };
+  }
+
+  it('withdraws the previous finding when this run has none', async () => {
+    const h = build(null);
+
+    await h.service.reconcile('ep-1');
+
+    // Position 4 is certificateMessage. `undefined` here is what let the stale
+    // text survive; `null` is what clears it.
+    expect(h.completed[0][4]).toBeNull();
+  });
+
+  it('still reports a failure this run did find', async () => {
+    const h = build('no ready wildcard ClusterIssuer');
+
+    await h.service.reconcile('ep-1');
+
+    expect(h.completed[0][4]).toBe('no ready wildcard ClusterIssuer');
+  });
+});

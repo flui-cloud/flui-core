@@ -267,6 +267,15 @@ export class DnsZoneReconciliationService {
       name: wanted.name,
       value: wanted.value,
       ttl: wanted.ttl,
+      // Without these `cleanupClusterDnsRecords` cannot see it — it matches on
+      // that pair — so the record outlives the cluster. A later cluster taking
+      // the same name then finds its own wildcard already answering, from an
+      // address somebody else released, and never publishes one.
+      labels: {
+        'managed-by': 'flui-cloud',
+        'flui-resource-type': 'dns-record',
+        'flui-cluster-id': assignment.clusterId,
+      },
     });
     this.logger.log(
       `[dns-wildcard] published ${state.fqdn} → ${wanted.value}; applications on this cluster resolve the moment they are created`,

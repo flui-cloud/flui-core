@@ -5,13 +5,17 @@ import {
   BadRequestException,
   Logger,
   Inject,
+  OnApplicationBootstrap,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { IsNull, Not, Repository } from 'typeorm';
+import { IsNull, LessThan, Not, Repository } from 'typeorm';
 import { ClusterDnsZoneEntity } from '../entities/cluster-dns-zone.entity';
 import { DnsZoneEntity } from '../entities/dns-zone.entity';
 import { AppEndpointEntity } from '../entities/app-endpoint.entity';
-import { ClusterEntity } from '../../infrastructure/clusters/entities/cluster.entity';
+import {
+  ClusterEntity,
+  ClusterStatus,
+} from '../../infrastructure/clusters/entities/cluster.entity';
 import { ApplicationEntity } from '../../applications/entities/application.entity';
 import { AssignDnsZoneDto } from '../dto/assign-dns-zone.dto';
 import { ClusterDnsZoneResponseDto } from '../dto/cluster-dns-zone-response.dto';
@@ -67,7 +71,7 @@ function isOrderOwnedByRequest(
 }
 
 @Injectable()
-export class ClusterDnsZoneService {
+export class ClusterDnsZoneService implements OnApplicationBootstrap {
   private readonly logger = new Logger(ClusterDnsZoneService.name);
   private readonly httpIssuerNames = [
     'letsencrypt-staging',
@@ -136,6 +140,44 @@ export class ClusterDnsZoneService {
     return (await this.getInternalHostingStatus(clusterId)).ready;
   }
 
+  /**
+   * A reconcile lives in a background promise, not in a durable job, so a
+   * restart between "mark RECONCILING" and the terminal write leaves a row
+   * claiming work nobody is doing — and the interface disables Remove while it
+   * thinks so.
+   *
+   * The empty message is what separates the two: the in-flight marker is
+   * written without one, while a truthful "waiting for ACME" always carries the
+   * issuer's own text. The age guard is only because a resumed job may have
+   * legitimately written RECONCILING moments ago.
+   */
+  async onApplicationBootstrap(): Promise<void> {
+    const staleBefore = new Date(Date.now() - 10 * 60_000);
+    try {
+      const result = await this.clusterDnsZoneRepository.update(
+        {
+          reconciliationStatus: ReconciliationStatus.RECONCILING,
+          errorMessage: IsNull(),
+          updatedAt: LessThan(staleBefore),
+        },
+        {
+          reconciliationStatus: ReconciliationStatus.ERROR,
+          errorMessage:
+            'Reconciliation was interrupted by a restart — reconcile again.',
+        },
+      );
+      if (result.affected) {
+        this.logger.warn(
+          `Released ${result.affected} DNS zone assignment(s) left reconciling by an earlier restart`,
+        );
+      }
+    } catch (err) {
+      this.logger.warn(
+        `Could not release interrupted DNS zone assignments: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
+
   async assignZoneToCluster(
     clusterId: string,
     dto: AssignDnsZoneDto,
@@ -169,18 +211,31 @@ export class ClusterDnsZoneService {
     }
 
     const wildcardCertificate = dto.wildcardCertificate ?? true;
+    // The wizard assigns the zone about 150ms after queueing the creation, and
+    // the cluster is ready two and a half minutes later. Reconciling now only
+    // reaches a cluster with no kubeconfig, and shows a failure the operator
+    // cannot act on; the ready-time hook picks it up when there is one.
+    const clusterReady = cluster.status === ClusterStatus.READY;
     const assignment = this.clusterDnsZoneRepository.create({
       clusterId,
       dnsZoneId: dto.dnsZoneId,
       certificateProvider: dto.certificateProvider ?? null,
       acmeEmail: dto.acmeEmail ?? null,
       wildcardCertificate,
-      reconciliationStatus: wildcardCertificate
-        ? ReconciliationStatus.RECONCILING
-        : ReconciliationStatus.PENDING,
+      reconciliationStatus:
+        wildcardCertificate && clusterReady
+          ? ReconciliationStatus.RECONCILING
+          : ReconciliationStatus.PENDING,
+      ...(clusterReady
+        ? {}
+        : {
+            errorMessage:
+              'Waiting for the cluster to be ready — reconciled automatically once it is.',
+          }),
     });
 
     const saved = await this.clusterDnsZoneRepository.save(assignment);
+    if (!clusterReady) return saved;
     // Reconciling applies Secrets and ClusterIssuers and reads them back: on a
     // fresh cluster, with cert-manager still warming up, that is minutes of
     // cluster I/O. The assignment is already persisted, so the caller gets it

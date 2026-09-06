@@ -331,7 +331,9 @@ export class AppEndpointReconciliationService {
         dnsRecordId,
         dnsRecordValue,
         certStatus,
-        certMessage ?? undefined,
+        // Not `?? undefined`: both halves are this run's own diagnosis, so no
+        // finding means the previous one is withdrawn, not kept.
+        certMessage,
       );
 
       this.emitEndpointCertStatus(endpoint, certStatus ?? null, certMessage);

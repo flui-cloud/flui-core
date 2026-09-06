@@ -56,6 +56,12 @@ import {
   InfrastructureOperationFailedDto,
 } from '../../operations/dto/infrastructure-operation-events.dto';
 
+import { ReconciliationStatus } from '../../shared/enums/reconciliation-status.enum';
+
+/** cert-manager's webhooks register after the cluster reports ready. */
+const ZONE_RECONCILE_ATTEMPTS = 5;
+const ZONE_RECONCILE_DELAY_MS = 30_000;
+
 @Processor('infrastructure')
 export class ClusterQueueProcessor {
   private readonly logger = new Logger(ClusterQueueProcessor.name);
@@ -164,14 +170,45 @@ export class ClusterQueueProcessor {
       return;
     }
     for (const assignment of assignments) {
+      await this.reconcileUntilSettled(assignment.id, cluster.id);
+    }
+  }
+
+  /**
+   * A ready cluster is not a ready platform. Measured on workload-cluster-4:
+   * ready at 2m19s, but cert-manager's DNS-01 webhook registered its APIService
+   * later, so the first pass failed with "webhook not installed" and no issuer
+   * was ever created — one retry twenty minutes later succeeded in 10 seconds.
+   *
+   * Bounded and local to the creation window: this is the component coming up,
+   * not a cluster that is unwell. A cluster that is genuinely misconfigured
+   * ends in ERROR with the reason, where it belongs.
+   */
+  private async reconcileUntilSettled(
+    assignmentId: string,
+    clusterId: string,
+  ): Promise<void> {
+    for (let attempt = 1; attempt <= ZONE_RECONCILE_ATTEMPTS; attempt++) {
       try {
-        await this.clusterDnsZoneService.reconcileAssignment(assignment.id);
-        this.logger.log(
-          `Reconciled DNS zone assignment ${assignment.id} now that cluster ${cluster.id} is ready`,
+        const settled =
+          await this.clusterDnsZoneService.reconcileAssignment(assignmentId);
+        if (settled.reconciliationStatus !== ReconciliationStatus.ERROR) {
+          this.logger.log(
+            `Reconciled DNS zone assignment ${assignmentId} now that cluster ${clusterId} is ready`,
+          );
+          return;
+        }
+        this.logger.warn(
+          `DNS zone assignment ${assignmentId} not settled (attempt ${attempt}/${ZONE_RECONCILE_ATTEMPTS}): ${settled.errorMessage ?? 'no reason recorded'}`,
         );
       } catch (err) {
         this.logger.error(
-          `Reconcile of DNS zone assignment ${assignment.id} failed: ${err instanceof Error ? err.message : String(err)}`,
+          `Reconcile of DNS zone assignment ${assignmentId} failed: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+      if (attempt < ZONE_RECONCILE_ATTEMPTS) {
+        await new Promise((resolve) =>
+          setTimeout(resolve, ZONE_RECONCILE_DELAY_MS),
         );
       }
     }
