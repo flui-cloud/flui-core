@@ -354,76 +354,313 @@ describe('ClusterRebuildService.plan', () => {
   });
 });
 
-describe('ClusterRebuildService endpoint naming', () => {
-  function withFqdn(opts: {
-    stored: string;
-    derivedForSource: string;
-    derivedForDestination: string;
+/**
+ * Through `rebuildOne`, never through the classifier alone. The defect these
+ * cover is an ordering one — a check reading a column an earlier phase already
+ * wrote — and it is invisible to any test that calls the check on untouched
+ * rows. So the fakes here mutate for real, and `generateFqdn` computes from its
+ * arguments instead of answering by call order: a classifier handed the wrong
+ * cluster must produce the wrong answer, or the test proves nothing.
+ */
+describe('ClusterRebuildService endpoint naming, through a rebuild', () => {
+  const ZONE = 'example.com';
+
+  function harness(opts: {
+    endpoints: Record<string, unknown>[];
+    ledger?: Record<string, unknown>;
+    /** Zone assignments, by id. Omit the destination's to strand the names. */
+    zones?: Record<string, { clusterId: string; zoneName: string }>;
   }) {
+    const from = {
+      id: 'from-1',
+      name: 'workload-lost',
+      masterIpAddress: '10.0.0.1',
+    };
+    const to = {
+      id: 'to-1',
+      name: 'workload-live',
+      masterIpAddress: '10.0.0.2',
+    };
+    const zones = opts.zones ?? {
+      'z-from': { clusterId: 'from-1', zoneName: ZONE },
+      'z-to': { clusterId: 'to-1', zoneName: ZONE },
+    };
+    const zoneRows = Object.entries(zones).map(([id, z]) => ({
+      id,
+      clusterId: z.clusterId,
+      dnsZone: { zoneName: z.zoneName },
+    }));
+
+    const application: Record<string, unknown> = {
+      id: 'app-1',
+      name: 'App One',
+      slug: 'app',
+      clusterId: 'from-1',
+      metadata: opts.ledger ? { rebuild: opts.ledger } : {},
+    };
+    const endpoints = opts.endpoints.map((e) => ({ ...e }));
+
     const service = Object.create(
       ClusterRebuildService.prototype,
     ) as ClusterRebuildService;
     const r = service as unknown as Record<string, unknown>;
-    r.clusterRepo = { findOne: jest.fn(async () => ({ id: 'from-1' })) };
-    r.zoneAssignmentRepo = { findOne: jest.fn(async () => ({ id: 'z-1' })) };
-    r.endpointMode = {
-      generateFqdn: jest
-        .fn()
-        .mockReturnValueOnce(opts.derivedForSource)
-        .mockReturnValueOnce(opts.derivedForDestination),
+
+    r.logger = { log: jest.fn(), warn: jest.fn(), error: jest.fn() };
+    r.appRepo = {
+      findOne: jest.fn(async () => application),
+      update: jest.fn(async (_c: unknown, patch: Record<string, unknown>) => {
+        Object.assign(application, patch);
+      }),
     };
-    return (
-      service as unknown as {
-        rederiveFqdn(e: unknown, a: unknown, t: unknown): Promise<string>;
-      }
-    ).rederiveFqdn(
-      { fqdn: opts.stored, clusterId: 'from-1', clusterDnsZoneId: 'z-0' },
-      { slug: 'app' },
-      { id: 'to-1', name: 'workload-live' },
-    );
+    r.endpointRepo = {
+      find: jest.fn(async () => endpoints),
+      update: jest.fn(
+        async (c: { id: string }, patch: Record<string, unknown>) => {
+          const row = endpoints.find((e) => e.id === c.id);
+          if (row) Object.assign(row, patch);
+        },
+      ),
+    };
+    r.zoneAssignmentRepo = {
+      find: jest.fn(async (q: { where: { clusterId: string } }) =>
+        zoneRows.filter((z) => z.clusterId === q.where.clusterId),
+      ),
+      findOne: jest.fn(
+        async (q: { where: { id: string } }) =>
+          zoneRows.find((z) => z.id === q.where.id) ?? null,
+      ),
+    };
+    // Computes. A mock answering by call order agrees with the defect.
+    r.endpointMode = {
+      generateFqdn: jest.fn(
+        (
+          mode: string,
+          slug: string,
+          cluster: { name: string; masterIpAddress: string },
+          zone?: { dnsZone?: { zoneName: string } } | null,
+        ) => {
+          if (mode === 'ip') {
+            return `${slug}.${cluster.masterIpAddress.replace(/\./g, '-')}.nip.io`;
+          }
+          if (!zone?.dnsZone) throw new Error('no zone');
+          return `${slug}.${cluster.name}.${zone.dnsZone.zoneName}`;
+        },
+      ),
+    };
+    const released: string[] = [];
+    const reconciled: string[] = [];
+    r.endpointReconciliation = {
+      releaseDnsRecord: jest.fn(async (id: string) => {
+        released.push(id);
+      }),
+      reconcile: jest.fn(async (id: string) => {
+        reconciled.push(id);
+      }),
+    };
+    r.dataRestorer = {
+      restoreInto: jest.fn(async () => []),
+      forget: jest.fn(async () => undefined),
+    };
+    r.deploy = { deploy: jest.fn(async () => ({ id: 'op-1' })) };
+    r.operationRepo = {
+      findOne: jest.fn(async () => ({ status: 'COMPLETED' })),
+    };
+    r.catalogInstallRepo = { update: jest.fn(async () => undefined) };
+    r.policyRepo = { update: jest.fn(async () => undefined) };
+    r.dataSource = {
+      transaction: jest.fn(
+        async (cb: (m: Record<string, unknown>) => Promise<void>) =>
+          cb({
+            update: async (
+              entity: { name: string },
+              c: { id: string },
+              patch: Record<string, unknown>,
+            ) => {
+              if (entity.name === 'AppEndpointEntity') {
+                const row = endpoints.find((e) => e.id === c.id);
+                if (row) Object.assign(row, patch);
+                return;
+              }
+              if (entity.name === 'ApplicationEntity') {
+                Object.assign(application, patch);
+              }
+            },
+            createQueryBuilder: () => {
+              const qb: Record<string, unknown> = {};
+              for (const m of ['update', 'set', 'where']) {
+                qb[m] = jest.fn(() => qb);
+              }
+              qb.execute = jest.fn(async () => undefined);
+              return qb;
+            },
+          }),
+      ),
+    };
+
+    const run = async () => {
+      jest.useFakeTimers();
+      const running = (
+        service as unknown as {
+          rebuildOne(
+            u: string,
+            id: string,
+            f: unknown,
+            t: unknown,
+          ): Promise<Record<string, unknown>>;
+        }
+      ).rebuildOne('user-1', 'app-1', from, to);
+      await jest.advanceTimersByTimeAsync(6_000);
+      const result = await running;
+      jest.useRealTimers();
+      return result;
+    };
+
+    return { run, application, endpoints, released, reconciled, r };
   }
 
-  it('re-derives a name Flui itself generated', async () => {
-    expect(
-      await withFqdn({
-        stored: 'app.workload-lost.example.com',
-        derivedForSource: 'app.workload-lost.example.com',
-        derivedForDestination: 'app.workload-live.example.com',
-      }),
-    ).toBe('app.workload-live.example.com');
+  const derived = (over: Record<string, unknown> = {}) => ({
+    id: 'ep-1',
+    applicationId: 'app-1',
+    fqdn: `app.workload-lost.${ZONE}`,
+    clusterId: 'from-1',
+    clusterDnsZoneId: 'z-from',
+    hostnameMode: 'domain',
+    dnsRecordId: 'rec-1',
+    dnsRecordValue: '10.0.0.1',
+    ...over,
   });
 
-  it('leaves a name the user chose exactly as it is', async () => {
-    // The string replacement it replaced would have turned this into
-    // `www.workload-live.example.com` and taken the application off the
-    // address its owner published.
-    expect(
-      await withFqdn({
-        stored: 'www.shop.example.com',
-        derivedForSource: 'app.workload-lost.example.com',
-        derivedForDestination: 'app.workload-live.example.com',
-      }),
-    ).toBe('www.shop.example.com');
+  it('renames a name Flui generated, and says so', async () => {
+    const h = harness({ endpoints: [derived()] });
+
+    const result = await h.run();
+
+    expect(h.endpoints[0].fqdn).toBe(`app.workload-live.${ZONE}`);
+    expect(result.endpointMoved).toEqual([
+      { from: `app.workload-lost.${ZONE}`, to: `app.workload-live.${ZONE}` },
+    ]);
+    expect(h.released).toEqual(['ep-1']);
+    expect(h.reconciled).toEqual(['ep-1']);
   });
 
-  it('keeps the name when the destination has no zone to derive one from', async () => {
-    const service = Object.create(
-      ClusterRebuildService.prototype,
-    ) as ClusterRebuildService;
-    const r = service as unknown as Record<string, unknown>;
-    r.clusterRepo = { findOne: jest.fn(async () => ({ id: 'from-1' })) };
-    r.zoneAssignmentRepo = { findOne: jest.fn(async () => null) };
-    r.endpointMode = { generateFqdn: jest.fn() };
+  it('classifies against the source, not the row it is about to overwrite', async () => {
+    // The defect in the flesh: `repoint` writes the destination into
+    // `clusterId`, so a classifier reading it back compared the destination's
+    // own name against a name still holding the source's and called every
+    // generated hostname a custom one.
+    const h = harness({ endpoints: [derived()] });
 
-    const kept = await (
-      service as unknown as {
-        rederiveFqdn(e: unknown, a: unknown, t: unknown): Promise<string>;
-      }
-    ).rederiveFqdn(
-      { fqdn: 'app.workload-lost.example.com', clusterId: 'from-1' },
-      { slug: 'app' },
-      { id: 'to-1', name: 'workload-live' },
+    await h.run();
+
+    const calls = (h.r.endpointMode as { generateFqdn: jest.Mock }).generateFqdn
+      .mock.calls;
+    expect(calls[0][2]).toEqual(expect.objectContaining({ id: 'from-1' }));
+    expect(calls[0][3]).toEqual(expect.objectContaining({ id: 'z-from' }));
+  });
+
+  it('still renames when the row already names the destination', async () => {
+    // A resumed run: `repoint` ran last time and moved both columns the
+    // classification used to read. This is the case that failed live.
+    const h = harness({
+      ledger: { phase: 'deployed', to: 'to-1', at: 'yesterday' },
+      endpoints: [derived({ clusterId: 'to-1', clusterDnsZoneId: 'z-to' })],
+    });
+
+    await h.run();
+
+    expect(h.endpoints[0].fqdn).toBe(`app.workload-live.${ZONE}`);
+  });
+
+  it('renames from the ledger when the lost cluster took its zone with it', async () => {
+    // `cluster_dns_zones` cascades on delete, so a resumed run can find no
+    // trace of what the name was derived from. The decision was recorded when
+    // it was still knowable.
+    const h = harness({
+      ledger: {
+        phase: 'deployed',
+        to: 'to-1',
+        from: 'from-1',
+        endpoints: {
+          'ep-1': {
+            from: `app.workload-lost.${ZONE}`,
+            to: `app.workload-live.${ZONE}`,
+          },
+        },
+      },
+      zones: { 'z-to': { clusterId: 'to-1', zoneName: ZONE } },
+      endpoints: [derived({ clusterId: 'to-1', clusterDnsZoneId: 'z-to' })],
+    });
+
+    await h.run();
+
+    expect(h.endpoints[0].fqdn).toBe(`app.workload-live.${ZONE}`);
+  });
+
+  it('keeps a name the user chose, and unpins it from the dead address', async () => {
+    // `reconcileDnsRecord` prefers a stored `dnsRecordValue` over the cluster's
+    // own master, so leaving one holds a custom domain on the lost cluster's IP
+    // — and the zone sweep then defends it as desired.
+    const h = harness({
+      endpoints: [derived({ fqdn: 'www.shop.example.com' })],
+    });
+
+    const result = await h.run();
+
+    expect(h.endpoints[0].fqdn).toBe('www.shop.example.com');
+    expect(h.endpoints[0].dnsRecordValue).toBeNull();
+    expect(result.endpointMoved).toBeUndefined();
+    expect(h.reconciled).toEqual(['ep-1']);
+  });
+
+  it('reports every name that moved, not the first', async () => {
+    // Both are Flui's, derived differently: one under the zone, one on nip.io.
+    const h = harness({
+      endpoints: [
+        derived(),
+        derived({
+          id: 'ep-2',
+          fqdn: 'app.10-0-0-1.nip.io',
+          hostnameMode: 'ip',
+        }),
+      ],
+    });
+
+    const result = await h.run();
+
+    expect(result.endpointMoved).toHaveLength(2);
+  });
+
+  it('moves the zone assignment a skipped repoint left behind', async () => {
+    // Its fallback address for the zone reconciler is the lost cluster's
+    // master, which is the address the rename is trying to get away from.
+    const h = harness({
+      ledger: { phase: 'deployed', to: 'to-1', at: 'yesterday' },
+      endpoints: [derived({ clusterId: 'to-1' })],
+    });
+
+    await h.run();
+
+    expect(h.endpoints[0].clusterDnsZoneId).toBe('z-to');
+    // Released while the row still named the zone that owns the record.
+    const release = (
+      h.r.endpointReconciliation as { releaseDnsRecord: jest.Mock }
+    ).releaseDnsRecord.mock.invocationCallOrder[0];
+    const write = (h.r.endpointRepo as { update: jest.Mock }).update.mock
+      .invocationCallOrder[0];
+    expect(release).toBeLessThan(write);
+  });
+
+  it('says the names were kept when the destination has no zone', async () => {
+    const h = harness({
+      zones: { 'z-from': { clusterId: 'from-1', zoneName: ZONE } },
+      endpoints: [derived()],
+    });
+
+    const result = await h.run();
+
+    expect(h.endpoints[0].fqdn).toBe(`app.workload-lost.${ZONE}`);
+    expect((result.notes as string[]).join(' ')).toMatch(
+      /no assignment for this zone/,
     );
-    expect(kept).toBe('app.workload-lost.example.com');
   });
 });

@@ -8,7 +8,7 @@ import {
 import { InjectQueue } from '@nestjs/bull';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Queue } from 'bull';
-import { Repository } from 'typeorm';
+import { DataSource, EntityManager, Repository } from 'typeorm';
 import {
   ClusterEntity,
   ClusterStatus,
@@ -45,13 +45,22 @@ export type RebuildPhase =
   | 'reconciled'
   | 'failed';
 
+/** One endpoint's old and new name, decided before anything was mutated. */
+export interface EndpointMove {
+  from: string;
+  to: string;
+}
+
+/** Keyed by endpoint id, so a resumed run reads the answer instead of re-deriving it. */
+export type EndpointMoves = Record<string, EndpointMove>;
+
 export interface RebuildResultApp {
   applicationId: string;
   name: string;
   phase: RebuildPhase | 'skipped';
   error?: string;
-  /** Only when the name had to change, which it does whenever it names the cluster. */
-  endpointMoved?: { from: string; to: string };
+  /** Every name that changed, not the first: an application may publish several. */
+  endpointMoved?: EndpointMove[];
   /** What came back thinner than the application had — per volume, in words. */
   notes?: string[];
 }
@@ -136,6 +145,7 @@ export class ClusterRebuildService {
     private readonly endpointMode: EndpointModeResolverService,
     @InjectRepository(ClusterDnsZoneEntity)
     private readonly zoneAssignmentRepo: Repository<ClusterDnsZoneEntity>,
+    private readonly dataSource: DataSource,
   ) {}
 
   async plan(fromId: string, toId: string): Promise<RebuildPlan> {
@@ -307,6 +317,7 @@ export class ClusterRebuildService {
       throw new BadRequestException(plan.refusals.join(' '));
     }
 
+    const from = await this.mustFindCluster(fromId, 'from');
     const to = await this.mustFindCluster(toId, 'to');
     // Stops it being offered as a deploy target while its applications move.
     await this.markLost(fromId);
@@ -337,7 +348,9 @@ export class ClusterRebuildService {
         continue;
       }
 
-      results.push(await this.rebuildOne(userId, planned.applicationId, to));
+      results.push(
+        await this.rebuildOne(userId, planned.applicationId, from, to),
+      );
       await opts.onProgress?.(results);
     }
 
@@ -388,6 +401,7 @@ export class ClusterRebuildService {
   private async rebuildOne(
     userId: string,
     applicationId: string,
+    from: ClusterEntity,
     to: ClusterEntity,
   ): Promise<RebuildResultApp> {
     const app = await this.appRepo.findOne({ where: { id: applicationId } });
@@ -405,12 +419,13 @@ export class ClusterRebuildService {
 
     try {
       if (!phaseSoFar) {
-        await this.repoint(app, to);
-        await this.setPhase(app, 'repointed', to.id);
+        // Writes its own phase: the decision and the phase that depends on it
+        // commit together.
+        await this.repoint(app, from, to, notes);
       }
 
       if (this.phaseRank(this.phaseOf(app)) < this.phaseRank('restored')) {
-        notes = await this.restoreData(app, to);
+        notes = [...notes, ...(await this.restoreData(app, to))];
         await this.setPhase(app, 'restored', to.id, undefined, notes);
       } else {
         notes = this.notesOf(app);
@@ -430,7 +445,7 @@ export class ClusterRebuildService {
       // on the row is a live credential for someone else's repository.
       await this.dataRestorer.forget(app.id);
 
-      const endpointMoved = await this.repointEndpoints(app, to);
+      const endpointMoved = await this.repointEndpoints(app, from, to);
       await this.setPhase(app, 'reconciled', to.id, undefined, notes);
 
       return {
@@ -442,7 +457,16 @@ export class ClusterRebuildService {
       };
     } catch (err: any) {
       const message = err?.message ?? String(err);
-      await this.setPhase(app, 'failed', to.id, message);
+      // The phase reached is kept and the error recorded beside it. Writing
+      // `failed` over it ranked the application at zero, so the next run redid
+      // the restore and the deploy on one already running.
+      await this.setPhase(
+        app,
+        this.phaseOf(app) ?? 'failed',
+        to.id,
+        message,
+        notes,
+      );
       this.logger.error(`[rebuild] ${name}: ${message}`);
       return {
         applicationId,
@@ -488,46 +512,113 @@ export class ClusterRebuildService {
    */
   private async repoint(
     app: ApplicationEntity,
+    from: ClusterEntity,
     to: ClusterEntity,
-  ): Promise<void> {
-    // A node name from the lost cluster would become a nodeSelector nothing
-    // satisfies. The plan refuses these, so reaching here means it was cleared.
-    app.clusterId = to.id;
-    app.dedicatedNodeName = null;
-    await this.appRepo.save(app);
+    notes: string[],
+  ): Promise<EndpointMoves> {
+    // Decided here, while the rows still name the source. Every column the
+    // classification reads is one this method is about to overwrite.
+    const moves = await this.planEndpointMoves(app, from, to);
 
-    // The zone assignment too: its fallback address for the zone reconciler is
-    // the dead master, in exactly the window clearing the record value opens.
-    const toZone = await this.zoneAssignmentRepo.findOne({
-      where: { clusterId: to.id },
-    });
-    await this.endpointRepo.update(
-      { applicationId: app.id },
-      {
-        clusterId: to.id,
-        ...(toZone ? { clusterDnsZoneId: toZone.id } : {}),
-      },
-    );
+    // Released while the row still names the record and the zone that owns it.
+    for (const [endpointId, move] of Object.entries(moves)) {
+      if (move.to === move.from) continue;
+      await this.endpointReconciliation.releaseDnsRecord(endpointId);
+    }
 
-    const catalogInstallId = (app.metadata as Record<string, string> | null)
-      ?.catalogInstallId;
-    if (catalogInstallId) {
-      await this.catalogInstallRepo.update(
-        { id: catalogInstallId },
-        { clusterId: to.id },
+    const toZone = await this.destinationZoneFor(app, to);
+    if (!toZone) {
+      notes.push(
+        'the destination has no assignment for this zone, so the published ' +
+          'names were kept as they were',
       );
     }
 
-    // Otherwise the application comes back and stops being backed up: the
-    // schedule keeps firing at a machine that does not answer.
-    await this.policyRepo
-      .createQueryBuilder()
-      .update()
-      .set({ clusterId: to.id })
-      .where(`"scopeSelector"->'applicationIds' @> :needle::jsonb`, {
-        needle: JSON.stringify([app.id]),
-      })
-      .execute();
+    const catalogInstallId = (app.metadata as Record<string, string> | null)
+      ?.catalogInstallId;
+    const metadata = this.ledgerFor(app, 'repointed', to.id, {
+      from: from.id,
+      endpoints: moves,
+    });
+
+    // One transaction, because the phase and the facts the phase was decided
+    // from must survive or fail together: a crash between them leaves an
+    // endpoint already mutated and no record of what it used to be.
+    await this.dataSource.transaction(async (tx: EntityManager) => {
+      // A node name from the lost cluster would become a nodeSelector nothing
+      // satisfies. The plan refuses these, so reaching here means it was cleared.
+      await tx.update(
+        ApplicationEntity,
+        { id: app.id },
+        {
+          clusterId: to.id,
+          dedicatedNodeName: null as never,
+          metadata: metadata as never,
+        },
+      );
+
+      for (const [endpointId, move] of Object.entries(moves)) {
+        await tx.update(
+          AppEndpointEntity,
+          { id: endpointId },
+          {
+            clusterId: to.id,
+            // Its fallback address for the zone reconciler is the dead master.
+            ...(toZone ? { clusterDnsZoneId: toZone.id } : {}),
+            ...this.invalidatedByMove(move),
+          },
+        );
+      }
+
+      if (catalogInstallId) {
+        await tx.update(
+          CatalogInstallEntity,
+          { id: catalogInstallId },
+          { clusterId: to.id },
+        );
+      }
+
+      // Otherwise the application comes back and stops being backed up: the
+      // schedule keeps firing at a machine that does not answer.
+      await tx
+        .createQueryBuilder()
+        .update(BackupPolicyEntity)
+        .set({ clusterId: to.id })
+        .where(`"scopeSelector"->'applicationIds' @> :needle::jsonb`, {
+          needle: JSON.stringify([app.id]),
+        })
+        .execute();
+    });
+
+    app.clusterId = to.id;
+    app.dedicatedNodeName = null;
+    app.metadata = metadata as ApplicationEntity['metadata'];
+    return moves;
+  }
+
+  /**
+   * Cleared whether or not the name changed. `reconcileDnsRecord` prefers a
+   * stored `dnsRecordValue` over the cluster's own master address, so a value
+   * left behind pins a custom domain to the lost cluster's IP — and the zone
+   * sweep then defends it as the desired state. `app-migration` already drops
+   * it for the same reason.
+   */
+  private invalidatedByMove(move: EndpointMove): Partial<AppEndpointEntity> {
+    const common = {
+      dnsRecordValue: null as never,
+      reconciliationStatus: ReconciliationStatus.DRIFT,
+    };
+    if (move.to === move.from) return common;
+    return {
+      ...common,
+      fqdn: move.to,
+      // Everything else derived from the old name, so it is minted again.
+      dnsRecordId: null as never,
+      wildcardCertificateId: null,
+      sanCertificateId: null,
+      tlsSecretName: null as never,
+      syncedDomain: null as never,
+    };
   }
 
   /**
@@ -559,6 +650,7 @@ export class ClusterRebuildService {
    */
   private async repointEndpoints(
     app: ApplicationEntity,
+    from: ClusterEntity,
     to: ClusterEntity,
   ): Promise<RebuildResultApp['endpointMoved']> {
     const endpoints = await this.endpointRepo.find({
@@ -566,59 +658,91 @@ export class ClusterRebuildService {
     });
     if (endpoints.length === 0) return undefined;
 
-    let moved: RebuildResultApp['endpointMoved'];
-    for (const endpoint of endpoints) {
-      const before = endpoint.fqdn;
-      const after = await this.rederiveFqdn(endpoint, app, to);
+    // The ledger holds what `repoint` decided before it mutated anything. A run
+    // whose repoint predates the ledger falls back to deciding now, which is
+    // sound only because the source is passed in rather than read off the row.
+    const moves =
+      this.movesOf(app) ?? (await this.planEndpointMoves(app, from, to));
+    // A resumed run skips `repoint`, so this can still name the lost cluster —
+    // whose master is the zone reconciler's fallback address.
+    const toZone = await this.destinationZoneFor(app, to);
 
-      if (after !== before) {
+    const moved: EndpointMove[] = [];
+    for (const endpoint of endpoints) {
+      const move = moves[endpoint.id] ?? {
+        from: endpoint.fqdn,
+        to: endpoint.fqdn,
+      };
+      // Whether the rename still has to happen, not whether one was decided:
+      // on a first run `repoint` applied it already.
+      const pending = endpoint.fqdn !== move.to;
+
+      if (pending && move.to !== move.from) {
         // The old record first, while the row still names it.
         await this.endpointReconciliation.releaseDnsRecord(endpoint.id);
+      }
+      const zoneStale = !!toZone && endpoint.clusterDnsZoneId !== toZone.id;
+      if (pending || endpoint.dnsRecordValue || zoneStale) {
         await this.endpointRepo.update(
           { id: endpoint.id },
           {
-            fqdn: after,
-            // Everything derived from the old name, so it is minted again.
-            dnsRecordId: null as never,
-            dnsRecordValue: null as never,
-            wildcardCertificateId: null,
-            sanCertificateId: null,
-            reconciliationStatus: ReconciliationStatus.DRIFT,
+            ...this.invalidatedByMove(move),
+            ...(zoneStale ? { clusterDnsZoneId: toZone.id } : {}),
           },
         );
-        moved ??= { from: before, to: after };
       }
+      if (move.to !== move.from) moved.push(move);
 
       // Not optional: without it the application answers at no name at all.
       await this.endpointReconciliation.reconcile(endpoint.id);
     }
-    return moved;
+    return moved.length > 0 ? moved : undefined;
   }
 
   /**
    * Only a name Flui derived is re-derived. A string replacement assumed
    * `<slug>.<cluster>.<two-label zone>` — the fixture's shape — and would
    * mangle a custom hostname, which is worse than leaving one that worked.
+   *
+   * The source is passed in, never read from the endpoint: `repoint` overwrites
+   * both `clusterId` and `clusterDnsZoneId`, so a classification that consulted
+   * them compared the destination's name against the source's and concluded
+   * every generated hostname was a custom one.
+   *
+   * Known gap: `tenancySubdomain` is not reproduced here, so a tenancy name is
+   * classified custom and kept. Safe, and visible in the result.
    */
-  private async rederiveFqdn(
+  private async planEndpointMoves(
+    app: ApplicationEntity,
+    from: ClusterEntity,
+    to: ClusterEntity,
+  ): Promise<EndpointMoves> {
+    const endpoints = await this.endpointRepo.find({
+      where: { applicationId: app.id },
+    });
+    const toZone = await this.destinationZoneFor(app, to);
+    const moves: EndpointMoves = {};
+
+    for (const endpoint of endpoints) {
+      moves[endpoint.id] = {
+        from: endpoint.fqdn,
+        to: await this.derivedTarget(endpoint, app, from, to, toZone),
+      };
+    }
+    return moves;
+  }
+
+  /** The old name back means "not ours to rename". */
+  private async derivedTarget(
     endpoint: AppEndpointEntity,
     app: ApplicationEntity,
+    from: ClusterEntity,
     to: ClusterEntity,
+    toZone: ClusterDnsZoneEntity | null,
   ): Promise<string> {
-    const from = await this.clusterRepo.findOne({
-      where: { id: endpoint.clusterId },
-    });
-    const toZone = await this.zoneAssignmentRepo.findOne({
-      where: { clusterId: to.id },
-      relations: ['dnsZone'],
-    });
-    if (!from || !toZone) return endpoint.fqdn;
-
+    if (!toZone) return endpoint.fqdn;
     try {
-      const fromZone = await this.zoneAssignmentRepo.findOne({
-        where: { id: endpoint.clusterDnsZoneId ?? '' },
-        relations: ['dnsZone'],
-      });
+      const fromZone = await this.sourceZoneFor(endpoint, from);
       const derived = this.endpointMode.generateFqdn(
         endpoint.hostnameMode,
         app.slug,
@@ -637,6 +761,59 @@ export class ClusterRebuildService {
       // safe half of that refusal.
       return endpoint.fqdn;
     }
+  }
+
+  /**
+   * The endpoint's own assignment when it still names the source, otherwise the
+   * source's assignment for the same zone — never "any assignment on that
+   * cluster", which picks arbitrarily when a cluster serves several.
+   */
+  private async sourceZoneFor(
+    endpoint: AppEndpointEntity,
+    from: ClusterEntity,
+  ): Promise<ClusterDnsZoneEntity | null> {
+    const recorded = endpoint.clusterDnsZoneId
+      ? await this.zoneAssignmentRepo.findOne({
+          where: { id: endpoint.clusterDnsZoneId },
+          relations: ['dnsZone'],
+        })
+      : null;
+    if (recorded?.clusterId === from.id) return recorded;
+
+    const zoneName = recorded?.dnsZone?.zoneName;
+    if (!zoneName) return recorded;
+    const assignments = await this.zoneAssignmentRepo.find({
+      where: { clusterId: from.id },
+      relations: ['dnsZone'],
+    });
+    return (
+      assignments.find((a) => a.dnsZone?.zoneName === zoneName) ?? recorded
+    );
+  }
+
+  /** Matched on the zone the endpoint already publishes under, not on order. */
+  private async destinationZoneFor(
+    app: ApplicationEntity,
+    to: ClusterEntity,
+  ): Promise<ClusterDnsZoneEntity | null> {
+    const assignments = await this.zoneAssignmentRepo.find({
+      where: { clusterId: to.id },
+      relations: ['dnsZone'],
+    });
+    if (assignments.length <= 1) return assignments[0] ?? null;
+
+    const endpoints = await this.endpointRepo.find({
+      where: { applicationId: app.id },
+    });
+    for (const endpoint of endpoints) {
+      const match = assignments.find(
+        (a) =>
+          a.dnsZone?.zoneName &&
+          endpoint.fqdn.endsWith(`.${a.dnsZone.zoneName}`),
+      );
+      if (match) return match;
+    }
+    return assignments[0] ?? null;
   }
 
   private phaseOf(app: ApplicationEntity): RebuildPhase | undefined {
@@ -682,20 +859,52 @@ export class ClusterRebuildService {
       where: { id: app.id },
       select: { id: true, metadata: true } as never,
     });
-    const metadata = (fresh?.metadata ?? app.metadata ?? {}) as Record<
-      string,
-      unknown
-    > as Record<string, unknown>;
+    if (fresh?.metadata) app.metadata = fresh.metadata;
+    const metadata = this.ledgerFor(app, phase, toId, { error, notes });
+    await this.appRepo.update({ id: app.id }, { metadata: metadata as never });
+    // Kept in step so the phase checks in `rebuildOne` read what was written.
+    app.metadata = metadata as ApplicationEntity['metadata'];
+  }
+
+  /**
+   * Rewritten whole at every phase, so what `repoint` decided is carried
+   * forward explicitly — a blind merge would also carry a failed run's `error`
+   * into the phases that came after it.
+   */
+  private ledgerFor(
+    app: ApplicationEntity,
+    phase: RebuildPhase,
+    toId: string,
+    extra: {
+      from?: string;
+      endpoints?: EndpointMoves;
+      error?: string;
+      notes?: string[];
+    },
+  ): Record<string, unknown> {
+    const metadata = ((app.metadata ?? {}) as Record<string, unknown>) ?? {};
+    const previous = (metadata.rebuild ?? {}) as {
+      from?: string;
+      endpoints?: EndpointMoves;
+    };
+    const from = extra.from ?? previous.from;
+    const endpoints = extra.endpoints ?? previous.endpoints;
     metadata.rebuild = {
       to: toId,
       phase,
       at: new Date().toISOString(),
-      ...(notes?.length ? { notes } : {}),
-      ...(error ? { error } : {}),
+      ...(from ? { from } : {}),
+      ...(endpoints ? { endpoints } : {}),
+      ...(extra.notes?.length ? { notes: extra.notes } : {}),
+      ...(extra.error ? { error: extra.error } : {}),
     };
-    await this.appRepo.update({ id: app.id }, { metadata: metadata as never });
-    // Kept in step so the phase checks in `rebuildOne` read what was written.
-    app.metadata = metadata as ApplicationEntity['metadata'];
+    return metadata;
+  }
+
+  private movesOf(app: ApplicationEntity): EndpointMoves | undefined {
+    const ledger = (app.metadata as Record<string, unknown> | undefined)
+      ?.rebuild as { endpoints?: EndpointMoves } | undefined;
+    return ledger?.endpoints;
   }
 
   /** What stops it, separated from what the person should know first. */

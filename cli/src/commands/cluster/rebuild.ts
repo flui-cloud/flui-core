@@ -40,7 +40,7 @@ interface ResultApp {
   name: string;
   phase: string;
   error?: string;
-  endpointMoved?: { from: string; to: string };
+  endpointMoved?: { from: string; to: string }[];
   notes?: string[];
 }
 
@@ -308,12 +308,8 @@ export default class ClusterRebuild extends Command {
     for (const note of app.notes ?? []) {
       console.log(chalk.yellow(`      ${note}`));
     }
-    if (app.endpointMoved) {
-      console.log(
-        chalk.dim(
-          `      ${app.endpointMoved.from} → ${chalk.cyan(app.endpointMoved.to)}`,
-        ),
-      );
+    for (const moved of app.endpointMoved ?? []) {
+      console.log(chalk.dim(`      ${moved.from} → ${chalk.cyan(moved.to)}`));
     }
   }
 }
