@@ -58,6 +58,7 @@
     "kb:sync": "ts-node -r tsconfig-paths/register ./scripts/kb-sync.ts",
     "kb:cli-ref": "ts-node -r tsconfig-paths/register ./scripts/kb-cli-ref.ts",
     "kb:version": "ts-node -r tsconfig-paths/register ./scripts/kb-version-manifest.ts",
+    "release:index": "ts-node -r tsconfig-paths/register ./scripts/release-index.ts",
     "kb:build": "ts-node -r tsconfig-paths/register ./scripts/kb-build.ts",
     "kb": "pnpm run kb:sync && pnpm run kb:cli-ref && pnpm run kb:version && pnpm run kb:build",
     "db:kb:build": "ts-node -r tsconfig-paths/register ./scripts/db-kb-build.ts",

@@ -9,6 +9,16 @@ Operational scripts for Flui contributors and users.
 - `catalog-smoke-test.ts` — smoke test the catalog endpoints
 - `smoke-catalog-spec-integration.ts` — integration smoke test against `@flui-cloud/spec`
 
+## Release
+
+- `release-index.ts` — publish `RELEASE` as an entry in `releases.json`, the list
+  an installation reads to learn what exists after the release it was built as.
+  See [internal-docs/RELEASE_MANIFEST.md](../internal-docs/RELEASE_MANIFEST.md).
+
+  ```bash
+  pnpm release:index --notes "What changed"
+  ```
+
 ## Cluster
 
 - `verify-cluster.sh` / `verify-cluster.ps1` — verify a provisioned cluster (API + node reachability)

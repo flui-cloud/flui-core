@@ -7,7 +7,7 @@ import {
 import { compareVersions } from '../utils/version-compare';
 
 const DEFAULT_MANIFEST_URL =
-  'https://raw.githubusercontent.com/flui-cloud/bootstrap-scripts/master/releases.json';
+  'https://raw.githubusercontent.com/flui-cloud/flui-core/master/releases.json';
 const DEFAULT_TTL_MS = 60 * 60 * 1000;
 const FETCH_TIMEOUT_MS = 8000;
 
@@ -19,10 +19,13 @@ interface CachedManifest {
 /**
  * Fetches and caches the published release manifest.
  *
- * Pinned to `master` on purpose, unlike every other bootstrap-scripts read: the
- * manifest's whole job is to describe releases *newer* than the one this build
- * pins, and a manifest fetched at the installed release's own ref could only
- * ever describe the past.
+ * The file lives beside `release.config.ts` and is generated from it
+ * (`pnpm release:index`), so the release tuple has one author and one
+ * publication rather than two places to write it down.
+ *
+ * Read from `master`, deliberately: the manifest's whole job is to describe
+ * releases *newer* than the one this build pins, and a manifest fetched at the
+ * installed release's own ref could only ever describe the past.
  */
 @Injectable()
 export class ReleaseManifestService {
