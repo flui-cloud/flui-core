@@ -281,10 +281,8 @@ export class VolumeExportService implements IVolumeExport {
   async restoreFromExport(
     input: RestorePvcFromExportInput,
   ): Promise<{ pvcName: string }> {
-    // Never `input.exportId` verbatim. For a pvc-clone it is a PVC name and
-    // passes; for an s3-archive it is the object key prefix — slashes and well
-    // past 63 characters — and the API server rejects the whole object on a
-    // label it cannot parse, before anything is created.
+    // Never `input.exportId` verbatim: for an s3-archive it is the key prefix,
+    // with slashes and past 63 characters, and the API server rejects it.
     const newPvcLabels: Record<string, string> = {
       ...input.labels,
       'flui.cloud/restored-from': asLabelValue(input.exportId),
@@ -1010,11 +1008,8 @@ export class VolumeExportService implements IVolumeExport {
       '          command:',
       '            - /bin/sh',
       '            - -c',
-      // `--metadata` carries uid, gid and mode across as object metadata.
-      // Without it everything comes back owned by whoever ran the restore, and
-      // an application that runs as a non-root user can read its own files but
-      // not write them. Archives written before this flag lack it, and no
-      // restore can invent what was never recorded.
+      // `--metadata` carries uid, gid and mode. Without it a non-root
+      // application can read its restored files but not write them.
       String.raw`            - 'rclone -v --retries 2 --metadata --s3-no-check-bucket sync /src "${remote}" && echo FLUI_ACTUAL_BYTES=$(du -sb /src | awk "{print \$1}")'`,
       this.renderS3EnvBlock(args.s3),
       '          volumeMounts:',

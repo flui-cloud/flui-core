@@ -71,8 +71,26 @@ describe('ClusterRebuildService.plan', () => {
         q.where.id === 'from-1' ? from : to,
       ),
     };
+    const listed = (opts.apps ?? [app()]).map((a) => app(a));
     (service as unknown as Record<string, unknown>).appRepo = {
-      find: jest.fn(async () => (opts.apps ?? [app()]).map((a) => app(a))),
+      find: jest.fn(async () => listed),
+      // The plan builds its list with a query builder now: an application is
+      // listed when it is still on the source OR carries a ledger naming this
+      // destination, so a half-finished rebuild can be resumed.
+      createQueryBuilder: jest.fn(() => {
+        const qb: Record<string, unknown> = {};
+        for (const m of ['where', 'orWhere', 'orderBy']) {
+          qb[m] = jest.fn(() => qb);
+        }
+        qb.getMany = jest.fn(async () => listed);
+        return qb;
+      }),
+    };
+    (service as unknown as Record<string, unknown>).zoneAssignmentRepo = {
+      findOne: jest.fn(async () => null),
+    };
+    (service as unknown as Record<string, unknown>).endpointMode = {
+      generateFqdn: jest.fn(() => 'derived.example.com'),
     };
     (service as unknown as Record<string, unknown>).endpointRepo = {};
     (service as unknown as Record<string, unknown>).endpointReconciliation = {
@@ -333,5 +351,79 @@ describe('ClusterRebuildService.plan', () => {
 
     expect(plan.refusals).toEqual([]);
     expect(plan.warnings).toEqual([]);
+  });
+});
+
+describe('ClusterRebuildService endpoint naming', () => {
+  function withFqdn(opts: {
+    stored: string;
+    derivedForSource: string;
+    derivedForDestination: string;
+  }) {
+    const service = Object.create(
+      ClusterRebuildService.prototype,
+    ) as ClusterRebuildService;
+    const r = service as unknown as Record<string, unknown>;
+    r.clusterRepo = { findOne: jest.fn(async () => ({ id: 'from-1' })) };
+    r.zoneAssignmentRepo = { findOne: jest.fn(async () => ({ id: 'z-1' })) };
+    r.endpointMode = {
+      generateFqdn: jest
+        .fn()
+        .mockReturnValueOnce(opts.derivedForSource)
+        .mockReturnValueOnce(opts.derivedForDestination),
+    };
+    return (
+      service as unknown as {
+        rederiveFqdn(e: unknown, a: unknown, t: unknown): Promise<string>;
+      }
+    ).rederiveFqdn(
+      { fqdn: opts.stored, clusterId: 'from-1', clusterDnsZoneId: 'z-0' },
+      { slug: 'app' },
+      { id: 'to-1', name: 'workload-live' },
+    );
+  }
+
+  it('re-derives a name Flui itself generated', async () => {
+    expect(
+      await withFqdn({
+        stored: 'app.workload-lost.example.com',
+        derivedForSource: 'app.workload-lost.example.com',
+        derivedForDestination: 'app.workload-live.example.com',
+      }),
+    ).toBe('app.workload-live.example.com');
+  });
+
+  it('leaves a name the user chose exactly as it is', async () => {
+    // The string replacement it replaced would have turned this into
+    // `www.workload-live.example.com` and taken the application off the
+    // address its owner published.
+    expect(
+      await withFqdn({
+        stored: 'www.shop.example.com',
+        derivedForSource: 'app.workload-lost.example.com',
+        derivedForDestination: 'app.workload-live.example.com',
+      }),
+    ).toBe('www.shop.example.com');
+  });
+
+  it('keeps the name when the destination has no zone to derive one from', async () => {
+    const service = Object.create(
+      ClusterRebuildService.prototype,
+    ) as ClusterRebuildService;
+    const r = service as unknown as Record<string, unknown>;
+    r.clusterRepo = { findOne: jest.fn(async () => ({ id: 'from-1' })) };
+    r.zoneAssignmentRepo = { findOne: jest.fn(async () => null) };
+    r.endpointMode = { generateFqdn: jest.fn() };
+
+    const kept = await (
+      service as unknown as {
+        rederiveFqdn(e: unknown, a: unknown, t: unknown): Promise<string>;
+      }
+    ).rederiveFqdn(
+      { fqdn: 'app.workload-lost.example.com', clusterId: 'from-1' },
+      { slug: 'app' },
+      { id: 'to-1', name: 'workload-live' },
+    );
+    expect(kept).toBe('app.workload-lost.example.com');
   });
 });

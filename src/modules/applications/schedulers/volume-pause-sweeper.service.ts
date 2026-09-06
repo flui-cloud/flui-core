@@ -45,19 +45,10 @@ export class VolumePauseSweeperService
   ) {}
 
   /**
-   * Started, never awaited.
-   *
-   * `onApplicationBootstrap` runs before `app.listen()`, so anything awaited
-   * here is a precondition for the control plane serving at all — and this
-   * sweep talks to every cluster in turn. A powered-off host does not refuse
-   * the connection, it swallows the packets, and the kernel takes about 133
-   * seconds to give up; the liveness probe kills the pod at 90. One workload
-   * cluster that is down therefore stopped the control plane from ever
-   * restarting, which is the exact moment somebody needs it. Observed on a
-   * real installation, not reasoned about.
-   *
-   * The sweep still runs, and still releases everything it finds. It just no
-   * longer decides whether the API answers.
+   * Started, never awaited: this runs before `app.listen()` and talks to every
+   * cluster. A powered-off host swallows the packets for ~133s and the
+   * liveness probe kills at 90, so one dead cluster stopped the control plane
+   * from ever restarting. The sweep still runs; it just no longer gates the port.
    */
   onApplicationBootstrap(): void {
     void this.sweepEverywhere(true, 'boot').catch((err: Error) => {
@@ -80,9 +71,7 @@ export class VolumePauseSweeperService
       clusters = await this.clusterRepository.find({
         where: {
           kubeconfigEncrypted: Not(IsNull()),
-          // A cluster nobody can reach has no lease to release and costs the
-          // full connect timeout to find that out. `LOST` and `STOPPED` are
-          // Flui's own record that it will not answer; believing it is free.
+          // No lease to release, and asking costs the full connect timeout.
           status: Not(In([ClusterStatus.LOST, ClusterStatus.STOPPED])),
         },
       });

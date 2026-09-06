@@ -19,6 +19,8 @@ import { ApplicationStatus } from '../../../applications/enums/application-statu
 import { AppEndpointEntity } from '../../../dns/entities/app-endpoint.entity';
 import { ReconciliationStatus } from '../../shared/enums/reconciliation-status.enum';
 import { AppEndpointReconciliationService } from '../../../dns/services/app-endpoint-reconciliation.service';
+import { EndpointModeResolverService } from '../../../dns/services/endpoint-mode-resolver.service';
+import { ClusterDnsZoneEntity } from '../../../dns/entities/cluster-dns-zone.entity';
 import { CatalogInstallEntity } from '../../../catalog/entities/catalog-install.entity';
 import { BackupPolicyEntity } from '../../../backups/entities/backup-policy.entity';
 import { KubernetesService } from '../../shared/services/kubernetes.service';
@@ -98,15 +100,11 @@ export interface RebuildPlan {
 }
 
 /**
- * Re-materialises the applications of a lost cluster onto a live one.
+ * Re-materialises the applications of a lost cluster onto a live one: the
+ * records supply the shape, the backups the contents.
  *
- * The records are the source: `ApplicationEntity` carries env, volumes, config,
- * resources, scaling, exposure and placement, and the manifest generator
- * rebuilds every Kubernetes object from that row — which is what a redeploy
- * already does. Backups supply the *contents*; the records supply the shape.
- *
- * Three declared limits: it covers only what Flui created, it rebuilds the
- * container and not what is inside it, and it needs a live control plane.
+ * Limits: only what Flui created, only the container and not what is inside
+ * it, and it needs a live control plane.
  */
 @Injectable()
 export class ClusterRebuildService {
@@ -134,6 +132,10 @@ export class ClusterRebuildService {
     private readonly dataRestorer: RebuildDataRestorer,
     @Inject(forwardRef(() => AppEndpointReconciliationService))
     private readonly endpointReconciliation: AppEndpointReconciliationService,
+    @Inject(forwardRef(() => EndpointModeResolverService))
+    private readonly endpointMode: EndpointModeResolverService,
+    @InjectRepository(ClusterDnsZoneEntity)
+    private readonly zoneAssignmentRepo: Repository<ClusterDnsZoneEntity>,
   ) {}
 
   async plan(fromId: string, toId: string): Promise<RebuildPlan> {
@@ -179,10 +181,20 @@ export class ClusterRebuildService {
           ]
         : [];
 
-    const apps = await this.appRepo.find({
-      where: { clusterId: from.id },
-      order: { name: 'ASC' },
-    });
+    // Two sets, because `repoint` is the first thing a rebuild does and it
+    // changes the very column this used to select on: an application that got
+    // past step one vanished from the plan, and a rebuild that failed halfway
+    // could never be resumed by the same command — which is the property the
+    // phase ledger exists to provide. So: still on the source, or carrying a
+    // ledger that names this destination.
+    const apps = await this.appRepo
+      .createQueryBuilder('a')
+      .where('a."clusterId" = :fromId', { fromId: from.id })
+      .orWhere(`a."metadata"::jsonb -> 'rebuild' ->> 'to' = :toId`, {
+        toId: to.id,
+      })
+      .orderBy('a.name', 'ASC')
+      .getMany();
     const planned = await Promise.all(apps.map((app) => this.planApp(app)));
 
     const capacity = await this.planCapacity(to, apps).catch((err: Error) => {
@@ -213,11 +225,8 @@ export class ClusterRebuildService {
   }
 
   /**
-   * Queues the rebuild and hands back the operation to follow.
-   *
    * The plan runs here rather than in the job so a refusal reaches the person
-   * who typed the command, instead of becoming a failure four minutes deep in
-   * something nobody is watching.
+   * who typed the command, not a log nobody is watching.
    */
   async start(
     userId: string,
@@ -281,11 +290,8 @@ export class ClusterRebuildService {
   }
 
   /**
-   * Moves the applications, one at a time, and records where each one got to.
-   *
-   * Never rolls back. Ten applications running on recovered data are not
-   * undone to make a table look tidy; the nine still on the lost cluster are
-   * an honest state that a re-run continues from.
+   * One application at a time, recording where each got to. Never rolls back:
+   * a partial rebuild is an honest state that a re-run continues from.
    */
   async execute(
     userId: string,
@@ -302,9 +308,7 @@ export class ClusterRebuildService {
     }
 
     const to = await this.mustFindCluster(toId, 'to');
-    // The precondition has just been proven: the source did not answer. Saying
-    // so stops it being offered as a deploy target while its applications are
-    // being moved off it, which `READY` would keep doing.
+    // Stops it being offered as a deploy target while its applications move.
     await this.markLost(fromId);
     const results: RebuildResultApp[] = [];
 
@@ -352,17 +356,9 @@ export class ClusterRebuildService {
   }
 
   /**
-   * Schedules that named the cluster rather than an application.
-   *
-   * `repoint` moves a policy that names the application it is moving, which
-   * covers a database's own. It cannot move one whose scope is the cluster —
-   * "everything here" — because at that point most of "everything" has not
-   * moved yet. So it happens once, at the end.
-   *
-   * Left alone these keep firing against a cluster that does not answer, and
-   * the applications that just came back are no longer protected by anything.
-   * That was true after the first real rebuild: the volume-copy schedule stayed
-   * on the lost cluster, enabled, while its application ran on the new one.
+   * A cluster-scoped schedule cannot move with any single application, so it
+   * moves once at the end. Left alone it keeps firing at a dead cluster and
+   * the applications that just came back are protected by nothing.
    */
   private async repointClusterWidePolicies(
     fromId: string,
@@ -385,13 +381,9 @@ export class ClusterRebuildService {
   }
 
   /**
-   * One application, in the order that leaves nothing half-true.
-   *
-   * The row is re-pointed immediately before its own deploy rather than for
-   * the whole set up front: a failure partway then leaves the untouched ones
-   * still on the lost cluster, which is true, instead of pointing at a
-   * destination they were never deployed to — which the hourly reconciler
-   * would read as drift on every one of them.
+   * Re-pointed immediately before its own deploy, not for the whole set up
+   * front: a failure partway then leaves the untouched ones honestly on the
+   * lost cluster rather than claiming a destination they never reached.
    */
   private async rebuildOne(
     userId: string,
@@ -434,9 +426,8 @@ export class ClusterRebuildService {
         await this.setPhase(app, 'deployed', to.id, undefined, notes);
       }
 
-      // Only now, and only because the pod already holds what it needed: what
-      // stays on the row otherwise is a live credential for someone else's
-      // repository, for as long as the application exists.
+      // Only now: the pod already holds what it needed, and what would stay
+      // on the row is a live credential for someone else's repository.
       await this.dataRestorer.forget(app.id);
 
       const endpointMoved = await this.repointEndpoints(app, to);
@@ -464,13 +455,9 @@ export class ClusterRebuildService {
   }
 
   /**
-   * Waits for the deploy to actually land before calling the application moved.
-   *
-   * `deploy()` queues and returns an operation. Marking the phase on the return
-   * would report an application as rebuilt while its pod has not been created,
-   * hand the next one a capacity reading taken before this one landed, and hide
-   * the failures that only appear at rollout — a missing storage class, an
-   * image the destination cannot pull, a restore that did not find its bucket.
+   * `deploy()` only queues. Marking the phase on its return would call an
+   * application rebuilt before its pod exists, and hide every failure that
+   * appears at rollout.
    */
   private async awaitDeploy(operationId: string, name: string): Promise<void> {
     const deadline = Date.now() + DEPLOY_WAIT_MS;
@@ -496,11 +483,8 @@ export class ClusterRebuildService {
   }
 
   /**
-   * Everything that names the lost cluster, moved together.
-   *
-   * The application alone is not enough: its endpoints, its catalog install and
-   * its backup policy all carry a `clusterId`, and one left behind points at a
-   * cluster that no longer answers.
+   * Everything that names the lost cluster moves together — endpoints, catalog
+   * install, backup policy — or what is left behind points at a dead cluster.
    */
   private async repoint(
     app: ApplicationEntity,
@@ -512,9 +496,17 @@ export class ClusterRebuildService {
     app.dedicatedNodeName = null;
     await this.appRepo.save(app);
 
+    // The zone assignment too: its fallback address for the zone reconciler is
+    // the dead master, in exactly the window clearing the record value opens.
+    const toZone = await this.zoneAssignmentRepo.findOne({
+      where: { clusterId: to.id },
+    });
     await this.endpointRepo.update(
       { applicationId: app.id },
-      { clusterId: to.id },
+      {
+        clusterId: to.id,
+        ...(toZone ? { clusterDnsZoneId: toZone.id } : {}),
+      },
     );
 
     const catalogInstallId = (app.metadata as Record<string, string> | null)
@@ -526,9 +518,8 @@ export class ClusterRebuildService {
       );
     }
 
-    // The one that would otherwise undo the recovery: a policy left pointing at
-    // the lost cluster keeps scheduling jobs against a machine that does not
-    // answer, so the application comes back and stops being backed up.
+    // Otherwise the application comes back and stops being backed up: the
+    // schedule keeps firing at a machine that does not answer.
     await this.policyRepo
       .createQueryBuilder()
       .update()
@@ -540,13 +531,8 @@ export class ClusterRebuildService {
   }
 
   /**
-   * Puts the data where the workload will look for it, before it looks.
-   *
-   * Two shapes, and neither leaves an application running on an empty volume:
-   * a database is booted in restore mode, so its first start reads recovered
-   * data rather than initialising a new directory; a plain volume is restored
-   * into a claim named exactly what the workload is about to ask for, so the
-   * deploy adopts it instead of creating an empty one.
+   * Neither shape leaves an application running on an empty volume: a database
+   * boots recovering, a volume is filled before its container may start.
    */
   private async restoreData(
     app: ApplicationEntity,
@@ -566,16 +552,10 @@ export class ClusterRebuildService {
   }
 
   /**
-   * Re-points the endpoint rows and lets the reconciler do the rest.
-   *
-   * The hostname is not preserved, and cannot be: `generateFqdn` builds
-   * `<slug>.<cluster>.<zone>`, so a name carried over would announce a cluster
-   * the application no longer runs on. The new name is reported rather than
-   * assumed to be guessable.
-   *
-   * Computing it is not the job — writing it is. An earlier version returned
-   * the string and did nothing with it, and a rebuild that reported two
-   * applications reconciled left both answering at no hostname at all.
+   * A Flui-derived hostname names its cluster, so it cannot be carried over.
+   * Computing the new one is not the job — writing it and reconciling is: an
+   * earlier version returned the string and left both applications answering
+   * at no hostname at all.
    */
   private async repointEndpoints(
     app: ApplicationEntity,
@@ -589,23 +569,16 @@ export class ClusterRebuildService {
     let moved: RebuildResultApp['endpointMoved'];
     for (const endpoint of endpoints) {
       const before = endpoint.fqdn;
-      const after = before.replace(
-        /\.[^.]+\.(?=[^.]+\.[^.]+$)/,
-        `.${to.name}.`,
-      );
+      const after = await this.rederiveFqdn(endpoint, app, to);
 
       if (after !== before) {
-        // The old name at the DNS provider first, while the row still says
-        // what it was: left behind it answers with the address of a machine
-        // that is gone.
+        // The old record first, while the row still names it.
         await this.endpointReconciliation.releaseDnsRecord(endpoint.id);
         await this.endpointRepo.update(
           { id: endpoint.id },
           {
             fqdn: after,
-            // Everything derived from the old name, so the reconciler mints it
-            // again rather than reusing a record and a certificate issued for
-            // a hostname that no longer exists.
+            // Everything derived from the old name, so it is minted again.
             dnsRecordId: null as never,
             dnsRecordValue: null as never,
             wildcardCertificateId: null,
@@ -616,13 +589,54 @@ export class ClusterRebuildService {
         moved ??= { from: before, to: after };
       }
 
-      // Not optional, and the reason the whole step exists: without it the
-      // application runs on the destination and answers at no name at all —
-      // no record, no Ingress. Observed on the first real rebuild, which
-      // reported success with both applications unreachable.
+      // Not optional: without it the application answers at no name at all.
       await this.endpointReconciliation.reconcile(endpoint.id);
     }
     return moved;
+  }
+
+  /**
+   * Only a name Flui derived is re-derived. A string replacement assumed
+   * `<slug>.<cluster>.<two-label zone>` — the fixture's shape — and would
+   * mangle a custom hostname, which is worse than leaving one that worked.
+   */
+  private async rederiveFqdn(
+    endpoint: AppEndpointEntity,
+    app: ApplicationEntity,
+    to: ClusterEntity,
+  ): Promise<string> {
+    const from = await this.clusterRepo.findOne({
+      where: { id: endpoint.clusterId },
+    });
+    const toZone = await this.zoneAssignmentRepo.findOne({
+      where: { clusterId: to.id },
+      relations: ['dnsZone'],
+    });
+    if (!from || !toZone) return endpoint.fqdn;
+
+    try {
+      const fromZone = await this.zoneAssignmentRepo.findOne({
+        where: { id: endpoint.clusterDnsZoneId ?? '' },
+        relations: ['dnsZone'],
+      });
+      const derived = this.endpointMode.generateFqdn(
+        endpoint.hostnameMode,
+        app.slug,
+        from,
+        fromZone,
+      );
+      if (derived !== endpoint.fqdn) return endpoint.fqdn;
+      return this.endpointMode.generateFqdn(
+        endpoint.hostnameMode,
+        app.slug,
+        to,
+        toZone,
+      );
+    } catch {
+      // `generateFqdn` refuses rather than guesses; keeping the name is the
+      // safe half of that refusal.
+      return endpoint.fqdn;
+    }
   }
 
   private phaseOf(app: ApplicationEntity): RebuildPhase | undefined {
@@ -653,17 +667,9 @@ export class ClusterRebuildService {
   }
 
   /**
-   * Writes the ledger and nothing else.
-   *
-   * One column, by id, rather than saving the entity: the object this holds was
-   * loaded at the start of the application's turn, and everything since — the
-   * restore declaration, the deploy, the sweep that takes the restore
-   * credentials back off — has written to that row through its own copy. Saving
-   * the whole entity here put every one of those back.
-   *
-   * That is not theoretical. `forget()` ran, cleaned the row, and the next
-   * `setPhase` restored a live S3 credential onto both rebuilt applications;
-   * the row was found still carrying it after a rebuild that reported success.
+   * One column by id, never the entity: this object was loaded at the start of
+   * the turn and everything since wrote through its own copy. Saving it whole
+   * put a live S3 credential back on both applications after `forget()`.
    */
   private async setPhase(
     app: ApplicationEntity,
@@ -692,17 +698,13 @@ export class ClusterRebuildService {
     app.metadata = metadata as ApplicationEntity['metadata'];
   }
 
-  /**
-   * What is true about one application, separated into what stops it and what
-   * the person needs to know before saying yes.
-   */
+  /** What stops it, separated from what the person should know first. */
   private async planApp(app: ApplicationEntity): Promise<RebuildPlanApp> {
     const warnings: string[] = [];
     let blocked: string | undefined;
 
-    // A node name from the lost cluster names a machine the destination does
-    // not have. Left in place it becomes a nodeSelector nothing satisfies, and
-    // the pod waits forever instead of failing.
+    // Left in place it becomes a nodeSelector nothing satisfies, and the pod
+    // waits forever instead of failing.
     if (app.dedicatedNodeName) {
       blocked =
         `pinned to node "${app.dedicatedNodeName}", which does not exist on the ` +
@@ -722,13 +724,10 @@ export class ClusterRebuildService {
       );
     }
 
-    // Asked of the same code that will do it, so the plan cannot promise data
-    // the rebuild then does not restore.
-    //
-    // Both halves are reported. A plan that listed only the gaps left silence
-    // meaning two different things — "this comes back" and "this application
-    // has no data at all" — and the reader could not tell which, on the one
-    // screen where that is the whole question.
+    // The same code that will do it, so the plan cannot promise data the
+    // rebuild does not restore. Both halves: silence used to mean both "this
+    // comes back" and "there is no data", on the screen where that is the
+    // whole question.
     const restores: string[] = [];
     for (const outcome of await this.dataRestorer.preview(app)) {
       if (outcome.kind === 'empty') {
@@ -751,11 +750,8 @@ export class ClusterRebuildService {
   }
 
   /**
-   * Summed for the whole set, never app by app.
-   *
-   * Checking one at a time answers a different question: each may fit while
-   * the set does not, and the rebuild discovers it halfway through, with some
-   * applications moved and some not.
+   * Summed for the whole set: each may fit alone while the set does not, and
+   * the rebuild would discover it with half the applications moved.
    */
   private async planCapacity(
     to: ClusterEntity,
@@ -765,14 +761,10 @@ export class ClusterRebuildService {
       throw new Error('the destination has no kubeconfig');
     }
     const kubeconfig = this.encryption.decrypt(to.kubeconfigEncrypted);
-    // Both already in the units this reports — `getNodeAllocatable` returns
-    // millicores and MiB, not cores and bytes. Converting them again read a
-    // 2-core node as 2000000m and a 3.7Gi one as 0Mi, which refused every
-    // rebuild for want of memory the destination had.
+    // Millicores and MiB already. Converting again read a 2-core node as
+    // 2000000m and a 3.7Gi one as 0Mi, refusing every rebuild.
     const allocatable = await this.k8s.getNodeAllocatable(kubeconfig);
-    // Minus what is already asked for: allocatable alone is the size of the
-    // cluster, not the room in it, and a destination that is merely large
-    // would pass while having nowhere to put anything.
+    // Allocatable is the size of the cluster, not the room in it.
     const requested = await this.k8s.getPodResourceRequests(kubeconfig);
 
     let cpu = 0;
@@ -800,23 +792,13 @@ export class ClusterRebuildService {
   }
 
   /**
-   * Does the source still answer, and how sure are we?
+   * A call that throws, not a listing: `[]` means the same for an unreachable
+   * cluster and an empty one. Bounded, because a powered-off host swallows the
+   * packets and the kernel takes 133s to give up — measured.
    *
-   * Deliberately a call that throws. `listResourcesByLabel` answers `[]` for an
-   * unreachable cluster as readily as for an empty one, and reading that as
-   * "lost" would let a rebuild run against a cluster that is merely busy.
-   *
-   * Bounded, because the case this exists for is the case where it hangs: a
-   * powered-off host does not refuse the connection, it swallows the packets,
-   * and the kernel takes over two minutes to give up. Unbounded, the plan
-   * became unanswerable exactly when somebody needed it — measured against a
-   * cluster stopped at the provider, not reasoned about.
-   *
-   * The two negative answers are not the same and are not merged. A refused or
-   * failed connection is proof the cluster is not serving. A silence that
-   * outlasts the deadline is not: a control plane partitioned from a workload
-   * cluster sees precisely this while the applications there keep running and
-   * keep writing. The caller is told which one it got.
+   * `refused` is proof the cluster is not serving. `silent` is not: a
+   * partitioned control plane sees the same thing while the applications there
+   * keep writing, so the caller is told which it got.
    */
   private async probeSource(
     cluster: ClusterEntity,
@@ -841,13 +823,8 @@ export class ClusterRebuildService {
     }
   }
 
-  /**
-   * Records what is already true rather than deciding anything.
-   *
-   * `DELETED` would claim a decision nobody made, and `READY` keeps the cluster
-   * in every deploy picker; `LOST` is the state a machine that stopped
-   * answering was actually in.
-   */
+  /** `DELETED` would claim a decision nobody made; `READY` keeps it in every
+   * deploy picker. */
   private async markLost(clusterId: string): Promise<void> {
     await this.clusterRepo.update(
       { id: clusterId },

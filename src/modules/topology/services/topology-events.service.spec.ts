@@ -11,19 +11,13 @@ jest.mock('@kubernetes/client-node', () => ({
 import { TopologyEventsService } from './topology-events.service';
 
 /**
- * The first snapshot must never be a precondition for the API answering.
+ * The first snapshot must never gate the port: it calls every cluster's API,
+ * and a powered-off host swallows the packets for ~133s against a probe that
+ * kills at 90.
  *
- * `onModuleInit` runs before `app.listen()`, and building a topology calls the
- * Kubernetes API of every cluster. A powered-off host swallows the packets
- * instead of refusing them — about 133 seconds before the kernel gives up,
- * against a liveness probe that kills the pod at 90. One workload cluster that
- * was down stopped the control plane from starting at all, which is the exact
- * moment somebody needs it in order to rebuild that cluster.
- *
- * The same mistake had already been fixed in the volume-pause sweeper the hour
- * before. It was still here because the search that found the first one looked
- * for `onApplicationBootstrap` and this hook is `onModuleInit` — which is why
- * the rule is worth a test in each place rather than a memory of it.
+ * The same mistake was fixed in the volume-pause sweeper an hour earlier and
+ * survived here because that search looked for `onApplicationBootstrap` — this
+ * hook is `onModuleInit`. Hence a test in each place rather than a memory.
  */
 describe('TopologyEventsService boot', () => {
   function make(buildTopology: jest.Mock) {
@@ -50,8 +44,7 @@ describe('TopologyEventsService boot', () => {
     const buildTopology = jest.fn(() => pending);
     const service = make(buildTopology);
 
-    // Synchronous by signature: there is no promise for Nest to await, so the
-    // port cannot be held behind a cluster that never answers.
+    // No promise for Nest to await.
     const returned: void = service.onModuleInit();
     expect(returned).toBeUndefined();
 

@@ -12,16 +12,9 @@ import { VolumePauseSweeperService } from './volume-pause-sweeper.service';
 import { ClusterStatus } from '../../infrastructure/clusters/entities/cluster.entity';
 
 /**
- * The sweep is housekeeping. What these tests protect is that it never becomes
- * a precondition for the control plane answering at all.
- *
- * `onApplicationBootstrap` runs before `app.listen()`. Awaiting a sweep that
- * talks to every cluster meant one powered-off workload cluster stopped the API
- * from starting: a host that is off swallows the packets rather than refusing
- * them, the kernel takes about 133 seconds to give up, and the liveness probe
- * kills the pod at 90. Seen on a real installation, where the API crashlooped
- * from the moment a workload cluster was stopped — the exact moment somebody
- * needs the control plane in order to recover it.
+ * Housekeeping must never become a precondition for the API answering. Awaiting
+ * a sweep over every cluster meant one powered-off cluster stopped the control
+ * plane from starting — ~133s to give up against a probe that kills at 90.
  */
 describe('VolumePauseSweeperService', () => {
   function make(clusters: Array<Record<string, unknown>>, sweep?: jest.Mock) {
@@ -51,8 +44,7 @@ describe('VolumePauseSweeperService', () => {
     const sweep = jest.fn(() => blocked);
     const { service } = make([{ id: 'c-1', kubeconfigEncrypted: 'kc' }], sweep);
 
-    // Synchronous by signature: there is no promise here for Nest to await, so
-    // `app.listen()` cannot be held behind a cluster that does not answer.
+    // No promise for Nest to await, so the port cannot be held.
     const returned: void = service.onApplicationBootstrap();
     expect(returned).toBeUndefined();
 
@@ -61,15 +53,13 @@ describe('VolumePauseSweeperService', () => {
   });
 
   it('asks the database only for clusters that might answer', async () => {
-    // A cluster Flui has recorded as lost or stopped has no lease to release
-    // and costs the whole connect timeout to establish that.
+    // No lease to release, and asking costs the full connect timeout.
     const { find, sweepEverywhere } = make([]);
     await sweepEverywhere(true, 'boot');
 
     const where = (find.mock.calls[0] as unknown as [{ where: unknown }])[0]
       .where;
-    // The operator objects are TypeORM internals; what matters is that both
-    // states appear in the query at all, so the database does the excluding.
+    // TypeORM internals; what matters is both states reach the query.
     const rendered = JSON.stringify(where);
     expect(rendered).toContain(ClusterStatus.LOST);
     expect(rendered).toContain(ClusterStatus.STOPPED);

@@ -31,24 +31,13 @@ const RESTORE_MOUNT = '/flui-restore';
 const RCLONE_IMAGE = 'rclone/rclone:1.67';
 
 /**
- * Puts an application's data where the application will look for it, before it
- * looks — so a rebuilt application never starts empty and then gets filled.
+ * Declares the recovery on the application row so the workload is born reading
+ * it: a database boots recovering, a volume is filled by an init container
+ * before the application's container may start.
  *
- * Both shapes work the same way, and deliberately so: the recovery is declared
- * on the application row, and the workload is born reading it. A database gets
- * the engine's restore environment, so its first start recovers instead of
- * initialising; a volume gets an init container that fills the claim before the
- * application's own container is allowed to run.
- *
- * The alternative — a Job that fills a claim the deploy then adopts — was
- * rejected after review. The claim would have to be pre-created byte-identical
- * to what the generator later renders, in a namespace that does not exist yet,
- * and its Job would bind the volume to whichever node it happened to land on
- * while the deploy picks a node of its own: a pod Pending forever on a volume
- * node-affinity conflict. One pod is one node, and that whole class disappears.
- *
- * Lives in the backups module because that is where the artifacts, policies and
- * engines already are; the rebuild asks it one question and learns none of it.
+ * A Job filling a claim the deploy then adopts was rejected: it would bind the
+ * volume to its own node while the deploy picks another, leaving the pod
+ * Pending forever on a node-affinity conflict. One pod is one node.
  */
 @Injectable()
 export class RebuildDataRestorer {
@@ -65,11 +54,8 @@ export class RebuildDataRestorer {
   ) {}
 
   /**
-   * Everything this application has, decided one part at a time.
-   *
    * A list rather than a verdict: an application can be a database with an
-   * uploads directory beside it, and answering for the whole application hides
-   * whichever half went badly.
+   * uploads directory beside it, and one answer hides whichever half failed.
    */
   async restoreInto(
     app: ApplicationEntity,
@@ -82,13 +68,8 @@ export class RebuildDataRestorer {
     return outcomes;
   }
 
-  /**
-   * The same decision, taken without writing anything.
-   *
-   * The plan has to say what the rebuild will do, and the only way for that to
-   * stay true is for both to run the same code. A second implementation that
-   * reads "probably restores" would drift the first time either changed.
-   */
+  /** The same decision without writing anything, so the plan cannot drift
+   * from what the rebuild does. */
   async preview(app: ApplicationEntity): Promise<RestoredWith[]> {
     return this.decide(app, true);
   }
@@ -107,13 +88,9 @@ export class RebuildDataRestorer {
   }
 
   /**
-   * Takes the recovery back off the row once it has happened.
-   *
-   * What is left otherwise is a live credential for someone else's repository
-   * sitting in the application's environment for as long as the application
-   * exists, and an init container that runs on every deploy from here on. The
-   * running pod is untouched — it already has what it needed — so this costs
-   * nothing and the next deploy renders clean.
+   * Otherwise a live credential for someone else's repository stays in the
+   * application's environment for as long as it exists. The running pod is
+   * untouched; the next deploy renders clean.
    */
   async forget(applicationId: string): Promise<void> {
     const app = await this.appRepo.findOne({ where: { id: applicationId } });
@@ -136,8 +113,7 @@ export class RebuildDataRestorer {
       (e) => !RESTORE_ENV_PREFIXES.some((p) => e.name.startsWith(p)),
     );
 
-    // Anything the engines declared for their own restore goes with it: the
-    // database path writes prefixed names for exactly the same one boot.
+    // The engines' own restore variables go too — same one boot.
     const enginePrefixes = this.engines.all().map((e) => e.restoreEnvPrefix);
     const finalEnv = keptEnv.filter(
       (e) => !enginePrefixes.some((p) => e.name.startsWith(p)),
@@ -156,16 +132,9 @@ export class RebuildDataRestorer {
   }
 
   /**
-   * Boots the rebuilt database in restore mode instead of filling it after.
-   *
-   * Both engines already recover into an empty data directory at first start,
-   * driven by environment: Postgres when `PG_VERSION` is absent, MariaDB from
-   * its init container. Writing that environment onto the row the deploy
-   * renders from means the server's first start reads recovered data — there
-   * is no window in which the application is up and empty.
-   *
-   * Returns null when this application is not a database under continuous
-   * backup, so the volume pass can still speak for it.
+   * Both engines recover into an empty data directory at first start, driven
+   * by environment, so writing it on the row leaves no window in which the
+   * application is up and empty. Null when there is no continuous backup.
    */
   private async prepareDatabase(
     app: ApplicationEntity,
@@ -192,17 +161,9 @@ export class RebuildDataRestorer {
     }
 
     const engine = this.engines.forEngine(artifact.engine ?? policy.engine);
-    // Neither an instant nor a base label, deliberately: both engines read the
-    // absence as "the newest base, then every log archived after it", which is
-    // the whole point of a continuous backup and the only sensible default for
-    // a disaster.
-    //
-    // Naming the artifact's own label instead pinned recovery to the moment
-    // that backup was taken. Measured on a real rebuild: the base was 3 hours
-    // 51 minutes old, the WAL containing everything since was in the
-    // repository and archived without error, and the database came back
-    // missing all of it — reported as a success. Nothing but a marker written
-    // on purpose would have shown it.
+    // Neither instant nor label: both engines read the absence as "newest
+    // base, then every log after it". Naming the label pinned recovery to when
+    // that backup was taken — measured at 3h51m of WAL discarded, silently.
     const restoreEnv = engine.buildRestoreEnv(
       app.id,
       destination,
@@ -216,8 +177,7 @@ export class RebuildDataRestorer {
       return { kind: 'database', what: 'database', from };
     }
 
-    // Onto the row, because the row is what the manifest is rendered from. The
-    // catalog's declaration matters only at install; here the values are ours.
+    // The row is what the manifest is rendered from.
     app.env = [
       ...(app.env ?? []).filter(
         (e) => !e.name.startsWith(engine.restoreEnvPrefix),
@@ -232,10 +192,7 @@ export class RebuildDataRestorer {
     return { kind: 'database', what: 'database', from };
   }
 
-  /**
-   * One init container per volume that has an object-store copy to come back
-   * from, and a stated reason for every volume that does not.
-   */
+  /** One init container per volume with a copy, a stated reason for the rest. */
   private async prepareVolumes(
     app: ApplicationEntity,
     databaseHandled: boolean,
@@ -260,10 +217,7 @@ export class RebuildDataRestorer {
         outcomes.push({
           kind: 'empty',
           what: volume.name,
-          // Two different situations wear the same shape. For a database under
-          // continuous backup the absence of a volume copy is correct — its
-          // data comes back through the engine — and reporting that as loss
-          // would send someone to fix what is already working.
+          // For a database under continuous backup the absence is correct.
           why: databaseHandled
             ? "no separate copy of this volume: the database's own data comes " +
               'back through its engine, anything else stored beside it does not'
@@ -272,9 +226,8 @@ export class RebuildDataRestorer {
         continue;
       }
 
-      // Recorded by the copy's own preflight, from the volume itself. A file
-      // copy of a running database restores into something that does not
-      // start, and saying so is the whole point of having looked.
+      // Seen by the copy's own preflight: a file copy of a running database
+      // restores into something that does not start.
       const detected = artifact.manifestSummary?.dataDirectoryDetected as
         | string
         | undefined;
@@ -307,9 +260,8 @@ export class RebuildDataRestorer {
 
       credentials ??= destination;
       if (destination.id !== credentials.id) {
-        // One set of rclone variables serves the whole pod, so two buckets in
-        // one application would silently read the second from the first's
-        // credentials. Rare enough to refuse rather than to design around.
+        // One set of rclone variables serves the whole pod, so a second
+        // bucket would be read with the first's credentials.
         outcomes.push({
           kind: 'empty',
           what: volume.name,
@@ -335,16 +287,11 @@ export class RebuildDataRestorer {
   }
 
   /**
-   * `rclone copy`, never `sync`: a sync makes the claim match the bucket, and a
-   * pod that restarts after the application has written would delete that work.
-   * The marker makes the second run a no-op regardless.
+   * `copy`, never `sync`: a sync would delete what the application wrote after
+   * a restart. The marker makes a second run a no-op anyway.
    *
-   * Ownership is the known limit. The archive carries no uid, gid or mode — the
-   * copy that wrote it did not ask for them — so everything arrives owned by
-   * whoever ran this container. When the application declares a user, that is
-   * who runs it and the files are already right; when it does not, they are
-   * root's, and an application that runs as somebody else can read them but not
-   * write. Reported rather than papered over.
+   * Known limit: archives written before `--metadata` carry no uid or mode, so
+   * files arrive owned by whoever ran this container.
    */
   private restoreInitContainer(
     app: ApplicationEntity,
@@ -390,11 +337,8 @@ export class RebuildDataRestorer {
     };
   }
 
-  /**
-   * rclone reads its whole configuration from the environment, so the remote
-   * needs no config file and the secret half lands in the application's Secret
-   * rather than in the pod spec.
-   */
+  /** From the environment, so the secret half lands in the application's
+   * Secret rather than in the pod spec. */
   private declareRclone(
     app: ApplicationEntity,
     destination: BackupDestinationEntity,
@@ -435,10 +379,8 @@ export class RebuildDataRestorer {
 }
 
 /**
- * A container name is a DNS label: lower-case, no trailing dash, 63 at most,
- * and unique within the pod. Truncating a long volume name satisfies none of
- * those on its own — it can end on a dash, and two volumes sharing a prefix
- * collapse onto the same name, which the API server rejects for the whole pod.
+ * A DNS label: truncating a long volume name can end on a dash, and two
+ * volumes sharing a prefix collide — either rejects the whole pod.
  */
 function containerNameFor(volumeName: string): string {
   const natural = `${RESTORE_INIT_PREFIX}${volumeName}`.toLowerCase();

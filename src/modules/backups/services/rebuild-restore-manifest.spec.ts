@@ -12,13 +12,8 @@ import { RebuildDataRestorer } from './rebuild-data-restorer.service';
 import { ApplicationManifestGeneratorService } from '../../applications/services/application-manifest-generator.service';
 
 /**
- * The seam between the two halves of a volume restore.
- *
- * One service decides what the pod must do and writes it on the row; another,
- * in another module, renders it. Each is tested on its own and both can be
- * right while the pod is wrong — a mount named after the volume the generator
- * calls something else, a container name the API server will not accept — and
- * nothing says so until a rebuild runs against a real cluster.
+ * The seam: one service writes what the pod must do on the row, another
+ * renders it. Both can be right on their own while the pod is wrong.
  */
 describe('what the restorer declares is what the pod runs', () => {
   const gen = ApplicationManifestGeneratorService.prototype as any;

@@ -62,9 +62,7 @@ export class TopologyService {
       where: { deletedAt: IsNull() },
       order: { createdAt: 'ASC' },
     });
-    // A cluster Flui has recorded as lost or stopped will not answer, and
-    // asking costs the whole connect timeout — the packets are swallowed, not
-    // refused — for every caller of this, on every poll.
+    // Will not answer, and asking costs the full connect timeout on every poll.
     const reachable = clusters.filter(
       (c) =>
         c.status !== ClusterStatus.LOST && c.status !== ClusterStatus.STOPPED,

@@ -23,6 +23,7 @@ import { ClusterRebuildProcessor } from './processors/cluster-rebuild.processor'
 import { AppEndpointEntity } from 'src/modules/dns/entities/app-endpoint.entity';
 import { CatalogInstallEntity } from 'src/modules/catalog/entities/catalog-install.entity';
 import { BackupPolicyEntity } from 'src/modules/backups/entities/backup-policy.entity';
+import { ClusterDnsZoneEntity } from 'src/modules/dns/entities/cluster-dns-zone.entity';
 import { ApplicationsModule } from 'src/modules/applications/applications.module';
 
 // Entities
@@ -121,6 +122,8 @@ import { FleetHistoryService } from './services/fleet-history.service';
       // the lost one, or the install and its schedule keep addressing it.
       CatalogInstallEntity,
       BackupPolicyEntity,
+      // Read when a rebuild re-files an endpoint under the destination's zone.
+      ClusterDnsZoneEntity,
       SSHKeyEntity, // For SSH key cleanup service
       VNetSubnetEntity,
       // Read-only access for node-lock check (no module dep on ApplicationsModule)

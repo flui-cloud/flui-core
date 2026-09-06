@@ -167,19 +167,11 @@ function sidecarMountLines(s: SidecarSpec): string[] {
 }
 
 /**
- * The claim a running pod asks for, which is not the same as the claim manifest
- * Flui renders.
+ * The claim a pod mounts, which is not the object `generatePvc` names: a swap
+ * points it elsewhere, and a StatefulSet asks for `<volume>-<set>-0`.
  *
- * `generatePvc` always writes `<slug>-<volume>`, because that is the object it
- * owns. What the pod *mounts* can differ twice over: a volume swap points it at
- * another claim, and a StatefulSet gets its claims from `volumeClaimTemplates`,
- * so the first replica asks for `<volume>-<set>-0` — the shape
- * `winningStatefulSet` in ApplicationVolumeClaimsService parses back.
- *
- * Exported because a cluster rebuild has to fill exactly this claim before the
- * pod starts, and a second copy of the rule in another module is a data loss
- * waiting for whichever copy is edited first: filling the wrong name leaves the
- * pod creating an empty claim beside the full one, silently.
+ * Exported because a rebuild must fill exactly this claim, and a second copy
+ * of the rule would silently leave the pod on an empty one beside the full one.
  */
 export function claimNameForVolume(
   app: Pick<ApplicationEntity, 'slug' | 'workloadKind'>,
