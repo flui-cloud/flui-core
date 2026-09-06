@@ -7,7 +7,7 @@ import {
   Inject,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { IsNull, Not, Repository } from 'typeorm';
 import { ClusterDnsZoneEntity } from '../entities/cluster-dns-zone.entity';
 import { DnsZoneEntity } from '../entities/dns-zone.entity';
 import { AppEndpointEntity } from '../entities/app-endpoint.entity';
@@ -349,7 +349,23 @@ export class ClusterDnsZoneService {
     if (!assignments.some((a) => a.wildcardCertificate)) return;
 
     const acmeEmail = await this.resolveAcmeEmail(clusterId);
-    if (!acmeEmail) return;
+    if (!acmeEmail) {
+      // Said out loud: the assignment used to sit in RECONCILING with no
+      // message, and the one badge that would have explained it is hidden
+      // whenever `certificateProvider` is null, which is exactly this case.
+      this.logger.warn(
+        `Cluster ${clusterId} has no ACME email, so no wildcard ClusterIssuer ` +
+          'was applied. Set one on the zone assignment, or set ADMIN_EMAIL.',
+      );
+      return;
+    }
+
+    // Written back so the operator sees which address the certificates were
+    // registered with, rather than an inherited one nothing shows.
+    await this.clusterDnsZoneRepository.update(
+      { clusterId, acmeEmail: IsNull() },
+      { acmeEmail },
+    );
 
     const cluster = await this.clusterRepository.findOne({
       where: { id: clusterId },
@@ -377,15 +393,35 @@ export class ClusterDnsZoneService {
     const assignments = await this.getZonesForCluster(clusterId);
     const fromAssignment = assignments.find((a) => a.acmeEmail)?.acmeEmail;
     if (fromAssignment) return fromAssignment;
+
+    // The same zone assigned elsewhere: whoever registered it named an email,
+    // and it is the same zone and the same operator. Preferred over the
+    // installation-wide address, which says nothing about who owns this name.
+    if (assignments.length > 0) {
+      const sameZone = await this.clusterDnsZoneRepository.findOne({
+        where: assignments.map((a) => ({
+          dnsZoneId: a.dnsZoneId,
+          acmeEmail: Not(IsNull()),
+        })),
+        order: { createdAt: 'ASC' },
+      });
+      if (sameZone?.acmeEmail) return sameZone.acmeEmail;
+    }
+
     try {
       const issuers = await this.getIssuers(clusterId);
-      return issuers.find((i) => i.email)?.email ?? null;
+      const fromIssuer = issuers.find((i) => i.email)?.email;
+      if (fromIssuer) return fromIssuer;
     } catch (err) {
       this.logger.warn(
         `Could not read issuers of cluster ${clusterId} for the ACME email: ${err instanceof Error ? err.message : String(err)}`,
       );
-      return null;
     }
+
+    // Last, and the same source the IP-mode bootstrap has always used. Never a
+    // built-in default: an address nobody chose would register a real ACME
+    // account under a name that does not exist.
+    return process.env.ADMIN_EMAIL || null;
   }
 
   async getZonesForCluster(clusterId: string): Promise<ClusterDnsZoneEntity[]> {
@@ -1229,9 +1265,20 @@ export class ClusterDnsZoneService {
         this.dnsIssuerNames.includes(i.name),
       );
     } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
       this.logger.warn(
-        `Could not read cluster ${clusterId} while refreshing DNS zone statuses: ${err instanceof Error ? err.message : String(err)}`,
+        `Could not read cluster ${clusterId} while refreshing DNS zone statuses: ${message}`,
       );
+      // Leaving the status untouched left it RECONCILING with no message, for
+      // as long as nobody asked again — while the route promises that a zone
+      // which cannot be reconciled lands in ERROR with the reason.
+      for (const assignment of assignments) {
+        await this.updateReconciliationStatus(
+          assignment.id,
+          ReconciliationStatus.ERROR,
+          `Could not read the cluster to check the DNS setup: ${message}`,
+        );
+      }
       return;
     }
 

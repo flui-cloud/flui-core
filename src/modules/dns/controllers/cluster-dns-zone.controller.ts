@@ -64,6 +64,10 @@ export class ClusterDnsZoneController {
   }
 
   @Post()
+  // Was open to any authenticated caller while removing the same assignment
+  // needed CLUSTER_MANAGE. It decides which zone a cluster publishes under and
+  // which address its ACME accounts register with.
+  @RequirePermission(IAM_PERMISSION.CLUSTER_MANAGE)
   @ApiOperation({
     summary: 'Assign a DNS zone to a cluster',
     description:

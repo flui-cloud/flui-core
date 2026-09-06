@@ -143,6 +143,40 @@ export class ClusterQueueProcessor {
     }
   }
 
+  /**
+   * A zone assigned while the cluster was still provisioning reconciled against
+   * one with no kubeconfig, failed, and nothing retried: the dashboard wizard
+   * assigns about 150ms after queueing the creation, and the cluster is ready
+   * two and a half minutes later. Measured on both workload clusters.
+   */
+  private async reconcileZoneAssignments(
+    cluster: ClusterEntity,
+  ): Promise<void> {
+    let assignments: { id: string }[];
+    try {
+      assignments = await this.clusterDnsZoneService.getZonesForCluster(
+        cluster.id,
+      );
+    } catch (err) {
+      this.logger.warn(
+        `Could not list DNS zone assignments of cluster ${cluster.id}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      return;
+    }
+    for (const assignment of assignments) {
+      try {
+        await this.clusterDnsZoneService.reconcileAssignment(assignment.id);
+        this.logger.log(
+          `Reconciled DNS zone assignment ${assignment.id} now that cluster ${cluster.id} is ready`,
+        );
+      } catch (err) {
+        this.logger.error(
+          `Reconcile of DNS zone assignment ${assignment.id} failed: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    }
+  }
+
   private async bootstrapIpModeIssuers(cluster: ClusterEntity): Promise<void> {
     if (
       cluster.clusterType !== ClusterType.WORKLOAD ||
@@ -342,6 +376,7 @@ export class ClusterQueueProcessor {
         }
 
         await this.bootstrapIpModeIssuers(cluster);
+        await this.reconcileZoneAssignments(cluster);
 
         // Post-creation hook: Register in Grafana if this is a workload cluster
         await this.registerClusterInGrafana(cluster);
@@ -425,6 +460,7 @@ export class ClusterQueueProcessor {
         }
 
         await this.bootstrapIpModeIssuers(cluster);
+        await this.reconcileZoneAssignments(cluster);
 
         // Post-creation hook: Register in Grafana if this is a workload cluster
         await this.registerClusterInGrafana(cluster);
