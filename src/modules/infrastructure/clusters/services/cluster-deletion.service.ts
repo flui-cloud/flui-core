@@ -3,9 +3,13 @@ import {
   Logger,
   NotFoundException,
   BadRequestException,
+  Inject,
+  forwardRef,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
+import { DnsZoneReconciliationService } from '../../../dns/services/dns-zone-reconciliation.service';
+import { ClusterDnsZoneEntity } from '../../../dns/entities/cluster-dns-zone.entity';
 import { ScalingGroupEntity } from '../../scaling/entities/scaling-group.entity';
 import { ScalingDecisionEntity } from '../../scaling/entities/scaling-decision.entity';
 import { InjectQueue } from '@nestjs/bull';
@@ -43,6 +47,10 @@ export class ClusterDeletionService {
     private readonly clusterFirewallIntegrationService: ClusterFirewallIntegrationService,
     private readonly grafanaDatasourceService: GrafanaDatasourceService,
     private readonly clusterDnsCleanupService: ClusterDnsCleanupService,
+    @Inject(forwardRef(() => DnsZoneReconciliationService))
+    private readonly zoneReconciliation: DnsZoneReconciliationService,
+    @InjectRepository(ClusterDnsZoneEntity)
+    private readonly zoneAssignmentRepository: Repository<ClusterDnsZoneEntity>,
     @InjectRepository(ScalingGroupEntity)
     private readonly scalingGroupRepository: Repository<ScalingGroupEntity>,
     @InjectRepository(ScalingDecisionEntity)
@@ -189,6 +197,12 @@ export class ClusterDeletionService {
   async cleanupClusterDnsRecords(clusterId: string): Promise<void> {
     this.logger.log(`Cleaning up DNS records for cluster ${clusterId}`);
 
+    // Before the label sweep and separately from it: `*.<cluster>` is matched
+    // by value, not by label, so records published before labels existed are
+    // still withdrawn. Left behind it answers every name under the cluster with
+    // the address of a machine that is gone.
+    await this.retractClusterWildcards(clusterId);
+
     try {
       const deleted =
         await this.clusterDnsCleanupService.deleteRecordsByClusterId(clusterId);
@@ -199,6 +213,27 @@ export class ClusterDeletionService {
       this.logger.error(
         `Failed to cleanup DNS records for cluster ${clusterId}: ${error.message}`,
         error.stack,
+      );
+    }
+  }
+
+  /** Best effort: a DNS provider blip must not stop a cluster being deleted. */
+  private async retractClusterWildcards(clusterId: string): Promise<void> {
+    try {
+      const assignments = await this.zoneAssignmentRepository.find({
+        where: { clusterId },
+        relations: ['dnsZone', 'cluster'],
+      });
+      for (const assignment of assignments) {
+        if (!assignment.dnsZone) continue;
+        await this.zoneReconciliation.retractClusterWildcardRecord(
+          assignment,
+          assignment.dnsZone,
+        );
+      }
+    } catch (error) {
+      this.logger.warn(
+        `Could not withdraw the wildcard of cluster ${clusterId}: ${error instanceof Error ? error.message : String(error)}`,
       );
     }
   }

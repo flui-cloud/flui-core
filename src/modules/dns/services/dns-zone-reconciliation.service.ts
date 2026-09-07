@@ -290,6 +290,44 @@ export class DnsZoneReconciliationService {
    * removed by hand would otherwise keep showing as published, and this is
    * precisely the screen where a person goes to find out whether it is.
    */
+  /**
+   * Withdraw `*.<cluster>` once that cluster is gone.
+   *
+   * Without it a lost cluster's wildcard keeps answering with the address of a
+   * machine that is off: every name under it black-holes, and a later cluster
+   * taking the same name finds its own wildcard already occupied — `foreign`,
+   * so it never publishes one. Measured after rebuilding workload-cluster-2.
+   *
+   * Deleted only when it still points at this cluster's own address. `foreign`
+   * is somebody else's decision, and `unknown` means we could not read the
+   * zone — neither is ours to remove.
+   */
+  async retractClusterWildcardRecord(
+    assignment: ClusterDnsZoneEntity,
+    zone: DnsZoneEntity,
+  ): Promise<ClusterWildcardStatus> {
+    const state = await this.inspectClusterWildcard(assignment, zone);
+    if (state.status !== 'published') return state;
+
+    const wanted = clusterWildcardRecord(assignment, zone);
+    if (!wanted) return state;
+
+    const provider = this.dnsProviderFactory.getDnsProviderOrFail(
+      zone.dnsProvider,
+    );
+    const records = await provider.listRecords(zone.providerZoneId);
+    const existing = records.find(
+      (r) => r.name === wanted.name && r.type === wanted.type,
+    );
+    if (!existing) return { ...state, status: 'absent', actualValue: null };
+
+    await provider.deleteRecord(zone.providerZoneId, existing.recordId);
+    this.logger.log(
+      `[dns-wildcard] withdrew ${state.fqdn} → ${state.actualValue}; the cluster it named is gone`,
+    );
+    return { ...state, status: 'absent', actualValue: null };
+  }
+
   async inspectClusterWildcard(
     assignment: ClusterDnsZoneEntity,
     zone: DnsZoneEntity,

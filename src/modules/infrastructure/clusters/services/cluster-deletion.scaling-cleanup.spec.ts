@@ -31,6 +31,10 @@ function harness(groups = 1, decisions = 16) {
     {} as never,
     {} as never,
     {} as never,
+    // zoneReconciliation + its assignment repository: this suite never reaches
+    // the DNS path, but the constructor is positional.
+    {} as never,
+    {} as never,
     scalingGroups as unknown as Repository<ScalingGroupEntity>,
     scalingDecisions as unknown as Repository<ScalingDecisionEntity>,
   );

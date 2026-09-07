@@ -27,6 +27,7 @@ import { KubernetesService } from '../../shared/services/kubernetes.service';
 import { EncryptionService } from '../../../shared/encryption/services/encryption.service';
 import { ApplicationDeployService } from '../../../applications/services/application-deploy.service';
 import { RebuildDataRestorer } from '../../../backups/services/rebuild-data-restorer.service';
+import { DnsZoneReconciliationService } from '../../../dns/services/dns-zone-reconciliation.service';
 import { BackupJobsService } from '../../../backups/services/backup-jobs.service';
 import {
   InfrastructureOperationEntity,
@@ -146,6 +147,8 @@ export class ClusterRebuildService {
     private readonly endpointReconciliation: AppEndpointReconciliationService,
     @Inject(forwardRef(() => EndpointModeResolverService))
     private readonly endpointMode: EndpointModeResolverService,
+    @Inject(forwardRef(() => DnsZoneReconciliationService))
+    private readonly zoneReconciliation: DnsZoneReconciliationService,
     @InjectRepository(ClusterDnsZoneEntity)
     private readonly zoneAssignmentRepo: Repository<ClusterDnsZoneEntity>,
     private readonly dataSource: DataSource,
@@ -1111,6 +1114,36 @@ export class ClusterRebuildService {
       { id: clusterId },
       { status: ClusterStatus.LOST },
     );
+    await this.retractWildcards(clusterId);
+  }
+
+  /**
+   * The moment a cluster is known to be gone is the moment its `*.<cluster>`
+   * stops being true. Left up it answers every name under it with the address
+   * of a machine that is off — measured after rebuilding workload-cluster-2 —
+   * and a later cluster taking that name finds the wildcard already occupied.
+   *
+   * Best effort: the applications matter more than the record, and a rebuild
+   * must not fail because a DNS provider was briefly unreachable.
+   */
+  private async retractWildcards(clusterId: string): Promise<void> {
+    const assignments = await this.zoneAssignmentRepo.find({
+      where: { clusterId },
+      relations: ['dnsZone', 'cluster'],
+    });
+    for (const assignment of assignments) {
+      if (!assignment.dnsZone) continue;
+      try {
+        await this.zoneReconciliation.retractClusterWildcardRecord(
+          assignment,
+          assignment.dnsZone,
+        );
+      } catch (err) {
+        this.logger.warn(
+          `[rebuild] could not withdraw the wildcard of ${clusterId}: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    }
   }
 
   private async mustFindCluster(

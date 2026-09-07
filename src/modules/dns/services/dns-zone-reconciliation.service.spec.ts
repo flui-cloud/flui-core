@@ -411,3 +411,99 @@ describe('DnsZoneReconciliationService.inspectClusterWildcard', () => {
     ).toMatchObject({ status: 'unavailable', fqdn: null });
   });
 });
+
+/**
+ * A lost cluster's `*.<cluster>` kept answering with the address of a machine
+ * that was off: every name under it black-holed. Measured after rebuilding
+ * workload-cluster-2 — the application's own record moved, the wildcard did
+ * not, because withdrawal only existed on the delete path and a lost cluster is
+ * never deleted.
+ */
+describe('DnsZoneReconciliationService.retractClusterWildcardRecord', () => {
+  const zone = {
+    zoneName: 'example.com',
+    providerZoneId: 'pz-1',
+    dnsProvider: 'hetzner',
+    recordTtlSeconds: 300,
+  } as never;
+
+  const assignment = (ip: string | null = '10.0.0.1') =>
+    ({
+      id: 'a-1',
+      clusterId: 'c-1',
+      cluster: { name: 'workload-lost', masterIpAddress: ip },
+    }) as never;
+
+  function build(existing: { value: string } | null) {
+    const provider = {
+      listRecords: jest.fn(async () =>
+        existing
+          ? [
+              {
+                recordId: 'r-1',
+                name: '*.workload-lost',
+                type: 'A',
+                value: existing.value,
+              },
+            ]
+          : [],
+      ),
+      deleteRecord: jest.fn(async () => undefined),
+    };
+    const service = Object.create(
+      DnsZoneReconciliationService.prototype,
+    ) as DnsZoneReconciliationService;
+    const r = service as unknown as Record<string, unknown>;
+    r.logger = { log: jest.fn(), warn: jest.fn(), error: jest.fn() };
+    r.dnsProviderFactory = {
+      getDnsProviderOrFail: jest.fn(() => provider),
+    };
+    return { service, provider };
+  }
+
+  it('withdraws the record it published itself', async () => {
+    const h = build({ value: '10.0.0.1' });
+
+    const state = await h.service.retractClusterWildcardRecord(
+      assignment(),
+      zone,
+    );
+
+    expect(h.provider.deleteRecord).toHaveBeenCalledWith('pz-1', 'r-1');
+    expect(state.status).toBe('absent');
+  });
+
+  it('leaves a name someone else pointed elsewhere', async () => {
+    // `foreign` is a decision somebody made; withdrawing it would take down
+    // whatever they aimed it at.
+    const h = build({ value: '203.0.113.9' });
+
+    const state = await h.service.retractClusterWildcardRecord(
+      assignment(),
+      zone,
+    );
+
+    expect(h.provider.deleteRecord).not.toHaveBeenCalled();
+    expect(state.status).toBe('foreign');
+  });
+
+  it('does nothing when there is no record to withdraw', async () => {
+    const h = build(null);
+
+    await h.service.retractClusterWildcardRecord(assignment(), zone);
+
+    expect(h.provider.deleteRecord).not.toHaveBeenCalled();
+  });
+
+  it('does not guess when the cluster has no address of its own', async () => {
+    const h = build({ value: '10.0.0.1' });
+
+    const state = await h.service.retractClusterWildcardRecord(
+      assignment(null),
+      zone,
+    );
+
+    expect(h.provider.deleteRecord).not.toHaveBeenCalled();
+    expect(state.status).toBe('unavailable');
+  });
+});

@@ -130,6 +130,7 @@ import { ClusterDnsGateway } from './gateway/cluster-dns.gateway';
     TenancySubdomainService,
     SandboxSubdomainService,
     GatewayMiddlewareCompilerService,
+    DnsZoneReconciliationService,
   ],
 })
 export class DnsModule {}

@@ -463,6 +463,9 @@ describe('ClusterRebuildService endpoint naming, through a rebuild', () => {
       rearm: jest.fn(async () => 'policy-1'),
     };
     r.backupJobs = { createOnDemand: jest.fn(async () => ({ id: 'job-1' })) };
+    r.zoneReconciliation = {
+      retractClusterWildcardRecord: jest.fn(async () => ({ status: 'absent' })),
+    };
     r.deploy = { deploy: jest.fn(async () => ({ id: 'op-1' })) };
     r.operationRepo = {
       findOne: jest.fn(async () => ({ status: 'COMPLETED' })),
