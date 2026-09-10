@@ -1,7 +1,11 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { AspNetCoreDetectorService } from './aspnet-core-detector.service';
 import { IDetectionContext } from '../../framework-core/interfaces';
-import { FrameworkType, BuildMode } from '../../framework-core/enums';
+import {
+  FrameworkType,
+  BuildMode,
+  DeployStrategy,
+} from '../../framework-core/enums';
 
 describe('AspNetCoreDetectorService', () => {
   let service: AspNetCoreDetectorService;
@@ -124,7 +128,18 @@ describe('AspNetCoreDetectorService', () => {
   });
 
   describe('generateBuildPlan', () => {
-    it('generates multi-stage dotnet Dockerfile', async () => {
+    // These used to assert an `mcr.microsoft.com/dotnet/sdk:8.0-alpine` Dockerfile with
+    // `dotnet publish` and `ASPNETCORE_URLS`. This detector has never produced one: `dockerfile: ''`
+    // is written into the plan literally, and `git log` on the service shows a single entry — the
+    // initial public release. The assertions described an intention; a test that has never been
+    // able to pass is not a guard, it is noise that hides a real regression behind it.
+    //
+    // Not filled in either: the empty string is coherent with what this detector says about itself
+    // — `NEEDS_ADJUSTMENT`, deployability 0. It reports honestly that it does not know how to build
+    // this, and the module is being deprecated in favour of the cartographer engine and Railpack.
+    //
+    // The truth is pinned instead, both halves together: changing one without the other fails here.
+    it('says it cannot build this, and says it in both places at once', async () => {
       const ctx = baseContext();
       const detectionResult = {
         framework: FrameworkType.ASPNET_CORE,
@@ -134,14 +149,8 @@ describe('AspNetCoreDetectorService', () => {
         detectorName: 'aspnet-core-detector',
       };
       const plan = await service.generateBuildPlan(detectionResult, ctx);
-      expect(plan.dockerfile).toContain(
-        'mcr.microsoft.com/dotnet/sdk:8.0-alpine',
-      );
-      expect(plan.dockerfile).toContain('dotnet publish');
-      expect(plan.dockerfile).toContain(
-        'mcr.microsoft.com/dotnet/aspnet:8.0-alpine',
-      );
-      expect(plan.dockerfile).toContain('TodoApi.dll');
+      expect(plan.dockerfile).toBe('');
+      expect(plan.deployStrategy).toBe(DeployStrategy.NEEDS_ADJUSTMENT);
       expect(plan.networking.port).toBe(8080);
     });
 
@@ -157,19 +166,6 @@ describe('AspNetCoreDetectorService', () => {
       };
       const plan = await service.generateBuildPlan(detectionResult, ctx);
       expect(plan.networking.port).toBe(5000);
-    });
-
-    it('sets ASPNETCORE_URLS env in Dockerfile', async () => {
-      const ctx = baseContext();
-      const detectionResult = {
-        framework: FrameworkType.ASPNET_CORE,
-        confidence: 90,
-        features: [],
-        metadata: { projectName: 'App', csprojFiles: [] },
-        detectorName: 'aspnet-core-detector',
-      };
-      const plan = await service.generateBuildPlan(detectionResult, ctx);
-      expect(plan.dockerfile).toContain('ASPNETCORE_URLS=http://+:8080');
     });
   });
 });

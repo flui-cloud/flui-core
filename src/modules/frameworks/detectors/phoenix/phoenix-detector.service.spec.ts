@@ -1,7 +1,11 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { PhoenixDetectorService } from './phoenix-detector.service';
 import { IDetectionContext } from '../../framework-core/interfaces';
-import { FrameworkType, BuildMode } from '../../framework-core/enums';
+import {
+  FrameworkType,
+  BuildMode,
+  DeployStrategy,
+} from '../../framework-core/enums';
 
 describe('PhoenixDetectorService', () => {
   let service: PhoenixDetectorService;
@@ -107,34 +111,34 @@ describe('PhoenixDetectorService', () => {
   });
 
   describe('generateBuildPlan', () => {
-    it('generates multi-stage Elixir Dockerfile with Alpine runtime', async () => {
+    // These used to assert an `elixir:1.16-alpine` Dockerfile with `mix release` and
+    // `mix phx.digest`. This detector has never produced one: `dockerfile: ''` is written into the
+    // plan literally, and `git log` on the service shows a single entry — the initial public
+    // release. The assertions described an intention, and a test that has never been able to pass
+    // is not a guard, it is noise that hides a real regression behind it.
+    //
+    // Not filled in either: the empty string is coherent with what this detector says about itself
+    // — `NEEDS_ADJUSTMENT`, deployability 0, build reproducibility 0. It reports honestly that it
+    // does not know how to build this. Writing a Dockerfile now, for a module the plan is
+    // deprecating in favour of the cartographer engine and Railpack, would be an assertion nobody
+    // has ever put against a real build.
+    //
+    // So the truth is pinned instead, and the two halves are pinned together: changing one without
+    // the other fails here, which is what makes "this detector can build now" a decision somebody
+    // has to take deliberately rather than a side effect.
+    it('says it cannot build this, and says it in both places at once', async () => {
       const ctx = baseContext();
       const detectionResult = {
         framework: FrameworkType.PHOENIX,
         confidence: 85,
-        features: ['mix-lock'],
-        metadata: { hasLiveView: false },
-        detectorName: 'phoenix-detector',
-      };
-      const plan = await service.generateBuildPlan(detectionResult, ctx);
-      expect(plan.dockerfile).toContain('elixir:1.16-alpine AS builder');
-      expect(plan.dockerfile).toContain('mix release');
-      expect(plan.dockerfile).toContain('alpine:3.19');
-      expect(plan.networking.port).toBe(4000);
-    });
-
-    it('includes asset build step when assets detected', async () => {
-      const ctx = baseContext();
-      const detectionResult = {
-        framework: FrameworkType.PHOENIX,
-        confidence: 90,
         features: ['assets', 'mix-lock'],
         metadata: { hasLiveView: true },
         detectorName: 'phoenix-detector',
       };
       const plan = await service.generateBuildPlan(detectionResult, ctx);
-      expect(plan.dockerfile).toContain('npm run deploy');
-      expect(plan.dockerfile).toContain('mix phx.digest');
+      expect(plan.dockerfile).toBe('');
+      expect(plan.deployStrategy).toBe(DeployStrategy.NEEDS_ADJUSTMENT);
+      expect(plan.networking.port).toBe(4000);
     });
 
     it('uses port from fluiConfig', async () => {
