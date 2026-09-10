@@ -166,7 +166,12 @@ export interface CatalogLinkedBuildingBlock {
 
 export interface CatalogLinkedEnv {
   name: string;
-  fromService?: 'host' | 'port';
+  /**
+   * `url` is a reference, never a value: it resolves to a `secretKeyRef` at the
+   * block's own Secret, because a connection URL carries the password.
+   * Available only on a block that declares a database engine.
+   */
+  fromService?: 'host' | 'port' | 'url';
   fromBBEnv?: string;
   /**
    * Literal value emitted as a plain env entry. Used when the env is BB-specific

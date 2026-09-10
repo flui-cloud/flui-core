@@ -39,7 +39,7 @@
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1041.0",
     "@aws-sdk/s3-request-presigner": "^3.1041.0",
-    "@flui-cloud/spec": "^0.9.0",
+    "@flui-cloud/spec": "^0.10.0",
     "@kubernetes/client-node": "^1.4.0",
     "@nestjs/axios": "^4.0.0",
     "@nestjs/bull": "^11.0.4",
@@ -187,6 +187,12 @@
       },
       "vault": {
         "description": "The vault that protects credentials stored on this machine"
+      },
+      "repo": {
+        "description": "GitHub repositories connected to Flui, and what they say about themselves"
+      },
+      "repo:map": {
+        "description": "Read a repository into deployable units, services, inputs and a verdict — and act on it"
       }
     }
   },

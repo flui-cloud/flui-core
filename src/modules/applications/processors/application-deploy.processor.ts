@@ -55,6 +55,10 @@ import { ApplicationResourceKind } from '../enums/application-resource-kind.enum
 import { DedicatedPlacementService } from '../services/dedicated-placement.service';
 import { ApplicationTeardownService } from './application-teardown.service';
 import { writeOperationProgress } from './operation-progress.util';
+import {
+  ATTACHED_SERVICES_PORT,
+  AttachedServicesPort,
+} from '../interfaces/attached-services.port';
 
 @Processor('application-deploy')
 export class ApplicationDeployProcessor {
@@ -92,7 +96,42 @@ export class ApplicationDeployProcessor {
     @Optional()
     @InjectQueue('backup')
     private readonly backupQueue?: Queue,
+    // Read-only here: the processor never provisions anything, it only refuses
+    // to render an application whose declared services are not ready.
+    @Optional()
+    @Inject(ATTACHED_SERVICES_PORT)
+    private readonly attachedServices?: AttachedServicesPort,
   ) {}
+
+  /**
+   * The single guardian that keeps a half-attached application from going green.
+   *
+   * Everything else about attaching a service can fail in a place a person is
+   * looking at — a refused manifest, a failed install, a timed-out wait. This is
+   * the one that catches what got past all of them: if a row says the service is
+   * not ready, the deploy does not render. An application that reached its pod
+   * without its database would answer health checks and be reported RUNNING,
+   * which is the failure that costs the most to notice.
+   */
+  private async assertAttachedServicesReady(
+    app: ApplicationEntity,
+  ): Promise<void> {
+    if (!this.attachedServices) return;
+    const attachments = await this.attachedServices.attachmentsOf(app.id);
+    const notReady = attachments.filter((a) => a.status !== 'READY');
+    if (!notReady.length) return;
+
+    throw new Error(
+      `${app.name} declares ${notReady.length} attached service(s) that are not ready: ` +
+        notReady
+          .map((a) => {
+            const reasonLabel = a.statusReason ? ` — ${a.statusReason}` : '';
+            return `${a.name} (${a.block}) is ${a.status}${reasonLabel}`;
+          })
+          .join('; ') +
+        '. Deploying now would start the application without them.',
+    );
+  }
 
   /**
    * Auto-pin a dedicated app to the worker with the most free capacity, unless
@@ -312,6 +351,8 @@ export class ApplicationDeployProcessor {
         cluster.kubeconfigEncrypted,
       );
 
+      await this.assertAttachedServicesReady(app);
+
       const placedApp = await this.ensureDedicatedPlacement(app);
 
       // If rollback, restore config from target revision
@@ -471,6 +512,22 @@ export class ApplicationDeployProcessor {
       });
       await this.waitForAllReady(kubeconfig, app, manifests);
 
+      // An `exposure: public` application owes a public endpoint, and a deploy
+      // that cannot mint one has not succeeded — so this runs before the
+      // revision is written and the app is called RUNNING, and it is allowed to
+      // throw: the catch below fails the operation with the reason, the road
+      // every other phase failure already takes. The pods stay up; what changes
+      // is the verdict.
+      if (this.applicationSourceDeployService) {
+        await this.applicationSourceDeployService.ensurePublicEndpoint(
+          applicationId,
+        );
+      } else {
+        this.logger.warn(
+          `ensurePublicEndpoint(${applicationId}): ApplicationSourceDeployService not wired, skipping (likely a test harness)`,
+        );
+      }
+
       // Finalize — create revision snapshot
       await this.updateOperation(
         operationId,
@@ -550,20 +607,6 @@ export class ApplicationDeployProcessor {
       // For exposure=internal apps, auto-attach the InternalAppEndpoint and
       // trigger its reconciliation (Ingress with ForwardAuth + cert).
       await this.ensureInternalEndpoint(appForManifests);
-
-      // For exposure=public apps deployed via `flui deploy` (kind: Application),
-      // auto-create the public AppEndpoint based on the `flui.endpoint.spec`
-      // hints stored in `app.metadata` by ApplicationSourceDeployService. This
-      // is a no-op for legacy apps without that metadata key.
-      if (this.applicationSourceDeployService) {
-        await this.applicationSourceDeployService
-          .ensurePublicEndpoint(applicationId)
-          .catch((err) =>
-            this.logger.warn(
-              `ensurePublicEndpoint(${applicationId}) failed: ${err instanceof Error ? err.message : String(err)}`,
-            ),
-          );
-      }
 
       // Trigger immediate reconciliation to confirm actual K8s state after deploy
       try {

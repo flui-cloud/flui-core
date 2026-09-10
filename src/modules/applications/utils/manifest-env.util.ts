@@ -77,16 +77,20 @@ export function applyEnvironmentProfile(
     overlaid.set(name, { name, value });
   }
 
-  return {
-    ...manifest,
-    deploy: {
-      ...manifest.deploy,
-      env: [...overlaid.values()],
-      resources: profile.deploy?.resources ?? manifest.deploy.resources,
-      scaling: profile.deploy?.scaling ?? manifest.deploy.scaling,
-      domain: profile.deploy?.domain ?? manifest.deploy.domain,
-    },
-  };
+  // `deploy` is a union in the spec — a workload that listens carries `domain`,
+  // one that listens on nothing types it away — so the overlay is built as a
+  // plain object and re-asserted once, rather than written as a literal the
+  // silent half of the union can never satisfy.
+  const domain = profile.deploy?.domain ?? manifest.deploy.domain;
+  const deploy = {
+    ...manifest.deploy,
+    env: [...overlaid.values()],
+    resources: profile.deploy?.resources ?? manifest.deploy.resources,
+    scaling: profile.deploy?.scaling ?? manifest.deploy.scaling,
+    ...(domain ? { domain } : {}),
+  } as ApplicationManifest['deploy'];
+
+  return { ...manifest, deploy };
 }
 
 export type ServiceRefKey = 'url' | 'host' | 'port';

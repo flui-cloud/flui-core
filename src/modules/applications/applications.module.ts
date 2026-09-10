@@ -41,6 +41,8 @@ import { ApplicationReleaseService } from './services/application-release.servic
 import { GhcrSecretRefreshService } from './services/ghcr-secret-refresh.service';
 import { ApplicationVersionsService } from './services/application-versions.service';
 import { ApplicationSourceDeployService } from './services/application-source-deploy.service';
+import { RepoTreeReaderService } from './services/repo-tree-reader.service';
+import { RepoFactsReaderService } from './services/repo-facts-reader.service';
 import { VolumeSnapshotsService } from './services/volume-snapshots.service';
 import { VolumeCopyLedgerService } from './services/volume-copy-ledger.service';
 import { VolumeCopyPreflightService } from './services/volume-copy-preflight.service';
@@ -123,7 +125,9 @@ import { VolumeExportService } from '../providers/services/volume-export.service
     SharedInfrastructureModule,
     EncryptionModule,
     ImagesModule,
-    RepositoriesModule,
+    // forwardRef since RepositoriesModule now reaches back for the archive
+    // reader and the cluster capacity the repository map needs.
+    forwardRef(() => RepositoriesModule),
     BuildAgentConfigModule,
     forwardRef(() => ImageRegistryModule),
     forwardRef(() => ScalingModule),
@@ -174,6 +178,11 @@ import { VolumeExportService } from '../providers/services/volume-export.service
     GhcrSecretRefreshService,
     ApplicationVersionsService,
     ApplicationSourceDeployService,
+    // What lets a manifest be checked against the code it claims to build:
+    // the tree reader fetches the commit, the facts reader surveys it, and
+    // `allChecksFor` compares the two in the validation preview.
+    RepoTreeReaderService,
+    RepoFactsReaderService,
     VolumeSnapshotsService,
     VolumeCopyLedgerService,
     VolumeCopyPreflightService,

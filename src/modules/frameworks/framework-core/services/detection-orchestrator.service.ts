@@ -1015,9 +1015,10 @@ export class DetectionOrchestratorService {
       });
       const data = resp.data as { encoding?: string; content?: string };
       if (data.encoding === 'base64' && data.content) {
-        return Buffer.from(data.content.replaceAll('n', ''), 'base64').toString(
-          'utf-8',
-        );
+        return Buffer.from(
+          data.content.replaceAll('\n', ''),
+          'base64',
+        ).toString('utf-8');
       }
       return null;
     } catch {

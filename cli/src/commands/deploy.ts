@@ -348,6 +348,11 @@ export default class Deploy extends Command {
 
     let deploy: SourceDeployResponse;
     try {
+      // No client deadline on this one. A manifest that declares `deploy.services` provisions its
+      // building blocks inside this request and waits for them to reach RUNNING — up to ten
+      // minutes. With the client's default 30s the CLI printed a timeout while the server carried
+      // on installing and committing the workflow, so the only visible outcome was a failure that
+      // had not happened.
       deploy = await apiClient.post<SourceDeployResponse>(
         '/applications/deploy-from-yaml',
         {
@@ -361,6 +366,7 @@ export default class Deploy extends Command {
           ...(secretEnvKeys.length > 0 ? { secretEnvKeys } : {}),
           ...(overrides ? { overrides } : {}),
         },
+        { timeoutMs: 0 },
       );
       spinner.succeed(
         skipBuild ? 'Deploy triggered (build skipped)' : 'Build triggered',

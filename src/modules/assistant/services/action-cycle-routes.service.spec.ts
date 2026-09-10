@@ -214,6 +214,10 @@ describe('the tools whose request the chat can show', () => {
     'migration_destroy_source',
     'platform_component_redeploy',
     'repo_connect',
+    // Writes a branch and a commit into somebody's repository and spends
+    // its Actions minutes. The repository is the path parameter here, so
+    // unlike `repo_connect` this one can be conceded per repository.
+    'repo_map_apply',
     'san_certificate_create',
     // A scaling group is not a node, it is the standing figure a cluster may
     // grow and spend to unattended — which is the class of thing the cycle

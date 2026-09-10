@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { ConfigModule } from '@nestjs/config';
 import { HttpModule } from '@nestjs/axios';
@@ -35,6 +35,13 @@ import { GitHubSetupController } from './controllers/github-setup.controller';
 import { GithubAppOAuthController } from './controllers/github-app-oauth.controller';
 import { UserEventsGateway } from '../auth/gateway/user-events.gateway';
 import { WsAuthModule } from '../auth/ws-auth.module';
+import { ClustersModule } from '../infrastructure/clusters/clusters.module';
+import { SharedInfrastructureModule } from '../infrastructure/shared/shared-infrastructure.module';
+import { CatalogAppDefinitionEntity } from '../catalog/entities/catalog-app-definition.entity';
+import { RepoTreeReaderService } from '../applications/services/repo-tree-reader.service';
+import { RepoMapService } from './services/repo-map.service';
+import { RepoApplyService } from './services/repo-apply.service';
+import { ApplicationsModule } from '../applications/applications.module';
 
 @Module({
   imports: [
@@ -47,11 +54,23 @@ import { WsAuthModule } from '../auth/ws-auth.module';
       GitHubAppInstallationEntity,
       GithubUserTokenEntity,
       GithubAppManifestStateEntity,
+      // Read-only: the map's capacity pass weighs a catalog block's own
+      // declared resources. No dependency on CatalogModule, which imports this
+      // one transitively.
+      CatalogAppDefinitionEntity,
     ]),
     SharedModule,
     GitModule,
     FrameworksModule,
     WsAuthModule,
+    // The map weighs a repository against a cluster's real allocatable.
+    // ClustersModule sits downstream of this one, hence forwardRef.
+    forwardRef(() => ClustersModule),
+    // The apply creates Applications and marks their builds. ApplicationsModule
+    // already forwardRefs this one for the archive reader, so the cycle is
+    // declared on both sides rather than half-declared.
+    forwardRef(() => ApplicationsModule),
+    SharedInfrastructureModule,
   ],
   controllers: [
     RepositoriesController,
@@ -79,6 +98,13 @@ import { WsAuthModule } from '../auth/ws-auth.module';
     GitHubWorkflowService,
     GhcrPackagesService,
     GhcrPatAuditService,
+    // The same archive reader the manifest checks already run — one way to
+    // read a repository, and it needs nothing this module does not have
+    // (`GitHubTokenResolverService`). Provided here rather than reached for
+    // through ApplicationsModule, which imports this module.
+    RepoTreeReaderService,
+    RepoMapService,
+    RepoApplyService,
   ],
   exports: [
     RepositoriesService,
@@ -96,6 +122,8 @@ import { WsAuthModule } from '../auth/ws-auth.module';
     WorkflowGeneratorService,
     GitHubWorkflowService,
     GhcrPackagesService,
+    RepoMapService,
+    RepoApplyService,
   ],
 })
 export class RepositoriesModule {}

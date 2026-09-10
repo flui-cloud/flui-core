@@ -45,6 +45,7 @@ const ARGS: Record<string, Record<string, unknown>> = {
   app_releases: { id: 'a1' },
   app_events: { id: 'a1' },
   app_deploy_from_yaml: { yaml: 'kind: Application' },
+  app_deploy_image: { image: 'nginx:1.25', name: 'my-app' },
   app_manifest_validate: { yaml: 'kind: Application' },
   app_deploy: { id: 'a1' },
   app_scale: { id: 'a1', replicas: 2 },
@@ -64,6 +65,11 @@ const ARGS: Record<string, Record<string, unknown>> = {
   github_setup: {},
   github_connect: {},
   repo_connect: { repository: 'acme/api' },
+  // The id form, so the stand-in does not have to hold a repository list
+  // for the lookup to find. That both forms are accepted is pinned in
+  // `repo.tools.spec.ts`, where the list can be described.
+  repo_map: { repository: '11111111-1111-1111-1111-111111111111' },
+  repo_map_apply: { repository: '11111111-1111-1111-1111-111111111111' },
   backup_status: {},
   backup_policy_list: {},
   backup_run: { policyId: 'p1' },
@@ -372,6 +378,7 @@ describe('strada B — the whole tool catalogue goes over the wire', () => {
     ['app_debug', 'GET /applications/a1/debug/pods'],
     ['app_deploy', 'POST /applications/a1/deploy'],
     ['app_deploy_from_yaml', 'POST /applications/deploy-from-yaml'],
+    ['app_deploy_image', 'POST /clusters/c1/applications'],
     ['app_manifest_validate', 'POST /applications/manifest/validate'],
     ['app_delete', 'DELETE /applications/a1/install'],
     ['app_removal_preview', 'GET /applications/a1/removal-preview'],
@@ -392,6 +399,17 @@ describe('strada B — the whole tool catalogue goes over the wire', () => {
     ['migration_abort', 'DELETE /app-migrations/m1'],
     ['repo_list', 'GET /repositories'],
     ['repo_connect', 'POST /repositories/import'],
+    // The two query parameters the route reads live in the path, because
+    // `McpApiCaller.post` has no query argument. The fence and this suite
+    // both compare on the path before the `?`.
+    [
+      'repo_map',
+      'POST /repositories/11111111-1111-1111-1111-111111111111/map?clusterId=c1',
+    ],
+    [
+      'repo_map_apply',
+      'POST /repositories/11111111-1111-1111-1111-111111111111/map/apply',
+    ],
     [
       'github_setup',
       'POST /repositories/github/setup/github-app/manifest-start',

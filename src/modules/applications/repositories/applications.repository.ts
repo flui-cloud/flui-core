@@ -215,6 +215,30 @@ export class ApplicationsRepository {
   }
 
   /**
+   * The webhook token already in use for a repository, if any application bound to it holds one.
+   *
+   * `FLUI_WEBHOOK_TOKEN` is a *repository* secret, and the application rows are what the webhook
+   * compares it against. Minting a fresh one and storing it on only the new applications leaves
+   * every older application of the same repository holding a token GitHub no longer sends: its
+   * next push is answered with a 401 and its auto-deploy stops, silently, because the build
+   * watcher only reconciles applications that are AWAITING_BUILD.
+   */
+  async findWebhookTokenForRepository(
+    repositoryId: string,
+  ): Promise<string | null> {
+    const row = await this.repository
+      .createQueryBuilder('app')
+      .where('app.deletedAt IS NULL')
+      .andWhere(`app."sourceConfig"->>'repositoryId' = :repositoryId`, {
+        repositoryId,
+      })
+      .andWhere('app.webhookToken IS NOT NULL')
+      .orderBy('app.createdAt', 'ASC')
+      .getOne();
+    return row?.webhookToken ?? null;
+  }
+
+  /**
    * Applications on a given cluster that were installed via the catalog as a
    * building block with the given slug (e.g. "postgresql", "valkey"). Used by
    * the catalog dependency resolver to offer reusable instances to apps whose

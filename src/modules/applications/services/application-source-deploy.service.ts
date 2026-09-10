@@ -4,6 +4,7 @@ import {
   BadRequestException,
   NotFoundException,
   Inject,
+  Optional,
   forwardRef,
   HttpException,
 } from '@nestjs/common';
@@ -37,7 +38,17 @@ import {
   GitBuildSourceConfig,
 } from '../interfaces/source-config.interface';
 import { RepositoriesService } from '../../repositories/services/repositories.service';
-import { mergeAppEnv, collectEnvShadows } from '../utils/env-merge.util';
+import {
+  mergeAppEnv,
+  mergeLinkEnv,
+  collectEnvShadows,
+} from '../utils/env-merge.util';
+import {
+  ATTACHED_SERVICES_PORT,
+  AttachedServiceRecord,
+  AttachedServiceSpec,
+  AttachedServicesPort,
+} from '../interfaces/attached-services.port';
 import { materializeDeclaredSecrets } from '../utils/env-write.util';
 import {
   applyEnvironmentProfile,
@@ -59,6 +70,7 @@ import { ApplicationSourceType } from '../enums/application-source-type.enum';
 import { ApplicationCategory } from '../enums/application-category.enum';
 import { ApplicationExposure } from '../enums/application-exposure.enum';
 import { AppEndpointService } from '../../dns/services/app-endpoint.service';
+import { AppEndpointEntity } from '../../dns/entities/app-endpoint.entity';
 import { AppEndpointReconciliationService } from '../../dns/services/app-endpoint-reconciliation.service';
 import { ClusterDnsZoneService } from '../../dns/services/cluster-dns-zone.service';
 import { ClustersService } from '../../infrastructure/clusters/clusters.service';
@@ -68,16 +80,81 @@ import {
   normalizeClusterType,
 } from '../../infrastructure/clusters/entities/cluster.entity';
 import {
-  checksFor,
   wouldDeploy,
   type CapacityFact,
   type ManifestCheck,
 } from '../manifest-checks.core';
+import { allChecksFor, type RepoFacts } from '../manifest-repo-checks.core';
+import { manifestSelfFacts } from '../manifest-self-facts.core';
+import { RepoFactsReaderService } from './repo-facts-reader.service';
+import { EndpointType } from '../../dns/enums/endpoint-type.enum';
 import { HostnameMode } from '../../dns/enums/hostname-mode.enum';
 import { CertChallenge } from '../../dns/enums/cert-challenge.enum';
 import { CertificateProvider } from '../../providers/enums/certificate-provider.enum';
+import { ApplicationEntity } from '../entities/application.entity';
+import {
+  readEndpointFailure,
+  withEndpointFailure,
+  withoutEndpointFailure,
+} from '../utils/endpoint-failure.util';
+import { EndpointDiagnosisService } from '../../scaling/services/endpoint-diagnosis.service';
 
 const ENDPOINT_SPEC_METADATA_KEY = 'flui.endpoint.spec';
+
+/** `deploy.domain` as the manifest wrote it: every field an override, none of them the trigger. */
+interface EndpointSpec {
+  auto?: boolean;
+  tls?: boolean;
+  fqdn?: string;
+  hostnameMode?: 'ip' | 'domain';
+  certChallenge?: 'http-01' | 'dns-01';
+  certificateProvider?: 'lets-encrypt' | 'lets-encrypt-staging';
+}
+
+/**
+ * A manifest deploy stopped one step before it writes to GitHub: the
+ * Application exists, its services are up, and nothing has been committed.
+ */
+export interface PreparedApplicationFromYaml {
+  app: ApplicationEntity;
+  /** The manifest as applied — branch environment and overrides baked in. */
+  manifest: ApplicationManifest;
+  branch: string;
+  repositoryId: string;
+  buildPaths: { dockerfile: string; context: string; subPath?: string };
+  skipBuild: boolean;
+  /** The image to deploy when `skipBuild` — null when a build is expected. */
+  resolvedImageRef: string | null;
+  /**
+   * The services this preparation brought up, `name=block`. Reported because
+   * preparing is the step that provisions databases: a caller that fails
+   * afterwards has to be able to say what already exists rather than leave a
+   * person to find a Postgres nobody named.
+   */
+  attachedServices: string[];
+  /** True when an application left behind by an earlier attempt was reused. */
+  adopted: boolean;
+}
+
+/**
+ * A caller that owns more of the sequence than this service does — the apply,
+ * which prepares N applications before it writes anything to GitHub.
+ */
+export interface PrepareOptions {
+  /**
+   * Reuse this application row instead of looking one up by identity.
+   *
+   * The apply cuts a branch per base commit, so an attempt abandoned on
+   * `flui/deploy-<A7>` cannot be found again from `flui/deploy-<B7>`: the
+   * branch is part of the identity. The caller that knows those two attempts
+   * are the same intent passes the row here, and the alternative it avoids is
+   * a second application — with a second database — beside the first.
+   *
+   * Ignored, with a log line, when the row is gone or sits on another cluster:
+   * a deleted orphan means a person already dealt with it.
+   */
+  adoptApplicationId?: string;
+}
 
 const SERVICE_REF_SKIP_REASON = {
   'not-found': 'matches no app',
@@ -109,6 +186,17 @@ export class ApplicationSourceDeployService {
     private readonly clusterDnsZoneService: ClusterDnsZoneService,
     @Inject(forwardRef(() => ClustersService))
     private readonly clustersService: ClustersService,
+    private readonly repoFactsReader: RepoFactsReaderService,
+    @Inject(forwardRef(() => EndpointDiagnosisService))
+    private readonly endpointDiagnosisService: EndpointDiagnosisService,
+    // Provisioning a catalog block from here would mean importing the module
+    // that already imports this one, so the implementation is injected through
+    // a token from a module above both. Optional: a build without it still
+    // deploys applications that attach nothing, and refuses — loudly — the ones
+    // that do (see `assertAttachable`).
+    @Optional()
+    @Inject(ATTACHED_SERVICES_PORT)
+    private readonly attachedServices?: AttachedServicesPort,
   ) {}
 
   /**
@@ -123,11 +211,89 @@ export class ApplicationSourceDeployService {
     dto: DeployFromYamlDto,
     userEmail: string,
   ): Promise<DeployFromYamlResponseDto> {
-    let manifest = this.parseAndValidate(dto.yaml);
-
     if (dto.validateOnly) {
-      return this.buildValidationPreview(userId, manifest, dto);
+      return this.buildValidationPreview(
+        userId,
+        this.parseAndValidate(dto.yaml),
+        dto,
+      );
     }
+
+    const prepared = await this.prepareApplicationFromYaml(
+      userId,
+      dto,
+      userEmail,
+    );
+    const { app, manifest, branch, buildPaths, skipBuild, resolvedImageRef } =
+      prepared;
+
+    if (skipBuild && resolvedImageRef) {
+      const reason = dto.imageRef
+        ? `flui deploy --image ${dto.imageRef}`
+        : 'flui deploy --no-build (config-only update)';
+      this.logger.log(
+        `skipBuild: deploying ${app.slug} with imageRef=${resolvedImageRef}`,
+      );
+      const operation = await this.applicationDeployService.deploy(app.id, {
+        imageRef: resolvedImageRef,
+        reason,
+      });
+      return {
+        applicationId: app.id,
+        slug: app.slug,
+        name: app.name,
+        status: 'PROVISIONING',
+        operationId: operation.id,
+      };
+    }
+
+    const workflowResult =
+      await this.applicationWorkflowService.generateAndCommitWorkflowV3(
+        app.id,
+        userId,
+        {
+          branch,
+          isFluiManaged: true,
+          dockerfilePath: buildPaths.dockerfile,
+          buildContext: buildPaths.context,
+          buildArgs: manifest.build?.args,
+          subPath: buildPaths.subPath,
+        },
+      );
+
+    return {
+      applicationId: app.id,
+      slug: app.slug,
+      name: app.name,
+      status: 'AWAITING_BUILD',
+      workflowUrl: workflowResult.workflowUrl,
+      workflowRunUrl: workflowResult.runId
+        ? `https://github.com/${dto.repoFullName}/actions/runs/${workflowResult.runId}`
+        : undefined,
+    };
+  }
+
+  /**
+   * Everything a manifest deploy does *before* it writes to GitHub: validate,
+   * resolve the repository and the build paths, find or create the
+   * Application, merge its environment, and bring up the services the manifest
+   * attaches.
+   *
+   * Split out because the apply path needs exactly this and not the tail: it
+   * creates N applications on one branch and then lands one atomic commit for
+   * all of them, whereas `deployFromYaml`'s tail commits one workflow per call.
+   * Nothing here touches the repository, so a caller that fails afterwards has
+   * left rows in the database and nothing in anyone's git history — rows that
+   * may already own a running database, which is why the result names the
+   * services it brought up and why `opts.adoptApplicationId` exists.
+   */
+  async prepareApplicationFromYaml(
+    userId: string,
+    dto: DeployFromYamlDto,
+    userEmail: string,
+    opts?: PrepareOptions,
+  ): Promise<PreparedApplicationFromYaml> {
+    let manifest = this.parseAndValidate(dto.yaml);
 
     await this.assertGitHubConnected(userId);
     await this.assertGhcrPatPresent(userId);
@@ -162,12 +328,17 @@ export class ApplicationSourceDeployService {
 
     const buildPaths = this.resolveBuildPaths(manifest);
 
-    let app = await this.findExistingApp(
-      dto.clusterId,
-      repository.id,
-      branch,
-      manifest.metadata.name,
-    );
+    const adopted = opts?.adoptApplicationId
+      ? await this.resolveAdoptedApp(opts.adoptApplicationId, dto.clusterId)
+      : null;
+    let app =
+      adopted ??
+      (await this.findExistingApp(
+        dto.clusterId,
+        repository.id,
+        branch,
+        manifest.metadata.name,
+      ));
 
     const effectiveOverrides = this.resolveInstallOverrides(
       manifest,
@@ -175,6 +346,11 @@ export class ApplicationSourceDeployService {
       dto.overrides,
     );
     manifest = applyDeployOverrides(manifest, effectiveOverrides);
+
+    // Before anything is created: a `deploy.services` we cannot honour must be
+    // a refusal here, not an application that comes up green without its
+    // database. Same call the `--validate-only` preview makes.
+    await this.validateAttachedServices(manifest);
 
     // Resolve the imageRef to use when skipping the build:
     //   1. dto.imageRef (explicit) — wins
@@ -285,50 +461,63 @@ export class ApplicationSourceDeployService {
       app = await this.applicationsRepository.findById(app.id);
     }
 
-    if (skipBuild && resolvedImageRef) {
-      const reason = dto.imageRef
-        ? `flui deploy --image ${dto.imageRef}`
-        : 'flui deploy --no-build (config-only update)';
-      this.logger.log(
-        `skipBuild: deploying ${app.slug} with imageRef=${resolvedImageRef}`,
-      );
-      const operation = await this.applicationDeployService.deploy(app.id, {
-        imageRef: resolvedImageRef,
-        reason,
-      });
-      return {
-        applicationId: app.id,
-        slug: app.slug,
-        name: app.name,
-        status: 'PROVISIONING',
-        operationId: operation.id,
-      };
-    }
-
-    const workflowResult =
-      await this.applicationWorkflowService.generateAndCommitWorkflowV3(
-        app.id,
-        userId,
-        {
-          branch,
-          isFluiManaged: true,
-          dockerfilePath: buildPaths.dockerfile,
-          buildContext: buildPaths.context,
-          buildArgs: manifest.build?.args,
-          subPath: buildPaths.subPath,
-        },
-      );
+    // The services the manifest attaches are brought up and wired in BEFORE any
+    // build or deploy is started: the deploy renders `app.env`, so an
+    // attachment that landed afterwards would ship one rollout too late — the
+    // application would run once without its own database.
+    const reconciled = await this.reconcileAttachedServices(app, manifest, {
+      userId,
+      userEmail,
+      clusterId: dto.clusterId,
+    });
+    app = reconciled.app;
 
     return {
-      applicationId: app.id,
-      slug: app.slug,
-      name: app.name,
-      status: 'AWAITING_BUILD',
-      workflowUrl: workflowResult.workflowUrl,
-      workflowRunUrl: workflowResult.runId
-        ? `https://github.com/${dto.repoFullName}/actions/runs/${workflowResult.runId}`
-        : undefined,
+      app,
+      manifest,
+      branch,
+      repositoryId: repository.id,
+      buildPaths,
+      skipBuild,
+      resolvedImageRef,
+      attachedServices: reconciled.attachments.map(
+        (a) => `${a.name}=${a.block}`,
+      ),
+      adopted: adopted !== null,
     };
+  }
+
+  /**
+   * The row a caller asked to reuse, when reusing it is defensible.
+   *
+   * Two refusals, both of which fall back to the ordinary lookup rather than
+   * failing: the row is gone (a person removed the orphan, which is exactly
+   * the outcome the removal preview exists to produce), or it belongs to
+   * another cluster (an identity this deploy has no claim on). Neither is an
+   * error — but neither is silent, because a reuse that did not happen changes
+   * what the next screen shows.
+   */
+  private async resolveAdoptedApp(
+    applicationId: string,
+    clusterId: string,
+  ): Promise<ApplicationEntity | null> {
+    const app = await this.applicationsRepository.findById(applicationId);
+    if (!app) {
+      this.logger.warn(
+        `Asked to reuse application ${applicationId}, which no longer exists — creating a new one instead.`,
+      );
+      return null;
+    }
+    if (app.clusterId !== clusterId) {
+      this.logger.warn(
+        `Asked to reuse application ${applicationId}, which is on cluster ${app.clusterId} and not ${clusterId} — creating a new one instead.`,
+      );
+      return null;
+    }
+    this.logger.log(
+      `Reusing application ${app.slug} (${app.id}) left behind by an earlier attempt.`,
+    );
+    return app;
   }
 
   /**
@@ -376,6 +565,7 @@ export class ApplicationSourceDeployService {
       applyEnvironmentProfile(manifest, dto.branch ?? 'main'),
       dto.overrides,
     );
+    await this.validateAttachedServices(preview);
     const checks = await this.installationChecks(userId, preview, dto);
     return {
       applicationId: '',
@@ -426,25 +616,68 @@ export class ApplicationSourceDeployService {
       .getZoneAssignment(dto.clusterId)
       .catch(() => null);
 
-    return checksFor({
-      clusterFound: cluster.found,
-      clusterReady: cluster.ready,
-      clusterName: cluster.name,
-      repositoryConnected: dto.repoFullName ? !!repository : null,
-      repoFullName: dto.repoFullName ?? null,
-      githubConnected,
-      registryCredential,
-      existingApp: existingApp?.slug ?? null,
-      capacity: await this.readCapacity(dto.clusterId, manifest),
-      exposure:
-        manifest.deploy?.exposure === 'internal' ? 'internal' : 'public',
-      dnsZone: zoneName(zone),
-      fqdn: manifest.deploy?.domain?.fqdn ?? null,
-      targetIsControlCluster: cluster.isControl,
-      hasWorkloadCluster: cluster.isControl
-        ? await this.hasWorkloadCluster()
-        : null,
-    });
+    const repo = await this.repoFacts(userId, dto, branch, !!repository);
+
+    return allChecksFor(
+      {
+        clusterFound: cluster.found,
+        clusterReady: cluster.ready,
+        clusterName: cluster.name,
+        repositoryConnected: dto.repoFullName ? !!repository : null,
+        repoFullName: dto.repoFullName ?? null,
+        githubConnected,
+        registryCredential,
+        existingApp: existingApp?.slug ?? null,
+        capacity: await this.readCapacity(dto.clusterId, manifest),
+        exposure:
+          manifest.deploy?.exposure === 'internal' ? 'internal' : 'public',
+        dnsZone: zoneName(zone),
+        fqdn: manifest.deploy?.domain?.fqdn ?? null,
+        targetIsControlCluster: cluster.isControl,
+        hasWorkloadCluster: cluster.isControl
+          ? await this.hasWorkloadCluster()
+          : null,
+      },
+      manifestSelfFacts(manifest),
+      repo,
+    );
+  }
+
+  /**
+   * The repository, read at the ref being validated, or nothing.
+   *
+   * `undefined` — not `read: false` — when no repository was named: the answer
+   * is then byte-identical to what this endpoint has always returned, plus the
+   * currency note, which needs no repository. A repository named but not
+   * connected is decided here rather than by attempting a read, because that
+   * is the fact we hold and no GitHub call can improve on it.
+   */
+  private async repoFacts(
+    userId: string,
+    dto: DeployFromYamlDto,
+    branch: string,
+    connected: boolean,
+  ): Promise<RepoFacts | undefined> {
+    const fullName = dto.repoFullName;
+    if (!fullName) return undefined;
+    if (!connected) {
+      return {
+        read: false,
+        reason: 'not-connected',
+        repoFullName: fullName,
+        ref: branch,
+      };
+    }
+    const [owner, repo] = fullName.split('/');
+    if (!owner || !repo) {
+      return {
+        read: false,
+        reason: 'not-found',
+        repoFullName: fullName,
+        ref: branch,
+      };
+    }
+    return this.repoFactsReader.factsFor(userId, { owner, repo, ref: branch });
   }
 
   private async readCluster(clusterId: string): Promise<{
@@ -729,6 +962,24 @@ export class ApplicationSourceDeployService {
         ? { ...app.metadata, [ENDPOINT_SPEC_METADATA_KEY]: endpointSpecJson }
         : app.metadata,
     });
+    // A push that ADDS a service must create it, and a push that changes its
+    // wiring must rewire it. Without this the git-authoritative path re-reads
+    // `deploy.env` only, and a service added in a commit would never exist.
+    const refreshed = await this.applicationsRepository.findById(app.id);
+    if (refreshed) {
+      // The same refusals `flui deploy` makes must be made here. A name that collides with the
+      // application's own `deploy.env`, or a service on a manifest with no port, was rejected on
+      // the interactive path and merged silently on the push path — and a silent merge means the
+      // value someone can still read in git is not the value that runs.
+      await this.validateAttachedServices(manifest);
+      await this.reconcileAttachedServices(refreshed, manifest, {
+        userId: app.userId,
+        // No person is on the other end of a push; the owner's address is read
+        // from the application itself where a namespace depends on it.
+        clusterId: app.clusterId,
+      });
+    }
+
     this.logger.log(
       `Re-applied flui.yaml for ${app.slug} at ${short} — git is authoritative on this deploy.`,
     );
@@ -747,6 +998,107 @@ export class ApplicationSourceDeployService {
           `Pass --env ${s.name}=… to keep a different value.`,
       );
     }
+  }
+
+  // ─── Attached services (`deploy.services`) ─────────────────────────────────
+
+  /** What the manifest attaches, in the shape the port speaks. */
+  private declaredServices(
+    manifest: ApplicationManifest,
+  ): AttachedServiceSpec[] {
+    const services = (manifest.deploy as { services?: AttachedServiceSpec[] })
+      .services;
+    return services ?? [];
+  }
+
+  /**
+   * Refuse a manifest whose attached services cannot be honoured — before an
+   * application row exists.
+   *
+   * Two refusals, and both matter more than they look:
+   *   - no implementation of the port at all. A manifest that DECLARES services
+   *     must never deploy without them: it would come up green, answer health
+   *     checks, and have no database.
+   *   - a name declared both by `deploy.env` and by a service's env. Whichever
+   *     list merges second wins, silently, and the loser is a variable someone
+   *     wrote down and can still read in git.
+   */
+  private async validateAttachedServices(
+    manifest: ApplicationManifest,
+  ): Promise<void> {
+    const services = this.declaredServices(manifest);
+    if (!services.length) return;
+
+    if (!this.attachedServices) {
+      throw new BadRequestException(
+        'This manifest declares deploy.services, but this deployment of Flui ' +
+          'cannot provision building blocks. Deploying it would start the ' +
+          'application without them — remove the services or use a build that ' +
+          'supports them.',
+      );
+    }
+
+    const ownEnvNames = new Set(
+      normalizeManifestEnv(manifest.deploy.env).map((e) => e.name),
+    );
+    const clashes = services
+      .flatMap((svc) => (svc.env ?? []).map((e) => e.name))
+      .filter((name) => ownEnvNames.has(name));
+    if (clashes.length) {
+      throw new BadRequestException(
+        `deploy.env and deploy.services both declare ${[...new Set(clashes)].join(', ')}. ` +
+          'One of the two would silently win — give the service env a different name.',
+      );
+    }
+
+    await this.attachedServices.validate(services);
+  }
+
+  /**
+   * Bring the attached services up and write the env that reaches them.
+   *
+   * Returns the application as it now stands, because the env it carries has
+   * changed and every caller downstream renders from it — and the attachments
+   * it brought up, because a caller that fails after this point has to be able
+   * to name the databases that now exist.
+   */
+  private async reconcileAttachedServices(
+    app: ApplicationEntity,
+    manifest: ApplicationManifest,
+    ctx: { userId: string; userEmail?: string; clusterId: string },
+  ): Promise<{ app: ApplicationEntity; attachments: AttachedServiceRecord[] }> {
+    const services = this.declaredServices(manifest);
+    if (!services.length || !this.attachedServices)
+      return { app, attachments: [] };
+
+    const result = await this.attachedServices.reconcile({
+      applicationId: app.id,
+      clusterId: ctx.clusterId,
+      userId: ctx.userId,
+      userEmail: ctx.userEmail,
+      services,
+    });
+
+    const env = mergeLinkEnv(
+      (app.env as ApplicationEnvVar[]) ?? [],
+      result.env,
+      result.ownedNames,
+    );
+    await this.applicationsRepository.update(app.id, { env });
+
+    const attachmentsLabel = result.attachments
+      .map((a) => `${a.name}=${a.block}`)
+      .join(', ');
+    this.logger.log(
+      `${app.slug}: ${result.attachments.length} attached service(s) ready ` +
+        `(${attachmentsLabel}), ` +
+        `${result.env.length} env entries wired`,
+    );
+
+    return {
+      app: (await this.applicationsRepository.findById(app.id)) ?? app,
+      attachments: result.attachments,
+    };
   }
 
   private async buildManifestEnv(
@@ -966,52 +1318,95 @@ export class ApplicationSourceDeployService {
   }
 
   /**
-   * Ensure a public AppEndpoint exists for the application based on the
-   * `flui.endpoint.spec` previously stored in `app.metadata` by `deployFromYaml`.
+   * The public endpoint an `exposure: public` application is owed.
    *
-   * Idempotent: if an endpoint already exists for the app, just (re)triggers
-   * reconciliation. Safe to call from the deploy processor's finalize step,
-   * after the K8s Service is ready.
+   * Derived from the exposure, never from `deploy.domain`. Reading the domain
+   * block as the trigger meant the most common manifest there is — a port, a
+   * healthcheck, nothing else — asked for no endpoint at all: build green,
+   * image published, pods 1/1, and not one host reachable, with nothing said
+   * anywhere. `deploy.domain` is back to what it was always meant to be: the
+   * override for an author who wants a name of their own.
    *
-   * Failures are non-fatal: warnings are logged and the deploy is not failed.
+   * The hostname itself is minted by `AppEndpointService` through
+   * `EndpointModeResolverService` — the cluster's assigned zone when it has
+   * one, nip.io off the master IP when it does not — which is the same road
+   * the catalog takes.
+   *
+   * Idempotent: an application that already has endpoints only gets them
+   * reconciled again.
+   *
+   * A public application whose hostname cannot be minted is a deploy that did
+   * not succeed, so this throws: the deploy processor fails the operation on
+   * it, the same road every other phase failure takes, and the reason is left
+   * on the application so the reconciler cannot overwrite the verdict with the
+   * pods' own good health.
    */
   async ensurePublicEndpoint(applicationId: string): Promise<void> {
     const app = await this.applicationsRepository.findById(applicationId);
-    if (!app) return;
-    if (app.exposure !== ApplicationExposure.PUBLIC) return;
-
-    const specRaw = app.metadata?.[ENDPOINT_SPEC_METADATA_KEY];
-    if (!specRaw) return;
-
-    let spec: {
-      auto?: boolean;
-      tls?: boolean;
-      fqdn?: string;
-      hostnameMode?: 'ip' | 'domain';
-      certChallenge?: 'http-01' | 'dns-01';
-      certificateProvider?: 'lets-encrypt' | 'lets-encrypt-staging';
-    };
-    try {
-      spec = JSON.parse(specRaw);
-    } catch {
+    if (!app) {
       this.logger.warn(
-        `ensurePublicEndpoint(${applicationId}): invalid endpoint spec JSON in metadata, skipping`,
+        `ensurePublicEndpoint(${applicationId}): no such application — nothing to expose`,
+      );
+      return;
+    }
+    const label = `ensurePublicEndpoint(${app.slug})`;
+
+    // Whatever this run decides replaces what the last one left behind — an
+    // application that has since been made internal, or handed an endpoint by
+    // hand, must not keep reading as failed.
+    await this.clearEndpointFailure(app);
+
+    if (app.exposure !== ApplicationExposure.PUBLIC) {
+      this.logger.log(
+        `${label}: exposure=${app.exposure} — no public endpoint is owed`,
+      );
+      return;
+    }
+    if (app.category === ApplicationCategory.SYSTEM || app.systemProtected) {
+      this.logger.log(
+        `${label}: system application — the platform owns its ingress, not this path`,
+      );
+      return;
+    }
+    const catalogInstallId = app.metadata?.catalogInstallId;
+    if (catalogInstallId) {
+      this.logger.log(
+        `${label}: catalog install ${catalogInstallId} owns this application's endpoint`,
       );
       return;
     }
 
-    if (spec.auto === false) return;
+    const spec = this.readEndpointSpec(app);
+    if (!spec) {
+      throw await this.endpointFailure(
+        app,
+        `the stored ${ENDPOINT_SPEC_METADATA_KEY} is not readable JSON, so the domain this manifest declared cannot be honoured`,
+      );
+    }
+    if (spec.auto === false) {
+      this.logger.warn(
+        `${label}: deploy.domain.auto=false — no endpoint created; the application stays unreachable from outside until one is configured`,
+      );
+      return;
+    }
 
-    const existing =
-      await this.appEndpointService.listByApplicationId(applicationId);
+    // Only a public endpoint discharges what a public application is owed. An
+    // application moved from `internal` to `public` still carries its internal
+    // row, and counting that one would send this path home having created
+    // nothing — the same silence this whole repair exists to remove.
+    const existing = (
+      await this.appEndpointService.listByApplicationId(applicationId)
+    ).filter((ep) => ep.endpointType !== EndpointType.INTERNAL);
     if (existing.length > 0) {
-      // Endpoint already created — just retrigger reconciliation
+      this.logger.log(
+        `${label}: ${existing.length} public endpoint(s) already exist — reconciling them`,
+      );
       for (const ep of existing) {
         this.appEndpointReconciliationService
           .reconcile(ep.id)
           .catch((err) =>
             this.logger.warn(
-              `ensurePublicEndpoint(${applicationId}): reconcile of existing endpoint ${ep.id} failed: ${err instanceof Error ? err.message : String(err)}`,
+              `${label}: reconcile of existing endpoint ${ep.id} failed: ${errorMessage(err)}`,
             ),
           );
       }
@@ -1028,53 +1423,166 @@ export class ApplicationSourceDeployService {
       ? await this.clusterDnsZoneService.resolveWildcardIssuer(app.clusterId)
       : null;
 
-    let hostnameMode: HostnameMode | undefined;
-    if (spec.hostnameMode === 'ip') hostnameMode = HostnameMode.IP;
-    else if (spec.hostnameMode === 'domain') hostnameMode = HostnameMode.DOMAIN;
-
-    let certChallenge: CertChallenge | undefined;
-    if (spec.certChallenge === 'http-01') certChallenge = CertChallenge.HTTP_01;
-    else if (spec.certChallenge === 'dns-01')
-      certChallenge = CertChallenge.DNS_01;
-
-    let certificateProvider: CertificateProvider | undefined;
-    if (spec.certificateProvider === 'lets-encrypt') {
-      certificateProvider = CertificateProvider.LETS_ENCRYPT;
-    } else if (spec.certificateProvider === 'lets-encrypt-staging') {
-      certificateProvider = CertificateProvider.LETS_ENCRYPT_STAGING;
-    } else {
-      certificateProvider = wildcardIssuer?.certificateProvider;
+    let endpoint: AppEndpointEntity;
+    try {
+      endpoint = await this.appEndpointService.createEndpoint(app.clusterId, {
+        applicationId,
+        clusterDnsZoneId: assignment?.id,
+        certificateRequired: spec.tls !== false,
+        ...(spec.fqdn ? { fqdn: spec.fqdn } : {}),
+        ...this.endpointOverrides(spec, wildcardIssuer?.certificateProvider),
+      });
+    } catch (err) {
+      throw await this.endpointFailure(app, errorMessage(err));
     }
 
-    try {
-      const endpoint = await this.appEndpointService.createEndpoint(
-        app.clusterId,
-        {
-          applicationId,
-          clusterDnsZoneId: assignment?.id,
-          certificateRequired: spec.tls !== false,
-          ...(spec.fqdn ? { fqdn: spec.fqdn } : {}),
-          ...(hostnameMode ? { hostnameMode } : {}),
-          ...(certChallenge ? { certChallenge } : {}),
-          ...(certificateProvider ? { certificateProvider } : {}),
-        },
-      );
-      this.logger.log(
-        `ensurePublicEndpoint(${applicationId}): endpoint created fqdn=${endpoint.fqdn} mode=${endpoint.hostnameMode}/${endpoint.certChallenge} tls=${spec.tls !== false}`,
-      );
+    this.logger.log(
+      `${label}: endpoint created fqdn=${endpoint.fqdn} mode=${endpoint.hostnameMode}/${endpoint.certChallenge} ` +
+        `tls=${spec.tls !== false} — ${hostnameOrigin(spec, assignment)}`,
+    );
 
-      this.appEndpointReconciliationService
-        .reconcile(endpoint.id)
-        .catch((err) =>
-          this.logger.warn(
-            `ensurePublicEndpoint(${applicationId}): reconcile failed for ${endpoint.id}: ${err instanceof Error ? err.message : String(err)}`,
-          ),
-        );
+    this.appEndpointReconciliationService
+      .reconcile(endpoint.id)
+      .catch((err) =>
+        this.logger.warn(
+          `${label}: reconcile failed for ${endpoint.id}: ${errorMessage(err)}`,
+        ),
+      );
+  }
+
+  /**
+   * The `deploy.domain` fields that are an override of how the endpoint is
+   * named and certified — the catalog maps its own domain spec the same way.
+   * A field the manifest left out is left out here too, so the endpoint
+   * resolver decides it.
+   */
+  private endpointOverrides(
+    spec: EndpointSpec,
+    wildcardProvider: CertificateProvider | undefined,
+  ): {
+    hostnameMode?: HostnameMode;
+    certChallenge?: CertChallenge;
+    certificateProvider?: CertificateProvider;
+  } {
+    const hostnameMode = HOSTNAME_MODES[spec.hostnameMode ?? ''];
+    const certChallenge = CERT_CHALLENGES[spec.certChallenge ?? ''];
+    const certificateProvider =
+      CERTIFICATE_PROVIDERS[spec.certificateProvider ?? ''] ?? wildcardProvider;
+    return {
+      ...(hostnameMode ? { hostnameMode } : {}),
+      ...(certChallenge ? { certChallenge } : {}),
+      ...(certificateProvider ? { certificateProvider } : {}),
+    };
+  }
+
+  /**
+   * The manifest's `deploy.domain` as stored, `{}` when the manifest declared
+   * none — the endpoint is owed either way — and `null` when what is stored
+   * cannot be read at all, which is a public application whose declared name
+   * we would otherwise silently replace with one of our own.
+   */
+  private readEndpointSpec(app: ApplicationEntity): EndpointSpec | null {
+    const raw = app.metadata?.[ENDPOINT_SPEC_METADATA_KEY];
+    if (raw === undefined || raw === null || raw === '') return {};
+    if (typeof raw === 'object') return raw as EndpointSpec;
+    try {
+      return JSON.parse(String(raw)) as EndpointSpec;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Records why the application has no endpoint and returns the error the
+   * deploy fails with. Writing the metadata marker is what keeps the verdict
+   * alive past the next reconciliation — see `endpoint-failure.util`. Writing
+   * the diagnosis is what puts the same fact where a person actually looks
+   * for it — the dashboard's Diagnoses tab — see `EndpointDiagnosisService`.
+   * Neither write is allowed to hide the real failure: both are logged and
+   * swallowed on their own, the thrown error is unconditional.
+   */
+  private async endpointFailure(
+    app: ApplicationEntity,
+    cause: string,
+  ): Promise<Error> {
+    const reason =
+      `exposure: public, but no public endpoint could be created — ${cause}. ` +
+      `The application is running and unreachable from outside.`;
+    try {
+      await this.applicationsRepository.update(app.id, {
+        metadata: withEndpointFailure(app.metadata, reason),
+      });
     } catch (err) {
       this.logger.warn(
-        `ensurePublicEndpoint(${applicationId}) failed: ${err instanceof Error ? err.message : String(err)}`,
+        `ensurePublicEndpoint(${app.slug}): could not record the endpoint failure on the application: ${errorMessage(err)}`,
       );
     }
+    try {
+      await this.endpointDiagnosisService.record(app, cause);
+    } catch (err) {
+      this.logger.warn(
+        `ensurePublicEndpoint(${app.slug}): could not write the diagnosis for the endpoint failure: ${errorMessage(err)}`,
+      );
+    }
+    this.logger.error(`ensurePublicEndpoint(${app.slug}): ${reason}`);
+    return new Error(reason);
+  }
+
+  /**
+   * The diagnosis is resolved whether or not the marker is still there: an
+   * endpoint created by hand already cleared the marker, so a guard on it left
+   * the critical diagnosis open for good — on an application anybody could
+   * reach.
+   */
+  private async clearEndpointFailure(app: ApplicationEntity): Promise<void> {
+    if (readEndpointFailure(app.metadata)) {
+      await this.applicationsRepository.update(app.id, {
+        metadata: withoutEndpointFailure(app.metadata),
+      });
+    }
+    try {
+      await this.endpointDiagnosisService.resolve(app.id);
+    } catch (err) {
+      this.logger.warn(
+        `ensurePublicEndpoint(${app.slug}): could not resolve the endpoint-failure diagnosis: ${errorMessage(err)}`,
+      );
+    }
+  }
+}
+
+const HOSTNAME_MODES: Record<string, HostnameMode | undefined> = {
+  ip: HostnameMode.IP,
+  domain: HostnameMode.DOMAIN,
+};
+
+const CERT_CHALLENGES: Record<string, CertChallenge | undefined> = {
+  'http-01': CertChallenge.HTTP_01,
+  'dns-01': CertChallenge.DNS_01,
+};
+
+const CERTIFICATE_PROVIDERS: Record<string, CertificateProvider | undefined> = {
+  'lets-encrypt': CertificateProvider.LETS_ENCRYPT,
+  'lets-encrypt-staging': CertificateProvider.LETS_ENCRYPT_STAGING,
+};
+
+/** Where the hostname came from, said in the log that records the endpoint. */
+function hostnameOrigin(
+  spec: EndpointSpec,
+  assignment: { dnsZone?: { zoneName?: string } } | null,
+): string {
+  if (spec.fqdn) return 'fqdn declared by the manifest';
+  const zone = assignment?.dnsZone?.zoneName;
+  return zone
+    ? `minted under the cluster zone ${zone}`
+    : 'no cluster zone — minted on nip.io off the master IP';
+}
+
+function errorMessage(err: unknown): string {
+  if (err instanceof Error) return err.message;
+  try {
+    return JSON.stringify(err) ?? String(err);
+  } catch {
+    return String(err);
   }
 }
 
@@ -1113,9 +1621,27 @@ function memoryToMi(value?: string | number | null): number | null {
   return Math.round(n * factor);
 }
 
-/** The assignment shape varies by caller; only its zone name is needed here. */
+/**
+ * The assignment shape varies by caller. `getZoneAssignment` returns a
+ * `ClusterDnsZoneEntity`, which holds the name one level down in its `dnsZone`
+ * relation — reading only the top level answered `null` for every cluster,
+ * including one with a zone bound and in sync, and the exposure check then told
+ * the author their cluster had no zone.
+ */
 function zoneName(zone: unknown): string | null {
   if (!zone || typeof zone !== 'object') return null;
-  const named = zone as { zoneName?: string; name?: string; zone?: string };
-  return named.zoneName ?? named.name ?? named.zone ?? null;
+  const named = zone as {
+    zoneName?: string;
+    name?: string;
+    zone?: string;
+    dnsZone?: { zoneName?: string; name?: string };
+  };
+  return (
+    named.zoneName ??
+    named.name ??
+    named.zone ??
+    named.dnsZone?.zoneName ??
+    named.dnsZone?.name ??
+    null
+  );
 }

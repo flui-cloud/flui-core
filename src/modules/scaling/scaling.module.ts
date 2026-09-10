@@ -13,6 +13,7 @@ import { CrashPatternMatcherService } from './services/crash-pattern-matcher.ser
 import { DiagnosticEngineService } from './services/diagnostic-engine.service';
 import { DeploymentGuardService } from './services/deployment-guard.service';
 import { CrashRecoveryService } from './services/crash-recovery.service';
+import { EndpointDiagnosisService } from './services/endpoint-diagnosis.service';
 import {
   ACTUATOR_DEPLOYER,
   ACTUATOR_MEMORY_PARSER,
@@ -44,6 +45,7 @@ import { CrashDiagnosesController } from './controllers/crash-diagnoses.controll
     DiagnosticEngineService,
     DeploymentGuardService,
     CrashRecoveryService,
+    EndpointDiagnosisService,
     ActuatorService,
     PodDebugService,
     {
@@ -58,6 +60,7 @@ import { CrashDiagnosesController } from './controllers/crash-diagnoses.controll
   exports: [
     DeploymentGuardService,
     CrashRecoveryService,
+    EndpointDiagnosisService,
     ActuatorService,
     PodDebugService,
   ],

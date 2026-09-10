@@ -14,6 +14,7 @@ import { AppResourceEntity } from '../entities/app-resource.entity';
 import { ApplicationStatus } from '../enums/application-status.enum';
 import { ApplicationCategory } from '../enums/application-category.enum';
 import { ApplicationResourceStatus } from '../enums/application-resource-status.enum';
+import { readEndpointFailure } from '../utils/endpoint-failure.util';
 
 type K8sResource = {
   status?: {
@@ -334,6 +335,17 @@ export class ApplicationReconciliationService {
           `Could not mark release as FAILED for app ${app.id}: ${err.message}`,
         );
       }
+    }
+
+    // A public application that never got its endpoint is unreachable, and its
+    // pods say nothing about it — they are healthy. Without this the verdict
+    // the deploy wrote would be erased by the first refresh and the row would
+    // read `running` again while every host answers 404.
+    const endpointFailure = readEndpointFailure(app.metadata);
+    if (endpointFailure && newStatus === ApplicationStatus.RUNNING) {
+      newStatus = ApplicationStatus.FAILED;
+      newReconciliationStatus = ReconciliationStatus.ERROR;
+      summary.errors.push(endpointFailure);
     }
 
     summary.newStatus = newStatus;

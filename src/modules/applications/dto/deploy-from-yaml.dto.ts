@@ -8,6 +8,7 @@ import {
   IsIn,
   IsFQDN,
   ValidateNested,
+  ValidateIf,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 
@@ -88,9 +89,19 @@ export class DeployFromYamlDto {
   clusterId: string;
 
   @ApiProperty({
-    description: 'GitHub repository full name (owner/repo)',
+    description:
+      'GitHub repository full name (owner/repo). Required to deploy; optional with validateOnly, ' +
+      'where omitting it leaves the repository checks unanswered instead of failing them.',
     example: 'acme/my-astro-app',
+    required: false,
   })
+  // Required to deploy, optional to validate — and the pipe has to know, because it runs before the
+  // controller does. Both surfaces already told callers this was allowed: `app_manifest_validate`
+  // says "omit it and the repository check is left unanswered rather than failed", and
+  // `app_deploy_from_yaml` says "set validateOnly: true to check the manifest without deploying or
+  // needing a repo". Neither was true: the unconditional `@IsNotEmpty` refused the request with a
+  // 400 before anything read `validateOnly`.
+  @ValidateIf((dto: DeployFromYamlDto) => dto.validateOnly !== true)
   @IsString()
   @IsNotEmpty()
   repoFullName: string;

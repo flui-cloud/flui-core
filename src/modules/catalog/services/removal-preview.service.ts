@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { ClusterEntity } from '../../infrastructure/clusters/entities/cluster.entity';
@@ -16,7 +16,13 @@ import { formatStorageBytes } from '../../../common/utils/storage-quantity.util'
 import {
   RemovalPreviewDto,
   RemovalPreviewVolumeDto,
+  RemovalSnapshotOfferDto,
 } from '../dto/removal-preview.dto';
+import {
+  ATTACHED_SERVICES_PORT,
+  AttachedServicesPort,
+} from '../../applications/interfaces/attached-services.port';
+import { DB_ENGINE_LABEL } from '../../database-console/engine/engine-profile';
 
 /**
  * What `DELETE /applications/:id/install` is about to take away.
@@ -44,6 +50,10 @@ export class RemovalPreviewService {
     private readonly appResources: AppResourcesRepository,
     private readonly volumeClaims: ApplicationVolumeClaimsService,
     private readonly installer: CatalogInstallerService,
+    // The token, not the module: the implementation imports this one.
+    @Optional()
+    @Inject(ATTACHED_SERVICES_PORT)
+    private readonly attachedServices?: AttachedServicesPort,
   ) {}
 
   async preview(applicationId: string): Promise<RemovalPreviewDto> {
@@ -53,9 +63,14 @@ export class RemovalPreviewService {
       app.clusterId,
     );
 
+    // The blocks this application attached go with it, so they are members of
+    // the removal — which is what makes `claimsOf` count their volumes. Without
+    // them a preview of an application with a 10Gi Postgres says "0 volumes",
+    // and the one sentence all three surfaces share would be a lie.
+    const attached = await this.attachedMembers(applicationId);
     const members = install
       ? await this.resolveMembers(install.applicationIds ?? [], app)
-      : [app];
+      : [app, ...attached.apps];
     const removes = install ? 'catalog-install' : 'application';
     const label = install
       ? `Uninstall ${install.displayName}`
@@ -74,6 +89,7 @@ export class RemovalPreviewService {
       totalLabel: formatStorageBytes(0),
       volumesKnown: false,
       dataWarning: null,
+      snapshotOffer: attached.offer,
     };
 
     const cluster = await this.clusters.findOne({
@@ -122,6 +138,57 @@ export class RemovalPreviewService {
       volumesKnown: true,
       dataWarning: this.warn(deduped.length, totalBytes),
     };
+  }
+
+  /**
+   * The blocks an application attached to itself, and the offer to keep their
+   * data first.
+   *
+   * Only for a standalone application: an application that is part of a catalog
+   * install already previews the whole install, and a building block does not
+   * attach services of its own.
+   */
+  private async attachedMembers(applicationId: string): Promise<{
+    apps: ApplicationEntity[];
+    offer: RemovalSnapshotOfferDto[];
+  }> {
+    if (!this.attachedServices) return { apps: [], offer: [] };
+
+    const attachments =
+      await this.attachedServices.attachmentsOf(applicationId);
+    const apps: ApplicationEntity[] = [];
+    const offer: RemovalSnapshotOfferDto[] = [];
+
+    for (const attachment of attachments) {
+      if (!attachment.bbApplicationId) continue;
+      const blockApp = await this.applicationsRepository.findById(
+        attachment.bbApplicationId,
+      );
+      if (!blockApp || blockApp.deletedAt) continue;
+      apps.push(blockApp);
+
+      const engine =
+        (blockApp.labels as Record<string, string> | undefined)?.[
+          DB_ENGINE_LABEL
+        ] ?? null;
+      offer.push({
+        serviceName: attachment.name,
+        block: attachment.block,
+        applicationId: blockApp.id,
+        applicationName: blockApp.name,
+        engine,
+        snapshotEndpoint: engine
+          ? `POST /applications/${blockApp.id}/snapshots`
+          : null,
+        sentence: engine
+          ? `Snapshot "${attachment.name}" (${attachment.block}) before removing it — ` +
+            `its data goes with it and cannot be recovered afterwards.`
+          : `"${attachment.name}" (${attachment.block}) is removed with this application. ` +
+            `Flui cannot snapshot it — copy anything you need out of it first.`,
+      });
+    }
+
+    return { apps, offer };
   }
 
   /** The one sentence. Null only when there provably is no storage to lose. */

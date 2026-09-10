@@ -831,7 +831,7 @@ export class ApplicationManifestGeneratorService {
     const startCommand = this.getStartCommandOverride(app);
     if (!startCommand) return '';
     const escaped = startCommand
-      .replaceAll(String.raw`\\`, String.raw`\\`)
+      .replaceAll('\\', String.raw`\\`)
       .replaceAll('"', String.raw`\"`);
     return (
       '          command: ["/bin/sh", "-c"]\n' +

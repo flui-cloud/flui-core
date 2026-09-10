@@ -1,8 +1,11 @@
 import { z } from 'zod';
+import { CreateApplicationDto } from '../../applications/dto/create-application.dto';
 import { DeployApplicationDto } from '../../applications/dto/deploy-application.dto';
 import { DeployFromYamlDto } from '../../applications/dto/deploy-from-yaml.dto';
 import { ApplicationCategory } from '../../applications/enums/application-category.enum';
+import { ApplicationExposure } from '../../applications/enums/application-exposure.enum';
 import { ApplicationKind } from '../../applications/enums/application-kind.enum';
+import { ApplicationSourceType } from '../../applications/enums/application-source-type.enum';
 import { ApplicationStatus } from '../../applications/enums/application-status.enum';
 import { MCP_SCOPE } from '../constants/mcp-scopes';
 import {
@@ -20,6 +23,7 @@ import {
   defineTool,
   removeApplication,
   resolveClusterId,
+  startedOutcome,
   ToolDef,
 } from './mcp-tool.util';
 
@@ -376,7 +380,10 @@ export const APPLICATION_TOOLS: ToolDef[] = [
       const dto: DeployFromYamlDto = {
         yaml: args.yaml,
         clusterId: await resolveClusterId(ctx, args.clusterId),
-        repoFullName: args.repoFullName ?? '',
+        // Omitted, not blanked. An empty string fails `@IsNotEmpty` in the pipe, which runs before
+        // the controller — so the documented "validateOnly without a repo" was answered with a 400
+        // and the description was telling callers something the code refused.
+        repoFullName: args.repoFullName as string,
         branch: args.branch,
         validateOnly: args.validateOnly,
         envOverrides: args.envOverrides,
@@ -386,6 +393,81 @@ export const APPLICATION_TOOLS: ToolDef[] = [
       // grant only authorises the creations its selector reaches, and a sandbox
       // guest only its own tenancy's cluster. In process none of that ran.
       return ctx.api.post('/applications/deploy-from-yaml', dto);
+    },
+  }),
+  defineTool({
+    name: 'app_deploy_image',
+    routes: ['POST /clusters/:clusterId/applications'],
+    description:
+      'Deploy a CUSTOM application straight from a container image you already have — no repository, no build, no manifest to write. Creates the application and starts its first deploy in one call. This is ONE way to reach a running app and not the required one: it stands equal to repo_map (reads a connected repository and renders the manifest for you) and app_deploy_from_yaml (you write the flui.yaml yourself) — reach for this one when the image already exists and describing the app any other way would be extra work for no reason; Flui is not the only way to get from code to a container, and bringing your own carries the same standing as the two routes that go through it. ' +
+      'clusterId is optional (the sole cluster is used automatically). name identifies the application — a unique slug is generated from it. port is the container port Flui routes traffic to (omit it for a worker with no inbound traffic). exposure is "public" (default: Ingress + certificate + DNS on a public hostname) or "internal" (ClusterIP only, reached through the Flui dashboard\'s proxy). env sets plain, non-secret environment variables — never pass a real secret here: deploy first and set it afterwards with app_variable_set, or ask the person for it with app_variable_request. ' +
+      'Returns the created application together with the deploy operation it started; follow the `note` in the result — it is surface-specific — and confirm with operation_status before telling anyone the app is actually live, since this call only enqueues the deploy.',
+    scope: MCP_SCOPE.APP_WRITE,
+    inputSchema: {
+      image: z
+        .string()
+        .describe(
+          'Container image reference, e.g. "ghcr.io/acme/api:1.4.0" or "nginx:1.25". Any registry Flui can reach works — Flui does not need to have built it.',
+        ),
+      name: z.string(),
+      clusterId: z.string().optional(),
+      port: coerceNumber(z.number().int().min(1).max(65535)).optional(),
+      exposure: z.enum(['public', 'internal']).optional(),
+      env: z
+        .record(z.string(), z.string())
+        .optional()
+        .describe(
+          'Plain (non-secret) environment variables, as name: value. Never put a real secret here.',
+        ),
+    },
+    run: async (args, ctx) => {
+      const clusterId = await resolveClusterId(ctx, args.clusterId);
+      const dto: CreateApplicationDto = {
+        name: args.name,
+        category: ApplicationCategory.USER,
+        sourceType: ApplicationSourceType.DOCKER_IMAGE,
+        sourceConfig: { type: 'docker_image', imageRef: args.image },
+        port: args.port,
+        exposure: args.exposure as ApplicationExposure | undefined,
+        env: args.env
+          ? Object.entries(args.env).map(([name, value]) => ({ name, value }))
+          : undefined,
+        // The whole point of this tool is to ship the image, not merely record
+        // it — without this the app is created with no workload at all and the
+        // description's promise ("reach a running app") would be false.
+        autoDeploy: true,
+      };
+      // `assertCanCreate` runs on the route (and, for a sandbox guest, pins the
+      // creation to its own tenancy cluster) — none of which an in-process call
+      // would ever meet. The route also carries `@ActionCycle`: a credential
+      // with no standing approval gets back a proposal, which `runGated`
+      // already turns into an `input_required` wait — nothing extra to do here.
+      const result = await ctx.api.post<{
+        application?: {
+          id?: string;
+          name?: string;
+          slug?: string;
+          url?: string;
+          internalUrl?: string;
+          endpointStatus?: string;
+          endpointError?: string;
+        };
+        operation?: { id?: string; status?: string } | null;
+      }>(`/clusters/${enc(clusterId)}/applications`, dto);
+      const app = result.application;
+      const op = result.operation;
+      return {
+        id: app?.id,
+        name: app?.name,
+        slug: app?.slug,
+        url: app ? urlForModel(app) : undefined,
+        ...startedOutcome(
+          ctx,
+          op?.id ?? '',
+          op?.status ?? 'PENDING',
+          `Deploy ${args.name}`,
+        ),
+      };
     },
   }),
   defineTool({

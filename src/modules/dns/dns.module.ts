@@ -20,6 +20,7 @@ import { ApplicationEntity } from '../applications/entities/application.entity';
 import { ClusterAuthzInstallEntity } from '../authz/entities/cluster-authz-install.entity';
 import { SandboxTenantEntity } from '../sandbox/entities/sandbox-tenant.entity';
 import { IamModule } from '../iam/iam.module';
+import { ScalingModule } from '../scaling/scaling.module';
 import { ClusterAuthzInstallRepository } from '../authz/repositories/cluster-authz-install.repository';
 
 import { DnsZoneService } from './services/dns-zone.service';
@@ -79,6 +80,7 @@ import { ClusterDnsGateway } from './gateway/cluster-dns.gateway';
     OidcModule,
     WsAuthModule,
     IamModule,
+    forwardRef(() => ScalingModule),
   ],
   providers: [
     DnsZoneService,

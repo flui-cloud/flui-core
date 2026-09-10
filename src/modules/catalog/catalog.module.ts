@@ -18,6 +18,7 @@ import {
 } from './services/catalog-installer.service';
 import { CatalogDependencyResolverService } from './services/catalog-dependency-resolver.service';
 import { CatalogLinkingService } from './services/catalog-linking.service';
+import { BlockConnectionUrlService } from './services/block-connection-url.service';
 import { RemovalPreviewService } from './services/removal-preview.service';
 import { CatalogInstallProcessor } from './processors/catalog-install.processor';
 import { CatalogController } from './controllers/catalog.controller';
@@ -62,6 +63,7 @@ import { EncryptionModule } from '../shared/encryption/encryption.module';
     CatalogInstallerService,
     CatalogDependencyResolverService,
     CatalogLinkingService,
+    BlockConnectionUrlService,
     RemovalPreviewService,
     CatalogInstallProcessor,
     // Instantiated in this module's injector because AppRemovalController mounts
@@ -75,6 +77,7 @@ import { EncryptionModule } from '../shared/encryption/encryption.module';
     CatalogInstallerService,
     CatalogDependencyResolverService,
     CatalogLinkingService,
+    BlockConnectionUrlService,
   ],
 })
 export class CatalogModule {}

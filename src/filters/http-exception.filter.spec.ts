@@ -1,6 +1,7 @@
 import {
   ArgumentsHost,
   ForbiddenException,
+  HttpException,
   NotFoundException,
 } from '@nestjs/common';
 import { HttpExceptionFilter } from './http-exception.filter';
@@ -107,6 +108,55 @@ describe('HttpExceptionFilter', () => {
       estimateRef: '/infrastructure/clusters/c1/scale-preview',
       decideUrl: 'http://localhost:4200/agents/requests/p-1',
       expiresAt: '2026-08-26T09:00:00.000Z',
+    });
+  });
+
+  it('carries what an apply left behind, so a caller can act instead of only read', () => {
+    // Measured before this: the filter rebuilt the body field by field and dropped every one of
+    // these. The dashboard read the absence of `markedForReuse` as `false` and disabled the retry
+    // with "remove them by hand first", directly above the backend's own message saying they WERE
+    // marked and the next apply would reuse them. The screen contradicted itself and closed the
+    // only way out.
+    const { host, sent } = hostFor();
+    filter.catch(
+      new HttpException(
+        {
+          statusCode: 500,
+          error: 'ApplyLeftApplicationsBehind',
+          message:
+            'Applying acme/shop failed after 1 application(s) had already been created…',
+          branch: 'flui/deploy-3f9a2c1',
+          branchDeleted: true,
+          committed: false,
+          markedForReuse: true,
+          strandedApplications: [
+            {
+              id: 'app-1',
+              name: 'shop',
+              slug: 'shop-ab12cd',
+              unitId: '.',
+              branch: 'flui/deploy-3f9a2c1',
+              attachedServices: ['db=postgresql'],
+            },
+          ],
+        },
+        500,
+      ),
+      host,
+    );
+
+    expect(sent()).toMatchObject({
+      error: 'ApplyLeftApplicationsBehind',
+      branch: 'flui/deploy-3f9a2c1',
+      branchDeleted: true,
+      committed: false,
+      markedForReuse: true,
+      strandedApplications: [
+        expect.objectContaining({
+          slug: 'shop-ab12cd',
+          attachedServices: ['db=postgresql'],
+        }),
+      ],
     });
   });
 

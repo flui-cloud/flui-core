@@ -4,6 +4,8 @@ import {
   Get,
   HttpCode,
   HttpStatus,
+  Inject,
+  Optional,
   Param,
   Req,
   UseGuards,
@@ -27,9 +29,16 @@ import { AuthenticatedUser } from '../../auth/interfaces/authenticated-user.inte
 import { CatalogInstallerService } from '../services/catalog-installer.service';
 import { CatalogInstallStatus } from '../enums/catalog-install-status.enum';
 import { AppRemovalResponseDto } from '../dto/app-removal-response.dto';
-import { RemovalPreviewDto } from '../dto/removal-preview.dto';
+import {
+  RemovalPreviewDto,
+  RemovalSnapshotOfferDto,
+} from '../dto/removal-preview.dto';
 import { RemovalPreviewService } from '../services/removal-preview.service';
 import { ActionCycle } from '../../action-cycle/action-cycle.decorator';
+import {
+  ATTACHED_SERVICES_PORT,
+  AttachedServicesPort,
+} from '../../applications/interfaces/attached-services.port';
 
 /**
  * Remove an application the way it was installed, decided server-side.
@@ -56,6 +65,9 @@ export class AppRemovalController {
     private readonly installer: CatalogInstallerService,
     private readonly deploy: ApplicationDeployService,
     private readonly preview: RemovalPreviewService,
+    @Optional()
+    @Inject(ATTACHED_SERVICES_PORT)
+    private readonly attachedServices?: AttachedServicesPort,
   ) {}
 
   @Get('removal-preview')
@@ -75,6 +87,20 @@ export class AppRemovalController {
   @ApiResponse({ status: 404, description: 'Application not found' })
   async removalPreview(@Param('id') id: string): Promise<RemovalPreviewDto> {
     return this.preview.preview(id);
+  }
+
+  /**
+   * The preview, or nothing. A removal already authorised must not be blocked
+   * by a reading that failed — the caller is told less, not refused.
+   */
+  private async previewOrNothing(
+    id: string,
+  ): Promise<RemovalPreviewDto | null> {
+    try {
+      return await this.preview.preview(id);
+    } catch {
+      return null;
+    }
   }
 
   @Delete('install')
@@ -111,13 +137,44 @@ export class AppRemovalController {
     );
 
     if (!install) {
+      // Read what goes BEFORE anything goes, so what the caller is told is what
+      // was actually taken. A removal that quietly deleted a Postgres an
+      // application had attached to itself is the outcome this path exists to
+      // prevent — but a preview that cannot be produced must never be what
+      // makes a removal impossible, so it degrades to "unknown" instead of
+      // throwing.
+      const before = await this.previewOrNothing(id);
       const operation = await this.deploy.deleteApplication(id, userId);
+      const removed = this.attachedServices
+        ? await this.attachedServices.detachAll(id, userId)
+        : [];
+      const offerByName = new Map(
+        (before?.snapshotOffer ?? []).map((o) => [o.serviceName, o]),
+      );
       return {
         removed: 'application',
         operationId: operation.id,
         status: operation.status,
         done: false,
         label: `Delete ${app.name}`,
+        // Built from what was ACTUALLY detached, enriched by the preview where
+        // there is one: the list must not shrink because a cluster was
+        // unreachable a second earlier.
+        attachedServicesRemoved: removed.map(
+          (r): RemovalSnapshotOfferDto =>
+            offerByName.get(r.name) ?? {
+              serviceName: r.name,
+              block: r.block,
+              applicationId: r.bbApplicationId ?? '',
+              applicationName: r.name,
+              engine: null,
+              snapshotEndpoint: null,
+              sentence:
+                `"${r.name}" (${r.block}) was removed with this application. ` +
+                `Its data went with it.`,
+            },
+        ),
+        dataWarning: before?.dataWarning ?? null,
       };
     }
 
@@ -133,6 +190,10 @@ export class AppRemovalController {
         done,
         alreadyUnderway: true,
         label: `Uninstall ${install.displayName}`,
+        // A catalog install owns its components outright; nothing was attached
+        // to it through `deploy.services`, which only applications from source
+        // can declare.
+        attachedServicesRemoved: [],
       };
     }
 
@@ -143,6 +204,7 @@ export class AppRemovalController {
       status: operation.status,
       done: false,
       label: `Uninstall ${install.displayName}`,
+      attachedServicesRemoved: [],
     };
   }
 }

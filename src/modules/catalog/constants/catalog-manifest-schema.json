@@ -934,8 +934,8 @@
           "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
         },
         "fromService": {
-          "enum": ["host", "port"],
-          "description": "Compute from the BB's Kubernetes Service: 'host' \u2192 cluster DNS, 'port' \u2192 first port's internal number."
+          "enum": ["host", "port", "url"],
+          "description": "Compute from the BB's Kubernetes Service: 'host' \u2192 cluster DNS, 'port' \u2192 first port's internal number, 'url' \u2192 the connection URL held in the BB's own Secret (datastores only; it carries the password, so it is always delivered by reference)."
         },
         "fromBBEnv": {
           "type": "string",

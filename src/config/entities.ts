@@ -75,6 +75,7 @@ import { OperatingContextEntryEntity } from '../modules/operating-context/entiti
 import { SandboxTenantEntity } from '../modules/sandbox/entities/sandbox-tenant.entity';
 import { ScalingGroupEntity } from '../modules/infrastructure/scaling/entities/scaling-group.entity';
 import { ScalingDecisionEntity } from '../modules/infrastructure/scaling/entities/scaling-decision.entity';
+import { ApplicationServiceEntity } from '../modules/attached-services/entities/application-service.entity';
 
 export const entities = [
   SSHKeyEntity,
@@ -148,4 +149,5 @@ export const entities = [
   OperatingContextEntryEntity,
   ScalingGroupEntity,
   ScalingDecisionEntity,
+  ApplicationServiceEntity,
 ];

@@ -67,6 +67,7 @@ function build(subdomains: {
     {
       activeSubdomain: jest.fn(async () => subdomains.shared ?? null),
     } as never,
+    { resolve: jest.fn() } as never,
   );
 
   return { service, save };

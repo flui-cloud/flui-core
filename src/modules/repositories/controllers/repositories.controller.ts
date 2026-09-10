@@ -39,6 +39,15 @@ import { RequirePermission } from '../../iam/decorators/require-permission.decor
 import { ActionCycle } from '../../action-cycle/action-cycle.decorator';
 import { IAM_PERMISSION } from '../../iam/constants/iam-permissions';
 import { ExtractEnvDto, ExtractedEnvVarDto } from '../dto/extract-env.dto';
+import { RepositoryMapResponseDto } from '../dto/repository-map.dto';
+import { RepoMapService } from '../services/repo-map.service';
+import {
+  RepositoryApplyDto,
+  RepositoryApplyResponseDto,
+} from '../dto/repository-apply.dto';
+import { RepoApplyService } from '../services/repo-apply.service';
+import { mapApplyClause } from '../map-apply-clause';
+import { SANDBOX_GUEST_REQUEST } from '../../sandbox/guards/sandbox-fence.guard';
 
 @ApiTags('Repositories')
 @ApiBearerAuth()
@@ -47,6 +56,8 @@ export class RepositoriesController {
   constructor(
     private readonly repositoriesService: RepositoriesService,
     private readonly webhookService: WebhookService,
+    private readonly repoMapService: RepoMapService,
+    private readonly repoApplyService: RepoApplyService,
   ) {}
 
   @Get('available')
@@ -209,7 +220,8 @@ export class RepositoriesController {
     summary: 'Analyze a public GitHub repository',
     description:
       'Clones a public GitHub repository without requiring it to be imported. ' +
-      'Detects the framework and generates a build plan. No authentication required.',
+      'Detects the framework and generates a build plan. Authentication is ' +
+      'required: the repository is public, the caller is not.',
   })
   @ApiResponse({
     status: 200,
@@ -363,5 +375,159 @@ export class RepositoriesController {
   async listWebhooks(@Req() req: Request, @Param('id') id: string) {
     const { userId } = req.user as AuthenticatedUser;
     return this.webhookService.listWebhooks(userId, id);
+  }
+
+  /**
+   * The map, as the engine actually holds it — read-only.
+   *
+   * Every fact keeps its citation (`file:line`) and its firmness (declared /
+   * derived / circumstantial), the open questions and caveats stay questions
+   * and caveats, and the verdict stays one of the six the taxonomy allows.
+   * Flattening any of that into a list of ticks would throw away the only
+   * thing this engine has to say: not "it works", but what will happen and
+   * what we could not tell.
+   *
+   * `clusterId` is optional and it changes what the verdict *is*: without one,
+   * only the repository half is computed and `verdict.capacity.assessed` is
+   * `false` — never a `deployable` that was never weighed against a cluster.
+   */
+  @Post(':id/map')
+  @HttpCode(HttpStatus.OK)
+  @RequirePermission(IAM_PERMISSION.APP_READ)
+  @ApiOperation({
+    summary:
+      'Map the repository: units, services, verdict and rendered manifests',
+    description:
+      'Reads the repository as one in-memory archive of one commit — no clone, symlinks refused, ' +
+      'ceilings declared in the response — and returns what it says about itself: deployable units, ' +
+      'the services it wants, required inputs, external dependencies, blockers, caveats, open ' +
+      'questions and the decisions taken on its behalf, each with its file:line evidence and its ' +
+      'confidence; the verdict with its reason and remedy; and one rendered flui.yaml per unit. ' +
+      'Read-only: nothing is deployed, provisioned or written.',
+  })
+  @ApiQuery({
+    name: 'branch',
+    required: false,
+    description: 'Git ref to read from (defaults to the default branch)',
+  })
+  @ApiQuery({
+    name: 'clusterId',
+    required: false,
+    description:
+      'Weigh the map against this cluster. Omitted, the verdict answers only the repository half and says so in verdict.capacity.',
+  })
+  @ApiResponse({
+    status: 200,
+    description:
+      'Map produced (a repository that could not be read answers with read.ok=false and a not_assessed verdict)',
+    type: RepositoryMapResponseDto,
+  })
+  @ApiResponse({ status: 404, description: 'Repository not found' })
+  async mapRepository(
+    @Req() req: Request,
+    @Param('id', new ParseUUIDPipe({ errorHttpStatusCode: 404 })) id: string,
+    @Query('branch') branch?: string,
+    @Query('clusterId') clusterId?: string,
+  ): Promise<RepositoryMapResponseDto> {
+    const { userId } = req.user as AuthenticatedUser;
+    const repository = await this.repositoriesService.getRepository(userId, id);
+    return this.repoMapService.mapFor(userId, {
+      repositoryId: repository.id,
+      owner: repository.owner,
+      repo: repository.repositoryName,
+      ref: branch || repository.defaultBranch,
+      clusterId,
+    });
+  }
+
+  /**
+   * The map, acted on — on a branch of Flui's own.
+   *
+   * The author's branch is read and cut from, never written to. What lands is
+   * one commit on `flui/deploy-<sha7>` carrying one rendered `flui.yaml` per
+   * deployable unit and the workflow that builds it, and that commit is what
+   * starts the builds. If the build goes green the author promotes the
+   * manifests onto their own branch; if it does not, a branch is deleted and
+   * nothing happened to their repository.
+   *
+   * Nothing about the manifests comes from the request: they are rendered
+   * server-side from the map at the moment of the apply. The caller chooses
+   * the cluster, the branch to read, and — at most — which of the rendered
+   * units to apply.
+   */
+  @Post(':id/map/apply')
+  @HttpCode(HttpStatus.CREATED)
+  @RequirePermission(IAM_PERMISSION.APP_CREATE)
+  // Unlike `POST /repositories/import`, the repository being acted on IS the
+  // path parameter here, so an "always" has an edge to be pinned to and gets
+  // one. Without `bind` the request cannot state its own boundary and the
+  // cycle offers only "allow once" — fail-closed, but it would ask on every
+  // apply of a repository somebody already said yes to.
+  @ActionCycle({
+    action: 'POST /repositories/:id/map/apply',
+    bind: ['id'],
+    sentence:
+      'commit Flui-rendered manifests to repository {id} and start their builds',
+    clause: mapApplyClause,
+    consequence:
+      'A new branch flui/deploy-<sha7> is created in the repository at the commit that was read — the branch you name is read and never written to — and one commit lands on it carrying a flui.yaml and a build workflow per unit. That commit starts a GitHub Actions build for each, which spends this repository’s Actions minutes, and one application is created per unit on the Flui branch.',
+  })
+  @ApiOperation({
+    summary: 'Apply the map: cut a Flui branch, commit the manifests, build',
+    description:
+      'Reads the repository at the given branch, refuses unless the verdict allows a deploy, then creates ' +
+      'a branch `flui/deploy-<sha7>` **at the exact commit the map was read from** and lands ONE commit on ' +
+      'it containing the rendered flui.yaml of every deployable unit plus a build workflow for each. That ' +
+      'commit triggers the builds. One Application is created per unit, on the Flui branch — a distinct ' +
+      'identity from anything deployed from the author’s own branch, so an apply can never overwrite a ' +
+      'production application. The author’s branch is never written to. ' +
+      'A failure before the commit deletes the Flui branch but does NOT delete the applications already ' +
+      'created: preparing one provisions the services its manifest declares, and a service is only removed ' +
+      'through the removal preview. Those applications are named in the error and reused by the next apply.',
+  })
+  @ApiResponse({
+    status: 201,
+    description:
+      'Branch cut, commit landed, builds started. Check `partial`: when true the commit is real and every ' +
+      'build is running, but at least one unit could not be armed — `units[].armed` and `units[].reason` say which.',
+    type: RepositoryApplyResponseDto,
+  })
+  @ApiResponse({
+    status: 400,
+    description: 'A named unit has no rendered manifest',
+  })
+  @ApiResponse({
+    status: 403,
+    description:
+      'No write access to the repository (nothing was written), or a sandbox guest',
+  })
+  @ApiResponse({ status: 404, description: 'Repository not found' })
+  @ApiResponse({
+    status: 409,
+    description:
+      'A Flui branch for this exact commit already exists — an earlier apply holds it',
+  })
+  @ApiResponse({
+    status: 422,
+    description:
+      'The repository could not be read, the verdict does not allow a deploy, or no unit rendered',
+  })
+  async applyRepositoryMap(
+    @Req() req: Request,
+    @Param('id', new ParseUUIDPipe({ errorHttpStatusCode: 404 })) id: string,
+    @Body() dto: RepositoryApplyDto,
+  ): Promise<RepositoryApplyResponseDto> {
+    const { userId, email } = req.user as AuthenticatedUser;
+    const repository = await this.repositoriesService.getRepository(userId, id);
+    const marked = req as Request & { [SANDBOX_GUEST_REQUEST]?: unknown };
+    return this.repoApplyService.apply(userId, email, {
+      repositoryId: repository.id,
+      owner: repository.owner,
+      repo: repository.repositoryName,
+      branch: dto.branch || repository.defaultBranch,
+      clusterId: dto.clusterId,
+      unitIds: dto.unitIds,
+      isSandboxGuest: marked[SANDBOX_GUEST_REQUEST] !== undefined,
+    });
   }
 }

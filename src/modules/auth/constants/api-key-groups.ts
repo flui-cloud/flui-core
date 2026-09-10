@@ -153,7 +153,7 @@ export const PERMISSION_GROUPS: PermissionGroupDef[] = [
     depth: PERMISSION_DEPTH.CHANGE,
     label: 'Deploy and operate applications',
     summary:
-      'Deploy, install, scale, restart, stop and roll back applications, change how much CPU and memory they may use, set their non-secret configuration, set up the routes, schedules, wildcard DNS and repository links they need, read the logs, metrics, traffic and alerts of what it is running, and ask you in person for a sensitive value it must never hold itself, on top of everything See applications reads — but never delete one.',
+      'Deploy, install, scale, restart, stop and roll back applications, change how much CPU and memory they may use, set their non-secret configuration, set up the routes, schedules, wildcard DNS and repository links they need, read a connected repository and commit the manifests Flui renders for it onto a branch of Flui’s own — never yours — starting builds that spend that repository’s own GitHub Actions minutes, read the logs, metrics, traffic and alerts of what it is running, and ask you in person for a sensitive value it must never hold itself, on top of everything See applications reads — but never delete one.',
     scopes: APPS_CHANGE,
   },
   {

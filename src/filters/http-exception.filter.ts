@@ -68,6 +68,16 @@ export class HttpExceptionFilter implements ExceptionFilter {
       'dataDirectoryDetected',
       'writersAtStart',
       'options',
+      // An apply that left applications behind. The prose already names them, but the caller needs
+      // the facts to act: `markedForReuse` decides whether the next apply adopts those rows or
+      // builds a second set beside them, and the dashboard was reading its absence as `false` —
+      // so it disabled the retry with "remove them by hand first" directly above a message that
+      // said the opposite. Assembled in `repo-apply.service.ts`; dropped here until now.
+      'branch',
+      'branchDeleted',
+      'committed',
+      'markedForReuse',
+      'strandedApplications',
     ] as const;
     const carried: Record<string, unknown> = {};
     for (const field of CARRIED) {

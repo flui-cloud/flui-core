@@ -6,13 +6,15 @@ import {
   CatalogLinkedBuildingBlock,
   CatalogSpecBuildingBlock,
 } from '../interfaces/catalog-manifest.interface';
+import {
+  LinkedEnvError,
+  resolveLinkedEnvEntries,
+} from '../../attached-services/attached-service-env.core';
+import { BlockConnectionUrlService } from './block-connection-url.service';
+import { ApplicationEnvVar } from '../../applications/interfaces/source-config.interface';
 
-export interface ResolvedLinkedEnv {
-  name: string;
-  value: string;
-  secret: boolean;
-  externalSecretRef?: { secretName: string; key: string };
-}
+export type { ResolvedLinkedEnv } from '../../attached-services/attached-service-env.core';
+import type { ResolvedLinkedEnv } from '../../attached-services/attached-service-env.core';
 
 /**
  * Resolves the env vars a catalog client (e.g. pgweb) needs to talk to a
@@ -32,6 +34,7 @@ export class CatalogLinkingService {
     private readonly installRepo: CatalogInstallRepository,
     private readonly definitionRepo: CatalogAppDefinitionRepository,
     private readonly applicationsRepo: ApplicationsRepository,
+    private readonly blockConnectionUrl: BlockConnectionUrlService,
   ) {}
 
   async resolveLinkedEnv(
@@ -80,66 +83,56 @@ export class CatalogLinkingService {
 
     const bbSpec = bbDefinition.manifest.spec as CatalogSpecBuildingBlock;
     const bbSecretName = `${bbApp.slug}-secret`;
-    const bbServiceHost = `${bbApp.slug}-svc.${bbApp.k8sNamespace}.svc.cluster.local`;
-    const bbServicePort = bbSpec.ports[0]?.internal;
 
-    const out: ResolvedLinkedEnv[] = [];
-    for (const entry of linked.envMapping) {
-      if (entry.fromService === 'host') {
-        out.push({ name: entry.name, value: bbServiceHost, secret: false });
-        continue;
+    // `fromService: url` is the only branch that needs something to EXIST before
+    // it can be read: the block's Secret has to carry the URL. Ask for it only
+    // when a mapping wants it, so a plain host/port link never touches a Secret.
+    const wantsUrl = linked.envMapping.some((e) => e.fromService === 'url');
+    const connectionUrlKey = wantsUrl
+      ? await this.blockConnectionUrl.ensureOnExisting(bbApp, bbSpec.engine)
+      : null;
+
+    let out: ResolvedLinkedEnv[];
+    try {
+      out = resolveLinkedEnvEntries(linked.envMapping, {
+        ref: bbDefinition.slug,
+        host: `${bbApp.slug}-svc.${bbApp.k8sNamespace}.svc.cluster.local`,
+        port: bbSpec.ports[0]?.internal,
+        secretName: bbSecretName,
+        declaredEnv: bbSpec.env.map((e) => ({
+          name: e.name,
+          secret: isSecretDeclaration(e),
+        })),
+        appEnv: Object.fromEntries(
+          ((bbApp.env as ApplicationEnvVar[] | undefined) ?? [])
+            .filter((e) => !e.secret && !e.externalSecretRef)
+            .map((e) => [e.name, e.value ?? '']),
+        ),
+        connectionUrlKey,
+      });
+    } catch (err) {
+      if (err instanceof LinkedEnvError) {
+        throw new BadRequestException(err.message);
       }
-      if (entry.fromService === 'port') {
-        out.push({
-          name: entry.name,
-          value: String(bbServicePort ?? ''),
-          secret: false,
-        });
-        continue;
-      }
-      if (entry.value !== undefined) {
-        out.push({ name: entry.name, value: entry.value, secret: false });
-        continue;
-      }
-      if (entry.fromBBEnv) {
-        const bbEnvSpec = bbSpec.env.find((e) => e.name === entry.fromBBEnv);
-        if (!bbEnvSpec) {
-          throw new BadRequestException(
-            `Linked envMapping references ${entry.fromBBEnv} but the BB manifest has no such env`,
-          );
-        }
-        const isSecret =
-          !!bbEnvSpec.valueFrom &&
-          ('generate' in bbEnvSpec.valueFrom ||
-            ('userInput' in bbEnvSpec.valueFrom &&
-              !!bbEnvSpec.valueFrom.userInput.sensitive));
-        if (isSecret) {
-          out.push({
-            name: entry.name,
-            value: '',
-            secret: true,
-            externalSecretRef: {
-              secretName: bbSecretName,
-              key: entry.fromBBEnv,
-            },
-          });
-        } else {
-          const bbAppEnv = bbApp.env?.find((e) => e.name === entry.fromBBEnv);
-          out.push({
-            name: entry.name,
-            value: bbAppEnv?.value ?? '',
-            secret: false,
-          });
-        }
-        continue;
-      }
-      throw new BadRequestException(
-        `Linked envMapping entry "${entry.name}" has no fromService, fromBBEnv, or value`,
-      );
+      throw err;
     }
+
     this.logger.log(
       `resolveLinkedEnv(→ ${bbApp.slug}): ${out.length} env entries (${out.filter((e) => e.externalSecretRef).length} secretKeyRef)`,
     );
     return out;
   }
+}
+
+/**
+ * A block env is a secret when the block generates it or asks a person for a
+ * sensitive value. Unchanged from what this file tested inline before the chain
+ * moved into the core — a `secret: true` with no `valueFrom` stays public here,
+ * as it always has, because widening it would turn plain values into dangling
+ * secretKeyRefs on links that work today.
+ */
+function isSecretDeclaration(e: { valueFrom?: unknown }): boolean {
+  const vf = e.valueFrom as Record<string, any> | undefined;
+  if (!vf) return false;
+  return 'generate' in vf || ('userInput' in vf && !!vf.userInput?.sensitive);
 }

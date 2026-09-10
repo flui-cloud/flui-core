@@ -1,9 +1,11 @@
 import {
+  Inject,
   Injectable,
   NotFoundException,
   BadRequestException,
   ConflictException,
   Logger,
+  forwardRef,
 } from '@nestjs/common';
 import { In, QueryFailedError, Repository } from 'typeorm';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -12,6 +14,10 @@ import { SanCertificateEntity } from '../entities/san-certificate.entity';
 import { ClusterEntity } from '../../infrastructure/clusters/entities/cluster.entity';
 import { ClusterDnsZoneEntity } from '../entities/cluster-dns-zone.entity';
 import { ApplicationEntity } from '../../applications/entities/application.entity';
+import {
+  readEndpointFailure,
+  withoutEndpointFailure,
+} from '../../applications/utils/endpoint-failure.util';
 import { CreateAppEndpointDto } from '../dto/create-app-endpoint.dto';
 import { UpdateAppEndpointDto } from '../dto/update-app-endpoint.dto';
 import { AppEndpointResponseDto } from '../dto/app-endpoint-response.dto';
@@ -33,6 +39,7 @@ import { EndpointGatewayConfig } from '../interfaces/endpoint-gateway-config.int
 import { EndpointHostGuardService } from './endpoint-host-guard.service';
 import { TenancySubdomainService } from './tenancy-subdomain.service';
 import { SandboxSubdomainService } from './sandbox-subdomain.service';
+import { EndpointDiagnosisService } from '../../scaling/services/endpoint-diagnosis.service';
 
 /** An application's primary endpoint, hostname together with whether it serves. */
 export interface PrimaryEndpointState {
@@ -73,6 +80,8 @@ export class AppEndpointService {
     private readonly hostGuard: EndpointHostGuardService,
     private readonly tenancySubdomains: TenancySubdomainService,
     private readonly sandboxSubdomains: SandboxSubdomainService,
+    @Inject(forwardRef(() => EndpointDiagnosisService))
+    private readonly endpointDiagnosisService: EndpointDiagnosisService,
   ) {}
 
   /**
@@ -308,8 +317,9 @@ export class AppEndpointService {
       reconciliationStatus: ReconciliationStatus.PENDING,
     });
 
+    let saved: AppEndpointEntity;
     try {
-      return await this.endpointRepository.save(endpoint);
+      saved = await this.endpointRepository.save(endpoint);
     } catch (err) {
       if (this.isUniqueFqdnViolation(err)) {
         throw new ConflictException({
@@ -321,6 +331,27 @@ export class AppEndpointService {
       }
       throw err;
     }
+
+    // The application now has the endpoint whose absence failed its deploy, so
+    // the recorded reason is no longer true — and a reason left behind would
+    // keep the app reading as failed for good. The diagnosis is retracted
+    // unconditionally: it is what a person reads on the dashboard, and
+    // clearing only the marker left it claiming "nobody can reach it" about an
+    // application this very call just made reachable.
+    if (readEndpointFailure(application.metadata)) {
+      await this.applicationRepository.update(application.id, {
+        metadata: withoutEndpointFailure(application.metadata),
+      });
+    }
+    try {
+      await this.endpointDiagnosisService.resolve(application.id);
+    } catch (err) {
+      this.logger.warn(
+        `Endpoint ${saved.fqdn} created, but the "no endpoint" diagnosis for application ${application.id} could not be resolved: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+
+    return saved;
   }
 
   private async resolveSanCertificateId(

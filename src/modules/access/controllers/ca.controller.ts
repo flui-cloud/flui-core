@@ -205,8 +205,8 @@ export class CAController {
 # How to use this certificate for SSH testing on Windows:
 
 # 1. Save the private key and certificate to files:
-echo "${cert.privateKey.replaceAll('n', '\n')}" > ephemeral_key
-echo "${cert.certificate.replaceAll('n', '\n')}" > ephemeral_key-cert.pub
+echo "${cert.privateKey}" > ephemeral_key
+echo "${cert.certificate}" > ephemeral_key-cert.pub
 
 # 2. Set correct permissions (Git Bash):
 chmod 600 ephemeral_key

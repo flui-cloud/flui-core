@@ -54,6 +54,7 @@ import { ProjectsModule } from './modules/projects/projects.module';
 import { DemoModule } from './modules/demo/demo.module';
 import { MaskModule } from './modules/mask/mask.module';
 import { PlatformUpdatesModule } from './modules/platform-updates/platform-updates.module';
+import { AttachedServicesModule } from './modules/attached-services/attached-services.module';
 
 @Module({
   imports: [
@@ -140,6 +141,9 @@ import { PlatformUpdatesModule } from './modules/platform-updates/platform-updat
     OperatingContextModule,
     MaskModule,
     PlatformUpdatesModule,
+    // Above applications and catalog both, so `deploy.services[]` can provision
+    // a building block without either importing the other.
+    AttachedServicesModule,
     ScheduleModule.forRoot(),
   ],
   providers: [

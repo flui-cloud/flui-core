@@ -86,8 +86,14 @@ export class ApiClient {
   /**
    * POST request
    */
-  async post<T>(path: string, data?: any): Promise<T> {
-    const response = await this.client.post<T>(path, data);
+  async post<T>(
+    path: string,
+    data?: any,
+    opts?: { timeoutMs?: number },
+  ): Promise<T> {
+    const response = await this.client.post<T>(path, data, {
+      ...(opts?.timeoutMs !== undefined ? { timeout: opts.timeoutMs } : {}),
+    });
     return response.data;
   }
 

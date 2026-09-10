@@ -112,3 +112,53 @@ export function collectEnvShadows(
   }
   return shadows;
 }
+
+/**
+ * Fold the env of an application's attached services into what is stored.
+ *
+ * Separate from {@link mergeAppEnv} on purpose. That function must never
+ * reclaim a key carrying an `externalSecretRef` — swapping a `secretKeyRef` for
+ * a plain value is how a credential leaks into the database — and that rule is
+ * exactly what stops it from UPDATING one when the block behind it changes.
+ * An attachment is the one writer allowed to replace its own references, so it
+ * gets its own merge with an explicit list of the names it owns.
+ *
+ * `ownedNames` is what the current manifest declares through `deploy.services`.
+ * A `link` entry this application no longer declares is dropped: the service is
+ * gone, and a stale reference to a deleted Secret is a pod that never starts.
+ */
+export function mergeLinkEnv(
+  existing: ApplicationEnvVar[],
+  resolved: Array<{
+    name: string;
+    value: string;
+    secret?: boolean;
+    externalSecretRef?: { secretName: string; key: string };
+  }>,
+  ownedNames: Iterable<string>,
+): ApplicationEnvVar[] {
+  const owned = new Set(ownedNames);
+  const incoming = new Map(resolved.map((r) => [r.name, r]));
+  const out: ApplicationEnvVar[] = [];
+
+  for (const e of existing) {
+    if (incoming.has(e.name)) continue; // replaced below
+    // A link this application owned and stopped declaring.
+    if (e.source === 'link' && owned.has(e.name)) continue;
+    out.push(e);
+  }
+
+  for (const r of resolved) {
+    out.push({
+      name: r.name,
+      value: r.externalSecretRef ? '' : r.value,
+      source: 'link',
+      ...(r.secret ? { secret: true } : {}),
+      ...(r.externalSecretRef
+        ? { externalSecretRef: r.externalSecretRef }
+        : {}),
+    });
+  }
+
+  return out;
+}

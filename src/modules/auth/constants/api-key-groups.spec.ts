@@ -81,6 +81,7 @@ describe('permission groups — the taxonomy', () => {
         'app_debug',
         'app_deploy',
         'app_deploy_from_yaml',
+        'app_deploy_image',
         'app_events',
         'app_get',
         'app_install',
@@ -122,6 +123,12 @@ describe('permission groups — the taxonomy', () => {
         'operation_status',
         'repo_connect',
         'repo_list',
+        // These two arrived together and widened the sentence above: the read
+        // is harmless, but the apply writes a branch and a commit into
+        // somebody's GitHub repository and spends its Actions minutes. The
+        // group's summary was rewritten to say so.
+        'repo_map',
+        'repo_map_apply',
         'schedule_create',
         'schedule_list',
         'schedule_runs',

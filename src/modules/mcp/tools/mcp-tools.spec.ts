@@ -5,8 +5,13 @@ import {
   ToolDef,
   resolveClusterId,
   runGated,
+  runTool,
 } from './mcp-tool.util';
 import { MCP_SCOPE } from '../constants/mcp-scopes';
+import { McpApiError } from '../services/mcp-api.client';
+import { isInputRequired } from '../protocol/mrtr';
+import { isOfferedToGuest } from '../services/sandbox-tool-visibility';
+import { ACTION_PROPOSAL_CODE } from '../../action-cycle/action-cycle.core';
 
 const find = (tools: ToolDef[], name: string): ToolDef => {
   const tool = tools.find((t) => t.name === name);
@@ -327,6 +332,156 @@ describe('MCP agent-facing tool surface', () => {
       >;
       expect(out.removed).toBe('application');
       expect(out.label).toBe('Delete immich-web');
+    });
+  });
+
+  describe('app_deploy_image (bring-your-own image, first deploy)', () => {
+    const deployImage = find(APPLICATION_TOOLS, 'app_deploy_image');
+
+    it('creates the application on the resolved cluster, sourced from the image, and starts a deploy', async () => {
+      const ctx = apiCtx((call) =>
+        call.path === '/clusters/c1/applications'
+          ? {
+              application: {
+                id: 'a1',
+                name: 'my-api',
+                slug: 'my-api-3l6a9w',
+                status: 'PENDING',
+              },
+              operation: { id: 'op1', status: 'PENDING' },
+            }
+          : oneCluster(call),
+      );
+
+      const out = (await run(
+        deployImage,
+        {
+          image: 'ghcr.io/acme/api:1.4.0',
+          name: 'my-api',
+          port: 3000,
+          exposure: 'internal',
+          env: { NODE_ENV: 'production' },
+        },
+        ctx,
+      )) as Record<string, unknown>;
+
+      // clusterId auto-resolved, exactly like every other cluster-scoped tool.
+      expect(ctx.calls.map((c) => `${c.method} ${c.path}`)).toEqual([
+        'GET /infrastructure/clusters',
+        'POST /clusters/c1/applications',
+      ]);
+      const body = ctx.calls[1].payload as Record<string, unknown>;
+      expect(body.sourceType).toBe('docker_image');
+      expect(body.sourceConfig).toEqual({
+        type: 'docker_image',
+        imageRef: 'ghcr.io/acme/api:1.4.0',
+      });
+      expect(body.port).toBe(3000);
+      expect(body.exposure).toBe('internal');
+      expect(body.env).toEqual([{ name: 'NODE_ENV', value: 'production' }]);
+      // The whole point is to SHIP the image, not merely record it.
+      expect(body.autoDeploy).toBe(true);
+
+      expect(out.id).toBe('a1');
+      expect(out.slug).toBe('my-api-3l6a9w');
+      expect(out.operationId).toBe('op1');
+      expect(out.done).toBe(false);
+      expect(out.label).toBe('Deploy my-api');
+    });
+
+    it('rejects with the same actionable message as every other cluster-scoped tool when the cluster is ambiguous', async () => {
+      const ctx = apiCtx((call) =>
+        call.path === '/infrastructure/clusters'
+          ? [
+              { id: 'c1', name: 'one' },
+              { id: 'c2', name: 'two' },
+            ]
+          : undefined,
+      );
+
+      await expect(
+        run(deployImage, { image: 'nginx:1.25', name: 'x' }, ctx),
+      ).rejects.toThrow(/Several clusters/);
+      // Never reached the create route with an unresolved target.
+      expect(ctx.calls.some((c) => c.path.includes('/applications'))).toBe(
+        false,
+      );
+    });
+
+    it('relays the API refusal verbatim when the image does not exist (DockerHub verification, 400)', async () => {
+      const ctx = apiCtx((call) =>
+        call.path === '/clusters/c1/applications'
+          ? Promise.reject(
+              new McpApiError(
+                400,
+                'Docker image not found: acme/does-not-exist:latest. Please verify the image name and tag on DockerHub.',
+                'POST',
+                '/clusters/c1/applications',
+              ),
+            )
+          : oneCluster(call),
+      );
+
+      await expect(
+        run(
+          deployImage,
+          { image: 'acme/does-not-exist:latest', name: 'x' },
+          ctx,
+        ),
+      ).rejects.toThrow(/Docker image not found/);
+    });
+
+    // The route carries `@ActionCycle`: a credential with no standing approval
+    // gets a proposal instead of an effect. Nothing in the tool body handles
+    // this — `runGated` already turns it into an `input_required` wait — so
+    // what this pins is that the wiring actually reaches that branch for
+    // THIS route, not merely that the generic mechanism exists somewhere.
+    it('comes back as input_required, not a failure, when the action cycle asks a person first', async () => {
+      const ctx = {
+        user: { userId: 'u1', email: 'e@x' },
+        scopes: new Set([MCP_SCOPE.APP_WRITE]),
+        allowDestructive: true,
+        surface: 'mcp',
+        audit: { record: jest.fn() },
+        api: {
+          get: () => Promise.resolve([{ id: 'c1' }]),
+          post: () => {
+            return Promise.reject(
+              new McpApiError(
+                403,
+                'This call needs a person to allow it first.',
+                'POST',
+                '/clusters/c1/applications',
+                ACTION_PROPOSAL_CODE,
+                undefined,
+                {
+                  proposalId: 'p-1',
+                  action: 'POST /clusters/:clusterId/applications',
+                  sentence: 'create applications in cluster c1',
+                  offersAlways: true,
+                  estimateWithheld: false,
+                },
+              ),
+            );
+          },
+        },
+      } as unknown as McpToolContext;
+
+      const result = await runTool(ctx, deployImage, {
+        image: 'nginx:1.25',
+        name: 'x',
+      });
+      expect(isInputRequired(result)).toBe(true);
+    });
+
+    // Verified, not assumed: `/clusters/:clusterId/applications` is already
+    // fenced open at 'full' for a sandbox guest ("Create an application of
+    // your own", sandbox-fence-own.ts) — the same route the dashboard's own
+    // deploy wizard uses for a guest's docker-image app. This tool reaches no
+    // further than the guest already can, so it is offered exactly like
+    // app_deploy is.
+    it('is offered to a sandbox guest, matching the create route the fence already opens for one', () => {
+      expect(isOfferedToGuest(deployImage)).toBe(true);
     });
   });
 

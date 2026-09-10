@@ -70,7 +70,7 @@ export class CAManagerService {
     if (envCaKey) {
       this.logger.debug('Using CLI CA private key from environment');
       // SSH private keys MUST end with a newline
-      return envCaKey.replaceAll(String.raw`\r\n`, '\n').trimEnd() + '\n';
+      return envCaKey.replaceAll('\r\n', '\n').trimEnd() + '\n';
     }
 
     // 2. CLI CA file — local development (profile-aware: ~/.flui/profiles/<profile>/ca/ca_key)
@@ -79,7 +79,7 @@ export class CAManagerService {
       const fileKey = await fsPromises.readFile(caKeyPath, 'utf-8');
       this.logger.debug(`Using CLI CA private key from ${caKeyPath}`);
       // SSH private keys MUST end with a newline — normalize but preserve it
-      return fileKey.replaceAll(String.raw`\r\n`, '\n').trimEnd() + '\n';
+      return fileKey.replaceAll('\r\n', '\n').trimEnd() + '\n';
     } catch {
       // File not found, continue to database fallback
     }
@@ -242,8 +242,7 @@ echo "=== Enrollment completed successfully ==="
 
     const encryptedPrivateKey = options.privateKey
       ? this.keyStorage.encryptKeyToString(
-          options.privateKey.replaceAll(String.raw`\r\n`, '\n').trimEnd() +
-            '\n',
+          options.privateKey.replaceAll('\r\n', '\n').trimEnd() + '\n',
         )
       : null;
 
@@ -280,7 +279,7 @@ echo "=== Enrollment completed successfully ==="
       throw new NotFoundException(`CA ${caId} not found`);
     }
     ca.encryptedPrivateKey = this.keyStorage.encryptKeyToString(
-      privateKey.replaceAll(String.raw`\r\n`, '\n').trimEnd() + '\n',
+      privateKey.replaceAll('\r\n', '\n').trimEnd() + '\n',
     );
     await this.caRepository.save(ca);
     this.logger.log(`CA ${ca.name} private key attached`);

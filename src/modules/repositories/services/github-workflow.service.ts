@@ -1,4 +1,10 @@
-import { Injectable, Logger, BadRequestException } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  BadRequestException,
+  ConflictException,
+  ForbiddenException,
+} from '@nestjs/common';
 import * as sodium from 'libsodium-wrappers';
 import { GitHubOAuthService } from './github-oauth.service';
 import { GitHubTokenResolverService } from './github-token-resolver.service';
@@ -23,6 +29,12 @@ export type WorkflowDelivery = 'push' | 'pull-request';
 
 /** Legacy shared workflow path (single-app repos, pre multi-app). */
 export const LEGACY_WORKFLOW_PATH = '.github/workflows/flui.yml';
+
+/** One file in a multi-file commit: repo-root-relative path, whole content. */
+export interface CommitFile {
+  path: string;
+  content: string;
+}
 
 /**
  * Per-app workflow filename. One workflow per Application so a monorepo can
@@ -348,6 +360,182 @@ export class GitHubWorkflowService {
   }
 
   /**
+   * Cuts a new branch **at a commit the caller names**, with no commit on it.
+   *
+   * This is the first thing the apply writes, and it is deliberately the least
+   * damaging write there is: the new ref points exactly where that commit
+   * already is, so no file changed, no workflow matched, no Actions minute was
+   * spent. If the credential cannot write to this repository we find out here,
+   * before an Application row exists and before anything was committed.
+   *
+   * `baseSha`, not a branch name, and that is the whole point. Resolving the
+   * branch tip here would resolve it a second time — the map already read one,
+   * rendered every manifest from it, and named the branch after it. If the
+   * author pushes between the two reads, the manifests rendered from commit A
+   * land on top of commit B while the branch is called `deploy-<A7>` and the
+   * response says `baseCommitSha: A`: two statements that are simply not true.
+   * Taking the sha means the branch is the commit the map read, or nothing.
+   *
+   * It is also the lock. GitHub answers 422 when the ref exists, and that
+   * answer is the whole concurrency story: two applies from the same commit
+   * cannot both proceed, and the second one is told which branch already
+   * holds the first one's work rather than silently pushing a second commit
+   * onto it — a second commit would re-trigger every build on that branch.
+   */
+  async createBranchFrom(
+    userId: string,
+    owner: string,
+    repo: string,
+    head: string,
+    baseSha: string,
+  ): Promise<{ head: string; baseSha: string }> {
+    if (!baseSha) {
+      throw new BadRequestException(
+        `Refusing to cut ${head} in ${owner}/${repo}: no base commit was given. ` +
+          'A Flui branch is cut at the exact commit its manifests were rendered from, ' +
+          'never at whatever the branch happens to point at now.',
+      );
+    }
+    await this.tokenResolver.assertCapability(userId, ['repo', 'workflow']);
+    const octokit = await this.tokenResolver.getOctokit(userId, owner);
+
+    try {
+      await octokit.git.createRef({
+        owner,
+        repo,
+        ref: `refs/heads/${head}`,
+        sha: baseSha,
+      });
+    } catch (error) {
+      const status = (error as { status?: number })?.status;
+      if (status === 422) {
+        throw new ConflictException(
+          `The branch ${head} already exists in ${owner}/${repo}. ` +
+            'It holds an earlier apply from this same commit. Open it to see how that one finished, ' +
+            'or push a new commit to your branch and apply again from there.',
+        );
+      }
+      if (status === 403 || status === 404) {
+        throw new ForbiddenException(
+          `Flui cannot create a branch in ${owner}/${repo}. The connected GitHub credential has no write access to it, ` +
+            'so nothing was written. Grant it write access — or fork the repository into your own namespace — and try again.',
+        );
+      }
+      throw error;
+    }
+
+    this.logger.log(
+      `Cut ${owner}/${repo}@${head} at ${baseSha.slice(0, 7)} — no commit yet`,
+    );
+    return { head, baseSha };
+  }
+
+  /**
+   * One commit, N files, one tree — on a branch Flui owns.
+   *
+   * The atomicity is the point: N manifests and N workflows arriving as N
+   * commits would fire N rounds of builds, each round rebuilding whatever the
+   * previous commit had already queued. One tree means one push event, and a
+   * push event is what the generated workflows trigger on.
+   *
+   * `branch` is expected to be a branch Flui cut itself (`createBranchFrom`),
+   * which is why this advances the ref outright: nothing here is a decision
+   * about somebody's own branch. Pointing it at a user branch would be, and
+   * that path is `commitWorkflowOnly` with its delivery choice.
+   */
+  async commitFilesOnBranch(
+    userId: string,
+    owner: string,
+    repo: string,
+    branch: string,
+    files: CommitFile[],
+    opts: { message: string },
+  ): Promise<CommitResult & { baseSha: string; files: string[] }> {
+    if (files.length === 0) {
+      throw new BadRequestException(
+        'Refusing to create an empty commit: no files were rendered.',
+      );
+    }
+    await this.tokenResolver.assertCapability(userId, ['repo', 'workflow']);
+    const octokit = await this.tokenResolver.getOctokit(userId, owner);
+
+    const { data: refData } = await octokit.git.getRef({
+      owner,
+      repo,
+      ref: `heads/${branch}`,
+    });
+    const latestCommitSha = refData.object.sha;
+
+    const { data: commitData } = await octokit.git.getCommit({
+      owner,
+      repo,
+      commit_sha: latestCommitSha,
+    });
+
+    const { data: treeData } = await octokit.git.createTree({
+      owner,
+      repo,
+      base_tree: commitData.tree.sha,
+      tree: files.map((file) => ({
+        path: file.path,
+        mode: '100644' as const,
+        type: 'blob' as const,
+        content: file.content,
+      })),
+    });
+
+    const { data: newCommit } = await octokit.git.createCommit({
+      owner,
+      repo,
+      message: opts.message,
+      tree: treeData.sha,
+      parents: [latestCommitSha],
+    });
+
+    await octokit.git.updateRef({
+      owner,
+      repo,
+      ref: `heads/${branch}`,
+      sha: newCommit.sha,
+    });
+
+    this.logger.log(
+      `Committed ${files.length} file(s) to ${owner}/${repo}@${branch} (${newCommit.sha.slice(0, 7)})`,
+    );
+
+    return {
+      workflowUrl: `https://github.com/${owner}/${repo}/tree/${branch}`,
+      sha: newCommit.sha,
+      baseSha: latestCommitSha,
+      files: files.map((f) => f.path),
+    };
+  }
+
+  /**
+   * Removes a branch Flui cut. Best-effort by construction: it runs on the
+   * failure path of an apply, where the error the caller is about to raise is
+   * the one that matters, and a leftover empty branch is a nuisance rather
+   * than a hazard.
+   */
+  async deleteBranch(
+    userId: string,
+    owner: string,
+    repo: string,
+    head: string,
+  ): Promise<boolean> {
+    try {
+      const octokit = await this.tokenResolver.getOctokit(userId, owner);
+      await octokit.git.deleteRef({ owner, repo, ref: `heads/${head}` });
+      return true;
+    } catch (error) {
+      this.logger.warn(
+        `Could not delete ${owner}/${repo}@${head}: ${(error as Error)?.message}`,
+      );
+      return false;
+    }
+  }
+
+  /**
    * True when the legacy shared flui.yml exists on the branch AND was generated
    * for the given app (its FLUI_APP_ID env matches). Any read failure = false:
    * cleanup is best-effort and must never block the workflow commit.
@@ -510,7 +698,7 @@ export class GitHubWorkflowService {
         ref: branch,
       });
       const encoded = data.content as string;
-      return Buffer.from(encoded.replaceAll('n', ''), 'base64').toString(
+      return Buffer.from(encoded.replaceAll('\n', ''), 'base64').toString(
         'utf-8',
       );
     } catch {

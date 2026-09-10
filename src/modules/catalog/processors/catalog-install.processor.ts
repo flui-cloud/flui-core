@@ -63,6 +63,7 @@ import {
 } from '../interfaces/template-context.interface';
 import { CatalogTemplateResolverService } from '../services/catalog-template-resolver.service';
 import { CatalogSecretGeneratorService } from '../services/catalog-secret-generator.service';
+import { BlockConnectionUrlService } from '../services/block-connection-url.service';
 import { CatalogDependencyResolverService } from '../services/catalog-dependency-resolver.service';
 import {
   CATALOG_INSTALL_QUEUE,
@@ -116,6 +117,7 @@ export class CatalogInstallProcessor {
     private readonly secretGenerator: CatalogSecretGeneratorService,
     private readonly deployConfig: DeployConfigService,
     private readonly dependencyResolver: CatalogDependencyResolverService,
+    private readonly blockConnectionUrl: BlockConnectionUrlService,
     private readonly installerService: CatalogInstallerService,
     private readonly oidcProvider: OidcProviderAdminClient,
     @InjectRepository(ClusterEntity)
@@ -291,6 +293,18 @@ export class CatalogInstallProcessor {
         install.userId,
         install.userEmail,
       );
+
+      // A datastore gets its connection URL now, as one more secret env, so the
+      // Secret carries it the moment the Secret is first rendered. Written
+      // before the deploy below on purpose: after it, adding the key would mean
+      // rolling the database to hand it a variable it does not itself read.
+      if (spec.type === CatalogAppType.BUILDING_BLOCK) {
+        await this.blockConnectionUrl.ensureAtGeneration(
+          application,
+          (spec as CatalogSpecBuildingBlock).engine,
+          spec.ports[0]?.internal,
+        );
+      }
 
       await this.installRepo.update(install.id, {
         applicationIds: [application.id],
@@ -1404,6 +1418,15 @@ export class CatalogInstallProcessor {
           install.userId,
           install.userEmail,
         );
+        // Same reason as the single-application path: a component that IS a
+        // datastore carries its own URL before its Secret is first written.
+        if (component.engine) {
+          await this.blockConnectionUrl.ensureAtGeneration(
+            application,
+            component.engine,
+            component.ports?.[0]?.internal,
+          );
+        }
       }
       applicationIds.push(application.id);
       appIdByComponent.set(component.name, application.id);

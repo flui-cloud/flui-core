@@ -163,7 +163,7 @@ export class ApplicationWorkflowService {
    * repository that cannot work. If the secret cannot be written, the workflow
    * is not committed at all.
    */
-  private async saveWebhookSecret(
+  async saveWebhookSecret(
     userId: string,
     owner: string,
     repo: string,
@@ -188,7 +188,7 @@ export class ApplicationWorkflowService {
     }
   }
 
-  private async saveFluiGhcrSecret(
+  async saveFluiGhcrSecret(
     userId: string,
     owner: string,
     repo: string,
@@ -542,38 +542,26 @@ export class ApplicationWorkflowService {
       { workflowFileName, cleanupLegacyForAppId: appId, delivery },
     );
 
-    // Persist the monorepo subPath into sourceConfig so the build watcher can
-    // compose `{repo}/{subPath}:{sha}` — the exact package this workflow pushes.
-    // Without it the watcher rolls out a bare `{repo}:{sha}` that never existed.
-    const source = (app.sourceConfig ?? {}) as GitBuildSourceConfig;
-    const mergedSourceConfig = {
-      ...source,
-      type: 'git_build',
-      subPath: dto.subPath,
-      ...(dto.dockerfilePath ? { dockerfile: dto.dockerfilePath } : {}),
-    } as ApplicationSourceConfig;
-
     // A pull request moves no branch, so nothing is queued and nothing is
     // building. Marking the application AWAITING_BUILD here would put a spinner
     // on a screen for a run that will not exist until somebody merges — the
     // build clock would start counting an event that has not happened.
     const proposed = commitResult.pullRequestUrl !== undefined;
 
-    await this.applicationsRepository.update(appId, {
-      buildPath: 'github-actions',
+    const marked = await this.markAwaitingExternalBuild(appId, userId, {
+      app,
+      owner: repository.owner,
+      repo: repository.repositoryName,
+      branch: dto.branch,
+      workflowFileName,
+      commitSha: commitResult.sha,
+      workflowUrl: commitResult.workflowUrl,
       webhookToken,
+      subPath: dto.subPath,
+      dockerfilePath: dto.dockerfilePath,
       isFluiManaged: dto.isFluiManaged ?? false,
-      sourceConfig: mergedSourceConfig,
-      ...(proposed
-        ? {}
-        : {
-            status: ApplicationStatus.AWAITING_BUILD,
-            buildStartedAt: new Date(),
-          }),
-      workflowRunId: null,
-      workflowRunUrl: null,
-      lastBuildStatus: null,
-      lastBuildConclusion: null,
+      buildStarted: !proposed,
+      force: dto.force,
     });
 
     if (proposed) {
@@ -588,25 +576,123 @@ export class ApplicationWorkflowService {
       };
     }
 
+    this.logger.log(
+      `V3 workflow committed for app ${appId}. workflowUrl=${commitResult.workflowUrl}`,
+    );
+
+    return {
+      committed: true,
+      workflowUrl: commitResult.workflowUrl,
+      runId: marked.runId,
+      buildStarted: true,
+    };
+  }
+
+  /**
+   * What an application must record once the commit that will build it has
+   * landed: the webhook credential it will be called back with, the build
+   * paths the watcher composes the image ref from, the AWAITING_BUILD status,
+   * the provider-agnostic AppBuild row, and — best effort — the GitHub run id.
+   *
+   * Public and split out of `generateAndCommitWorkflowV3` because the apply
+   * path lands one commit for several applications and then has to mark each
+   * of them. Marking is deliberately *after* the commit in both callers: an
+   * application that says it is awaiting a build which was never triggered is
+   * a spinner the build watchdog turns into a FAILED half an hour later,
+   * whereas an application still PENDING next to no commit is visibly
+   * unfinished and recoverable.
+   *
+   * `buildStarted: false` records the configuration without starting the
+   * clock — the pull-request delivery, where no branch moved.
+   *
+   * `resolveRun: false` skips the courtesy lookup of the GitHub run id, and
+   * with it the four-second wait that lookup needs before GitHub has the run.
+   * That wait is affordable once — the one-application path, which keeps it —
+   * and is not affordable N times: an apply of a five-unit monorepo marks five
+   * applications in a row inside one HTTP request and spent twenty seconds
+   * sleeping. Nothing is lost by skipping it: the build watcher looks the run
+   * up by workflow file on its next tick and persists it (see
+   * `application-build-watcher.service.ts`), which is the same lookup, later,
+   * off the request.
+   */
+  async markAwaitingExternalBuild(
+    appId: string,
+    userId: string,
+    params: {
+      app: { sourceConfig: unknown };
+      owner: string;
+      repo: string;
+      /** The branch the workflow run lives on — the one the commit landed on. */
+      branch: string;
+      workflowFileName: string;
+      commitSha: string;
+      workflowUrl: string;
+      webhookToken: string;
+      subPath?: string;
+      dockerfilePath?: string;
+      isFluiManaged: boolean;
+      buildStarted: boolean;
+      force?: boolean;
+      /** Default true. False = do not wait on GitHub for the run id. */
+      resolveRun?: boolean;
+    },
+  ): Promise<{ runId?: string }> {
+    // Persist the monorepo subPath into sourceConfig so the build watcher can
+    // compose `{repo}/{subPath}:{sha}` — the exact package this workflow pushes.
+    // Without it the watcher rolls out a bare `{repo}:{sha}` that never existed.
+    const source = (params.app.sourceConfig ?? {}) as GitBuildSourceConfig;
+    const mergedSourceConfig = {
+      ...source,
+      type: 'git_build',
+      subPath: params.subPath,
+      ...(params.dockerfilePath ? { dockerfile: params.dockerfilePath } : {}),
+    } as ApplicationSourceConfig;
+
+    await this.applicationsRepository.update(appId, {
+      buildPath: 'github-actions',
+      webhookToken: params.webhookToken,
+      isFluiManaged: params.isFluiManaged,
+      sourceConfig: mergedSourceConfig,
+      ...(params.buildStarted
+        ? {
+            status: ApplicationStatus.AWAITING_BUILD,
+            buildStartedAt: new Date(),
+          }
+        : {}),
+      workflowRunId: null,
+      workflowRunUrl: null,
+      lastBuildStatus: null,
+      lastBuildConclusion: null,
+    });
+
+    if (!params.buildStarted) return {};
+
     await this.recordExternalBuildStarted({
       applicationId: appId,
       provider: BuildProvider.GITHUB_ACTIONS,
-      branch: dto.branch,
-      externalUrl: commitResult.workflowUrl,
-      commitSha: commitResult.sha,
-      force: dto.force,
+      branch: params.branch,
+      externalUrl: params.workflowUrl,
+      commitSha: params.commitSha,
+      force: params.force,
     });
+
+    // The AppBuild row above is what the watcher matches the run against, so
+    // returning here loses nothing but the head start.
+    if (params.resolveRun === false) return {};
 
     let runId: string | undefined;
     try {
       await this.delay(4000);
+      // Resolved per workflow *file*, never per branch: in a monorepo the same
+      // commit starts several runs on the same branch, and matching by branch
+      // alone would hand every application the same run id.
       const run = await this.githubWorkflowService.getLatestWorkflowRun(
         userId,
-        repository.owner,
-        repository.repositoryName,
-        dto.branch,
-        commitResult.sha,
-        workflowFileName,
+        params.owner,
+        params.repo,
+        params.branch,
+        params.commitSha,
+        params.workflowFileName,
       );
       if (run) {
         runId = run.runId;
@@ -619,11 +705,11 @@ export class ApplicationWorkflowService {
         await this.recordExternalBuildStarted({
           applicationId: appId,
           provider: BuildProvider.GITHUB_ACTIONS,
-          branch: dto.branch,
+          branch: params.branch,
           externalRunId: runId,
           externalUrl: run.url,
-          commitSha: run.headSha || commitResult.sha,
-          force: dto.force,
+          commitSha: run.headSha || params.commitSha,
+          force: params.force,
         });
       }
     } catch (error) {
@@ -632,16 +718,7 @@ export class ApplicationWorkflowService {
       );
     }
 
-    this.logger.log(
-      `V3 workflow committed for app ${appId}. workflowUrl=${commitResult.workflowUrl}`,
-    );
-
-    return {
-      committed: true,
-      workflowUrl: commitResult.workflowUrl,
-      runId,
-      buildStarted: true,
-    };
+    return { runId };
   }
 
   /**
@@ -899,7 +976,7 @@ export class ApplicationWorkflowService {
    * active, the webhook wins when it can reach us, the poller picks up the
    * slack when it can't.
    */
-  private isBackendPollingOnly(): boolean {
+  isBackendPollingOnly(): boolean {
     const raw = this.configService.get<string>('BACKEND_POLLING_ONLY');
     return raw === 'true' || raw === '1';
   }

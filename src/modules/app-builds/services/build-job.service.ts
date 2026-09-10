@@ -305,9 +305,11 @@ spec:
       if (!content) return '';
       // Use printf to avoid heredoc quoting issues with arbitrary Dockerfile content
       const escaped = content
-        .replaceAll(String.raw`\\`, String.raw`\\`)
+        .replaceAll('\\', String.raw`\\`)
+        .replaceAll('%', '%%')
         .replaceAll("'", String.raw`'\''`)
-        .replaceAll('n', String.raw`\n`);
+        .replaceAll('\r', '')
+        .replaceAll('\n', String.raw`\n`);
       return `\n              printf '${escaped}' > /workspace/Dockerfile\n              echo "FLUI-RUNNER: Dockerfile written from build advisor (strategy=dockerfile)"\n`;
     })();
 
