@@ -5,7 +5,7 @@ import { FrameworkType } from '../../framework-core/enums';
 import { promises as fs } from 'node:fs';
 
 // Mock fs module
-jest.mock('fs', () => ({
+jest.mock('node:fs', () => ({
   promises: {
     readFile: jest.fn(),
   },

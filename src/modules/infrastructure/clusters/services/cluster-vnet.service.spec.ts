@@ -33,7 +33,7 @@ describe('ClusterVNetService.attachClusterToVNet', () => {
     };
     const queue = { add: jest.fn().mockResolvedValue(undefined) };
     const providerFactory = {
-      getProvider: jest.fn().mockResolvedValue(provider),
+      getProvider: jest.fn().mockReturnValue(provider),
     };
     const vnetsService = {
       getVNet: jest.fn().mockResolvedValue(vnet),
