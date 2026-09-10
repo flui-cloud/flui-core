@@ -2,6 +2,24 @@
   "schemaVersion": 1,
   "releases": [
     {
+      "version": "0.13.0-rc.2",
+      "publishedAt": "2026-09-10T19:24:35.427Z",
+      "bootstrapRef": "4957101",
+      "images": {
+        "fluiApi": "0.13.0-rc.2",
+        "fluiWeb": "0.13.0-rc.2",
+        "fluiAuthz": "0.6.0"
+      },
+      "notes": [
+        "Deploy from a repository: Flui reads it, renders its manifests, and applies them on a branch of its own",
+        "Backups: continuous protection with point-in-time restore, scheduled volume copies, and retention",
+        "Rebuild a lost cluster from its sealed bundle, and put the data back where the ledger says",
+        "Apply a Flui release from the running installation"
+      ],
+      "migrations": 13,
+      "requiresBootstrap": true
+    },
+    {
       "version": "0.13.0-rc.1",
       "publishedAt": "2026-09-03T15:09:49+02:00",
       "bootstrapRef": "8bdbb6f",
