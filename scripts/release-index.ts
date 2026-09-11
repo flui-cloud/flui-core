@@ -11,9 +11,16 @@
  * Three of the four fields that are not in RELEASE are derived, not invented:
  * `migrations` from the migrations added since the previous release's tag,
  * `requiresBootstrap` from a changed `bootstrapRef`, `publishedAt` from the
- * release tag's own commit date. Only `notes` is authored.
+ * release tag's own commit date. Only `notes` is authored, and it is optional —
+ * an entry with none still publishes; there is nothing worth templating out of
+ * a commit log; good release copy is written by a person, later, with:
  *
  *   pnpm release:index --notes "Cluster rebuild" --notes "Backup quick setup"
+ *
+ * Pushing a tag matching `RELEASE.version` runs this in CI
+ * (.github/workflows/docker-publish.yml, job `publish-release-index`), which
+ * passes `--verify-tag` so a forgotten version bump fails loudly instead of
+ * publishing an entry for the wrong release.
  */
 import { execFileSync } from 'node:child_process';
 import * as fs from 'node:fs';
@@ -39,6 +46,11 @@ interface ReleaseEntry {
 interface ReleaseIndex {
   schemaVersion: number;
   releases: ReleaseEntry[];
+}
+
+function flagValue(name: string): string | undefined {
+  const values = flagValues(name);
+  return values[0];
 }
 
 function flagValues(name: string): string[] {
@@ -133,7 +145,27 @@ function publishedAt(version: string): string {
   return new Date().toISOString();
 }
 
+/**
+ * Refuses to publish an entry for a release nobody meant to cut: the tag is
+ * the trigger (a human decided "this commit is a release" by naming it), so if
+ * `RELEASE.version` was not bumped to match, the entry would describe the wrong
+ * release under the right tag — worse than no entry at all, because an
+ * installation would trust it.
+ */
+function verifyTag(): void {
+  const tag = flagValue('verify-tag');
+  if (!tag) return;
+  const tagVersion = tag.replace(/^v/, '');
+  if (tagVersion !== RELEASE.version) {
+    throw new Error(
+      `Tag ${tag} does not match RELEASE.version (${RELEASE.version}) in ` +
+        `src/config/release.config.ts. Bump it before tagging.`,
+    );
+  }
+}
+
 function main(): void {
+  verifyTag();
   const index = readIndex();
   const others = index.releases.filter((r) => r.version !== RELEASE.version);
   const existing = index.releases.find((r) => r.version === RELEASE.version);

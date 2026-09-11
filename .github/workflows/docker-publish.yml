@@ -74,3 +74,49 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+
+  publish-release-index:
+    name: Publish release index
+    needs: build-and-push
+    # Only a real release: `main` pushes and workflow_dispatch build images
+    # without cutting a release, and get nothing added to releases.json.
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          # release-index.ts diffs migrations against the previous release's
+          # tag and reads that tag's commit date — needs the full history and
+          # every tag, not the shallow single-branch clone checkout defaults to.
+          fetch-depth: 0
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Generate the entry for this release
+        run: pnpm release:index --verify-tag "${{ github.ref_name }}"
+
+      - name: Commit and push, if the index actually changed
+        run: |
+          if git diff --quiet -- releases.json; then
+            echo "releases.json already describes ${{ github.ref_name }} — nothing to publish."
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email 'github-actions[bot]@users.noreply.github.com'
+          git add releases.json
+          git commit -m "chore(release): publish ${{ github.ref_name }} to releases.json"
+          # main may have moved since checkout; a release tag is a rare,
+          # single-writer event, so one rebase-and-retry covers the race
+          # without a full lock.
+          git pull --rebase origin main
+          git push origin HEAD:main

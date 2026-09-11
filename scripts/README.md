@@ -11,8 +11,10 @@ Operational scripts for Flui contributors and users.
 
 ## Release
 
-- `release-index.ts` — publish `RELEASE` as an entry in `releases.json`, the list
-  an installation reads to learn what exists after the release it was built as.
+- `release-index.ts` — generates `releases.json`, the list an installation reads
+  to learn what exists after the release it was built as, from `RELEASE` in
+  `src/config/release.config.ts`. Runs automatically in CI on every `v*` tag
+  push; run it by hand only to add release notes to an already-published entry.
   See [internal-docs/RELEASE_MANIFEST.md](../internal-docs/RELEASE_MANIFEST.md).
 
   ```bash
