@@ -261,10 +261,14 @@ export class CliK3sScriptService {
             config.sharedStorage?.volumeSizeGb ?? 0,
           ),
         },
-        // BYOS only: a cloud cluster gets its provider firewall before any node
-        // exists, so its host is never exposed. A BYOS host is, from the moment
-        // k3s binds a port until something closes it.
-        config.provider === 'byos'
+        // BYOS and OVH: neither has a working pre-create managed firewall
+        // (BYOS has no provider API at all; OVH's Neutron security groups
+        // ship with quota 0, unusable) — a cluster on either provider is
+        // exposed from the moment k3s binds a port until something closes
+        // it, unless the firewall is baked into first boot itself. Hetzner/
+        // Scaleway get their provider firewall applied before the node
+        // exists, so they don't need this.
+        config.provider === 'byos' || config.provider === 'ovh'
           ? this.buildHostFirewallPreamble(config)
           : '',
       );

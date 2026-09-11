@@ -34,6 +34,7 @@ import {
   getEuRegions,
   getDefaultRegion,
 } from '../../config/defaults';
+import { CLOUD_PROVIDER_BY_KEY } from '../../config/provider-map';
 import {
   confirmAlternativeServerType,
   displayServerTypeNotFoundError,
@@ -64,8 +65,9 @@ export default class EnvCreate extends Command {
     provider: Flags.string({
       char: 'p',
       description:
-        "Cloud provider for the control cluster (default: the profile's configured provider)",
-      options: ['hetzner', 'scaleway'],
+        "Cloud provider for the control cluster (default: the profile's configured provider). " +
+        'OVH has no CLI-side firewall automation yet — pass --no-configure-firewall.',
+      options: ['hetzner', 'scaleway', 'ovh'],
     }),
     'node-size': Flags.string({
       description:
@@ -184,7 +186,7 @@ export default class EnvCreate extends Command {
 
   /** Providers that already have stored credentials in this profile. */
   private getConfiguredProviders(configStorage: ConfigStorage): string[] {
-    return (['hetzner', 'scaleway'] as const).filter((p) =>
+    return (['hetzner', 'scaleway', 'ovh'] as const).filter((p) =>
       isCompoundProvider(p)
         ? configStorage.hasCredentials(p)
         : configStorage.hasToken(p),
@@ -520,9 +522,7 @@ export default class EnvCreate extends Command {
     }
 
     const cloudProvider =
-      providerKey === 'scaleway'
-        ? CloudProvider.SCALEWAY
-        : CloudProvider.HETZNER;
+      CLOUD_PROVIDER_BY_KEY[providerKey] ?? CloudProvider.HETZNER;
     const nodeSize =
       flags['node-size'] || getRecommendedServerType(providerKey);
     const region = flags.region || getDefaultRegion(providerKey);
@@ -876,7 +876,8 @@ export default class EnvCreate extends Command {
               ? vnetService.hetznerNetworkZoneFor(validatedRegion)
               : undefined,
           region:
-            cloudProvider === CloudProvider.SCALEWAY
+            cloudProvider === CloudProvider.SCALEWAY ||
+            cloudProvider === CloudProvider.OVH
               ? validatedRegion
               : undefined,
         });
@@ -903,8 +904,18 @@ export default class EnvCreate extends Command {
         this.exit(1);
       }
 
-      // 4. Create firewall BEFORE cluster (if enabled)
-      if (flags['configure-firewall']) {
+      // 4. Create firewall BEFORE cluster (if enabled). OVH has no pre-create
+      // managed firewall to call here — its protection is baked into the
+      // node's own cloud-init (a default-deny host-nftables ruleset applied
+      // before k3s binds anything) and becomes dashboard-visible once
+      // BootstrapSeeder reads it back on the server itself.
+      if (flags['configure-firewall'] && cloudProvider === CloudProvider.OVH) {
+        console.log(
+          chalk.dim(
+            '\nℹ OVH firewall: applied via host-nftables at first boot, not a pre-create API call.\n',
+          ),
+        );
+      } else if (flags['configure-firewall']) {
         spinner = ora('Creating firewall...').start();
 
         try {

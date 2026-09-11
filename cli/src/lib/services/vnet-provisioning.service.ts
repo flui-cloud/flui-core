@@ -14,9 +14,9 @@ export interface EnvVnetSpec {
   name: string;
   ipRange?: string;
   subnetIpRange?: string;
-  /** Hetzner: networkZone (eu-central). Scaleway: regional, ignored. */
+  /** Hetzner: networkZone (eu-central). Scaleway/OVH: regional, ignored. */
   networkZone?: string;
-  /** Scaleway: region (fr-par, nl-ams, pl-waw). Hetzner: ignored. */
+  /** Scaleway: region (fr-par, nl-ams, pl-waw). OVH: macro region (GRA, SBG…). Hetzner: ignored. */
   region?: string;
 }
 
@@ -78,6 +78,9 @@ export class VnetProvisioningService {
     }
     if (spec.provider === CloudProvider.SCALEWAY) {
       return this.createScalewayVnet(spec, ipRange, subnetIpRange);
+    }
+    if (spec.provider === CloudProvider.OVH) {
+      return this.createOvhVnet(spec, ipRange, subnetIpRange);
     }
     throw new Error(
       `VNet provisioning not yet implemented for provider ${spec.provider}`,
@@ -146,6 +149,60 @@ export class VnetProvisioningService {
     const provider = this.providerFactory.getProvider(CloudProvider.SCALEWAY);
     if (!provider.createVNet) {
       throw new Error('Scaleway provider does not implement createVNet');
+    }
+    const created = await provider.createVNet({
+      name: spec.name,
+      ipRange,
+      labels: [
+        { key: 'managed-by', value: 'flui-cloud' },
+        { key: 'flui-resource-type', value: 'vnet' },
+        { key: 'region', value: region },
+        contextLabelPair(),
+      ],
+      subnets: [{ ipRange: subnetIpRange, networkZone: region }],
+    });
+
+    const vnetRecord = await this.vnetRepo.save({
+      providerResourceId: created.vnetId,
+      name: spec.name,
+      provider: spec.provider,
+      ipRange: created.ipRange,
+      labels: [
+        { key: 'managed-by', value: 'flui-cloud' },
+        { key: 'flui-resource-type', value: 'vnet' },
+        { key: 'region', value: region },
+        contextLabelPair(),
+      ],
+      status: VNetStatus.ACTIVE,
+      subnets: [],
+    });
+
+    const subnetRecord = await this.vnetRepo.addSubnet(vnetRecord.id, {
+      providerSubnetId: subnetIpRange,
+      ipRange: subnetIpRange,
+      type: SubnetType.CLOUD,
+      networkZone: region,
+    });
+
+    return this.toInfo(
+      { ...vnetRecord, subnets: [subnetRecord] },
+      subnetRecord,
+      true,
+    );
+  }
+
+  private async createOvhVnet(
+    spec: EnvVnetSpec,
+    ipRange: string,
+    subnetIpRange: string,
+  ): Promise<EnvVnetInfo> {
+    const region = spec.region || 'GRA';
+    this.logger.log(
+      `Creating OVH private network ${spec.name} in ${region} (${ipRange})`,
+    );
+    const provider = this.providerFactory.getProvider(CloudProvider.OVH);
+    if (!provider.createVNet) {
+      throw new Error('OVH provider does not implement createVNet');
     }
     const created = await provider.createVNet({
       name: spec.name,

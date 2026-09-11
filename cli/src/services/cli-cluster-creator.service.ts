@@ -164,9 +164,16 @@ export class CliClusterCreatorService {
         cluster.k3sTokenEncrypted,
       );
 
-      // Get firewall ID from metadata if pre-created
+      // Get firewall ID from metadata if pre-created. OVH has no pre-create
+      // managed firewall (see the cloud-init host-nftables preamble in
+      // k3s-script.service.ts) — its firewall only starts existing once
+      // BootstrapSeeder reads this id back on the server itself, so the id
+      // must already follow NftablesFirewallBackend's own convention
+      // ('nft-<clusterId>') for that backend to find it later.
       const metadata = operation.metadata as any;
-      const firewallId = metadata?.firewallId;
+      const firewallId =
+        metadata?.firewallId ||
+        (cluster.provider === 'ovh' ? `nft-${cluster.id}` : undefined);
 
       // Step 1: Create master node
       this.log(opId, 'Creating master node...');
