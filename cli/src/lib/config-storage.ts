@@ -179,7 +179,20 @@ export class ConfigStorage {
 
     try {
       const content = readFileSync(this.configFile, 'utf8');
-      return JSON.parse(content);
+      const parsed = JSON.parse(content) as Partial<ConfigData>;
+      // Backfills structural keys missing from a config.json written before
+      // they existed (e.g. `credentials` predates access-key/secret-key
+      // providers) — every writer below assumes these are always objects.
+      return {
+        ...parsed,
+        tokens: parsed.tokens ?? {},
+        credentials: parsed.credentials ?? {},
+        metadata: parsed.metadata ?? {
+          version: '1.0.0',
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        },
+      };
     } catch (error) {
       throw new Error(`Failed to read config file: ${error.message}`);
     }
