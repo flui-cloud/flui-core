@@ -93,6 +93,8 @@ export class CliCredentialProviderService implements ICredentialProvider {
         return 'hetzner';
       case CloudProvider.SCALEWAY:
         return 'scaleway';
+      case CloudProvider.OVH:
+        return 'ovh';
       default:
         throw new Error(`Unsupported provider: ${provider}`);
     }

@@ -7,14 +7,22 @@ export const CLI_DEFAULTS = {
   SCALEWAY_EU_REGIONS: ['fr-par', 'nl-ams', 'pl-waw'] as const,
   DEFAULT_SCALEWAY_REGION: 'fr-par' as const,
 
+  // OVH macro-region codes (city-level, see OVH_REGIONS in @flui-cloud/infra).
+  // GRA/SBG/DE/UK/WAW are EU; BHS/SGP/SYD are excluded here as non-EU.
+  OVH_EU_REGIONS: ['GRA', 'SBG', 'DE', 'UK', 'WAW'] as const,
+  DEFAULT_OVH_REGION: 'GRA' as const,
+
   FALLBACK_SERVER_TYPES: {
     hetzner: ['cx23', 'cx33', 'cx32', 'cpx21', 'cx42', 'cpx31'],
     scaleway: ['DEV1-M', 'DEV1-L', 'GP1-XS', 'GP1-S'],
+    ovh: ['d2-2', 'd2-4', 'd2-8', 'c3-4'],
   },
 
   RECOMMENDED_SERVER_TYPES: {
     hetzner: 'cx23',
     scaleway: 'DEV1-M',
+    // Cheapest hourly-billed flavor in OVH's public catalog (~€0.0104/h).
+    ovh: 'd2-2',
   },
 
   MIN_SPECS: {
@@ -75,12 +83,22 @@ export function getDefaultScalewayRegion(): string {
   return CLI_DEFAULTS.DEFAULT_SCALEWAY_REGION;
 }
 
+export function getOvhEuRegions(): string[] {
+  return [...CLI_DEFAULTS.OVH_EU_REGIONS];
+}
+
+export function getDefaultOvhRegion(): string {
+  return CLI_DEFAULTS.DEFAULT_OVH_REGION;
+}
+
 export function getEuRegions(provider: string): string[] {
   if (provider === 'scaleway') return getScalewayEuRegions();
+  if (provider === 'ovh') return getOvhEuRegions();
   return getHetznerEuRegions();
 }
 
 export function getDefaultRegion(provider: string): string {
   if (provider === 'scaleway') return getDefaultScalewayRegion();
+  if (provider === 'ovh') return getDefaultOvhRegion();
   return getDefaultHetznerRegion();
 }

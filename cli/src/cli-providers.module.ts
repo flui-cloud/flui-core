@@ -10,6 +10,8 @@ import { ProviderCoreModule } from 'src/modules/providers/provider-core.module';
 import { CommonModule } from 'src/modules/common/common.module';
 import { HetznerProviderModule } from 'src/modules/providers/implementations/hetzner/hetzner-provider.module';
 import { ScalewayProviderModule } from 'src/modules/providers/implementations/scaleway/scaleway-provider.module';
+import { OvhProviderModule } from 'src/modules/providers/implementations/ovh/ovh-provider.module';
+import { OvhProviderService } from 'src/modules/providers/implementations/ovh/ovh-provider.service';
 import { ProviderFactory } from 'src/modules/providers/core/factories/provider.factory';
 import { FirewallProviderFactory } from 'src/modules/providers/core/factories/firewall-provider.factory';
 import { DnsProviderFactory } from 'src/modules/providers/core/factories/dns-provider.factory';
@@ -35,6 +37,7 @@ import {
     CommonModule,
     HetznerProviderModule,
     ScalewayProviderModule,
+    OvhProviderModule,
   ],
   providers: [
     CliCredentialProviderService,
@@ -47,12 +50,18 @@ import {
       useFactory: (
         hetzner: HetznerProviderService,
         scaleway: ScalewayProviderService,
+        ovh: OvhProviderService,
       ) =>
         new ProviderFactory([
           { provider: CloudProvider.HETZNER, service: hetzner },
           { provider: CloudProvider.SCALEWAY, service: scaleway },
+          { provider: CloudProvider.OVH, service: ovh },
         ]),
-      inject: [HetznerProviderService, ScalewayProviderService],
+      inject: [
+        HetznerProviderService,
+        ScalewayProviderService,
+        OvhProviderService,
+      ],
     },
     {
       provide: FirewallProviderFactory,
@@ -107,6 +116,7 @@ import {
     'ICredentialProvider',
     HetznerProviderModule,
     ScalewayProviderModule,
+    OvhProviderModule,
     ProviderFactory,
     FirewallProviderFactory,
     DnsProviderFactory,

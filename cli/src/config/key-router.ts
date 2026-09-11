@@ -4,7 +4,7 @@ import { PREFERENCES, isPreferenceKey } from './preferences-schema';
  * Cloud provider keys recognized by `flui config set/get/remove`.
  * Kept in sync with the prompts/credential logic; extend here when adding a new provider.
  */
-export const SUPPORTED_PROVIDERS = ['hetzner', 'scaleway'] as const;
+export const SUPPORTED_PROVIDERS = ['hetzner', 'scaleway', 'ovh'] as const;
 export type SupportedProvider = (typeof SUPPORTED_PROVIDERS)[number];
 
 export const SYSTEM_KEYS = ['api-url'] as const;
@@ -39,7 +39,7 @@ export function formatKnownKeys(): string {
     .map((p) => `  - ${p.key} (preference) — ${p.description}`)
     .join('\n');
   const providers = SUPPORTED_PROVIDERS.map((p) => {
-    const isCompound = p === 'scaleway';
+    const isCompound = p === 'scaleway' || p === 'ovh';
     return `  - ${p} (${isCompound ? 'access key + secret key' : 'provider token'})`;
   }).join('\n');
   const system = SYSTEM_KEYS.map((k) => `  - ${k} (system override)`).join(

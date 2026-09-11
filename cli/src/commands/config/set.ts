@@ -11,6 +11,7 @@ import {
 } from '../../lib/provider-credential-schemas';
 import { promptInput, promptMaskedInput } from '../../lib/prompts';
 import { validateScalewayCredentials } from '../../lib/scaleway-validator';
+import { validateOvhCredentials } from '../../lib/ovh-validator';
 
 export default class ConfigSet extends Command {
   static readonly description =
@@ -192,21 +193,33 @@ export default class ConfigSet extends Command {
       collected[field.key] = supplied.trim();
     }
 
-    if (provider === 'scaleway') {
-      const result = await validateScalewayCredentials(
-        collected.accessKey,
-        collected.secretKey,
-      );
-      if (!result.success) {
-        console.log(chalk.red(`\n${result.message}\n`));
-        this.exit(1);
-      }
+    const result = await this.validateCompound(provider, collected);
+    if (result && !result.success) {
+      console.log(chalk.red(`\n${result.message}\n`));
+      this.exit(1);
     }
 
     storage.saveCredentials(provider, collected);
     console.log(chalk.green(`\nProvider configured: ${provider}`));
     console.log(chalk.gray(`Location: ${storage.getConfigPath()}`));
     console.log(chalk.gray('Encryption: AES-256-GCM\n'));
+  }
+
+  /** Live pre-save check for providers with a validator; null when none exists yet. */
+  private async validateCompound(
+    provider: string,
+    collected: Record<string, string>,
+  ): Promise<{ success: boolean; message: string } | null> {
+    if (provider === 'scaleway') {
+      return validateScalewayCredentials(
+        collected.accessKey,
+        collected.secretKey,
+      );
+    }
+    if (provider === 'ovh') {
+      return validateOvhCredentials(collected.accessKey, collected.secretKey);
+    }
+    return null;
   }
 
   private async setCompoundProvider(
@@ -237,13 +250,10 @@ export default class ConfigSet extends Command {
       collected[field.key] = value.trim();
     }
 
-    if (provider === 'scaleway') {
-      process.stdout.write(chalk.dim('\nValidating credentials...'));
-      const result = await validateScalewayCredentials(
-        collected.accessKey,
-        collected.secretKey,
-      );
-      process.stdout.write('\r\u001B[2K');
+    process.stdout.write(chalk.dim('\nValidating credentials...'));
+    const result = await this.validateCompound(provider, collected);
+    process.stdout.write('\r\u001B[2K');
+    if (result) {
       if (!result.success) {
         console.log(chalk.red(`✖ ${result.message}\n`));
         this.exit(1);

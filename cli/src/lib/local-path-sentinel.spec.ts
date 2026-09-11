@@ -187,6 +187,9 @@ const LOCAL_PATH: Record<string, LocalPathEntry> = {
   'commands/server-types/list.ts': {
     why: 'Chooses a server type before there is a cluster to ask.',
   },
+  'commands/config/test.ts': {
+    why: 'Validates stored provider credentials before there is a cluster to ask.',
+  },
 
   // ── the operation kills, or presumes dead, the API it would have called ────
   'commands/env/destroy.ts': {
@@ -313,7 +316,7 @@ describe('the local path is a list somebody wrote down', () => {
     .sort();
 
   /**
-   * Thirty-seven, counted rather than remembered. A new command that wants the
+   * Thirty-eight, counted rather than remembered. A new command that wants the
    * local path fails here first, and the way to make it pass is to say why —
    * which is the whole mechanism. Removing one is equally loud, so the list
    * cannot rot in the other direction either.
@@ -330,7 +333,7 @@ describe('the local path is a list somebody wrote down', () => {
   });
 
   /**
-   * How many of the thirty-six decide behind the guard chain rather than in
+   * How many of the thirty-eight decide behind the guard chain rather than in
    * process. The number moves only when a command changes side, which is the
    * point: it cannot drift quietly.
    *
@@ -340,12 +343,12 @@ describe('the local path is a list somebody wrote down', () => {
    * asking the closed door for that service is the net loss. Two more have no
    * route at all.
    */
-  it('has ten of the thirty-seven deciding over HTTP', () => {
+  it('has ten of the thirty-eight deciding over HTTP', () => {
     const viaApi = Object.entries(LOCAL_PATH)
       .filter(([, entry]) => entry.viaApi)
       .map(([file]) => file);
     expect({ total: measured.length, viaApi: viaApi.length }).toEqual({
-      total: 37,
+      total: 38,
       viaApi: 10,
     });
   });
@@ -387,6 +390,8 @@ describe('what the local path still resolves out of its own container', () => {
       'Rewrites the SSH allowlist from outside, which is the point when the allowlist is what locked you out.',
     'commands/server-types/list.ts  ::  ProviderFactory':
       'Lists server types before any cluster exists to ask.',
+    'commands/config/test.ts  ::  ProviderFactory':
+      'Validates stored credentials with a live provider call before any cluster exists to ask.',
     'commands/env/credentials.ts  ::  EncryptionService':
       'Decrypts secrets held in this machine’s store; nothing leaves it.',
     'commands/dev/creds.ts  ::  EncryptionService':

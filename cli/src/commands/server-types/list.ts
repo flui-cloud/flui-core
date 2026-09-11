@@ -57,7 +57,7 @@ export default class ServerTypesList extends Command {
     provider: Flags.string({
       char: 'p',
       description: 'Cloud provider',
-      options: ['hetzner', 'scaleway'],
+      options: ['hetzner', 'scaleway', 'ovh'],
       required: true,
     }),
     region: Flags.string({

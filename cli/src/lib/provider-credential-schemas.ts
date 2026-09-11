@@ -13,6 +13,8 @@
  */
 export type CliCredentialType = 'api_key' | 'access_key_secret';
 
+export type CliSupportedProvider = 'hetzner' | 'scaleway' | 'ovh';
+
 export interface CliCredentialField {
   key: string;
   label: string;
@@ -22,13 +24,13 @@ export interface CliCredentialField {
 }
 
 export interface CliProviderCredentialSchema {
-  provider: 'hetzner' | 'scaleway';
+  provider: CliSupportedProvider;
   type: CliCredentialType;
   fields: CliCredentialField[];
 }
 
 export const PROVIDER_CREDENTIAL_SCHEMAS: Record<
-  'hetzner' | 'scaleway',
+  CliSupportedProvider,
   CliProviderCredentialSchema
 > = {
   hetzner: {
@@ -64,12 +66,32 @@ export const PROVIDER_CREDENTIAL_SCHEMAS: Record<
       },
     ],
   },
+  ovh: {
+    provider: 'ovh',
+    type: 'access_key_secret',
+    fields: [
+      {
+        key: 'accessKey',
+        label: 'OpenStack Username',
+        hint: 'OVH Manager → Public Cloud → Users & Roles',
+        secret: false,
+        required: true,
+      },
+      {
+        key: 'secretKey',
+        label: 'OpenStack Password',
+        hint: 'Set when the OpenStack user was created',
+        secret: true,
+        required: true,
+      },
+    ],
+  },
 };
 
 export function getCredentialSchema(
   provider: string,
 ): CliProviderCredentialSchema | null {
-  const key = provider.toLowerCase() as 'hetzner' | 'scaleway';
+  const key = provider.toLowerCase() as CliSupportedProvider;
   return PROVIDER_CREDENTIAL_SCHEMAS[key] ?? null;
 }
 

@@ -5,6 +5,7 @@ import { ServerTypeValidatorService } from '../services/server-type-validator.se
 import { ConfigStorage } from './config-storage';
 import { getCredentialSchema } from './provider-credential-schemas';
 import { validateScalewayCredentials } from './scaleway-validator';
+import { validateOvhCredentials } from './ovh-validator';
 
 const validator = new ServerTypeValidatorService();
 
@@ -21,7 +22,7 @@ function makeStdinCleanup(onData: (data: Buffer) => void): () => void {
 }
 
 interface ProviderOption {
-  id: 'hetzner' | 'scaleway';
+  id: 'hetzner' | 'scaleway' | 'ovh';
   label: string;
   available: boolean;
   unavailableReason?: string;
@@ -30,6 +31,7 @@ interface ProviderOption {
 const SUPPORTED_PROVIDERS: ProviderOption[] = [
   { id: 'hetzner', label: 'Hetzner Cloud', available: true },
   { id: 'scaleway', label: 'Scaleway', available: true },
+  { id: 'ovh', label: 'OVHcloud', available: true },
 ];
 
 interface ArrowSelectItem {
@@ -340,6 +342,22 @@ export async function runProviderSetupWizard(
       collected.secretKey,
     );
     process.stdout.write('\r\u001B[2K');
+    if (!result.success) {
+      console.log(chalk.red(`   ✖ ${result.message}\n`));
+      return null;
+    }
+    console.log(chalk.green(`   ✔ ${result.message}`));
+  }
+
+  if (selectedProvider.id === 'ovh') {
+    process.stdout.write(
+      chalk.dim('\n   Validating credentials with OVH (Keystone)...'),
+    );
+    const result = await validateOvhCredentials(
+      collected.accessKey,
+      collected.secretKey,
+    );
+    process.stdout.write('\r[2K');
     if (!result.success) {
       console.log(chalk.red(`   ✖ ${result.message}\n`));
       return null;
