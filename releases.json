@@ -2,6 +2,19 @@
   "schemaVersion": 1,
   "releases": [
     {
+      "version": "0.13.0-rc.3",
+      "publishedAt": "2026-09-11T07:59:26+02:00",
+      "bootstrapRef": "4957101",
+      "images": {
+        "fluiApi": "0.13.0-rc.3",
+        "fluiWeb": "0.13.0-rc.3",
+        "fluiAuthz": "0.6.0"
+      },
+      "notes": [],
+      "migrations": 0,
+      "requiresBootstrap": false
+    },
+    {
       "version": "0.13.0-rc.2",
       "publishedAt": "2026-09-10T19:24:35.427Z",
       "bootstrapRef": "4957101",
