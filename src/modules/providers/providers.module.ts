@@ -18,6 +18,7 @@ import { HetznerObjectStorageModule } from './implementations/hetzner/object-sto
 import { ContaboProviderModule } from './implementations/contabo/contabo-provider.module';
 import { ScalewayProviderModule } from './implementations/scaleway/scaleway-provider.module';
 import { ScalewayObjectStorageModule } from './implementations/scaleway/object-storage/scaleway-object-storage.module';
+import { OvhProviderModule } from './implementations/ovh/ovh-provider.module';
 import { ProviderFactory } from './core/factories/provider.factory';
 import { FirewallProviderFactory } from './core/factories/firewall-provider.factory';
 import { NftablesFirewallBackend } from './core/firewall/nftables-firewall.backend';
@@ -36,6 +37,8 @@ import { HetznerCapabilitiesService } from './implementations/hetzner/hetzner-ca
 import { ContaboCapabilitiesService } from './implementations/contabo/contabo-capabilities.service';
 import { ScalewayCapabilitiesService } from './implementations/scaleway/scaleway-capabilities.service';
 import { ByosCapabilitiesService } from './implementations/byos/byos-capabilities.service';
+import { OvhCapabilitiesService } from './implementations/ovh/ovh-capabilities.service';
+import { OvhProviderService } from './implementations/ovh/ovh-provider.service';
 import { HetznerProviderService } from './services/hetzner-provider.service';
 import { HetznerFirewallService } from './services/hetzner-firewall.service';
 import { HetznerDnsService } from './services/hetzner-dns.service';
@@ -71,6 +74,7 @@ import { DnsProvider } from './enums/dns-provider.enum';
     ContaboProviderModule,
     ScalewayProviderModule,
     ScalewayObjectStorageModule,
+    OvhProviderModule,
   ],
   controllers: [ProviderFirewallsController, ProviderSchemasController],
   providers: [
@@ -88,16 +92,19 @@ import { DnsProvider } from './enums/dns-provider.enum';
         hetzner: HetznerProviderService,
         contabo: ContaboProviderService,
         scaleway: ScalewayProviderService,
+        ovh: OvhProviderService,
       ) =>
         new ProviderFactory([
           { provider: CloudProvider.HETZNER, service: hetzner },
           { provider: CloudProvider.CONTABO, service: contabo },
           { provider: CloudProvider.SCALEWAY, service: scaleway },
+          { provider: CloudProvider.OVH, service: ovh },
         ]),
       inject: [
         HetznerProviderService,
         ContaboProviderService,
         ScalewayProviderService,
+        OvhProviderService,
       ],
     },
     NativeSSHConnectionService,
@@ -119,6 +126,7 @@ import { DnsProvider } from './enums/dns-provider.enum';
           CloudProvider.HETZNER,
           CloudProvider.SCALEWAY,
           CloudProvider.CONTABO,
+          CloudProvider.OVH,
           CloudProvider.BYOS,
         ]) {
           const backend = capabilities
@@ -155,18 +163,21 @@ import { DnsProvider } from './enums/dns-provider.enum';
         contabo: ContaboCapabilitiesService,
         scaleway: ScalewayCapabilitiesService,
         byos: ByosCapabilitiesService,
+        ovh: OvhCapabilitiesService,
       ) =>
         new CapabilitiesProviderFactory([
           { provider: CloudProvider.HETZNER, service: hetzner },
           { provider: CloudProvider.CONTABO, service: contabo },
           { provider: CloudProvider.SCALEWAY, service: scaleway },
           { provider: CloudProvider.BYOS, service: byos },
+          { provider: CloudProvider.OVH, service: ovh },
         ]),
       inject: [
         HetznerCapabilitiesService,
         ContaboCapabilitiesService,
         ScalewayCapabilitiesService,
         ByosCapabilitiesService,
+        OvhCapabilitiesService,
       ],
     },
     VolumeExportService,
@@ -199,6 +210,7 @@ import { DnsProvider } from './enums/dns-provider.enum';
           { provider: CloudProvider.SCALEWAY, service: universal },
           { provider: CloudProvider.CONTABO, service: universal },
           { provider: CloudProvider.BYOS, service: universal },
+          { provider: CloudProvider.OVH, service: universal },
         ]),
       inject: [VolumeExportService],
     },
@@ -223,6 +235,7 @@ import { DnsProvider } from './enums/dns-provider.enum';
     ContaboProviderModule,
     ScalewayProviderModule,
     ScalewayObjectStorageModule,
+    OvhProviderModule,
     ProviderFactory,
     FirewallProviderFactory,
     DnsProviderFactory,

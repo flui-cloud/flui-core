@@ -142,6 +142,9 @@ export class ProviderDefinitionsService {
       case CloudProvider.SCALEWAY:
         return true;
 
+      case CloudProvider.OVH:
+        return true;
+
       default:
         return false;
     }

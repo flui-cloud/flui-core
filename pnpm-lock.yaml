@@ -19,6 +19,9 @@ importers:
       '@flui-cloud/cartographer':
         specifier: ^0.7.0
         version: 0.7.0
+      '@flui-cloud/infra':
+        specifier: ^0.5.0
+        version: 0.5.0(@nestjs/common@11.1.6(class-transformer@0.5.1)(class-validator@0.14.2)(reflect-metadata@0.2.2)(rxjs@7.8.2))(@nestjs/config@4.0.2(@nestjs/common@11.1.6(class-transformer@0.5.1)(class-validator@0.14.2)(reflect-metadata@0.2.2)(rxjs@7.8.2))(rxjs@7.8.2))(@nestjs/swagger@11.2.6(@nestjs/common@11.1.6(class-transformer@0.5.1)(class-validator@0.14.2)(reflect-metadata@0.2.2)(rxjs@7.8.2))(@nestjs/core@11.1.6)(class-transformer@0.5.1)(class-validator@0.14.2)(reflect-metadata@0.2.2))(class-transformer@0.5.1)(class-validator@0.14.2)(reflect-metadata@0.2.2)(rxjs@7.8.2)
       '@flui-cloud/mail':
         specifier: ^0.1.0
         version: 0.1.0
@@ -1027,6 +1030,20 @@ packages:
         integrity: sha512-qsN8Bq6KkrJZ9Y6TWxR8A0tOMv/KbeCkp3ZGSxU6ymhoQXIaPol0B1/TPt/yejfLyj18bD+ef18PZXHqtdjjcQ==,
       }
     engines: { node: '>=20.0.0' }
+
+  '@flui-cloud/infra@0.5.0':
+    resolution:
+      {
+        integrity: sha512-TuXJRlnKNqoUdLjGcY2ZgiesCbZDSU2r+h8/hyjZZEZUTO7KA6YlUswsZdMUVTalGRIxSR6+sn/t2QX7EasFMg==,
+      }
+    peerDependencies:
+      '@nestjs/common': '>=10'
+      '@nestjs/config': '>=3'
+      '@nestjs/swagger': '>=7'
+      class-transformer: '>=0.5'
+      class-validator: '>=0.14'
+      reflect-metadata: '>=0.1'
+      rxjs: '>=7'
 
   '@flui-cloud/mail@0.1.0':
     resolution:
@@ -10346,6 +10363,19 @@ snapshots:
   '@eslint/js@8.57.1': {}
 
   '@flui-cloud/cartographer@0.7.0': {}
+
+  '@flui-cloud/infra@0.5.0(@nestjs/common@11.1.6(class-transformer@0.5.1)(class-validator@0.14.2)(reflect-metadata@0.2.2)(rxjs@7.8.2))(@nestjs/config@4.0.2(@nestjs/common@11.1.6(class-transformer@0.5.1)(class-validator@0.14.2)(reflect-metadata@0.2.2)(rxjs@7.8.2))(rxjs@7.8.2))(@nestjs/swagger@11.2.6(@nestjs/common@11.1.6(class-transformer@0.5.1)(class-validator@0.14.2)(reflect-metadata@0.2.2)(rxjs@7.8.2))(@nestjs/core@11.1.6)(class-transformer@0.5.1)(class-validator@0.14.2)(reflect-metadata@0.2.2))(class-transformer@0.5.1)(class-validator@0.14.2)(reflect-metadata@0.2.2)(rxjs@7.8.2)':
+    dependencies:
+      '@nestjs/common': 11.1.6(class-transformer@0.5.1)(class-validator@0.14.2)(reflect-metadata@0.2.2)(rxjs@7.8.2)
+      '@nestjs/config': 4.0.2(@nestjs/common@11.1.6(class-transformer@0.5.1)(class-validator@0.14.2)(reflect-metadata@0.2.2)(rxjs@7.8.2))(rxjs@7.8.2)
+      '@nestjs/swagger': 11.2.6(@nestjs/common@11.1.6(class-transformer@0.5.1)(class-validator@0.14.2)(reflect-metadata@0.2.2)(rxjs@7.8.2))(@nestjs/core@11.1.6)(class-transformer@0.5.1)(class-validator@0.14.2)(reflect-metadata@0.2.2)
+      axios: 1.16.0
+      class-transformer: 0.5.1
+      class-validator: 0.14.2
+      reflect-metadata: 0.2.2
+      rxjs: 7.8.2
+    transitivePeerDependencies:
+      - debug
 
   '@flui-cloud/mail@0.1.0': {}
 
