@@ -1,4 +1,4 @@
-import { Inject, Injectable } from '@nestjs/common';
+import { Inject, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import {
   OvhProviderService as InfraOvhProviderService,
@@ -73,6 +73,8 @@ function isOvhGpuFlavor(id: string): boolean {
  */
 @Injectable()
 export class OvhProviderService implements ICloudProvider {
+  private readonly logger = new Logger(OvhProviderService.name);
+
   /** Catalog/pricing (getNodeSizes) needs no credentials — one shared instance is enough. */
   private readonly catalogOnly = new InfraOvhProviderService(
     this.configService,
@@ -328,7 +330,20 @@ export class OvhProviderService implements ICloudProvider {
     const region = config.subnets?.[0]?.networkZone;
     if (region) client.setDefaultRegion(region);
     const svc = new InfraOvhProviderService(this.configService, client);
-    return svc.createVNet(config);
+    const result = await svc.createVNet(config);
+    const resolvedRegion = region ?? (await client.resolveNetworkRegion());
+    await Promise.all(
+      result.subnets.map((subnet) =>
+        client
+          .clearSubnetGateway(resolvedRegion, subnet.id)
+          .catch((e) =>
+            this.logger.warn(
+              `Failed to clear gateway on subnet ${subnet.id}: ${String(e)} — the node may pick up a second default route via this VNet.`,
+            ),
+          ),
+      ),
+    );
+    return result;
   }
 
   async listVNets(): Promise<VNetDetails[]> {

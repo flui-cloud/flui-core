@@ -45,6 +45,20 @@ export class FluiOpenStackClient extends OpenStackClient {
     this.config.defaultRegion = region;
   }
 
+  /**
+   * A subnet with a gateway makes DHCP hand the node a second default
+   * route, which can pull pod egress onto this private-only VNet and into a
+   * dead end. Neutron only drops the gateway on an explicit `null`, which
+   * @flui-cloud/infra's createSubnet() never sends — so clear it right after
+   * creation.
+   */
+  async clearSubnetGateway(region: string, subnetId: string): Promise<void> {
+    const neutron = await this.endpoint('network', region);
+    await this.put(`${neutron}/v2.0/subnets/${subnetId}`, {
+      subnet: { gateway_ip: null },
+    });
+  }
+
   // ── Cinder (block storage) ──
 
   async listVolumes(region: string): Promise<CinderVolume[]> {
