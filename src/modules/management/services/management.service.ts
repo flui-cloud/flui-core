@@ -761,8 +761,9 @@ export class ManagementService {
    */
   async clearNodeSizesCache(provider: CloudProvider): Promise<void> {
     const cacheKey = this.cacheService.buildKey(
-      CacheCategory.CONFIGURATION,
-      `provider:${provider}:node-sizes`,
+      'provider',
+      provider,
+      'node-sizes-metadata',
     );
     await this.cacheService.delete(cacheKey);
   }

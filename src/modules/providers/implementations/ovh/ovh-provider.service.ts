@@ -35,6 +35,36 @@ import { buildOvhOpenStackClient } from './ovh-openstack-client.factory';
 import { FluiOpenStackClient } from './openstack-volumes-client';
 
 /**
+ * GPU flavors are real, orderable OVH products (@flui-cloud/infra's catalog
+ * intentionally keeps them — see its ovh-flavor-denylist.ts), but Flui has no
+ * GPU-aware workload story yet. Offering one as a K3s cluster node size would
+ * let someone provision a many-thousands-EUR/month box for a control-plane
+ * node by mistake. @flui-cloud/infra doesn't expose the catalog's
+ * `technical.gpu` field, so this list stands in for it — verified against
+ * OVH's live public catalog (eu.api.ovh.com/v1/order/catalog/public/cloud)
+ * on 2026-09-12: every flavor with a non-null `technical.gpu` falls under one
+ * of these plan-code prefixes.
+ */
+const OVH_GPU_FLAVOR_PREFIXES = [
+  'a10-',
+  'a100-',
+  'g1-',
+  'g2-',
+  'g3-',
+  'h100-',
+  'h200-',
+  'l4-',
+  'l40s-',
+  'rtx5000-',
+  't1-',
+  't2-',
+];
+
+function isOvhGpuFlavor(id: string): boolean {
+  return OVH_GPU_FLAVOR_PREFIXES.some((prefix) => id.startsWith(prefix));
+}
+
+/**
  * Flui-native OVH provider — delegates the actual Nova/Neutron work to
  * @flui-cloud/infra's OvhProviderService, but sources credentials from
  * ICredentialProvider (the encrypted DB-backed store) instead of process env
@@ -82,7 +112,8 @@ export class OvhProviderService implements ICloudProvider {
   }
 
   async getNodeSizes(): Promise<NodeSizeDto[]> {
-    return this.catalogOnly.getNodeSizes();
+    const sizes = await this.catalogOnly.getNodeSizes();
+    return sizes.filter((size) => !isOvhGpuFlavor(size.id));
   }
 
   async listServersAsDto(): Promise<ServerResponseDto[]> {
