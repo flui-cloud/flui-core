@@ -21,6 +21,7 @@ import { ProviderCredentialsDto } from '../dto/credentials.dto';
 import { CredentialType } from '../entities/credentials.entity';
 import { CreateBearerTokenDto } from 'src/modules/access/dto/create-bearer-token.dto';
 import { ProviderFactory } from 'src/modules/providers/services/provider.factory';
+import { ICloudProvider } from 'src/modules/providers/interfaces/cloud-provider.interface';
 import { CapabilitiesProviderFactory } from 'src/modules/providers/core/factories/capabilities-provider.factory';
 import { NodeSizeOptionDto } from '../dto/node-size-option.dto';
 import { PricingQueryDto } from '../dto/pricing-query.dto';
@@ -642,17 +643,17 @@ export class ManagementService {
       },
     );
 
-    const nodeSizesWithAvailability = await cloudProvider.getNodeSizes(true);
+    // Some providers (e.g. OVH) have no live stock signal — their
+    // availability is a static projection of the same catalog snapshot, so a
+    // second getNodeSizes(true) call would just re-fetch identical data.
+    const capabilities =
+      this.capabilitiesFactory.getCapabilitiesService(provider);
+    const hasLiveAvailability =
+      capabilities.getStaticCapabilities().hasLiveAvailability;
 
-    const allNodeSizes = metadataNodeSizes.map((metadata) => {
-      const withAvailability = nodeSizesWithAvailability.find(
-        (ns) => ns.id === metadata.id,
-      );
-      return {
-        ...metadata,
-        availability: withAvailability?.availability || [],
-      };
-    });
+    const allNodeSizes = hasLiveAvailability
+      ? await this.mergeWithLiveAvailability(cloudProvider, metadataNodeSizes)
+      : metadataNodeSizes;
 
     if (!region) {
       return allNodeSizes;
@@ -692,6 +693,23 @@ export class ManagementService {
     );
 
     return filteredNodeSizes;
+  }
+
+  /** Enriches cached metadata with a fresh, uncached availability call — only worth it for providers with real live stock (see hasLiveAvailability). */
+  private async mergeWithLiveAvailability(
+    cloudProvider: ICloudProvider,
+    metadataNodeSizes: NodeSizeOptionDto[],
+  ): Promise<NodeSizeOptionDto[]> {
+    const nodeSizesWithAvailability = await cloudProvider.getNodeSizes!(true);
+    return metadataNodeSizes.map((metadata) => {
+      const withAvailability = nodeSizesWithAvailability.find(
+        (ns) => ns.id === metadata.id,
+      );
+      return {
+        ...metadata,
+        availability: withAvailability?.availability || [],
+      };
+    });
   }
 
   /**

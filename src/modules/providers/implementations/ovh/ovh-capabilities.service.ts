@@ -143,6 +143,10 @@ export class OvhCapabilitiesService implements IProviderCapabilitiesService {
       vnetTopology: null,
       vnetRequired: false,
       crossClusterAllowed: false,
+      // OVH's node sizes come from the public pricing catalog, which has no
+      // live stock signal — a second getNodeSizes(true) call returns the
+      // same static data as the first. management.service.ts skips it.
+      hasLiveAvailability: false,
     };
   }
 

@@ -2458,10 +2458,14 @@ const MASK_EXEMPT: string[] = [
   'NodeMonthToDateDto.status', // modules/infrastructure/clusters/dto/cluster-billing.dto.ts
   'NodeRequirementResponseDto.cpu', // modules/infrastructure/scaling/dto/scaling-response.dto.ts
   'NodeRequirementResponseDto.memory', // modules/infrastructure/scaling/dto/scaling-response.dto.ts
+  'NodeSizeLocationAvailabilityDto.available', // modules/management/dto/node-size-option.dto.ts
+  'NodeSizeLocationAvailabilityDto.deprecated', // modules/management/dto/node-size-option.dto.ts
+  'NodeSizeLocationAvailabilityDto.location', // modules/management/dto/node-size-option.dto.ts
   'NodeSizeLocationDto.deprecation', // modules/management/dto/node-size-option.dto.ts
   'NodeSizeLocationDto.id', // modules/management/dto/node-size-option.dto.ts
   'NodeSizeLocationDto.name', // modules/management/dto/node-size-option.dto.ts
   'NodeSizeOptionDto.architecture', // modules/management/dto/node-size-option.dto.ts
+  'NodeSizeOptionDto.availability', // modules/management/dto/node-size-option.dto.ts
   'NodeSizeOptionDto.bareMetal', // modules/management/dto/node-size-option.dto.ts
   'NodeSizeOptionDto.blockStoragePricePerGbMonthly', // modules/management/dto/node-size-option.dto.ts
   'NodeSizeOptionDto.cores', // modules/management/dto/node-size-option.dto.ts

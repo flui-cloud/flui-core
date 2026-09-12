@@ -247,6 +247,7 @@ export class ScalewayCapabilitiesService
       vnetRequired: true,
       crossClusterAllowed: false,
       inference: SCALEWAY_INFERENCE,
+      hasLiveAvailability: true,
     };
   }
 

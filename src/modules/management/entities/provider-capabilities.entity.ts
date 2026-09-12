@@ -107,4 +107,13 @@ export interface ProviderCapabilities {
   crossClusterAllowed: boolean;
   /** Present only for inference-capable providers (e.g. Scaleway Generative APIs). */
   inference?: InferenceCapability;
+  /**
+   * Whether a second getNodeSizes(includeAvailability=true) call returns a
+   * genuinely fresher signal than the cached metadata call — true for
+   * providers with real per-datacenter stock (Hetzner, Scaleway). False when
+   * availability is just a static projection of the same catalog snapshot
+   * (OVH's public pricing catalog has no live stock concept), in which case
+   * management.service.ts skips the redundant second fetch entirely.
+   */
+  hasLiveAvailability: boolean;
 }

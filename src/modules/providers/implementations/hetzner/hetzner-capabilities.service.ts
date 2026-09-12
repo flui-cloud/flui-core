@@ -243,6 +243,7 @@ export class HetznerCapabilitiesService
       },
       vnetRequired: true,
       crossClusterAllowed: false,
+      hasLiveAvailability: true,
     };
   }
 

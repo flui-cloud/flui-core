@@ -5,6 +5,7 @@ import {
   PriceDetailDto as ProviderPriceDetailDto,
   NodeSizeLocationDto as ProviderNodeSizeLocationDto,
   DeprecationInfoDto as ProviderDeprecationInfoDto,
+  NodeSizeLocationAvailabilityDto as ProviderNodeSizeLocationAvailabilityDto,
 } from 'src/modules/providers/dto/node-size.dto';
 
 // Re-export with Swagger decorators for API documentation
@@ -40,6 +41,26 @@ export class DeprecationInfoDto implements ProviderDeprecationInfoDto {
     example: '2023-06-01T00:00:00Z',
   })
   announced: string;
+}
+
+export class NodeSizeLocationAvailabilityDto
+  implements ProviderNodeSizeLocationAvailabilityDto
+{
+  @ApiProperty({ description: 'Location identifier', example: 'nbg1' })
+  location: string;
+
+  @ApiProperty({
+    description:
+      'Whether the server type is currently available for order in this location',
+    example: true,
+  })
+  available: boolean;
+
+  @ApiProperty({
+    description: 'Whether the server type is deprecated in this location',
+    example: false,
+  })
+  deprecated: boolean;
 }
 
 export class NodeSizeLocationDto implements ProviderNodeSizeLocationDto {
@@ -145,4 +166,12 @@ export class NodeSizeOptionDto implements NodeSizeDto {
     type: [NodeSizeLocationDto],
   })
   locations: NodeSizeLocationDto[];
+
+  @ApiProperty({
+    description:
+      'Real-time per-location availability. Absent for providers with no live stock signal.',
+    type: [NodeSizeLocationAvailabilityDto],
+    required: false,
+  })
+  availability?: NodeSizeLocationAvailabilityDto[];
 }

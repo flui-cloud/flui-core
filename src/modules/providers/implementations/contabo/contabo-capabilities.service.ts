@@ -256,6 +256,7 @@ export class ContaboCapabilitiesService
       vnetTopology: null, // Contabo VNet not yet implemented
       vnetRequired: true,
       crossClusterAllowed: false,
+      hasLiveAvailability: false, // getNodeSizes not yet implemented for Contabo
     };
   }
 

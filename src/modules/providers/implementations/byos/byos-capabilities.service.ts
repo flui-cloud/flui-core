@@ -93,6 +93,7 @@ export class ByosCapabilitiesService implements IProviderCapabilitiesService {
       },
       vnetRequired: true,
       crossClusterAllowed: true,
+      hasLiveAvailability: false, // no node sizes API — fixed operator hardware
     };
   }
 
