@@ -2,40 +2,95 @@ import {
   Injectable,
   BadRequestException,
   ConflictException,
+  Logger,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, Not } from 'typeorm';
 import { ClusterEntity, ClusterStatus } from '../entities/cluster.entity';
 import { CreateClusterDto } from '../dto/create-cluster.dto';
+import { NameAvailabilityResponseDto } from '../dto/name-availability.dto';
 import { ManagementService } from '../../../management/services/management.service';
+import { ProviderFactory } from '../../../providers/core/factories/provider.factory';
+import { CloudProvider } from '../../../providers/enums/cloud-provider.enum';
 
 /**
  * Service responsible for cluster validation logic
  */
 @Injectable()
 export class ClusterValidationService {
+  private readonly logger = new Logger(ClusterValidationService.name);
+
   constructor(
     @InjectRepository(ClusterEntity)
     private readonly clusterRepository: Repository<ClusterEntity>,
     private readonly managementService: ManagementService,
+    private readonly providerFactory: ProviderFactory,
   ) {}
+
+  /**
+   * Whether `name` can be used for a new cluster on `provider` right now.
+   *
+   * Checks Flui's own records first, then the provider's real server
+   * inventory for a `${name}-master` — a soft-deleted cluster (status:
+   * DELETED) frees the name in our DB by design, but that says nothing about
+   * whether its server actually got removed at the provider (e.g. a force
+   * delete that swallowed a provider-side failure). Suggesting or accepting
+   * such a name sends a brand-new cluster ~8 minutes into provisioning before
+   * failing on a collision nobody could have seen coming.
+   *
+   * The provider check is best-effort: a transient provider/API error is
+   * logged and treated as "can't tell", not "unavailable" — this check backs
+   * up the deep idempotency guard in ServersService.assertServerIsOurs, it
+   * isn't the only line of defense.
+   */
+  async checkNameAvailability(
+    name: string,
+    provider: CloudProvider,
+  ): Promise<NameAvailabilityResponseDto> {
+    const existingCluster = await this.clusterRepository.findOne({
+      where: { name, status: Not(ClusterStatus.DELETED) },
+    });
+    if (existingCluster) {
+      return {
+        available: false,
+        reason: `Cluster with name '${name}' already exists`,
+      };
+    }
+
+    try {
+      const providerService = this.providerFactory.getProvider(provider);
+      const servers = await providerService.listServersAsDto();
+      const masterName = `${name}-master`;
+      const hasCollision = servers.some((s) => s.name === masterName);
+      if (hasCollision) {
+        return {
+          available: false,
+          reason:
+            `A server named "${masterName}" already exists at ${provider} ` +
+            '(left over from a past cluster whose deletion did not fully ' +
+            'clean up the provider). Choose another name, or remove that ' +
+            'server first.',
+        };
+      }
+    } catch (error) {
+      this.logger.warn(
+        `Could not verify name availability against ${provider}: ${(error as Error).message}`,
+      );
+    }
+
+    return { available: true };
+  }
 
   /**
    * Validate cluster creation request
    */
   async validateCreateClusterRequest(dto: CreateClusterDto): Promise<void> {
-    // Check for duplicate cluster name (exclude deleted clusters)
-    const existingCluster = await this.clusterRepository.findOne({
-      where: {
-        name: dto.name,
-        status: Not(ClusterStatus.DELETED),
-      },
-    });
-
-    if (existingCluster) {
-      throw new ConflictException(
-        `Cluster with name '${dto.name}' already exists`,
-      );
+    const availability = await this.checkNameAvailability(
+      dto.name,
+      dto.provider,
+    );
+    if (!availability.available) {
+      throw new ConflictException(availability.reason);
     }
 
     // Validate node size
@@ -67,11 +122,11 @@ export class ClusterValidationService {
     );
 
     // Accept both name and ID for flexibility
-    const validSize = nodeSizes.find(
+    const hasValidSize = nodeSizes.some(
       (size) => size.name === nodeSize || size.id === nodeSize,
     );
 
-    if (!validSize) {
+    if (!hasValidSize) {
       throw new BadRequestException(
         `Node size '${nodeSize}' is not available for provider '${provider}' in region '${region}'`,
       );

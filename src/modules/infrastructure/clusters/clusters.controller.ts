@@ -8,6 +8,7 @@ import {
   Body,
   Query,
   Header,
+  Req,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -73,7 +74,6 @@ import {
   RebuildPlanResponseDto,
 } from './dto/rebuild-cluster.dto';
 import { ClusterRebuildService } from './services/cluster-rebuild.service';
-import { Req } from '@nestjs/common';
 import { Request } from 'express';
 import { AuthenticatedUser } from '../../auth/interfaces/authenticated-user.interface';
 import { RemoveWorkerResponseDto } from './dto/remove-worker.dto';
@@ -96,6 +96,8 @@ import { ClusterNodeScalingService } from './services/cluster-node-scaling.servi
 import { ScaleNodeDto, ExpandSharedVolumeDto } from './dto/scale-node.dto';
 import { OrphanVolumesService } from './services/orphan-volumes.service';
 import { CloudProvider } from 'src/modules/providers/enums/cloud-provider.enum';
+import { ClusterValidationService } from './services/cluster-validation.service';
+import { NameAvailabilityResponseDto } from './dto/name-availability.dto';
 
 /**
  * `@RequireSection(...)` sits on each route instead of on the class, which is
@@ -152,7 +154,29 @@ export class ClustersController {
     private readonly byosVNetService: ByosVNetService,
     private readonly fleetHistoryService: FleetHistoryService,
     private readonly clusterRebuildService: ClusterRebuildService,
+    private readonly clusterValidationService: ClusterValidationService,
   ) {}
+
+  @Get('name-availability')
+  @RequireSection('infrastructure')
+  @ApiOperation({
+    summary: 'Check whether a cluster name is free to use',
+    description:
+      "Checks both Flui's own records and the cloud provider's real server " +
+      'inventory for a collision. A cluster soft-deleted in our DB frees its ' +
+      "name here too, but that alone doesn't mean its server actually left " +
+      'the provider (e.g. after a force delete) — this catches that case ' +
+      'before a new cluster spends minutes provisioning into it.',
+  })
+  @ApiQuery({ name: 'name', description: 'Proposed cluster name' })
+  @ApiQuery({ name: 'provider', description: 'Target cloud provider' })
+  @ApiResponse({ status: 200, type: NameAvailabilityResponseDto })
+  async checkNameAvailability(
+    @Query('name') name: string,
+    @Query('provider') provider: CloudProvider,
+  ): Promise<NameAvailabilityResponseDto> {
+    return this.clusterValidationService.checkNameAvailability(name, provider);
+  }
 
   @Get('orphan-volumes')
   @RequireSection('infrastructure')

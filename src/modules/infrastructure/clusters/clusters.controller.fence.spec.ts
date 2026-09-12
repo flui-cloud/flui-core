@@ -31,6 +31,7 @@ import { ByosNodeJoinService } from './services/byos-node-join.service';
 import { ByosVNetService } from './services/byos-vnet.service';
 import { FleetHistoryService } from './services/fleet-history.service';
 import { ClusterRebuildService } from './services/cluster-rebuild.service';
+import { ClusterValidationService } from './services/cluster-validation.service';
 import { FirewallsService } from '../firewalls/services/firewalls.service';
 import { KubernetesService } from '../shared/services/kubernetes.service';
 import { GrafanaDatasourceService } from '../../grafana/services/grafana-datasource.service';
@@ -230,6 +231,12 @@ describe('clusters controller — the fence around the cluster key', () => {
           useValue: { getHistory: async () => ({ points: [] }) },
         },
         { provide: ClusterRebuildService, useValue: {} },
+        {
+          provide: ClusterValidationService,
+          useValue: {
+            checkNameAvailability: async () => ({ available: true }),
+          },
+        },
       ],
     }).compile();
 
@@ -286,6 +293,10 @@ describe('clusters controller — the fence around the cluster key', () => {
    */
   const GATED: ReadonlyArray<[string, string]> = [
     ['/infrastructure/clusters/orphan-volumes', 'infrastructure'],
+    [
+      '/infrastructure/clusters/name-availability?name=workload-1&provider=ovh',
+      'infrastructure',
+    ],
     [`/infrastructure/clusters/${CLUSTER}/capacity-plan`, 'infrastructure'],
     [
       `/infrastructure/clusters/${CLUSTER}/nodes/node-1/scale/preview`,

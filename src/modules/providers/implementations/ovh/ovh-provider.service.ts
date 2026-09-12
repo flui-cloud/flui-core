@@ -134,7 +134,8 @@ export class OvhProviderService implements ICloudProvider {
 
   async getServerStatus(serverId: string): Promise<string> {
     const svc = await this.delegate();
-    return svc.getServerStatus(serverId);
+    const status = await svc.getServerStatus(serverId);
+    return normalizeOvhServerStatus(status);
   }
 
   async createServer(
@@ -385,6 +386,27 @@ export class OvhProviderService implements ICloudProvider {
   ): Promise<{ actionId?: number }> {
     const svc = await this.delegate();
     return svc.detachServerFromVNet(config);
+  }
+}
+
+/**
+ * ServersService.waitForServerReady() is provider-agnostic by design: it
+ * polls getServerStatus() and only recognizes Hetzner/Scaleway's own
+ * vocabulary ('running' means ready, 'error' means failed). OVH's Nova
+ * backend reports the raw OpenStack vocabulary instead ('ACTIVE', 'BUILD',
+ * 'ERROR', all uppercase) — left untranslated, that wait loop never sees a
+ * status it recognizes as ready and always times out at 300s, no matter how
+ * fast the server actually boots. Translate at this boundary so every
+ * provider-agnostic caller of getServerStatus() keeps working unmodified.
+ */
+export function normalizeOvhServerStatus(novaStatus: string): string {
+  switch (novaStatus) {
+    case 'ACTIVE':
+      return 'running';
+    case 'ERROR':
+      return 'error';
+    default:
+      return novaStatus.toLowerCase();
   }
 }
 
