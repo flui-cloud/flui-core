@@ -53,11 +53,19 @@ function fakeNetworkIdentifier(
 ): string {
   const hash = sessionDigest(saltSecret, session, realValue);
 
-  if (isIpv4(realValue)) {
-    return `203.0.113.${hash[0] % 256}`;
+  // A subnet/VNet range arrives as a CIDR (`10.10.1.0/24`), not a bare
+  // address — strip the prefix length before testing the address shape, and
+  // reattach it after faking so the result is still a valid CIDR of the same
+  // size, not a bare address or (worse) a hostname-shaped fake for what was
+  // really an IP range.
+  const [address, prefix] = realValue.trim().split('/');
+  const suffix = prefix !== undefined ? `/${prefix}` : '';
+
+  if (isIpv4(address)) {
+    return `203.0.113.${hash[0] % 256}${suffix}`;
   }
 
-  if (isIpv6(realValue)) {
+  if (isIpv6(address)) {
     const groups: string[] = [];
     for (let i = 0; i < 4; i += 1) {
       groups.push(
@@ -67,7 +75,7 @@ function fakeNetworkIdentifier(
           .padStart(4, '0'),
       );
     }
-    return `2001:db8:${groups.join(':')}`;
+    return `2001:db8:${groups.join(':')}${suffix}`;
   }
 
   return `host-${hash.toString('hex').slice(0, 12)}.mask.invalid`;
