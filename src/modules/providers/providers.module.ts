@@ -49,6 +49,7 @@ import { ScalewayFirewallService } from './implementations/scaleway/scaleway-fir
 import { ScalewayDnsService } from './implementations/scaleway/scaleway-dns.service';
 import { HetznerBootstrapSeeder } from './implementations/hetzner/hetzner-bootstrap-seeder.service';
 import { ScalewayBootstrapSeeder } from './implementations/scaleway/scaleway-bootstrap-seeder.service';
+import { OvhBootstrapSeeder } from './implementations/ovh/ovh-bootstrap-seeder.service';
 import {
   PROVIDER_BOOTSTRAP_SEEDER_REGISTRY,
   ProviderBootstrapSeederRegistration,
@@ -219,11 +220,17 @@ import { DnsProvider } from './enums/dns-provider.enum';
       useFactory: (
         hetzner: HetznerBootstrapSeeder,
         scaleway: ScalewayBootstrapSeeder,
+        ovh: OvhBootstrapSeeder,
       ): ProviderBootstrapSeederRegistration[] => [
         { provider: CloudProvider.HETZNER, service: hetzner },
         { provider: CloudProvider.SCALEWAY, service: scaleway },
+        { provider: CloudProvider.OVH, service: ovh },
       ],
-      inject: [HetznerBootstrapSeeder, ScalewayBootstrapSeeder],
+      inject: [
+        HetznerBootstrapSeeder,
+        ScalewayBootstrapSeeder,
+        OvhBootstrapSeeder,
+      ],
     },
   ],
   exports: [

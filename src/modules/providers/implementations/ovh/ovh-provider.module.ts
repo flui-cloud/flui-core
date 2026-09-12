@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { CloudProvider } from '../../enums/cloud-provider.enum';
 import { OvhProviderService } from './ovh-provider.service';
 import { OvhCapabilitiesService } from './ovh-capabilities.service';
+import { OvhBootstrapSeeder } from './ovh-bootstrap-seeder.service';
 import {
   CLOUD_PROVIDER_REGISTRY,
   CAPABILITIES_PROVIDER_REGISTRY,
@@ -22,6 +23,7 @@ import {
   providers: [
     OvhProviderService,
     OvhCapabilitiesService,
+    OvhBootstrapSeeder,
 
     multiProvider<CapabilitiesProviderRegistration>({
       provide: CAPABILITIES_PROVIDER_REGISTRY,
@@ -48,6 +50,7 @@ import {
   exports: [
     OvhProviderService,
     OvhCapabilitiesService,
+    OvhBootstrapSeeder,
     CLOUD_PROVIDER_REGISTRY,
     CAPABILITIES_PROVIDER_REGISTRY,
   ],

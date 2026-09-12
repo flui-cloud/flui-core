@@ -62,6 +62,8 @@ export interface K3sMasterConfig {
   providerApiKey?: string;
   providerScalewayAccessKey?: string;
   providerScalewaySecretKey?: string;
+  providerOvhAccessKey?: string;
+  providerOvhSecretKey?: string;
   providerRegions?: string;
   clusterRegion?: string;
   instanceType?: string;
@@ -235,6 +237,8 @@ export class CliK3sScriptService {
             config.provider === 'hetzner' ? config.providerApiKey || '' : '',
           PROVIDER_SCALEWAY_ACCESS_KEY: config.providerScalewayAccessKey || '',
           PROVIDER_SCALEWAY_SECRET_KEY: config.providerScalewaySecretKey || '',
+          PROVIDER_OVH_ACCESS_KEY: config.providerOvhAccessKey || '',
+          PROVIDER_OVH_SECRET_KEY: config.providerOvhSecretKey || '',
           PROVIDER_REGIONS: config.providerRegions || '',
           CLUSTER_REGION: config.clusterRegion || '',
           INSTANCE_TYPE: config.instanceType || '',

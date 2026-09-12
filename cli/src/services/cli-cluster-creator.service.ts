@@ -219,6 +219,8 @@ export class CliClusterCreatorService {
         providerToken,
         providerScalewayAccessKey,
         providerScalewaySecretKey,
+        providerOvhAccessKey,
+        providerOvhSecretKey,
         providerRegions,
         zitadelMasterkey,
         zitadelDbAdminPassword,
@@ -292,6 +294,8 @@ export class CliClusterCreatorService {
         providerApiKey: providerToken,
         providerScalewayAccessKey,
         providerScalewaySecretKey,
+        providerOvhAccessKey,
+        providerOvhSecretKey,
         providerRegions,
         clusterRegion: cluster.region,
         instanceType: cluster.nodeSize,
@@ -440,6 +444,8 @@ export class CliClusterCreatorService {
           providerToken,
           providerScalewayAccessKey,
           providerScalewaySecretKey,
+          providerOvhAccessKey,
+          providerOvhSecretKey,
           providerRegions,
           clusterRegion: cluster.region,
           instanceType: cluster.nodeSize,
@@ -905,6 +911,8 @@ export class CliClusterCreatorService {
               providerToken: '',
               providerScalewayAccessKey: '',
               providerScalewaySecretKey: '',
+              providerOvhAccessKey: '',
+              providerOvhSecretKey: '',
               providerRegions: '',
               clusterRegion: cluster.region,
               instanceType: cluster.nodeSize,
@@ -1112,6 +1120,8 @@ export class CliClusterCreatorService {
         providerApiKey: decrypted.providerToken,
         providerScalewayAccessKey: decrypted.providerScalewayAccessKey,
         providerScalewaySecretKey: decrypted.providerScalewaySecretKey,
+        providerOvhAccessKey: decrypted.providerOvhAccessKey,
+        providerOvhSecretKey: decrypted.providerOvhSecretKey,
         providerRegions: decrypted.providerRegions,
         clusterRegion: cluster.region,
         instanceType: cluster.nodeSize,
@@ -1186,6 +1196,8 @@ export class CliClusterCreatorService {
         providerToken: decrypted.providerToken,
         providerScalewayAccessKey: decrypted.providerScalewayAccessKey,
         providerScalewaySecretKey: decrypted.providerScalewaySecretKey,
+        providerOvhAccessKey: decrypted.providerOvhAccessKey,
+        providerOvhSecretKey: decrypted.providerOvhSecretKey,
         providerRegions: decrypted.providerRegions,
         clusterRegion: cluster.region,
         instanceType: cluster.nodeSize,
@@ -1692,6 +1704,8 @@ export class CliClusterCreatorService {
     providerToken: string;
     providerScalewayAccessKey: string;
     providerScalewaySecretKey: string;
+    providerOvhAccessKey: string;
+    providerOvhSecretKey: string;
     providerRegions: string;
     zitadelMasterkey: string;
     zitadelDbAdminPassword: string;
@@ -1730,6 +1744,8 @@ export class CliClusterCreatorService {
       providerScalewaySecretKey: tryDecrypt(
         meta.providerScalewaySecretKeyEncrypted,
       ),
+      providerOvhAccessKey: tryDecrypt(meta.providerOvhAccessKeyEncrypted),
+      providerOvhSecretKey: tryDecrypt(meta.providerOvhSecretKeyEncrypted),
       providerRegions: meta.providerRegions || '',
       zitadelMasterkey: tryDecrypt(meta.zitadelMasterkeyEncrypted),
       zitadelDbAdminPassword: tryDecrypt(meta.zitadelDbAdminPasswordEncrypted),
@@ -2033,6 +2049,8 @@ export class CliClusterCreatorService {
       providerToken: string;
       providerScalewayAccessKey: string;
       providerScalewaySecretKey: string;
+      providerOvhAccessKey: string;
+      providerOvhSecretKey: string;
       providerRegions: string;
       clusterRegion: string;
       instanceType: string;
@@ -2086,6 +2104,8 @@ export class CliClusterCreatorService {
         PROVIDER_SCALEWAY_SECRET_KEY: b64(
           bootstrap.providerScalewaySecretKey || '',
         ),
+        PROVIDER_OVH_ACCESS_KEY: b64(bootstrap.providerOvhAccessKey || ''),
+        PROVIDER_OVH_SECRET_KEY: b64(bootstrap.providerOvhSecretKey || ''),
         PROVIDER_REGIONS: b64(bootstrap.providerRegions),
         CLUSTER_REGION: b64(bootstrap.clusterRegion),
         INSTANCE_TYPE: b64(bootstrap.instanceType),

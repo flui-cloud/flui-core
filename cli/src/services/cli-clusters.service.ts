@@ -96,6 +96,8 @@ export class CliClustersService {
     let providerToken = '';
     let providerScalewayAccessKey = '';
     let providerScalewaySecretKey = '';
+    let providerOvhAccessKey = '';
+    let providerOvhSecretKey = '';
     let providerRegions = '';
     if (createClusterDto.provider === 'scaleway') {
       const creds = configStorage.getCredentials('scaleway') as {
@@ -108,6 +110,18 @@ export class CliClustersService {
       // keep providerToken populated so legacy code paths still work.
       providerToken = providerScalewaySecretKey;
       providerRegions = 'fr-par,nl-ams,pl-waw';
+    } else if (createClusterDto.provider === 'ovh') {
+      const creds = configStorage.getCredentials('ovh') as {
+        accessKey?: string;
+        secretKey?: string;
+      } | null;
+      providerOvhAccessKey = creds?.accessKey || '';
+      providerOvhSecretKey = creds?.secretKey || '';
+      providerToken = providerOvhSecretKey;
+      // OVH has no static region list — regions come from the OpenStack
+      // service catalog the credential itself resolves at call time (see
+      // OpenStackHttpClient.regions()), so there's nothing fixed to seed here.
+      providerRegions = '';
     } else {
       providerToken = configStorage.getToken(createClusterDto.provider) || '';
       providerRegions = 'nbg1,fsn1,hel1,ash,hil';
@@ -205,6 +219,12 @@ export class CliClustersService {
           : '',
         providerScalewaySecretKeyEncrypted: providerScalewaySecretKey
           ? this.encryptionService.encrypt(providerScalewaySecretKey)
+          : '',
+        providerOvhAccessKeyEncrypted: providerOvhAccessKey
+          ? this.encryptionService.encrypt(providerOvhAccessKey)
+          : '',
+        providerOvhSecretKeyEncrypted: providerOvhSecretKey
+          ? this.encryptionService.encrypt(providerOvhSecretKey)
           : '',
         providerRegions,
       },
