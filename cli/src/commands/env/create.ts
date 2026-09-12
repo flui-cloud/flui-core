@@ -33,6 +33,7 @@ import {
   getFallbackServerTypes,
   getEuRegions,
   getDefaultRegion,
+  CLI_DEFAULTS,
 } from '../../config/defaults';
 import { CLOUD_PROVIDER_BY_KEY } from '../../config/provider-map';
 import {
@@ -42,6 +43,7 @@ import {
   runProviderSetupWizard,
   selectConfiguredProvider,
   promptInput,
+  confirmPrompt,
 } from '../../lib/prompts';
 import { PreferencesResolver } from '../../config/preferences-resolver';
 import { refuseToAsk, setNonInteractive } from '../../lib/non-interactive';
@@ -130,6 +132,11 @@ export default class EnvCreate extends Command {
     latest: Flags.boolean({
       description:
         'Install mobile dev tags instead of the pinned release: bootstrap scripts from `master` and `:latest` Docker images. Default: every component is pinned to the CLI release version.',
+      default: false,
+    }),
+    'allow-undersized': Flags.boolean({
+      description:
+        "Skip the confirmation when --node-size is below the documented minimum for a control cluster's own stack (Postgres, Redis, Zitadel, observability all run on this one node — an undersized node may never reach READY).",
       default: false,
     }),
     'no-shared-storage': Flags.boolean({
@@ -810,6 +817,37 @@ export default class EnvCreate extends Command {
         }
       } else {
         spinner.succeed('Server type validation skipped (no data available)');
+      }
+
+      // Warn before provisioning below the documented minimum for a control
+      // cluster's own stack: Postgres, Redis, Zitadel and observability all
+      // share this one node, and Redis in particular can hang indefinitely
+      // waiting on memory below MIN_SPECS.observability.
+      const resolvedType = serverTypes?.find((t) => t.id === validatedNodeSize);
+      if (resolvedType && !flags['allow-undersized']) {
+        const min = CLI_DEFAULTS.MIN_SPECS.observability;
+        const undersized =
+          resolvedType.cores < min.cores ||
+          resolvedType.memory < min.memory ||
+          resolvedType.disk < min.disk;
+        if (undersized) {
+          console.log(
+            chalk.yellow(
+              `\n⚠  ${validatedNodeSize} (${resolvedType.cores} vCPU / ${resolvedType.memory}GB / ${resolvedType.disk}GB) is below the ` +
+                `recommended minimum for a control cluster (${min.cores} vCPU / ${min.memory}GB / ${min.disk}GB — ` +
+                `Postgres, Redis, Zitadel and observability all run on this one node). It may never reach READY.\n`,
+            ),
+          );
+          refuseToAsk(
+            'whether to continue with an undersized node',
+            'Pass --allow-undersized to skip this check, or choose a --node-size that meets the minimum.',
+          );
+          const proceed = await confirmPrompt('Continue anyway?', false);
+          if (!proceed) {
+            console.log(chalk.dim('\nCancelled.\n'));
+            this.exit(0);
+          }
+        }
       }
 
       // Display cluster configuration

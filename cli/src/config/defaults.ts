@@ -15,14 +15,19 @@ export const CLI_DEFAULTS = {
   FALLBACK_SERVER_TYPES: {
     hetzner: ['cx23', 'cx33', 'cx32', 'cpx21', 'cx42', 'cpx31'],
     scaleway: ['DEV1-M', 'DEV1-L', 'GP1-XS', 'GP1-S'],
-    ovh: ['d2-2', 'd2-4', 'd2-8', 'c3-4'],
+    // d2-2 (2GB) is listed last: it undersizes a control cluster's stack
+    // (Postgres+Redis+Zitadel+observability) below MIN_SPECS.observability
+    // below, live-confirmed by Redis never becoming ready on one — fine for
+    // a workload cluster, not offered first here.
+    ovh: ['d2-4', 'd2-8', 'c3-4', 'd2-2'],
   },
 
   RECOMMENDED_SERVER_TYPES: {
     hetzner: 'cx23',
     scaleway: 'DEV1-M',
-    // Cheapest hourly-billed flavor in OVH's public catalog (~€0.0104/h).
-    ovh: 'd2-2',
+    // d2-4: 2 vCPU / 4GB / 50GB, cheapest OVH flavor meeting
+    // MIN_SPECS.observability below (~€0.0206/h).
+    ovh: 'd2-4',
   },
 
   MIN_SPECS: {
