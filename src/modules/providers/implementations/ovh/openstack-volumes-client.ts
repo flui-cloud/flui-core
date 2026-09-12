@@ -126,6 +126,25 @@ export class FluiOpenStackClient extends OpenStackClient {
     );
   }
 
+  /**
+   * The instance's virtual serial console — reachable through Nova's own API,
+   * not the network, so it still answers when SSH/ICMP to the guest do not.
+   * The one diagnostic that can tell "the network is down" apart from
+   * "the guest never got this far".
+   */
+  async getConsoleOutput(
+    region: string,
+    serverId: string,
+    length = 200,
+  ): Promise<string> {
+    const nova = await this.endpoint('compute', region);
+    const body = await this.post<{ output: string }>(
+      `${nova}/servers/${serverId}/action`,
+      { 'os-getConsoleOutput': { length } },
+    );
+    return body.output ?? '';
+  }
+
   // ── Nova volume attachments (join/leave a volume to a server) ──
 
   async listServerVolumeAttachments(
