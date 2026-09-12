@@ -178,34 +178,51 @@ export class ClusterCreationService {
     const savedCluster = await this.clusterRepository.save(cluster);
     this.logger.log(`Cluster record created: ${savedCluster.id}`);
 
-    // Create cluster firewall (BEFORE creating nodes).
-    // Intra-cluster Prometheus scraping no longer requires public firewall rules:
-    // observability ↔ workload metrics traffic flows over the environment VNet.
-    let providerFirewallId: string | null = null;
-    try {
-      const desiredRules = await this.buildDesiredFirewallRules(
-        dto.firewallRules || [],
-        envSubnet.ipRange,
-        clusterType,
-      );
+    const desiredRules = await this.buildDesiredFirewallRules(
+      dto.firewallRules || [],
+      envSubnet.ipRange,
+      clusterType,
+    );
 
-      providerFirewallId =
-        await this.clusterFirewallIntegrationService.createAndReconcileFirewall(
-          savedCluster,
-          desiredRules,
+    // Managed-API firewalls (Hetzner, Scaleway) are a cloud resource that can
+    // exist before any server does, and get attached to nodes as they're
+    // created — so creating it here, before nodes, is how those providers
+    // want it. Host-nftables (OVH, BYOS) has no such resource: "the firewall"
+    // IS an nftables ruleset applied over SSH to a real node, which doesn't
+    // exist yet at this point. Reconciling it here would always fail with "no
+    // reachable SSH endpoint" — so for that backend, defer it to the queue
+    // processor, right after the master node comes up (see
+    // handleCreateCluster in cluster-queue.processor.ts).
+    const firewallBackend = this.capabilitiesFactory
+      .getCapabilitiesService(dto.provider)
+      .getStaticCapabilities().firewall.backend;
+    const firewallDeferred = firewallBackend === 'host-nftables';
+
+    let providerFirewallId: string | null = null;
+    if (!firewallDeferred) {
+      try {
+        providerFirewallId =
+          await this.clusterFirewallIntegrationService.createAndReconcileFirewall(
+            savedCluster,
+            desiredRules,
+          );
+        this.logger.log(
+          `Firewall created for cluster ${savedCluster.id}: ${providerFirewallId}`,
         );
+      } catch (error) {
+        this.logger.error(
+          `Failed to create firewall for cluster ${savedCluster.id}: ${error.message}`,
+          error.stack,
+        );
+        // Firewall creation failure should fail cluster creation
+        await this.clusterRepository.delete(savedCluster.id);
+        throw new BadRequestException(
+          `Failed to create cluster firewall: ${error.message}`,
+        );
+      }
+    } else {
       this.logger.log(
-        `Firewall created for cluster ${savedCluster.id}: ${providerFirewallId}`,
-      );
-    } catch (error) {
-      this.logger.error(
-        `Failed to create firewall for cluster ${savedCluster.id}: ${error.message}`,
-        error.stack,
-      );
-      // Firewall creation failure should fail cluster creation
-      await this.clusterRepository.delete(savedCluster.id);
-      throw new BadRequestException(
-        `Failed to create cluster firewall: ${error.message}`,
+        `Firewall reconciliation deferred for cluster ${savedCluster.id} (${dto.provider} uses host-nftables — needs a node to SSH into)`,
       );
     }
 
@@ -233,8 +250,9 @@ export class ClusterCreationService {
       metadata: {
         clusterConfig: dto,
         estimatedDurationInSeconds: estimateCreateDurationSeconds(workerCount),
-        providerFirewallId, // Single firewall ID (not array)
+        providerFirewallId, // Single firewall ID (not array) — null when deferred
         operationSteps: operationSteps, // Fixed: was 'steps', now 'operationSteps'
+        desiredFirewallRules: firewallDeferred ? desiredRules : undefined,
       },
     });
 

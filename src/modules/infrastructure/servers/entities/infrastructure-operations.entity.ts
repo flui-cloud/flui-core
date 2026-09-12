@@ -16,6 +16,7 @@ import {
 import { CreateServerDto } from '../dto/create-server.dto';
 import { DeleteServerDto } from '../dto/delete-server.dto';
 import { CreateClusterDto } from '../../clusters/dto/create-cluster.dto';
+import { FirewallRuleDto } from '../../../providers/dto/firewall.dto';
 import { OperationStepConfig } from '../../operations/helpers/operation-steps.helper';
 
 export enum OperationType {
@@ -356,6 +357,15 @@ export interface CreateClusterOperationMetadata extends BaseOperationMetadata {
   targetNodeCount?: number;
   workerCount?: number;
   providerFirewallIds?: string[]; // Array of provider firewall IDs created for the cluster
+  /**
+   * Pre-computed desired firewall rules, resolved once at create time.
+   * Host-nftables providers (OVH, BYOS) can't have their firewall reconciled
+   * until a node exists to SSH into, so the queue processor reconciles it
+   * itself right after the master node comes up, reusing this instead of
+   * re-deriving the rules (which need the environment subnet + control
+   * egress IPs, not just what's on the request DTO).
+   */
+  desiredFirewallRules?: FirewallRuleDto[];
 }
 
 export interface DeleteClusterOperationMetadata extends BaseOperationMetadata {

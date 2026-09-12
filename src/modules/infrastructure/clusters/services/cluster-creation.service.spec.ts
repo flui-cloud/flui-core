@@ -9,7 +9,11 @@ describe('ClusterCreationService.createCluster — provider policies', () => {
     envVnetProvider = CloudProvider.HETZNER,
     controlEgressIps = [],
   }: {
-    capabilities: { vnetRequired: boolean; crossClusterAllowed: boolean };
+    capabilities: {
+      vnetRequired: boolean;
+      crossClusterAllowed: boolean;
+      firewall?: { backend: string };
+    };
     observabilityCluster?: unknown;
     envVnetProvider?: CloudProvider;
     controlEgressIps?: string[];
@@ -44,7 +48,10 @@ describe('ClusterCreationService.createCluster — provider policies', () => {
     };
     const capabilitiesFactory = {
       getCapabilitiesService: jest.fn().mockReturnValue({
-        getStaticCapabilities: jest.fn().mockReturnValue(capabilities),
+        getStaticCapabilities: jest.fn().mockReturnValue({
+          firewall: { backend: 'managed-api' },
+          ...capabilities,
+        }),
       }),
     };
     const firewallReconciliation = {
@@ -157,5 +164,42 @@ describe('ClusterCreationService.createCluster — provider policies', () => {
     );
     expect(ssh.sourceIps).toEqual(['95.246.69.217/32', '62.238.51.202/32']);
     expect(ssh.sourceIps).not.toContain('0.0.0.0/0');
+  });
+
+  // host-nftables (OVH, BYOS) applies the firewall over SSH to a real node —
+  // there is nothing to SSH into yet at this point, so reconciling here would
+  // always fail with "no reachable SSH endpoint". The rules are computed and
+  // stashed on the operation for the queue processor to apply once the
+  // master node exists (see cluster-queue.processor.ts).
+  it('defers firewall reconciliation for host-nftables providers instead of calling it before any node exists', async () => {
+    const { service, firewallIntegration } = build({
+      capabilities: {
+        vnetRequired: false,
+        crossClusterAllowed: false,
+        firewall: { backend: 'host-nftables' },
+      },
+      observabilityCluster: { provider: CloudProvider.OVH },
+      envVnetProvider: CloudProvider.OVH,
+    });
+
+    const operation = await service.createCluster({
+      ...baseDto,
+      provider: CloudProvider.OVH,
+    } as never);
+
+    expect(
+      firewallIntegration.createAndReconcileFirewall,
+    ).not.toHaveBeenCalled();
+    expect(
+      (operation as unknown as { metadata: { providerFirewallId: unknown } })
+        .metadata.providerFirewallId,
+    ).toBeNull();
+    expect(
+      (
+        operation as unknown as {
+          metadata: { desiredFirewallRules: unknown[] };
+        }
+      ).metadata.desiredFirewallRules,
+    ).toBeDefined();
   });
 });

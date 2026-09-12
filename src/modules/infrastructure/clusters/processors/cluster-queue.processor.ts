@@ -32,6 +32,8 @@ import {
   CreateClusterOperationMetadata,
 } from '../../servers/entities/infrastructure-operations.entity';
 import { ClusterOrchestrationService } from '../services/cluster-orchestration.service';
+import { ClusterFirewallIntegrationService } from '../services/cluster-firewall-integration.service';
+import { CapabilitiesProviderFactory } from 'src/modules/providers/core/factories/capabilities-provider.factory';
 import { KubernetesService } from '../../shared/services/kubernetes.service';
 import { EncryptionService } from '../../../shared/encryption/services/encryption.service';
 import { BillingIntervalsService } from '../services/billing-intervals.service';
@@ -91,6 +93,8 @@ export class ClusterQueueProcessor {
     private readonly providerFactory: ProviderFactory,
     private readonly kubernetesService: KubernetesService,
     private readonly encryptionService: EncryptionService,
+    private readonly clusterFirewallIntegrationService: ClusterFirewallIntegrationService,
+    private readonly capabilitiesFactory: CapabilitiesProviderFactory,
   ) {}
 
   private formatVolumeRef(
@@ -361,6 +365,40 @@ export class ClusterQueueProcessor {
 
       cluster.nodeCount = 1;
       await this.clusterRepository.save(cluster);
+
+      // Host-nftables providers (OVH, BYOS) can't have their firewall
+      // reconciled until a node exists to SSH into — cluster-creation.service
+      // skips it up front for these and leaves the desired rules on the
+      // operation for us to pick up now that the master is actually there.
+      const firewallBackend = this.capabilitiesFactory
+        .getCapabilitiesService(cluster.provider as CloudProvider)
+        .getStaticCapabilities().firewall.backend;
+      if (firewallBackend === 'host-nftables') {
+        const desiredRules =
+          (operation.metadata as CreateClusterOperationMetadata)
+            .desiredFirewallRules ?? [];
+        try {
+          const providerFirewallId =
+            await this.clusterFirewallIntegrationService.createAndReconcileFirewall(
+              cluster,
+              desiredRules,
+            );
+          operation.metadata = {
+            ...operation.metadata,
+            providerFirewallId,
+          } as CreateClusterOperationMetadata;
+          await this.operationRepository.save(operation);
+          this.logger.log(
+            `Deferred firewall reconciled for cluster ${clusterId}: ${providerFirewallId}`,
+          );
+        } catch (error) {
+          this.logger.error(
+            `Deferred firewall reconciliation failed for cluster ${clusterId}: ${error.message}`,
+            error.stack,
+          );
+          throw error;
+        }
+      }
 
       // === STEP 2 (all topologies): KUBECONFIG ===
       await this.updateOperationStep(operationId, 2, 50, {
