@@ -3,20 +3,33 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { InfrastructureOperationsController } from './infrastructure-operations.controller';
 import { InfrastructureOperationsService } from './infrastructure-operations.service';
 import { InfrastructureOperationEntity } from '../servers/entities/infrastructure-operations.entity';
+import { InfrastructureOperationLogEntity } from './entities/infrastructure-operation-log.entity';
 import { InfrastructureOperationsGateway } from './gateway/infrastructure-operations.gateway';
+import { InstallLogService } from './services/install-log.service';
 import { WsAuthModule } from '../../auth/ws-auth.module';
 import { IamModule } from '../../iam/iam.module';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([InfrastructureOperationEntity]),
+    TypeOrmModule.forFeature([
+      InfrastructureOperationEntity,
+      InfrastructureOperationLogEntity,
+    ]),
     WsAuthModule,
     // The route and the WebSocket room both ask whose operation it is, and the
     // answer needs the resolved section level as well as the row's owner.
     IamModule,
   ],
   controllers: [InfrastructureOperationsController],
-  providers: [InfrastructureOperationsService, InfrastructureOperationsGateway],
-  exports: [InfrastructureOperationsService, InfrastructureOperationsGateway],
+  providers: [
+    InfrastructureOperationsService,
+    InfrastructureOperationsGateway,
+    InstallLogService,
+  ],
+  exports: [
+    InfrastructureOperationsService,
+    InfrastructureOperationsGateway,
+    InstallLogService,
+  ],
 })
 export class InfrastructureOperationsModule {}

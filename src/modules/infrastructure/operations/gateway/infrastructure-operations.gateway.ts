@@ -16,6 +16,7 @@ import {
   InfrastructureOperationProgressDto,
   InfrastructureOperationCompletedDto,
   InfrastructureOperationFailedDto,
+  InfrastructureOperationLogDto,
 } from '../dto/infrastructure-operation-events.dto';
 import { WsAuthService } from '../../../auth/services/ws-auth.service';
 import { installWsAuth } from '../../../auth/utils/ws-auth-middleware.util';
@@ -193,6 +194,17 @@ export class InfrastructureOperationsGateway
     this.logger.debug(
       `[${operationId}] progress: ${dto.percentage}% — ${dto.message}`,
     );
+  }
+
+  emitLogChunk(
+    operationId: string,
+    resourceId: string,
+    dto: InfrastructureOperationLogDto,
+  ): void {
+    this.server
+      .to(`operation:${operationId}`)
+      .to(`resource:${resourceId}`)
+      .emit('infrastructure:operation:log', dto);
   }
 
   emitCompleted(

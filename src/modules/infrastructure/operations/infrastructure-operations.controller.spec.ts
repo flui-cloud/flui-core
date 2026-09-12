@@ -40,11 +40,13 @@ describe('GET /infrastructure/operations/:id asks whose operation it is', () => 
     const policy = {
       resolveSectionAccess: jest.fn().mockResolvedValue(sections),
     };
+    const installLogService = { getFullLog: jest.fn() };
     return {
       service,
       policy,
       controller: new InfrastructureOperationsController(
         service as never,
+        installLogService as never,
         policy as never,
       ),
     };

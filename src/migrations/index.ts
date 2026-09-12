@@ -35,6 +35,7 @@ import { RebuildClusterOperation1788200000000 } from './1788200000000-RebuildClu
 import { PlatformUpdateOperation1788300000000 } from './1788300000000-PlatformUpdateOperation';
 import { ApplicationAttachedServices1788400000000 } from './1788400000000-ApplicationAttachedServices';
 import { OvhProviderEnum1788500000000 } from './1788500000000-OvhProviderEnum';
+import { InfrastructureOperationLogs1788600000000 } from './1788600000000-InfrastructureOperationLogs';
 import { CatchUpEntityDrift1788000000000 } from './1788000000000-CatchUpEntityDrift';
 import { ProtectRecordsFromClusterDelete1787900000000 } from './1787900000000-ProtectRecordsFromClusterDelete';
 import { WidenEngineVersion1787800000000 } from './1787800000000-WidenEngineVersion';
@@ -89,4 +90,5 @@ export const migrations = [
   PlatformUpdateOperation1788300000000,
   ApplicationAttachedServices1788400000000,
   OvhProviderEnum1788500000000,
+  InfrastructureOperationLogs1788600000000,
 ];

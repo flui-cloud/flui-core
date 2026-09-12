@@ -9,6 +9,7 @@ import { ProviderCredentialsEntity } from '../modules/access/entities/credential
 import { ApiTokenEntity } from '../modules/access/entities/api-token.entity';
 import { ProviderConfigurationEntity } from '../modules/management/entities/provider-configuration.entity';
 import { InfrastructureOperationEntity } from '../modules/infrastructure/servers/entities/infrastructure-operations.entity';
+import { InfrastructureOperationLogEntity } from '../modules/infrastructure/operations/entities/infrastructure-operation-log.entity';
 import { ServerEntity } from '../modules/infrastructure/servers/entities/server.entity';
 import { ClusterEntity } from '../modules/infrastructure/clusters/entities/cluster.entity';
 import { ClusterNodeEntity } from '../modules/infrastructure/clusters/entities/cluster-node.entity';
@@ -150,4 +151,5 @@ export const entities = [
   ScalingGroupEntity,
   ScalingDecisionEntity,
   ApplicationServiceEntity,
+  InfrastructureOperationLogEntity,
 ];

@@ -35,6 +35,7 @@ import { CAManagerService } from 'src/modules/access/services/ca-manager.service
 import { SubnetsService } from '../../vnets/services/subnets.service';
 import { VNetsService } from '../../vnets/services/vnets.service';
 import { NativeSSHConnectionService } from 'src/modules/terminal/services/native-ssh-connection.service';
+import { InstallLogService } from '../../operations/services/install-log.service';
 import { KubernetesService } from '../../shared/services/kubernetes.service';
 import { BillingIntervalsService } from './billing-intervals.service';
 import { VolumeBillableKind } from '../entities/volume-billable-interval.entity';
@@ -67,6 +68,7 @@ export class ClusterOrchestrationService {
     private readonly kubernetesService: KubernetesService,
     private readonly billingIntervals: BillingIntervalsService,
     private readonly nodePriceService: NodePriceService,
+    private readonly installLogService: InstallLogService,
   ) {}
 
   /**
@@ -442,14 +444,40 @@ export class ClusterOrchestrationService {
             'Waiting for K3s to write its kubeconfig...',
           );
         },
+        () =>
+          this.tailInstallLog(
+            operationId,
+            cluster.id,
+            node.ipAddress,
+            bootstrapKey.privateKey,
+          ),
       );
     } catch (err) {
+      // One more pull past the last tick: the loop's own tail attempt trails
+      // the outcome it rides alongside by up to KUBECONFIG_FETCH_INTERVAL_MS,
+      // and the last few seconds before a failure are usually the ones that
+      // explain it.
+      await this.tailInstallLog(
+        operationId,
+        cluster.id,
+        node.ipAddress,
+        bootstrapKey.privateKey,
+      );
       this.logger.error(
         `[createMasterNode] Failed to fetch kubeconfig from ${node.ipAddress}: ${err.message}`,
         err.stack,
       );
       throw err;
     }
+    // Same catch-up on the success path — the kubeconfig write and the log
+    // tail are two independent SSH calls, so success here doesn't guarantee
+    // the tail already captured everything up to this instant.
+    await this.tailInstallLog(
+      operationId,
+      cluster.id,
+      node.ipAddress,
+      bootstrapKey.privateKey,
+    );
     this.logger.log(
       `[createMasterNode] Kubeconfig fetched (${kubeconfig.length} bytes), encrypting and storing...`,
     );
@@ -1568,6 +1596,7 @@ export class ClusterOrchestrationService {
     bootstrapPrivateKey: string,
     serverIp: string,
     onWaiting?: (elapsedMs: number) => Promise<void>,
+    onTailAttempt?: () => Promise<void>,
   ): Promise<string> {
     const started = Date.now();
     const deadline =
@@ -1578,6 +1607,9 @@ export class ClusterOrchestrationService {
     while (Date.now() < deadline) {
       attempt++;
       const remainingMs = deadline - Date.now();
+      // Rides the same SSH connectivity this loop already depends on — no
+      // separate polling loop, no extra load beyond one more short exec per tick.
+      await onTailAttempt?.();
       try {
         this.logger.log(
           `Fetching kubeconfig via SSH (attempt ${attempt}, ${Math.round(remainingMs / 1000)}s left)...`,
@@ -1629,5 +1661,57 @@ export class ClusterOrchestrationService {
         ClusterOrchestrationService.KUBECONFIG_FETCH_DEADLINE_MS / 60000,
       )} minutes (${attempt} attempts): ${lastError}`,
     );
+  }
+
+  private static readonly INSTALL_LOG_SOURCE_FILE =
+    '/var/log/cloud-init-output.log';
+
+  /**
+   * Pulls whatever's new in the master's cloud-init output since the last
+   * tick and forwards it through InstallLogService (persists + relays over
+   * the `/infrastructure` gateway). Uses the same bootstrap key as the
+   * kubeconfig poll it rides alongside — the CA-signed ephemeral cert isn't
+   * accepted yet this early in boot (TrustedUserCAKeys is only installed
+   * partway through flui-init.sh). Best-effort: a failure here is the same
+   * "not up yet" the kubeconfig attempt just hit, so it's swallowed and
+   * retried next tick rather than aborting the whole creation.
+   *
+   * Bounded by the kubeconfig-wait window: nothing this node does after
+   * writing its kubeconfig (control-cluster observability stack included,
+   * which finishes later in the same script) is captured. Covers the
+   * incident this feature was built for — the master never coming up at
+   * all — not later, already-past-that-point failures.
+   */
+  private async tailInstallLog(
+    operationId: string,
+    resourceId: string,
+    masterIp: string,
+    bootstrapPrivateKey: string,
+  ): Promise<void> {
+    try {
+      const { byteOffset, truncated } =
+        await this.installLogService.getOffset(operationId);
+      if (truncated) return;
+
+      const chunk = await this.nativeSsh.execCommand(
+        masterIp,
+        'root',
+        bootstrapPrivateKey,
+        `tail -c +${byteOffset + 1} ${ClusterOrchestrationService.INSTALL_LOG_SOURCE_FILE} 2>/dev/null || true`,
+        10000,
+      );
+      if (chunk) {
+        await this.installLogService.appendChunk(
+          operationId,
+          resourceId,
+          chunk,
+          ClusterOrchestrationService.INSTALL_LOG_SOURCE_FILE,
+        );
+      }
+    } catch (err) {
+      this.logger.debug(
+        `Install log tail attempt failed (will retry next tick): ${err.message}`,
+      );
+    }
   }
 }

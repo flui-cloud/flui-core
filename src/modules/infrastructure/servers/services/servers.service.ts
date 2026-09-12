@@ -4,6 +4,7 @@ import {
   NotFoundException,
   BadRequestException,
   ForbiddenException,
+  NotImplementedException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
@@ -220,6 +221,26 @@ export class ServersService {
     }
 
     return server;
+  }
+
+  /**
+   * The instance's serial console via the provider's own API — no SSH, no
+   * network reachability required. Only OVH implements it today; other
+   * providers' generated API clients expose no equivalent (verified against
+   * their vendored OpenAPI specs).
+   */
+  async getConsoleOutput(
+    serverId: string,
+    provider: CloudProvider,
+    length?: number,
+  ): Promise<string> {
+    const providerService = this.providerFactory.getProvider(provider);
+    if (typeof providerService.getConsoleOutput !== 'function') {
+      throw new NotImplementedException(
+        `Console output is not supported for provider ${provider}.`,
+      );
+    }
+    return providerService.getConsoleOutput(serverId, length);
   }
 
   async createServer(

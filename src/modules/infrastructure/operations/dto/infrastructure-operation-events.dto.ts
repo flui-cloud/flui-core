@@ -50,6 +50,20 @@ export class InfrastructureOperationCompletedDto {
   timestamp: Date;
 }
 
+export class InfrastructureOperationLogDto {
+  @ApiProperty({ example: 'op-uuid' })
+  operationId: string;
+
+  @ApiProperty({ example: 'resource-uuid' })
+  resourceId: string;
+
+  @ApiProperty({ example: '[2026-09-12T10:00:00Z] Installing K3s...\n' })
+  chunk: string;
+
+  @ApiProperty()
+  timestamp: Date;
+}
+
 export class InfrastructureOperationFailedDto {
   @ApiProperty({ example: 'op-uuid' })
   operationId: string;

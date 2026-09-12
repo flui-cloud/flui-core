@@ -162,6 +162,14 @@ export interface ICloudProvider {
   powerOnServer?(serverId: string): Promise<void>;
   powerOffServer?(serverId: string): Promise<void>;
 
+  /**
+   * The instance's serial/virtual console, reachable through the provider's
+   * own API rather than the network — the one diagnostic that still answers
+   * when SSH/ICMP to the guest do not. Only OVH implements this today; other
+   * providers' APIs expose no equivalent as of writing.
+   */
+  getConsoleOutput?(serverId: string, length?: number): Promise<string>;
+
   // Server label management
   updateServerLabels?(
     serverId: string,

@@ -228,12 +228,10 @@ export class NativeSSHConnectionService {
       const portArgs = options?.port ? ['-p', String(options.port)] : [];
 
       return await new Promise<string>((resolve, reject) => {
-        const timer = setTimeout(
-          () => reject(new Error(`SSH exec timeout after ${timeoutMs}ms`)),
-          timeoutMs,
-        );
-
-        const proc = spawn(
+        // spawn() is synchronous, so proc exists well before the timer's
+        // callback can ever run — safe to reference it there without the
+        // forward-declared `let` that pattern would otherwise suggest.
+        const proc: ChildProcess = spawn(
           'ssh',
           [
             '-i',
@@ -253,19 +251,32 @@ export class NativeSSHConnectionService {
           ],
           { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true },
         );
+        const timer = setTimeout(() => {
+          // Otherwise a hung ssh session outlives this call and keeps running
+          // in the background — one leaked process per timed-out attempt.
+          proc.kill();
+          reject(new Error(`SSH exec timeout after ${timeoutMs}ms`));
+        }, timeoutMs);
 
-        let stdout = '';
-        let stderr = '';
-        proc.stdout?.on('data', (d: Buffer) => (stdout += d.toString()));
-        proc.stderr?.on('data', (d: Buffer) => (stderr += d.toString()));
+        // Buffered whole and decoded once at the end — decoding each `data`
+        // chunk separately (as UTF-8) mangles any multibyte character split
+        // across a chunk boundary, which corrupts byte-offset-based callers
+        // (e.g. tailing a remote file incrementally) since the decoded
+        // length then disagrees with the bytes actually read.
+        const stdoutChunks: Buffer[] = [];
+        const stderrChunks: Buffer[] = [];
+        proc.stdout?.on('data', (d: Buffer) => stdoutChunks.push(d));
+        proc.stderr?.on('data', (d: Buffer) => stderrChunks.push(d));
 
         proc.on('close', (code) => {
           clearTimeout(timer);
           if (code === 0) {
-            resolve(stdout);
+            resolve(Buffer.concat(stdoutChunks).toString('utf8'));
           } else {
             reject(
-              new Error(`SSH exec failed (code ${code}): ${stderr.trim()}`),
+              new Error(
+                `SSH exec failed (code ${code}): ${Buffer.concat(stderrChunks).toString('utf8').trim()}`,
+              ),
             );
           }
         });

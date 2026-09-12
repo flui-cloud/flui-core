@@ -2131,6 +2131,10 @@ const MASK_EXEMPT: string[] = [
   'InfrastructureOperationFailedDto.resourceId', // modules/infrastructure/operations/dto/infrastructure-operation-events.dto.ts
   'InfrastructureOperationFailedDto.resourceType', // modules/infrastructure/operations/dto/infrastructure-operation-events.dto.ts
   'InfrastructureOperationFailedDto.timestamp', // modules/infrastructure/operations/dto/infrastructure-operation-events.dto.ts
+  'InfrastructureOperationLogDto.chunk', // modules/infrastructure/operations/dto/infrastructure-operation-events.dto.ts
+  'InfrastructureOperationLogDto.operationId', // modules/infrastructure/operations/dto/infrastructure-operation-events.dto.ts
+  'InfrastructureOperationLogDto.resourceId', // modules/infrastructure/operations/dto/infrastructure-operation-events.dto.ts
+  'InfrastructureOperationLogDto.timestamp', // modules/infrastructure/operations/dto/infrastructure-operation-events.dto.ts
   'InfrastructureOperationProgressDto.currentStepIndex', // modules/infrastructure/operations/dto/infrastructure-operation-events.dto.ts
   'InfrastructureOperationProgressDto.message', // modules/infrastructure/operations/dto/infrastructure-operation-events.dto.ts
   'InfrastructureOperationProgressDto.operationId', // modules/infrastructure/operations/dto/infrastructure-operation-events.dto.ts

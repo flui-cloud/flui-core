@@ -103,6 +103,54 @@ export class ServersController {
     return await this.serversService.getServerById(serverId, provider);
   }
 
+  @Get(':id/console-output')
+  // A console buffer can contain far more than a details DTO does (anything
+  // the guest printed to its serial line, cloud-init included) — gated the
+  // same as delete, not left at the class-level read-only default.
+  @RequirePermission(IAM_PERMISSION.CLUSTER_MANAGE)
+  @ApiOperation({
+    summary: "Read the server's serial console output",
+    description:
+      "Fetches the instance's serial/virtual console via the provider's own " +
+      'API — no SSH or network reachability to the guest required. The one ' +
+      'diagnostic that can tell "the network is down" apart from "the guest ' +
+      'never got this far". Only OVH implements this today.',
+  })
+  @ApiParam({
+    name: 'id',
+    description: 'Server ID from cloud provider',
+    example: '12345678',
+  })
+  @ApiQuery({
+    name: 'provider',
+    enum: CloudProvider,
+    description: 'Cloud provider to query',
+    example: CloudProvider.OVH,
+  })
+  @ApiQuery({
+    name: 'length',
+    type: Number,
+    required: false,
+    description: 'Number of lines to return from the end of the console buffer',
+  })
+  @ApiResponse({ status: 200, description: 'Console output as plain text' })
+  @ApiResponse({
+    status: 501,
+    description: 'Console output not supported for this provider',
+  })
+  async getConsoleOutput(
+    @Param('id') serverId: string,
+    @Query('provider') provider: CloudProvider,
+    @Query('length') length?: number,
+  ): Promise<{ output: string }> {
+    const output = await this.serversService.getConsoleOutput(
+      serverId,
+      provider,
+      length ? Number(length) : undefined,
+    );
+    return { output };
+  }
+
   @Post()
   @ApiOperation({
     summary: 'Create a new server',

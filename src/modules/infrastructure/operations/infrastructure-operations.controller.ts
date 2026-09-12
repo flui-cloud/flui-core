@@ -6,8 +6,9 @@ import {
   Param,
   Post,
   Req,
+  Res,
 } from '@nestjs/common';
-import { Request } from 'express';
+import { Request, Response as ExpressResponse } from 'express';
 import {
   ApiBearerAuth,
   ApiTags,
@@ -17,6 +18,7 @@ import {
 } from '@nestjs/swagger';
 import { InfrastructureOperationsService } from './infrastructure-operations.service';
 import { InfrastructureOperationEntity } from '../servers/entities/infrastructure-operations.entity';
+import { InstallLogService } from './services/install-log.service';
 import { RequireSection } from '../../iam/decorators/require-section.decorator';
 import { RequirePermission } from '../../iam/decorators/require-permission.decorator';
 import { IAM_PERMISSION } from '../../iam/constants/iam-permissions';
@@ -34,6 +36,7 @@ import { mayReadOperation } from './helpers/operation-ownership.helper';
 export class InfrastructureOperationsController {
   constructor(
     private readonly operationsService: InfrastructureOperationsService,
+    private readonly installLogService: InstallLogService,
     @Inject(POLICY_ENGINE) private readonly policy: PolicyEngine,
   ) {}
 
@@ -73,6 +76,44 @@ export class InfrastructureOperationsController {
     // The same 404 a missing id gets: an operation that is not yours must not
     // be distinguishable from one that does not exist.
     throw new NotFoundException(`Operation ${operationId} not found`);
+  }
+
+  @Get(':operationId/log')
+  @RequirePermission(IAM_PERMISSION.APP_READ)
+  @ApiOperation({
+    summary: 'Download the captured install log for an operation',
+    description:
+      'Bootstrap output captured while a master node was created, as plain ' +
+      'text — available live and after completion or failure. 404 if the ' +
+      'operation never reached the tailing window (predates this feature, ' +
+      'or was a node type not yet covered).',
+  })
+  @ApiParam({ name: 'operationId', description: 'Operation ID' })
+  @ApiResponse({ status: 200, description: 'Plain-text install log' })
+  @ApiResponse({ status: 404, description: 'Operation or log not found' })
+  async downloadLog(
+    @Param('operationId') operationId: string,
+    @Req() req: Request,
+    @Res() res: ExpressResponse,
+  ): Promise<void> {
+    const operation =
+      await this.operationsService.getOperationDetails(operationId);
+    const user = req.user as AuthenticatedUser | undefined;
+    if (!(await this.mayRead(operation, user))) {
+      throw new NotFoundException(`Operation ${operationId} not found`);
+    }
+    const log = await this.installLogService.getFullLog(operationId);
+    if (!log) {
+      throw new NotFoundException(
+        `No install log captured for operation ${operationId}`,
+      );
+    }
+    res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="install-${operationId}.log"`,
+    );
+    res.send(log.content);
   }
 
   @Post(':operationId/cancel')
