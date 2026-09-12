@@ -1,4 +1,4 @@
-import { Inject, Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import {
   OvhProviderService as InfraOvhProviderService,
@@ -134,8 +134,29 @@ export class OvhProviderService implements ICloudProvider {
 
   async getServerStatus(serverId: string): Promise<string> {
     const svc = await this.delegate();
-    const status = await svc.getServerStatus(serverId);
-    return normalizeOvhServerStatus(status);
+    try {
+      const status = await svc.getServerStatus(serverId);
+      return normalizeOvhServerStatus(status);
+    } catch (error) {
+      // @flui-cloud/infra throws when Nova has no such server; Hetzner/Scaleway
+      // return 'not-found' instead, which is what waitForDeletionComplete
+      // polls for to detect a completed delete.
+      if (error instanceof Error && /not found/i.test(error.message)) {
+        return 'not-found';
+      }
+      throw error;
+    }
+  }
+
+  /** `getServerDetailsAsDto` already scans every region to find the server; reuse it rather than re-scanning. */
+  async getConsoleOutput(serverId: string, length = 200): Promise<string> {
+    const svc = await this.delegate();
+    const details = await svc.getServerDetailsAsDto(serverId);
+    if (!details) {
+      throw new NotFoundException(`OVH server ${serverId} not found.`);
+    }
+    const client = await this.client();
+    return client.getConsoleOutput(details.location, serverId, length);
   }
 
   async createServer(
@@ -390,14 +411,9 @@ export class OvhProviderService implements ICloudProvider {
 }
 
 /**
- * ServersService.waitForServerReady() is provider-agnostic by design: it
- * polls getServerStatus() and only recognizes Hetzner/Scaleway's own
- * vocabulary ('running' means ready, 'error' means failed). OVH's Nova
- * backend reports the raw OpenStack vocabulary instead ('ACTIVE', 'BUILD',
- * 'ERROR', all uppercase) — left untranslated, that wait loop never sees a
- * status it recognizes as ready and always times out at 300s, no matter how
- * fast the server actually boots. Translate at this boundary so every
- * provider-agnostic caller of getServerStatus() keeps working unmodified.
+ * OVH reports raw Nova statuses ('ACTIVE', 'ERROR', uppercase); the
+ * provider-agnostic wait loops in ServersService expect Hetzner/Scaleway's
+ * vocabulary ('running', 'error'). Translate here so they work unmodified.
  */
 export function normalizeOvhServerStatus(novaStatus: string): string {
   switch (novaStatus) {
