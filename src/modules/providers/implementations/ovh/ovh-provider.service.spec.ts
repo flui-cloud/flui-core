@@ -225,6 +225,127 @@ describe('OvhProviderService.createServer — post-boot network attach', () => {
   });
 });
 
+describe('OvhProviderService.createServer — private NIC netplan injection', () => {
+  const BOOTSTRAP_SCRIPT = [
+    '#!/bin/bash',
+    '# Flui.cloud Bootstrap Script (master)',
+    'set -euo pipefail',
+    "export CLUSTER_ID='abc'",
+    'curl -fsSL "${SCRIPTS_BASE_URL}/k3s-master-init.sh" -o /tmp/init.sh',
+    '',
+  ].join('\n');
+
+  async function userDataSentTo(config: Record<string, unknown>) {
+    const infraCreateServer = jest.fn().mockResolvedValue({
+      serverId: 'srv-1',
+      ipAddress: '1.2.3.4',
+      status: 'ACTIVE',
+    });
+    (buildOvhOpenStackClient as jest.Mock).mockResolvedValue({
+      resolveComputeRegion: jest.fn().mockResolvedValue('GRA11'),
+      attachServerInterface: jest.fn().mockResolvedValue(undefined),
+      rebootServer: jest.fn(),
+      getConsoleOutput: jest
+        .fn()
+        .mockResolvedValue(
+          'Cloud-init v. 26.1 finished at Sat, 12 Sep 2026 21:25:50 +0000. Datasource DataSourceOpenStackLocal [net,ver=2].',
+        ),
+    });
+    (parseRegionId as jest.Mock).mockReturnValue({ id: 'net-1' });
+    (InfraOvhProviderService as unknown as jest.Mock).mockImplementation(
+      () => ({
+        createServer: infraCreateServer,
+      }),
+    );
+    const service = new OvhProviderService(
+      {} as never,
+      {
+        getActiveAccessKeyPair: jest
+          .fn()
+          .mockResolvedValue({ accessKey: 'ak', secretKey: 'sk' }),
+      } as never,
+    );
+
+    jest.useFakeTimers();
+    try {
+      const pending = service.createServer(config as never);
+      await jest.advanceTimersByTimeAsync(30_000);
+      await pending;
+    } finally {
+      jest.useRealTimers();
+    }
+    return infraCreateServer.mock.calls[0][0].user_data as string | undefined;
+  }
+
+  it('declares the hot-attached NIC in netplan, ahead of the bootstrap script it leaves intact', async () => {
+    const userData = await userDataSentTo({
+      name: 'workload-2-master',
+      networks: ['region:net-1'],
+      user_data: BOOTSTRAP_SCRIPT,
+    });
+
+    expect(userData.startsWith('#!/bin/bash\n')).toBe(true);
+    // Ahead of the script's own `set -euo pipefail`, so a failure here can
+    // never abort the bootstrap.
+    expect(userData.indexOf('flui_ovh_configure_private_nic')).toBeLessThan(
+      userData.indexOf('set -euo pipefail'),
+    );
+    expect(userData).toContain('/etc/netplan/60-flui-private.yaml');
+    expect(userData).toContain('dhcp4-overrides');
+    // Without this the private DHCP installs a competing default route.
+    expect(userData).toContain('use-routes: false');
+    // Without this a later boot blocks on systemd-networkd-wait-online.
+    expect(userData).toContain('optional: true');
+    expect(userData).toContain("export CLUSTER_ID='abc'");
+    expect(userData).toContain(
+      'curl -fsSL "${SCRIPTS_BASE_URL}/k3s-master-init.sh" -o /tmp/init.sh',
+    );
+  });
+
+  it('discovers the NIC at runtime rather than hard-coding a predictable name', async () => {
+    const userData = await userDataSentTo({
+      name: 'workload-2-master',
+      networks: ['region:net-1'],
+      user_data: BOOTSTRAP_SCRIPT,
+    });
+
+    expect(userData).not.toContain('ens7');
+    expect(userData).toContain('/sys/class/net/');
+    expect(userData).toContain('ip -4 route show default');
+  });
+
+  it('leaves user_data untouched when no VNet is attached — nothing to compensate for', async () => {
+    const userData = await userDataSentTo({
+      name: 'control-master',
+      user_data: BOOTSTRAP_SCRIPT,
+    });
+
+    expect(userData).toBe(BOOTSTRAP_SCRIPT);
+  });
+
+  it('emits a standalone script when there is no user_data to splice into', async () => {
+    const userData = await userDataSentTo({
+      name: 'workload-2-master',
+      networks: ['region:net-1'],
+    });
+
+    expect(userData.startsWith('#!/bin/bash\n')).toBe(true);
+    expect(userData).toContain('flui_ovh_configure_private_nic');
+  });
+
+  it('refuses to splice shell into a user_data that is not a shell script — a broken bootstrap is worse than no private network', async () => {
+    const cloudConfig = '#cloud-config\nruncmd:\n  - echo hi\n';
+
+    const userData = await userDataSentTo({
+      name: 'workload-2-master',
+      networks: ['region:net-1'],
+      user_data: cloudConfig,
+    });
+
+    expect(userData).toBe(cloudConfig);
+  });
+});
+
 describe('OvhProviderService.listInstances', () => {
   function build(servers: unknown[], nodeSizes: unknown[] = []) {
     (buildOvhOpenStackClient as jest.Mock).mockResolvedValue({});

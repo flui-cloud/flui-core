@@ -66,6 +66,74 @@ function isOvhGpuFlavor(id: string): boolean {
 }
 
 /**
+ * Shell run inside the guest before the bootstrap script's own body, to give
+ * the hot-attached VNet interface a netplan declaration it would otherwise
+ * never get (see withPrivateNicNetplan).
+ *
+ * The NIC is discovered at runtime rather than named: its predictable name
+ * depends on the PCI slot Nova hot-plugs it into, and the only thing Flui
+ * knows for certain is that it is the one real ethernet device that is
+ * neither loopback, nor the Ext-Net device holding the default route, nor
+ * already carrying an IPv4 address.
+ *
+ * `use-routes: false` is the reason this is a separate file rather than a
+ * plain `dhcp4: true`: the VNet's DHCP would otherwise install a second
+ * default route and blackhole egress.
+ */
+const OVH_PRIVATE_NIC_NETPLAN_SNIPPET = `
+flui_ovh_configure_private_nic() {
+  command -v netplan >/dev/null 2>&1 || return 0
+
+  flui_primary=$(ip -4 route show default 2>/dev/null | awk '{print $5; exit}')
+  flui_nic=''
+  flui_i=0
+  while [ "$flui_i" -lt 30 ]; do
+    for flui_path in /sys/class/net/*; do
+      flui_dev=\${flui_path##*/}
+      [ "$flui_dev" = "lo" ] && continue
+      [ "$flui_dev" = "$flui_primary" ] && continue
+      [ -e "$flui_path/device" ] || continue
+      ip -4 -o addr show dev "$flui_dev" 2>/dev/null | grep -q . && continue
+      flui_nic=$flui_dev
+      break
+    done
+    [ -n "$flui_nic" ] && break
+    flui_i=$((flui_i + 1))
+    sleep 2
+  done
+
+  if [ -z "$flui_nic" ]; then
+    echo "[Bootstrap] OVH private NIC never appeared - no private networking"
+    return 0
+  fi
+
+  cat > /etc/netplan/60-flui-private.yaml <<FLUI_NETPLAN_EOF
+network:
+  version: 2
+  ethernets:
+    $flui_nic:
+      dhcp4: true
+      dhcp4-overrides:
+        use-routes: false
+      accept-ra: false
+      optional: true
+FLUI_NETPLAN_EOF
+  chmod 600 /etc/netplan/60-flui-private.yaml
+  netplan apply || true
+
+  flui_i=0
+  while [ "$flui_i" -lt 30 ]; do
+    ip -4 -o addr show dev "$flui_nic" 2>/dev/null | grep -q . && break
+    flui_i=$((flui_i + 1))
+    sleep 2
+  done
+  flui_addr=$(ip -4 -o addr show dev "$flui_nic" 2>/dev/null | awk '{print $4}')
+  echo "[Bootstrap] OVH private NIC $flui_nic: \${flui_addr:-none}"
+}
+flui_ovh_configure_private_nic || true
+`;
+
+/**
  * Flui-native OVH provider — delegates the actual Nova/Neutron work to
  * @flui-cloud/infra's OvhProviderService, but sources credentials from
  * ICredentialProvider (the encrypted DB-backed store) instead of process env
@@ -241,6 +309,7 @@ export class OvhProviderService implements ICloudProvider {
       ...config,
       image: toOvhImageName(config.image),
       networks: undefined,
+      user_data: this.withPrivateNicNetplan(config),
     });
 
     // Nova's create response is 'BUILD' with no IP yet — unlike Hetzner/
@@ -352,6 +421,51 @@ export class OvhProviderService implements ICloudProvider {
     }
 
     return result;
+  }
+
+  /**
+   * Compensates, inside the guest, for this service's own "boot on Ext-Net
+   * only" workaround. cloud-init writes /etc/netplan/50-cloud-init.yaml at
+   * first boot, when the VNet interface does not exist yet; the interface
+   * hot-attached seconds later therefore appears in no netplan config at all
+   * and stays DOWN with no IP permanently — live-confirmed on two clusters,
+   * with k3s falling back to registering the public IP as its INTERNAL-IP.
+   * Every other provider attaches the VNet at create time and never sees
+   * this, so the fix belongs here rather than in the shared bootstrap
+   * scripts or in provider-agnostic code.
+   *
+   * user_data is a plain `#!/bin/bash` script (K3sScriptService.
+   * generateBootstrapScript), which @flui-cloud/infra base64-encodes for
+   * Nova — it is not cloud-config, so a `write_files` fragment cannot be
+   * merged into it. Splicing shell in after the shebang keeps the payload
+   * format byte-for-byte what cloud-init already handles, and lands ahead of
+   * the script's own `set -euo pipefail` so nothing here can abort the
+   * bootstrap. Anything that is neither absent nor a shell script is left
+   * untouched: a broken bootstrap is far worse than no private network.
+   */
+  private withPrivateNicNetplan(
+    config: CreateServerConfig,
+  ): string | undefined {
+    if (!config.networks?.length) return config.user_data;
+
+    const userData = config.user_data;
+    if (!userData?.trim()) {
+      return `#!/bin/bash\n${OVH_PRIVATE_NIC_NETPLAN_SNIPPET}`;
+    }
+    if (!userData.startsWith('#!')) {
+      this.logger.warn(
+        'OVH user_data is not a shell script — skipping the private-NIC netplan injection; the VNet interface will have no IP.',
+      );
+      return userData;
+    }
+
+    const shebangEnd = userData.indexOf('\n');
+    if (shebangEnd === -1) return userData + OVH_PRIVATE_NIC_NETPLAN_SNIPPET;
+    return (
+      userData.slice(0, shebangEnd) +
+      OVH_PRIVATE_NIC_NETPLAN_SNIPPET +
+      userData.slice(shebangEnd + 1)
+    );
   }
 
   private async waitForServerActive(
