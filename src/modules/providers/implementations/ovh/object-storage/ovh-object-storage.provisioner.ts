@@ -1,5 +1,4 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
 import {
   IObjectStorageProvisioner,
   ProvisionerCapability,
@@ -10,17 +9,7 @@ import {
 import { StorageBackendProvider } from '../../../../storage/enums/storage-backend-provider.enum';
 import { GenericS3Backend } from '../../../../storage/implementations/generic-s3.backend';
 import { OvhEc2CredentialsService } from './ovh-ec2-credentials.service';
-
-const OVH_DEFAULT_S3_REGION = 'gra';
-
-/**
- * S3 region names are lowercase and do not match the Nova region a cluster
- * runs in ('gra' here vs 'GRA11' for compute) — never derive one from the
- * other.
- */
-function endpointFor(region: string): string {
-  return `https://s3.${region}.io.cloud.ovh.net`;
-}
+import { OvhObjectStoragePreset } from './ovh-object-storage.preset';
 
 /**
  * OVH Object Storage provisioner — FULL_AUTO, like Scaleway. Where Scaleway
@@ -39,7 +28,7 @@ export class OvhObjectStorageProvisioner implements IObjectStorageProvisioner {
   readonly capability = ProvisionerCapability.FULL_AUTO;
 
   constructor(
-    private readonly configService: ConfigService,
+    private readonly preset: OvhObjectStoragePreset,
     private readonly ec2Credentials: OvhEc2CredentialsService,
     private readonly genericS3: GenericS3Backend,
   ) {}
@@ -58,10 +47,8 @@ export class OvhObjectStorageProvisioner implements IObjectStorageProvisioner {
   }
 
   async provisionDestination(input: ProvisionInput): Promise<ProvisionResult> {
-    const region =
-      input.desiredRegion ??
-      this.configService.get<string>('OVH_S3_REGION', OVH_DEFAULT_S3_REGION);
-    const endpoint = endpointFor(region);
+    const region = input.desiredRegion ?? this.preset.defaultRegion();
+    const endpoint = this.preset.endpointFor(region);
     const bucket =
       input.desiredBucketName ?? this.defaultBucketName(input.userId);
     const { accessKey, secretKey, reused } =

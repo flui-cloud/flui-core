@@ -12,6 +12,7 @@ import { ApiTokenRepository } from '../../../../access/repositories/api-token.re
 import { KeyStorageService } from '../../../../access/services/key-storage.service';
 import { ScalewayProviderModule } from '../scaleway-provider.module';
 import { ScalewayObjectStorageProvisioner } from './scaleway-object-storage.provisioner';
+import { ScalewayObjectStoragePreset } from './scaleway-object-storage.preset';
 
 /**
  * API-only module che aggiunge il provisioning automatico di Scaleway Object
@@ -30,6 +31,7 @@ import { ScalewayObjectStorageProvisioner } from './scaleway-object-storage.prov
     ApiTokenRepository,
     KeyStorageService,
     ScalewayObjectStorageProvisioner,
+    ScalewayObjectStoragePreset,
 
     multiProvisionerProvider({
       provide: OBJECT_STORAGE_PROVISIONER_REGISTRY,
@@ -45,6 +47,7 @@ import { ScalewayObjectStorageProvisioner } from './scaleway-object-storage.prov
   ],
   exports: [
     ScalewayObjectStorageProvisioner,
+    ScalewayObjectStoragePreset,
     OBJECT_STORAGE_PROVISIONER_REGISTRY,
   ],
 })

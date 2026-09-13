@@ -14,6 +14,7 @@ import { HetznerProviderModule } from '../hetzner-provider.module';
 import { HetznerObjectStorageConnectionService } from './hetzner-object-storage-connection.service';
 import { HetznerObjectStorageConnectionController } from './hetzner-object-storage-connection.controller';
 import { HetznerObjectStorageProvisioner } from './hetzner-object-storage.provisioner';
+import { HetznerObjectStoragePreset } from './hetzner-object-storage.preset';
 
 /**
  * API-only module che aggiunge il provisioning automatico di Hetzner Object
@@ -33,6 +34,7 @@ import { HetznerObjectStorageProvisioner } from './hetzner-object-storage.provis
     KeyStorageService,
     HetznerObjectStorageConnectionService,
     HetznerObjectStorageProvisioner,
+    HetznerObjectStoragePreset,
 
     multiProvisionerProvider({
       provide: OBJECT_STORAGE_PROVISIONER_REGISTRY,
@@ -49,6 +51,7 @@ import { HetznerObjectStorageProvisioner } from './hetzner-object-storage.provis
   exports: [
     HetznerObjectStorageConnectionService,
     HetznerObjectStorageProvisioner,
+    HetznerObjectStoragePreset,
     OBJECT_STORAGE_PROVISIONER_REGISTRY,
   ],
 })

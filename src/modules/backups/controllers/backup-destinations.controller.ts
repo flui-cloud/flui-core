@@ -7,10 +7,12 @@ import {
   Post,
   Req,
 } from '@nestjs/common';
-import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiOkResponse, ApiTags } from '@nestjs/swagger';
 import { Request } from 'express';
 import { BackupDestinationsService } from '../services/backup-destinations.service';
 import { CreateBackupDestinationDto } from '../dto/create-backup-destination.dto';
+import { ObjectStoragePresetDto } from '../dto/object-storage-preset.dto';
+import { ObjectStoragePresetsService } from '../../storage/services/object-storage-presets.service';
 import { RequireSection } from '../../iam/decorators/require-section.decorator';
 import { RequirePermission } from '../../iam/decorators/require-permission.decorator';
 import { IAM_PERMISSION } from '../../iam/constants/iam-permissions';
@@ -20,7 +22,10 @@ import { IAM_PERMISSION } from '../../iam/constants/iam-permissions';
 @Controller('backup-destinations')
 @RequireSection('backup')
 export class BackupDestinationsController {
-  constructor(private readonly service: BackupDestinationsService) {}
+  constructor(
+    private readonly service: BackupDestinationsService,
+    private readonly presets: ObjectStoragePresetsService,
+  ) {}
 
   private userId(req: Request): string {
     const u = req.user as { userId?: string; id?: string } | undefined;
@@ -35,6 +40,17 @@ export class BackupDestinationsController {
   @Get()
   async list(@Req() req: Request) {
     return this.service.list(this.userId(req));
+  }
+
+  /**
+   * Declared before `:id` on purpose — Nest matches routes in order and would
+   * otherwise read 'presets' as a destination id.
+   */
+  @Get('presets')
+  @RequirePermission(IAM_PERMISSION.CLUSTER_READ)
+  @ApiOkResponse({ type: [ObjectStoragePresetDto] })
+  listPresets(): ObjectStoragePresetDto[] {
+    return this.presets.list();
   }
 
   @Get(':id')

@@ -9,6 +9,7 @@ import {
 import { OvhProviderModule } from '../ovh-provider.module';
 import { OvhEc2CredentialsService } from './ovh-ec2-credentials.service';
 import { OvhObjectStorageProvisioner } from './ovh-object-storage.provisioner';
+import { OvhObjectStoragePreset } from './ovh-object-storage.preset';
 
 /**
  * Adds automatic provisioning of OVH Object Storage. The S3 key pair is derived
@@ -20,6 +21,7 @@ import { OvhObjectStorageProvisioner } from './ovh-object-storage.provisioner';
 @Module({
   imports: [StorageModule, OvhProviderModule],
   providers: [
+    OvhObjectStoragePreset,
     OvhEc2CredentialsService,
     OvhObjectStorageProvisioner,
 
@@ -36,6 +38,7 @@ import { OvhObjectStorageProvisioner } from './ovh-object-storage.provisioner';
     }),
   ],
   exports: [
+    OvhObjectStoragePreset,
     OvhEc2CredentialsService,
     OvhObjectStorageProvisioner,
     OBJECT_STORAGE_PROVISIONER_REGISTRY,

@@ -2488,6 +2488,19 @@ const MASK_EXEMPT: string[] = [
   'NodeSizePriceDto.location', // modules/management/dto/node-size-option.dto.ts
   'NodeSizePriceDto.priceHourly', // modules/management/dto/node-size-option.dto.ts
   'NodeSizePriceDto.priceMonthly', // modules/management/dto/node-size-option.dto.ts
+  'ObjectStoragePresetDto.badge', // modules/backups/dto/object-storage-preset.dto.ts
+  'ObjectStoragePresetDto.defaultEndpoint', // modules/backups/dto/object-storage-preset.dto.ts
+  'ObjectStoragePresetDto.defaultRegion', // modules/backups/dto/object-storage-preset.dto.ts
+  'ObjectStoragePresetDto.description', // modules/backups/dto/object-storage-preset.dto.ts
+  'ObjectStoragePresetDto.forcePathStyle', // modules/backups/dto/object-storage-preset.dto.ts
+  'ObjectStoragePresetDto.label', // modules/backups/dto/object-storage-preset.dto.ts
+  'ObjectStoragePresetDto.provider', // modules/backups/dto/object-storage-preset.dto.ts
+  'ObjectStoragePresetDto.provisioning', // modules/backups/dto/object-storage-preset.dto.ts
+  'ObjectStoragePresetDto.regions', // modules/backups/dto/object-storage-preset.dto.ts
+  'ObjectStoragePresetDto.usableForEtcdL1', // modules/backups/dto/object-storage-preset.dto.ts
+  'ObjectStorageRegionOptionDto.endpoint', // modules/backups/dto/object-storage-preset.dto.ts
+  'ObjectStorageRegionOptionDto.label', // modules/backups/dto/object-storage-preset.dto.ts
+  'ObjectStorageRegionOptionDto.value', // modules/backups/dto/object-storage-preset.dto.ts
   'ObservabilityEndpointsDto.fluiApi', // modules/grafana/dto/grafana-datasource.dto.ts
   'ObservabilityEndpointsDto.grafana', // modules/grafana/dto/grafana-datasource.dto.ts
   'ObservabilityEndpointsDto.loki', // modules/grafana/dto/grafana-datasource.dto.ts

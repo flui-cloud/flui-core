@@ -20,6 +20,7 @@ import { ContaboProviderModule } from './implementations/contabo/contabo-provide
 import { ScalewayProviderModule } from './implementations/scaleway/scaleway-provider.module';
 import { ScalewayObjectStorageModule } from './implementations/scaleway/object-storage/scaleway-object-storage.module';
 import { OvhObjectStorageModule } from './implementations/ovh/object-storage/ovh-object-storage.module';
+import { StorageModule } from '../storage/storage.module';
 import { OvhProviderModule } from './implementations/ovh/ovh-provider.module';
 import { ProviderFactory } from './core/factories/provider.factory';
 import { FirewallProviderFactory } from './core/factories/firewall-provider.factory';
@@ -30,6 +31,14 @@ import { DnsProviderFactory } from './core/factories/dns-provider.factory';
 import { CapabilitiesProviderFactory } from './core/factories/capabilities-provider.factory';
 import { VolumeExportFactory } from './core/factories/volume-export.factory';
 import { ObjectStorageProvisionerFactory } from '../storage/factories/object-storage-provisioner.factory';
+import { ObjectStoragePresetsService } from '../storage/services/object-storage-presets.service';
+import { OvhObjectStoragePreset } from './implementations/ovh/object-storage/ovh-object-storage.preset';
+import { ScalewayObjectStoragePreset } from './implementations/scaleway/object-storage/scaleway-object-storage.preset';
+import { HetznerObjectStoragePreset } from './implementations/hetzner/object-storage/hetzner-object-storage.preset';
+import {
+  GenericS3ObjectStoragePreset,
+  MinioObjectStoragePreset,
+} from '../storage/presets/self-hosted-object-storage.presets';
 import { StorageBackendProvider } from '../storage/enums/storage-backend-provider.enum';
 import { HetznerObjectStorageProvisioner } from './implementations/hetzner/object-storage/hetzner-object-storage.provisioner';
 import { ScalewayObjectStorageProvisioner } from './implementations/scaleway/object-storage/scaleway-object-storage.provisioner';
@@ -81,6 +90,7 @@ import { DnsProvider } from './enums/dns-provider.enum';
     ScalewayObjectStorageModule,
     OvhObjectStorageModule,
     OvhProviderModule,
+    StorageModule,
   ],
   controllers: [ProviderFirewallsController, ProviderSchemasController],
   providers: [
@@ -188,6 +198,30 @@ import { DnsProvider } from './enums/dns-provider.enum';
     },
     VolumeExportService,
     {
+      provide: ObjectStoragePresetsService,
+      useFactory: (
+        scaleway: ScalewayObjectStoragePreset,
+        ovh: OvhObjectStoragePreset,
+        hetzner: HetznerObjectStoragePreset,
+        minio: MinioObjectStoragePreset,
+        generic: GenericS3ObjectStoragePreset,
+      ) =>
+        new ObjectStoragePresetsService([
+          scaleway,
+          ovh,
+          hetzner,
+          minio,
+          generic,
+        ]),
+      inject: [
+        ScalewayObjectStoragePreset,
+        OvhObjectStoragePreset,
+        HetznerObjectStoragePreset,
+        MinioObjectStoragePreset,
+        GenericS3ObjectStoragePreset,
+      ],
+    },
+    {
       provide: ObjectStorageProvisionerFactory,
       useFactory: (
         hetzner: HetznerObjectStorageProvisioner,
@@ -261,6 +295,7 @@ import { DnsProvider } from './enums/dns-provider.enum';
     CapabilitiesProviderFactory,
     VolumeExportFactory,
     ObjectStorageProvisionerFactory,
+    ObjectStoragePresetsService,
     PROVIDER_BOOTSTRAP_SEEDER_REGISTRY,
   ],
 })
