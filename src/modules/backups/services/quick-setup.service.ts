@@ -35,6 +35,7 @@ const BACKUP_STORAGE_PREFERENCE: readonly StorageBackendProvider[] = [
 ];
 
 const NO_ELIGIBLE_STORAGE = 'NO_ELIGIBLE_STORAGE';
+const SAME_PROVIDER_AS_CLUSTER = 'SAME_PROVIDER_AS_CLUSTER';
 
 function needsConnection(reason?: string): boolean {
   return /^CONNECT_[A-Z_]+_REQUIRED$/.test(reason ?? '');
@@ -66,6 +67,19 @@ export class QuickSetupService {
     const { storage: primaryStorage, readiness: primaryReady } =
       await this.selectPrimaryStorage(cluster.provider, userId);
 
+    const eligible = await Promise.all(
+      this.eligibleFor(cluster.provider).map(async (provider) => {
+        const r = await this.checkReady(provider, userId);
+        return {
+          provider,
+          ready: r.ready,
+          needsConnection: !r.ready && needsConnection(r.reason),
+          reason: r.reason,
+          message: r.message,
+        };
+      }),
+    );
+
     const [clusterEst, singleEst] = await Promise.all([
       this.billing.estimateClusterMonthlyCost(clusterId),
       this.billing.estimateBackupMonthlyCost(
@@ -85,6 +99,7 @@ export class QuickSetupService {
         reason: primaryReady.reason,
         message: primaryReady.message,
       },
+      eligible,
       recommendedReplicas: [],
       estimate: {
         currency: 'EUR',
@@ -123,7 +138,11 @@ export class QuickSetupService {
     if (!cluster) throw new NotFoundException(`Cluster ${clusterId} not found`);
 
     const { storage: primaryStorage, readiness } =
-      await this.selectPrimaryStorage(cluster.provider, userId);
+      await this.selectPrimaryStorage(
+        cluster.provider,
+        userId,
+        dto.primaryProvider,
+      );
     if (!readiness.ready) {
       throw new BadRequestException(
         readiness.message ??
@@ -164,17 +183,42 @@ export class QuickSetupService {
    * is connected the first eligible candidate is returned anyway, carrying its
    * own reason, so the UI can offer the right provider to connect.
    */
+  private eligibleFor(
+    clusterProvider: CloudProvider | string | null | undefined,
+  ): StorageBackendProvider[] {
+    const clusterFamily = (clusterProvider ?? '').toLowerCase();
+    return BACKUP_STORAGE_PREFERENCE.filter(
+      (p) => cloudFamilyOfStorage(p) !== clusterFamily,
+    );
+  }
+
   private async selectPrimaryStorage(
     clusterProvider: CloudProvider | string | null | undefined,
     userId: string,
+    requested?: StorageBackendProvider,
   ): Promise<{
     storage: StorageBackendProvider;
     readiness: { ready: boolean; reason?: string; message?: string };
   }> {
     const clusterFamily = (clusterProvider ?? '').toLowerCase();
-    const eligible = BACKUP_STORAGE_PREFERENCE.filter(
-      (p) => cloudFamilyOfStorage(p) !== clusterFamily,
-    );
+    const eligible = this.eligibleFor(clusterProvider);
+
+    if (requested) {
+      if (!eligible.includes(requested)) {
+        return {
+          storage: requested,
+          readiness: {
+            ready: false,
+            reason: SAME_PROVIDER_AS_CLUSTER,
+            message: `${requested} sits on ${clusterFamily}, the cluster's own cloud. A backup there dies with the outage it protects against.`,
+          },
+        };
+      }
+      return {
+        storage: requested,
+        readiness: await this.checkReady(requested, userId),
+      };
+    }
 
     if (eligible.length === 0) {
       return {

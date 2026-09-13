@@ -1,6 +1,7 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
   IsBoolean,
+  IsEnum,
   IsIn,
   IsInt,
   IsOptional,
@@ -9,8 +10,8 @@ import {
 } from 'class-validator';
 import { StorageBackendProvider } from '../../storage/enums/storage-backend-provider.enum';
 
-// MVP: only 'single' profile to Scaleway is supported. 'mirrored' will be
-// reintroduced once a second backup destination is GA.
+// MVP: only the 'single' profile is supported. 'mirrored' will be reintroduced
+// once writing to two destinations at once is GA.
 export type QuickSetupProfile = 'single';
 
 export class QuickSetupDto {
@@ -34,6 +35,16 @@ export class QuickSetupDto {
   @IsOptional()
   @IsBoolean()
   runFirstBackup?: boolean;
+
+  /**
+   * Where backups go. Omit to take the first connected candidate that is not
+   * on the cluster's own cloud. A destination on that cloud is refused however
+   * it is asked for.
+   */
+  @ApiPropertyOptional({ enum: StorageBackendProvider })
+  @IsOptional()
+  @IsEnum(StorageBackendProvider)
+  primaryProvider?: StorageBackendProvider;
 }
 
 export class SetupOptionsResponse {
@@ -48,6 +59,16 @@ export class SetupOptionsResponse {
     reason?: string;
     message?: string;
   };
+
+  /** Every destination this cluster may use, so a client can offer a choice. */
+  @ApiProperty()
+  eligible: Array<{
+    provider: StorageBackendProvider;
+    ready: boolean;
+    needsConnection: boolean;
+    reason?: string;
+    message?: string;
+  }>;
 
   @ApiProperty()
   recommendedReplicas: Array<{

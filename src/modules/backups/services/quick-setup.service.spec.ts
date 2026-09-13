@@ -126,6 +126,56 @@ describe('QuickSetupService — choosing where backups go', () => {
     ).rejects.toBeInstanceOf(BadRequestException);
   });
 
+  it('honours an explicit choice over the preference order', async () => {
+    const { service, queue } = build(CloudProvider.HETZNER, {
+      [SCW]: READY,
+      [OVH]: READY,
+    });
+
+    await service.startQuickSetup('u1', 'c1', {
+      primaryProvider: OVH,
+    } as never);
+
+    expect(queue.add).toHaveBeenCalledWith(
+      'quick-setup',
+      expect.objectContaining({ primaryProvider: OVH }),
+    );
+  });
+
+  it('refuses an explicit choice that sits on the cluster’s own cloud', async () => {
+    const { service } = build(CloudProvider.SCALEWAY, {
+      [SCW]: READY,
+      [OVH]: READY,
+    });
+
+    await expect(
+      service.startQuickSetup('u1', 'c1', { primaryProvider: SCW } as never),
+    ).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it('refuses an explicit choice that is not connected', async () => {
+    const { service } = build(CloudProvider.HETZNER, {
+      [SCW]: READY,
+      [OVH]: notConnected('OVH'),
+    });
+
+    await expect(
+      service.startQuickSetup('u1', 'c1', { primaryProvider: OVH } as never),
+    ).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it('lists every destination the cluster may use, so a client can offer a choice', async () => {
+    const { service } = build(CloudProvider.SCALEWAY, {
+      [SCW]: READY,
+      [OVH]: READY,
+    });
+
+    const options = await service.getSetupOptions('u1', 'c1');
+
+    // Scaleway is the cluster's own cloud, so it is not on the menu at all.
+    expect(options.eligible.map((e) => e.provider)).toEqual([OVH]);
+  });
+
   it('queues the job against the selected provider, not a hardcoded one', async () => {
     const { service, queue } = build(CloudProvider.SCALEWAY, {
       [SCW]: READY,

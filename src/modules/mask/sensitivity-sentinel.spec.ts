@@ -2814,6 +2814,7 @@ const MASK_EXEMPT: string[] = [
   'QueuedBuildInfoDto.commitSha', // modules/app-builds/dto/build-namespace.dto.ts
   'QueuedBuildInfoDto.status', // modules/app-builds/dto/build-namespace.dto.ts
   'QuickSetupDto.cronSchedule', // modules/backups/dto/quick-setup.dto.ts
+  'QuickSetupDto.primaryProvider', // modules/backups/dto/quick-setup.dto.ts
   'QuickSetupDto.profile', // modules/backups/dto/quick-setup.dto.ts
   'QuickSetupDto.retentionDays', // modules/backups/dto/quick-setup.dto.ts
   'QuickSetupDto.runFirstBackup', // modules/backups/dto/quick-setup.dto.ts
@@ -3276,6 +3277,7 @@ const MASK_EXEMPT: string[] = [
   'SetGatewayPolicyDto.rateLimit', // modules/applications/dto/gateway-route.dto.ts
   'SetPlatformConfigDto.heartbeatUrl', // modules/backups/dto/set-platform-config.dto.ts
   'SetPlatformConfigDto.recipient', // modules/backups/dto/set-platform-config.dto.ts
+  'SetupOptionsResponse.eligible', // modules/backups/dto/quick-setup.dto.ts
   'SetupOptionsResponse.currentProvider', // modules/backups/dto/quick-setup.dto.ts
   'SetupOptionsResponse.estimate', // modules/backups/dto/quick-setup.dto.ts
   'SetupOptionsResponse.primary', // modules/backups/dto/quick-setup.dto.ts
