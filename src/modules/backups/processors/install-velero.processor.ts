@@ -12,6 +12,7 @@ import {
 } from '../../infrastructure/servers/entities/infrastructure-operations.entity';
 import { VeleroInstallerService } from '../services/velero-installer.service';
 import { BackupDestinationRepository } from '../repositories/backup-destination.repository';
+import { BackupJobsService } from '../services/backup-jobs.service';
 import { BACKUP_QUEUE, BACKUP_JOB_TYPES } from '../backups.constants';
 
 export interface InstallVeleroJobData {
@@ -19,6 +20,14 @@ export interface InstallVeleroJobData {
   destinationIds: string[];
   primaryDestinationId: string;
   operationId: string;
+  /**
+   * Policy whose first backup runs once this install is done. Velero fails a
+   * backup outright when the storage location it names is not there yet, so
+   * the very first one cannot be started alongside the install that creates
+   * it.
+   */
+  firstBackupPolicyId?: string;
+  userId?: string;
 }
 
 @Processor(BACKUP_QUEUE)
@@ -33,12 +42,19 @@ export class InstallVeleroProcessor {
     private readonly destRepo: BackupDestinationRepository,
     private readonly encryption: EncryptionService,
     private readonly installer: VeleroInstallerService,
+    private readonly jobsService: BackupJobsService,
   ) {}
 
   @Process(BACKUP_JOB_TYPES.INSTALL_VELERO)
   async handle(job: Job<InstallVeleroJobData>): Promise<void> {
-    const { clusterId, destinationIds, primaryDestinationId, operationId } =
-      job.data;
+    const {
+      clusterId,
+      destinationIds,
+      primaryDestinationId,
+      operationId,
+      firstBackupPolicyId,
+      userId,
+    } = job.data;
     this.logger.log(`[install-velero] Starting for cluster ${clusterId}`);
 
     const setStep = async (step: OperationStep, progress: number) => {
@@ -91,6 +107,15 @@ export class InstallVeleroProcessor {
         progress: 100,
       });
       this.logger.log(`[install-velero] Completed for cluster ${clusterId}`);
+
+      if (firstBackupPolicyId && userId) {
+        await this.jobsService.createOnDemand(userId, {
+          policyId: firstBackupPolicyId,
+        });
+        this.logger.log(
+          `[install-velero] Queued the first backup for policy ${firstBackupPolicyId}`,
+        );
+      }
     } catch (err: any) {
       this.logger.error(`[install-velero] Failed: ${err?.message}`);
       await this.opRepo.update(operationId, {

@@ -15,7 +15,6 @@ import { StorageBackendProvider } from '../../storage/enums/storage-backend-prov
 import { EncryptionService } from '../../shared/encryption/services/encryption.service';
 import { BackupDestinationRepository } from '../repositories/backup-destination.repository';
 import { BackupPoliciesService } from '../services/backup-policies.service';
-import { BackupJobsService } from '../services/backup-jobs.service';
 import { BackupDestinationEntity } from '../entities/backup-destination.entity';
 import {
   DestinationHealthStatus,
@@ -55,7 +54,6 @@ export class QuickSetupProcessor {
     private readonly provisionerFactory: ObjectStorageProvisionerFactory,
     private readonly encryption: EncryptionService,
     private readonly policiesService: BackupPoliciesService,
-    private readonly jobsService: BackupJobsService,
     @InjectQueue(BACKUP_QUEUE) private readonly queue: Queue,
   ) {}
 
@@ -191,13 +189,14 @@ export class QuickSetupProcessor {
         ],
         primaryDestinationId: primaryDest.id,
         operationId: installOp.id,
+        // The install starts it, once the storage location exists.
+        ...(data.runFirstBackup
+          ? { firstBackupPolicyId: policy.id, userId: data.userId }
+          : {}),
       });
 
       if (data.runFirstBackup) {
         await setStep(OperationStep.QUICK_SETUP_RUN_FIRST_BACKUP, 85);
-        await this.jobsService.createOnDemand(data.userId, {
-          policyId: policy.id,
-        });
       }
 
       await setStep(OperationStep.QUICK_SETUP_FINALIZE, 100);
