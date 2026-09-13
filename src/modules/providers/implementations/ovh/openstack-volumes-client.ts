@@ -46,6 +46,21 @@ export class FluiOpenStackClient extends OpenStackClient {
   }
 
   /**
+   * Nova's flavor list for one region. Public because the base client keeps
+   * `get()` protected, and shape discovery has to read it per region: OVH's
+   * newer regions carry flavors the public ordering catalog never lists.
+   */
+  async listFlavorsDetail(
+    region: string,
+  ): Promise<{ name: string; vcpus: number; ram: number; disk: number }[]> {
+    const nova = await this.endpoint('compute', region);
+    const body = await this.get<{
+      flavors?: { name: string; vcpus: number; ram: number; disk: number }[];
+    }>(`${nova.replace(/\/$/, '')}/flavors/detail`);
+    return body.flavors ?? [];
+  }
+
+  /**
    * A subnet with a gateway makes DHCP hand the node a second default
    * route, which can pull pod egress onto this private-only VNet and into a
    * dead end. Neutron only drops the gateway on an explicit `null`, which

@@ -33,6 +33,7 @@ import { NodeSizeDto } from '../../dto/node-size.dto';
 import { CloudProvider } from '../../enums/cloud-provider.enum';
 import { ICredentialProvider } from '../../interfaces/credential-provider.interface';
 import { buildOvhOpenStackClient } from './ovh-openstack-client.factory';
+import { getOvhNodeSizesFromNova, FlavorPricing } from './ovh-nova-flavors';
 import { FluiOpenStackClient } from './openstack-volumes-client';
 
 /**
@@ -287,9 +288,39 @@ export class OvhProviderService implements ICloudProvider {
     return instance;
   }
 
+  /**
+   * Shapes come from Nova, prices from the public ordering catalog: Nova knows
+   * what a region actually offers, the catalog knows what it costs, and neither
+   * knows both. Milan, Paris and Roubaix carry live Nova flavors that appear in
+   * no catalog entry at all.
+   *
+   * Falls back to the catalog when Nova cannot be reached, so a missing or
+   * broken credential degrades to a smaller list rather than an empty one.
+   */
   async getNodeSizes(): Promise<NodeSizeDto[]> {
-    const sizes = await this.catalogOnly.getNodeSizes();
-    return sizes.filter((size) => !isOvhGpuFlavor(size.id));
+    const catalogSizes = await this.catalogOnly.getNodeSizes();
+    try {
+      const client = await this.client();
+      const pricing = new Map<string, FlavorPricing>(
+        catalogSizes.map((size) => [
+          size.id,
+          {
+            hourly: Number(size.prices[0]?.priceHourly.net) || undefined,
+            monthly: Number(size.prices[0]?.priceMonthly.net) || undefined,
+            storageType: size.storageType,
+            cpuType: size.cpuType,
+            deprecated: size.deprecated,
+          },
+        ]),
+      );
+      const sizes = await getOvhNodeSizesFromNova(client, pricing);
+      if (sizes.length) return sizes.filter((size) => !isOvhGpuFlavor(size.id));
+    } catch (error) {
+      this.logger.warn(
+        `Could not read OVH flavors from Nova, falling back to the order catalog: ${String(error)}`,
+      );
+    }
+    return catalogSizes.filter((size) => !isOvhGpuFlavor(size.id));
   }
 
   async listServersAsDto(): Promise<ServerResponseDto[]> {

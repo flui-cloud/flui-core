@@ -1,3 +1,12 @@
+import {
+  OVH_REGION_METADATA,
+  isEuropeanOvhRegion,
+} from 'src/modules/providers/implementations/ovh/ovh-region-metadata';
+
+/** European OVH regions, read off the provider module's own metadata table. */
+const OVH_EU_REGION_CODES =
+  Object.keys(OVH_REGION_METADATA).filter(isEuropeanOvhRegion);
+
 export const CLI_DEFAULTS = {
   SERVER_TYPE_CACHE_TTL_HOURS: 12,
 
@@ -7,19 +16,27 @@ export const CLI_DEFAULTS = {
   SCALEWAY_EU_REGIONS: ['fr-par', 'nl-ams', 'pl-waw'] as const,
   DEFAULT_SCALEWAY_REGION: 'fr-par' as const,
 
-  // OVH macro-region codes (city-level, see OVH_REGIONS in @flui-cloud/infra).
-  // GRA/SBG/DE/UK/WAW are EU; BHS/SGP/SYD are excluded here as non-EU.
-  OVH_EU_REGIONS: ['GRA', 'SBG', 'DE', 'UK', 'WAW'] as const,
+  // OVH region codes. Not a catalogue: the real list comes from the Keystone
+  // service catalog and is per-credential, but `env create` validates the flag
+  // before it boots the Nest app that could ask. This is the floor of regions
+  // Flui knows how to place a control cluster in — derived from the same
+  // metadata table the provider module uses, so a region is added in one place.
+  OVH_EU_REGIONS: OVH_EU_REGION_CODES,
   DEFAULT_OVH_REGION: 'GRA' as const,
 
   FALLBACK_SERVER_TYPES: {
     hetzner: ['cx23', 'cx33', 'cx32', 'cpx21', 'cx42', 'cpx31'],
     scaleway: ['DEV1-M', 'DEV1-L', 'GP1-XS', 'GP1-S'],
+    // The d2 family does not exist in Milan or Paris — those regions carry
+    // only the current-generation c3/b3/r3 shapes — so c3-4 and b3-8, the two
+    // that are present in all nine regions, follow the d2 entries rather than
+    // sitting at the end. The create flow walks this list against real
+    // per-region availability, so a d2-only default still resolves there.
     // d2-2 (2GB) is listed last: it undersizes a control cluster's stack
     // (Postgres+Redis+Zitadel+observability) below MIN_SPECS.observability
     // below, live-confirmed by Redis never becoming ready on one — fine for
     // a workload cluster, not offered first here.
-    ovh: ['d2-4', 'd2-8', 'c3-4', 'd2-2'],
+    ovh: ['d2-4', 'd2-8', 'c3-4', 'b3-8', 'd2-2'],
   },
 
   RECOMMENDED_SERVER_TYPES: {

@@ -1,4 +1,5 @@
 import { CloudProvider } from '../enums/cloud-provider.enum';
+import { OVH_REGION_METADATA } from '../implementations/ovh/ovh-region-metadata';
 
 export interface RegionCoordinates {
   latitude: number;
@@ -22,18 +23,15 @@ const COORDINATES: Record<CloudProvider, Record<string, RegionCoordinates>> = {
     'EU-2': { latitude: 48.1351, longitude: 11.582 },
     UK: { latitude: 50.8198, longitude: -1.0879 },
   },
-  // Macro-region (city-level) coordinates — same source as OVH_REGIONS in
-  // @flui-cloud/infra, which OvhCapabilitiesService.getAvailableRegions() uses.
-  [CloudProvider.OVH]: {
-    GRA: { latitude: 50.9871, longitude: 2.1255 },
-    SBG: { latitude: 48.5734, longitude: 7.7521 },
-    DE: { latitude: 50.1109, longitude: 8.6821 },
-    UK: { latitude: 51.5074, longitude: -0.1278 },
-    WAW: { latitude: 52.2297, longitude: 21.0122 },
-    BHS: { latitude: 45.3151, longitude: -73.8779 },
-    SGP: { latitude: 1.3521, longitude: 103.8198 },
-    SYD: { latitude: -33.8688, longitude: 151.2093 },
-  },
+  // Derived, not duplicated: getAvailableRegions() reads the OVH region *list*
+  // from Keystone and decorates it from ovh-region-metadata.ts, so coordinates
+  // have to come from that same table to stay in step.
+  [CloudProvider.OVH]: Object.fromEntries(
+    Object.entries(OVH_REGION_METADATA).map(([code, meta]) => [
+      code,
+      { latitude: meta.latitude, longitude: meta.longitude },
+    ]),
+  ),
   // BYOS has no provider-defined regions — the operator's host has its own
   // location, unknown to Flui.
   [CloudProvider.BYOS]: {},

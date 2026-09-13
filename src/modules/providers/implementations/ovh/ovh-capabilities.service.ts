@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { OvhCapabilitiesService as InfraOvhCapabilitiesService } from '@flui-cloud/infra';
 import {
@@ -14,6 +14,9 @@ import {
 } from '../../../management/entities/credentials.entity';
 import { ValidationResultDto } from '../../../management/dto/validation-result.dto';
 import { buildOvhOpenStackClient } from './ovh-openstack-client.factory';
+import { ovhRegionCode, ovhRegionMeta } from './ovh-region-metadata';
+import { ICredentialProvider } from '../../interfaces/credential-provider.interface';
+import { CloudProvider } from '../../enums/cloud-provider.enum';
 
 /**
  * Flui-native OVH capabilities — delegates catalog/regions/pricing to
@@ -29,10 +32,64 @@ export class OvhCapabilitiesService implements IProviderCapabilitiesService {
   private readonly logger = new Logger(OvhCapabilitiesService.name);
   private readonly inner = new InfraOvhCapabilitiesService(this.configService);
 
-  constructor(private readonly configService: ConfigService) {}
+  constructor(
+    private readonly configService: ConfigService,
+    @Inject('ICredentialProvider')
+    private readonly credentialProvider: ICredentialProvider,
+  ) {}
 
-  getAvailableRegions(): Promise<ProviderRegion[]> {
-    return this.inner.getAvailableRegions();
+  /**
+   * The regions this credential can actually reach, read from the Keystone
+   * service catalog. Region availability is per-project on OVH, so no static
+   * list can be right for every account.
+   *
+   * Falls back to the static list when there is no credential to authenticate
+   * with, because the dashboard asks for regions before one is stored.
+   */
+  async getAvailableRegions(): Promise<ProviderRegion[]> {
+    try {
+      const client = await this.buildClient();
+      if (!client) return this.inner.getAvailableRegions();
+      const keystoneRegions = await client.regions('compute');
+      const codes = [...new Set(keystoneRegions.map(ovhRegionCode))].sort(
+        (a, b) => a.localeCompare(b),
+      );
+      if (!codes.length) return this.inner.getAvailableRegions();
+      return codes.map((code) => {
+        const meta = ovhRegionMeta(code);
+        const label = meta ? `${meta.city}, ${meta.country}` : code;
+        return {
+          id: code,
+          name: meta?.city ?? code,
+          displayName: label,
+          location: label,
+          available: true,
+          country: meta?.country,
+          latitude: meta?.latitude,
+          longitude: meta?.longitude,
+        };
+      });
+    } catch (error) {
+      this.logger.warn(
+        `Could not read OVH regions from Keystone, falling back to the static list: ${String(error)}`,
+      );
+      return this.inner.getAvailableRegions();
+    }
+  }
+
+  /** Null when no OVH credential is stored yet — the caller falls back. */
+  private async buildClient(): Promise<
+    Awaited<ReturnType<typeof buildOvhOpenStackClient>> | undefined
+  > {
+    const pair = await this.credentialProvider
+      .getActiveAccessKeyPair(CloudProvider.OVH)
+      .catch(() => undefined);
+    if (!pair?.accessKey || !pair.secretKey) return undefined;
+    return buildOvhOpenStackClient(
+      this.configService,
+      pair.accessKey,
+      pair.secretKey,
+    );
   }
 
   getSupportedInstanceTypes(): Promise<InstanceTypeInfo[]> {
