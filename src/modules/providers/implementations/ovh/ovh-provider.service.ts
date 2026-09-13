@@ -79,8 +79,36 @@ function isOvhGpuFlavor(id: string): boolean {
  * `use-routes: false` is the reason this is a separate file rather than a
  * plain `dhcp4: true`: the VNet's DHCP would otherwise install a second
  * default route and blackhole egress.
+ *
+ * `netplan apply` reconfigures every link, not just the one whose file
+ * changed, so the public interface loses its lease and its default route for
+ * a moment — long enough that the bootstrap's very next command (a curl of
+ * the next-stage script) died in 53ms with a resolve/route error on live
+ * nodes. The private address appearing says nothing about that, hence the
+ * separate egress wait before returning.
  */
 const OVH_PRIVATE_NIC_NETPLAN_SNIPPET = `
+flui_ovh_wait_for_egress() {
+  flui_probe_url=https://raw.githubusercontent.com/
+  flui_i=0
+  while [ "$flui_i" -lt 15 ]; do
+    if [ -n "$(ip -4 route show default 2>/dev/null)" ]; then
+      if ! command -v curl >/dev/null 2>&1; then
+        echo "[Bootstrap] Egress: default route is back (no curl to confirm)"
+        return 0
+      fi
+      if curl -sS -m 2 -o /dev/null "$flui_probe_url" >/dev/null 2>&1; then
+        echo "[Bootstrap] Egress restored after netplan apply"
+        return 0
+      fi
+    fi
+    flui_i=$((flui_i + 1))
+    sleep 2
+  done
+  echo "[Bootstrap] WARNING: no egress 30s after netplan apply - continuing anyway"
+  return 0
+}
+
 flui_ovh_configure_private_nic() {
   command -v netplan >/dev/null 2>&1 || return 0
 
@@ -129,9 +157,22 @@ FLUI_NETPLAN_EOF
   done
   flui_addr=$(ip -4 -o addr show dev "$flui_nic" 2>/dev/null | awk '{print $4}')
   echo "[Bootstrap] OVH private NIC $flui_nic: \${flui_addr:-none}"
+
+  flui_ovh_wait_for_egress
 }
 flui_ovh_configure_private_nic || true
 `;
+
+/**
+ * Console signatures that prove the guest is already running (see
+ * waitForGuestBoot). The first is cloud-init's network-stage banner — the
+ * quotes matter: they keep it from matching the much earlier `running
+ * 'init-local'`.
+ */
+const OVH_GUEST_BOOTED_CONSOLE_MARKERS = [
+  /running 'init'/,
+  /ci-info:.*Net device info/,
+];
 
 /**
  * Flui-native OVH provider — delegates the actual Nova/Neutron work to
@@ -337,6 +378,8 @@ export class OvhProviderService implements ICloudProvider {
     // delete it). Best-effort delete before re-throwing.
     try {
       if (config.networks?.length) {
+        await this.waitForGuestBoot(client, region, result.serverId);
+
         for (const netId of config.networks) {
           await client.attachServerInterface(
             region,
@@ -485,6 +528,63 @@ export class OvhProviderService implements ICloudProvider {
       await new Promise((r) => setTimeout(r, pollIntervalMs));
     }
     return null;
+  }
+
+  /**
+   * Waits until the guest is demonstrably running before the VNet interface is
+   * attached, so the attach is a real hot-plug.
+   *
+   * Nova reporting ACTIVE says the hypervisor accepted the instance, not that
+   * the guest has powered on: OVH leaves instances in BUILD for a minute or
+   * more and the private Neutron port was seen being created 79-111s after the
+   * server record. When the attach lands in that window the VM powers on with
+   * BOTH NICs already on the bus — exactly the create-time-attach condition
+   * the Ext-Net-only workaround above exists to avoid — and hits OVH's bug:
+   * neither interface ever gets an address, systemd-networkd-wait-online times
+   * out, the bootstrap script can download nothing and the node is dead.
+   * Live-confirmed on two nodes, whose consoles showed both `ens3` and `ens7`
+   * renamed at ~2.2s of guest uptime (2026-09-13); it accounted for roughly
+   * 40% of OVH nodes.
+   *
+   * The marker has to sit between two failure modes: anything earlier than
+   * userspace (a non-empty console, a kernel line) can still be a guest that
+   * is only just powering on, while waiting for cloud-init to *finish* would
+   * push the private IP past the bootstrap script's own PRIVATE_IP
+   * autodetection, which falls back to the public address when there is none.
+   * cloud-init's network stage banner is the narrow point in between: it is
+   * printed once the kernel has enumerated the Ext-Net NIC and cloud-init has
+   * reached its net stage, still several stages ahead of the runcmd that
+   * launches the bootstrap script — and the netplan snippet spliced into that
+   * script waits a further 60s for the NIC, so the attach has ample room. The
+   * `ci-info:` device table is accepted as a second signature purely for
+   * redundancy across image versions; it is printed by the same cloud-init
+   * entry point and is likewise proof of a running guest.
+   */
+  private async waitForGuestBoot(
+    client: FluiOpenStackClient,
+    region: string,
+    serverId: string,
+    timeoutMs = 120_000,
+    pollIntervalMs = 5_000,
+  ): Promise<boolean> {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      const output = await client
+        .getConsoleOutput(region, serverId, 200)
+        .catch(() => '');
+      if (OVH_GUEST_BOOTED_CONSOLE_MARKERS.some((m) => m.test(output))) {
+        return true;
+      }
+      await new Promise((r) => setTimeout(r, pollIntervalMs));
+    }
+
+    // Attach anyway: the console API returns empty for a while on some
+    // instances and can fail outright, and a node with no private network is
+    // still better than a cluster creation that fails outright.
+    this.logger.warn(
+      `OVH server ${serverId}: serial console never showed the guest booting within ${timeoutMs / 1000}s — attaching the private interface anyway.`,
+    );
+    return false;
   }
 
   /**

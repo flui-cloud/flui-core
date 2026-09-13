@@ -7,6 +7,11 @@ jest.mock('./ovh-openstack-client.factory', () => ({
   buildOvhOpenStackClient: jest.fn().mockResolvedValue({}),
 }));
 
+import { execFileSync } from 'child_process';
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
+import { Logger } from '@nestjs/common';
 import {
   OvhProviderService as InfraOvhProviderService,
   parseRegionId,
@@ -80,7 +85,7 @@ describe('OvhProviderService.createServer — post-boot network attach', () => {
       const getConsoleOutput = jest
         .fn()
         .mockResolvedValue(
-          "cloud-init[593]: Traceback...\nValueError: Unable to find a system nic for {'mac': 'x'}",
+          "Cloud-init v. 24.4 running 'init' at Sat, 12 Sep 2026 21:25:31 +0000.\ncloud-init[593]: Traceback...\nValueError: Unable to find a system nic for {'mac': 'x'}",
         );
       (buildOvhOpenStackClient as jest.Mock).mockResolvedValue({
         resolveComputeRegion,
@@ -149,7 +154,7 @@ describe('OvhProviderService.createServer — post-boot network attach', () => {
       const getConsoleOutput = jest
         .fn()
         .mockResolvedValue(
-          'Cloud-init v. 26.1 finished at Sat, 12 Sep 2026 21:25:50 +0000. Datasource DataSourceOpenStackLocal [net,ver=2].',
+          "Cloud-init v. 26.1 running 'init' at Sat, 12 Sep 2026 21:25:31 +0000.\nCloud-init v. 26.1 finished at Sat, 12 Sep 2026 21:25:50 +0000. Datasource DataSourceOpenStackLocal [net,ver=2].",
         );
       (buildOvhOpenStackClient as jest.Mock).mockResolvedValue({
         resolveComputeRegion: jest.fn().mockResolvedValue('GRA11'),
@@ -225,6 +230,153 @@ describe('OvhProviderService.createServer — post-boot network attach', () => {
   });
 });
 
+describe('OvhProviderService.createServer — waiting for the guest to boot before the attach', () => {
+  const NET_STAGE =
+    "Cloud-init v. 24.4 running 'init' at Sat, 13 Sep 2026 10:00:02 +0000.";
+  const CLOUD_INIT_DONE =
+    'Cloud-init v. 24.4 finished at Sat, 13 Sep 2026 10:00:20 +0000. Datasource DataSourceOpenStackLocal [net,ver=2].';
+
+  function build(getConsoleOutput: jest.Mock) {
+    const attachServerInterface = jest.fn().mockResolvedValue(undefined);
+    (buildOvhOpenStackClient as jest.Mock).mockResolvedValue({
+      resolveComputeRegion: jest.fn().mockResolvedValue('GRA11'),
+      attachServerInterface,
+      rebootServer: jest.fn().mockResolvedValue(undefined),
+      getConsoleOutput,
+    });
+    (parseRegionId as jest.Mock).mockReturnValue({ id: 'net-1' });
+    (InfraOvhProviderService as unknown as jest.Mock).mockImplementation(
+      () => ({
+        createServer: jest.fn().mockResolvedValue({
+          serverId: 'srv-1',
+          ipAddress: '1.2.3.4',
+          status: 'ACTIVE',
+        }),
+      }),
+    );
+    const service = new OvhProviderService(
+      {} as never,
+      {
+        getActiveAccessKeyPair: jest
+          .fn()
+          .mockResolvedValue({ accessKey: 'ak', secretKey: 'sk' }),
+      } as never,
+    );
+    return { service, attachServerInterface };
+  }
+
+  const createWorkloadServer = (service: OvhProviderService) =>
+    service.createServer({
+      name: 'workload-2-master',
+      networks: ['region:net-1'],
+    } as never);
+
+  it('holds the attach until the console shows the guest running — a NIC present at power-on boots with no addresses at all', async () => {
+    jest.useFakeTimers();
+    try {
+      const getConsoleOutput = jest
+        .fn()
+        .mockResolvedValueOnce('')
+        .mockResolvedValueOnce('')
+        .mockResolvedValue(`${NET_STAGE}\n${CLOUD_INIT_DONE}`);
+      const { service, attachServerInterface } = build(getConsoleOutput);
+
+      const pending = createWorkloadServer(service);
+      await jest.advanceTimersByTimeAsync(0);
+      expect(attachServerInterface).not.toHaveBeenCalled();
+
+      await jest.advanceTimersByTimeAsync(5_000);
+      expect(attachServerInterface).not.toHaveBeenCalled();
+
+      await jest.advanceTimersByTimeAsync(5_000);
+      expect(attachServerInterface).toHaveBeenCalledWith(
+        'GRA11',
+        'srv-1',
+        'net-1',
+      );
+
+      await jest.advanceTimersByTimeAsync(5_000);
+      await pending;
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it("does not mistake cloud-init's 'init-local' stage for the network stage", async () => {
+    jest.useFakeTimers();
+    try {
+      const { service, attachServerInterface } = build(
+        jest
+          .fn()
+          .mockResolvedValue(
+            "Cloud-init v. 24.4 running 'init-local' at Sat, 13 Sep 2026 10:00:01 +0000.",
+          ),
+      );
+
+      const pending = createWorkloadServer(service);
+      await jest.advanceTimersByTimeAsync(60_000);
+      expect(attachServerInterface).not.toHaveBeenCalled();
+
+      await jest.advanceTimersByTimeAsync(60_000);
+      expect(attachServerInterface).toHaveBeenCalled();
+
+      await jest.advanceTimersByTimeAsync(30_000);
+      await pending;
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('attaches anyway when the console stays unreadable — an unread console must never fail a cluster creation', async () => {
+    jest.useFakeTimers();
+    const warn = jest
+      .spyOn(Logger.prototype, 'warn')
+      .mockImplementation(() => undefined);
+    try {
+      const { service, attachServerInterface } = build(
+        jest.fn().mockRejectedValue(new Error('console unavailable')),
+      );
+
+      const pending = createWorkloadServer(service);
+      await jest.advanceTimersByTimeAsync(120_000);
+      expect(attachServerInterface).toHaveBeenCalledWith(
+        'GRA11',
+        'srv-1',
+        'net-1',
+      );
+
+      await jest.advanceTimersByTimeAsync(30_000);
+      await expect(pending).resolves.toMatchObject({ serverId: 'srv-1' });
+      expect(warn).toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
+      jest.useRealTimers();
+    }
+  });
+
+  it('accepts the ci-info device table as an alternative signature of a running guest', async () => {
+    jest.useFakeTimers();
+    try {
+      const { service, attachServerInterface } = build(
+        jest
+          .fn()
+          .mockResolvedValue(
+            'ci-info: ++++++++++++Net device info+++++++++++++\nci-info: | ens3 | True | 51.83.1.2 |',
+          ),
+      );
+
+      const pending = createWorkloadServer(service);
+      await jest.advanceTimersByTimeAsync(0);
+      expect(attachServerInterface).toHaveBeenCalled();
+
+      await jest.advanceTimersByTimeAsync(30_000);
+      await pending;
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+});
+
 describe('OvhProviderService.createServer — private NIC netplan injection', () => {
   const BOOTSTRAP_SCRIPT = [
     '#!/bin/bash',
@@ -248,7 +400,7 @@ describe('OvhProviderService.createServer — private NIC netplan injection', ()
       getConsoleOutput: jest
         .fn()
         .mockResolvedValue(
-          'Cloud-init v. 26.1 finished at Sat, 12 Sep 2026 21:25:50 +0000. Datasource DataSourceOpenStackLocal [net,ver=2].',
+          "Cloud-init v. 26.1 running 'init' at Sat, 12 Sep 2026 21:25:31 +0000.\nCloud-init v. 26.1 finished at Sat, 12 Sep 2026 21:25:50 +0000. Datasource DataSourceOpenStackLocal [net,ver=2].",
         ),
     });
     (parseRegionId as jest.Mock).mockReturnValue({ id: 'net-1' });
@@ -343,6 +495,130 @@ describe('OvhProviderService.createServer — private NIC netplan injection', ()
     });
 
     expect(userData).toBe(cloudConfig);
+  });
+
+  it('waits for egress, not just for the private address, before handing back to the bootstrap', async () => {
+    const userData = await userDataSentTo({
+      name: 'workload-2-master',
+      networks: ['region:net-1'],
+      user_data: BOOTSTRAP_SCRIPT,
+    });
+
+    expect(userData).toContain('flui_ovh_wait_for_egress');
+    expect(userData.indexOf('netplan apply')).toBeLessThan(
+      userData.lastIndexOf('flui_ovh_wait_for_egress'),
+    );
+    // Bounded, and never fatal: the caller is `|| true` and the loop returns 0.
+    expect(userData).toContain('continuing anyway');
+  });
+
+  describe('rendered shell', () => {
+    async function renderSnippet() {
+      return (await userDataSentTo({
+        name: 'workload-2-master',
+        networks: ['region:net-1'],
+      })) as string;
+    }
+
+    function sandbox(script: string) {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'flui-ovh-nic-'));
+      // The snippet only ever touches absolute paths, so the sandbox has to
+      // redirect them rather than chroot.
+      const rewritten = script
+        .replace(/\/sys\/class\/net/g, `${dir}/sys`)
+        .replace(
+          /\/etc\/netplan\/60-flui-private\.yaml/g,
+          `${dir}/netplan.yaml`,
+        );
+      for (const dev of ['ens3', 'ens7']) {
+        fs.mkdirSync(path.join(dir, 'sys', dev), { recursive: true });
+        fs.writeFileSync(path.join(dir, 'sys', dev, 'device'), '');
+      }
+      fs.mkdirSync(path.join(dir, 'sys', 'lo'), { recursive: true });
+
+      const bin = path.join(dir, 'bin');
+      fs.mkdirSync(bin);
+      const stub = (name: string, body: string) => {
+        const file = path.join(bin, name);
+        fs.writeFileSync(file, `#!/bin/bash\n${body}\n`);
+        fs.chmodSync(file, 0o700);
+      };
+      stub(
+        'ip',
+        [
+          'case "$*" in',
+          '  "-4 route show default") echo "default via 10.10.0.1 dev ens3";;',
+          '  "-4 -o addr show dev ens7")',
+          '    [ -f "$FLUI_STUB_DIR/applied" ] && echo "7: ens7 inet 10.10.1.182/24 scope global ens7";;',
+          '  "-4 -o addr show dev ens3") echo "2: ens3 inet 51.83.1.2/32 scope global ens3";;',
+          'esac',
+          'exit 0',
+        ].join('\n'),
+      );
+      stub('netplan', 'touch "$FLUI_STUB_DIR/applied"; exit 0');
+      stub('curl', '[ "$FLUI_CURL_OK" = "1" ] && exit 0; exit 6');
+      stub('sleep', 'exit 0');
+
+      const file = path.join(dir, 'snippet.sh');
+      fs.writeFileSync(file, rewritten);
+      return { dir, bin, file };
+    }
+
+    function run(curlOk: boolean, s: ReturnType<typeof sandbox>) {
+      return execFileSync('bash', [s.file], {
+        encoding: 'utf8',
+        env: {
+          PATH: `${s.bin}:/usr/bin:/bin`,
+          FLUI_STUB_DIR: s.dir,
+          FLUI_CURL_OK: curlOk ? '1' : '0',
+        },
+      });
+    }
+
+    it('is syntactically valid shell', async () => {
+      const snippet = await renderSnippet();
+      const file = path.join(
+        fs.mkdtempSync(path.join(os.tmpdir(), 'flui-ovh-syntax-')),
+        'snippet.sh',
+      );
+      fs.writeFileSync(file, snippet);
+
+      expect(() =>
+        execFileSync('bash', ['-n', file], { encoding: 'utf8' }),
+      ).not.toThrow();
+    });
+
+    it('returns as soon as egress is proven, after the private address is up', async () => {
+      const s = sandbox(await renderSnippet());
+      try {
+        const out = run(true, s);
+
+        expect(out).toContain('OVH private NIC ens7: 10.10.1.182/24');
+        expect(out).toContain('Egress restored after netplan apply');
+        expect(out.indexOf('OVH private NIC')).toBeLessThan(
+          out.indexOf('Egress restored'),
+        );
+        expect(
+          fs.readFileSync(path.join(s.dir, 'netplan.yaml'), 'utf8'),
+        ).toContain('use-routes: false');
+      } finally {
+        fs.rmSync(s.dir, { recursive: true, force: true });
+      }
+    }, 30_000);
+
+    it('gives up with a warning instead of aborting when egress never comes back', async () => {
+      const s = sandbox(await renderSnippet());
+      try {
+        const out = run(false, s);
+
+        expect(out).toContain('OVH private NIC ens7: 10.10.1.182/24');
+        expect(out).toContain('WARNING: no egress');
+        // execFileSync would have thrown on a non-zero exit — the bootstrap
+        // must survive this.
+      } finally {
+        fs.rmSync(s.dir, { recursive: true, force: true });
+      }
+    }, 30_000);
   });
 });
 
