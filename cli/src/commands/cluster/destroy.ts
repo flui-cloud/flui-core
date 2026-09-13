@@ -3,7 +3,7 @@ import chalk from 'chalk';
 import ora from 'ora';
 import { ApiClient } from '../../lib/api-client';
 import { ConfigStorage } from '../../lib/config-storage';
-import { resolveCluster } from '../../lib/resolve-cluster';
+import { listClusters } from '../../lib/cluster-listing';
 import { confirmByTypingPrompt } from '../../lib/prompts';
 
 const POLL_INTERVAL_MS = 5000;
@@ -49,16 +49,35 @@ export default class ClusterDestroy extends Command {
       this.error('Not logged in. Run `flui auth login` first.', { exit: 1 });
     }
 
-    let resolved: Awaited<ReturnType<typeof resolveCluster>>;
-    try {
-      resolved = await resolveCluster(args.cluster);
-    } catch (error: any) {
-      this.error(error.message, { exit: 1 });
+    // resolveCluster()/resolveClusterRef() only search the local store, which
+    // never holds workload clusters (they live in the control cluster's own
+    // database) — listing straight from the API is the only way this command
+    // can ever find the cluster it's meant to destroy.
+    const { clusters, apiError } = await listClusters();
+    if (apiError) {
+      this.error(`Could not reach the API to find the cluster: ${apiError}`, {
+        exit: 1,
+      });
+    }
+    const needle = args.cluster.toLowerCase();
+    const match = clusters.find(
+      (c) => c.id === args.cluster || c.name.toLowerCase() === needle,
+    );
+    if (!match) {
+      this.error(
+        `Cluster "${args.cluster}" not found. Available clusters:\n` +
+          clusters.map((c) => `  • ${c.name}  (${c.id})`).join('\n'),
+        { exit: 1 },
+      );
     }
 
-    const { id: clusterId, name: clusterName, entity } = resolved;
+    const clusterId = match.id;
+    const clusterName = match.name;
 
-    if (entity.metadata?.isObservabilityCluster) {
+    if (
+      (match.metadata as { isObservabilityCluster?: boolean })
+        ?.isObservabilityCluster
+    ) {
       this.error(
         `"${clusterName}" is the control cluster. Use \`flui env destroy\` instead.`,
         { exit: 1 },
@@ -68,9 +87,9 @@ export default class ClusterDestroy extends Command {
     console.log(chalk.red('\n⚠️  DESTROY Workload Cluster\n'));
     console.log(`  ${chalk.bold('Name:')}    ${clusterName}`);
     console.log(`  ${chalk.bold('ID:')}      ${clusterId}`);
-    console.log(`  ${chalk.bold('Status:')}  ${entity.status}`);
-    console.log(`  ${chalk.bold('Region:')}  ${entity.region}`);
-    console.log(`  ${chalk.bold('Nodes:')}   ${entity.nodeCount}`);
+    console.log(`  ${chalk.bold('Status:')}  ${match.status}`);
+    console.log(`  ${chalk.bold('Region:')}  ${match.region}`);
+    console.log(`  ${chalk.bold('Nodes:')}   ${match.nodeCount}`);
     console.log(chalk.red('\n  ⚠️  ALL DATA WILL BE PERMANENTLY LOST!\n'));
 
     if (!flags.force) {
@@ -141,13 +160,14 @@ export default class ClusterDestroy extends Command {
 
     while (Date.now() - started < MAX_WAIT_MS) {
       await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
-      const done = await this.pollOperation(
+      const result = await this.pollOperation(
         apiClient,
         operationId,
         clusterName,
         waitSpinner,
       );
-      if (done) return;
+      if (result === 'failed') this.exit(1);
+      if (result === 'completed') return;
     }
 
     waitSpinner.warn('Timed out waiting for deletion');
@@ -162,7 +182,7 @@ export default class ClusterDestroy extends Command {
     operationId: string,
     clusterName: string,
     waitSpinner: ReturnType<typeof ora>,
-  ): Promise<boolean> {
+  ): Promise<'completed' | 'failed' | 'pending'> {
     try {
       const op = await apiClient.get<{
         status: string;
@@ -184,17 +204,19 @@ export default class ClusterDestroy extends Command {
             '  All nodes and associated resources have been removed.\n',
           ),
         );
-        return true;
+        return 'completed';
       }
+      // Exiting here would throw oclif's ExitError into the catch below, which
+      // swallows it as a polling failure and keeps retrying until the timeout.
       if (op.status === 'FAILED') {
         waitSpinner.fail('Deletion failed');
         const msg = op.metadata?.error ?? 'Unknown error';
         console.log(chalk.red(`\n  Error: ${msg}\n`));
-        this.exit(1);
+        return 'failed';
       }
     } catch {
       /* polling error — keep trying */
     }
-    return false;
+    return 'pending';
   }
 }
