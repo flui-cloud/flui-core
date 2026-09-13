@@ -1,12 +1,16 @@
 import {
+  ConflictException,
   Injectable,
   Logger,
   NotFoundException,
   BadRequestException,
 } from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
 import * as crypto from 'node:crypto';
 import { BackupDestinationRepository } from '../repositories/backup-destination.repository';
 import { EncryptionService } from '../../shared/encryption/services/encryption.service';
+import { BackupArtifactLocationEntity } from '../entities/backup-artifact-location.entity';
 import { StorageBackendFactory } from '../../storage/factories/storage-backend.factory';
 import { CreateBackupDestinationDto } from '../dto/create-backup-destination.dto';
 import { BackupDestinationEntity } from '../entities/backup-destination.entity';
@@ -25,6 +29,8 @@ export class BackupDestinationsService {
     private readonly repo: BackupDestinationRepository,
     private readonly encryption: EncryptionService,
     private readonly storageFactory: StorageBackendFactory,
+    @InjectRepository(BackupArtifactLocationEntity)
+    private readonly locationRepo: Repository<BackupArtifactLocationEntity>,
   ) {}
 
   async create(
@@ -111,7 +117,19 @@ export class BackupDestinationsService {
     });
   }
 
+  /**
+   * A destination still holding backups is refused, not deleted: removing it
+   * is how the backups it points at stop being reachable.
+   */
   async delete(id: string): Promise<void> {
+    const held = await this.locationRepo.count({
+      where: { destinationId: id },
+    });
+    if (held > 0) {
+      throw new ConflictException(
+        `This destination still holds ${held} backup${held === 1 ? '' : 's'}. Delete or expire them first — removing the destination now would leave them unreachable.`,
+      );
+    }
     await this.repo.delete(id);
   }
 
