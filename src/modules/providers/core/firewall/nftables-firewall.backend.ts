@@ -5,8 +5,9 @@ import {
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { In, Repository } from 'typeorm';
 import { ClusterEntity } from 'src/modules/infrastructure/clusters/entities/cluster.entity';
+import { VNetSubnetEntity } from 'src/modules/infrastructure/vnets/entities/vnet-subnet.entity';
 import { CertificateSignerService } from 'src/modules/access/services/certificate-signer.service';
 import { NativeSSHConnectionService } from 'src/modules/terminal/services/native-ssh-connection.service';
 import {
@@ -38,6 +39,12 @@ const CERT_TTL_SECONDS = 300;
 const IPV4_RE = /^(\d{1,3}\.){3}\d{1,3}$/;
 const CIDR_RE = /^[0-9a-fA-F:.]+\/\d{1,3}$/;
 const LOOPBACK_RE = /^(127\.|::1$|169\.254\.|fe80:)/;
+const ANYWHERE_CIDRS = new Set(['0.0.0.0/0', '::/0']);
+
+interface VNetRef {
+  vnetId?: string | null;
+  subnetId?: string | null;
+}
 
 @Injectable()
 export class NftablesFirewallBackend implements IFirewallProvider {
@@ -46,6 +53,8 @@ export class NftablesFirewallBackend implements IFirewallProvider {
   constructor(
     @InjectRepository(ClusterEntity)
     private readonly clusterRepository: Repository<ClusterEntity>,
+    @InjectRepository(VNetSubnetEntity)
+    private readonly subnetRepository: Repository<VNetSubnetEntity>,
     private readonly certificateSigner: CertificateSignerService,
     private readonly nativeSsh: NativeSSHConnectionService,
   ) {}
@@ -60,7 +69,7 @@ export class NftablesFirewallBackend implements IFirewallProvider {
       clusterId,
       config.rules,
       targets,
-      this.deriveInternalCidrs(cluster),
+      await this.deriveInternalCidrs(cluster),
     );
     return {
       firewallId: this.makeFirewallId(clusterId),
@@ -79,7 +88,7 @@ export class NftablesFirewallBackend implements IFirewallProvider {
       clusterId,
       rules,
       targets,
-      this.deriveInternalCidrs(cluster),
+      await this.deriveInternalCidrs(cluster),
     );
   }
 
@@ -259,7 +268,7 @@ export class NftablesFirewallBackend implements IFirewallProvider {
     return [...ips];
   }
 
-  private deriveInternalCidrs(cluster: ClusterEntity): string[] {
+  private async deriveInternalCidrs(cluster: ClusterEntity): Promise<string[]> {
     const cidrs = new Set<string>(DEFAULT_INTERNAL_CIDRS);
 
     const declared = (
@@ -280,7 +289,70 @@ export class NftablesFirewallBackend implements IFirewallProvider {
       }
     }
 
+    // Node /32s only ever cover this cluster's own nodes, and a node's own IP is
+    // already reached over `lo`. The peers that actually need in — the control
+    // cluster, sibling workload clusters — are siblings on the environment's
+    // VNet subnet, so the subnet range is what makes them reachable.
+    for (const cidr of await this.resolveVnetSubnetCidrs(cluster)) {
+      cidrs.add(cidr);
+    }
+
     return [...cidrs];
+  }
+
+  private async resolveVnetSubnetCidrs(
+    cluster: ClusterEntity,
+  ): Promise<string[]> {
+    const refs: VNetRef[] = [
+      (cluster.metadata as { vnetConfig?: VNetRef })?.vnetConfig ?? {},
+    ];
+    for (const node of cluster.nodes ?? []) {
+      refs.push(
+        (node.metadata as { vnetAttachment?: VNetRef })?.vnetAttachment ?? {},
+        { subnetId: node.subnetId },
+      );
+    }
+
+    const subnetIds = new Set(
+      refs.map((r) => r.subnetId).filter((id): id is string => !!id),
+    );
+    const vnetIds = new Set(
+      refs.map((r) => r.vnetId).filter((id): id is string => !!id),
+    );
+    if (subnetIds.size === 0 && vnetIds.size === 0) return [];
+
+    try {
+      let subnets = subnetIds.size
+        ? await this.subnetRepository.find({
+            where: { id: In([...subnetIds]) },
+          })
+        : [];
+      // Clusters attached before subnetId was recorded only know their VNet.
+      if (subnets.length === 0 && vnetIds.size > 0) {
+        subnets = await this.subnetRepository.find({
+          where: { vnetId: In([...vnetIds]) },
+        });
+      }
+      const ranges = subnets
+        .map((s) => s.ipRange?.trim())
+        .filter(
+          (r): r is string => !!r && CIDR_RE.test(r) && !ANYWHERE_CIDRS.has(r),
+        );
+      if (ranges.length === 0) {
+        this.logger.warn(
+          `Cluster ${cluster.id} references a VNet subnet with no usable IP range — ` +
+            `host firewall falls back to pod/service CIDRs plus node /32s`,
+        );
+      }
+      return ranges;
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      this.logger.warn(
+        `Could not resolve the VNet subnet of cluster ${cluster.id} (${msg}) — ` +
+          `host firewall falls back to pod/service CIDRs plus node /32s`,
+      );
+      return [];
+    }
   }
 
   private async applyRuleset(

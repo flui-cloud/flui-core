@@ -17,6 +17,7 @@ describe('NftablesFirewallBackend.resolveTargets', () => {
     };
     const backend = new NftablesFirewallBackend(
       repo as any,
+      { find: jest.fn().mockResolvedValue([]) } as any,
       {} as any,
       {} as any,
     );
@@ -109,51 +110,55 @@ describe('NftablesFirewallBackend.resolveTargets', () => {
 /**
  * deriveInternalCidrs builds the wholesale-accept list for the input chain. The
  * k3s pod/service ranges are always present; node-to-node traffic is added from
- * an explicit metadata.byos.nodeNetwork and from each node's real private IP, so
- * a multi-node host-firewall cluster never fences a worker off the master API.
+ * an explicit metadata.byos.nodeNetwork, from each node's real private IP, and
+ * from the environment VNet subnet the cluster is attached to — without that
+ * last one a single-node workload cluster drops the control cluster on a
+ * policy-drop input chain (live finding: ping ok, TCP/6443 refused).
  */
 describe('NftablesFirewallBackend.deriveInternalCidrs', () => {
-  const derive = (cluster: any): string[] => {
+  const derive = (cluster: any, subnets: any[] = []): Promise<string[]> => {
+    const subnetRepo = { find: jest.fn().mockResolvedValue(subnets) };
     const backend = new NftablesFirewallBackend(
       {} as any,
+      subnetRepo as any,
       {} as any,
       {} as any,
     );
-    return (backend as any).deriveInternalCidrs(cluster) as string[];
+    return (backend as any).deriveInternalCidrs(cluster) as Promise<string[]>;
   };
 
-  it('always keeps the k3s pod + service CIDRs', () => {
-    const cidrs = derive({ metadata: {}, nodes: [] });
+  it('always keeps the k3s pod + service CIDRs', async () => {
+    const cidrs = await derive({ metadata: {}, nodes: [] });
     expect(cidrs).toEqual(
       expect.arrayContaining(['10.42.0.0/16', '10.43.0.0/16']),
     );
   });
 
-  it('adds an explicit byos.nodeNetwork CIDR (string)', () => {
-    const cidrs = derive({
+  it('adds an explicit byos.nodeNetwork CIDR (string)', async () => {
+    const cidrs = await derive({
       metadata: { byos: { nodeNetwork: '10.89.0.0/24' } },
       nodes: [],
     });
     expect(cidrs).toContain('10.89.0.0/24');
   });
 
-  it('accepts a comma list and an array for byos.nodeNetwork', () => {
+  it('accepts a comma list and an array for byos.nodeNetwork', async () => {
     expect(
-      derive({
+      await derive({
         metadata: { byos: { nodeNetwork: '10.0.0.0/24, 10.1.0.0/24' } },
         nodes: [],
       }),
     ).toEqual(expect.arrayContaining(['10.0.0.0/24', '10.1.0.0/24']));
     expect(
-      derive({
+      await derive({
         metadata: { byos: { nodeNetwork: ['192.168.1.0/24'] } },
         nodes: [],
       }),
     ).toContain('192.168.1.0/24');
   });
 
-  it("adds each node's private IP as a /32, skipping loopback/link-local", () => {
-    const cidrs = derive({
+  it("adds each node's private IP as a /32, skipping loopback/link-local", async () => {
+    const cidrs = await derive({
       metadata: {},
       nodes: [
         { privateIp: '10.89.0.2' },
@@ -169,17 +174,135 @@ describe('NftablesFirewallBackend.deriveInternalCidrs', () => {
     expect(cidrs).not.toContain('169.254.1.1/32');
   });
 
-  it('ignores a malformed nodeNetwork value', () => {
-    const cidrs = derive({
+  it('ignores a malformed nodeNetwork value', async () => {
+    const cidrs = await derive({
       metadata: { byos: { nodeNetwork: 'not-a-cidr' } },
       nodes: [],
     });
     expect(cidrs).toEqual(['10.42.0.0/16', '10.43.0.0/16']);
   });
+
+  it('adds the VNet subnet range from the node vnetAttachment (peers get in)', async () => {
+    const cidrs = await derive(
+      {
+        id: 'workload-5',
+        metadata: {},
+        nodes: [
+          {
+            privateIp: '10.10.1.85',
+            metadata: {
+              vnetAttachment: { vnetId: 'vnet-1', subnetId: 'subnet-1' },
+            },
+          },
+        ],
+      },
+      [{ id: 'subnet-1', ipRange: '10.10.1.0/24' }],
+    );
+    // the control cluster (10.10.1.69) is now inside an accepted source range
+    expect(cidrs).toContain('10.10.1.0/24');
+    expect(cidrs).toContain('10.10.1.85/32');
+  });
+
+  it('adds the VNet subnet range from cluster metadata.vnetConfig', async () => {
+    const cidrs = await derive(
+      {
+        id: 'c1',
+        metadata: { vnetConfig: { vnetId: 'vnet-1', subnetId: 'subnet-1' } },
+        nodes: [],
+      },
+      [{ id: 'subnet-1', ipRange: '10.10.1.0/24' }],
+    );
+    expect(cidrs).toContain('10.10.1.0/24');
+  });
+
+  it('falls back to the VNet subnets when only a vnetId is recorded', async () => {
+    const cidrs = await derive(
+      {
+        id: 'c1',
+        metadata: { vnetConfig: { vnetId: 'vnet-1' } },
+        nodes: [],
+      },
+      [{ id: 's', ipRange: '10.10.2.0/24' }],
+    );
+    expect(cidrs).toContain('10.10.2.0/24');
+  });
+
+  it('falls back to the VNet when the recorded subnetId no longer resolves', async () => {
+    const subnetRepo = {
+      find: jest
+        .fn()
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([{ id: 's', ipRange: '10.10.3.0/24' }]),
+    };
+    const backend = new NftablesFirewallBackend(
+      {} as any,
+      subnetRepo as any,
+      {} as any,
+      {} as any,
+    );
+    const cidrs = await (backend as any).deriveInternalCidrs({
+      id: 'c1',
+      metadata: { vnetConfig: { vnetId: 'vnet-1', subnetId: 'stale' } },
+      nodes: [],
+    });
+    expect(cidrs).toContain('10.10.3.0/24');
+    expect(subnetRepo.find).toHaveBeenCalledTimes(2);
+  });
+
+  it('never widens to 0.0.0.0/0 from a bogus subnet range', async () => {
+    const cidrs = await derive(
+      {
+        id: 'c1',
+        metadata: { vnetConfig: { subnetId: 'subnet-1' } },
+        nodes: [],
+      },
+      [{ id: 'subnet-1', ipRange: '0.0.0.0/0' }],
+    );
+    expect(cidrs).toEqual(['10.42.0.0/16', '10.43.0.0/16']);
+  });
+
+  it('degrades to the previous behaviour when the subnet lookup throws', async () => {
+    const subnetRepo = {
+      find: jest.fn().mockRejectedValue(new Error('db down')),
+    };
+    const backend = new NftablesFirewallBackend(
+      {} as any,
+      subnetRepo as any,
+      {} as any,
+      {} as any,
+    );
+    const cidrs = await (backend as any).deriveInternalCidrs({
+      id: 'c1',
+      metadata: { vnetConfig: { subnetId: 'subnet-1' } },
+      nodes: [{ privateIp: '10.10.1.85' }],
+    });
+    expect(cidrs).toEqual(['10.42.0.0/16', '10.43.0.0/16', '10.10.1.85/32']);
+  });
+
+  it('does not query at all when the cluster has no VNet reference', async () => {
+    const subnetRepo = { find: jest.fn() };
+    const backend = new NftablesFirewallBackend(
+      {} as any,
+      subnetRepo as any,
+      {} as any,
+      {} as any,
+    );
+    await (backend as any).deriveInternalCidrs({
+      id: 'c1',
+      metadata: {},
+      nodes: [{ privateIp: '10.10.1.85' }],
+    });
+    expect(subnetRepo.find).not.toHaveBeenCalled();
+  });
 });
 
 describe('NftablesFirewallBackend.toReachabilityError', () => {
-  const backend = new NftablesFirewallBackend({} as any, {} as any, {} as any);
+  const backend = new NftablesFirewallBackend(
+    {} as any,
+    {} as any,
+    {} as any,
+    {} as any,
+  );
   const target = { host: '127.0.0.1', port: 2222, user: 'root' };
   const map = (msg: string) =>
     (backend as any).toReachabilityError(new Error(msg), target) as Error;

@@ -7,6 +7,7 @@ import { ApiTokenRepository } from '../access/repositories/api-token.repository'
 import { ProviderCredentialsEntity } from '../access/entities/credentials.entity';
 import { ApiTokenEntity } from '../access/entities/api-token.entity';
 import { ClusterEntity } from '../infrastructure/clusters/entities/cluster.entity';
+import { VNetSubnetEntity } from '../infrastructure/vnets/entities/vnet-subnet.entity';
 import { ProviderFirewallsController } from './controllers/provider-firewalls.controller';
 import { ProviderSchemasController } from './controllers/provider-schemas.controller';
 import { AccessModule } from '../access/access.module';
@@ -65,6 +66,7 @@ import { DnsProvider } from './enums/dns-provider.enum';
       ProviderCredentialsEntity,
       ApiTokenEntity,
       ClusterEntity,
+      VNetSubnetEntity,
     ]),
     ProviderCoreModule,
     CommonModule,
