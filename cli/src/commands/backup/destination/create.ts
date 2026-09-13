@@ -8,6 +8,7 @@ import { readSecrets, SECRET_FLAG_NOTE } from '../../../lib/secret-input';
 const PROVIDERS = [
   'hetzner_object_storage',
   'scaleway_object_storage',
+  'ovh_object_storage',
   'minio',
   'generic_s3',
 ] as const;

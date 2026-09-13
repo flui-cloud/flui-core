@@ -25,6 +25,7 @@ export interface CreateBackupDestinationInput {
   provider:
     | 'hetzner_object_storage'
     | 'scaleway_object_storage'
+    | 'ovh_object_storage'
     | 'minio'
     | 'generic_s3';
   endpoint: string;

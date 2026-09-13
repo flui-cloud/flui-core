@@ -19,13 +19,13 @@ import { HetznerObjectStorageModule } from './implementations/hetzner/object-sto
 import { ContaboProviderModule } from './implementations/contabo/contabo-provider.module';
 import { ScalewayProviderModule } from './implementations/scaleway/scaleway-provider.module';
 import { ScalewayObjectStorageModule } from './implementations/scaleway/object-storage/scaleway-object-storage.module';
+import { OvhObjectStorageModule } from './implementations/ovh/object-storage/ovh-object-storage.module';
 import { OvhProviderModule } from './implementations/ovh/ovh-provider.module';
 import { ProviderFactory } from './core/factories/provider.factory';
 import { FirewallProviderFactory } from './core/factories/firewall-provider.factory';
 import { NftablesFirewallBackend } from './core/firewall/nftables-firewall.backend';
 import { NativeSSHConnectionService } from '../terminal/services/native-ssh-connection.service';
 import { IFirewallProvider } from './interfaces/firewall-provider.interface';
-import { FirewallProviderRegistration } from './core/tokens';
 import { DnsProviderFactory } from './core/factories/dns-provider.factory';
 import { CapabilitiesProviderFactory } from './core/factories/capabilities-provider.factory';
 import { VolumeExportFactory } from './core/factories/volume-export.factory';
@@ -33,6 +33,7 @@ import { ObjectStorageProvisionerFactory } from '../storage/factories/object-sto
 import { StorageBackendProvider } from '../storage/enums/storage-backend-provider.enum';
 import { HetznerObjectStorageProvisioner } from './implementations/hetzner/object-storage/hetzner-object-storage.provisioner';
 import { ScalewayObjectStorageProvisioner } from './implementations/scaleway/object-storage/scaleway-object-storage.provisioner';
+import { OvhObjectStorageProvisioner } from './implementations/ovh/object-storage/ovh-object-storage.provisioner';
 import { VolumeExportService } from './services/volume-export.service';
 import { HetznerCapabilitiesService } from './implementations/hetzner/hetzner-capabilities.service';
 import { ContaboCapabilitiesService } from './implementations/contabo/contabo-capabilities.service';
@@ -52,6 +53,7 @@ import { HetznerBootstrapSeeder } from './implementations/hetzner/hetzner-bootst
 import { ScalewayBootstrapSeeder } from './implementations/scaleway/scaleway-bootstrap-seeder.service';
 import { OvhBootstrapSeeder } from './implementations/ovh/ovh-bootstrap-seeder.service';
 import {
+  FirewallProviderRegistration,
   PROVIDER_BOOTSTRAP_SEEDER_REGISTRY,
   ProviderBootstrapSeederRegistration,
 } from './core/tokens';
@@ -77,6 +79,7 @@ import { DnsProvider } from './enums/dns-provider.enum';
     ContaboProviderModule,
     ScalewayProviderModule,
     ScalewayObjectStorageModule,
+    OvhObjectStorageModule,
     OvhProviderModule,
   ],
   controllers: [ProviderFirewallsController, ProviderSchemasController],
@@ -189,6 +192,7 @@ import { DnsProvider } from './enums/dns-provider.enum';
       useFactory: (
         hetzner: HetznerObjectStorageProvisioner,
         scaleway: ScalewayObjectStorageProvisioner,
+        ovh: OvhObjectStorageProvisioner,
       ) =>
         new ObjectStorageProvisionerFactory([
           {
@@ -199,10 +203,15 @@ import { DnsProvider } from './enums/dns-provider.enum';
             provider: StorageBackendProvider.SCALEWAY_OBJECT_STORAGE,
             provisioner: scaleway,
           },
+          {
+            provider: StorageBackendProvider.OVH_OBJECT_STORAGE,
+            provisioner: ovh,
+          },
         ]),
       inject: [
         HetznerObjectStorageProvisioner,
         ScalewayObjectStorageProvisioner,
+        OvhObjectStorageProvisioner,
       ],
     },
     {
@@ -244,6 +253,7 @@ import { DnsProvider } from './enums/dns-provider.enum';
     ContaboProviderModule,
     ScalewayProviderModule,
     ScalewayObjectStorageModule,
+    OvhObjectStorageModule,
     OvhProviderModule,
     ProviderFactory,
     FirewallProviderFactory,

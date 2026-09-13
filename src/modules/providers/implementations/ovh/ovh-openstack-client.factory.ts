@@ -18,7 +18,7 @@ interface KeystoneProject {
  * issues one project per OpenStack user by default — mirrors how
  * ScalewayIamAdapter derives a default project id from an access key alone.
  */
-async function resolveOvhProjectId(
+export async function resolveOvhProjectId(
   authUrl: string,
   username: string,
   password: string,

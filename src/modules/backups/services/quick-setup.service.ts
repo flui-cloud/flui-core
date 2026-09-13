@@ -1,4 +1,9 @@
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bull';
 import { Queue } from 'bull';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -11,16 +16,29 @@ import {
 } from '../../infrastructure/servers/entities/infrastructure-operations.entity';
 import { ObjectStorageProvisionerFactory } from '../../storage/factories/object-storage-provisioner.factory';
 import { StorageBackendProvider } from '../../storage/enums/storage-backend-provider.enum';
+import { cloudFamilyOfStorage } from '../../storage/utils/storage-cloud-family';
+import { CloudProvider } from '../../providers/enums/cloud-provider.enum';
 import { QuickSetupDto, SetupOptionsResponse } from '../dto/quick-setup.dto';
 import { BillingEstimatorService } from './billing-estimator.service';
 import { BACKUP_QUEUE } from '../backups.constants';
 
 const QUICK_SETUP_JOB = 'quick-setup';
 
-// MVP: backups are always written to Scaleway Object Storage, regardless of
-// the cluster's compute provider. Hetzner Object Storage as a backup
-// destination will be revisited post-MVP.
-const MVP_BACKUP_STORAGE = StorageBackendProvider.SCALEWAY_OBJECT_STORAGE;
+/**
+ * Candidate backup destinations in preference order. A candidate is only
+ * eligible if it is NOT on the cluster's own cloud — a backup that dies with
+ * the provider it protects against is not a backup.
+ */
+const BACKUP_STORAGE_PREFERENCE: readonly StorageBackendProvider[] = [
+  StorageBackendProvider.SCALEWAY_OBJECT_STORAGE,
+  StorageBackendProvider.OVH_OBJECT_STORAGE,
+];
+
+const NO_ELIGIBLE_STORAGE = 'NO_ELIGIBLE_STORAGE';
+
+function needsConnection(reason?: string): boolean {
+  return /^CONNECT_[A-Z_]+_REQUIRED$/.test(reason ?? '');
+}
 
 @Injectable()
 export class QuickSetupService {
@@ -45,8 +63,8 @@ export class QuickSetupService {
     });
     if (!cluster) throw new NotFoundException(`Cluster ${clusterId} not found`);
 
-    const primaryStorage = MVP_BACKUP_STORAGE;
-    const primaryReady = await this.checkReady(primaryStorage, userId);
+    const { storage: primaryStorage, readiness: primaryReady } =
+      await this.selectPrimaryStorage(cluster.provider, userId);
 
     const [clusterEst, singleEst] = await Promise.all([
       this.billing.estimateClusterMonthlyCost(clusterId),
@@ -63,8 +81,7 @@ export class QuickSetupService {
         provider: primaryStorage,
         ready: primaryReady.ready,
         needsConnection:
-          !primaryReady.ready &&
-          primaryReady.reason === 'CONNECT_SCALEWAY_REQUIRED',
+          !primaryReady.ready && needsConnection(primaryReady.reason),
         reason: primaryReady.reason,
         message: primaryReady.message,
       },
@@ -105,7 +122,14 @@ export class QuickSetupService {
     });
     if (!cluster) throw new NotFoundException(`Cluster ${clusterId} not found`);
 
-    const primaryStorage = MVP_BACKUP_STORAGE;
+    const { storage: primaryStorage, readiness } =
+      await this.selectPrimaryStorage(cluster.provider, userId);
+    if (!readiness.ready) {
+      throw new BadRequestException(
+        readiness.message ??
+          `No backup destination is available for a cluster on ${cluster.provider} (${readiness.reason}).`,
+      );
+    }
 
     const op = await this.opRepo.save(
       this.opRepo.create({
@@ -132,6 +156,48 @@ export class QuickSetupService {
       runFirstBackup: dto.runFirstBackup ?? true,
     });
     return { operationId: op.id };
+  }
+
+  /**
+   * Picks where backups go. Candidates on the cluster's own cloud are excluded
+   * outright, then the first connected one in preference order wins. When none
+   * is connected the first eligible candidate is returned anyway, carrying its
+   * own reason, so the UI can offer the right provider to connect.
+   */
+  private async selectPrimaryStorage(
+    clusterProvider: CloudProvider | string | null | undefined,
+    userId: string,
+  ): Promise<{
+    storage: StorageBackendProvider;
+    readiness: { ready: boolean; reason?: string; message?: string };
+  }> {
+    const clusterFamily = (clusterProvider ?? '').toLowerCase();
+    const eligible = BACKUP_STORAGE_PREFERENCE.filter(
+      (p) => cloudFamilyOfStorage(p) !== clusterFamily,
+    );
+
+    if (eligible.length === 0) {
+      return {
+        storage: BACKUP_STORAGE_PREFERENCE[0],
+        readiness: {
+          ready: false,
+          reason: NO_ELIGIBLE_STORAGE,
+          message: `No backup destination is available off ${clusterFamily}. Connect a provider other than ${clusterFamily}.`,
+        },
+      };
+    }
+
+    let firstUnready: {
+      storage: StorageBackendProvider;
+      readiness: { ready: boolean; reason?: string; message?: string };
+    } | null = null;
+
+    for (const storage of eligible) {
+      const readiness = await this.checkReady(storage, userId);
+      if (readiness.ready) return { storage, readiness };
+      firstUnready ??= { storage, readiness };
+    }
+    return firstUnready;
   }
 
   private async checkReady(

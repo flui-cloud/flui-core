@@ -4,6 +4,7 @@ import { Repository } from 'typeorm';
 import { ClusterEntity } from '../../infrastructure/clusters/entities/cluster.entity';
 import { BackupDestinationRepository } from '../repositories/backup-destination.repository';
 import { StorageBackendProvider } from '../../storage/enums/storage-backend-provider.enum';
+import { cloudFamilyOfStorage } from '../../storage/utils/storage-cloud-family';
 
 /**
  * A backup must survive the loss of the cluster's own provider. Reject a
@@ -86,13 +87,6 @@ export class DestinationPlacementValidator {
   }
 
   private cloudFamilyOf(provider: StorageBackendProvider): string | null {
-    switch (provider) {
-      case StorageBackendProvider.SCALEWAY_OBJECT_STORAGE:
-        return 'scaleway';
-      case StorageBackendProvider.HETZNER_OBJECT_STORAGE:
-        return 'hetzner';
-      default:
-        return null;
-    }
+    return cloudFamilyOfStorage(provider);
   }
 }

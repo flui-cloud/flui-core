@@ -142,6 +142,7 @@ export class BackupDestinationsService {
     return [
       StorageBackendProvider.HETZNER_OBJECT_STORAGE,
       StorageBackendProvider.SCALEWAY_OBJECT_STORAGE,
+      StorageBackendProvider.OVH_OBJECT_STORAGE,
       StorageBackendProvider.MINIO,
     ].includes(p);
   }

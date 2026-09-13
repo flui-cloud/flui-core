@@ -1,0 +1,105 @@
+import { Injectable, Logger } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import {
+  IObjectStorageProvisioner,
+  ProvisionerCapability,
+  ProvisionerReadiness,
+  ProvisionInput,
+  ProvisionResult,
+} from '../../../../storage/interfaces/object-storage-provisioner.interface';
+import { StorageBackendProvider } from '../../../../storage/enums/storage-backend-provider.enum';
+import { GenericS3Backend } from '../../../../storage/implementations/generic-s3.backend';
+import { OvhEc2CredentialsService } from './ovh-ec2-credentials.service';
+
+const OVH_DEFAULT_S3_REGION = 'gra';
+
+/**
+ * S3 region names are lowercase and do not match the Nova region a cluster
+ * runs in ('gra' here vs 'GRA11' for compute) — never derive one from the
+ * other.
+ */
+function endpointFor(region: string): string {
+  return `https://s3.${region}.io.cloud.ovh.net`;
+}
+
+/**
+ * OVH Object Storage provisioner — FULL_AUTO, like Scaleway. Where Scaleway
+ * reuses its compute key verbatim, OVH derives an S3 key pair from the stored
+ * OpenStack credential (see OvhEc2CredentialsService); the customer is asked
+ * for nothing extra either way.
+ *
+ * OVH prices ingress and egress at zero, which makes it attractive as a
+ * destination for clusters hosted elsewhere — which is also the only correct
+ * way to use it, since backups must not sit on the cluster's own provider.
+ */
+@Injectable()
+export class OvhObjectStorageProvisioner implements IObjectStorageProvisioner {
+  private readonly logger = new Logger(OvhObjectStorageProvisioner.name);
+  readonly provider = StorageBackendProvider.OVH_OBJECT_STORAGE;
+  readonly capability = ProvisionerCapability.FULL_AUTO;
+
+  constructor(
+    private readonly configService: ConfigService,
+    private readonly ec2Credentials: OvhEc2CredentialsService,
+    private readonly genericS3: GenericS3Backend,
+  ) {}
+
+  async isReady(_userId: string): Promise<ProvisionerReadiness> {
+    const connected = await this.ec2Credentials.hasComputeCredential();
+    if (!connected) {
+      return {
+        ready: false,
+        reason: 'CONNECT_OVH_REQUIRED',
+        message:
+          'OVH non collegato. Aggiungi credenziali OVH nelle impostazioni provider.',
+      };
+    }
+    return { ready: true };
+  }
+
+  async provisionDestination(input: ProvisionInput): Promise<ProvisionResult> {
+    const region =
+      input.desiredRegion ??
+      this.configService.get<string>('OVH_S3_REGION', OVH_DEFAULT_S3_REGION);
+    const endpoint = endpointFor(region);
+    const bucket =
+      input.desiredBucketName ?? this.defaultBucketName(input.userId);
+    const { accessKey, secretKey, reused } =
+      await this.ec2Credentials.ensureS3KeyPair();
+
+    const creds = {
+      provider: this.provider,
+      endpoint,
+      region,
+      bucket,
+      accessKey,
+      secretKey,
+      forcePathStyle: true,
+    };
+
+    const alreadyExisted = (await this.genericS3.testConnection(creds)).healthy;
+    if (!alreadyExisted) {
+      await this.genericS3.ensureBucket(creds);
+    }
+    this.logger.log(
+      `OVH bucket ${bucket} (${region}) ready — credential ${reused ? 'reused' : 'minted'}, bucket ${alreadyExisted ? 'existing' : 'created'}`,
+    );
+
+    return {
+      bucket,
+      region,
+      endpoint,
+      forcePathStyle: true,
+      pathPrefix: `flui/${input.clusterId}`,
+      accessKey,
+      secretKey,
+      usableForEtcdL1: true,
+      alreadyExisted,
+    };
+  }
+
+  private defaultBucketName(userId: string): string {
+    const short = userId.replaceAll('-', '').slice(0, 12).toLowerCase();
+    return `flui-backups-${short}`;
+  }
+}

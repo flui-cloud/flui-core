@@ -95,6 +95,7 @@ export class BillingEstimatorService {
     const prefixMap: Partial<Record<StorageBackendProvider, string>> = {
       [StorageBackendProvider.SCALEWAY_OBJECT_STORAGE]:
         'FLUI_BACKUP_PRICE_SCALEWAY_OS',
+      [StorageBackendProvider.OVH_OBJECT_STORAGE]: 'FLUI_BACKUP_PRICE_OVH_OS',
     };
     const prefix = prefixMap[provider];
     if (!prefix) return null;
