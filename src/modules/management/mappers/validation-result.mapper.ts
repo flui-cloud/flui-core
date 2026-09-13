@@ -1,9 +1,10 @@
 import { ValidationResultDto } from '../dto/validation-result.dto';
+import { ProviderRegion } from '../entities/provider-region.entity';
 
 export class ValidationResultMapper {
   static createSuccess(
     details?: any,
-    availableRegions?: Array<{ id: string; name: string; location: string }>,
+    availableRegions?: ProviderRegion[],
   ): ValidationResultDto {
     return {
       success: true,

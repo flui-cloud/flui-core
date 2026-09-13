@@ -1,4 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { ProviderRegion } from '../entities/provider-region.entity';
 
 export class ValidationResultDto {
   @ApiProperty({ description: 'Whether validation passed' })
@@ -17,13 +18,15 @@ export class ValidationResultDto {
     [key: string]: any;
   };
 
+  /**
+   * The same shape the regions endpoint returns. It has to be: the
+   * configuration wizard renders whichever of the two it gets, and a narrower
+   * shape here silently drops the fields it reads — the region shows up with
+   * no country and marked unavailable.
+   */
   @ApiPropertyOptional({
     description: 'Available regions discovered',
     type: [Object],
   })
-  availableRegions?: Array<{
-    id: string;
-    name: string;
-    location: string;
-  }>;
+  availableRegions?: ProviderRegion[];
 }

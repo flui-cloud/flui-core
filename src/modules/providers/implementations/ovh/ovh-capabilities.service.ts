@@ -50,31 +50,37 @@ export class OvhCapabilitiesService implements IProviderCapabilitiesService {
     try {
       const client = await this.buildClient();
       if (!client) return this.inner.getAvailableRegions();
-      const keystoneRegions = await client.regions('compute');
-      const codes = [...new Set(keystoneRegions.map(ovhRegionCode))].sort(
-        (a, b) => a.localeCompare(b),
-      );
-      if (!codes.length) return this.inner.getAvailableRegions();
-      return codes.map((code) => {
-        const meta = ovhRegionMeta(code);
-        const label = meta ? `${meta.city}, ${meta.country}` : code;
-        return {
-          id: code,
-          name: meta?.city ?? code,
-          displayName: label,
-          location: label,
-          available: true,
-          country: meta?.country,
-          latitude: meta?.latitude,
-          longitude: meta?.longitude,
-        };
-      });
+      const regions = await this.regionsFromKeystone(client);
+      return regions.length ? regions : this.inner.getAvailableRegions();
     } catch (error) {
       this.logger.warn(
         `Could not read OVH regions from Keystone, falling back to the static list: ${String(error)}`,
       );
       return this.inner.getAvailableRegions();
     }
+  }
+
+  private async regionsFromKeystone(
+    client: Awaited<ReturnType<typeof buildOvhOpenStackClient>>,
+  ): Promise<ProviderRegion[]> {
+    const keystoneRegions = await client.regions('compute');
+    const codes = [...new Set(keystoneRegions.map(ovhRegionCode))].sort(
+      (a, b) => a.localeCompare(b),
+    );
+    return codes.map((code) => {
+      const meta = ovhRegionMeta(code);
+      const label = meta ? `${meta.city}, ${meta.country}` : code;
+      return {
+        id: code,
+        name: meta?.city ?? code,
+        displayName: label,
+        location: label,
+        available: true,
+        country: meta?.country,
+        latitude: meta?.latitude,
+        longitude: meta?.longitude,
+      };
+    });
   }
 
   /** Null when no OVH credential is stored yet — the caller falls back. */
@@ -145,9 +151,29 @@ export class OvhCapabilitiesService implements IProviderCapabilitiesService {
         credentials.secretKey,
       );
       const result = await client.testConnection();
-      return result.success
-        ? { success: true, message: 'Credentials are valid' }
-        : { success: false, message: result.error ?? 'Invalid credentials' };
+      if (!result.success) {
+        return {
+          success: false,
+          message: result.error ?? 'Invalid credentials',
+        };
+      }
+      // The configuration wizard picks regions before this credential is
+      // stored, so the discovery has to travel back with the validation that
+      // just authenticated — otherwise the only list it can show is the static
+      // one, which on a real account offers regions the credential cannot
+      // reach and hides ones it can.
+      const regions = await this.regionsFromKeystone(client).catch((error) => {
+        this.logger.warn(
+          `Validated the OVH credential but could not read its regions: ${String(error)}`,
+        );
+        return [];
+      });
+      return {
+        success: true,
+        message: 'Credentials are valid',
+        details: { apiAccess: true, regionsDiscovered: regions.length },
+        availableRegions: regions,
+      };
     } catch (error) {
       this.logger.warn(`OVH credential validation failed: ${String(error)}`);
       return {
