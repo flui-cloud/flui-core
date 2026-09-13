@@ -32,12 +32,27 @@ describe('ClusterValidationService.checkNameAvailability', () => {
     const providerFactory = {
       getProvider: jest.fn().mockReturnValue({ listServersAsDto }),
     };
+    const cacheStore = new Map<string, unknown>();
+    const cacheService = {
+      get: jest.fn((key: string) => Promise.resolve(cacheStore.get(key))),
+      set: jest.fn((key: string, value: unknown) => {
+        cacheStore.set(key, value);
+        return Promise.resolve();
+      }),
+    };
     const service = new ClusterValidationService(
       clusterRepo as never,
       managementService as never,
       providerFactory as never,
+      cacheService as never,
     );
-    return { service, clusterRepo, providerFactory, listServersAsDto };
+    return {
+      service,
+      clusterRepo,
+      providerFactory,
+      cacheService,
+      listServersAsDto,
+    };
   }
 
   it('is unavailable when a non-deleted cluster already owns the name', async () => {
@@ -112,6 +127,18 @@ describe('ClusterValidationService.checkNameAvailability', () => {
     expect(whereArg.status._type).toBe('not');
     expect(whereArg.status._value).toBe(ClusterStatus.DELETED);
   });
+
+  it('reuses the provider server list across calls instead of re-scanning per candidate name', async () => {
+    const { service, providerFactory, listServersAsDto } = build({
+      servers: [{ name: 'some-other-master' }],
+    });
+
+    await service.checkNameAvailability('workload-1', CloudProvider.OVH);
+    await service.checkNameAvailability('workload-2', CloudProvider.OVH);
+
+    expect(providerFactory.getProvider).toHaveBeenCalledTimes(1);
+    expect(listServersAsDto).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe('ClusterValidationService.validateCreateClusterRequest — name gate', () => {
@@ -120,10 +147,12 @@ describe('ClusterValidationService.validateCreateClusterRequest — name gate', 
       findOne: jest.fn().mockResolvedValue({ id: 'c1', name: 'workload-1' }),
     };
     const providerFactory = { getProvider: jest.fn() };
+    const cacheService = { get: jest.fn(), set: jest.fn() };
     const service = new ClusterValidationService(
       clusterRepo as never,
       {} as never,
       providerFactory as never,
+      cacheService as never,
     );
 
     await expect(

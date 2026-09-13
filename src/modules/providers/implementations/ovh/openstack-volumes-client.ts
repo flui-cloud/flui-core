@@ -159,6 +159,29 @@ export class FluiOpenStackClient extends OpenStackClient {
     return body.output ?? '';
   }
 
+  /**
+   * A SOFT reboot (ACPI restart, guest-OS-level) rather than power-cycling
+   * the hypervisor domain — the NIC hot-attached moments earlier is already
+   * live on the virtual PCI bus, so a normal kernel boot enumerates it from
+   * the start same as any other device, instead of racing cloud-init's very
+   * first metadata query against the guest's own hot-plug handling.
+   */
+  async rebootServer(region: string, serverId: string): Promise<void> {
+    const nova = await this.endpoint('compute', region);
+    try {
+      await this.post(`${nova}/servers/${serverId}/action`, {
+        reboot: { type: 'SOFT' },
+      });
+    } catch (error) {
+      // Nova answers os-reboot with 202 and an empty body; the shared
+      // post()/parse() helper only special-cases 204, so it tries
+      // `res.json()` on that empty 202 body and throws a SyntaxError. An
+      // actual HTTP error from parse() is a plain Error with the status in
+      // its message, not a SyntaxError, so this can't mask a real failure.
+      if (!(error instanceof SyntaxError)) throw error;
+    }
+  }
+
   // ── Nova volume attachments (join/leave a volume to a server) ──
 
   async listServerVolumeAttachments(

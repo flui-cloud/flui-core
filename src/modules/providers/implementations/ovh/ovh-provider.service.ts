@@ -26,6 +26,7 @@ import {
   ServerVNetAttachmentResult,
 } from '../../interfaces/network-provider.interface';
 import { InstanceEntity } from '../../../instances/entities/instance.entity';
+import { InstanceStatus } from '../../../instances/entities/instance-status.enum';
 import { DeleteServerDto } from '../../../infrastructure/servers/dto/delete-server.dto';
 import { ServerResponseDto } from '../../../infrastructure/servers/dto/server-response.dto';
 import { NodeSizeDto } from '../../dto/node-size.dto';
@@ -109,8 +110,72 @@ export class OvhProviderService implements ICloudProvider {
     }
   }
 
-  async listInstances(): Promise<InstanceEntity[]> {
-    return [];
+  /**
+   * Was a hard-coded `[]` — OVH servers never showed up in `/instances` at
+   * all, not even the control cluster's own master, because nothing here
+   * ever called the provider. listServersAsDto() already does the real work;
+   * this only shapes its result into InstanceEntity, matching the schema
+   * IamOwnership.classifyOwnership() (in InstancesService) expects — labels
+   * specifically have to land at metadata.labels as a plain
+   * Record<string,string>, not the {key,value}[] shape ServerResponseDto
+   * itself uses, or every OVH server would misclassify as unmanaged.
+   */
+  async listInstances(filters?: {
+    clusterId?: string;
+  }): Promise<InstanceEntity[]> {
+    const [servers, nodeSizes] = await Promise.all([
+      this.listServersAsDto(),
+      this.getNodeSizes().catch(() => []),
+    ]);
+
+    const scoped = filters?.clusterId
+      ? servers.filter(
+          (s) =>
+            s.labels?.find((l) => l.key === 'flui-cluster-id')?.value ===
+            filters.clusterId,
+        )
+      : servers;
+
+    return scoped.map((s) => this.toInstanceEntity(s, nodeSizes));
+  }
+
+  private toInstanceEntity(
+    s: ServerResponseDto,
+    nodeSizes: NodeSizeDto[],
+  ): InstanceEntity {
+    const size = nodeSizes.find(
+      (n) => n.id === s.server_type || n.name === s.server_type,
+    );
+
+    const instance = new InstanceEntity();
+    instance.name = s.name;
+    instance.displayName = s.name;
+    instance.provider = CloudProvider.OVH;
+    instance.providerId = s.id;
+    instance.status = mapOvhStatusToInstanceStatus(s.status);
+    instance.dataCenter = s.location ?? 'unknown';
+    instance.region = s.location ?? 'unknown';
+    instance.regionName = '';
+    instance.cpuCores = size?.cores ?? 0;
+    instance.ramMb = (size?.memory ?? 0) * 1024;
+    instance.diskMb = (size?.disk ?? 0) * 1024;
+    instance.osType = null;
+    instance.ipConfig = {
+      v4: s.public_ip
+        ? { ip: s.public_ip, gateway: '', netmaskCidr: 32 }
+        : undefined,
+    };
+    instance.productType = s.server_type ?? 'unknown';
+    instance.productName = size?.description ?? '';
+    instance.defaultUser = 'root';
+    instance.additionalIps = [];
+    instance.metadata = {
+      labels: s.labels?.length
+        ? Object.fromEntries(s.labels.map((l) => [l.key, l.value]))
+        : {},
+      privateIp: s.private_ip,
+    };
+    return instance;
   }
 
   async getNodeSizes(): Promise<NodeSizeDto[]> {
@@ -210,6 +275,44 @@ export class OvhProviderService implements ICloudProvider {
             parseRegionId(netId).id,
           );
         }
+
+        // Hot-attaching a NIC after boot races cloud-init: the metadata
+        // service already reports it, but the guest's early boot stages can
+        // query that before the kernel has hot-plugged the device, and
+        // cloud-init crashes instead of retrying (seen live: "Unable to find
+        // a system nic for {mac}", every cloud-init stage failing as a
+        // result — the bootstrap script never runs at all). A SOFT reboot
+        // fixes that by giving the guest a normal boot with the NIC already
+        // on the bus — but it is not free: if the guest's own bootstrap
+        // script (flui-init.sh, launched from cloud-init's runcmd) already
+        // started, the reboot's shutdown sweep SIGTERMs it mid-flight, and
+        // cloud-init does NOT retry a stage that was killed by signal — only
+        // one that recorded itself as failed. Live-confirmed: apt-get killed
+        // mid-install, k3s never installed, no error anywhere. So only
+        // reboot when the console actually shows the NIC crash — never
+        // unconditionally.
+        const sawNicCrash = await this.pollForNicRaceOutcome(
+          client,
+          region,
+          result.serverId,
+        );
+        if (sawNicCrash) {
+          await client.rebootServer(region, result.serverId);
+          // waitForServerActive's first check runs immediately — without
+          // this, it can catch Nova still reporting the pre-reboot ACTIVE
+          // status before the reboot transition has even registered, and
+          // return straight away without actually waiting for the reboot.
+          await new Promise((r) => setTimeout(r, 5_000));
+          const activeAfterReboot = await this.waitForServerActive(
+            svc,
+            result.serverId,
+          );
+          if (activeAfterReboot) {
+            result.ipAddress = activeAfterReboot.public_ip ?? result.ipAddress;
+            result.privateIp = activeAfterReboot.private_ip ?? result.privateIp;
+            result.status = activeAfterReboot.status;
+          }
+        }
       }
 
       if (config.attachedVolumes?.length) {
@@ -268,6 +371,41 @@ export class OvhProviderService implements ICloudProvider {
       await new Promise((r) => setTimeout(r, pollIntervalMs));
     }
     return null;
+  }
+
+  /**
+   * Whether the guest actually hit the hot-attach NIC race, read from its
+   * serial console — no SSH or network reachability to the guest required,
+   * so this works even when the crash itself broke networking. Polls
+   * because the answer only exists once the guest's early boot stages have
+   * run at all: too early and neither signature is there yet.
+   *
+   * Both signatures are drawn from a real crash and a real clean boot
+   * observed live on this account (see createServer's caller comment).
+   * Defaults to "no crash" on timeout or a console-fetch failure: an
+   * unconfirmed reboot risks killing an in-progress bootstrap for real,
+   * observed harm, against a NIC race this is a best-effort guard for in
+   * the first place.
+   */
+  private async pollForNicRaceOutcome(
+    client: FluiOpenStackClient,
+    region: string,
+    serverId: string,
+    timeoutMs = 30_000,
+    pollIntervalMs = 5_000,
+  ): Promise<boolean> {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, pollIntervalMs));
+      const output = await client
+        .getConsoleOutput(region, serverId, 500)
+        .catch(() => '');
+      if (/Unable to find a system nic/.test(output)) return true;
+      if (/finished at .+Datasource DataSourceOpenStackLocal/.test(output)) {
+        return false;
+      }
+    }
+    return false;
   }
 
   async deleteServer(config: DeleteServerDto): Promise<ServerDeletionResult> {
@@ -353,7 +491,16 @@ export class OvhProviderService implements ICloudProvider {
     if (region) client.setDefaultRegion(region);
     const svc = new InfraOvhProviderService(this.configService, client);
     const result = await svc.createVNet(config);
-    const resolvedRegion = region ?? (await client.resolveNetworkRegion());
+    // `region` here is a macro like 'GRA', not a specific datacenter — the
+    // caller (vnet-provisioning.service.ts) only ever knows the macro. Left
+    // unresolved, this used to hand that literal macro straight to
+    // clearSubnetGateway() as if it were the resolved region: on this
+    // account's network-service catalog that fuzzy-matched to a different
+    // datacenter (WAW1) than the one createVNet() actually created the
+    // subnet in (GRA11) — a live-confirmed 404. Route it through the same
+    // resolver createVNet() itself uses, on the same client (already primed
+    // above via setDefaultRegion), so both land on the same datacenter.
+    const resolvedRegion = await client.resolveNetworkRegion(region);
     await Promise.all(
       result.subnets.map((subnet) =>
         client
@@ -423,6 +570,37 @@ export function normalizeOvhServerStatus(novaStatus: string): string {
       return 'error';
     default:
       return novaStatus.toLowerCase();
+  }
+}
+
+/** Same raw Nova vocabulary as normalizeOvhServerStatus, mapped to the enum listInstances()'s InstanceEntity needs instead. */
+function mapOvhStatusToInstanceStatus(novaStatus: string): InstanceStatus {
+  switch (novaStatus) {
+    case 'ACTIVE':
+      return InstanceStatus.RUNNING;
+    case 'SHUTOFF':
+    case 'PAUSED':
+    case 'SUSPENDED':
+      return InstanceStatus.STOPPED;
+    case 'BUILD':
+      return InstanceStatus.PROVISIONING;
+    case 'REBOOT':
+    case 'HARD_REBOOT':
+      return InstanceStatus.STARTING;
+    case 'RESIZE':
+    case 'VERIFY_RESIZE':
+    case 'REVERT_RESIZE':
+    case 'REBUILD':
+      return InstanceStatus.REBUILDING;
+    case 'MIGRATING':
+      return InstanceStatus.MIGRATING;
+    case 'DELETED':
+    case 'SOFT_DELETED':
+      return InstanceStatus.DELETING;
+    case 'ERROR':
+      return InstanceStatus.ERROR;
+    default:
+      return InstanceStatus.UNKNOWN;
   }
 }
 

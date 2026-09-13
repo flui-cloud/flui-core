@@ -12,6 +12,9 @@ import { NameAvailabilityResponseDto } from '../dto/name-availability.dto';
 import { ManagementService } from '../../../management/services/management.service';
 import { ProviderFactory } from '../../../providers/core/factories/provider.factory';
 import { CloudProvider } from '../../../providers/enums/cloud-provider.enum';
+import { CacheService } from '../../../common/cache/cache.service';
+import { CacheCategory } from '../../../common/cache/enums/cache-category.enum';
+import { ServerResponseDto } from '../../servers/dto/server-response.dto';
 
 /**
  * Service responsible for cluster validation logic
@@ -25,6 +28,7 @@ export class ClusterValidationService {
     private readonly clusterRepository: Repository<ClusterEntity>,
     private readonly managementService: ManagementService,
     private readonly providerFactory: ProviderFactory,
+    private readonly cacheService: CacheService,
   ) {}
 
   /**
@@ -58,8 +62,7 @@ export class ClusterValidationService {
     }
 
     try {
-      const providerService = this.providerFactory.getProvider(provider);
-      const servers = await providerService.listServersAsDto();
+      const servers = await this.listServersForAvailabilityCheck(provider);
       const masterName = `${name}-master`;
       const hasCollision = servers.some((s) => s.name === masterName);
       if (hasCollision) {
@@ -79,6 +82,33 @@ export class ClusterValidationService {
     }
 
     return { available: true };
+  }
+
+  /**
+   * listServersAsDto() is a real provider API scan (OVH: one call per
+   * region) — measured at several seconds. The name-generator on the
+   * dashboard calls checkNameAvailability() once per candidate name in a
+   * loop, which without this would re-scan the whole account per candidate.
+   * A short cache lets one generate click reuse a single fetch; 30s is well
+   * inside "obviously stale" territory for how often servers actually
+   * appear/disappear, and this cache is one of two guards — the deep
+   * idempotency check in ServersService.assertServerIsOurs still runs at
+   * actual creation time regardless of what this said.
+   */
+  private async listServersForAvailabilityCheck(
+    provider: CloudProvider,
+  ): Promise<ServerResponseDto[]> {
+    const cacheKey = `cluster-name-check:servers:${provider}`;
+    const cached = await this.cacheService.get<ServerResponseDto[]>(cacheKey);
+    if (cached) return cached;
+
+    const servers = await this.providerFactory
+      .getProvider(provider)
+      .listServersAsDto();
+    await this.cacheService.set(cacheKey, servers, {
+      category: CacheCategory.REALTIME,
+    });
+    return servers;
   }
 
   /**
