@@ -267,9 +267,11 @@ export class ClusterQueueProcessor {
         throw new Error(`Operation ${operationId} not found`);
       }
 
+      // Nothing ever wrote a top-level metadata.workerCount; the real value
+      // lives on the stored request DTO.
       const workerCount =
-        (operation.metadata as CreateClusterOperationMetadata)?.workerCount ||
-        0;
+        (operation.metadata as CreateClusterOperationMetadata)?.clusterConfig
+          ?.workerCount || 0;
       const isSingleNode = workerCount === 0;
 
       // Updated: Use providerFirewallId (string) instead of providerFirewallIds (array)
