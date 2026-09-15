@@ -35,6 +35,8 @@ import { RebuildClusterOperation1788200000000 } from './1788200000000-RebuildClu
 import { PlatformUpdateOperation1788300000000 } from './1788300000000-PlatformUpdateOperation';
 import { ApplicationAttachedServices1788400000000 } from './1788400000000-ApplicationAttachedServices';
 import { OvhProviderEnum1788500000000 } from './1788500000000-OvhProviderEnum';
+import { FluiManagedVNet1788900000000 } from './1788900000000-FluiManagedVNet';
+import { WireGuardPeers1788800000000 } from './1788800000000-WireGuardPeers';
 import { OvhObjectStorageDestination1788700000000 } from './1788700000000-OvhObjectStorageDestination';
 import { InfrastructureOperationLogs1788600000000 } from './1788600000000-InfrastructureOperationLogs';
 import { CatchUpEntityDrift1788000000000 } from './1788000000000-CatchUpEntityDrift';
@@ -93,4 +95,6 @@ export const migrations = [
   OvhProviderEnum1788500000000,
   InfrastructureOperationLogs1788600000000,
   OvhObjectStorageDestination1788700000000,
+  WireGuardPeers1788800000000,
+  FluiManagedVNet1788900000000,
 ];

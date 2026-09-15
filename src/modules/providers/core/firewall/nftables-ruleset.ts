@@ -9,6 +9,20 @@ export interface NftRenderOptions {
    * survives on conntrack, the one after it does not.
    */
   sshPorts?: number[];
+  /**
+   * The Flui WireGuard interface, when the node is on the management overlay.
+   *
+   * Naming it turns on two things that cannot be expressed as ordinary rules:
+   * the ingest ports become reachable over the tunnel and nowhere else, and
+   * traffic is refused passage from one peer to another through this host.
+   */
+  wgInterface?: string;
+  /**
+   * Ports reachable *only* over `wgInterface`. Meant for the observability
+   * ingest, which is plaintext and unauthenticated on the push path: the tunnel
+   * is what stands in for the authentication it does not have.
+   */
+  wgOnlyPorts?: Array<{ port: number; protocol?: 'tcp' | 'udp' }>;
 }
 
 export const DEFAULT_INTERNAL_CIDRS = ['10.42.0.0/16', '10.43.0.0/16'];
@@ -133,6 +147,21 @@ export function renderFluiNftRuleset(
     internalLines.push(`\t\tip6 saddr ${cidr} accept`);
   }
 
+  const wgIface = options.wgInterface?.trim();
+  // Same lines in `input` and `prerouting`: a NodePort never reaches `input`
+  // (kube-proxy DNATs it first), while a port served by a host process never
+  // reaches `prerouting`'s drop. Emitting both costs nothing and means the
+  // caller does not have to know which kind a port is.
+  const wgOnlyLines = wgIface
+    ? (options.wgOnlyPorts ?? [])
+        .filter((p) => isUsablePort(p.port))
+        .map(
+          (p) =>
+            `\t\tiifname "${wgIface}" ${p.protocol ?? 'tcp'} dport ${p.port} accept` +
+            ` comment "reachable over the Flui overlay only"`,
+        )
+    : [];
+
   const sshPorts = [...new Set((options.sshPorts ?? []).filter(isUsablePort))];
   if (!sshPorts.length) sshPorts.push(22);
   const sshLines = sshPorts.map(
@@ -168,6 +197,14 @@ export function renderFluiNftRuleset(
     '\t\t# a public IP must be joined with that address in internalCidrs as a /32.',
     ...internalLines,
     '',
+    ...(wgOnlyLines.length
+      ? [
+          '',
+          '\t\t# Ports that exist only on the Flui management overlay.',
+          ...wgOnlyLines,
+        ]
+      : []),
+    '',
     '\t\t# Reconciled public ingress rules:',
     ...(inbound.length ? inbound : ['\t\t# (none)']),
     '\t}',
@@ -187,6 +224,9 @@ export function renderFluiNftRuleset(
     '\t\tiif "lo" accept',
     '\t\tct state established,related accept',
     ...internalLines,
+    // Before the drop below, or the exception never applies: this chain is
+    // first-match, and the NodePort range swallows the ingest ports.
+    ...(wgOnlyLines.length ? ['', ...wgOnlyLines] : []),
     '',
     `\t\ttcp dport ${NODEPORT_RANGE} drop comment "NodePort services are cluster-internal, never public"`,
     '\t}',
@@ -194,6 +234,17 @@ export function renderFluiNftRuleset(
     '\tchain forward {',
     '\t\t# k3s relies on forwarding (pod/service routing); never default-drop here.',
     '\t\ttype filter hook forward priority 0; policy accept;',
+    ...(wgIface
+      ? [
+          '',
+          '\t\t# No transit between overlay peers. The control cluster holds a route to',
+          '\t\t# every peer, so without this it would quietly become the router between',
+          '\t\t# clusters that are meant to be isolated from one another. Expressed as a',
+          '\t\t# targeted drop and not a policy change, because k3s needs the rest of',
+          '\t\t# this chain to keep forwarding.',
+          `\t\tiifname "${wgIface}" oifname "${wgIface}" drop comment "no peer-to-peer transit"`,
+        ]
+      : []),
     '\t}',
     '',
     '\tchain output {',

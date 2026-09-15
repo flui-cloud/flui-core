@@ -3,6 +3,7 @@ import {
   encodeRulesComment,
   decodeRulesComment,
   DEFAULT_INTERNAL_CIDRS,
+  NftRenderOptions,
 } from './nftables-ruleset';
 import { FirewallRule } from '../../interfaces/firewall-provider.interface';
 
@@ -273,5 +274,95 @@ describe('rules comment round-trip', () => {
 
   it('returns null when no comment is present', () => {
     expect(decodeRulesComment('table inet flui {}')).toBeNull();
+  });
+});
+
+describe('the Flui WireGuard overlay', () => {
+  const render = (over: Partial<NftRenderOptions> = {}) =>
+    renderFluiNftRuleset(
+      [
+        {
+          description: 'HTTPS',
+          direction: 'in',
+          protocol: 'tcp',
+          port: '443',
+          sourceIps: ['0.0.0.0/0'],
+        },
+      ],
+      {
+        supportsSshAllowlist: false,
+        wgInterface: 'flui0',
+        wgOnlyPorts: [{ port: 30100 }],
+        ...over,
+      },
+    );
+
+  const lineOf = (text: string, needle: string) =>
+    text.split('\n').findIndex((l) => l.includes(needle));
+
+  it('admits the ingest port on the overlay interface only', () => {
+    expect(render()).toContain('iifname "flui0" tcp dport 30100 accept');
+  });
+
+  it('places the exception ahead of the NodePort drop', () => {
+    // prerouting is first-match: after the drop, the exception is dead text and
+    // the ingest stays unreachable over the tunnel too.
+    const text = render();
+    const prerouting = text.slice(text.indexOf('chain prerouting'));
+    expect(lineOf(prerouting, 'iifname "flui0" tcp dport 30100')).toBeLessThan(
+      lineOf(prerouting, 'dport 30000-32767 drop'),
+    );
+  });
+
+  it('emits the exception in input as well, for ports served by the host', () => {
+    const text = render();
+    const input = text.slice(
+      text.indexOf('chain input'),
+      text.indexOf('chain prerouting'),
+    );
+    expect(input).toContain('iifname "flui0" tcp dport 30100 accept');
+  });
+
+  it('refuses transit between two overlay peers', () => {
+    // The control cluster routes to every peer; without this it silently
+    // becomes the router between clusters meant to be isolated.
+    expect(render()).toContain(
+      'iifname "flui0" oifname "flui0" drop comment "no peer-to-peer transit"',
+    );
+  });
+
+  it('leaves the forward chain accepting, because k3s needs it', () => {
+    expect(render()).toContain(
+      'type filter hook forward priority 0; policy accept;',
+    );
+  });
+
+  it('changes nothing at all when no overlay interface is given', () => {
+    const plain = renderFluiNftRuleset(
+      [
+        {
+          description: 'HTTPS',
+          direction: 'in',
+          protocol: 'tcp',
+          port: '443',
+          sourceIps: ['0.0.0.0/0'],
+        },
+      ],
+      { supportsSshAllowlist: false },
+    );
+    expect(plain).not.toContain('flui0');
+    expect(plain).not.toContain('no peer-to-peer transit');
+  });
+
+  it('ignores a nonsensical port rather than rendering it', () => {
+    expect(render({ wgOnlyPorts: [{ port: 0 }, { port: 99999 }] })).not.toMatch(
+      /iifname "flui0" tcp dport (0|99999)/,
+    );
+  });
+
+  it('supports a udp port, for a future ingest that is not tcp', () => {
+    expect(
+      render({ wgOnlyPorts: [{ port: 30100, protocol: 'udp' }] }),
+    ).toContain('iifname "flui0" udp dport 30100 accept');
   });
 });

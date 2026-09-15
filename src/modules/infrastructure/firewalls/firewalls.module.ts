@@ -4,6 +4,7 @@ import { FirewallEntity } from './entities/firewall.entity';
 import { ClusterFirewallEntity } from './entities/cluster-firewall.entity';
 import { ClusterEntity } from '../clusters/entities/cluster.entity';
 import { FirewallsService } from './services/firewalls.service';
+import { NetworkingModule } from '../networking/networking.module';
 import { FirewallDesiredStateService } from './services/firewall-desired-state.service';
 import { FirewallReconciliationService } from './services/firewall-reconciliation.service';
 import { CrossProviderFirewallService } from './services/cross-provider-firewall.service';
@@ -22,6 +23,9 @@ import { SharedInfrastructureModule } from '../shared/shared-infrastructure.modu
     ]),
     ProvidersModule, // For FirewallProviderFactory and provider services
     SharedInfrastructureModule, // For LabelService
+    // For WireGuardPeerService: the overlay's inbound rule is derived from the
+    // peers themselves, not from a second list kept in step by hand.
+    NetworkingModule,
   ],
   providers: [
     FirewallsService,

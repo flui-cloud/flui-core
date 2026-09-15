@@ -8,12 +8,18 @@ import {
   isControlClusterType,
 } from '../../clusters/entities/cluster.entity';
 import { FirewallRuleDto } from '../../../providers/dto/firewall.dto';
+import { NodeType } from '../../clusters/entities/cluster-node.entity';
 import { ClusterFirewallEntity } from '../entities/cluster-firewall.entity';
+import { ManagementAddressResolver } from '../../shared/services/management-address.resolver';
+import { WireGuardPeerService } from '../../networking/services/wireguard-peer.service';
 import { FirewallDesiredStateService } from './firewall-desired-state.service';
 import { FirewallReconciliationService } from './firewall-reconciliation.service';
 
 /** Marks the dynamic, cluster-topology-derived rules this service owns. */
 const PEER_RULE_PREFIX = 'flui:xprovider:';
+/** The Flui overlay's listen port. Not WireGuard's 51820: k3s would claim that
+ *  if flannel were ever switched to its wireguard-native backend. */
+const DEFAULT_WG_PORT = 51821;
 const API_SERVER_PORT = '6443';
 /** Loki NodePort is confirmed 30100; the metrics remote_write NodePort is
  *  declared in the external bootstrap-scripts repo — append it via env once
@@ -54,6 +60,8 @@ export class CrossProviderFirewallService {
     private readonly reconciliation: FirewallReconciliationService,
     @InjectRepository(ClusterEntity)
     private readonly clusterRepository: Repository<ClusterEntity>,
+    private readonly managementAddress: ManagementAddressResolver,
+    private readonly wgPeers: WireGuardPeerService,
   ) {}
 
   async reconcileAllPeers(): Promise<void> {
@@ -84,10 +92,19 @@ export class CrossProviderFirewallService {
       );
     }
 
+    // The one inbound rule the overlay needs anywhere: members dial out and
+    // hold the tunnel open, so only the control cluster has to listen.
+    const wgEgressIps = await this.overlayEgressIps();
+
     for (const fw of firewalls) {
       if (!fw.cluster || fw.cluster.status === ClusterStatus.DELETED) continue;
       try {
-        await this.reconcileFirewallPeers(fw, control, crossWorkloadNodeIps);
+        await this.reconcileFirewallPeers(
+          fw,
+          control,
+          crossWorkloadNodeIps,
+          wgEgressIps,
+        );
       } catch (err: any) {
         this.logger.error(
           `[fw-xprovider] firewall ${fw.id} (cluster ${fw.cluster?.id}) failed: ${err?.message ?? err}`,
@@ -107,15 +124,6 @@ export class CrossProviderFirewallService {
       relations: ['nodes'],
     });
     return this.pickControlCluster(candidates);
-  }
-
-  /** The control's public source IP as seen from another provider. For BYOS the
-   *  reachable address is the operator-declared host; masterIpAddress can be an
-   *  internal (e.g. Podman) address. Cloud controls expose masterIpAddress. */
-  private controlPublicIp(control: ClusterEntity): string | undefined {
-    const byosHost = (control.metadata as { byos?: { host?: string } })?.byos
-      ?.host;
-    return byosHost || control.masterIpAddress;
   }
 
   /** Match getControlCluster()'s resolution: prefer a real CONTROL over a legacy
@@ -142,12 +150,16 @@ export class CrossProviderFirewallService {
     clusters: ClusterEntity[],
     control: ClusterEntity,
   ): string[] {
+    // Derived from the very call that told those nodes where to push, so the
+    // allow-list and the push target can never drift apart: a node sent to the
+    // control's public address must be allowed in on it.
     const ips = clusters
       .filter(
         (c) =>
           !isControlClusterType(c.clusterType) &&
           c.status === ClusterStatus.READY &&
-          c.provider !== control.provider,
+          this.managementAddress.controlEndpointFor(c, control)?.path ===
+            'public',
       )
       .flatMap((c) => (c.nodes ?? []).map((n) => n.ipAddress))
       .filter((ip): ip is string => !!ip);
@@ -158,12 +170,21 @@ export class CrossProviderFirewallService {
     fw: ClusterFirewallEntity,
     control: ClusterEntity,
     crossWorkloadNodeIps: string[],
+    wgEgressIps: string[],
   ): Promise<void> {
     const cluster = fw.cluster;
+    const master =
+      (cluster.nodes ?? []).find((n) => n.nodeType === NodeType.MASTER) ??
+      (cluster.nodes ?? [])[0];
+    const nodeOverlay = master
+      ? await this.wgPeers.nodeOverlayFor(master.id).catch(() => undefined)
+      : undefined;
     const peerRules = this.computePeerRules(
       cluster,
       control,
       crossWorkloadNodeIps,
+      wgEgressIps,
+      nodeOverlay,
     );
     const baseRules = (fw.desiredRules ?? []).filter(
       (r) => !this.isPeerRule(r),
@@ -178,26 +199,60 @@ export class CrossProviderFirewallService {
     cluster: ClusterEntity,
     control: ClusterEntity,
     crossWorkloadNodeIps: string[],
+    wgEgressIps: string[],
+    nodeOverlay?: { nodeAddress: string; enrolled: boolean },
   ): FirewallRuleDto[] {
     if (isControlClusterType(cluster.clusterType)) {
+      const rules: FirewallRuleDto[] = [];
+      if (wgEgressIps.length > 0) {
+        rules.push({
+          description: `${PEER_RULE_PREFIX}wg-listen`,
+          direction: 'in',
+          protocol: 'udp',
+          port: String(this.wgPort()),
+          // Source-scoped to the peers' own egress addresses where they are
+          // known. Defence in depth only: WireGuard authenticates by public
+          // key, and an unknown source gets no reply at all — the address is
+          // not the identity, it just narrows who may try.
+          sourceIps: wgEgressIps,
+        });
+      }
       // Unauthenticated ingest stays vnet-only unless explicitly opted in.
-      if (!this.publicObsIngestEnabled()) return [];
-      if (crossWorkloadNodeIps.length === 0) return [];
+      if (!this.publicObsIngestEnabled()) return rules;
+      if (crossWorkloadNodeIps.length === 0) return rules;
       const ports = this.obsIngestNodePorts();
-      if (ports.length === 0) return [];
+      if (ports.length === 0) return rules;
       const sourceIps = crossWorkloadNodeIps.map((ip) => `${ip}/32`);
-      return ports.map((port) => ({
-        description: `${PEER_RULE_PREFIX}obs-ingest-${port}`,
-        direction: 'in',
-        protocol: 'tcp',
-        port,
-        sourceIps,
-      }));
+      return [
+        ...rules,
+        ...ports.map((port) => ({
+          description: `${PEER_RULE_PREFIX}obs-ingest-${port}`,
+          direction: 'in' as const,
+          protocol: 'tcp' as const,
+          port,
+          sourceIps,
+        })),
+      ];
     }
 
-    // Workload: only cross-provider workloads need a public 6443 allow-rule.
-    if (control.provider === cluster.provider) return [];
-    const controlIp = this.controlPublicIp(control);
+    // Workload: the rule follows the kubeconfig, never a parallel predicate,
+    // so a public API-server endpoint can never exist without the rule that
+    // opens 6443 to it.
+    const master =
+      (cluster.nodes ?? []).find((n) => n.nodeType === NodeType.MASTER) ??
+      (cluster.nodes ?? [])[0];
+    if (!master) return [];
+    if (
+      !this.managementAddress.requiresPublicApiServerRule(
+        cluster,
+        master,
+        control,
+        nodeOverlay,
+      )
+    ) {
+      return [];
+    }
+    const controlIp = this.managementAddress.publicAddressOf(control);
     if (!controlIp) return [];
     return [
       {
@@ -212,6 +267,33 @@ export class CrossProviderFirewallService {
 
   private isPeerRule(rule: FirewallRuleDto): boolean {
     return !!rule.description?.startsWith(PEER_RULE_PREFIX);
+  }
+
+  /**
+   * Addresses the overlay's peers dial in from, empty when the overlay is off.
+   *
+   * A failure here must not take the whole firewall reconcile with it: the
+   * public rules this service also owns are what keep existing clusters
+   * manageable, and they are not the overlay's to break.
+   */
+  private async overlayEgressIps(): Promise<string[]> {
+    if (process.env.FLUI_WG_ENABLED !== 'true') return [];
+    try {
+      return await this.wgPeers.memberEgressIps();
+    } catch (err: any) {
+      this.logger.warn(
+        `[fw-xprovider] could not read overlay peers (${err?.message ?? err}) — ` +
+          `leaving the WireGuard port closed this pass`,
+      );
+      return [];
+    }
+  }
+
+  private wgPort(): number {
+    const raw = Number(process.env.FLUI_WG_PORT);
+    return Number.isInteger(raw) && raw > 0 && raw < 65536
+      ? raw
+      : DEFAULT_WG_PORT;
   }
 
   private publicObsIngestEnabled(): boolean {

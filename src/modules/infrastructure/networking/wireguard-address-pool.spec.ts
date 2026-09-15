@@ -1,0 +1,117 @@
+import { BadRequestException } from '@nestjs/common';
+import {
+  cidrContains,
+  cidrsOverlap,
+  formatIp,
+  parseIp,
+  WireGuardAddressPool,
+} from './wireguard-address-pool';
+
+describe('cidrsOverlap', () => {
+  it.each([
+    ['10.250.0.0/16', '10.250.0.0/16', true],
+    ['10.250.0.0/16', '10.250.5.0/24', true],
+    ['10.250.5.0/24', '10.250.0.0/16', true],
+    ['10.250.0.0/16', '10.251.0.0/16', false],
+    ['10.250.0.0/16', '10.42.0.0/16', false],
+    ['10.0.0.0/8', '10.250.0.0/16', true],
+  ])('%s vs %s → %s', (a, b, expected) => {
+    expect(cidrsOverlap(a as string, b as string)).toBe(expected);
+  });
+});
+
+describe('address arithmetic', () => {
+  it('round-trips addresses across the signed-integer boundary', () => {
+    // 224.0.0.1 has the high bit set; a signed shift would produce a negative
+    // number and format as garbage.
+    for (const ip of ['0.0.0.0', '10.250.1.10', '192.168.1.1', '224.0.0.1']) {
+      expect(formatIp(parseIp(ip))).toBe(ip);
+    }
+  });
+
+  it('rejects malformed input rather than coercing it', () => {
+    expect(() => parseIp('10.250.1')).toThrow(BadRequestException);
+    expect(() => parseIp('10.250.1.999')).toThrow(BadRequestException);
+  });
+});
+
+describe('WireGuardAddressPool', () => {
+  it('refuses a pool that overlaps the k3s pod range', () => {
+    // The failure it prevents is not an error but a silence: the node's own
+    // cluster routes win, and the tunnel simply never carries the traffic.
+    expect(() => new WireGuardAddressPool('10.42.0.0/16')).toThrow(
+      /overlaps 10\.42\.0\.0\/16/,
+    );
+  });
+
+  it('refuses a pool that overlaps a private network Flui already knows', () => {
+    expect(
+      () => new WireGuardAddressPool('10.0.0.0/16', ['10.0.1.0/24']),
+    ).toThrow(/overlaps 10\.0\.1\.0\/24/);
+  });
+
+  it('accepts a pool that clears everything known', () => {
+    expect(
+      () => new WireGuardAddressPool('10.250.0.0/16', ['10.0.1.0/24']),
+    ).not.toThrow();
+  });
+
+  it('refuses a pool with no room for a peer', () => {
+    expect(() => new WireGuardAddressPool('10.250.0.0/31')).toThrow(
+      /too small/,
+    );
+  });
+
+  describe('allocate', () => {
+    const pool = () => new WireGuardAddressPool('10.250.0.0/16');
+
+    it('starts at the first host address, not the network address', () => {
+      expect(pool().allocate([])).toBe('10.250.0.1');
+    });
+
+    it('hands out the lowest free address', () => {
+      expect(pool().allocate(['10.250.0.1', '10.250.0.2'])).toBe('10.250.0.3');
+    });
+
+    it('reuses a gap left by a released peer', () => {
+      expect(pool().allocate(['10.250.0.1', '10.250.0.3'])).toBe('10.250.0.2');
+    });
+
+    it('ignores addresses from outside the pool instead of rejecting them', () => {
+      // Narrowing the pool must not break allocation for peers that predate it.
+      expect(pool().allocate(['10.9.9.9', '10.250.0.1'])).toBe('10.250.0.2');
+    });
+
+    it('never hands out the broadcast address', () => {
+      const small = new WireGuardAddressPool('10.250.0.0/30');
+      expect(small.allocate([])).toBe('10.250.0.1');
+      expect(small.allocate(['10.250.0.1'])).toBe('10.250.0.2');
+      expect(() => small.allocate(['10.250.0.1', '10.250.0.2'])).toThrow(
+        /exhausted/,
+      );
+    });
+  });
+
+  it('knows which addresses belong to it', () => {
+    const p = new WireGuardAddressPool('10.250.0.0/16');
+    expect(p.contains('10.250.99.4')).toBe(true);
+    expect(p.contains('10.251.0.1')).toBe(false);
+  });
+});
+
+describe('cidrContains', () => {
+  it('recognises an address inside its own range', () => {
+    expect(cidrContains('10.60.1.0/24', '10.60.1.1')).toBe(true);
+    expect(cidrContains('10.60.0.0/16', '10.60.9.42')).toBe(true);
+  });
+
+  it('refuses one that merely looks similar', () => {
+    expect(cidrContains('10.60.1.0/24', '10.60.2.1')).toBe(false);
+    expect(cidrContains('10.60.1.0/24', '110.60.1.1')).toBe(false);
+  });
+
+  it('handles a range that is a single address', () => {
+    expect(cidrContains('10.60.1.7/32', '10.60.1.7')).toBe(true);
+    expect(cidrContains('10.60.1.7/32', '10.60.1.8')).toBe(false);
+  });
+});

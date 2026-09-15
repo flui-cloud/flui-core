@@ -18,6 +18,21 @@ export enum VNetStatus {
   DELETED = 'DELETED',
 }
 
+/**
+ * Who builds the network, as opposed to whose infrastructure it sits on.
+ *
+ * `provider` keeps meaning "whose machines these are"; this answers the
+ * separate question of who provides the private network between them. The same
+ * distinction the firewall capability already draws with
+ * `backend: managed-api | host-nftables`, and for the same reason: conflating
+ * the two forces a provider enum to carry a value that means nothing to
+ * credentials, regions or pricing.
+ */
+export enum VNetImplementation {
+  PROVIDER_NATIVE = 'provider-native',
+  WIREGUARD = 'wireguard',
+}
+
 export interface VNetLabel {
   key: string;
   value: string;
@@ -39,6 +54,13 @@ export class VNetEntity {
 
   @Column({ type: 'varchar', length: 50 })
   ipRange: string;
+
+  @Column({
+    type: 'enum',
+    enum: VNetImplementation,
+    default: VNetImplementation.PROVIDER_NATIVE,
+  })
+  implementation: VNetImplementation;
 
   @Column({ type: 'jsonb', default: '[]' })
   labels: VNetLabel[];
