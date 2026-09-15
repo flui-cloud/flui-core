@@ -2,7 +2,7 @@ import { Command, Flags } from '@oclif/core';
 import chalk from 'chalk';
 import ora from 'ora';
 import { CliNodeService } from '../../lib/services/cli-node.service';
-import { resolveCluster } from '../../lib/resolve-cluster';
+import { resolveClusterRef } from '../../lib/resolve-cluster';
 
 const POLL_INTERVAL_MS = 5000;
 const MAX_WAIT_MS = 600_000; // 10 min
@@ -44,7 +44,7 @@ export default class NodeAdd extends Command {
 
     let service: CliNodeService;
     try {
-      const { id: clusterId } = await resolveCluster(flags.cluster);
+      const { id: clusterId } = await resolveClusterRef(flags.cluster);
       service = await CliNodeService.create(clusterId);
     } catch (error: any) {
       spinner.fail('Setup failed');

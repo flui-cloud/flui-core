@@ -107,6 +107,9 @@
       "auth": {
         "description": "Authentication management"
       },
+      "network": {
+        "description": "Private networks: the ones a provider offers and the ones Flui builds"
+      },
       "iam": {
         "description": "Access management: roles, grants (role bindings) and groups"
       },

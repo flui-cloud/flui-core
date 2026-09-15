@@ -11,14 +11,18 @@ const MAX_WAIT_MS = 1_800_000; // 30 min — matches the server-side estimate fo
 
 export default class ClusterCreate extends Command {
   static readonly description =
-    'Create a workload cluster. Runs on the same provider as the control ' +
-    'cluster (a hard constraint — the dashboard enforces the same rule) and ' +
-    'attaches to its environment VNet automatically when the provider needs one.';
+    "Create a workload cluster. Defaults to the control cluster's provider " +
+    'and region, and attaches to its environment VNet automatically when the ' +
+    'provider needs one. Pass --provider to place it elsewhere: the API allows ' +
+    'that only when the control cluster permits cross-provider workloads.';
 
   static readonly examples = [
     '<%= config.bin %> <%= command.id %> my-workload',
     '<%= config.bin %> <%= command.id %> my-workload --node-size d2-4 --worker-count 2',
     '<%= config.bin %> <%= command.id %> my-workload --no-wait',
+    '<%= config.bin %> <%= command.id %> edge --provider hetzner --region hel1',
+    '<%= config.bin %> <%= command.id %> edge --provider byos --flui-network',
+    '<%= config.bin %> <%= command.id %> edge --vnet 3f2a… --subnet 9c1b…',
   ];
 
   static readonly args = {
@@ -41,6 +45,33 @@ export default class ClusterCreate extends Command {
       description: 'Number of worker nodes (0 = master-only)',
       default: 0,
     }),
+    provider: Flags.string({
+      description:
+        "Provider for the workload cluster. Defaults to the control cluster's " +
+        'own. A different one is only accepted when the control cluster permits ' +
+        'cross-provider workloads (the API refuses it otherwise).',
+    }),
+    'flui-network': Flags.boolean({
+      description:
+        'Have Flui build the private network instead of using one the provider ' +
+        'offers. For machines that share no network: every node gets an address ' +
+        'on an encrypted mesh and K3s binds to it, so traffic between pods stops ' +
+        'crossing the internet in the clear.',
+      default: false,
+    }),
+    'network-cidr': Flags.string({
+      description:
+        'Range for the network Flui builds (implies --flui-network). Defaults ' +
+        'to 10.201.0.0/24.',
+    }),
+    vnet: Flags.string({
+      description:
+        'Attach the cluster to an existing private network (see `flui network list`).',
+    }),
+    subnet: Flags.string({
+      description:
+        'Subnet within --vnet. Defaults to the network’s only subnet.',
+    }),
     'no-wait': Flags.boolean({
       description: 'Return immediately after queuing creation',
       default: false,
@@ -58,8 +89,8 @@ export default class ClusterCreate extends Command {
     }
     const apiClient = new ApiClient({ baseUrl: apiUrl, apiKey });
 
-    // Workload clusters must share the control cluster's provider — find it
-    // rather than asking the caller to know and repeat it correctly.
+    // The control cluster only supplies the defaults: whether a given
+    // workload/control provider pair is allowed is the API's decision.
     const { clusters, apiError } = await listClusters();
     if (apiError) {
       this.error(
@@ -81,9 +112,34 @@ export default class ClusterCreate extends Command {
       );
     }
 
-    const provider = control.provider;
-    const region = flags.region ?? control.region ?? '';
+    const provider = flags.provider ?? control.provider;
+    const region =
+      flags.region ??
+      (provider === control.provider ? (control.region ?? '') : '');
+    if (
+      flags.provider &&
+      flags.provider !== control.provider &&
+      !flags.region
+    ) {
+      this.warn(
+        `No --region given for ${provider}; the control cluster's region ` +
+          `("${control.region ?? 'unset'}") does not apply to another provider, ` +
+          `so the provider default will be used.`,
+      );
+    }
     const nodeSize = flags['node-size'] ?? getRecommendedServerType(provider);
+
+    const fluiNetwork = flags['flui-network'] || !!flags['network-cidr'];
+    if (fluiNetwork && flags.vnet) {
+      this.error(
+        'Choose one: --flui-network builds a network, --vnet attaches to one ' +
+          'that already exists.',
+        { exit: 1 },
+      );
+    }
+    if (flags.subnet && !flags.vnet) {
+      this.error('--subnet needs the --vnet it belongs to.', { exit: 1 });
+    }
 
     const spinner = ora(
       `Checking "${args.name}" is free on ${provider}...`,
@@ -115,6 +171,14 @@ export default class ClusterCreate extends Command {
     );
     console.log(`  ${chalk.bold('Node size:')}    ${nodeSize}`);
     console.log(`  ${chalk.bold('Worker nodes:')} ${flags['worker-count']}`);
+    if (fluiNetwork) {
+      console.log(
+        `  ${chalk.bold('Network:')}      built by Flui ` +
+          `(${flags['network-cidr'] ?? 'default range'})`,
+      );
+    } else if (flags.vnet) {
+      console.log(`  ${chalk.bold('Network:')}      ${flags.vnet}`);
+    }
     console.log('');
 
     const createSpinner = ora('Queuing cluster creation...').start();
@@ -133,6 +197,21 @@ export default class ClusterCreate extends Command {
         region,
         nodeSize,
         workerCount: flags['worker-count'],
+        ...(fluiNetwork
+          ? {
+              fluiManagedNetwork: flags['network-cidr']
+                ? { ipRange: flags['network-cidr'] }
+                : {},
+            }
+          : {}),
+        ...(flags.vnet
+          ? {
+              vnetConfig: {
+                vnetId: flags.vnet,
+                ...(flags.subnet ? { subnetId: flags.subnet } : {}),
+              },
+            }
+          : {}),
       });
       operationId = result.operation_id;
       clusterId = result.cluster_id;
