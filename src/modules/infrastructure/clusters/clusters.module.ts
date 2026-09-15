@@ -47,6 +47,9 @@ import { ClusterMapperService } from './services/cluster-mapper.service';
 import { ClusterOperationsService } from './services/cluster-operations.service';
 import { ClusterFirewallIntegrationService } from './services/cluster-firewall-integration.service';
 import { ClusterOrchestrationService } from './services/cluster-orchestration.service';
+import { NetworkingModule } from '../networking/networking.module';
+import { TelemetryEndpointReconciler } from './services/telemetry-endpoint.reconciler';
+import { TelemetryEndpointScheduler } from './schedulers/telemetry-endpoint.scheduler';
 import { ClusterPowerManagementService } from './services/cluster-power-management.service';
 import { ClusterSshCleanupService } from './services/cluster-ssh-cleanup.service';
 import { K3sScriptService } from './services/k3s-script.service';
@@ -90,6 +93,7 @@ import { FleetHistoryService } from './services/fleet-history.service';
     // Shared infrastructure modules
     ServersModule,
     ProvidersModule,
+    NetworkingModule,
     AccessModule,
     SharedInfrastructureModule,
     ManagementModule,
@@ -150,6 +154,8 @@ import { FleetHistoryService } from './services/fleet-history.service';
     ClusterMapperService,
     ClusterFirewallIntegrationService,
     ClusterOrchestrationService,
+    TelemetryEndpointReconciler,
+    TelemetryEndpointScheduler,
     ClusterPowerManagementService,
     ClusterSshCleanupService,
     ClusterBillingService,
