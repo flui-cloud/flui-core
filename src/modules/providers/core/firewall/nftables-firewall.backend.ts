@@ -1,15 +1,8 @@
-import {
-  Injectable,
-  Logger,
-  BadRequestException,
-  ServiceUnavailableException,
-} from '@nestjs/common';
+import { Injectable, Logger, BadRequestException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { In, Repository } from 'typeorm';
 import { ClusterEntity } from 'src/modules/infrastructure/clusters/entities/cluster.entity';
 import { VNetSubnetEntity } from 'src/modules/infrastructure/vnets/entities/vnet-subnet.entity';
-import { CertificateSignerService } from 'src/modules/access/services/certificate-signer.service';
-import { NativeSSHConnectionService } from 'src/modules/terminal/services/native-ssh-connection.service';
 import {
   IFirewallProvider,
   CreateFirewallConfig,
@@ -18,18 +11,18 @@ import {
   FirewallRule,
   FirewallFilters,
 } from '../../interfaces/firewall-provider.interface';
-import { CloudProvider } from '../../enums/cloud-provider.enum';
+import { deriveHostTargets, HostTarget } from '../host/host-targets';
+import {
+  HostCommandService,
+  toReachabilityError,
+} from '../host/host-command.service';
 import {
   renderFluiNftRuleset,
   decodeRulesComment,
   DEFAULT_INTERNAL_CIDRS,
 } from './nftables-ruleset';
 
-interface SshTarget {
-  host: string;
-  port: number;
-  user: string;
-}
+type SshTarget = HostTarget;
 
 const FIREWALL_ID_PREFIX = 'nft-';
 const RULESET_PATH = '/etc/flui/flui-firewall.nft';
@@ -55,8 +48,7 @@ export class NftablesFirewallBackend implements IFirewallProvider {
     private readonly clusterRepository: Repository<ClusterEntity>,
     @InjectRepository(VNetSubnetEntity)
     private readonly subnetRepository: Repository<VNetSubnetEntity>,
-    private readonly certificateSigner: CertificateSignerService,
-    private readonly nativeSsh: NativeSSHConnectionService,
+    private readonly hostCommand: HostCommandService,
   ) {}
 
   async createFirewall(
@@ -212,60 +204,7 @@ export class NftablesFirewallBackend implements IFirewallProvider {
   }
 
   private deriveTargets(cluster: ClusterEntity): SshTarget[] {
-    if (cluster.provider === CloudProvider.BYOS) {
-      return this.deriveByosTargets(cluster);
-    }
-    const targets = this.collectNodeHosts(cluster).map((host) => ({
-      host,
-      port: 22,
-      user: 'root',
-    }));
-    if (targets.length === 0) {
-      throw new BadRequestException(
-        `No reachable SSH endpoint for cluster ${cluster.id}`,
-      );
-    }
-    return targets;
-  }
-
-  private deriveByosTargets(cluster: ClusterEntity): SshTarget[] {
-    const byos = (cluster.metadata as { byos?: Partial<SshTarget> } | undefined)
-      ?.byos;
-    const clusterPort = byos?.port ?? 22;
-    const clusterUser = byos?.user ?? 'root';
-    const seen = new Set<string>();
-    const targets: SshTarget[] = [];
-    for (const node of cluster.nodes ?? []) {
-      const nb = (node.metadata as { byos?: Partial<SshTarget> } | undefined)
-        ?.byos;
-      const host = nb?.host || node.ipAddress || byos?.host;
-      if (!host) continue;
-      const target = {
-        host,
-        port: nb?.port ?? clusterPort,
-        user: nb?.user ?? clusterUser,
-      };
-      const key = `${target.host}:${target.port}:${target.user}`;
-      if (!seen.has(key)) {
-        seen.add(key);
-        targets.push(target);
-      }
-    }
-    if (targets.length > 0) return targets;
-    const host = byos?.host || cluster.masterIpAddress;
-    if (host) return [{ host, port: clusterPort, user: clusterUser }];
-    throw new BadRequestException(
-      `No reachable SSH endpoint for cluster ${cluster.id}`,
-    );
-  }
-
-  private collectNodeHosts(cluster: ClusterEntity): string[] {
-    const ips = new Set<string>();
-    for (const node of cluster.nodes ?? []) {
-      if (node.ipAddress) ips.add(node.ipAddress);
-    }
-    if (cluster.masterIpAddress) ips.add(cluster.masterIpAddress);
-    return [...ips];
+    return deriveHostTargets(cluster);
   }
 
   private async deriveInternalCidrs(cluster: ClusterEntity): Promise<string[]> {
@@ -412,36 +351,14 @@ export class NftablesFirewallBackend implements IFirewallProvider {
   }
 
   private async sshExec(target: SshTarget, command: string): Promise<string> {
-    const cert = await this.certificateSigner.generateEphemeralCertificate(
-      undefined,
-      CERT_TTL_SECONDS,
-    );
-    try {
-      return await this.nativeSsh.execCommand(
-        target.host,
-        target.user,
-        cert.privateKey,
-        command,
-        SSH_TIMEOUT_MS,
-        { certificate: cert.certificate, port: target.port },
-      );
-    } catch (error) {
-      throw this.toReachabilityError(error, target);
-    }
+    return this.hostCommand.run(target, command, {
+      timeoutMs: SSH_TIMEOUT_MS,
+      certTtlSeconds: CERT_TTL_SECONDS,
+    });
   }
 
+  /** Kept as a thin seam so the backend's own tests can exercise the mapping. */
   private toReachabilityError(error: unknown, target: SshTarget): Error {
-    const msg = error instanceof Error ? error.message : String(error);
-    const unreachable =
-      /connection refused|connection timed out|timed out|no route to host|could not resolve|permission denied|host key verification|code 255/i.test(
-        msg,
-      );
-    if (unreachable) {
-      return new ServiceUnavailableException(
-        `Cannot reach node ${target.host}:${target.port} over SSH — the host firewall is applied over SSH. ` +
-          `Check the cluster's SSH connection settings (host, port, user). (${msg})`,
-      );
-    }
-    return error instanceof Error ? error : new Error(msg);
+    return toReachabilityError(error, target);
   }
 }

@@ -25,6 +25,7 @@ import { OvhProviderModule } from './implementations/ovh/ovh-provider.module';
 import { ProviderFactory } from './core/factories/provider.factory';
 import { FirewallProviderFactory } from './core/factories/firewall-provider.factory';
 import { NftablesFirewallBackend } from './core/firewall/nftables-firewall.backend';
+import { HostCommandService } from './core/host/host-command.service';
 import { NativeSSHConnectionService } from '../terminal/services/native-ssh-connection.service';
 import { IFirewallProvider } from './interfaces/firewall-provider.interface';
 import { DnsProviderFactory } from './core/factories/dns-provider.factory';
@@ -124,6 +125,7 @@ import { DnsProvider } from './enums/dns-provider.enum';
       ],
     },
     NativeSSHConnectionService,
+    HostCommandService,
     NftablesFirewallBackend,
     {
       provide: FirewallProviderFactory,
@@ -297,6 +299,7 @@ import { DnsProvider } from './enums/dns-provider.enum';
     ObjectStorageProvisionerFactory,
     ObjectStoragePresetsService,
     PROVIDER_BOOTSTRAP_SEEDER_REGISTRY,
+    HostCommandService,
   ],
 })
 export class ProvidersModule {}

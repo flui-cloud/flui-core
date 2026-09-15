@@ -19,7 +19,6 @@ describe('NftablesFirewallBackend.resolveTargets', () => {
       repo as any,
       { find: jest.fn().mockResolvedValue([]) } as any,
       {} as any,
-      {} as any,
     );
     // private method — exercised directly
     return (backend as any).resolveTargets('c1') as Promise<
@@ -121,7 +120,6 @@ describe('NftablesFirewallBackend.deriveInternalCidrs', () => {
     const backend = new NftablesFirewallBackend(
       {} as any,
       subnetRepo as any,
-      {} as any,
       {} as any,
     );
     return (backend as any).deriveInternalCidrs(cluster) as Promise<string[]>;
@@ -238,7 +236,6 @@ describe('NftablesFirewallBackend.deriveInternalCidrs', () => {
       {} as any,
       subnetRepo as any,
       {} as any,
-      {} as any,
     );
     const cidrs = await (backend as any).deriveInternalCidrs({
       id: 'c1',
@@ -269,7 +266,6 @@ describe('NftablesFirewallBackend.deriveInternalCidrs', () => {
       {} as any,
       subnetRepo as any,
       {} as any,
-      {} as any,
     );
     const cidrs = await (backend as any).deriveInternalCidrs({
       id: 'c1',
@@ -285,7 +281,6 @@ describe('NftablesFirewallBackend.deriveInternalCidrs', () => {
       {} as any,
       subnetRepo as any,
       {} as any,
-      {} as any,
     );
     await (backend as any).deriveInternalCidrs({
       id: 'c1',
@@ -297,12 +292,7 @@ describe('NftablesFirewallBackend.deriveInternalCidrs', () => {
 });
 
 describe('NftablesFirewallBackend.toReachabilityError', () => {
-  const backend = new NftablesFirewallBackend(
-    {} as any,
-    {} as any,
-    {} as any,
-    {} as any,
-  );
+  const backend = new NftablesFirewallBackend({} as any, {} as any, {} as any);
   const target = { host: '127.0.0.1', port: 2222, user: 'root' };
   const map = (msg: string) =>
     (backend as any).toReachabilityError(new Error(msg), target) as Error;
