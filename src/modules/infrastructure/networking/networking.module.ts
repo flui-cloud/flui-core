@@ -10,6 +10,7 @@ import { WireGuardReconciliationScheduler } from './schedulers/wireguard-reconci
 import { ClusterEntity } from '../clusters/entities/cluster.entity';
 import { InfrastructureOperationEntity } from '../servers/entities/infrastructure-operations.entity';
 import { ProvidersModule } from '../../providers/providers.module';
+import { SharedInfrastructureModule } from '../shared/shared-infrastructure.module';
 
 /**
  * The management overlay: who is on it, at which address, with which key.
@@ -33,6 +34,7 @@ import { ProvidersModule } from '../../providers/providers.module';
     // For HostCommandService: the overlay reaches a node the same way the host
     // firewall does, rather than growing an SSH path of its own.
     ProvidersModule,
+    SharedInfrastructureModule,
   ],
   providers: [
     WireGuardPeerService,
