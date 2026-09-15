@@ -63,6 +63,25 @@ export class WireGuardPeerService {
    */
   async pool(): Promise<WireGuardAddressPool> {
     const known = await this.vnets.find();
+
+    // The management block of the Flui network, when there is one — not a
+    // parallel space alongside it, which would put two allocators over the
+    // same /16 and hand out addresses from a range nobody can see.
+    const fluiNetwork = known.find(
+      (v) => v.implementation === VNetImplementation.WIREGUARD,
+    );
+    const managementSubnet = (fluiNetwork?.subnets ?? []).find(
+      (s) => s.networkZone === 'management',
+    );
+    if (managementSubnet) {
+      const others = known
+        .flatMap((v) => (v.subnets ?? []).map((s) => s.ipRange))
+        .filter((c): c is string => !!c && c !== managementSubnet.ipRange);
+      return new WireGuardAddressPool(managementSubnet.ipRange, others);
+    }
+
+    // Before the network exists — the first boot of an installation, and every
+    // installation that predates it.
     const cidrs = known
       .flatMap((v) => [v.ipRange, ...(v.subnets ?? []).map((s) => s.ipRange)])
       .filter((c): c is string => !!c);

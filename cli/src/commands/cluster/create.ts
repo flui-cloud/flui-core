@@ -53,16 +53,16 @@ export default class ClusterCreate extends Command {
     }),
     'flui-network': Flags.boolean({
       description:
-        'Have Flui build the private network instead of using one the provider ' +
-        'offers. For machines that share no network: every node gets an address ' +
-        'on an encrypted mesh and K3s binds to it, so traffic between pods stops ' +
-        'crossing the internet in the clear.',
+        'No-op: on a provider that offers no private network of its own, Flui ' +
+        'builds one either way — every node gets an address on an encrypted ' +
+        'mesh and K3s binds to it, so traffic between pods stops crossing the ' +
+        'internet in the clear. On a provider that has one, Flui uses that.',
       default: false,
     }),
     'network-cidr': Flags.string({
       description:
-        'Range for the network Flui builds (implies --flui-network). Defaults ' +
-        'to 10.201.0.0/24.',
+        'Range for the network Flui builds, if the default would collide with ' +
+        'something you already run. Defaults to 10.250.0.0/16.',
     }),
     vnet: Flags.string({
       description:
@@ -132,8 +132,8 @@ export default class ClusterCreate extends Command {
     const fluiNetwork = flags['flui-network'] || !!flags['network-cidr'];
     if (fluiNetwork && flags.vnet) {
       this.error(
-        'Choose one: --flui-network builds a network, --vnet attaches to one ' +
-          'that already exists.',
+        'Choose one: --vnet attaches to a network that already exists, and ' +
+          '--network-cidr sets the range of the one Flui builds.',
         { exit: 1 },
       );
     }

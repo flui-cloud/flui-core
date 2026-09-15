@@ -50,6 +50,23 @@ export class CliByosPurgeService {
       '  systemctl disable --now "$svc" 2>/dev/null || true',
       '  rm -f /etc/systemd/system/"$svc".service',
       'done',
+      // Left behind this is not inert: `wg-quick@flui0` stays enabled and
+      // raises an interface at every boot on a machine where Flui no longer
+      // exists, holding a private key nobody manages any more.
+      'if [ -d /etc/wireguard ]; then',
+      '  for conf in /etc/wireguard/flui*.conf; do',
+      '    [ -e "$conf" ] || continue',
+      '    iface=$(basename "$conf" .conf)',
+      '    wg-quick down "$conf" >/dev/null 2>&1 || ip link delete "$iface" 2>/dev/null || true',
+      '    systemctl disable "wg-quick@$iface" >/dev/null 2>&1 || true',
+      '  done',
+      '  rm -f /etc/wireguard/flui*.conf /etc/wireguard/flui*.key /etc/wireguard/flui*.pub',
+      '  echo "[flui-purge] management tunnel removed"',
+      'fi',
+      // K3s keeps its node password here, and a fresh install that mints a
+      // different one is refused with "Node password rejected".
+      'rm -rf /etc/rancher/node /etc/rancher/flui-resolv.conf',
+      'rmdir /etc/rancher 2>/dev/null || true',
       'systemctl daemon-reload 2>/dev/null || true',
       'rm -f /usr/local/bin/node_exporter /usr/local/bin/vector',
       'userdel node_exporter 2>/dev/null || true',

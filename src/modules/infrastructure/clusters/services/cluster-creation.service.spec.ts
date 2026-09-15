@@ -14,6 +14,7 @@ describe('ClusterCreationService.createCluster — provider policies', () => {
       vnetRequired: boolean;
       crossClusterAllowed: boolean;
       firewall?: { backend: string };
+      supportsFluiManagedVNet?: boolean;
     };
     observabilityCluster?: unknown;
     envVnetProvider?: CloudProvider;
@@ -66,7 +67,7 @@ describe('ClusterCreationService.createCluster — provider policies', () => {
       ensureClusterVNet: jest.fn().mockResolvedValue({
         vnetId: 'vnet-flui',
         subnetId: 'sub-flui',
-        ipRange: '10.201.0.0/24',
+        ipRange: '10.250.0.0/24',
         attachedNodes: 0,
         warnings: [],
       }),
@@ -123,32 +124,36 @@ describe('ClusterCreationService.createCluster — provider policies', () => {
     expect(firewallIntegration.createAndReconcileFirewall).toHaveBeenCalled();
   });
 
-  it('builds the network before queuing, when asked to build one', async () => {
-    // Before, not after: the first node reserves its address on this network
-    // while it is being provisioned, and one that arrived later would leave the
-    // master with a --node-ip nobody assigned.
+  it('builds the network before queuing, on a provider that has none', async () => {
+    // Unconditional on such a provider, and before the job is queued: the
+    // first node reserves its address while it is being provisioned.
     const { service, byosVNet } = build({
-      capabilities: { vnetRequired: true, crossClusterAllowed: false },
+      capabilities: {
+        vnetRequired: true,
+        crossClusterAllowed: false,
+        supportsFluiManagedVNet: true,
+      },
       observabilityCluster: { provider: CloudProvider.HETZNER },
     });
 
     await service.createCluster({
       ...baseDto,
-      fluiManagedNetwork: { ipRange: '10.201.0.0/24' },
+      fluiManagedNetwork: { ipRange: '10.202.0.0/16' },
     } as never);
 
     expect(byosVNet.ensureClusterVNet).toHaveBeenCalledWith(
       'cluster-1',
-      expect.objectContaining({
-        implementation: 'wireguard',
-        ipRange: '10.201.0.0/24',
-      }),
+      expect.objectContaining({ ipRange: '10.202.0.0/16' }),
     );
   });
 
-  it('builds nothing when not asked to', async () => {
+  it('leaves the network to the provider that has one', async () => {
     const { service, byosVNet } = build({
-      capabilities: { vnetRequired: true, crossClusterAllowed: false },
+      capabilities: {
+        vnetRequired: true,
+        crossClusterAllowed: false,
+        supportsFluiManagedVNet: false,
+      },
       observabilityCluster: { provider: CloudProvider.HETZNER },
     });
 

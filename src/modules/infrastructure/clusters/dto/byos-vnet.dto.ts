@@ -1,13 +1,13 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import { IsEnum, IsOptional, IsString, Matches } from 'class-validator';
-import { VNetImplementation } from '../../vnets/entities/vnet.entity';
+import { IsOptional, IsString, Matches } from 'class-validator';
 
 export class EnsureByosVNetDto {
   @ApiPropertyOptional({
     description:
-      'CIDR of the private network the nodes share. Omit to derive it from ' +
-      'the cluster (existing declaration, or the /24 of the master private IP).',
-    example: '10.0.0.0/24',
+      'Range for the network Flui builds, if the default would collide with ' +
+      'something you already run. Not a description of a network you have: ' +
+      'Flui never infers one from an address a machine happens to carry.',
+    example: '10.250.0.0/16',
   })
   @IsOptional()
   @IsString()
@@ -15,17 +15,4 @@ export class EnsureByosVNetDto {
     message: 'ipRange must be a CIDR, e.g. 10.0.0.0/24',
   })
   ipRange?: string;
-
-  @ApiPropertyOptional({
-    description:
-      'Who builds the network. `provider-native` (the default) records one ' +
-      'the operator already wired; `wireguard` has Flui build it and assign ' +
-      'every node an address on it — for an estate whose machines share no ' +
-      'network, where pod traffic would otherwise cross the internet in clear.',
-    enum: VNetImplementation,
-    example: VNetImplementation.WIREGUARD,
-  })
-  @IsOptional()
-  @IsEnum(VNetImplementation)
-  implementation?: VNetImplementation;
 }

@@ -1857,7 +1857,6 @@ const MASK_EXEMPT: string[] = [
   'DrainCheckDto.cleared', // modules/infrastructure/scaling/dto/scaling-response.dto.ts
   'DrainCheckDto.ok', // modules/infrastructure/scaling/dto/scaling-response.dto.ts
   'EnableProviderDto.enabled', // modules/management/dto/enable-provider.dto.ts
-  'EnsureByosVNetDto.implementation', // modules/infrastructure/clusters/dto/byos-vnet.dto.ts
   'EnsureByosVNetDto.ipRange', // modules/infrastructure/clusters/dto/byos-vnet.dto.ts
   'EnvVarCandidateDto.detectedPattern', // modules/frameworks/env-var-detection/dto/env-var-detection.dto.ts
   'EnvVarCandidateDto.sourceFile', // modules/frameworks/env-var-detection/dto/env-var-detection.dto.ts

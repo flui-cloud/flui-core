@@ -31,7 +31,7 @@ export const RELEASE: ReleaseManifest = {
   // heads of bootstrap-scripts, flui-core and flui-dashboard.
   bootstrapRef: 'a5d6dfa',
   images: {
-    fluiApi: '8b899e9',
+    fluiApi: 'd46e976',
     fluiWeb: '010e973',
     // Unchanged: that repository did not move.
     fluiAuthz: '0.6.0',

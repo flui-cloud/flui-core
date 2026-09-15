@@ -55,14 +55,15 @@ export class VNetConfigDto {
 export class FluiManagedNetworkDto {
   @ApiPropertyOptional({
     description:
-      'CIDR for the network Flui builds. Omit for the default — it is not ' +
-      'derived from any address the nodes have, because they have none.',
-    example: '10.201.0.0/24',
+      'Range for the network Flui builds, if the default would collide with ' +
+      'something you already run. Never derived from an address a machine ' +
+      'happens to carry.',
+    example: '10.250.0.0/16',
   })
   @IsOptional()
   @IsString()
   @Matches(/^[0-9a-fA-F:.]+\/\d{1,3}$/, {
-    message: 'ipRange must be a CIDR, e.g. 10.201.0.0/24',
+    message: 'ipRange must be a CIDR, e.g. 10.250.0.0/16',
   })
   ipRange?: string;
 }
@@ -274,11 +275,11 @@ export class CreateClusterDto {
 
   @ApiPropertyOptional({
     description:
-      'Ask Flui to build the private network instead of attaching to one the ' +
-      'provider offers. For an estate whose machines share no network — every ' +
-      'node gets an address on an encrypted mesh and K3s binds to it, so pod ' +
-      'traffic stops crossing the internet in clear. Only on providers that ' +
-      'declare `supportsFluiManagedVNet`.',
+      'Settings for the network Flui builds. On a provider that offers no ' +
+      'private network of its own (`supportsFluiManagedVNet`) Flui builds one ' +
+      'either way — every node gets an address on an encrypted mesh and K3s ' +
+      'binds to it, so pod traffic stops crossing the internet in clear. This ' +
+      'only chooses the range; on any other provider it is ignored.',
     type: () => FluiManagedNetworkDto,
   })
   @IsOptional()

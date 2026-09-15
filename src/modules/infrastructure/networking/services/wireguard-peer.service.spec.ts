@@ -384,6 +384,59 @@ describe('WireGuardPeerService', () => {
     });
   });
 
+  describe('the management block of the Flui network', () => {
+    const fluiNetwork = (over: Record<string, unknown> = {}) => ({
+      find: async () => [
+        {
+          id: 'flui',
+          name: 'flui-network',
+          provider: 'byos',
+          ipRange: '10.250.0.0/16',
+          implementation: 'wireguard',
+          subnets: [
+            {
+              id: 'sub-mgmt',
+              ipRange: '10.250.0.0/24',
+              networkZone: 'management',
+            },
+            {
+              id: 'sub-a',
+              ipRange: '10.250.1.0/24',
+              networkZone: 'flui-managed',
+            },
+          ],
+          ...over,
+        },
+      ],
+    });
+
+    it('allocates from the visible management subnet, not a parallel space', async () => {
+      svc = new WireGuardPeerService(peers as any, fluiNetwork() as any);
+      const control = await svc.ensureControlPeer({
+        clusterId: 'ctl',
+        publicKey: KEY_A,
+        endpointHost: '1.1.1.1',
+      });
+      expect(control.managementIp).toBe('10.250.0.1');
+    });
+
+    it('never hands out an address that belongs to a cluster subnet', async () => {
+      // Two allocators over one /16 would collide; the management block is a
+      // /24 of it and the rest is somebody's.
+      svc = new WireGuardPeerService(peers as any, fluiNetwork() as any);
+      const pool = await svc.pool();
+      expect(pool.range).toBe('10.250.0.0/24');
+      expect(pool.contains('10.250.1.5')).toBe(false);
+    });
+
+    it('falls back to the flat pool before the network exists', async () => {
+      // The first boot of an installation, and every installation older than
+      // this design.
+      svc = new WireGuardPeerService(peers as any, vnets() as any);
+      expect((await svc.pool()).range).toBe('10.250.0.0/16');
+    });
+  });
+
   describe('a Flui-managed subnet', () => {
     beforeEach(() => {
       svc = new WireGuardPeerService(peers as any, managedVnets() as any);

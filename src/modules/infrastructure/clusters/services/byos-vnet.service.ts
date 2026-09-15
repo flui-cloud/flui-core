@@ -7,22 +7,22 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { ClusterEntity } from '../entities/cluster.entity';
-import { ClusterNodeEntity, NodeType } from '../entities/cluster-node.entity';
+import { ClusterNodeEntity } from '../entities/cluster-node.entity';
 import { VNetsService } from '../../vnets/services/vnets.service';
 import { SubnetsService } from '../../vnets/services/subnets.service';
 import { CloudProvider } from '../../../providers/enums/cloud-provider.enum';
-import { VNetImplementation } from '../../vnets/entities/vnet.entity';
+import { VNetEntity } from '../../vnets/entities/vnet.entity';
+import { VNetSubnetEntity } from '../../vnets/entities/vnet-subnet.entity';
+import { nextFreeBlock } from '../../networking/wireguard-address-pool';
 import { WireGuardPeerService } from '../../networking/services/wireguard-peer.service';
 import { CapabilitiesProviderFactory } from '../../../providers/core/factories/capabilities-provider.factory';
 
 /**
- * Where a Flui-built node network lives when nobody picks one.
- *
- * Inside 10/8 but far from both the k3s pod and service ranges and from the
- * addresses providers hand out in their own private networks, so a cluster that
- * later gains a real LAN does not find Flui already sitting on it.
+ * One `/24` per cluster: 254 nodes is far past anything this serves, and a /16
+ * then holds 256 clusters. Sized for legibility rather than density — an
+ * operator reading `10.250.3.7` should be able to tell which cluster that is.
  */
-export const DEFAULT_MANAGED_NODE_NETWORK = '10.201.0.0/24';
+export const CLUSTER_SUBNET_PREFIX = 24;
 
 export interface EnsureByosVNetResult {
   vnetId: string;
@@ -48,82 +48,55 @@ export class ByosVNetService {
   ) {}
 
   /**
-   * Registers the cluster's private network, whether the operator wired one or
-   * Flui has to build it.
+   * Puts this cluster on the network Flui builds, and gives every node of it an
+   * address there.
    *
-   * The same flow serves both because the difference is narrow: where a node's
-   * private address comes from. With an operator-wired LAN the node already has
-   * one and Flui records it; with a Flui-built network there is none, so Flui
-   * assigns it out of the subnet and the node reaches its siblings through the
-   * tunnel that address lives on.
+   * One network for the installation, one subnet per cluster. The subnet is the
+   * isolation domain — nodes peer with the siblings of their own subnet and
+   * with the control cluster, and with nobody else — which is why a cluster
+   * does not get to pick one: two clusters sharing a subnet would silently join
+   * their node networks.
    *
-   * Not a provider capability, deliberately. The same provider serves both
-   * estates — one operator has a LAN, the next has four machines in four
-   * datacentres — so the answer belongs to the cluster, not to a static table
-   * that would have to lie for one of them.
+   * Nothing here is inferred from an address the machine already has: on any
+   * host running containers that address is a container bridge, and two such
+   * hosts would both report the same range while sharing nothing.
    */
   async ensureClusterVNet(
     clusterId: string,
-    opts: { ipRange?: string; implementation?: VNetImplementation } = {},
+    opts: { ipRange?: string } = {},
   ): Promise<EnsureByosVNetResult> {
     const cluster = await this.clusterRepository.findOne({
       where: { id: clusterId },
       relations: ['nodes'],
     });
     if (!cluster) throw new NotFoundException(`Cluster ${clusterId} not found`);
-    const implementation =
-      opts.implementation ?? VNetImplementation.PROVIDER_NATIVE;
-    const fluiBuilt = implementation === VNetImplementation.WIREGUARD;
 
-    if (fluiBuilt) {
-      // Asked of the provider rather than assumed from its name: the estates
-      // that need a network built for them are the ones whose provider offers
-      // none, and that is a property of the provider, not of BYOS in
-      // particular — Contabo is in exactly the same position.
-      const capabilities = this.capabilitiesFactory
-        .getCapabilitiesService(cluster.provider as CloudProvider)
-        .getStaticCapabilities();
-      if (!capabilities.supportsFluiManagedVNet) {
-        throw new BadRequestException(
-          `${cluster.provider} builds private networks of its own — Flui will ` +
-            `not build a second one over the top. Attach the cluster to a ` +
-            `${cluster.provider} network instead.`,
-        );
-      }
-    } else if (cluster.provider !== CloudProvider.BYOS) {
+    // Asked of the provider rather than assumed from its name: the estates that
+    // need a network built for them are the ones whose provider offers none,
+    // and that is a property of the provider — Contabo is in the same position
+    // as BYOS, while Hetzner and Scaleway have their own and must keep it.
+    const capabilities = this.capabilitiesFactory
+      .getCapabilitiesService(cluster.provider as CloudProvider)
+      .getStaticCapabilities();
+    if (!capabilities.supportsFluiManagedVNet) {
       throw new BadRequestException(
-        'Manual VNet registration is only supported for BYOS clusters.',
+        `${cluster.provider} builds private networks of its own — Flui will ` +
+          `not build a second one over the top. Attach the cluster to a ` +
+          `${cluster.provider} network instead.`,
       );
     }
-    const ipRange = fluiBuilt
-      ? this.resolveManagedRange(cluster, opts.ipRange)
-      : this.resolveIpRange(cluster, opts.ipRange);
 
-    const vnet = await this.vnetsService.registerManualVNet({
-      clusterId,
-      // The cluster's own provider, not BYOS: a Flui-built network serves any
-      // provider that offers none, and a row claiming the wrong one is a lie
-      // every later lookup inherits.
-      provider: cluster.provider as CloudProvider,
-      name: `${cluster.name}-net`,
-      ipRange,
-      implementation,
-    });
-    const subnet = vnet.subnets[0];
-    if (!subnet) {
-      throw new BadRequestException(
-        `Manual VNet ${vnet.id} has no subnet — cannot attach nodes.`,
-      );
-    }
+    const network = await this.vnetsService.ensureFluiNetwork(opts.ipRange);
+    const subnet = await this.ensureClusterSubnet(network, cluster);
 
     const metadata = {
       ...cluster.metadata,
       vnetConfig: {
         ...(cluster.metadata as any)?.vnetConfig,
-        vnetId: vnet.id,
+        vnetId: network.id,
         subnetId: subnet.id,
       },
-      byos: { ...(cluster.metadata as any)?.byos, nodeNetwork: ipRange },
+      byos: { ...(cluster.metadata as any)?.byos, nodeNetwork: subnet.ipRange },
     };
     await this.clusterRepository.update(clusterId, { metadata });
 
@@ -132,17 +105,14 @@ export class ByosVNetService {
     for (const node of cluster.nodes ?? []) {
       // Reserved before the tunnel exists, so the address can go into the API
       // server certificate at first boot instead of after a restart.
-      const ip = fluiBuilt
-        ? (
-            await this.wireguard.reserveAddress({
-              clusterId,
-              nodeId: node.id,
-              subnetId: subnet.id,
-            })
-          ).managementIp
-        : node.privateIp?.trim();
-      if (!ip) continue;
-      if (fluiBuilt && node.privateIp !== ip) {
+      const ip = (
+        await this.wireguard.reserveAddress({
+          clusterId,
+          nodeId: node.id,
+          subnetId: subnet.id,
+        })
+      ).managementIp;
+      if (node.privateIp !== ip) {
         await this.nodeRepository.update(node.id, { privateIp: ip });
       }
       try {
@@ -159,21 +129,50 @@ export class ByosVNetService {
           `Node ${node.serverName} (${ip}) not attached: ${(e as Error).message}`,
         );
         this.logger.warn(
-          `BYOS VNet attach skipped for ${node.serverName}: ${(e as Error).message}`,
+          `Flui network attach skipped for ${node.serverName}: ${(e as Error).message}`,
         );
       }
     }
 
     this.logger.log(
-      `BYOS VNet ensured for cluster ${clusterId}: ${ipRange} (vnet ${vnet.id}, ${attached} node(s) attached)`,
+      `Cluster ${clusterId} is on the Flui network at ${subnet.ipRange} ` +
+        `(${attached} node(s) addressed)`,
     );
     return {
-      vnetId: vnet.id,
+      vnetId: network.id,
       subnetId: subnet.id,
-      ipRange,
+      ipRange: subnet.ipRange,
       attachedNodes: attached,
       warnings,
     };
+  }
+
+  /**
+   * The block this cluster's nodes live on.
+   *
+   * Allocated once and remembered: the addresses inside it are already in
+   * certificates and in other nodes' peer configs, so a cluster that came back
+   * on a different block would be a different cluster to everyone else.
+   */
+  private async ensureClusterSubnet(
+    network: VNetEntity,
+    cluster: ClusterEntity,
+  ): Promise<VNetSubnetEntity> {
+    const recorded = (
+      cluster.metadata as { vnetConfig?: { subnetId?: string } } | null
+    )?.vnetConfig?.subnetId;
+    const existing = (network.subnets ?? []).find((s) => s.id === recorded);
+    if (existing) return existing;
+
+    const taken = (network.subnets ?? []).map((s) => s.ipRange);
+    const block = nextFreeBlock(network.ipRange, taken, CLUSTER_SUBNET_PREFIX);
+    if (!block) {
+      throw new BadRequestException(
+        `The Flui network ${network.ipRange} has no free /${CLUSTER_SUBNET_PREFIX} ` +
+          `left — ${taken.length} clusters are already on it.`,
+      );
+    }
+    return this.vnetsService.ensureManualSubnet(network.id, block);
   }
 
   async attachNode(
@@ -201,46 +200,5 @@ export class ByosVNetService {
     await this.subnetsService.detachServerFromSubnet(subnetId, {
       serverId: node.id,
     });
-  }
-
-  private resolveIpRange(cluster: ClusterEntity, override?: string): string {
-    if (override?.trim()) return override.trim();
-
-    const declared = (cluster.metadata as any)?.byos?.nodeNetwork;
-    if (typeof declared === 'string' && declared.trim()) return declared.trim();
-
-    const master = (cluster.nodes ?? []).find(
-      (n) => n.nodeType === NodeType.MASTER,
-    );
-    const masterIp = master?.privateIp || cluster.masterIpAddress;
-    const slash24 = this.toSlash24(masterIp);
-    if (slash24) return slash24;
-
-    throw new BadRequestException(
-      'Cannot determine the private network CIDR — pass ipRange (the subnet your nodes share).',
-    );
-  }
-
-  /**
-   * The range for a network Flui builds.
-   *
-   * Never derived from an address a node already has: guessing a range out of
-   * a public IP would produce one the operator never chose.
-   */
-  private resolveManagedRange(
-    cluster: ClusterEntity,
-    override?: string,
-  ): string {
-    if (override?.trim()) return override.trim();
-    const declared = (cluster.metadata as any)?.byos?.nodeNetwork;
-    if (typeof declared === 'string' && declared.trim()) return declared.trim();
-    return DEFAULT_MANAGED_NODE_NETWORK;
-  }
-
-  private toSlash24(ip?: string): string | undefined {
-    const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.\d{1,3}$/.exec(
-      (ip ?? '').trim(),
-    );
-    return m ? `${m[1]}.${m[2]}.${m[3]}.0/24` : undefined;
   }
 }

@@ -12,6 +12,7 @@ import {
   VNetStatus,
 } from '../entities/vnet.entity';
 import { VNetSubnetEntity, SubnetType } from '../entities/vnet-subnet.entity';
+
 import { VNetRouteEntity } from '../entities/vnet-route.entity';
 import { ProviderFactory } from 'src/modules/providers/services/provider.factory';
 import { CapabilitiesProviderFactory } from 'src/modules/providers/core/factories/capabilities-provider.factory';
@@ -23,6 +24,26 @@ import { DeleteSubnetDto } from '../dto/delete-subnet.dto';
 import { SubnetCalculator } from '../utils/subnet-calculator';
 import { AddSubnetResult } from 'src/modules/providers/interfaces/network-provider.interface';
 import * as ipaddr from 'ipaddr.js';
+
+/** One row per installation, found by this id rather than by name. */
+export const FLUI_NETWORK_RESOURCE_ID = 'flui-managed';
+
+/**
+ * Inside 10/8 but clear of the ranges already spoken for on a typical host:
+ * k3s pods and services (10.42, 10.43), Podman's default bridge (10.88) and
+ * Docker's (172.17). A collision there works until one packet takes the wrong
+ * route.
+ */
+export const DEFAULT_FLUI_NETWORK_RANGE = '10.250.0.0/16';
+
+export const MANAGEMENT_SUBNET_PREFIX = 24;
+
+/** Always the first block of the network, so it is the same address whatever
+ *  else has been allocated since. */
+export function managementBlock(networkRange: string): string {
+  const base = networkRange.split('/')[0];
+  return `${base}/${MANAGEMENT_SUBNET_PREFIX}`;
+}
 
 @Injectable()
 export class VNetsService {
@@ -362,6 +383,91 @@ export class VNetsService {
       `Registered manual VNet "${input.name}" (${input.ipRange}) for cluster ${input.clusterId}`,
     );
     return this.getVNet(savedVNet.id);
+  }
+
+  /**
+   * The one network Flui builds for this installation.
+   *
+   * One row, not one per cluster: the network is inherently cross-cluster, and
+   * a network per cluster would leave the control-to-workload path belonging to
+   * neither — invisible in exactly the place an operator would look for it.
+   *
+   * `provider: byos` is not a lie about the machines: on a *network* row the
+   * question is whose network this is, and nobody's cloud is what BYOS means.
+   * `implementation` carries the rest.
+   */
+  async ensureFluiNetwork(ipRange?: string): Promise<VNetEntity> {
+    const existing = await this.vnetRepository.findOne({
+      where: { providerResourceId: FLUI_NETWORK_RESOURCE_ID },
+      relations: ['subnets'],
+    });
+    if (existing) return existing;
+
+    const range = ipRange?.trim() || DEFAULT_FLUI_NETWORK_RANGE;
+    this.assertValidCidr(range);
+    const vnet = await this.vnetRepository.save(
+      this.vnetRepository.create({
+        providerResourceId: FLUI_NETWORK_RESOURCE_ID,
+        name: 'flui-network',
+        provider: CloudProvider.BYOS,
+        ipRange: range,
+        implementation: VNetImplementation.WIREGUARD,
+        status: VNetStatus.ACTIVE,
+        labels: [
+          { key: 'managed-by', value: 'flui-cloud' },
+          { key: 'flui-resource-type', value: 'vnet' },
+          { key: 'flui-vnet-name', value: 'flui-network' },
+          { key: 'flui-vnet-scope', value: 'flui-managed' },
+        ],
+        metadata: { fluiManaged: true },
+      }),
+    );
+    // Reserved from the start for the addresses that are only ever management:
+    // the control's own end, and nodes whose provider already gives them a
+    // network. Those hold a single peer each — the control — so sharing a
+    // subnet costs them no isolation.
+    await this.ensureManualSubnet(
+      vnet.id,
+      managementBlock(range),
+      'management',
+    );
+    this.logger.log(`Flui network created (${range})`);
+    return this.getVNetEntity(vnet.id);
+  }
+
+  /**
+   * Records a subnet inside a network Flui built.
+   *
+   * Never reaches a provider: there is nothing to create anywhere. The row *is*
+   * the subnet, and what enforces it is the peer configuration each node gets.
+   */
+  async ensureManualSubnet(
+    vnetId: string,
+    ipRange: string,
+    networkZone = 'flui-managed',
+  ): Promise<VNetSubnetEntity> {
+    const existing = await this.subnetRepository.findOne({
+      where: { vnetId, ipRange },
+    });
+    if (existing) return existing;
+    return this.subnetRepository.save(
+      this.subnetRepository.create({
+        vnetId,
+        ipRange,
+        type: SubnetType.MANUAL,
+        networkZone,
+        attachedServerIds: [],
+      }),
+    );
+  }
+
+  private async getVNetEntity(id: string): Promise<VNetEntity> {
+    const vnet = await this.vnetRepository.findOne({
+      where: { id },
+      relations: ['subnets'],
+    });
+    if (!vnet) throw new NotFoundException(`VNet ${id} not found`);
+    return vnet;
   }
 
   private buildManualSubnet(vnetId: string, ipRange: string): VNetSubnetEntity {

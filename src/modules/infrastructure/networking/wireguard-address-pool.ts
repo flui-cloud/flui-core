@@ -49,6 +49,45 @@ export function cidrsOverlap(a: string, b: string): boolean {
 }
 
 /**
+ * The next free block of `prefix` bits inside `network`.
+ *
+ * Deliberately not `SubnetCalculator.calculateNextSubnetRange`, which does the
+ * same arithmetic through an ESM-only dependency Jest cannot parse — every spec
+ * that touches it has to mock the module away, which is a poor trade for twenty
+ * lines of shifts.
+ *
+ * Blocks are handed out lowest-first and a released one is reused: unlike a
+ * peer address, a subnet carries no identity a stale config elsewhere could
+ * still name, so there is nothing to protect by burning it.
+ */
+export function nextFreeBlock(
+  network: string,
+  taken: string[],
+  prefix: number,
+): string | null {
+  const net = parseCidr(network);
+  if (prefix < net.prefix || prefix > 32) {
+    throw new BadRequestException(
+      `A /${prefix} does not fit inside ${network}`,
+    );
+  }
+  const used = new Set(
+    taken
+      .filter((t) => !!t)
+      .map((t) => parseCidr(t))
+      .filter((t) => (t.base & maskOf(net.prefix)) === net.base)
+      .map((t) => t.base & maskOf(prefix)),
+  );
+  const step = prefix === 0 ? 0 : (~maskOf(prefix) >>> 0) + 1;
+  const last = (net.base | (~maskOf(net.prefix) >>> 0)) >>> 0;
+  for (let base = net.base; base <= last; base += step) {
+    if (!used.has(base)) return `${formatIp(base)}/${prefix}`;
+    if (base + step > last) break;
+  }
+  return null;
+}
+
+/**
  * Whether an address falls inside a range.
  *
  * Deliberately not `SubnetCalculator`, which pulls in an ESM-only dependency:

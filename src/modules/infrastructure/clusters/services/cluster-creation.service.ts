@@ -179,23 +179,25 @@ export class ClusterCreationService {
     const savedCluster = await this.clusterRepository.save(cluster);
     this.logger.log(`Cluster record created: ${savedCluster.id}`);
 
+    // Unconditional on a provider that has no private network of its own:
+    // deriving one from an address the machine happens to carry is guessing,
+    // and on any host running containers the guess is a container bridge. The
+    // only choice left is the range, and only to dodge a collision.
+    //
     // Before the job is queued, not after: the first node reserves its address
-    // on this network while it is being provisioned, and a network that
-    // arrives later would leave the master with a `--node-ip` nobody assigned.
-    if (dto.fluiManagedNetwork) {
+    // on this network while it is being provisioned, and a network that arrives
+    // later would leave the master with a `--node-ip` nobody assigned.
+    if (this.buildsItsOwnNetwork(dto.provider)) {
       const built = await this.byosVNetService.ensureClusterVNet(
         savedCluster.id,
-        {
-          implementation: VNetImplementation.WIREGUARD,
-          ipRange: dto.fluiManagedNetwork.ipRange,
-        },
+        { ipRange: dto.fluiManagedNetwork?.ipRange },
       );
       savedCluster.metadata = {
         ...savedCluster.metadata,
         vnetConfig: { vnetId: built.vnetId, subnetId: built.subnetId },
       };
       this.logger.log(
-        `Cluster ${dto.name} will run on a Flui-built network (${built.ipRange})`,
+        `Cluster ${dto.name} is on the Flui network at ${built.ipRange}`,
       );
     }
 
@@ -327,6 +329,13 @@ export class ClusterCreationService {
         controlIps,
       ),
     );
+  }
+
+  /** Whether this provider leaves Flui to build the private network. */
+  private buildsItsOwnNetwork(provider: CloudProvider): boolean {
+    return !!this.capabilitiesFactory
+      .getCapabilitiesService(provider)
+      .getStaticCapabilities().supportsFluiManagedVNet;
   }
 
   /**

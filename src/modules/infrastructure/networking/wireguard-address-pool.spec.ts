@@ -1,6 +1,7 @@
 import { BadRequestException } from '@nestjs/common';
 import {
   cidrContains,
+  nextFreeBlock,
   cidrsOverlap,
   formatIp,
   parseIp,
@@ -113,5 +114,42 @@ describe('cidrContains', () => {
   it('handles a range that is a single address', () => {
     expect(cidrContains('10.60.1.7/32', '10.60.1.7')).toBe(true);
     expect(cidrContains('10.60.1.7/32', '10.60.1.8')).toBe(false);
+  });
+});
+
+describe('nextFreeBlock', () => {
+  it('hands out the first block of a fresh network', () => {
+    expect(nextFreeBlock('10.250.0.0/16', [], 24)).toBe('10.250.0.0/24');
+  });
+
+  it('skips the blocks already handed out', () => {
+    expect(
+      nextFreeBlock('10.250.0.0/16', ['10.250.0.0/24', '10.250.1.0/24'], 24),
+    ).toBe('10.250.2.0/24');
+  });
+
+  it('reuses a gap rather than always growing', () => {
+    // A subnet carries no identity a stale config could still name, so unlike
+    // a peer address there is nothing to protect by burning it.
+    expect(
+      nextFreeBlock('10.250.0.0/16', ['10.250.0.0/24', '10.250.2.0/24'], 24),
+    ).toBe('10.250.1.0/24');
+  });
+
+  it('ignores blocks that belong to another network', () => {
+    expect(nextFreeBlock('10.250.0.0/16', ['10.99.0.0/24'], 24)).toBe(
+      '10.250.0.0/24',
+    );
+  });
+
+  it('answers nothing when the network is full', () => {
+    const taken = ['10.250.0.0/25', '10.250.0.128/25'];
+    expect(nextFreeBlock('10.250.0.0/24', taken, 25)).toBeNull();
+  });
+
+  it('refuses a block that cannot fit', () => {
+    expect(() => nextFreeBlock('10.250.0.0/24', [], 16)).toThrow(
+      /does not fit/,
+    );
   });
 });
