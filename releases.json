@@ -2,6 +2,19 @@
   "schemaVersion": 1,
   "releases": [
     {
+      "version": "0.13.0-rc.4",
+      "publishedAt": "2026-09-15T17:25:40+02:00",
+      "bootstrapRef": "a5d6dfa",
+      "images": {
+        "fluiApi": "8b899e9",
+        "fluiWeb": "010e973",
+        "fluiAuthz": "0.6.0"
+      },
+      "notes": [],
+      "migrations": 3,
+      "requiresBootstrap": true
+    },
+    {
       "version": "0.13.0-rc.3",
       "publishedAt": "2026-09-11T07:59:26+02:00",
       "bootstrapRef": "4957101",
@@ -42,8 +55,8 @@
         "fluiAuthz": "0.6.0"
       },
       "notes": [
-        "Cluster rebuild — recover a lost cluster from its last backup without recreating apps by hand.",
-        "Backup quick setup — one command wires a destination, a policy and the first job.",
+        "Cluster rebuild \u2014 recover a lost cluster from its last backup without recreating apps by hand.",
+        "Backup quick setup \u2014 one command wires a destination, a policy and the first job.",
         "MariaDB point-in-time restore joins the Postgres continuous-backup engine.",
         "Server adoption checks ownership before applying firewall rules."
       ],
