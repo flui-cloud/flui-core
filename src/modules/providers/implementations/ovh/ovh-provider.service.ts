@@ -116,7 +116,15 @@ flui_ovh_configure_private_nic() {
   flui_primary=$(ip -4 route show default 2>/dev/null | awk '{print $5; exit}')
   flui_nic=''
   flui_i=0
-  while [ "$flui_i" -lt 30 ]; do
+  # Ten minutes, against the sixty seconds this used to allow. OVH cannot give
+  # an instance its private interface at create time — asking leaves it stuck in
+  # BUILD — so Flui hot-attaches it once the server is ACTIVE, and that can land
+  # as late as four minutes after creation: 120s waiting for ACTIVE plus 120s
+  # watching the console for the guest to boot. The old bound expired first and
+  # the node carried on without a private network it was about to be told it
+  # had. There is nothing to race here: the node simply has to outwait the
+  # control plane, and the creation job allows thirty minutes for all of it.
+  while [ "$flui_i" -lt 300 ]; do
     for flui_path in /sys/class/net/*; do
       flui_dev=\${flui_path##*/}
       [ "$flui_dev" = "lo" ] && continue
@@ -132,8 +140,13 @@ flui_ovh_configure_private_nic() {
   done
 
   if [ -z "$flui_nic" ]; then
-    echo "[Bootstrap] OVH private NIC never appeared - no private networking"
-    return 0
+    # Loudly, not quietly. A node that proceeds without the interface binds
+    # K3s to its public address and looks healthy: the cluster forms, the pods
+    # schedule, and the traffic between them crosses the internet in the clear
+    # for the life of the node. A creation that fails here is recoverable; that
+    # is not.
+    echo "[Bootstrap] FATAL: OVH private network interface never appeared after 600s" >&2
+    return 1
   fi
 
   cat > /etc/netplan/60-flui-private.yaml <<FLUI_NETPLAN_EOF
@@ -151,17 +164,26 @@ FLUI_NETPLAN_EOF
   netplan apply || true
 
   flui_i=0
-  while [ "$flui_i" -lt 30 ]; do
+  while [ "$flui_i" -lt 60 ]; do
     ip -4 -o addr show dev "$flui_nic" 2>/dev/null | grep -q . && break
     flui_i=$((flui_i + 1))
     sleep 2
   done
   flui_addr=$(ip -4 -o addr show dev "$flui_nic" 2>/dev/null | awk '{print $4}')
-  echo "[Bootstrap] OVH private NIC $flui_nic: \${flui_addr:-none}"
+  if [ -z "$flui_addr" ]; then
+    # The interface is there but Neutron's DHCP never answered. Same reasoning
+    # as above: an interface with no address is not a private network.
+    echo "[Bootstrap] FATAL: OVH private NIC $flui_nic never received an address" >&2
+    return 1
+  fi
+  echo "[Bootstrap] OVH private NIC $flui_nic: $flui_addr"
 
   flui_ovh_wait_for_egress
 }
-flui_ovh_configure_private_nic || true
+if ! flui_ovh_configure_private_nic; then
+  echo "[Bootstrap] refusing to install onto a node with no private network" >&2
+  exit 1
+fi
 `;
 
 /**

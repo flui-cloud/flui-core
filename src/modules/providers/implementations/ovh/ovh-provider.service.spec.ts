@@ -429,6 +429,39 @@ describe('OvhProviderService.createServer — private NIC netplan injection', ()
     return infraCreateServer.mock.calls[0][0].user_data as string | undefined;
   }
 
+  it('outwaits the control plane rather than giving up first', async () => {
+    // The node used to allow sixty seconds while the attach can land as late
+    // as four minutes after creation — 120s waiting for ACTIVE plus 120s
+    // watching the console — so it gave up first and carried on without the
+    // network it was about to be given.
+    const userData = await userDataSentTo({
+      name: 'workload-2-master',
+      networks: ['region:net-1'],
+      user_data: BOOTSTRAP_SCRIPT,
+    });
+
+    expect(userData).toContain('-lt 300'); // 300 x 2s
+    expect(userData).not.toContain('flui_i" -lt 30 ]');
+  });
+
+  it('refuses to install rather than proceeding without a private network', async () => {
+    // Proceeding looks healthy: the cluster forms, the pods schedule, and the
+    // traffic between them crosses the internet in the clear for the life of
+    // the node. A creation that fails here is recoverable; that is not.
+    const userData = await userDataSentTo({
+      name: 'workload-2-master',
+      networks: ['region:net-1'],
+      user_data: BOOTSTRAP_SCRIPT,
+    });
+
+    expect(userData).toContain(
+      'FATAL: OVH private network interface never appeared',
+    );
+    expect(userData).toContain('exit 1');
+    // The old call swallowed every failure the function could report.
+    expect(userData).not.toContain('flui_ovh_configure_private_nic || true');
+  });
+
   it('declares the hot-attached NIC in netplan, ahead of the bootstrap script it leaves intact', async () => {
     const userData = await userDataSentTo({
       name: 'workload-2-master',
@@ -437,8 +470,10 @@ describe('OvhProviderService.createServer — private NIC netplan injection', ()
     });
 
     expect(userData.startsWith('#!/bin/bash\n')).toBe(true);
-    // Ahead of the script's own `set -euo pipefail`, so a failure here can
-    // never abort the bootstrap.
+    // Ahead of the script's own `set -euo pipefail`. That used to be the
+    // reason a failure here could not abort the bootstrap; now it exits
+    // explicitly instead, because a node without its private network must not
+    // install K3s at all.
     expect(userData.indexOf('flui_ovh_configure_private_nic')).toBeLessThan(
       userData.indexOf('set -euo pipefail'),
     );

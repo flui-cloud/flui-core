@@ -130,6 +130,13 @@ describe('OVH capabilities — the private network it actually has', () => {
     });
   });
 
+  it('demands a private network, like every provider that has one', () => {
+    // Without this the whole hot-attach wait never runs: no network means no
+    // `networks` on the create call, which means the netplan snippet is never
+    // injected and the node has nothing to wait for.
+    expect(topology().vnetRequired).toBe(true);
+  });
+
   it('does not ask Flui to build a network it already has', () => {
     expect(topology().supportsFluiManagedVNet).toBe(false);
   });

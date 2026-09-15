@@ -241,7 +241,13 @@ export class OvhCapabilitiesService implements IProviderCapabilitiesService {
         vnetIpRange: { minPrefix: 8, maxPrefix: 30 },
         subnetIpRange: { minPrefix: 8, maxPrefix: 30 },
       },
-      vnetRequired: false,
+      // Required, like every other provider that has a private network of its
+      // own. It was false while the declaration above was empty — with no
+      // topology to describe, demanding a network nobody could describe would
+      // have refused every OVH cluster. Now that the network is declared, a
+      // cluster without one is a cluster whose pods talk over the public
+      // internet, which is not a thing to allow by omission.
+      vnetRequired: true,
       crossClusterAllowed: false,
       // OVH has a private network of its own, so Flui does not build one — with
       // the same caveat as every regional provider: an estate spread across two
