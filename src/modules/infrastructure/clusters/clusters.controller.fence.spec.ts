@@ -29,6 +29,7 @@ import { ClusterNodeScalingService } from './services/cluster-node-scaling.servi
 import { OrphanVolumesService } from './services/orphan-volumes.service';
 import { ByosNodeJoinService } from './services/byos-node-join.service';
 import { ByosVNetService } from './services/byos-vnet.service';
+import { ApiServerSanService } from '../networking/services/api-server-san.service';
 import { FleetHistoryService } from './services/fleet-history.service';
 import { ClusterRebuildService } from './services/cluster-rebuild.service';
 import { ClusterValidationService } from './services/cluster-validation.service';
@@ -226,6 +227,7 @@ describe('clusters controller — the fence around the cluster key', () => {
         },
         { provide: ByosNodeJoinService, useValue: {} },
         { provide: ByosVNetService, useValue: {} },
+        { provide: ApiServerSanService, useValue: {} },
         {
           provide: FleetHistoryService,
           useValue: { getHistory: async () => ({ points: [] }) },

@@ -59,6 +59,7 @@ import {
 } from '../../operations/dto/infrastructure-operation-events.dto';
 
 import { ReconciliationStatus } from '../../shared/enums/reconciliation-status.enum';
+import { ApiServerSanService } from '../../networking/services/api-server-san.service';
 
 /** cert-manager's webhooks register after the cluster reports ready. */
 const ZONE_RECONCILE_ATTEMPTS = 5;
@@ -95,6 +96,7 @@ export class ClusterQueueProcessor {
     private readonly encryptionService: EncryptionService,
     private readonly clusterFirewallIntegrationService: ClusterFirewallIntegrationService,
     private readonly capabilitiesFactory: CapabilitiesProviderFactory,
+    private readonly apiServerSan: ApiServerSanService,
   ) {}
 
   private formatVolumeRef(
@@ -1729,6 +1731,60 @@ export class ClusterQueueProcessor {
         timestamp: new Date(),
       } as InfrastructureOperationFailedDto);
 
+      throw error;
+    }
+  }
+
+  /**
+   * Brings an existing cluster onto the management overlay.
+   *
+   * The one job here that restarts K3s on a live master, which is why it is a
+   * job at all: it takes minutes, and its outcome — including a rollback that
+   * put the master back exactly as it was — belongs in the operation record.
+   */
+  @Process('enrol-cluster-overlay')
+  async handleEnrolClusterOverlay(
+    job: Job<{ operationId: string; clusterId: string }>,
+  ): Promise<void> {
+    const { operationId, clusterId } = job.data;
+    const operation = await this.operationRepository.findOne({
+      where: { id: operationId },
+    });
+    if (!operation) throw new Error(`Operation ${operationId} not found`);
+
+    operation.status = OperationStatus.IN_PROGRESS;
+    operation.startedAt = new Date();
+    operation.progress = 10;
+    await this.operationRepository.save(operation);
+
+    try {
+      const result = await this.apiServerSan.enrolOverlayAddress(clusterId);
+      operation.status = OperationStatus.COMPLETED;
+      operation.progress = 100;
+      operation.completedAt = new Date();
+      operation.metadata = {
+        ...operation.metadata,
+        outcome: result.outcome,
+        // Read back from the master rather than assumed: the database records
+        // what Flui asked for, the certificate says what TLS will accept.
+        certificateIps: result.certificateIps,
+      };
+      await this.operationRepository.save(operation);
+      this.logger.log(
+        `Overlay enrolment ${result.outcome} for cluster ${clusterId}`,
+      );
+    } catch (error) {
+      operation.status = OperationStatus.FAILED;
+      operation.completedAt = new Date();
+      operation.metadata = {
+        ...operation.metadata,
+        error: error.message,
+        failedAt: new Date().toISOString(),
+      };
+      await this.operationRepository.save(operation);
+      this.logger.error(
+        `Overlay enrolment failed for cluster ${clusterId}: ${error.message}`,
+      );
       throw error;
     }
   }

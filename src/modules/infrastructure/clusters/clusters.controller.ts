@@ -98,6 +98,7 @@ import { OrphanVolumesService } from './services/orphan-volumes.service';
 import { CloudProvider } from 'src/modules/providers/enums/cloud-provider.enum';
 import { ClusterValidationService } from './services/cluster-validation.service';
 import { NameAvailabilityResponseDto } from './dto/name-availability.dto';
+import { ApiServerSanService } from '../networking/services/api-server-san.service';
 
 /**
  * `@RequireSection(...)` sits on each route instead of on the class, which is
@@ -152,6 +153,7 @@ export class ClustersController {
     private readonly orphanVolumesService: OrphanVolumesService,
     private readonly byosNodeJoinService: ByosNodeJoinService,
     private readonly byosVNetService: ByosVNetService,
+    private readonly apiServerSanService: ApiServerSanService,
     private readonly fleetHistoryService: FleetHistoryService,
     private readonly clusterRebuildService: ClusterRebuildService,
     private readonly clusterValidationService: ClusterValidationService,
@@ -406,6 +408,39 @@ export class ClustersController {
     return this.byosVNetService.ensureClusterVNet(clusterId, {
       ipRange: dto?.ipRange,
     });
+  }
+
+  @Post(':id/overlay-enrolment')
+  @RequireSection('infrastructure')
+  @ApiOperation({
+    summary: 'Bring an existing cluster onto the management overlay',
+    description:
+      'Adds the cluster’s management address to its API server certificate. ' +
+      'A cluster installed before the overlay existed has no such address in ' +
+      'its certificate, so the control cluster can reach it through the tunnel ' +
+      'and still be refused at the TLS handshake. K3s only regenerates that ' +
+      'certificate when it is missing, so this restarts K3s on a live master — ' +
+      'which is why it runs as a tracked operation, refuses unless the tunnel ' +
+      'has already handshaken, and restores the master if it does not come ' +
+      'back. Nothing is repointed at the new address until it answers there.',
+  })
+  @ApiParam({ name: 'id', description: 'Cluster ID' })
+  @ApiResponse({ status: 201, description: 'Enrolment queued' })
+  @ApiResponse({
+    status: 400,
+    description: 'The overlay is off, or its tunnel has never handshaken',
+  })
+  @ApiResponse({ status: 404, description: 'Cluster not found' })
+  async enrolClusterOverlay(@Param('id') clusterId: string) {
+    const operation =
+      await this.apiServerSanService.enrolOverlayAddressAsync(clusterId);
+    return {
+      operation_id: operation.id,
+      status: operation.status,
+      management_address: (
+        operation.metadata as { managementAddress?: string } | undefined
+      )?.managementAddress,
+    };
   }
 
   @Post(':id/join-tokens')

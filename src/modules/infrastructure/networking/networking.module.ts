@@ -5,6 +5,7 @@ import { WireGuardPeerEntity } from './entities/wireguard-peer.entity';
 import { VNetEntity } from '../vnets/entities/vnet.entity';
 import { WireGuardPeerService } from './services/wireguard-peer.service';
 import { WireGuardReconciler } from './services/wireguard-reconciler.service';
+import { ApiServerSanService } from './services/api-server-san.service';
 import { WireGuardReconciliationScheduler } from './schedulers/wireguard-reconciliation.scheduler';
 import { ClusterEntity } from '../clusters/entities/cluster.entity';
 import { InfrastructureOperationEntity } from '../servers/entities/infrastructure-operations.entity';
@@ -37,7 +38,8 @@ import { ProvidersModule } from '../../providers/providers.module';
     WireGuardPeerService,
     WireGuardReconciler,
     WireGuardReconciliationScheduler,
+    ApiServerSanService,
   ],
-  exports: [WireGuardPeerService, WireGuardReconciler],
+  exports: [WireGuardPeerService, WireGuardReconciler, ApiServerSanService],
 })
 export class NetworkingModule {}
