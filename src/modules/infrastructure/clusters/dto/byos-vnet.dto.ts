@@ -1,5 +1,6 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import { IsOptional, IsString, Matches } from 'class-validator';
+import { IsEnum, IsOptional, IsString, Matches } from 'class-validator';
+import { VNetImplementation } from '../../vnets/entities/vnet.entity';
 
 export class EnsureByosVNetDto {
   @ApiPropertyOptional({
@@ -14,4 +15,17 @@ export class EnsureByosVNetDto {
     message: 'ipRange must be a CIDR, e.g. 10.0.0.0/24',
   })
   ipRange?: string;
+
+  @ApiPropertyOptional({
+    description:
+      'Who builds the network. `provider-native` (the default) records one ' +
+      'the operator already wired; `wireguard` has Flui build it and assign ' +
+      'every node an address on it — for an estate whose machines share no ' +
+      'network, where pod traffic would otherwise cross the internet in clear.',
+    enum: VNetImplementation,
+    example: VNetImplementation.WIREGUARD,
+  })
+  @IsOptional()
+  @IsEnum(VNetImplementation)
+  implementation?: VNetImplementation;
 }

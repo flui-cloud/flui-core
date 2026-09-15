@@ -1551,6 +1551,7 @@ const MASK_EXEMPT: string[] = [
   'CreateClusterDto.sharedStorageEnabled', // modules/infrastructure/clusters/dto/create-cluster.dto.ts
   'CreateClusterDto.sharedStorageVolumeSizeGb', // modules/infrastructure/clusters/dto/create-cluster.dto.ts
   'CreateClusterDto.sshKeys', // modules/infrastructure/clusters/dto/create-cluster.dto.ts
+  'CreateClusterDto.fluiManagedNetwork', // modules/infrastructure/clusters/dto/create-cluster.dto.ts
   'CreateClusterDto.vnetConfig', // modules/infrastructure/clusters/dto/create-cluster.dto.ts
   'CreateClusterDto.workerCount', // modules/infrastructure/clusters/dto/create-cluster.dto.ts
   'CreateClusterFirewallDto.clusterId', // modules/infrastructure/firewalls/dto/cluster-firewall.dto.ts
@@ -1856,6 +1857,7 @@ const MASK_EXEMPT: string[] = [
   'DrainCheckDto.cleared', // modules/infrastructure/scaling/dto/scaling-response.dto.ts
   'DrainCheckDto.ok', // modules/infrastructure/scaling/dto/scaling-response.dto.ts
   'EnableProviderDto.enabled', // modules/management/dto/enable-provider.dto.ts
+  'EnsureByosVNetDto.implementation', // modules/infrastructure/clusters/dto/byos-vnet.dto.ts
   'EnsureByosVNetDto.ipRange', // modules/infrastructure/clusters/dto/byos-vnet.dto.ts
   'EnvVarCandidateDto.detectedPattern', // modules/frameworks/env-var-detection/dto/env-var-detection.dto.ts
   'EnvVarCandidateDto.sourceFile', // modules/frameworks/env-var-detection/dto/env-var-detection.dto.ts
@@ -1946,6 +1948,7 @@ const MASK_EXEMPT: string[] = [
   'FleetHistoryPointDto.hourlyEur', // modules/infrastructure/clusters/dto/fleet-history.dto.ts
   'FleetHistoryPointDto.nodes', // modules/infrastructure/clusters/dto/fleet-history.dto.ts
   'FleetHistoryPointDto.unpricedNodes', // modules/infrastructure/clusters/dto/fleet-history.dto.ts
+  'FluiManagedNetworkDto.ipRange', // modules/infrastructure/clusters/dto/create-cluster.dto.ts
   'FulltextAssistDto.conversation', // modules/database-console/dto/fulltext-console.dto.ts
   'FulltextAssistDto.index', // modules/database-console/dto/fulltext-console.dto.ts
   'FulltextAssistDto.prompt', // modules/database-console/dto/fulltext-console.dto.ts
@@ -2693,6 +2696,7 @@ const MASK_EXEMPT: string[] = [
   'ProviderCapabilitiesDto.pricing', // modules/management/dto/provider-capabilities.dto.ts
   'ProviderCapabilitiesDto.supportedInstanceTypes', // modules/management/dto/provider-capabilities.dto.ts
   'ProviderCapabilitiesDto.supportedRegions', // modules/management/dto/provider-capabilities.dto.ts
+  'ProviderCapabilitiesDto.supportsFluiManagedVNet', // modules/management/dto/provider-capabilities.dto.ts
   'ProviderCapabilitiesDto.vnetRequired', // modules/management/dto/provider-capabilities.dto.ts
   'ProviderCapabilitiesDto.vnetTopology', // modules/management/dto/provider-capabilities.dto.ts
   'ProviderConfigurationDto.availableRegions', // modules/management/dto/provider-configuration.dto.ts

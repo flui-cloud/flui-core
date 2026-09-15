@@ -223,9 +223,31 @@ export class OvhCapabilitiesService implements IProviderCapabilitiesService {
         managedEdge: false,
         supportsSshAllowlist: false,
       },
-      vnetTopology: null,
+      vnetTopology: {
+        // A Neutron network is regional: `createVNet` steers the client to the
+        // subnet's own zone, and a server in another region cannot join it.
+        scope: 'regional',
+        // Left to the dynamic call: the regions a credential can reach come
+        // from its Keystone catalogue, so a static list here would go stale.
+        zones: [],
+        supportsSubnets: true,
+        subnetPerZone: true,
+        // Neutron routers exist, but Flui drives none of them here — and
+        // `createVNet` deliberately clears the subnet gateway so a node never
+        // picks up a second default route.
+        supportsRoutes: false,
+        sharedAddressSpace: false,
+        // Neutron does not constrain the prefix the way a managed product does.
+        vnetIpRange: { minPrefix: 8, maxPrefix: 30 },
+        subnetIpRange: { minPrefix: 8, maxPrefix: 30 },
+      },
       vnetRequired: false,
       crossClusterAllowed: false,
+      // OVH has a private network of its own, so Flui does not build one — with
+      // the same caveat as every regional provider: an estate spread across two
+      // regions still shares nothing, and that case is what the management
+      // overlay is for.
+      supportsFluiManagedVNet: false,
       // OVH's node sizes come from the public pricing catalog, which has no
       // live stock signal — a second getNodeSizes(true) call returns the
       // same static data as the first. management.service.ts skips it.

@@ -37,6 +37,11 @@ import { VNetsService } from '../../vnets/services/vnets.service';
 import { NativeSSHConnectionService } from 'src/modules/terminal/services/native-ssh-connection.service';
 import { InstallLogService } from '../../operations/services/install-log.service';
 import { KubernetesService } from '../../shared/services/kubernetes.service';
+import { ManagementAddressResolver } from '../../shared/services/management-address.resolver';
+import { WireGuardPeerService } from '../../networking/services/wireguard-peer.service';
+import { BootstrapPeer } from '../../networking/wireguard-config';
+import { cidrContains } from '../../networking/wireguard-address-pool';
+import { VNetSubnetEntity } from '../../vnets/entities/vnet-subnet.entity';
 import { BillingIntervalsService } from './billing-intervals.service';
 import { VolumeBillableKind } from '../entities/volume-billable-interval.entity';
 import { NodePriceService } from './node-price.service';
@@ -53,6 +58,8 @@ export class ClusterOrchestrationService {
     private readonly nodeRepository: Repository<ClusterNodeEntity>,
     @InjectRepository(InfrastructureOperationEntity)
     private readonly operationRepository: Repository<InfrastructureOperationEntity>,
+    @InjectRepository(VNetSubnetEntity)
+    private readonly vnetSubnetRepository: Repository<VNetSubnetEntity>,
     @InjectQueue('infrastructure') private readonly infrastructureQueue: Queue,
     private readonly k3sScriptService: K3sScriptService,
     private readonly encryptionService: EncryptionService,
@@ -69,6 +76,8 @@ export class ClusterOrchestrationService {
     private readonly billingIntervals: BillingIntervalsService,
     private readonly nodePriceService: NodePriceService,
     private readonly installLogService: InstallLogService,
+    private readonly managementAddress: ManagementAddressResolver,
+    private readonly wgPeers: WireGuardPeerService,
   ) {}
 
   /**
@@ -109,8 +118,28 @@ export class ClusterOrchestrationService {
     const sharedStorageVolumeSizeGb = cluster.sharedStorageVolumeSizeGb ?? 20;
 
     // Generate master init script WITH serverId (node.id from database)
+    // Reserved before the machine boots so the address can go into the API
+    // server certificate as a SAN from the start. A failure here must not stop
+    // a cluster from being created: without the SAN the overlay simply costs a
+    // certificate regeneration later, which is worse than a missing tunnel but
+    // far better than no cluster.
+    const overlay = await this.overlayPlanFor(cluster, node.id);
+
+    const wgControl = await this.wgPeers
+      .controlHandshakeDetails()
+      .catch(() => undefined);
+
     const masterScript = await this.k3sScriptService.generateMasterScript({
       serverId: node.id, // IMPORTANT: Pass database node ID for observability metrics
+      wgAddress: overlay.address,
+      wgControl,
+      wgMode: overlay.mode,
+      wgPeers: overlay.peers,
+      // In a Flui-built network the node's private address is the one on the
+      // tunnel, and it has to be told: the bootstrap deliberately refuses to
+      // detect it, because an overlay that only reaches the control cluster
+      // would otherwise be mistaken for a network the nodes share.
+      privateIp: overlay.mode === 'mesh' ? overlay.address : undefined,
       clusterId: cluster.id,
       clusterName: cluster.name,
       k3sToken,
@@ -354,13 +383,20 @@ export class ClusterOrchestrationService {
     // Update node with server info
     node.providerResourceId = masterServer.id;
     node.ipAddress = masterServer.public_ip || masterServer.private_ip;
-    node.privateIp = masterServer.private_ip ?? null;
+    // In a Flui-built network the provider assigns no private address: the
+    // node's is the one reserved on the tunnel. Everything downstream — the
+    // address workers join at, the kubeconfig, the VNet attachment — reads it
+    // from here, so recording it once is what keeps them agreeing.
+    node.privateIp = masterServer.private_ip ?? overlay.address ?? null;
     node.status = NodeStatus.JOINING;
     node.hourlyPriceEur = await this.nodePriceService.resolveHourlyEur(
       cluster.provider,
       node.serverType,
       masterServer.location ?? cluster.region,
     );
+    if (!cluster.metadata?.vnetConfig && node.privateIp) {
+      await this.adoptVNetFromAddress(cluster, node.privateIp);
+    }
     if (cluster.metadata?.vnetConfig) {
       node.subnetId = cluster.metadata.vnetConfig.subnetId ?? null;
       node.metadata = {
@@ -368,7 +404,7 @@ export class ClusterOrchestrationService {
         vnetAttachment: {
           vnetId: cluster.metadata.vnetConfig.vnetId,
           subnetId: cluster.metadata.vnetConfig.subnetId,
-          privateIp: masterServer.private_ip ?? null,
+          privateIp: node.privateIp ?? null,
           attachedAt: new Date().toISOString(),
           source: 'create-time',
         },
@@ -634,9 +670,22 @@ export class ClusterOrchestrationService {
           }
         : undefined;
 
+    const overlay = await this.overlayPlanFor(cluster, node.id);
+    const wgControl = await this.wgPeers
+      .controlHandshakeDetails()
+      .catch(() => undefined);
+    const overlayConfig = {
+      wgAddress: overlay.address,
+      wgControl,
+      wgMode: overlay.mode,
+      wgPeers: overlay.peers,
+      privateIp: overlay.mode === 'mesh' ? overlay.address : undefined,
+    };
+
     // Generate worker init script WITH serverId (node.id from database)
     const workerScript = await this.k3sScriptService.generateWorkerScript({
       serverId: node.id, // IMPORTANT: Pass database node ID for observability metrics
+      ...overlayConfig,
       clusterId: cluster.id,
       clusterName: cluster.name,
       k3sToken,
@@ -683,6 +732,7 @@ export class ClusterOrchestrationService {
     const finalWorkerScript = workerBootstrapPublicKeyForCloudInit
       ? await this.k3sScriptService.generateWorkerScript({
           serverId: node.id,
+          ...overlayConfig,
           clusterId: cluster.id,
           clusterName: cluster.name,
           k3sToken,
@@ -801,7 +851,7 @@ export class ClusterOrchestrationService {
     // Update node
     node.providerResourceId = workerServer.id;
     node.ipAddress = workerServer.public_ip || workerServer.private_ip;
-    node.privateIp = workerServer.private_ip ?? null;
+    node.privateIp = workerServer.private_ip ?? overlay.address ?? null;
     node.status = NodeStatus.READY;
     node.hourlyPriceEur = await this.nodePriceService.resolveHourlyEur(
       cluster.provider,
@@ -1367,29 +1417,105 @@ export class ClusterOrchestrationService {
     return { caPublicKey, caPrivateKey };
   }
 
+  /**
+   * Records the private network a node turned out to be on.
+   *
+   * The attachment can happen at the infrastructure level without the
+   * registration ever following, and on a same-provider pair that sends
+   * management traffic down the public path while a private one sits unused.
+   *
+   * Adopting from the address is safe in a way that guessing is not: the
+   * address is what the machine actually has, and the subnet either contains it
+   * or does not.
+   */
+  private async adoptVNetFromAddress(
+    cluster: ClusterEntity,
+    privateIp: string,
+  ): Promise<void> {
+    try {
+      const subnets = await this.vnetSubnetRepository.find({
+        relations: ['vnet'],
+      });
+      const match = subnets.find(
+        (s) => s.ipRange && cidrContains(s.ipRange, privateIp),
+      );
+      if (!match) return;
+      cluster.metadata = {
+        ...cluster.metadata,
+        vnetConfig: {
+          vnetId: match.vnetId,
+          subnetId: match.id,
+          autoAssignIp: true,
+        },
+      };
+      await this.clusterRepository.update(cluster.id, {
+        metadata: cluster.metadata,
+      });
+      this.logger.log(
+        `[vnet] ${cluster.name} was attached to ${match.ipRange} without being ` +
+          `recorded — registered subnet ${match.id}`,
+      );
+    } catch (err) {
+      // Never fatal: a cluster that exists with an unrecorded network is the
+      // state we are improving on, not one worth failing a creation over.
+      this.logger.warn(
+        `[vnet] could not adopt the network for ${cluster.name}: ${(err as Error).message}`,
+      );
+    }
+  }
+
+  /**
+   * Everything this node needs to raise its own tunnel before K3s installs:
+   * its address, which kind of network it is on, and who its siblings are.
+   *
+   * Swallows its own failure on purpose, but only in `overlay` mode — there a
+   * missing tunnel costs a certificate regeneration later, which beats a
+   * cluster that cannot be created. In `mesh` mode the tunnel *is* the
+   * cluster's private network, so a failure is not something to continue past.
+   */
+  private async overlayPlanFor(
+    cluster: ClusterEntity,
+    nodeId: string,
+  ): Promise<{
+    address?: string;
+    mode: 'overlay' | 'mesh';
+    peers: BootstrapPeer[];
+  }> {
+    if (process.env.FLUI_WG_ENABLED !== 'true') {
+      return { mode: 'overlay', peers: [] };
+    }
+    const subnetId = await this.wgPeers.managedSubnetId(
+      (cluster.metadata as { vnetConfig?: { subnetId?: string } } | null)
+        ?.vnetConfig?.subnetId,
+    );
+    try {
+      const peer = await this.wgPeers.reserveAddress({
+        clusterId: cluster.id,
+        nodeId,
+        subnetId,
+      });
+      return {
+        address: peer.managementIp,
+        mode: subnetId ? 'mesh' : 'overlay',
+        peers: subnetId ? await this.wgPeers.bootstrapPeersFor(nodeId) : [],
+      };
+    } catch (err) {
+      if (subnetId) throw err;
+      this.logger.warn(
+        `[wg] could not reserve an overlay address for ${nodeId}: ` +
+          `${(err as Error).message} — continuing without the SAN`,
+      );
+      return { mode: 'overlay', peers: [] };
+    }
+  }
+
   private async resolveWorkerObservabilityIp(
     cluster: ClusterEntity,
   ): Promise<string | undefined> {
-    if (cluster.clusterType === ClusterType.WORKLOAD) {
-      try {
-        const obsCluster = await this.getControlCluster();
-        if (
-          obsCluster &&
-          (obsCluster.masterPrivateIp || obsCluster.masterIpAddress)
-        ) {
-          return obsCluster.masterPrivateIp ?? obsCluster.masterIpAddress;
-        }
-      } catch (error) {
-        this.logger.error(
-          `Error retrieving control cluster for worker node: ${error.message}`,
-        );
-      }
-      return undefined;
-    }
     if (isControlClusterType(cluster.clusterType)) {
       return cluster.masterPrivateIp ?? cluster.masterIpAddress ?? undefined;
     }
-    return undefined;
+    return this.resolveControlClusterIp(cluster);
   }
 
   private async resolveControlClusterIp(
@@ -1406,28 +1532,28 @@ export class ClusterOrchestrationService {
     );
     try {
       const obsCluster = await this.getControlCluster();
-      if (
-        obsCluster &&
-        (obsCluster.masterPrivateIp || obsCluster.masterIpAddress)
-      ) {
-        // Cross-provider: the vnet/private IP is not routable off the master's
-        // provider, so a workload on a different provider must push to the
-        // public IP (the firewall opens the ingest ports to it — MVP-3).
-        const crossProvider = obsCluster.provider !== cluster.provider;
-        const ip = crossProvider
-          ? obsCluster.masterIpAddress
-          : (obsCluster.masterPrivateIp ?? obsCluster.masterIpAddress);
-        if (ip) {
+      if (obsCluster) {
+        // One predicate for every management flow — see
+        // ManagementAddressResolver. The discriminator is "do these two share a
+        // routable private network", not "are they on the same provider": two
+        // clusters on one provider but different VNets do not.
+        const endpoint = this.managementAddress.controlEndpointFor(
+          cluster,
+          obsCluster,
+        );
+        if (endpoint) {
           this.logger.log(
-            `✅ Using control cluster at ${ip} for monitoring${crossProvider ? ' (cross-provider public IP)' : ''}`,
+            `✅ Using control cluster at ${endpoint.address} for monitoring ` +
+              `(${endpoint.path}: ${endpoint.reason})`,
           );
           this.logger.debug(
-            `   Will pass OBSERVABILITY_CLUSTER_IP=${ip} to bootstrap script`,
+            `   Will pass OBSERVABILITY_CLUSTER_IP=${endpoint.address} to bootstrap script`,
           );
-          return ip;
+          return endpoint.address;
         }
         this.logger.warn(
-          `⚠️ Control cluster has no ${crossProvider ? 'public' : ''} IP for cross-provider monitoring`,
+          `⚠️ Control cluster ${obsCluster.name} has no address reachable from ` +
+            `${cluster.name} — telemetry will not be shipped`,
         );
       }
       if (obsCluster) {
@@ -1546,35 +1672,22 @@ export class ClusterOrchestrationService {
       return privateFirst;
     }
 
-    if (control && this.sharesPrivateNetworkWithControl(cluster, control)) {
-      return privateFirst;
-    }
-    // No shared private network with the control → private IP is unroutable.
-    this.logger.log(
-      `[kubeconfig] workload ${cluster.name} does not share a private network ` +
-        `with the control cluster — baking public API-server IP ${node.ipAddress}`,
+    // The same overlay context the firewall rule will use. Passing it in both
+    // places is what makes "never a public endpoint without the rule that opens
+    // it" true by construction rather than by discipline.
+    const overlay = await this.wgPeers.nodeOverlayFor(node.id);
+    const endpoint = this.managementAddress.apiServerEndpointFor(
+      cluster,
+      node,
+      control,
+      overlay,
     );
-    return node.ipAddress;
-  }
-
-  /**
-   * True when a workload and the control cluster sit on the same private network
-   * and can therefore reach each other over private IPs. Requires the same
-   * provider and the same VNet; if both pin an explicit subnet, the same subnet.
-   * A control with no VNet config (e.g. BYOS) never shares — returns false.
-   */
-  private sharesPrivateNetworkWithControl(
-    workload: ClusterEntity,
-    control: ClusterEntity,
-  ): boolean {
-    if (workload.provider !== control.provider) return false;
-    type VNetRef = { vnetId?: string; subnetId?: string };
-    const w = (workload.metadata as { vnetConfig?: VNetRef })?.vnetConfig;
-    const c = (control.metadata as { vnetConfig?: VNetRef })?.vnetConfig;
-    if (!w?.vnetId || !c?.vnetId) return false;
-    if (w.vnetId !== c.vnetId) return false;
-    if (w.subnetId && c.subnetId && w.subnetId !== c.subnetId) return false;
-    return true;
+    if (!endpoint) return privateFirst;
+    this.logger.log(
+      `[kubeconfig] workload ${cluster.name} API server at ${endpoint.address} ` +
+        `(${endpoint.path}: ${endpoint.reason})`,
+    );
+    return endpoint.address;
   }
 
   /** Bounded by wall clock, not attempt count: an attempt costs SSH time plus

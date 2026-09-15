@@ -13,7 +13,15 @@ import { InferenceCapability } from '../../providers/interfaces/inference-capabi
  * multiple datacenters share a zone (Hetzner eu-central) or each datacenter is its
  * own zone (Scaleway).
  */
-export type VNetScope = 'global' | 'regional' | 'manual';
+/**
+ * Who provides the private network.
+ *
+ * `manual` means the operator wired one and Flui merely records it;
+ * `flui-managed` means there is none to record and Flui builds it — the case
+ * where a BYOS estate's nodes have only public addresses, and their pod traffic
+ * would otherwise cross the internet in clear.
+ */
+export type VNetScope = 'global' | 'regional' | 'manual' | 'flui-managed';
 
 /**
  * A logical network zone that can be targeted when creating a VNet.
@@ -105,6 +113,18 @@ export interface ProviderCapabilities {
   vnetTopology: VNetTopology | null;
   vnetRequired: boolean;
   crossClusterAllowed: boolean;
+  /**
+   * Whether Flui can build the private network itself here, as an alternative
+   * to whatever this provider offers.
+   *
+   * Separate from `vnetTopology.scope`, which says who provides the network by
+   * default. The two coexist on the same provider: one BYOS operator has a
+   * wired LAN, the next has four machines in four datacentres, and a single
+   * value would have to lie to one of them. So the default stays in `scope`,
+   * the choice is made per cluster, and this flag only says the choice exists —
+   * which is what lets an interface offer it instead of requiring the API.
+   */
+  supportsFluiManagedVNet?: boolean;
   /** Present only for inference-capable providers (e.g. Scaleway Generative APIs). */
   inference?: InferenceCapability;
   /**

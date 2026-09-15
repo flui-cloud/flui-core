@@ -147,3 +147,84 @@ describe('ClusterOrchestrationService — retry safety', () => {
     });
   });
 });
+
+describe('ClusterOrchestrationService — adopting an unrecorded network', () => {
+  const subnets = [
+    {
+      id: 'sub-a',
+      vnetId: 'vnet-a',
+      ipRange: '10.60.1.0/24',
+      vnet: { provider: 'hetzner' },
+    },
+    {
+      id: 'sub-b',
+      vnetId: 'vnet-b',
+      ipRange: '10.70.0.0/16',
+      vnet: { provider: 'scaleway' },
+    },
+  ];
+
+  const build = (over: Record<string, unknown> = {}) => {
+    const clusterRepository = { update: jest.fn().mockResolvedValue({}) };
+    const service = Object.create(
+      ClusterOrchestrationService.prototype,
+    ) as ClusterOrchestrationService;
+    Object.assign(service, {
+      logger: { log: jest.fn(), warn: jest.fn(), error: jest.fn() },
+      clusterRepository,
+      vnetSubnetRepository: { find: jest.fn().mockResolvedValue(subnets) },
+      ...over,
+    });
+    return { service, clusterRepository };
+  };
+
+  const adopt = (
+    service: ClusterOrchestrationService,
+    cluster: any,
+    ip: string,
+  ) =>
+    (
+      service as unknown as {
+        adoptVNetFromAddress: (c: unknown, ip: string) => Promise<void>;
+      }
+    ).adoptVNetFromAddress(cluster, ip);
+
+  it('records the subnet that actually contains the address', async () => {
+    const { service, clusterRepository } = build();
+    const cluster: any = { id: 'c1', name: 'w1', metadata: {} };
+
+    await adopt(service, cluster, '10.60.1.1');
+
+    expect(cluster.metadata.vnetConfig).toMatchObject({
+      vnetId: 'vnet-a',
+      subnetId: 'sub-a',
+    });
+    expect(clusterRepository.update).toHaveBeenCalledWith(
+      'c1',
+      expect.objectContaining({ metadata: cluster.metadata }),
+    );
+  });
+
+  it('records nothing when no known network contains it', async () => {
+    const { service, clusterRepository } = build();
+    const cluster: any = { id: 'c1', name: 'w1', metadata: {} };
+
+    await adopt(service, cluster, '192.168.5.9');
+
+    expect(cluster.metadata.vnetConfig).toBeUndefined();
+    expect(clusterRepository.update).not.toHaveBeenCalled();
+  });
+
+  it('never fails a cluster creation over it', async () => {
+    // A cluster with an unrecorded network is the state being improved on, not
+    // one worth refusing to create.
+    const { service } = build({
+      vnetSubnetRepository: {
+        find: jest.fn().mockRejectedValue(new Error('db gone')),
+      },
+    });
+    await expect(
+      adopt(service, { id: 'c1', name: 'w1', metadata: {} }, '10.60.1.1'),
+    ).resolves.toBeUndefined();
+  });
+});

@@ -6,7 +6,11 @@ import {
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { VNetEntity, VNetStatus } from '../entities/vnet.entity';
+import {
+  VNetEntity,
+  VNetImplementation,
+  VNetStatus,
+} from '../entities/vnet.entity';
 import { VNetSubnetEntity, SubnetType } from '../entities/vnet-subnet.entity';
 import { VNetRouteEntity } from '../entities/vnet-route.entity';
 import { ProviderFactory } from 'src/modules/providers/services/provider.factory';
@@ -258,6 +262,11 @@ export class VNetsService {
     provider: CloudProvider;
     name: string;
     ipRange: string;
+    /** Who builds the network. `provider-native` (the default) records one that
+     *  already exists; `wireguard` declares one Flui will build and address
+     *  itself. The provider is the same either way — this is the separate
+     *  question of where the private addresses come from. */
+    implementation?: VNetImplementation;
   }): Promise<VNetResponseDto> {
     this.assertValidCidr(input.ipRange);
 
@@ -278,13 +287,21 @@ export class VNetsService {
       }
     }
 
+    const implementation =
+      input.implementation ?? VNetImplementation.PROVIDER_NATIVE;
     const providerResourceId = `manual:${input.clusterId}`;
     const labels = [
       { key: 'managed-by', value: 'flui-cloud' },
       { key: 'flui-resource-type', value: 'vnet' },
       { key: 'flui-vnet-name', value: input.name },
       { key: 'flui-cluster-id', value: input.clusterId },
-      { key: 'flui-vnet-scope', value: 'manual' },
+      {
+        key: 'flui-vnet-scope',
+        value:
+          implementation === VNetImplementation.WIREGUARD
+            ? 'flui-managed'
+            : 'manual',
+      },
     ];
 
     const existing = await this.vnetRepository.findOne({
@@ -292,8 +309,21 @@ export class VNetsService {
       relations: ['subnets'],
     });
     if (existing) {
-      if (existing.ipRange !== input.ipRange) {
+      if (
+        existing.ipRange !== input.ipRange ||
+        existing.implementation !== implementation
+      ) {
         existing.ipRange = input.ipRange;
+        // Never silently: nodes already hold addresses from the previous
+        // assigner, so a silent switch leaves half the cluster on the old
+        // scheme.
+        if (existing.implementation !== implementation) {
+          this.logger.warn(
+            `VNet ${existing.id} changes from ${existing.implementation} to ` +
+              `${implementation}; existing node addresses are not migrated`,
+          );
+          existing.implementation = implementation;
+        }
         await this.vnetRepository.save(existing);
       }
       const manualSubnet = (existing.subnets ?? []).find(
@@ -318,6 +348,7 @@ export class VNetsService {
       name: input.name,
       provider: input.provider,
       ipRange: input.ipRange,
+      implementation,
       labels,
       status: VNetStatus.ACTIVE,
       metadata: { clusterId: input.clusterId, manual: true },
@@ -837,6 +868,7 @@ export class VNetsService {
       name: vnet.name,
       provider: vnet.provider,
       ipRange: vnet.ipRange,
+      implementation: vnet.implementation,
       labels: vnet.labels,
       metadata: vnet.metadata,
       status: vnet.status,

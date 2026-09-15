@@ -1,6 +1,6 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { CloudProvider } from 'src/modules/providers/enums/cloud-provider.enum';
-import { VNetStatus } from '../entities/vnet.entity';
+import { VNetStatus, VNetImplementation } from '../entities/vnet.entity';
 import { Sensitivity } from '../../../mask/decorators/sensitivity.decorator';
 
 export class VNetSubnetResponseDto {
@@ -111,6 +111,15 @@ export class VNetResponseDto {
   @Sensitivity(Sensitivity.PUBLIC)
   @ApiProperty({ description: 'VNet status', enum: VNetStatus })
   status: VNetStatus;
+
+  @Sensitivity(Sensitivity.PUBLIC)
+  @ApiProperty({
+    description:
+      'Who built the network: the provider, or Flui over an encrypted mesh. ' +
+      'Separate from `provider`, which says whose machines these are.',
+    enum: VNetImplementation,
+  })
+  implementation: VNetImplementation;
 
   // Nested DTO array: the interceptor recurses via VNetSubnetResponseDto's own
   // decorators regardless of this value — present only so the sentinel sees every

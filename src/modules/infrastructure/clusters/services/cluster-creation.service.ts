@@ -1,4 +1,5 @@
 import { Injectable, Logger, BadRequestException } from '@nestjs/common';
+import { ManagementAddressResolver } from '../../shared/services/management-address.resolver';
 import { InjectRepository } from '@nestjs/typeorm';
 import { In, Repository } from 'typeorm';
 import { InjectQueue } from '@nestjs/bull';
@@ -27,6 +28,8 @@ import {
 } from '../../operations/helpers/operation-steps.helper';
 import { CreateClusterJobData } from '../clusters.service';
 import { VNetSubnetEntity } from '../../vnets/entities/vnet-subnet.entity';
+import { VNetImplementation } from '../../vnets/entities/vnet.entity';
+import { ByosVNetService } from './byos-vnet.service';
 import {
   generateNipHostnameToken,
   isValidNipHostnameToken,
@@ -52,6 +55,8 @@ export class ClusterCreationService {
     private readonly clusterFirewallIntegrationService: ClusterFirewallIntegrationService,
     private readonly capabilitiesFactory: CapabilitiesProviderFactory,
     private readonly firewallReconciliation: FirewallReconciliationService,
+    private readonly managementAddress: ManagementAddressResolver,
+    private readonly byosVNetService: ByosVNetService,
   ) {}
 
   /**
@@ -79,11 +84,7 @@ export class ClusterCreationService {
     // workload can't attach to it (the network lives on the control's provider),
     // so it must bring its own VNet on its own provider — cross-provider
     // reachability is handled by firewall peer rules, not a shared L2.
-    const envSubnet = await this.vnetSubnetRepository.findOne({
-      where: {},
-      order: { createdAt: 'ASC' },
-      relations: ['vnet'],
-    });
+    const envSubnet = await this.environmentSubnet();
     if (!envSubnet) {
       throw new BadRequestException(
         'No environment subnet registered. The CLI must provision a VNet/Subnet during `flui env create` before any cluster can be created.',
@@ -177,6 +178,26 @@ export class ClusterCreationService {
 
     const savedCluster = await this.clusterRepository.save(cluster);
     this.logger.log(`Cluster record created: ${savedCluster.id}`);
+
+    // Before the job is queued, not after: the first node reserves its address
+    // on this network while it is being provisioned, and a network that
+    // arrives later would leave the master with a `--node-ip` nobody assigned.
+    if (dto.fluiManagedNetwork) {
+      const built = await this.byosVNetService.ensureClusterVNet(
+        savedCluster.id,
+        {
+          implementation: VNetImplementation.WIREGUARD,
+          ipRange: dto.fluiManagedNetwork.ipRange,
+        },
+      );
+      savedCluster.metadata = {
+        ...savedCluster.metadata,
+        vnetConfig: { vnetId: built.vnetId, subnetId: built.subnetId },
+      };
+      this.logger.log(
+        `Cluster ${dto.name} will run on a Flui-built network (${built.ipRange})`,
+      );
+    }
 
     const desiredRules = await this.buildDesiredFirewallRules(
       dto.firewallRules || [],
@@ -308,6 +329,45 @@ export class ClusterCreationService {
     );
   }
 
+  /**
+   * The subnet that means "this environment's own network".
+   *
+   * The control cluster's, not the oldest row in the table: Flui builds one
+   * network per cluster on providers that offer none, so the oldest row can
+   * belong to somebody else and every later cluster would be compared against
+   * a stranger's provider to decide whether it is cross-provider.
+   */
+  private async environmentSubnet(): Promise<VNetSubnetEntity | null> {
+    const control = await this.clusterRepository.findOne({
+      where: { clusterType: ClusterType.CONTROL },
+      order: { createdAt: 'ASC' },
+    });
+    const declaredId = (
+      control?.metadata as { vnetConfig?: { subnetId?: string } } | null
+    )?.vnetConfig?.subnetId;
+    if (declaredId) {
+      const declared = await this.vnetSubnetRepository.findOne({
+        where: { id: declaredId },
+        relations: ['vnet'],
+      });
+      if (declared) return declared;
+    }
+
+    // Installations that predate the control recording its own network. Never a
+    // Flui-built one: those belong to a single cluster by construction, so
+    // treating one as the environment's network would attach the next cluster
+    // to a network built for somebody else.
+    const all = await this.vnetSubnetRepository.find({
+      order: { createdAt: 'ASC' },
+      relations: ['vnet'],
+    });
+    return (
+      all.find(
+        (s) => s.vnet?.implementation !== VNetImplementation.WIREGUARD,
+      ) ?? null
+    );
+  }
+
   private async enforceProviderPolicies(
     dto: CreateClusterDto,
     clusterType: ClusterType,
@@ -330,6 +390,21 @@ export class ClusterCreationService {
     }
   }
 
+  /**
+   * Whether the management overlay can carry traffic between this control
+   * cluster and a workload on another provider.
+   *
+   * Members dial out and hold the tunnel open, so the only thing the control
+   * must have is an address they can dial. Deliberately not a check that the
+   * tunnel is *already* up: at creation time the workload does not exist yet,
+   * and refusing to create it because its own tunnel is missing would be
+   * circular.
+   */
+  private overlayCanBridge(control: ClusterEntity): boolean {
+    if (process.env.FLUI_WG_ENABLED !== 'true') return false;
+    return !!this.managementAddress.publicAddressOf(control);
+  }
+
   private async assertWorkloadProviderMatchesControl(
     dto: CreateClusterDto,
     clusterType: ClusterType,
@@ -347,22 +422,37 @@ export class ClusterCreationService {
       return;
     }
 
-    // Cross-provider is gated by the CONTROL provider's capability: a control
-    // that permits it (e.g. BYOS, which can't provision workloads on itself)
-    // may run workloads on other providers.
+    // The question is whether these two can reach each other privately, not
+    // what provider the control runs on: a control with a reachable public
+    // address can be dialled by members over the overlay, and everything after
+    // that — addresses, keys, firewall openings — is reconciled.
     const controlAllowsCross = this.capabilitiesFactory
       .getCapabilitiesService(control.provider as CloudProvider)
       .getStaticCapabilities().crossClusterAllowed;
     if (controlAllowsCross) {
       return;
     }
+    if (this.overlayCanBridge(control)) {
+      this.logger.log(
+        `[cross-provider] ${dto.provider} workload under a ${control.provider} ` +
+          `control: allowed over the management overlay`,
+      );
+      return;
+    }
 
     throw new BadRequestException({
       code: 'CROSS_PROVIDER_NOT_ALLOWED',
-      message: `Workload provider '${dto.provider}' must match the control cluster provider '${control.provider}'.`,
+      message:
+        `Workload provider '${dto.provider}' does not match the control cluster ` +
+        `provider '${control.provider}', and no private path between them is ` +
+        `available. Enable the Flui management overlay (FLUI_WG_ENABLED) on an ` +
+        `installation whose control cluster has a reachable address.`,
       details: {
         workloadProvider: dto.provider,
         controlProvider: control.provider,
+        overlayEnabled: process.env.FLUI_WG_ENABLED === 'true',
+        controlReachableAt:
+          this.managementAddress.publicAddressOf(control) ?? null,
       },
     });
   }

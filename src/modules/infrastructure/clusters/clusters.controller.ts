@@ -407,6 +407,7 @@ export class ClustersController {
   ) {
     return this.byosVNetService.ensureClusterVNet(clusterId, {
       ipRange: dto?.ipRange,
+      implementation: dto?.implementation,
     });
   }
 

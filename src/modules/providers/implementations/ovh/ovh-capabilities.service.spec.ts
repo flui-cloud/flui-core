@@ -113,3 +113,29 @@ describe('OvhCapabilitiesService regions', () => {
     expect(buildClient).not.toHaveBeenCalled();
   });
 });
+
+describe('OVH capabilities — the private network it actually has', () => {
+  const topology = () =>
+    new OvhCapabilitiesService(
+      { get: jest.fn() } as any,
+      { getOpenStackClient: jest.fn() } as any,
+    ).getStaticCapabilities();
+
+  it('declares the Neutron network, regional and with subnets', () => {
+    const caps = topology();
+    expect(caps.vnetTopology).toMatchObject({
+      scope: 'regional',
+      supportsSubnets: true,
+      subnetPerZone: true,
+    });
+  });
+
+  it('does not ask Flui to build a network it already has', () => {
+    expect(topology().supportsFluiManagedVNet).toBe(false);
+  });
+
+  it('leaves the zone list to the credential that can see them', () => {
+    // A static list goes stale; the regions come from the Keystone catalogue.
+    expect(topology().vnetTopology?.zones).toEqual([]);
+  });
+});

@@ -1,3 +1,4 @@
+import { ManagementAddressResolver } from '../../shared/services/management-address.resolver';
 import { BadRequestException } from '@nestjs/common';
 import { ClusterCreationService } from './cluster-creation.service';
 import { CloudProvider } from '../../../providers/enums/cloud-provider.enum';
@@ -30,13 +31,17 @@ describe('ClusterCreationService.createCluster — provider policies', () => {
     };
     // The env subnet lives on the CONTROL's provider; the service compares its
     // vnet.provider against the workload's to detect cross-provider creation.
+    const envSubnet = {
+      id: 'subnet-1',
+      vnetId: 'vnet-1',
+      ipRange: '10.10.1.0/24',
+      vnet: { provider: envVnetProvider, implementation: 'provider-native' },
+    };
     const vnetSubnetRepo = {
-      findOne: jest.fn().mockResolvedValue({
-        id: 'subnet-1',
-        vnetId: 'vnet-1',
-        ipRange: '10.10.1.0/24',
-        vnet: { provider: envVnetProvider },
-      }),
+      findOne: jest.fn().mockResolvedValue(envSubnet),
+      // The fallback path, for installations whose control never recorded its
+      // own network.
+      find: jest.fn().mockResolvedValue([envSubnet]),
     };
     const queue = { add: jest.fn().mockResolvedValue(undefined) };
     const encryption = {
@@ -57,6 +62,15 @@ describe('ClusterCreationService.createCluster — provider policies', () => {
     const firewallReconciliation = {
       resolveControlEgressIps: jest.fn().mockResolvedValue(controlEgressIps),
     };
+    const byosVNet = {
+      ensureClusterVNet: jest.fn().mockResolvedValue({
+        vnetId: 'vnet-flui',
+        subnetId: 'sub-flui',
+        ipRange: '10.201.0.0/24',
+        attachedNodes: 0,
+        warnings: [],
+      }),
+    };
     const service = new ClusterCreationService(
       clusterRepo as never,
       operationRepo as never,
@@ -66,8 +80,12 @@ describe('ClusterCreationService.createCluster — provider policies', () => {
       firewallIntegration as never,
       capabilitiesFactory as never,
       firewallReconciliation as never,
+      // The real resolver: it is pure, and the gate's decision depends on what
+      // it says about the control cluster's reachable address.
+      new ManagementAddressResolver(),
+      byosVNet as never,
     );
-    return { service, firewallIntegration };
+    return { service, firewallIntegration, byosVNet };
   }
 
   const baseDto = {
@@ -103,6 +121,40 @@ describe('ClusterCreationService.createCluster — provider policies', () => {
     await service.createCluster(baseDto as never);
 
     expect(firewallIntegration.createAndReconcileFirewall).toHaveBeenCalled();
+  });
+
+  it('builds the network before queuing, when asked to build one', async () => {
+    // Before, not after: the first node reserves its address on this network
+    // while it is being provisioned, and one that arrived later would leave the
+    // master with a --node-ip nobody assigned.
+    const { service, byosVNet } = build({
+      capabilities: { vnetRequired: true, crossClusterAllowed: false },
+      observabilityCluster: { provider: CloudProvider.HETZNER },
+    });
+
+    await service.createCluster({
+      ...baseDto,
+      fluiManagedNetwork: { ipRange: '10.201.0.0/24' },
+    } as never);
+
+    expect(byosVNet.ensureClusterVNet).toHaveBeenCalledWith(
+      'cluster-1',
+      expect.objectContaining({
+        implementation: 'wireguard',
+        ipRange: '10.201.0.0/24',
+      }),
+    );
+  });
+
+  it('builds nothing when not asked to', async () => {
+    const { service, byosVNet } = build({
+      capabilities: { vnetRequired: true, crossClusterAllowed: false },
+      observabilityCluster: { provider: CloudProvider.HETZNER },
+    });
+
+    await service.createCluster(baseDto as never);
+
+    expect(byosVNet.ensureClusterVNet).not.toHaveBeenCalled();
   });
 
   it('allows cross-provider when crossClusterAllowed is true (workload brings its own VNet)', async () => {
@@ -201,5 +253,128 @@ describe('ClusterCreationService.createCluster — provider policies', () => {
         }
       ).metadata.desiredFirewallRules,
     ).toBeDefined();
+  });
+
+  describe('the cross-provider gate is about the path, not the provider', () => {
+    afterEach(() => {
+      delete process.env.FLUI_WG_ENABLED;
+    });
+
+    const control = (masterIpAddress: string | null) => ({
+      id: 'ctl',
+      clusterType: 'control',
+      provider: CloudProvider.HETZNER,
+      masterIpAddress,
+      metadata: {},
+    });
+
+    const dto = {
+      name: 'edge',
+      provider: CloudProvider.OVH,
+      region: 'gra11',
+      nodeSize: 'b3-8',
+      vnetConfig: { vnetId: 'v1', subnetId: 's1' },
+    };
+
+    const setup = (masterIpAddress: string | null) =>
+      build({
+        capabilities: { vnetRequired: false, crossClusterAllowed: false },
+        observabilityCluster: control(masterIpAddress),
+        envVnetProvider: CloudProvider.HETZNER,
+      });
+
+    it('refuses when no private path exists', async () => {
+      const { service } = setup('1.2.3.4');
+      await expect(service.createCluster(dto as never)).rejects.toBeInstanceOf(
+        BadRequestException,
+      );
+    });
+
+    it('allows it once the overlay can bridge the two', async () => {
+      process.env.FLUI_WG_ENABLED = 'true';
+      const { service } = setup('1.2.3.4');
+      await expect(service.createCluster(dto as never)).resolves.toBeDefined();
+    });
+
+    it('still refuses when the control has no address members could dial', async () => {
+      // Members dial out; a control nobody can reach bridges nothing, and
+      // saying yes would create a cluster that can never be managed.
+      process.env.FLUI_WG_ENABLED = 'true';
+      const { service } = setup(null);
+      await expect(service.createCluster(dto as never)).rejects.toBeInstanceOf(
+        BadRequestException,
+      );
+    });
+  });
+});
+
+describe('ClusterCreationService — which subnet means "this environment"', () => {
+  const subnet = (over: Record<string, unknown> = {}) => ({
+    id: 'sub-old',
+    vnetId: 'vnet-old',
+    ipRange: '10.10.1.0/24',
+    vnet: {
+      provider: CloudProvider.HETZNER,
+      implementation: 'provider-native',
+    },
+    ...over,
+  });
+
+  const service = (clusterRepo: any, subnetRepo: any) =>
+    new ClusterCreationService(
+      clusterRepo,
+      { create: (x: any) => x, save: async (x: any) => x } as any,
+      subnetRepo,
+      { add: jest.fn() } as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+    );
+
+  it('takes the network the control cluster records', async () => {
+    const declared = subnet({ id: 'sub-control' });
+    const svc = service(
+      {
+        findOne: jest.fn().mockResolvedValue({
+          metadata: { vnetConfig: { subnetId: 'sub-control' } },
+        }),
+      },
+      {
+        findOne: jest.fn().mockResolvedValue(declared),
+        find: jest.fn().mockResolvedValue([subnet()]),
+      },
+    );
+
+    expect(await (svc as any).environmentSubnet()).toBe(declared);
+  });
+
+  it('never mistakes a Flui-built network for the environment one', async () => {
+    // Those belong to a single cluster by construction: attaching the next
+    // cluster to one would put it on a network built for somebody else.
+    const fluiBuilt = subnet({
+      id: 'sub-flui',
+      vnet: { provider: CloudProvider.BYOS, implementation: 'wireguard' },
+    });
+    const providerBuilt = subnet({ id: 'sub-provider' });
+    const svc = service(
+      { findOne: jest.fn().mockResolvedValue(null) },
+      {
+        findOne: jest.fn().mockResolvedValue(null),
+        find: jest.fn().mockResolvedValue([fluiBuilt, providerBuilt]),
+      },
+    );
+
+    expect(await (svc as any).environmentSubnet()).toBe(providerBuilt);
+  });
+
+  it('answers nothing when there is no provider-built network at all', async () => {
+    const svc = service(
+      { findOne: jest.fn().mockResolvedValue(null) },
+      { findOne: jest.fn(), find: jest.fn().mockResolvedValue([]) },
+    );
+    expect(await (svc as any).environmentSubnet()).toBeNull();
   });
 });

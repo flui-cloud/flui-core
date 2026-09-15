@@ -232,4 +232,14 @@ export class ProviderCapabilitiesDto {
     example: false,
   })
   crossClusterAllowed: boolean;
+
+  @ApiProperty({
+    description:
+      'Whether Flui can build the private network itself on this provider, as ' +
+      'an alternative to the one the provider offers. Says the choice exists; ' +
+      'the choice itself is made per cluster.',
+    example: true,
+    required: false,
+  })
+  supportsFluiManagedVNet?: boolean;
 }

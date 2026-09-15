@@ -93,6 +93,12 @@ export class ByosCapabilitiesService implements IProviderCapabilitiesService {
       },
       vnetRequired: true,
       crossClusterAllowed: true,
+      // An operator with a wired LAN keeps it; one with four machines in four
+      // datacentres has nothing for their pods to cross but the public
+      // internet, and Flui can build them a network instead. Which of the two
+      // this estate is cannot be known here, so this only says the choice
+      // exists — `scope: 'manual'` above remains the default.
+      supportsFluiManagedVNet: true,
       hasLiveAvailability: false, // no node sizes API — fixed operator hardware
     };
   }

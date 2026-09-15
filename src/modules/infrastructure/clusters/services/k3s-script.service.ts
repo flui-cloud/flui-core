@@ -2,6 +2,10 @@ import { Injectable, Logger } from '@nestjs/common';
 
 import { BOOTSTRAP_CONFIG } from 'src/config/bootstrap.config';
 import { K3S_DEFAULT_VERSION } from '../constants';
+import {
+  BootstrapPeer,
+  encodeBootstrapPeers,
+} from '../../networking/wireguard-config';
 
 export interface K3sMasterConfig {
   serverId?: string; // Database node ID (ClusterNodeEntity.id) - used for observability metrics
@@ -31,6 +35,36 @@ export interface K3sMasterConfig {
   // Private IP on the environment VNet (used for K3s --node-ip / --advertise-address
   // and as the in-VNet endpoint other clusters reach the API on).
   privateIp?: string;
+  /**
+   * The node's address on the Flui management overlay, reserved before the
+   * machine exists. Goes into the API server certificate as a third `--tls-san`
+   * at first boot: adding it later means deleting the serving certificate and
+   * restarting K3s on a live master, and there is no reason to pay that when
+   * the address is knowable in advance.
+   */
+  wgAddress?: string;
+  /**
+   * What the node needs to raise its own side of the tunnel unaided: the
+   * control's key, its address on the overlay, and where to dial it. All three
+   * are known before the machine exists, which is what makes the node
+   * self-installing rather than something Flui has to connect to and configure.
+   */
+  wgControl?: {
+    publicKey: string;
+    address: string;
+    endpoint: string;
+  };
+  /**
+   * `mesh` when this node's private network is one Flui builds rather than one
+   * the provider offers. It changes two things on the node: the interface
+   * listens as well as dials, and a failure to raise it becomes fatal — K3s is
+   * about to bind its node IP there, so there is no public path to fall back
+   * to.
+   */
+  wgMode?: 'overlay' | 'mesh';
+  /** Siblings already known when this node is provisioned, so it can reach its
+   *  own cluster at first boot instead of waiting for a reconcile. */
+  wgPeers?: BootstrapPeer[];
   envVnet?: {
     vnetProviderResourceId: string;
     vnetProvider: string;
@@ -82,6 +116,16 @@ export interface K3sWorkerConfig {
   controlClusterIp?: string;
   // Private IP on the environment VNet for K3s --node-ip on the worker.
   privateIp?: string;
+  /** See `K3sMasterConfig` — the node's reserved overlay address, and what it
+   *  needs to raise the tunnel unaided. */
+  wgAddress?: string;
+  wgControl?: {
+    publicKey: string;
+    address: string;
+    endpoint: string;
+  };
+  wgMode?: 'overlay' | 'mesh';
+  wgPeers?: BootstrapPeer[];
   // Bootstrap SSH public key for providers without SSH key registry (e.g. Scaleway)
   bootstrapPublicKey?: string;
   /**
@@ -215,6 +259,13 @@ export class K3sScriptService {
           FLUI_CA_PUBLIC_KEY: config.caPublicKey || '',
           SSH_CA_PUBLIC_KEY: config.caPublicKey || '',
           SSH_CA_PRIVATE_KEY: config.caPrivateKey || '',
+          // Reserved before the node existed; only its key comes from the node.
+          FLUI_WG_ADDRESS: config.wgAddress || '',
+          FLUI_WG_CONTROL_PUBKEY: config.wgControl?.publicKey || '',
+          FLUI_WG_CONTROL_ADDRESS: config.wgControl?.address || '',
+          FLUI_WG_CONTROL_ENDPOINT: config.wgControl?.endpoint || '',
+          FLUI_WG_MODE: config.wgMode || 'overlay',
+          FLUI_WG_PEERS: encodeBootstrapPeers(config.wgPeers ?? []),
           // Multi-cluster observability
           OBSERVABILITY_CLUSTER_IP: config.controlClusterIp || '',
           DEPLOY_MONITORING_AGENT: config.deployMonitoringAgent
@@ -297,6 +348,12 @@ export class K3sScriptService {
           // Multi-cluster observability
           OBSERVABILITY_CLUSTER_IP: config.controlClusterIp || '',
           PRIVATE_IP: config.privateIp || '',
+          FLUI_WG_ADDRESS: config.wgAddress || '',
+          FLUI_WG_CONTROL_PUBKEY: config.wgControl?.publicKey || '',
+          FLUI_WG_CONTROL_ADDRESS: config.wgControl?.address || '',
+          FLUI_WG_CONTROL_ENDPOINT: config.wgControl?.endpoint || '',
+          FLUI_WG_MODE: config.wgMode || 'overlay',
+          FLUI_WG_PEERS: encodeBootstrapPeers(config.wgPeers ?? []),
           // Flui shared storage (NFS+fscache, §14 of scaling doc)
           FLUI_SHARED_STORAGE_ENABLED: config.sharedStorage?.enabled
             ? 'true'
