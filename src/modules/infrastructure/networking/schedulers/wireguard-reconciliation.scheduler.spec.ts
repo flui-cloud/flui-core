@@ -20,11 +20,13 @@ describe('WireGuardReconciliationScheduler', () => {
     }),
   ) => {
     reconcileCluster.mockResolvedValue(ok);
+    const revokeOrphanPeers = jest.fn().mockResolvedValue(0);
     const scheduler = new WireGuardReconciliationScheduler(
       { find: jest.fn().mockResolvedValue(clusters) } as any,
-      { reconcileCluster, ensureControlEnd } as any,
+      { reconcileCluster } as any,
+      { ensureControlEnd, revokeOrphanPeers } as any,
     );
-    return { scheduler, reconcileCluster, ensureControlEnd };
+    return { scheduler, reconcileCluster, ensureControlEnd, revokeOrphanPeers };
   };
 
   afterEach(() => {
@@ -140,14 +142,45 @@ describe('WireGuardReconciliationScheduler', () => {
     expect(reconcileCluster).toHaveBeenCalledTimes(1);
   });
 
+  it('withdraws departed peers before the hub config is written', async () => {
+    // The hub's config lists the members it knows; writing it first would keep
+    // a destroyed cluster's nodes on the interface for another whole pass.
+    process.env.FLUI_WG_ENABLED = 'true';
+    const order: string[] = [];
+    const { scheduler } = build(
+      [],
+      jest.fn(),
+      jest.fn().mockImplementation(async () => {
+        order.push('hub');
+        return {
+          address: '10.250.0.1',
+          publicKey: 'k',
+          host: '1.1.1.1',
+          applied: true,
+        };
+      }),
+    );
+    (scheduler as any).hub.revokeOrphanPeers = jest
+      .fn()
+      .mockImplementation(async () => {
+        order.push('revoke');
+        return 0;
+      });
+
+    await scheduler.tick();
+
+    expect(order).toEqual(['revoke', 'hub']);
+  });
+
   it('only looks at ready workload clusters', async () => {
     process.env.FLUI_WG_ENABLED = 'true';
     const find = jest.fn().mockResolvedValue([]);
     const scheduler = new WireGuardReconciliationScheduler(
       { find } as any,
+      { reconcileCluster: jest.fn() } as any,
       {
-        reconcileCluster: jest.fn(),
         ensureControlEnd: jest.fn().mockResolvedValue(undefined),
+        revokeOrphanPeers: jest.fn().mockResolvedValue(0),
       } as any,
     );
 

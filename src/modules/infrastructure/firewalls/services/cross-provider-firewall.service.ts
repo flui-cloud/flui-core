@@ -179,12 +179,14 @@ export class CrossProviderFirewallService {
     const nodeOverlay = master
       ? await this.wgPeers.nodeOverlayFor(master.id).catch(() => undefined)
       : undefined;
+    const controlOverlayIp = await this.controlOverlayAddress();
     const peerRules = this.computePeerRules(
       cluster,
       control,
       crossWorkloadNodeIps,
       wgEgressIps,
       nodeOverlay,
+      controlOverlayIp,
     );
     const baseRules = (fw.desiredRules ?? []).filter(
       (r) => !this.isPeerRule(r),
@@ -201,6 +203,7 @@ export class CrossProviderFirewallService {
     crossWorkloadNodeIps: string[],
     wgEgressIps: string[],
     nodeOverlay?: { nodeAddress: string; enrolled: boolean },
+    controlOverlayIp?: string,
   ): FirewallRuleDto[] {
     if (isControlClusterType(cluster.clusterType)) {
       const rules: FirewallRuleDto[] = [];
@@ -242,17 +245,27 @@ export class CrossProviderFirewallService {
       (cluster.nodes ?? []).find((n) => n.nodeType === NodeType.MASTER) ??
       (cluster.nodes ?? [])[0];
     if (!master) return [];
-    if (
-      !this.managementAddress.requiresPublicApiServerRule(
-        cluster,
-        master,
-        control,
-        nodeOverlay,
-      )
-    ) {
-      return [];
+    // The rule names the address the packets actually carry. On the overlay the
+    // control arrives as its tunnel address, not its public one — naming the
+    // public address there closes 6443 against the very path that was chosen,
+    // and the host firewall's policy is drop. Nothing is opened for a shared
+    // private network: the VNet's own range is already allowed.
+    const endpoint = this.managementAddress.apiServerEndpointFor(
+      cluster,
+      master,
+      control,
+      nodeOverlay,
+    );
+    let controlIp: string | undefined;
+    if (endpoint?.path === 'public') {
+      controlIp = this.managementAddress.publicAddressOf(control);
+    } else if (endpoint?.path === 'wireguard') {
+      // Falling back to the public address rather than emitting nothing: not
+      // knowing the tunnel's own address is not a reason to close the only
+      // other door and strand the cluster.
+      controlIp =
+        controlOverlayIp ?? this.managementAddress.publicAddressOf(control);
     }
-    const controlIp = this.managementAddress.publicAddressOf(control);
     if (!controlIp) return [];
     return [
       {
@@ -276,6 +289,23 @@ export class CrossProviderFirewallService {
    * public rules this service also owns are what keep existing clusters
    * manageable, and they are not the overlay's to break.
    */
+  /** The control's own address on the overlay, or nothing. Defensive for the
+   *  same reason as `overlayEgressIps`: the public rules this service owns keep
+   *  existing clusters manageable and are not the overlay's to break. */
+  private async controlOverlayAddress(): Promise<string | undefined> {
+    // No FLUI_WG_ENABLED gate: the answer is only ever used when the chosen
+    // API-server path is already the tunnel, which says more than the flag does.
+    try {
+      return (await this.wgPeers.controlPeer())?.managementIp ?? undefined;
+    } catch (err: any) {
+      this.logger.warn(
+        `[fw-xprovider] could not read the control's overlay address ` +
+          `(${err?.message ?? err})`,
+      );
+      return undefined;
+    }
+  }
+
   private async overlayEgressIps(): Promise<string[]> {
     if (process.env.FLUI_WG_ENABLED !== 'true') return [];
     try {

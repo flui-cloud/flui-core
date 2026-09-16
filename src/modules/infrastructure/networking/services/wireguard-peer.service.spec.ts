@@ -393,6 +393,8 @@ describe('WireGuardPeerService', () => {
           provider: 'byos',
           ipRange: '10.250.0.0/16',
           implementation: 'wireguard',
+          // What identifies it: one row per installation, keyed here.
+          providerResourceId: 'flui-managed',
           subnets: [
             {
               id: 'sub-mgmt',
@@ -427,6 +429,31 @@ describe('WireGuardPeerService', () => {
       const pool = await svc.pool();
       expect(pool.range).toBe('10.250.0.0/24');
       expect(pool.contains('10.250.1.5')).toBe(false);
+    });
+
+    it('is not confused by another network that also runs on WireGuard', async () => {
+      // `implementation` is a property rows can share; the resource id is the
+      // one thing `ensureFluiNetwork` guarantees is unique.
+      const impostor = {
+        find: async () => [
+          {
+            id: 'other',
+            name: 'someone-elses',
+            provider: 'byos',
+            ipRange: '10.9.0.0/16',
+            implementation: 'wireguard',
+            providerResourceId: 'manual:abc',
+            subnets: [
+              { id: 's', ipRange: '10.9.0.0/24', networkZone: 'management' },
+            ],
+          },
+        ],
+      };
+      svc = new WireGuardPeerService(peers as any, impostor as any);
+
+      const pool = await svc.pool();
+
+      expect(pool.range).not.toBe('10.9.0.0/24');
     });
 
     it('falls back to the flat pool before the network exists', async () => {

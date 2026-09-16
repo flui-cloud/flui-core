@@ -1210,13 +1210,15 @@ export default class EnvCreate extends Command {
 
         const readyCluster = await controlService.getControlCluster();
         if (readyCluster?.masterIpAddress) {
-          emitEvent({
-            type: 'ready',
-            endpoint: buildNipBaseDomain(
-              readyCluster.masterIpAddress,
-              readyCluster.nipHostnameToken,
-            ),
-          });
+          const baseDomain = buildNipBaseDomain(
+            readyCluster.masterIpAddress,
+            readyCluster.nipHostnameToken,
+          );
+          // Every path that learns the URL records it, so the profile never
+          // has to fall back on reading clusters.json — a fallback that only
+          // works while the first entry there happens to be the right one.
+          configStorage.saveApiUrl(`https://api.${baseDomain}/api/v1`);
+          emitEvent({ type: 'ready', endpoint: baseDomain });
         }
 
         console.log('');

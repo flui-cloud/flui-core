@@ -119,7 +119,10 @@ export default class ClusterDestroy extends Command {
         operation_id: string;
         status: string;
         estimated_duration: string;
-      }>(`/infrastructure/clusters/${clusterId}`);
+        // `force` on the API means "delete it even though the server is
+        // running" — which is every cluster this command is pointed at. The
+        // gate is the typed cluster name above, not this flag.
+      }>(`/infrastructure/clusters/${clusterId}?force=true`);
       operationId = result.operation_id;
       spinner.succeed('Deletion queued');
       console.log('');

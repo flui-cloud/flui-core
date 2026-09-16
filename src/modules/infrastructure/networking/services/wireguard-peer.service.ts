@@ -1,4 +1,5 @@
 import { BadRequestException, Injectable, Logger } from '@nestjs/common';
+import { FLUI_NETWORK_RESOURCE_ID } from '../../vnets/services/vnets.service';
 import { InjectRepository } from '@nestjs/typeorm';
 import { IsNull, Repository } from 'typeorm';
 import {
@@ -67,8 +68,11 @@ export class WireGuardPeerService {
     // The management block of the Flui network, when there is one — not a
     // parallel space alongside it, which would put two allocators over the
     // same /16 and hand out addresses from a range nobody can see.
+    // By resource id, which is the invariant `ensureFluiNetwork` maintains —
+    // one row per installation. `implementation` is a property several rows
+    // could share, and `find` would then pick whichever came back first.
     const fluiNetwork = known.find(
-      (v) => v.implementation === VNetImplementation.WIREGUARD,
+      (v) => v.providerResourceId === FLUI_NETWORK_RESOURCE_ID,
     );
     const managementSubnet = (fluiNetwork?.subnets ?? []).find(
       (s) => s.networkZone === 'management',
@@ -563,11 +567,11 @@ export class WireGuardPeerService {
     });
     if (!peer) return;
     peer.lastHandshakeAt = at ?? peer.lastHandshakeAt ?? null;
-    peer.status = at
-      ? WireGuardPeerStatus.ACTIVE
-      : peer.status === WireGuardPeerStatus.ACTIVE
-        ? WireGuardPeerStatus.STALE
-        : peer.status;
+    if (at) {
+      peer.status = WireGuardPeerStatus.ACTIVE;
+    } else if (peer.status === WireGuardPeerStatus.ACTIVE) {
+      peer.status = WireGuardPeerStatus.STALE;
+    }
     await this.peers.save(peer);
   }
 

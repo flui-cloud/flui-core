@@ -278,113 +278,6 @@ export class VNetsService {
     }
   }
 
-  async registerManualVNet(input: {
-    clusterId: string;
-    provider: CloudProvider;
-    name: string;
-    ipRange: string;
-    /** Who builds the network. `provider-native` (the default) records one that
-     *  already exists; `wireguard` declares one Flui will build and address
-     *  itself. The provider is the same either way — this is the separate
-     *  question of where the private addresses come from. */
-    implementation?: VNetImplementation;
-  }): Promise<VNetResponseDto> {
-    this.assertValidCidr(input.ipRange);
-
-    const constraints = this.capabilitiesFactory
-      .getCapabilitiesService(input.provider)
-      .getStaticCapabilities().vnetTopology?.vnetIpRange;
-    if (constraints) {
-      const prefix = Number.parseInt(input.ipRange.split('/')[1], 10);
-      if (
-        Number.isNaN(prefix) ||
-        prefix < constraints.minPrefix ||
-        prefix > constraints.maxPrefix
-      ) {
-        throw new BadRequestException(
-          `Private network prefix /${prefix} is out of range ` +
-            `(/${constraints.minPrefix}–/${constraints.maxPrefix}).`,
-        );
-      }
-    }
-
-    const implementation =
-      input.implementation ?? VNetImplementation.PROVIDER_NATIVE;
-    const providerResourceId = `manual:${input.clusterId}`;
-    const labels = [
-      { key: 'managed-by', value: 'flui-cloud' },
-      { key: 'flui-resource-type', value: 'vnet' },
-      { key: 'flui-vnet-name', value: input.name },
-      { key: 'flui-cluster-id', value: input.clusterId },
-      {
-        key: 'flui-vnet-scope',
-        value:
-          implementation === VNetImplementation.WIREGUARD
-            ? 'flui-managed'
-            : 'manual',
-      },
-    ];
-
-    const existing = await this.vnetRepository.findOne({
-      where: { providerResourceId },
-      relations: ['subnets'],
-    });
-    if (existing) {
-      if (
-        existing.ipRange !== input.ipRange ||
-        existing.implementation !== implementation
-      ) {
-        existing.ipRange = input.ipRange;
-        // Never silently: nodes already hold addresses from the previous
-        // assigner, so a silent switch leaves half the cluster on the old
-        // scheme.
-        if (existing.implementation !== implementation) {
-          this.logger.warn(
-            `VNet ${existing.id} changes from ${existing.implementation} to ` +
-              `${implementation}; existing node addresses are not migrated`,
-          );
-          existing.implementation = implementation;
-        }
-        await this.vnetRepository.save(existing);
-      }
-      const manualSubnet = (existing.subnets ?? []).find(
-        (s) => s.type === SubnetType.MANUAL,
-      );
-      if (!manualSubnet) {
-        await this.subnetRepository.save(
-          this.buildManualSubnet(existing.id, input.ipRange),
-        );
-      } else if (manualSubnet.ipRange !== input.ipRange) {
-        manualSubnet.ipRange = input.ipRange;
-        await this.subnetRepository.save(manualSubnet);
-      }
-      this.logger.log(
-        `Manual VNet for cluster ${input.clusterId} already registered; CIDR synced to ${input.ipRange}`,
-      );
-      return this.getVNet(existing.id);
-    }
-
-    const vnet = this.vnetRepository.create({
-      providerResourceId,
-      name: input.name,
-      provider: input.provider,
-      ipRange: input.ipRange,
-      implementation,
-      labels,
-      status: VNetStatus.ACTIVE,
-      metadata: { clusterId: input.clusterId, manual: true },
-    });
-    const savedVNet = await this.vnetRepository.save(vnet);
-    await this.subnetRepository.save(
-      this.buildManualSubnet(savedVNet.id, input.ipRange),
-    );
-
-    this.logger.log(
-      `Registered manual VNet "${input.name}" (${input.ipRange}) for cluster ${input.clusterId}`,
-    );
-    return this.getVNet(savedVNet.id);
-  }
-
   /**
    * The one network Flui builds for this installation.
    *
@@ -468,16 +361,6 @@ export class VNetsService {
     });
     if (!vnet) throw new NotFoundException(`VNet ${id} not found`);
     return vnet;
-  }
-
-  private buildManualSubnet(vnetId: string, ipRange: string): VNetSubnetEntity {
-    return this.subnetRepository.create({
-      vnetId,
-      ipRange,
-      type: SubnetType.MANUAL,
-      networkZone: 'manual',
-      attachedServerIds: [],
-    });
   }
 
   private assertValidCidr(cidr: string): void {

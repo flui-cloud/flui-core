@@ -119,7 +119,42 @@ describe('ClusterOrchestrationService — retry safety', () => {
       expect(kubeconfig).toContain('https://10.0.0.1:6443');
     });
 
-    it('fails immediately when the master rejects the key', async () => {
+    /** A virtual clock driven by the injected sleep, so the grace period below
+     *  is measured without the test waiting out three real minutes. */
+    const withClock = () => {
+      let now = 1_000_000;
+      const spy = jest.spyOn(Date, 'now').mockImplementation(() => now);
+      const sleep = jest.fn().mockImplementation(async () => {
+        now += 15_000;
+      });
+      return { sleep, restore: () => spy.mockRestore() };
+    };
+
+    it('waits out an early refusal — cloud-init may not have written the key', async () => {
+      // On a provider that registers no keypair with the hypervisor (OVH),
+      // sshd answers before authorized_keys exists, so the first refusal means
+      // "too early", not "wrong key".
+      const { sleep, restore } = withClock();
+      const execCommand = jest
+        .fn()
+        .mockRejectedValueOnce(
+          new Error(
+            'SSH exec failed (code 255): Permission denied (publickey).',
+          ),
+        )
+        .mockResolvedValue('apiVersion: v1\nserver: https://127.0.0.1:6443');
+      const service = build({ nativeSsh: { execCommand }, sleep });
+
+      try {
+        await expect(call(service)).resolves.toContain('https://10.0.0.1:6443');
+        expect(execCommand).toHaveBeenCalledTimes(2);
+      } finally {
+        restore();
+      }
+    });
+
+    it('gives up once the refusal outlasts the grace period', async () => {
+      const { sleep, restore } = withClock();
       const execCommand = jest
         .fn()
         .mockRejectedValue(
@@ -127,12 +162,18 @@ describe('ClusterOrchestrationService — retry safety', () => {
             'SSH exec failed (code 255): Permission denied (publickey).',
           ),
         );
-      const sleep = jest.fn().mockResolvedValue(undefined);
       const service = build({ nativeSsh: { execCommand }, sleep });
 
-      await expect(call(service)).rejects.toThrow(/rejected the bootstrap key/);
-      expect(execCommand).toHaveBeenCalledTimes(1);
-      expect(sleep).not.toHaveBeenCalled();
+      try {
+        await expect(call(service)).rejects.toThrow(
+          /kept rejecting the bootstrap key/,
+        );
+        // Bounded: it must not burn the whole 15-minute deadline on a key that
+        // is genuinely wrong.
+        expect(execCommand.mock.calls.length).toBeLessThan(15);
+      } finally {
+        restore();
+      }
     });
 
     it('rejects a truncated kubeconfig rather than persisting it', async () => {

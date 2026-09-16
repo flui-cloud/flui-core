@@ -78,7 +78,11 @@ export function nextFreeBlock(
       .filter((t) => (t.base & maskOf(net.prefix)) === net.base)
       .map((t) => t.base & maskOf(prefix)),
   );
-  const step = prefix === 0 ? 0 : (~maskOf(prefix) >>> 0) + 1;
+  // A /0 is the whole address space: one candidate, and a step of zero would
+  // walk the loop below forever.
+  if (prefix === 0) return used.has(0) ? null : `${formatIp(0)}/0`;
+
+  const step = (~maskOf(prefix) >>> 0) + 1;
   const last = (net.base | (~maskOf(net.prefix) >>> 0)) >>> 0;
   for (let base = net.base; base <= last; base += step) {
     if (!used.has(base)) return `${formatIp(base)}/${prefix}`;

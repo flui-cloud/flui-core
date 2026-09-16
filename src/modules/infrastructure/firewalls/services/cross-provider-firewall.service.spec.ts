@@ -76,6 +76,7 @@ describe('CrossProviderFirewallService', () => {
   let service: CrossProviderFirewallService;
   let wgEgress: jest.Mock;
   let wgNodeOverlay: jest.Mock;
+  let wgControlPeer: jest.Mock;
   let list: jest.Mock;
   let apply: jest.Mock;
   let clusterFind: jest.Mock;
@@ -99,6 +100,7 @@ describe('CrossProviderFirewallService', () => {
     });
     wgEgress = jest.fn().mockResolvedValue([]);
     wgNodeOverlay = jest.fn().mockResolvedValue(undefined);
+    wgControlPeer = jest.fn().mockResolvedValue(null);
     const mod = await Test.createTestingModule({
       providers: [
         CrossProviderFirewallService,
@@ -123,6 +125,7 @@ describe('CrossProviderFirewallService', () => {
           useValue: {
             memberEgressIps: wgEgress,
             nodeOverlayFor: wgNodeOverlay,
+            controlPeer: wgControlPeer,
           },
         },
       ],
@@ -516,14 +519,18 @@ describe('CrossProviderFirewallService', () => {
       expect(peerOf(rulesFor('fw-w'))).toHaveLength(1);
     });
 
-    it('withdraws it once the node answers on the tunnel', async () => {
+    it('moves it to the tunnel address once the node answers there', async () => {
       // Derived from the same call that chooses the kubeconfig endpoint, so the
-      // two cannot drift: the rule goes exactly when the endpoint stops being
-      // public, never a pass earlier.
+      // two cannot drift. It moves rather than disappears: the host firewall
+      // policy is drop, and through the tunnel the control arrives as
+      // 10.250.0.1 — a rule naming its public address would close 6443 against
+      // the very path just chosen, while ICMP still answers and makes the node
+      // look healthy.
       wgNodeOverlay.mockResolvedValue({
         nodeAddress: '10.250.0.2',
         enrolled: true,
       });
+      wgControlPeer.mockResolvedValue({ managementIp: '10.250.0.1' });
       list.mockResolvedValue([
         firewall('fw-ctl', control()),
         firewall('fw-w', crossProviderWorkload()),
@@ -531,7 +538,33 @@ describe('CrossProviderFirewallService', () => {
 
       await service.reconcileAllPeers();
 
-      expect(peerOf(rulesFor('fw-w'))).toEqual([]);
+      expect(peerOf(rulesFor('fw-w'))).toEqual([
+        expect.objectContaining({
+          port: '6443',
+          sourceIps: ['10.250.0.1/32'],
+        }),
+      ]);
+    });
+
+    it('keeps the public source when the tunnel address cannot be read', async () => {
+      // Not knowing the overlay's own address is not a reason to close the only
+      // other door.
+      wgNodeOverlay.mockResolvedValue({
+        nodeAddress: '10.250.0.2',
+        enrolled: true,
+      });
+      wgControlPeer.mockRejectedValue(new Error('db down'));
+      list.mockResolvedValue([
+        firewall('fw-ctl', control()),
+        firewall('fw-w', crossProviderWorkload()),
+      ]);
+
+      await service.reconcileAllPeers();
+
+      expect(peerOf(rulesFor('fw-w'))).toHaveLength(1);
+      expect(peerOf(rulesFor('fw-w'))[0].sourceIps).not.toEqual([
+        '10.250.0.1/32',
+      ]);
     });
 
     it('keeps the rule when the overlay cannot be read at all', async () => {

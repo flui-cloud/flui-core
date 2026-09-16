@@ -8,6 +8,7 @@ import {
   ClusterType,
 } from '../../clusters/entities/cluster.entity';
 import { WireGuardReconciler } from '../services/wireguard-reconciler.service';
+import { WireGuardHubService } from '../services/wireguard-hub.service';
 
 /**
  * Brings every cluster's overlay back to its desired state on a loop.
@@ -32,6 +33,7 @@ export class WireGuardReconciliationScheduler {
     @InjectRepository(ClusterEntity)
     private readonly clusters: Repository<ClusterEntity>,
     private readonly reconciler: WireGuardReconciler,
+    private readonly hub: WireGuardHubService,
   ) {}
 
   @Cron(process.env.FLUI_WG_RECONCILE_CRON || CronExpression.EVERY_10_MINUTES)
@@ -56,13 +58,23 @@ export class WireGuardReconciliationScheduler {
    * pass.
    */
   async reconcileAll(): Promise<void> {
-    // First, and not conditionally: members dial the control, so until its end
-    // is up there is no overlay for any of them to join. A failure here is
+    // Before the hub's config is rendered, so the members of a destroyed
+    // cluster leave it in this pass rather than lingering until the next one.
+    try {
+      await this.hub.revokeOrphanPeers();
+    } catch (err: any) {
+      this.logger.error(
+        `[wg-reconcile] withdrawing departed peers failed: ${err?.message ?? err}`,
+      );
+    }
+
+    // Then the control, and not conditionally: members dial it, so until its
+    // end is up there is no overlay for any of them to join. A failure here is
     // logged and the pass continues — the workload loop below refuses on its
     // own when the control has no key, and one unreachable control should not
     // also cost the diagnostics the rest of the pass produces.
     try {
-      const control = await this.reconciler.ensureControlEnd();
+      const control = await this.hub.ensureControlEnd();
       if (!control) {
         this.logger.warn(
           `[wg-reconcile] the control cluster has no end of the overlay — ` +

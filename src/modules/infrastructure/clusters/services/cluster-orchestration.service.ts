@@ -1698,6 +1698,13 @@ export class ClusterOrchestrationService {
   /** Measured on Hetzner hel1: cloud-init reaches k3s.yaml ~106s after the
    *  server answers. Only paces the progress bar — never gates the fetch. */
   private static readonly KUBECONFIG_TYPICAL_WAIT_MS = 110_000;
+  /** How long "permission denied" still reads as "too early" rather than
+   *  "wrong key". Only providers that register the key with the hypervisor have
+   *  it in place at first boot; where it arrives through cloud-init, sshd
+   *  answers before `authorized_keys` exists and refuses every caller until it
+   *  does. Seen on OVH, which registers no keypair at all (`resolveSSHKeys` is
+   *  absent there, and the sync logs an empty list of provider ids). */
+  private static readonly KUBECONFIG_KEY_GRACE_MS = 180_000;
 
   /**
    * Fetch kubeconfig from master node via SSH using the bootstrap key.
@@ -1747,12 +1754,25 @@ export class ClusterOrchestrationService {
       } catch (err) {
         lastError = err.message;
 
-        // Rejected credentials never become accepted ones by waiting, and
-        // burning the deadline hides the cause behind what reads as a slow boot.
+        // A key that stays rejected never becomes accepted by waiting, and
+        // burning the deadline hides the cause behind what reads as a slow
+        // boot. But for the first minutes it is not yet a verdict: see
+        // KUBECONFIG_KEY_GRACE_MS.
+        const elapsedMs = Date.now() - started;
         if (/permission denied|denied \(publickey\)/i.test(lastError)) {
-          throw new Error(
-            `Master rejected the bootstrap key — it is not the key installed at first boot, ` +
-              `so no amount of waiting will help: ${lastError}`,
+          if (
+            elapsedMs >= ClusterOrchestrationService.KUBECONFIG_KEY_GRACE_MS
+          ) {
+            throw new Error(
+              `Master kept rejecting the bootstrap key for ` +
+                `${Math.round(elapsedMs / 1000)}s — it is not the key installed ` +
+                `at first boot, so no amount of waiting will help: ${lastError}`,
+            );
+          }
+          this.logger.log(
+            `Master not accepting the bootstrap key yet ` +
+              `(${Math.round(elapsedMs / 1000)}s in) — cloud-init may still be ` +
+              `writing authorized_keys`,
           );
         }
 

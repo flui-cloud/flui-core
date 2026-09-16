@@ -18,6 +18,11 @@ const cluster = (nodes: any[]) => ({
 });
 
 describe('WireGuardReconciler', () => {
+  let hub: { applyControlConfig: jest.Mock };
+  beforeEach(() => {
+    hub = { applyControlConfig: jest.fn() };
+  });
+
   const build = (clusterRow: any, host: any, peerSvc: any = {}) =>
     new WireGuardReconciler(
       { findOne: jest.fn().mockResolvedValue(clusterRow) } as any,
@@ -31,7 +36,7 @@ describe('WireGuardReconciler', () => {
         ...peerSvc,
       } as any,
       host as any,
-      new ManagementAddressResolver(),
+      hub as any,
     );
 
   describe('enrolCluster', () => {
@@ -268,6 +273,45 @@ describe('WireGuardReconciler', () => {
       await svc.reconcileCluster('c1');
 
       expect(peerSvc.revokeMember).not.toHaveBeenCalled();
+    });
+
+    /**
+     * The hub's config is written at the top of a sweep, before any member has
+     * been asked for a key. A node enrolled further down the same sweep is
+     * therefore absent from it, and stays unreachable from the control until
+     * the next one — ten minutes of silence on a node that is otherwise ready.
+     */
+    it('rewrites the hub’s own config as soon as a node presents a key', async () => {
+      const svc = build(
+        cluster([
+          { id: 'n1', ipAddress: '1.1.1.1', metadata: {}, nodeType: 'master' },
+        ]),
+        {
+          apply: jest
+            .fn()
+            .mockResolvedValue(`${KEY_MARKER}=${KEY_A}\n${READY_MARKER}`),
+        },
+        peersOf([]),
+      );
+
+      await svc.reconcileCluster('c1');
+
+      expect(hub.applyControlConfig).toHaveBeenCalled();
+    });
+
+    it('leaves the hub alone when no node presented one', async () => {
+      // Nothing changed at the hub, and it is an SSH round trip per sweep.
+      const svc = build(
+        cluster([
+          { id: 'n1', ipAddress: '1.1.1.1', metadata: {}, nodeType: 'master' },
+        ]),
+        { apply: jest.fn().mockResolvedValue(UNSUPPORTED_MARKER) },
+        peersOf([]),
+      );
+
+      await svc.reconcileCluster('c1');
+
+      expect(hub.applyControlConfig).not.toHaveBeenCalled();
     });
 
     it('reports what happened rather than throwing on a bad node', async () => {

@@ -111,6 +111,17 @@ export function buildApplyScript(
     `  ( umask 077; wg-quick strip ${conf} > ${conf}.stripped )`,
     `  wg syncconf ${iface} ${conf}.stripped`,
     `  rm -f ${conf}.stripped`,
+    // syncconf applies peers but not their routes — only `wg-quick up` does
+    // that, and it only runs when the interface is absent. Without this a peer
+    // added to a live tunnel handshakes and shows in `wg show` while every
+    // packet to it leaves by the default route.
+    `  wg show ${iface} allowed-ips 2>/dev/null | while read -r _peer ips; do`,
+    '    for ip in $ips; do',
+    `      if [ "$ip" != "(none)" ]; then`,
+    `        ip route replace "$ip" dev ${iface} >/dev/null 2>&1 || true`,
+    '      fi',
+    '    done',
+    '  done',
     'else',
     `  wg-quick up ${conf}`,
     'fi',

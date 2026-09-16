@@ -153,3 +153,13 @@ describe('nextFreeBlock', () => {
     );
   });
 });
+
+describe('nextFreeBlock at the edges', () => {
+  it('returns the whole space for a /0 rather than looping forever', () => {
+    expect(nextFreeBlock('0.0.0.0/0', [], 0)).toBe('0.0.0.0/0');
+  });
+
+  it('has nothing left to give when the /0 is taken', () => {
+    expect(nextFreeBlock('0.0.0.0/0', ['0.0.0.0/0'], 0)).toBeNull();
+  });
+});

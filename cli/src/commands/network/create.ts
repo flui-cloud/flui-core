@@ -1,6 +1,7 @@
 import { Command, Flags } from '@oclif/core';
 import chalk from 'chalk';
 import ora from 'ora';
+import { randomBytes } from 'node:crypto';
 import { ApiClient } from '../../lib/api-client';
 import { ConfigStorage } from '../../lib/config-storage';
 
@@ -61,7 +62,10 @@ export default class NetworkCreate extends Command {
         'CIDR for the first subnet. Defaults to the whole network range.',
     }),
     name: Flags.string({
-      description: 'Name for the network. Defaults to <provider>-<zone>.',
+      description:
+        'Name for the network. Defaults to <provider>-<zone>-<suffix>; the ' +
+        'suffix is there because providers reject a duplicate name and an ' +
+        'installation may want more than one network in a zone.',
     }),
   };
 
@@ -79,7 +83,9 @@ export default class NetworkCreate extends Command {
     });
 
     const zone = await this.resolveZone(apiClient, flags.provider, flags.zone);
-    const name = flags.name ?? `${flags.provider}-${zone}`.toLowerCase();
+    const name =
+      flags.name ??
+      `${flags.provider}-${zone}-${randomBytes(3).toString('hex')}`.toLowerCase();
 
     console.log('');
     console.log(`  ${chalk.bold('Provider:')}  ${flags.provider}`);
@@ -160,10 +166,12 @@ export default class NetworkCreate extends Command {
     this.error(
       `This provider has more than one network zone; pass --zone with one of:\n` +
         zones
-          .map(
-            (z) =>
-              `  • ${z.id}${z.coveredRegions?.length ? `  (${z.coveredRegions.join(', ')})` : ''}`,
-          )
+          .map((z) => {
+            const regions = z.coveredRegions?.length
+              ? `  (${z.coveredRegions.join(', ')})`
+              : '';
+            return `  • ${z.id}${regions}`;
+          })
           .join('\n'),
       { exit: 1 },
     );

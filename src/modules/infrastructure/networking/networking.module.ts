@@ -5,12 +5,14 @@ import { WireGuardPeerEntity } from './entities/wireguard-peer.entity';
 import { VNetEntity } from '../vnets/entities/vnet.entity';
 import { WireGuardPeerService } from './services/wireguard-peer.service';
 import { WireGuardReconciler } from './services/wireguard-reconciler.service';
+import { WireGuardHubService } from './services/wireguard-hub.service';
 import { ApiServerSanService } from './services/api-server-san.service';
 import { WireGuardReconciliationScheduler } from './schedulers/wireguard-reconciliation.scheduler';
 import { ClusterEntity } from '../clusters/entities/cluster.entity';
 import { InfrastructureOperationEntity } from '../servers/entities/infrastructure-operations.entity';
 import { ProvidersModule } from '../../providers/providers.module';
 import { SharedInfrastructureModule } from '../shared/shared-infrastructure.module';
+import { VNetsModule } from '../vnets/vnets.module';
 
 /**
  * The management overlay: who is on it, at which address, with which key.
@@ -35,13 +37,22 @@ import { SharedInfrastructureModule } from '../shared/shared-infrastructure.modu
     // firewall does, rather than growing an SSH path of its own.
     ProvidersModule,
     SharedInfrastructureModule,
+    // The overlay is a network, and an operator looking for it looks in VNet
+    // management. Nothing else here creates that row.
+    VNetsModule,
   ],
   providers: [
     WireGuardPeerService,
+    WireGuardHubService,
     WireGuardReconciler,
     WireGuardReconciliationScheduler,
     ApiServerSanService,
   ],
-  exports: [WireGuardPeerService, WireGuardReconciler, ApiServerSanService],
+  exports: [
+    WireGuardPeerService,
+    WireGuardHubService,
+    WireGuardReconciler,
+    ApiServerSanService,
+  ],
 })
 export class NetworkingModule {}

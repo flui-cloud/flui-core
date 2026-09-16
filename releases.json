@@ -4,10 +4,10 @@
     {
       "version": "0.13.0-rc.4",
       "publishedAt": "2026-09-15T17:25:40+02:00",
-      "bootstrapRef": "a5d6dfa",
+      "bootstrapRef": "2de6e0a",
       "images": {
-        "fluiApi": "d46e976",
-        "fluiWeb": "010e973",
+        "fluiApi": "67400bd",
+        "fluiWeb": "de88258",
         "fluiAuthz": "0.6.0"
       },
       "notes": [],

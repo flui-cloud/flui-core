@@ -17,10 +17,12 @@ import { ClusterEntity } from '../clusters/entities/cluster.entity';
 import { InfrastructureOperationEntity } from '../servers/entities/infrastructure-operations.entity';
 import { WireGuardPeerService } from './services/wireguard-peer.service';
 import { WireGuardReconciler } from './services/wireguard-reconciler.service';
+import { WireGuardHubService } from './services/wireguard-hub.service';
 import { ApiServerSanService } from './services/api-server-san.service';
 import { WireGuardReconciliationScheduler } from './schedulers/wireguard-reconciliation.scheduler';
 import { HostCommandService } from '../../providers/core/host/host-command.service';
 import { ManagementAddressResolver } from '../shared/services/management-address.resolver';
+import { VNetsService } from '../vnets/services/vnets.service';
 
 /**
  * Resolves this module's own graph, because the type-checker cannot.
@@ -40,6 +42,7 @@ import { ManagementAddressResolver } from '../shared/services/management-address
 @Module({
   providers: [
     WireGuardPeerService,
+    WireGuardHubService,
     WireGuardReconciler,
     WireGuardReconciliationScheduler,
     ApiServerSanService,
@@ -48,6 +51,7 @@ import { ManagementAddressResolver } from '../shared/services/management-address
     // from here too and the resolution below fails.
     ManagementAddressResolver,
     { provide: HostCommandService, useValue: {} },
+    { provide: VNetsService, useValue: {} },
     { provide: getRepositoryToken(WireGuardPeerEntity), useValue: {} },
     { provide: getRepositoryToken(VNetEntity), useValue: {} },
     { provide: getRepositoryToken(ClusterEntity), useValue: {} },
@@ -68,19 +72,19 @@ describe('the networking module resolves its own graph', () => {
     const moduleRef = await build();
 
     expect(moduleRef.get(WireGuardPeerService)).toBeDefined();
+    expect(moduleRef.get(WireGuardHubService)).toBeDefined();
     expect(moduleRef.get(WireGuardReconciler)).toBeDefined();
     expect(moduleRef.get(ApiServerSanService)).toBeDefined();
     expect(moduleRef.get(WireGuardReconciliationScheduler)).toBeDefined();
   });
 
-  it('gives the reconciler the resolver it now needs', async () => {
+  it('gives the hub the resolver it needs', async () => {
     // The dependency the real module had no source for.
     const moduleRef = await build();
-    const reconciler = moduleRef.get(WireGuardReconciler);
+    const hub = moduleRef.get(WireGuardHubService);
 
     expect(
-      (reconciler as unknown as { managementAddress: unknown })
-        .managementAddress,
+      (hub as unknown as { managementAddress: unknown }).managementAddress,
     ).toBeInstanceOf(ManagementAddressResolver);
   });
 });

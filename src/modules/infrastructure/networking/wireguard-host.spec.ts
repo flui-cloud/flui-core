@@ -1,3 +1,14 @@
+import { execFileSync } from 'node:child_process';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import {
   APPLIED_MARKER,
   buildApplyScript,
@@ -133,6 +144,73 @@ describe('buildApplyScript', () => {
 
   it('confirms with a marker', () => {
     expect(script).toContain(`echo ${APPLIED_MARKER}`);
+  });
+
+  /**
+   * Runs the generated sync branch against fake `wg` and `ip`, because reading
+   * it proves nothing: the branch was syntactically fine, applied its peers,
+   * and still left every one of them unreachable for want of a route. Here the
+   * fake `ip` records what the script actually asked for.
+   */
+  describe('the sync branch, executed', () => {
+    const run = (allowedIps: string) => {
+      const dir = mkdtempSync(join(tmpdir(), 'wg-apply-'));
+      const bin = join(dir, 'bin');
+      mkdirSync(bin);
+      const log = join(dir, 'routes.log');
+      writeFileSync(
+        join(bin, 'wg'),
+        `#!/bin/sh\n[ "$1" = show ] && [ "$3" = allowed-ips ] && printf '%s'` +
+          ` '${allowedIps}'\nexit 0\n`,
+        { mode: 0o755 },
+      );
+      writeFileSync(
+        join(bin, 'ip'),
+        `#!/bin/sh\n[ "$1" = route ] && [ "$2" = replace ] &&` +
+          ` echo "$3 dev $5" >> ${log}\nexit 0\n`,
+        { mode: 0o755 },
+      );
+      writeFileSync(join(bin, 'wg-quick'), '#!/bin/sh\nexit 0\n', {
+        mode: 0o755,
+      });
+
+      // The generated branch, with only its key directory redirected — the
+      // logic under test is the text the node really receives.
+      const branch = script
+        .slice(
+          script.indexOf('if ip link show'),
+          script.indexOf('\nelse\n  wg-quick up'),
+        )
+        .split('/etc/wireguard')
+        .join(dir);
+      execFileSync('sh', ['-c', `set -e\n${branch}\nfi\necho DONE`], {
+        env: { ...process.env, PATH: `${bin}:${process.env.PATH}` },
+        encoding: 'utf-8',
+      });
+      const routes = existsSync(log) ? readFileSync(log, 'utf-8') : '';
+      rmSync(dir, { recursive: true, force: true });
+      return routes.trim().split('\n').filter(Boolean);
+    };
+
+    it('installs a route for every peer, which syncconf does not', () => {
+      expect(run('AAAA\t10.250.0.2/32\n')).toEqual(['10.250.0.2/32 dev flui0']);
+    });
+
+    it('keeps going past the first peer', () => {
+      // `[ x ] && continue` under `set -e` ends the loop on the first peer it
+      // does not skip, so the second node silently stays unrouted.
+      expect(
+        run('AAAA\t10.250.0.2/32\nBBBB\t10.250.0.3/32 10.42.1.0/24\n'),
+      ).toEqual([
+        '10.250.0.2/32 dev flui0',
+        '10.250.0.3/32 dev flui0',
+        '10.42.1.0/24 dev flui0',
+      ]);
+    });
+
+    it('asks for nothing when a peer allows nothing', () => {
+      expect(run('CCCC\t(none)\n')).toEqual([]);
+    });
   });
 });
 
