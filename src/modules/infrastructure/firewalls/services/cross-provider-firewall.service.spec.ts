@@ -3,6 +3,7 @@ import { getRepositoryToken } from '@nestjs/typeorm';
 import { CrossProviderFirewallService } from './cross-provider-firewall.service';
 import { ManagementAddressResolver } from '../../shared/services/management-address.resolver';
 import { WireGuardPeerService } from '../../networking/services/wireguard-peer.service';
+import { EncryptionService } from '../../../shared/encryption/services/encryption.service';
 import { FirewallDesiredStateService } from './firewall-desired-state.service';
 import { FirewallReconciliationService } from './firewall-reconciliation.service';
 import {
@@ -127,6 +128,10 @@ describe('CrossProviderFirewallService', () => {
             nodeOverlayFor: wgNodeOverlay,
             controlPeer: wgControlPeer,
           },
+        },
+        {
+          provide: EncryptionService,
+          useValue: { decrypt: (v: string) => v.replace(/^enc:/, '') },
         },
       ],
     }).compile();
@@ -406,14 +411,17 @@ describe('CrossProviderFirewallService', () => {
       return peerOf(rulesFor('fw-ctl'));
     };
 
-    it('opens UDP on the control, scoped to the peers that dial in', async () => {
+    it('opens UDP on the control to any address', async () => {
+      // Not scoped to known peers: a member has to dial in before it can be
+      // known, and could not dial in until it was. WireGuard answers an unknown
+      // peer with silence, so the address never was the identity.
       expect(await withOverlay(['5.6.7.8/32'])).toEqual([
         {
           description: 'flui:xprovider:wg-listen',
           direction: 'in',
           protocol: 'udp',
           port: '51821',
-          sourceIps: ['5.6.7.8/32'],
+          sourceIps: ['0.0.0.0/0', '::/0'],
         },
       ]);
     });
@@ -425,10 +433,10 @@ describe('CrossProviderFirewallService', () => {
       expect(peerOf(rulesFor('fw-ctl'))).toEqual([]);
     });
 
-    it('opens nothing when no peer has an address to dial from', async () => {
-      // An empty allow-list would have to mean "anywhere", and a port opened to
-      // the world because a list came back empty is the wrong kind of default.
-      expect(await withOverlay([])).toEqual([]);
+    it('opens it before any peer exists, which is the whole point', async () => {
+      // Seen live: revoking the last peers closed the port, and the next node
+      // created could not join until a firewall pass reopened it.
+      expect(await withOverlay([])).toHaveLength(1);
     });
 
     it('honours a configured port', async () => {
@@ -461,7 +469,8 @@ describe('CrossProviderFirewallService', () => {
 
       await service.reconcileAllPeers();
 
-      expect(peerOf(rulesFor('fw-ctl'))).toEqual([]);
+      // The tunnel port no longer depends on that table at all.
+      expect(peerOf(rulesFor('fw-ctl'))).toHaveLength(1);
       expect(peerOf(rulesFor('fw-w'))).toHaveLength(1);
     });
 
@@ -519,18 +528,15 @@ describe('CrossProviderFirewallService', () => {
       expect(peerOf(rulesFor('fw-w'))).toHaveLength(1);
     });
 
-    it('moves it to the tunnel address once the node answers there', async () => {
-      // Derived from the same call that chooses the kubeconfig endpoint, so the
-      // two cannot drift. It moves rather than disappears: the host firewall
-      // policy is drop, and through the tunnel the control arrives as
-      // 10.250.0.1 — a rule naming its public address would close 6443 against
-      // the very path just chosen, while ICMP still answers and makes the node
-      // look healthy.
+    it('withdraws it once the node answers on the tunnel', async () => {
+      // It does not move to the tunnel address: the tunnel is admitted on the
+      // host by interface, which no source address can express and which stays
+      // true however the control's address changes. Leaving a second rule here
+      // would be a second mechanism for one job, free to drift from the first.
       wgNodeOverlay.mockResolvedValue({
         nodeAddress: '10.250.0.2',
         enrolled: true,
       });
-      wgControlPeer.mockResolvedValue({ managementIp: '10.250.0.1' });
       list.mockResolvedValue([
         firewall('fw-ctl', control()),
         firewall('fw-w', crossProviderWorkload()),
@@ -538,33 +544,28 @@ describe('CrossProviderFirewallService', () => {
 
       await service.reconcileAllPeers();
 
-      expect(peerOf(rulesFor('fw-w'))).toEqual([
-        expect.objectContaining({
-          port: '6443',
-          sourceIps: ['10.250.0.1/32'],
-        }),
-      ]);
+      expect(peerOf(rulesFor('fw-w'))).toEqual([]);
     });
 
-    it('keeps the public source when the tunnel address cannot be read', async () => {
-      // Not knowing the overlay's own address is not a reason to close the only
-      // other door.
+    it('never reopens the public port once the kubeconfig has moved', async () => {
+      // The peer has gone stale, which used to read as "back to public". The
+      // kubeconfig already names the overlay address, so nothing would use that
+      // port — reopening it would expose a door no one walks through.
       wgNodeOverlay.mockResolvedValue({
         nodeAddress: '10.250.0.2',
-        enrolled: true,
+        enrolled: false,
       });
-      wgControlPeer.mockRejectedValue(new Error('db down'));
+      const moved = crossProviderWorkload();
+      (moved as any).kubeconfigEncrypted =
+        'enc:server: https://10.250.0.2:6443';
       list.mockResolvedValue([
         firewall('fw-ctl', control()),
-        firewall('fw-w', crossProviderWorkload()),
+        firewall('fw-w', moved),
       ]);
 
       await service.reconcileAllPeers();
 
-      expect(peerOf(rulesFor('fw-w'))).toHaveLength(1);
-      expect(peerOf(rulesFor('fw-w'))[0].sourceIps).not.toEqual([
-        '10.250.0.1/32',
-      ]);
+      expect(peerOf(rulesFor('fw-w'))).toEqual([]);
     });
 
     it('keeps the rule when the overlay cannot be read at all', async () => {

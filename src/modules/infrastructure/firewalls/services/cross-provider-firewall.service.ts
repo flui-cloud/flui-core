@@ -12,6 +12,7 @@ import { NodeType } from '../../clusters/entities/cluster-node.entity';
 import { ClusterFirewallEntity } from '../entities/cluster-firewall.entity';
 import { ManagementAddressResolver } from '../../shared/services/management-address.resolver';
 import { WireGuardPeerService } from '../../networking/services/wireguard-peer.service';
+import { EncryptionService } from '../../../shared/encryption/services/encryption.service';
 import { FirewallDesiredStateService } from './firewall-desired-state.service';
 import { FirewallReconciliationService } from './firewall-reconciliation.service';
 
@@ -62,6 +63,7 @@ export class CrossProviderFirewallService {
     private readonly clusterRepository: Repository<ClusterEntity>,
     private readonly managementAddress: ManagementAddressResolver,
     private readonly wgPeers: WireGuardPeerService,
+    private readonly encryption: EncryptionService,
   ) {}
 
   async reconcileAllPeers(): Promise<void> {
@@ -179,14 +181,12 @@ export class CrossProviderFirewallService {
     const nodeOverlay = master
       ? await this.wgPeers.nodeOverlayFor(master.id).catch(() => undefined)
       : undefined;
-    const controlOverlayIp = await this.controlOverlayAddress();
     const peerRules = this.computePeerRules(
       cluster,
       control,
       crossWorkloadNodeIps,
       wgEgressIps,
       nodeOverlay,
-      controlOverlayIp,
     );
     const baseRules = (fw.desiredRules ?? []).filter(
       (r) => !this.isPeerRule(r),
@@ -203,21 +203,26 @@ export class CrossProviderFirewallService {
     crossWorkloadNodeIps: string[],
     wgEgressIps: string[],
     nodeOverlay?: { nodeAddress: string; enrolled: boolean },
-    controlOverlayIp?: string,
   ): FirewallRuleDto[] {
     if (isControlClusterType(cluster.clusterType)) {
       const rules: FirewallRuleDto[] = [];
-      if (wgEgressIps.length > 0) {
+      if (this.overlayEnabled()) {
         rules.push({
           description: `${PEER_RULE_PREFIX}wg-listen`,
           direction: 'in',
           protocol: 'udp',
           port: String(this.wgPort()),
-          // Source-scoped to the peers' own egress addresses where they are
-          // known. Defence in depth only: WireGuard authenticates by public
-          // key, and an unknown source gets no reply at all — the address is
-          // not the identity, it just narrows who may try.
-          sourceIps: wgEgressIps,
+          // Open, deliberately. Scoping this to the egress addresses of peers
+          // already known is circular: a member has to dial in before it can be
+          // known, and cannot dial in until it is. Live consequence — a cluster
+          // whose peer table had just been emptied left the port closed, and the
+          // first new member waited out a firewall pass before it could join.
+          // The same scoping also breaks WireGuard's roaming: a peer whose
+          // public address changes stops being admitted under its old one.
+          // Nothing is lost by opening it. WireGuard authenticates by public
+          // key and answers an unknown peer with silence, so the address was
+          // never the identity — it only narrowed who could be ignored.
+          sourceIps: ['0.0.0.0/0', '::/0'],
         });
       }
       // Unauthenticated ingest stays vnet-only unless explicitly opted in.
@@ -245,27 +250,28 @@ export class CrossProviderFirewallService {
       (cluster.nodes ?? []).find((n) => n.nodeType === NodeType.MASTER) ??
       (cluster.nodes ?? [])[0];
     if (!master) return [];
-    // The rule names the address the packets actually carry. On the overlay the
-    // control arrives as its tunnel address, not its public one — naming the
-    // public address there closes 6443 against the very path that was chosen,
-    // and the host firewall's policy is drop. Nothing is opened for a shared
-    // private network: the VNet's own range is already allowed.
+    // This rule governs the public path and nothing else. The tunnel is admitted
+    // on the host by interface (`iifname flui0`), which no source address can
+    // express and which stays true however the control's address changes; on a
+    // provider firewall the tunnel is invisible anyway, since it only ever sees
+    // the outer UDP. So when the path stops being public there is nothing left
+    // here to open.
+    // Asked of the stored kubeconfig, not re-derived from peer health. Health
+    // flaps — the handshake goes stale after three minutes while the sweep
+    // samples every ten — and a rule derived from it would reopen the public
+    // port on every flap, long after nothing uses it any more. The kubeconfig
+    // is the one place the choice is written down, and it only ever moves one
+    // way.
+    if (this.addressedOverTheOverlay(cluster, nodeOverlay)) return [];
+
     const endpoint = this.managementAddress.apiServerEndpointFor(
       cluster,
       master,
       control,
       nodeOverlay,
     );
-    let controlIp: string | undefined;
-    if (endpoint?.path === 'public') {
-      controlIp = this.managementAddress.publicAddressOf(control);
-    } else if (endpoint?.path === 'wireguard') {
-      // Falling back to the public address rather than emitting nothing: not
-      // knowing the tunnel's own address is not a reason to close the only
-      // other door and strand the cluster.
-      controlIp =
-        controlOverlayIp ?? this.managementAddress.publicAddressOf(control);
-    }
+    if (endpoint?.path !== 'public') return [];
+    const controlIp = this.managementAddress.publicAddressOf(control);
     if (!controlIp) return [];
     return [
       {
@@ -276,6 +282,22 @@ export class CrossProviderFirewallService {
         sourceIps: [`${controlIp}/32`],
       },
     ];
+  }
+
+  /** Whether this cluster's kubeconfig already names its overlay address. */
+  private addressedOverTheOverlay(
+    cluster: ClusterEntity,
+    nodeOverlay?: { nodeAddress: string; enrolled: boolean },
+  ): boolean {
+    if (!cluster.kubeconfigEncrypted || !nodeOverlay?.nodeAddress) return false;
+    try {
+      return this.encryption
+        .decrypt(cluster.kubeconfigEncrypted)
+        .includes(`//${nodeOverlay.nodeAddress}:`);
+    } catch {
+      // Unreadable is not proof of anything; fall through to the live answer.
+      return false;
+    }
   }
 
   private isPeerRule(rule: FirewallRuleDto): boolean {
@@ -289,23 +311,6 @@ export class CrossProviderFirewallService {
    * public rules this service also owns are what keep existing clusters
    * manageable, and they are not the overlay's to break.
    */
-  /** The control's own address on the overlay, or nothing. Defensive for the
-   *  same reason as `overlayEgressIps`: the public rules this service owns keep
-   *  existing clusters manageable and are not the overlay's to break. */
-  private async controlOverlayAddress(): Promise<string | undefined> {
-    // No FLUI_WG_ENABLED gate: the answer is only ever used when the chosen
-    // API-server path is already the tunnel, which says more than the flag does.
-    try {
-      return (await this.wgPeers.controlPeer())?.managementIp ?? undefined;
-    } catch (err: any) {
-      this.logger.warn(
-        `[fw-xprovider] could not read the control's overlay address ` +
-          `(${err?.message ?? err})`,
-      );
-      return undefined;
-    }
-  }
-
   private async overlayEgressIps(): Promise<string[]> {
     if (process.env.FLUI_WG_ENABLED !== 'true') return [];
     try {
@@ -317,6 +322,10 @@ export class CrossProviderFirewallService {
       );
       return [];
     }
+  }
+
+  private overlayEnabled(): boolean {
+    return process.env.FLUI_WG_ENABLED === 'true';
   }
 
   private wgPort(): number {

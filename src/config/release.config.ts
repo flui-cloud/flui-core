@@ -29,9 +29,9 @@ export const RELEASE: ReleaseManifest = {
   // push to main, so a release can point at exactly what is on the branch
   // without cutting a git tag first — which is what these three refs are: the
   // heads of bootstrap-scripts, flui-core and flui-dashboard.
-  bootstrapRef: '2de6e0a',
+  bootstrapRef: 'dcefc2b',
   images: {
-    fluiApi: '67400bd',
+    fluiApi: 'deeed09',
     fluiWeb: 'de88258',
     // Unchanged: that repository did not move.
     fluiAuthz: '0.6.0',

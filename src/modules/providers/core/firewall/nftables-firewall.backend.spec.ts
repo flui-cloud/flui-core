@@ -114,6 +114,52 @@ describe('NftablesFirewallBackend.resolveTargets', () => {
  * last one a single-node workload cluster drops the control cluster on a
  * policy-drop input chain (live finding: ping ok, TCP/6443 refused).
  */
+/**
+ * The renderer has accepted `wgInterface`/`wgOnlyPorts` from the start and no
+ * caller ever passed them, so the tunnel was never a trusted ingress and every
+ * rule had to name a source address instead — which cannot follow the control
+ * when the path moves. These read the ruleset the backend actually ships.
+ */
+describe('the ruleset the backend ships', () => {
+  const shipped = async () => {
+    let sent = '';
+    const hostCommand = {
+      run: jest.fn().mockImplementation(async (_t: unknown, script: string) => {
+        const b64 = /echo '([A-Za-z0-9+/=]+)' \| base64 -d/.exec(script)?.[1];
+        if (b64) sent = Buffer.from(b64, 'base64').toString('utf-8');
+        return 'FLUI_NFT_APPLIED';
+      }),
+    };
+    const backend = new NftablesFirewallBackend(
+      {
+        findOne: jest.fn().mockResolvedValue({
+          id: 'c1',
+          provider: CloudProvider.BYOS,
+          masterIpAddress: '10.0.0.1',
+          nodes: [{ ipAddress: '10.0.0.1' }],
+          metadata: { byos: { user: 'root' } },
+        }),
+      } as any,
+      { find: jest.fn().mockResolvedValue([]) } as any,
+      hostCommand as any,
+    );
+    await backend.createFirewall({
+      name: 'f',
+      rules: [],
+      labels: [{ key: 'flui-cluster-id', value: 'c1' }],
+    } as any);
+    return sent;
+  };
+
+  it('admits the API server over the tunnel, by interface and not by address', async () => {
+    expect(await shipped()).toContain('iifname "flui0" tcp dport 6443 accept');
+  });
+
+  it('refuses to carry traffic between two overlay peers', async () => {
+    expect(await shipped()).toContain('iifname "flui0" oifname "flui0" drop');
+  });
+});
+
 describe('NftablesFirewallBackend.deriveInternalCidrs', () => {
   const derive = (cluster: any, subnets: any[] = []): Promise<string[]> => {
     const subnetRepo = { find: jest.fn().mockResolvedValue(subnets) };

@@ -4,6 +4,7 @@ import { FirewallEntity } from './entities/firewall.entity';
 import { ClusterFirewallEntity } from './entities/cluster-firewall.entity';
 import { ClusterEntity } from '../clusters/entities/cluster.entity';
 import { FirewallsService } from './services/firewalls.service';
+import { EncryptionModule } from 'src/modules/shared/encryption/encryption.module';
 import { NetworkingModule } from '../networking/networking.module';
 import { FirewallDesiredStateService } from './services/firewall-desired-state.service';
 import { FirewallReconciliationService } from './services/firewall-reconciliation.service';
@@ -26,6 +27,8 @@ import { SharedInfrastructureModule } from '../shared/shared-infrastructure.modu
     // For WireGuardPeerService: the overlay's inbound rule is derived from the
     // peers themselves, not from a second list kept in step by hand.
     NetworkingModule,
+    // For the stored kubeconfig: the one place the chosen path is written down.
+    EncryptionModule,
   ],
   providers: [
     FirewallsService,

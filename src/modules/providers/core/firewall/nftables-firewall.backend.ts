@@ -21,6 +21,10 @@ import {
   decodeRulesComment,
   DEFAULT_INTERNAL_CIDRS,
 } from './nftables-ruleset';
+// The one place the overlay's interface name is decided, and it carries the
+// reasoning for why it is not `wg0`. Duplicating the literal here would be a
+// second truth about the same thing.
+import { WG_INTERFACE } from '../../../infrastructure/networking/wireguard-config';
 
 type SshTarget = HostTarget;
 
@@ -28,6 +32,7 @@ const FIREWALL_ID_PREFIX = 'nft-';
 const RULESET_PATH = '/etc/flui/flui-firewall.nft';
 const SSH_TIMEOUT_MS = 60_000;
 const CERT_TTL_SECONDS = 300;
+const API_SERVER_PORT = 6443;
 
 const IPV4_RE = /^(\d{1,3}\.){3}\d{1,3}$/;
 const CIDR_RE = /^[0-9a-fA-F:.]+\/\d{1,3}$/;
@@ -306,6 +311,14 @@ export class NftablesFirewallBackend implements IFirewallProvider {
       // The anti-lockout rule has to name the port Flui actually reaches these
       // hosts on, or reconciling a custom-port host locks us out of it.
       sshPorts: targets.map((t) => t.port),
+      // Naming the interface does two things no source-address rule can: the
+      // API server stays reachable over the tunnel whatever address the control
+      // dials from, and this host stops forwarding between overlay peers. A
+      // rule that names an address cannot follow the control when the path
+      // moves, and the policy here is drop — so the address form is the one
+      // that silently closes 6443 against the path just chosen.
+      wgInterface: WG_INTERFACE,
+      wgOnlyPorts: [{ port: API_SERVER_PORT, protocol: 'tcp' }],
     });
     const b64 = Buffer.from(ruleset, 'utf-8').toString('base64');
 

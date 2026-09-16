@@ -50,6 +50,8 @@ import { ClusterOrchestrationService } from './services/cluster-orchestration.se
 import { NetworkingModule } from '../networking/networking.module';
 import { TelemetryEndpointReconciler } from './services/telemetry-endpoint.reconciler';
 import { TelemetryEndpointScheduler } from './schedulers/telemetry-endpoint.scheduler';
+import { KubeconfigEndpointPromoter } from './services/kubeconfig-endpoint.promoter';
+import { KubeconfigEndpointScheduler } from './schedulers/kubeconfig-endpoint.scheduler';
 import { ClusterPowerManagementService } from './services/cluster-power-management.service';
 import { ClusterSshCleanupService } from './services/cluster-ssh-cleanup.service';
 import { K3sScriptService } from './services/k3s-script.service';
@@ -156,6 +158,8 @@ import { FleetHistoryService } from './services/fleet-history.service';
     ClusterOrchestrationService,
     TelemetryEndpointReconciler,
     TelemetryEndpointScheduler,
+    KubeconfigEndpointPromoter,
+    KubeconfigEndpointScheduler,
     ClusterPowerManagementService,
     ClusterSshCleanupService,
     ClusterBillingService,
