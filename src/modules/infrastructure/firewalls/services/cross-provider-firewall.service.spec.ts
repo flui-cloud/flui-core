@@ -528,18 +528,40 @@ describe('CrossProviderFirewallService', () => {
       expect(peerOf(rulesFor('fw-w'))).toHaveLength(1);
     });
 
-    it('withdraws it once the node answers on the tunnel', async () => {
-      // It does not move to the tunnel address: the tunnel is admitted on the
-      // host by interface, which no source address can express and which stays
-      // true however the control's address changes. Leaving a second rule here
-      // would be a second mechanism for one job, free to drift from the first.
+    it('keeps the public door open until the kubeconfig has actually moved', async () => {
+      // The peer is enrolled, which used to be enough to withdraw the rule. It
+      // is not: the kubeconfig still names the public address, so withdrawing
+      // now leaves the control unable to reach the cluster at either address.
+      // Seen live on a workload whose certificate did not yet name its overlay
+      // address — public closed, tunnel unusable, cluster stranded.
       wgNodeOverlay.mockResolvedValue({
         nodeAddress: '10.250.0.2',
         enrolled: true,
       });
+      const stillPublic = crossProviderWorkload();
+      (stillPublic as any).kubeconfigEncrypted =
+        'enc:server: https://1.2.3.4:6443';
       list.mockResolvedValue([
         firewall('fw-ctl', control()),
-        firewall('fw-w', crossProviderWorkload()),
+        firewall('fw-w', stillPublic),
+      ]);
+
+      await service.reconcileAllPeers();
+
+      expect(peerOf(rulesFor('fw-w'))).toHaveLength(1);
+    });
+
+    it('withdraws it once the kubeconfig names the overlay', async () => {
+      wgNodeOverlay.mockResolvedValue({
+        nodeAddress: '10.250.0.2',
+        enrolled: true,
+      });
+      const moved = crossProviderWorkload();
+      (moved as any).kubeconfigEncrypted =
+        'enc:server: https://10.250.0.2:6443';
+      list.mockResolvedValue([
+        firewall('fw-ctl', control()),
+        firewall('fw-w', moved),
       ]);
 
       await service.reconcileAllPeers();
@@ -551,6 +573,7 @@ describe('CrossProviderFirewallService', () => {
       // The peer has gone stale, which used to read as "back to public". The
       // kubeconfig already names the overlay address, so nothing would use that
       // port — reopening it would expose a door no one walks through.
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
       wgNodeOverlay.mockResolvedValue({
         nodeAddress: '10.250.0.2',
         enrolled: false,

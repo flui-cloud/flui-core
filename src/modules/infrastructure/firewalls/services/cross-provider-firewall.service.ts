@@ -256,21 +256,32 @@ export class CrossProviderFirewallService {
     // provider firewall the tunnel is invisible anyway, since it only ever sees
     // the outer UDP. So when the path stops being public there is nothing left
     // here to open.
-    // Asked of the stored kubeconfig, not re-derived from peer health. Health
-    // flaps — the handshake goes stale after three minutes while the sweep
-    // samples every ten — and a rule derived from it would reopen the public
-    // port on every flap, long after nothing uses it any more. The kubeconfig
-    // is the one place the choice is written down, and it only ever moves one
-    // way.
-    if (this.addressedOverTheOverlay(cluster, nodeOverlay)) return [];
+    // Asked of the stored kubeconfig, which is where the choice is actually
+    // written down — not re-derived from peer health. Two reasons, and the
+    // second is the one that hurt: health flaps, so a rule derived from it
+    // reopens the public port on every stale handshake; and worse, it withdrew
+    // the rule the moment a peer enrolled, closing the old door before anything
+    // had proved the new one open. Seen live — a workload whose certificate did
+    // not yet name its overlay address was left reachable at neither.
+    //
+    // The rule now follows the address the control will actually dial. It goes
+    // when the kubeconfig moves, and not one pass earlier.
+    const addressed = this.addressedAt(cluster);
+    const publicIp = this.trim(master.ipAddress);
+    if (addressed) {
+      if (!publicIp || addressed !== publicIp) return [];
+    } else {
+      // Before the first kubeconfig exists there is nothing to follow, so fall
+      // back to the endpoint the creation path is about to choose.
+      const endpoint = this.managementAddress.apiServerEndpointFor(
+        cluster,
+        master,
+        control,
+        nodeOverlay,
+      );
+      if (endpoint?.path !== 'public') return [];
+    }
 
-    const endpoint = this.managementAddress.apiServerEndpointFor(
-      cluster,
-      master,
-      control,
-      nodeOverlay,
-    );
-    if (endpoint?.path !== 'public') return [];
     const controlIp = this.managementAddress.publicAddressOf(control);
     if (!controlIp) return [];
     return [
@@ -284,20 +295,22 @@ export class CrossProviderFirewallService {
     ];
   }
 
-  /** Whether this cluster's kubeconfig already names its overlay address. */
-  private addressedOverTheOverlay(
-    cluster: ClusterEntity,
-    nodeOverlay?: { nodeAddress: string; enrolled: boolean },
-  ): boolean {
-    if (!cluster.kubeconfigEncrypted || !nodeOverlay?.nodeAddress) return false;
+  /** The host the stored kubeconfig names, or nothing if there is none to read. */
+  private addressedAt(cluster: ClusterEntity): string | undefined {
+    if (!cluster.kubeconfigEncrypted) return undefined;
     try {
-      return this.encryption
-        .decrypt(cluster.kubeconfigEncrypted)
-        .includes(`//${nodeOverlay.nodeAddress}:`);
+      return /\bserver:\s*https:\/\/([^\s:/]+|\[[^\]]+\])/.exec(
+        this.encryption.decrypt(cluster.kubeconfigEncrypted),
+      )?.[1];
     } catch {
-      // Unreadable is not proof of anything; fall through to the live answer.
-      return false;
+      // Unreadable is not proof of anything.
+      return undefined;
     }
+  }
+
+  private trim(value: string | null | undefined): string | undefined {
+    const t = value?.trim();
+    return t ? t : undefined;
   }
 
   private isPeerRule(rule: FirewallRuleDto): boolean {

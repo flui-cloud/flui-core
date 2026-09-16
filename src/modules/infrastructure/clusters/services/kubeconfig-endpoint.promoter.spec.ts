@@ -15,8 +15,15 @@ describe('KubeconfigEndpointPromoter', () => {
     cluster: any,
     overlay: any,
     answers = true,
-  ): { promoter: KubeconfigEndpointPromoter; save: jest.Mock } => {
+  ): {
+    promoter: KubeconfigEndpointPromoter;
+    save: jest.Mock;
+    enrolSan: jest.Mock;
+  } => {
     const save = jest.fn();
+    const enrolSan = jest
+      .fn()
+      .mockResolvedValue({ outcome: 'already-present' });
     const promoter = new KubeconfigEndpointPromoter(
       { find: jest.fn().mockResolvedValue([cluster]), save } as any,
       {
@@ -24,10 +31,11 @@ describe('KubeconfigEndpointPromoter', () => {
         encrypt: (v: string) => `enc:${v}`,
       } as any,
       { nodeOverlayFor: jest.fn().mockResolvedValue(overlay) } as any,
+      { enrolOverlayAddress: enrolSan } as any,
     );
     (promoter as unknown as { answers: () => Promise<boolean> }).answers =
       async () => answers;
-    return { promoter, save };
+    return { promoter, save, enrolSan };
   };
 
   const workload = (host: string) => ({
@@ -90,6 +98,45 @@ describe('KubeconfigEndpointPromoter', () => {
 
     expect(await promoter.promoteAll()).toBe(0);
     expect(save).not.toHaveBeenCalled();
+  });
+
+  it('puts the address in the certificate before trying to use it', async () => {
+    // The probe verifies the certificate, so a cluster whose certificate omits
+    // the address could never be promoted — and nothing else runs the enrolment
+    // on a loop. Seen live: a workload sat unreachable at both addresses until
+    // the enrolment was triggered by hand.
+    const { promoter, enrolSan } = build(workload('91.99.53.190'), {
+      nodeAddress: '10.250.0.4',
+      enrolled: true,
+    });
+
+    await promoter.promoteAll();
+
+    expect(enrolSan).toHaveBeenCalledWith('c1');
+  });
+
+  it('asks for nothing once the cluster has already moved', async () => {
+    const { promoter, enrolSan } = build(workload('10.250.0.4'), {
+      nodeAddress: '10.250.0.4',
+      enrolled: true,
+    });
+
+    await promoter.promoteAll();
+
+    expect(enrolSan).not.toHaveBeenCalled();
+  });
+
+  it('still tries the probe when the enrolment fails', async () => {
+    // An unreachable node must not stop a certificate that is already correct
+    // from being used.
+    const { promoter, save, enrolSan } = build(workload('91.99.53.190'), {
+      nodeAddress: '10.250.0.4',
+      enrolled: true,
+    });
+    enrolSan.mockRejectedValue(new Error('ssh timeout'));
+
+    expect(await promoter.promoteAll()).toBe(1);
+    expect(save).toHaveBeenCalled();
   });
 
   it('refuses to move without a CA to verify the tunnel against', async () => {

@@ -6,6 +6,7 @@ import { ClusterEntity, ClusterType } from '../entities/cluster.entity';
 import { NodeType } from '../entities/cluster-node.entity';
 import { EncryptionService } from '../../../shared/encryption/services/encryption.service';
 import { WireGuardPeerService } from '../../networking/services/wireguard-peer.service';
+import { ApiServerSanService } from '../../networking/services/api-server-san.service';
 
 const SERVER_LINE = /(\bserver:\s*https:\/\/)([^\s:/]+|\[[^\]]+\])(:\d+)?/;
 const CA_DATA = /certificate-authority-data:\s*(\S+)/;
@@ -34,6 +35,7 @@ export class KubeconfigEndpointPromoter {
     private readonly clusters: Repository<ClusterEntity>,
     private readonly encryption: EncryptionService,
     private readonly wgPeers: WireGuardPeerService,
+    private readonly apiServerSan: ApiServerSanService,
   ) {}
 
   async promoteAll(): Promise<number> {
@@ -80,6 +82,22 @@ export class KubeconfigEndpointPromoter {
         `[kubeconfig] ${cluster.name}: no certificate authority to verify the tunnel against — not moving`,
       );
       return false;
+    }
+
+    // The certificate has to name the address before anything can be pointed at
+    // it, and nothing else puts it there on a loop — the enrolment has only ever
+    // been reachable by hand, from an endpoint and a CLI command. Without this
+    // the chain stops here forever: the probe below verifies the certificate, so
+    // a cluster whose certificate omits the address can never be promoted, and a
+    // cluster that is never promoted stays on the public path. Cheap to repeat:
+    // it reports `already-present` and restarts nothing when the name is there,
+    // and it only runs for clusters still waiting to move.
+    try {
+      await this.apiServerSan.enrolOverlayAddress(cluster.id);
+    } catch (err: any) {
+      this.logger.warn(
+        `[kubeconfig] ${cluster.name}: could not put ${overlay.nodeAddress} in the certificate (${err?.message ?? err})`,
+      );
     }
 
     const port = current[3] ?? ':6443';
