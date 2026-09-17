@@ -163,3 +163,45 @@ describe('nextFreeBlock at the edges', () => {
     expect(nextFreeBlock('0.0.0.0/0', ['0.0.0.0/0'], 0)).toBeNull();
   });
 });
+
+/**
+ * A Scaleway private network is dual-stack: `flui network create` returns an
+ * IPv4 subnet and an fd00::/8 one, and every range the installation knows about
+ * is handed to the pool as something the overlay must not collide with. The
+ * parser accepts IPv4 only, so one provider's second subnet refused every
+ * address allocation on the installation — the overlay was never reserved, the
+ * certificate never carried it, and the reconciler failed on the same string
+ * every cycle.
+ */
+describe('a dual-stack private network', () => {
+  const v6 = 'fd6f:4031:d3b0:2ca0::/64';
+
+  it('does not stop a pool from being built', () => {
+    expect(
+      () => new WireGuardAddressPool('10.250.0.0/16', ['10.80.0.0/24', v6]),
+    ).not.toThrow();
+  });
+
+  it('still allocates from the pool', () => {
+    const pool = new WireGuardAddressPool('10.250.0.0/16', [v6]);
+    expect(pool.allocate([])).toBe('10.250.0.1');
+  });
+
+  it('does not mask a real IPv4 overlap sitting beside it', () => {
+    expect(
+      () => new WireGuardAddressPool('10.250.0.0/16', [v6, '10.250.5.0/24']),
+    ).toThrow(/overlaps/);
+  });
+
+  it('still refuses a mistyped IPv4 range rather than skipping it', () => {
+    expect(
+      () => new WireGuardAddressPool('10.250.0.0/16', ['10.250.0.0/33']),
+    ).toThrow(/Not an IPv4 CIDR/);
+  });
+
+  it('is ignored when a subnet block is being chosen too', () => {
+    expect(nextFreeBlock('10.88.0.0/16', [v6, '10.88.0.0/24'], 24)).toBe(
+      '10.88.1.0/24',
+    );
+  });
+});

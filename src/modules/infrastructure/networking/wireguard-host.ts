@@ -122,6 +122,22 @@ export function buildApplyScript(
     '      fi',
     '    done',
     '  done',
+    // And the other direction: syncconf drops a departed peer but leaves the
+    // route it was given, so one accumulates per cluster ever created. They
+    // blackhole nothing — an overlay address is never handed out twice — but
+    // they make `ip route show` on this interface unreadable, which is the one
+    // place an operator looks when a peer is reachable and its traffic is not.
+    //
+    // Only host routes this script could have added: anything carrying a prefix
+    // is the interface's own network, and `proto kernel` marks what the kernel
+    // put there. Removing either would take the tunnel down.
+    `  KEEP=$(wg show ${iface} allowed-ips 2>/dev/null | tr '\\t' ' ' | tr ' ' '\\n' | sed 's#/32$##' | grep -E '^[0-9]+\\.' || true)`,
+    `  ip route show dev ${iface} 2>/dev/null | grep -v 'proto kernel' | while read -r dest _rest; do`,
+    '    case "$dest" in */*|"") continue ;; esac',
+    '    if ! printf \'%s\\n\' "$KEEP" | grep -qxF "$dest"; then',
+    `      ip route del "$dest" dev ${iface} >/dev/null 2>&1 || true`,
+    '    fi',
+    '  done',
     'else',
     `  wg-quick up ${conf}`,
     'fi',

@@ -13,7 +13,30 @@ export const CLUSTER_RESERVED_CIDRS = ['10.42.0.0/16', '10.43.0.0/16'];
 export const DEFAULT_MANAGEMENT_POOL = '10.250.0.0/16';
 
 const IPV4_CIDR_RE = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})\/(\d{1,2})$/;
+
 const IPV4_RE = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/;
+
+/**
+ * An IPv6 range, which for every question this module answers is not a wrong
+ * answer but an irrelevant one: it cannot overlap an IPv4 pool and cannot
+ * contain an IPv4 address, so comparing the two is meaningless rather than
+ * mistaken. Matched on the colon, which no IPv4 CIDR carries — deliberately
+ * narrow, so a mistyped IPv4 range still fails loudly instead of being skipped.
+ *
+ * This exists because a provider handed us one: a Scaleway private network is
+ * dual-stack, so its subnets arrive as an IPv4 range *and* an fd00::/8 range,
+ * and every range Flui knows about is fed to the pool as something to avoid.
+ */
+function isIpv6Cidr(cidr: string): boolean {
+  return cidr.includes(':');
+}
+
+/** Only the ranges an IPv4 pool can meaningfully be compared against. */
+export function ipv4CidrsOnly(
+  cidrs: readonly (string | null | undefined)[],
+): string[] {
+  return cidrs.filter((c): c is string => !!c && !isIpv6Cidr(c));
+}
 
 export function parseCidr(cidr: string): Ipv4Cidr {
   const m = IPV4_CIDR_RE.exec(cidr.trim());
@@ -72,8 +95,7 @@ export function nextFreeBlock(
     );
   }
   const used = new Set(
-    taken
-      .filter((t) => !!t)
+    ipv4CidrsOnly(taken)
       .map((t) => parseCidr(t))
       .filter((t) => (t.base & maskOf(net.prefix)) === net.base)
       .map((t) => t.base & maskOf(prefix)),
@@ -129,9 +151,10 @@ export class WireGuardAddressPool {
         `Management pool ${pool} is too small to hold any peer`,
       );
     }
-    const clash = [...CLUSTER_RESERVED_CIDRS, ...knownCidrs].find(
-      (known) => known && cidrsOverlap(pool, known),
-    );
+    const clash = ipv4CidrsOnly([
+      ...CLUSTER_RESERVED_CIDRS,
+      ...knownCidrs,
+    ]).find((known) => cidrsOverlap(pool, known));
     if (clash) {
       throw new BadRequestException(
         `Management pool ${pool} overlaps ${clash}. Pick a range that no ` +

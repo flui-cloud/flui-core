@@ -212,6 +212,84 @@ describe('buildApplyScript', () => {
       expect(run('CCCC\t(none)\n')).toEqual([]);
     });
   });
+
+  describe('routes of peers that are gone', () => {
+    const sweep = (allowedIps: string, existingRoutes: string) => {
+      const dir = mkdtempSync(join(tmpdir(), 'wg-sweep-'));
+      const bin = join(dir, 'bin');
+      mkdirSync(bin);
+      const log = join(dir, 'deleted.log');
+      writeFileSync(
+        join(bin, 'wg'),
+        `#!/bin/sh\n[ "$1" = show ] && [ "$3" = allowed-ips ] && printf '%s'` +
+          ` '${allowedIps}'\nexit 0\n`,
+        { mode: 0o755 },
+      );
+      writeFileSync(
+        join(bin, 'ip'),
+        `#!/bin/sh\n` +
+          `if [ "$1" = route ] && [ "$2" = show ]; then printf '%s' '${existingRoutes}'; exit 0; fi\n` +
+          `if [ "$1" = route ] && [ "$2" = del ]; then echo "$3" >> ${log}; fi\n` +
+          `exit 0\n`,
+        { mode: 0o755 },
+      );
+      writeFileSync(join(bin, 'wg-quick'), '#!/bin/sh\nexit 0\n', {
+        mode: 0o755,
+      });
+
+      const branch = script
+        .slice(
+          script.indexOf('if ip link show'),
+          script.indexOf('\nelse\n  wg-quick up'),
+        )
+        .split('/etc/wireguard')
+        .join(dir);
+      // `sh` is dash on the images this runs on, and `set -e` is what turned a
+      // previous version of this loop into a silent no-op after its first pass.
+      execFileSync('sh', ['-c', `set -e\n${branch}\nfi\necho DONE`], {
+        env: { ...process.env, PATH: `${bin}:${process.env.PATH}` },
+        encoding: 'utf-8',
+      });
+      const deleted = existsSync(log) ? readFileSync(log, 'utf-8') : '';
+      rmSync(dir, { recursive: true, force: true });
+      return deleted.trim().split('\n').filter(Boolean);
+    };
+
+    const routes = [
+      '10.250.0.0/16 proto kernel scope link src 10.250.0.1',
+      '10.250.0.2 scope link',
+      '10.250.0.7 scope link',
+      '10.250.0.42 scope link',
+      '',
+    ].join('\n');
+
+    it('removes the ones no peer claims any more', () => {
+      expect(sweep('AAAA\t10.250.0.7/32\n', routes).sort()).toEqual([
+        '10.250.0.2',
+        '10.250.0.42',
+      ]);
+    });
+
+    it('never touches the interface own network, nor what the kernel put there', () => {
+      expect(sweep('AAAA\t10.250.0.7/32\n', routes)).not.toContain(
+        '10.250.0.0/16',
+      );
+    });
+
+    it('leaves every live peer routed', () => {
+      expect(
+        sweep('AAAA\t10.250.0.7/32\nBBBB\t10.250.0.2/32\n', routes),
+      ).toEqual(['10.250.0.42']);
+    });
+
+    it('removes them all when the last peer is gone', () => {
+      expect(sweep('CCCC\t(none)\n', routes).sort()).toEqual([
+        '10.250.0.2',
+        '10.250.0.42',
+        '10.250.0.7',
+      ]);
+    });
+  });
 });
 
 describe('parseWireGuardDump', () => {
