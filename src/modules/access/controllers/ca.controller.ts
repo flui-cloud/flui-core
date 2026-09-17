@@ -18,7 +18,10 @@ import {
 import { AdminGuard } from '../../auth/guards/admin.guard';
 import { Admin } from '../../auth/decorators/admin.decorator';
 import { CAManagerService } from '../services/ca-manager.service';
-import { CertificateSignerService } from '../services/certificate-signer.service';
+import {
+  CertificateSignerService,
+  MAX_CERTIFICATE_TTL_SECONDS,
+} from '../services/certificate-signer.service';
 import { CAPublicKeyDto } from '../dto/ca-public-key.dto';
 import { RegisterCADto, RegisterCAResponseDto } from '../dto/register-ca.dto';
 
@@ -59,7 +62,13 @@ export class CAController {
     };
   }
 
+  // Replaces the certificate authority the whole fleet trusts, and the sibling
+  // `initialize` was gated while this one never was. The adoption flow that
+  // legitimately registers a CA from a new machine does not come through here:
+  // it uses `adoption/ca/register`, which proves a one-time adoption token.
   @Post('register')
+  @UseGuards(AdminGuard)
+  @Admin()
   @HttpCode(HttpStatus.CREATED)
   @ApiOperation({
     summary: 'Register external CA public key from CLI',
@@ -101,6 +110,8 @@ export class CAController {
   }
 
   @Get('info')
+  @UseGuards(AdminGuard)
+  @Admin()
   @ApiOperation({ summary: 'Get CA info (without private key)' })
   @ApiResponse({
     status: 200,
@@ -122,7 +133,11 @@ export class CAController {
     };
   }
 
+  // The script carries the CA public key and the commands that make a host
+  // trust it — the other half of the pair `register` completes.
   @Get('enrollment-script')
+  @UseGuards(AdminGuard)
+  @Admin()
   @ApiOperation({ summary: 'Get server enrollment script' })
   @ApiResponse({
     status: 200,
@@ -142,18 +157,25 @@ export class CAController {
     return { script };
   }
 
+  // Hands out a certificate carrying the `root` principal on every node that
+  // trusts this CA. A route with no permission decorator is not consulted by
+  // the IAM layer at all, so without this guard the lowest-privileged account
+  // on the installation could mint one.
   @Post('test-certificate')
+  @UseGuards(AdminGuard)
+  @Admin()
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
-    summary: 'Generate ephemeral certificate for testing (DEV ONLY)',
+    summary:
+      'Generate ephemeral certificate for manual SSH testing (admin only)',
     description:
-      'Generates an ephemeral certificate for manual SSH testing. Returns private key and certificate that can be used with ssh command line.',
+      'Generates a short-lived certificate for manual SSH testing. Returns a private key and certificate usable from the ssh command line. Admin only: the certificate authenticates as root on every node trusting this CA.',
   })
   @ApiQuery({
     name: 'ttl',
     required: false,
     type: Number,
-    description: 'Certificate TTL in seconds (default: 180)',
+    description: `Certificate TTL in seconds (default: 180, maximum: ${MAX_CERTIFICATE_TTL_SECONDS})`,
     example: 180,
   })
   @ApiResponse({
@@ -188,7 +210,11 @@ export class CAController {
     },
   })
   async generateTestCertificate(@Query('ttl') ttl = 180) {
-    const ttlSeconds = ttl;
+    const requested = Number(ttl);
+    const ttlSeconds =
+      Number.isFinite(requested) && requested > 0
+        ? Math.min(Math.floor(requested), MAX_CERTIFICATE_TTL_SECONDS)
+        : 180;
     const cert = await this.certificateSigner.generateEphemeralCertificate(
       'test',
       ttlSeconds,

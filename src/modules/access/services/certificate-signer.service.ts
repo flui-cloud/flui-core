@@ -2,12 +2,23 @@ import { Injectable, Logger } from '@nestjs/common';
 import { SSHKeyGeneratorService } from './ssh-key-generator.service';
 import { CAManagerService } from './ca-manager.service';
 import { promises as fs } from 'node:fs';
-import { exec } from 'node:child_process';
+import { exec, execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import * as path from 'node:path';
 import * as os from 'node:os';
 
 const execAsync = promisify(exec);
+const execFileAsync = promisify(execFile);
+
+/**
+ * Longest life a certificate minted here may be given.
+ *
+ * These certificates carry `root` and cannot be revoked: there is no KRL, so a
+ * long-lived one is only killed by rotating the CA on every node that trusts
+ * it. The ceiling is what keeps a mistyped or hostile TTL from outliving the
+ * cluster it opens.
+ */
+export const MAX_CERTIFICATE_TTL_SECONDS = 600;
 
 /**
  * Internal interface for ephemeral certificates
@@ -103,13 +114,28 @@ export class CertificateSignerService {
 
       const principalsStr = principals.join(',');
       const timestamp = Date.now();
-      const command = `ssh-keygen -s "${caKeyPath}" -I "flui-ephemeral-${timestamp}" -n "${principalsStr}" -V "+${validitySeconds}s" "${pubKeyPath}"`;
+
+      // Arguments as an array, never a shell string: the validity and the
+      // principals reach here from request input, and a shell would read them
+      // as syntax. Today a coercion upstream happens to make that harmless,
+      // which is not the same as it being safe.
+      const args = [
+        '-s',
+        caKeyPath,
+        '-I',
+        `flui-ephemeral-${timestamp}`,
+        '-n',
+        principalsStr,
+        '-V',
+        `+${validitySeconds}s`,
+        pubKeyPath,
+      ];
 
       this.logger.debug(`Executing ssh-keygen signing command...`);
-      this.logger.debug(`Command: ${command}`);
 
-      // Execute ssh-keygen and capture output
-      const { stdout, stderr } = await execAsync(command, { cwd: tempDir });
+      const { stdout, stderr } = await execFileAsync('ssh-keygen', args, {
+        cwd: tempDir,
+      });
       if (stdout) this.logger.debug(`ssh-keygen stdout: ${stdout}`);
       if (stderr) this.logger.debug(`ssh-keygen stderr: ${stderr}`);
 

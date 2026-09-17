@@ -32,12 +32,20 @@ const SRC = join(__dirname, '..', '..');
  * is. The two halves had to land together, which is why they waited.
  */
 const STILL_ON_THE_BOOLEAN: Record<string, number> = {
-  // Installation bootstrap — six routes. They move together with the split of
-  // the two installation credentials; applying `platform:bootstrap` to them
-  // alone stops `flui env create` halfway through provisioning.
+  // Installation bootstrap — six routes, counting `access/ca/initialize`
+  // below. They move together with the split of the two installation
+  // credentials; applying `platform:bootstrap` to them alone stops
+  // `flui env create` halfway through provisioning.
   'modules/auth/controllers/auth.controller.ts': 4,
   'modules/auth/controllers/branding.controller.ts': 1,
-  'modules/access/controllers/ca.controller.ts': 1,
+  // `initialize` for the reason above; the other four for the opposite one.
+  // They mint or replace material that authenticates as `root` on every node
+  // trusting the CA, and the boolean is the *narrowest* gate they could carry:
+  // the closest nameable permission is `cluster:manage`, which `maintainer`
+  // holds and `mcp:backup:write` carries. Naming it would widen root SSH to a
+  // backup agent's key, so these stay where only `owner` reaches them until a
+  // permission exists that means this and nothing else.
+  'modules/access/controllers/ca.controller.ts': 5,
 };
 
 function tsFiles(dir: string): string[] {
