@@ -2,23 +2,15 @@ import { Injectable, Logger } from '@nestjs/common';
 import { promises as fs } from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
+import {
+  redactBootstrapSecrets,
+  DEBUG_SCRIPTS_ENV,
+} from '../lib/redact-bootstrap-secrets';
 import { CliLoggerService } from './cli-logger.service';
 import { getScriptsBaseUrl } from '../config/bootstrap.config';
 import { resolveEffectiveImageTags } from '../config/release-override';
 import { renderFluiNftRuleset } from '../../../src/modules/providers/core/firewall/nftables-ruleset';
 import { getFirewallRulesForClusterType } from '../../../src/modules/infrastructure/firewalls/templates/firewall-rules.template';
-
-/**
- * The CA signs SSH certificates for every cluster in the profile, so its blast
- * radius is wider than the per-cluster secrets this script already carries. It
- * has to reach the host, but it does not have to survive on the operator's disk.
- */
-function redactCaPrivateKey(script: string): string {
-  return script.replace(
-    /export SSH_CA_PRIVATE_KEY='[\s\S]*?'\n/,
-    "export SSH_CA_PRIVATE_KEY='<redacted>'\n",
-  );
-}
 
 export interface K3sMasterConfig {
   serverId?: string; // Database node ID (ClusterNodeEntity.id) - used for observability metrics
@@ -490,12 +482,17 @@ echo "[Bootstrap] ${scriptName} completed successfully"
     content: string,
     operationId?: string,
   ): Promise<void> {
+    if (!process.env[DEBUG_SCRIPTS_ENV]) return;
+
     try {
       const debugDir = path.join(os.homedir(), '.flui', 'debug', clusterId);
-      await fs.mkdir(debugDir, { recursive: true });
+      await fs.mkdir(debugDir, { recursive: true, mode: 0o700 });
 
       const debugPath = path.join(debugDir, filename);
-      await fs.writeFile(debugPath, redactCaPrivateKey(content), 'utf8');
+      await fs.writeFile(debugPath, redactBootstrapSecrets(content), {
+        encoding: 'utf8',
+        mode: 0o600,
+      });
 
       this.log(`💾 Debug script saved: ${debugPath}`, operationId);
     } catch (error) {
