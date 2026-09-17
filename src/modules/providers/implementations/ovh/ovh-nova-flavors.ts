@@ -113,7 +113,14 @@ export async function getOvhNodeSizesFromNova(
       });
       size.availability!.push({
         location: code,
+        // Not a claim, a default. Nova lists the flavors a region offers, never
+        // whether one can be built there right now — that is decided by the
+        // scheduler at the moment of the request, and OVH exposes no way to ask
+        // it in advance with the credentials Flui holds. Saying `true` here
+        // used to read as a promise; `availabilityKnown: false` is what makes
+        // it an admission.
         available: true,
+        availabilityKnown: false,
         deprecated: false,
       });
     }

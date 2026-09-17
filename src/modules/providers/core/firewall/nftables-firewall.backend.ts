@@ -25,6 +25,7 @@ import {
 // reasoning for why it is not `wg0`. Duplicating the literal here would be a
 // second truth about the same thing.
 import { WG_INTERFACE } from '../../../infrastructure/networking/wireguard-config';
+import { observabilityIngestPorts } from '../../../infrastructure/networking/observability-ingest';
 
 type SshTarget = HostTarget;
 
@@ -318,7 +319,18 @@ export class NftablesFirewallBackend implements IFirewallProvider {
       // moves, and the policy here is drop — so the address form is the one
       // that silently closes 6443 against the path just chosen.
       wgInterface: WG_INTERFACE,
-      wgOnlyPorts: [{ port: API_SERVER_PORT, protocol: 'tcp' }],
+      // The API server, and the telemetry a workload pushes back. Both arrive
+      // on the tunnel, and without naming them here both are dropped: the
+      // ingest ports sit inside the NodePort range this ruleset refuses on
+      // principle — right for a public address, wrong for a peer the tunnel has
+      // already authenticated.
+      wgOnlyPorts: [
+        { port: API_SERVER_PORT, protocol: 'tcp' as const },
+        ...observabilityIngestPorts().ports.map((port) => ({
+          port,
+          protocol: 'tcp' as const,
+        })),
+      ],
     });
     const b64 = Buffer.from(ruleset, 'utf-8').toString('base64');
 

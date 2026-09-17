@@ -85,3 +85,18 @@ describe('getOvhNodeSizesFromNova', () => {
     expect(sizes.map((s) => s.id)).toEqual(['c3-4']);
   });
 });
+
+describe('what the availability actually claims', () => {
+  it('admits that OVH availability was never asked of anyone', async () => {
+    // "We do not track this" and "there is none" are opposite answers, and
+    // `available: true` on its own reads as the promise it cannot make.
+    const sizes = await getOvhNodeSizesFromNova(
+      client({ GRA11: [d24] }),
+      new Map(),
+    );
+
+    for (const entry of sizes[0].availability ?? []) {
+      expect(entry.availabilityKnown).toBe(false);
+    }
+  });
+});

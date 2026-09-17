@@ -217,12 +217,21 @@ describe('CrossProviderFirewallService', () => {
 
     await service.reconcileAllPeers();
 
+    // Both ingests: logs on 30100 and metrics on 30428. Naming only one admits
+    // half the telemetry and drops the rest without a word.
     expect(peerOf(rulesFor('fw-ctl'))).toEqual([
       {
         description: 'flui:xprovider:obs-ingest-30100',
         direction: 'in',
         protocol: 'tcp',
         port: '30100',
+        sourceIps: ['1.1.1.1/32', '2.2.2.2/32', '3.3.3.3/32'],
+      },
+      {
+        description: 'flui:xprovider:obs-ingest-30428',
+        direction: 'in',
+        protocol: 'tcp',
+        port: '30428',
         sourceIps: ['1.1.1.1/32', '2.2.2.2/32', '3.3.3.3/32'],
       },
     ]);

@@ -65,6 +65,17 @@ describe('VolumePauseSweeperService', () => {
     expect(rendered).toContain(ClusterStatus.STOPPED);
   });
 
+  it('leaves destroyed clusters out, which keep their kubeconfig', async () => {
+    // A destroyed cluster keeps its kubeconfig and so passes a filter written
+    // only against LOST and STOPPED, costing a connect timeout on every pass.
+    const { find, sweepEverywhere } = make([]);
+    await sweepEverywhere(true, 'boot');
+
+    const where = (find.mock.calls[0] as unknown as [{ where: unknown }])[0]
+      .where;
+    expect(Object.keys(where as object)).toContain('deletedAt');
+  });
+
   it('keeps going when one cluster fails, so the others still get their leases back', async () => {
     const sweep = jest
       .fn()

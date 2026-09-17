@@ -6,7 +6,7 @@
       "publishedAt": "2026-09-15T17:25:40+02:00",
       "bootstrapRef": "dcefc2b",
       "images": {
-        "fluiApi": "7c56398",
+        "fluiApi": "979d7ef",
         "fluiWeb": "de88258",
         "fluiAuthz": "0.6.0"
       },

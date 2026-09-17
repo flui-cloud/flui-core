@@ -25,6 +25,17 @@ export class NodeSizeLocationAvailabilityDto {
   location: string;
   available: boolean;
   deprecated: boolean;
+  /**
+   * Whether `available` was actually asked of the provider.
+   *
+   * "We do not track this" and "there is none" are opposite answers, and a
+   * screen that renders the first as the second tells the reader something
+   * false. Hetzner publishes per-datacentre stock and sets this true; OVH
+   * publishes nothing an OpenStack credential can read, so it says so rather
+   * than promising. Optional, and absent means known: a consumer that ignores
+   * it behaves exactly as before.
+   */
+  availabilityKnown?: boolean;
 }
 
 export class NodeSizeDto {

@@ -13,6 +13,11 @@ import { ClusterFirewallEntity } from '../entities/cluster-firewall.entity';
 import { ManagementAddressResolver } from '../../shared/services/management-address.resolver';
 import { WireGuardPeerService } from '../../networking/services/wireguard-peer.service';
 import { EncryptionService } from '../../../shared/encryption/services/encryption.service';
+import {
+  observabilityIngestPorts,
+  NODEPORT_MIN,
+  NODEPORT_MAX,
+} from '../../networking/observability-ingest';
 import { FirewallDesiredStateService } from './firewall-desired-state.service';
 import { FirewallReconciliationService } from './firewall-reconciliation.service';
 
@@ -22,12 +27,6 @@ const PEER_RULE_PREFIX = 'flui:xprovider:';
  *  if flannel were ever switched to its wireguard-native backend. */
 const DEFAULT_WG_PORT = 51821;
 const API_SERVER_PORT = '6443';
-/** Loki NodePort is confirmed 30100; the metrics remote_write NodePort is
- *  declared in the external bootstrap-scripts repo — append it via env once
- *  known (e.g. FLUI_OBS_INGEST_NODEPORTS="30100,30428"). */
-const DEFAULT_OBS_INGEST_NODEPORTS = '30100';
-const NODEPORT_MIN = 30000;
-const NODEPORT_MAX = 32767;
 
 /**
  * Same-provider clusters talk to the master over the shared VNet (subnet CIDR
@@ -355,23 +354,12 @@ export class CrossProviderFirewallService {
   /** Only well-formed NodePorts (30000–32767) — a typo must never open an
    *  arbitrary control-plane port (e.g. 22 / 6443 / 5432) publicly. */
   private obsIngestNodePorts(): string[] {
-    const raw = (
-      process.env.FLUI_OBS_INGEST_NODEPORTS || DEFAULT_OBS_INGEST_NODEPORTS
-    )
-      .split(',')
-      .map((s) => s.trim())
-      .filter(Boolean);
-    const valid: string[] = [];
-    for (const p of raw) {
-      const n = Number(p);
-      if (Number.isInteger(n) && n >= NODEPORT_MIN && n <= NODEPORT_MAX) {
-        valid.push(String(n));
-      } else {
-        this.logger.warn(
-          `[fw-xprovider] ignoring invalid ingest NodePort '${p}' (must be an integer ${NODEPORT_MIN}-${NODEPORT_MAX})`,
-        );
-      }
+    const { ports, rejected } = observabilityIngestPorts();
+    for (const bad of rejected) {
+      this.logger.warn(
+        `[fw-xprovider] ignoring invalid ingest NodePort '${bad}' (must be an integer ${NODEPORT_MIN}-${NODEPORT_MAX})`,
+      );
     }
-    return valid;
+    return ports.map(String);
   }
 }

@@ -414,7 +414,13 @@ export class OvhProviderService implements ICloudProvider {
     // 'building' — even after the IP shows up — so this waits for ACTIVE,
     // not just a truthy public_ip.
     if (!result.ipAddress || result.status !== 'ACTIVE') {
-      const active = await this.waitForServerActive(svc, result.serverId);
+      const active = await this.waitForServerActive(
+        svc,
+        result.serverId,
+        undefined,
+        undefined,
+        { client, region },
+      );
       if (active) {
         result.ipAddress = active.public_ip ?? result.ipAddress;
         result.privateIp = active.private_ip ?? result.privateIp;
@@ -471,6 +477,9 @@ export class OvhProviderService implements ICloudProvider {
           const activeAfterReboot = await this.waitForServerActive(
             svc,
             result.serverId,
+            undefined,
+            undefined,
+            { client, region },
           );
           if (activeAfterReboot) {
             result.ipAddress = activeAfterReboot.public_ip ?? result.ipAddress;
@@ -569,6 +578,7 @@ export class OvhProviderService implements ICloudProvider {
     serverId: string,
     timeoutMs = 120_000,
     pollIntervalMs = 3_000,
+    faultContext?: { client: FluiOpenStackClient; region: string },
   ): Promise<{
     public_ip?: string;
     private_ip?: string;
@@ -578,9 +588,61 @@ export class OvhProviderService implements ICloudProvider {
     while (Date.now() < deadline) {
       const server = await svc.getServerDetailsAsDto(serverId);
       if (server?.public_ip && server.status === 'ACTIVE') return server;
+      // An instance Nova has given up on will never become ACTIVE, and waiting
+      // out the deadline hides the reason behind whatever fails next. The
+      // attach below then reports "cannot attach_interface while it is in
+      // vm_state error", which names the wrong subject entirely: the interface
+      // is fine, the machine was never built.
+      if (server?.status?.toUpperCase() === 'ERROR') {
+        throw new Error(await this.explainBuildFailure(serverId, faultContext));
+      }
       await new Promise((r) => setTimeout(r, pollIntervalMs));
     }
     return null;
+  }
+
+  /**
+   * What OVH says about an instance it could not build.
+   *
+   * Nova puts the reason in the server's `fault` field, which the client's type
+   * does not declare — the field is in the response, not in the interface, so
+   * it is read explicitly rather than assumed absent. Worth the reach: the
+   * common case is `No valid host was found`, meaning the region has no room
+   * for that flavor at that moment. It is temporary and not a misconfiguration,
+   * and the message should say so rather than leave the reader hunting.
+   *
+   * OVH does publish per-flavor stock, but on its own API and under application
+   * credentials, not the OpenStack ones this provider holds — so with what is
+   * configured here the condition is only knowable once it has happened.
+   */
+  private async explainBuildFailure(
+    serverId: string,
+    ctx?: { client: FluiOpenStackClient; region: string },
+  ): Promise<string> {
+    let reason = '';
+    if (ctx) {
+      try {
+        const raw = (await ctx.client.getServer(serverId, ctx.region)) as
+          | { fault?: { message?: string } }
+          | null
+          | undefined;
+        reason = raw?.fault?.message?.trim() ?? '';
+      } catch {
+        // The reason is a courtesy; not having it must not replace the failure
+        // with a different one.
+      }
+    }
+    const where = ctx?.region ? ` in ${ctx.region}` : '';
+    const capacity = /no valid host/i.test(reason);
+    return (
+      `OVH could not build the instance${where}` +
+      (reason ? `: ${reason}` : '.') +
+      (capacity
+        ? ' That region has no room for this node size at the moment — ' +
+          'it is temporary and not a misconfiguration. Try another region, ' +
+          'or a different node size in the same one.'
+        : '')
+    );
   }
 
   /**

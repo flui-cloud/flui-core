@@ -230,6 +230,91 @@ describe('OvhProviderService.createServer — post-boot network attach', () => {
   });
 });
 
+describe('OvhProviderService.createServer — an instance the provider could not build', () => {
+  const build = (fault?: { message?: string }) => {
+    const getServer = jest.fn().mockResolvedValue(fault ? { fault } : {});
+    (buildOvhOpenStackClient as jest.Mock).mockResolvedValue({
+      resolveComputeRegion: jest.fn().mockResolvedValue('GRA11'),
+      attachServerInterface: jest.fn(),
+      getServer,
+    });
+    (parseRegionId as jest.Mock).mockReturnValue({ id: 'net-1' });
+    (InfraOvhProviderService as unknown as jest.Mock).mockImplementation(
+      () => ({
+        createServer: jest.fn().mockResolvedValue({
+          serverId: 'srv-1',
+          status: 'BUILD',
+        }),
+        getServerDetailsAsDto: jest.fn().mockResolvedValue({ status: 'ERROR' }),
+        deleteServer: jest.fn().mockResolvedValue(undefined),
+      }),
+    );
+    const service = new OvhProviderService(
+      {} as never,
+      {
+        getActiveAccessKeyPair: jest
+          .fn()
+          .mockResolvedValue({ accessKey: 'ak', secretKey: 'sk' }),
+      } as never,
+    );
+    return service.createServer({
+      name: 'wl-master',
+      networks: ['region:net-1'],
+    } as never);
+  };
+
+  it('gives up as soon as Nova says ERROR, instead of waiting out the deadline', async () => {
+    // Polling to the deadline and attaching anyway surfaces the failure as
+    // "cannot attach_interface while it is in vm_state error", which blames the
+    // interface for a machine that was never built.
+    await expect(build()).rejects.toThrow(/could not build the instance/i);
+  });
+
+  it('repeats the reason OVH gave, which the client type does not declare', async () => {
+    await expect(
+      build({ message: 'No valid host was found. ' }),
+    ).rejects.toThrow(/No valid host was found/);
+  });
+
+  it('says what to change when the region is simply full', async () => {
+    await expect(
+      build({ message: 'No valid host was found.' }),
+    ).rejects.toThrow(/another region, or a different node size/i);
+  });
+
+  it('still fails clearly when the reason cannot be read', async () => {
+    (buildOvhOpenStackClient as jest.Mock).mockResolvedValue({
+      resolveComputeRegion: jest.fn().mockResolvedValue('GRA11'),
+      attachServerInterface: jest.fn(),
+      getServer: jest.fn().mockRejectedValue(new Error('gone')),
+    });
+    (InfraOvhProviderService as unknown as jest.Mock).mockImplementation(
+      () => ({
+        createServer: jest
+          .fn()
+          .mockResolvedValue({ serverId: 'srv-1', status: 'BUILD' }),
+        getServerDetailsAsDto: jest.fn().mockResolvedValue({ status: 'ERROR' }),
+        deleteServer: jest.fn().mockResolvedValue(undefined),
+      }),
+    );
+    const service = new OvhProviderService(
+      {} as never,
+      {
+        getActiveAccessKeyPair: jest
+          .fn()
+          .mockResolvedValue({ accessKey: 'ak', secretKey: 'sk' }),
+      } as never,
+    );
+
+    await expect(
+      service.createServer({
+        name: 'wl-master',
+        networks: ['region:net-1'],
+      } as never),
+    ).rejects.toThrow(/could not build the instance/i);
+  });
+});
+
 describe('OvhProviderService.createServer — waiting for the guest to boot before the attach', () => {
   const NET_STAGE =
     "Cloud-init v. 24.4 running 'init' at Sat, 13 Sep 2026 10:00:02 +0000.";

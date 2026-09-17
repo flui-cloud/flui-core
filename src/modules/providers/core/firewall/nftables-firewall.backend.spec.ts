@@ -155,6 +155,16 @@ describe('the ruleset the backend ships', () => {
     expect(await shipped()).toContain('iifname "flui0" tcp dport 6443 accept');
   });
 
+  it('admits the telemetry a workload pushes back, over the tunnel', async () => {
+    // The ingest ports sit inside the NodePort range the ruleset refuses on
+    // principle. Right for a public address, wrong for a peer the tunnel has
+    // already authenticated — without this a workload's telemetry is dropped at
+    // the control cluster's own ingress.
+    const ruleset = await shipped();
+    expect(ruleset).toContain('iifname "flui0" tcp dport 30100 accept');
+    expect(ruleset).toContain('iifname "flui0" tcp dport 30428 accept');
+  });
+
   it('refuses to carry traffic between two overlay peers', async () => {
     expect(await shipped()).toContain('iifname "flui0" oifname "flui0" drop');
   });

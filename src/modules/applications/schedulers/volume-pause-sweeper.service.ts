@@ -71,6 +71,10 @@ export class VolumePauseSweeperService
       clusters = await this.clusterRepository.find({
         where: {
           kubeconfigEncrypted: Not(IsNull()),
+          // A destroyed cluster keeps its kubeconfig, so without this the sweep
+          // goes on dialling machines that no longer exist, paying a connect
+          // timeout for each one on every pass.
+          deletedAt: IsNull(),
           // No lease to release, and asking costs the full connect timeout.
           status: Not(In([ClusterStatus.LOST, ClusterStatus.STOPPED])),
         },

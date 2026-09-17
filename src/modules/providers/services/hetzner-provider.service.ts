@@ -1117,6 +1117,9 @@ export class HetznerProviderService implements ICloudProvider {
             location: loc.name,
             available:
               availabilityMap.get(loc.name)?.has(serverTypeId) ?? false,
+            // Asked of the datacentres themselves, so `available` here is an
+            // answer and not a default.
+            availabilityKnown: true,
             deprecated: !!loc.deprecation,
           }));
 
