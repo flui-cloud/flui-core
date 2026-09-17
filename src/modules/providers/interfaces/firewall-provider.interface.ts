@@ -6,6 +6,24 @@ export interface IFirewallProvider {
   deleteFirewall(firewallId: string): Promise<void>;
   applyToServers(firewallId: string, serverIds: string[]): Promise<void>;
   removeFromServers(firewallId: string, serverIds: string[]): Promise<void>;
+
+  /**
+   * A fingerprint of everything this provider would actually send for these
+   * rules, beyond the rules themselves.
+   *
+   * Reconciliation skips work when the desired rules have not changed, which is
+   * right until what a provider *does* with those rules changes instead — a
+   * host ruleset gains a line no rule names, a transform starts emitting a
+   * different shape. Then nothing moves, nothing is re-applied, and the
+   * improvement reaches only clusters created afterwards.
+   *
+   * Optional: a provider that does not implement it keeps the old behaviour of
+   * comparing rules alone, which is safe and merely less thorough.
+   */
+  payloadFingerprint?(
+    firewallId: string,
+    rules: FirewallRule[],
+  ): Promise<string | undefined>;
 }
 
 export interface FirewallRule {

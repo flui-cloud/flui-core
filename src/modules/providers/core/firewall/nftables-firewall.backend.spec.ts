@@ -170,6 +170,73 @@ describe('the ruleset the backend ships', () => {
   });
 });
 
+/**
+ * The value reconciliation uses to decide whether an already-configured host
+ * still has the right ruleset. It has to move for anything that changes what
+ * the host receives — the whole reason the ruleset improvement that prompted it
+ * reached nobody was that the comparison only ever looked at the rules.
+ */
+describe('the fingerprint of what a host would be sent', () => {
+  const backendFor = (cluster: any) =>
+    new NftablesFirewallBackend(
+      { findOne: jest.fn().mockResolvedValue(cluster) } as any,
+      { find: jest.fn().mockResolvedValue([]) } as any,
+      { run: jest.fn() } as any,
+    );
+
+  const cluster = {
+    id: 'c1',
+    provider: CloudProvider.BYOS,
+    masterIpAddress: '10.0.0.1',
+    nodes: [{ ipAddress: '10.0.0.1' }],
+    metadata: { byos: { user: 'root' } },
+  };
+
+  const rules = [
+    {
+      description: 'https',
+      direction: 'in' as const,
+      protocol: 'tcp' as const,
+      port: '443',
+      sourceIps: ['0.0.0.0/0'],
+    },
+  ];
+
+  const print = (c: any = cluster) =>
+    backendFor(c).payloadFingerprint('nft-c1', rules);
+
+  afterEach(() => delete process.env.FLUI_OBS_INGEST_NODEPORTS);
+
+  it('is stable while nothing about the payload changes', async () => {
+    expect(await print()).toBe(await print());
+  });
+
+  it('moves when what the tunnel is trusted with changes', async () => {
+    // No rule mentions these ports, so the rules hash cannot notice them.
+    const before = await print();
+    process.env.FLUI_OBS_INGEST_NODEPORTS = '30100';
+    expect(await print()).not.toBe(before);
+  });
+
+  it('moves when the rules themselves change', async () => {
+    const other = await backendFor(cluster).payloadFingerprint('nft-c1', [
+      { ...rules[0], port: '8443' },
+    ]);
+    expect(other).not.toBe(await print());
+  });
+
+  it('answers nothing rather than guessing when the cluster cannot be read', async () => {
+    // Nothing compares equal to nothing, so the decision falls back to the
+    // rules — where it was before this existed.
+    const backend = new NftablesFirewallBackend(
+      { findOne: jest.fn().mockResolvedValue(null) } as any,
+      { find: jest.fn().mockResolvedValue([]) } as any,
+      { run: jest.fn() } as any,
+    );
+    expect(await backend.payloadFingerprint('nft-c1', rules)).toBeUndefined();
+  });
+});
+
 describe('NftablesFirewallBackend.deriveInternalCidrs', () => {
   const derive = (cluster: any, subnets: any[] = []): Promise<string[]> => {
     const subnetRepo = { find: jest.fn().mockResolvedValue(subnets) };

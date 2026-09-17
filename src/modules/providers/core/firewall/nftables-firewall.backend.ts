@@ -11,6 +11,7 @@ import {
   FirewallRule,
   FirewallFilters,
 } from '../../interfaces/firewall-provider.interface';
+import { createHash } from 'node:crypto';
 import { deriveHostTargets, HostTarget } from '../host/host-targets';
 import {
   HostCommandService,
@@ -24,8 +25,7 @@ import {
 // The one place the overlay's interface name is decided, and it carries the
 // reasoning for why it is not `wg0`. Duplicating the literal here would be a
 // second truth about the same thing.
-import { WG_INTERFACE } from '../../../infrastructure/networking/wireguard-config';
-import { observabilityIngestPorts } from '../../../infrastructure/networking/observability-ingest';
+import { overlayRulesetOptions } from './overlay-ruleset-policy';
 
 type SshTarget = HostTarget;
 
@@ -33,7 +33,6 @@ const FIREWALL_ID_PREFIX = 'nft-';
 const RULESET_PATH = '/etc/flui/flui-firewall.nft';
 const SSH_TIMEOUT_MS = 60_000;
 const CERT_TTL_SECONDS = 300;
-const API_SERVER_PORT = 6443;
 
 const IPV4_RE = /^(\d{1,3}\.){3}\d{1,3}$/;
 const CIDR_RE = /^[0-9a-fA-F:.]+\/\d{1,3}$/;
@@ -300,12 +299,20 @@ export class NftablesFirewallBackend implements IFirewallProvider {
     }
   }
 
-  private async applyRuleset(
-    clusterId: string,
+  /**
+   * Exactly what a host will be sent — the ruleset and the unit that reinstates
+   * it at boot, as one script.
+   *
+   * Built here and nowhere else so that whatever decides a host needs this
+   * again is looking at the same text the host receives. A ruleset improvement
+   * that changed no rule used to reach nobody: the comparison was over the
+   * rules, and the rules had not moved.
+   */
+  private buildApplyScript(
     rules: FirewallRule[],
     targets: SshTarget[],
     internalCidrs?: string[],
-  ): Promise<void> {
+  ): string {
     const ruleset = renderFluiNftRuleset(rules, {
       supportsSshAllowlist: false,
       internalCidrs,
@@ -318,23 +325,18 @@ export class NftablesFirewallBackend implements IFirewallProvider {
       // rule that names an address cannot follow the control when the path
       // moves, and the policy here is drop — so the address form is the one
       // that silently closes 6443 against the path just chosen.
-      wgInterface: WG_INTERFACE,
       // The API server, and the telemetry a workload pushes back. Both arrive
       // on the tunnel, and without naming them here both are dropped: the
       // ingest ports sit inside the NodePort range this ruleset refuses on
       // principle — right for a public address, wrong for a peer the tunnel has
-      // already authenticated.
-      wgOnlyPorts: [
-        { port: API_SERVER_PORT, protocol: 'tcp' as const },
-        ...observabilityIngestPorts().ports.map((port) => ({
-          port,
-          protocol: 'tcp' as const,
-        })),
-      ],
+      // already authenticated. Shared with the fingerprint that decides when a
+      // host needs the ruleset again, so the two cannot disagree about what it
+      // contains.
+      ...overlayRulesetOptions(),
     });
     const b64 = Buffer.from(ruleset, 'utf-8').toString('base64');
 
-    const script = [
+    return [
       'set -e',
       'NFT=$(command -v nft || echo /usr/sbin/nft)',
       'if [ ! -x "$NFT" ]; then echo "nft not found" >&2; exit 3; fi',
@@ -358,6 +360,46 @@ export class NftablesFirewallBackend implements IFirewallProvider {
       'systemctl enable flui-firewall.service >/dev/null 2>&1 || true',
       'echo FLUI_NFT_APPLIED',
     ].join('\n');
+  }
+
+  /**
+   * Hashes the whole script, not the ruleset alone: the systemd unit that
+   * reinstates it at boot is part of what a host is given, and a fix to that
+   * unit is exactly the kind of change no rule describes.
+   */
+  async payloadFingerprint(
+    firewallId: string,
+    rules: FirewallRule[],
+  ): Promise<string | undefined> {
+    try {
+      const clusterId = this.parseFirewallId(firewallId);
+      const cluster = await this.loadClusterOrThrow(clusterId);
+      const targets = this.deriveTargets(cluster);
+      if (targets.length === 0) return undefined;
+      const script = this.buildApplyScript(
+        rules,
+        targets,
+        await this.deriveInternalCidrs(cluster),
+      );
+      return createHash('sha256').update(script).digest('hex').slice(0, 32);
+    } catch (err: any) {
+      // Not knowing must not be read as "nothing changed": returning nothing
+      // leaves the decision to the rules comparison, which is where it was
+      // before this existed.
+      this.logger.warn(
+        `Could not fingerprint the ruleset for ${firewallId}: ${err?.message ?? err}`,
+      );
+      return undefined;
+    }
+  }
+
+  private async applyRuleset(
+    clusterId: string,
+    rules: FirewallRule[],
+    targets: SshTarget[],
+    internalCidrs?: string[],
+  ): Promise<void> {
+    const script = this.buildApplyScript(rules, targets, internalCidrs);
 
     for (const target of targets) {
       this.logger.log(

@@ -207,6 +207,34 @@ export class FirewallReconciliationService {
    * The control cluster is exempt: it is driven from the operator's machine by
    * the CLI, which allowlists its own detected IP and SSHes from that same host.
    */
+  /**
+   * Asks the provider what it would send, when it can answer.
+   *
+   * A provider without the seam returns nothing, and nothing compares equal to
+   * nothing — so such a firewall is gated on its rules exactly as before.
+   */
+  private async payloadFingerprintOf(
+    cluster: ClusterEntity,
+    firewall: ClusterFirewallEntity,
+    rules: FirewallRuleDto[],
+  ): Promise<string | undefined> {
+    if (!firewall.providerFirewallId) return undefined;
+    try {
+      const provider = this.firewallProviderFactory.getFirewallProvider(
+        cluster.provider as CloudProvider,
+      );
+      return await provider.payloadFingerprint?.(
+        firewall.providerFirewallId,
+        rules,
+      );
+    } catch (err: any) {
+      this.logger.warn(
+        `Could not read what firewall ${firewall.id} would be sent: ${err?.message ?? err}`,
+      );
+      return undefined;
+    }
+  }
+
   static ensureWorkloadSshFromControl(
     clusterType: ClusterEntity['clusterType'],
     rules: FirewallRuleDto[],
@@ -325,12 +353,42 @@ export class FirewallReconciliationService {
     const newDesiredHash =
       this.desiredStateService.calculateHash(canonicalRules);
 
-    // Check if rules actually changed
-    if (newDesiredHash === firewall.desiredHash) {
+    // What the provider would actually send, which the rules do not describe on
+    // their own: a host ruleset carries an anti-lockout accept, a NodePort drop
+    // and whatever the overlay interface is trusted with, none of them named by
+    // any rule. Comparing rules alone let a ruleset improvement ship and reach
+    // no host that was already configured.
+    //
+    // Kept beside the rules hash rather than folded into it, so `desiredHash`
+    // goes on meaning what it says. Folding it in would make every already
+    // reconciled firewall read as DRIFT the moment this value moved — reported
+    // against rules that were in fact applied exactly as desired.
+    const newPayloadFingerprint = await this.payloadFingerprintOf(
+      cluster,
+      firewall,
+      canonicalRules,
+    );
+    const knownPayloadFingerprint = (
+      firewall.metadata as { payloadFingerprint?: string } | null
+    )?.payloadFingerprint;
+
+    if (
+      newDesiredHash === firewall.desiredHash &&
+      newPayloadFingerprint === knownPayloadFingerprint
+    ) {
       this.logger.log(
         `No changes detected for firewall ${firewallId}, skipping update`,
       );
       return firewall;
+    }
+    if (
+      newDesiredHash === firewall.desiredHash &&
+      newPayloadFingerprint !== knownPayloadFingerprint
+    ) {
+      this.logger.log(
+        `Firewall ${firewallId}: rules unchanged but what it would be sent has ` +
+          `changed — re-applying`,
+      );
     }
 
     // Mark as reconciling temporarily (without persisting to DB yet)
@@ -395,6 +453,20 @@ export class FirewallReconciliationService {
           canonicalRules,
           firewall.providerFirewallId,
         );
+
+      // Recorded only after the provider accepted it. Remembering what we meant
+      // to send would let a failed apply look settled on the next pass.
+      const appliedFingerprint = await this.payloadFingerprintOf(
+        cluster,
+        savedFirewall,
+        canonicalRules,
+      );
+      if (appliedFingerprint) {
+        await this.desiredStateService.rememberPayloadFingerprint(
+          savedFirewall.id,
+          appliedFingerprint,
+        );
+      }
 
       this.logger.log(
         `Firewall ${firewallId} updated and applied successfully`,

@@ -283,6 +283,26 @@ export class FirewallDesiredStateService {
   /**
    * Calculate canonical hash of rules
    */
+  /**
+   * Records what the provider was last given, beside the rules rather than
+   * inside their hash.
+   *
+   * `desiredHash` answers "are these the rules we want" and is compared against
+   * the applied hash to report drift; a value that moved for any other reason
+   * would report drift against rules that are in fact correct.
+   */
+  async rememberPayloadFingerprint(
+    firewallId: string,
+    fingerprint: string,
+  ): Promise<void> {
+    const firewall = await this.getFirewallById(firewallId);
+    firewall.metadata = {
+      ...(firewall.metadata ?? {}),
+      payloadFingerprint: fingerprint,
+    };
+    await this.firewallRepository.save(firewall);
+  }
+
   calculateHash(rules: FirewallRuleDto[]): string {
     const canonical = this.canonicalizeRules(rules);
     const json = JSON.stringify(canonical);
