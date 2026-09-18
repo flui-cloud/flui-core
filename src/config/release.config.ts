@@ -38,6 +38,24 @@ export const RELEASE: ReleaseManifest = {
   },
 };
 
+/** GHCR repository → the component slot that pins its tag in this release. */
+const COMPONENT_REPOSITORIES: Record<string, keyof ComponentImageTags> = {
+  'flui-cloud/core': 'fluiApi',
+  'flui-cloud/dashboard': 'fluiWeb',
+  'flui-cloud/flui-authz': 'fluiAuthz',
+};
+
+/**
+ * The tag this release pins for a GHCR repository, or null when the repository
+ * is not a Flui component. Lets a version listing keep the pinned build visible
+ * even when it is a bare commit SHA that would otherwise age out of the
+ * per-commit history window.
+ */
+export function pinnedTagForRepository(repository: string): string | null {
+  const slot = COMPONENT_REPOSITORIES[repository];
+  return slot ? RELEASE.images[slot] : null;
+}
+
 const LATEST_BOOTSTRAP_REF = 'master';
 const LATEST_IMAGE_TAGS: ComponentImageTags = {
   fluiApi: 'latest',

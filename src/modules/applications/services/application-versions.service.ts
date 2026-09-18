@@ -21,9 +21,16 @@ import { matchesAnyPattern } from '../utils/version-pattern';
 import { sortVersionsForDisplay } from '../utils/version-ordering.util';
 import { ApplicationReleaseService } from './application-release.service';
 import { ApplicationReleaseDto } from '../dto/application-release.dto';
+import { curateVersionHistory } from '../utils/version-history.util';
+import { pinnedTagForRepository } from '../../../config/release.config';
 import { GhcrTagDto } from '../../image-registry/dto/ghcr.dto';
 
 const PLATFORM_CHILD_WINDOW_MS = 10_000;
+
+// CI tags every push to `main` with a short SHA, so a GHCR-backed system app
+// accumulates hundreds of anonymous versions. Named tags and anything ever
+// released always survive; this caps only the unnamed tail.
+const GHCR_SHA_HISTORY_LIMIT = 10;
 
 @Injectable()
 export class ApplicationVersionsService {
@@ -194,6 +201,10 @@ export class ApplicationVersionsService {
     const app = await this.applicationsRepository.findById(appId);
     if (!app) throw new NotFoundException(`Application ${appId} not found`);
 
+    // Resolved once and shared: the history cull must not drop the image the
+    // pod is actually running, and the flagging pass needs the same answer.
+    const runningRef = await this.resolveRunningImageRef(app);
+
     let response: AvailableVersionsResponseDto;
     if (app.sourceType === ApplicationSourceType.GIT_BUILD) {
       response = await this.listForGitBuild(app, userId);
@@ -212,12 +223,13 @@ export class ApplicationVersionsService {
         page,
         limit,
         userId,
+        runningRef,
       );
     } else {
       response = this.emptyResponse(app, null);
     }
 
-    return this.applyCurrentlyDeployedFromCurrentImageRef(response, app);
+    return this.applyCurrentlyDeployedFromCurrentImageRef(response, runningRef);
   }
 
   /**
@@ -228,21 +240,15 @@ export class ApplicationVersionsService {
    * local `images` table and what the workload actually serves — the listing
    * is just a view, the flag must reflect the current top-level field.
    *
-   * Before matching, attempts to upgrade `response.currentImageRef` to the
-   * digest the cluster pod is actually executing (via the k8s API), so that
-   * a stale `:latest` tag on the Deployment spec does not mislead the UI
-   * when the pod still has an older digest cached locally on the node.
+   * Before matching, upgrades `response.currentImageRef` to `runningRef` —
+   * the digest the cluster pod is actually executing — so that a stale
+   * `:latest` tag on the Deployment spec does not mislead the UI when the pod
+   * still has an older digest cached locally on the node.
    */
-  private async applyCurrentlyDeployedFromCurrentImageRef(
+  private applyCurrentlyDeployedFromCurrentImageRef(
     response: AvailableVersionsResponseDto,
-    app: {
-      id: string;
-      slug?: string | null;
-      clusterId?: string | null;
-      k8sNamespace?: string | null;
-    },
-  ): Promise<AvailableVersionsResponseDto> {
-    const runningRef = await this.resolveRunningImageRef(app);
+    runningRef: string | null,
+  ): AvailableVersionsResponseDto {
     if (runningRef) {
       response = { ...response, currentImageRef: runningRef };
     }
@@ -355,6 +361,7 @@ export class ApplicationVersionsService {
     page: number,
     limit: number,
     userId: string,
+    runningRef: string | null,
   ): Promise<AvailableVersionsResponseDto> {
     const label = app.labels?.['app'] ?? app.slug;
     const def = findSystemAppByLabel(label);
@@ -371,7 +378,17 @@ export class ApplicationVersionsService {
         imageSource,
         userId,
       );
-      const versions = await this.enrichWithReleases(app.id, rawVersions);
+      const enriched = await this.enrichWithReleases(app.id, rawVersions);
+      const running = this.parseImageRef(runningRef ?? '');
+      const declared = this.parseImageRef(app.imageRef ?? '');
+      const versions = curateVersionHistory(enriched, GHCR_SHA_HISTORY_LIMIT, {
+        tags: [
+          running.tag,
+          declared.tag,
+          pinnedTagForRepository(imageSource.repository),
+        ],
+        digests: [running.digest, declared.digest],
+      });
       return {
         sourceType: app.sourceType,
         currentImageRef: app.imageRef ?? null,
