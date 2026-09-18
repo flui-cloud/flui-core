@@ -24,16 +24,20 @@ export interface ReleaseManifest {
 }
 
 export const RELEASE: ReleaseManifest = {
-  version: '0.13.0-rc.4',
-  // Commit builds, not release tags. The CI publishes a short-SHA tag for every
-  // push to main, so a release can point at exactly what is on the branch
-  // without cutting a git tag first — which is what these three refs are: the
-  // heads of bootstrap-scripts, flui-core and flui-dashboard.
+  version: '0.13.0-rc.5',
+  // A commit ref, not a tag: bootstrap-scripts did not move for this release, so
+  // this is the same head rc.4 pinned. `requiresBootstrap` is derived from it
+  // being unchanged, which is what makes this release installable in place.
   bootstrapRef: 'dcefc2b',
   images: {
-    fluiApi: '979d7ef',
-    fluiWeb: 'de88258',
-    // Unchanged: that repository did not move.
+    // Release tags, as every tagged release before rc.4 used: the tag build is
+    // what makes an image exist under the release's own name. Both repositories
+    // are tagged `v0.13.0-rc.5` — the dashboard did not change, but its image
+    // has to answer to this version or a rollout waits on a pull that cannot
+    // succeed.
+    fluiApi: '0.13.0-rc.5',
+    fluiWeb: '0.13.0-rc.5',
+    // Pinned by its own version, not the platform's, and it did not move.
     fluiAuthz: '0.6.0',
   },
 };
