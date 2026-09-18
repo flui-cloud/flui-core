@@ -1,5 +1,13 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsEnum, IsISO8601, IsOptional, IsUUID } from 'class-validator';
+import {
+  IsEnum,
+  IsISO8601,
+  IsOptional,
+  IsUUID,
+  ValidateNested,
+} from 'class-validator';
+import { Type } from 'class-transformer';
+import { RestoreTargetSelectorDto } from './selector.dto';
 import {
   RestoreTargetKind,
   RestoreStrategy,
@@ -36,9 +44,11 @@ export class CreateRestoreJobDto {
   @IsEnum(RestorePlacement)
   placement?: RestorePlacement;
 
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({ type: RestoreTargetSelectorDto })
   @IsOptional()
-  targetSelector?: RestoreTargetSelector;
+  @ValidateNested()
+  @Type(() => RestoreTargetSelectorDto)
+  targetSelector?: RestoreTargetSelectorDto;
 
   @ApiPropertyOptional({ enum: RestoreStrategy })
   @IsOptional()

@@ -67,8 +67,10 @@ export const SCOPE_AUTHORITY: Record<McpScope, ScopeAuthority> = {
     allows: [IAM_PERMISSION.APP_READ],
   },
   // The widest read in the catalogue: the group summaries promise the clusters,
-  // repositories, templates, gateway routes and DNS status behind an
-  // application, and those routes are read-gated on `cluster:read`.
+  // repositories, templates and DNS status behind an application, and those
+  // routes are read-gated on `cluster:read`. Gateway routes are not among them —
+  // the cluster-wide listing is gated on `app:read` and scoped to what the
+  // caller may read, rather than answering with every tenant's hostnames.
   [MCP_SCOPE.APP_READ]: {
     requires: IAM_PERMISSION.APP_READ,
     allows: [IAM_PERMISSION.APP_READ, IAM_PERMISSION.CLUSTER_READ],

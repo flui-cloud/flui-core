@@ -35,38 +35,48 @@ export type RestRequestKind = 'read' | 'write';
 
 export type RestRequestClassifier = (req: RawRestRequest) => RestRequestKind;
 
-// POST is overloaded in ES-wire: query endpoints read, everything else writes.
-// Match these as a path segment so /products/_search and /_search both count.
-const ES_READ_POST = [
-  '_search',
-  '_count',
-  '_msearch',
-  '_field_caps',
-  '_analyze',
-  '_explain',
-  '_validate',
-  '_mget',
-  '_terms_enum',
-  '_render',
-  '_search_shards',
+/**
+ * The POST paths that read, written as whole shapes rather than as a set of
+ * segments to look for anywhere.
+ *
+ * "Anywhere" was the defect. `POST /idx/_doc/_search` indexes a document whose
+ * id happens to be `_search`, and `POST /_scripts/_search` stores a script under
+ * that name — both contain a segment from the read list, both mutate, and both
+ * were classified as reads and let through the read-only gate. Matching only the
+ * last segment does not fix it either, since it is the last segment in both.
+ *
+ * What actually distinguishes them is the shape: a query endpoint is the action
+ * alone, or an index followed by the action. An index name cannot begin with an
+ * underscore (the server reserves that prefix), which is what makes the first
+ * segment safe to allow as a wildcard here.
+ */
+const ES_READ_ACTION =
+  '(_search|_count|_msearch|_field_caps|_analyze|_explain|_validate|_mget|_terms_enum|_search_shards)';
+
+const ES_READ_POST_SHAPES = [
+  // /_search, /_msearch, …
+  new RegExp(`^${ES_READ_ACTION}$`),
+  // /my-index/_search, /my-index,other/_count, … — never /_scripts/_search,
+  // because an index may not start with an underscore.
+  new RegExp(`^[^_/][^/]*/${ES_READ_ACTION}$`),
+  // The template forms, which carry one more segment.
+  /^_render\/template$/,
+  /^(_search|[^_/][^/]*\/_search)\/template$/,
 ];
 
-function pathHasSegment(path: string, segments: string[]): boolean {
-  const clean = path.split('?')[0];
-  const parts = clean.split('/').filter(Boolean);
-  return parts.some((p) => segments.includes(p));
+function esReadPath(path: string): boolean {
+  const clean = path.split('?')[0].split('/').filter(Boolean).join('/');
+  return ES_READ_POST_SHAPES.some((shape) => shape.test(clean));
 }
 
 /**
  * ES-wire (OpenSearch / Elasticsearch) classifier. GET/HEAD never mutate; PUT/
- * DELETE/PATCH always do; POST reads only for the known query endpoints and is
+ * DELETE/PATCH always do; POST reads only for the known query shapes and is
  * treated as a write otherwise (safe default — unknown POSTs stay gated).
  */
 export const classifyEsRequest: RestRequestClassifier = (req) => {
   if (req.method === 'GET' || req.method === 'HEAD') return 'read';
-  if (req.method === 'POST') {
-    return pathHasSegment(req.path, ES_READ_POST) ? 'read' : 'write';
-  }
+  if (req.method === 'POST') return esReadPath(req.path) ? 'read' : 'write';
   return 'write';
 };
 

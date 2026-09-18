@@ -3,6 +3,7 @@ import { corsOriginDelegate } from './config/cors-origin.config';
 import { AppModule } from './app.module';
 import * as dotenv from 'dotenv';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
+import helmet from 'helmet';
 import { ValidationPipe, Logger, ConsoleLogger } from '@nestjs/common';
 import { HttpExceptionFilter } from './filters/http-exception.filter';
 import { MalformedIdentifierFilter } from './filters/malformed-identifier.filter';
@@ -126,8 +127,28 @@ async function bootstrap() {
   // Validation pipe
   app.useGlobalPipes(new ValidationPipe({ transform: true }));
 
+  // Response headers. The installation answers over TLS at the edge, so HSTS is
+  // the one that matters here; the rest are cheap and the audit found none of
+  // them present. `contentSecurityPolicy` is off because the only HTML this
+  // process serves is the Swagger page below, which loads its own inline assets
+  // and which production does not serve at all.
+  app.use(
+    helmet({
+      contentSecurityPolicy: false,
+      crossOriginEmbedderPolicy: false,
+      hsts: { maxAge: 31_536_000, includeSubDomains: true, preload: false },
+    }),
+  );
+
   // CORS — the same allowlist the websocket gateways use.
   app.enableCors({ origin: corsOriginDelegate, credentials: true });
+
+  // The internal document describes every route on the installation, its DTO
+  // shapes and its parameters, and it was served to anyone who asked. It is a
+  // development convenience, so it is one here too: production serves it only
+  // when somebody deliberately turns it on.
+  const serveInternalDocs =
+    !isProduction || process.env.ENABLE_INTERNAL_DOCS === 'true';
 
   // Swagger configuration
   const config = new DocumentBuilder()
@@ -141,9 +162,15 @@ async function bootstrap() {
     SwaggerModule.createDocument(app, config),
   );
 
-  SwaggerModule.setup('docs/internal', app, document, {
-    jsonDocumentUrl: 'swagger/json',
-  });
+  if (serveInternalDocs) {
+    SwaggerModule.setup('docs/internal', app, document, {
+      jsonDocumentUrl: 'swagger/json',
+    });
+  } else {
+    new Logger('Bootstrap').log(
+      'Internal API docs are not served (set ENABLE_INTERNAL_DOCS=true to serve them)',
+    );
+  }
 
   // Public API docs with filtered endpoints
   const publicDocument = addEnumVarnamesExtension(

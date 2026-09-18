@@ -100,8 +100,11 @@ export class WsAuthService implements OnModuleInit {
     if (typeof header === 'string' && header) {
       return header.replace(/^Bearer\s+/i, '');
     }
-    const q = socket.handshake.query?.token;
-    if (typeof q === 'string' && q) return q;
+    // Deliberately no `handshake.query.token` fallback. A bearer in the query
+    // string is written to every proxy and access log between the browser and
+    // here, and kept there for the log's retention. Every first-party client
+    // sends `auth.token`; the header and the session cookie are the other two
+    // ways in.
     const cookieHeader = socket.handshake.headers.cookie;
     if (typeof cookieHeader === 'string' && cookieHeader) {
       return this.extractSessionCookie(cookieHeader);

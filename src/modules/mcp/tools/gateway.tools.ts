@@ -42,7 +42,7 @@ export const GATEWAY_TOOLS: ToolDef[] = [
     name: 'gateway_list_routes',
     routes: ['GET /applications/:id/gateway/routes'],
     description:
-      'List the gateway routes of an application (pass id) or of the whole cluster (pass clusterId, read-only global view). Each route is host+path → app service with its policies (auth/rateLimit/allowIps), TLS and reconciliation status.',
+      'List the gateway routes of an application (pass id) or of a cluster (pass clusterId). The cluster form is read-only and scoped to the applications you may read, so it is a way to spot a hostname collision among your own routes, not an inventory of the installation — a route it does not return may still exist. Each route is host+path → app service with its policies (auth/rateLimit/allowIps), TLS and reconciliation status.',
     scope: MCP_SCOPE.APP_READ,
     inputSchema: {
       id: z.string().optional(),

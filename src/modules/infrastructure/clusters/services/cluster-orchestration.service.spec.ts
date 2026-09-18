@@ -74,7 +74,7 @@ describe('ClusterOrchestrationService — retry safety', () => {
         accessService,
         keyGenerator,
         clusterRepository,
-        debugLogBootstrapKey: jest.fn(),
+        logBootstrapKeyFingerprint: jest.fn(),
       });
 
       const cluster = { ...CLUSTER };

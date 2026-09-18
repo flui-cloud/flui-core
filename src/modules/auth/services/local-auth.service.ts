@@ -1,6 +1,5 @@
 import {
   Injectable,
-  Logger,
   NotFoundException,
   UnauthorizedException,
 } from '@nestjs/common';
@@ -14,13 +13,23 @@ import { RefreshTokenEntity } from '../entities/refresh-token.entity';
 import { LoginDto } from '../dto/login.dto';
 import { ChangePasswordDto } from '../dto/change-password.dto';
 import { UpdateMeDto } from '../dto/update-me.dto';
+import { hashRefreshToken } from '../utils/refresh-token-hash.util';
 
 const REFRESH_TOKEN_TTL_DAYS = 7;
 
+/**
+ * Stood in for a missing account's password hash, so the comparison costs the
+ * same whether the address exists or not. A real bcrypt hash of a value nobody
+ * holds — it can never match. It has to be well-formed or `compare` returns
+ * early and the cost disappears with it, and it has to carry the same cost
+ * factor the product hashes with (12, see `changePassword`) or the two paths
+ * take measurably different times again.
+ */
+const ABSENT_ACCOUNT_HASH =
+  '$2b$12$fNU.K9Wuy8x7afhXh.XxqecXcz9XFQ37sxd5SA88JEwlrP4ejSg1.';
+
 @Injectable()
 export class LocalAuthService {
-  private readonly logger = new Logger(LocalAuthService.name);
-
   constructor(
     @InjectRepository(UserEntity)
     private readonly userRepo: Repository<UserEntity>,
@@ -30,22 +39,20 @@ export class LocalAuthService {
   ) {}
 
   async login(dto: LoginDto) {
-    this.logger.log(`Login attempt for: ${dto.email}`);
-
+    // Nothing about the attempt is logged, and that is the point: a line naming
+    // the address, or distinguishing "no such user" from "wrong password", turns
+    // whoever can read the logs into a holder of the account list.
     const user = await this.userRepo.findOne({ where: { email: dto.email } });
-    if (!user) {
-      this.logger.warn(`Login failed: user not found (${dto.email})`);
-      throw new UnauthorizedException('Invalid credentials');
-    }
 
-    this.logger.log(
-      `User found: ${user.email} | passwordHash present: ${!!user.passwordHash} | hash prefix: ${user.passwordHash?.substring(0, 7)}`,
+    // The comparison runs even when there is no such account, against a hash of
+    // nothing. Identical wording is only half of not answering the question:
+    // bcrypt at this cost takes a few hundred milliseconds, so skipping it on
+    // the miss path times the difference out loud for anyone holding a stopwatch.
+    const valid = await bcrypt.compare(
+      dto.password,
+      user?.passwordHash ?? ABSENT_ACCOUNT_HASH,
     );
-
-    const valid = await bcrypt.compare(dto.password, user.passwordHash);
-    this.logger.log(`Password valid: ${valid}`);
-    if (!valid) {
-      this.logger.warn(`Login failed: wrong password for ${dto.email}`);
+    if (!user || !valid) {
       throw new UnauthorizedException('Invalid credentials');
     }
 
@@ -65,7 +72,9 @@ export class LocalAuthService {
   }
 
   async refresh(token: string): Promise<{ access_token: string }> {
-    const record = await this.refreshTokenRepo.findOne({ where: { token } });
+    const record = await this.refreshTokenRepo.findOne({
+      where: { token: hashRefreshToken(token) },
+    });
 
     if (!record || record.revoked || record.expiresAt < new Date()) {
       throw new UnauthorizedException('Invalid or expired refresh token');
@@ -80,7 +89,10 @@ export class LocalAuthService {
   }
 
   async logout(token: string): Promise<void> {
-    await this.refreshTokenRepo.update({ token }, { revoked: true });
+    await this.refreshTokenRepo.update(
+      { token: hashRefreshToken(token) },
+      { revoked: true },
+    );
   }
 
   async changePassword(userId: string, dto: ChangePasswordDto): Promise<void> {
@@ -123,7 +135,7 @@ export class LocalAuthService {
     expiresAt.setDate(expiresAt.getDate() + REFRESH_TOKEN_TTL_DAYS);
 
     await this.refreshTokenRepo.save({
-      token,
+      token: hashRefreshToken(token),
       userId,
       expiresAt,
       revoked: false,

@@ -797,6 +797,9 @@ const MASK_EXEMPT: string[] = [
   'AvailableVersionsResponseDto.nextPage', // modules/applications/dto/available-versions.dto.ts
   'AvailableVersionsResponseDto.sourceType', // modules/applications/dto/available-versions.dto.ts
   'AvailableVersionsResponseDto.versions', // modules/applications/dto/available-versions.dto.ts
+  'BackupScopeSelectorDto.applicationIds', // modules/backups/dto/selector.dto.ts
+  'BackupScopeSelectorDto.labelSelector', // modules/backups/dto/selector.dto.ts
+  'BackupScopeSelectorDto.namespaces', // modules/backups/dto/selector.dto.ts
   'BearerTokenDto.access_token', // modules/access/dto/bearer-token.dto.ts
   'BearerTokenDto.expires_in', // modules/access/dto/bearer-token.dto.ts
   'BearerTokenDto.refresh_token', // modules/access/dto/bearer-token.dto.ts
@@ -2685,9 +2688,6 @@ const MASK_EXEMPT: string[] = [
   'PricingResponseDto.provider', // modules/management/dto/pricing-response.dto.ts
   'PricingResponseDto.serverTypes', // modules/management/dto/pricing-response.dto.ts
   'PricingResponseDto.vatRate', // modules/management/dto/pricing-response.dto.ts
-  'PrometheusServiceDiscoveryResponseDto.targets', // modules/observability/dto/prometheus-target.dto.ts
-  'PrometheusTargetDto.labels', // modules/observability/dto/prometheus-target.dto.ts
-  'PrometheusTargetDto.targets', // modules/observability/dto/prometheus-target.dto.ts
   'ProviderCapabilitiesDto.credentialType', // modules/management/dto/provider-capabilities.dto.ts
   'ProviderCapabilitiesDto.crossClusterAllowed', // modules/management/dto/provider-capabilities.dto.ts
   'ProviderCapabilitiesDto.features', // modules/management/dto/provider-capabilities.dto.ts
@@ -3032,6 +3032,11 @@ const MASK_EXEMPT: string[] = [
   'ResourceProfilesResponseDto.profiles', // modules/images/dto/images.dto.ts
   'ResourceRequirementsDto.cpu', // modules/frameworks/framework-core/dto/build-plan.dto.ts
   'ResourceRequirementsDto.memory', // modules/frameworks/framework-core/dto/build-plan.dto.ts
+  'RestoreNewInstallDto.clusterId', // modules/backups/dto/selector.dto.ts
+  'RestoreNewInstallDto.name', // modules/backups/dto/selector.dto.ts
+  'RestoreTargetSelectorDto.applicationId', // modules/backups/dto/selector.dto.ts
+  'RestoreTargetSelectorDto.namespaceMapping', // modules/backups/dto/selector.dto.ts
+  'RestoreTargetSelectorDto.newInstall', // modules/backups/dto/selector.dto.ts
   'RestorePreviewDto.artifactId', // modules/backups/dto/create-restore-job.dto.ts
   'RestorePreviewDto.sourceDestinationId', // modules/backups/dto/create-restore-job.dto.ts
   'RollbackApplicationDto.buildId', // modules/applications/dto/rollback-application.dto.ts

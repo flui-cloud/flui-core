@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
@@ -113,14 +113,15 @@ export class KeyStorageService {
   }
 
   async retrievePrivateKey(keyPath: string): Promise<string> {
-    const encryptedKey = await fs.readFile(keyPath);
+    const encryptedKey = await fs.readFile(this.assertStoredPath(keyPath));
     return this.decryptKey(encryptedKey);
   }
 
   async deleteKey(keyPath: string): Promise<void> {
+    const safePath = this.assertStoredPath(keyPath);
     try {
-      await fs.unlink(keyPath);
-      await this.cleanupKeyDirectory(keyPath);
+      await fs.unlink(safePath);
+      await this.cleanupKeyDirectory(safePath);
     } catch (error) {
       if (error.code !== 'ENOENT') {
         throw error;
@@ -134,6 +135,24 @@ export class KeyStorageService {
   }
 
   public encryptKey(privateKey: string): Buffer {
+    // Sealing with the retired key is refused; opening with it is not.
+    //
+    // The previous behaviour was to log an error and seal anyway, which is the
+    // worst of both: the operator sees a line in a log they may never read, and
+    // every provider credential and SSH private key written from then on is
+    // encrypted with a key that is published in this repository — recoverable by
+    // anyone who obtains the database. Refusing here rather than at startup is
+    // deliberate: records already sealed with it stay readable, so an
+    // installation that lands in this state can be repaired by setting a real
+    // key and restarting, which is what re-seals them. Refusing to boot would
+    // take that path away.
+    if (this.sealingWithRetiredKey) {
+      throw new Error(
+        'Refusing to encrypt: SSH_KEY_ENCRYPTION_KEY is unset or is the retired default, ' +
+          'which is published in the source tree. Set a 64-hex-character key ' +
+          '(openssl rand -hex 32) and restart — existing records are re-sealed automatically.',
+      );
+    }
     const iv = crypto.randomBytes(16);
     const cipher = crypto.createCipheriv('aes-256-gcm', this.primaryKey, iv);
 
@@ -191,17 +210,65 @@ export class KeyStorageService {
     return this.open(Buffer.from(encryptedString, 'base64'));
   }
 
+  /**
+   * The only place a key file's location is decided, and therefore the only
+   * place worth asserting it.
+   *
+   * `userId` is whatever the caller passed as a user name, and `path.join`
+   * resolves `..` silently — a name of `../../../etc` wrote sealed key material
+   * outside the keys root. Validating the field on the way in is worth doing and
+   * is done, but the containment check belongs here: it holds for every caller,
+   * including ones that do not exist yet.
+   */
   private getKeyPath(userId: string, keyId: string): string {
-    return path.join(this.keyBasePath, userId, keyId, 'private.key');
+    const root = path.resolve(this.keyBasePath);
+    const resolved = path.resolve(root, userId, keyId, 'private.key');
+    if (resolved !== root && !resolved.startsWith(root + path.sep)) {
+      throw new BadRequestException(
+        'Invalid SSH key location: the name resolves outside the keys directory',
+      );
+    }
+    return resolved;
   }
 
+  /**
+   * Removes the directories a deleted key leaves empty, and stops at the keys
+   * root.
+   *
+   * Without the stop it kept going: root, then the root's parent, then upward
+   * until it met something non-empty. On an installation whose keys root is a
+   * mount of its own that is the mount point; and it is the second place, after
+   * `getKeyPath`, where a path that escaped containment turns into a filesystem
+   * operation.
+   */
   private async cleanupKeyDirectory(keyPath: string): Promise<void> {
-    const directory = path.dirname(keyPath);
-    const files = await fs.readdir(directory);
+    const root = path.resolve(this.keyBasePath);
+    const directory = path.dirname(path.resolve(keyPath));
+    if (directory === root || !directory.startsWith(root + path.sep)) return;
 
+    const files = await fs.readdir(directory);
     if (files.length === 0) {
       await fs.rmdir(directory);
       await this.cleanupKeyDirectory(directory);
     }
+  }
+
+  /**
+   * A path read back from the database, asserted before it is acted on.
+   *
+   * `keyPath` is written only by `storePrivateKey`, which is contained — but
+   * rows written before that containment existed are still in the table, and a
+   * row is a weaker guarantee than a check. Reading one of those is harmless
+   * (the seal fails), deleting one is not.
+   */
+  private assertStoredPath(keyPath: string): string {
+    const root = path.resolve(this.keyBasePath);
+    const resolved = path.resolve(keyPath);
+    if (!resolved.startsWith(root + path.sep)) {
+      throw new BadRequestException(
+        'Invalid SSH key location: the stored path is outside the keys directory',
+      );
+    }
+    return resolved;
   }
 }

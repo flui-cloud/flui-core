@@ -23,6 +23,10 @@ import {
   ServerLogsQueryDto,
   ServerLogsResponseDto,
 } from '../dto';
+import { RequireSection } from '../../iam/decorators/require-section.decorator';
+import { RequirePermission } from '../../iam/decorators/require-permission.decorator';
+import { SECTION } from '../../iam/constants/iam-sections';
+import { IAM_PERMISSION } from '../../iam/constants/iam-permissions';
 
 /**
  * Server Metrics Controller
@@ -32,6 +36,13 @@ import {
  */
 @ApiTags('Cluster Metrics & Logs')
 @ApiBearerAuth()
+// Whole-installation data: the nodes of a cluster, their metrics and their
+// logs, none of it scoped to a tenant. It answered to every authenticated
+// principal. The section is the human gate; the permission is what the
+// credential ceiling is checked against, and without it an agent key minted by
+// an administrator reaches these regardless of the scope it declares.
+@RequireSection(SECTION.CLUSTERS)
+@RequirePermission(IAM_PERMISSION.CLUSTER_READ)
 @Controller('observability')
 export class ServerMetricsController {
   private readonly logger = new Logger(ServerMetricsController.name);

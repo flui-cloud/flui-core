@@ -1188,9 +1188,33 @@ export class ClusterOrchestrationService {
           operation.errorMessage ||
           operation.metadata?.error ||
           'Unknown error';
+        // The fields `BaseOperationMetadata` actually declares, by name, plus
+        // the names of whatever else is in there. The blob used to be dumped
+        // whole, and it is an index signature written from a hundred call
+        // sites: what it holds is not knowable from here, which is the reason
+        // not to print it. Naming the declared fields keeps the diagnostic the
+        // dump was read for.
+        const meta = (operation.metadata ?? {}) as Record<string, unknown>;
+        const declared = ['stepDescription', 'failedAt', 'message', 'stack']
+          .filter((k) => meta[k] !== undefined)
+          .map((k) => `${k}=${String(meta[k])}`)
+          .join(' ');
+        const otherKeys = Object.keys(meta).filter(
+          (k) =>
+            ![
+              'stepDescription',
+              'failedAt',
+              'message',
+              'stack',
+              'error',
+            ].includes(k),
+        );
         this.logger.error(
           `Operation ${operationId} FAILED after ${checks} checks: ${errorMsg} ` +
-            `| metadata: ${JSON.stringify(operation.metadata)}`,
+            `${declared}` +
+            (otherKeys.length
+              ? ` | other metadata keys: ${otherKeys.join(', ')}`
+              : ''),
         );
         throw new Error(`Operation failed: ${errorMsg}`);
       }
@@ -1259,22 +1283,29 @@ export class ClusterOrchestrationService {
    * Get control cluster if it exists and is ready
    * Returns null if no control cluster exists or if it's not ready
    */
-  private debugLogBootstrapKey(
+  /**
+   * Identifies the bootstrap key in the log without being it.
+   *
+   * There used to be a `DEBUG_LOG_BOOTSTRAP_KEYS` switch here that printed the
+   * private half. A switch is not a safeguard: it only has to be turned on once,
+   * by whoever is debugging a failed provision, for the key that opens every
+   * node of the cluster to land in log aggregation for its retention period.
+   * The fingerprint answers the question that switch was there for — is this
+   * the same key the node was given — and answers nothing else.
+   */
+  private logBootstrapKeyFingerprint(
     label: string,
     serverName: string,
-    bootstrapKey: { privateKey: string; publicKey: string },
+    bootstrapKey: { fingerprint: string },
   ): void {
-    if (process.env.DEBUG_LOG_BOOTSTRAP_KEYS !== 'true') return;
-    this.logger.warn('='.repeat(80));
-    this.logger.warn(`DEBUG MODE: Bootstrap SSH Key (${label})`);
-    this.logger.warn('Server: ' + serverName);
-    this.logger.warn('='.repeat(80));
-    this.logger.warn('PRIVATE KEY:');
-    this.logger.warn(bootstrapKey.privateKey);
-    this.logger.warn('='.repeat(80));
-    this.logger.warn('PUBLIC KEY:');
-    this.logger.warn(bootstrapKey.publicKey);
-    this.logger.warn('='.repeat(80));
+    // The key's own fingerprint, the one `SSHKeyGeneratorService` computed and
+    // the one written to `ssh_keys.fingerprint` — not a fresh digest of the
+    // text. A value that looks like an SSH fingerprint but matches neither
+    // `ssh-keygen -lf` on the node nor the row in the table answers the only
+    // question this line exists for: is the node holding this key.
+    this.logger.log(
+      `Bootstrap SSH key (${label}) for ${serverName}: ${bootstrapKey.fingerprint}`,
+    );
   }
 
   /**
@@ -1303,7 +1334,11 @@ export class ClusterOrchestrationService {
 
     this.logger.log(`Generating bootstrap key for cluster ${cluster.name}`);
     const generated = await this.keyGenerator.generateKeyPair('ed25519');
-    this.debugLogBootstrapKey(nodeType.toUpperCase(), cluster.name, generated);
+    this.logBootstrapKeyFingerprint(
+      nodeType.toUpperCase(),
+      cluster.name,
+      generated,
+    );
 
     const saved = await this.accessService.createSSHKey({
       name: `flui-bootstrap-cluster-${cluster.name}`,

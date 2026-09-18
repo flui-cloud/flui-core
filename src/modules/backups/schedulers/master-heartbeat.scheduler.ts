@@ -7,6 +7,7 @@ import { BackupPolicyEntity } from '../entities/backup-policy.entity';
 import { BackupJobEntity } from '../entities/backup-job.entity';
 import { BackupEngineClass } from '../enums/backup-engine-class.enum';
 import { BackupJobStatus } from '../enums/backup-job.enum';
+import { guardedRequest } from '../../../common/net/egress-guard';
 
 /** A backup older than this makes the heartbeat go silent — the operator's absence
  * evaluator then alarms on BOTH master death and a silently-failing backup. */
@@ -56,15 +57,19 @@ export class MasterHeartbeatScheduler {
         return;
       }
 
-      await axios.post(
+      // Guarded: the URL is operator-configured and this runs from inside the
+      // cluster every five minutes, which is a scheduled read primitive against
+      // the private network if nothing judges the address.
+      await guardedRequest({
+        method: 'POST',
         url,
-        {
+        data: {
           ts: new Date().toISOString(),
           lastPlatformBackupAt: lastAt,
           lastPlatformBackupStatus: 'ok',
         },
-        { timeout: 5000 },
-      );
+        timeout: 5000,
+      });
     } catch (err: any) {
       // A heartbeat failure must never crash the cron; the watchdog will notice the gap.
       this.logger.warn(

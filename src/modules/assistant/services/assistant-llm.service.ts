@@ -1,5 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
-import axios from 'axios';
+import { guardedRequest } from '../../../common/net/egress-guard';
 import { InferenceEndpoint } from '../../providers/interfaces/inference-capability';
 import { describeError } from '../../shared/utils/error.util';
 import { toInferenceError } from './inference-error.util';
@@ -37,7 +37,10 @@ export class AssistantLlmService {
   ): Promise<ChatCompletionResponse> {
     const url = `${endpoint.baseUrl.replace(/\/$/, '')}/chat/completions`;
     return this.send(endpoint, request, async (req) => {
-      const response = await axios.post<ChatCompletionResponse>(url, req, {
+      const response = await guardedRequest<ChatCompletionResponse>({
+        method: 'POST',
+        url,
+        data: req,
         headers: { Authorization: `Bearer ${endpoint.apiKey}` },
         timeout: 60000,
       });
@@ -57,15 +60,14 @@ export class AssistantLlmService {
   ): Promise<ChatCompletionMessage> {
     const url = `${endpoint.baseUrl.replace(/\/$/, '')}/chat/completions`;
     return this.send(endpoint, request, async (req) => {
-      const response = await axios.post<NodeJS.ReadableStream>(
+      const response = await guardedRequest<NodeJS.ReadableStream>({
+        method: 'POST',
         url,
-        { ...req, stream: true },
-        {
-          headers: { Authorization: `Bearer ${endpoint.apiKey}` },
-          timeout: 60000,
-          responseType: 'stream',
-        },
-      );
+        data: { ...req, stream: true },
+        headers: { Authorization: `Bearer ${endpoint.apiKey}` },
+        timeout: 60000,
+        responseType: 'stream',
+      });
       return this.consumeStream(response.data, onDelta);
     });
   }

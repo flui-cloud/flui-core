@@ -1,3 +1,4 @@
+import * as crypto from 'node:crypto';
 import { ConfigService } from '@nestjs/config';
 import {
   KeyStorageService,
@@ -8,6 +9,24 @@ const A_REAL_KEY =
   'a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90';
 const ANOTHER_REAL_KEY =
   '112233445566778899aabbccddeeff00112233445566778899aabbccddeeff00';
+
+/**
+ * Seals the way an installation that never had a real key sealed.
+ *
+ * The service refuses to encrypt with the retired default now — that refusal is
+ * the point — so records in that state are built here, with the same
+ * construction `encryptKey` uses: iv, auth tag, ciphertext.
+ */
+function sealedWithRetiredKey(plaintext: string): string {
+  const key = Buffer.from(RETIRED_DEFAULT_KEY_HEX, 'hex');
+  const iv = crypto.randomBytes(16);
+  const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
+  const body = Buffer.concat([
+    cipher.update(plaintext, 'utf8'),
+    cipher.final(),
+  ]);
+  return Buffer.concat([iv, cipher.getAuthTag(), body]).toString('base64');
+}
 
 function serviceWith(key?: string): KeyStorageService {
   const config = {
@@ -67,14 +86,36 @@ describe('KeyStorageService', () => {
     });
 
     it('opens records left behind by the retired default, and says so', () => {
-      const legacy = serviceWith(RETIRED_DEFAULT_KEY_HEX);
-      const sealed = legacy.encryptKeyToString('an-old-provider-token');
+      const sealed = sealedWithRetiredKey('an-old-provider-token');
 
       const upgraded = serviceWith(A_REAL_KEY);
       const opened = upgraded.openFromString(sealed);
 
       expect(opened.plaintext).toBe('an-old-provider-token');
       expect(opened.stale).toBe(true);
+    });
+
+    it('refuses to seal anything with the retired default', () => {
+      // It used to log an error and seal anyway, so every provider credential
+      // and private key written from then on was encrypted with a key published
+      // in this repository. Opening such a record still works — that is the
+      // repair path — but nothing new is written with it.
+      const stuck = serviceWith(RETIRED_DEFAULT_KEY_HEX);
+
+      expect(() => stuck.encryptKeyToString('a-fresh-secret')).toThrow(
+        /Refusing to encrypt/,
+      );
+      expect(() => stuck.encryptKey('a-fresh-secret')).toThrow(
+        /Refusing to encrypt/,
+      );
+      // And an installation with no key at all is in the same state.
+      expect(() => serviceWith().encryptKeyToString('x')).toThrow(
+        /Refusing to encrypt/,
+      );
+      // Reading what is already there is untouched.
+      expect(
+        stuck.openFromString(sealedWithRetiredKey('an-old-one')).plaintext,
+      ).toBe('an-old-one');
     });
 
     it('does not mark its own records stale', () => {

@@ -7,6 +7,7 @@ import {
 import { DemoStateService } from './demo-state.service';
 import { DemoEventsService, DemoEventType } from './demo-events.service';
 import { DemoLoopState } from '../enums/demo.enum';
+import { guardedRequest } from '../../../common/net/egress-guard';
 
 export interface DemoCounters {
   probesTotal: number;
@@ -129,21 +130,27 @@ export class DemoProberService implements OnModuleInit, OnModuleDestroy {
   }
 
   private async probe(url: string, timeoutMs: number): Promise<boolean> {
-    const controller = new AbortController();
-    const t = setTimeout(() => controller.abort(), timeoutMs);
     try {
-      // Follow redirects (http→https at the edge) but only a final 2xx from the
-      // app itself counts as served — a 3xx to an error page is not "served".
-      const res = await fetch(url, {
-        method: 'GET',
-        signal: controller.signal,
-        redirect: 'follow',
-      });
+      // Moved off `fetch` so the egress guard applies: the URL is
+      // operator-configured and this runs on a schedule from inside the cluster.
+      // Redirects are still followed — an edge answering :80 with a 301 to https
+      // is the ordinary front door, and scoring that as "not served" would
+      // silently mark a healthy app down and count the misses as requests lost
+      // during a migration. They are followed one hop at a time *through the
+      // guard*, so the target of the redirect is judged like the first address.
+      const res = await guardedRequest(
+        {
+          method: 'GET',
+          url,
+          timeout: timeoutMs,
+          validateStatus: () => true,
+        },
+        undefined,
+        3,
+      );
       return res.status >= 200 && res.status < 300;
     } catch {
       return false;
-    } finally {
-      clearTimeout(t);
     }
   }
 

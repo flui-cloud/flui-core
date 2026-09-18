@@ -1,3 +1,4 @@
+import * as crypto from 'node:crypto';
 import { ConfigService } from '@nestjs/config';
 import { Repository } from 'typeorm';
 import * as fs from 'node:fs/promises';
@@ -10,6 +11,28 @@ import {
 import { SecretRotationService } from './secret-rotation.service';
 import { ApiTokenEntity } from '../entities/api-token.entity';
 import { ProviderCredentialsEntity } from '../entities/credentials.entity';
+
+/**
+ * Seals a value the way an installation that never had a real key sealed it.
+ *
+ * `KeyStorageService` now refuses to encrypt with the retired default — which is
+ * the finding these fixtures exist to prove was worth fixing — so the "before"
+ * state is built here rather than through the service. Same construction as
+ * `encryptKey`: iv, auth tag, ciphertext.
+ */
+function sealWithRetiredKey(plaintext: string): Buffer {
+  const key = Buffer.from(RETIRED_DEFAULT_KEY_HEX, 'hex');
+  const iv = crypto.randomBytes(16);
+  const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
+  const body = Buffer.concat([
+    cipher.update(plaintext, 'utf8'),
+    cipher.final(),
+  ]);
+  return Buffer.concat([iv, cipher.getAuthTag(), body]);
+}
+
+const sealedWithRetiredKey = (plaintext: string): string =>
+  sealWithRetiredKey(plaintext).toString('base64');
 
 const A_REAL_KEY =
   'a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90';
@@ -81,8 +104,8 @@ describe('SecretRotationService', () => {
       apiTokens: [
         {
           id: 'token-1',
-          encrypted_token: legacy.encryptKeyToString('hcloud-secret'),
-          encrypted_access_key: legacy.encryptKeyToString('SCWACCESSKEY'),
+          encrypted_token: sealedWithRetiredKey('hcloud-secret'),
+          encrypted_access_key: sealedWithRetiredKey('SCWACCESSKEY'),
         },
       ],
     });
@@ -110,9 +133,9 @@ describe('SecretRotationService', () => {
       credentials: [
         {
           id: 'cred-1',
-          password: legacy.encryptKeyToString('pw'),
-          client_id: legacy.encryptKeyToString('cid'),
-          client_secret: legacy.encryptKeyToString('csecret'),
+          password: sealedWithRetiredKey('pw'),
+          client_id: sealedWithRetiredKey('cid'),
+          client_secret: sealedWithRetiredKey('csecret'),
         },
       ],
     });
@@ -131,7 +154,7 @@ describe('SecretRotationService', () => {
     const legacy = keyStorage(RETIRED_DEFAULT_KEY_HEX, keysDir);
     const keyFile = path.join(keysDir, 'user-1', 'key-1', 'private.key');
     await fs.mkdir(path.dirname(keyFile), { recursive: true });
-    await fs.writeFile(keyFile, legacy.encryptKey('PRIVATE KEY BODY'));
+    await fs.writeFile(keyFile, sealWithRetiredKey('PRIVATE KEY BODY'));
 
     const { service, storage } = build(A_REAL_KEY);
     const report = await service.rotate();
@@ -146,12 +169,10 @@ describe('SecretRotationService', () => {
     const legacy = keyStorage(RETIRED_DEFAULT_KEY_HEX, keysDir);
     const keyFile = path.join(keysDir, 'user-1', 'key-1', 'private.key');
     await fs.mkdir(path.dirname(keyFile), { recursive: true });
-    await fs.writeFile(keyFile, legacy.encryptKey('body'));
+    await fs.writeFile(keyFile, sealWithRetiredKey('body'));
 
     const { service } = build(A_REAL_KEY, {
-      apiTokens: [
-        { id: 't', encrypted_token: legacy.encryptKeyToString('secret') },
-      ],
+      apiTokens: [{ id: 't', encrypted_token: sealedWithRetiredKey('secret') }],
     });
 
     expect(await service.rotate()).toMatchObject({ apiTokens: 1, keyFiles: 1 });
@@ -164,7 +185,7 @@ describe('SecretRotationService', () => {
 
   it('does nothing at all while the installation still has no real key', async () => {
     const legacy = keyStorage(RETIRED_DEFAULT_KEY_HEX, keysDir);
-    const sealed = legacy.encryptKeyToString('secret');
+    const sealed = sealedWithRetiredKey('secret');
     const { service, apiTokens } = build(RETIRED_DEFAULT_KEY_HEX, {
       apiTokens: [{ id: 't', encrypted_token: sealed }],
     });

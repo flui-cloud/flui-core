@@ -8,8 +8,10 @@ import {
   Param,
   Patch,
   Post,
+  Req,
   UseGuards,
 } from '@nestjs/common';
+import type { Request } from 'express';
 import {
   ApiBearerAuth,
   ApiOperation,
@@ -18,6 +20,9 @@ import {
   ApiTags,
 } from '@nestjs/swagger';
 import { AppAccessGuard } from '../guards/app-access.guard';
+import { RequirePermission } from '../../iam/decorators/require-permission.decorator';
+import { IAM_PERMISSION } from '../../iam/constants/iam-permissions';
+import { AuthenticatedUser } from '../../auth/interfaces/authenticated-user.interface';
 import { ActionCycle } from '../../action-cycle/action-cycle.decorator';
 import { GatewayService } from '../services/gateway.service';
 import {
@@ -165,17 +170,28 @@ export class GatewayController {
 export class ClusterGatewayController {
   constructor(private readonly gateway: GatewayService) {}
 
+  // Scoped in the service rather than gated on a section here, deliberately.
+  // A section would have closed the view to every operator whose grant is a
+  // project — including the agent tool that reaches this route — while the
+  // actual defect is that it answered with other tenants' routes. `app:read` is
+  // what the filter resolves against, and it is the permission the credential
+  // ceiling is then checked on.
   @Get('routes')
+  @RequirePermission(IAM_PERMISSION.APP_READ)
   @ApiOperation({
-    summary: 'List all gateway routes on a cluster',
+    summary: 'List gateway routes on a cluster',
     description:
-      'Read-only global view: every route across all applications with its policies and owning app. Operate on routes from the owning application scope.',
+      'Every route on the cluster that you may see, with its policies and owning app — scoped to the applications you can read. Operate on routes from the owning application scope.',
   })
   @ApiParam({ name: 'clusterId', description: 'Cluster ID' })
   @ApiResponse({ status: 200, type: [ClusterGatewayRouteDto] })
   async listRoutes(
     @Param('clusterId') clusterId: string,
+    @Req() req: Request,
   ): Promise<ClusterGatewayRouteDto[]> {
-    return this.gateway.listClusterRoutes(clusterId);
+    return this.gateway.listClusterRoutes(
+      clusterId,
+      req.user as AuthenticatedUser | undefined,
+    );
   }
 }

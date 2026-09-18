@@ -35,7 +35,11 @@ import { DnsZoneInfo } from '../../providers/interfaces/dns-provider.interface';
 export class DnsZoneController {
   constructor(private readonly dnsZoneService: DnsZoneService) {}
 
+  // The registry is instance-wide and registering calls the provider account,
+  // so it sits with the sibling delete rather than with the reads below.
   @Post()
+  @RequireSection(SECTION.INFRASTRUCTURE)
+  @RequirePermission(IAM_PERMISSION.CLUSTER_MANAGE)
   @ApiOperation({
     summary: 'Register a DNS zone',
     description:
@@ -51,7 +55,13 @@ export class DnsZoneController {
     return this.dnsZoneService.toResponseDto(zone);
   }
 
+  // Reading the registry is not the same decision as growing it: the cluster
+  // DNS tab and `flui dns zone list` are reached by people who operate clusters
+  // without administering the infrastructure, and the response carries no
+  // credential.
   @Get()
+  @RequireSection(SECTION.CLUSTERS)
+  @RequirePermission(IAM_PERMISSION.CLUSTER_READ)
   @ApiOperation({ summary: 'List all registered DNS zones' })
   @ApiResponse({ status: 200, type: [DnsZoneResponseDto] })
   async listZones(): Promise<DnsZoneResponseDto[]> {
@@ -59,8 +69,12 @@ export class DnsZoneController {
     return zones.map((z) => this.dnsZoneService.toResponseDto(z));
   }
 
+  // Authenticated, and deliberately nothing more. It is a live lookup through
+  // the server's resolver on a caller-supplied hostname — as a `@Public()` route
+  // that is a resolution oracle for anyone at all — but the endpoint form that
+  // calls it sits in the application DNS tab, so a section gate would take it
+  // away from every operator below maintainer.
   @Get('verify')
-  @Public()
   @ApiOperation({
     summary: 'Verify that a hostname resolves to an expected IP',
     description:
@@ -86,6 +100,8 @@ export class DnsZoneController {
   }
 
   @Get(':id')
+  @RequireSection(SECTION.CLUSTERS)
+  @RequirePermission(IAM_PERMISSION.CLUSTER_READ)
   @ApiOperation({ summary: 'Get a DNS zone by ID' })
   @ApiParam({ name: 'id', description: 'DNS zone ID' })
   @ApiResponse({ status: 200, type: DnsZoneResponseDto })
@@ -122,8 +138,13 @@ export class DnsZoneController {
     return { providers: this.dnsZoneService.getSupportedDnsProviders() };
   }
 
+  // The permission is not redundant beside the section: the section guard steps
+  // aside for an administrator without ever consulting the credential ceiling,
+  // so a section-only route is open to any agent key an administrator minted,
+  // whatever scope it declares. This one queries the provider account.
   @Get('/providers/:provider/zones')
   @RequireSection(SECTION.INFRASTRUCTURE)
+  @RequirePermission(IAM_PERMISSION.CLUSTER_MANAGE)
   @ApiBearerAuth()
   @ApiOperation({
     summary: 'List available zones from a DNS provider',

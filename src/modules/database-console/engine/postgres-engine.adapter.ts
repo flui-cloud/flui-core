@@ -59,6 +59,17 @@ class PostgresConnection implements SqlEngineConnection {
       const raw = (await this.client.query({
         text: sql,
         rowMode: 'array',
+        // Read-only sessions go through the extended protocol, which the server
+        // refuses to give more than one command at a time. Without it the simple
+        // protocol accepts `COMMIT; CREATE TABLE evil();` — the first statement
+        // ends the read-only transaction and the rest runs in autocommit, as the
+        // building block's own superuser. The trailing ROLLBACK below then has
+        // nothing left to undo.
+        //
+        // The cost is that a read-only session cannot send several statements at
+        // once. That is the trade, and it is the right way round: the convenience
+        // belongs to a session that was allowed to write anyway.
+        ...(opts.readOnly ? { queryMode: 'extended' as const } : {}),
       })) as unknown;
       // Multiple statements in one request yield an array of results; surface
       // the last one in the grid (multi-result tabs are a future enhancement).

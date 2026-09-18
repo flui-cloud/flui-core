@@ -24,6 +24,20 @@ export interface SSHConnection {
  * Service for managing native SSH connections with certificate support
  * Uses native SSH command instead of ssh2 library to support SSH certificates
  */
+/**
+ * What reaches `stty` on the far end.
+ *
+ * The dimensions arrive over the socket and are written into a command line on
+ * the remote shell, so anything but a small integer is a way to append to that
+ * line. Clamped rather than refused: a nonsensical size is a broken client, not
+ * something worth tearing the session down for.
+ */
+function clampDimension(value: number): number {
+  const n = Math.trunc(Number(value));
+  if (!Number.isFinite(n)) return 24;
+  return Math.min(500, Math.max(1, n));
+}
+
 @Injectable()
 export class NativeSSHConnectionService {
   private readonly logger = new Logger(NativeSSHConnectionService.name);
@@ -124,8 +138,11 @@ export class NativeSSHConnectionService {
       // Handle stderr
       sshProcess.stderr?.on('data', (data: Buffer) => {
         const str = data.toString('utf-8');
-        this.logger.debug(`📤 Received ${str.length} chars from stderr`);
-        this.logger.debug(`📤 stderr content: ${str}`);
+        // Length only, like the input side. Under `-tt` the remote program's
+        // stderr is multiplexed into the PTY, so this is normally the ssh
+        // client's own diagnostics — but "normally" is not a property worth
+        // betting a password prompt's echo on.
+        this.logger.debug(`Received ${str.length} chars from stderr`);
         // SSH protocol messages go to stderr, pass to onData
         onData(str);
       });
@@ -299,9 +316,7 @@ export class NativeSSHConnectionService {
   writeData(sshProcess: ChildProcess, data: string): void {
     if (sshProcess.stdin?.writable) {
       sshProcess.stdin.write(data);
-      this.logger.debug(
-        `✍️ Wrote ${data.length} chars to SSH stdin: ${JSON.stringify(data.substring(0, 20))}`,
-      );
+      this.logger.debug(`Wrote ${data.length} chars to SSH stdin`);
     } else {
       this.logger.error('❌ SSH stdin is not writable');
       throw new Error('SSH stdin is not writable');
@@ -317,7 +332,9 @@ export class NativeSSHConnectionService {
       // \x15 = Ctrl+U clears the current input line (no echo)
       // stty updates the PTY dimensions on the remote shell
       // \x0c = Ctrl+L triggers a silent screen redraw (no visible command)
-      sshProcess.stdin.write(`\x15stty rows ${rows} cols ${cols}\r`);
+      sshProcess.stdin.write(
+        `\x15stty rows ${clampDimension(rows)} cols ${clampDimension(cols)}\r`,
+      );
       // Small delay to let stty complete, then redraw cleanly
       setTimeout(() => {
         if (sshProcess.stdin?.writable) {

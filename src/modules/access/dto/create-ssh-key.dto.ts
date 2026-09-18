@@ -6,6 +6,8 @@ import {
   IsNotEmpty,
   IsArray,
   IsEnum,
+  Matches,
+  MaxLength,
 } from 'class-validator';
 import { CloudProvider } from '../../providers/enums/cloud-provider.enum';
 
@@ -24,6 +26,15 @@ export class CreateSSHKeyDto {
   })
   @IsString()
   @IsNotEmpty()
+  // Becomes a directory name under the keys root, so it is spelled out here as
+  // well as asserted at the storage layer: a name is not a path.
+  // The negative lookahead is not decoration: `.` and `..` are made only of
+  // characters this class allows, and both are directory names with a meaning.
+  @Matches(/^(?!\.+$)[a-zA-Z0-9._-]+$/, {
+    message:
+      'userName may contain only letters, digits, dots, underscores and hyphens, and cannot be "." or ".."',
+  })
+  @MaxLength(64)
   userName: string;
 
   @ApiPropertyOptional({

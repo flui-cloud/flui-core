@@ -10,6 +10,7 @@ import {
   Min,
   ValidateNested,
 } from 'class-validator';
+import { ZEPTOMAIL_HOSTS } from '@flui-cloud/mail';
 import type {
   MailConnectionProvider,
   MailConnectionScope,
@@ -32,6 +33,15 @@ export class MailConnectionConfigDto {
   })
   @IsOptional()
   @IsString()
+  // Against the list Zoho publishes, which the mail library already exports.
+  // The field is a hostname the installation then sends its ZeptoMail token to,
+  // with `Authorization: Zoho-enczapikey <token>` — so a free-string host is not
+  // a blind SSRF, it is a way to have the credential delivered. An allow-list is
+  // both stricter and simpler than an egress guard here, because the set of
+  // legitimate values is known and small.
+  @IsIn(Object.values(ZEPTOMAIL_HOSTS), {
+    message: `region must be one of ${Object.values(ZEPTOMAIL_HOSTS).join(', ')}`,
+  })
   region?: string;
 
   @ApiPropertyOptional({

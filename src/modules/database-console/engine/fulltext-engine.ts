@@ -103,25 +103,28 @@ export function detectFulltextEngine(imageRef?: string): FulltextEngine | null {
   return null;
 }
 
-// Meilisearch is REST: GET/HEAD read; POST is a write EXCEPT the search endpoints
-// (/indexes/{uid}/search, /multi-search) which read; PUT/PATCH/DELETE always write.
-const MEILI_READ_POST = ['search', 'multi-search', 'facet-search'];
+/**
+ * Meilisearch's POST paths that read, as whole shapes.
+ *
+ * Same defect and same reasoning as the ES-wire classifier: looking for a
+ * segment anywhere in the path made `POST /indexes/search/documents` — adding
+ * documents to an index that happens to be named `search` — read as a query.
+ */
+const MEILI_READ_POST_SHAPES = [
+  /^multi-search$/,
+  /^indexes\/[^/]+\/(search|facet-search)$/,
+];
 
-function pathHasSegment(path: string, segments: string[]): boolean {
-  const clean = path.split('?')[0];
-  return clean
-    .split('/')
-    .filter(Boolean)
-    .some((p) => segments.includes(p));
+function meiliReadPath(path: string): boolean {
+  const clean = path.split('?')[0].split('/').filter(Boolean).join('/');
+  return MEILI_READ_POST_SHAPES.some((shape) => shape.test(clean));
 }
 
 export const classifyMeiliRequest: RestRequestClassifier = (
   req: RawRestRequest,
 ) => {
   if (req.method === 'GET' || req.method === 'HEAD') return 'read';
-  if (req.method === 'POST') {
-    return pathHasSegment(req.path, MEILI_READ_POST) ? 'read' : 'write';
-  }
+  if (req.method === 'POST') return meiliReadPath(req.path) ? 'read' : 'write';
   return 'write';
 };
 

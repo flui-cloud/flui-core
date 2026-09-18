@@ -1,4 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { dump as dumpYaml } from 'js-yaml';
 import * as crypto from 'node:crypto';
 import { KubernetesService } from '../../infrastructure/shared/services/kubernetes.service';
 import { EncryptionService } from '../../shared/encryption/services/encryption.service';
@@ -72,14 +73,28 @@ export class VeleroInstallerService {
       ? this.encryption.decrypt(primary.encryptionPassphraseEncrypted)
       : crypto.randomBytes(32).toString('hex');
 
+    // Built as an object and written by a YAML writer rather than substituted
+    // into template text. The two keys went into a `cloud: |` literal block and
+    // the passphrase into a double-quoted scalar; a newline ends the block, a
+    // quote ends the scalar, and either one lets a credential field decide what
+    // manifest gets applied into the velero namespace. None of the three can be
+    // charset-restricted — an access key is whatever the provider issued, and a
+    // passphrase is whatever the operator chose.
     await this.k8s.applyManifest(
       kubeconfig,
-      this.templates.render('velero/velero-credentials-secret.yaml.tpl', {
-        NAMESPACE: VELERO_NAMESPACE,
-        SECRET_NAME: VELERO_CREDENTIALS_SECRET_NAME,
-        ACCESS_KEY: accessKey,
-        SECRET_KEY: secretKey,
-        KOPIA_PASSPHRASE: passphrase,
+      dumpYaml({
+        apiVersion: 'v1',
+        kind: 'Secret',
+        metadata: {
+          name: VELERO_CREDENTIALS_SECRET_NAME,
+          namespace: VELERO_NAMESPACE,
+          labels: { 'managed-by': 'flui-cloud' },
+        },
+        type: 'Opaque',
+        stringData: {
+          cloud: `[default]\naws_access_key_id=${accessKey}\naws_secret_access_key=${secretKey}\n`,
+          'kopia-repo-password': passphrase,
+        },
       }),
     );
 

@@ -3,7 +3,6 @@ import { ConfigModule } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
 
 // Services
-import { PrometheusConfigService } from './services/prometheus-config.service';
 import { PrometheusQueryService } from './services/prometheus-query.service';
 import { LokiQueryService } from './services/loki-query.service';
 import { ClusterHealthService } from './services/cluster-health.service';
@@ -48,7 +47,6 @@ import { ApplicationsModule } from '../applications/applications.module';
  * - Production: K3s-based observability cluster with centralized monitoring
  *
  * Database Usage:
- * - PrometheusConfigService: Uses DB to discover which servers exist (for Prometheus targets)
  * - PrometheusQueryService: Queries Prometheus using cluster_id (matches DB UUID directly)
  * - LokiQueryService: Queries Loki using cluster_id (matches DB UUID directly)
  */
@@ -73,7 +71,6 @@ import { ApplicationsModule } from '../applications/applications.module';
     AlertEventsController,
   ],
   providers: [
-    PrometheusConfigService,
     PrometheusQueryService,
     LokiQueryService,
     ClusterHealthService,
@@ -83,7 +80,6 @@ import { ApplicationsModule } from '../applications/applications.module';
     AlertMaintenanceScheduler,
   ],
   exports: [
-    PrometheusConfigService,
     PrometheusQueryService,
     LokiQueryService,
     ClusterHealthService,

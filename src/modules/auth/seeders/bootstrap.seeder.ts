@@ -202,7 +202,7 @@ export class BootstrapSeeder implements OnModuleInit {
   private logEnvSummary(): void {
     const vars = {
       FLUI_CLI_API_KEY: process.env.FLUI_CLI_API_KEY
-        ? `${process.env.FLUI_CLI_API_KEY.substring(0, 10)}…`
+        ? '(present)'
         : '(missing)',
       FLUI_CA_PUBLIC_KEY: process.env.FLUI_CA_PUBLIC_KEY
         ? '(present)'

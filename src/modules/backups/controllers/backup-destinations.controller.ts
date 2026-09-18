@@ -32,12 +32,19 @@ export class BackupDestinationsController {
     return u?.id ?? u?.userId ?? '00000000-0000-0000-0000-000000000000';
   }
 
+  // A destination's fields are substituted into manifests applied into the
+  // cluster, into a pgBackRest configuration file and into a systemd unit on the
+  // master — so creating one is an infrastructure act, and the sibling delete
+  // already said so. The section alone let any account that can see the Backup
+  // section create one.
   @Post()
+  @RequirePermission(IAM_PERMISSION.CLUSTER_MANAGE)
   async create(@Req() req: Request, @Body() dto: CreateBackupDestinationDto) {
     return this.service.create(this.userId(req), dto);
   }
 
   @Get()
+  @RequirePermission(IAM_PERMISSION.CLUSTER_READ)
   async list(@Req() req: Request) {
     return this.service.list(this.userId(req));
   }
@@ -54,16 +61,19 @@ export class BackupDestinationsController {
   }
 
   @Get(':id')
+  @RequirePermission(IAM_PERMISSION.CLUSTER_READ)
   async get(@Param('id') id: string) {
     return this.service.findById(id);
   }
 
   @Post(':id/test')
+  @RequirePermission(IAM_PERMISSION.CLUSTER_MANAGE)
   async test(@Param('id') id: string) {
     return this.service.testConnection(id);
   }
 
   @Post(':id/refresh-usage')
+  @RequirePermission(IAM_PERMISSION.CLUSTER_MANAGE)
   async refresh(@Param('id') id: string) {
     await this.service.refreshUsage(id);
     return { ok: true };

@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import axios from 'axios';
+import { guardedRequest } from '../../../common/net/egress-guard';
 import { filterAssistantModels } from '../utils/model-filter.util';
 
 interface OpenAiModelsResponse {
@@ -10,7 +10,11 @@ interface OpenAiModelsResponse {
 export class InferenceClientService {
   async listModelIds(baseUrl: string, apiKey: string): Promise<string[]> {
     const url = `${baseUrl.replace(/\/$/, '')}/models`;
-    const response = await axios.get<OpenAiModelsResponse>(url, {
+    // Guarded: `baseUrl` is a field any authenticated account can set, and this
+    // call is made from inside the cluster.
+    const response = await guardedRequest<OpenAiModelsResponse>({
+      method: 'GET',
+      url,
       headers: { Authorization: `Bearer ${apiKey}` },
       timeout: 10000,
     });

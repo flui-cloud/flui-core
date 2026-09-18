@@ -75,15 +75,25 @@ export class AdminSeeder implements OnModuleInit {
       }),
     );
 
+    this.logger.log(`Admin user created: ${email}`);
+
     if (isGenerated) {
-      this.logger.warn('━'.repeat(60));
-      this.logger.warn('🌱 Admin user created with GENERATED credentials:');
-      this.logger.warn(`   Email:    ${email}`);
-      this.logger.warn(`   Password: ${password}`);
-      this.logger.warn('   ⚠️  Save these credentials — shown only once!');
-      this.logger.warn('━'.repeat(60));
-    } else {
-      this.logger.log(`🌱 Admin user created: ${email}`);
+      // Never through the logger. In production that is a JSON stream into log
+      // aggregation, where the owner credential then sits for the retention
+      // period — and it buys nothing, because no Flui-provisioned installation
+      // reaches this branch: the CLI always generates `ADMIN_PASSWORD` and
+      // passes it into the bootstrap script, and `flui env credentials` reads it
+      // back from the cluster record. This is the hand-rolled local run, and
+      // stdout is where the person who started it is looking.
+      process.stdout.write(
+        `\n${'-'.repeat(60)}\n` +
+          `Admin account created with a generated password.\n` +
+          `  Email:    ${email}\n` +
+          `  Password: ${password}\n` +
+          `Shown once, here only — it is not written to the log. Change it, or\n` +
+          `set ADMIN_PASSWORD before the first start.\n` +
+          `${'-'.repeat(60)}\n\n`,
+      );
     }
   }
 }

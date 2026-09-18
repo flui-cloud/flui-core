@@ -35,8 +35,20 @@ export const SANDBOX_FORBIDDEN_CODE = 'SANDBOX_ROUTE_FORBIDDEN';
  */
 export const SANDBOX_GUEST_REQUEST = Symbol('sandboxGuest');
 
+/**
+ * Set when this guard has admitted a guest's request by name.
+ *
+ * The fence is the authority on what a guest may reach, and it runs before the
+ * IAM guards. Recording its verdict lets `PermissionsGuard` defer to a decision
+ * already taken instead of re-deriving it — which matters for the routes the
+ * fence opens read-only on the strength of `section:view`, where the guest holds
+ * no governing permission and never will.
+ */
+export const SANDBOX_FENCE_ADMITTED = Symbol('sandboxFenceAdmitted');
+
 export interface SandboxGuestRequest {
   [SANDBOX_GUEST_REQUEST]?: { userId: string };
+  [SANDBOX_FENCE_ADMITTED]?: boolean;
 }
 
 /**
@@ -77,7 +89,10 @@ export class SandboxFenceGuard implements CanActivate {
     const pattern = (req.route as { path?: string } | undefined)?.path;
     const path = stripPrefix(pattern ?? req.path);
 
-    if (isSandboxAllowed(req.method, path)) return true;
+    if (isSandboxAllowed(req.method, path)) {
+      req[SANDBOX_FENCE_ADMITTED] = true;
+      return true;
+    }
 
     // A write on a section the guest can see, filled with examples, is still
     // refused — but not with "this is disabled here", which contradicts the

@@ -51,6 +51,50 @@ function commandOf(sql: string): string {
   return /^[\s;]*([A-Za-z]+)/.exec(sql)?.[1]?.toUpperCase() ?? '';
 }
 
+/**
+ * Statements MySQL and MariaDB commit implicitly, refused before they are sent
+ * when the session is read-only.
+ *
+ * `START TRANSACTION READ ONLY` does not constrain these: the server commits the
+ * open transaction *before* running them, so the statement executes in
+ * autocommit read-write and the ROLLBACK afterwards has nothing to undo. That is
+ * why a CREATE TABLE succeeded on this path with the flag set — the flag was
+ * enforced, the transaction simply does not cover this family. With the building
+ * block's own superuser as the session credential, GRANT on this list is the
+ * database handed over.
+ *
+ * Defence in depth and nothing more, stated plainly: this reads the first word,
+ * and a first word can be hidden behind a comment. What makes it worth having
+ * anyway is that the driver is configured `multipleStatements: false`, so there
+ * is exactly one statement to look at. The real fix is a connection that is not
+ * the owner — see `DedicatedUserConnectionResolver`.
+ */
+const IMPLICITLY_COMMITTING = new Set([
+  'CREATE',
+  'ALTER',
+  'DROP',
+  'RENAME',
+  'TRUNCATE',
+  'GRANT',
+  'REVOKE',
+  'FLUSH',
+  'LOCK',
+  'UNLOCK',
+  'ANALYZE',
+  'OPTIMIZE',
+  'REPAIR',
+  'CACHE',
+  'INSTALL',
+  'UNINSTALL',
+  'LOAD',
+  'CALL',
+  'BEGIN',
+  'START',
+  'COMMIT',
+  'ROLLBACK',
+  'SET',
+]);
+
 interface OkPacketLike {
   affectedRows?: number;
 }
@@ -63,6 +107,11 @@ class MariadbConnection implements SqlEngineConnection {
 
   async query(sql: string, opts: SqlQueryOptions): Promise<SqlQueryResult> {
     const start = Date.now();
+    if (opts.readOnly && IMPLICITLY_COMMITTING.has(commandOf(sql))) {
+      throw new BadRequestException(
+        `${commandOf(sql)} is not available in read-only mode: on MySQL and MariaDB it commits the transaction before it runs, so the read-only session would not hold it back.`,
+      );
+    }
     // MariaDB measures max_statement_time in (fractional) seconds, not ms.
     const seconds = Math.max(0.001, opts.statementTimeoutMs / 1000);
     await this.conn.query(`SET SESSION max_statement_time = ${seconds}`);

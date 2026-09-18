@@ -13,7 +13,11 @@ import {
 } from '../interfaces/policy-engine.interface';
 import { AuthenticatedUser } from '../../auth/interfaces/authenticated-user.interface';
 import { IamPrincipal, principalFromUser } from '../interfaces/iam.types';
-import { SANDBOX_GUEST_REQUEST } from '../../sandbox/guards/sandbox-fence.guard';
+import {
+  SANDBOX_FENCE_ADMITTED,
+  SANDBOX_GUEST_REQUEST,
+} from '../../sandbox/guards/sandbox-fence.guard';
+import { isSafeVerb } from '../constants/iam-sections';
 import { isSandboxStandInRequest } from '../../sandbox/stand-in/sandbox-stand-in';
 import {
   ceilingRefusal,
@@ -56,12 +60,30 @@ export class PermissionsGuard implements CanActivate {
       route?: { path?: string };
       path?: string;
       [SANDBOX_GUEST_REQUEST]?: unknown;
+      [SANDBOX_FENCE_ADMITTED]?: boolean;
     }>();
     // Answered from the example world before the handler is reached — there is
     // no privileged read behind this to protect. Refusing here would close a
     // section the fence has deliberately opened, which is how a guest ends up
     // with a menu entry that leads to an error.
     if (req[SANDBOX_GUEST_REQUEST] && isSandboxStandInRequest(req)) return true;
+
+    // A guest reading something the fence opened to them by name.
+    //
+    // The fence runs before this guard and is the authority on what a guest may
+    // reach; several of the routes it shows read-only — the cluster's own
+    // metrics, for one — are governed by a permission no guest holds, because
+    // `section:view` is a level and not a subject. Without this, adding the
+    // permission decorator those routes need in order to be closed to everybody
+    // else would close them to the demonstration as well. Safe verbs only: a
+    // write behind a shown section is still the section guard's to refuse.
+    if (
+      req[SANDBOX_GUEST_REQUEST] &&
+      req[SANDBOX_FENCE_ADMITTED] &&
+      isSafeVerb(req.method)
+    ) {
+      return true;
+    }
 
     const user = req.user;
     if (!user) throw new ForbiddenException('Unauthenticated');

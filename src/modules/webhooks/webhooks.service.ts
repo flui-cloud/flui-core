@@ -1,3 +1,4 @@
+import { timingSafeEqual } from 'node:crypto';
 import { Injectable, Logger, UnauthorizedException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
@@ -15,6 +16,17 @@ import { shouldAutoDeployOnBuild } from './webhooks.util';
  * Validates the per-application HMAC token, then triggers K3s deploy on success
  * or marks the application as failed on build failure.
  */
+/**
+ * Constant-time, and length-guarded first: `timingSafeEqual` throws when the
+ * buffers differ in length, which would turn a wrong-length token into a 500
+ * instead of a 401 and leak the length by the difference.
+ */
+function sameToken(expected: string, presented: string): boolean {
+  const a = Buffer.from(expected, 'utf8');
+  const b = Buffer.from(presented, 'utf8');
+  return a.length === b.length && timingSafeEqual(a, b);
+}
+
 @Injectable()
 export class WebhooksService {
   private readonly logger = new Logger(WebhooksService.name);
@@ -36,8 +48,14 @@ export class WebhooksService {
       where: { id: dto.appId },
     });
 
-    // Return the same error for not-found and invalid token to avoid enumeration
-    if (app?.webhookToken !== token) {
+    // Same refusal for a missing application and a wrong token, so the route
+    // cannot be used to ask which application ids exist.
+    //
+    // Each condition is stated separately because the single `!==` this replaces
+    // was fail-OPEN: with no header and an unknown id both sides were
+    // `undefined`, the comparison was false, and the request went through on a
+    // route that is `@Public()`.
+    if (!token || !app?.webhookToken || !sameToken(app.webhookToken, token)) {
       throw new UnauthorizedException('Invalid webhook token');
     }
 

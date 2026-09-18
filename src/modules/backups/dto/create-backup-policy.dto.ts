@@ -11,6 +11,7 @@ import {
   ValidateNested,
 } from 'class-validator';
 import { Type } from 'class-transformer';
+import { BackupScopeSelectorDto } from './selector.dto';
 import { BackupScope } from '../enums/backup-scope.enum';
 import { BackupPolicyProfile } from '../enums/backup-policy-status.enum';
 import { BackupEngineClass } from '../enums/backup-engine-class.enum';
@@ -66,9 +67,11 @@ export class CreateBackupPolicyDto {
   @IsEnum(BackupEngineClass)
   engineClass?: BackupEngineClass;
 
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({ type: BackupScopeSelectorDto })
   @IsOptional()
-  scopeSelector?: BackupScopeSelector;
+  @ValidateNested()
+  @Type(() => BackupScopeSelectorDto)
+  scopeSelector?: BackupScopeSelectorDto;
 
   @ApiPropertyOptional()
   @IsOptional()

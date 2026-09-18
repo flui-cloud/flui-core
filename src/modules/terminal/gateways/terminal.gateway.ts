@@ -221,9 +221,10 @@ export class TerminalGateway
     @MessageBody() payload: InputPayload,
   ) {
     try {
-      this.logger.debug(
-        `📥 Received input (${payload.data.length} chars): ${JSON.stringify(payload.data.substring(0, 50))}`,
-      );
+      // Only the length. What a person types into a root shell includes the
+      // passwords they are prompted for, and a debug level is not a place to
+      // decide that is acceptable.
+      this.logger.debug(`Received input (${payload.data.length} chars)`);
       await this.terminalService.writeToConnection(socket.id, payload.data);
     } catch (error) {
       this.logger.error(`Failed to write input: ${error.message}`);

@@ -1,5 +1,6 @@
 import { BadRequestException, Inject, Injectable } from '@nestjs/common';
 import { Readable, Writable } from 'node:stream';
+import { randomBytes } from 'node:crypto';
 import { createWriteStream } from 'node:fs';
 import { unlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -214,12 +215,17 @@ export class DbBackupService {
     const backend = this.storageFactory.forProvider(dest.provider);
     const strat = STRATEGIES[info.engine];
 
+    // Unguessable and unreadable by anyone else, the way the platform backup
+    // already stages its own dumps. The name used to be the install id and a
+    // timestamp — both knowable — and the file was created with the default
+    // mode, so a whole database sat world-readable in the container's temp
+    // directory for as long as the upload took.
     const tmp = join(
       tmpdir(),
-      `flui-db-dump-${input.dbInstallId}-${Date.now()}.${info.format}`,
+      `flui-db-dump-${randomBytes(8).toString('hex')}.${info.format}`,
     );
     try {
-      await this.dump(input, createWriteStream(tmp));
+      await this.dump(input, createWriteStream(tmp, { mode: 0o600 }));
       const key = `db-dumps/${input.dbInstallId}/${info.suggestedFilename}`;
       const fullKey = await backend.uploadFile(
         creds,

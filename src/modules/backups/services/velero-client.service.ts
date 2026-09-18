@@ -1,4 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { dump as dumpYaml } from 'js-yaml';
 import { KubernetesService } from '../../infrastructure/shared/services/kubernetes.service';
 import { TemplateRendererService } from './template-renderer.service';
 import {
@@ -56,17 +57,35 @@ export class VeleroClientService {
     private readonly templates: TemplateRendererService,
   ) {}
 
-  private formatLabels(labels: Record<string, string>, indent = 4): string {
+  /**
+   * A fragment of YAML, produced by a YAML writer rather than by string
+   * concatenation, and then indented into place.
+   *
+   * These blocks used to be assembled by hand — `- "${item}"`, `${k}: "${v}"`,
+   * and for the namespace mapping not even a pair of quotes. The values are
+   * namespaces and labels a caller names in a backup policy or a restore
+   * request, so a quote or a newline in one of them wrote structure of its own
+   * into a Velero Backup or Restore in the velero namespace. A Restore carries
+   * `spec.hooks`, and a hook is a command.
+   *
+   * Nothing here needs to know which characters are dangerous: the writer
+   * quotes whatever needs quoting, which is the point of using one.
+   */
+  private yamlBlock(value: unknown, indent: number): string {
     const pad = ' '.repeat(indent);
-    return Object.entries(labels)
-      .map(([k, v]) => `${pad}${k}: "${v}"`)
+    return dumpYaml(value)
+      .replace(/\n$/, '')
+      .split('\n')
+      .map((line) => `${pad}${line}`)
       .join('\n');
   }
 
+  private formatLabels(labels: Record<string, string>, indent = 4): string {
+    return this.yamlBlock(labels, indent);
+  }
+
   private formatList(items: string[], indent = 4): string {
-    const pad = ' '.repeat(indent);
-    if (!items.length) return `${pad}[]`;
-    return items.map((i) => `${pad}- "${i}"`).join('\n');
+    return this.yamlBlock(items, indent);
   }
 
   async createBackup(
@@ -102,9 +121,7 @@ export class VeleroClientService {
       ? `  includedNamespaces:\n${this.formatList(spec.includedNamespaces, 4)}`
       : '';
     const namespaceMapping = spec.namespaceMapping
-      ? `  namespaceMapping:\n${Object.entries(spec.namespaceMapping)
-          .map(([k, v]) => `    ${k}: ${v}`)
-          .join('\n')}`
+      ? `  namespaceMapping:\n${this.yamlBlock(spec.namespaceMapping, 4)}`
       : '';
     const labelSelectorBlock = spec.labelSelector
       ? `  labelSelector:\n    matchLabels:\n${this.formatLabels(spec.labelSelector, 6)}`

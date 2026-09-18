@@ -5,6 +5,8 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { ApplicationsRepository } from '../repositories/applications.repository';
+import { ApplicationAccessService } from './application-access.service';
+import { AuthenticatedUser } from '../../auth/interfaces/authenticated-user.interface';
 import { ApplicationEntity } from '../entities/application.entity';
 import { AppEndpointService } from '../../dns/services/app-endpoint.service';
 import { AppEndpointReconciliationService } from '../../dns/services/app-endpoint-reconciliation.service';
@@ -45,6 +47,7 @@ export class GatewayService {
     private readonly reconciliationService: AppEndpointReconciliationService,
     private readonly gatewayCompiler: GatewayMiddlewareCompilerService,
     private readonly clusterDnsZoneService: ClusterDnsZoneService,
+    private readonly applicationAccess: ApplicationAccessService,
   ) {}
 
   async listRoutes(appId: string): Promise<GatewayRouteDto[]> {
@@ -136,14 +139,33 @@ export class GatewayService {
     };
   }
 
-  /** Read-only global view: every route on the cluster with its owning app. */
+  /**
+   * Every route on the cluster the caller may see, with its owning app.
+   *
+   * It used to be every route full stop, to any authenticated principal: the
+   * hostname, the service, the access policy and the owning application of every
+   * tenant on the installation. The view is worth having — it is how you find a
+   * hostname collision — so it is scoped rather than closed, through the same
+   * resolution that decides which applications a person may read.
+   *
+   * A route with no owning application is infrastructure's own; only an
+   * administrator sees those, since no application grant can reach them.
+   */
   async listClusterRoutes(
     clusterId: string,
+    user?: AuthenticatedUser,
   ): Promise<ClusterGatewayRouteDto[]> {
     const endpoints = await this.appEndpointService.listEndpoints(clusterId);
     const apps = await this.applicationsRepository.findByClusterId(clusterId);
-    const appById = new Map(apps.map((a) => [a.id, a]));
+
+    if (!user) return [];
+    const readable = await this.applicationAccess.filterReadable(user, apps);
+    const appById = new Map(readable.map((a) => [a.id, a]));
+
     return endpoints
+      .filter((e) =>
+        e.applicationId ? appById.has(e.applicationId) : Boolean(user.isAdmin),
+      )
       .map((e) => {
         const app = e.applicationId ? appById.get(e.applicationId) : undefined;
         return {

@@ -20,6 +20,10 @@ import {
 } from '@nestjs/swagger';
 import { AppConfigService } from '../services/app-config.service';
 import { AppAccessGuard } from '../guards/app-access.guard';
+import { RequireSection } from '../../iam/decorators/require-section.decorator';
+import { RequirePermission } from '../../iam/decorators/require-permission.decorator';
+import { SECTION } from '../../iam/constants/iam-sections';
+import { IAM_PERMISSION } from '../../iam/constants/iam-permissions';
 import {
   UpsertVariablesDto,
   UpsertClusterVariablesDto,
@@ -141,7 +145,13 @@ export class VariablesController {
   //
   //  GET  /variables/clusters/:clusterId/namespaces/:namespace
 
+  // Not app-scoped, so `AppAccessGuard` has no resource to reason about: these
+  // read every Flui-managed set in a namespace, across tenants, and one of them
+  // is the platform's own configuration. The section is what says "the machine
+  // room", and it demands `cluster:read` at global scope.
   @Get('clusters/:clusterId/namespaces/:namespace')
+  @RequireSection(SECTION.CLUSTERS)
+  @RequirePermission(IAM_PERMISSION.CLUSTER_READ)
   @ApiOperation({
     summary: 'List variable sets in a cluster namespace',
     description:
@@ -219,6 +229,8 @@ export class VariablesController {
   //  PUT  /variables/clusters/:clusterId/namespaces/:namespace/:name
 
   @Get('clusters/:clusterId/namespaces/:namespace/:name')
+  @RequireSection(SECTION.CLUSTERS)
+  @RequirePermission(IAM_PERMISSION.CLUSTER_READ)
   @ApiOperation({
     summary: 'Read a variable set by name from a cluster namespace',
     description:
@@ -276,7 +288,12 @@ export class VariablesController {
     };
   }
 
+  // Writing is a heavier decision than reading here: a full replace of a
+  // ConfigMap any workload or platform component consumes. It sits with the
+  // rest of infrastructure management rather than with the read above.
   @Put('clusters/:clusterId/namespaces/:namespace/:name')
+  @RequireSection(SECTION.INFRASTRUCTURE)
+  @RequirePermission(IAM_PERMISSION.CLUSTER_MANAGE)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Upsert a variable set by name in a cluster namespace',

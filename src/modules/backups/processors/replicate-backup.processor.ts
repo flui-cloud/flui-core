@@ -1,4 +1,5 @@
 import { Processor, Process } from '@nestjs/bull';
+import { dump as dumpYaml } from 'js-yaml';
 import { Logger } from '@nestjs/common';
 import { Job } from 'bull';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -35,6 +36,39 @@ export interface ReplicateBackupJobData {
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+interface RcloneRemoteCreds {
+  endpoint: string;
+  region: string;
+  accessKey: string;
+  secretKey: string;
+  forcePathStyle?: boolean;
+  provider: StorageBackendProvider;
+}
+
+/**
+ * The rclone configuration the replication job mounts.
+ *
+ * Built here rather than in the manifest template so the credentials never pass
+ * through YAML text at all — see the note at the call site.
+ */
+function rcloneConf(
+  remotes: { src: RcloneRemoteCreds; dst: RcloneRemoteCreds },
+  rcloneProvider: (provider: StorageBackendProvider) => string,
+): string {
+  const section = (name: string, c: RcloneRemoteCreds): string =>
+    [
+      `[${name}]`,
+      'type = s3',
+      `provider = ${rcloneProvider(c.provider)}`,
+      `endpoint = ${c.endpoint}`,
+      `region = ${c.region}`,
+      `access_key_id = ${c.accessKey}`,
+      `secret_access_key = ${c.secretKey}`,
+      `force_path_style = ${String(c.forcePathStyle ?? true)}`,
+    ].join('\n');
+  return `${section('src', remotes.src)}\n\n${section('dst', remotes.dst)}\n`;
+}
 
 @Processor(BACKUP_QUEUE)
 export class ReplicateBackupProcessor {
@@ -98,26 +132,39 @@ export class ReplicateBackupProcessor {
       const secretName = `${jobName}-config`;
       const namespace = 'flui-system';
 
+      // The Secret is built as an object and written by a YAML writer, not
+      // substituted into template text.
+      //
+      // It used to be the first document of that template, with the two access
+      // keys and both endpoints dropped straight into an `rclone.conf: |` block.
+      // A newline at the wrong column ends a literal block, and `\n---\n` after
+      // it starts a new document — so a credential field was a way to apply a
+      // manifest of one's choosing into `flui-system`. Charset rules cannot help
+      // here: an access key is whatever the provider issued.
+      const secretYaml = dumpYaml({
+        apiVersion: 'v1',
+        kind: 'Secret',
+        metadata: {
+          name: secretName,
+          namespace,
+          labels: { 'managed-by': 'flui-cloud', 'flui-job-id': artifactId },
+        },
+        type: 'Opaque',
+        stringData: {
+          'rclone.conf': rcloneConf({ src: srcCreds, dst: dstCreds }, (p) =>
+            this.rcloneProvider(p),
+          ),
+        },
+      });
+
       const yaml = this.templates.render('rclone/replication-job.yaml.tpl', {
         SECRET_NAME: secretName,
         NAMESPACE: namespace,
         JOB_NAME: jobName,
         JOB_ID: artifactId,
         RCLONE_IMAGE,
-        SRC_PROVIDER: this.rcloneProvider(src.provider),
-        SRC_ENDPOINT: srcCreds.endpoint,
-        SRC_REGION: srcCreds.region,
-        SRC_ACCESS_KEY: srcCreds.accessKey,
-        SRC_SECRET_KEY: srcCreds.secretKey,
-        SRC_FORCE_PATH_STYLE: String(srcCreds.forcePathStyle ?? true),
         SRC_BUCKET: srcCreds.bucket,
         SRC_PREFIX: this.normalizePrefix(srcCreds.pathPrefix, veleroBackupName),
-        DST_PROVIDER: this.rcloneProvider(dst.provider),
-        DST_ENDPOINT: dstCreds.endpoint,
-        DST_REGION: dstCreds.region,
-        DST_ACCESS_KEY: dstCreds.accessKey,
-        DST_SECRET_KEY: dstCreds.secretKey,
-        DST_FORCE_PATH_STYLE: String(dstCreds.forcePathStyle ?? true),
         DST_BUCKET: dstCreds.bucket,
         DST_PREFIX: this.normalizePrefix(dstCreds.pathPrefix, veleroBackupName),
       });
@@ -128,6 +175,7 @@ export class ReplicateBackupProcessor {
         `apiVersion: v1\nkind: Namespace\nmetadata:\n  name: ${namespace}\n  labels:\n    managed-by: flui-cloud\n`,
       );
 
+      await this.k8s.applyManifest(obsKubeconfig, secretYaml);
       await this.k8s.applyManifest(obsKubeconfig, yaml);
 
       // Wait for Job

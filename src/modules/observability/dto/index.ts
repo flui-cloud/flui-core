@@ -1,4 +1,3 @@
-export * from './prometheus-target.dto';
 export * from './server-metrics-response.dto';
 export * from './server-logs-query.dto';
 export * from './server-logs-response.dto';
