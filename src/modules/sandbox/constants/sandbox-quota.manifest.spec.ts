@@ -105,6 +105,23 @@ describe('sandbox quota manifests', () => {
     );
   });
 
+  /**
+   * Two numbers, two jobs — and the reason they must not be one. `storage` is
+   * summed from the sizes *declared* on claims, so it governs how many
+   * applications a guest may install: the catalogue asks 10Gi for a code editor
+   * that starts out holding megabytes. The ceiling the kernel enforces on bytes
+   * written is a different, much smaller number, and using the declared one for
+   * it would size every node for storage nobody uses.
+   */
+  it('keeps what a guest may install apart from what they may write', () => {
+    expect(DEFAULT_SANDBOX_QUOTA.nodeLocalCeiling).not.toBe(
+      DEFAULT_SANDBOX_QUOTA.storage,
+    );
+    const declared = parseInt(DEFAULT_SANDBOX_QUOTA.storage, 10);
+    const written = parseInt(DEFAULT_SANDBOX_QUOTA.nodeLocalCeiling, 10);
+    expect(written).toBeLessThan(declared);
+  });
+
   it('marks what it creates as the platform’s own', () => {
     for (const doc of docs()) {
       expect(doc.metadata.labels['flui.cloud/sandbox']).toBe('true');

@@ -43,9 +43,17 @@ export class SandboxStorageQuotaService {
     @Inject(SANDBOX_CONFIG) private readonly config: SandboxConfig,
   ) {}
 
-  /** The ceiling a guest is already told they have. */
+  /**
+   * The bytes a tenancy may write, which is not the number on their quota.
+   *
+   * `requests.storage` is summed from the sizes declared on claims, so it
+   * governs how many applications a guest may install, not how much data they
+   * may keep: the catalogue declares 10Gi for a code editor that starts out
+   * holding a few megabytes. Enforcing that figure on disk would size the node
+   * for storage nobody uses.
+   */
   private limitBytes(): number {
-    return parseStorageQuantityToBytes(DEFAULT_SANDBOX_QUOTA.storage);
+    return parseStorageQuantityToBytes(DEFAULT_SANDBOX_QUOTA.nodeLocalCeiling);
   }
 
   async apply(): Promise<StorageQuotaReconciliation | null> {

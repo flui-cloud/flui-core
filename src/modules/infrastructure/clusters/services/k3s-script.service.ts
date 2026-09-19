@@ -175,8 +175,38 @@ export interface K3sWorkerConfig {
   };
 }
 
+/**
+ * How much of the node's disk `flui-local` may hold, when nothing says otherwise.
+ *
+ * A default rather than an option every caller has to remember: there are nine
+ * places that build a bootstrap script, and a ceiling that depends on all nine
+ * getting it right is not a ceiling. Left to a caller, the one that forgets
+ * produces a node where a single workload can still fill `/` and take k3s down
+ * with it — which is the failure this exists to prevent.
+ *
+ * The backing file is sparse, so this reserves nothing: it is a limit, not an
+ * allocation, and an empty cluster is no smaller for having it. `sizeGb: 0`
+ * opts out and keeps the older shape, a plain directory with no quota.
+ */
+const DEFAULT_LOCAL_STORAGE_GB = 20;
+
 @Injectable()
 export class K3sScriptService {
+  /** The node-local storage a script should build, with the default applied. */
+  private resolveLocalStorage(localStorage?: {
+    device?: string;
+    sizeGb?: number;
+  }): { device: string; sizeGb: number } {
+    const device = localStorage?.device ?? '';
+    // A device of its own needs no backing file, and asking for both would have
+    // the script quietly prefer one.
+    if (device) return { device, sizeGb: 0 };
+    return {
+      device: '',
+      sizeGb: localStorage?.sizeGb ?? DEFAULT_LOCAL_STORAGE_GB,
+    };
+  }
+
   private readonly logger = new Logger(K3sScriptService.name);
 
   /**
@@ -329,8 +359,12 @@ export class K3sScriptService {
           FLUI_SHARED_STORAGE_VOLUME_GB: String(
             config.sharedStorage?.volumeSizeGb ?? 0,
           ),
-          FLUI_LOCAL_STORAGE_DEVICE: config.localStorage?.device ?? '',
-          FLUI_LOCAL_STORAGE_SIZE_GB: String(config.localStorage?.sizeGb ?? 0),
+          FLUI_LOCAL_STORAGE_DEVICE: this.resolveLocalStorage(
+            config.localStorage,
+          ).device,
+          FLUI_LOCAL_STORAGE_SIZE_GB: String(
+            this.resolveLocalStorage(config.localStorage).sizeGb,
+          ),
         },
         config.bootstrapPublicKey,
       );
@@ -398,8 +432,12 @@ export class K3sScriptService {
             : 'false',
           FLUI_SHARED_STORAGE_MASTER_IP:
             config.sharedStorage?.masterPrivateIp ?? '',
-          FLUI_LOCAL_STORAGE_DEVICE: config.localStorage?.device ?? '',
-          FLUI_LOCAL_STORAGE_SIZE_GB: String(config.localStorage?.sizeGb ?? 0),
+          FLUI_LOCAL_STORAGE_DEVICE: this.resolveLocalStorage(
+            config.localStorage,
+          ).device,
+          FLUI_LOCAL_STORAGE_SIZE_GB: String(
+            this.resolveLocalStorage(config.localStorage).sizeGb,
+          ),
         },
         config.bootstrapPublicKey,
       );

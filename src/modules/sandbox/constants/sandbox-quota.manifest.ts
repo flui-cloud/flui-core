@@ -16,6 +16,17 @@ export interface SandboxQuota {
   memoryLimit: string;
   storage: string;
   /**
+   * Bytes a tenancy may actually write to the node's own disk.
+   *
+   * Deliberately not `storage`, which does a different job: that one is summed
+   * from the sizes *declared* on claims and so governs how many applications a
+   * guest may install — the catalogue asks for 10Gi for a code editor and 2Gi
+   * for a note-taker, none of which is what they go on to use. This is the
+   * ceiling the kernel enforces on bytes written, and a trial that lasts a day
+   * needs far less of it than the declared sums suggest.
+   */
+  nodeLocalCeiling: string;
+  /**
    * Bytes a container may write outside a volume — its writable layer, its logs
    * and any emptyDir. Unlike the size declared on a volume, which local-path
    * does not enforce, this one the kubelet does enforce: it evicts the pod that
@@ -47,6 +58,7 @@ export const DEFAULT_SANDBOX_QUOTA: SandboxQuota = {
   memoryRequest: '2Gi',
   memoryLimit: '6Gi',
   storage: '12Gi',
+  nodeLocalCeiling: '2Gi',
   ephemeralStorageRequest: '4Gi',
   ephemeralStorageLimit: '8Gi',
   pods: 12,
