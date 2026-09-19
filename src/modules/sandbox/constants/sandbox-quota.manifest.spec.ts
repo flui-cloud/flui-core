@@ -65,9 +65,9 @@ describe('sandbox quota manifests', () => {
     expect(container.max.cpu).not.toBe(DEFAULT_SANDBOX_QUOTA.cpuLimit);
   });
 
-  // Measured on the live instance: the seeded application needs 7Gi of volumes
-  // across its components, so a 5Gi cap silently stopped it at the first one.
-  it('leaves room for the seed plus what the guest installs', () => {
+  // A catalogue application with several stateful components asks for around
+  // 7Gi of volumes, so a 5Gi ceiling stops it silently at the first one.
+  it('leaves room for what a guest installs', () => {
     const [quota] = docs();
     expect(parseInt(quota.spec.hard['requests.storage'], 10)).toBeGreaterThan(
       7,
@@ -75,6 +75,34 @@ describe('sandbox quota manifests', () => {
     expect(
       Number(quota.spec.hard.persistentvolumeclaims),
     ).toBeGreaterThanOrEqual(8);
+  });
+
+  /**
+   * The size declared on a volume is not a cap: a claim of 1Mi accepts 50MiB on
+   * both storage classes, and Kubernetes still reports 1Mi. So the storage
+   * numbers above bound how much a guest may *ask for*, not how much they may
+   * write. Ephemeral storage is the one byte ceiling the kubelet does enforce,
+   * and without it a guest fills the node's root filesystem with one `dd`,
+   * taking down the cluster rather than merely their own tenancy.
+   */
+  it('caps the disk a container may fill outside its volumes', () => {
+    const [quota, limits] = docs();
+    const container = limits.spec.limits.find(
+      (l: { type: string }) => l.type === 'Container',
+    );
+
+    expect(container.default['ephemeral-storage']).toBe(
+      DEFAULT_SANDBOX_QUOTA.defaultContainerEphemeralStorage,
+    );
+    expect(container.defaultRequest['ephemeral-storage']).toBe(
+      DEFAULT_SANDBOX_QUOTA.defaultContainerEphemeralStorage,
+    );
+    expect(container.max['ephemeral-storage']).toBe(
+      DEFAULT_SANDBOX_QUOTA.maxContainerEphemeralStorage,
+    );
+    expect(quota.spec.hard['limits.ephemeral-storage']).toBe(
+      DEFAULT_SANDBOX_QUOTA.ephemeralStorageLimit,
+    );
   });
 
   it('marks what it creates as the platform’s own', () => {

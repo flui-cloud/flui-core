@@ -58,6 +58,7 @@ import { DedicatedPlacementService } from './services/dedicated-placement.servic
 import { ApplicationDeployProcessor } from './processors/application-deploy.processor';
 import { ApplicationTeardownService } from './processors/application-teardown.service';
 import { ApplicationVolumeClaimsService } from './services/application-volume-claims.service';
+import { ApplicationVolumeResizeService } from './services/application-volume-resize.service';
 import {
   ApplicationBuildWatchProcessor,
   BUILD_WATCH_QUEUE,
@@ -199,6 +200,7 @@ import { VolumeExportService } from '../providers/services/volume-export.service
     ApplicationDeployProcessor,
     ApplicationTeardownService,
     ApplicationVolumeClaimsService,
+    ApplicationVolumeResizeService,
     ApplicationBuildWatchProcessor,
     GhcrSecretRefreshProcessor,
   ],
@@ -211,6 +213,7 @@ import { VolumeExportService } from '../providers/services/volume-export.service
     IamModule,
     ApplicationAccessService,
     ApplicationVolumeClaimsService,
+    ApplicationVolumeResizeService,
     // The scheduled volume-copy engine runs this rather than reimplementing
     // the copy primitive beside it, so the ad-hoc and scheduled paths cannot
     // drift on the consistency gate they both go through.

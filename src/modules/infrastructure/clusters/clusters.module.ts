@@ -64,6 +64,8 @@ import { BillingIntervalsService } from './services/billing-intervals.service';
 import { ClusterAutoscaleService } from './services/cluster-autoscale.service';
 import { ClusterVNetService } from './services/cluster-vnet.service';
 import { ClusterScalingService } from './services/cluster-scaling.service';
+import { ClusterStorageUsageService } from './services/cluster-storage-usage.service';
+import { NodeStorageQuotaService } from './services/node-storage-quota.service';
 import { ClusterStorageService } from './services/cluster-storage.service';
 import { OrphanedClaimsService } from './services/orphaned-claims.service';
 import { ClusterOrphanedClaimsController } from './cluster-orphaned-claims.controller';
@@ -174,6 +176,8 @@ import { FleetHistoryService } from './services/fleet-history.service';
     ClusterVNetService,
     ClusterScalingService,
     ClusterStorageService,
+    ClusterStorageUsageService,
+    NodeStorageQuotaService,
     OrphanedClaimsService,
     ClusterCapacityService,
     ClusterNodeScalingService,
@@ -188,6 +192,9 @@ import { FleetHistoryService } from './services/fleet-history.service';
   ],
   exports: [
     ClustersService,
+    // The sandbox is the only caller: it is the only place with tenancies that
+    // are told they have a storage ceiling.
+    NodeStorageQuotaService,
     AutoscaleReconcilerRegistry,
     // Exported for the scaling actuator, the one caller outside this module
     // allowed to add or remove a node without a person asking for it.

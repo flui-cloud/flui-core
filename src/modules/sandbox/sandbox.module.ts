@@ -1,4 +1,7 @@
 import { forwardRef, Module } from '@nestjs/common';
+import { ApplicationsModule } from '../applications/applications.module';
+import { ObservabilityModule } from '../observability/observability.module';
+import { ClustersModule } from '../infrastructure/clusters/clusters.module';
 import { APP_INTERCEPTOR } from '@nestjs/core';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { IamModule } from '../iam/iam.module';
@@ -12,15 +15,15 @@ import { SandboxFenceGuard } from './guards/sandbox-fence.guard';
 import { SandboxProjectionInterceptor } from './interceptors/sandbox-projection.interceptor';
 import { SandboxCapacityService } from './services/sandbox-capacity.service';
 import { SandboxEntryService } from './services/sandbox-entry.service';
-import { SandboxHistoryService } from './services/sandbox-history.service';
 import { SandboxQuotaService } from './services/sandbox-quota.service';
 import { SandboxResumeMailService } from './services/sandbox-resume-mail.service';
 import { SandboxScopeService } from './services/sandbox-scope.service';
-import { SandboxSeedService } from './services/sandbox-seed.service';
 import { SandboxPrepullService } from './services/sandbox-prepull.service';
+import { SandboxCapacityAlertService } from './services/sandbox-capacity-alert.service';
 import { SandboxReserveService } from './services/sandbox-reserve.service';
 import { SandboxTenantService } from './services/sandbox-tenant.service';
 import { SandboxSchedulerService } from './services/sandbox-scheduler.service';
+import { SandboxStorageQuotaService } from './services/sandbox-storage-quota.service';
 import { SandboxTenantEntity } from './entities/sandbox-tenant.entity';
 import { UserEntity } from '../auth/entities/user.entity';
 import { ApiKeyEntity } from '../auth/entities/api-key.entity';
@@ -56,6 +59,15 @@ import { MailModule } from '../mail/mail.module';
     MailModule,
     DatabaseConsoleModule,
     forwardRef(() => CatalogModule),
+    // For the one path that removes a guest's workload: the same service a
+    // person's own delete goes through, not a copy of it beside the reaper.
+    forwardRef(() => ApplicationsModule),
+    // For the one alert nothing in the cluster can raise: the demo being full is
+    // arithmetic over the tenancy table, not a metric anything scrapes.
+    ObservabilityModule,
+    // The gate that decides whether one more area's work could start — the same
+    // one that refuses a guest's install, so the warning cannot disagree with it.
+    forwardRef(() => ClustersModule),
   ],
   controllers: [SandboxController, SandboxClaimController],
   providers: [
@@ -68,14 +80,14 @@ import { MailModule } from '../mail/mail.module';
     { provide: APP_INTERCEPTOR, useClass: SandboxProjectionInterceptor },
     SandboxCapacityService,
     SandboxEntryService,
-    SandboxHistoryService,
     SandboxQuotaService,
     SandboxResumeMailService,
-    SandboxSeedService,
     SandboxPrepullService,
+    SandboxCapacityAlertService,
     SandboxReserveService,
     SandboxTenantService,
     SandboxSchedulerService,
+    SandboxStorageQuotaService,
   ],
   exports: [
     SandboxFenceGuard,

@@ -26,6 +26,7 @@ import {
   VolumeBackupsService,
   BackupDestination,
 } from '../services/volume-backups.service';
+import { ApplicationVolumeResizeService } from '../services/application-volume-resize.service';
 
 @ApiTags('Applications')
 @ApiBearerAuth()
@@ -36,6 +37,7 @@ export class ApplicationSnapshotsController {
     private readonly volumeSnapshotsService: VolumeSnapshotsService,
     private readonly volumeBackupsService: VolumeBackupsService,
     private readonly appManagementService: AppManagementService,
+    private readonly volumeResizeService: ApplicationVolumeResizeService,
   ) {}
 
   // ── Volume snapshots ──────────────────────────────────────
@@ -149,6 +151,41 @@ export class ApplicationSnapshotsController {
       body.newClaimName,
       (req.user as AuthenticatedUser | undefined)?.userId,
     );
+  }
+
+  // ── Volume size ───────────────────────────────────────────
+
+  @Get('applications/:id/volumes/resize-plan')
+  @ApiOperation({
+    summary: 'Whether each volume of this application can be made bigger',
+    description:
+      'Answers without changing anything, so a caller can explain a refusal before asking for a size. ' +
+      "A volume can only grow where its storage class allows it, which on Flui's default local-path classes it does not.",
+  })
+  @ApiParam({ name: 'id', description: 'Application ID' })
+  async volumeResizePlan(@Param('id') id: string) {
+    return this.volumeResizeService.planForApplication(id);
+  }
+
+  @Post('applications/:id/volumes/:volumeName/resize')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Make one application volume bigger',
+    description:
+      'Volumes only grow, never shrink. The answer says whether the application has to restart ' +
+      'before the extra space becomes usable, which depends on the storage driver.',
+  })
+  @ApiParam({ name: 'id', description: 'Application ID' })
+  @ApiParam({ name: 'volumeName', description: 'Name of the volume to grow' })
+  async resizeVolume(
+    @Param('id') id: string,
+    @Param('volumeName') volumeName: string,
+    @Body() body: { sizeGb: number },
+  ) {
+    if (typeof body?.sizeGb !== 'number') {
+      throw new BadRequestException('sizeGb is required');
+    }
+    return this.volumeResizeService.resize(id, volumeName, body.sizeGb);
   }
 
   @Get('clusters/:clusterId/snapshots')

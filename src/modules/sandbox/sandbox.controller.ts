@@ -19,6 +19,7 @@ import { SandboxTenancyDto } from './dto/sandbox-tenancy.dto';
 import { SandboxCapacityService } from './services/sandbox-capacity.service';
 import { SandboxReserveService } from './services/sandbox-reserve.service';
 import { SandboxTenantService } from './services/sandbox-tenant.service';
+import { SandboxStorageQuotaService } from './services/sandbox-storage-quota.service';
 import { SandboxTenantEntity } from './entities/sandbox-tenant.entity';
 
 @ApiTags('Sandbox')
@@ -28,7 +29,35 @@ export class SandboxController {
     private readonly capacity: SandboxCapacityService,
     private readonly reserve: SandboxReserveService,
     private readonly tenants: SandboxTenantService,
+    private readonly storageQuotas: SandboxStorageQuotaService,
   ) {}
+
+  /**
+   * The ceiling the guests are already told they have, applied now instead of
+   * at the next tick — and, more usefully, reported back.
+   *
+   * A node whose local storage is still a plain folder answers `supported:
+   * false` with the reason, which is the honest state of every cluster that has
+   * not been rebuilt on a quota-capable filesystem. Reading that here is how
+   * somebody checks the promise is real before opening the doors.
+   */
+  @Post('storage-ceilings')
+  @HttpCode(HttpStatus.OK)
+  @RequirePermission(IAM_PERMISSION.SANDBOX_OPERATE)
+  @ApiOperation({
+    summary: 'Apply the guests’ storage ceilings now, and report what holds',
+    description:
+      'Tags each tenancy’s volumes with its own project on every node and sets the hard limit, then reads back what the kernel believes. Safe to call at any time: it changes nothing on a cluster whose storage cannot enforce a quota, and says so.',
+  })
+  async applyStorageCeilings() {
+    const result = await this.storageQuotas.apply();
+    return (
+      result ?? {
+        reconciledAt: new Date().toISOString(),
+        nodes: [],
+      }
+    );
+  }
 
   /**
    * Public on purpose. "What is disabled here, and why" is a promise made before

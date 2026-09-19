@@ -52,6 +52,8 @@ const RESOURCE_NOUN: Record<string, string> = {
   'requests.memory': 'memory (requested)',
   'limits.memory': 'memory (limit)',
   'requests.storage': 'storage',
+  'requests.ephemeral-storage': 'disk outside volumes (requested)',
+  'limits.ephemeral-storage': 'disk outside volumes (limit)',
   count: 'objects',
 };
 

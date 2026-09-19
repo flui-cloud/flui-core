@@ -218,6 +218,10 @@ export interface AppDetail {
   systemProtected?: boolean;
 }
 
+/** A v4 uuid, which is what every application id on an installation is. */
+const LOOKS_LIKE_ID =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 export interface DeleteTarget {
   kind: 'standalone' | 'composed';
   name: string;
@@ -394,6 +398,27 @@ export class CliAppService {
   // any component's) and removal uninstalls the whole bundle; the flat listing
   // only carries components, so name/slug lookup there can't see the bundle.
   async resolveDeleteTarget(name: string): Promise<DeleteTarget> {
+    /**
+     * An id is looked up on its own, outside the cluster.
+     *
+     * Everything else here resolves inside the current cluster, which is the
+     * right shape for a name — but it means an application whose cluster has
+     * been deleted can never be named at all, and those are exactly the ones an
+     * operator needs to remove. The id is the one handle that still works when
+     * the machines are gone.
+     */
+    if (LOOKS_LIKE_ID.test(name)) {
+      const app = await this.apiClient.get<AppSummary>(`/applications/${name}`);
+      return {
+        kind: 'standalone',
+        name: app.name,
+        slug: app.slug,
+        status: app.status,
+        appId: app.id,
+        previewApplicationId: app.id,
+      };
+    }
+
     const groups = await this.listAppGroups();
     const q = name.toLowerCase();
 
@@ -706,6 +731,23 @@ export class CliAppService {
     );
   }
 
+  async appVolumeResizePlan(appId: string): Promise<VolumeResizePlan[]> {
+    return this.apiClient.get<VolumeResizePlan[]>(
+      `/applications/${appId}/volumes/resize-plan`,
+    );
+  }
+
+  async resizeAppVolume(
+    appId: string,
+    volumeName: string,
+    sizeGb: number,
+  ): Promise<VolumeResizeResult> {
+    return this.apiClient.post<VolumeResizeResult>(
+      `/applications/${appId}/volumes/${encodeURIComponent(volumeName)}/resize`,
+      { sizeGb },
+    );
+  }
+
   async listAppSnapshots(appId: string): Promise<SnapshotListResponse> {
     return this.apiClient.get<SnapshotListResponse>(
       `/applications/${appId}/snapshots`,
@@ -999,6 +1041,26 @@ export interface GatewayStatus {
   total: number;
   synced: number;
   routes: GatewayRoute[];
+}
+
+export interface VolumeResizePlan {
+  volumeName: string;
+  namespace: string;
+  storageClass: string | null;
+  current: string | null;
+  currentBytes: number;
+  canGrow: boolean;
+  reason?: string;
+}
+
+export interface VolumeResizeResult {
+  volumeName: string;
+  namespace: string;
+  from: string | null;
+  to: string;
+  outcome: 'applied' | 'restart-required' | 'in-progress';
+  restartRequired: boolean;
+  message: string;
 }
 
 /** GET /applications/:id/snapshots — unlike the cluster-wide list, this one

@@ -5,7 +5,9 @@ import { SandboxCapacityService } from './sandbox-capacity.service';
 import { SandboxReserveService } from './sandbox-reserve.service';
 import { SandboxTenantService } from './sandbox-tenant.service';
 import { SandboxPrepullService } from './sandbox-prepull.service';
+import { SandboxCapacityAlertService } from './sandbox-capacity-alert.service';
 import { SandboxTenantState } from '../entities/sandbox-tenant.entity';
+import { SandboxStorageQuotaService } from './sandbox-storage-quota.service';
 
 /**
  * A pass builds sequentially, so this is also a time bound: eight builds is
@@ -28,14 +30,60 @@ export class SandboxSchedulerService {
   private readonly logger = new Logger(SandboxSchedulerService.name);
   private reaping = false;
   private refilling = false;
+  private sweeping = false;
+  private capping = false;
 
   constructor(
     private readonly reserve: SandboxReserveService,
     private readonly capacity: SandboxCapacityService,
     private readonly tenants: SandboxTenantService,
     private readonly prepull: SandboxPrepullService,
+    private readonly capacityAlert: SandboxCapacityAlertService,
+    private readonly storageQuotas: SandboxStorageQuotaService,
     @Inject(SANDBOX_CONFIG) private readonly config: SandboxConfig,
   ) {}
+
+  /**
+   * The second clock. Separate from the reaper on purpose: this one takes the
+   * machines away and leaves the person their account, so a failure here must
+   * not look like a failure to collect an expired area.
+   */
+  @Cron(CronExpression.EVERY_MINUTE)
+  async sweepWorkloads(): Promise<void> {
+    if (!this.config.enabled || this.sweeping) return;
+    this.sweeping = true;
+    try {
+      await this.tenants.sweepExpiredWorkloads();
+    } catch (error) {
+      this.logger.error(
+        `Workload sweep failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    } finally {
+      this.sweeping = false;
+    }
+  }
+
+  /**
+   * The ceiling a guest is already told they have, made true on the disk.
+   *
+   * On a clock rather than at claim time because a tenancy has no directories
+   * until the guest deploys something — and because a ceiling arriving a few
+   * minutes late is worth far more than one that could fail a first deploy.
+   */
+  @Cron(CronExpression.EVERY_5_MINUTES)
+  async applyStorageCeilings(): Promise<void> {
+    if (!this.config.enabled || this.capping) return;
+    this.capping = true;
+    try {
+      await this.storageQuotas.apply();
+    } catch (error) {
+      this.logger.error(
+        `Storage ceilings pass failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    } finally {
+      this.capping = false;
+    }
+  }
 
   @Cron(CronExpression.EVERY_MINUTE)
   async reapExpired(): Promise<void> {
@@ -72,6 +120,10 @@ export class SandboxSchedulerService {
     }
     this.refilling = true;
     try {
+      // Before building anything: if there is no room the refill has nothing to
+      // do, and that is precisely the moment somebody should be told.
+      await this.capacityAlert.check(this.config.clusterId);
+
       const first = await this.capacity.snapshot();
       if (first.target > first.warm) {
         this.logger.log(

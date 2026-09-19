@@ -1,4 +1,4 @@
-import { Command } from '@oclif/core';
+import { Command, Flags } from '@oclif/core';
 import chalk from 'chalk';
 import ora from 'ora';
 import { getNestApp, closeNestApp } from '../../lib/nest-app';
@@ -16,9 +16,21 @@ export default class EnvStorage extends Command {
   static readonly description =
     'Show shared storage status (Volume + NFS export + PVC summary) for the current control cluster';
 
-  static readonly examples = ['<%= config.bin %> <%= command.id %>'];
+  static readonly examples = [
+    '<%= config.bin %> <%= command.id %>',
+    '<%= config.bin %> <%= command.id %> --usage',
+  ];
+
+  static readonly flags = {
+    usage: Flags.boolean({
+      default: false,
+      description:
+        'Also measure how much disk each application and each user really takes. Runs a short job on every node, so it takes a few seconds.',
+    }),
+  };
 
   async run(): Promise<void> {
+    const { flags } = await this.parse(EnvStorage);
     printContextBanner();
     const spinner = ora('Inspecting shared storage...').start();
 
@@ -29,6 +41,19 @@ export default class EnvStorage extends Command {
       );
       spinner.succeed('Storage status retrieved');
       this.render(status);
+
+      if (flags.usage) {
+        const measuring = ora(
+          'Measuring what each application uses...',
+        ).start();
+        const usage = await api.get<ClusterStorageUsage>(
+          `/infrastructure/clusters/${cluster.id}/storage/usage`,
+        );
+        measuring.succeed(
+          `Measured on ${usage.nodes.length} node${usage.nodes.length === 1 ? '' : 's'}`,
+        );
+        this.renderUsage(usage);
+      }
     } catch (error) {
       spinner.fail('Failed to retrieve storage status');
       printControlPlaneError(error);
@@ -87,6 +112,47 @@ export default class EnvStorage extends Command {
     console.log('');
   }
 
+  private renderUsage(u: ClusterStorageUsage): void {
+    for (const miss of u.unreachable) {
+      console.log(chalk.yellow(`   ⚠ ${miss.node}: ${miss.reason}`));
+    }
+
+    if (u.volumes.length === 0) {
+      console.log(
+        chalk.dim('\n   No application volumes on this cluster yet.\n'),
+      );
+      return;
+    }
+
+    console.log(chalk.cyan('\n👤 Used by each user\n'));
+    for (const row of u.byNamespace) {
+      console.log(
+        `   ${row.namespace.padEnd(28)} ${bytes(row.bytes).padStart(10)}  ${chalk.dim(
+          `${row.volumes} volume${row.volumes === 1 ? '' : 's'}`,
+        )}`,
+      );
+    }
+
+    console.log(chalk.cyan('\n📊 Used by each volume\n'));
+    for (const v of u.volumes) {
+      const where = v.kind === 'local' ? "node's disk" : 'shared';
+      console.log(
+        `   ${v.volumeName.padEnd(44)} ${bytes(v.bytes).padStart(10)}  ${chalk.dim(
+          `${v.namespace} · ${where}`,
+        )}`,
+      );
+    }
+
+    console.log('');
+    console.log(
+      `   ${chalk.bold('On the nodes’ own disks:')} ${bytes(u.totals.local)}`,
+    );
+    console.log(
+      `   ${chalk.bold('On the shared volume:')}    ${bytes(u.totals.shared)}`,
+    );
+    console.log('');
+  }
+
   private formatStatus(status: ClusterStorageStatus): string {
     const map: Record<ClusterStorageStatus, (s: string) => string> = {
       [ClusterStorageStatus.READY]: chalk.green,
@@ -98,4 +164,31 @@ export default class EnvStorage extends Command {
     };
     return (map[status] ?? chalk.white)(status);
   }
+}
+
+interface ClusterStorageUsage {
+  measuredAt: string;
+  nodes: string[];
+  unreachable: Array<{ node: string; reason: string }>;
+  volumes: Array<{
+    volumeName: string;
+    namespace: string;
+    kind: 'local' | 'shared';
+    node: string;
+    bytes: number;
+  }>;
+  byNamespace: Array<{ namespace: string; bytes: number; volumes: number }>;
+  totals: { local: number; shared: number };
+}
+
+function bytes(n: number): string {
+  if (n < 1024) return `${n} B`;
+  const units = ['KiB', 'MiB', 'GiB', 'TiB'];
+  let value = n / 1024;
+  let unit = 0;
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024;
+    unit += 1;
+  }
+  return `${value < 10 ? value.toFixed(1) : Math.round(value)} ${units[unit]}`;
 }

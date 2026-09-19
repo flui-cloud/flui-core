@@ -99,6 +99,24 @@ export interface K3sMasterConfig {
     volumeDevicePath?: string;
     volumeSizeGb?: number;
   };
+
+  /**
+   * The node's own storage for `flui-local` — the class every dedicated
+   * workload, and therefore every database, writes to.
+   *
+   * Left unset it stays a folder on the root disk, which is how it has always
+   * been and what existing clusters keep. Set, it becomes a filesystem of its
+   * own with project quotas, which is the only way a tenancy's ceiling can be
+   * made real and the only thing that stops one workload filling `/` and
+   * taking k3s down with it.
+   *
+   * `device` is a Volume of its own; `sizeGb` asks for a file on the root disk
+   * instead, which costs nothing and still bounds the damage.
+   */
+  localStorage?: {
+    device?: string;
+    sizeGb?: number;
+  };
 }
 
 export interface K3sWorkerConfig {
@@ -136,6 +154,24 @@ export interface K3sWorkerConfig {
   sharedStorage?: {
     enabled: boolean;
     masterPrivateIp?: string;
+  };
+
+  /**
+   * The node's own storage for `flui-local` — the class every dedicated
+   * workload, and therefore every database, writes to.
+   *
+   * Left unset it stays a folder on the root disk, which is how it has always
+   * been and what existing clusters keep. Set, it becomes a filesystem of its
+   * own with project quotas, which is the only way a tenancy's ceiling can be
+   * made real and the only thing that stops one workload filling `/` and
+   * taking k3s down with it.
+   *
+   * `device` is a Volume of its own; `sizeGb` asks for a file on the root disk
+   * instead, which costs nothing and still bounds the damage.
+   */
+  localStorage?: {
+    device?: string;
+    sizeGb?: number;
   };
 }
 
@@ -293,6 +329,8 @@ export class K3sScriptService {
           FLUI_SHARED_STORAGE_VOLUME_GB: String(
             config.sharedStorage?.volumeSizeGb ?? 0,
           ),
+          FLUI_LOCAL_STORAGE_DEVICE: config.localStorage?.device ?? '',
+          FLUI_LOCAL_STORAGE_SIZE_GB: String(config.localStorage?.sizeGb ?? 0),
         },
         config.bootstrapPublicKey,
       );
@@ -360,6 +398,8 @@ export class K3sScriptService {
             : 'false',
           FLUI_SHARED_STORAGE_MASTER_IP:
             config.sharedStorage?.masterPrivateIp ?? '',
+          FLUI_LOCAL_STORAGE_DEVICE: config.localStorage?.device ?? '',
+          FLUI_LOCAL_STORAGE_SIZE_GB: String(config.localStorage?.sizeGb ?? 0),
         },
         config.bootstrapPublicKey,
       );

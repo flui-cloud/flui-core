@@ -15,14 +15,24 @@ export interface SandboxQuota {
   memoryRequest: string;
   memoryLimit: string;
   storage: string;
+  /**
+   * Bytes a container may write outside a volume — its writable layer, its logs
+   * and any emptyDir. Unlike the size declared on a volume, which local-path
+   * does not enforce, this one the kubelet does enforce: it evicts the pod that
+   * exceeds it. It is the only byte ceiling in this file that is real.
+   */
+  ephemeralStorageRequest: string;
+  ephemeralStorageLimit: string;
   pods: number;
   services: number;
   persistentVolumeClaims: number;
   /** Applied to any container that declares nothing of its own. */
   defaultContainerCpu: string;
   defaultContainerMemory: string;
+  defaultContainerEphemeralStorage: string;
   maxContainerCpu: string;
   maxContainerMemory: string;
+  maxContainerEphemeralStorage: string;
 }
 
 /**
@@ -37,13 +47,17 @@ export const DEFAULT_SANDBOX_QUOTA: SandboxQuota = {
   memoryRequest: '2Gi',
   memoryLimit: '6Gi',
   storage: '12Gi',
+  ephemeralStorageRequest: '4Gi',
+  ephemeralStorageLimit: '8Gi',
   pods: 12,
   services: 12,
   persistentVolumeClaims: 8,
   defaultContainerCpu: '200m',
   defaultContainerMemory: '256Mi',
+  defaultContainerEphemeralStorage: '1Gi',
   maxContainerCpu: '1',
   maxContainerMemory: '1Gi',
+  maxContainerEphemeralStorage: '4Gi',
 };
 
 /**
@@ -71,6 +85,8 @@ spec:
     requests.memory: "${quota.memoryRequest}"
     limits.memory: "${quota.memoryLimit}"
     requests.storage: "${quota.storage}"
+    requests.ephemeral-storage: "${quota.ephemeralStorageRequest}"
+    limits.ephemeral-storage: "${quota.ephemeralStorageLimit}"
     pods: "${quota.pods}"
     services: "${quota.services}"
     persistentvolumeclaims: "${quota.persistentVolumeClaims}"
@@ -91,12 +107,15 @@ spec:
       default:
         cpu: "${quota.defaultContainerCpu}"
         memory: "${quota.defaultContainerMemory}"
+        ephemeral-storage: "${quota.defaultContainerEphemeralStorage}"
       defaultRequest:
         cpu: "${quota.defaultContainerCpu}"
         memory: "${quota.defaultContainerMemory}"
+        ephemeral-storage: "${quota.defaultContainerEphemeralStorage}"
       max:
         cpu: "${quota.maxContainerCpu}"
         memory: "${quota.maxContainerMemory}"
+        ephemeral-storage: "${quota.maxContainerEphemeralStorage}"
     - type: PersistentVolumeClaim
       max:
         storage: "${quota.storage}"

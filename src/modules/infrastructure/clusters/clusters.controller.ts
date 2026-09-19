@@ -67,6 +67,7 @@ import {
 } from './dto/update-cluster-vnet.dto';
 import { ClusterScalingService } from './services/cluster-scaling.service';
 import { ClusterStorageService } from './services/cluster-storage.service';
+import { ClusterStorageUsageService } from './services/cluster-storage-usage.service';
 import { AddWorkerDto, AddWorkerResponseDto } from './dto/add-worker.dto';
 import {
   RebuildClusterDto,
@@ -148,6 +149,7 @@ export class ClustersController {
     private readonly clusterVNetService: ClusterVNetService,
     private readonly clusterScalingService: ClusterScalingService,
     private readonly clusterStorageService: ClusterStorageService,
+    private readonly clusterStorageUsageService: ClusterStorageUsageService,
     private readonly clusterCapacityService: ClusterCapacityService,
     private readonly clusterNodeScalingService: ClusterNodeScalingService,
     private readonly orphanVolumesService: OrphanVolumesService,
@@ -906,6 +908,23 @@ export class ClustersController {
     @Param('id') id: string,
   ): Promise<ClusterStorageStatusDto> {
     return this.clusterStorageService.getStatus(id);
+  }
+
+  @Get(':id/storage/usage')
+  @RequireSection('clusters')
+  @ApiOperation({
+    summary: 'Measure how much disk each application and tenancy really uses',
+    description:
+      'Kubernetes cannot answer this: on local-path storage a volume is a folder on a ' +
+      'shared filesystem, so the per-volume metric reports the whole machine and every ' +
+      'volume reads the same. This measures the folders on every node instead — both the ' +
+      "node's own disk (dedicated apps) and the shared volume — and attributes each one to " +
+      'its tenancy. It runs a short-lived job per node, so it takes a few seconds.',
+  })
+  @ApiParam({ name: 'id', description: 'Cluster ID' })
+  @ApiResponse({ status: 404, description: 'Cluster not found' })
+  async getClusterStorageUsage(@Param('id') id: string) {
+    return this.clusterStorageUsageService.measure(id);
   }
 
   @Get(':id/nodes')

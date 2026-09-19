@@ -112,6 +112,7 @@ describe('ApplicationsController fills in what it used to drop', () => {
       snapshots as never,
       undefined as never,
       management as never,
+      undefined as never,
     );
     return {
       controller,

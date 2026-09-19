@@ -24,6 +24,7 @@ import { ClusterAutoscaleService } from './services/cluster-autoscale.service';
 import { ClusterVNetService } from './services/cluster-vnet.service';
 import { ClusterScalingService } from './services/cluster-scaling.service';
 import { ClusterStorageService } from './services/cluster-storage.service';
+import { ClusterStorageUsageService } from './services/cluster-storage-usage.service';
 import { ClusterCapacityService } from './services/cluster-capacity.service';
 import { ClusterNodeScalingService } from './services/cluster-node-scaling.service';
 import { OrphanVolumesService } from './services/orphan-volumes.service';
@@ -213,6 +214,7 @@ describe('clusters controller — the fence around the cluster key', () => {
         { provide: ClusterVNetService, useValue: {} },
         { provide: ClusterScalingService, useValue: {} },
         { provide: ClusterStorageService, useValue: {} },
+        { provide: ClusterStorageUsageService, useValue: {} },
         {
           provide: ClusterCapacityService,
           useValue: { getPlan: async () => ({ candidates: [] }) },
