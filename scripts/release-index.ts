@@ -183,11 +183,16 @@ function main(): void {
     images: { ...RELEASE.images },
     notes: notes.length > 0 ? notes : (existing?.notes ?? []),
     migrations: migrationsSince(previous),
-    // Unknown for a release with no predecessor in the index: an entry that
-    // cannot be compared claims nothing rather than claiming "no change".
+    // With no predecessor in the index there is nothing to compare against —
+    // which happens when a release was tagged but never indexed. `false` is not
+    // the neutral answer it looks like: it is read as "no bootstrap change" and
+    // clears the blocker that sends the operator to the CLI, so an installation
+    // would take the new images and never re-run the manifests. Unknown
+    // therefore resolves to `true`: running the bootstrap again costs a
+    // reinstall, skipping it costs the release.
     requiresBootstrap: previousEntry
       ? previousEntry.bootstrapRef !== RELEASE.bootstrapRef
-      : false,
+      : true,
     ...(minFrom ? { minFrom } : {}),
   };
 
