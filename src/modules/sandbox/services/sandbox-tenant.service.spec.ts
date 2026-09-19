@@ -45,9 +45,9 @@ const build = (
       | 'idpMissing'
       | 'apps'
       | 'apiKeys'
-      | 'seed'
       | 'endpoint'
-      | 'clusterGone',
+      | 'clusterGone'
+      | 'noHeld',
       boolean
     >
   > = {},
@@ -56,6 +56,7 @@ const build = (
   const marks: Array<{ kind: string; detail?: string }> = [];
 
   const reserve = {
+    findClaimed: async () => (breakages.noHeld ? [] : [tenantRow]),
     createPending: async () => ({ ...tenantRow, id: 'new' }),
     recordIdentities: async () => calls.push('record-identities'),
     markReady: async () => marks.push({ kind: 'ready' }),
@@ -71,23 +72,6 @@ const build = (
     }),
   };
   const quota = { apply: async () => calls.push('quota') };
-  const seed = {
-    seed: async () => {
-      calls.push('seed');
-      return 'install-1';
-    },
-    waitUntilSeeded: async () => {
-      calls.push('wait-seed');
-      return !breakages.seed;
-    },
-    groupUnderProject: async () => calls.push('group-project'),
-  };
-  const history = {
-    copyInto: async () => {
-      calls.push('copy-history');
-      return { copied: true, seconds: 1.7 };
-    },
-  };
   const k8s = {
     ensureNamespaceExists: async () => calls.push('ensure-ns'),
     applyManifest: async (_kc: string, manifest: string) =>
@@ -185,6 +169,12 @@ const build = (
     },
   };
 
+  const deploy = {
+    deleteApplication: async (id: string) => {
+      calls.push(`delete-app:${id}`);
+    },
+  };
+
   const sandboxSubdomains = {
     ensure: async () => {
       calls.push('shared-subdomain');
@@ -196,8 +186,6 @@ const build = (
     reserve as never,
     { recordBuild: () => undefined } as never,
     quota as never,
-    seed as never,
-    history as never,
     k8s as never,
     encryption as never,
     directory as never,
@@ -207,6 +195,7 @@ const build = (
     apiKeys as never,
     applications as never,
     clusters as never,
+    deploy as never,
     projects as never,
     userManagement as never,
     appEndpoints as never,
@@ -229,40 +218,25 @@ describe('SandboxTenantService.provision', () => {
       'quota',
       'netpol',
       'noindex',
-      // Before the seed: the seed creates the endpoints that carry the name,
-      // and a hostname is written once.
+      // Before anyone is let in: the first application a guest deploys creates
+      // the endpoint that carries the name, and a hostname is written once.
       'shared-subdomain',
       'tenancy-certificate',
-      'seed',
-      'wait-seed',
-      // After the seed runs and before anyone can hold the tenancy: the copy
-      // is what stops a freshly built area from looking newly born.
-      'copy-history',
-      'group-project',
     ]);
     expect(marks.map((m) => m.kind)).toContain('ready');
   });
 
-  // The seed alone can run for ten minutes. Anything that breaks in there used
-  // to strand the identity-provider account, because the row that named it was
-  // only written once the tenancy went ready.
-  it('records the identity before the long part, so a failure can still be cleaned up', async () => {
-    const { service, calls } = build({ seed: true });
+  // The row that names the identity-provider account is written before the
+  // first step that can fail. Written any later, a build that died in the
+  // middle would leave an account in the identity provider that nothing in the
+  // database points at, and the reaper would have no way to find it.
+  it('records the identity before the first step that can fail', async () => {
+    const { service, calls } = build();
+    await service.provision('c1');
 
-    await expect(service.provision('c1')).rejects.toThrow('not offered');
     expect(calls.indexOf('record-identities')).toBeLessThan(
-      calls.indexOf('seed'),
+      calls.indexOf('ensure-ns'),
     );
-  });
-
-  // A tenancy handed out with an empty namespace breaks the one promise the
-  // first screen makes, so a seed that never comes up must not be offered.
-  it('refuses to offer a tenancy whose seed never came up', async () => {
-    const { service, marks } = build({ seed: true });
-
-    await expect(service.provision('c1')).rejects.toThrow('not offered');
-    expect(marks.map((m) => m.kind)).toContain('failed');
-    expect(marks.map((m) => m.kind)).not.toContain('ready');
   });
 });
 
@@ -447,5 +421,25 @@ describe('SandboxTenantService.expireNow', () => {
     const after = await service.expireNow(tenantRow);
 
     expect(after.state).toBe(SandboxTenantState.FAILED);
+  });
+});
+
+describe('SandboxTenantService.sweepExpiredWorkloads', () => {
+  // The whole point of two clocks: the machines go, the person keeps the area.
+  it('removes what the guest deployed through the same path a person’s own delete takes', async () => {
+    const { service, calls } = build();
+
+    const removed = await service.sweepExpiredWorkloads();
+
+    expect(removed).toBe(1);
+    expect(calls).toContain('delete-app:a1');
+    expect(calls).not.toContain('delete-ns');
+  });
+
+  it('does nothing when nobody is holding an area', async () => {
+    const { service, calls } = build({ noHeld: true });
+
+    expect(await service.sweepExpiredWorkloads()).toBe(0);
+    expect(calls.filter((c) => c.startsWith('delete-app'))).toHaveLength(0);
   });
 });

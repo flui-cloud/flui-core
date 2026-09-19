@@ -247,6 +247,69 @@ export const SANDBOX_ALLOW_OWN: SandboxAllowRule[] = [
     why: 'Switch off an agent you connected.',
   },
   {
+    /**
+     * Asking the assistant something, and only by the door that thinks first.
+     *
+     * `/assistant/v1/agent` routes every fresh turn through the on-topic guard
+     * before it spends a real turn, which is what stops a demo from being a
+     * free language model with a cloud console attached.
+     * `/assistant/v1/chat/completions` is deliberately absent: it is the raw
+     * pass-through, and a visitor does not need it to be shown what the
+     * assistant is for.
+     *
+     * What it may then *do* is not decided here and does not need to be: every
+     * tool it runs arrives back at this same list as the guest, and anything it
+     * proposes to change meets the action cycle, which asks the person before
+     * the model's arguments become an action.
+     */
+    verbs: ['POST'],
+    pattern: '/assistant/v1/agent',
+    why: 'Ask the assistant, and let it act inside these same limits.',
+  },
+  {
+    verbs: ['POST'],
+    pattern: '/assistant/v1/agent/stream',
+    why: 'The same, answered as it is written.',
+  },
+  {
+    // What is left of the share this area came with. Its own, and read-only:
+    // a ring on the screen is the only form in which "tokens" means anything
+    // to somebody who did not come here to learn what a token is.
+    verbs: ['GET'],
+    pattern: '/assistant/v1/usage',
+    why: 'See how much of this area’s assistant time is left.',
+  },
+  {
+    /**
+     * What the agent reads first, and without which the rest of this block is
+     * a key to a door nobody described.
+     *
+     * `get_started` is the tool the registry calls "how an agent learns to
+     * operate Flui at all", and its own description tells a model to call it
+     * before anything else. It routes here — so with this line missing the
+     * fence marked it `closed`, the tool was hidden from a guest's agent by
+     * the visibility rule, and an agent that got a credential anyway arrived
+     * with no idea how work is done on the other end.
+     *
+     * Safe to open, and not as a judgement call: the payload takes two facts
+     * about the installation — the MCP endpoint and the API base — and nothing
+     * per-credential. No key, no name, no scope list. It is the same document
+     * for everyone, which is why the REST route already asks no permission.
+     */
+    verbs: ['GET'],
+    pattern: '/auth/agent-skill',
+    why: 'Read how work is done here, which is the first thing your agent asks.',
+  },
+  {
+    // The other half of that one tool: the agent saying it has read them. It
+    // writes nothing but a timestamp against the credential the guest minted,
+    // and it is what makes "the agent you connected is alive" true on their own
+    // screen rather than a guess.
+    verbs: ['POST'],
+    pattern: '/auth/agent-skill/check-in',
+    why: 'Let your agent report that it has read them.',
+  },
+  {
     // Where the agent then speaks. Without it the credential above executes
     // nothing: the fence would refuse the agent at the door, and the failure
     // would arrive after the consent instead of before it. It opens no data of

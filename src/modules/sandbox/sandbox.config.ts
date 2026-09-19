@@ -6,25 +6,28 @@ export interface SandboxConfig {
   /** Accepting new visitors. Off closes the door without touching who is inside. */
   acceptingClaims: boolean;
   clusterId: string | null;
+  /** How long the guest's account lasts. */
   ttlHours: number;
   ttlMs: number;
+  /**
+   * How long what the guest deploys lasts, which is the half that costs.
+   *
+   * Two clocks rather than one because the two things cost differently: an
+   * account holds a namespace under a quota and nothing else, so it can be left
+   * standing for a week for nothing, while a running workload holds memory and
+   * CPU a visitor who left hours ago is not using. Told up front, "what you
+   * deploy lives a day" is a rule nobody argues with; discovered afterwards it
+   * is a broken promise.
+   */
+  workloadTtlHours: number;
+  workloadTtlMs: number;
   /** Unclaimed tenancies older than this are torn down and rebuilt. */
   recycleUnclaimedMs: number;
   maxClaimsPerIp: number;
   claimWindowMs: number;
-  /** Catalogue entry installed into every tenancy as its seed. */
-  seedCatalogSlug: string;
-  /**
-   * Where the long-running instance whose accumulated data every new tenancy
-   * receives a copy of lives. A namespace rather than an id, so standing one up
-   * is an ordinary install rather than a change to the API's environment.
-   */
-  historyNamespace: string;
-  /** How long provisioning waits for that seed to reach Running. */
-  seedTimeoutMs: number;
   /** After this, a tenancy still "provisioning" is treated as abandoned. */
   provisionStuckMs: number;
-  /** Single-node test clusters only — see SandboxSeedService. */
+  /** Single-node test clusters only. */
   allowMasterPlacement: boolean;
   emailPrefix: string;
   emailDomain: string;
@@ -42,7 +45,8 @@ const num = (raw: string | undefined, fallback: number): number => {
 export function loadSandboxConfig(
   env: NodeJS.ProcessEnv = process.env,
 ): SandboxConfig {
-  const ttlHours = num(env.SANDBOX_TTL_HOURS, 24);
+  const ttlHours = num(env.SANDBOX_TTL_HOURS, 24 * 7);
+  const workloadTtlHours = num(env.SANDBOX_WORKLOAD_TTL_HOURS, 24);
   return {
     enabled: env.SANDBOX_ENABLED === 'true',
     // Separate from `enabled` on purpose: the switch that stops the bleeding in
@@ -56,15 +60,11 @@ export function loadSandboxConfig(
     // SandboxCapacityService — the answer is arithmetic over two measurements.
     ttlHours,
     ttlMs: hours(ttlHours),
+    workloadTtlHours,
+    workloadTtlMs: hours(workloadTtlHours),
     recycleUnclaimedMs: hours(num(env.SANDBOX_RECYCLE_UNCLAIMED_HOURS, 48)),
     maxClaimsPerIp: num(env.SANDBOX_MAX_CLAIMS_PER_IP, 3),
     claimWindowMs: hours(num(env.SANDBOX_CLAIM_WINDOW_HOURS, 24)),
-    seedCatalogSlug: env.SANDBOX_SEED_CATALOG_SLUG ?? 'flui-demo-activity',
-    historyNamespace: env.SANDBOX_HISTORY_NAMESPACE ?? 'flui-sandbox-reference',
-    // A first install pulls four images cold; once the pre-pull DaemonSet has
-    // warmed a node it is far quicker. This is a background refill, not a
-    // visitor waiting, so the timeout is generous.
-    seedTimeoutMs: num(env.SANDBOX_SEED_TIMEOUT_SECONDS, 900) * 1000,
     provisionStuckMs: hours(num(env.SANDBOX_PROVISION_STUCK_HOURS, 1)),
     allowMasterPlacement: env.SANDBOX_ALLOW_MASTER_PLACEMENT === 'true',
     emailPrefix: env.SANDBOX_EMAIL_PREFIX ?? 'guest',

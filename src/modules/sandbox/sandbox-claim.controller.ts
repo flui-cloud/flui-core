@@ -25,6 +25,7 @@ import { extractJwtFromFluiSessionCookie } from '../auth/utils/cookie-extractor.
 import { setFluiSessionCookie } from '../auth/utils/session-cookie.util';
 import { SANDBOX_CONFIG, SandboxConfig } from './sandbox.config';
 import { SandboxReserveService } from './services/sandbox-reserve.service';
+import { SandboxTenantService } from './services/sandbox-tenant.service';
 import {
   SandboxClaimResultDto,
   SandboxSaveRequestDto,
@@ -40,6 +41,7 @@ import { SandboxTenantEntity } from './entities/sandbox-tenant.entity';
 export class SandboxClaimController {
   constructor(
     private readonly reserve: SandboxReserveService,
+    private readonly tenants: SandboxTenantService,
     private readonly apiKeys: ApiKeyService,
     private readonly apiKeyStrategy: ApiKeyStrategy,
     private readonly resumeMail: SandboxResumeMailService,
@@ -48,8 +50,8 @@ export class SandboxClaimController {
   ) {}
 
   /**
-   * Take one warm tenancy from the reserve and hand it to whoever asked — or
-   * give back the one the caller already has.
+   * Hand an area to whoever asked — one that was waiting, or one built on the
+   * spot — or give back the one the caller already has.
    *
    * Public and unauthenticated by definition — the whole promise is "no signup".
    * What stands in for an account is the per-address limit and the fact that
@@ -69,11 +71,11 @@ export class SandboxClaimController {
   @ApiOperation({
     summary: 'Claim a sandbox tenancy',
     description:
-      'Assigns a pre-built tenancy and returns a credential scoped to it. The countdown starts now, not when the tenancy was built.',
+      'Assigns a tenancy — pre-built when one is waiting, built on the spot when none is — and returns a credential scoped to it. The countdown starts now, not when the tenancy was built.',
   })
   @ApiResponse({ status: 201, type: SandboxClaimResultDto })
   @ApiResponse({ status: 409, description: 'This address has claimed enough' })
-  @ApiResponse({ status: 503, description: 'The reserve is empty' })
+  @ApiResponse({ status: 503, description: 'An area could not be prepared' })
   async claim(
     @Req() req: Request,
     @Res({ passthrough: true }) res: Response,
@@ -99,7 +101,9 @@ export class SandboxClaimController {
       return { ...this.toSession(existing), resumed: true };
     }
 
-    const { tenant, expiresAt } = await this.reserve.claim(clientIp(req));
+    const { tenant, expiresAt } = await this.tenants.claimOrBuild(
+      clientIp(req),
+    );
 
     // The credential expires with the tenancy, so a leaked token cannot outlive
     // the thing it opens.
@@ -250,6 +254,7 @@ export class SandboxClaimController {
         Math.floor((expiresAt.getTime() - Date.now()) / 1000),
       ),
       ttlHours: this.config.ttlHours,
+      workloadTtlHours: this.config.workloadTtlHours,
       loginUrl: this.entry.origin,
     };
   }

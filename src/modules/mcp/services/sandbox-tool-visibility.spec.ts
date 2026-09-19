@@ -21,6 +21,18 @@ const offered = (name: string) => isOfferedToGuest(find(name));
  * twice rather than a second list written beside it.
  */
 describe('what a guest is offered', () => {
+  /**
+   * `get_started` routes to `/auth/agent-skill`, and its own description tells
+   * a model to call it before anything else. The guest fence has to list that
+   * route or the visibility rule hides the tool, leaving a visitor's coding
+   * agent able to act and unable to orient itself.
+   */
+  it('offers the tool an agent is told to call first', () => {
+    expect(guestGetsTheRealThing('GET /auth/agent-skill')).toBe(true);
+    expect(guestGetsTheRealThing('POST /auth/agent-skill/check-in')).toBe(true);
+    expect(offered('get_started')).toBe(true);
+  });
+
   describe('the two questions, asked of the same list', () => {
     it('keeps a route a guest is answered for real', () => {
       expect(guestGetsTheRealThing('POST /applications/a1/deploy')).toBe(true);

@@ -74,8 +74,13 @@ export class SandboxReserveService {
    * Hand one warm tenancy to a visitor. Returns the row only if this call is the
    * one that flipped it — a second caller racing for the same row updates zero
    * rows and tries the next one.
+   *
+   * `null` means the reserve was empty, not that the visitor has to be turned
+   * away: an area holds nothing until its guest deploys something, so one can
+   * be built on the spot. Deciding that is {@link SandboxTenantService}'s job,
+   * because building is — this service only knows about rows.
    */
-  async claim(ip: string): Promise<ClaimResult> {
+  async tryClaim(ip: string): Promise<ClaimResult | null> {
     const recent = await this.countRecentClaimsFrom(ip);
     if (recent >= this.config.maxClaimsPerIp) {
       throw new ConflictException({
@@ -123,9 +128,17 @@ export class SandboxReserveService {
       }
     }
 
-    // Counted, not just refused. How often the door is closed is the one signal
-    // that says the buffer is sized too small, and it is invisible from the
-    // tenancy table: nobody who was turned away leaves a row behind.
+    return null;
+  }
+
+  /**
+   * The refusal, for the caller that has already tried to build one and failed.
+   *
+   * Counted, not just refused. How often the door is closed is the one signal
+   * that says something is wrong, and it is invisible from the tenancy table:
+   * nobody who was turned away leaves a row behind.
+   */
+  async refuseAsFull(): Promise<never> {
     this.capacity.recordFullRefusal();
     throw new ServiceUnavailableException({
       statusCode: 503,
@@ -150,13 +163,22 @@ export class SandboxReserveService {
         await this.capacity.snapshot();
       if (ceiling > live + warm) {
         const minutes = Math.max(1, Math.ceil(readySeconds / 60));
-        return `Every sandbox is taken right now. Another is being built — try again in about ${minutes} minutes.`;
+        return `An area could not be prepared just now. Another is being built — try again in about ${minutes} minutes.`;
       }
       return `This instance is running as many sandboxes as it can hold. They are released as their ${this.config.ttlHours} hours run out, so a slot opens through the day — try again later.`;
     } catch {
       // Never let the shape of the refusal depend on a working cluster read.
       return 'Every sandbox is taken right now. They are released continuously — try again in a few minutes.';
     }
+  }
+
+  /** Every area somebody is holding right now. */
+  async findClaimed(limit = 200): Promise<SandboxTenantEntity[]> {
+    return this.tenants.find({
+      where: { state: SandboxTenantState.CLAIMED },
+      order: { claimedAt: 'ASC' },
+      take: limit,
+    });
   }
 
   /** Tenancies whose deadline has passed. The reaper's work list. */

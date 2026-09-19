@@ -96,6 +96,12 @@ describe('sandbox allowlist', () => {
       ['POST', '/infrastructure/clusters'],
       ['DELETE', '/infrastructure/clusters/c1'],
       ['POST', '/infrastructure/clusters/c1/workers'],
+      // Names every tenancy on the cluster and how much disk each one takes,
+      // so it answers "who else is here" — a question the sandbox exists to
+      // refuse. It sits one segment past `/infrastructure/clusters/:id`, which
+      // IS shown to a guest, which is exactly the shape a prefix match would
+      // wave through.
+      ['GET', '/infrastructure/clusters/c1/storage/usage'],
       ['GET', '/infrastructure/servers'],
       ['GET', '/access/ssh-keys'],
       ['POST', '/access/ssh-keys'],
@@ -645,10 +651,21 @@ describe('sandbox allowlist', () => {
       'read-only',
     );
     expect(findSandboxStandIn('GET', '/assistant/v1/info')).toBeUndefined();
-    // Inference costs the operator money and is not offered.
+  });
+
+  /**
+   * Inference costs the operator money, and that is still true — so the door
+   * that opened is the one that thinks before it spends. A fresh turn on
+   * `/agent` is routed past the on-topic guard first; `chat/completions` is the
+   * raw pass-through and stays shut, because a demo that proxies a language
+   * model is a demo somebody will use as one.
+   */
+  it('opens the assistant by the door that thinks first, and only that one', () => {
+    expect(isSandboxAllowed('POST', '/assistant/v1/agent')).toBe(true);
+    expect(isSandboxAllowed('POST', '/assistant/v1/agent/stream')).toBe(true);
+    expect(isSandboxAllowed('GET', '/assistant/v1/usage')).toBe(true);
     expect(isSandboxAllowed('POST', '/assistant/v1/chat/completions')).toBe(
       false,
     );
-    expect(isSandboxAllowed('POST', '/assistant/v1/agent')).toBe(false);
   });
 });

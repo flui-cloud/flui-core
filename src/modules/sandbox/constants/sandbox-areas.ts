@@ -30,13 +30,14 @@ export const SANDBOX_AREAS: SandboxArea[] = [
     why: 'Yours to deploy, scale, read and delete, exactly as on your own instance.',
   },
   {
-    // Not a section of its own, and deliberately: these applications appear in
-    // the workload list beside the guest's own, each one carrying
-    // `showcase: true` and `readOnly: true`, because that is where a person
-    // looks for a running application. The label is what keeps the two apart —
-    // and the reason it has to be there is the same reason the seed declares
-    // itself: something the visitor did not create, shown unlabelled, reads as
-    // the leftovers of another guest.
+    // A section of its own on the workload page, under its own heading, rather
+    // than rows mixed in among the guest's with a label to tell them apart.
+    // A per-row label is a thin defence: something the visitor did not create,
+    // shown among the things they did, reads as the leftovers of another guest.
+    // A heading says it once, for the whole group, before the first row is read.
+    //
+    // Each application still carries `showcase: true` and `readOnly: true`: the
+    // grouping is the interface's, the facts are the API's.
     //
     // The sentence is the showcase's own, imported rather than restated, so the
     // showcase and the list of limits cannot end up promising different things.
@@ -170,10 +171,13 @@ export const SANDBOX_AREAS: SandboxArea[] = [
     why: 'Which models the platform talks to, on an example account. No key value is ever shown.',
   },
   {
+    // Bounded rather than switched off: asking costs inference the instance
+    // pays for, so the cost is counted and capped per area. The model is the
+    // instance's choice and not the guest's, on every route including the API.
     key: 'assistant',
     area: 'The assistant',
-    level: 'read-only',
-    why: 'You can see what it is and what it knows. Asking it something costs inference the instance pays for, so that stays off here.',
+    level: 'full',
+    why: 'Ask it, and let it act inside these same limits. It runs on the instance’s own model and this area comes with a share of it; your own coding agent can carry on over MCP, on your account.',
   },
   {
     // Read by a person on the screen and by their agent through the MCP tool,

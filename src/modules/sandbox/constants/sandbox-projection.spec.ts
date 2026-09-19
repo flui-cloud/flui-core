@@ -21,6 +21,60 @@ const project = (
 };
 
 describe('sandbox response projection', () => {
+  /**
+   * The workload list reaches the showcase application by a wider route than
+   * `GET /showcase`, and carried `k8sNamespace` and `userId` with it — the
+   * operator's namespace and account id, which `GET /showcase` omits on
+   * purpose.
+   */
+  describe("somebody else's application in the list", () => {
+    const own = { id: 'mine', slug: 'mine', k8sNamespace: 'user-guest-1' };
+    const theirs = {
+      id: 'showcase-1',
+      slug: 'live-activity',
+      k8sNamespace: 'user-operator',
+      userId: 'operator-1',
+    };
+
+    it('takes the namespace and the owner off what is not the guest’s', () => {
+      const out = project(
+        'GET',
+        '/clusters/own-cluster/applications',
+        [theirs],
+        scope({ applicationIds: new Set(['mine']) }),
+      ) as Record<string, unknown>[];
+
+      expect(out[0]).toEqual({ id: 'showcase-1', slug: 'live-activity' });
+    });
+
+    it('leaves the guest’s own application untouched', () => {
+      const out = project(
+        'GET',
+        '/clusters/own-cluster/applications',
+        [own],
+        scope({ applicationIds: new Set(['mine']) }),
+      ) as Record<string, unknown>[];
+
+      expect(out[0]).toEqual(own);
+    });
+
+    it('reaches inside a group, or the grouped page answers what the flat one refuses', () => {
+      const out = project(
+        'GET',
+        '/clusters/own-cluster/applications/grouped',
+        [{ id: 'g1', name: 'Live activity', components: [theirs, own] }],
+        scope({ applicationIds: new Set(['mine']) }),
+      ) as Record<string, unknown>[];
+
+      const components = out[0].components as Record<string, unknown>[];
+      expect(components[0]).toEqual({
+        id: 'showcase-1',
+        slug: 'live-activity',
+      });
+      expect(components[1]).toEqual(own);
+    });
+  });
+
   describe('the cluster list', () => {
     const clusters = [
       {

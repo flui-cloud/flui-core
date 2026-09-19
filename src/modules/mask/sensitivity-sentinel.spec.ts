@@ -3125,6 +3125,7 @@ const MASK_EXEMPT: string[] = [
   'SandboxSessionDto.loginUrl', // modules/sandbox/dto/sandbox-session.dto.ts
   'SandboxSessionDto.secondsRemaining', // modules/sandbox/dto/sandbox-session.dto.ts
   'SandboxSessionDto.ttlHours', // modules/sandbox/dto/sandbox-session.dto.ts
+  'SandboxSessionDto.workloadTtlHours', // modules/sandbox/dto/sandbox-session.dto.ts
   'SandboxTenancyDto.claimedAt', // modules/sandbox/dto/sandbox-tenancy.dto.ts
   'SandboxTenancyDto.clusterId', // modules/sandbox/dto/sandbox-tenancy.dto.ts
   'SandboxTenancyDto.createdAt', // modules/sandbox/dto/sandbox-tenancy.dto.ts

@@ -131,7 +131,53 @@ const ENDPOINT_FIELDS = [
   'updatedAt',
 ] as const;
 
+/**
+ * An application the guest does not own, with the operator's own details taken
+ * off. Their own applications come back untouched: a namespace derived from
+ * their address is theirs to see.
+ */
+function strangersApplication(
+  app: Record<string, unknown>,
+  scope: SandboxScope,
+): Record<string, unknown> {
+  if (typeof app.id === 'string' && scope.applicationIds.has(app.id))
+    return app;
+  const { k8sNamespace: _ns, userId: _owner, ...rest } = app;
+  return rest;
+}
+
 export const SANDBOX_PROJECTIONS: SandboxProjectionRule[] = [
+  {
+    // The showcase is somebody else's application, shown on purpose — but where
+    // it runs and who owns it are not part of the showing. `GET /showcase`
+    // already carries neither, deliberately; the workload list reached the same
+    // application by a wider route and carried both, which is the drift that
+    // makes one read safe and another read leaky.
+    verbs: ['GET'],
+    pattern: '/clusters/:clusterId/applications',
+    needs: ['applicationIds'],
+    why: "Where an application runs and who owns it, only for the guest's own.",
+    project: (body, scope) =>
+      asArray(body).map((app) => strangersApplication(app, scope)),
+  },
+  {
+    // Same rule, one level down: here the applications are the components of a
+    // group, so the stripping has to reach inside or the grouped page answers
+    // what the flat one refuses.
+    verbs: ['GET'],
+    pattern: '/clusters/:clusterId/applications/grouped',
+    needs: ['applicationIds'],
+    why: "Where an application runs and who owns it, only for the guest's own.",
+    project: (body, scope) =>
+      asArray(body).map((group) => ({
+        ...group,
+        components: Array.isArray(group.components)
+          ? (group.components as Record<string, unknown>[]).map((component) =>
+              strangersApplication(component, scope),
+            )
+          : group.components,
+      })),
+  },
   {
     verbs: ['GET'],
     pattern: '/infrastructure/clusters',

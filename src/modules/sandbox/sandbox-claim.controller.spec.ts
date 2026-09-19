@@ -14,6 +14,7 @@ import { SandboxClaimController } from './sandbox-claim.controller';
 import { loginUrl, resumeLink } from './sandbox-entry';
 import { SandboxEntryService } from './services/sandbox-entry.service';
 import { SandboxReserveService } from './services/sandbox-reserve.service';
+import { SandboxTenantService } from './services/sandbox-tenant.service';
 import { ApiKeyService } from '../auth/services/api-key.service';
 import { ApiKeyStrategy } from '../auth/strategies/api-key.strategy';
 import { SandboxConfig } from './sandbox.config';
@@ -80,10 +81,12 @@ describe('claiming with a session already in hand', () => {
   }) => {
     const reserve = {
       findActiveForUser: overrides.findActiveForUser ?? jest.fn(),
-      claim:
+    } as unknown as SandboxReserveService;
+    const tenants = {
+      claimOrBuild:
         overrides.claim ??
         jest.fn().mockResolvedValue({ tenant, expiresAt: tenant.expiresAt }),
-    } as unknown as SandboxReserveService;
+    } as unknown as SandboxTenantService;
     const apiKeys = {
       generateApiKey: jest.fn().mockResolvedValue({ plaintext: 'flui_new' }),
     } as unknown as ApiKeyService;
@@ -96,6 +99,7 @@ describe('claiming with a session already in hand', () => {
     return {
       controller: new SandboxClaimController(
         reserve,
+        tenants,
         apiKeys,
         strategy,
         resumeMail,
@@ -104,12 +108,13 @@ describe('claiming with a session already in hand', () => {
       ),
       resumeMail,
       reserve,
+      tenants,
       apiKeys,
     };
   };
 
   it('gives back the tenancy the caller already holds, taking none from the reserve', async () => {
-    const { controller, reserve, apiKeys } = build({
+    const { controller, tenants, apiKeys } = build({
       validate: jest.fn().mockResolvedValue({ userId: 'guest-1' }),
       findActiveForUser: jest.fn().mockResolvedValue(tenant),
     });
@@ -119,17 +124,17 @@ describe('claiming with a session already in hand', () => {
     expect(out.resumed).toBe(true);
     expect(out.apiKey).toBeUndefined();
     expect(out.loginUrl).toBe('https://try.flui.cloud');
-    expect(reserve.claim).not.toHaveBeenCalled();
+    expect(tenants.claimOrBuild).not.toHaveBeenCalled();
     expect(apiKeys.generateApiKey).not.toHaveBeenCalled();
   });
 
   it('assigns a new tenancy when there is no cookie', async () => {
-    const { controller, reserve } = build({});
+    const { controller, tenants } = build({});
     const out = await controller.claim(req(), res());
 
     expect(out.resumed).toBe(false);
     expect(out.apiKey).toBe('flui_new');
-    expect(reserve.claim).toHaveBeenCalled();
+    expect(tenants.claimOrBuild).toHaveBeenCalled();
   });
 
   it.each([
@@ -145,11 +150,11 @@ describe('claiming with a session already in hand', () => {
       },
     ],
   ])('falls through to a fresh tenancy for %s', async (_label, overrides) => {
-    const { controller, reserve } = build(overrides);
+    const { controller, tenants } = build(overrides);
     const out = await controller.claim(req('flui_stale'), res());
 
     expect(out.resumed).toBe(false);
-    expect(reserve.claim).toHaveBeenCalled();
+    expect(tenants.claimOrBuild).toHaveBeenCalled();
   });
 
   it('never puts the namespace or the synthetic address in a public response', async () => {
@@ -220,6 +225,7 @@ describe('following a resume link that is gone', () => {
   const build = (validate: jest.Mock, findActiveForUser: jest.Mock) =>
     new SandboxClaimController(
       { findActiveForUser } as unknown as SandboxReserveService,
+      {} as unknown as SandboxTenantService,
       {} as unknown as ApiKeyService,
       { validate } as unknown as ApiKeyStrategy,
       {} as unknown as SandboxResumeMailService,

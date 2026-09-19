@@ -18,8 +18,18 @@ export class SandboxSessionDto {
   })
   secondsRemaining: number;
 
-  @ApiProperty({ example: 24 })
+  @ApiProperty({
+    example: 168,
+    description: 'How long the area itself lasts.',
+  })
   ttlHours: number;
+
+  @ApiProperty({
+    example: 24,
+    description:
+      'How long what the guest deploys lasts, which is the shorter of the two and the one that costs. Served rather than assumed, so the screen that states the rule and the sweep that enforces it cannot end up saying different numbers.',
+  })
+  workloadTtlHours: number;
 
   @ApiProperty({
     example: 'https://try.flui.cloud',

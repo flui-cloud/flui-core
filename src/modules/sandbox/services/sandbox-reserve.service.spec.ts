@@ -96,7 +96,7 @@ describe('SandboxReserveService.claim', () => {
     );
 
     const before = Date.now();
-    const { expiresAt } = await service.claim('1.2.3.4');
+    const { expiresAt } = await service.tryClaim('1.2.3.4');
 
     const hours = (expiresAt.getTime() - before) / 3_600_000;
     expect(hours).toBeGreaterThan(23.9);
@@ -116,11 +116,14 @@ describe('SandboxReserveService.claim', () => {
       config,
     );
 
-    await expect(service.claim('1.2.3.4')).resolves.toBeTruthy();
+    await expect(service.tryClaim('1.2.3.4')).resolves.toBeTruthy();
     expect(updates).toHaveLength(2);
   });
 
-  it('refuses rather than inventing a tenancy when the reserve is empty', async () => {
+  // An area costs nothing until its guest deploys something, so an empty
+  // reserve is not a refusal: this service says "none waiting" and the caller
+  // builds one.
+  it('reports an empty reserve rather than inventing a tenancy', async () => {
     const { repo } = repoWith({ ready: [] });
     const service = new SandboxReserveService(
       repo as never,
@@ -128,7 +131,19 @@ describe('SandboxReserveService.claim', () => {
       config,
     );
 
-    await expect(service.claim('1.2.3.4')).rejects.toMatchObject({
+    await expect(service.tryClaim('1.2.3.4')).resolves.toBeNull();
+    expect(refusals).toHaveLength(0);
+  });
+
+  it('counts the refusal when one is finally made', async () => {
+    const { repo } = repoWith({ ready: [] });
+    const service = new SandboxReserveService(
+      repo as never,
+      capacity as never,
+      config,
+    );
+
+    await expect(service.refuseAsFull()).rejects.toMatchObject({
       response: { code: 'SANDBOX_FULL' },
     });
     expect(refusals.length).toBeGreaterThan(0);
@@ -147,7 +162,7 @@ describe('SandboxReserveService.claim', () => {
       config,
     );
 
-    await expect(service.claim('1.2.3.4')).rejects.toMatchObject({
+    await expect(service.refuseAsFull()).rejects.toMatchObject({
       response: { message: expect.stringContaining('about 4 minutes') },
     });
   });
@@ -160,7 +175,7 @@ describe('SandboxReserveService.claim', () => {
       config,
     );
 
-    const failure = await service.claim('1.2.3.4').catch((e) => e);
+    const failure = await service.refuseAsFull().catch((e) => e);
     expect(failure.response.message).toContain('as it can hold');
     expect(failure.response.message).not.toContain('minutes');
   });
@@ -176,9 +191,7 @@ describe('SandboxReserveService.claim', () => {
       config,
     );
 
-    await expect(service.claim('1.2.3.4')).rejects.toMatchObject({
-      response: { code: 'SANDBOX_FULL' },
-    });
+    await expect(service.tryClaim('1.2.3.4')).resolves.toBeNull();
     expect(updates.length).toBeLessThanOrEqual(5);
   });
 
@@ -190,7 +203,7 @@ describe('SandboxReserveService.claim', () => {
       config,
     );
 
-    await expect(service.claim('1.2.3.4')).rejects.toMatchObject({
+    await expect(service.tryClaim('1.2.3.4')).rejects.toMatchObject({
       response: { code: 'SANDBOX_CLAIM_LIMIT' },
     });
   });
@@ -203,7 +216,7 @@ describe('SandboxReserveService.claim', () => {
       config,
     );
 
-    await service.claim('203.0.113.9');
+    await service.tryClaim('203.0.113.9');
 
     const written = JSON.stringify(updates[0]);
     expect(written).not.toContain('203.0.113.9');
@@ -265,10 +278,19 @@ describe('sandbox configuration', () => {
   it('falls back to sane numbers when the environment says something silly', () => {
     const cfg = loadSandboxConfig({
       SANDBOX_TTL_HOURS: 'banana',
+      SANDBOX_WORKLOAD_TTL_HOURS: '',
       SANDBOX_MAX_CLAIMS_PER_IP: '-4',
     } as NodeJS.ProcessEnv);
-    expect(cfg.ttlHours).toBe(24);
+    expect(cfg.ttlHours).toBe(24 * 7);
+    expect(cfg.workloadTtlHours).toBe(24);
     expect(cfg.maxClaimsPerIp).toBe(3);
+  });
+
+  // Two clocks, and the shorter one belongs to the half that costs: an account
+  // holds a namespace under a quota, a running workload holds memory and CPU.
+  it('lets the account outlive what the guest deployed', () => {
+    const cfg = loadSandboxConfig({} as NodeJS.ProcessEnv);
+    expect(cfg.workloadTtlMs).toBeLessThan(cfg.ttlMs);
   });
 });
 

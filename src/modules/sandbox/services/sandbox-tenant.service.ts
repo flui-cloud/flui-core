@@ -1,15 +1,13 @@
 import { Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { LessThan, Repository } from 'typeorm';
 import { SandboxTenantEntity } from '../entities/sandbox-tenant.entity';
 import { SANDBOX_CONFIG, SandboxConfig } from '../sandbox.config';
 import { ProjectsService } from '../../projects/projects.service';
 import { SandboxBuildTimeline } from './sandbox-build-timeline';
 import { SandboxCapacityService } from './sandbox-capacity.service';
-import { SandboxHistoryService } from './sandbox-history.service';
-import { SandboxReserveService } from './sandbox-reserve.service';
+import { ClaimResult, SandboxReserveService } from './sandbox-reserve.service';
 import { SandboxQuotaService } from './sandbox-quota.service';
-import { SandboxSeedService } from './sandbox-seed.service';
 import { buildSandboxNetworkPolicy } from '../constants/sandbox-network-policy.manifest';
 import { buildNoindexMiddleware } from '../constants/sandbox-noindex';
 import {
@@ -23,6 +21,7 @@ import { IamRoleBindingEntity } from '../../iam/entities/iam-role-binding.entity
 import { IAM_ROLE } from '../../iam/constants/iam-roles';
 import { SHOWCASE_GRANT } from '../../iam/constants/iam-showcase';
 import { ApplicationEntity } from '../../applications/entities/application.entity';
+import { ApplicationDeployService } from '../../applications/services/application-deploy.service';
 import { ClusterEntity } from '../../infrastructure/clusters/entities/cluster.entity';
 import { KubernetesService } from '../../infrastructure/shared/services/kubernetes.service';
 import { EncryptionService } from '../../shared/encryption/services/encryption.service';
@@ -48,8 +47,6 @@ export class SandboxTenantService {
     private readonly reserve: SandboxReserveService,
     private readonly capacity: SandboxCapacityService,
     private readonly quota: SandboxQuotaService,
-    private readonly seed: SandboxSeedService,
-    private readonly history: SandboxHistoryService,
     private readonly k8s: KubernetesService,
     private readonly encryption: EncryptionService,
     @Inject(IDENTITY_DIRECTORY)
@@ -65,6 +62,7 @@ export class SandboxTenantService {
     private readonly applications: Repository<ApplicationEntity>,
     @InjectRepository(ClusterEntity)
     private readonly clusters: Repository<ClusterEntity>,
+    private readonly deploy: ApplicationDeployService,
     private readonly projects: ProjectsService,
     private readonly userManagement: UserManagementService,
     private readonly appEndpoints: AppEndpointService,
@@ -72,6 +70,42 @@ export class SandboxTenantService {
     private readonly tenancySubdomains: TenancySubdomainService,
     private readonly sandboxSubdomains: SandboxSubdomainService,
   ) {}
+
+  /**
+   * Give this visitor an area, building one if none is waiting.
+   *
+   * The reserve is a head start, not a gate. It used to be both: an area only
+   * counted as ready once an application was running inside it, so an empty
+   * reserve meant a two-minute build and the visitor was turned away rather
+   * than made to watch it. An area now installs nothing, so the build is
+   * identity, grants, a namespace under a quota, and a certificate — seconds,
+   * and worth making someone wait for rather than sending them away.
+   *
+   * A refusal here therefore no longer means "the instance is full". It means
+   * the build itself failed, which is worth counting for what it is.
+   */
+  async claimOrBuild(ip: string): Promise<ClaimResult> {
+    const held = await this.reserve.tryClaim(ip);
+    if (held) return held;
+
+    if (!this.config.clusterId) return this.reserve.refuseAsFull();
+
+    try {
+      await this.provision(this.config.clusterId);
+    } catch (error) {
+      this.logger.error(
+        `Building an area on demand failed: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+      return this.reserve.refuseAsFull();
+    }
+
+    // Not the row just built: another visitor may have taken it in between, and
+    // the claim is the only thing allowed to decide who holds what.
+    const claimed = await this.reserve.tryClaim(ip);
+    return claimed ?? this.reserve.refuseAsFull();
+  }
 
   async provision(clusterId: string): Promise<SandboxTenantEntity> {
     const timeline = new SandboxBuildTimeline();
@@ -84,6 +118,11 @@ export class SandboxTenantService {
         sendInvite: false,
         role: IdentityRole.USER,
       });
+
+      // Split from the local row on purpose: with nothing installed for a
+      // guest any more, the identity provider is the longest step in the build
+      // by a wide margin, and a single 'identity' mark hid which half it was.
+      timeline.mark('idp user');
 
       // The local row normally appears on first login. Creating it now is what
       // lets the owner grant exist before the guest ever signs in — the grant
@@ -104,7 +143,7 @@ export class SandboxTenantService {
         userId: user.id,
         idpUserId: created.id,
       });
-      timeline.mark('identity');
+      timeline.mark('local user');
 
       // Two grants, deliberately separate. The first is the tenancy: everything
       // this guest makes, and nothing else. The second is the showcase: read-only
@@ -136,8 +175,9 @@ export class SandboxTenantService {
         'flui.cloud/sandbox-tenant': tenant.id,
       });
       await this.quota.apply(kubeconfig, tenant.namespace);
-      // Both fences go up before anything runs in here, so there is no window in
-      // which a seeded workload is reachable from another tenancy.
+      // Both fences go up before the guest can reach the area at all, so there
+      // is no window in which the first thing they deploy is reachable from
+      // another tenancy.
       await this.k8s.applyManifest(
         kubeconfig,
         buildSandboxNetworkPolicy(tenant.namespace),
@@ -148,11 +188,12 @@ export class SandboxTenantService {
       );
       timeline.mark('namespace');
 
-      // Before the seed, because the seed is what creates the endpoints that
-      // will carry the name: an application deployed before the certificate is
-      // valid keeps the shared hostname for as long as it lives, since a
-      // hostname is written once. This is also the only place the wait is free
-      // — a background refill, not a visitor watching a spinner.
+      // Before anyone is let in, because the first application a guest deploys
+      // is what creates the endpoint that carries the name: deployed before the
+      // certificate is valid, it keeps the shared hostname for as long as it
+      // lives, since a hostname is written once. This is also the only place
+      // the wait is free — a background refill, not a visitor watching a
+      // spinner.
       //
       // Never fatal: a tenancy without its own certificate is a tenancy on the
       // shared name, which is where every tenancy is today.
@@ -169,28 +210,13 @@ export class SandboxTenantService {
         timeline.mark('tenancy certificate');
       }
 
-      // Readiness waits for the seed. A tenancy is only warm once there is
-      // something running in it — that is the whole reason the reserve exists.
-      const installId = await this.seed.seed({ ...tenant, userId: user.id });
-      timeline.mark('seed queued');
-      const seeded = await this.seed.waitUntilSeeded(installId);
-      if (!seeded) {
-        throw new Error(
-          `seed install ${installId} did not reach Running — tenancy not offered`,
-        );
-      }
-      timeline.mark('seed running');
-
-      // The seed leaves a database with about a minute of rows in it. This is
-      // where the tenancy stops looking newly born: a copy of what the
-      // reference instance has actually accumulated. Done here, on a tenancy
-      // nobody holds yet, rather than during the entrance.
-      await this.history.copyInto({ ...tenant, userId: user.id });
-      timeline.mark('history');
-
-      await this.seed.groupUnderProject(tenant);
-      timeline.mark('project');
-
+      // Nothing is installed here, and that is the decision this whole service
+      // now rests on: an empty namespace under a quota costs the cluster
+      // nothing, so an area can be handed to anyone who asks for one and only
+      // starts costing when its guest deploys something. What makes the place
+      // look alive is not theirs — the showcase application the grant above
+      // opens, and the example sections — so there is nothing left to build
+      // before a visitor can be let in.
       await this.reserve.markReady(tenant.id, {
         userId: user.id,
         idpUserId: created.id,
@@ -200,7 +226,7 @@ export class SandboxTenantService {
       this.logger.log(
         `Sandbox tenancy ${tenant.namespace} is ready — ${timeline}`,
       );
-      // Back into the rule that decides how many to keep warm, so a seed that
+      // Back into the rule that decides how many to keep warm, so a step that
       // gets slower widens the buffer by itself instead of waiting for somebody
       // to notice and edit a number.
       this.capacity.recordBuild(timeline.totalMs / 1000);
@@ -215,6 +241,60 @@ export class SandboxTenantService {
       );
       throw error;
     }
+  }
+
+  /**
+   * Delete what a guest deployed more than one workload lifetime ago, and leave
+   * the area standing.
+   *
+   * This is the half of the demo that costs: an area holds a namespace under a
+   * quota and nothing else, while a running workload holds memory and CPU that
+   * a visitor who left hours ago is not using. Two clocks, so the account can
+   * outlive the machines it started.
+   *
+   * Removal goes through the same path a person's own delete takes rather than
+   * a shortcut written here: the shortcut would drop the rows and leave the
+   * cluster holding the pods, which is the failure mode the reaper exists to
+   * avoid. `LessThan(createdAt)` rather than anything about activity — "what
+   * you deploy lives a day" is a rule a visitor can be told in one line.
+   */
+  async sweepExpiredWorkloads(): Promise<number> {
+    const held = await this.reserve.findClaimed();
+    if (held.length === 0) return 0;
+
+    const cutoff = new Date(Date.now() - this.config.workloadTtlMs);
+    let removed = 0;
+
+    for (const tenant of held) {
+      const stale = await this.applications.find({
+        where: {
+          clusterId: tenant.clusterId,
+          k8sNamespace: tenant.namespace,
+          createdAt: LessThan(cutoff),
+        },
+        select: { id: true, slug: true },
+      });
+
+      for (const app of stale) {
+        try {
+          await this.deploy.deleteApplication(app.id);
+          removed += 1;
+        } catch (error) {
+          // One application refusing to go is not a reason to leave the rest
+          // of the instance paying for the others.
+          this.logger.warn(
+            `Could not remove ${app.slug} from ${tenant.namespace}: ${this.msg(error)}`,
+          );
+        }
+      }
+    }
+
+    if (removed > 0) {
+      this.logger.log(
+        `Removed ${removed} workload(s) past their ${this.config.workloadTtlHours}h in areas that stay`,
+      );
+    }
+    return removed;
   }
 
   /**

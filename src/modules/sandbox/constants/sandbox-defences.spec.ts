@@ -2,7 +2,7 @@ import * as yaml from 'js-yaml';
 import { buildSandboxNetworkPolicy } from './sandbox-network-policy.manifest';
 import { buildNoindexMiddleware, SANDBOX_ROBOTS_TXT } from './sandbox-noindex';
 import { buildPrepullManifest } from './sandbox-prepull.manifest';
-import { isFastCatalogApp, SEEDED_METADATA } from './sandbox-seed';
+import { isFastCatalogApp } from './sandbox-seed';
 
 describe('network policy around a tenancy', () => {
   const policy = () =>
@@ -108,15 +108,8 @@ describe('image pre-pull', () => {
   });
 });
 
-describe('the seed', () => {
-  it('declares itself as seeded, because unlabelled content reads as a leak', () => {
-    expect(SEEDED_METADATA['flui.cloud/seeded']).toBe('true');
-    expect(SEEDED_METADATA['flui.cloud/seeded-note']).toContain(
-      'Seeded by Flui',
-    );
-  });
-
-  it('keeps the heavy catalog applications out of the guided path', () => {
+describe('the guided path', () => {
+  it('keeps the heavy catalog applications out of it', () => {
     expect(isFastCatalogApp('gitea')).toBe(true);
     expect(isFastCatalogApp('immich')).toBe(false);
     expect(isFastCatalogApp('nextcloud')).toBe(false);
