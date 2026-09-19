@@ -7,18 +7,35 @@ on:
     tags:
       - 'v*'
   workflow_dispatch:
-    inputs:
-      multiarch:
-        description: 'Also build linux/arm64 (slow QEMU emulation)'
-        type: boolean
-        default: false
 
 env:
   IMAGE_NAME: ghcr.io/flui-cloud/core
 
 jobs:
-  build-and-push:
-    runs-on: ubuntu-latest
+  # One runner per architecture, each building natively.
+  #
+  # arm64 used to be emulated with QEMU on an amd64 runner, which is both slow
+  # and unsound: a release build was seen dying with `qemu: uncaught target
+  # signal 4 (Illegal instruction)` inside `pnpm install`, after which the step
+  # retried forever and the job sat there until somebody noticed. Building each
+  # architecture on its own machine removes the emulator from the picture, and
+  # costs nothing here because arm64 runners are free for public repositories.
+  #
+  # Each job pushes an untagged image by digest; `merge` is what gives the
+  # release its name, once both architectures exist.
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux/amd64
+            runner: ubuntu-latest
+          - platform: linux/arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    # A build that has stopped making progress should say so, not occupy a
+    # runner for the six hours GitHub allows by default.
+    timeout-minutes: 30
     permissions:
       contents: read
       packages: write
@@ -26,24 +43,65 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # arm64 (QEMU-emulated) is slow, so build it only for releases (v* tags)
-      # or on-demand via workflow_dispatch. Branch pushes stay amd64-only for a
-      # fast dev/test loop.
-      - name: Decide target platforms
-        id: platforms
-        run: |
-          if [ "${{ startsWith(github.ref, 'refs/tags/v') || inputs.multiarch }}" = "true" ]; then
-            echo "list=linux/amd64,linux/arm64" >> "$GITHUB_OUTPUT"
-            echo "arm=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "list=linux/amd64" >> "$GITHUB_OUTPUT"
-            echo "arm=false" >> "$GITHUB_OUTPUT"
-          fi
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
 
-      # QEMU is only needed to emulate arm64 on the amd64 runner.
-      - name: Set up QEMU
-        if: steps.platforms.outputs.arm == 'true'
-        uses: docker/setup-qemu-action@v3
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Name the architecture for the cache scope
+        id: arch
+        run: echo "slug=${PLATFORM//\//-}" >> "$GITHUB_OUTPUT"
+        env:
+          PLATFORM: ${{ matrix.platform }}
+
+      - name: Build and push by digest
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: ${{ matrix.platform }}
+          # Nothing was cached between releases before, so every build repeated
+          # the whole install and compile. The scope is per-architecture: one
+          # shared scope would have the two jobs overwrite each other's layers.
+          cache-from: type=gha,scope=${{ steps.arch.outputs.slug }}
+          cache-to: type=gha,mode=max,scope=${{ steps.arch.outputs.slug }}
+          outputs: type=image,name=${{ env.IMAGE_NAME }},push-by-digest=true,name-canonical=true,push=true
+
+      - name: Export the digest
+        run: |
+          mkdir -p /tmp/digests
+          touch "/tmp/digests/${DIGEST#sha256:}"
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: digests-${{ steps.arch.outputs.slug }}
+          path: /tmp/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  # The tags live here, and only here: an image named before both architectures
+  # exist is a tag that resolves for half the fleet.
+  merge:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: /tmp/digests
+          pattern: digests-*
+          merge-multiple: true
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -66,18 +124,19 @@ jobs:
             type=sha,prefix=,format=short
             type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v') }}
 
-      - name: Build and push
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          platforms: ${{ steps.platforms.outputs.list }}
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
+      - name: Create the manifest list
+        working-directory: /tmp/digests
+        run: |
+          docker buildx imagetools create \
+            $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
+            $(printf "${IMAGE_NAME}@sha256:%s " *)
+
+      - name: Check what was published
+        run: docker buildx imagetools inspect "${IMAGE_NAME}:${{ steps.meta.outputs.version }}"
 
   publish-release-index:
     name: Publish release index
-    needs: build-and-push
+    needs: merge
     # Only a real release: `main` pushes and workflow_dispatch build images
     # without cutting a release, and get nothing added to releases.json.
     if: startsWith(github.ref, 'refs/tags/v')
