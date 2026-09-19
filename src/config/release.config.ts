@@ -24,19 +24,18 @@ export interface ReleaseManifest {
 }
 
 export const RELEASE: ReleaseManifest = {
-  version: '0.13.0-rc.5',
-  // A commit ref, not a tag: bootstrap-scripts did not move for this release, so
-  // this is the same head rc.4 pinned. `requiresBootstrap` is derived from it
-  // being unchanged, which is what makes this release installable in place.
-  bootstrapRef: 'dcefc2b',
+  version: '0.13.0-rc.6',
+  // A commit ref, not a tag. bootstrap-scripts moved for this release: node-local
+  // storage is now a quota-capable filesystem of its own, and the alert rules can
+  // see a single volume fill. An installation that does not pick this ref up gets
+  // neither, so `requiresBootstrap` is derived from the ref having changed.
+  bootstrapRef: '4be1bb8',
   images: {
-    // Release tags, as every tagged release before rc.4 used: the tag build is
-    // what makes an image exist under the release's own name. Both repositories
-    // are tagged `v0.13.0-rc.5` — the dashboard did not change, but its image
-    // has to answer to this version or a rollout waits on a pull that cannot
-    // succeed.
-    fluiApi: '0.13.0-rc.5',
-    fluiWeb: '0.13.0-rc.5',
+    // Release tags: the tag build is what makes an image exist under the
+    // release's own name. Both repositories are tagged `v0.13.0-rc.6`, so a
+    // rollout never waits on a pull that cannot succeed.
+    fluiApi: '0.13.0-rc.6',
+    fluiWeb: '0.13.0-rc.6',
     // Pinned by its own version, not the platform's, and it did not move.
     fluiAuthz: '0.6.0',
   },

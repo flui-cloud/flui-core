@@ -2,6 +2,24 @@
   "schemaVersion": 1,
   "releases": [
     {
+      "version": "0.13.0-rc.6",
+      "publishedAt": "2026-09-19T11:38:05.426Z",
+      "bootstrapRef": "4be1bb8",
+      "images": {
+        "fluiApi": "0.13.0-rc.6",
+        "fluiWeb": "0.13.0-rc.6",
+        "fluiAuthz": "0.6.0"
+      },
+      "notes": [
+        "Node-local storage is a quota-capable filesystem of its own, so a tenancy's disk ceiling can be enforced and one workload can no longer fill the node's root disk.",
+        "Storage usage is measured per application and per tenancy, and a volume can be resized where the storage class allows it.",
+        "Critical alerts reach the instance's administrators by email, including the ones no application owns.",
+        "Guest inference is metered and pinned to the model the instance chose."
+      ],
+      "migrations": 1,
+      "requiresBootstrap": true
+    },
+    {
       "version": "0.13.0-rc.4",
       "publishedAt": "2026-09-15T17:25:40+02:00",
       "bootstrapRef": "dcefc2b",
