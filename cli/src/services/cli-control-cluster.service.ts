@@ -21,6 +21,26 @@ import { checkTcpPort } from '../lib/utils/tcp-port';
 import { SshMode } from '../lib/ssh-mode';
 import { contextScopedName } from '../lib/context-stamp';
 
+/** A reading of one workload, or the absence of one. */
+export type ServiceHealth = 'healthy' | 'unreachable' | 'unknown';
+
+export interface ObservabilityServices {
+  prometheus: ServiceHealth;
+  grafana: ServiceHealth;
+  loki: ServiceHealth;
+  postgres: ServiceHealth;
+  redis: ServiceHealth;
+  fluiApi: ServiceHealth;
+  fluiWeb: ServiceHealth;
+}
+
+export interface ObservabilityHealth extends ObservabilityServices {
+  /** Whether the master could be reached at all. When false, read nothing into the statuses. */
+  checked: boolean;
+  /** What stopped the check, when it could not run. */
+  reason?: string;
+}
+
 /**
  * CLI Control Cluster Service
  *
@@ -565,33 +585,26 @@ export class CliControlClusterService {
    * @param masterIp Master node IP address
    * @returns Object with service health status
    */
+  /**
+   * Readiness of the platform workloads, read over SSH.
+   *
+   * `checked` is the field that matters. The readings below are only worth
+   * anything when it is true: reaching the master is a precondition of asking
+   * at all, so a failure there says nothing whatsoever about the services —
+   * and reporting it as though every one of them were down sends somebody to
+   * look for a fault in a cluster that is very probably healthy.
+   */
   async checkObservabilityServices(
     masterIp: string,
     _nipHostnameToken?: string | null,
     ssh?: { host: string; port: number; user: string },
-  ): Promise<{
-    prometheus: 'healthy' | 'unreachable';
-    grafana: 'healthy' | 'unreachable';
-    loki: 'healthy' | 'unreachable';
-    postgres: 'healthy' | 'unreachable';
-    redis: 'healthy' | 'unreachable';
-    fluiApi: 'healthy' | 'unreachable';
-    fluiWeb: 'healthy' | 'unreachable';
-  }> {
+  ): Promise<ObservabilityHealth> {
     // With the closed-firewall policy, services aren't reachable publicly and
     // the master node host can't resolve cluster DNS. Health = workload
     // readiness, queried with one combined kubectl call (sshExec is blocking,
     // Promise.all wouldn't actually parallelize separate ssh invocations).
+    type Result = ObservabilityServices;
     type Lookup = { ns: string; name: string; key: keyof Result };
-    type Result = {
-      prometheus: 'healthy' | 'unreachable';
-      grafana: 'healthy' | 'unreachable';
-      loki: 'healthy' | 'unreachable';
-      postgres: 'healthy' | 'unreachable';
-      redis: 'healthy' | 'unreachable';
-      fluiApi: 'healthy' | 'unreachable';
-      fluiWeb: 'healthy' | 'unreachable';
-    };
 
     // Match by (unique) workload name only — the observability stack lives in
     // `flui-control` on new installs and `flui-observability` on legacy ones.
@@ -605,14 +618,16 @@ export class CliControlClusterService {
       { ns: 'flui-system', name: 'flui-web', key: 'fluiWeb' },
     ];
 
+    // `unknown` until something is actually read, so a check that never ran
+    // cannot be mistaken for a check that came back bad.
     const result: Result = {
-      prometheus: 'unreachable',
-      grafana: 'unreachable',
-      loki: 'unreachable',
-      postgres: 'unreachable',
-      redis: 'unreachable',
-      fluiApi: 'unreachable',
-      fluiWeb: 'unreachable',
+      prometheus: 'unknown',
+      grafana: 'unknown',
+      loki: 'unknown',
+      postgres: 'unknown',
+      redis: 'unknown',
+      fluiApi: 'unknown',
+      fluiWeb: 'unknown',
     };
 
     interface WorkloadItem {
@@ -662,11 +677,15 @@ export class CliControlClusterService {
         result[lookup.key] =
           replicas > 0 && ready === replicas ? 'healthy' : 'unreachable';
       }
-    } catch {
-      // On SSH failure, leave defaults (all unreachable).
+    } catch (error) {
+      return {
+        ...result,
+        checked: false,
+        reason: (error as Error).message,
+      };
     }
 
-    return result;
+    return { ...result, checked: true };
   }
 
   /**

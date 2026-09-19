@@ -135,10 +135,34 @@ export default class EnvStatus extends Command {
         nipHostnameToken,
         sshTarget,
       );
+      // Reaching the master is a precondition of asking, so a failure there is
+      // not an answer about the services. Printing seven red rows for workloads
+      // nothing ever looked at sends somebody hunting a fault in a cluster that
+      // is almost certainly fine — which is exactly what the readings would be
+      // worth here.
+      if (!servicesHealth.checked) {
+        spinner.warn('Could not check the services');
+        console.log(
+          `\n   ${chalk.yellow('Nothing was read')} — the services may well be running.\n`,
+        );
+        if (servicesHealth.reason) {
+          // The transport's own wrapper adds nothing a reader needs; what helps
+          // is the sentence underneath it, which names the host and the port.
+          const why = servicesHealth.reason.replace(/^Command failed:\s*/, '');
+          console.log(`   ${why}\n`);
+        }
+        console.log(
+          chalk.dim(
+            '   Usually the firewall: port 22 is open to one address, and yours has changed.\n',
+          ),
+        );
+        console.log(`     ${chalk.cyan.bold('flui env update-firewall')}\n`);
+        return spinner;
+      }
+
       spinner.succeed('Services health checked');
 
       console.log(chalk.cyan('\n📊 Observability Services Status:\n'));
-      const note = chalk.dim('(deployment ready)');
       const rows: Array<[string, string]> = [
         ['Metrics:   ', servicesHealth.prometheus],
         ['Grafana:   ', servicesHealth.grafana],
@@ -149,8 +173,14 @@ export default class EnvStatus extends Command {
         ['Dashboard: ', servicesHealth.fluiWeb],
       ];
       for (const [label, status] of rows) {
-        const icon = status === 'healthy' ? '✅' : '❌';
-        const color = status === 'healthy' ? chalk.green : chalk.red;
+        const healthy = status === 'healthy';
+        const icon = healthy ? '✅' : '❌';
+        const color = healthy ? chalk.green : chalk.red;
+        // Only claimed where it was read: the note used to be printed on every
+        // row, including rows that were never anything but a default.
+        const note = healthy
+          ? chalk.dim('(deployment ready)')
+          : chalk.dim('(deployment not ready)');
         console.log(`   ${icon} ${chalk.bold(label)} ${color(status)} ${note}`);
       }
     } catch (error) {

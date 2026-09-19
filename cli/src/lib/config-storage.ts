@@ -14,6 +14,7 @@ import {
   type ProfileKey,
 } from './vault/vault-crypto';
 import { VaultLockedError, getProfileKey } from './vault/session-key';
+import { VaultFile } from './vault/vault-file';
 
 /**
  * The sealing primitives, applied to whichever key is in play — the vault's, or
@@ -21,6 +22,18 @@ import { VaultLockedError, getProfileKey } from './vault/session-key';
  * same `iv:authTag:ciphertext` shape, so the stored format never changes and a
  * half-migrated profile is still a readable one.
  */
+/**
+ * Raised instead of a decryption failure when the only key available is a key
+ * file that opens nothing. It carries its own instruction, so callers pass it
+ * through rather than wrapping it in a sentence about ciphertext.
+ */
+export class StaleKeyFileError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'StaleKeyFileError';
+  }
+}
+
 function encryptWith(key: Buffer, plaintext: string): string {
   return sealValue(key as ProfileKey, plaintext);
 }
@@ -86,13 +99,43 @@ export class ConfigStorage {
    */
   private get encryptionKey(): Buffer {
     const fromVault = getProfileKey(this.profileName);
-    if (fromVault) return fromVault;
+    if (fromVault) {
+      this.keySource = 'vault';
+      return fromVault;
+    }
 
     if (existsSync(this.encryptionKeyFile)) {
+      this.keySource = 'legacy';
       return readFileSync(this.encryptionKeyFile);
     }
 
     throw new VaultLockedError(this.profileName);
+  }
+
+  /** Which key the last read used, so a failure can name the likely reason. */
+  private keySource: 'vault' | 'legacy' | null = null;
+
+  /**
+   * A key file that cannot open this profile's secrets.
+   *
+   * It is the leftover of a CLI old enough to mint one on demand, and it is
+   * dangerous precisely because it exists: the lookup above takes it as proof
+   * the profile predates the vault, so a locked vault stops announcing itself
+   * and every read fails as `unable to authenticate data` instead. That reads
+   * as corrupted data, and sends somebody looking for a lost credential rather
+   * than typing a passphrase.
+   */
+  private staleKeyFileError(): Error {
+    const vaultSealed = new VaultFile().exists();
+    if (!vaultSealed) return new Error('The stored value could not be opened.');
+
+    return new StaleKeyFileError(
+      `The credentials for profile "${this.profileName}" could not be opened.\n` +
+        `  They are sealed under the vault, and the vault is locked.\n` +
+        `  Unlock it with:  flui vault unlock\n` +
+        `  (${this.encryptionKeyFile} is a leftover from an older CLI and opens nothing; ` +
+        `unlocking replaces it.)`,
+    );
   }
 
   /** True when this profile still holds secrets sealed under the old key file. */
@@ -158,7 +201,15 @@ export class ConfigStorage {
   }
 
   private decrypt(ciphertext: string): string {
-    return decryptWith(this.encryptionKey, ciphertext);
+    const key = this.encryptionKey;
+    try {
+      return decryptWith(key, ciphertext);
+    } catch (error) {
+      // Only the key file can be wrong this way: a vault key that opens one
+      // value opens them all, so a failure there is a real one and is passed on.
+      if (this.keySource === 'legacy') throw this.staleKeyFileError();
+      throw error;
+    }
   }
 
   /**
@@ -242,6 +293,7 @@ export class ConfigStorage {
       // A closed vault is not a decryption failure, and saying so sends the
       // reader looking for corrupt data instead of typing their passphrase.
       if (error instanceof VaultLockedError) throw error;
+      if (error instanceof StaleKeyFileError) throw error;
       throw new Error(
         `Failed to decrypt token for ${provider}: ${error.message}`,
       );
@@ -309,6 +361,7 @@ export class ConfigStorage {
       return JSON.parse(decrypted);
     } catch (error) {
       if (error instanceof VaultLockedError) throw error;
+      if (error instanceof StaleKeyFileError) throw error;
       throw new Error(
         `Failed to decrypt credentials for ${provider}: ${error.message}`,
       );
@@ -451,6 +504,10 @@ export class ConfigStorage {
     try {
       return this.decrypt(config.apiKey);
     } catch {
+      // Deliberately silent, unlike the token and credential readers: this is
+      // read while dependencies are being constructed, so throwing here turns
+      // a locked vault into a stack trace on every command. The actionable
+      // message belongs where a secret is actually being used.
       return null;
     }
   }
