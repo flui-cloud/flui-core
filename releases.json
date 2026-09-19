@@ -2,6 +2,23 @@
   "schemaVersion": 1,
   "releases": [
     {
+      "version": "0.13.0-rc.7",
+      "publishedAt": "2026-09-19T13:55:01.955Z",
+      "bootstrapRef": "4be1bb8",
+      "images": {
+        "fluiApi": "0.13.0-rc.7",
+        "fluiWeb": "0.13.0-rc.7",
+        "fluiAuthz": "0.6.0"
+      },
+      "notes": [
+        "Every node now gets a quota-capable filesystem for application data, so a tenancy's disk ceiling can be enforced and one workload can no longer fill the node's root disk. New nodes only: a bootstrap script runs when a node is created.",
+        "A guest's enforced disk ceiling is now sized for the bytes they write, separately from the declared sizes that govern how many applications they may install.",
+        "The CLI names a locked vault instead of reporting a decryption failure, and says when a health check could not reach the cluster rather than calling every service down."
+      ],
+      "migrations": 0,
+      "requiresBootstrap": false
+    },
+    {
       "version": "0.13.0-rc.6",
       "publishedAt": "2026-09-19T11:38:05.426Z",
       "bootstrapRef": "4be1bb8",
