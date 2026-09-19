@@ -26,4 +26,27 @@ export interface InferenceEndpoint {
   apiKey: string;
   /** Default chat model for this source (provider default or BYO connection's first model). */
   defaultModel?: string;
+  /**
+   * The model this caller gets, whatever they asked for.
+   *
+   * Set only where the choice is not the caller's to make — a sandbox guest,
+   * whose inference the instance pays for. It rides on the endpoint rather than
+   * being a second argument because every caller already threads the endpoint
+   * from `resolveEndpoint` into `resolveModel`: a pin that travels with the
+   * object cannot be forgotten by the seventh caller added next year.
+   */
+  pinnedModel?: string;
+  /**
+   * On whose behalf this call is made, for the ledger and for the budget.
+   *
+   * It rides here for the same reason the pin does: every caller already
+   * threads the endpoint from `resolveEndpoint` into the call, so the meter
+   * cannot be left off by a caller who did not know it existed. An endpoint
+   * without a spender is the platform calling on its own behalf.
+   */
+  spender?: {
+    userId: string | null;
+    guest: boolean;
+    surface: string;
+  };
 }

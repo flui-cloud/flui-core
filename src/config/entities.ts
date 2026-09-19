@@ -57,6 +57,7 @@ import { BackupArtifactEntity } from '../modules/backups/entities/backup-artifac
 import { BackupArtifactLocationEntity } from '../modules/backups/entities/backup-artifact-location.entity';
 import { RestoreJobEntity } from '../modules/backups/entities/restore-job.entity';
 import { InferenceConnectionEntity } from '../modules/inference/entities/inference-connection.entity';
+import { InferenceUsageEventEntity } from '../modules/inference/entities/inference-usage-event.entity';
 import { AssistantMessageLogEntity } from '../modules/assistant/entities/assistant-message-log.entity';
 import { McpToolCallLogEntity } from '../modules/mcp/entities/mcp-tool-call-log.entity';
 import { IamRoleBindingEntity } from '../modules/iam/entities/iam-role-binding.entity';
@@ -131,6 +132,7 @@ export const entities = [
   BackupArtifactLocationEntity,
   RestoreJobEntity,
   InferenceConnectionEntity,
+  InferenceUsageEventEntity,
   AssistantMessageLogEntity,
   McpToolCallLogEntity,
   IamRoleBindingEntity,

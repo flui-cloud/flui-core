@@ -56,9 +56,11 @@ export class FulltextAssistService {
     selection: InferenceSelection = {},
   ): Promise<FulltextSearchSuggestion> {
     const indexes = await this.indexNames(input);
-    const { endpoint } = await this.inference.resolveEndpoint(selection, {
-      userId: input.fluiUserId,
-    });
+    const { endpoint } = await this.inference.resolveEndpoint(
+      selection,
+      { userId: input.fluiUserId },
+      'console:fulltext',
+    );
     const model = await this.inference.resolveModel(selection, endpoint);
     const system = [
       'You are a Meilisearch copilot. Translate the user request into a single search.',
@@ -98,9 +100,11 @@ export class FulltextAssistService {
     selection: InferenceSelection = {},
   ): Promise<FulltextRawSuggestion> {
     const indexes = await this.indexNames(input);
-    const { endpoint } = await this.inference.resolveEndpoint(selection, {
-      userId: input.fluiUserId,
-    });
+    const { endpoint } = await this.inference.resolveEndpoint(
+      selection,
+      { userId: input.fluiUserId },
+      'console:fulltext',
+    );
     const model = await this.inference.resolveModel(selection, endpoint);
     const system = [
       'You are a Meilisearch copilot for a raw REST "Dev Tools" console. Translate the request into ONE REST call.',

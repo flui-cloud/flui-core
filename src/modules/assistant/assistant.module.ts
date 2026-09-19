@@ -18,6 +18,7 @@ import { BackupsModule } from '../backups/backups.module';
 import { DbLifecycleModule } from '../db-lifecycle/db-lifecycle.module';
 import { AppMigrationModule } from '../app-migration/app-migration.module';
 import { FullMigrationModule } from '../full-migration/full-migration.module';
+import { UserEntity } from '../auth/entities/user.entity';
 import { AssistantMessageLogEntity } from './entities/assistant-message-log.entity';
 import { AssistantAuditRepository } from './repositories/assistant-audit.repository';
 import { AssistantLlmService } from './services/assistant-llm.service';
@@ -40,7 +41,7 @@ import { AssistantController } from './controllers/assistant.controller';
     // BEFORE it makes a call, and the decorations are the only honest source.
     DiscoveryModule,
     MailModule,
-    TypeOrmModule.forFeature([AssistantMessageLogEntity]),
+    TypeOrmModule.forFeature([AssistantMessageLogEntity, UserEntity]),
     InferenceModule,
     McpModule,
     IamModule,

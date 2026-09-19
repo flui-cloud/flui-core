@@ -8,12 +8,14 @@ import {
   Param,
   ParseEnumPipe,
   Post,
+  Query,
   Request,
 } from '@nestjs/common';
 import {
   ApiBearerAuth,
   ApiOperation,
   ApiParam,
+  ApiQuery,
   ApiResponse,
   ApiTags,
 } from '@nestjs/swagger';
@@ -21,6 +23,7 @@ import { CloudProvider } from '../../providers/enums/cloud-provider.enum';
 import { ValidationResultDto } from '../../management/dto/validation-result.dto';
 import { InferenceProviderService } from '../services/inference-provider.service';
 import { InferenceConnectionService } from '../services/inference-connection.service';
+import { InferenceUsageService } from '../services/inference-usage.service';
 import { CreateInferenceConnectionDto } from '../dto/create-inference-connection.dto';
 import { InferenceProviderInfoDto } from '../dto/inference-provider-info.dto';
 import { InferenceConnectionDto } from '../dto/inference-connection.dto';
@@ -35,7 +38,44 @@ export class InferenceController {
   constructor(
     private readonly providers: InferenceProviderService,
     private readonly connections: InferenceConnectionService,
+    private readonly usage: InferenceUsageService,
   ) {}
+
+  /**
+   * What inference has cost this installation, and who spent it.
+   *
+   * Behind `integration:manage` — the same permission that connects a model
+   * account in the first place — because this is the other half of that job:
+   * whoever may attach the account is who has to watch what it costs.
+   */
+  @Get('usage')
+  @RequirePermission(IAM_PERMISSION.INTEGRATION_MANAGE)
+  @ApiOperation({
+    summary: 'Token usage by model and by person',
+    description:
+      'Rows are written by the one point every surface reaches a provider through — the assistant and the console copilots alike — so this is the whole bill, not one screen of it. `estimated` counts the calls whose provider reported nothing and whose size was worked out from the text.',
+  })
+  @ApiQuery({
+    name: 'days',
+    required: false,
+    description: 'Window to report on. Default 7; 0 means everything.',
+  })
+  async usageReport(@Query('days') days?: string): Promise<{
+    since: string | null;
+    byModel: Awaited<ReturnType<InferenceUsageService['byModel']>>;
+    byPerson: Awaited<ReturnType<InferenceUsageService['byPerson']>>;
+  }> {
+    const window = Number(days ?? 7);
+    const since =
+      Number.isFinite(window) && window > 0
+        ? new Date(Date.now() - window * 86_400_000)
+        : undefined;
+    const [byModel, byPerson] = await Promise.all([
+      this.usage.byModel(since),
+      this.usage.byPerson(since),
+    ]);
+    return { since: since?.toISOString() ?? null, byModel, byPerson };
+  }
 
   @Get('providers')
   @ApiOperation({

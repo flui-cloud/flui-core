@@ -56,6 +56,11 @@ import { MaskModule } from './modules/mask/mask.module';
 import { PlatformUpdatesModule } from './modules/platform-updates/platform-updates.module';
 import { AttachedServicesModule } from './modules/attached-services/attached-services.module';
 
+const boolOr = (raw: string | undefined, fallback: boolean): boolean =>
+  raw === undefined || raw === null || raw === ''
+    ? fallback
+    : raw.toLowerCase() === 'true';
+
 @Module({
   imports: [
     ConfigModule.forRoot({
@@ -79,8 +84,21 @@ import { AttachedServicesModule } from './modules/attached-services/attached-ser
         // Prod aligns the schema through versioned migrations run at boot;
         // synchronize (auto-DDL) is dev-only — in prod it can drop/alter
         // destructively and drifts silently when the image adds columns.
-        synchronize: configService.get('NODE_ENV') !== 'production',
-        migrationsRun: configService.get('NODE_ENV') === 'production',
+        //
+        // Both are overridable because NODE_ENV alone cannot express the case
+        // that matters most here: a developer's API, which is `development` by
+        // every other measure, pointed at an instance's real database through
+        // `flui dev tunnel`. Auto-DDL against that database would rewrite a
+        // live schema to match a working tree, and boot-time migrations would
+        // apply a change the deployed image does not yet know how to read.
+        synchronize: boolOr(
+          configService.get<string>('DB_SYNCHRONIZE'),
+          configService.get('NODE_ENV') !== 'production',
+        ),
+        migrationsRun: boolOr(
+          configService.get<string>('DB_MIGRATIONS_RUN'),
+          configService.get('NODE_ENV') === 'production',
+        ),
         migrations,
       }),
       inject: [ConfigService],

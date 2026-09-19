@@ -61,6 +61,12 @@ export interface ChatCompletionChunk {
   created: number;
   model: string;
   choices: ChatCompletionChunkChoice[];
+  /**
+   * Present only on the final frame, and only when the request asked for it
+   * (`stream_options.include_usage`). A provider that does not send one leaves
+   * the caller to work the cost out from the text.
+   */
+  usage?: ChatCompletionUsage;
 }
 
 export interface ChatCompletionChoice {

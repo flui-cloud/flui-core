@@ -29,6 +29,7 @@ import { AssistantRecommendationsDto } from '../dto/assistant-recommendations.dt
 import { AgentStreamEvent } from '../interfaces/agent-events';
 import { credentialFromRequest } from '../../mcp/services/mcp-api.client';
 import { actorFromRequest } from '../../auth/utils/actor.util';
+import { AssistantInferenceService } from '../services/assistant-inference.service';
 
 interface AuthenticatedRequest extends ExpressRequest {
   user: AuthenticatedUser;
@@ -44,6 +45,7 @@ export class AssistantController {
     private readonly knowledge: KnowledgeService,
     private readonly recommendations: AssistantRecommendationsService,
     private readonly config: ConfigService,
+    private readonly inference: AssistantInferenceService,
   ) {}
 
   @Get('info')
@@ -59,6 +61,30 @@ export class AssistantController {
           this.config.get<string>('MCP_ALLOW_DESTRUCTIVE') === 'true',
       },
     };
+  }
+
+  /**
+   * What is left of the share this area came with.
+   *
+   * Answered for the caller and nobody else — there is no id to pass, so there
+   * is nothing to change to read somebody else's. A member gets no budget at
+   * all, and says so with `budget: null` rather than a large number that would
+   * read as a limit they are approaching.
+   */
+  @Get('usage')
+  @ApiOperation({
+    summary:
+      'Assistant tokens this caller has spent, and the share they were given',
+  })
+  @ApiResponse({ status: 200 })
+  async usage(@Request() req: AuthenticatedRequest): Promise<{
+    spent: number;
+    budget: number | null;
+  }> {
+    const user = req.user as AuthenticatedUser;
+    const { spent, budget } = await this.inference.guestUsage(user.userId);
+    const guest = await this.inference.isGuest(user.userId);
+    return { spent, budget: guest ? budget : null };
   }
 
   @Get('recommendations')
