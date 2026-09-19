@@ -19,6 +19,10 @@ import {
 import { AppBuildEntity } from '../../app-builds/entities/app-build.entity';
 import { AppBuildStatus } from '../../app-builds/enums/app-build-status.enum';
 import { ApplicationService } from './application.service';
+import {
+  ClusterEntity,
+  ClusterStatus,
+} from '../../infrastructure/clusters/entities/cluster.entity';
 import { ApplicationEntity } from '../entities/application.entity';
 import { AppRevisionsRepository } from '../repositories/app-revisions.repository';
 import { ApplicationStatus } from '../enums/application-status.enum';
@@ -71,6 +75,8 @@ export class ApplicationDeployService {
     private readonly operationRepository: Repository<InfrastructureOperationEntity>,
     @InjectRepository(ApplicationEntity)
     private readonly applicationRepository: Repository<ApplicationEntity>,
+    @InjectRepository(ClusterEntity)
+    private readonly clusterRepository: Repository<ClusterEntity>,
     @InjectRepository(AppBuildEntity)
     private readonly appBuildRepository: Repository<AppBuildEntity>,
     @InjectQueue('application-deploy')
@@ -362,6 +368,53 @@ export class ApplicationDeployService {
 
     this.logger.log(`[DELETE] Marking application ${id} status=DELETING`);
     await this.applicationService.updateStatus(id, ApplicationStatus.DELETING);
+
+    /**
+     * Nothing to remove *from*, so nothing is queued.
+     *
+     * A cluster that has been deleted leaves its applications behind: their
+     * rows still say `running`, their endpoints still say `IN_SYNC`, and the
+     * normal path queues a job that will spend its retries looking for a
+     * kubeconfig nobody has. There is no route to a delete except through the
+     * cluster the application belongs to, so without this branch such an
+     * application can never be removed at all.
+     *
+     * The record goes, and the operation says plainly that the machines were
+     * already gone rather than claiming to have cleaned them up.
+     */
+    const cluster = await this.clusterRepository.findOne({
+      where: { id: app.clusterId },
+      select: { id: true, name: true, status: true },
+    });
+    const clusterGone =
+      !cluster ||
+      cluster.status === ClusterStatus.DELETED ||
+      cluster.status === ClusterStatus.DELETING;
+    if (clusterGone) {
+      this.logger.log(
+        `[DELETE] ${app.name} belongs to a cluster that is ${cluster?.status ?? 'no longer registered'} — removing the record only`,
+      );
+      await this.applicationService.softDelete(app.id);
+      const orphanOperation = this.operationRepository.create({
+        operationType: OperationType.DELETE_APPLICATION,
+        status: OperationStatus.COMPLETED,
+        resourceType: 'application',
+        resourceName: app.name,
+        resourceId: app.id,
+        userId,
+        totalSteps: 1,
+        currentStepIndex: 1,
+        currentStepProgress: 100,
+        metadata: {
+          applicationId: app.id,
+          applicationName: app.name,
+          clusterId: app.clusterId,
+          orphan: true,
+          note: `The cluster this application ran on is ${cluster?.status ?? 'no longer registered'}, so only the record was removed.`,
+        },
+      });
+      return this.operationRepository.save(orphanOperation);
+    }
 
     const operationSteps = this.getDeleteOperationSteps();
     const operation = this.operationRepository.create({

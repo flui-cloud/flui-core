@@ -31,19 +31,27 @@ const app = (over: Partial<ApplicationEntity>): ApplicationEntity =>
     ...over,
   }) as unknown as ApplicationEntity;
 
-const build = (rows: ApplicationEntity[]) => {
+const build = (
+  rows: ApplicationEntity[],
+  over: { cluster?: { id: string; name: string; status: string } | null } = {},
+) => {
   const store = [...rows];
   const tagged = () =>
     store.filter((r) => (r.tags ?? []).includes(SHOWCASE_TAG));
+  const wheres: Array<{ clause: string; params: Record<string, unknown> }> = [];
 
   const repo = {
-    // The real read is a `tags @> ARRAY['showcase']` query builder; the stub
-    // answers the same question.
+    // The real read is a jsonb containment query on `tags`. The stub answers
+    // the same question, and records the clause so a test can pin the one part
+    // a stub cannot answer for: what is actually bound to the parameter.
     createQueryBuilder: () => {
       const qb: Record<string, unknown> = {};
       const self = () => qb;
       Object.assign(qb, {
-        where: self,
+        where: (clause: string, params: Record<string, unknown>) => {
+          wheres.push({ clause, params });
+          return qb;
+        },
         orderBy: self,
         getMany: async () => tagged(),
       });
@@ -64,13 +72,47 @@ const build = (rows: ApplicationEntity[]) => {
     mapPrimaryEndpoints: async () =>
       new Map([['a1', { fqdn: 'umami.control-cluster.dawit.blog' }]]),
   };
+  const clusters = {
+    // `in`, not `??`: an explicit null means "no such cluster", which is the
+    // case under test, and `??` would have swallowed it into the default.
+    findOne: async () =>
+      'cluster' in over
+        ? over.cluster
+        : { id: 'c1', name: 'demo', status: 'ready' },
+  };
+
   return {
     store,
-    service: new ShowcaseService(repo as never, endpoints as never),
+    wheres,
+    service: new ShowcaseService(
+      repo as never,
+      clusters as never,
+      endpoints as never,
+    ),
   };
 };
 
 describe('ShowcaseService', () => {
+  /**
+   * A JS array binds as a Postgres array literal, which `@>` against a jsonb
+   * column refuses with `invalid input syntax for type json` — so the read that
+   * follows a successful write fails, and publishing reports an error on an
+   * application it has just published.
+   *
+   * No stub can catch that by answering the question correctly, so this pins
+   * the wire shape instead: JSON text, and a cast that says what it is.
+   */
+  it('asks Postgres for containment in JSON, not in an array literal', async () => {
+    const { service, wheres } = build([app({ tags: [SHOWCASE_TAG] })]);
+    await service.list();
+
+    expect(wheres).toHaveLength(1);
+    expect(wheres[0].clause).toContain('::jsonb');
+    expect(Object.values(wheres[0].params)).toEqual([
+      JSON.stringify([SHOWCASE_TAG]),
+    ]);
+  });
+
   it('is empty until an application carries the tag', async () => {
     const { service } = build([app({})]);
     await expect(service.list()).resolves.toEqual([]);
@@ -196,5 +238,36 @@ describe('ShowcaseService', () => {
       NotFoundException,
     );
     await expect(service.resolve('s2')).resolves.toMatchObject({ id: 'a2' });
+  });
+
+  /**
+   * `status` is whatever the last reconciler wrote before the cluster went
+   * away, and there is nobody left to correct it — so the running check cannot
+   * catch this on its own.
+   */
+  it('refuses an application whose cluster has been deleted, whatever its row says', async () => {
+    const { service } = build(
+      [app({ id: 'ghost', status: ApplicationStatus.RUNNING })],
+      {
+        cluster: { id: 'c1', name: 'demo', status: 'deleted' },
+      },
+    );
+
+    await expect(service.publish('ghost')).rejects.toThrow(
+      /not running anywhere/,
+    );
+  });
+
+  it('refuses one whose cluster is not registered at all', async () => {
+    const { service } = build(
+      [app({ id: 'ghost', status: ApplicationStatus.RUNNING })],
+      {
+        cluster: null,
+      },
+    );
+
+    await expect(service.publish('ghost')).rejects.toThrow(
+      /no longer registered/,
+    );
   });
 });

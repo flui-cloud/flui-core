@@ -75,6 +75,18 @@ export class ApplicationGroupingService {
     // application, and the endpoint state the composed group needs comes back
     // on the component DTOs instead of a second batched read.
     const dtos = await this.applicationService.toResponseDtosWithUrls(apps);
+
+    // What the caller may do with each component, exactly as the flat listing
+    // attaches it. Left off here, the page that draws from this shape could not
+    // tell an application in the showcase from one of its own — the fact lives
+    // on `access`, and a list that omits it forces the interface to guess.
+    if (user) {
+      const access = await this.access.summarise(user, apps);
+      for (const dto of dtos) {
+        dto.access = access.get(dto.id);
+      }
+    }
+
     const dtoById = new Map(dtos.map((d) => [d.id, d]));
 
     const groups: ApplicationGroupDto[] = [];

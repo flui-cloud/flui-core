@@ -41,7 +41,18 @@ describe('grouped listing carries the addresses', () => {
         toResponseDto: jest.fn((a: { id: string }) => ({ id: a.id })),
       } as never,
       { find: jest.fn().mockResolvedValue(installs) } as never,
-      { filterReadable: jest.fn(async (_u, a) => a) } as never,
+      {
+        filterReadable: jest.fn(async (_u, a) => a),
+        summarise: jest.fn(
+          async (_u, a: { id: string }[]) =>
+            new Map(
+              a.map((x) => [
+                x.id,
+                { tabs: [], readOnly: false, showcase: false },
+              ]),
+            ),
+        ),
+      } as never,
     );
     return { service, toResponseDtosWithUrls };
   };
@@ -166,11 +177,42 @@ describe('grouped listing carries the addresses', () => {
         toResponseDto: jest.fn((a: { id: string }) => ({ id: a.id })),
       } as never,
       { find: jest.fn().mockResolvedValue([]) } as never,
-      { filterReadable: jest.fn().mockResolvedValue([standalone]) } as never,
+      {
+        filterReadable: jest.fn().mockResolvedValue([standalone]),
+        summarise: jest.fn().mockResolvedValue(new Map()),
+      } as never,
     );
 
     await service.listGroupedByCluster('c1', { userId: 'u1' } as never);
 
     expect(toResponseDtosWithUrls.mock.calls[0][0]).toEqual([standalone]);
+  });
+
+  /**
+   * Grouped components carry `access` like the flat listing does: without it a
+   * page drawing from this shape cannot tell an application shown read-only
+   * from one of the caller's own, and has to guess.
+   */
+  it('says what the caller may do with each component', async () => {
+    const toResponseDtosWithUrls = jest.fn().mockResolvedValue([{ id: 'a1' }]);
+    const summary = { tabs: ['overview'], readOnly: true, showcase: true };
+    const service = new ApplicationGroupingService(
+      {
+        findByClusterId: jest.fn().mockResolvedValue([standalone]),
+        toResponseDtosWithUrls,
+        toResponseDto: jest.fn((a: { id: string }) => ({ id: a.id })),
+      } as never,
+      { find: jest.fn().mockResolvedValue([]) } as never,
+      {
+        filterReadable: jest.fn(async (_u, a) => a),
+        summarise: jest.fn().mockResolvedValue(new Map([['a1', summary]])),
+      } as never,
+    );
+
+    const groups = await service.listGroupedByCluster('c1', {
+      userId: 'u1',
+    } as never);
+
+    expect(groups[0].components[0].access).toEqual(summary);
   });
 });

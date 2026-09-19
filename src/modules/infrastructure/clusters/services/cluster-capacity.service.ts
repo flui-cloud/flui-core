@@ -44,12 +44,28 @@ export class ClusterCapacityService {
     });
 
     const provider = cluster.provider as CloudProvider;
-    const providerService = this.providerFactory.getProvider(provider);
+    /**
+     * A cluster whose machines were brought rather than bought has no adapter
+     * here, and the factory says so by throwing. That is the right answer to
+     * "sell me a bigger node" and the wrong one to "how much room is left",
+     * which is the question this endpoint is actually asked — so the failure is
+     * absorbed and the plan carries on without the half a provider would have
+     * filled in.
+     */
+    let providerService: ReturnType<ProviderFactory['getProvider']> | null =
+      null;
+    try {
+      providerService = this.providerFactory.getProvider(provider);
+    } catch {
+      this.logger.debug(
+        `No provider adapter for ${provider} — capacity is read from the cluster alone`,
+      );
+    }
 
     let currentServerType: string | undefined;
     if (
       masterNode?.providerResourceId &&
-      providerService.getServerDetailsAsDto
+      providerService?.getServerDetailsAsDto
     ) {
       try {
         const details = await providerService.getServerDetailsAsDto(
@@ -64,7 +80,7 @@ export class ClusterCapacityService {
     }
 
     let sizes: NodeSizeDto[] = [];
-    if (providerService.getNodeSizes) {
+    if (providerService?.getNodeSizes) {
       try {
         sizes = await providerService.getNodeSizes(false);
       } catch (err) {
@@ -127,6 +143,7 @@ export class ClusterCapacityService {
       message: this.buildMessage({
         currentServerType,
         sizesCount: sizes.length,
+        hasProvider: !!providerService,
       }),
     };
   }
@@ -201,7 +218,11 @@ export class ClusterCapacityService {
   private buildMessage(ctx: {
     currentServerType?: string;
     sizesCount: number;
+    hasProvider: boolean;
   }): string | undefined {
+    if (!ctx.hasProvider) {
+      return 'The machines of this cluster were brought rather than bought, so there is no size list and no price: what is shown is the room the cluster has now. Adding capacity means attaching another machine.';
+    }
     if (!ctx.currentServerType) {
       return 'Could not resolve current master server type from provider — costs are shown as n/a.';
     }

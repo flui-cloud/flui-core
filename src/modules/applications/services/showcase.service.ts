@@ -8,6 +8,10 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { ApplicationEntity } from '../entities/application.entity';
 import { ApplicationStatus } from '../enums/application-status.enum';
+import {
+  ClusterEntity,
+  ClusterStatus,
+} from '../../infrastructure/clusters/entities/cluster.entity';
 import { AppEndpointService } from '../../dns/services/app-endpoint.service';
 import { SHOWCASE_TAG, isShowcase } from '../../iam/constants/iam-showcase';
 
@@ -45,6 +49,8 @@ export class ShowcaseService {
   constructor(
     @InjectRepository(ApplicationEntity)
     private readonly applications: Repository<ApplicationEntity>,
+    @InjectRepository(ClusterEntity)
+    private readonly clusters: Repository<ClusterEntity>,
     private readonly endpoints: AppEndpointService,
   ) {}
 
@@ -52,7 +58,13 @@ export class ShowcaseService {
   async list(): Promise<ShowcaseItem[]> {
     const rows = await this.applications
       .createQueryBuilder('app')
-      .where('app.tags @> :tag', { tag: [SHOWCASE_TAG] })
+      // The parameter has to reach Postgres as JSON, not as a JS array: bound
+      // as an array it arrives as an array literal and `@>` on a jsonb column
+      // rejects it outright ("invalid input syntax for type json"). Same shape
+      // as the two other containment queries in this codebase.
+      .where('app.tags @> :tag::jsonb', {
+        tag: JSON.stringify([SHOWCASE_TAG]),
+      })
       .orderBy('app.createdAt', 'ASC')
       .getMany();
     if (rows.length === 0) return [];
@@ -95,6 +107,7 @@ export class ShowcaseService {
 
     if (!isShowcase(application.tags)) {
       this.assertRunning(application);
+      await this.assertItsClusterIsStillThere(application);
       application.tags = [...(application.tags ?? []), SHOWCASE_TAG];
     }
     if (note?.trim()) {
@@ -143,6 +156,35 @@ export class ShowcaseService {
       );
     }
     throw new NotFoundException(`No application "${ref}"`);
+  }
+
+  /**
+   * An application whose cluster has been deleted still says `running` and
+   * still carries an endpoint marked `IN_SYNC`, so the showcase can publish an
+   * address that refuses the connection.
+   *
+   * `status` is the last thing a reconciler wrote before the cluster went away,
+   * and nothing rewrites it afterwards: there is no cluster left to ask. So the
+   * running check cannot catch this on its own, and asking whether the machine
+   * is still there is the only honest question. The showcase is the one read
+   * that crosses from the operator's things to a stranger's screen, which is
+   * why it is asked here rather than left to whoever looks at the row next.
+   */
+  private async assertItsClusterIsStillThere(
+    application: ApplicationEntity,
+  ): Promise<void> {
+    const cluster = await this.clusters.findOne({
+      where: { id: application.clusterId },
+      select: { id: true, name: true, status: true },
+    });
+    const gone =
+      !cluster ||
+      cluster.status === ClusterStatus.DELETED ||
+      cluster.status === ClusterStatus.DELETING;
+    if (!gone) return;
+    throw new BadRequestException(
+      `${application.slug} belongs to a cluster that is ${cluster ? cluster.status : 'no longer registered'}, so whatever its record says, it is not running anywhere. The showcase only takes applications that are really up.`,
+    );
   }
 
   /**
