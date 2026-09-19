@@ -1,3 +1,9 @@
+// The notifier imports the mail sender for its type, and one package in that
+// chain is ESM. Same cut the mail module's own specs make.
+jest.mock('../../mail/services/mail-send.service', () => ({
+  MailSendService: class MailSendService {},
+}));
+
 import { Test, TestingModule } from '@nestjs/testing';
 import { ConfigService } from '@nestjs/config';
 import { UnauthorizedException } from '@nestjs/common';
@@ -7,9 +13,13 @@ import { ApplicationEntity } from '../../applications/entities/application.entit
 import { ApplicationTrafficService } from '../../observability/services/application-traffic.service';
 import { AlertEventsService } from '../../observability/services/alert-events.service';
 import { UserEventsGateway } from '../../auth/gateway/user-events.gateway';
+import { AlertMailService } from '../../observability/services/alert-mail.service';
 import { AlertmanagerWebhookDto } from '../dto/alertmanager-webhook.dto';
 
 const TOKEN = 'super-secret-token';
+
+/** What the email path was asked to deliver, so a test can read the recipient. */
+const emailed = jest.fn().mockResolvedValue(true);
 
 const payload = (
   labels: Record<string, string>,
@@ -58,6 +68,7 @@ describe('AlertsWebhookService', () => {
         },
         { provide: AlertEventsService, useValue: { record } },
         { provide: UserEventsGateway, useValue: { emitAlert } },
+        { provide: AlertMailService, useValue: { deliver: emailed } },
       ],
     }).compile();
 
@@ -249,6 +260,42 @@ describe('AlertsWebhookService', () => {
       expect(find).not.toHaveBeenCalled();
       expect(res.alerts).toBe(1);
       expect(res.resolved).toBe(0);
+    });
+
+    // A node alert owns no application, so there is no bell to ring: the email
+    // path is its only delivery.
+    it('takes an ownerless alert to the email path, which the bell cannot reach', async () => {
+      emailed.mockClear();
+      emitAlert.mockClear();
+      // The recorder decides what counts as news; here it says one alert
+      // started, so the announcement has something to carry.
+      record.mockResolvedValueOnce([
+        {
+          kind: 'fired',
+          event: {
+            id: 'e1',
+            fingerprint: 'fp1',
+            alertname: 'FluiNodeDown',
+            severity: 'critical',
+            applicationId: null,
+            annotations: {},
+            startsAt: new Date(),
+          },
+        },
+      ]);
+
+      await service.handle(
+        { header: TOKEN },
+        payload({
+          flui_kind: 'node',
+          alertname: 'FluiNodeDown',
+          instance: '10.0.0.4:9100',
+        }),
+      );
+
+      expect(emitAlert).not.toHaveBeenCalled();
+      expect(emailed).toHaveBeenCalledTimes(1);
+      expect(emailed.mock.calls[0][2]).toEqual({ ownerUserId: null });
     });
 
     it('accepts an unknown kind without failing the delivery', async () => {

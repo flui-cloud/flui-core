@@ -5,6 +5,7 @@ import { In, Repository } from 'typeorm';
 import { timingSafeEqual } from 'node:crypto';
 import { ApplicationEntity } from '../../applications/entities/application.entity';
 import { ApplicationTrafficService } from '../../observability/services/application-traffic.service';
+import { AlertMailService } from '../../observability/services/alert-mail.service';
 import {
   AlertEventsService,
   AlertTransition,
@@ -55,6 +56,7 @@ export class AlertsWebhookService {
     private readonly traffic: ApplicationTrafficService,
     private readonly alertEvents: AlertEventsService,
     private readonly userEvents: UserEventsGateway,
+    private readonly alertMail: AlertMailService,
   ) {}
 
   async handle(
@@ -109,8 +111,13 @@ export class AlertsWebhookService {
    * A transition is what a human would call news: it started, or it recovered. The
    * repeats in between update the row and tell nobody.
    *
-   * This is the seam the notification substrate plugs into — the dashboard bell first,
-   * then user webhooks and ntfy, routed by severity.
+   * Two deliveries, and they answer different questions. The bell reaches whoever
+   * owns the application and happens to be looking; the email reaches somebody who
+   * is not. An alert with no owner — a node, a disk, a cluster — has no bell to
+   * ring at all, so the email path runs for those too, addressed to the
+   * instance's administrators.
+   *
+   * Still the seam the rest plugs into: user webhooks and ntfy, routed by severity.
    */
   private announce(
     transitions: AlertTransition[],
@@ -120,6 +127,11 @@ export class AlertsWebhookService {
       const userId = event.applicationId
         ? context.owners.get(event.applicationId)
         : undefined;
+
+      // Deliberately outside the `userId` guard below, and not awaited: a slow
+      // mail provider must not hold open the request Alertmanager is making.
+      void this.alertMail.deliver(kind, event, { ownerUserId: userId ?? null });
+
       if (!userId) continue;
       this.userEvents.emitAlert(userId, {
         id: event.id,

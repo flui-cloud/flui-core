@@ -27,6 +27,9 @@ import { ServerEntity } from '../infrastructure/servers/entities/server.entity';
 import { ClusterNodeEntity } from '../infrastructure/clusters/entities/cluster-node.entity';
 import { ClusterEntity } from '../infrastructure/clusters/entities/cluster.entity';
 import { AlertEventEntity } from './entities/alert-event.entity';
+import { UserEntity } from '../auth/entities/user.entity';
+import { MailModule } from '../mail/mail.module';
+import { AlertMailService } from './services/alert-mail.service';
 
 // External modules
 import { ApplicationsModule } from '../applications/applications.module';
@@ -58,8 +61,10 @@ import { ApplicationsModule } from '../applications/applications.module';
       ClusterNodeEntity,
       ClusterEntity,
       AlertEventEntity,
+      UserEntity,
     ]),
     ApplicationsModule,
+    MailModule,
   ],
   controllers: [
     ObservabilityController,
@@ -77,6 +82,7 @@ import { ApplicationsModule } from '../applications/applications.module';
     ApplicationMetricsService,
     ApplicationTrafficService,
     AlertEventsService,
+    AlertMailService,
     AlertMaintenanceScheduler,
   ],
   exports: [
@@ -86,6 +92,7 @@ import { ApplicationsModule } from '../applications/applications.module';
     ApplicationMetricsService,
     ApplicationTrafficService,
     AlertEventsService,
+    AlertMailService,
   ],
 })
 export class ObservabilityModule {}
