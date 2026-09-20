@@ -143,12 +143,13 @@ describe('PlatformUpdatesService', () => {
 
     expect(status.updateAvailable).toBe(true);
     expect(status.applicable).toBe(true);
-    expect(status.advisories).toContainEqual(
-      expect.objectContaining({
-        level: 'warning',
-        title: 'This release changes the bootstrap manifests',
-      }),
+    const advisory = status.advisories.find(
+      (a) => a.title === 'This release changes the bootstrap manifests',
     );
+    expect(advisory?.level).toBe('warning');
+    // The remedy has to be a command that exists: this sentence once named a
+    // bootstrap re-run nothing performs, and `flui env reinstall` wipes state.
+    expect(advisory?.detail).toContain('flui env refresh-manifests');
   });
 
   it('names the CLI this release would need, without gating on it', async () => {

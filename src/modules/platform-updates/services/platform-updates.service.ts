@@ -11,7 +11,6 @@ import {
 } from '../../infrastructure/clusters/entities/cluster.entity';
 import { KubernetesService } from '../../infrastructure/shared/services/kubernetes.service';
 import { EncryptionService } from '../../shared/encryption/services/encryption.service';
-import { findSystemAppByLabel as findSystemApp } from '../../applications/constants/system-app-catalog';
 import {
   PLATFORM_UPDATE_COMPONENTS,
   PlatformComponentKey,
@@ -207,7 +206,7 @@ export class PlatformUpdatesService {
         : def.key === 'fluiWeb'
           ? (process.env.FLUI_WEB_IMAGE_TAG ?? RELEASE.images.fluiWeb)
           : (process.env.FLUI_AUTHZ_IMAGE_TAG ?? RELEASE.images.fluiAuthz);
-    const catalogEntry = findSystemApp(def.systemAppLabel);
+    const catalogEntry = findSystemAppByLabel(def.systemAppLabel);
     const cluster = await this.controlCluster();
     if (!cluster?.kubeconfigEncrypted || !catalogEntry?.imageSource) {
       return { installed: true, version: pin, observed: false };
@@ -327,13 +326,14 @@ export class PlatformUpdatesService {
     // the new manifests reports itself unsupported and leaves the node alone
     // (see NodeStorageQuotaService). Refusing the whole release would hold back
     // the component images too, which is the larger harm — so this says what
-    // will not arrive and lets the operator decide.
+    // will not arrive, and names the command that carries the half of it that
+    // can be carried.
     if (release.requiresBootstrap) {
       out.push({
         level: 'warning',
         title: 'This release changes the bootstrap manifests',
         detail:
-          'An in-app update moves image tags only, so the host-level changes are not applied. Whatever depends on them stays inert until the bootstrap is re-run from a CLI on this release.',
+          'An in-app update moves image tags only. The manifests this cluster restarts from are brought forward separately, with `flui env refresh-manifests`. What a bootstrap script does while a node is being built cannot be brought forward at all — only a node created on this release gets it.',
       });
     }
     if (
