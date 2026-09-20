@@ -24,19 +24,20 @@ export interface ReleaseManifest {
 }
 
 export const RELEASE: ReleaseManifest = {
-  version: '0.13.0-rc.7',
-  // A commit ref, not a tag. Unchanged since rc.6, which is what makes this
-  // release installable in place — but note what that does *not* mean: rc.7 is
-  // the release that finally asks the bootstrap for a quota-capable
-  // `flui-local`, and a script only runs when a node is created. An existing
-  // node keeps the plain directory it was built with, whatever image it runs.
-  bootstrapRef: '4be1bb8',
+  version: '0.13.0-rc.8',
+  // A commit ref, not a tag. It moved for this release, so `requiresBootstrap`
+  // is true — and what that buys is narrower than it sounds. The renderer no
+  // longer blanks the `$labels` in every alert annotation, but a bootstrap
+  // script runs when a node is created: an installation already standing keeps
+  // the annotations it was built with until `flui env refresh-manifests` puts
+  // the current file back.
+  bootstrapRef: '6e4da52',
   images: {
     // Release tags: the tag build is what makes an image exist under the
-    // release's own name. Both repositories are tagged `v0.13.0-rc.7`, so a
+    // release's own name. Both repositories are tagged `v0.13.0-rc.8`, so a
     // rollout never waits on a pull that cannot succeed.
-    fluiApi: '0.13.0-rc.7',
-    fluiWeb: '0.13.0-rc.7',
+    fluiApi: '0.13.0-rc.8',
+    fluiWeb: '0.13.0-rc.8',
     // Pinned by its own version, not the platform's, and it did not move.
     fluiAuthz: '0.6.0',
   },

@@ -2,6 +2,28 @@
   "schemaVersion": 1,
   "releases": [
     {
+      "version": "0.13.0-rc.8",
+      "publishedAt": "2026-09-20T11:33:03.502Z",
+      "bootstrapRef": "6e4da52",
+      "images": {
+        "fluiApi": "0.13.0-rc.8",
+        "fluiWeb": "0.13.0-rc.8",
+        "fluiAuthz": "0.6.0"
+      },
+      "notes": [
+        "Every alert now names the application it is about. The installer was blanking the label references in every alert annotation, so a firing alert said \"Application  is down\" with nothing in the gap. New nodes get the fix from the bootstrap; an installation already standing repairs it with `flui env refresh-manifests`.",
+        "Applications in the demo sandbox are reachable again. A guest's area fenced out the ingress controller itself, so anything a guest deployed answered 502 and never obtained a certificate. Existing guest areas keep the old rule and have to be recycled.",
+        "An application's address now appears on its own once the certificate is issued, instead of waiting for somebody to open the networking screens.",
+        "The state Flui shows for an application is re-read every five minutes. It was the outcome of the last deploy, frozen — so a pod that died an hour later still read as running.",
+        "A workload refused by the cluster now says why within seconds, instead of timing out after five minutes with no cause. The same reason is now carried on a cluster that failed to delete.",
+        "Every container has a ceiling on what it may write outside its volumes, set on the namespace and overridable per application. Nothing outside the demo sandbox had one, and what fills is the node's own disk.",
+        "Installing from the catalog keeps the name you chose, and a restart of the API mid-install no longer leaves two copies of the application.",
+        "New: `flui env refresh-manifests` brings the manifests a cluster restarts from into line with a release. It shows what would change and writes nothing unless asked, never touches a file holding a secret, and supplies no values."
+      ],
+      "migrations": 0,
+      "requiresBootstrap": true
+    },
+    {
       "version": "0.13.0-rc.7",
       "publishedAt": "2026-09-19T13:55:01.955Z",
       "bootstrapRef": "4be1bb8",
