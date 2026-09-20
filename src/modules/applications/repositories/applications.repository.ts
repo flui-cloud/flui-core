@@ -11,6 +11,12 @@ import { ApplicationKind } from '../enums/application-kind.enum';
 /** Stable code for the refusal below, so a client can recognise it. */
 export const PROJECTION_NOT_REMOVABLE_CODE = 'APP_IS_A_PLATFORM_PROJECTION';
 
+const OBSERVABLE_STATUSES = [
+  ApplicationStatus.RUNNING,
+  ApplicationStatus.DEGRADED,
+  ApplicationStatus.FAILED,
+] as const;
+
 @Injectable()
 export class ApplicationsRepository {
   constructor(
@@ -143,6 +149,36 @@ export class ApplicationsRepository {
   async existsBySlug(slug: string): Promise<boolean> {
     const count = await this.repository.count({ where: { slug } });
     return count > 0;
+  }
+
+  /**
+   * Everything whose recorded status is worth checking against the cluster.
+   *
+   * Wider than "active", and kept apart from it: `findAllActive` decides who
+   * gets an OpenBao unseal and whose volumes are snapshotted, and a failed
+   * application should get neither — but it should still be looked at, or it
+   * stays `failed` long after it started serving.
+   */
+  async findObservable(): Promise<ApplicationEntity[]> {
+    return this.repository.find({
+      where: OBSERVABLE_STATUSES.map((status) => ({
+        status,
+        deletedAt: IsNull(),
+      })),
+    });
+  }
+
+  async findObservableByCluster(
+    clusterId: string,
+  ): Promise<ApplicationEntity[]> {
+    return this.repository.find({
+      where: OBSERVABLE_STATUSES.map((status) => ({
+        clusterId,
+        status,
+        deletedAt: IsNull(),
+      })),
+      relations: ['appResources'],
+    });
   }
 
   async findAllActive(): Promise<ApplicationEntity[]> {

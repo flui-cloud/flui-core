@@ -68,6 +68,22 @@ export const FLUI_NAMESPACE_LABEL_SELECTOR = `${FLUI_NAMESPACE_LABEL}=${FLUI_NAM
 /** The only two pod phases from which no further write can come. */
 const TERMINAL_POD_PHASES = new Set(['Succeeded', 'Failed']);
 
+/**
+ * The workload will not become ready, and the cluster has said why.
+ *
+ * Named so the polling loop can tell it apart from the transient read errors it
+ * is meant to ride out: retrying a refusal only spends the timeout before
+ * saying the same thing, with the cause lost.
+ */
+export class AdmissionRefusedError extends Error {
+  constructor(message: string) {
+    super(message);
+    // Without this the name stays `Error`, and a log line loses the one word
+    // that says this was a refusal rather than a fault.
+    this.name = 'AdmissionRefusedError';
+  }
+}
+
 @Injectable()
 export class KubernetesService {
   private readonly logger = new Logger(KubernetesService.name);
@@ -374,9 +390,19 @@ export class KubernetesService {
           return true;
         }
 
+        // A refusal is not a slow start, and waiting out the timeout turns a
+        // sentence Kubernetes already wrote into "it took too long".
+        const refused = this.admissionFailureOn(resource);
+        if (refused) {
+          throw new AdmissionRefusedError(
+            `${kind}/${name} cannot start: ${refused}`,
+          );
+        }
+
         this.logger.debug(`${kind}/${name} not ready yet, waiting...`);
         await this.sleep(pollInterval);
       } catch (error) {
+        if (error instanceof AdmissionRefusedError) throw error;
         this.logger.error(
           `Error checking ${kind}/${name} readiness: ${error.message}`,
         );
@@ -387,6 +413,36 @@ export class KubernetesService {
     throw new Error(
       `Timeout waiting for ${kind}/${name} to be ready after ${timeoutMs}ms`,
     );
+  }
+
+  /**
+   * Why a workload will never become ready, when Kubernetes has already said so.
+   *
+   * A Deployment whose ReplicaSet cannot create pods carries `ReplicaFailure`
+   * with the reason inside it — a LimitRange maximum, a quota, a PodSecurity
+   * refusal, a missing pull secret. Nothing read it, so readiness never became
+   * true and the caller reported a timeout, which names no cause.
+   *
+   * The translation is the product's own; this only decides where to look, and
+   * relays a message it cannot phrase rather than dropping a refusal.
+   */
+  private admissionFailureOn(resource: unknown): string | null {
+    const status = (resource as { status?: { conditions?: unknown } })?.status;
+    const conditions = (status?.conditions ?? []) as Array<{
+      type?: string;
+      status?: string;
+      message?: string;
+    }>;
+    for (const condition of conditions) {
+      if (condition.type !== 'ReplicaFailure' || condition.status !== 'True') {
+        continue;
+      }
+      if (!condition.message) return 'its pods were refused';
+      return (
+        describeQuotaRefusal(condition.message)?.message ?? condition.message
+      );
+    }
+    return null;
   }
 
   /**

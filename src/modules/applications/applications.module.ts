@@ -32,6 +32,8 @@ import { ApplicationMaterializerService } from './services/application-materiali
 import { ApplicationDeployService } from './services/application-deploy.service';
 import { DeployConfigService } from './services/deploy-config.service';
 import { ApplicationReconciliationService } from './services/application-reconciliation.service';
+import { ApplicationReconciliationScheduler } from './schedulers/application-reconciliation.scheduler';
+import { WorkloadNamespaceService } from './services/workload-namespace.service';
 import { SystemAppCatalogService } from './services/system-app-catalog.service';
 import { AppConfigService } from './services/app-config.service';
 import { AppManagementService } from './services/app-management.service';
@@ -168,6 +170,8 @@ import { VolumeExportService } from '../providers/services/volume-export.service
     ApplicationDeployService,
     DeployConfigService,
     ApplicationReconciliationService,
+    ApplicationReconciliationScheduler,
+    WorkloadNamespaceService,
     SystemAppCatalogService,
     AppConfigService,
     ScheduledJobsService,

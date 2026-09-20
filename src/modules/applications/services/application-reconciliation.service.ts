@@ -71,7 +71,7 @@ export class ApplicationReconciliationService {
       'Starting reconciliation cycle for all active applications',
     );
 
-    const apps = await this.applicationsRepository.findAllActive();
+    const apps = await this.applicationsRepository.findObservable();
     if (apps.length === 0) {
       this.logger.debug('No active applications to reconcile');
       return;
@@ -104,7 +104,7 @@ export class ApplicationReconciliationService {
     }
 
     const apps =
-      await this.applicationsRepository.findActiveByCluster(clusterId);
+      await this.applicationsRepository.findObservableByCluster(clusterId);
     if (apps.length === 0) {
       this.logger.debug(`No active apps in cluster ${clusterId} to reconcile`);
       return;

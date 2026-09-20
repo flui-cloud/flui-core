@@ -1,3 +1,4 @@
+import { Sensitivity } from '../../../mask/decorators/sensitivity.decorator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { ClusterType } from '../entities/cluster.entity';
 
@@ -138,6 +139,17 @@ export class ClusterResponseDto {
     example: '10.0.1.10',
   })
   masterIpAddress?: string;
+
+  @ApiPropertyOptional({
+    description:
+      "Why the cluster is in this state, when the state alone does not say. Present on a failure — a refused deletion carries the provider's own sentence, which usually names the remedy as well as the cause.",
+    example:
+      'Server deletion failed: Server is running. Use force=true to delete running servers.',
+  })
+  // Arbitrary text rather than exempt: what a provider puts in an error
+  // message is not something this codebase gets to promise anything about.
+  @Sensitivity(Sensitivity.ARBITRARY_TEXT)
+  statusReason?: string;
 
   @ApiPropertyOptional({
     description: 'VNet UUID if cluster is attached to a VNet',

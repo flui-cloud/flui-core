@@ -3,6 +3,18 @@ import { ClusterEntity } from '../entities/cluster.entity';
 import { ClusterResponseDto } from '../dto/cluster-response.dto';
 
 /**
+ * Why a cluster is in the state it is, when the state alone is a dead end.
+ *
+ * `deletion_failed` was recorded with its reason and the reason was read back
+ * in one place: a log line, on the next retry. Nothing served it, so a person
+ * saw a word and no way forward.
+ */
+function failureReasonOf(cluster: ClusterEntity): string | undefined {
+  const reason = cluster.metadata?.deletionError;
+  return typeof reason === 'string' && reason ? reason : undefined;
+}
+
+/**
  * Service responsible for mapping entities to DTOs
  */
 @Injectable()
@@ -32,6 +44,7 @@ export class ClusterMapperService {
       maxNodes: cluster.maxNodes,
       k3sVersion: cluster.k3sVersion,
       masterIpAddress: masterNode?.ipAddress,
+      statusReason: failureReasonOf(cluster),
       vnetId: vnetConfig?.vnetId,
       vnetName: vnetConfig?.vnetName,
       grafanaPrometheusUid: grafanaConfig?.prometheusUid,

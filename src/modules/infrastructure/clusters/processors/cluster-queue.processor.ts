@@ -1357,8 +1357,13 @@ export class ClusterQueueProcessor {
       `Verifying ${cluster.nodes.length} servers deleted from provider`,
     );
 
+    // What is still there, and in what state — so the timeout below can say why
+    // it timed out instead of only that it did.
+    const stillThere = new Map<string, string>();
+
     while (Date.now() - startTime < maxWaitTime) {
       let allDeleted = true;
+      stillThere.clear();
 
       for (const node of cluster.nodes) {
         if (!node.providerResourceId) {
@@ -1373,6 +1378,7 @@ export class ClusterQueueProcessor {
 
           if (status !== 'not-found') {
             allDeleted = false;
+            stillThere.set(node.serverName ?? node.providerResourceId, status);
             this.logger.debug(
               `Server ${node.serverName} (${node.providerResourceId}) still exists: ${status}`,
             );
@@ -1380,6 +1386,10 @@ export class ClusterQueueProcessor {
           }
         } catch (error) {
           this.logger.warn(`Error checking server status: ${error.message}`);
+          stillThere.set(
+            node.serverName ?? node.providerResourceId,
+            `could not be checked: ${error.message}`,
+          );
           allDeleted = false;
           break;
         }
@@ -1403,8 +1413,23 @@ export class ClusterQueueProcessor {
       await this.sleep(checkInterval);
     }
 
+    // The timeout is the symptom; what is still standing, and in what state, is
+    // the cause — and for the commonest of them the remedy is a single flag.
+    // This sentence travels onto the cluster as `statusReason`, which is the
+    // only thing anybody looking at a `deletion_failed` cluster gets to read.
+    const remaining = [...stillThere.entries()]
+      .map(([name, status]) => `${name} (${status})`)
+      .join(', ');
+    const running = [...stillThere.values()].includes('running');
+    const seconds = Math.round(maxWaitTime / 1000);
+    const which = remaining ? `: ${remaining}` : '';
+    const hint = running
+      ? ' A running server is not deleted unless deletion is forced.'
+      : '';
     throw new Error(
-      `Timeout waiting for servers to be deleted from provider. Cannot safely delete firewalls.`,
+      `The provider still has ${stillThere.size || 'some'} server(s) after ` +
+        `${seconds}s${which}. Firewalls are left in place rather than deleted ` +
+        `while a server might still be using them.${hint}`,
     );
   }
 

@@ -464,6 +464,7 @@ const MASK_EXEMPT: string[] = [
   'ApplicationReleaseDto.status', // modules/applications/dto/application-release.dto.ts
   'ApplicationReleaseListDto.releases', // modules/applications/dto/application-release.dto.ts
   'ApplicationResourcesDto.cpu', // modules/applications/dto/create-application.dto.ts
+  'ApplicationResourcesDto.ephemeralStorage', // modules/applications/dto/create-application.dto.ts
   'ApplicationResourcesDto.memory', // modules/applications/dto/create-application.dto.ts
   'ApplicationResponseDto.access', // modules/applications/dto/application-response.dto.ts
   'ApplicationResponseDto.activeRevisionId', // modules/applications/dto/application-response.dto.ts
