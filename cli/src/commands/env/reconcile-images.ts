@@ -11,6 +11,7 @@ import { printContextBanner } from '../../lib/context-banner';
 interface PinnedImage {
   image: string;
   pinned: boolean;
+  outcome: 'written' | 'already' | 'undeclared' | 'failed';
   files: string[];
   reason?: string;
 }
@@ -73,15 +74,20 @@ export default class EnvReconcileImages extends Command {
 
     for (const i of images) {
       const where = i.files.length ? chalk.dim(` (${i.files.join(', ')})`) : '';
-      if (i.pinned) {
-        this.log(`   ${chalk.green('✔')} ${i.image}${where}`);
-      } else {
+      if (i.outcome === 'failed') {
         this.log(`   ${chalk.yellow('⚠')} ${i.image}`);
         this.log(chalk.dim(`     ${i.reason ?? 'could not be declared'}`));
+        continue;
+      }
+      this.log(`   ${chalk.green('✔')} ${i.image}${where}`);
+      // A component with no manifest of its own is not a gap: the API installs
+      // it, so there is no file on the master that could hand an older one back.
+      if (i.outcome === 'undeclared') {
+        this.log(chalk.dim('     nothing on the master declares it'));
       }
     }
 
-    const done = images.filter((i) => i.pinned).length;
+    const done = images.filter((i) => i.outcome !== 'failed').length;
     this.log('');
     this.log(
       done === images.length

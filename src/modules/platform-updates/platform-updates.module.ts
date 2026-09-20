@@ -20,6 +20,7 @@ import {
 } from './services/platform-update-runner.service';
 import { PlatformUpdateResumeService } from './services/platform-update-resume.service';
 import { PlatformUpdateProcessor } from './processors/platform-update.processor';
+import { DeclaredImageScheduler } from './schedulers/declared-image.scheduler';
 
 @Module({
   imports: [
@@ -37,6 +38,7 @@ import { PlatformUpdateProcessor } from './processors/platform-update.processor'
   providers: [
     PlatformUpdatesService,
     DeclaredImageService,
+    DeclaredImageScheduler,
     ManifestRefreshService,
     ManifestMasterService,
     ReleaseManifestService,

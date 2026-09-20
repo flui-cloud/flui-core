@@ -1,4 +1,3 @@
-import { randomBytes } from 'node:crypto';
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { In, Repository } from 'typeorm';
@@ -10,47 +9,49 @@ import {
 import { EncryptionService } from '../../shared/encryption/services/encryption.service';
 import { KubernetesService } from '../../infrastructure/shared/services/kubernetes.service';
 import { pinnedTagForRepository } from '../../../config/release.config';
+import {
+  bareRepository,
+  hasSettled,
+  pinImageIn,
+} from '../utils/declared-image.util';
+import { FileToWrite, ManifestMasterService } from './manifest-master.service';
 
-const MANIFEST_DIR = '/var/lib/rancher/k3s/server/manifests';
-const JOB_NAMESPACE = 'flui-local-storage';
-const JOB_TIMEOUT_MS = 120_000;
-const JOB_POLL_MS = 2_000;
+export type DeclaredImageOutcome =
+  /** A manifest was rewritten to name this tag. */
+  | 'written'
+  /** A manifest already named it. */
+  | 'already'
+  /** No manifest names this repository, so no restart can reassert one. */
+  | 'undeclared'
+  /** The declaration could not be reached; what is running is unaffected. */
+  | 'failed';
 
 export interface DeclaredImageResult {
-  /** False when the declared state could not be reached; the update still happened. */
+  /**
+   * Whether no restart of this master can hand a different build back.
+   *
+   * True for a file that names this tag *and* for no file at all — flui-authz
+   * has no declared manifest, because the API installs it itself, so there is
+   * nothing there to drift. Both satisfy the one property that matters.
+   */
   pinned: boolean;
-  /** The manifest files whose image line was rewritten. */
+  outcome: DeclaredImageOutcome;
+  /** The manifest files that declare this image. */
   files: string[];
   reason?: string;
 }
 
 /**
- * Keeping the declared image in step with the running one.
+ * Keeping the image a master *declares* in step with the one it *runs*.
  *
- * An in-app update edits the live Deployment and nothing else, while the
- * manifest k3s re-applies at every start still names the old tag — so a restart
- * silently puts the old build back, with no error and no actor. That symptom is
- * close to unattributable from outside, which is why this runs as part of the
- * update rather than waiting for somebody to notice.
+ * An update edits the live Deployment; the manifest k3s re-applies at every
+ * start still names the tag the node was built with, so a reboot puts the old
+ * build back with no error and no actor to blame.
  *
- * It rewrites one line per file: the image of the repository just updated. The
- * file is rebuilt beside the original and checked for parsing before it moves,
- * because k3s applies a half-written manifest as eagerly as a whole one.
+ * Writes through `ManifestMasterService` for its lock, backup, digest check and
+ * staged rename — and to stop needing the privilege and the host `python3` that
+ * editing one line used to cost.
  */
-/** The images in one Deployment that this release speaks for. */
-function ourImagesIn(deployment: k8s.V1Deployment): string[] {
-  const out: string[] = [];
-  for (const container of deployment.spec?.template?.spec?.containers ?? []) {
-    const image = container.image;
-    if (!image) continue;
-    const colon = image.lastIndexOf(':');
-    if (colon <= 0) continue;
-    const repository = image.slice(0, colon).replace(/^[^/]+\//, '');
-    if (pinnedTagForRepository(repository) !== null) out.push(image);
-  }
-  return out;
-}
-
 @Injectable()
 export class DeclaredImageService {
   private readonly logger = new Logger(DeclaredImageService.name);
@@ -60,74 +61,92 @@ export class DeclaredImageService {
     private readonly clusterRepository: Repository<ClusterEntity>,
     private readonly kubernetesService: KubernetesService,
     private readonly encryptionService: EncryptionService,
+    private readonly master: ManifestMasterService,
   ) {}
 
   /**
-   * @param imageRef the full reference just rolled out, e.g.
+   * @param imageRef the full reference now running, e.g.
    *   `ghcr.io/flui-cloud/core:0.13.0-rc.8`. The repository half decides which
    *   lines are ours to touch; the tag half is what gets written.
    */
   async pin(imageRef: string): Promise<DeclaredImageResult> {
-    const split = imageRef.lastIndexOf(':');
-    if (split <= 0 || imageRef.slice(split + 1).includes('/')) {
+    const access = await this.masterAccess();
+    if ('reason' in access) {
       return {
         pinned: false,
+        outcome: 'failed',
         files: [],
-        reason: `"${imageRef}" carries no tag, so there is nothing to declare.`,
+        reason: access.reason,
       };
     }
-    const repository = imageRef.slice(0, split);
-
-    const cluster = await this.controlCluster();
-    if (!cluster?.kubeconfigEncrypted) {
-      return {
-        pinned: false,
-        files: [],
-        reason: 'No kubeconfig for the cluster.',
-      };
-    }
-    const master = (cluster.nodes ?? []).find((n) => n.nodeType === 'master');
-    if (!master?.serverName) {
-      return {
-        pinned: false,
-        files: [],
-        reason: 'The cluster has no master node recorded to write on.',
-      };
-    }
-
-    const kubeconfig = this.encryptionService.decrypt(
-      cluster.kubeconfigEncrypted,
-    );
-    const jobName = `flui-declare-image-${Date.now()}-${randomBytes(3).toString('hex')}`;
+    const { kubeconfig, node } = access;
 
     try {
-      await this.kubernetesService.applyManifest(
-        kubeconfig,
-        this.buildJobManifest(jobName, master.serverName, repository, imageRef),
-      );
-      await this.awaitJob(kubeconfig, jobName);
-      const logs = await this.readJobLogs(kubeconfig, jobName);
-      return this.parse(logs);
+      const held = await this.master.read(kubeconfig, node);
+      const toWrite: FileToWrite[] = [];
+      const declaredIn: string[] = [];
+      const refusals: string[] = [];
+
+      for (const [name, file] of held) {
+        // A file whose content never left the master carries a Secret, and no
+        // Flui component's image is declared inside one.
+        if (file.content === undefined) continue;
+
+        const outcome = pinImageIn(file.content, imageRef);
+        if (outcome.refusal) {
+          refusals.push(`${name}: ${outcome.refusal}`);
+          continue;
+        }
+        if (!outcome.declared) continue;
+
+        declaredIn.push(name);
+        if (outcome.changed) {
+          toWrite.push({
+            name,
+            content: outcome.content,
+            expectCurrentSha: file.sha,
+          });
+        }
+      }
+
+      if (refusals.length > 0) {
+        return {
+          pinned: false,
+          outcome: 'failed',
+          files: [],
+          reason: `left alone — ${refusals.join('; ')}`,
+        };
+      }
+      if (declaredIn.length === 0) {
+        return {
+          pinned: true,
+          outcome: 'undeclared',
+          files: [],
+          reason: `no manifest on this master declares ${bareRepository(imageRef.split(':')[0])}, so nothing there can reassert an older one`,
+        };
+      }
+      if (toWrite.length === 0) {
+        return { pinned: true, outcome: 'already', files: declaredIn };
+      }
+
+      const planId = `declare-${Date.now()}`;
+      const wrote = await this.master.write(kubeconfig, node, planId, toWrite);
+      return { pinned: true, outcome: 'written', files: wrote };
     } catch (error) {
-      // The update itself succeeded; failing to write the declaration is worth
-      // reporting, never worth failing the update that already rolled out.
+      // The rollout itself succeeded; failing to write the declaration is worth
+      // reporting, never worth failing an update that already happened.
       const reason = (error as Error).message;
       this.logger.warn(`Could not pin ${imageRef} in the manifests: ${reason}`);
-      return { pinned: false, files: [], reason };
-    } finally {
-      await this.kubernetesService
-        .deleteResource(kubeconfig, 'Job', jobName, JOB_NAMESPACE)
-        .catch(() => undefined);
+      return { pinned: false, outcome: 'failed', files: [], reason };
     }
   }
 
   /**
-   * Repair for an installation that already drifted.
+   * Declare what is actually running, for every component that has a manifest.
    *
-   * Pinning happens on update, so an installation whose declared tag was never
-   * brought into line still names the old one and will hand it back at the next
-   * reboot. This is the way to say "declare what is actually running" without
-   * waiting for another release.
+   * Scheduled rather than only run at the end of an update, because the API's
+   * own rollout has no code path left to pin from: the pod that would do it is
+   * the one being replaced.
    */
   async reconcile(): Promise<Array<DeclaredImageResult & { image: string }>> {
     const images = await this.runningComponentImages();
@@ -137,13 +156,15 @@ export class DeclaredImageService {
   }
 
   /**
-   * What the components are running, asked of the cluster.
+   * What the components are running, asked of the cluster and only once it has
+   * settled.
    *
-   * Not of `applications.observedImageRef`, which is a record kept by a
-   * reconciler and can lag: read from there, this repair declared a superseded
-   * build on a cluster running a newer one, and k3s duly rolled the cluster
-   * back to it. The Deployment is the only account of what is running
-   * that cannot be stale, because it is the thing that decides it.
+   * Not `applications.observedImageRef`, which a reconciler keeps and can lag:
+   * read from there, this declared a superseded build on a cluster running a
+   * newer one, and k3s duly rolled the cluster back to it. The Deployment's
+   * `spec` is what it has been *told* to run, so it is read only where the
+   * status agrees it arrived — pinning a tag mid-rollout would write a build
+   * that may never come up, and then every restart would reassert it.
    */
   private async runningComponentImages(): Promise<string[]> {
     const cluster = await this.controlCluster();
@@ -164,8 +185,9 @@ export class DeclaredImageService {
         // names cover both layouts, and every cluster has one of them.
         continue;
       }
-      for (const dep of list.items ?? []) {
-        for (const image of ourImagesIn(dep)) found.add(image);
+      for (const deployment of list.items ?? []) {
+        if (!hasSettled(deployment)) continue;
+        for (const image of ourImagesIn(deployment)) found.add(image);
       }
     }
     return [...found];
@@ -181,144 +203,37 @@ export class DeclaredImageService {
     });
   }
 
-  private buildScript(repository: string, imageRef: string): string {
-    return [
-      'set -e',
-      `DIR=${MANIFEST_DIR}`,
-      `REPO="${repository}"`,
-      `REF="${imageRef}"`,
-      '[ -d "$DIR" ] || { echo "SKIP no manifest directory on this node"; exit 0; }',
-      'for f in "$DIR"/*.yaml; do',
-      '  grep -q "image: ${REPO}:" "$f" 2>/dev/null || continue',
-      '  if grep -q "image: ${REF}$" "$f" 2>/dev/null; then echo "ALREADY $(basename $f)"; continue; fi',
-      '  tmp="$f.flui-new"',
-      '  sed "s|image: ${REPO}:.*|image: ${REF}|" "$f" > "$tmp"',
-      '  if ! python3 -c "import sys,yaml; list(yaml.safe_load_all(open(sys.argv[1])))" "$tmp" 2>/dev/null; then',
-      '    rm -f "$tmp"; echo "REFUSED $(basename $f) would not parse after the rewrite"; continue',
-      '  fi',
-      '  mv "$tmp" "$f"',
-      '  echo "PINNED $(basename $f)"',
-      'done',
-    ].join('\n');
-  }
-
-  private buildJobManifest(
-    jobName: string,
-    node: string,
-    repository: string,
-    imageRef: string,
-  ): string {
-    const scriptBlock = this.buildScript(repository, imageRef)
-      .split('\n')
-      .map((line) => `            ${line}`)
-      .join('\n');
-
-    return [
-      'apiVersion: batch/v1',
-      'kind: Job',
-      'metadata:',
-      `  name: ${jobName}`,
-      `  namespace: ${JOB_NAMESPACE}`,
-      '  labels:',
-      '    flui.cloud/managed-by: flui-cloud',
-      '    flui-resource-type: declared-image',
-      'spec:',
-      '  ttlSecondsAfterFinished: 60',
-      '  backoffLimit: 0',
-      '  template:',
-      '    metadata:',
-      '      labels:',
-      '        flui.cloud/managed-by: flui-cloud',
-      `        flui-declare-image-job: ${jobName}`,
-      '    spec:',
-      '      restartPolicy: Never',
-      '      hostPID: true',
-      '      nodeSelector:',
-      `        kubernetes.io/hostname: ${node}`,
-      '      tolerations:',
-      '      - key: node-role.kubernetes.io/control-plane',
-      '        operator: Exists',
-      '        effect: NoSchedule',
-      '      - key: node-role.kubernetes.io/master',
-      '        operator: Exists',
-      '        effect: NoSchedule',
-      '      containers:',
-      '      - name: declare',
-      '        image: alpine:3.20',
-      '        securityContext:',
-      '          privileged: true',
-      '        command: ["sh","-c"]',
-      '        args:',
-      '        - |',
-      '          apk add --no-cache util-linux >/dev/null 2>&1 || true',
-      "          SCRIPT=$(cat <<'FLUIDECLARE'",
-      scriptBlock,
-      '          FLUIDECLARE',
-      '          )',
-      '          nsenter -t 1 -m -- /bin/sh -c "$SCRIPT"',
-      '',
-    ].join('\n');
-  }
-
-  private async awaitJob(kubeconfig: string, jobName: string): Promise<void> {
-    const start = Date.now();
-    while (Date.now() - start < JOB_TIMEOUT_MS) {
-      const job = await this.kubernetesService.getResource(
-        kubeconfig,
-        'Job',
-        jobName,
-        JOB_NAMESPACE,
-      );
-      if ((job?.status?.succeeded ?? 0) > 0) return;
-      if ((job?.status?.failed ?? 0) > 0) {
-        throw new Error(`job ${jobName} failed`);
-      }
-      await new Promise((r) => setTimeout(r, JOB_POLL_MS));
+  private async masterAccess(): Promise<
+    { kubeconfig: string; node: string } | { reason: string }
+  > {
+    const cluster = await this.controlCluster();
+    if (!cluster?.kubeconfigEncrypted) {
+      return { reason: 'No kubeconfig for the cluster.' };
     }
-    throw new Error(`job ${jobName} timed out`);
-  }
-
-  private async readJobLogs(
-    kubeconfig: string,
-    jobName: string,
-  ): Promise<string> {
-    const kc = this.kubernetesService.makeKubeConfig(kubeconfig);
-    const coreApi = kc.makeApiClient(k8s.CoreV1Api);
-    const pods = await coreApi.listNamespacedPod({
-      namespace: JOB_NAMESPACE,
-      labelSelector: `flui-declare-image-job=${jobName}`,
-    });
-    const podName = pods.items?.[0]?.metadata?.name;
-    if (!podName) throw new Error(`no pod found for job ${jobName}`);
-    return this.kubernetesService.getPodLogs(
-      kubeconfig,
-      podName,
-      JOB_NAMESPACE,
-    );
-  }
-
-  private parse(logs: string): DeclaredImageResult {
-    const files: string[] = [];
-    const refused: string[] = [];
-
-    for (const line of logs.split('\n').map((l) => l.trim())) {
-      if (line.startsWith('PINNED ')) files.push(line.slice('PINNED '.length));
-      if (line.startsWith('ALREADY '))
-        files.push(line.slice('ALREADY '.length));
-      if (line.startsWith('REFUSED '))
-        refused.push(line.slice('REFUSED '.length));
-      if (line.startsWith('SKIP ')) {
-        return { pinned: false, files: [], reason: line.slice('SKIP '.length) };
-      }
+    const master = (cluster.nodes ?? []).find((n) => n.nodeType === 'master');
+    if (!master?.serverName) {
+      return { reason: 'The cluster has no master node recorded to write on.' };
     }
-
-    if (refused.length > 0) {
-      return {
-        pinned: false,
-        files,
-        reason: `left alone because the rewrite would not parse: ${refused.join(', ')}`,
-      };
-    }
-    return { pinned: true, files };
+    return {
+      kubeconfig: this.encryptionService.decrypt(cluster.kubeconfigEncrypted),
+      node: master.serverName,
+    };
   }
+}
+
+/** The images in one Deployment that this release speaks for. */
+function ourImagesIn(deployment: k8s.V1Deployment): string[] {
+  const out: string[] = [];
+  for (const container of deployment.spec?.template?.spec?.containers ?? []) {
+    const image = container.image;
+    if (!image) continue;
+    const colon = image.lastIndexOf(':');
+    if (colon <= 0) continue;
+    if (
+      pinnedTagForRepository(bareRepository(image.slice(0, colon))) !== null
+    ) {
+      out.push(image);
+    }
+  }
+  return out;
 }

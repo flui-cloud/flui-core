@@ -14,7 +14,10 @@ import { SECTION } from '../../iam/constants/iam-sections';
 import { IAM_PERMISSION } from '../../iam/constants/iam-permissions';
 import { ActionCycle } from '../../action-cycle/action-cycle.decorator';
 import { PlatformUpdatesService } from '../services/platform-updates.service';
-import { DeclaredImageService } from '../services/declared-image.service';
+import {
+  DeclaredImageOutcome,
+  DeclaredImageService,
+} from '../services/declared-image.service';
 import {
   ManifestRefreshService,
   RefreshPlan,
@@ -105,6 +108,7 @@ export class PlatformUpdatesController {
     images: Array<{
       image: string;
       pinned: boolean;
+      outcome: DeclaredImageOutcome;
       files: string[];
       reason?: string;
     }>;

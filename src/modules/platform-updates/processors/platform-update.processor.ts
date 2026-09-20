@@ -131,7 +131,7 @@ export class PlatformUpdateProcessor {
     // the update is only finished once the declaration agrees — otherwise the
     // next reboot quietly undoes it, with no error and nothing to blame.
     const declared = await this.declaredImages.pin(component.imageRef);
-    if (!declared.pinned) {
+    if (declared.outcome === 'failed') {
       this.logger.warn(
         `${component.name} rolled out, but its manifest still declares the old image: ${declared.reason}`,
       );
