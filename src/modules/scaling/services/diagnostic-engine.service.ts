@@ -246,7 +246,7 @@ export class DiagnosticEngineService {
   > | null> {
     if (!cs.state?.running && (cs.restartCount ?? 0) === 0) return null;
 
-    const events = await this.kubernetesService.listPodEvents(
+    const events = await this.kubernetesService.listEventsFor(
       input.kubeconfig,
       input.pod.metadata?.namespace ?? 'default',
       input.pod.metadata?.name ?? '',

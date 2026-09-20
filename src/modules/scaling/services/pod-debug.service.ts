@@ -154,7 +154,7 @@ export class PodDebugService {
     namespace: string,
     podName: string,
   ): Promise<K8sEventSummary[]> {
-    const events = await this.kubernetesService.listPodEvents(
+    const events = await this.kubernetesService.listEventsFor(
       kubeconfig,
       namespace,
       podName,

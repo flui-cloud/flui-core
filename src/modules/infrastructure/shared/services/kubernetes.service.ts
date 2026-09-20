@@ -84,6 +84,13 @@ export class AdmissionRefusedError extends Error {
   }
 }
 
+/** How often a stalled rollout is asked what Kubernetes said about it. */
+const EVENT_CHECK_INTERVAL_MS = 30_000;
+
+/** `eventTime` on the newer API, `lastTimestamp` on the older one. */
+const timeOfEvent = (event: k8s.CoreV1Event): number =>
+  new Date(event.lastTimestamp ?? event.eventTime ?? 0).getTime();
+
 @Injectable()
 export class KubernetesService {
   private readonly logger = new Logger(KubernetesService.name);
@@ -368,6 +375,7 @@ export class KubernetesService {
   ): Promise<boolean> {
     const startTime = Date.now();
     const pollInterval = 5000; // 5 seconds
+    let nextEventCheck = startTime + EVENT_CHECK_INTERVAL_MS;
 
     while (Date.now() - startTime < timeoutMs) {
       try {
@@ -399,6 +407,16 @@ export class KubernetesService {
           );
         }
 
+        if (Date.now() >= nextEventCheck) {
+          nextEventCheck = Date.now() + EVENT_CHECK_INTERVAL_MS;
+          await this.throwIfRefusedInEvents(
+            kubeconfigContent,
+            kind,
+            name,
+            namespace,
+          );
+        }
+
         this.logger.debug(`${kind}/${name} not ready yet, waiting...`);
         await this.sleep(pollInterval);
       } catch (error) {
@@ -410,9 +428,45 @@ export class KubernetesService {
       }
     }
 
+    await this.throwIfRefusedInEvents(kubeconfigContent, kind, name, namespace);
     throw new Error(
       `Timeout waiting for ${kind}/${name} to be ready after ${timeoutMs}ms`,
     );
+  }
+
+  /**
+   * A refusal Kubernetes only ever wrote in an event.
+   *
+   * A StatefulSet's `volumeClaimTemplate` is created by its controller, not by a
+   * call of ours, so a ResourceQuota refusal lands as a `FailedCreate` event on
+   * the StatefulSet and nowhere else — no condition to read, no call to fail.
+   * A guest who has just reached their own storage ceiling would otherwise watch
+   * the rollout time out and be given no reason at all.
+   */
+  private async throwIfRefusedInEvents(
+    kubeconfigContent: string,
+    kind: string,
+    name: string,
+    namespace: string,
+  ): Promise<void> {
+    const events = await this.listEventsFor(
+      kubeconfigContent,
+      namespace,
+      name,
+    ).catch(() => [] as k8s.CoreV1Event[]);
+
+    const newestFirst = [...events].sort(
+      (a, b) => timeOfEvent(b) - timeOfEvent(a),
+    );
+    for (const event of newestFirst) {
+      if (event.type !== 'Warning') continue;
+      const refusal = describeQuotaRefusal(event.message);
+      if (refusal) {
+        throw new AdmissionRefusedError(
+          `${kind}/${name} cannot start: ${refusal.message}`,
+        );
+      }
+    }
   }
 
   /**
@@ -882,18 +936,16 @@ export class KubernetesService {
     return response.items ?? [];
   }
 
-  /**
-   * List events that reference the given pod (involvedObject.name filter).
-   */
-  async listPodEvents(
+  /** Events naming this object, whatever kind it is (involvedObject.name). */
+  async listEventsFor(
     kubeconfigContent: string,
     namespace: string,
-    podName: string,
+    objectName: string,
   ): Promise<k8s.CoreV1Event[]> {
     const { coreApi } = this.getKubeClient(kubeconfigContent);
     const response = await coreApi.listNamespacedEvent({
       namespace,
-      fieldSelector: `involvedObject.name=${podName}`,
+      fieldSelector: `involvedObject.name=${objectName}`,
     });
     return response.items ?? [];
   }

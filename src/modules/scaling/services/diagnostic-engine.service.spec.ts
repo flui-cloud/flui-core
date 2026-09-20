@@ -38,12 +38,12 @@ function buildPod(
 describe('DiagnosticEngineService', () => {
   const createService = () => {
     const getPodLogs = jest.fn().mockResolvedValue('');
-    const listPodEvents = jest.fn().mockResolvedValue([]);
+    const listEventsFor = jest.fn().mockResolvedValue([]);
     const service = new DiagnosticEngineService(
-      { getPodLogs, listPodEvents } as any,
+      { getPodLogs, listEventsFor } as any,
       { match: jest.fn().mockReturnValue(null) } as any,
     );
-    return { service, getPodLogs, listPodEvents };
+    return { service, getPodLogs, listEventsFor };
   };
 
   const analyze = (pod: k8s.V1Pod) =>

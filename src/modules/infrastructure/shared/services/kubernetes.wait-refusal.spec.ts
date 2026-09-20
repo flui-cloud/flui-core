@@ -79,3 +79,58 @@ describe('waiting for a workload that will never be ready', () => {
     ).rejects.toThrow(/Timeout/);
   }, 15_000);
 });
+
+/**
+ * The refusal that exists only as an event. A StatefulSet's volume claim is made
+ * by its controller, so a quota refusal never reaches a call of ours and never
+ * lands on a condition: a guest at their storage ceiling saw `failed` with an
+ * empty reason, which is the one case this wording was written for.
+ */
+describe('waiting for a StatefulSet whose volume was refused', () => {
+  const serviceWith = (events: unknown[]) => {
+    const service = new KubernetesService();
+    jest.spyOn(service, 'getResource').mockResolvedValue({
+      status: { readyReplicas: 0, replicas: 1 },
+    } as never);
+    jest.spyOn(service, 'listEventsFor').mockResolvedValue(events as never);
+    return service;
+  };
+
+  const failedCreate = (message: string) => ({
+    type: 'Warning',
+    reason: 'FailedCreate',
+    lastTimestamp: '2026-09-19T10:00:00Z',
+    message,
+  });
+
+  it('names the ceiling instead of reporting a timeout', async () => {
+    const service = serviceWith([
+      failedCreate(
+        'create Claim data-umami-db-0 for Pod umami-db-0 in StatefulSet umami-db failed error: persistentvolumeclaims "data-umami-db-0" is forbidden: exceeded quota: sandbox-quota, requested: requests.storage=5Gi, used: requests.storage=10Gi, limited: requests.storage=12Gi',
+      ),
+    ]);
+    await expect(
+      service.waitForReady('kc', 'StatefulSet', 'umami-db', 'ns', 1_000),
+    ).rejects.toBeInstanceOf(AdmissionRefusedError);
+  }, 15_000);
+
+  it('says it as storage a person has used, not as an object being forbidden', async () => {
+    const service = serviceWith([
+      failedCreate(
+        'create Claim data-umami-db-0 for Pod umami-db-0 in StatefulSet umami-db failed error: persistentvolumeclaims "data-umami-db-0" is forbidden: exceeded quota: sandbox-quota, requested: requests.storage=5Gi, used: requests.storage=10Gi, limited: requests.storage=12Gi',
+      ),
+    ]);
+    await expect(
+      service.waitForReady('kc', 'StatefulSet', 'umami-db', 'ns', 1_000),
+    ).rejects.toThrow(/10Gi of the 12Gi storage your trial allows/);
+  }, 15_000);
+
+  it('leaves a warning that is not a refusal to time out on its own', async () => {
+    const service = serviceWith([
+      { type: 'Warning', reason: 'BackOff', message: 'Back-off pulling image' },
+    ]);
+    await expect(
+      service.waitForReady('kc', 'StatefulSet', 'umami-db', 'ns', 1_000),
+    ).rejects.toThrow(/Timeout/);
+  }, 15_000);
+});
