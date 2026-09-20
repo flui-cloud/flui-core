@@ -136,14 +136,35 @@ describe('PlatformUpdatesService', () => {
     expect(status.advisories.every((a) => a.level !== 'blocker')).toBe(true);
   });
 
-  it('refuses a release that changes the bootstrap manifests', async () => {
+  it('applies a release that changes the bootstrap manifests, and says what will not arrive', async () => {
     const status = await build({
       releases: [entry({ requiresBootstrap: true })],
     }).getStatus();
 
     expect(status.updateAvailable).toBe(true);
-    expect(status.applicable).toBe(false);
-    expect(status.advisories.some((a) => a.level === 'blocker')).toBe(true);
+    expect(status.applicable).toBe(true);
+    expect(status.advisories).toContainEqual(
+      expect.objectContaining({
+        level: 'warning',
+        title: 'This release changes the bootstrap manifests',
+      }),
+    );
+  });
+
+  it('names the CLI this release would need, without gating on it', async () => {
+    const status = await build({
+      releases: [entry({ requiresBootstrap: true })],
+    }).getStatus();
+
+    expect(status.requiredCliVersion).toBe(status.availableVersion);
+    expect(status.applicable).toBe(true);
+  });
+
+  it('has no CLI version to name when no release is on offer', async () => {
+    const status = await build({ releases: [] }).getStatus();
+
+    expect(status.updateAvailable).toBe(false);
+    expect(status.requiredCliVersion).toBeNull();
   });
 
   it('refuses a release that cannot be reached from the installed version', async () => {

@@ -91,6 +91,11 @@ export class PlatformUpdatesService {
       updateAvailable: release !== null,
       applicable:
         release !== null && !advisories.some((a) => a.level === 'blocker'),
+      // Informational only, and never a gate: the CLI pins the bootstrap ref and
+      // the image tags from its own compiled release, so re-running the bootstrap
+      // for release X needs a CLI on X or newer. The API cannot see which CLI the
+      // operator has — it can only say which one this release would need.
+      requiredCliVersion: release?.version ?? null,
       publishedAt: release?.publishedAt ?? null,
       notes: release?.notes ?? [],
       migrations: release?.migrations ?? 0,
@@ -317,12 +322,18 @@ export class PlatformUpdatesService {
 
     if (!release) return out;
 
+    // Deliberately a warning, not a blocker. An in-app update cannot apply a
+    // host-level change, but it does not break one either: a feature that needs
+    // the new manifests reports itself unsupported and leaves the node alone
+    // (see NodeStorageQuotaService). Refusing the whole release would hold back
+    // the component images too, which is the larger harm — so this says what
+    // will not arrive and lets the operator decide.
     if (release.requiresBootstrap) {
       out.push({
-        level: 'blocker',
+        level: 'warning',
         title: 'This release changes the bootstrap manifests',
         detail:
-          'An in-app update moves image tags only. Install this release with the CLI (flui env) instead.',
+          'An in-app update moves image tags only, so the host-level changes are not applied. Whatever depends on them stays inert until the bootstrap is re-run from a CLI on this release.',
       });
     }
     if (

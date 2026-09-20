@@ -114,9 +114,18 @@ export class PlatformUpdateStatusDto {
   @Sensitivity(Sensitivity.PUBLIC)
   @ApiProperty({
     description:
-      'True when the available release can be applied from the dashboard. False with a blocker advisory when it needs the CLI.',
+      'True when the available release can be applied from the dashboard. False only when something makes the release genuinely unappliable — the manifest could not be read, or the release refuses this starting version. A release that also changes the host manifests stays applicable: the images move and an advisory says what will not arrive.',
   })
   applicable: boolean;
+
+  @Sensitivity(Sensitivity.PUBLIC)
+  @ApiPropertyOptional({
+    nullable: true,
+    description:
+      'The CLI version needed to re-run the bootstrap for this release, shown for information and never enforced. The CLI installs the ref and tags pinned in its own build, so an older CLI would reinstall its own release; the API cannot see which one the operator has.',
+    example: '0.13.0-rc.6',
+  })
+  requiredCliVersion: string | null;
 
   @Sensitivity(Sensitivity.PUBLIC)
   @ApiPropertyOptional({ nullable: true, example: '2026-09-02T09:00:00.000Z' })

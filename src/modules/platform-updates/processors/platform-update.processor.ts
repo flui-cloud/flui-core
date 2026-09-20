@@ -12,6 +12,7 @@ import {
   PlatformUpdateOperationMetadata,
 } from '../../infrastructure/servers/entities/infrastructure-operations.entity';
 import { PlatformUpdatesService } from '../services/platform-updates.service';
+import { DeclaredImageService } from '../services/declared-image.service';
 import {
   PLATFORM_UPDATE_JOB,
   PLATFORM_UPDATE_QUEUE,
@@ -41,6 +42,7 @@ export class PlatformUpdateProcessor {
     private readonly operationRepository: Repository<InfrastructureOperationEntity>,
     private readonly deployService: ApplicationDeployService,
     private readonly platformUpdates: PlatformUpdatesService,
+    private readonly declaredImages: DeclaredImageService,
   ) {}
 
   @Process(PLATFORM_UPDATE_JOB)
@@ -122,6 +124,16 @@ export class PlatformUpdateProcessor {
       await this.markComponent(operationId, metadata, component.key, 'failed');
       throw new Error(
         `${component.name} did not roll out to ${component.targetVersion} (deploy ${child.id} ended ${outcome}).`,
+      );
+    }
+    // The live Deployment now runs the new tag; the manifest on the master still
+    // declares the old one, and k3s re-applies that directory at every start. So
+    // the update is only finished once the declaration agrees — otherwise the
+    // next reboot quietly undoes it, with no error and nothing to blame.
+    const declared = await this.declaredImages.pin(component.imageRef);
+    if (!declared.pinned) {
+      this.logger.warn(
+        `${component.name} rolled out, but its manifest still declares the old image: ${declared.reason}`,
       );
     }
     await this.markComponent(operationId, metadata, component.key, 'done');

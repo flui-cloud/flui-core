@@ -78,8 +78,10 @@ export class ApiClient {
   /**
    * GET request
    */
-  async get<T>(path: string): Promise<T> {
-    const response = await this.client.get<T>(path);
+  async get<T>(path: string, opts?: { timeoutMs?: number }): Promise<T> {
+    const response = await this.client.get<T>(path, {
+      ...(opts?.timeoutMs !== undefined ? { timeout: opts.timeoutMs } : {}),
+    });
     return response.data;
   }
 

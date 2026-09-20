@@ -19,6 +19,7 @@ function status(
     availableVersion: TARGET,
     updateAvailable: true,
     applicable: true,
+    requiredCliVersion: TARGET,
     publishedAt: '2026-09-02T09:00:00.000Z',
     notes: [],
     migrations: 2,

@@ -14,6 +14,12 @@ import { SECTION } from '../../iam/constants/iam-sections';
 import { IAM_PERMISSION } from '../../iam/constants/iam-permissions';
 import { ActionCycle } from '../../action-cycle/action-cycle.decorator';
 import { PlatformUpdatesService } from '../services/platform-updates.service';
+import { DeclaredImageService } from '../services/declared-image.service';
+import {
+  ManifestRefreshService,
+  RefreshPlan,
+  RefreshResult,
+} from '../services/manifest-refresh.service';
 import { PlatformUpdateRunnerService } from '../services/platform-update-runner.service';
 import { PlatformUpdateStatusDto } from '../dto/platform-update.dto';
 import { PlatformUpdateOperationDto } from '../dto/platform-update-operation.dto';
@@ -37,6 +43,8 @@ export class PlatformUpdatesController {
   constructor(
     private readonly platformUpdates: PlatformUpdatesService,
     private readonly runner: PlatformUpdateRunnerService,
+    private readonly declaredImages: DeclaredImageService,
+    private readonly manifests: ManifestRefreshService,
   ) {}
 
   @Get()
@@ -84,6 +92,62 @@ export class PlatformUpdatesController {
       limit ? Number.parseInt(limit, 10) : 20,
     );
     return operations.map(toPlatformUpdateOperationDto);
+  }
+
+  @Post('reconcile-declared')
+  @RequirePermission(IAM_PERMISSION.PLATFORM_UPDATE)
+  @ApiOperation({
+    summary: 'Declare the images that are actually running',
+    description:
+      'An update moves the running components and nothing else, so the manifests on the master keep naming the tags the cluster was installed with — and k3s hands those back the next time it reads that directory, undoing the update with no error and nothing to blame. This writes what is running into what is declared. It changes no running component: if the two already agree, it does nothing at all.',
+  })
+  async reconcileDeclared(): Promise<{
+    images: Array<{
+      image: string;
+      pinned: boolean;
+      files: string[];
+      reason?: string;
+    }>;
+  }> {
+    return { images: await this.declaredImages.reconcile() };
+  }
+
+  @Post('manifests/plan')
+  @RequirePermission(IAM_PERMISSION.PLATFORM_UPDATE)
+  @ApiOperation({
+    summary:
+      'What a release would change in the manifests on the master, without changing it',
+    description:
+      'Compares the files k3s re-applies at every start with the ones a release ships, and reports what it would replace, what it would add, and — the part that matters — what it will not touch and why. Writes nothing. The plan id it returns is what the apply call must be given.',
+  })
+  async planManifests(
+    @Body()
+    body: {
+      ref?: string;
+      only?: string[];
+      allowStatefulImageChange?: boolean;
+    },
+  ): Promise<RefreshPlan> {
+    return this.manifests.plan(body ?? {});
+  }
+
+  @Post('manifests/apply')
+  @RequirePermission(IAM_PERMISSION.PLATFORM_UPDATE)
+  @ApiOperation({
+    summary: 'Apply a manifest plan that was previewed',
+    description:
+      'Recomputes the plan and refuses if it differs, so only what was previewed — against the state it was previewed on — can be written. It never writes a file that carries a Secret, never supplies a value, and never deletes.',
+  })
+  async applyManifests(
+    @Body()
+    body: {
+      planId: string;
+      ref?: string;
+      only?: string[];
+      allowStatefulImageChange?: boolean;
+    },
+  ): Promise<RefreshResult> {
+    return this.manifests.apply(body);
   }
 
   @Post()

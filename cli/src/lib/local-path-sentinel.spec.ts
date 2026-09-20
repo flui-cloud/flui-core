@@ -151,6 +151,18 @@ const LOCAL_PATH: Record<string, LocalPathEntry> = {
     viaApi: true,
     why: 'Resolves the database through the API; the local path is the SSH tunnel and the socket on this machine.',
   },
+  'commands/env/refresh-manifests.ts': {
+    viaApi: true,
+    why: 'POST /platform/updates/manifests/plan|apply, which runs the job on the master. The local path supplies identity and transport only.',
+  },
+  'commands/env/reconcile-images.ts': {
+    viaApi: true,
+    why: 'POST /platform/updates/reconcile-declared, which runs the job on the master. The local path supplies identity and transport only.',
+  },
+  'commands/sandbox/storage.ts': {
+    viaApi: true,
+    why: 'POST /sandbox/storage-ceilings, which applies the ceilings on every node. The local path supplies identity and transport only.',
+  },
   'commands/env/firewall/apply.ts': {
     viaApi: true,
     why: 'POST /firewalls/cluster/:id/enable. The local path supplies identity and the cluster’s own key when nobody is logged in.',
@@ -333,7 +345,7 @@ describe('the local path is a list somebody wrote down', () => {
   });
 
   /**
-   * How many of the thirty-eight decide behind the guard chain rather than in
+   * How many of the forty-one decide behind the guard chain rather than in
    * process. The number moves only when a command changes side, which is the
    * point: it cannot drift quietly.
    *
@@ -343,13 +355,13 @@ describe('the local path is a list somebody wrote down', () => {
    * asking the closed door for that service is the net loss. Two more have no
    * route at all.
    */
-  it('has ten of the thirty-eight deciding over HTTP', () => {
+  it('has thirteen of the forty-one deciding over HTTP', () => {
     const viaApi = Object.entries(LOCAL_PATH)
       .filter(([, entry]) => entry.viaApi)
       .map(([file]) => file);
     expect({ total: measured.length, viaApi: viaApi.length }).toEqual({
-      total: 38,
-      viaApi: 10,
+      total: 41,
+      viaApi: 13,
     });
   });
 });

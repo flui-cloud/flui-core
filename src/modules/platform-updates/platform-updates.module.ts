@@ -10,6 +10,9 @@ import { SharedInfrastructureModule } from '../infrastructure/shared/shared-infr
 import { EncryptionModule } from '../shared/encryption/encryption.module';
 import { PlatformUpdatesController } from './controllers/platform-updates.controller';
 import { PlatformUpdatesService } from './services/platform-updates.service';
+import { DeclaredImageService } from './services/declared-image.service';
+import { ManifestRefreshService } from './services/manifest-refresh.service';
+import { ManifestMasterService } from './services/manifest-master.service';
 import { ReleaseManifestService } from './services/release-manifest.service';
 import {
   PLATFORM_UPDATE_QUEUE,
@@ -33,6 +36,9 @@ import { PlatformUpdateProcessor } from './processors/platform-update.processor'
   controllers: [PlatformUpdatesController],
   providers: [
     PlatformUpdatesService,
+    DeclaredImageService,
+    ManifestRefreshService,
+    ManifestMasterService,
     ReleaseManifestService,
     PlatformUpdateRunnerService,
     PlatformUpdateResumeService,
