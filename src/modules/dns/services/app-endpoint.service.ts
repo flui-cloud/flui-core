@@ -413,6 +413,20 @@ export class AppEndpointService {
     });
   }
 
+  /**
+   * Endpoints sitting in one certificate state, across every cluster. Used by
+   * the sweep that moves `issuing` along: cert-manager never announces that an
+   * order finished, so something has to go and look, and the set worth looking
+   * at is exactly this one.
+   */
+  async listByCertificateStatus(
+    certificateStatus: CertificateStatus,
+  ): Promise<AppEndpointEntity[]> {
+    return await this.endpointRepository.find({
+      where: { certificateStatus, certificateRequired: true },
+    });
+  }
+
   async listByApplicationId(
     applicationId: string,
   ): Promise<AppEndpointEntity[]> {

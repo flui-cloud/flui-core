@@ -49,6 +49,8 @@ import { GatewayMiddlewareCompilerService } from './services/gateway-middleware-
 import { DnsZoneReconciliationService } from './services/dns-zone-reconciliation.service';
 import { DnsZoneReplicaService } from './services/dns-zone-replica.service';
 import { DnsZoneReconciliationScheduler } from './schedulers/dns-zone-reconciliation.scheduler';
+import { CertificateStatusRefreshService } from './services/certificate-status-refresh.service';
+import { CertificateStatusScheduler } from './schedulers/certificate-status.scheduler';
 
 import { DnsZoneController } from './controllers/dns-zone.controller';
 import { DnsZoneReplicaController } from './controllers/dns-zone-replica.controller';
@@ -108,6 +110,8 @@ import { ClusterDnsGateway } from './gateway/cluster-dns.gateway';
     DnsZoneReconciliationService,
     DnsZoneReplicaService,
     DnsZoneReconciliationScheduler,
+    CertificateStatusRefreshService,
+    CertificateStatusScheduler,
   ],
   controllers: [
     DnsZoneController,

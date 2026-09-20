@@ -30,6 +30,7 @@ import { ApplicationsRepository } from '../../applications/repositories/applicat
 import { AppEndpointService } from '../services/app-endpoint.service';
 import { AppEndpointReconciliationService } from '../services/app-endpoint-reconciliation.service';
 import { ClusterDnsGateway } from '../gateway/cluster-dns.gateway';
+import { CertificateStatusRefreshService } from '../services/certificate-status-refresh.service';
 import { CreateAppEndpointDto } from '../dto/create-app-endpoint.dto';
 import { UpdateAppEndpointDto } from '../dto/update-app-endpoint.dto';
 import { AppEndpointResponseDto } from '../dto/app-endpoint-response.dto';
@@ -47,49 +48,11 @@ export class AppEndpointController {
     private readonly clusterDnsGateway: ClusterDnsGateway,
     private readonly appAccess: ApplicationAccessService,
     private readonly applications: ApplicationsRepository,
+    private readonly certificateStatus: CertificateStatusRefreshService,
   ) {}
 
-  private async refreshCertStatusIfNeeded(endpointId: string): Promise<void> {
-    const endpoint = await this.appEndpointService.getEndpoint(endpointId);
-
-    // Refresh when actively issuing, failed (may have recovered), or status is unknown
-    const needsRefresh =
-      endpoint.certificateRequired &&
-      (endpoint.certificateStatus === CertificateStatus.ISSUING ||
-        endpoint.certificateStatus === CertificateStatus.FAILED ||
-        endpoint.certificateStatus === null);
-    if (!needsRefresh) return;
-
-    try {
-      const { status, message } =
-        await this.reconciliationService.getCertificateStatus(endpointId);
-      if (
-        status !== null &&
-        (status !== endpoint.certificateStatus ||
-          message !== endpoint.certificateMessage)
-      ) {
-        await this.appEndpointService.updateCertificateStatus(
-          endpointId,
-          status,
-          message,
-        );
-        this.clusterDnsGateway.emitEndpointCertStatus(endpoint.clusterId, {
-          clusterId: endpoint.clusterId,
-          endpointId: endpoint.id,
-          fqdn: endpoint.fqdn,
-          certificateStatus: status,
-          certificateMessage: message,
-          tlsEnabled:
-            !!endpoint.certificateRequired &&
-            status === CertificateStatus.VALID,
-          timestamp: new Date(),
-        });
-      }
-    } catch (err) {
-      this.logger.warn(
-        `Live cert status refresh failed for ${endpointId}: ${err.message}`,
-      );
-    }
+  private refreshCertStatusIfNeeded(endpointId: string): Promise<void> {
+    return this.certificateStatus.refreshIfNeeded(endpointId);
   }
 
   @Get('endpoints/check-fqdn')

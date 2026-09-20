@@ -128,6 +128,7 @@ describe('the four routes where ownership is the question', () => {
               over.app === undefined ? { id: 'a1' } : over.app,
             ),
         } as never,
+        { refreshIfNeeded: jest.fn() } as never,
       );
       return { controller, assertCan, deleteEndpoint, deleteEndpointResources };
     };
@@ -246,6 +247,7 @@ describe('the four routes where ownership is the question', () => {
       {} as never,
       { assertCan: jest.fn() } as never,
       { findById: jest.fn() } as never,
+      { refreshIfNeeded: jest.fn() } as never,
     );
     const images = new ImageRegistryController(
       { getImage: jest.fn(), deleteImage: jest.fn() } as never,

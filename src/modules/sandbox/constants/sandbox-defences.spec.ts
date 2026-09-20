@@ -30,6 +30,46 @@ describe('network policy around a tenancy', () => {
     expect(from.some((f: any) => f.podSelector)).toBe(true);
   });
 
+  /**
+   * The rule the demo actually runs on: a host-networked Traefik can never match
+   * a selector, so before this every application a guest deployed answered 502
+   * and never got a certificate. The address is on the pod network, not the
+   * node's — the caller was measured as `10.42.0.0`.
+   */
+  it('lets the ingress controller in by address, since it cannot be matched by selector', () => {
+    const from = policy().spec.ingress[0].from;
+    const cidrs = from
+      .filter((f: any) => f.ipBlock)
+      .map((f: any) => f.ipBlock.cidr);
+    expect(cidrs).toContain('10.42.0.0/31');
+    expect(cidrs).toContain('10.42.255.0/31');
+  });
+
+  /**
+   * Two addresses per node — the CNI's own — and never a pod's. A `/16` was
+   * measured letting one tenancy reach another's service, which is the sentence
+   * this fence exists to prevent.
+   */
+  it('opens no address a pod could hold', () => {
+    const from = policy().spec.ingress[0].from;
+    const cidrs: string[] = from
+      .filter((f: any) => f.ipBlock)
+      .map((f: any) => f.ipBlock.cidr);
+    expect(cidrs.some((c) => /\/(8|16|24)$/.test(c))).toBe(false);
+    for (const cidr of cidrs) expect(cidr).toMatch(/^10\.42\.\d{1,3}\.0\/31$/);
+  });
+
+  /**
+   * The widening is one direction only. What keeps one tenancy out of another
+   * is the egress half, which this change does not touch — so if that ever
+   * loosens, it fails here rather than in somebody's data.
+   */
+  it('does not open a tenancy towards anything by widening the way in', () => {
+    const egress = JSON.stringify(policy().spec.egress);
+    expect(egress).toContain('10.0.0.0/8');
+    expect(egress).toContain('169.254.0.0/16');
+  });
+
   it('keeps the internet reachable, because an app that cannot call out proves less', () => {
     const internet = policy().spec.egress.find((e: any) =>
       e.to?.some((t: any) => t.ipBlock?.cidr === '0.0.0.0/0'),

@@ -8,7 +8,10 @@ import { SandboxBuildTimeline } from './sandbox-build-timeline';
 import { SandboxCapacityService } from './sandbox-capacity.service';
 import { ClaimResult, SandboxReserveService } from './sandbox-reserve.service';
 import { SandboxQuotaService } from './sandbox-quota.service';
-import { buildSandboxNetworkPolicy } from '../constants/sandbox-network-policy.manifest';
+import {
+  SANDBOX_INGRESS_SOURCE_CIDRS,
+  buildSandboxNetworkPolicy,
+} from '../constants/sandbox-network-policy.manifest';
 import { buildNoindexMiddleware } from '../constants/sandbox-noindex';
 import {
   IDENTITY_DIRECTORY,
@@ -180,7 +183,17 @@ export class SandboxTenantService {
       // another tenancy.
       await this.k8s.applyManifest(
         kubeconfig,
-        buildSandboxNetworkPolicy(tenant.namespace),
+        // The VNet range rides along as a hedge: the pod CIDR is what a live
+        // cluster was measured to use, and this costs nothing if that holds and
+        // saves the demo if some provider or the overlay routes differently.
+        buildSandboxNetworkPolicy(tenant.namespace, {
+          ingressSourceCidrs: [
+            ...SANDBOX_INGRESS_SOURCE_CIDRS,
+            ...(process.env.FLUI_SUBNET_IP_RANGE
+              ? [process.env.FLUI_SUBNET_IP_RANGE]
+              : []),
+          ],
+        }),
       );
       await this.k8s.applyManifest(
         kubeconfig,
