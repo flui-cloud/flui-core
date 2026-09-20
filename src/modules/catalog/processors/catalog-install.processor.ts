@@ -287,12 +287,39 @@ export class CatalogInstallProcessor {
         ctx,
         await this.allowMasterPlacementFor(install),
       );
-      const application = await this.applicationService.create(
-        install.clusterId,
-        dto,
-        install.userId,
-        install.userEmail,
+      // Re-entrant, because this handler can be delivered twice: `attempts: 1`
+      // stops a retry after an error, not a stalled job handed to the next
+      // worker when this one dies — and a platform update restarts the API.
+      // Measured: one install, one COMPLETED operation, two applications with a
+      // pod and a volume each. The composed path below already guards this way.
+      const alreadyCreated = await this.applicationRepo.findByCatalogInstall(
+        install.id,
       );
+      const application =
+        alreadyCreated[0] ??
+        (await this.applicationService.create(
+          install.clusterId,
+          dto,
+          install.userId,
+          install.userEmail,
+        ));
+      if (alreadyCreated[0]) {
+        this.logger.log(
+          `Install ${install.id}: idempotent re-entry, reusing ${application.name}`,
+        );
+      }
+
+      // The name the person typed, carried onto the application: it was landing
+      // on the install row and nowhere else, so the person and their agent held
+      // two names for one thing. Written after the create and not into the DTO,
+      // because the slug derives from `name` and the slug is already inside the
+      // hostname, the Service, the Ingress and the certificate.
+      if (install.displayName && application.name !== install.displayName) {
+        await this.applicationRepo.update(application.id, {
+          name: install.displayName,
+        });
+        application.name = install.displayName;
+      }
 
       // A datastore gets its connection URL now, as one more secret env, so the
       // Secret carries it the moment the Secret is first rendered. Written
