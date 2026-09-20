@@ -8,6 +8,7 @@ import { ApplicationEntity } from '../entities/application.entity';
 import { ApplicationEnvVar } from '../interfaces/source-config.interface';
 import { ApplicationSourceType } from '../enums/application-source-type.enum';
 import { ApplicationManifestGeneratorService } from './application-manifest-generator.service';
+import { WorkloadNamespaceService } from './workload-namespace.service';
 import { GhcrSecretRefreshService } from './ghcr-secret-refresh.service';
 
 const WAITABLE_KINDS = new Set(['Deployment', 'StatefulSet', 'DaemonSet']);
@@ -45,6 +46,7 @@ export class ApplicationMaterializerService {
     private readonly encryptionService: EncryptionService,
     private readonly manifestGenerator: ApplicationManifestGeneratorService,
     private readonly ghcrSecretRefresh: GhcrSecretRefreshService,
+    private readonly workloadNamespace: WorkloadNamespaceService,
   ) {}
 
   private async kubeconfigFor(clusterId: string): Promise<string> {
@@ -81,14 +83,10 @@ export class ApplicationMaterializerService {
             ...(overrides?.env === undefined ? {} : { env: overrides.env }),
           } as ApplicationEntity);
 
-    await this.kubernetesService.ensureNamespaceExists(
-      kubeconfig,
-      app.k8sNamespace,
-      {
-        'flui.cloud/tier': 'user',
-        ...(app.userId ? { 'flui.cloud/owner': app.userId } : {}),
-      },
-    );
+    await this.workloadNamespace.ensure(kubeconfig, app.k8sNamespace, {
+      'flui.cloud/tier': 'user',
+      ...(app.userId ? { 'flui.cloud/owner': app.userId } : {}),
+    });
 
     let imagePullSecretName: string | undefined;
     if (app.sourceType === ApplicationSourceType.GIT_BUILD && app.userId) {

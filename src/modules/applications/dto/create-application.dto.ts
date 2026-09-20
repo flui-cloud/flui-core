@@ -87,6 +87,15 @@ class ApplicationResourcesDto {
   @ValidateNested()
   @Type(() => ResourceLimitDto)
   memory?: ResourceLimitDto;
+
+  @ApiPropertyOptional({
+    description:
+      "What the container may write outside a volume — its writable layer, its logs and any emptyDir. Unlike the size declared on a volume, which is not enforced, this one the kubelet enforces: a container past its limit is evicted. What fills up is the node's own disk, which also holds k3s, its datastore, the images and the logs, so this is not about disturbing neighbours. Defaults apply when it is left out; the request is not a reservation, only what the scheduler counts and what decides who is evicted first when the node itself runs low.",
+  })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => ResourceLimitDto)
+  ephemeralStorage?: ResourceLimitDto;
 }
 
 class ApplicationScalingDto {

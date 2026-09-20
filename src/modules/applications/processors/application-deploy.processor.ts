@@ -31,6 +31,7 @@ import {
   GeneratedManifest,
 } from '../services/application-manifest-generator.service';
 import { ApplicationReconciliationService } from '../services/application-reconciliation.service';
+import { WorkloadNamespaceService } from '../services/workload-namespace.service';
 import {
   DeployApplicationJobData,
   DeleteApplicationJobData,
@@ -76,6 +77,7 @@ export class ApplicationDeployProcessor {
     private readonly appResourcesRepository: AppResourcesRepository,
     private readonly manifestGenerator: ApplicationManifestGeneratorService,
     private readonly reconciliationService: ApplicationReconciliationService,
+    private readonly workloadNamespace: WorkloadNamespaceService,
     private readonly eventsGateway: ApplicationEventsGateway,
     private readonly ghcrSecretRefresh: GhcrSecretRefreshService,
     private readonly deployConfig: DeployConfigService,
@@ -365,14 +367,10 @@ export class ApplicationDeployProcessor {
       }
 
       // Ensure target namespace exists (creates it on first deploy, no-op afterwards)
-      await this.kubernetesService.ensureNamespaceExists(
-        kubeconfig,
-        app.k8sNamespace,
-        {
-          'flui.cloud/tier': 'user',
-          ...(app.userId ? { 'flui.cloud/owner': app.userId } : {}),
-        },
-      );
+      await this.workloadNamespace.ensure(kubeconfig, app.k8sNamespace, {
+        'flui.cloud/tier': 'user',
+        ...(app.userId ? { 'flui.cloud/owner': app.userId } : {}),
+      });
 
       // RAW_MANIFEST system apps own only their image tag — manifests live in
       // bootstrap-scripts and are not regenerated. We patch the container

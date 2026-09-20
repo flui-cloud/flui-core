@@ -35,9 +35,11 @@ spec:
             requests:
               cpu: "{{CPU_REQUEST}}"
               memory: "{{MEMORY_REQUEST}}"
+{{EPHEMERAL_REQUEST_LINE}}
             limits:
               cpu: "{{CPU_LIMIT}}"
               memory: "{{MEMORY_LIMIT}}"
+{{EPHEMERAL_LIMIT_LINE}}
 {{READINESS_PROBE_BLOCK}}
 {{VOLUME_MOUNTS_BLOCK}}
 {{SIDECARS_BLOCK}}

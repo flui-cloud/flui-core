@@ -11,6 +11,7 @@ import {
   ClusterStorageStatusDto,
 } from 'src/modules/infrastructure/clusters/dto/cluster-storage.dto';
 import { printContextBanner } from '../../lib/context-banner';
+import { resolveClusterRef } from '../../lib/resolve-cluster';
 
 export default class EnvStorage extends Command {
   static readonly description =
@@ -22,6 +23,11 @@ export default class EnvStorage extends Command {
   ];
 
   static readonly flags = {
+    cluster: Flags.string({
+      char: 'c',
+      description:
+        'Cluster to inspect. Defaults to the control cluster; a workload cluster is where applications actually keep their data.',
+    }),
     usage: Flags.boolean({
       default: false,
       description:
@@ -36,8 +42,11 @@ export default class EnvStorage extends Command {
 
     try {
       const { cluster, api } = await openControlPlane(await getNestApp());
+      const target = flags.cluster
+        ? (await resolveClusterRef(flags.cluster)).id
+        : cluster.id;
       const status = await api.get<ClusterStorageStatusDto>(
-        `/infrastructure/clusters/${cluster.id}/storage`,
+        `/infrastructure/clusters/${target}/storage`,
       );
       spinner.succeed('Storage status retrieved');
       this.render(status);
@@ -47,7 +56,10 @@ export default class EnvStorage extends Command {
           'Measuring what each application uses...',
         ).start();
         const usage = await api.get<ClusterStorageUsage>(
-          `/infrastructure/clusters/${cluster.id}/storage/usage`,
+          `/infrastructure/clusters/${target}/storage/usage`,
+          // One short job per node, awaited: the default client timeout would
+          // call a working cluster unreachable on anything but a single node.
+          { timeoutMs: 300_000 },
         );
         measuring.succeed(
           `Measured on ${usage.nodes.length} node${usage.nodes.length === 1 ? '' : 's'}`,

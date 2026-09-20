@@ -182,6 +182,22 @@ export function claimNameForVolume(
     : (volume.claimNameOverride ?? `${app.slug}-${volume.name}`);
 }
 
+/** Where the line sits in each template; the cron job nests one level deeper. */
+const EPHEMERAL_INDENT = ' '.repeat(14);
+const EPHEMERAL_INDENT_CRONJOB = ' '.repeat(18);
+
+/**
+ * The ephemeral-storage lines, written only when the application asked for them.
+ *
+ * The ceiling itself is a LimitRange on the namespace: a value written into
+ * every manifest overrides the LimitRange a namespace may carry, and a sandbox
+ * tenancy is dosed by one. What belongs here is only what an application
+ * declared for itself, which a LimitRange default never overrides.
+ */
+function ephemeralLine(value: string | undefined, indent: string): string {
+  return value ? `${indent}ephemeral-storage: "${value}"` : '';
+}
+
 @Injectable()
 export class ApplicationManifestGeneratorService {
   private readonly logger = new Logger(
@@ -311,6 +327,8 @@ export class ApplicationManifestGeneratorService {
     const cpuLimit = app.resources?.cpu?.limit ?? '500m';
     const memRequest = app.resources?.memory?.request ?? '128Mi';
     const memLimit = app.resources?.memory?.limit ?? '256Mi';
+    const ephemeralRequest = app.resources?.ephemeralStorage?.request;
+    const ephemeralLimit = app.resources?.ephemeralStorage?.limit;
 
     const template = this.loadTemplate('deployment.yaml');
     const yaml = template
@@ -332,6 +350,14 @@ export class ApplicationManifestGeneratorService {
       .replaceAll('{{CPU_LIMIT}}', cpuLimit)
       .replaceAll('{{MEMORY_REQUEST}}', memRequest)
       .replaceAll('{{MEMORY_LIMIT}}', memLimit)
+      .replaceAll(
+        '{{EPHEMERAL_REQUEST_LINE}}',
+        ephemeralLine(ephemeralRequest, EPHEMERAL_INDENT),
+      )
+      .replaceAll(
+        '{{EPHEMERAL_LIMIT_LINE}}',
+        ephemeralLine(ephemeralLimit, EPHEMERAL_INDENT),
+      )
       .replaceAll(
         '{{READINESS_PROBE_BLOCK}}',
         this.renderReadinessProbeBlock(app),
@@ -383,6 +409,8 @@ export class ApplicationManifestGeneratorService {
     const cpuLimit = app.resources?.cpu?.limit ?? '500m';
     const memRequest = app.resources?.memory?.request ?? '128Mi';
     const memLimit = app.resources?.memory?.limit ?? '256Mi';
+    const ephemeralRequest = app.resources?.ephemeralStorage?.request;
+    const ephemeralLimit = app.resources?.ephemeralStorage?.limit;
 
     const template = this.loadTemplate('statefulset.yaml');
     const yaml = template
@@ -404,6 +432,14 @@ export class ApplicationManifestGeneratorService {
       .replaceAll('{{CPU_LIMIT}}', cpuLimit)
       .replaceAll('{{MEMORY_REQUEST}}', memRequest)
       .replaceAll('{{MEMORY_LIMIT}}', memLimit)
+      .replaceAll(
+        '{{EPHEMERAL_REQUEST_LINE}}',
+        ephemeralLine(ephemeralRequest, EPHEMERAL_INDENT),
+      )
+      .replaceAll(
+        '{{EPHEMERAL_LIMIT_LINE}}',
+        ephemeralLine(ephemeralLimit, EPHEMERAL_INDENT),
+      )
       .replaceAll(
         '{{READINESS_PROBE_BLOCK}}',
         this.renderReadinessProbeBlock(app),
@@ -480,6 +516,8 @@ export class ApplicationManifestGeneratorService {
     const cpuLimit = app.resources?.cpu?.limit ?? '500m';
     const memRequest = app.resources?.memory?.request ?? '128Mi';
     const memLimit = app.resources?.memory?.limit ?? '256Mi';
+    const ephemeralRequest = app.resources?.ephemeralStorage?.request;
+    const ephemeralLimit = app.resources?.ephemeralStorage?.limit;
 
     const timezoneLine = spec.timezone
       ? `  timeZone: ${JSON.stringify(spec.timezone)}`
@@ -529,7 +567,15 @@ export class ApplicationManifestGeneratorService {
       .replaceAll('{{CPU_REQUEST}}', cpuRequest)
       .replaceAll('{{CPU_LIMIT}}', cpuLimit)
       .replaceAll('{{MEMORY_REQUEST}}', memRequest)
-      .replaceAll('{{MEMORY_LIMIT}}', memLimit);
+      .replaceAll('{{MEMORY_LIMIT}}', memLimit)
+      .replaceAll(
+        '{{EPHEMERAL_REQUEST_LINE}}',
+        ephemeralLine(ephemeralRequest, EPHEMERAL_INDENT_CRONJOB),
+      )
+      .replaceAll(
+        '{{EPHEMERAL_LIMIT_LINE}}',
+        ephemeralLine(ephemeralLimit, EPHEMERAL_INDENT_CRONJOB),
+      );
 
     return {
       kind: ApplicationResourceKind.CRON_JOB,

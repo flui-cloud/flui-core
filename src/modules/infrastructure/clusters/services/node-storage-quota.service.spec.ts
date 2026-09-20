@@ -186,15 +186,39 @@ describe('the manifest that carries the script', () => {
     expect(script).not.toMatch(/\bdone;\s*\S/);
   });
 
-  it('is valid YAML that mounts only the local storage root', () => {
+  /**
+   * Found on a real workload cluster: the probe was placed in `flui-system`,
+   * which belongs to the control plane and exists nowhere else, so Kubernetes
+   * refused it and every node reported as though its storage could not enforce
+   * a quota — a product-wide "no" produced by a namespace name.
+   */
+  it('runs where flui-local exists, not in the control plane’s namespace', () => {
     const doc = yaml.load(
       build().buildJobManifest('j1', 'node-1', planned),
     ) as Record<string, any>;
 
-    expect(doc.kind).toBe('Job');
+    expect(doc.metadata.namespace).toBe('flui-local-storage');
+    expect(doc.metadata.namespace).not.toBe('flui-system');
+  });
+
+  /**
+   * Measured on a real cluster: from inside a pod, `/var/lib/flui/local` is a
+   * bind mount and `findmnt` shows nothing about the `prjquota` option that
+   * decides everything — so a node enforcing quotas perfectly well reported
+   * that it could not. The probe therefore enters pid 1's mount namespace and
+   * needs no volumes of its own: it reads the host exactly as an operator
+   * would over SSH.
+   */
+  it('looks at the host, not at the container it runs in', () => {
+    const doc = yaml.load(
+      build().buildJobManifest('j1', 'node-1', planned),
+    ) as Record<string, any>;
+
     const spec = doc.spec.template.spec;
+    expect(doc.kind).toBe('Job');
     expect(spec.nodeSelector['kubernetes.io/hostname']).toBe('node-1');
-    expect(spec.volumes).toHaveLength(1);
-    expect(spec.volumes[0].hostPath.path).toBe('/var/lib/flui/local');
+    expect(spec.hostPID).toBe(true);
+    expect(spec.volumes).toBeUndefined();
+    expect(spec.containers[0].args[0]).toContain('nsenter -t 1 -m');
   });
 });

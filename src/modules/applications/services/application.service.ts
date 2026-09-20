@@ -241,7 +241,21 @@ export class ApplicationService {
   private resolveResources(dto: CreateApplicationDto): {
     cpu: { request: string; limit: string };
     memory: { request: string; limit: string };
+    ephemeralStorage?: { request?: string; limit?: string };
   } {
+    // Carried through every branch below rather than resolved in one: the
+    // profiles describe cpu and memory only, so there is nothing to expand it
+    // from, and a field that is declared and then rebuilt away is worse than a
+    // field that does not exist. Left undefined when nobody asked, so the
+    // namespace's LimitRange decides.
+    const ephemeralStorage =
+      dto.resources?.ephemeralStorage?.request ||
+      dto.resources?.ephemeralStorage?.limit
+        ? {
+            request: dto.resources?.ephemeralStorage?.request,
+            limit: dto.resources?.ephemeralStorage?.limit,
+          }
+        : undefined;
     // 1. Named profile explicitly provided — expand from JSON (highest priority)
     if (dto.resourceProfile) {
       const profile = this.resourceProfilesService.resolveResources(
@@ -253,11 +267,16 @@ export class ApplicationService {
           request: profile.memory.request,
           limit: profile.memory.limit,
         },
+        ephemeralStorage,
       };
     }
 
     // 2. Raw resources explicitly provided — use as-is (advanced user override, no profile selected)
-    if (dto.resources?.cpu?.request || dto.resources?.memory?.request) {
+    if (
+      dto.resources?.cpu?.request ||
+      dto.resources?.memory?.request ||
+      ephemeralStorage
+    ) {
       const defaultProfile = this.resourceProfilesService.resolveResources(
         this.resourceProfilesService.getDefaultProfileName(),
       );
@@ -271,6 +290,7 @@ export class ApplicationService {
             dto.resources.memory?.request ?? defaultProfile.memory.request,
           limit: dto.resources.memory?.limit ?? defaultProfile.memory.limit,
         },
+        ephemeralStorage,
       };
     }
 
@@ -281,6 +301,7 @@ export class ApplicationService {
     return {
       cpu: { request: profile.cpu.request, limit: profile.cpu.limit },
       memory: { request: profile.memory.request, limit: profile.memory.limit },
+      ephemeralStorage,
     };
   }
 

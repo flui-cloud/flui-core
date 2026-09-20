@@ -7,7 +7,17 @@ import { EncryptionService } from '../../../shared/encryption/services/encryptio
 import { KubernetesService } from '../../shared/services/kubernetes.service';
 
 const FLUI_LOCAL_STORAGE_PATH = '/var/lib/flui/local';
-const JOB_NAMESPACE = 'flui-system';
+/**
+ * Where the short-lived probes run.
+ *
+ * Not `flui-system`, which is the control plane's own and does not exist on a
+ * workload cluster — a job placed there is refused with `namespaces
+ * "flui-system" not found`, and every node then reports as though its storage
+ * could not enforce a quota. This namespace ships in the common manifests, so
+ * it exists wherever `flui-local` does, which is exactly where these probes
+ * have anything to look at.
+ */
+const JOB_NAMESPACE = 'flui-local-storage';
 const JOB_TIMEOUT_MS = 180_000;
 const JOB_POLL_MS = 2_000;
 
@@ -196,12 +206,20 @@ export class NodeStorageQuotaService {
   }
 
   /**
-   * The script is deliberately dull, because it runs privileged on every node.
+   * The script is deliberately dull, because it runs privileged on every node,
+   * and it runs in the host's mount namespace rather than the container's.
    *
    * It refuses to do anything at all unless the mount says `prjquota`, tags
    * each volume directory with its tenancy's project, applies the ceiling, and
    * prints what the kernel now believes. A directory whose name does not carry
    * a tenancy is skipped rather than guessed at.
+   *
+   * Measured the hard way: from inside a pod, `/var/lib/flui/local` is a bind
+   * mount and `findmnt` reports nothing useful about it — the `prjquota` option
+   * that decides everything is invisible, so a node whose storage enforces
+   * quotas perfectly well reported that it could not. Entering pid 1's mount
+   * namespace gives the same view the operator would get over SSH, which is the
+   * only view that answers the question being asked.
    */
   private buildScript(
     planned: Array<TenancyStorageLimit & { projectId: number }>,
@@ -210,14 +228,17 @@ export class NodeStorageQuotaService {
       .map((p) => `${p.namespace}:${p.projectId}:${p.bytes}`)
       .join(' ');
 
-    return [
+    const onHost = [
       'set -e',
       `ROOT=${FLUI_LOCAL_STORAGE_PATH}`,
       // Nothing here is safe or meaningful on a filesystem without project
       // quotas, and saying so is a better answer than half-applying.
-      `if ! findmnt -no OPTIONS "$ROOT" 2>/dev/null | grep -q prjquota; then echo "UNSUPPORTED no project quota on $ROOT"; exit 0; fi`,
-      'apk add --no-cache xfsprogs >/dev/null 2>&1 || true',
-      `if ! command -v xfs_quota >/dev/null 2>&1; then echo "UNSUPPORTED xfs_quota unavailable"; exit 0; fi`,
+      `if ! findmnt -no OPTIONS "$ROOT" 2>/dev/null | grep -q prjquota; then`,
+      `  WHAT=$(findmnt -no SOURCE,FSTYPE "$ROOT" 2>/dev/null || echo "a directory on the root disk, not a filesystem of its own")`,
+      `  echo "UNSUPPORTED no project quota on $ROOT — $WHAT"`,
+      `  exit 0`,
+      `fi`,
+      `if ! command -v xfs_quota >/dev/null 2>&1; then echo "UNSUPPORTED xfs_quota is not installed on this node"; exit 0; fi`,
       `TABLE="${table}"`,
       'for d in "$ROOT"/*; do',
       '  [ -d "$d" ] || continue',
@@ -233,12 +254,22 @@ export class NodeStorageQuotaService {
       '  done',
       'done',
       'for entry in $TABLE; do',
-      '  ens=$(echo "$entry" | cut -d: -f1)',
       '  eid=$(echo "$entry" | cut -d: -f2)',
       '  ebytes=$(echo "$entry" | cut -d: -f3)',
       '  xfs_quota -x -c "limit -p bhard=$ebytes $eid" "$ROOT" >/dev/null 2>&1 || true',
       'done',
       `xfs_quota -x -c 'report -p -N -b' "$ROOT" 2>/dev/null | sed 's/^/REPORT /'`,
+    ].join('\n');
+
+    // `nsenter` is not in the base image; the host's own shell and xfs_quota are
+    // what run the script, so nothing else has to be installed anywhere.
+    return [
+      'apk add --no-cache util-linux >/dev/null 2>&1 || true',
+      "SCRIPT=$(cat <<'FLUIPROBE'",
+      onHost,
+      'FLUIPROBE',
+      ')',
+      'nsenter -t 1 -m -- /bin/sh -c "$SCRIPT"',
     ].join('\n');
   }
 
@@ -274,6 +305,9 @@ export class NodeStorageQuotaService {
       `        flui-storage-quota-job: ${jobName}`,
       '    spec:',
       '      restartPolicy: Never',
+      // pid 1 lives in the host's namespaces; without this there is nothing to
+      // enter, and the probe is back to describing the container it runs in.
+      '      hostPID: true',
       '      nodeSelector:',
       `        kubernetes.io/hostname: ${node}`,
       '      tolerations:',
@@ -292,14 +326,6 @@ export class NodeStorageQuotaService {
       '        args:',
       '        - |',
       scriptBlock,
-      '        volumeMounts:',
-      '        - name: local',
-      `          mountPath: ${FLUI_LOCAL_STORAGE_PATH}`,
-      '      volumes:',
-      '      - name: local',
-      '        hostPath:',
-      `          path: ${FLUI_LOCAL_STORAGE_PATH}`,
-      '          type: DirectoryOrCreate',
       '',
     ].join('\n');
   }

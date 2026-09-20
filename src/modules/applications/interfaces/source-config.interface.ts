@@ -104,6 +104,11 @@ export interface ApplicationEnvVar {
 export interface ApplicationResources {
   cpu?: { request?: string; limit?: string };
   memory?: { request?: string; limit?: string };
+  /**
+   * Bytes outside a volume: the writable layer, the logs, any emptyDir. The one
+   * byte ceiling the kubelet enforces — a container past its limit is evicted.
+   */
+  ephemeralStorage?: { request?: string; limit?: string };
 }
 
 /** Pod/container security; only set fields are emitted. Mainly `fsGroup` so non-root images can write a PVC. */

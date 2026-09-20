@@ -10,7 +10,17 @@ import { FLUI_SHARED_STORAGE_PATH } from '../constants/storage-conventions';
 /** Where `flui-local` keeps a dedicated application's data, on each node's own disk. */
 const FLUI_LOCAL_STORAGE_PATH = '/var/lib/flui/local';
 
-const JOB_NAMESPACE = 'flui-system';
+/**
+ * Where the short-lived probes run.
+ *
+ * Not `flui-system`, which is the control plane's own and does not exist on a
+ * workload cluster — a job placed there is refused with `namespaces
+ * "flui-system" not found`, and every node then reports as though its storage
+ * could not enforce a quota. This namespace ships in the common manifests, so
+ * it exists wherever `flui-local` does, which is exactly where these probes
+ * have anything to look at.
+ */
+const JOB_NAMESPACE = 'flui-local-storage';
 const JOB_TIMEOUT_MS = 120_000;
 const JOB_POLL_MS = 2_000;
 
