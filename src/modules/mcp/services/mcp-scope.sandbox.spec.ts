@@ -3,7 +3,10 @@ import { isOfferedToGuest } from './sandbox-tool-visibility';
 import { AuthenticatedUser } from '../../auth/interfaces/authenticated-user.interface';
 import { IdentityRole } from '../../auth/entities/user.entity';
 import { MCP_SCOPE } from '../constants/mcp-scopes';
-import { findPermissionGroup } from '../../auth/constants/api-key-groups';
+import {
+  UNGROUPED_BASELINE_SCOPES,
+  findPermissionGroup,
+} from '../../auth/constants/api-key-groups';
 import { ALL_TOOLS } from '../tools/tool-registry';
 import { isExecutable, McpToolContext } from '../tools/mcp-tool.util';
 
@@ -37,7 +40,19 @@ describe('MCP scopes for a sandbox guest', () => {
   it('defaults a guest to the group a person is shown when connecting an agent', () => {
     const byName = (a: string, b: string) => a.localeCompare(b);
     expect([...resolver.resolve(guest, true)].sort(byName)).toEqual(
-      [...appsChange].sort(byName),
+      [...appsChange, ...UNGROUPED_BASELINE_SCOPES].sort(byName),
+    );
+  });
+
+  /**
+   * The baseline every credential is documented to carry, and the one a guest
+   * used not to get: it is unioned into a key's scopes column, and a guest's
+   * key declares none. The fence opens `GET /auth/agent-skill` for exactly this
+   * tool while the toolbox hid it.
+   */
+  it('carries the baseline that lets it read how work is done here', () => {
+    expect(resolver.resolve(guest, true).has(MCP_SCOPE.ONBOARDING_READ)).toBe(
+      true,
     );
   });
 

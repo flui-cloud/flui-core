@@ -21,20 +21,75 @@ import { createHash } from 'node:crypto';
  * "never a credential inside a skill" rule made structural rather than
  * remembered.
  */
-export const AGENT_SKILL_VERSION = '1.2.0';
+export const AGENT_SKILL_VERSION = '1.3.0';
 
 /** What the agent stores it as. Claude Code and its kin read `SKILL.md`. */
 export const AGENT_SKILL_FILENAME = 'SKILL.md';
 
 export const AGENT_SKILL_MEDIA_TYPE = 'text/markdown';
 
-/** The two installation facts the text needs, and the only inputs it takes. */
+/**
+ * Who holds the credential the reader would have to use.
+ *
+ * `http` is an agent handed a key. `tool` is one that arrived through
+ * `get_started` and holds none — the MCP server keeps the key, and the
+ * in-product assistant runs on a browser session that has none to lend. Neither
+ * can attach an `Authorization` header, whatever the transport.
+ */
+export type AgentSkillSurface = 'http' | 'tool';
+
+/** The installation facts the text needs, and the only inputs it takes. */
 export interface AgentSkillFacts {
   /** Absolute URL of the MCP endpoint, e.g. `https://api.example/api/v1/mcp`. */
   mcpEndpoint: string;
   /** Absolute URL the REST API is served under, e.g. `https://api.example/api/v1`. */
   apiBaseUrl: string;
+  /** Defaults to `http`, which is what the plain REST route serves. */
+  surface?: AgentSkillSurface;
 }
+
+/**
+ * The opening section, the one part of the document that depends on the reader.
+ * An agent on the `tool` surface holds no credential and has no raw-HTTP tool,
+ * so telling it to check in by hand is telling it to do the impossible as its
+ * first act — and the bridge has already done it on its behalf.
+ */
+const ORIENTATION: Record<AgentSkillSurface, string> = {
+  http: `## Before anything else
+
+Call \`POST {{API_BASE_URL}}/auth/agent-skill/check-in\` with
+\`{"skillVersion": "{{VERSION}}"}\` and the same \`Authorization\` header.
+
+It answers two things you cannot work out on your own: **what you are connected
+to** — the endpoint, the credential's name, the scopes it carries, when it
+expires — and **whether these instructions are still the current ones**. If it
+answers \`stale\`, fetch \`GET {{API_BASE_URL}}/auth/agent-skill\` and follow
+what comes back instead of this. Doing that costs one call per session and is
+the only thing standing between you and being confidently out of date.
+
+The same call is what tells the person who connected you that you exist. Until
+you make it, their panel shows the key as never having spoken.
+`,
+  tool: `## Where you stand
+
+You reached this through \`get_started\`, which has already checked you in: the
+person who connected you can see this credential is alive. There is nothing for
+you to call by hand here, and nothing to call it with — the key lives in the
+bridge you are speaking through and is never handed to you. Do not go looking
+for an HTTP tool to make up the difference; there isn't one, on purpose.
+
+The two things a check-in is for are answered elsewhere on this surface, both
+without a bearer header:
+
+- **What you are connected to** — who you are acting as, the scopes your
+  credential carries, what this installation permits that person, and what is
+  merely a trial boundary — is \`my_permissions\`. Read it before telling anyone
+  a capability is missing.
+- **Whether these instructions are current** is not a question you have here.
+  \`get_started\` returns the live document every time, so what you are reading
+  is the current one by construction. There is no stale copy to catch.
+`,
+};
 
 /**
  * Every claim below is read off this repository rather than remembered:
@@ -61,20 +116,7 @@ You are connected to one Flui installation. It speaks MCP over Streamable HTTP:
 The key was handed to you once, outside this file. **This file never contains
 one**, and nothing here should ever be edited to hold one.
 
-## Before anything else
-
-Call \`POST {{API_BASE_URL}}/auth/agent-skill/check-in\` with
-\`{"skillVersion": "{{VERSION}}"}\` and the same \`Authorization\` header.
-
-It answers two things you cannot work out on your own: **what you are connected
-to** — the endpoint, the credential's name, the scopes it carries, when it
-expires — and **whether these instructions are still the current ones**. If it
-answers \`stale\`, fetch \`GET {{API_BASE_URL}}/auth/agent-skill\` and follow
-what comes back instead of this. Doing that costs one call per session and is
-the only thing standing between you and being confidently out of date.
-
-The same call is what tells the person who connected you that you exist. Until
-you make it, their panel shows the key as never having spoken.
+{{ORIENTATION}}
 
 ## Your credential is a ceiling, never a grant
 
@@ -171,6 +213,15 @@ only speak for what you were shown.
 const PLACEHOLDER = /\{\{(MCP_ENDPOINT|API_BASE_URL|VERSION)\}\}/g;
 
 /**
+ * The instructions for one surface, with the installation's own facts still
+ * unresolved. This is the unit the digest fingerprints: it varies with what the
+ * document says and not with which instance is serving it.
+ */
+function bodyFor(surface: AgentSkillSurface): string {
+  return AGENT_SKILL_TEMPLATE.replace('{{ORIENTATION}}', ORIENTATION[surface]);
+}
+
+/**
  * The document for this installation.
  *
  * Substitution is by fixed name over a fixed template: there is no path by
@@ -182,8 +233,9 @@ export function renderAgentSkill(facts: AgentSkillFacts): string {
     API_BASE_URL: facts.apiBaseUrl,
     VERSION: AGENT_SKILL_VERSION,
   };
-  return AGENT_SKILL_TEMPLATE.replace(PLACEHOLDER, (_, key: string) =>
-    key in values ? values[key] : '',
+  return bodyFor(facts.surface ?? 'http').replace(
+    PLACEHOLDER,
+    (_, key: string) => (key in values ? values[key] : ''),
   );
 }
 
@@ -191,10 +243,14 @@ export function renderAgentSkill(facts: AgentSkillFacts): string {
  * A fingerprint of the body, taken before substitution so it identifies the
  * instructions and not the installation. Two instances on the same version
  * therefore agree on the digest, which is what makes it usable as a pin.
+ *
+ * It is per surface, because the documents are. One digest covering two texts
+ * would be a pin that cannot tell you which of them an agent is holding, which
+ * is the entire job of a pin.
  */
-export function agentSkillDigest(): string {
+export function agentSkillDigest(surface: AgentSkillSurface = 'http'): string {
   return createHash('sha256')
-    .update(AGENT_SKILL_TEMPLATE, 'utf8')
+    .update(bodyFor(surface), 'utf8')
     .digest('hex')
     .slice(0, 12);
 }

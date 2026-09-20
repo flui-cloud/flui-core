@@ -185,16 +185,25 @@ export const CATALOG_TOOLS: ToolDef[] = [
         status: string;
         operationId?: string;
       }>(`/catalog/${enc(args.slug)}/install`, dto);
+      const started = startedOutcome(
+        ctx,
+        install.operationId ?? '',
+        install.status,
+        `Install ${install.displayName}`,
+      );
+      // `installId` is the one identifier here that no other tool accepts, and
+      // it sits next to an instruction to pass an id on to `operation_status`.
+      // Measured: an agent reads "the tool that started it hands it back",
+      // passes this, and gets a 404 whose advice — look it up first — cannot be
+      // followed, because the application does not exist until the install
+      // finishes. So the note says which id goes where, and that the name the
+      // person chose is not the name the application will carry.
       return {
         installId: install.id,
         slug: args.slug,
         displayName: install.displayName,
-        ...startedOutcome(
-          ctx,
-          install.operationId ?? '',
-          install.status,
-          `Install ${install.displayName}`,
-        ),
+        ...started,
+        note: `${started.note ?? ''} Use operationId alone for operation_status — installId is NOT an application id and no tool takes it, and no application exists to name until this finishes. Once it is done, find the application with app_list: it is named after the catalog app with a random suffix, not "${install.displayName}".`.trim(),
       };
     },
   }),

@@ -1,7 +1,10 @@
 import { Injectable } from '@nestjs/common';
 import { AuthenticatedUser } from '../../auth/interfaces/authenticated-user.interface';
 import { DEFAULT_SCOPES, McpScope, expandTier } from '../constants/mcp-scopes';
-import { findPermissionGroup } from '../../auth/constants/api-key-groups';
+import {
+  UNGROUPED_BASELINE_SCOPES,
+  findPermissionGroup,
+} from '../../auth/constants/api-key-groups';
 import { mcpScopesOf } from '../../auth/utils/credential-ceiling.util';
 
 /**
@@ -18,6 +21,19 @@ import { mcpScopesOf } from '../../auth/utils/credential-ceiling.util';
  */
 const GUEST_DEFAULT_SCOPES: McpScope[] =
   findPermissionGroup('apps:change')?.scopes ?? [];
+
+/**
+ * The baseline every credential is supposed to carry, applied here too.
+ *
+ * `generateApiKey` unions it into a key's own scopes column, which misses every
+ * path where the scopes are a default computed here — so a sandbox guest was
+ * offered no `get_started` at all, while the fence opened its route for exactly
+ * that purpose.
+ */
+function withBaseline(scopes: Set<string>): Set<string> {
+  for (const scope of UNGROUPED_BASELINE_SCOPES) scopes.add(scope);
+  return scopes;
+}
 
 /**
  * Resolves a principal's effective MCP scopes, issuer-agnostically. Scopes can
@@ -60,9 +76,10 @@ export class McpScopeResolver {
     // exactly how the toolbox and the API would come to disagree about what a
     // key is.
     const explicit = new Set<string>(mcpScopesOf(user));
-    if (explicit.size > 0) return explicit;
-    if (isSandbox) return new Set<string>(GUEST_DEFAULT_SCOPES);
-    if (user.isAdmin) return new Set<string>(expandTier('destructive'));
-    return new Set<string>(DEFAULT_SCOPES);
+    if (explicit.size > 0) return withBaseline(explicit);
+    if (isSandbox) return withBaseline(new Set<string>(GUEST_DEFAULT_SCOPES));
+    if (user.isAdmin)
+      return withBaseline(new Set<string>(expandTier('destructive')));
+    return withBaseline(new Set<string>(DEFAULT_SCOPES));
   }
 }

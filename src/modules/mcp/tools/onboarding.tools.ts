@@ -37,7 +37,15 @@ export const ONBOARDING_TOOLS: ToolDef[] = [
     scope: MCP_SCOPE.ONBOARDING_READ,
     inputSchema: {},
     run: async (_args, ctx) => {
-      const skill = await ctx.api.get<AgentSkillPayload>('/auth/agent-skill');
+      // `surface: 'tool'` is not a formatting preference. The document's opening
+      // section tells the reader how to check in, and for anything arriving
+      // here the only honest answer is "already done, and you could not have
+      // done it yourself". It holds no credential on either agentic surface —
+      // the MCP server keeps the key, the assistant runs on a browser session
+      // that has none — and neither is handed a tool for raw HTTP.
+      const skill = await ctx.api.get<AgentSkillPayload>('/auth/agent-skill', {
+        surface: 'tool',
+      });
       // Best-effort: a dropped check-in must never turn a working read into a
       // failed tool call. The agent already has what it asked for either way.
       await ctx.api

@@ -131,6 +131,40 @@ describe('MCP agent-facing tool surface', () => {
       ]) as Array<{ url?: string }>;
       expect(projected[0].url).toMatch(/no endpoint/i);
     });
+
+    /**
+     * The window between "the address is in place" and "HTTPS answers". The
+     * URL is withheld on purpose for those minutes, because the link is
+     * `https://` and publishing it early hands the visitor a certificate
+     * warning. What must not happen is the app reading as having no address at
+     * all: measured on a live install, an app whose Ingress and DNS record were
+     * both applied came back as "no endpoint configured", and the assistant's
+     * own instructions then tell it to relay exactly that.
+     */
+    it('forModel says the certificate is still coming, not that there is no endpoint', () => {
+      const projected = appList.forModel!([
+        {
+          id: 'a1',
+          name: 'uptime-kuma-1f03b1',
+          endpointStatus: 'IN_SYNC',
+          endpointCertificateStatus: 'issuing',
+        },
+      ]) as Array<{ url?: string }>;
+      expect(projected[0].url).not.toMatch(/no endpoint/i);
+      expect(projected[0].url).toMatch(/certificate/i);
+    });
+
+    it('still says "no endpoint" once the certificate question is settled', () => {
+      const projected = appList.forModel!([
+        {
+          id: 'a1',
+          name: 'internal-only',
+          endpointStatus: 'IN_SYNC',
+          endpointCertificateStatus: 'failed',
+        },
+      ]) as Array<{ url?: string }>;
+      expect(projected[0].url).toMatch(/no endpoint/i);
+    });
   });
 
   describe('operation_status forModel', () => {
@@ -141,13 +175,50 @@ describe('MCP agent-facing tool surface', () => {
         id: 'op1',
         status: 'IN_PROGRESS',
         progress: 50,
-        currentStepIndex: 0,
+        currentStepIndex: 3,
         totalSteps: 8,
       }) as { done: boolean; progress: number; step: string; note?: string };
       expect(view.done).toBe(false);
       expect(view.progress).toBe(50);
-      expect(view.step).toBe('0/8');
+      expect(view.step).toBe('3/8');
       expect(view.note).toMatch(/never claim it completed/i);
+    });
+
+    /**
+     * Measured on a live install: the catalog and deploy processors advance
+     * `currentStep` and `progress` but write `currentStepIndex` once, at
+     * creation, and never again. The model relays whatever it is handed, so a
+     * step counter frozen at zero while progress climbs becomes "step 0 of 8"
+     * told to a person about work that is half done.
+     */
+    it('withholds a step counter that is visibly not being advanced', () => {
+      const view = op.forModel!({
+        id: 'op1',
+        status: 'IN_PROGRESS',
+        progress: 50,
+        currentStepIndex: 0,
+        totalSteps: 8,
+      }) as { progress?: number; step?: string };
+      expect(view.step).toBeUndefined();
+      expect(view.progress).toBe(50);
+    });
+
+    /**
+     * On something that has finished, neither number is information — `status`
+     * and `done` are the whole answer. Reported anyway, a completed removal came
+     * back as "0% complete".
+     */
+    it('drops both counters once the operation is over', () => {
+      const view = op.forModel!({
+        id: 'op1',
+        status: 'COMPLETED',
+        progress: 0,
+        currentStepIndex: 1,
+        totalSteps: 1,
+      }) as { done: boolean; progress?: number; step?: string };
+      expect(view.done).toBe(true);
+      expect(view.progress).toBeUndefined();
+      expect(view.step).toBeUndefined();
     });
 
     it('surfaces the failure reason on a terminal failure', () => {

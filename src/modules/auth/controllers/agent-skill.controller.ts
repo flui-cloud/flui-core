@@ -5,6 +5,7 @@ import {
   HttpCode,
   HttpStatus,
   Post,
+  Query,
   Request,
   UseGuards,
 } from '@nestjs/common';
@@ -13,6 +14,7 @@ import {
   ApiBearerAuth,
   ApiOkResponse,
   ApiOperation,
+  ApiQuery,
   ApiTags,
 } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../guards/jwt-auth.guard';
@@ -26,6 +28,7 @@ import {
   AGENT_SKILL_FILENAME,
   AGENT_SKILL_MEDIA_TYPE,
   AGENT_SKILL_VERSION,
+  AgentSkillSurface,
   agentSkillDigest,
   renderAgentSkill,
   skillFreshness,
@@ -76,16 +79,28 @@ export class AgentSkillController {
       'credential — it never contains one itself, and asking for it again is ' +
       'how an agent that has gone stale catches up.',
   })
+  @ApiQuery({
+    name: 'surface',
+    required: false,
+    enum: ['http', 'tool'],
+    description:
+      'How the reader reached this. `tool` is an agent coming through the ' +
+      'get_started tool, which holds no credential of its own and cannot be ' +
+      'told to make an HTTP call. Defaults to `http`.',
+  })
   @ApiOkResponse({ type: AgentSkillDto })
-  skill(): AgentSkillDto {
+  skill(@Query('surface') surface?: string): AgentSkillDto {
     const { mcpEndpoint, apiBaseUrl } = this.endpoints();
+    // Anything unrecognised reads as the default rather than failing: a wrong
+    // query value must not cost an agent the instructions it came for.
+    const read: AgentSkillSurface = surface === 'tool' ? 'tool' : 'http';
     return {
       version: AGENT_SKILL_VERSION,
-      digest: agentSkillDigest(),
+      digest: agentSkillDigest(read),
       filename: AGENT_SKILL_FILENAME,
       mediaType: AGENT_SKILL_MEDIA_TYPE,
       mcpEndpoint,
-      content: renderAgentSkill({ mcpEndpoint, apiBaseUrl }),
+      content: renderAgentSkill({ mcpEndpoint, apiBaseUrl, surface: read }),
     };
   }
 

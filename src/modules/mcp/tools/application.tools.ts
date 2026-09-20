@@ -123,16 +123,24 @@ export const APPLICATION_TOOLS: ToolDef[] = [
         note =
           'Still running — it is not finished yet. Tell the user it is provisioning and that they can ask you to check again; never claim it completed, and do not promise to notify them automatically.';
       }
+      // Neither counter is reported unless it can be trusted: the model relays
+      // both verbatim. The install and deploy processors write
+      // `currentStepIndex` once and never again, so a completed install reads
+      // `progress 100, step 0/8` and a completed deletion the mirror image. On
+      // something finished, `status` and `done` are the whole answer.
+      const indexStalled =
+        (op.currentStepIndex ?? 0) === 0 && (op.progress ?? 0) > 0;
+      const step =
+        terminal || indexStalled || op.totalSteps == null
+          ? undefined
+          : `${op.currentStepIndex ?? 0}/${op.totalSteps}`;
       return {
         operationId: op.id,
         type: op.operationType,
         status: op.status,
         done: terminal,
-        progress: op.progress,
-        step:
-          op.totalSteps != null
-            ? `${op.currentStepIndex ?? 0}/${op.totalSteps}`
-            : undefined,
+        progress: terminal ? undefined : op.progress,
+        step,
         error: op.errorMessage,
         note,
       };

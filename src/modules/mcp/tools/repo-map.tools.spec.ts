@@ -731,3 +731,42 @@ describe('what the descriptions promise', () => {
     expect(APPLY.description).toMatch(/IDENTICAL call/);
   });
 });
+
+/**
+ * An empty list that cannot say why it is empty.
+ *
+ * Measured on a live instance: `repo_list` answered `[]` while
+ * `integration_status` answered `connected: false`. An agent asked to deploy
+ * somebody's repository reads the bare array as "you have not added one yet"
+ * and gives advice for the wrong problem — the person cannot add one, because
+ * GitHub was never connected. Two states, opposite next steps.
+ */
+describe('repo_list on an empty list', () => {
+  const tool = REPO_TOOLS.find((t) => t.name === 'repo_list')!;
+
+  const ctxWith = (repositories: unknown[], connected: boolean) =>
+    ({
+      api: {
+        get: jest.fn(async (path: string) =>
+          path === '/repositories' ? repositories : { connected },
+        ),
+      },
+    }) as never;
+
+  it('returns the repositories untouched when there are any', async () => {
+    const repos = [{ id: 'r1', name: 'acme/site' }];
+    expect(await tool.run({}, ctxWith(repos, true))).toBe(repos);
+  });
+
+  it('says GitHub was never connected, and sends them to connect it', async () => {
+    const out = (await tool.run({}, ctxWith([], false))) as { note: string };
+    expect(out.note).toMatch(/not connected/i);
+    expect(out.note).toContain('github_connect');
+  });
+
+  it('does not send them to connect GitHub when GitHub is already connected', async () => {
+    const out = (await tool.run({}, ctxWith([], true))) as { note: string };
+    expect(out.note).toContain('repo_connect');
+    expect(out.note).not.toMatch(/send them through github_connect/i);
+  });
+});

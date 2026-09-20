@@ -16,6 +16,13 @@ export const enc = encodeURIComponent;
 const NO_ENDPOINT = 'none — app has no endpoint configured';
 
 /**
+ * Certificate states that mean "asked for, not arrived yet" — a window that
+ * closes by itself, unlike `failed` and `expired`, which do not and so must
+ * never be described as something to wait out.
+ */
+const CERTIFICATE_STILL_COMING = new Set(['pending', 'issuing']);
+
+/**
  * What to tell the model in place of a URL. "No endpoint" and "the endpoint
  * failed to come up" look identical from the outside but need opposite advice:
  * the first is a design choice, the second is a broken app with a fixable cause.
@@ -26,6 +33,7 @@ export function urlForModel(app: {
   internalUrl?: string;
   endpointStatus?: string;
   endpointError?: string;
+  endpointCertificateStatus?: string;
 }): string {
   if (app.url) return app.url;
   if (app.internalUrl) return app.internalUrl;
@@ -36,6 +44,17 @@ export function urlForModel(app: {
   }
   if (app.endpointStatus && app.endpointStatus !== 'IN_SYNC') {
     return `not ready yet — the public endpoint is still being provisioned (${app.endpointStatus}); re-check before giving the user a link`;
+  }
+  // The gap this closes was measured on a live install: reconciliation reports
+  // IN_SYNC the moment the DNS record and the Ingress are applied, but the URL
+  // is deliberately withheld for the minutes an ACME order takes, because the
+  // link is `https://` and publishing it early hands the visitor a browser
+  // security warning. Without this branch that window reads as NO_ENDPOINT —
+  // "this app has no address", said of an app that has one and is minutes from
+  // serving it. The assistant's own instructions then tell it to relay exactly
+  // that, so the model is not merely uninformed, it is instructed to assert it.
+  if (CERTIFICATE_STILL_COMING.has(app.endpointCertificateStatus ?? '')) {
+    return 'not ready yet — the address exists and is in place, but its certificate is still being issued, so the link is withheld until HTTPS works; it resolves on its own, re-check in a few minutes';
   }
   return NO_ENDPOINT;
 }

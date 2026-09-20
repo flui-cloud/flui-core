@@ -35,7 +35,17 @@ describe('the agent skill', () => {
     expect({
       version: AGENT_SKILL_VERSION,
       digest: agentSkillDigest(),
-    }).toEqual({ version: '1.2.0', digest: '71aeb9cd53fb' });
+    }).toEqual({ version: '1.3.0', digest: 'c6480ce7a6ae' });
+  });
+
+  /**
+   * The tool reading is a different document, and the pin has to say so. One
+   * digest covering both would leave "which of these is that agent holding?"
+   * unanswerable, which is the only thing a digest is for.
+   */
+  it('pins the tool reading separately, because it is a different text', () => {
+    expect(agentSkillDigest('tool')).not.toBe(agentSkillDigest('http'));
+    expect(agentSkillDigest('tool')).toBe('cf19ca157e87');
   });
 
   it('is stable across renders — the digest identifies the instructions, not the installation', () => {
@@ -68,6 +78,50 @@ describe('the agent skill', () => {
     it('is a skill file an agent can save', () => {
       expect(AGENT_SKILL_FILENAME).toBe('SKILL.md');
       expect(doc.startsWith('---\nname: flui\n')).toBe(true);
+    });
+  });
+
+  /**
+   * The first instruction in the document, and the one that changes with the
+   * reader: an agent that arrived through `get_started` holds no credential and
+   * has no raw-HTTP tool, and the bridge has already checked in for it.
+   */
+  describe('the surface the reader is on', () => {
+    const http = renderAgentSkill(FACTS);
+    const tool = renderAgentSkill({ ...FACTS, surface: 'tool' });
+
+    it('defaults to the text for somebody holding their own key', () => {
+      expect(renderAgentSkill(FACTS)).toBe(
+        renderAgentSkill({ ...FACTS, surface: 'http' }),
+      );
+      expect(http).toContain(
+        'POST https://flui.example/api/v1/auth/agent-skill/check-in',
+      );
+    });
+
+    it('never asks a keyless reader to make a call it cannot make', () => {
+      expect(tool).not.toContain('/auth/agent-skill/check-in');
+      expect(tool).not.toContain('Before anything else');
+    });
+
+    it('tells the keyless reader the check-in already happened', () => {
+      expect(tool).toContain('already checked you in');
+    });
+
+    it('sends it to the tool that answers what the check-in would have', () => {
+      expect(tool).toContain('my_permissions');
+    });
+
+    it('leaves no placeholder unsubstituted on either surface', () => {
+      expect(tool).not.toMatch(/\{\{[A-Z_]+\}\}/);
+      expect(http).not.toMatch(/\{\{[A-Z_]+\}\}/);
+    });
+
+    it('changes only that section', () => {
+      const tail = 'Your credential is a ceiling, never a grant';
+      expect(http.slice(http.indexOf(tail))).toBe(
+        tool.slice(tool.indexOf(tail)),
+      );
     });
   });
 
@@ -146,7 +200,7 @@ describe('the agent skill', () => {
     it.each([
       [AGENT_SKILL_VERSION, 'current'],
       ['0.9.0', 'stale'],
-      ['1.2.1', 'ahead'],
+      ['1.3.1', 'ahead'],
       ['whatever', 'unknown'],
       ['', 'undeclared'],
       [null, 'undeclared'],

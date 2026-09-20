@@ -118,14 +118,34 @@ export const REPO_TOOLS: ToolDef[] = [
   }),
   defineTool({
     name: 'repo_list',
-    routes: ['GET /repositories'],
+    routes: ['GET /repositories', 'GET /repositories/github/status'],
     description:
-      'List the GitHub repositories connected to Flui (deployable sources) for the current user.',
+      'List the GitHub repositories connected to Flui (deployable sources) for the current user. An empty list also says WHY it is empty — whether GitHub is connected and you simply have no repositories yet, or GitHub was never connected at all, which need opposite advice.',
     scope: MCP_SCOPE.APP_READ,
     inputSchema: {},
     // The route reads the caller off the request, so "the current user" is the
     // credential's own user and cannot be another one by mistake.
-    run: (_args, ctx) => ctx.api.get('/repositories'),
+    //
+    // The second call happens only on an empty list, and it is the difference
+    // between two states that look identical from here: "connected, nothing
+    // added yet" wants the person to add a repository, "never connected" wants
+    // them to connect GitHub first. A bare `[]` reads as the former, so an
+    // agent asked to deploy somebody's repository confidently gives the wrong
+    // next step. Measured on this instance: repo_list answered `[]` while
+    // integration_status answered `connected: false`.
+    run: async (_args, ctx) => {
+      const repositories = await ctx.api.get<unknown[]>('/repositories');
+      if (repositories.length > 0) return repositories;
+      const { connected } = await ctx.api.get<{ connected?: boolean }>(
+        '/repositories/github/status',
+      );
+      return {
+        repositories,
+        note: connected
+          ? 'GitHub is connected but no repository has been added to Flui yet. The person adds one with repo_connect; do not tell them to connect GitHub, that part is done.'
+          : 'This is empty because GitHub is not connected at all, not because the person has no repositories. Nothing can be deployed from a repository until that is fixed — send them through github_connect, and do not list or guess repository names.',
+      };
+    },
   }),
   defineTool({
     name: 'integration_status',
@@ -135,6 +155,20 @@ export const REPO_TOOLS: ToolDef[] = [
     scope: MCP_SCOPE.APP_READ,
     inputSchema: {},
     run: (_args, ctx) => ctx.api.get('/repositories/github/status'),
+    // `connected: false` on its own is a fact with no next step attached, and
+    // it covers two situations the route does not separate: this instance has
+    // no Flui GitHub App configured yet, or it has one and this person has not
+    // installed it. The tools for those are different, so the note names both
+    // and how to tell them apart, rather than picking one and being wrong half
+    // the time.
+    forModel: (data) => {
+      const s = data as { connected?: boolean; githubUsername?: string };
+      if (s.connected) return s;
+      return {
+        ...s,
+        note: 'Not connected, so nothing can be deployed from a repository yet. Two different things produce this: the instance may have no Flui GitHub App configured (github_setup, which needs permission to manage integrations and is refused on an agent key), or it has one and this person has not installed it (github_connect). Try github_connect first and relay what it answers; never claim which it was without checking.',
+      };
+    },
   }),
   defineTool({
     name: 'github_setup',

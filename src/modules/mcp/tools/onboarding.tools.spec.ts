@@ -66,6 +66,25 @@ describe('get_started', () => {
     expect(result).toEqual(SKILL);
   });
 
+  /**
+   * The document's opening section is the one part that depends on whether the
+   * reader holds a credential, and nothing arriving here does — the key is the
+   * bridge's on MCP, and the assistant has none at all. Asking without saying so
+   * serves the text that opens by telling the reader to attach an
+   * `Authorization` header it will never have.
+   */
+  it('asks for the reading written for somebody who holds no key', async () => {
+    const ctx = apiCtx((call) =>
+      call.path === '/auth/agent-skill' ? SKILL : {},
+    );
+    await tool.run({}, ctx);
+    expect(ctx.calls.find((c) => c.path === '/auth/agent-skill')).toEqual({
+      method: 'GET',
+      path: '/auth/agent-skill',
+      payload: { surface: 'tool' },
+    });
+  });
+
   it('checks in with the version it just read, so the issuer can see the connection is alive', async () => {
     const ctx = apiCtx((call) =>
       call.path === '/auth/agent-skill' ? SKILL : { recorded: true },
