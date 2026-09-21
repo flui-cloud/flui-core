@@ -61,6 +61,20 @@ export class AvailableVersionDto {
       'True when this is the most recent release ever attempted on the app (regardless of outcome). Distinct from isCurrentlyDeployed: a FAILED release can be the latest but not currently deployed.',
   })
   isLatestRelease: boolean;
+
+  @ApiProperty({
+    description:
+      'Whether this application can actually be asked to run this version. False for an image built from another branch, or for a row that is only a moving tag. A listing that offers what cannot be run teaches people not to trust the rest of it.',
+  })
+  releasable: boolean;
+
+  @ApiPropertyOptional({
+    description:
+      'Why it cannot be released, in one sentence. Null when it can.',
+    nullable: true,
+    example: 'Built from "staging", and this application deploys "main".',
+  })
+  notReleasableReason: string | null;
 }
 
 export class AvailableVersionsResponseDto {

@@ -22,6 +22,7 @@ import { sortVersionsForDisplay } from '../utils/version-ordering.util';
 import { ApplicationReleaseService } from './application-release.service';
 import { ApplicationReleaseDto } from '../dto/application-release.dto';
 import { curateVersionHistory } from '../utils/version-history.util';
+import { judgeReleasable } from '../utils/version-releasability';
 import { pinnedTagForRepository } from '../../../config/release.config';
 import { GhcrTagDto } from '../../image-registry/dto/ghcr.dto';
 
@@ -324,6 +325,8 @@ export class ApplicationVersionsService {
           lastRelease: null,
           releaseCount: 0,
           isLatestRelease: false,
+          releasable: true,
+          notReleasableReason: null,
         };
       }
       const primaryTag = this.selectPrimaryTag(v.tags);
@@ -338,9 +341,14 @@ export class ApplicationVersionsService {
         lastRelease: null,
         releaseCount: 0,
         isLatestRelease: false,
+        releasable: true,
+        notReleasableReason: null,
       };
     });
-    const versions = await this.enrichWithReleases(app.id, rawVersions);
+    const versions = await this.enrichWithReleases(
+      app.id,
+      await this.judgeReleasability(app, rawVersions),
+    );
     return {
       sourceType: app.sourceType,
       currentImageRef: app.imageRef ?? null,
@@ -348,6 +356,64 @@ export class ApplicationVersionsService {
       nextPage: null,
       allowedPatterns: null,
     };
+  }
+
+  /**
+   * Marks each version with whether this application can be asked to run it.
+   *
+   * The branch comes from the `images` rows this installation wrote as builds
+   * arrived — the durable record, not a notification that may never have
+   * landed. A version with no row is left releasable: an application whose
+   * builds predate the record must keep its list.
+   */
+  private async judgeReleasability(
+    app: ApplicationEntity,
+    versions: AvailableVersionDto[],
+  ): Promise<AvailableVersionDto[]> {
+    const source = app.sourceConfig as { branch?: string } | undefined;
+    const branch = source?.branch ?? null;
+
+    const byTag = new Map<string, string>();
+    const byDigest = new Map<string, string>();
+    try {
+      for (const image of await this.imageRegistryService.listImagesByApp(
+        app.id,
+      )) {
+        if (!image.branch) continue;
+        const parsed = this.parseImageRef(image.imageRef);
+        if (parsed.tag) byTag.set(parsed.tag, image.branch);
+        if (parsed.digest) byDigest.set(parsed.digest, image.branch);
+      }
+    } catch (err) {
+      this.logger.debug(
+        `releasability: no image rows for ${app.id}: ${(err as Error).message}`,
+      );
+    }
+
+    const context = {
+      branch,
+      recordedBranch: (v: {
+        tag: string;
+        allTags?: readonly string[];
+        digest?: string | null;
+      }): string | null => {
+        if (v.digest && byDigest.has(v.digest)) return byDigest.get(v.digest)!;
+        for (const tag of [v.tag, ...(v.allTags ?? [])]) {
+          const found = byTag.get(tag);
+          if (found) return found;
+        }
+        return null;
+      },
+    };
+
+    return versions.map((v) => {
+      const verdict = judgeReleasable(v, context);
+      return {
+        ...v,
+        releasable: verdict.releasable,
+        notReleasableReason: verdict.reason,
+      };
+    });
   }
 
   private shortDigest(digest: string | undefined | null): string {
@@ -489,6 +555,8 @@ export class ApplicationVersionsService {
         lastRelease: null,
         releaseCount: 0,
         isLatestRelease: false,
+        releasable: true,
+        notReleasableReason: null,
       };
     });
   }
@@ -518,6 +586,8 @@ export class ApplicationVersionsService {
       lastRelease: null,
       releaseCount: 0,
       isLatestRelease: false,
+      releasable: true,
+      notReleasableReason: null,
     }));
     if (allowedPatterns && allowedPatterns.length > 0) {
       mapped = mapped.filter((v) => matchesAnyPattern(v.tag, allowedPatterns));
