@@ -37,10 +37,7 @@ export default class IntegrationGhcrPatSet extends Command {
     const { flags } = await this.parse(IntegrationGhcrPatSet);
     const configStorage = new ConfigStorage();
     const apiUrl = configStorage.getApiUrlOrThrow();
-    const apiKey = configStorage.getApiKey();
-    if (!apiKey) {
-      this.error('Not logged in. Run `flui auth login` first.', { exit: 1 });
-    }
+    const apiKey = configStorage.getApiKeyOrThrow();
     const api = new ApiClient({ baseUrl: apiUrl, apiKey });
 
     let existing: GhcrPatStatus | null = null;
@@ -75,12 +72,10 @@ export default class IntegrationGhcrPatSet extends Command {
       message: 'Expiry date (YYYY-MM-DD, must match the one set on GitHub)',
       default: defaultExpiry,
       validate: (v) => {
-        if (!/^\d{4}-\d{2}-\d{2}$/.test(v))
-          return 'Expected format YYYY-MM-DD';
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(v)) return 'Expected format YYYY-MM-DD';
         const d = new Date(v);
         if (Number.isNaN(d.getTime())) return 'Not a valid date';
-        if (d.getTime() < Date.now())
-          return 'Expiry must be in the future';
+        if (d.getTime() < Date.now()) return 'Expiry must be in the future';
         return null;
       },
     });
@@ -151,11 +146,15 @@ export default class IntegrationGhcrPatSet extends Command {
     console.log('');
     if (alreadyConfigured) {
       console.log(
-        chalk.yellow('  A GHCR PAT is already configured. This will replace it.'),
+        chalk.yellow(
+          '  A GHCR PAT is already configured. This will replace it.',
+        ),
       );
       console.log('');
     }
-    console.log(`  ${chalk.bold('Generate a GitHub Personal Access Token (classic)')}`);
+    console.log(
+      `  ${chalk.bold('Generate a GitHub Personal Access Token (classic)')}`,
+    );
     console.log('');
 
     const opened = !headless && openInBrowser(prefilledUrl);
@@ -168,12 +167,20 @@ export default class IntegrationGhcrPatSet extends Command {
       console.log(`  ${chalk.cyan(prefilledUrl)}`);
     }
     console.log('');
-    console.log(`  Required scopes: ${chalk.bold('read:packages')} ${chalk.dim('(or write:packages)')}`);
-    console.log(`  Recommended:     ${chalk.bold('delete:packages')} ${chalk.dim('(lets Flui clean up old images)')}`);
-    console.log(`  Expiry:          ${chalk.dim('pick a date (90 days is a sensible default)')}`);
+    console.log(
+      `  Required scopes: ${chalk.bold('read:packages')} ${chalk.dim('(or write:packages)')}`,
+    );
+    console.log(
+      `  Recommended:     ${chalk.bold('delete:packages')} ${chalk.dim('(lets Flui clean up old images)')}`,
+    );
+    console.log(
+      `  Expiry:          ${chalk.dim('pick a date (90 days is a sensible default)')}`,
+    );
     console.log('');
     console.log(
-      chalk.dim('  Fine-grained PATs (github_pat_…) are also accepted as long as'),
+      chalk.dim(
+        '  Fine-grained PATs (github_pat_…) are also accepted as long as',
+      ),
     );
     console.log(
       chalk.dim('  they grant Packages: read on the relevant org/account.'),

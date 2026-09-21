@@ -23,10 +23,7 @@ export default class IntegrationInstallations extends Command {
   async run(): Promise<void> {
     const configStorage = new ConfigStorage();
     const apiUrl = configStorage.getApiUrlOrThrow();
-    const apiKey = configStorage.getApiKey();
-    if (!apiKey) {
-      this.error('Not logged in. Run `flui auth login` first.', { exit: 1 });
-    }
+    const apiKey = configStorage.getApiKeyOrThrow();
     const api = new ApiClient({ baseUrl: apiUrl, apiKey });
 
     let rows: InstallationRow[];
@@ -35,10 +32,9 @@ export default class IntegrationInstallations extends Command {
         '/repositories/github-app/installations',
       );
     } catch (error: unknown) {
-      this.error(
-        `Failed to list installations: ${(error as Error).message}`,
-        { exit: 1 },
-      );
+      this.error(`Failed to list installations: ${(error as Error).message}`, {
+        exit: 1,
+      });
     }
 
     if (!rows || rows.length === 0) {

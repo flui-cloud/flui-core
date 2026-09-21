@@ -68,8 +68,7 @@ export default class BackupStatus extends Command {
 
   private apiClient(): ApiClient {
     const cfg = new ConfigStorage();
-    const apiKey = cfg.getApiKey();
-    if (!apiKey) this.error('Not logged in. Run `flui auth login` first.');
+    const apiKey = cfg.getApiKeyOrThrow();
     return new ApiClient({ baseUrl: cfg.getApiUrlOrThrow(), apiKey });
   }
 

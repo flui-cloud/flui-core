@@ -23,10 +23,7 @@ export default class IntegrationGhcrPatStatus extends Command {
   async run(): Promise<void> {
     const configStorage = new ConfigStorage();
     const apiUrl = configStorage.getApiUrlOrThrow();
-    const apiKey = configStorage.getApiKey();
-    if (!apiKey) {
-      this.error('Not logged in. Run `flui auth login` first.', { exit: 1 });
-    }
+    const apiKey = configStorage.getApiKeyOrThrow();
     const api = new ApiClient({ baseUrl: apiUrl, apiKey });
 
     let status: GhcrPatStatus;
@@ -43,7 +40,9 @@ export default class IntegrationGhcrPatStatus extends Command {
 
     console.log('');
     if (!status.configured) {
-      console.log(`  ${chalk.bold('Status:')} ${chalk.yellow('not configured')}`);
+      console.log(
+        `  ${chalk.bold('Status:')} ${chalk.yellow('not configured')}`,
+      );
       console.log('');
       console.log(
         chalk.dim(
@@ -61,7 +60,9 @@ export default class IntegrationGhcrPatStatus extends Command {
           ? chalk.yellow
           : chalk.red;
 
-    console.log(`  ${chalk.bold('Status:')}    ${statusColor(status.status ?? 'unknown')}`);
+    console.log(
+      `  ${chalk.bold('Status:')}    ${statusColor(status.status ?? 'unknown')}`,
+    );
     if (status.githubLogin) {
       console.log(`  GitHub user: ${chalk.bold(status.githubLogin)}`);
     }

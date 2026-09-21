@@ -26,10 +26,7 @@ export default class IntegrationList extends Command {
   async run(): Promise<void> {
     const configStorage = new ConfigStorage();
     const apiUrl = configStorage.getApiUrlOrThrow();
-    const apiKey = configStorage.getApiKey();
-    if (!apiKey) {
-      this.error('Not logged in. Run `flui auth login` first.', { exit: 1 });
-    }
+    const apiKey = configStorage.getApiKeyOrThrow();
     const api = new ApiClient({ baseUrl: apiUrl, apiKey });
 
     let github: GitHubStatus;

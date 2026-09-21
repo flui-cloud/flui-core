@@ -37,10 +37,7 @@ export default class DbBackupStatus extends Command {
   async run(): Promise<DbPitrStatus> {
     const { args } = await this.parse(DbBackupStatus);
     const cfg = new ConfigStorage();
-    const apiKey = cfg.getApiKey();
-    if (!apiKey) {
-      this.error('Not logged in. Run `flui auth login` first.');
-    }
+    const apiKey = cfg.getApiKeyOrThrow();
     const api = new ApiClient({ baseUrl: cfg.getApiUrlOrThrow(), apiKey });
 
     let status: DbPitrStatus;

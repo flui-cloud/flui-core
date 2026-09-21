@@ -73,10 +73,7 @@ export default class NetworkCreate extends Command {
     const { flags } = await this.parse(NetworkCreate);
 
     const configStorage = new ConfigStorage();
-    const apiKey = configStorage.getApiKey();
-    if (!apiKey) {
-      this.error('Not logged in. Run `flui auth login` first.', { exit: 1 });
-    }
+    const apiKey = configStorage.getApiKeyOrThrow();
     const apiClient = new ApiClient({
       baseUrl: configStorage.getApiUrlOrThrow(),
       apiKey,

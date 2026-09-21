@@ -39,10 +39,7 @@ export default class AuthApiKeys extends Command {
 
     const storage = new ConfigStorage(flags.profile);
     const apiUrl = storage.getApiUrlOrThrow();
-    const apiKey = storage.getApiKey();
-    if (!apiKey) {
-      this.error('Not logged in. Run `flui auth login` first.', { exit: 1 });
-    }
+    const apiKey = storage.getApiKeyOrThrow();
     const api = new ApiClient({ baseUrl: apiUrl, apiKey });
 
     let keys: ApiKeySummary[];

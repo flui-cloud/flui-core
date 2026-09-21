@@ -129,10 +129,7 @@ export class ScalingClient {
   static open(): ScalingClient {
     const storage = new ConfigStorage();
     const baseUrl = storage.getApiUrlOrThrow();
-    const apiKey = storage.getApiKey();
-    if (!apiKey) {
-      throw new Error('Not logged in. Run `flui auth login` first.');
-    }
+    const apiKey = storage.getApiKeyOrThrow();
     return new ScalingClient(new ApiClient({ baseUrl, apiKey }));
   }
 

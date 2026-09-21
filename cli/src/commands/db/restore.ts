@@ -40,10 +40,7 @@ export default class DbRestore extends Command {
       this.error(`File not found: ${args.file}`);
     }
     const cfg = new ConfigStorage();
-    const apiKey = cfg.getApiKey();
-    if (!apiKey) {
-      this.error('Not logged in. Run `flui auth login` first.');
-    }
+    const apiKey = cfg.getApiKeyOrThrow();
     const api = new ApiClient({ baseUrl: cfg.getApiUrlOrThrow(), apiKey });
 
     if (!flags.yes) {

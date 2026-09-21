@@ -91,10 +91,7 @@ export default class ClusterRebuild extends Command {
 
     const configStorage = new ConfigStorage();
     const apiUrl = configStorage.getApiUrlOrThrow();
-    const apiKey = configStorage.getApiKey();
-    if (!apiKey) {
-      this.error('Not logged in. Run `flui auth login` first.', { exit: 1 });
-    }
+    const apiKey = configStorage.getApiKeyOrThrow();
 
     let from: { id: string; name: string };
     let to: { id: string; name: string };

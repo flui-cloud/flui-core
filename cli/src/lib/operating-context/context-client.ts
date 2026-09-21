@@ -66,12 +66,7 @@ export class OperatingContextClient {
 
   static fromConfig(): OperatingContextClient {
     const cfg = new ConfigStorage();
-    const apiKey = cfg.getApiKey();
-    if (!apiKey) {
-      throw new Error(
-        'Not logged in. Run `flui auth login` first, or check the API key for this profile.',
-      );
-    }
+    const apiKey = cfg.getApiKeyOrThrow();
     return new OperatingContextClient(
       new ApiClient({ baseUrl: cfg.getApiUrlOrThrow(), apiKey }),
     );

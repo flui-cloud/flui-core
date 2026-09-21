@@ -49,11 +49,7 @@ export class CliNodeService {
   static async create(clusterId: string): Promise<CliNodeService> {
     const configStorage = new ConfigStorage();
     const apiUrl = configStorage.getApiUrlOrThrow();
-    const apiKey = configStorage.getApiKey();
-
-    if (!apiKey) {
-      throw new Error('Not logged in. Run `flui auth login` first.');
-    }
+    const apiKey = configStorage.getApiKeyOrThrow();
 
     const apiClient = new ApiClient({ baseUrl: apiUrl, apiKey });
     return new CliNodeService(apiClient, clusterId);

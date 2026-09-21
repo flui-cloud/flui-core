@@ -43,11 +43,7 @@ export default class ClusterDestroy extends Command {
 
     const configStorage = new ConfigStorage();
     const apiUrl = configStorage.getApiUrlOrThrow();
-    const apiKey = configStorage.getApiKey();
-
-    if (!apiKey) {
-      this.error('Not logged in. Run `flui auth login` first.', { exit: 1 });
-    }
+    const apiKey = configStorage.getApiKeyOrThrow();
 
     // resolveCluster()/resolveClusterRef() only search the local store, which
     // never holds workload clusters (they live in the control cluster's own

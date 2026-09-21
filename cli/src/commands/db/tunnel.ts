@@ -75,12 +75,7 @@ export default class DbTunnel extends Command {
     try {
       const configStorage = new ConfigStorage();
       const apiUrl = configStorage.getApiUrlOrThrow();
-      const apiKey = configStorage.getApiKey();
-      if (!apiKey) {
-        spinner.fail('Not logged in. Run `flui auth login` first.');
-        this.exit(1);
-        return;
-      }
+      const apiKey = configStorage.getApiKeyOrThrow();
       const api = new ApiClient({ baseUrl: apiUrl, apiKey });
       const { clusters, apiError } = await listClusters();
 

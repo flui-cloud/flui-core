@@ -174,12 +174,7 @@ export class BackupClient {
   static fromConfig(): BackupClient {
     const cfg = new ConfigStorage();
     const apiUrl = cfg.getApiUrlOrThrow();
-    const apiKey = cfg.getApiKey();
-    if (!apiKey) {
-      throw new Error(
-        'Not logged in. Run `flui auth login` first or check API key.',
-      );
-    }
+    const apiKey = cfg.getApiKeyOrThrow();
     return new BackupClient(new ApiClient({ baseUrl: apiUrl, apiKey }));
   }
 

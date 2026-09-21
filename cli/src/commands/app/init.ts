@@ -93,7 +93,10 @@ export default class AppInit extends Command {
     }
 
     if (!apiKey) {
-      this.error('Not logged in. Run `flui auth login` first.', { exit: 1 });
+      // Deferred, unlike everywhere else: `--list` above answers "what can I
+      // deploy here?" without an account. Reached only past that, and it names
+      // the real obstacle — an absent credential or a vault still closed.
+      configStorage.getApiKeyOrThrow();
     }
 
     if (!args.framework) {

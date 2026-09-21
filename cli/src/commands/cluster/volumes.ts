@@ -76,13 +76,7 @@ export default class ClusterVolumes extends Command {
   async run(): Promise<void> {
     const { flags } = await this.parse(ClusterVolumes);
     const cfg = new ConfigStorage();
-    const apiKey = cfg.getApiKey();
-    if (!apiKey) {
-      console.log(
-        chalk.red('\n  Not logged in. Run `flui auth login` first.\n'),
-      );
-      this.exit(1);
-    }
+    const apiKey = cfg.getApiKeyOrThrow();
     const api = new ApiClient({ baseUrl: cfg.getApiUrlOrThrow(), apiKey });
 
     const spinner = ora('Looking for abandoned volumes…').start();

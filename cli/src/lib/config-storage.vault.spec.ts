@@ -67,6 +67,46 @@ describe('ConfigStorage under the vault', () => {
     return legacyKey;
   }
 
+  /**
+   * The distinction every caller used to flatten. Both cases yield no key, but
+   * only one is fixed by signing in — and told to sign in against a closed
+   * vault, an operator mints a second credential beside the one already there.
+   */
+  describe('asking for the API key when there is none to hand back', () => {
+    it('names the vault when the secret is sealed and the vault is closed', () => {
+      seedLegacyProfile();
+      rmSync(join(profileDir, '.key'));
+
+      expect(() => new ConfigStorage(PROFILE).getApiKeyOrThrow()).toThrow(
+        VaultLockedError,
+      );
+      expect(() => new ConfigStorage(PROFILE).getApiKeyOrThrow()).toThrow(
+        /flui vault unlock/,
+      );
+    });
+
+    it('says to sign in when the profile simply holds no key', () => {
+      const legacyKey = seedLegacyProfile();
+      const config = JSON.parse(
+        readFileSync(join(profileDir, 'config.json'), 'utf8'),
+      );
+      delete config.apiKey;
+      writeFileSync(join(profileDir, 'config.json'), JSON.stringify(config));
+      expect(legacyKey).toBeDefined();
+
+      expect(() => new ConfigStorage(PROFILE).getApiKeyOrThrow()).toThrow(
+        /flui auth login/,
+      );
+    });
+
+    it('hands the key over when the profile can be opened', () => {
+      seedLegacyProfile();
+      expect(new ConfigStorage(PROFILE).getApiKeyOrThrow()).toBe(
+        'flui-api-key',
+      );
+    });
+  });
+
   it('still opens a profile that predates the vault, so an upgrade locks nobody out', () => {
     seedLegacyProfile();
     expect(new ConfigStorage(PROFILE).getToken('hetzner')).toBe(

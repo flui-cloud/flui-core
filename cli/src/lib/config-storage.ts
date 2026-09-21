@@ -502,14 +502,34 @@ export class ConfigStorage {
     if (!config.apiKey) return null;
 
     try {
+      this.lastApiKeyFailure = null;
       return this.decrypt(config.apiKey);
-    } catch {
+    } catch (error) {
       // Deliberately silent, unlike the token and credential readers: this is
       // read while dependencies are being constructed, so throwing here turns
-      // a locked vault into a stack trace on every command. The actionable
-      // message belongs where a secret is actually being used.
+      // a locked vault into a stack trace on every command. The reason is kept
+      // so `getApiKeyOrThrow` can state it where a secret is actually used.
+      this.lastApiKeyFailure = error instanceof Error ? error : null;
       return null;
     }
+  }
+
+  /** Why the last `getApiKey()` came back empty, when it was not simply unset. */
+  private lastApiKeyFailure: Error | null = null;
+
+  /**
+   * The API key, or an error that names the actual obstacle.
+   *
+   * Absent and sealed-shut are different problems with different remedies, and
+   * for a long time every caller reported both as "Not logged in. Run `flui
+   * auth login`" — advice that, followed against a locked vault, mints a second
+   * credential beside the one already there rather than opening it.
+   */
+  public getApiKeyOrThrow(): string {
+    const apiKey = this.getApiKey();
+    if (apiKey) return apiKey;
+    if (this.lastApiKeyFailure) throw this.lastApiKeyFailure;
+    throw new Error('Not logged in. Run `flui auth login` first.');
   }
 
   /**
