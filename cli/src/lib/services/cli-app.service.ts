@@ -11,6 +11,9 @@ export interface AppSummary {
   exposure: string;
   lastDeployedAt?: string;
   clusterId: string;
+  sourceType?: string;
+  /** Continuous auto-deploy: the app follows its branch on its own. */
+  deployOnPush?: boolean;
 }
 
 export interface AppGroupComponent extends AppSummary {
@@ -359,11 +362,7 @@ export class CliAppService {
   static async create(clusterId: string): Promise<CliAppService> {
     const configStorage = new ConfigStorage();
     const apiUrl = configStorage.getApiUrlOrThrow();
-    const apiKey = configStorage.getApiKey();
-
-    if (!apiKey) {
-      throw new Error('Not logged in. Run `flui auth login` first.');
-    }
+    const apiKey = configStorage.getApiKeyOrThrow();
 
     const apiClient = new ApiClient({ baseUrl: apiUrl, apiKey });
     return new CliAppService(apiClient, clusterId);
@@ -505,6 +504,30 @@ export class CliAppService {
     return this.apiClient.get<AppLogsResponse>(
       `/observability/applications/${appId}/logs${qsSuffix}`,
     );
+  }
+
+  /**
+   * One application, in full.
+   *
+   * The cluster listing answers with a reduced view — `deployOnPush` is not in
+   * it — so a policy read off the list reports "off" for a field that was never
+   * sent. Anything that has to be sure asks here.
+   */
+  async getApp(appId: string): Promise<AppSummary> {
+    return this.apiClient.get<AppSummary>(`/applications/${appId}`);
+  }
+
+  /**
+   * Turn continuous auto-deploy on or off for a git-build application.
+   *
+   * With it on, the platform rolls out the newest successful build of the
+   * branch and a version chosen by hand is overwritten by the next reconcile —
+   * so this is the switch to reach for before pinning an older image.
+   */
+  async setDeployOnPush(appId: string, enabled: boolean): Promise<AppSummary> {
+    return this.apiClient.patch<AppSummary>(`/applications/${appId}`, {
+      deployOnPush: enabled,
+    });
   }
 
   async scale(appId: string, replicas: number): Promise<AppRuntime> {
