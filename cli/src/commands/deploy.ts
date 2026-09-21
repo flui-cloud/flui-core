@@ -1,6 +1,8 @@
 import { Command, Args, Flags } from '@oclif/core';
 import chalk from 'chalk';
 import ora from 'ora';
+import { confirmPrompt } from '../lib/prompts';
+import { judgeMissingConnection } from '../lib/repo-connection';
 import fs from 'node:fs';
 import path from 'node:path';
 import { execSync } from 'node:child_process';
@@ -260,10 +262,7 @@ export default class Deploy extends Command {
 
     const configStorage = new ConfigStorage();
     const apiUrl = flags['api-url'] ?? configStorage.getApiUrlOrThrow();
-    const apiKey = configStorage.getApiKey();
-    if (!apiKey) {
-      this.error('Not logged in. Run `flui auth login` first.', { exit: 1 });
-    }
+    const apiKey = configStorage.getApiKeyOrThrow();
 
     const apiClient = new ApiClient({ baseUrl: apiUrl, apiKey: apiKey });
 
@@ -346,14 +345,8 @@ export default class Deploy extends Command {
     }
     const spinner = ora(spinnerLabel).start();
 
-    let deploy: SourceDeployResponse;
-    try {
-      // No client deadline on this one. A manifest that declares `deploy.services` provisions its
-      // building blocks inside this request and waits for them to reach RUNNING — up to ten
-      // minutes. With the client's default 30s the CLI printed a timeout while the server carried
-      // on installing and committing the workflow, so the only visible outcome was a failure that
-      // had not happened.
-      deploy = await apiClient.post<SourceDeployResponse>(
+    const submit = (): Promise<SourceDeployResponse> =>
+      apiClient.post<SourceDeployResponse>(
         '/applications/deploy-from-yaml',
         {
           yaml: raw,
@@ -368,6 +361,15 @@ export default class Deploy extends Command {
         },
         { timeoutMs: 0 },
       );
+
+    let deploy: SourceDeployResponse;
+    try {
+      // No client deadline on this one. A manifest that declares `deploy.services` provisions its
+      // building blocks inside this request and waits for them to reach RUNNING — up to ten
+      // minutes. With the client's default 30s the CLI printed a timeout while the server carried
+      // on installing and committing the workflow, so the only visible outcome was a failure that
+      // had not happened.
+      deploy = await submit();
       spinner.succeed(
         skipBuild ? 'Deploy triggered (build skipped)' : 'Build triggered',
       );
@@ -389,13 +391,28 @@ export default class Deploy extends Command {
           ),
         );
       } else if (/Repository .* is not connected/i.test(msg)) {
-        console.log(
-          chalk.yellow(
-            `  Hint: run \`flui repo connect ${repoFullName}\` to import this repository into Flui.\n`,
-          ),
-        );
+        // Connected just now? Then the refusal is spent: try once more and let
+        // the normal reporting below carry on as if it had never happened.
+        if (await this.offerToConnect(apiClient, repoFullName)) {
+          const again = ora(spinnerLabel).start();
+          try {
+            deploy = await submit();
+            again.succeed(
+              skipBuild
+                ? 'Deploy triggered (build skipped)'
+                : 'Build triggered',
+            );
+          } catch (error2: unknown) {
+            again.fail('Failed to trigger deploy');
+            console.log(chalk.red(`\n  Error: ${(error2 as Error).message}\n`));
+            this.exit(1);
+          }
+        } else {
+          this.exit(1);
+        }
+      } else {
+        this.exit(1);
       }
-      this.exit(1);
     }
 
     console.log('');
@@ -422,6 +439,64 @@ export default class Deploy extends Command {
     }
 
     await this.pollSourceDeploy(apiClient, deploy);
+  }
+
+  /**
+   * A repository this installation does not hold, answered where it was asked.
+   *
+   * It never connects on its own: the import route carries a confirmation
+   * because it deposits a credential that can read someone's code, and a deploy
+   * is not the place to decide that quietly. What it removes is the guessing —
+   * the old message named a command whether or not the credential could reach
+   * the repository, and those are two different problems.
+   */
+  private async offerToConnect(
+    apiClient: { get: Function; post: Function },
+    repoFullName: string,
+  ): Promise<boolean> {
+    const spinner = ora('Asking GitHub what your credential reaches…').start();
+    let available: string[] = [];
+    let listingError: string | undefined;
+    try {
+      const repos = (await apiClient.get('/repositories/available')) as Array<{
+        fullName?: string;
+      }>;
+      available = (repos ?? []).map((r) => r.fullName ?? '').filter(Boolean);
+      spinner.stop();
+    } catch (error: unknown) {
+      spinner.stop();
+      listingError = (error as Error).message;
+    }
+
+    const verdict = judgeMissingConnection(repoFullName, {
+      available,
+      canAsk: Boolean(process.stdin.isTTY),
+      listingError,
+    });
+
+    if (verdict.kind !== 'offer') {
+      console.log(chalk.yellow(`  ${verdict.message}\n`));
+      return false;
+    }
+
+    const yes = await confirmPrompt(
+      `  Connect ${chalk.bold(repoFullName)} to this installation now?`,
+      true,
+    );
+    if (!yes) return false;
+
+    const connecting = ora(`Connecting ${repoFullName}…`).start();
+    try {
+      await apiClient.post('/repositories/import', {
+        repositoryIds: [repoFullName],
+      });
+      connecting.succeed(`Connected ${repoFullName}`);
+      return true;
+    } catch (error: unknown) {
+      connecting.fail('Failed to connect repository');
+      console.log(chalk.red(`  ${(error as Error).message}\n`));
+      return false;
+    }
   }
 
   private async pollSourceDeploy(
