@@ -2771,6 +2771,8 @@ const MASK_EXEMPT: string[] = [
   'ProviderRefreshTokenDto.refresh_token', // modules/access/dto/refresh-token.dto.ts
   'ProviderRegionDto.available', // modules/management/dto/provider-capabilities.dto.ts
   'ProviderRegionDto.country', // modules/management/dto/provider-capabilities.dto.ts
+  'ProviderRegionDto.countryCode', // modules/management/dto/provider-capabilities.dto.ts
+  'ProviderRegionDto.macroRegion', // modules/management/dto/provider-capabilities.dto.ts
   'ProviderRegionDto.description', // modules/management/dto/provider-capabilities.dto.ts
   'ProviderRegionDto.displayName', // modules/management/dto/provider-capabilities.dto.ts
   'ProviderRegionDto.flagEmoji', // modules/management/dto/provider-capabilities.dto.ts

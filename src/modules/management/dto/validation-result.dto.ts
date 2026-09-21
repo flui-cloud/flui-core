@@ -1,5 +1,6 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { ProviderRegion } from '../entities/provider-region.entity';
+import { ProviderRegionDto } from './provider-capabilities.dto';
 
 export class ValidationResultDto {
   @ApiProperty({ description: 'Whether validation passed' })
@@ -26,7 +27,7 @@ export class ValidationResultDto {
    */
   @ApiPropertyOptional({
     description: 'Available regions discovered',
-    type: [Object],
+    type: [ProviderRegionDto],
   })
   availableRegions?: ProviderRegion[];
 }

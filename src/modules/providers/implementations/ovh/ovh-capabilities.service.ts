@@ -1,6 +1,9 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { OvhCapabilitiesService as InfraOvhCapabilitiesService } from '@flui-cloud/infra';
+import {
+  OvhCapabilitiesService as InfraOvhCapabilitiesService,
+  macroRegionOf,
+} from '@flui-cloud/infra';
 import {
   IProviderCapabilitiesService,
   InstanceTypeInfo,
@@ -77,6 +80,8 @@ export class OvhCapabilitiesService implements IProviderCapabilitiesService {
         location: label,
         available: true,
         country: meta?.country,
+        countryCode: meta?.cc,
+        macroRegion: macroRegionOf(meta?.cc) ?? undefined,
         latitude: meta?.latitude,
         longitude: meta?.longitude,
       };

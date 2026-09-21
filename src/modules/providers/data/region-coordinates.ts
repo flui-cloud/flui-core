@@ -7,10 +7,15 @@ export interface RegionCoordinates {
 }
 
 const COORDINATES: Record<CloudProvider, Record<string, RegionCoordinates>> = {
+  // Six locations across four network zones, as Hetzner's own API reference
+  // lists them. City centres, which is what every other entry here is.
   [CloudProvider.HETZNER]: {
     fsn1: { latitude: 50.4777, longitude: 12.3649 },
     nbg1: { latitude: 49.4521, longitude: 11.0767 },
     hel1: { latitude: 60.1699, longitude: 24.9384 },
+    ash: { latitude: 39.0438, longitude: -77.4874 },
+    hil: { latitude: 45.5229, longitude: -122.9898 },
+    sin: { latitude: 1.3521, longitude: 103.8198 },
   },
   [CloudProvider.SCALEWAY]: {
     'fr-par': { latitude: 48.8566, longitude: 2.3522 },

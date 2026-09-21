@@ -26,6 +26,7 @@ import { Public } from '../../auth/decorators/public.decorator';
 import { ManagementService } from '../services/management.service';
 import { CloudProvider } from '../../providers/enums/cloud-provider.enum';
 import { ProviderDefinition } from '../entities/provider-definition.entity';
+import { ProviderRegionDto } from '../dto/provider-capabilities.dto';
 import { ProviderConfigurationDto } from '../dto/provider-configuration.dto';
 import { ConfigureProviderDto } from '../dto/configure-provider.dto';
 import { ProviderFiltersDto } from '../dto/provider-filters.dto';
@@ -254,7 +255,7 @@ export class ManagementController {
   @ApiResponse({
     status: 200,
     description: 'Available regions',
-    type: [Object],
+    type: [ProviderRegionDto],
   })
   async getProviderRegions(@Param('provider') provider: CloudProvider) {
     return this.managementService.getProviderRegions(provider);

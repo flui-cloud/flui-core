@@ -23,36 +23,6 @@ export interface OvhRegionMeta {
   longitude: number;
 }
 
-const EU_COUNTRIES = new Set([
-  'AT',
-  'BE',
-  'BG',
-  'HR',
-  'CY',
-  'CZ',
-  'DK',
-  'EE',
-  'FI',
-  'FR',
-  'DE',
-  'GR',
-  'HU',
-  'IE',
-  'IT',
-  'LV',
-  'LT',
-  'LU',
-  'MT',
-  'NL',
-  'PL',
-  'PT',
-  'RO',
-  'SK',
-  'SI',
-  'ES',
-  'SE',
-]);
-
 const META: Record<string, OvhRegionMeta> = {
   GRA: {
     city: 'Gravelines',
@@ -140,13 +110,6 @@ export function ovhRegionCode(keystoneRegion: string): string {
 
 export function ovhRegionMeta(code: string): OvhRegionMeta | undefined {
   return META[code.toUpperCase()];
-}
-
-export function isEuropeanOvhRegion(code: string): boolean {
-  const meta = ovhRegionMeta(code);
-  // Unknown codes are not assumed European — an unplaceable region should not
-  // silently widen an EU-only default.
-  return meta ? EU_COUNTRIES.has(meta.cc) || meta.cc === 'GB' : false;
 }
 
 export const OVH_REGION_METADATA = META;

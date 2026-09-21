@@ -25,6 +25,7 @@ import {
   Configuration as IamConfiguration,
 } from 'src/modules/providers/implementations/scaleway/generated/iam';
 import { getRegionCoordinates } from '../../data/region-coordinates';
+import { macroRegionOf } from '@flui-cloud/infra';
 import { SCALEWAY_INFERENCE } from './scaleway-inference';
 
 @Injectable()
@@ -269,6 +270,7 @@ export class ScalewayCapabilitiesService
       id: string,
       name: string,
       country: string,
+      countryCode: string,
       flagEmoji: string,
     ): ProviderRegion => {
       const coords = getRegionCoordinates(CloudProvider.SCALEWAY, id);
@@ -280,14 +282,16 @@ export class ScalewayCapabilitiesService
         available: true,
         flagEmoji,
         country,
+        countryCode,
+        macroRegion: macroRegionOf(countryCode) ?? undefined,
         latitude: coords?.latitude,
         longitude: coords?.longitude,
       };
     };
     return [
-      make('fr-par', 'Paris', 'France', '🇫🇷'),
-      make('nl-ams', 'Amsterdam', 'Netherlands', '🇳🇱'),
-      make('pl-waw', 'Warsaw', 'Poland', '🇵🇱'),
+      make('fr-par', 'Paris', 'France', 'FR', '🇫🇷'),
+      make('nl-ams', 'Amsterdam', 'Netherlands', 'NL', '🇳🇱'),
+      make('pl-waw', 'Warsaw', 'Poland', 'PL', '🇵🇱'),
     ];
   }
 

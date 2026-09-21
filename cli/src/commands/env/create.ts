@@ -31,7 +31,7 @@ import { ServerTypeValidatorService } from '../../services/server-type-validator
 import {
   getRecommendedServerType,
   getFallbackServerTypes,
-  getEuRegions,
+  getSupportedRegions,
   getDefaultRegion,
   CLI_DEFAULTS,
 } from '../../config/defaults';
@@ -533,7 +533,7 @@ export default class EnvCreate extends Command {
     const nodeSize =
       flags['node-size'] || getRecommendedServerType(providerKey);
     const region = flags.region || getDefaultRegion(providerKey);
-    const allowedRegions = getEuRegions(providerKey);
+    const allowedRegions = getSupportedRegions(providerKey);
 
     if (!allowedRegions.includes(region)) {
       this.error(

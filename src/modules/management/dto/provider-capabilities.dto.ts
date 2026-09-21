@@ -1,4 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { MACRO_REGIONS, MacroRegion } from '@flui-cloud/infra';
 import { VNetScope } from '../entities/provider-capabilities.entity';
 
 export class IpRangeConstraintsDto {
@@ -101,7 +102,10 @@ export class ProviderRegionDto {
   @ApiProperty()
   displayName: string;
 
-  @ApiProperty()
+  @ApiProperty({
+    description:
+      'What the provider calls the country. Hetzner answers with an ISO code and OVH with a name, so this is display text and nothing may be decided from it.',
+  })
   country: string;
 
   @ApiProperty()
@@ -112,6 +116,18 @@ export class ProviderRegionDto {
   location: string;
   @ApiProperty({ required: false })
   description?: string;
+  @ApiProperty({
+    required: false,
+    description: 'ISO 3166-1 alpha-2. The macro-region is derived from this.',
+  })
+  countryCode?: string;
+  @ApiProperty({
+    required: false,
+    enum: MACRO_REGIONS,
+    description:
+      'Derived from the country code, never declared by the provider. Absent when the country is not recognised.',
+  })
+  macroRegion?: MacroRegion;
   @ApiProperty({ required: false })
   latitude?: number;
   @ApiProperty({ required: false })

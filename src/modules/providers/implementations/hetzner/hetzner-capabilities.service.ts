@@ -22,6 +22,7 @@ import {
   ServerTypesApi,
 } from 'src/modules/providers/implementations/hetzner/generated';
 import { getRegionCoordinates } from '../../data/region-coordinates';
+import { macroRegionOf } from '@flui-cloud/infra';
 
 @Injectable()
 export class HetznerCapabilitiesService
@@ -214,7 +215,9 @@ export class HetznerCapabilitiesService
       // network zone. Servers within the same zone (e.g. fsn1/nbg1/hel1 all share
       // eu-central) can join the same VNet. Cross-zone communication is not possible
       // over private networks. Subnets within a VNet are further scoped by zone.
-      // Only eu-central is in scope for Flui — us-east/us-west/ap-southeast excluded.
+      // Every zone is declared, because a region Flui offers with no zone
+      // covering it would ask for a VNet that cannot be placed — and a VNet is
+      // required here.
       // Ref: https://docs.hetzner.com/networking/networks/faq/
       vnetTopology: {
         scope: 'regional',
@@ -223,6 +226,21 @@ export class HetznerCapabilitiesService
             id: 'eu-central',
             displayName: 'Europe (Central)',
             coveredRegions: ['fsn1', 'nbg1', 'hel1'],
+          },
+          {
+            id: 'us-east',
+            displayName: 'US East',
+            coveredRegions: ['ash'],
+          },
+          {
+            id: 'us-west',
+            displayName: 'US West',
+            coveredRegions: ['hil'],
+          },
+          {
+            id: 'ap-southeast',
+            displayName: 'Asia Pacific (Southeast)',
+            coveredRegions: ['sin'],
           },
         ],
         supportsSubnets: true,
@@ -248,53 +266,24 @@ export class HetznerCapabilitiesService
   }
 
   private mapHetznerLocationsToRegions(locations: any[]): ProviderRegion[] {
-    return locations
-      .filter((location) => this.isEuropeanLocation(location))
-      .map((location) => {
-        const coords = getRegionCoordinates(
-          CloudProvider.HETZNER,
-          location.name,
-        );
-        return {
-          id: location.name,
-          name: location.city,
-          displayName: location.city,
-          location: location.country,
-          available: true,
-          flagEmoji: this.getCountryFlag(location.country),
-          country: location.country,
-          latitude: coords?.latitude,
-          longitude: coords?.longitude,
-        };
-      });
-  }
-
-  private isEuropeanLocation(location: any): boolean {
-    if (location.network_zone === 'eu-central') {
-      return true;
-    }
-
-    const europeanCountries = [
-      'DE',
-      'FI',
-      'NL',
-      'AT',
-      'BE',
-      'FR',
-      'IT',
-      'ES',
-      'PL',
-      'CZ',
-      'SE',
-      'NO',
-      'DK',
-      'CH',
-      'GB',
-      'IE',
-      'PT',
-    ];
-
-    return europeanCountries.includes(location.country);
+    return locations.map((location) => {
+      const coords = getRegionCoordinates(CloudProvider.HETZNER, location.name);
+      return {
+        id: location.name,
+        name: location.city,
+        displayName: location.city,
+        location: location.country,
+        available: true,
+        flagEmoji: this.getCountryFlag(location.country),
+        country: location.country,
+        // Hetzner answers with an ISO alpha-2 code, which is what a
+        // macro-region is derived from.
+        countryCode: location.country,
+        macroRegion: macroRegionOf(location.country) ?? undefined,
+        latitude: coords?.latitude,
+        longitude: coords?.longitude,
+      };
+    });
   }
 
   private mapHetznerServerTypesToInstanceTypes(
