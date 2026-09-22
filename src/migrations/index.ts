@@ -37,6 +37,7 @@ import { ApplicationAttachedServices1788400000000 } from './1788400000000-Applic
 import { OvhProviderEnum1788500000000 } from './1788500000000-OvhProviderEnum';
 import { FluiManagedVNet1788900000000 } from './1788900000000-FluiManagedVNet';
 import { RefreshTokenHashAtRest1789100000000 } from './1789100000000-RefreshTokenHashAtRest';
+import { DropDeadAutoscaleThresholds1789300000000 } from './1789300000000-DropDeadAutoscaleThresholds';
 import { InferenceUsageEvents1789200000000 } from './1789200000000-InferenceUsageEvents';
 import { OverlayEnrolmentOperation1789000000000 } from './1789000000000-OverlayEnrolmentOperation';
 import { WireGuardPeers1788800000000 } from './1788800000000-WireGuardPeers';
@@ -103,4 +104,5 @@ export const migrations = [
   OverlayEnrolmentOperation1789000000000,
   RefreshTokenHashAtRest1789100000000,
   InferenceUsageEvents1789200000000,
+  DropDeadAutoscaleThresholds1789300000000,
 ];

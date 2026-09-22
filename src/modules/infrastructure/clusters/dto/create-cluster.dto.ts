@@ -119,6 +119,11 @@ export class CreateClusterDto {
   })
   @IsOptional()
   @IsBoolean()
+  /**
+   * @deprecated Accepted and ignored. Nothing about growth depends on it: a
+   * cluster grows when a scaling group on it is set to buy. Removed with the
+   * column it used to write.
+   */
   autoscalingEnabled?: boolean;
 
   @ApiPropertyOptional({
@@ -148,12 +153,6 @@ export class CreateClusterDto {
     description:
       'Memory utilization percentage that triggers a scale-up. Overrides global default.',
   })
-  @IsOptional()
-  @IsInt()
-  @Min(50)
-  @Max(95)
-  scaleUpMemoryPct?: number;
-
   @ApiPropertyOptional({
     example: 75,
     minimum: 50,
@@ -161,12 +160,6 @@ export class CreateClusterDto {
     description:
       'CPU utilization percentage that triggers a scale-up. Overrides global default.',
   })
-  @IsOptional()
-  @IsInt()
-  @Min(50)
-  @Max(95)
-  scaleUpCpuPct?: number;
-
   @ApiPropertyOptional({
     example: 300,
     minimum: 60,
@@ -174,12 +167,6 @@ export class CreateClusterDto {
     description:
       'Cooldown period (seconds) between consecutive scale events. Overrides global default.',
   })
-  @IsOptional()
-  @IsInt()
-  @Min(60)
-  @Max(3600)
-  cooldownSeconds?: number;
-
   @ApiPropertyOptional({
     example: 'v1.35.4+k3s1',
     description: 'K3s version (default: v1.35.4+k3s1)',

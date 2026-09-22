@@ -233,7 +233,12 @@ export const INFRASTRUCTURE_OPERATION_TOOLS: ToolDef[] = [
       workerCount: coerceNumber(z.number().int().min(0).max(19)).describe(
         'Worker nodes beside the master. 0 means master-only.',
       ),
-      autoscalingEnabled: z.boolean().optional(),
+      autoscalingEnabled: z
+        .boolean()
+        .optional()
+        .describe(
+          'Deprecated and ignored: use scaling_group_set to make a cluster grow on its own.',
+        ),
     },
     run: async (args, ctx) => {
       const operation = await ctx.api.post<QueuedOperation>(
@@ -368,17 +373,18 @@ export const INFRASTRUCTURE_OPERATION_TOOLS: ToolDef[] = [
     name: 'cluster_autoscale_set',
     routes: ['PATCH /infrastructure/clusters/:id/autoscale'],
     description:
-      'Change how a cluster scales itself: on or off, the node bounds and the thresholds that trigger a scale-up. Raising maxNodes raises the ceiling on what this cluster can spend without anybody being asked again, so read cluster_capacity_plan and state the cost per node first. Enabling autoscaling on a cluster with no VNet is refused with a 400 — that one cannot be fixed here, only by re-creating the cluster.',
+      'Deprecated, and removed once the cluster columns go: prefer scaling_group_set. Sets the floor and ceiling on how many nodes a cluster may have, counted across every node including the master. Where the cluster has a scaling group these numbers go to it, because that is what enforces them. This does not make anything grow on its own: use scaling_group_set with provision "automatic" for that, and read cluster_capacity_plan and state the cost per node first. The thresholds this tool used to take were stored and read by nothing, and are gone.',
     scope: MCP_SCOPE.INFRA_WRITE,
     inputSchema: {
       ...clusterArg,
-      autoscalingEnabled: z.boolean().optional(),
+      autoscalingEnabled: z
+        .boolean()
+        .optional()
+        .describe(
+          'Deprecated and ignored: use scaling_group_set to make a cluster grow on its own.',
+        ),
       minNodes: coerceNumber(z.number().int().min(1).max(20)).optional(),
       maxNodes: coerceNumber(z.number().int().min(1).max(20)).optional(),
-      scaleUpMemoryPct: coerceNumber(
-        z.number().int().min(50).max(95),
-      ).optional(),
-      scaleUpCpuPct: coerceNumber(z.number().int().min(50).max(95)).optional(),
     },
     run: async (args, ctx) => {
       const { clusterId, ...body } = args;

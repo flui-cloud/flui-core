@@ -29,6 +29,7 @@ import { ClusterOperationsService } from './services/cluster-operations.service'
 import { ClusterPowerManagementService } from './services/cluster-power-management.service';
 import { AutoscaleActuationService } from './services/autoscale-actuation.service';
 import {
+  AutoscaleActuation,
   describeCapacityOutcome,
   resolveAutoscaleActuation,
 } from './services/autoscale-actuation';
@@ -324,22 +325,26 @@ export class ClustersService {
     const hasEnoughMemory = availableMemory >= requiredMemory;
     const autoscalingEnabled = cluster.autoscalingEnabled ?? false;
 
+    // Whether a node will actually appear, not whether a flag says it might.
+    // The flag was set on clusters where nothing drives scaling, so the gate
+    // used to wave a deployment through into a cluster that would never grow.
+    const actuation = resolveAutoscaleActuation(
+      await this.actuationService.resolveFacts(cluster.provider, cluster.id),
+    );
+    const willGrow = actuation === AutoscaleActuation.AUTOMATIC;
+
     let canDeploy: boolean;
     let reason: ResourceAvailabilityReason = null;
 
     if (hasEnoughCpu && hasEnoughMemory) {
       canDeploy = true;
-    } else if (autoscalingEnabled) {
+    } else if (willGrow) {
       canDeploy = true;
       reason = 'autoscaling_pending';
     } else {
       canDeploy = false;
       reason = 'insufficient_resources';
     }
-
-    const actuation = resolveAutoscaleActuation(
-      await this.actuationService.resolveFacts(cluster.provider, cluster.id),
-    );
 
     const formatCpu = (mc: number) => `${mc}m`;
     const formatMem = (mi: number) =>
@@ -377,7 +382,7 @@ export class ClustersService {
     let status: BuildResourceStatus;
     if (check.canDeploy && check.reason === null) {
       status = 'ok';
-    } else if (check.autoscalingEnabled) {
+    } else if (check.reason === 'autoscaling_pending') {
       status = 'autoscaling_required';
     } else {
       status = 'insufficient';

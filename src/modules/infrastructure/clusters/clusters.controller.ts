@@ -598,11 +598,14 @@ export class ClustersController {
     estimate: '/infrastructure/clusters/:id/capacity-plan',
   })
   @ApiOperation({
-    summary: 'Update cluster autoscale configuration',
+    deprecated: true,
+    summary: 'Set the node floor and ceiling (deprecated: use scaling groups)',
     description:
-      'Updates autoscaling enable flag, min/max nodes and optional threshold overrides. ' +
-      'Enabling autoscale on a cluster without VNet returns 400 — re-create the cluster ' +
-      'with autoscalingEnabled=true to get a VNet automatically provisioned.',
+      'Sets the floor and ceiling on how many nodes this cluster may hold, counted across ' +
+      'every node including the master. Where the cluster has a scaling group the numbers go ' +
+      'to it, because that is what enforces them; where it has several, the write is refused. ' +
+      'This does not make anything grow on its own — a group with provision "automatic" does. ' +
+      'Removed once the cluster columns go.',
   })
   @ApiParam({ name: 'id', description: 'Cluster ID' })
   @ApiBody({ type: UpdateClusterAutoscaleDto })

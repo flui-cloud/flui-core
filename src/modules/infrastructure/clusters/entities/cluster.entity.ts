@@ -92,15 +92,6 @@ export class ClusterEntity {
   @Column({ type: 'int', nullable: true })
   maxNodes?: number;
 
-  @Column({ type: 'int', nullable: true })
-  scaleUpMemoryPct?: number;
-
-  @Column({ type: 'int', nullable: true })
-  scaleUpCpuPct?: number;
-
-  @Column({ type: 'int', nullable: true })
-  cooldownSeconds?: number;
-
   // K3s specifics
   @Column({ type: 'text' })
   k3sTokenEncrypted: string; // Encrypted with EncryptionService

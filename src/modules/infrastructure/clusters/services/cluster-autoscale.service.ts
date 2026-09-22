@@ -19,6 +19,7 @@ import {
 } from '../config/autoscale-defaults';
 import { PrometheusQueryService } from '../../../observability/services/prometheus-query.service';
 import { AutoscaleActuationService } from './autoscale-actuation.service';
+import { ClusterBoundsRegistry } from './cluster-bounds.registry';
 import { AutoscaleActuation, isAlertOnly } from './autoscale-actuation';
 import { UnschedulablePodsService } from './unschedulable-pods.service';
 
@@ -32,6 +33,7 @@ export class ClusterAutoscaleService {
     private readonly prometheusQueryService: PrometheusQueryService,
     private readonly actuationService: AutoscaleActuationService,
     private readonly unschedulablePodsService: UnschedulablePodsService,
+    private readonly bounds: ClusterBoundsRegistry,
   ) {}
 
   getDefaults(): AutoscaleThresholds {
@@ -42,15 +44,15 @@ export class ClusterAutoscaleService {
     cluster: ClusterEntity,
   ): AutoscaleEffectiveThresholdsDto {
     return {
-      scaleUpMemoryPct:
-        cluster.scaleUpMemoryPct ?? AUTOSCALE_DEFAULTS.scaleUpMemoryPct,
-      scaleUpCpuPct: cluster.scaleUpCpuPct ?? AUTOSCALE_DEFAULTS.scaleUpCpuPct,
+      // Installation-wide, not per cluster: the per-cluster overrides were
+      // stored and read by nothing, so a number set there changed no behaviour.
+      scaleUpMemoryPct: AUTOSCALE_DEFAULTS.scaleUpMemoryPct,
+      scaleUpCpuPct: AUTOSCALE_DEFAULTS.scaleUpCpuPct,
       warnMemoryPct: AUTOSCALE_DEFAULTS.warnMemoryPct,
       dangerMemoryPct: AUTOSCALE_DEFAULTS.dangerMemoryPct,
       warnCpuPct: AUTOSCALE_DEFAULTS.warnCpuPct,
       dangerCpuPct: AUTOSCALE_DEFAULTS.dangerCpuPct,
-      cooldownSeconds:
-        cluster.cooldownSeconds ?? AUTOSCALE_DEFAULTS.cooldownSeconds,
+      cooldownSeconds: AUTOSCALE_DEFAULTS.cooldownSeconds,
     };
   }
 
@@ -66,45 +68,39 @@ export class ClusterAutoscaleService {
       throw new NotFoundException(`Cluster ${clusterId} not found`);
     }
 
-    const nextEnabled = dto.autoscalingEnabled ?? cluster.autoscalingEnabled;
     const nextMin = dto.minNodes ?? cluster.minNodes;
     const nextMax = dto.maxNodes ?? cluster.maxNodes;
 
-    if (nextEnabled) {
-      if (nextMin == null || nextMax == null) {
-        throw new BadRequestException(
-          'minNodes and maxNodes are required when autoscaling is enabled',
-        );
-      }
-      if (nextMin < 1) {
-        throw new BadRequestException('minNodes must be >= 1');
-      }
-      if (nextMin > nextMax) {
-        throw new BadRequestException('minNodes must be <= maxNodes');
-      }
+    // The bounds are checked whenever either is present. They used to be
+    // checked only behind a flag that decided nothing, so a floor above a
+    // ceiling was storable on any cluster the flag happened to be off for.
+    if (nextMin != null && nextMax != null && nextMin > nextMax) {
+      throw new BadRequestException(
+        'The floor cannot sit above the ceiling: minNodes must be <= maxNodes',
+      );
     }
 
-    if (
-      dto.autoscalingEnabled === true &&
-      cluster.autoscalingEnabled === false
-    ) {
-      const vnetId = cluster.metadata?.vnetConfig?.vnetId;
-      if (!vnetId) {
+    // Where a scaling group owns this cluster's bounds, the numbers go there:
+    // stored only on the cluster they would look set and fence nothing.
+    if (dto.minNodes !== undefined || dto.maxNodes !== undefined) {
+      const taken = await this.bounds.writeBounds(cluster.id, {
+        min: nextMin ?? null,
+        max: nextMax ?? null,
+      });
+      // Someone owns these bounds but could not take them — several groups on
+      // one cluster, and no way to tell which was meant. Storing them on the
+      // cluster row instead would leave a number that looks set and fences
+      // nothing, which is the failure this whole route was rewired to avoid.
+      if (!taken && (await this.bounds.boundsFor(cluster.id))) {
         throw new BadRequestException(
-          'Cannot enable autoscaling on a cluster without a VNet. ' +
-            'Recreate the cluster with autoscalingEnabled=true (a VNet will be created automatically) ' +
-            'or attach a VNet manually before enabling.',
+          'This cluster has several scaling groups; set the floor and ceiling on the group that should carry them.',
         );
       }
     }
 
     Object.assign(cluster, {
-      autoscalingEnabled: nextEnabled,
       minNodes: nextMin,
       maxNodes: nextMax,
-      scaleUpMemoryPct: dto.scaleUpMemoryPct ?? cluster.scaleUpMemoryPct,
-      scaleUpCpuPct: dto.scaleUpCpuPct ?? cluster.scaleUpCpuPct,
-      cooldownSeconds: dto.cooldownSeconds ?? cluster.cooldownSeconds,
     });
 
     return this.clusterRepository.save(cluster);
@@ -140,7 +136,6 @@ export class ClusterAutoscaleService {
     const unschedulable = await this.unschedulablePodsService.read(cluster);
 
     const warning = this.computeWarning(
-      cluster.autoscalingEnabled,
       memoryPct,
       cpuPct,
       effective,
@@ -166,7 +161,6 @@ export class ClusterAutoscaleService {
   }
 
   computeWarning(
-    autoscalingEnabled: boolean,
     memoryPct: number | null,
     cpuPct: number | null,
     thresholds: AutoscaleEffectiveThresholdsDto,
@@ -184,22 +178,22 @@ export class ClusterAutoscaleService {
         : `CPU at ${cpuPct.toFixed(1)}% (>= ${thresholds.dangerCpuPct}%)`;
       return {
         level: AutoscaleWarningLevel.DANGER_NEEDS_SCALE,
-        message: `Cluster under heavy load: ${reason}. ${this.describeRelief(
-          autoscalingEnabled,
-          actuation,
-        )}`,
+        message: `Cluster under heavy load: ${reason}. ${this.describeRelief(actuation)}`,
       };
     }
 
-    if ((memWarn || cpuWarn) && !autoscalingEnabled) {
+    // Pressure matters where nothing will relieve it on its own. The flag this
+    // used to read said nothing about that, so with it on the warning could
+    // never fire and the page went straight from calm to critical.
+    if ((memWarn || cpuWarn) && actuation !== AutoscaleActuation.AUTOMATIC) {
       const reason = memWarn
         ? `memory at ${memoryPct.toFixed(1)}%`
         : `CPU at ${cpuPct.toFixed(1)}%`;
       return {
         level: AutoscaleWarningLevel.WARN_NEEDS_AUTOSCALE,
         message:
-          `Sustained pressure detected (${reason}) and autoscaling is disabled. ` +
-          this.describeRelief(false, actuation),
+          `Sustained pressure detected (${reason}) and nothing adds a node on its own here. ` +
+          this.describeRelief(actuation),
       };
     }
 
@@ -207,20 +201,18 @@ export class ClusterAutoscaleService {
   }
 
   /** What would actually relieve the pressure here — never "the autoscaler will". */
-  private describeRelief(
-    autoscalingEnabled: boolean,
-    actuation: AutoscaleActuation,
-  ): string {
+  /**
+   * What would relieve the pressure, in terms of what this cluster can do.
+   * A flag no longer decides any of it: what decides is whether a scaling
+   * group on a provider that can buy is set to buy.
+   */
+  private describeRelief(actuation: AutoscaleActuation): string {
     if (isAlertOnly(actuation)) {
       return 'Flui cannot create a server on this provider — attach one yourself and connect it, or free capacity.';
     }
     if (actuation === AutoscaleActuation.AUTOMATIC) {
-      return autoscalingEnabled
-        ? 'Autoscaler should react within the cooldown window.'
-        : 'Autoscaling is DISABLED — add a worker or enable autoscaling.';
+      return 'Scaling should add a node within its settle window.';
     }
-    return autoscalingEnabled
-      ? 'Autoscaling is enabled, but nothing adds a node on its own — add a worker.'
-      : 'Autoscaling is DISABLED, and enabling it would not add a node on its own — add a worker.';
+    return 'Add a worker, or set this cluster’s scaling group to buy automatically.';
   }
 }

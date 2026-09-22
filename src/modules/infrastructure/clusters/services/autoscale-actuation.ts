@@ -52,8 +52,8 @@ export function describeAutoscaleActuation(
   switch (actuation) {
     case AutoscaleActuation.AUTOMATIC:
       return (
-        `Flui adds a node on ${provider} on its own when the cluster runs out ` +
-        `of room, within the cooldown window and up to the node limit.`
+        `Flui adds a node on ${provider} on its own when a pod cannot be ` +
+        `placed, up to this cluster's ceiling and its monthly limit.`
       );
     case AutoscaleActuation.NOT_DRIVEN:
       return (
@@ -79,37 +79,40 @@ export function describeAutoscaleActuation(
 
 /**
  * The sentence the capacity gate owes a reader who is about to deploy into a
- * cluster that has no room. `autoscaling_pending` is the case that used to
- * promise a node silently.
+ * cluster that has no room.
+ *
+ * `autoscaling_pending` now means one thing only: something really will add a
+ * node. Everywhere else the gate says no, and this sentence says why no node
+ * is coming — that used to be a promise the cluster could not keep.
  */
 export function describeCapacityOutcome(
   actuation: AutoscaleActuation,
   reason: 'insufficient_resources' | 'autoscaling_pending',
 ): string {
-  if (reason === 'insufficient_resources') {
+  if (reason === 'autoscaling_pending') {
     return (
-      'The cluster does not have room for this. Free capacity by removing ' +
-      'unused applications, or give the cluster another node.'
+      'The cluster does not have room for this right now. A node will be ' +
+      'added; the workload stays pending until it joins.'
     );
   }
+
   switch (actuation) {
-    case AutoscaleActuation.AUTOMATIC:
-      return (
-        'The cluster does not have room for this right now. Autoscaling is on ' +
-        'and a node will be added; the workload stays pending until it joins.'
-      );
     case AutoscaleActuation.NOT_DRIVEN:
       return (
-        'The cluster does not have room for this. Autoscaling is on, but ' +
-        'nothing adds a node on its own — unless someone adds one first, this ' +
-        'workload will stay pending indefinitely.'
+        'The cluster does not have room for this, and nothing adds a node on ' +
+        'its own here. Add one yourself, or let scaling buy for this cluster.'
       );
     case AutoscaleActuation.ALERT_ONLY_SIZED:
     case AutoscaleActuation.ALERT_ONLY_UNSIZED:
       return (
-        'The cluster does not have room for this. Autoscaling is on, but Flui ' +
-        'cannot create a server on this provider — no node will appear, and ' +
-        'this workload will stay pending until you attach one yourself.'
+        'The cluster does not have room for this, and Flui cannot create a ' +
+        'server on this provider — no node will appear until you attach one ' +
+        'yourself.'
+      );
+    case AutoscaleActuation.AUTOMATIC:
+      return (
+        'The cluster does not have room for this, and scaling cannot make ' +
+        'room: it is already at its ceiling, or its monthly limit stops it.'
       );
   }
 }

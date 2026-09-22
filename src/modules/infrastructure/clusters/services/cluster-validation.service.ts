@@ -126,8 +126,10 @@ export class ClusterValidationService {
     // Validate node size
     await this.validateNodeSize(dto.provider, dto.region, dto.nodeSize);
 
-    // Validate autoscaling configuration
-    if (dto.autoscalingEnabled) {
+    // Node bounds, whenever either is given. They are not behind a flag: the
+    // flag never decided whether they were enforced, only whether they were
+    // read here.
+    if (dto.minNodes != null || dto.maxNodes != null) {
       this.validateAutoscalingConfig(dto);
     }
 

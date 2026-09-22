@@ -151,12 +151,8 @@ export class ClusterCreationService {
       region: dto.region,
       nodeSize: dto.nodeSize,
       nodeCount: 0, // Will be updated as nodes are created
-      autoscalingEnabled: dto.autoscalingEnabled || false,
       minNodes: dto.minNodes,
       maxNodes: dto.maxNodes,
-      scaleUpMemoryPct: dto.scaleUpMemoryPct,
-      scaleUpCpuPct: dto.scaleUpCpuPct,
-      cooldownSeconds: dto.cooldownSeconds,
       k3sTokenEncrypted,
       k3sVersion: dto.k3sVersion,
       status: ClusterStatus.CREATING,

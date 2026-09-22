@@ -109,29 +109,40 @@ describe('describeAutoscaleActuation', () => {
 });
 
 describe('describeCapacityOutcome', () => {
-  it('warns that the workload stays pending where nothing drives scaling', () => {
+  it('says why no node is coming where nothing drives scaling', () => {
     const text = describeCapacityOutcome(
       AutoscaleActuation.NOT_DRIVEN,
-      'autoscaling_pending',
+      'insufficient_resources',
     );
     expect(text).toContain('nothing adds a node on its own');
-    expect(text).toContain('pending');
   });
 
   it('says no node will appear where Flui cannot provision', () => {
     const text = describeCapacityOutcome(
       AutoscaleActuation.ALERT_ONLY_SIZED,
-      'autoscaling_pending',
+      'insufficient_resources',
     );
     expect(text).toContain('no node will appear');
   });
 
-  it('promises a node only where something actually adds one', () => {
+  it('promises a node only for the one reason that means one is coming', () => {
     const text = describeCapacityOutcome(
       AutoscaleActuation.AUTOMATIC,
       'autoscaling_pending',
     );
-    expect(text).toContain('a node will be added');
+    expect(text).toContain('A node will be added');
+  });
+
+  it('never promises a node under the reason that means the gate said no', () => {
+    const refused = [
+      AutoscaleActuation.AUTOMATIC,
+      AutoscaleActuation.NOT_DRIVEN,
+      AutoscaleActuation.ALERT_ONLY_SIZED,
+      AutoscaleActuation.ALERT_ONLY_UNSIZED,
+    ].map((a) => describeCapacityOutcome(a, 'insufficient_resources'));
+    for (const text of refused) {
+      expect(text).not.toContain('will be added');
+    }
   });
 
   it('does not mention autoscaling when it is off', () => {

@@ -789,6 +789,8 @@ const MASK_EXEMPT: string[] = [
   'AvailableVersionDto.isCurrentlyDeployed', // modules/applications/dto/available-versions.dto.ts
   'AvailableVersionDto.isLatestRelease', // modules/applications/dto/available-versions.dto.ts
   'AvailableVersionDto.lastRelease', // modules/applications/dto/available-versions.dto.ts
+  'AvailableVersionDto.notReleasableReason', // modules/applications/dto/available-versions.dto.ts
+  'AvailableVersionDto.releasable', // modules/applications/dto/available-versions.dto.ts
   'AvailableVersionDto.platforms', // modules/applications/dto/available-versions.dto.ts
   'AvailableVersionDto.releaseCount', // modules/applications/dto/available-versions.dto.ts
   'AvailableVersionDto.tag', // modules/applications/dto/available-versions.dto.ts
@@ -1536,7 +1538,6 @@ const MASK_EXEMPT: string[] = [
   'CreateClusterDatasourcesDto.clusterName', // modules/grafana/dto/grafana-datasource.dto.ts
   'CreateClusterDatasourcesDto.masterIpAddress', // modules/grafana/dto/grafana-datasource.dto.ts
   'CreateClusterDto.autoscalingEnabled', // modules/infrastructure/clusters/dto/create-cluster.dto.ts
-  'CreateClusterDto.cooldownSeconds', // modules/infrastructure/clusters/dto/create-cluster.dto.ts
   'CreateClusterDto.diskSizeGb', // modules/infrastructure/clusters/dto/create-cluster.dto.ts
   'CreateClusterDto.endpointHostnameMode', // modules/infrastructure/clusters/dto/create-cluster.dto.ts
   'CreateClusterDto.firewallRules', // modules/infrastructure/clusters/dto/create-cluster.dto.ts
@@ -1550,8 +1551,6 @@ const MASK_EXEMPT: string[] = [
   'CreateClusterDto.nodeSize', // modules/infrastructure/clusters/dto/create-cluster.dto.ts
   'CreateClusterDto.provider', // modules/infrastructure/clusters/dto/create-cluster.dto.ts
   'CreateClusterDto.region', // modules/infrastructure/clusters/dto/create-cluster.dto.ts
-  'CreateClusterDto.scaleUpCpuPct', // modules/infrastructure/clusters/dto/create-cluster.dto.ts
-  'CreateClusterDto.scaleUpMemoryPct', // modules/infrastructure/clusters/dto/create-cluster.dto.ts
   'CreateClusterDto.sharedStorageEnabled', // modules/infrastructure/clusters/dto/create-cluster.dto.ts
   'CreateClusterDto.sharedStorageVolumeSizeGb', // modules/infrastructure/clusters/dto/create-cluster.dto.ts
   'CreateClusterDto.sshKeys', // modules/infrastructure/clusters/dto/create-cluster.dto.ts
@@ -3569,11 +3568,8 @@ const MASK_EXEMPT: string[] = [
   'UpdateApplicationDto.startCommand', // modules/applications/dto/update-application.dto.ts
   'UpdateApplicationDto.tags', // modules/applications/dto/update-application.dto.ts
   'UpdateClusterAutoscaleDto.autoscalingEnabled', // modules/infrastructure/clusters/dto/update-cluster-autoscale.dto.ts
-  'UpdateClusterAutoscaleDto.cooldownSeconds', // modules/infrastructure/clusters/dto/update-cluster-autoscale.dto.ts
   'UpdateClusterAutoscaleDto.maxNodes', // modules/infrastructure/clusters/dto/update-cluster-autoscale.dto.ts
   'UpdateClusterAutoscaleDto.minNodes', // modules/infrastructure/clusters/dto/update-cluster-autoscale.dto.ts
-  'UpdateClusterAutoscaleDto.scaleUpCpuPct', // modules/infrastructure/clusters/dto/update-cluster-autoscale.dto.ts
-  'UpdateClusterAutoscaleDto.scaleUpMemoryPct', // modules/infrastructure/clusters/dto/update-cluster-autoscale.dto.ts
   'UpdateClusterMetadataDto.metadata', // modules/infrastructure/clusters/dto/update-cluster-metadata.dto.ts
   'UpdateClusterVNetDto.autoAssignIp', // modules/infrastructure/clusters/dto/update-cluster-vnet.dto.ts
   'UpdateClusterVNetDto.subnetId', // modules/infrastructure/clusters/dto/update-cluster-vnet.dto.ts
