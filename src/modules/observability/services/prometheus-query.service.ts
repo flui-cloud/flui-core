@@ -605,11 +605,15 @@ export class PrometheusQueryService {
         netOutValues.map(([ts, v]) => [ts, Number.parseFloat(v)]),
       );
 
-      // Collect all unique timestamps across all metrics for this instance
+      // Collect all unique timestamps across all metrics for this instance.
+      // The network series belong in this union too: a timestamp only they
+      // carry used to be dropped, silently turning real traffic into a gap.
       const allTimestamps = new Set<number>();
       for (const [ts] of cpuValues) allTimestamps.add(ts);
       for (const [ts] of memValues) allTimestamps.add(ts);
       for (const [ts] of diskValues) allTimestamps.add(ts);
+      for (const [ts] of netInValues) allTimestamps.add(ts);
+      for (const [ts] of netOutValues) allTimestamps.add(ts);
 
       const cpuByTs = new Map(
         cpuValues.map(([ts, v]) => [ts, Number.parseFloat(v)]),
