@@ -68,6 +68,51 @@ describe('ConfigStorage under the vault', () => {
   }
 
   /**
+   * The case a live machine produced: `vault unlock` opened the vault but left
+   * one profile unmigrated, and from then on every read of it failed as
+   * "unable to authenticate data" — a message that reads as corruption.
+   *
+   * Presence of a key file proves nothing either way: it may be the fossil of a
+   * CLI that minted one on demand, or the real key of a profile adoption never
+   * reached. So the sealed data decides which key is this profile's.
+   */
+  describe('choosing between the vault key and a key file', () => {
+    it('keeps reading a profile the vault was opened without adopting', () => {
+      seedLegacyProfile();
+      // The vault is open and offers a key for this profile — the wrong one.
+      setProfileKey(PROFILE, deriveProfileKey(MASTER, PROFILE));
+
+      expect(new ConfigStorage(PROFILE).getToken('hetzner')).toBe(
+        'hcloud-real-token',
+      );
+      expect(new ConfigStorage(PROFILE).getApiKeyOrThrow()).toBe(
+        'flui-api-key',
+      );
+    });
+
+    it('uses the vault once the profile has been adopted', () => {
+      seedLegacyProfile();
+      const vaultKey = deriveProfileKey(MASTER, PROFILE);
+      new ConfigStorage(PROFILE).adoptVaultKey(vaultKey);
+      setProfileKey(PROFILE, vaultKey);
+
+      expect(existsSync(join(profileDir, '.key'))).toBe(false);
+      expect(new ConfigStorage(PROFILE).getToken('hetzner')).toBe(
+        'hcloud-real-token',
+      );
+    });
+
+    /** Neither opens it: that is a real failure and must say so. */
+    it('refuses when no candidate opens the data', () => {
+      seedLegacyProfile();
+      writeFileSync(join(profileDir, '.key'), randomBytes(32), { mode: 0o600 });
+      setProfileKey(PROFILE, deriveProfileKey(MASTER, 'a-different-profile'));
+
+      expect(() => new ConfigStorage(PROFILE).getApiKeyOrThrow()).toThrow();
+    });
+  });
+
+  /**
    * The distinction every caller used to flatten. Both cases yield no key, but
    * only one is fixed by signing in — and told to sign in against a closed
    * vault, an operator mints a second credential beside the one already there.

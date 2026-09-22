@@ -98,18 +98,63 @@ export class ConfigStorage {
    * unlock` re-seals those profiles and removes it.
    */
   private get encryptionKey(): Buffer {
+    if (this.resolvedKey) return this.resolvedKey;
+
+    const candidates: Array<{ source: 'vault' | 'legacy'; key: Buffer }> = [];
     const fromVault = getProfileKey(this.profileName);
-    if (fromVault) {
-      this.keySource = 'vault';
-      return fromVault;
-    }
-
+    if (fromVault) candidates.push({ source: 'vault', key: fromVault });
     if (existsSync(this.encryptionKeyFile)) {
-      this.keySource = 'legacy';
-      return readFileSync(this.encryptionKeyFile);
+      candidates.push({
+        source: 'legacy',
+        key: readFileSync(this.encryptionKeyFile),
+      });
+    }
+    if (candidates.length === 0) throw new VaultLockedError(this.profileName);
+
+    // Which of the two is this profile's key cannot be told apart by looking:
+    // a key file may be the fossil of a CLI that minted one on demand, or the
+    // real key of a profile `vault unlock` failed to re-seal. Presence proves
+    // neither. So an already-sealed value decides it — the encryption is
+    // authenticated, so exactly one candidate can open it.
+    const probe = this.sealedProbe();
+    const chosen = probe
+      ? candidates.find((c) => this.opens(c.key, probe))
+      : candidates[0];
+
+    if (!chosen) {
+      this.keySource = candidates[0].source;
+      throw this.staleKeyFileError();
     }
 
-    throw new VaultLockedError(this.profileName);
+    this.keySource = chosen.source;
+    this.resolvedKey = chosen.key;
+    return chosen.key;
+  }
+
+  /** The key this profile turned out to use; resolved once per instance. */
+  private resolvedKey: Buffer | null = null;
+
+  /** Any value already sealed in this profile, to test a candidate key against. */
+  private sealedProbe(): string | null {
+    const config = this.readConfig();
+    if (config.apiKey) return config.apiKey;
+    for (const entry of Object.values(config.tokens ?? {})) {
+      const sealed = (entry as { encrypted?: string })?.encrypted;
+      if (sealed) return sealed;
+    }
+    for (const sealed of Object.values(config.credentials ?? {})) {
+      if (typeof sealed === 'string' && sealed) return sealed;
+    }
+    return null;
+  }
+
+  private opens(key: Buffer, sealed: string): boolean {
+    try {
+      decryptWith(key, sealed);
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   /** Which key the last read used, so a failure can name the likely reason. */
