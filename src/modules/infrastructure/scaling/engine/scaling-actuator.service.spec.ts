@@ -1,3 +1,4 @@
+import { ClusterBoundsRegistry } from '../../clusters/services/cluster-bounds.registry';
 // The service that buys reaches the VNet maths and an ESM-only CIDR package,
 // and the engine's assessment type reaches the pending-pod reader. Nothing here
 // calls through either.
@@ -93,6 +94,7 @@ function harness(
   };
   const groupService = { capabilityOf: jest.fn().mockReturnValue(capability) };
   const registry = new AutoscaleReconcilerRegistry();
+  const boundsRegistry = new ClusterBoundsRegistry();
 
   const service = new ScalingActuatorService(
     operations as unknown as Repository<InfrastructureOperationEntity>,
@@ -101,6 +103,7 @@ function harness(
     clusters as unknown as ClusterScalingService,
     groupService as unknown as ScalingGroupService,
     registry,
+    boundsRegistry,
   );
   return { service, clusters, operations, groups, registry };
 }

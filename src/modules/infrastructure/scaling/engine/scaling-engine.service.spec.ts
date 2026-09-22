@@ -432,21 +432,23 @@ describe('urgency against the standing order', () => {
   });
 });
 
-describe('the two floors, which do not count the same thing', () => {
-  it("gives nothing back when the cluster's own worker floor would be breached", async () => {
+describe('one floor, counting the whole fleet', () => {
+  it('lets the last worker go when the master alone fills the floor', async () => {
+    // Two nodes against a floor of one: giving one back lands on the floor,
+    // not under it. There used to be a second floor here that counted workers
+    // only, and it refused this while the ceiling at the other end counted
+    // every node — one number meaning two things.
     const h = harness();
     h.pods.read.mockResolvedValue(waiting({ count: 0, largestRequest: null }));
     h.nodes.find.mockResolvedValue([master(), worker('worker-1')]);
+    h.drain.check.mockResolvedValue({ ok: true, blockers: [], cleared: [] });
 
     const assessment = await h.engine.assess(
       group({ minNodes: 1, desiredNodes: 1 }),
       cluster({ minNodes: 1 }),
     );
 
-    expect(assessment.intent).toBeNull();
-    expect(assessment.why).toContain('counts workers, not the fleet');
-    // The drain is never asked: there is nothing to ask about.
-    expect(h.drain.check).not.toHaveBeenCalled();
+    expect(assessment.intent).toMatchObject({ kind: 'remove' });
   });
 
   it('gives a node back once a worker is left over above that floor', async () => {

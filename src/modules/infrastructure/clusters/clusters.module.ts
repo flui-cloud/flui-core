@@ -79,6 +79,7 @@ import { InfrastructureOperationsModule } from '../operations/infrastructure-ope
 import { ClusterQueueProcessor } from './processors/cluster-queue.processor';
 import { AutoscaleActuationService } from './services/autoscale-actuation.service';
 import { AutoscaleReconcilerRegistry } from './services/autoscale-reconciler.registry';
+import { ClusterBoundsRegistry } from './services/cluster-bounds.registry';
 import { ScalingGroupEntity } from '../scaling/entities/scaling-group.entity';
 import { ScalingDecisionEntity } from '../scaling/entities/scaling-decision.entity';
 import { NodePriceService } from './services/node-price.service';
@@ -168,6 +169,7 @@ import { FleetHistoryService } from './services/fleet-history.service';
     BillingIntervalsService,
     ClusterAutoscaleService,
     AutoscaleReconcilerRegistry,
+    ClusterBoundsRegistry,
     AutoscaleActuationService,
     NodePriceService,
     NodeShapeBackfillService,
@@ -196,6 +198,7 @@ import { FleetHistoryService } from './services/fleet-history.service';
     // are told they have a storage ceiling.
     NodeStorageQuotaService,
     AutoscaleReconcilerRegistry,
+    ClusterBoundsRegistry,
     // Exported for the scaling actuator, the one caller outside this module
     // allowed to add or remove a node without a person asking for it.
     ClusterScalingService,

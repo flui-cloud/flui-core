@@ -11,6 +11,10 @@ import {
   OperationType,
 } from '../../servers/entities/infrastructure-operations.entity';
 import { ClusterScalingService } from '../../clusters/services/cluster-scaling.service';
+import {
+  ClusterBounds,
+  ClusterBoundsRegistry,
+} from '../../clusters/services/cluster-bounds.registry';
 import { AutoscaleReconcilerRegistry } from '../../clusters/services/autoscale-reconciler.registry';
 import { ScalingGroupEntity } from '../entities/scaling-group.entity';
 import { ScalingGroupService } from '../services/scaling-group.service';
@@ -57,6 +61,7 @@ export class ScalingActuatorService implements OnModuleInit {
     private readonly clusters: ClusterScalingService,
     private readonly groupService: ScalingGroupService,
     private readonly reconcilers: AutoscaleReconcilerRegistry,
+    private readonly bounds: ClusterBoundsRegistry,
   ) {}
 
   /**
@@ -69,6 +74,52 @@ export class ScalingActuatorService implements OnModuleInit {
       name: 'scaling-groups',
       drives: (clusterId) => this.drivesCluster(clusterId),
     });
+
+    // Once a cluster has a group, its bounds are the group's. Registering them
+    // here is what keeps a ceiling raised on the group from being enforced at
+    // the old number by the node fence.
+    this.bounds.register({
+      name: 'scaling-groups',
+      boundsFor: (clusterId) => this.boundsFor(clusterId),
+      writeBounds: (clusterId, bounds) => this.writeBounds(clusterId, bounds),
+    });
+  }
+
+  /**
+   * The bounds of this cluster's group, or nothing where it has none. Several
+   * groups on one cluster are a case the dashboard does not create; the widest
+   * pair wins, so the fence never sits tighter than any one group's own ceiling.
+   */
+  async boundsFor(clusterId: string): Promise<ClusterBounds | null> {
+    const groups = await this.groups.find({ where: { clusterId } });
+    if (groups.length === 0) return null;
+    return {
+      min: Math.min(...groups.map((g) => g.minNodes)),
+      max: Math.max(...groups.map((g) => g.maxNodes)),
+    };
+  }
+
+  /**
+   * Moves a floor and ceiling set through the older cluster route onto the
+   * group that actually enforces them. The target follows the floor and the
+   * ceiling rather than being left outside them.
+   */
+  async writeBounds(
+    clusterId: string,
+    bounds: ClusterBounds,
+  ): Promise<boolean> {
+    const groups = await this.groups.find({ where: { clusterId } });
+    if (groups.length !== 1) return false;
+
+    const group = groups[0];
+    if (bounds.min != null) group.minNodes = bounds.min;
+    if (bounds.max != null) group.maxNodes = bounds.max;
+    group.desiredNodes = Math.min(
+      Math.max(group.desiredNodes, group.minNodes),
+      group.maxNodes,
+    );
+    await this.groups.save(group);
+    return true;
   }
 
   /**

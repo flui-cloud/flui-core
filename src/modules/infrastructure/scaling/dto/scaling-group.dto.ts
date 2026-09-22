@@ -15,6 +15,8 @@ import {
   NodeRequirement,
   PLACEMENT_STRATEGIES,
   PlacementStrategy,
+  MAX_FLEET_NODES,
+  MIN_FLEET_NODES,
   PROVISION_MODES,
   ProvisionMode,
   STANDING_ORDER_KINDS,
@@ -23,23 +25,18 @@ import {
 
 export class ScalingBoundsDto {
   @IsInt()
-  @Min(0)
+  @Min(MIN_FLEET_NODES)
+  @Max(MAX_FLEET_NODES)
   min: number;
 
   @IsInt()
-  @Min(0)
+  @Min(MIN_FLEET_NODES)
+  @Max(MAX_FLEET_NODES)
   desired: number;
 
-  /**
-   * Zero is allowed, and it is a statement rather than a disabled group: this
-   * fleet should hold no nodes. Where nothing can be provisioned the ceiling was
-   * never a gate — it reports — so `max: 0` is how a group says every machine on
-   * the cluster is one somebody attached, and where Flui can buy it says urgency
-   * may buy nothing. `min <= desired <= max` still holds, so it is only writable
-   * with the other two at zero as well.
-   */
   @IsInt()
-  @Min(0)
+  @Min(MIN_FLEET_NODES)
+  @Max(MAX_FLEET_NODES)
   max: number;
 }
 

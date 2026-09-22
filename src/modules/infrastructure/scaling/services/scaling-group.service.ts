@@ -131,7 +131,7 @@ export class ScalingGroupService {
       requirement: dto.requirement ?? null,
     });
 
-    this.assertCoherent(draft, capability);
+    this.assertCoherent(draft, capability, hasVnet(cluster));
     await this.assertNameFree(clusterId, draft.name, null);
 
     return this.toDto(await this.groups.save(draft), cluster);
@@ -168,7 +168,7 @@ export class ScalingGroupService {
       group.requirement = dto.requirement ?? null;
     }
 
-    this.assertCoherent(group, capability);
+    this.assertCoherent(group, capability, hasVnet(cluster));
     await this.assertNameFree(group.clusterId, group.name, group.id);
 
     return this.toDto(await this.groups.save(group), cluster);
@@ -266,6 +266,7 @@ export class ScalingGroupService {
   private assertCoherent(
     group: ScalingGroupEntity,
     capability: ProviderScalingCapability,
+    hasVnet: boolean,
   ): void {
     if (!group.name) {
       throw new BadRequestException('A scaling group needs a name');
@@ -285,6 +286,15 @@ export class ScalingGroupService {
     if (group.provision === 'automatic' && !capability.canProvision) {
       throw new BadRequestException(
         `${capability.provider} has no API to create servers: this group can only ask a person, so provision must be "manual"`,
+      );
+    }
+
+    // A cluster with no VNet refuses every node the fence is asked for, so an
+    // automatic group on one would buy nothing and raise the same failed alarm
+    // every hour. Refused at the point the promise is made instead.
+    if (group.provision === 'automatic' && !hasVnet) {
+      throw new BadRequestException(
+        'This cluster has no VNet, so no node can join it: attach one before letting scaling buy, or leave this group on "manual"',
       );
     }
 
@@ -462,4 +472,11 @@ export function toDecisionDto(
     hourlyEur: row.hourlyPriceEur,
     considered: row.considered ?? [],
   };
+}
+
+/** A cluster with no private network cannot take a new node, whoever asks for it. */
+function hasVnet(cluster: {
+  metadata?: { vnetConfig?: { vnetId?: string } };
+}): boolean {
+  return Boolean(cluster.metadata?.vnetConfig?.vnetId);
 }

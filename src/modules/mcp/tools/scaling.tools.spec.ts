@@ -1,3 +1,4 @@
+import { z } from 'zod';
 import { SCALING_TOOLS } from './scaling.tools';
 import { McpToolContext, ToolDef, runTool } from './mcp-tool.util';
 import { McpApiCaller } from '../services/mcp-api.client';
@@ -830,16 +831,32 @@ describe('scaling_group_set', () => {
   });
 
   /**
-   * A fleet that should hold no nodes was refused by the schema before the API
-   * ever saw it, so the one group that most needs saying it could not say it.
+   * Bounds count the whole fleet, and a cluster always holds its master, so a
+   * bound below one fences nothing. The schema refuses it before the API is
+   * reached rather than letting a model write a number with no meaning.
    */
-  it('lets a group say it should hold no nodes', async () => {
-    const { calls } = await call(
-      'scaling_group_set',
-      { groupId: 'g1', bounds: { min: 0, desired: 0, max: 0 } },
-      () => ({ ...GROUP, bounds: { min: 0, desired: 0, max: 0 } }),
+  it('refuses a bound below the one node every cluster always has', () => {
+    const bounds = z.object(
+      find('scaling_group_set').inputSchema as Record<string, z.ZodTypeAny>,
     );
-    expect(calls[0].body).toEqual({ bounds: { min: 0, desired: 0, max: 0 } });
+    expect(
+      bounds.safeParse({
+        groupId: 'g1',
+        bounds: { min: 0, desired: 0, max: 0 },
+      }).success,
+    ).toBe(false);
+    expect(
+      bounds.safeParse({
+        groupId: 'g1',
+        bounds: { min: 1, desired: 1, max: 21 },
+      }).success,
+    ).toBe(false);
+    expect(
+      bounds.safeParse({
+        groupId: 'g1',
+        bounds: { min: 1, desired: 2, max: 4 },
+      }).success,
+    ).toBe(true);
   });
 
   it('hands back the money sentence the person was asked to agree to', async () => {
@@ -987,7 +1004,7 @@ describe('what the descriptions teach a model', () => {
     ['scaling_why', 'Ask it of the CLUSTER'],
     ['scaling_why', 'reached a provider'],
     ['scaling_why', 'WHICH gate refused it'],
-    ['scaling_group_set', 'should hold no nodes'],
+    ['scaling_group_set', 'counts the whole fleet'],
     ['scaling_group_set', 'REMOVES the monthly ceiling'],
     ['scaling_group_set', 'retry the identical call'],
     ['scaling_group_set', 'what makes a group act without asking again'],

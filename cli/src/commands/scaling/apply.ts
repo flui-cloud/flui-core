@@ -21,9 +21,7 @@ export default class ScalingApply extends Command {
     'Write a scaling group from a file — what a cluster may buy for itself, and where it must stop.\n' +
     'The file is the whole group: a field left out is a field reset to its default, and the same file ' +
     'applied twice leaves the same group. Several groups may live in one file, separated by `---`.\n' +
-    '`bounds.max: 0` is a fleet that should hold no nodes, not a group switched off: where the group ' +
-    'provisions manually it says every machine present is one somebody attached, and where it provisions ' +
-    'automatically it says urgency may buy nothing.';
+    'Every bound counts the whole fleet, master included, and sits between 1 and 20.';
 
   static readonly examples = [
     '<%= config.bin %> <%= command.id %> -f scaling.yaml',

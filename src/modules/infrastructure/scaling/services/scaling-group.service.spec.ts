@@ -62,12 +62,15 @@ const DECLARED: Record<string, ProviderCapabilities> = {
   }),
 };
 
-const cluster = (provider: string): ClusterEntity =>
+const cluster = (provider: string, vnet = 'vnet-1'): ClusterEntity =>
   ({
     id: 'c-1',
     name: 'prod-eu',
     provider,
     nodeCount: 2,
+    // A node can only join a cluster that has a private network, so a cluster
+    // fixture without one cannot stand in for one that grows.
+    metadata: vnet ? { vnetConfig: { vnetId: vnet } } : {},
   }) as ClusterEntity;
 
 interface Fakes {
@@ -499,13 +502,22 @@ describe('reading a group back', () => {
  * anything anyway, it reports.
  */
 describe('a ceiling of zero', () => {
-  it('is a bound the validator accepts', async () => {
+  it('is refused: bounds count the master, and it can never be removed', async () => {
     const bounds = plainToInstance(ScalingBoundsDto, {
       min: 0,
       desired: 0,
       max: 0,
     });
-    expect(await validate(bounds)).toEqual([]);
+    expect(await validate(bounds)).not.toEqual([]);
+  });
+
+  it('refuses a ceiling past what one cluster may hold', async () => {
+    const bounds = plainToInstance(ScalingBoundsDto, {
+      min: 1,
+      desired: 1,
+      max: 21,
+    });
+    expect(await validate(bounds)).not.toEqual([]);
   });
 
   it('is refused a floor or a target above it, like any other ceiling', async () => {

@@ -20,6 +20,17 @@ export const PLACEMENT_STRATEGIES = [
  */
 export type PlacementStrategy = (typeof PLACEMENT_STRATEGIES)[number];
 
+/**
+ * The most nodes any one cluster may hold, floor and ceiling alike.
+ *
+ * Bounds count every node including the master, and the master can never be
+ * removed, so one is the smallest a live cluster can be. The same pair of
+ * numbers is written through two doors — the cluster route and the group
+ * route — and they agreed on twenty long before one of them stopped saying so.
+ */
+export const MIN_FLEET_NODES = 1;
+export const MAX_FLEET_NODES = 20;
+
 export const PROVISION_MODES = ['automatic', 'manual'] as const;
 export type ProvisionMode = (typeof PROVISION_MODES)[number];
 

@@ -1,3 +1,4 @@
+import { ClusterBoundsRegistry } from './cluster-bounds.registry';
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 
 // cluster-scaling → cluster-node-scaling → kubernetes.service pulls in the
@@ -79,6 +80,7 @@ describe('ClusterScalingService', () => {
       capabilitiesFactory as any,
       nodeScalingService as any,
       byosNodeRemoval as any,
+      new ClusterBoundsRegistry(),
     );
     return {
       svc,
@@ -209,13 +211,24 @@ describe('ClusterScalingService', () => {
       );
     });
 
-    it('rejects when removal would violate minNodes', async () => {
+    it('rejects a removal that would take the cluster below its floor', async () => {
+      // Two nodes, floor of two: taking one away breaches it.
       const { svc } = makeService({
-        cluster: baseCluster({ minNodes: 1 }),
+        cluster: baseCluster({ minNodes: 2 }),
       });
       await expect(svc.removeWorker('c-1', 'n-w1')).rejects.toBeInstanceOf(
         BadRequestException,
       );
+    });
+
+    it('counts the master in the floor, so a floor of one leaves the last worker removable', async () => {
+      // The same two nodes against a floor of one: the fleet lands on the
+      // floor rather than under it. Counting workers alone used to refuse this
+      // while the ceiling at the other end of the fence counted every node.
+      const { svc } = makeService({
+        cluster: baseCluster({ minNodes: 1 }),
+      });
+      await expect(svc.removeWorker('c-1', 'n-w1')).resolves.toBeDefined();
     });
 
     it('rejects unknown nodeId', async () => {

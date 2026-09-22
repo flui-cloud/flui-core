@@ -19,6 +19,10 @@ import { getOperationSteps } from '../../operations/helpers/operation-steps.help
 import { FirewallsService } from '../../firewalls/services/firewalls.service';
 import { CapabilitiesProviderFactory } from '../../../providers/core/factories/capabilities-provider.factory';
 import { ClusterNodeScalingService } from './cluster-node-scaling.service';
+import {
+  ClusterBounds,
+  ClusterBoundsRegistry,
+} from './cluster-bounds.registry';
 import { ByosNodeRemovalService } from './byos-node-removal.service';
 import { CloudProvider } from '../../../providers/enums/cloud-provider.enum';
 
@@ -55,7 +59,22 @@ export class ClusterScalingService {
     private readonly capabilitiesFactory: CapabilitiesProviderFactory,
     private readonly nodeScalingService: ClusterNodeScalingService,
     private readonly byosNodeRemoval: ByosNodeRemovalService,
+    private readonly bounds: ClusterBoundsRegistry,
   ) {}
+
+  /**
+   * The floor and ceiling actually in force: whatever owns them now, the
+   * cluster's own columns otherwise. Both are counted across every node, the
+   * master included — the number a person reads on the page.
+   */
+  private async effectiveBounds(
+    cluster: ClusterEntity,
+  ): Promise<ClusterBounds> {
+    const owned = await this.bounds.boundsFor(cluster.id);
+    return (
+      owned ?? { min: cluster.minNodes ?? null, max: cluster.maxNodes ?? null }
+    );
+  }
 
   private assertNodeProvisioning(cluster: ClusterEntity): void {
     const providerEnum = cluster.provider as CloudProvider;
@@ -103,16 +122,16 @@ export class ClusterScalingService {
     const vnetId = cluster.metadata?.vnetConfig?.vnetId;
     if (!vnetId) {
       throw new BadRequestException(
-        'Cluster has no VNet attached. Add a VNet via PATCH /clusters/:id/vnet ' +
-          'or recreate the cluster with autoscalingEnabled=true to provision one automatically.',
+        'Cluster has no VNet attached, so no node can join it. Attach one via PATCH /clusters/:id/vnet.',
       );
     }
 
-    if (cluster.maxNodes != null) {
-      const projected = (cluster.nodes?.length ?? 0) + count;
-      if (projected > cluster.maxNodes) {
+    const ceiling = (await this.effectiveBounds(cluster)).max;
+    if (ceiling != null) {
+      const fleet = cluster.nodes?.length ?? 0;
+      if (fleet + count > ceiling) {
         throw new BadRequestException(
-          `Adding ${count} worker(s) would exceed maxNodes=${cluster.maxNodes} (current: ${cluster.nodes?.length ?? 0}).`,
+          `Adding ${count} node(s) would take this cluster past its ceiling of ${ceiling} (currently ${fleet}).`,
         );
       }
     }
@@ -230,13 +249,15 @@ export class ClusterScalingService {
       );
     }
 
-    const workerCount = cluster.nodes.filter(
-      (n) => n.nodeType === NodeType.WORKER,
-    ).length;
+    // The floor counts every node, master included, the same way the ceiling
+    // does and the same way the page reads it. Counting only workers here made
+    // the same number mean two things at the two ends of the fence.
+    const floor = (await this.effectiveBounds(cluster)).min;
+    const fleet = cluster.nodes.length;
 
-    if (cluster.minNodes != null && workerCount <= cluster.minNodes) {
+    if (floor != null && fleet - 1 < floor) {
       throw new BadRequestException(
-        `Removing this worker would violate minNodes=${cluster.minNodes} (current workers: ${workerCount}).`,
+        `Removing this node would take this cluster below its floor of ${floor} (currently ${fleet}).`,
       );
     }
 

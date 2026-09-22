@@ -1,4 +1,8 @@
 import { z } from 'zod';
+import {
+  MAX_FLEET_NODES,
+  MIN_FLEET_NODES,
+} from '../../infrastructure/scaling/scaling.core';
 import { MCP_SCOPE } from '../constants/mcp-scopes';
 import {
   ToolDef,
@@ -573,7 +577,7 @@ export const SCALING_TOOLS: ToolDef[] = [
       'PATCH /infrastructure/scaling-groups/:id',
     ],
     description:
-      'Write or change a cluster’s scaling group — the standing authority for how large it may grow and how much it may spend unattended. Pass `groupId` to change an existing group, or `clusterId` (or nothing, with a single cluster) plus `name` and `bounds` to write a new one. THIS ASKS A PERSON: the route is inside Flui’s action cycle, so the call comes back as a request carrying the figure it derived from your own bounds and limits — "up to 5 nodes, up to €40 a month, without asking you" — and you must stop, tell the user exactly what was asked for, and retry the identical call once they have answered. `bounds` is replaced whole and so is `limits`: sending `limits` without `maxMonthlyCost` REMOVES the monthly ceiling, it does not leave it alone, so restate the cap every time. `provision: "automatic"` is refused wherever `capability.canProvision` is false — read scaling_group_get first and do not retry it there. Where there is no catalogue, `shapes` and `regions` are refused and `requirement` (what a machine must hold) is required instead; where there is one, the reverse. A standing order may only name a shape and a region the group is already allowed to buy, or it is a wait that can never end. `bounds.max: 0` is accepted and means a fleet that should hold no nodes — a statement, not a group switched off — and it needs `min` and `desired` at 0 as well. `provision: "automatic"` is what makes a group act without asking again, and `maxMonthlyCost` with `bounds.max` are the ceilings it acts within — all three on the group, where a reader can see them. The answer carries `acts` and `acts.says`; relay that sentence rather than rewording it, and never state a monthly figure that is not the one the group itself carries.',
+      'Write or change a cluster’s scaling group — the standing authority for how large it may grow and how much it may spend unattended. Pass `groupId` to change an existing group, or `clusterId` (or nothing, with a single cluster) plus `name` and `bounds` to write a new one. THIS ASKS A PERSON: the route is inside Flui’s action cycle, so the call comes back as a request carrying the figure it derived from your own bounds and limits — "up to 5 nodes, up to €40 a month, without asking you" — and you must stop, tell the user exactly what was asked for, and retry the identical call once they have answered. `bounds` is replaced whole and so is `limits`: sending `limits` without `maxMonthlyCost` REMOVES the monthly ceiling, it does not leave it alone, so restate the cap every time. `provision: "automatic"` is refused wherever `capability.canProvision` is false — read scaling_group_get first and do not retry it there. Where there is no catalogue, `shapes` and `regions` are refused and `requirement` (what a machine must hold) is required instead; where there is one, the reverse. A standing order may only name a shape and a region the group is already allowed to buy, or it is a wait that can never end. Every bound counts the whole fleet, master included, so all three sit between 1 and 20. `provision: "automatic"` is what makes a group act without asking again, and `maxMonthlyCost` with `bounds.max` are the ceilings it acts within — all three on the group, where a reader can see them. The answer carries `acts` and `acts.says`; relay that sentence rather than rewording it, and never state a monthly figure that is not the one the group itself carries.',
     scope: MCP_SCOPE.INFRA_WRITE,
     inputSchema: {
       groupId: z
@@ -590,21 +594,24 @@ export const SCALING_TOOLS: ToolDef[] = [
           min: z
             .number()
             .int()
-            .min(0)
+            .min(MIN_FLEET_NODES)
+            .max(MAX_FLEET_NODES)
             .describe('The floor, held right now and always.'),
           desired: z
             .number()
             .int()
-            .min(0)
+            .min(MIN_FLEET_NODES)
+            .max(MAX_FLEET_NODES)
             .describe(
               'The target, approached only when the market allows. Not AWS’s desired capacity: being below it buys nothing by itself.',
             ),
           max: z
             .number()
             .int()
-            .min(0)
+            .min(MIN_FLEET_NODES)
+            .max(MAX_FLEET_NODES)
             .describe(
-              'How far urgency may reach right now. 0 is allowed and is a statement, not a group switched off: this fleet should hold no nodes. On `provision: "manual"` it says every machine present is one somebody attached; on "automatic" it says urgency may buy nothing. It needs min and desired at 0 too.',
+              'How far urgency may reach right now, counting the whole fleet including the master. Between 1 and 20: a cluster always holds its master, so a ceiling below one fences nothing.',
             ),
         })
         .optional()

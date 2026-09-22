@@ -510,23 +510,6 @@ export class ScalingEngineService {
       );
     }
 
-    // Two floors, and they do not count the same thing. A group's `min` is a
-    // bound on the fleet; the cluster's own `minNodes` is a bound on its
-    // *workers*, and the master does not count toward it. A fleet of two that
-    // clears the group's floor can still be one worker that does not clear the
-    // cluster's — and finding that out from the provider path means writing
-    // "tried and failed" where a decision could have said it plainly.
-    const workers = rows.filter(
-      (row) =>
-        row.nodeType !== NodeType.MASTER && row.status !== NodeStatus.DELETING,
-    ).length;
-    if (cluster.minNodes != null && workers <= cluster.minNodes) {
-      return words(
-        'Nothing.',
-        `The fleet is above its target of ${group.desiredNodes}, and giving a node back would leave ${workers - 1} worker(s) against this cluster's own floor of ${cluster.minNodes}. That floor counts workers, not the fleet, so the master does not make up the difference.`,
-      );
-    }
-
     const node = rows.find(
       (row) => row.id === candidate.id,
     ) as ClusterNodeEntity;
