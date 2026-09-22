@@ -3,6 +3,7 @@ import chalk from 'chalk';
 import ora from 'ora';
 import { CliAppService } from '../../lib/services/cli-app.service';
 import { resolveClusterRef } from '../../lib/resolve-cluster';
+import { composeImageRef } from '../../lib/image-ref';
 
 export default class AppRedeploy extends Command {
   static readonly description =
@@ -54,7 +55,16 @@ export default class AppRedeploy extends Command {
         return;
       }
 
-      await service.redeployTag(app.id, args.target);
+      // A system application has no owner, and the registry route judges by
+      // ownership — so for those the request goes the way the dashboard goes.
+      if (app.userId) {
+        await service.redeployTag(app.id, args.target);
+      } else {
+        await service.deployImageRef(
+          app.id,
+          composeImageRef(app.imageRef, args.target),
+        );
+      }
       spinner.succeed(
         `Redeploy triggered for ${app.name} with image "${args.target}"`,
       );

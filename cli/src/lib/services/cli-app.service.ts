@@ -12,6 +12,9 @@ export interface AppSummary {
   lastDeployedAt?: string;
   clusterId: string;
   sourceType?: string;
+  /** Null for a system application, which belongs to the installation itself. */
+  userId?: string | null;
+  imageRef?: string;
   /** Continuous auto-deploy: the app follows its branch on its own. */
   deployOnPush?: boolean;
 }
@@ -724,6 +727,18 @@ export class CliAppService {
     return this.apiClient.post(
       `/image-registry/apps/${appId}/ghcr/${encodeURIComponent(tag)}/deploy`,
     );
+  }
+
+  /**
+   * Ask an application to run a particular image.
+   *
+   * The registry route above cannot serve a system application: it refuses
+   * anything whose `userId` does not match the caller's, and a system
+   * application has no owner at all, so it refuses everyone. This is the route
+   * the dashboard's own Deploy button takes.
+   */
+  async deployImageRef(appId: string, imageRef: string): Promise<unknown> {
+    return this.apiClient.post(`/applications/${appId}/deploy`, { imageRef });
   }
 
   async deleteImageVersion(
