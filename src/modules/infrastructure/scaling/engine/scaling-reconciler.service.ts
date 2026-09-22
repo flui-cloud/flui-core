@@ -12,6 +12,7 @@ import {
   ScalingEngineService,
 } from './scaling-engine.service';
 import { Actuation, ScalingActuatorService } from './scaling-actuator.service';
+import { ScalingAlarmService } from './scaling-alarm.service';
 
 /**
  * How long the same answer stays the same answer.
@@ -47,6 +48,7 @@ export class ScalingReconcilerService {
     private readonly decisions: Repository<ScalingDecisionEntity>,
     private readonly engine: ScalingEngineService,
     private readonly actuator: ScalingActuatorService,
+    private readonly alarms: ScalingAlarmService,
   ) {}
 
   async reconcileAll(): Promise<number> {
@@ -97,7 +99,12 @@ export class ScalingReconcilerService {
       return false;
     }
 
-    await this.decisions.save(this.decisions.create(rowOf(assessment, acted)));
+    const row = rowOf(assessment, acted);
+    await this.decisions.save(this.decisions.create(row));
+
+    // Out of the log and onto the alert rail, so the one case that needs a
+    // person reaches one instead of waiting to be found.
+    await this.alarms.publish(group, row);
     return true;
   }
 

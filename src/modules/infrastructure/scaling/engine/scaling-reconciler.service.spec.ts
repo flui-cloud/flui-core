@@ -17,6 +17,7 @@ import {
   ScalingEngineService,
 } from './scaling-engine.service';
 import { ScalingReconcilerService } from './scaling-reconciler.service';
+import { ScalingAlarmService } from './scaling-alarm.service';
 import { ScalingActuatorService } from './scaling-actuator.service';
 
 const group = { id: 'g-1', clusterId: 'c-1' } as ScalingGroupEntity;
@@ -63,6 +64,7 @@ function harness(last: ScalingDecisionEntity | null = null) {
   // Nothing acts in these: the reconciler's own job is what is under test, and
   // an actuator that returns null is exactly a provider Flui cannot buy from.
   const actuator = { act: jest.fn().mockResolvedValue(null) };
+  const alarms = { publish: jest.fn().mockResolvedValue(undefined) };
   const service = new ScalingReconcilerService(
     {
       find: jest.fn().mockResolvedValue([group]),
@@ -73,8 +75,9 @@ function harness(last: ScalingDecisionEntity | null = null) {
     decisions as unknown as Repository<ScalingDecisionEntity>,
     engine as unknown as ScalingEngineService,
     actuator as unknown as ScalingActuatorService,
+    alarms as unknown as ScalingAlarmService,
   );
-  return { service, decisions, engine, actuator };
+  return { service, decisions, engine, actuator, alarms };
 }
 
 describe('a cluster on its way out', () => {
@@ -89,6 +92,7 @@ describe('a cluster on its way out', () => {
     // one whose groups a pass can no longer write about.
     const clusters = { find: jest.fn().mockResolvedValue([]) };
 
+    const alarms = { publish: jest.fn().mockResolvedValue(undefined) };
     const service = new ScalingReconcilerService(
       {
         find: jest.fn().mockResolvedValue([group]),
@@ -97,6 +101,7 @@ describe('a cluster on its way out', () => {
       decisions as unknown as Repository<ScalingDecisionEntity>,
       engine as unknown as ScalingEngineService,
       { act: jest.fn() } as unknown as ScalingActuatorService,
+      { publish: jest.fn() } as unknown as ScalingAlarmService,
     );
 
     expect(await service.reconcileAll()).toBe(0);

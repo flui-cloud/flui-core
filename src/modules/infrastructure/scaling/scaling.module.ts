@@ -22,6 +22,8 @@ import { ShapeFactsService } from './engine/shape-facts.service';
 import { ScalingEngineService } from './engine/scaling-engine.service';
 import { ScalingReconcilerService } from './engine/scaling-reconciler.service';
 import { ScalingReconcilerScheduler } from './engine/scaling-reconciler.scheduler';
+import { ObservabilityModule } from '../../observability/observability.module';
+import { ScalingAlarmService } from './engine/scaling-alarm.service';
 import { ScalingActuatorService } from './engine/scaling-actuator.service';
 import { DrainFeasibilityService } from './engine/drain-feasibility.service';
 
@@ -43,6 +45,9 @@ import { DrainFeasibilityService } from './engine/drain-feasibility.service';
     ProvidersModule,
     SharedInfrastructureModule,
     EncryptionModule,
+    // The rail a scaling alarm leaves on. Already reached through clusters;
+    // named here because this module now depends on it directly.
+    ObservabilityModule,
   ],
   controllers: [ScalingController],
   providers: [
@@ -60,6 +65,7 @@ import { DrainFeasibilityService } from './engine/drain-feasibility.service';
     DrainFeasibilityService,
     ScalingEngineService,
     ScalingActuatorService,
+    ScalingAlarmService,
     ScalingReconcilerService,
     ScalingReconcilerScheduler,
   ],
@@ -70,6 +76,7 @@ import { DrainFeasibilityService } from './engine/drain-feasibility.service';
     ShapeOrderingService,
     ScalingEngineService,
     ScalingActuatorService,
+    ScalingAlarmService,
   ],
 })
 export class ScalingModule {}
