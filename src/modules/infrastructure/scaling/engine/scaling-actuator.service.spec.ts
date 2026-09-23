@@ -137,6 +137,33 @@ describe('the only thing with hands', () => {
     expect(acted?.why).toContain('decide and not to act');
   });
 
+  it('asks a person when urgency is held back only by consent', async () => {
+    const h = harness();
+
+    const acted = await h.service.act(
+      group({ provision: 'manual' }),
+      cluster,
+      assessment(),
+    );
+
+    // A declined row raises no alarm and reaches nobody, so a manual group
+    // that promises to "name the machine" would in fact say nothing at all.
+    expect(acted?.outcome).toBe('alerted');
+    expect(acted?.asks).toContain('set this group to buy automatically');
+  });
+
+  it('stays a quiet decline for an opportunity nobody is waiting on', async () => {
+    const h = harness();
+
+    const acted = await h.service.act(
+      group({ provision: 'manual' }),
+      cluster,
+      assessment({ force: 'opportunity' }),
+    );
+
+    expect(acted?.outcome).toBe('declined');
+  });
+
   it('leaves an alert-only provider exactly as the engine wrote it', async () => {
     const h = harness(BYOS);
 

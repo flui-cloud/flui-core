@@ -208,6 +208,26 @@ export class ScalingActuatorService implements OnModuleInit {
     // The provider that cannot be bought from is already the whole of what the
     // engine said; repeating it would put the same sentence twice on one row.
     if (verdict.refusal === 'provider-cannot-buy') return null;
+
+    // Urgency held back only by consent is a question, not a decline: the
+    // machine and its price are already chosen and something is waiting on the
+    // answer. Only `alerted` carries an ask, so this is the outcome that
+    // reaches a person rather than sitting in the log.
+    if (
+      verdict.refusal === 'group-is-manual' &&
+      assessment.force === 'urgency'
+    ) {
+      return {
+        outcome: 'alerted',
+        did: assessment.did,
+        why: verdict.because,
+        asks:
+          assessment.asks ??
+          `${assessment.did} Add it yourself, or set this group to buy automatically — nothing here will change until one of the two happens.`,
+        operationId: null,
+      };
+    }
+
     return {
       outcome: assessment.outcome,
       did: assessment.did,
