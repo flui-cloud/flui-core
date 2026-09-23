@@ -174,3 +174,139 @@ describe('ClusterQueueProcessor.handleCreateCluster', () => {
     expect(infraGateway.emitFailed).not.toHaveBeenCalled();
   });
 });
+
+describe('ClusterQueueProcessor.handleRemoveWorker', () => {
+  function build(runImpl: jest.Mock) {
+    const node = {
+      id: 'node-w1',
+      serverName: 'workload-1-worker-1',
+      providerResourceId: null,
+    };
+    const cluster = {
+      id: 'cluster-1',
+      name: 'workload-1',
+      provider: 'hetzner',
+      clusterType: ClusterType.WORKLOAD,
+      masterIpAddress: '49.13.132.151',
+      nodeCount: 2,
+      nodes: [{ id: 'node-master' }, node],
+      metadata: {},
+    };
+    const operation = {
+      id: 'op-1',
+      status: OperationStatus.PENDING,
+      metadata: {
+        operationSteps: getOperationSteps(OperationType.REMOVE_WORKER),
+      } as Record<string, any>,
+    };
+
+    const nodeRepository = {
+      save: jest.fn().mockResolvedValue(undefined),
+      delete: jest.fn().mockResolvedValue(undefined),
+    };
+    const processor = Object.create(
+      ClusterQueueProcessor.prototype,
+    ) as ClusterQueueProcessor;
+    Object.assign(processor, {
+      logger: {
+        log: jest.fn(),
+        warn: jest.fn(),
+        error: jest.fn(),
+        debug: jest.fn(),
+      },
+      clusterRepository: {
+        findOne: jest.fn().mockResolvedValue(cluster),
+        update: jest.fn().mockResolvedValue(undefined),
+      },
+      nodeRepository,
+      operationRepository: {
+        findOne: jest.fn().mockResolvedValue(operation),
+        save: jest.fn().mockResolvedValue(undefined),
+      },
+      billingIntervals: { closeNodeIntervals: jest.fn() },
+      infraGateway: {
+        emitProgress: jest.fn(),
+        emitCompleted: jest.fn(),
+        emitFailed: jest.fn(),
+      },
+      hostCommand: { run: runImpl },
+    });
+
+    const run = () =>
+      processor.handleRemoveWorker({
+        id: 'job-1',
+        data: {
+          operationId: operation.id,
+          clusterId: cluster.id,
+          nodeId: node.id,
+        },
+      } as never);
+
+    return { run, operation, nodeRepository };
+  }
+
+  /** Answers the drain with a failure and the readiness probe with `ready`. */
+  function drainFailsWith(ready: string | Error) {
+    return jest.fn().mockImplementation((_target, command: string) => {
+      if (command.includes('kubectl drain')) {
+        return Promise.reject(new Error('eviction blocked by a budget'));
+      }
+      if (command.includes('kubectl get node')) {
+        return ready instanceof Error
+          ? Promise.reject(ready)
+          : Promise.resolve(ready);
+      }
+      return Promise.resolve('');
+    });
+  }
+
+  it('reaches the master through the certificate path, never a stored key', async () => {
+    const run = jest.fn().mockResolvedValue('');
+    const t = build(run);
+
+    await t.run();
+
+    const commands = run.mock.calls.map((c) => c[1] as string);
+    expect(commands[0]).toContain('kubectl cordon');
+    expect(commands[1]).toContain('kubectl drain');
+    expect(commands[2]).toContain('kubectl delete node');
+    for (const call of run.mock.calls) {
+      expect(call[0]).toEqual({
+        host: '49.13.132.151',
+        port: 22,
+        user: 'root',
+      });
+    }
+    expect(t.operation.metadata.warnings).toEqual([]);
+  });
+
+  it('refuses to destroy a node that is still ready and would not drain', async () => {
+    const t = build(drainFailsWith("'True'"));
+
+    await expect(t.run()).rejects.toThrow(/Refusing to destroy/);
+
+    expect(t.nodeRepository.delete).not.toHaveBeenCalled();
+    expect(t.operation.status).toBe(OperationStatus.FAILED);
+  });
+
+  it('refuses when the drain failed and the node state cannot be read', async () => {
+    const t = build(drainFailsWith(new Error('host unreachable')));
+
+    await expect(t.run()).rejects.toThrow(/Refusing to destroy/);
+
+    expect(t.nodeRepository.delete).not.toHaveBeenCalled();
+  });
+
+  it('removes a node the control plane has already lost, which no drain could empty', async () => {
+    const t = build(drainFailsWith("'Unknown'"));
+
+    await t.run();
+
+    expect(t.nodeRepository.delete).toHaveBeenCalledWith({ id: 'node-w1' });
+    expect(
+      (t.operation.metadata.warnings as Array<{ code: string }>).map(
+        (w) => w.code,
+      ),
+    ).toContain('DRAIN_FAILED');
+  });
+});

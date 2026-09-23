@@ -69,6 +69,17 @@ describe('ScalingAlarmService', () => {
     expect(resolved.endsAt).toBeInstanceOf(Date);
   });
 
+  it('still says what it asked for once it is resolved', async () => {
+    const { service, record } = makeService();
+    await service.publish(group, alerted);
+    await service.publish(group, quiet);
+
+    const resolved = record.mock.calls[1][0][0];
+    expect(resolved.status).toBe('resolved');
+    expect(resolved.annotations.description).toBe('A pod waited 40s');
+    expect(resolved.annotations.asks).toBe('asked for a cx33');
+  });
+
   it('does not clear an alarm it never raised', async () => {
     const { service, record } = makeService();
     await service.publish(group, quiet);

@@ -2,6 +2,13 @@ import { Injectable, Logger } from '@nestjs/common';
 import { AlertEventsService } from '../../../observability/services/alert-events.service';
 import { ScalingGroupEntity } from '../entities/scaling-group.entity';
 
+/** An alarm as it was raised, kept so that resolving it does not erase the ask. */
+interface Raised {
+  startsAt: Date;
+  description: string;
+  asks: string;
+}
+
 /** The part of a decision an alarm carries: what was seen, what was asked for. */
 export interface AlarmWorthyDecision {
   outcome?: string;
@@ -23,8 +30,12 @@ export interface AlarmWorthyDecision {
 export class ScalingAlarmService {
   private readonly logger = new Logger(ScalingAlarmService.name);
 
-  /** One alarm per group: a repeat is the same alarm still unanswered, not a new one. */
-  private readonly firing = new Map<string, Date>();
+  /**
+   * One alarm per group: a repeat is the same alarm still unanswered, not a new
+   * one. What it asked for is held with it, because a resolved alarm that no
+   * longer says what it wanted cannot be read back afterwards.
+   */
+  private readonly firing = new Map<string, Raised>();
 
   constructor(private readonly alerts: AlertEventsService) {}
 
@@ -41,40 +52,40 @@ export class ScalingAlarmService {
 
     // Keeping the original start makes the repeat the same alarm: how long it
     // has gone unanswered is the part a reader acts on.
-    const startsAt = this.firing.get(fingerprint) ?? new Date();
-    this.firing.set(fingerprint, startsAt);
+    const raised: Raised = {
+      startsAt: this.firing.get(fingerprint)?.startsAt ?? new Date(),
+      description: decision.saw ?? 'Scaling could not do what it wanted.',
+      asks: decision.did ?? 'unstated',
+    };
+    this.firing.set(fingerprint, raised);
 
-    await this.send(fingerprint, 'firing', startsAt, group, decision);
+    await this.send(fingerprint, 'firing', group, raised);
   }
 
   private async clear(
     fingerprint: string,
     group: ScalingGroupEntity,
   ): Promise<void> {
-    const startsAt = this.firing.get(fingerprint);
-    if (!startsAt) return;
+    const raised = this.firing.get(fingerprint);
+    if (!raised) return;
     this.firing.delete(fingerprint);
-    await this.send(fingerprint, 'resolved', startsAt, group, {
-      outcome: 'declined',
-      saw: 'The cluster no longer needs what the alarm asked for.',
-      did: 'nothing to do',
-      why: 'resolved',
-    });
+    // Resolved carries what it asked for, not a sentence about being over: an
+    // alarm read after the fact is only useful if it still says what it wanted.
+    await this.send(fingerprint, 'resolved', group, raised);
   }
 
   private async send(
     fingerprint: string,
     status: 'firing' | 'resolved',
-    startsAt: Date,
     group: ScalingGroupEntity,
-    decision: AlarmWorthyDecision,
+    raised: Raised,
   ): Promise<void> {
     try {
       await this.alerts.record([
         {
           fingerprint,
           status,
-          startsAt,
+          startsAt: raised.startsAt,
           endsAt: status === 'resolved' ? new Date() : null,
           alertname: 'FluiScalingNeedsPerson',
           // Not critical: the cluster is short of room, which is a thing to
@@ -90,8 +101,8 @@ export class ScalingAlarmService {
           },
           annotations: {
             summary: `Scaling on ${group.name} is waiting for a person`,
-            description: decision.saw ?? 'Scaling could not do what it wanted.',
-            asks: decision.did ?? 'unstated',
+            description: raised.description,
+            asks: raised.asks,
           },
         },
       ]);

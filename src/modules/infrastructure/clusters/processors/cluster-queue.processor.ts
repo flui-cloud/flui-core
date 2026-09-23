@@ -16,8 +16,7 @@ import {
 } from '../services/cluster-scaling.service';
 import { SubnetsService } from '../../vnets/services/subnets.service';
 import { VNetsService } from '../../vnets/services/vnets.service';
-import { NativeSSHConnectionService } from 'src/modules/terminal/services/native-ssh-connection.service';
-import { AccessService } from 'src/modules/access/services/access.service';
+import { HostCommandService } from 'src/modules/providers/core/host/host-command.service';
 import {
   ClusterEntity,
   ClusterStatus,
@@ -87,8 +86,6 @@ export class ClusterQueueProcessor {
     private readonly infraGateway: InfrastructureOperationsGateway,
     private readonly subnetsService: SubnetsService,
     private readonly vnetsService: VNetsService,
-    private readonly nativeSsh: NativeSSHConnectionService,
-    private readonly accessService: AccessService,
     private readonly clusterDnsZoneService: ClusterDnsZoneService,
     private readonly billingIntervals: BillingIntervalsService,
     private readonly providerFactory: ProviderFactory,
@@ -97,6 +94,7 @@ export class ClusterQueueProcessor {
     private readonly clusterFirewallIntegrationService: ClusterFirewallIntegrationService,
     private readonly capabilitiesFactory: CapabilitiesProviderFactory,
     private readonly apiServerSan: ApiServerSanService,
+    private readonly hostCommand: HostCommandService,
   ) {}
 
   private formatVolumeRef(
@@ -2028,13 +2026,8 @@ export class ClusterQueueProcessor {
       } as InfrastructureOperationProgressDto);
 
       const masterIp = cluster.masterIpAddress;
-      const bootstrapPrivateKey = await this.loadBootstrapPrivateKey(
-        cluster.bootstrapKeyId,
-        masterIp,
-      );
-
       const nodeName = node.serverName;
-      await this.cordonNode(masterIp, bootstrapPrivateKey, nodeName, warnings);
+      await this.cordonNode(masterIp, nodeName, warnings);
       await this.updateOperationStep(operationId, 0, 100, {
         message: 'Cordon step done',
       });
@@ -2055,12 +2048,10 @@ export class ClusterQueueProcessor {
         timestamp: new Date(),
       } as InfrastructureOperationProgressDto);
 
-      if (bootstrapPrivateKey && masterIp) {
+      if (masterIp) {
         try {
-          await this.nativeSsh.execCommand(
+          await this.runOnMaster(
             masterIp,
-            'root',
-            bootstrapPrivateKey,
             `kubectl drain ${nodeName} --ignore-daemonsets --delete-emptydir-data --timeout=120s`,
             150000,
           );
@@ -2070,9 +2061,7 @@ export class ClusterQueueProcessor {
             reason: e.message,
             details: { nodeName },
           });
-          this.logger.warn(
-            `Drain failed for ${nodeName}: ${e.message} — proceeding with delete`,
-          );
+          this.logger.warn(`Drain failed for ${nodeName}: ${e.message}`);
           this.infraGateway.emitProgress(operationId, clusterId, {
             operationId,
             resourceId: clusterId,
@@ -2081,14 +2070,15 @@ export class ClusterQueueProcessor {
             percentage: 30,
             currentStepIndex: 1,
             totalSteps: 5,
-            message: `Drain failed (continuing): ${e.message}`,
+            message: `Drain failed: ${e.message}`,
             timestamp: new Date(),
           } as InfrastructureOperationProgressDto);
+          await this.assertSafeToDestroy(masterIp, nodeName, e.message);
         }
       } else {
         warnings.push({
           code: 'DRAIN_SKIPPED',
-          reason: 'Master IP or bootstrap key unavailable',
+          reason: 'Master address unavailable',
         });
       }
       await this.updateOperationStep(operationId, 1, 100, {
@@ -2192,12 +2182,10 @@ export class ClusterQueueProcessor {
         timestamp: new Date(),
       } as InfrastructureOperationProgressDto);
 
-      if (bootstrapPrivateKey && masterIp) {
+      if (masterIp) {
         try {
-          await this.nativeSsh.execCommand(
+          await this.runOnMaster(
             masterIp,
-            'root',
-            bootstrapPrivateKey,
             `kubectl delete node ${nodeName} --ignore-not-found=true --timeout=60s && ` +
               `kubectl delete secret -n kube-system ${nodeName}.node-password.k3s --ignore-not-found=true --timeout=30s`,
             90000,
@@ -2215,7 +2203,7 @@ export class ClusterQueueProcessor {
       } else {
         warnings.push({
           code: 'K3S_NODE_DELETE_SKIPPED',
-          reason: 'Master IP or bootstrap key unavailable',
+          reason: 'Master address unavailable',
         });
       }
       await this.updateOperationStep(operationId, 3, 100, {
@@ -2286,24 +2274,68 @@ export class ClusterQueueProcessor {
     }
   }
 
-  private async loadBootstrapPrivateKey(
-    bootstrapKeyId: string | null | undefined,
-    masterIp: string | null | undefined,
-  ): Promise<string | null> {
-    if (!masterIp || !bootstrapKeyId) return null;
+  /**
+   * Runs a command on a cluster's master, authenticated with a certificate
+   * minted for the call.
+   *
+   * A master outlives the key pair its server was created with, and the CA is
+   * the only credential guaranteed to still be trusted there; a stored key is
+   * refused on any cluster whose master was not created with that exact pair.
+   */
+  private async runOnMaster(
+    masterIp: string,
+    command: string,
+    timeoutMs: number,
+  ): Promise<string> {
+    return this.hostCommand.run(
+      { host: masterIp, port: 22, user: 'root' },
+      command,
+      {
+        timeoutMs,
+      },
+    );
+  }
+
+  /**
+   * Guards the step that destroys the machine.
+   *
+   * A node that still carries pods has to be emptied first, or the workloads
+   * die with the server and the operation reports success over the top of it. A
+   * node the control plane has already lost cannot be emptied at all, and
+   * holding the removal back there would only strand a server nobody is using.
+   * So a failed drain is survivable for exactly one kind of node: one Kubernetes
+   * already reports as not ready. Anything we cannot establish counts against
+   * proceeding.
+   */
+  private async assertSafeToDestroy(
+    masterIp: string,
+    nodeName: string,
+    drainFailure: string,
+  ): Promise<void> {
+    let ready: string;
     try {
-      return await this.accessService.getPrivateKey('system', bootstrapKeyId);
-    } catch (e) {
-      this.logger.warn(
-        `Could not load cluster bootstrap key ${bootstrapKeyId}: ${(e as Error).message}`,
+      ready = await this.runOnMaster(
+        masterIp,
+        `kubectl get node ${nodeName} -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}'`,
+        30000,
       );
-      return null;
+    } catch (e) {
+      throw new Error(
+        `Refusing to destroy ${nodeName}: it could not be drained ` +
+          `(${drainFailure}) and its state could not be read either ` +
+          `(${(e as Error).message}).`,
+      );
     }
+    if (ready.trim().replace(/'/g, '') !== 'True') return;
+    throw new Error(
+      `Refusing to destroy ${nodeName}: the node is still ready and could ` +
+        `not be drained (${drainFailure}). Its workloads would be killed ` +
+        `with the server.`,
+    );
   }
 
   private async cordonNode(
     masterIp: string | null | undefined,
-    bootstrapPrivateKey: string | null,
     nodeName: string,
     warnings: Array<{
       code: string;
@@ -2311,21 +2343,15 @@ export class ClusterQueueProcessor {
       details?: Record<string, any>;
     }>,
   ): Promise<void> {
-    if (!bootstrapPrivateKey || !masterIp) {
+    if (!masterIp) {
       warnings.push({
         code: 'CORDON_SKIPPED',
-        reason: 'Master IP or bootstrap key unavailable',
+        reason: 'Master address unavailable',
       });
       return;
     }
     try {
-      await this.nativeSsh.execCommand(
-        masterIp,
-        'root',
-        bootstrapPrivateKey,
-        `kubectl cordon ${nodeName}`,
-        30000,
-      );
+      await this.runOnMaster(masterIp, `kubectl cordon ${nodeName}`, 30000);
     } catch (e) {
       warnings.push({ code: 'CORDON_FAILED', reason: (e as Error).message });
       this.logger.warn(
