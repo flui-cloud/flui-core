@@ -120,10 +120,7 @@ export function mayAct(facts: ActuationFacts): ActuationVerdict {
   // failure comes after the server exists, every retry leaves one behind.
   if (intent.kind !== 'remove' && facts.failedPurchase) {
     const { minutesAgo, error } = facts.failedPurchase;
-    const when =
-      minutesAgo < 1
-        ? 'just now'
-        : `${minutesAgo} minute${minutesAgo === 1 ? '' : 's'} ago`;
+    const when = sinceInWords(minutesAgo);
     const cause = error ? `: ${error.replace(/[.\s]*$/, '')}.` : '.';
     return no(
       'last-purchase-failed',
@@ -138,7 +135,7 @@ export function mayAct(facts: ActuationFacts): ActuationVerdict {
   ) {
     return no(
       'just-added',
-      `A node joined ${facts.minutesSinceAdded} minutes ago. Nothing is given back within ${HOLD_AFTER_ADD_MINUTES} minutes of a node joining — the load that called for it rarely leaves that fast, and giving it back only to buy it again is paid for twice.`,
+      `A node joined ${sinceInWords(facts.minutesSinceAdded)}. Nothing is given back within ${HOLD_AFTER_ADD_MINUTES} minutes of a node joining — the load that called for it rarely leaves that fast, and giving it back only to buy it again is paid for twice.`,
     );
   }
 
@@ -184,4 +181,9 @@ export function mayAct(facts: ActuationFacts): ActuationVerdict {
     because:
       'This group buys automatically, and the ladder chose within its ceilings.',
   };
+}
+
+function sinceInWords(minutes: number): string {
+  if (minutes < 1) return 'just now';
+  return `${minutes} minute${minutes === 1 ? '' : 's'} ago`;
 }

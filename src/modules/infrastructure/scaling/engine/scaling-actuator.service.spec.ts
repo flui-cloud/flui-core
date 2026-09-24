@@ -250,6 +250,31 @@ describe('the only thing with hands', () => {
     expect(acted?.outcome).toBe('added');
   });
 
+  it('does not call a person for an alarm raised while a machine is on its way', async () => {
+    const h = harness(HETZNER, 1);
+
+    const acted = await h.service.act(
+      group(),
+      cluster,
+      assessment({ outcome: 'alerted', intent: null }),
+    );
+
+    expect(acted).toMatchObject({ outcome: 'declined', asks: null });
+    expect(acted?.did).toContain('already on its way');
+  });
+
+  it('still raises the alarm when nothing is on its way', async () => {
+    const h = harness(HETZNER, 0);
+
+    const acted = await h.service.act(
+      group(),
+      cluster,
+      assessment({ outcome: 'alerted', intent: null }),
+    );
+
+    expect(acted).toBeNull();
+  });
+
   it('removes the node a decision named', async () => {
     const h = harness();
 

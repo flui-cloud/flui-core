@@ -119,6 +119,9 @@ describe('the gate between deciding and acting', () => {
     expect(verdict.act).toBe(false);
     expect(verdict.refusal).toBe('just-added');
     expect(verdict.because).toContain('3 minutes ago');
+    expect(
+      mayAct(facts({ intent: remove(), minutesSinceAdded: 1 })).because,
+    ).toContain('joined 1 minute ago.');
   });
 
   it('gives back once the pause has run out', () => {

@@ -155,7 +155,7 @@ export class ScalingActuatorService implements OnModuleInit {
     assessment: ScalingAssessment,
   ): Promise<Actuation | null> {
     const intent = assessment.intent;
-    if (!intent) return null;
+    if (!intent) return this.onItsWay(cluster, assessment);
 
     const capability = this.groupService.capabilityOf(cluster.provider);
     const verdict = mayAct({
@@ -205,6 +205,30 @@ export class ScalingActuatorService implements OnModuleInit {
         operationId: null,
       };
     }
+  }
+
+  /**
+   * An urgent alarm raised while a machine is already being added is almost
+   * always about that machine: the ladder counts it into the fleet's spend and
+   * finds nothing more it may buy. Nobody needs calling for that — the work is
+   * waiting for the node on its way, and if it still has nowhere to run once
+   * the node has joined, the next pass raises the alarm again.
+   */
+  private async onItsWay(
+    cluster: ClusterEntity,
+    assessment: ScalingAssessment,
+  ): Promise<Actuation | null> {
+    if (assessment.outcome !== 'alerted' || assessment.force !== 'urgency') {
+      return null;
+    }
+    if (!(await this.inFlight(cluster.id))) return null;
+    return {
+      outcome: 'declined',
+      did: 'Nothing more — a machine is already on its way.',
+      why: 'The waiting work is expected to land on the node being added. If it still has nowhere to run once that node has joined, the alarm is raised then.',
+      asks: null,
+      operationId: null,
+    };
   }
 
   private refused(
