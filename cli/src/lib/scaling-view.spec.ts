@@ -108,6 +108,7 @@ const decision = (
   region: null,
   hourlyEur: null,
   considered: [],
+  operation: null,
   ...over,
 });
 

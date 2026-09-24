@@ -148,5 +148,6 @@ function rowOf(
     considered: assessment.considered,
     pendingPods: assessment.pendingPods,
     drain: assessment.drain,
+    operationId: acted?.operationId ?? null,
   };
 }

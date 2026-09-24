@@ -102,4 +102,12 @@ export class ScalingDecisionEntity {
    */
   @Column({ type: 'jsonb', nullable: true })
   drain: DrainCheck | null;
+
+  /**
+   * The operation this decision started, where it started one. A purchase or a
+   * removal takes minutes after the decision is written, and this is how the
+   * decision can say what became of it.
+   */
+  @Column({ type: 'uuid', nullable: true })
+  operationId: string | null;
 }

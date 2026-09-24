@@ -1,6 +1,6 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Not, Repository } from 'typeorm';
+import { In, Not, Repository } from 'typeorm';
 import {
   ClusterEntity,
   ClusterStatus,
@@ -18,7 +18,10 @@ import {
 } from '../scaling-capability';
 import { StandingOrderConfig } from '../scaling.core';
 import { PurchaseHold, purchaseHold } from '../engine/purchase-hold';
-import { InfrastructureOperationEntity } from '../../servers/entities/infrastructure-operations.entity';
+import {
+  InfrastructureOperationEntity,
+  OperationStatus,
+} from '../../servers/entities/infrastructure-operations.entity';
 import {
   EditScalingGroupDto,
   ScalingLimitsDto,
@@ -29,6 +32,7 @@ import {
   ClusterScalingDecisionDto,
   ScalingActuationDto,
   ScalingDecisionResponseDto,
+  DecisionOperationDto,
   ScalingGroupResponseDto,
 } from '../dto/scaling-response.dto';
 import {
@@ -148,6 +152,17 @@ export class ScalingGroupService {
     group.purchaseRetryAt = new Date();
     await this.groups.save(group);
     return this.get(id);
+  }
+
+  private async operationsOf(
+    rows: ScalingDecisionEntity[],
+  ): Promise<Map<string, InfrastructureOperationEntity>> {
+    const ids = [
+      ...new Set(rows.map((row) => row.operationId).filter(Boolean)),
+    ] as string[];
+    if (!ids.length) return new Map();
+    const found = await this.operations.find({ where: { id: In(ids) } });
+    return new Map(found.map((op) => [op.id, op]));
   }
 
   private holdOf(group: ScalingGroupEntity): Promise<PurchaseHold | null> {
@@ -273,7 +288,8 @@ export class ScalingGroupService {
       order: { at: 'DESC' },
       take: bounded(limit),
     });
-    return rows.map(toDecisionDto);
+    const operations = await this.operationsOf(rows);
+    return rows.map((row) => toDecisionDto(row, operations));
   }
 
   /**
@@ -299,8 +315,9 @@ export class ScalingGroupService {
       order: { at: 'DESC' },
       take: bounded(limit),
     });
+    const operations = await this.operationsOf(rows);
     return rows.map((row) => ({
-      ...toDecisionDto(row),
+      ...toDecisionDto(row, operations),
       groupId: row.groupId,
       // A decision outlives nothing here — the group takes its decisions with it
       // when it is removed — so an unnamed group means a row written for a group
@@ -551,7 +568,9 @@ function applyLimits(
 
 export function toDecisionDto(
   row: ScalingDecisionEntity,
+  operations: Map<string, InfrastructureOperationEntity> = new Map(),
 ): ScalingDecisionResponseDto {
+  const operation = row.operationId ? operations.get(row.operationId) : null;
   return {
     id: row.id,
     at: row.at.toISOString(),
@@ -565,6 +584,30 @@ export function toDecisionDto(
     region: row.region ?? null,
     hourlyEur: row.hourlyPriceEur,
     considered: row.considered ?? [],
+    operation: operation ? decisionOperation(operation) : null,
+  };
+}
+
+const OPERATION_STATE: Record<OperationStatus, DecisionOperationDto['state']> =
+  {
+    [OperationStatus.PENDING]: 'pending',
+    [OperationStatus.IN_PROGRESS]: 'running',
+    [OperationStatus.COMPLETED]: 'completed',
+    [OperationStatus.FAILED]: 'failed',
+    [OperationStatus.CANCELLED]: 'cancelled',
+  };
+
+function decisionOperation(
+  op: InfrastructureOperationEntity,
+): DecisionOperationDto {
+  const step = (op.metadata as { message?: unknown } | null)?.message;
+  return {
+    id: op.id,
+    state: OPERATION_STATE[op.status] ?? 'running',
+    progress: op.progress ?? 0,
+    step: typeof step === 'string' ? step : null,
+    error: op.errorMessage ?? null,
+    finishedAt: op.completedAt ? new Date(op.completedAt).toISOString() : null,
   };
 }
 

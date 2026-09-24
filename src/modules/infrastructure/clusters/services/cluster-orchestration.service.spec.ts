@@ -114,6 +114,82 @@ describe('ClusterOrchestrationService — retry safety', () => {
     });
   });
 
+  describe('waitForNodeReady', () => {
+    type Wait = (
+      c: unknown,
+      name: string,
+      timeoutMs?: number,
+      intervalMs?: number,
+      onTick?: () => Promise<void>,
+    ) => Promise<void>;
+    const call = (
+      service: ClusterOrchestrationService,
+      ...args: Parameters<Wait>
+    ) =>
+      (service as unknown as { waitForNodeReady: Wait }).waitForNodeReady(
+        ...args,
+      );
+
+    function withNode(readings: Array<'missing' | 'NotReady' | 'Ready'>) {
+      const readNode = jest.fn();
+      for (const reading of readings) {
+        if (reading === 'missing') {
+          readNode.mockRejectedValueOnce(
+            Object.assign(new Error('nf'), { code: 404 }),
+          );
+        } else {
+          readNode.mockResolvedValueOnce({
+            status: {
+              conditions: [
+                {
+                  type: 'Ready',
+                  status: reading === 'Ready' ? 'True' : 'False',
+                },
+              ],
+            },
+          });
+        }
+      }
+      return build({
+        encryptionService: { decrypt: () => 'kubeconfig' },
+        kubernetesService: { getKubeClient: () => ({ coreApi: { readNode } }) },
+      });
+    }
+
+    it("pulls the joining node's log on every wait, so it can be followed while it boots", async () => {
+      const service = withNode(['missing', 'NotReady', 'Ready']);
+      const onTick = jest.fn().mockResolvedValue(undefined);
+
+      await call(
+        service,
+        { ...CLUSTER, kubeconfigEncrypted: 'x' },
+        'w-1',
+        60_000,
+        0,
+        onTick,
+      );
+
+      expect(onTick).toHaveBeenCalledTimes(2);
+    });
+
+    it('pulls it once more on the way out of a timeout — the last lines are the ones that explain it', async () => {
+      const service = withNode([]);
+      const onTick = jest.fn().mockResolvedValue(undefined);
+
+      await expect(
+        call(
+          service,
+          { ...CLUSTER, kubeconfigEncrypted: 'x' },
+          'w-1',
+          0,
+          0,
+          onTick,
+        ),
+      ).rejects.toThrow('did not become Ready');
+      expect(onTick).toHaveBeenCalledTimes(1);
+    });
+  });
+
   describe('fetchKubeconfigFromMaster', () => {
     const call = (service: ClusterOrchestrationService) =>
       (

@@ -3186,6 +3186,13 @@ const MASK_EXEMPT: string[] = [
   'ScalingGroupResponseDto.purchaseHeld', // modules/infrastructure/scaling/dto/scaling-response.dto.ts
   'PurchaseHoldDto.failedAt', // modules/infrastructure/scaling/dto/scaling-response.dto.ts
   'PurchaseHoldDto.error', // modules/infrastructure/scaling/dto/scaling-response.dto.ts
+  'ScalingDecisionResponseDto.operation', // modules/infrastructure/scaling/dto/scaling-response.dto.ts
+  'DecisionOperationDto.id', // modules/infrastructure/scaling/dto/scaling-response.dto.ts
+  'DecisionOperationDto.state', // modules/infrastructure/scaling/dto/scaling-response.dto.ts
+  'DecisionOperationDto.progress', // modules/infrastructure/scaling/dto/scaling-response.dto.ts
+  'DecisionOperationDto.step', // modules/infrastructure/scaling/dto/scaling-response.dto.ts
+  'DecisionOperationDto.error', // modules/infrastructure/scaling/dto/scaling-response.dto.ts
+  'DecisionOperationDto.finishedAt', // modules/infrastructure/scaling/dto/scaling-response.dto.ts
   'ScalingGroupResponseDto.settleSeconds', // modules/infrastructure/scaling/dto/scaling-response.dto.ts
   'ScalingGroupResponseDto.shapes', // modules/infrastructure/scaling/dto/scaling-response.dto.ts
   'ScalingGroupResponseDto.standingOrders', // modules/infrastructure/scaling/dto/scaling-response.dto.ts

@@ -140,6 +140,14 @@ interface DecisionDto {
     outcome: string;
     note?: string;
   }>;
+  operation?: {
+    id: string;
+    state: 'pending' | 'running' | 'completed' | 'failed' | 'cancelled';
+    progress: number;
+    step: string | null;
+    error: string | null;
+    finishedAt: string | null;
+  } | null;
 }
 
 /** A decision read from the cluster carries the group that took it. */
@@ -572,6 +580,7 @@ export const SCALING_TOOLS: ToolDef[] = [
           region: r.region,
           hourlyEur: r.hourlyEur,
           considered: r.considered ?? [],
+          operation: r.operation ?? null,
         })),
         note: silenceNote(rows, d.asked, d.groups),
       };
@@ -774,7 +783,7 @@ function silenceNote(
   groups?: GroupDto[],
 ): string {
   if (rows.length) {
-    return 'A decline is an answer, not a gap. Relay the `why` of the most recent decision rather than proposing the action it already refused, and relay `asks` verbatim on an alarm — nothing here clears one. On `added` and `removed` a machine actually changed and `why` names the gate that let it through; on a decline the same field names the gate that stopped it. Relay `why` in full either way, and never summarise it as "nothing happened".';
+    return 'A decline is an answer, not a gap. Relay the `why` of the most recent decision rather than proposing the action it already refused, and relay `asks` verbatim on an alarm — nothing here clears one. On `added` and `removed` a machine actually changed and `why` names the gate that let it through; on a decline the same field names the gate that stopped it. Relay `why` in full either way, and never summarise it as "nothing happened". A decision that bought or removed a machine carries `operation`: the decision is written when the purchase is ordered, and `operation.state` says what became of it since — `running` with its `step`, `completed`, or `failed` with its `error`. Report that state, never the decision alone, and follow a running one with operation_status.';
   }
   if (asked === 'cluster' && groups && !groups.length) {
     return 'This cluster has no scaling group, so nothing has been decided for it. It will not grow and it will raise no alarm — say that, rather than reporting that no scaling was needed.';

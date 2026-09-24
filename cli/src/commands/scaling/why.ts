@@ -188,6 +188,7 @@ export default class ScalingWhy extends Command {
       const text = line.label === 'asks' ? chalk.yellow(line.text) : line.text;
       console.log(`    ${chalk.dim(line.label.padEnd(7))}${text}`);
     }
+    this.printOperation(decision.operation);
 
     if (view.candidates.length) {
       console.log('');
@@ -204,6 +205,29 @@ export default class ScalingWhy extends Command {
       }
     }
     console.log('');
+  }
+
+  /** What became of the purchase or removal the decision started. */
+  private printOperation(
+    operation: ScalingDecisionResponseDto['operation'],
+  ): void {
+    if (!operation) return;
+    const colour =
+      operation.state === 'failed'
+        ? chalk.red
+        : operation.state === 'completed'
+          ? chalk.green
+          : chalk.cyan;
+    const detail =
+      operation.state === 'failed'
+        ? (operation.error ?? '')
+        : (operation.step ?? '');
+    console.log(
+      `    ${chalk.dim('then'.padEnd(7))}${colour(operation.state)} ${operation.progress}%${detail ? `  ${chalk.dim(detail)}` : ''}`,
+    );
+    console.log(
+      chalk.dim(`    ${''.padEnd(7)}flui operation ${operation.id} --follow`),
+    );
   }
 
   private colourHeadline(view: DecisionView): string {

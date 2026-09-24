@@ -591,6 +591,9 @@ export class ClusterOrchestrationService {
             operationId,
             providerFirewallIds,
             serverType,
+            // One log per operation: several workers booting at once would
+            // interleave into the same stream at conflicting offsets.
+            count === 1,
           ),
         );
       }
@@ -633,6 +636,7 @@ export class ClusterOrchestrationService {
     operationId: string,
     providerFirewallIds?: string[],
     serverType?: string | null,
+    captureInstallLog = false,
   ): Promise<ClusterNodeEntity> {
     const serverName = `${cluster.name}-worker-${index}`;
     // A fleet stops being uniform the moment something chooses a shape per
@@ -852,7 +856,8 @@ export class ClusterOrchestrationService {
     node.providerResourceId = workerServer.id;
     node.ipAddress = workerServer.public_ip || workerServer.private_ip;
     node.privateIp = workerServer.private_ip ?? overlay.address ?? null;
-    node.status = NodeStatus.READY;
+    // The server exists; the node does not take work until it has joined.
+    node.status = NodeStatus.JOINING;
     node.hourlyPriceEur = await this.nodePriceService.resolveHourlyEur(
       cluster.provider,
       node.serverType,
@@ -886,7 +891,7 @@ export class ClusterOrchestrationService {
       provider: cluster.provider,
       region: cluster.region,
       location: workerServer.location,
-      serverType: cluster.nodeSize,
+      serverType: shape,
       nodeType: node.nodeType,
     });
 
@@ -894,8 +899,29 @@ export class ClusterOrchestrationService {
       `Worker node ${serverName} provisioned (privateIp=${node.privateIp ?? 'none'}). Waiting for K3s join...`,
     );
 
+    await this.updateOperationProgress(
+      operationId,
+      60,
+      `Server ${serverName} is up; waiting for it to join the cluster...`,
+    );
+    const tail = captureInstallLog
+      ? () =>
+          this.tailInstallLog(
+            operationId,
+            cluster.id,
+            node.ipAddress,
+            bootstrapKey.privateKey,
+          )
+      : undefined;
+
     try {
-      await this.waitForNodeReady(cluster, serverName);
+      await this.waitForNodeReady(
+        cluster,
+        serverName,
+        undefined,
+        undefined,
+        tail,
+      );
     } catch (err) {
       node.status = NodeStatus.ERROR;
       node.metadata = {
@@ -914,6 +940,9 @@ export class ClusterOrchestrationService {
       throw err;
     }
 
+    await tail?.();
+    node.status = NodeStatus.READY;
+    await this.nodeRepository.save(node);
     this.logger.log(`Worker node ${serverName} joined cluster and is Ready`);
     return node;
   }
@@ -928,6 +957,7 @@ export class ClusterOrchestrationService {
     nodeName: string,
     timeoutMs = 240000,
     intervalMs = 10000,
+    onTick?: () => Promise<void>,
   ): Promise<void> {
     if (!cluster.kubeconfigEncrypted) {
       throw new Error(
@@ -965,8 +995,10 @@ export class ClusterOrchestrationService {
           lastErr = err?.message ?? String(err);
         }
       }
+      await onTick?.();
       await this.sleep(intervalMs);
     }
+    await onTick?.();
 
     throw new Error(
       `Node ${nodeName} did not become Ready within ${Math.round(timeoutMs / 1000)}s. ` +
@@ -1837,25 +1869,22 @@ export class ClusterOrchestrationService {
     '/var/log/cloud-init-output.log';
 
   /**
-   * Pulls whatever's new in the master's cloud-init output since the last
+   * Pulls whatever's new in a new node's cloud-init output since the last
    * tick and forwards it through InstallLogService (persists + relays over
-   * the `/infrastructure` gateway). Uses the same bootstrap key as the
-   * kubeconfig poll it rides alongside — the CA-signed ephemeral cert isn't
-   * accepted yet this early in boot (TrustedUserCAKeys is only installed
-   * partway through flui-init.sh). Best-effort: a failure here is the same
-   * "not up yet" the kubeconfig attempt just hit, so it's swallowed and
-   * retried next tick rather than aborting the whole creation.
+   * the `/infrastructure` gateway). Uses the bootstrap key — the CA-signed
+   * ephemeral cert isn't accepted yet this early in boot (TrustedUserCAKeys is
+   * only installed partway through the init script). Best-effort: a failure
+   * here is the same "not up yet" the wait it rides alongside just hit, so it
+   * is swallowed and retried next tick rather than aborting the creation.
    *
-   * Bounded by the kubeconfig-wait window: nothing this node does after
-   * writing its kubeconfig (control-cluster observability stack included,
-   * which finishes later in the same script) is captured. Covers the
-   * incident this feature was built for — the master never coming up at
-   * all — not later, already-past-that-point failures.
+   * Bounded by the wait it rides: for a master, until it writes its
+   * kubeconfig; for a worker, until it has joined the cluster. What either
+   * does afterwards is not captured.
    */
   private async tailInstallLog(
     operationId: string,
     resourceId: string,
-    masterIp: string,
+    nodeIp: string,
     bootstrapPrivateKey: string,
   ): Promise<void> {
     try {
@@ -1864,7 +1893,7 @@ export class ClusterOrchestrationService {
       if (truncated) return;
 
       const chunk = await this.nativeSsh.execCommand(
-        masterIp,
+        nodeIp,
         'root',
         bootstrapPrivateKey,
         `tail -c +${byteOffset + 1} ${ClusterOrchestrationService.INSTALL_LOG_SOURCE_FILE} 2>/dev/null || true`,

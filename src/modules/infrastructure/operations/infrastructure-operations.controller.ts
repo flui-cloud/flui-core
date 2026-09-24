@@ -83,10 +83,11 @@ export class InfrastructureOperationsController {
   @ApiOperation({
     summary: 'Download the captured install log for an operation',
     description:
-      'Bootstrap output captured while a master node was created, as plain ' +
-      'text — available live and after completion or failure. 404 if the ' +
-      'operation never reached the tailing window (predates this feature, ' +
-      'or was a node type not yet covered).',
+      'Bootstrap output captured while a new node came up — a master until it ' +
+      'wrote its kubeconfig, a single added worker until it joined — as plain ' +
+      'text, available live and after completion or failure. 404 if the ' +
+      'operation never reached the tailing window (predates this feature, or ' +
+      'added several workers at once, whose logs are not captured).',
   })
   @ApiParam({ name: 'operationId', description: 'Operation ID' })
   @ApiResponse({ status: 200, description: 'Plain-text install log' })

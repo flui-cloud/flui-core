@@ -820,3 +820,38 @@ describe('a group held back by a failed purchase', () => {
     expect(dto.purchaseHeld).toBeNull();
   });
 });
+
+describe('a decision that started something', () => {
+  it('says what became of the purchase it started, as it stands now', async () => {
+    const f = make('hetzner');
+    f.groups.findOne!.mockResolvedValue({ id: 'g-1', clusterId: 'c-1' });
+    f.decisions.find!.mockResolvedValue([
+      { id: 'd-2', at: new Date(), outcome: 'declined', operationId: null },
+      { id: 'd-1', at: new Date(), outcome: 'added', operationId: 'op-1' },
+    ]);
+    (f.operations as unknown as { find: jest.Mock }).find = jest
+      .fn()
+      .mockResolvedValue([
+        {
+          id: 'op-1',
+          status: 'IN_PROGRESS',
+          progress: 60,
+          metadata: { message: 'waiting for it to join the cluster' },
+          errorMessage: null,
+          completedAt: null,
+        },
+      ]);
+
+    const [quiet, bought] = await f.service.decisionsOf('g-1');
+
+    expect(quiet.operation).toBeNull();
+    expect(bought.operation).toEqual({
+      id: 'op-1',
+      state: 'running',
+      progress: 60,
+      step: 'waiting for it to join the cluster',
+      error: null,
+      finishedAt: null,
+    });
+  });
+});

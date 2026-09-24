@@ -285,6 +285,31 @@ export class ConsideredCandidateDto {
   note?: string;
 }
 
+export class DecisionOperationDto {
+  @ApiProperty({
+    description:
+      'GET /infrastructure/operations/:id for the whole record, /log for the node install log',
+  })
+  id: string;
+
+  @ApiProperty({
+    enum: ['pending', 'running', 'completed', 'failed', 'cancelled'],
+  })
+  state: 'pending' | 'running' | 'completed' | 'failed' | 'cancelled';
+
+  @ApiProperty({ description: '0–100' })
+  progress: number;
+
+  @ApiProperty({ nullable: true, description: 'What it is doing, or last did' })
+  step: string | null;
+
+  @ApiProperty({ nullable: true, description: 'Why it failed' })
+  error: string | null;
+
+  @ApiProperty({ nullable: true })
+  finishedAt: string | null;
+}
+
 export class ScalingDecisionResponseDto {
   @ApiProperty()
   id: string;
@@ -331,6 +356,14 @@ export class ScalingDecisionResponseDto {
     description: 'What it did not choose, and why each one lost',
   })
   considered: ConsideredCandidateDto[];
+
+  @ApiProperty({
+    type: DecisionOperationDto,
+    nullable: true,
+    description:
+      'The purchase or removal this decision started, as it stands now. Null where the decision started nothing.',
+  })
+  operation: DecisionOperationDto | null;
 }
 
 /**
