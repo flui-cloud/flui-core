@@ -1052,11 +1052,16 @@ export class AccessService {
   }
 
   /**
-   * The cluster's bootstrap key material, or null if it has none yet.
+   * The cluster's bootstrap key material, or null if it has none it can use.
    *
    * Keyed strictly on bootstrapKeyId, with no tag-based fallback: the tag search
    * returns the most recently created key, which on a retry is the one that was
    * never installed on the node.
+   *
+   * A record whose private half is no longer on disk also answers null, so the
+   * caller mints a fresh pair. Bootstrap keys only open a new server until it
+   * enrols with the CA, and the key directory does not outlive the API process:
+   * failing here stopped every node from ever being added again.
    */
   async getBootstrapKeyMaterialForCluster(clusterId: string): Promise<{
     id: string;
@@ -1071,11 +1076,17 @@ export class AccessService {
     if (!keyEntity) {
       return null;
     }
-    return {
-      id: keyEntity.id,
-      publicKey: keyEntity.publicKey,
-      privateKey: await this.keyStorage.retrievePrivateKey(keyEntity.keyPath),
-    };
+    let privateKey: string;
+    try {
+      privateKey = await this.keyStorage.retrievePrivateKey(keyEntity.keyPath);
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
+      this.logger.warn(
+        `Bootstrap key ${keyEntity.id} for cluster ${clusterId} has no private key on disk; a new one will be generated`,
+      );
+      return null;
+    }
+    return { id: keyEntity.id, publicKey: keyEntity.publicKey, privateKey };
   }
 
   /**
