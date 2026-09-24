@@ -87,41 +87,56 @@ describe('the gate between deciding and acting', () => {
 
   it('buys nothing more after a purchase failed, and says what failed', () => {
     const verdict = mayAct(
-      facts({ failedPurchase: { minutesAgo: 2, error: 'no SSH key' } }),
+      facts({
+        failedPurchase: {
+          at: new Date('2026-09-24T14:17:30Z'),
+          error: 'no SSH key',
+        },
+      }),
     );
     expect(verdict).toMatchObject({
       act: false,
       refusal: 'last-purchase-failed',
     });
-    expect(verdict.because).toContain('failed 2 minutes ago: no SSH key.');
+    expect(verdict.because).toContain('failed at 14:17 UTC: no SSH key.');
     expect(verdict.because).toContain('ask this group to try again');
   });
 
-  it('says when in words a person would use', () => {
-    const at = (minutesAgo: number) =>
-      mayAct(facts({ failedPurchase: { minutesAgo, error: null } })).because;
-    expect(at(0)).toContain('failed just now.');
-    expect(at(1)).toContain('failed 1 minute ago.');
+  /**
+   * The same failure, read a minute apart, must say the same thing: a repeated
+   * decision is only recognised as one while its sentence does not change.
+   */
+  it('says when as a time, so the answer does not change from one pass to the next', () => {
+    const failed = { at: new Date('2026-09-24T14:17:30Z'), error: null };
+    const first = mayAct(facts({ failedPurchase: failed })).because;
+    const later = mayAct(facts({ failedPurchase: failed })).because;
+    expect(first).toBe(later);
+    expect(first).toContain('failed at 14:17 UTC.');
   });
 
   it('still gives back after a purchase failed — a removal buys nothing', () => {
     const verdict = mayAct(
       facts({
         intent: remove(),
-        failedPurchase: { minutesAgo: 2, error: null },
+        failedPurchase: { at: new Date('2026-09-24T14:17:30Z'), error: null },
       }),
     );
     expect(verdict.act).toBe(true);
   });
 
   it('gives nothing back within the pause after a node has joined', () => {
-    const verdict = mayAct(facts({ intent: remove(), minutesSinceAdded: 3 }));
+    const verdict = mayAct(
+      facts({
+        intent: remove(),
+        minutesSinceAdded: 3,
+        lastJoinedAt: new Date('2026-09-24T14:18:39Z'),
+      }),
+    );
     expect(verdict.act).toBe(false);
     expect(verdict.refusal).toBe('just-added');
-    expect(verdict.because).toContain('3 minutes ago');
-    expect(
-      mayAct(facts({ intent: remove(), minutesSinceAdded: 1 })).because,
-    ).toContain('joined 1 minute ago.');
+    expect(verdict.because).toContain(
+      'A node joined at 14:18 UTC; nothing goes back before 14:28 UTC.',
+    );
   });
 
   it('gives back once the pause has run out', () => {

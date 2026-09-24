@@ -46,9 +46,11 @@ export interface ActuationFacts {
    * The last purchase on this cluster, when it failed and nobody has asked the
    * group to try again since. Null once a later purchase went through.
    */
-  failedPurchase: { minutesAgo: number; error: string | null } | null;
+  failedPurchase: { at: Date; error: string | null } | null;
   /** Minutes since a node last joined this cluster, or null if none ever did. */
   minutesSinceAdded: number | null;
+  /** When that node joined — said as a time, so the sentence is the same on every pass. */
+  lastJoinedAt?: Date | null;
   clusterRegion: string | null;
   /**
    * The group's own ceiling in money, or null where it set none.
@@ -119,8 +121,8 @@ export function mayAct(facts: ActuationFacts): ActuationVerdict {
   // pass buys again — once a minute, for as long as the cause lasts. Where the
   // failure comes after the server exists, every retry leaves one behind.
   if (intent.kind !== 'remove' && facts.failedPurchase) {
-    const { minutesAgo, error } = facts.failedPurchase;
-    const when = sinceInWords(minutesAgo);
+    const { at, error } = facts.failedPurchase;
+    const when = `at ${clock(at)}`;
     const cause = error ? `: ${error.replace(/[.\s]*$/, '')}.` : '.';
     return no(
       'last-purchase-failed',
@@ -135,7 +137,7 @@ export function mayAct(facts: ActuationFacts): ActuationVerdict {
   ) {
     return no(
       'just-added',
-      `A node joined ${sinceInWords(facts.minutesSinceAdded)}. Nothing is given back within ${HOLD_AFTER_ADD_MINUTES} minutes of a node joining — the load that called for it rarely leaves that fast, and giving it back only to buy it again is paid for twice.`,
+      `${joinedPhrase(facts.lastJoinedAt ?? null)} Nothing is given back within ${HOLD_AFTER_ADD_MINUTES} minutes of a node joining — the load that called for it rarely leaves that fast, and giving it back only to buy it again is paid for twice.`,
     );
   }
 
@@ -183,7 +185,17 @@ export function mayAct(facts: ActuationFacts): ActuationVerdict {
   };
 }
 
-function sinceInWords(minutes: number): string {
-  if (minutes < 1) return 'just now';
-  return `${minutes} minute${minutes === 1 ? '' : 's'} ago`;
+/**
+ * A time rather than an age: a decision repeated on every pass is recognised
+ * as the same one only while its sentence does not change, and "3 minutes ago"
+ * changes every minute.
+ */
+function clock(at: Date): string {
+  return `${at.toISOString().slice(11, 16)} UTC`;
+}
+
+function joinedPhrase(at: Date | null): string {
+  if (!at) return 'A node joined moments ago.';
+  const until = new Date(at.getTime() + HOLD_AFTER_ADD_MINUTES * 60_000);
+  return `A node joined at ${clock(at)}; nothing goes back before ${clock(until)}.`;
 }

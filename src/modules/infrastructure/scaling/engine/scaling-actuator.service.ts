@@ -168,7 +168,7 @@ export class ScalingActuatorService implements OnModuleInit {
         cluster.id,
         group.purchaseRetryAt,
       ),
-      minutesSinceAdded: await this.minutesSinceAdded(cluster.id),
+      ...(await this.lastJoin(cluster.id)),
       clusterRegion: cluster.region ?? null,
       intent,
     });
@@ -325,13 +325,12 @@ export class ScalingActuatorService implements OnModuleInit {
   ): Promise<ActuationFacts['failedPurchase']> {
     const hold = await purchaseHold(this.operations, clusterId, retryAskedAt);
     if (!hold) return null;
-    return {
-      minutesAgo: Math.floor((Date.now() - hold.failedAt.getTime()) / 60_000),
-      error: hold.error,
-    };
+    return { at: hold.failedAt, error: hold.error };
   }
 
-  private async minutesSinceAdded(clusterId: string): Promise<number | null> {
+  private async lastJoin(
+    clusterId: string,
+  ): Promise<Pick<ActuationFacts, 'minutesSinceAdded' | 'lastJoinedAt'>> {
     const last = await this.operations.findOne({
       where: {
         resourceId: clusterId,
@@ -341,8 +340,12 @@ export class ScalingActuatorService implements OnModuleInit {
       order: { completedAt: 'DESC' },
     });
     const at = last?.completedAt ?? last?.updatedAt;
-    if (!at) return null;
-    return Math.floor((Date.now() - new Date(at).getTime()) / 60_000);
+    if (!at) return { minutesSinceAdded: null, lastJoinedAt: null };
+    const joined = new Date(at);
+    return {
+      minutesSinceAdded: Math.floor((Date.now() - joined.getTime()) / 60_000),
+      lastJoinedAt: joined,
+    };
   }
 
   /**
