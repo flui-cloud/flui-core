@@ -317,16 +317,29 @@ export class HetznerCapabilitiesService
       });
   }
 
+  /**
+   * The flag for a country, from either the code the API answers with or the
+   * name the static fallback carries.
+   *
+   * Derived rather than tabulated: a flag emoji is its ISO alpha-2 code written
+   * in regional indicator letters, so every country is covered and a new
+   * Hetzner location needs no entry here. The names are kept only because the
+   * fallback list spells them out.
+   */
   private getCountryFlag(country: string): string {
-    const flags: Record<string, string> = {
-      Germany: '🇩🇪',
-      Finland: '🇫🇮',
-      USA: '🇺🇸',
-      'United States': '🇺🇸',
-      Netherlands: '🇳🇱',
-      Singapore: '🇸🇬',
+    const byName: Record<string, string> = {
+      Germany: 'DE',
+      Finland: 'FI',
+      USA: 'US',
+      'United States': 'US',
+      Netherlands: 'NL',
+      Singapore: 'SG',
     };
-    return flags[country] || '🌐';
+    const code = (byName[country] ?? country).trim().toUpperCase();
+    if (!/^[A-Z]{2}$/.test(code)) return '🌐';
+    return String.fromCodePoint(
+      ...[...code].map((letter) => 0x1f1e6 + letter.charCodeAt(0) - 65),
+    );
   }
 
   private getMockRegions(): ProviderRegion[] {
