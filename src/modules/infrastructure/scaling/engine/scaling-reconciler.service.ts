@@ -91,6 +91,7 @@ export class ScalingReconcilerService {
   ): Promise<boolean> {
     const assessment = await this.engine.assess(group, cluster);
     const acted = await this.actuator.act(group, cluster, assessment);
+    if (assessment.fulfilledExpansions) await this.closeExpansions(group);
 
     // Something happened to a machine, and that is never a repeat of anything:
     // the window below exists to stop a standing answer from being restated,
@@ -106,6 +107,14 @@ export class ScalingReconcilerService {
     // person reaches one instead of waiting to be found.
     await this.alarms.publish(group, row);
     return true;
+  }
+
+  /** An expansion that brought the fleet to its target is done; it stops being listed as open. */
+  private async closeExpansions(group: ScalingGroupEntity): Promise<void> {
+    const remaining = (group.standingOrders ?? []).filter(
+      (order) => order.kind !== 'expand',
+    );
+    await this.groups.update(group.id, { standingOrders: remaining });
   }
 
   private async alreadySaid(

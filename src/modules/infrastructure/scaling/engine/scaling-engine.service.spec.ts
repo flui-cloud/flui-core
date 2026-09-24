@@ -266,7 +266,12 @@ describe('urgency against the standing order', () => {
     expect(assessment.preview.opportunityHeldBecause).toBeNull();
   });
 
-  it('never reaches past the target, which only urgency may do', async () => {
+  /**
+   * An expansion is written to reach the target, and the patient side may not
+   * go past it: once there, the order has nothing left to buy and is closed
+   * rather than refused every minute for ever.
+   */
+  it('counts an expansion done once the fleet stands at its target', async () => {
     const h = harness();
     h.pods.read.mockResolvedValue(waiting({ count: 0, largestRequest: null }));
 
@@ -288,9 +293,31 @@ describe('urgency against the standing order', () => {
 
     expect(assessment.force).toBe('opportunity');
     expect(assessment.outcome).toBe('declined');
-    expect(assessment.considered[0]).toMatchObject({
-      outcome: 'refused-by-limit',
-    });
+    expect(assessment.intent).toBeNull();
+    expect(assessment.fulfilledExpansions).toBe(true);
+  });
+
+  it('keeps an expansion open while the fleet is still below its target', async () => {
+    const h = harness();
+    h.pods.read.mockResolvedValue(waiting({ count: 0, largestRequest: null }));
+
+    const assessment = await h.engine.assess(
+      group({
+        desiredNodes: 3,
+        standingOrders: [
+          {
+            kind: 'expand',
+            shape: 'cx32',
+            region: 'fsn1',
+            wanted: 1,
+            replaces: null,
+          },
+        ],
+      }),
+      cluster({ nodeCount: 2 }),
+    );
+
+    expect(assessment.fulfilledExpansions).toBe(false);
   });
 
   it('waits rather than alarms when the shape it wants is not to be had', async () => {

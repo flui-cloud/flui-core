@@ -65,10 +65,12 @@ function harness(last: ScalingDecisionEntity | null = null) {
   // an actuator that returns null is exactly a provider Flui cannot buy from.
   const actuator = { act: jest.fn().mockResolvedValue(null) };
   const alarms = { publish: jest.fn().mockResolvedValue(undefined) };
+  const groups = {
+    find: jest.fn().mockResolvedValue([group]),
+    update: jest.fn().mockResolvedValue(undefined),
+  };
   const service = new ScalingReconcilerService(
-    {
-      find: jest.fn().mockResolvedValue([group]),
-    } as unknown as Repository<ScalingGroupEntity>,
+    groups as unknown as Repository<ScalingGroupEntity>,
     {
       find: jest.fn().mockResolvedValue([cluster]),
     } as unknown as Repository<ClusterEntity>,
@@ -77,7 +79,7 @@ function harness(last: ScalingDecisionEntity | null = null) {
     actuator as unknown as ScalingActuatorService,
     alarms as unknown as ScalingAlarmService,
   );
-  return { service, decisions, engine, actuator, alarms };
+  return { service, decisions, engine, actuator, alarms, groups };
 }
 
 describe('a cluster on its way out', () => {
@@ -172,5 +174,51 @@ describe('the reconciler', () => {
     h.engine.assess.mockRejectedValueOnce(new Error('cluster unreachable'));
 
     expect(await h.service.reconcileAll()).toBe(0);
+  });
+});
+
+describe('an expansion the fleet has fulfilled', () => {
+  const withOrders = {
+    ...group,
+    standingOrders: [
+      {
+        kind: 'expand',
+        shape: 'cx32',
+        region: 'fsn1',
+        wanted: 1,
+        replaces: null,
+      },
+      {
+        kind: 'replace',
+        shape: 'cx32',
+        region: 'fsn1',
+        wanted: 1,
+        replaces: 'n-1',
+      },
+    ],
+  } as unknown as ScalingGroupEntity;
+
+  it('is closed, and a replacement still waiting is kept', async () => {
+    const h = harness();
+    h.engine.assess.mockResolvedValue(
+      assessment({ fulfilledExpansions: true }),
+    );
+
+    await h.service.reconcile(withOrders, cluster);
+
+    expect(h.groups.update).toHaveBeenCalledWith(withOrders.id, {
+      standingOrders: [withOrders.standingOrders[1]],
+    });
+  });
+
+  it('is left alone while the fleet has not got there', async () => {
+    const h = harness();
+    h.engine.assess.mockResolvedValue(
+      assessment({ fulfilledExpansions: false }),
+    );
+
+    await h.service.reconcile(withOrders, cluster);
+
+    expect(h.groups.update).not.toHaveBeenCalled();
   });
 });

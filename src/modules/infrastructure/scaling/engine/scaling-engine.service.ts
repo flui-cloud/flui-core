@@ -70,12 +70,18 @@ export interface ScalingAssessment {
   /** Pods the scheduler could not place. Null is an unanswered cluster, never 0. */
   pendingPods: number | null;
   preview: ScalingPreviewDto;
+  /**
+   * Expansion orders the fleet has already fulfilled: it stands at the target
+   * they were written to reach. Read here and removed by the loop that acts,
+   * so a preview never changes a group.
+   */
+  fulfilledExpansions: boolean;
 }
 
 /** Everything a decision carries but the identity of what it was decided about. */
 type DecisionDraft = Omit<
   ScalingAssessment,
-  'groupId' | 'clusterId' | 'preview' | 'pendingPods'
+  'groupId' | 'clusterId' | 'preview' | 'pendingPods' | 'fulfilledExpansions'
 >;
 
 /** A node the fleet could give back, named so something can actually remove it. */
@@ -156,6 +162,9 @@ export class ScalingEngineService {
       clusterId: cluster.id,
       pendingPods: waiting ? waiting.count : null,
       preview,
+      fulfilledExpansions:
+        fleet.nodes >= group.desiredNodes &&
+        (group.standingOrders ?? []).some((order) => order.kind === 'expand'),
     };
   }
 
@@ -841,8 +850,13 @@ function openOrders(
   nodes: number,
   input: LadderInput,
 ): StandingOrderConfig[] {
+  // An expansion is written to bring the fleet up to its target, and the
+  // patient side may not go past the target anyway: once there it has nothing
+  // left to buy, only to be closed.
   const declared = (group.standingOrders ?? []).filter(
-    (order) => order.wanted > 0,
+    (order) =>
+      order.wanted > 0 &&
+      (order.kind === 'replace' || nodes < group.desiredNodes),
   );
   if (declared.length) return declared;
   if (nodes >= group.desiredNodes) return [];
