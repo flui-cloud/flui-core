@@ -121,9 +121,14 @@ export function mayAct(facts: ActuationFacts): ActuationVerdict {
   // failure comes after the server exists, every retry leaves one behind.
   if (intent.kind !== 'remove' && facts.failedPurchase) {
     const { minutesAgo, error } = facts.failedPurchase;
+    const when =
+      minutesAgo < 1
+        ? 'just now'
+        : `${minutesAgo} minute${minutesAgo === 1 ? '' : 's'} ago`;
+    const cause = error ? `: ${error.replace(/[.\s]*$/, '')}.` : '.';
     return no(
       'last-purchase-failed',
-      `The last machine Flui tried to add here failed ${minutesAgo} minutes ago${error ? `: ${error}` : '.'} Nothing more is bought until that is looked at — a failing purchase retried every minute can leave a server behind each time. Once the cause is fixed, save this group again or add a node by hand.`,
+      `The last machine Flui tried to add here failed ${when}${cause} Nothing more is bought until that is looked at — a failing purchase retried every minute can leave a server behind each time. Once the cause is fixed, save this group again or add a node by hand.`,
     );
   }
 

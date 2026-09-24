@@ -1341,7 +1341,9 @@ export class ClusterOrchestrationService {
     );
 
     const saved = await this.accessService.createSSHKey({
-      name: `flui-bootstrap-cluster-${cluster.name}`,
+      // Unique per key: a provider registry refuses a second key under a name it
+      // already holds, and a cluster mints a new one whenever the old one is lost.
+      name: `flui-bootstrap-cluster-${cluster.name}-${Date.now().toString(36)}`,
       public_key: generated.publicKey,
       private_key: generated.privateKey, // Will be encrypted in storage
       fingerprint: generated.fingerprint,

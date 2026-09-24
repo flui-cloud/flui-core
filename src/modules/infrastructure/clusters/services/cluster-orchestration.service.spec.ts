@@ -87,6 +87,31 @@ describe('ClusterOrchestrationService — retry safety', () => {
       expect(cluster).toMatchObject({ bootstrapKeyId: 'key-new' });
       expect(result).toMatchObject({ id: 'key-new', privateKey: 'PRIV-new' });
     });
+
+    it('names each new key apart, so a provider holding an older one does not refuse it', async () => {
+      const accessService = {
+        getBootstrapKeyMaterialForCluster: jest.fn().mockResolvedValue(null),
+        createSSHKey: jest.fn().mockResolvedValue({ id: 'key-new' }),
+      };
+      const keyGenerator = {
+        generateKeyPair: jest.fn().mockResolvedValue({
+          publicKey: 'ssh-ed25519 AAAA-new',
+          privateKey: 'PRIV-new',
+          fingerprint: 'fp',
+        }),
+      };
+      const service = build({
+        accessService,
+        keyGenerator,
+        clusterRepository: { update: jest.fn() },
+        logBootstrapKeyFingerprint: jest.fn(),
+      });
+
+      await call(service, { ...CLUSTER });
+
+      const { name } = accessService.createSSHKey.mock.calls[0][0];
+      expect(name).toMatch(/^flui-bootstrap-cluster-workload-1-[0-9a-z]+$/);
+    });
   });
 
   describe('fetchKubeconfigFromMaster', () => {

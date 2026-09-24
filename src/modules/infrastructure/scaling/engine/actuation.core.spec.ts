@@ -93,8 +93,15 @@ describe('the gate between deciding and acting', () => {
       act: false,
       refusal: 'last-purchase-failed',
     });
-    expect(verdict.because).toContain('failed 2 minutes ago: no SSH key');
+    expect(verdict.because).toContain('failed 2 minutes ago: no SSH key.');
     expect(verdict.because).toContain('save this group again');
+  });
+
+  it('says when in words a person would use', () => {
+    const at = (minutesAgo: number) =>
+      mayAct(facts({ failedPurchase: { minutesAgo, error: null } })).because;
+    expect(at(0)).toContain('failed just now.');
+    expect(at(1)).toContain('failed 1 minute ago.');
   });
 
   it('still gives back after a purchase failed — a removal buys nothing', () => {
