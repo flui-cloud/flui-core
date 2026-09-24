@@ -5,6 +5,7 @@ import {
   ClusterEntity,
   ClusterStatus,
 } from '../../clusters/entities/cluster.entity';
+import { VNetSubnetEntity } from '../../vnets/entities/vnet-subnet.entity';
 import { CapabilitiesProviderFactory } from '../../../providers/core/factories/capabilities-provider.factory';
 import { CloudProvider } from '../../../providers/enums/cloud-provider.enum';
 import { ScalingGroupEntity } from '../entities/scaling-group.entity';
@@ -12,6 +13,7 @@ import { ScalingDecisionEntity } from '../entities/scaling-decision.entity';
 import { DrainCheck } from '../engine/drain.core';
 import {
   ProviderScalingCapability,
+  buyableRegionsOf,
   scalingCapabilityOf,
 } from '../scaling-capability';
 import { StandingOrderConfig } from '../scaling.core';
@@ -54,6 +56,8 @@ export class ScalingGroupService {
     private readonly decisions: Repository<ScalingDecisionEntity>,
     @InjectRepository(ClusterEntity)
     private readonly clusters: Repository<ClusterEntity>,
+    @InjectRepository(VNetSubnetEntity)
+    private readonly subnets: Repository<VNetSubnetEntity>,
     private readonly capabilities: CapabilitiesProviderFactory,
   ) {}
 
@@ -71,6 +75,39 @@ export class ScalingGroupService {
     );
   }
 
+  /**
+   * The network zone this cluster's own subnet sits in.
+   *
+   * Read from the subnet rather than the provider: a cluster has the network it
+   * was given, and on a provider whose zones group several regions that is the
+   * only thing that says which group it landed in. Null where the cluster has
+   * no subnet recorded, which every caller treats as "unknown", never as "any".
+   */
+  private async zoneOf(cluster: ClusterEntity): Promise<string | null> {
+    const subnetId = (
+      cluster.metadata as { vnetConfig?: { subnetId?: string } } | undefined
+    )?.vnetConfig?.subnetId;
+    if (!subnetId) return null;
+    const subnet = await this.subnets.findOne({ where: { id: subnetId } });
+    return subnet?.networkZone ?? null;
+  }
+
+  /** Where a node bought for this cluster could actually join it from. */
+  async buyableFor(cluster: ClusterEntity): Promise<string[] | null> {
+    const known = this.capabilities.isProviderSupported(
+      cluster.provider as CloudProvider,
+    );
+    return buyableRegionsOf(
+      cluster,
+      known
+        ? this.capabilities
+            .getCapabilitiesService(cluster.provider as CloudProvider)
+            .getStaticCapabilities()
+        : null,
+      await this.zoneOf(cluster),
+    );
+  }
+
   async listForCluster(clusterId: string): Promise<ScalingGroupResponseDto[]> {
     const cluster = await this.clusterOrFail(clusterId);
     const rows = await this.groups.find({
@@ -78,15 +115,20 @@ export class ScalingGroupService {
       order: { createdAt: 'ASC' },
     });
     const drains = await Promise.all(rows.map((row) => this.lastDrain(row.id)));
-    return rows.map((row, index) => this.toDto(row, cluster, drains[index]));
+    const buyable = await this.buyableFor(cluster);
+    return rows.map((row, index) =>
+      this.toDto(row, cluster, drains[index], buyable),
+    );
   }
 
   async get(id: string): Promise<ScalingGroupResponseDto> {
     const group = await this.groupOrFail(id);
+    const cluster = await this.clusterOrFail(group.clusterId);
     return this.toDto(
       group,
-      await this.clusterOrFail(group.clusterId),
+      cluster,
       await this.lastDrain(group.id),
+      await this.buyableFor(cluster),
     );
   }
 
@@ -124,17 +166,18 @@ export class ScalingGroupService {
       shapes: dto.shapes ?? [],
       strategy: dto.strategy ?? 'uniform',
       settleSeconds: dto.settleSeconds ?? 30,
-      hourlyBillingOnly: dto.limits?.hourlyBillingOnly ?? false,
+      hourlyBillingOnly: dto.limits?.hourlyBillingOnly ?? true,
       maxMonthlyCost: dto.limits?.maxMonthlyCost ?? null,
       provision: dto.provision ?? 'manual',
       standingOrders: (dto.standingOrders ?? []).map(standingOrder),
       requirement: dto.requirement ?? null,
     });
 
-    this.assertCoherent(draft, capability, hasVnet(cluster));
+    const buyable = await this.buyableFor(cluster);
+    this.assertCoherent(draft, capability, hasVnet(cluster), buyable);
     await this.assertNameFree(clusterId, draft.name, null);
 
-    return this.toDto(await this.groups.save(draft), cluster);
+    return this.toDto(await this.groups.save(draft), cluster, null, buyable);
   }
 
   async update(
@@ -168,10 +211,11 @@ export class ScalingGroupService {
       group.requirement = dto.requirement ?? null;
     }
 
-    this.assertCoherent(group, capability, hasVnet(cluster));
+    const buyable = await this.buyableFor(cluster);
+    this.assertCoherent(group, capability, hasVnet(cluster), buyable);
     await this.assertNameFree(group.clusterId, group.name, group.id);
 
-    return this.toDto(await this.groups.save(group), cluster);
+    return this.toDto(await this.groups.save(group), cluster, null, buyable);
   }
 
   /**
@@ -267,6 +311,7 @@ export class ScalingGroupService {
     group: ScalingGroupEntity,
     capability: ProviderScalingCapability,
     hasVnet: boolean,
+    buyableRegions: string[] | null,
   ): void {
     if (!group.name) {
       throw new BadRequestException('A scaling group needs a name');
@@ -296,6 +341,22 @@ export class ScalingGroupService {
       throw new BadRequestException(
         'This cluster has no VNet, so no node can join it: attach one before letting scaling buy, or leave this group on "manual"',
       );
+    }
+
+    // A node joins its siblings over the cluster's private network, and a
+    // region outside that network's reach buys a machine that never arrives:
+    // the purchase succeeds, the node never joins, and the group keeps paying
+    // for it. Refused where it is written rather than discovered there.
+    if (buyableRegions) {
+      const unreachable = group.regions.filter(
+        (region) => !buyableRegions.includes(region),
+      );
+      if (unreachable.length) {
+        throw new BadRequestException(
+          `A node bought in ${unreachable.join(', ')} could not join this cluster: ` +
+            `its private network reaches ${buyableRegions.join(', ')} and nowhere else`,
+        );
+      }
     }
 
     this.assertCatalogueCoherent(group, capability);
@@ -395,6 +456,7 @@ export class ScalingGroupService {
     group: ScalingGroupEntity,
     cluster: ClusterEntity,
     drain: DrainCheck | null = null,
+    buyableRegions: string[] | null = null,
   ): ScalingGroupResponseDto {
     return {
       id: group.id,
@@ -403,6 +465,7 @@ export class ScalingGroupService {
       clusterName: cluster.name,
       provider: cluster.provider,
       capability: this.capabilityOf(cluster.provider),
+      buyableRegions,
       bounds: {
         min: group.minNodes,
         desired: group.desiredNodes,
@@ -451,7 +514,7 @@ function applyLimits(
   group: ScalingGroupEntity,
   limits: ScalingLimitsDto,
 ): void {
-  group.hourlyBillingOnly = limits.hourlyBillingOnly ?? false;
+  group.hourlyBillingOnly = limits.hourlyBillingOnly ?? true;
   group.maxMonthlyCost = limits.maxMonthlyCost ?? null;
 }
 

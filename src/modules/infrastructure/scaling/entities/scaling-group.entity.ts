@@ -88,8 +88,17 @@ export class ScalingGroupEntity {
   @Column({ type: 'int', default: 30 })
   settleSeconds: number;
 
-  /** Refuse shapes billed monthly-only: they make autoscale cost-neutral at best. */
-  @Column({ type: 'boolean', default: false })
+  /**
+   * Refuse machines billed monthly-only: giving one back saves nothing, so
+   * scaling down would cost as much as staying large.
+   *
+   * Policy rather than preference, and no longer offered as a choice: every
+   * provider Flui can buy from bills by the hour, so the only state this can
+   * describe is one nobody would pick. Kept as a column because the engine
+   * still reads it, and because a provider that bills monthly and exposes a
+   * create API would need it again.
+   */
+  @Column({ type: 'boolean', default: true })
   hourlyBillingOnly: boolean;
 
   /** In currency, not in node count — the number of nodes is not the bill. */

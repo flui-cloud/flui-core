@@ -6,6 +6,7 @@ import { SharedInfrastructureModule } from '../shared/shared-infrastructure.modu
 import { ClustersModule } from '../clusters/clusters.module';
 import { ClusterEntity } from '../clusters/entities/cluster.entity';
 import { ClusterNodeEntity } from '../clusters/entities/cluster-node.entity';
+import { VNetSubnetEntity } from '../vnets/entities/vnet-subnet.entity';
 import { ApplicationEntity } from '../../applications/entities/application.entity';
 import { InfrastructureOperationEntity } from '../servers/entities/infrastructure-operations.entity';
 import { UnschedulablePodsService } from '../clusters/services/unschedulable-pods.service';
@@ -40,6 +41,9 @@ import { DrainFeasibilityService } from './engine/drain-feasibility.service';
       // whether a purchase is already on its way.
       ApplicationEntity,
       InfrastructureOperationEntity,
+      // Read-only: the network zone a cluster's own subnet sits in, which is
+      // what decides where a node bought for it could join from.
+      VNetSubnetEntity,
     ]),
     forwardRef(() => ClustersModule),
     ProvidersModule,

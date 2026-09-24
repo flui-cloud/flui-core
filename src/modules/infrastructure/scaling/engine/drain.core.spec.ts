@@ -130,7 +130,7 @@ describe('whether a node can be emptied', () => {
       }),
     );
     expect(check.ok).toBe(true);
-    expect(check.cleared.join(' ')).toContain('DaemonSet');
+    expect(check.cleared.join(' ')).toContain('run on every machine');
   });
 
   it('refuses a static pod, which is placed by the machine and cannot be evicted', () => {

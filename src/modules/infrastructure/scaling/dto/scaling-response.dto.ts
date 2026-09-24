@@ -188,6 +188,18 @@ export class ScalingGroupResponseDto {
   @ApiProperty({ type: ProviderScalingCapabilityDto })
   capability: ProviderScalingCapabilityDto;
 
+  @ApiProperty({
+    type: [String],
+    nullable: true,
+    description:
+      'The regions a node bought for this cluster could actually join it ' +
+      'from, or null where geography fences nothing — an unknown provider, a ' +
+      'global network, or one Flui builds itself. A property of the network ' +
+      'this cluster was given, not of what its provider sells: a machine can ' +
+      'be on offer somewhere its private network cannot be reached from.',
+  })
+  buyableRegions: string[] | null;
+
   @ApiProperty({ type: ScalingBoundsResponseDto })
   bounds: ScalingBoundsResponseDto;
 
@@ -202,7 +214,7 @@ export class ScalingGroupResponseDto {
 
   @ApiProperty({
     description:
-      'How long a pod must be stuck before this buys. Never a wait for a cheaper shape.',
+      'How long an app must be stuck before this buys. Never a wait for a cheaper machine.',
   })
   settleSeconds: number;
 

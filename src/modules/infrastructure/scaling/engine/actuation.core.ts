@@ -92,7 +92,7 @@ export function mayAct(facts: ActuationFacts): ActuationVerdict {
       'purchase-in-flight',
       intent.kind === 'remove'
         ? 'A machine is on its way to this cluster, so the fleet is about to be a different size. Nothing is given back until it has joined or failed — a count that is about to change is not a count to act on.'
-        : 'A machine is already on its way to this cluster. Nothing else is bought until it has joined or failed — a pod stays unplaceable for the whole of a provisioning, and a loop that did not wait would buy one node a minute for it.',
+        : 'A machine is already on its way to this cluster. Nothing else is bought until it has joined or failed — an app stays stuck for the whole of a provisioning, and a loop that did not wait would buy one node a minute for it.',
     );
   }
 

@@ -64,6 +64,7 @@ const group = (
   clusterId: '2f1c9e5a-0000-4000-8000-0000000000aa',
   clusterName: 'prod-eu',
   provider: 'hetzner',
+  buyableRegions: null,
   capability: hetzner,
   bounds: { min: 1, desired: 3, max: 5 },
   regions: ['fsn1', 'nbg1'],

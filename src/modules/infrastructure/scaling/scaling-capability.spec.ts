@@ -1,8 +1,10 @@
 import { ConfigService } from '@nestjs/config';
-import { scalingCapabilityOf } from './scaling-capability';
+import { buyableRegionsOf, scalingCapabilityOf } from './scaling-capability';
 import { ByosCapabilitiesService } from '../../providers/implementations/byos/byos-capabilities.service';
 import { ContaboCapabilitiesService } from '../../providers/implementations/contabo/contabo-capabilities.service';
 import { HetznerCapabilitiesService } from '../../providers/implementations/hetzner/hetzner-capabilities.service';
+import { OvhCapabilitiesService } from '../../providers/implementations/ovh/ovh-capabilities.service';
+import { ScalewayCapabilitiesService } from '../../providers/implementations/scaleway/scaleway-capabilities.service';
 import { ICredentialProvider } from '../../providers/interfaces/credential-provider.interface';
 
 const config = {
@@ -77,5 +79,73 @@ describe('what a provider lets a cluster do about its own size', () => {
       hasCatalogue: false,
       billing: 'none',
     });
+  });
+});
+
+/**
+ * Read off the same declarations, for the same reason: the claim is that where
+ * a group may buy follows from the network each provider describes, and a
+ * fixture would let the function and the product drift apart while both stay
+ * green.
+ */
+describe('where a scaling group may buy', () => {
+  const hetzner = () =>
+    new HetznerCapabilitiesService(config, credentials).getStaticCapabilities();
+  const scaleway = () =>
+    new ScalewayCapabilitiesService(credentials).getStaticCapabilities();
+  const ovh = () =>
+    new OvhCapabilitiesService(config, credentials).getStaticCapabilities();
+  const byos = () => new ByosCapabilitiesService().getStaticCapabilities();
+  const contabo = () =>
+    new ContaboCapabilitiesService(config).getStaticCapabilities();
+
+  it('opens a Hetzner group to the whole zone its cluster sits in', () => {
+    expect(
+      buyableRegionsOf({ region: 'fsn1' }, hetzner(), 'eu-central'),
+    ).toEqual(['fsn1', 'nbg1', 'hel1']);
+  });
+
+  it('does not let a Hetzner group reach across zones', () => {
+    const allowed = buyableRegionsOf(
+      { region: 'fsn1' },
+      hetzner(),
+      'eu-central',
+    );
+    expect(allowed).not.toContain('ash');
+  });
+
+  it('finds the zone from the region when the cluster never recorded one', () => {
+    expect(buyableRegionsOf({ region: 'nbg1' }, hetzner(), null)).toEqual([
+      'fsn1',
+      'nbg1',
+      'hel1',
+    ]);
+  });
+
+  /** One zone per region there, so the zone is the region. */
+  it('holds a Scaleway group to its own region', () => {
+    expect(
+      buyableRegionsOf({ region: 'nl-ams' }, scaleway(), 'nl-ams'),
+    ).toEqual(['nl-ams']);
+  });
+
+  /**
+   * OVH declares no zones on purpose — the regions a credential reaches come
+   * from Keystone — so nothing here can group two. Its own region is the only
+   * one the declarations say can join its network.
+   */
+  it('holds an OVH group to its own region, having no zones to group by', () => {
+    expect(buyableRegionsOf({ region: 'GRA11' }, ovh(), null)).toEqual([
+      'GRA11',
+    ]);
+  });
+
+  it('fences nothing where Flui builds the network itself', () => {
+    expect(buyableRegionsOf({ region: 'anywhere' }, byos(), null)).toBeNull();
+    expect(buyableRegionsOf({ region: 'EU' }, contabo(), null)).toBeNull();
+  });
+
+  it('fences nothing for a provider it knows nothing about', () => {
+    expect(buyableRegionsOf({ region: 'x' }, null, null)).toBeNull();
   });
 });

@@ -140,6 +140,9 @@ function harness(
   const pods = { read: jest.fn().mockResolvedValue(waiting()) };
   const groups = {
     capabilityOf: jest.fn().mockReturnValue(capability),
+    // Null: these fixtures fence nothing by geography, so the ladder sees the
+    // regions the group and the catalogue name and no others.
+    buyableFor: jest.fn().mockResolvedValue(null),
     withCluster: jest.fn(),
   };
   const catalogue = {
@@ -175,7 +178,7 @@ describe('the settle window', () => {
     expect(assessment.outcome).toBe('declined');
     expect(assessment.did).toBe('Nothing yet.');
     expect(assessment.why).toContain('12s of the 30s');
-    expect(assessment.why).toContain('not patience');
+    expect(assessment.why).toContain('really stuck');
     expect(assessment.shape).toBeNull();
   });
 

@@ -186,7 +186,7 @@ export class ScalingEngineService {
         outcome: 'declined',
         saw: 'The cluster could not be asked whether anything is waiting for capacity.',
         did: 'Nothing.',
-        why: 'An unanswered cluster is not a quiet one. Until it answers, a pod may be waiting, so nothing was decided and the patient side stayed down. Its floor is met, and that much needed no answer.',
+        why: 'An unanswered cluster is not a quiet one. Until it answers, something may be waiting to run, so nothing was decided and the patient side stayed down. Its floor is met, and that much needed no answer.',
         asks: null,
         shape: null,
         region: null,
@@ -642,6 +642,7 @@ export class ScalingEngineService {
         capability,
       },
       clusterRegion: cluster.region,
+      reachableRegions: await this.groups.buyableFor(cluster),
       ceiling,
       fleet,
       demand,
@@ -679,9 +680,9 @@ function sawPending(waiting: UnschedulablePods): string {
       ? 'for an unknown time'
       : `for ${waiting.oldestWaitingSeconds}s`;
   const what = largest
-    ? ` The largest asks for ${largest.cpuMillicores}m and ${largest.memoryMi}Mi (${largest.namespace}/${largest.name}).`
+    ? ` The biggest needs ${largest.cpuMillicores}m and ${largest.memoryMi}Mi (${largest.name}).`
     : '';
-  return `${waiting.count} pod(s) the scheduler could not place, waiting ${oldest}.${what}`;
+  return `${thing(waiting.count)} with nowhere to run, waiting ${oldest}.${what}`;
 }
 
 /**
@@ -699,7 +700,12 @@ function withinSettleWindow(
   // age would turn a missing timestamp into an indefinite wait.
   if (oldest === null) return null;
   if (oldest >= settleSeconds) return null;
-  return `The oldest has been stuck ${oldest}s of the ${settleSeconds}s this group waits before buying. That wait is not patience — it is there so a pod caught mid-schedule does not buy a machine.`;
+  return `The oldest has waited ${oldest}s of the ${settleSeconds}s this group waits before buying — long enough to be sure it is really stuck, and not just starting.`;
+}
+
+/** What a person would count: the things they deployed, not the units underneath. */
+function thing(count: number): string {
+  return count === 1 ? '1 app' : `${count} apps`;
 }
 
 function heldBecause(waiting: UnschedulablePods | null): string | null {
@@ -707,7 +713,7 @@ function heldBecause(waiting: UnschedulablePods | null): string | null {
     return 'The cluster could not be asked whether anything is waiting, so urgency cannot be ruled out and no standing order runs.';
   }
   if (waiting.count > 0) {
-    return `${waiting.count} pod(s) cannot be placed. Urgency always wins, and no standing order runs while one is waiting.`;
+    return `${thing(waiting.count)} with nowhere to run. Urgency always wins, and no standing order runs while one is waiting.`;
   }
   return null;
 }

@@ -136,6 +136,15 @@ export interface LadderGroup {
 export interface LadderInput {
   group: LadderGroup;
   clusterRegion: string;
+  /**
+   * Where a node could actually join this cluster from, or null where
+   * geography fences nothing.
+   *
+   * Fences the catalogue as well as the group's own list: a group that names no
+   * region means "anywhere on offer", and anywhere on offer includes regions
+   * this cluster's private network has never been able to reach.
+   */
+  reachableRegions: string[] | null;
   /** `max` for urgency and `desired` for opportunity: how far this force may go. */
   ceiling: number;
   fleet: FleetFacts;
@@ -180,22 +189,25 @@ const STEPS: {
   homeOnly: boolean;
 }[] = [
   {
-    describes: 'The preferred shape, in the cluster’s own region',
+    describes: 'The first machine on the list, in the cluster’s own region',
     preferredOnly: true,
     homeOnly: true,
   },
   {
-    describes: 'The preferred shape, in any region this group may buy in',
+    describes:
+      'The first machine on the list, in any region this group may buy in',
     preferredOnly: true,
     homeOnly: false,
   },
   {
-    describes: 'Anything that holds it, in the cluster’s own region',
+    describes:
+      'Any machine on the list that is big enough, in the cluster’s own region',
     preferredOnly: false,
     homeOnly: true,
   },
   {
-    describes: 'Anything that holds it, in any region this group may buy in',
+    describes:
+      'Any machine on the list that is big enough, in any region this group may buy in',
     preferredOnly: false,
     homeOnly: false,
   },
@@ -387,9 +399,13 @@ function asAlert(rung: LadderRung, input: LadderInput): LadderRung {
  * "nowhere".
  */
 function regionsFor(input: LadderInput, homeOnly: boolean): string[] {
-  const allowed = input.group.regions.length
+  const declared = input.group.regions.length
     ? input.group.regions
     : offeredRegions(input);
+  const reachable = input.reachableRegions;
+  const allowed = reachable
+    ? declared.filter((region) => reachable.includes(region))
+    : declared;
   if (homeOnly) {
     return allowed.includes(input.clusterRegion) ? [input.clusterRegion] : [];
   }
@@ -457,9 +473,14 @@ function refusedBy(input: LadderInput, candidate: Candidate): Verdict | null {
     };
   }
 
-  // The whole catalogue, refused by one setting — which from the outside looks
-  // exactly like the provider having nothing to sell.
-  if (group.hourlyBillingOnly && group.capability.billing === 'monthly') {
+  // Only where Flui can actually buy. On a provider with no create API the
+  // missing API is the reason every rung fails, and saying "refused by a limit"
+  // there would hide it behind a setting nobody chose.
+  if (
+    group.capability.canProvision &&
+    group.hourlyBillingOnly &&
+    group.capability.billing === 'monthly'
+  ) {
     return {
       outcome: REFUSED_BY_LIMIT,
       note: `${group.provider} bills monthly and this group takes hourly billing only, so every shape it publishes is refused.`,
@@ -481,7 +502,11 @@ function refusedBy(input: LadderInput, candidate: Candidate): Verdict | null {
       note: `${candidate.shape} is deprecated: buying one now buys a machine on its way out.`,
     };
   }
-  if (group.hourlyBillingOnly && !candidate.fact.supportsHourlyBilling) {
+  if (
+    group.capability.canProvision &&
+    group.hourlyBillingOnly &&
+    !candidate.fact.supportsHourlyBilling
+  ) {
     return {
       outcome: REFUSED_BY_LIMIT,
       note: `${candidate.shape} is a monthly commitment and this group takes hourly billing only.`,
@@ -514,7 +539,7 @@ function doesNotFit(
   if (cpu >= demand.cpuMillicores && memory >= demand.memoryMi) return null;
   return {
     outcome: 'does-not-fit',
-    note: `${fact.shape} leaves ${Math.max(0, Math.round(cpu))}m and ${Math.max(0, Math.round(memory))}Mi for a pod asking ${demand.cpuMillicores}m and ${demand.memoryMi}Mi.`,
+    note: `${fact.shape} leaves ${Math.max(0, Math.round(cpu))}m and ${Math.max(0, Math.round(memory))}Mi free, and the app waiting needs ${demand.cpuMillicores}m and ${demand.memoryMi}Mi.`,
   };
 }
 
@@ -652,7 +677,7 @@ function byRoom(a: Candidate, b: Candidate): number {
 
 function noShapeNote(input: LadderInput): string {
   return input.group.capability.hasCatalogue
-    ? `This group names no shape it may buy on ${input.group.provider}.`
+    ? `No machines are chosen, so there is nothing this group may buy on ${input.group.provider}.`
     : `${input.group.provider} publishes no catalogue, so no rung can name a shape here.`;
 }
 

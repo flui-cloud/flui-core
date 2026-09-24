@@ -53,3 +53,44 @@ export function scalingCapabilityOf(
     billing: hasCatalogue ? capabilities.pricing.billingCycle : 'none',
   };
 }
+
+/**
+ * Where a group may buy, or `null` when geography fences nothing.
+ *
+ * A node joins its siblings over the cluster's private network, and whether a
+ * second region can reach that network is a property of the network rather than
+ * of the provider's catalogue: a region Flui can sell a machine in is not
+ * necessarily a region that machine could join from.
+ *
+ * `null` is not "anywhere the provider sells" — it is "this is not the fence",
+ * and it is the honest answer in three different situations: an unknown
+ * provider, one whose network Flui builds itself (the overlay spans whatever it
+ * is given), and one whose network is global.
+ *
+ * `zone` is the network zone the cluster's own subnet sits in, which is what a
+ * cluster actually got rather than what its provider offers. Where it is
+ * unknown, or where the provider declares no zones at all, the cluster's own
+ * region is the only region known to reach its network — narrower than the
+ * truth on a provider that groups several, and the only claim the declarations
+ * support.
+ */
+export function buyableRegionsOf(
+  cluster: { region: string },
+  capabilities: ProviderCapabilities | null,
+  zone: string | null,
+): string[] | null {
+  if (!capabilities) return null;
+  if (capabilities.supportsFluiManagedVNet) return null;
+
+  const topology = capabilities.vnetTopology;
+  if (topology?.scope !== 'regional') return null;
+
+  const zones = topology.zones ?? [];
+  const covering =
+    zones.find((z) => z.id === zone) ??
+    zones.find((z) => z.coveredRegions?.includes(cluster.region));
+
+  return covering?.coveredRegions?.length
+    ? [...covering.coveredRegions]
+    : [cluster.region];
+}

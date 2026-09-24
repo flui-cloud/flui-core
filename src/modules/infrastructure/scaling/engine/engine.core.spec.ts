@@ -69,6 +69,7 @@ const input = (over: Partial<LadderInput> = {}): LadderInput => ({
     ...(over.group ?? {}),
   },
   clusterRegion: 'fsn1',
+  reachableRegions: null,
   ceiling: 5,
   fleet: {
     nodes: 2,
@@ -94,6 +95,50 @@ const reading = (
 });
 
 describe('the urgency ladder', () => {
+  /**
+   * The fence has to hold on both paths. A group that names no region means
+   * "anywhere on offer", and anywhere on offer includes regions whose network
+   * this cluster has never been able to reach — a machine bought there would be
+   * paid for and would never join.
+   */
+  it('will not reach a region the cluster\u2019s network cannot, even unnamed', () => {
+    const onlyFarAway = shape({
+      shape: 'cx32',
+      prices: [{ region: 'ash', hourlyEur: 0.001, monthlyEur: 0.73 }],
+    });
+    const group = {
+      provider: 'hetzner',
+      regions: [],
+      shapes: ['cx32'],
+      strategy: 'closest' as const,
+      hourlyBillingOnly: false,
+      maxMonthlyCost: null,
+      requirement: null,
+      capability: HETZNER,
+    };
+
+    const fenced = walkLadder(
+      input({
+        group,
+        reachableRegions: ['fsn1', 'nbg1'],
+        shapes: { shapes: [onlyFarAway], read: true },
+      }),
+    );
+    expect(fenced.chosen).toBeNull();
+    expect(fenced.rungs.map((rung) => rung.region)).not.toContain('ash');
+
+    // The same ladder with nothing to fence it buys there, which is what makes
+    // the assertion above worth writing.
+    const open = walkLadder(
+      input({
+        group,
+        reachableRegions: null,
+        shapes: { shapes: [onlyFarAway], read: true },
+      }),
+    );
+    expect(open.chosen?.region).toBe('ash');
+  });
+
   it('stops at the first rung that would work', () => {
     const result = walkLadder(input());
 
@@ -231,7 +276,7 @@ describe('the urgency ladder', () => {
     expect(result.chosen).toBeNull();
   });
 
-  it('refuses everything by limit, not by outage, when the provider bills monthly', () => {
+  it('blames the missing create API, not the hourly limit, where nothing can be bought anyway', () => {
     const result = walkLadder(
       input({
         group: {
@@ -250,8 +295,7 @@ describe('the urgency ladder', () => {
       }),
     );
 
-    expect(result.rungs[0]).toMatchObject({ outcome: 'refused-by-limit' });
-    expect(result.rungs[0].note).toContain('hourly billing only');
+    expect(result.rungs[0].note).not.toContain('hourly billing only');
     expect(result.chosen).toBeNull();
   });
 

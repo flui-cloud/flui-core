@@ -8,6 +8,7 @@ import { ScalingGroupService } from './scaling-group.service';
 import { ScalingGroupEntity } from '../entities/scaling-group.entity';
 import { ScalingDecisionEntity } from '../entities/scaling-decision.entity';
 import { ClusterEntity } from '../../clusters/entities/cluster.entity';
+import { VNetSubnetEntity } from '../../vnets/entities/vnet-subnet.entity';
 import { plainToInstance } from 'class-transformer';
 import { validate } from 'class-validator';
 import { CapabilitiesProviderFactory } from '../../../providers/core/factories/capabilities-provider.factory';
@@ -62,6 +63,21 @@ const DECLARED: Record<string, ProviderCapabilities> = {
   }),
 };
 
+DECLARED.zoned = capabilities({
+  vnetTopology: {
+    scope: 'regional',
+    zones: [
+      { id: 'eu-central', displayName: 'EU', coveredRegions: ['a1', 'a2'] },
+      { id: 'us-east', displayName: 'US', coveredRegions: ['b1'] },
+    ],
+    supportsSubnets: true,
+    subnetPerZone: true,
+    supportsRoutes: false,
+    vnetIpRange: { minPrefix: 8, maxPrefix: 29 },
+    subnetIpRange: { minPrefix: 8, maxPrefix: 29 },
+  },
+} as Partial<ProviderCapabilities>);
+
 const cluster = (provider: string, vnet = 'vnet-1'): ClusterEntity =>
   ({
     id: 'c-1',
@@ -70,7 +86,10 @@ const cluster = (provider: string, vnet = 'vnet-1'): ClusterEntity =>
     nodeCount: 2,
     // A node can only join a cluster that has a private network, so a cluster
     // fixture without one cannot stand in for one that grows.
-    metadata: vnet ? { vnetConfig: { vnetId: vnet } } : {},
+    region: 'a1',
+    metadata: vnet
+      ? { vnetConfig: { vnetId: vnet, subnetId: 'subnet-1' } }
+      : {},
   }) as ClusterEntity;
 
 interface Fakes {
@@ -97,6 +116,10 @@ const make = (provider = 'hetzner', existing: unknown[] = []): Fakes => {
   const clusters = {
     findOne: jest.fn().mockResolvedValue(cluster(provider)),
   };
+  const subnets = {
+    findOne: jest.fn().mockResolvedValue({ networkZone: 'eu-central' }),
+  };
+
   const factory = {
     isProviderSupported: (p: string) => p in DECLARED,
     getCapabilitiesService: (p: string) => ({
@@ -109,6 +132,7 @@ const make = (provider = 'hetzner', existing: unknown[] = []): Fakes => {
       groups as unknown as Repository<ScalingGroupEntity>,
       decisions as unknown as Repository<ScalingDecisionEntity>,
       clusters as unknown as Repository<ClusterEntity>,
+      subnets as unknown as Repository<VNetSubnetEntity>,
       factory,
     ),
     groups,
@@ -244,6 +268,27 @@ describe('what the provider declarations forbid a group to say', () => {
         write({ requirement: { cpu: '2', memory: '8Gi' } }),
       ),
     ).rejects.toBeInstanceOf(BadRequestException);
+  });
+});
+
+describe('where a group may buy', () => {
+  it('refuses a region its cluster\u2019s private network cannot reach', async () => {
+    const { service } = make('zoned');
+    await expect(
+      service.create('c-1', write({ regions: ['a1', 'b1'] })),
+    ).rejects.toThrow(/could not join this cluster/);
+  });
+
+  it('takes every region that shares the zone, not only the cluster\u2019s own', async () => {
+    const { service, saved } = make('zoned');
+    await service.create('c-1', write({ regions: ['a1', 'a2'] }));
+    expect(saved().regions).toEqual(['a1', 'a2']);
+  });
+
+  it('fences nothing where the provider declares no network of its own', async () => {
+    const { service, saved } = make('hetzner');
+    await service.create('c-1', write({ regions: ['anywhere', 'else'] }));
+    expect(saved().regions).toEqual(['anywhere', 'else']);
   });
 });
 

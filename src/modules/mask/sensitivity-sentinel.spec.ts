@@ -3171,6 +3171,7 @@ const MASK_EXEMPT: string[] = [
   'ScalingDto.targetMemoryUtilization', // modules/frameworks/framework-core/dto/build-plan.dto.ts
   'ScalingGroupResponseDto.acts', // modules/infrastructure/scaling/dto/scaling-response.dto.ts
   'ScalingGroupResponseDto.bounds', // modules/infrastructure/scaling/dto/scaling-response.dto.ts
+  'ScalingGroupResponseDto.buyableRegions', // modules/infrastructure/scaling/dto/scaling-response.dto.ts
   'ScalingGroupResponseDto.capability', // modules/infrastructure/scaling/dto/scaling-response.dto.ts
   'ScalingGroupResponseDto.clusterId', // modules/infrastructure/scaling/dto/scaling-response.dto.ts
   'ScalingGroupResponseDto.clusterName', // modules/infrastructure/scaling/dto/scaling-response.dto.ts

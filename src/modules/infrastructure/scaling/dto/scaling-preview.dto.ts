@@ -58,7 +58,7 @@ export class ScalingPreviewDto {
   @ApiProperty({
     nullable: true,
     description:
-      'Why the patient force is standing down. Urgency always wins, and no standing order runs while a pod is waiting.',
+      'Why the patient force is standing down. Urgency always wins, and no standing order runs while an app is waiting to run.',
   })
   opportunityHeldBecause: string | null;
 

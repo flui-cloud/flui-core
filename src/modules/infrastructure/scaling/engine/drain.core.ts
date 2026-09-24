@@ -115,7 +115,7 @@ export function checkDrain(subject: DrainSubject): DrainCheck {
       blockers.push({
         kind: 'not-evictable',
         what: where,
-        fix: 'A static pod is placed by the machine itself and cannot be evicted. Remove its manifest from the node first.',
+        fix: 'This part is placed by the machine itself and cannot be moved. Remove it from the machine first.',
       });
       continue;
     }
@@ -124,7 +124,7 @@ export function checkDrain(subject: DrainSubject): DrainCheck {
       blockers.push({
         kind: 'no-controller',
         what: where,
-        fix: 'Nothing would recreate this pod elsewhere. Give it a controller, or delete it and accept that it goes.',
+        fix: 'Nothing would start this again elsewhere. Deploy it as an app, or delete it and accept that it goes.',
       });
     }
 
@@ -132,7 +132,7 @@ export function checkDrain(subject: DrainSubject): DrainCheck {
       blockers.push({
         kind: 'bound-volume',
         what: `${where} → ${pod.boundVolumes.join(', ')}`,
-        fix: 'The volume lives on this machine and does not follow the pod. Move the data, or give the workload storage that any node can reach.',
+        fix: 'The disk lives on this machine and does not travel. Move the data, or give the app storage that any machine can reach.',
       });
     }
 
@@ -148,12 +148,12 @@ export function checkDrain(subject: DrainSubject): DrainCheck {
 
   if (daemons.length) {
     cleared.push(
-      `${daemons.length} DaemonSet pod(s) stay where they are: a drain neither evicts them nor waits for them.`,
+      `${daemons.length} part(s) that run on every machine stay where they are: emptying neither moves them nor waits for them.`,
     );
   }
   if (evictable.length && !blockers.some((b) => b.kind === 'no-controller')) {
     cleared.push(
-      `${evictable.length} pod(s) are managed by a controller that will place them again elsewhere.`,
+      `${evictable.length} part(s) would be started again on another machine.`,
     );
   }
   if (!blockers.some((b) => b.kind === 'bound-volume')) {
@@ -166,7 +166,7 @@ export function checkDrain(subject: DrainSubject): DrainCheck {
     !blockers.some((b) => b.kind === 'disruption-budget')
   ) {
     cleared.push(
-      `${subject.budgets.length} disruption budget(s) cover pods here and none of them refuses an eviction.`,
+      `${subject.budgets.length} rule(s) limit how much may stop at once here, and none of them refuses.`,
     );
   }
   if (!subject.dedicatedApps.length) {
