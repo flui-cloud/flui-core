@@ -25,7 +25,6 @@ import {
   ServerTypesApi,
   PricingApi,
   ServerActionsApi,
-  DataCentersApi,
   ListServers200ResponseServersInner,
   ListServers200ResponseServersInnerStatusEnum,
   ListServerTypes200ResponseServerTypesInner,
@@ -38,6 +37,8 @@ import {
 } from 'src/modules/providers/implementations/hetzner/generated';
 import { NodeSizeDto } from '../dto/node-size.dto';
 import { allServerTypes } from '../implementations/hetzner/all-server-types';
+import { serverTypeAvailability } from '../implementations/hetzner/server-type-availability';
+import { serverLocation } from '../implementations/hetzner/server-location';
 import { PricingDto, PricingQueryDto } from '../dto/pricing.dto';
 import { NodeSizeMapper } from '../mappers/node-size.mapper';
 import { PricingMapper } from '../mappers/pricing.mapper';
@@ -258,15 +259,6 @@ export class HetznerProviderService implements ICloudProvider {
     return new ActionsApi(configuration, this.basePath, axiosInstance);
   }
 
-  /**
-   * Create DataCentersApi instance with custom Axios configuration
-   */
-  private async createDataCentersApi(): Promise<DataCentersApi> {
-    const configuration = await this.createConfiguration();
-    const axiosInstance = this.createAxiosInstance();
-    return new DataCentersApi(configuration, this.basePath, axiosInstance);
-  }
-
   async listInstances(filters?: any): Promise<InstanceEntity[]> {
     const serversApi = await this.createServersApi();
 
@@ -335,9 +327,11 @@ export class HetznerProviderService implements ICloudProvider {
     // Map data center and region configuration. A just-created server may not
     // have these populated yet — tolerate missing fields instead of throwing
     // and voiding the whole instance list.
-    instance.dataCenter = server.datacenter?.name ?? 'unknown';
-    instance.region = server.datacenter?.location?.name ?? 'unknown';
-    instance.regionName = server.datacenter?.location?.description ?? '';
+    const location = serverLocation(server as never);
+    instance.dataCenter =
+      server.datacenter?.name ?? location?.name ?? 'unknown';
+    instance.region = location?.name ?? 'unknown';
+    instance.regionName = location?.description ?? '';
 
     // Map hardware specifications
     instance.cpuCores = server.server_type?.cores ?? 0;
@@ -991,7 +985,7 @@ export class HetznerProviderService implements ICloudProvider {
       provider: CloudProvider.HETZNER,
       provider_resource_id: server.id?.toString() ?? '',
       server_type: server.server_type?.name ?? 'unknown',
-      location: server.datacenter?.location?.name ?? 'unknown',
+      location: serverLocation(server as never)?.name ?? 'unknown',
       status: server.status,
       public_ip: server.public_net?.ipv4?.ip || null,
       private_ip: server.private_net?.[0]?.ip || null,
@@ -1105,29 +1099,18 @@ export class HetznerProviderService implements ICloudProvider {
         (nodeSize) => nodeSize.architecture !== 'arm',
       );
 
-      // If requested, enrich with real-time availability (NO CACHE)
       if (includeAvailability) {
-        const availabilityMap = await this.getDatacenterAvailability();
-
-        nodeSizes = nodeSizes.map((nodeSize) => {
-          const serverTypeId = Number.parseInt(nodeSize.id);
-
-          // Build availability info for each location this server type supports
-          const availability = nodeSize.locations.map((loc) => ({
-            location: loc.name,
-            available:
-              availabilityMap.get(loc.name)?.has(serverTypeId) ?? false,
-            // Asked of the datacentres themselves, so `available` here is an
-            // answer and not a default.
-            availabilityKnown: true,
-            deprecated: !!loc.deprecation,
-          }));
-
-          return {
-            ...nodeSize,
-            availability,
-          };
-        });
+        const byId = new Map(
+          serverTypes.map((type) => [String(type.id), type]),
+        );
+        nodeSizes = nodeSizes.map((nodeSize) => ({
+          ...nodeSize,
+          availability: serverTypeAvailability(
+            (byId.get(nodeSize.id) ?? {}) as Parameters<
+              typeof serverTypeAvailability
+            >[0],
+          ),
+        }));
       }
 
       // Sort by price (ascending, using first location's hourly gross price)
@@ -1189,48 +1172,6 @@ export class HetznerProviderService implements ICloudProvider {
   > {
     const serverTypesApi = await this.createServerTypesApi();
     return allServerTypes(serverTypesApi);
-  }
-
-  /**
-   * Get datacenter availability from Hetzner
-   * Returns a map of location name to Set of available server type IDs
-   */
-  private async getDatacenterAvailability(): Promise<Map<string, Set<number>>> {
-    this.logger.log('Fetching datacenter availability from Hetzner API');
-
-    try {
-      const datacenterApi = await this.createDataCentersApi();
-      const response = await datacenterApi.listDatacenters();
-
-      // Build a map: location name -> Set of available server type IDs
-      const availabilityMap = new Map<string, Set<number>>();
-
-      response.data.datacenters.forEach((dc) => {
-        const locationName = dc.location.name;
-
-        if (!availabilityMap.has(locationName)) {
-          availabilityMap.set(locationName, new Set());
-        }
-
-        // Add all available server type IDs for this location
-        dc.server_types.available.forEach((typeId) => {
-          availabilityMap.get(locationName).add(typeId);
-        });
-      });
-
-      this.logger.log(
-        `Fetched availability for ${availabilityMap.size} locations from ${response.data.datacenters.length} datacenters`,
-      );
-
-      return availabilityMap;
-    } catch (error) {
-      this.logger.error(
-        `Failed to fetch datacenter availability: ${this.describeError(error)}`,
-      );
-      throw new Error(
-        `Failed to fetch datacenter availability: ${error.message}`,
-      );
-    }
   }
 
   /**
