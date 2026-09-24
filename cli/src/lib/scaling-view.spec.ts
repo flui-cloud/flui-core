@@ -89,6 +89,7 @@ const group = (
     },
   ],
   requirement: null,
+  purchaseHeld: null,
   ...over,
 });
 

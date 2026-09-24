@@ -119,6 +119,16 @@ export default class ScalingGet extends Command {
     console.log(`  ${'limits'.padEnd(11)}${this.limitsLine(group)}`);
     console.log(`  ${'provision'.padEnd(11)}${group.provision}`);
     this.printActuation(group);
+    if (group.purchaseHeld) {
+      console.log(
+        `  ${'held'.padEnd(11)}${chalk.yellow('buys nothing more')} — the purchase of ${new Date(group.purchaseHeld.failedAt).toLocaleString()} failed${group.purchaseHeld.error ? `: ${group.purchaseHeld.error}` : ''}`,
+      );
+      console.log(
+        chalk.dim(
+          `  ${''.padEnd(11)}Once the cause is fixed: flui scaling retry ${group.name}`,
+        ),
+      );
+    }
 
     if (group.requirement) {
       console.log(

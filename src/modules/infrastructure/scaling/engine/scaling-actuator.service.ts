@@ -1,6 +1,6 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { In, Not, Repository } from 'typeorm';
+import { In, Repository } from 'typeorm';
 import {
   ClusterEntity,
   ClusterStatus,
@@ -20,6 +20,7 @@ import { ScalingGroupEntity } from '../entities/scaling-group.entity';
 import { ScalingGroupService } from '../services/scaling-group.service';
 import { ScalingAssessment } from './scaling-engine.service';
 import { ActuationFacts, ActuationVerdict, mayAct } from './actuation.core';
+import { purchaseHold } from './purchase-hold';
 
 /** What acting changed about the decision that was going to be written. */
 export interface Actuation {
@@ -163,7 +164,10 @@ export class ScalingActuatorService implements OnModuleInit {
       clusterReady: cluster.status === ClusterStatus.READY,
       monthlyCap: group.maxMonthlyCost,
       purchaseInFlight: await this.inFlight(cluster.id),
-      failedPurchase: await this.failedPurchase(cluster.id, group.updatedAt),
+      failedPurchase: await this.failedPurchase(
+        cluster.id,
+        group.purchaseRetryAt,
+      ),
       minutesSinceAdded: await this.minutesSinceAdded(cluster.id),
       clusterRegion: cluster.region ?? null,
       intent,
@@ -293,22 +297,13 @@ export class ScalingActuatorService implements OnModuleInit {
 
   private async failedPurchase(
     clusterId: string,
-    groupSavedAt: Date | undefined,
+    retryAskedAt: Date | null | undefined,
   ): Promise<ActuationFacts['failedPurchase']> {
-    const last = await this.operations.findOne({
-      where: {
-        resourceId: clusterId,
-        operationType: OperationType.ADD_WORKER,
-        status: Not(In(IN_FLIGHT)),
-      },
-      order: { createdAt: 'DESC' },
-    });
-    if (last?.status !== OperationStatus.FAILED) return null;
-    const at = new Date(last.updatedAt ?? last.createdAt);
-    if (groupSavedAt && new Date(groupSavedAt) > at) return null;
+    const hold = await purchaseHold(this.operations, clusterId, retryAskedAt);
+    if (!hold) return null;
     return {
-      minutesAgo: Math.floor((Date.now() - at.getTime()) / 60_000),
-      error: last.errorMessage ?? null,
+      minutesAgo: Math.floor((Date.now() - hold.failedAt.getTime()) / 60_000),
+      error: hold.error,
     };
   }
 

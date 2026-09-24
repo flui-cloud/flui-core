@@ -17,6 +17,8 @@ import {
   scalingCapabilityOf,
 } from '../scaling-capability';
 import { StandingOrderConfig } from '../scaling.core';
+import { PurchaseHold, purchaseHold } from '../engine/purchase-hold';
+import { InfrastructureOperationEntity } from '../../servers/entities/infrastructure-operations.entity';
 import {
   EditScalingGroupDto,
   ScalingLimitsDto,
@@ -59,6 +61,8 @@ export class ScalingGroupService {
     @InjectRepository(VNetSubnetEntity)
     private readonly subnets: Repository<VNetSubnetEntity>,
     private readonly capabilities: CapabilitiesProviderFactory,
+    @InjectRepository(InfrastructureOperationEntity)
+    private readonly operations: Repository<InfrastructureOperationEntity>,
   ) {}
 
   capabilityOf(provider: string): ProviderScalingCapability {
@@ -115,9 +119,10 @@ export class ScalingGroupService {
       order: { createdAt: 'ASC' },
     });
     const drains = await Promise.all(rows.map((row) => this.lastDrain(row.id)));
+    const holds = await Promise.all(rows.map((row) => this.holdOf(row)));
     const buyable = await this.buyableFor(cluster);
     return rows.map((row, index) =>
-      this.toDto(row, cluster, drains[index], buyable),
+      this.toDto(row, cluster, drains[index], buyable, holds[index]),
     );
   }
 
@@ -129,6 +134,27 @@ export class ScalingGroupService {
       cluster,
       await this.lastDrain(group.id),
       await this.buyableFor(cluster),
+      await this.holdOf(group),
+    );
+  }
+
+  /**
+   * Lets a group buy again after a purchase failed. Only the timestamp moves:
+   * whether anything is bought is still the next pass's decision, inside the
+   * group's own bounds and ceiling.
+   */
+  async retryPurchase(id: string): Promise<ScalingGroupResponseDto> {
+    const group = await this.groupOrFail(id);
+    group.purchaseRetryAt = new Date();
+    await this.groups.save(group);
+    return this.get(id);
+  }
+
+  private holdOf(group: ScalingGroupEntity): Promise<PurchaseHold | null> {
+    return purchaseHold(
+      this.operations,
+      group.clusterId,
+      group.purchaseRetryAt,
     );
   }
 
@@ -215,7 +241,8 @@ export class ScalingGroupService {
     this.assertCoherent(group, capability, hasVnet(cluster), buyable);
     await this.assertNameFree(group.clusterId, group.name, group.id);
 
-    return this.toDto(await this.groups.save(group), cluster, null, buyable);
+    const saved = await this.groups.save(group);
+    return this.toDto(saved, cluster, null, buyable, await this.holdOf(saved));
   }
 
   /**
@@ -457,6 +484,7 @@ export class ScalingGroupService {
     cluster: ClusterEntity,
     drain: DrainCheck | null = null,
     buyableRegions: string[] | null = null,
+    hold: PurchaseHold | null = null,
   ): ScalingGroupResponseDto {
     return {
       id: group.id,
@@ -491,6 +519,9 @@ export class ScalingGroupService {
         drainable: order.kind === 'replace' ? drain : null,
       })),
       requirement: group.requirement ?? null,
+      purchaseHeld: hold
+        ? { failedAt: hold.failedAt.toISOString(), error: hold.error }
+        : null,
     };
   }
 }

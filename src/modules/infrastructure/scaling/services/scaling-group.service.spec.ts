@@ -97,6 +97,7 @@ interface Fakes {
   groups: { [K in keyof Repository<ScalingGroupEntity>]?: jest.Mock };
   decisions: { [K in keyof Repository<ScalingDecisionEntity>]?: jest.Mock };
   clusters: { findOne: jest.Mock };
+  operations: { findOne: jest.Mock };
   saved: () => ScalingGroupEntity;
 }
 
@@ -119,6 +120,7 @@ const make = (provider = 'hetzner', existing: unknown[] = []): Fakes => {
   const subnets = {
     findOne: jest.fn().mockResolvedValue({ networkZone: 'eu-central' }),
   };
+  const operations = { findOne: jest.fn().mockResolvedValue(null) };
 
   const factory = {
     isProviderSupported: (p: string) => p in DECLARED,
@@ -134,10 +136,12 @@ const make = (provider = 'hetzner', existing: unknown[] = []): Fakes => {
       clusters as unknown as Repository<ClusterEntity>,
       subnets as unknown as Repository<VNetSubnetEntity>,
       factory,
+      operations as never,
     ),
     groups,
     decisions,
     clusters,
+    operations,
     saved: () => groups.save.mock.calls[0][0] as ScalingGroupEntity,
   };
 };
@@ -777,5 +781,42 @@ describe('changing a group', () => {
     const dto = await service.update('g-1', { regions: [] });
     expect(dto.shapes).toEqual(['cx23']);
     expect(dto.limits.maxMonthlyCost).toBe(40);
+  });
+});
+
+describe('a group held back by a failed purchase', () => {
+  const failed = {
+    status: 'FAILED',
+    errorMessage: 'SSH key already exists',
+    createdAt: new Date('2026-09-24T12:28:00Z'),
+    updatedAt: new Date('2026-09-24T12:28:00Z'),
+  };
+
+  it('says so, with what failed, on every read of the group', async () => {
+    const f = make('hetzner');
+    f.groups.findOne!.mockResolvedValue({ id: 'g-1', clusterId: 'c-1' });
+    f.operations.findOne.mockResolvedValue(failed);
+
+    const dto = await f.service.get('g-1');
+
+    expect(dto.purchaseHeld).toEqual({
+      failedAt: '2026-09-24T12:28:00.000Z',
+      error: 'SSH key already exists',
+    });
+  });
+
+  it('lets go once a person asked it to try again, and buys nothing by itself', async () => {
+    const f = make('hetzner');
+    const row = { id: 'g-1', clusterId: 'c-1', purchaseRetryAt: null };
+    f.groups.findOne!.mockImplementation(async () => row);
+    f.groups.save!.mockImplementation(async (r: typeof row) =>
+      Object.assign(row, r),
+    );
+    f.operations.findOne.mockResolvedValue(failed);
+
+    const dto = await f.service.retryPurchase('g-1');
+
+    expect(row.purchaseRetryAt).toBeInstanceOf(Date);
+    expect(dto.purchaseHeld).toBeNull();
   });
 });

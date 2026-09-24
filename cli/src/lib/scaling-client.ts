@@ -176,6 +176,14 @@ export class ScalingClient {
     );
   }
 
+  /** Lets a group held back by a failed purchase buy again; buys nothing itself. */
+  retryPurchase(id: string): Promise<ScalingGroupResponseDto> {
+    return this.api.post<ScalingGroupResponseDto>(
+      `/infrastructure/scaling-groups/${id}/retry-purchase`,
+      {},
+    );
+  }
+
   /** The same engine the reconciler runs, asked on demand and spending nothing. */
   preview(id: string): Promise<ScalingPreviewDto> {
     return this.api.get<ScalingPreviewDto>(

@@ -133,6 +133,13 @@ export class ScalingGroupEntity {
   @Column({ type: 'jsonb', nullable: true })
   requirement: NodeRequirement | null;
 
+  /**
+   * When a person last asked this group to try buying again after a purchase
+   * failed. A failure older than this no longer holds purchases back.
+   */
+  @Column({ type: 'timestamptz', nullable: true })
+  purchaseRetryAt: Date | null;
+
   @CreateDateColumn({ type: 'timestamptz' })
   createdAt: Date;
 

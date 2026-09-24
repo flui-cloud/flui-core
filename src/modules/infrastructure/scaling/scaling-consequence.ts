@@ -131,3 +131,8 @@ export const SCALING_CONSEQUENCE =
   'the ceilings it names in nodes and in money; one set to decide writes down ' +
   'what it would have bought and stops. Where the provider has no create API ' +
   'at all, this is simply the figure an alarm quotes to a person.';
+
+export const RETRY_PURCHASE_CONSEQUENCE =
+  'The group may buy again from its next pass, inside the same node and ' +
+  'money ceilings. If the cause of the failure is still there, the next ' +
+  'purchase fails the same way and the group holds back again.';

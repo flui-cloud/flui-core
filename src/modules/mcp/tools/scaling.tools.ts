@@ -118,6 +118,7 @@ interface GroupDto extends ScalingGroupAuthorityFacts {
   acts?: ActuationDto;
   standingOrders: StandingOrderDto[];
   requirement: { cpu: string; memory: string } | null;
+  purchaseHeld?: { failedAt: string; error: string | null } | null;
 }
 
 interface DecisionDto {
@@ -298,6 +299,13 @@ function groupView(group: GroupDto): Record<string, unknown> {
     actsMeans: actuationNote(group.acts),
     standingOrders: (group.standingOrders ?? []).map(standingOrderView),
     requirement: group.requirement,
+    purchaseHeld: group.purchaseHeld ?? null,
+    ...(group.purchaseHeld
+      ? {
+          purchaseHeldMeans:
+            'A purchase failed and this group buys nothing more until someone asks it to try again with scaling_group_retry_purchase. Tell the user what failed first: retrying before the cause is fixed only fails again.',
+        }
+      : {}),
     authorises: authorisedBy(group),
   };
 }
@@ -722,6 +730,20 @@ export const SCALING_TOOLS: ToolDef[] = [
         note: d.note,
       };
     },
+  }),
+
+  defineTool({
+    name: 'scaling_group_retry_purchase',
+    routes: ['POST /infrastructure/scaling-groups/:id/retry-purchase'],
+    description:
+      'Let a scaling group buy again after a purchase failed. A failed purchase holds the group back — shown as `purchaseHeld` by scaling_group_get — so a failing one is not retried every minute, possibly leaving a server behind each time. Call this only once the user says the cause is fixed. It buys nothing by itself: the next pass may buy, inside the same bounds and ceiling.',
+    scope: MCP_SCOPE.INFRA_WRITE,
+    inputSchema: { groupId: z.string() },
+    run: (args, ctx) =>
+      ctx.api.post<GroupDto>(
+        `/infrastructure/scaling-groups/${enc(args.groupId)}/retry-purchase`,
+      ),
+    forModel: (data) => groupView(data as GroupDto),
   }),
 ];
 

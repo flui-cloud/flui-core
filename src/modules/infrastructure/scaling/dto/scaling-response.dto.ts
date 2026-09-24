@@ -169,6 +169,19 @@ export class ScalingActuationDto {
   says: string;
 }
 
+export class PurchaseHoldDto {
+  @ApiProperty({
+    description: 'When the purchase that holds buying back failed',
+  })
+  failedAt: string;
+
+  @ApiProperty({
+    nullable: true,
+    description: 'What the provider or Flui said',
+  })
+  error: string | null;
+}
+
 export class ScalingGroupResponseDto {
   @ApiProperty()
   id: string;
@@ -236,6 +249,14 @@ export class ScalingGroupResponseDto {
     description: 'What a machine must hold, where no catalogue names shapes',
   })
   requirement: NodeRequirementResponseDto | null;
+
+  @ApiProperty({
+    type: PurchaseHoldDto,
+    nullable: true,
+    description:
+      'Set while a failed purchase holds this group back: nothing more is bought until someone asks it to try again (POST /infrastructure/scaling-groups/:id/retry-purchase) or a later purchase goes through.',
+  })
+  purchaseHeld: PurchaseHoldDto | null;
 }
 
 export class ConsideredCandidateDto {

@@ -23,6 +23,7 @@ import { IAM_PERMISSION } from '../../iam/constants/iam-permissions';
 import { ActionCycle } from '../../action-cycle/action-cycle.decorator';
 import {
   SCALING_CONSEQUENCE,
+  RETRY_PURCHASE_CONSEQUENCE,
   scalingConsequenceClause,
 } from './scaling-consequence';
 import { ScalingGroupService } from './services/scaling-group.service';
@@ -223,6 +224,30 @@ export class ScalingController {
     @Body() dto: EditScalingGroupDto,
   ): Promise<ScalingGroupResponseDto> {
     return this.groups.update(id, dto);
+  }
+
+  @Post('scaling-groups/:id/retry-purchase')
+  @RequirePermission(IAM_PERMISSION.CLUSTER_MANAGE)
+  // It reopens spending, so it meets the same question as writing the group.
+  @ActionCycle({
+    action: 'POST /infrastructure/scaling-groups/:id/retry-purchase',
+    bind: ['id'],
+    sentence: 'let scaling group {id} buy again after a failed purchase',
+    consequence: RETRY_PURCHASE_CONSEQUENCE,
+  })
+  @HttpCode(200)
+  @ApiOperation({
+    summary: 'Let a scaling group buy again after a purchase failed',
+    description:
+      'A failed purchase holds the group back so a failing one is not retried every minute. Call this once the cause is fixed: the next pass may buy again, inside the same bounds and ceiling. Buys nothing by itself.',
+  })
+  @ApiParam({ name: 'id', description: GROUP_ID })
+  @ApiResponse({ status: 200, type: ScalingGroupResponseDto })
+  @ApiResponse(GROUP_MISSING)
+  async retryPurchase(
+    @Param('id') id: string,
+  ): Promise<ScalingGroupResponseDto> {
+    return this.groups.retryPurchase(id);
   }
 
   @Delete('scaling-groups/:id')

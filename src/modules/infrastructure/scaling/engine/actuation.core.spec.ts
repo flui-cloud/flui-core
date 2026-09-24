@@ -94,7 +94,7 @@ describe('the gate between deciding and acting', () => {
       refusal: 'last-purchase-failed',
     });
     expect(verdict.because).toContain('failed 2 minutes ago: no SSH key.');
-    expect(verdict.because).toContain('save this group again');
+    expect(verdict.because).toContain('ask this group to try again');
   });
 
   it('says when in words a person would use', () => {

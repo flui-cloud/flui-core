@@ -3183,6 +3183,9 @@ const MASK_EXEMPT: string[] = [
   'ScalingGroupResponseDto.provision', // modules/infrastructure/scaling/dto/scaling-response.dto.ts
   'ScalingGroupResponseDto.regions', // modules/infrastructure/scaling/dto/scaling-response.dto.ts
   'ScalingGroupResponseDto.requirement', // modules/infrastructure/scaling/dto/scaling-response.dto.ts
+  'ScalingGroupResponseDto.purchaseHeld', // modules/infrastructure/scaling/dto/scaling-response.dto.ts
+  'PurchaseHoldDto.failedAt', // modules/infrastructure/scaling/dto/scaling-response.dto.ts
+  'PurchaseHoldDto.error', // modules/infrastructure/scaling/dto/scaling-response.dto.ts
   'ScalingGroupResponseDto.settleSeconds', // modules/infrastructure/scaling/dto/scaling-response.dto.ts
   'ScalingGroupResponseDto.shapes', // modules/infrastructure/scaling/dto/scaling-response.dto.ts
   'ScalingGroupResponseDto.standingOrders', // modules/infrastructure/scaling/dto/scaling-response.dto.ts

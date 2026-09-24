@@ -43,9 +43,8 @@ export interface ActuationFacts {
   /** A machine already on its way. Nothing may be added while one is in flight. */
   purchaseInFlight: boolean;
   /**
-   * The last purchase on this cluster, when it failed and nobody has touched
-   * the group since. Null once a later purchase went through or the group was
-   * saved again.
+   * The last purchase on this cluster, when it failed and nobody has asked the
+   * group to try again since. Null once a later purchase went through.
    */
   failedPurchase: { minutesAgo: number; error: string | null } | null;
   /** Minutes since a node last joined this cluster, or null if none ever did. */
@@ -128,7 +127,7 @@ export function mayAct(facts: ActuationFacts): ActuationVerdict {
     const cause = error ? `: ${error.replace(/[.\s]*$/, '')}.` : '.';
     return no(
       'last-purchase-failed',
-      `The last machine Flui tried to add here failed ${when}${cause} Nothing more is bought until that is looked at — a failing purchase retried every minute can leave a server behind each time. Once the cause is fixed, save this group again or add a node by hand.`,
+      `The last machine Flui tried to add here failed ${when}${cause} Nothing more is bought until that is looked at — a failing purchase retried every minute can leave a server behind each time. Once the cause is fixed, ask this group to try again.`,
     );
   }
 

@@ -215,7 +215,7 @@ describe('the only thing with hands', () => {
     );
 
     const acted = await h.service.act(
-      group({ updatedAt: new Date(Date.now() - 3_600_000) }),
+      group({ purchaseRetryAt: new Date(Date.now() - 3_600_000) }),
       cluster,
       assessment(),
     );
@@ -225,7 +225,7 @@ describe('the only thing with hands', () => {
     expect(acted?.asks).toContain('ENOENT: private.key');
   });
 
-  it('buys again once the group was saved after the failure', async () => {
+  it('buys again once a person asked the group to try again', async () => {
     const h = harness();
     h.operations.findOne.mockImplementation(({ where }) =>
       Promise.resolve(
@@ -241,7 +241,7 @@ describe('the only thing with hands', () => {
     );
 
     const acted = await h.service.act(
-      group({ updatedAt: new Date() }),
+      group({ purchaseRetryAt: new Date() }),
       cluster,
       assessment(),
     );
