@@ -17,6 +17,9 @@ const OBSERVABLE_STATUSES = [
   ApplicationStatus.FAILED,
 ] as const;
 
+/** How long an app may read `updating` before an absent deploy is believed. */
+export const ORPHANED_UPDATE_AFTER_MINUTES = 10;
+
 @Injectable()
 export class ApplicationsRepository {
   constructor(
@@ -160,18 +163,19 @@ export class ApplicationsRepository {
    * stays `failed` long after it started serving.
    */
   async findObservable(): Promise<ApplicationEntity[]> {
-    return this.repository.find({
+    const observed = await this.repository.find({
       where: OBSERVABLE_STATUSES.map((status) => ({
         status,
         deletedAt: IsNull(),
       })),
     });
+    return [...observed, ...(await this.findOrphanedUpdates())];
   }
 
   async findObservableByCluster(
     clusterId: string,
   ): Promise<ApplicationEntity[]> {
-    return this.repository.find({
+    const observed = await this.repository.find({
       where: OBSERVABLE_STATUSES.map((status) => ({
         clusterId,
         status,
@@ -179,6 +183,37 @@ export class ApplicationsRepository {
       })),
       relations: ['appResources'],
     });
+    return [...observed, ...(await this.findOrphanedUpdates(clusterId))];
+  }
+
+  /**
+   * Apps that read `updating` with nothing updating them.
+   *
+   * `updating` is left out of the periodic check so a deploy in progress is
+   * never second-guessed. But a deploy that died half-way — the API restarted
+   * under it, its job was lost — leaves the word behind with no one left to
+   * change it, and until somebody opens the app the list says `updating` for
+   * ever. Once no operation on the app is in flight and the status has been
+   * still for a while, the cluster is asked like any other.
+   */
+  async findOrphanedUpdates(clusterId?: string): Promise<ApplicationEntity[]> {
+    const query = this.repository
+      .createQueryBuilder('app')
+      .leftJoinAndSelect('app.appResources', 'appResources')
+      .where('app.status = :updating', { updating: ApplicationStatus.UPDATING })
+      .andWhere('app.deletedAt IS NULL')
+      .andWhere(`app."updatedAt" < now() - make_interval(mins => :minutes)`, {
+        minutes: ORPHANED_UPDATE_AFTER_MINUTES,
+      })
+      .andWhere(
+        `NOT EXISTS (
+          SELECT 1 FROM infrastructure_operations op
+          WHERE op."resourceId" = app.id::text
+            AND op.status IN ('PENDING', 'IN_PROGRESS')
+        )`,
+      );
+    if (clusterId) query.andWhere('app.clusterId = :clusterId', { clusterId });
+    return query.getMany();
   }
 
   async findAllActive(): Promise<ApplicationEntity[]> {

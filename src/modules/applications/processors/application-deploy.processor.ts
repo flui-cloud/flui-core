@@ -752,9 +752,11 @@ export class ApplicationDeployProcessor {
     });
 
     await this.applicationsRepository.update(app.id, {
+      status: ApplicationStatus.RUNNING,
       currentRevisionId: revision.id,
       lastDeployedAt: new Date(),
       imageRef: app.imageRef,
+      observedImageRef: app.imageRef,
     });
 
     await this.updateOperation(
