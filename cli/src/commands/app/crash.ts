@@ -1,15 +1,19 @@
 import { Args, Command, Flags } from '@oclif/core';
 import chalk from 'chalk';
 import ora from 'ora';
-import { CliAppService } from '../../lib/services/cli-app.service';
+import {
+  CliAppService,
+  CrashDiagnosis,
+} from '../../lib/services/cli-app.service';
 import { resolveClusterRef } from '../../lib/resolve-cluster';
 
 export default class AppCrash extends Command {
   static readonly description =
-    'Show a single crash diagnosis. Use --dismiss to mark it resolved.';
+    'Show a single crash diagnosis. Use --apply to accept the change it proposes, or --dismiss to mark it resolved.';
 
   static readonly examples = [
     '<%= config.bin %> <%= command.id %> my-api 5d3f...',
+    '<%= config.bin %> <%= command.id %> my-api 5d3f... --apply',
     '<%= config.bin %> <%= command.id %> my-api 5d3f... --dismiss',
     '<%= config.bin %> <%= command.id %> my-api 5d3f... --output json',
   ];
@@ -31,6 +35,12 @@ export default class AppCrash extends Command {
       description:
         'Cluster name or ID (default: auto-detect when only one cluster exists)',
     }),
+    apply: Flags.boolean({
+      description:
+        'Apply the change this diagnosis proposes (a higher memory limit after an out-of-memory kill). The application restarts.',
+      default: false,
+      exclusive: ['dismiss'],
+    }),
     dismiss: Flags.boolean({
       description: 'Mark this crash diagnosis as resolved',
       default: false,
@@ -45,21 +55,28 @@ export default class AppCrash extends Command {
 
   async run(): Promise<void> {
     const { args, flags } = await this.parse(AppCrash);
-    const verb = flags.dismiss ? 'Dismissing' : 'Fetching';
+    const verb = verbOf(flags);
     const spinner = ora(`${verb} crash ${args.id}...`).start();
 
     try {
       const { id: clusterId } = await resolveClusterRef(flags.cluster);
       const service = await CliAppService.create(clusterId);
       const app = await service.getAppByName(args.name);
-      const d = flags.dismiss
-        ? await service.dismissCrash(app.id, args.id)
-        : await service.getCrash(app.id, args.id);
+      const d = await this.act(service, app.id, args.id, flags);
 
       spinner.stop();
 
       if (flags.output === 'json') {
         console.log(JSON.stringify(d, null, 2));
+        return;
+      }
+
+      if (flags.apply) {
+        console.log(
+          chalk.green(
+            `\n  ✔ Applied: ${d.suggestedAction?.message ?? 'the proposed change'} The application restarts with it.\n`,
+          ),
+        );
         return;
       }
 
@@ -89,14 +106,18 @@ export default class AppCrash extends Command {
         console.log(`  ${d.explanation}`);
       }
       const action = d.suggestedAction as {
-        summary?: string;
-        steps?: string[];
+        type?: string;
+        message?: string;
       } | null;
-      if (action?.summary) {
+      if (action?.message) {
         console.log(`\n  ${chalk.bold('Suggested action')}`);
-        console.log(`  ${action.summary}`);
-        if (Array.isArray(action.steps)) {
-          for (const step of action.steps) console.log(`    • ${step}`);
+        console.log(`  ${action.message}`);
+        if (action.type === 'resources' && !d.resolvedAt) {
+          console.log(
+            chalk.dim(
+              `  Apply it: flui app crash ${args.name} ${d.id} --apply`,
+            ),
+          );
         }
       }
       console.log('');
@@ -105,6 +126,17 @@ export default class AppCrash extends Command {
       console.log(chalk.red(`\n  Error: ${error.message}\n`));
       this.exit(1);
     }
+  }
+
+  private act(
+    service: CliAppService,
+    appId: string,
+    id: string,
+    flags: { apply: boolean; dismiss: boolean },
+  ): Promise<CrashDiagnosis> {
+    if (flags.apply) return service.applyCrash(appId, id);
+    if (flags.dismiss) return service.dismissCrash(appId, id);
+    return service.getCrash(appId, id);
   }
 
   private colorSeverity(severity: string): string {
@@ -117,4 +149,10 @@ export default class AppCrash extends Command {
         return chalk.dim(severity);
     }
   }
+}
+
+function verbOf(flags: { apply: boolean; dismiss: boolean }): string {
+  if (flags.apply) return 'Applying';
+  if (flags.dismiss) return 'Dismissing';
+  return 'Fetching';
 }

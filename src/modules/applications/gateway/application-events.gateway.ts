@@ -289,13 +289,6 @@ export class ApplicationEventsGateway implements OnGatewayInit {
     this.logger.warn(`[${appId}] crash diagnosis emitted`);
   }
 
-  emitAutoRemediation(appId: string, payload: unknown): void {
-    this.server
-      .to(`application:${appId}`)
-      .emit('application:auto-remediation', payload);
-    this.logger.log(`[${appId}] auto remediation emitted`);
-  }
-
   emitCrashResolved(appId: string, payload: unknown): void {
     this.server
       .to(`application:${appId}`)

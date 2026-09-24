@@ -122,6 +122,7 @@ const ARGS: Record<string, Record<string, unknown>> = {
   // in `self-service.tools.spec.ts`, where the history can be described.
   app_rollback: { id: 'a1', revisionNumber: 2 },
   app_set_resources: { id: 'a1', limits: { memory: '512Mi' } },
+  app_crash_apply: { id: 'a1', diagnosisId: 'd1' },
   app_reconcile: { id: 'a1' },
   app_metrics: { id: 'a1' },
   app_variables: { applicationId: 'a1' },

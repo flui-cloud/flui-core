@@ -126,6 +126,12 @@ export function podDebugView(data: unknown): unknown {
       message?: string;
       count?: number;
     }>;
+    latestDiagnosisId?: string | null;
+    latestSuggestion?: {
+      type?: string;
+      message?: string;
+      payload?: unknown;
+    } | null;
   }>;
   return pods.map((p) => ({
     pod: p.name,
@@ -145,6 +151,16 @@ export function podDebugView(data: unknown): unknown {
       message: e.message,
       count: e.count,
     })),
+    ...(p.latestSuggestion
+      ? {
+          suggestion: {
+            diagnosisId: p.latestDiagnosisId,
+            says: p.latestSuggestion.message,
+            appliable: p.latestSuggestion.type === 'resources',
+            change: p.latestSuggestion.payload,
+          },
+        }
+      : {}),
   }));
 }
 

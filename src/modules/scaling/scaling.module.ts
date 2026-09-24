@@ -14,13 +14,6 @@ import { DiagnosticEngineService } from './services/diagnostic-engine.service';
 import { DeploymentGuardService } from './services/deployment-guard.service';
 import { CrashRecoveryService } from './services/crash-recovery.service';
 import { EndpointDiagnosisService } from './services/endpoint-diagnosis.service';
-import {
-  ACTUATOR_DEPLOYER,
-  ACTUATOR_MEMORY_PARSER,
-  ActuatorService,
-} from './services/actuator.service';
-import { ApplicationDeployService } from '../applications/services/application-deploy.service';
-import { KubernetesService } from '../infrastructure/shared/services/kubernetes.service';
 import { PodDebugService } from './services/pod-debug.service';
 import { PodDebugController } from './controllers/pod-debug.controller';
 import { CrashDiagnosesController } from './controllers/crash-diagnoses.controller';
@@ -46,22 +39,12 @@ import { CrashDiagnosesController } from './controllers/crash-diagnoses.controll
     DeploymentGuardService,
     CrashRecoveryService,
     EndpointDiagnosisService,
-    ActuatorService,
     PodDebugService,
-    {
-      provide: ACTUATOR_DEPLOYER,
-      useExisting: ApplicationDeployService,
-    },
-    {
-      provide: ACTUATOR_MEMORY_PARSER,
-      useExisting: KubernetesService,
-    },
   ],
   exports: [
     DeploymentGuardService,
     CrashRecoveryService,
     EndpointDiagnosisService,
-    ActuatorService,
     PodDebugService,
   ],
 })

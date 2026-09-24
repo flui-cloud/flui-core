@@ -42,6 +42,7 @@ export default class AppCrashes extends Command {
       const { id: clusterId } = await resolveClusterRef(flags.cluster);
       const service = await CliAppService.create(clusterId);
       const app = await service.getAppByName(args.name);
+      this.appName = args.name;
       const diagnoses = await service.getCrashes(app.id);
 
       spinner.stop();
@@ -86,10 +87,13 @@ export default class AppCrashes extends Command {
     }
   }
 
+  private appName = '';
+
   private printActiveDiagnosis(d: any): void {
     const icon =
       d.severity === 'critical' ? chalk.red('✖') : chalk.yellow('⚠');
     console.log(`  ${icon} ${chalk.bold(d.title)}`);
+    console.log(`    ${chalk.dim('id:')}        ${d.id}`);
     console.log(`    ${chalk.dim('category:')}  ${d.category}`);
     console.log(`    ${chalk.dim('pod:')}       ${d.podName}`);
     console.log(
@@ -101,9 +105,16 @@ export default class AppCrashes extends Command {
     if (d.explanation) {
       console.log(`    ${chalk.dim('reason:')}    ${d.explanation}`);
     }
-    if (d.suggestedAction?.summary) {
+    if (d.suggestedAction?.message) {
       console.log(
-        `    ${chalk.dim('action:')}    ${d.suggestedAction.summary}`,
+        `    ${chalk.dim('action:')}    ${d.suggestedAction.message}`,
+      );
+    }
+    if (d.suggestedAction?.type === 'resources') {
+      console.log(
+        chalk.dim(
+          `    apply it:  flui app crash ${this.appName} ${d.id} --apply`,
+        ),
       );
     }
     console.log('');

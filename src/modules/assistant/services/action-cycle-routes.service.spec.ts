@@ -240,6 +240,7 @@ describe('the tools whose request the chat can show', () => {
    * counting them here rather than reasoning about them from the names.
    */
   const UNGOVERNED = [
+    'app_crash_apply',
     'app_install',
     'app_reconcile',
     'app_restart',

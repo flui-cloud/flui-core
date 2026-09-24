@@ -78,6 +78,7 @@ describe('permission groups — the taxonomy', () => {
       [
         'api_key_request',
         'app_alerts',
+        'app_crash_apply',
         'app_debug',
         'app_deploy',
         'app_deploy_from_yaml',

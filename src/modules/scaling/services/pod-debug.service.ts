@@ -146,6 +146,10 @@ export class PodDebugService {
         affinity: pod.spec?.affinity as unknown as Record<string, unknown>,
       },
       latestDiagnosisId: latestDiagnosis?.id ?? null,
+      latestSuggestion:
+        latestDiagnosis && !latestDiagnosis.resolvedAt
+          ? latestDiagnosis.suggestedAction
+          : null,
     };
   }
 

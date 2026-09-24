@@ -40,7 +40,11 @@ describe('DiagnosticEngineService', () => {
     const getPodLogs = jest.fn().mockResolvedValue('');
     const listEventsFor = jest.fn().mockResolvedValue([]);
     const service = new DiagnosticEngineService(
-      { getPodLogs, listEventsFor } as any,
+      {
+        getPodLogs,
+        listEventsFor,
+        parseMemory: (v: string) => Number.parseInt(v, 10),
+      } as any,
       { match: jest.fn().mockReturnValue(null) } as any,
     );
     return { service, getPodLogs, listEventsFor };
@@ -56,6 +60,23 @@ describe('DiagnosticEngineService', () => {
 
     expect(diagnosis?.category).toBe(CrashCategory.OOM_KILLED);
     expect(diagnosis?.evidence.lastTerminationReason).toBe('OOMKilled');
+  });
+
+  it('proposes doubling the limit the killed container ran with, and applies nothing', async () => {
+    const pod = buildPod({ reason: 'OOMKilled', exitCode: 137 } as any);
+    pod.spec = {
+      containers: [
+        { name: 'main', resources: { limits: { memory: '300Mi' } } },
+      ],
+    } as k8s.V1PodSpec;
+
+    const diagnosis = await analyze(pod);
+
+    expect(diagnosis?.suggestedAction).toEqual({
+      type: 'resources',
+      message: 'Raise the memory limit from 300Mi to 600Mi.',
+      payload: { limits: { memory: '600Mi' }, containerName: 'main' },
+    });
   });
 
   it('does not report OOM_KILLED for a bare exit code 137', async () => {

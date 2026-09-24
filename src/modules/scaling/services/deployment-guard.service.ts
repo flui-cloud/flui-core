@@ -11,12 +11,10 @@ import {
   DiagnosticEngineService,
   Diagnosis,
 } from './diagnostic-engine.service';
-import { ActuatorService } from './actuator.service';
 import { CrashRecoveryService } from './crash-recovery.service';
 import { CrashDiagnosesRepository } from '../repositories/crash-diagnoses.repository';
 import { CrashDiagnosisEntity } from '../entities/crash-diagnosis.entity';
 import { DiagnosisSeverity } from '../enums/diagnosis-severity.enum';
-import { CrashCategory } from '../enums/crash-category.enum';
 
 interface GuardHandle {
   controller: AbortController;
@@ -43,7 +41,6 @@ export class DeploymentGuardService {
     private readonly diagnosticEngine: DiagnosticEngineService,
     private readonly crashDiagnosesRepository: CrashDiagnosesRepository,
     private readonly eventsGateway: ApplicationEventsGateway,
-    private readonly actuatorService: ActuatorService,
     private readonly crashRecoveryService: CrashRecoveryService,
   ) {}
 
@@ -145,16 +142,6 @@ export class DeploymentGuardService {
             `Crash recovery watch failed for ${app.slug}: ${(err as Error).message}`,
           ),
         );
-
-      if (entity.category === CrashCategory.OOM_KILLED) {
-        void this.actuatorService
-          .tryAutoFix(entity, app)
-          .catch((err) =>
-            this.logger.error(
-              `Actuator auto-fix failed for ${app.slug}: ${(err as Error).message}`,
-            ),
-          );
-      }
 
       if (diagnosis.severity === DiagnosisSeverity.CRITICAL) {
         this.close(app.id);

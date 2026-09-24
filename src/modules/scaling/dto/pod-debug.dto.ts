@@ -1,5 +1,8 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { K8sEventSummary } from '../interfaces/crash-diagnosis.interface';
+import {
+  K8sEventSummary,
+  SuggestedAction,
+} from '../interfaces/crash-diagnosis.interface';
 
 export class PodResourceQuantityDto {
   cpu: string | null;
@@ -112,4 +115,10 @@ export class PodDebugInfoDto {
   scheduling: PodSchedulingDto;
   @ApiProperty({ nullable: true })
   latestDiagnosisId: string | null;
+  @ApiProperty({
+    nullable: true,
+    description:
+      'What the latest open diagnosis of this pod proposes. When its type is `resources`, the change can be applied with POST /applications/:id/crash-diagnoses/:diagnosisId/apply.',
+  })
+  latestSuggestion: SuggestedAction | null;
 }

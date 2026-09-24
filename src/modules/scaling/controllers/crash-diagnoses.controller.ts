@@ -1,4 +1,5 @@
 import {
+  ConflictException,
   Controller,
   Get,
   NotFoundException,
@@ -20,9 +21,13 @@ import { CrashDiagnosisDto } from '../dto/crash-diagnosis.dto';
 import { CrashDiagnosisEntity } from '../entities/crash-diagnosis.entity';
 import { CrashDiagnosisStatusFilter } from '../enums/crash-diagnosis-status-filter.enum';
 import { AppAccessGuard } from '../../applications/guards/app-access.guard';
+import { AppManagementService } from '../../applications/services/app-management.service';
+import { UpdateResourcesDto } from '../../applications/dto/app-management.dto';
+import { SuggestedActionType } from '../enums/suggested-action-type.enum';
 
 /**
- * The crash history of one application, and the gesture that dismisses an entry.
+ * The crash history of one application, and the gestures that dismiss an
+ * entry or accept what it proposes.
  *
  * Guarded on the class for the same reason as PodDebugController: every route
  * here names an application in the path, and the diagnosis text quotes the
@@ -41,6 +46,7 @@ import { AppAccessGuard } from '../../applications/guards/app-access.guard';
 export class CrashDiagnosesController {
   constructor(
     private readonly crashDiagnosesRepository: CrashDiagnosesRepository,
+    private readonly appManagement: AppManagementService,
   ) {}
 
   @Get()
@@ -94,6 +100,45 @@ export class CrashDiagnosesController {
     if (entry?.applicationId !== applicationId) {
       throw new NotFoundException(`Crash diagnosis ${id} not found`);
     }
+    await this.crashDiagnosesRepository.markResolved(id);
+    const updated = await this.crashDiagnosesRepository.findById(id);
+    return this.toDto(updated);
+  }
+
+  /**
+   * Accept what a diagnosis proposes. Nothing proposed here is ever applied
+   * without this call: the values are the ones the diagnosis already shows, and
+   * they go through the same change as editing the resources by hand.
+   */
+  @Post(':diagnosisId/apply')
+  @ApiOperation({
+    summary: 'Apply the change a crash diagnosis proposes',
+    description:
+      'Applies the resource change a diagnosis proposes (today: a higher memory limit after an out-of-memory kill) and marks the diagnosis resolved. Refused when the diagnosis proposes nothing Flui can apply, or was already resolved.',
+  })
+  async apply(
+    @Param('id') applicationId: string,
+    @Param('diagnosisId') id: string,
+  ): Promise<CrashDiagnosisDto> {
+    const entry = await this.crashDiagnosesRepository.findById(id);
+    if (entry?.applicationId !== applicationId) {
+      throw new NotFoundException(`Crash diagnosis ${id} not found`);
+    }
+    if (entry.resolvedAt) {
+      throw new ConflictException(
+        'This diagnosis is already resolved; there is nothing left to apply.',
+      );
+    }
+    const action = entry.suggestedAction;
+    if (action?.type !== SuggestedActionType.RESOURCES || !action.payload) {
+      throw new ConflictException(
+        'This diagnosis proposes nothing Flui can apply. Its suggested action says what to do by hand.',
+      );
+    }
+    await this.appManagement.updateResources(
+      applicationId,
+      action.payload as UpdateResourcesDto,
+    );
     await this.crashDiagnosesRepository.markResolved(id);
     const updated = await this.crashDiagnosesRepository.findById(id);
     return this.toDto(updated);

@@ -43,7 +43,8 @@ import {
  *
  * Three intents, in the order somebody meets them:
  *
- *  - **put it back** — `app_rollback`, `app_set_resources`, `app_reconcile`;
+ *  - **put it back** — `app_rollback`, `app_set_resources`, `app_crash_apply`,
+ *    `app_reconcile`;
  *  - **see that it worked** — `app_metrics`;
  *  - **know your own edge** — `app_variables`, `app_variable_set` (the
  *    non-secret half only), and `my_permissions`.
@@ -162,7 +163,7 @@ export const SELF_SERVICE_TOOLS: ToolDef[] = [
     name: 'app_set_resources',
     routes: ['PATCH /applications/:id/resources'],
     description:
-      'Change how much CPU and memory an application may use. This is the cure for the OOMKilled that app_debug reports: raise the memory LIMIT, because a container is killed for crossing its limit, never for crossing its request — the request only reserves room on a node. Quantities are Kubernetes ones: cpu as cores ("1", "0.5") or millicores ("500m"), memory as "256Mi", "1Gi". Only what you pass is changed; anything left out keeps its current value. The pods are replaced to apply it, so the application restarts.',
+      'Change how much CPU and memory an application may use. This is the cure for the OOMKilled that app_debug reports — where app_debug already carries an appliable suggestion, app_crash_apply applies exactly that. Raise the memory LIMIT, because a container is killed for crossing its limit, never for crossing its request — the request only reserves room on a node. Quantities are Kubernetes ones: cpu as cores ("1", "0.5") or millicores ("500m"), memory as "256Mi", "1Gi". Only what you pass is changed; anything left out keeps its current value. The pods are replaced to apply it, so the application restarts.',
     scope: MCP_SCOPE.APP_WRITE,
     inputSchema: {
       id: z.string(),
@@ -192,6 +193,22 @@ export const SELF_SERVICE_TOOLS: ToolDef[] = [
       });
     },
     forModel: containersView,
+  }),
+
+  defineTool({
+    name: 'app_crash_apply',
+    routes: ['POST /applications/:id/crash-diagnoses/:diagnosisId/apply'],
+    description:
+      'Accept the change a crash diagnosis proposes — today, a higher memory limit after an out-of-memory kill. app_debug shows the proposal as `suggestion`, with its diagnosisId and whether it is appliable; nothing is ever raised until this is called. Only the limit changes, not the memory reserved on a machine. The pods are replaced to apply it, so the application restarts, and the diagnosis is marked resolved. Refused when the diagnosis proposes nothing appliable or is already resolved.',
+    scope: MCP_SCOPE.APP_WRITE,
+    inputSchema: {
+      id: z.string(),
+      diagnosisId: z.string(),
+    },
+    run: (args, ctx) =>
+      ctx.api.post(
+        `/applications/${enc(args.id)}/crash-diagnoses/${enc(args.diagnosisId)}/apply`,
+      ),
   }),
 
   defineTool({

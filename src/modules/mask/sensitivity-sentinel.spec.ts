@@ -2664,6 +2664,7 @@ const MASK_EXEMPT: string[] = [
   'PodDebugInfoDto.hostIP', // modules/scaling/dto/pod-debug.dto.ts
   'PodDebugInfoDto.labels', // modules/scaling/dto/pod-debug.dto.ts
   'PodDebugInfoDto.latestDiagnosisId', // modules/scaling/dto/pod-debug.dto.ts
+  'PodDebugInfoDto.latestSuggestion', // modules/scaling/dto/pod-debug.dto.ts
   'PodDebugInfoDto.name', // modules/scaling/dto/pod-debug.dto.ts
   'PodDebugInfoDto.namespace', // modules/scaling/dto/pod-debug.dto.ts
   'PodDebugInfoDto.nodeName', // modules/scaling/dto/pod-debug.dto.ts

@@ -605,6 +605,26 @@ export class CliAppService {
     );
   }
 
+  async applyCrash(appId: string, id: string): Promise<CrashDiagnosis> {
+    return this.apiClient.post<CrashDiagnosis>(
+      `/applications/${appId}/crash-diagnoses/${id}/apply`,
+    );
+  }
+
+  async setResources(
+    appId: string,
+    change: {
+      requests?: { cpu?: string; memory?: string };
+      limits?: { cpu?: string; memory?: string };
+      containerName?: string;
+    },
+  ): Promise<AppRuntime> {
+    return this.apiClient.patch<AppRuntime>(
+      `/applications/${appId}/resources`,
+      change,
+    );
+  }
+
   async getMetrics(appId: string): Promise<AppMetricsResponse> {
     return this.apiClient.get<AppMetricsResponse>(
       `/observability/applications/${appId}/metrics`,

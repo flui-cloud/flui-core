@@ -84,11 +84,4 @@ export class CrashDiagnosesRepository {
     const result = await qb.execute();
     return result.affected ?? 0;
   }
-
-  async updateSuggestedAction(
-    id: string,
-    suggestedAction: CrashDiagnosisEntity['suggestedAction'],
-  ): Promise<void> {
-    await this.repo.update(id, { suggestedAction });
-  }
 }

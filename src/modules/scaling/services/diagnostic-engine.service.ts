@@ -3,6 +3,7 @@ import * as k8s from '@kubernetes/client-node';
 import { ApplicationEntity } from '../../applications/entities/application.entity';
 import { KubernetesService } from '../../infrastructure/shared/services/kubernetes.service';
 import { CrashPatternMatcherService } from './crash-pattern-matcher.service';
+import { memoryRaise } from './memory-raise.core';
 import { CrashCategory } from '../enums/crash-category.enum';
 import { DiagnosisSeverity } from '../enums/diagnosis-severity.enum';
 import { SuggestedActionType } from '../enums/suggested-action-type.enum';
@@ -60,7 +61,7 @@ export class DiagnosticEngineService {
 
     const containerStatuses = pod.status?.containerStatuses ?? [];
     for (const cs of containerStatuses) {
-      const oom = this.checkOomKilled(cs);
+      const oom = this.checkOomKilled(cs, pod);
       if (oom) return this.finalize(podName, cs.name, oom, pod);
 
       const configError = this.checkCreateContainerConfigError(cs);
@@ -111,11 +112,14 @@ export class DiagnosticEngineService {
     return null;
   }
 
-  private checkOomKilled(cs: k8s.V1ContainerStatus): PartialDiagnosis | null {
+  private checkOomKilled(
+    cs: k8s.V1ContainerStatus,
+    pod: k8s.V1Pod,
+  ): PartialDiagnosis | null {
     const terminated = cs.state?.terminated ?? null;
     // Only the kernel's own verdict counts. Exit code 137 alone is any SIGKILL
     // (most often a container that outlived its termination grace period during
-    // a rollout) and misreading it as OOM makes the actuator inflate memory.
+    // a rollout) and misreading it as OOM proposes memory nobody needs.
     if (terminated?.reason !== 'OOMKilled') return null;
 
     return {
@@ -129,12 +133,16 @@ export class DiagnosticEngineService {
         lastTerminationReason: terminated.reason,
       },
       patternMatchedKey: null,
-      suggestedAction: {
-        type: SuggestedActionType.MANUAL,
-        message:
-          'Increase the application memory limit. Automatic fix will be available in a future release.',
-      },
+      suggestedAction: memoryRaise(this.memoryLimitMi(pod, cs.name), cs.name),
     };
+  }
+
+  private memoryLimitMi(pod: k8s.V1Pod, containerName: string): number | null {
+    const container = pod.spec?.containers?.find(
+      (c) => c.name === containerName,
+    );
+    const limit = container?.resources?.limits?.['memory'];
+    return limit ? this.kubernetesService.parseMemory(limit) : null;
   }
 
   private checkCreateContainerConfigError(
