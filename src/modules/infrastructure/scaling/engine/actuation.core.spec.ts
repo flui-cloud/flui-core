@@ -32,6 +32,7 @@ const facts = (over: Partial<ActuationFacts> = {}): ActuationFacts => ({
   provision: 'automatic',
   clusterReady: true,
   purchaseInFlight: false,
+  failedPurchase: null,
   minutesSinceAdded: null,
   clusterRegion: 'fsn1',
   monthlyCap: 40,
@@ -82,6 +83,28 @@ describe('the gate between deciding and acting', () => {
     expect(verdict.act).toBe(false);
     expect(verdict.because).toContain('about to be a different size');
     expect(verdict.because).not.toContain('is bought');
+  });
+
+  it('buys nothing more after a purchase failed, and says what failed', () => {
+    const verdict = mayAct(
+      facts({ failedPurchase: { minutesAgo: 2, error: 'no SSH key' } }),
+    );
+    expect(verdict).toMatchObject({
+      act: false,
+      refusal: 'last-purchase-failed',
+    });
+    expect(verdict.because).toContain('failed 2 minutes ago: no SSH key');
+    expect(verdict.because).toContain('save this group again');
+  });
+
+  it('still gives back after a purchase failed — a removal buys nothing', () => {
+    const verdict = mayAct(
+      facts({
+        intent: remove(),
+        failedPurchase: { minutesAgo: 2, error: null },
+      }),
+    );
+    expect(verdict.act).toBe(true);
   });
 
   it('gives nothing back within the pause after a node has joined', () => {

@@ -199,6 +199,57 @@ describe('the only thing with hands', () => {
     expect(acted?.why).toContain('already on its way');
   });
 
+  it('raises an alarm instead of retrying a purchase that failed', async () => {
+    const h = harness();
+    h.operations.findOne.mockImplementation(({ where }) =>
+      Promise.resolve(
+        typeof where.status === 'object'
+          ? {
+              status: 'FAILED',
+              errorMessage: 'ENOENT: private.key',
+              createdAt: new Date(Date.now() - 120_000),
+              updatedAt: new Date(Date.now() - 120_000),
+            }
+          : null,
+      ),
+    );
+
+    const acted = await h.service.act(
+      group({ updatedAt: new Date(Date.now() - 3_600_000) }),
+      cluster,
+      assessment(),
+    );
+
+    expect(h.clusters.addWorkers).not.toHaveBeenCalled();
+    expect(acted).toMatchObject({ outcome: 'alerted', did: 'Bought nothing.' });
+    expect(acted?.asks).toContain('ENOENT: private.key');
+  });
+
+  it('buys again once the group was saved after the failure', async () => {
+    const h = harness();
+    h.operations.findOne.mockImplementation(({ where }) =>
+      Promise.resolve(
+        typeof where.status === 'object'
+          ? {
+              status: 'FAILED',
+              errorMessage: 'ENOENT: private.key',
+              createdAt: new Date(Date.now() - 120_000),
+              updatedAt: new Date(Date.now() - 120_000),
+            }
+          : null,
+      ),
+    );
+
+    const acted = await h.service.act(
+      group({ updatedAt: new Date() }),
+      cluster,
+      assessment(),
+    );
+
+    expect(h.clusters.addWorkers).toHaveBeenCalled();
+    expect(acted?.outcome).toBe('added');
+  });
+
   it('removes the node a decision named', async () => {
     const h = harness();
 

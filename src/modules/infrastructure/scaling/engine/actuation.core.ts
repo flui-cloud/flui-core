@@ -22,6 +22,7 @@ export type ActuationRefusal =
   | 'unpriced-purchase'
   | 'outside-the-network'
   | 'purchase-in-flight'
+  | 'last-purchase-failed'
   | 'just-added'
   | 'cluster-not-ready';
 
@@ -41,6 +42,12 @@ export interface ActuationFacts {
   clusterReady: boolean;
   /** A machine already on its way. Nothing may be added while one is in flight. */
   purchaseInFlight: boolean;
+  /**
+   * The last purchase on this cluster, when it failed and nobody has touched
+   * the group since. Null once a later purchase went through or the group was
+   * saved again.
+   */
+  failedPurchase: { minutesAgo: number; error: string | null } | null;
   /** Minutes since a node last joined this cluster, or null if none ever did. */
   minutesSinceAdded: number | null;
   clusterRegion: string | null;
@@ -106,6 +113,17 @@ export function mayAct(facts: ActuationFacts): ActuationVerdict {
       intent.kind === 'remove'
         ? 'A machine is on its way to this cluster, so the fleet is about to be a different size. Nothing is given back until it has joined or failed — a count that is about to change is not a count to act on.'
         : 'A machine is already on its way to this cluster. Nothing else is bought until it has joined or failed — an app stays stuck for the whole of a provisioning, and a loop that did not wait would buy one node a minute for it.',
+    );
+  }
+
+  // A purchase that failed is no longer in flight, so without this the next
+  // pass buys again — once a minute, for as long as the cause lasts. Where the
+  // failure comes after the server exists, every retry leaves one behind.
+  if (intent.kind !== 'remove' && facts.failedPurchase) {
+    const { minutesAgo, error } = facts.failedPurchase;
+    return no(
+      'last-purchase-failed',
+      `The last machine Flui tried to add here failed ${minutesAgo} minutes ago${error ? `: ${error}` : '.'} Nothing more is bought until that is looked at — a failing purchase retried every minute can leave a server behind each time. Once the cause is fixed, save this group again or add a node by hand.`,
     );
   }
 

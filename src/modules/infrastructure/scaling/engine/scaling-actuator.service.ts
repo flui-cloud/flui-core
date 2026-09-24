@@ -1,6 +1,6 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { In, Repository } from 'typeorm';
+import { In, Not, Repository } from 'typeorm';
 import {
   ClusterEntity,
   ClusterStatus,
@@ -19,7 +19,7 @@ import { AutoscaleReconcilerRegistry } from '../../clusters/services/autoscale-r
 import { ScalingGroupEntity } from '../entities/scaling-group.entity';
 import { ScalingGroupService } from '../services/scaling-group.service';
 import { ScalingAssessment } from './scaling-engine.service';
-import { ActuationVerdict, mayAct } from './actuation.core';
+import { ActuationFacts, ActuationVerdict, mayAct } from './actuation.core';
 
 /** What acting changed about the decision that was going to be written. */
 export interface Actuation {
@@ -163,6 +163,7 @@ export class ScalingActuatorService implements OnModuleInit {
       clusterReady: cluster.status === ClusterStatus.READY,
       monthlyCap: group.maxMonthlyCost,
       purchaseInFlight: await this.inFlight(cluster.id),
+      failedPurchase: await this.failedPurchase(cluster.id, group.updatedAt),
       minutesSinceAdded: await this.minutesSinceAdded(cluster.id),
       clusterRegion: cluster.region ?? null,
       intent,
@@ -214,6 +215,16 @@ export class ScalingActuatorService implements OnModuleInit {
     // machine and its price are already chosen and something is waiting on the
     // answer. Only `alerted` carries an ask, so this is the outcome that
     // reaches a person rather than sitting in the log.
+    if (verdict.refusal === 'last-purchase-failed') {
+      return {
+        outcome: 'alerted',
+        did: 'Bought nothing.',
+        why: verdict.because,
+        asks: verdict.because,
+        operationId: null,
+      };
+    }
+
     if (
       verdict.refusal === 'group-is-manual' &&
       assessment.force === 'urgency'
@@ -250,7 +261,7 @@ export class ScalingActuatorService implements OnModuleInit {
     );
     return {
       outcome: 'added',
-      did: `Bought a ${shape ?? cluster.nodeSize} in ${cluster.region} and set it to join.`,
+      did: `Ordered a ${shape ?? cluster.nodeSize} in ${cluster.region}; it joins once provisioned.`,
       why: `${assessment.did} ${verdict.because}`,
       asks: null,
       operationId: operation.id,
@@ -280,13 +291,27 @@ export class ScalingActuatorService implements OnModuleInit {
     };
   }
 
-  /**
-   * A machine on its way is the whole reason a loop needs a memory.
-   *
-   * A pod stays unplaceable for every minute a node takes to provision, so a
-   * pass that only looked at the fleet would buy another one on each tick and
-   * still be buying when the first arrived.
-   */
+  private async failedPurchase(
+    clusterId: string,
+    groupSavedAt: Date | undefined,
+  ): Promise<ActuationFacts['failedPurchase']> {
+    const last = await this.operations.findOne({
+      where: {
+        resourceId: clusterId,
+        operationType: OperationType.ADD_WORKER,
+        status: Not(In(IN_FLIGHT)),
+      },
+      order: { createdAt: 'DESC' },
+    });
+    if (last?.status !== OperationStatus.FAILED) return null;
+    const at = new Date(last.updatedAt ?? last.createdAt);
+    if (groupSavedAt && new Date(groupSavedAt) > at) return null;
+    return {
+      minutesAgo: Math.floor((Date.now() - at.getTime()) / 60_000),
+      error: last.errorMessage ?? null,
+    };
+  }
+
   private async minutesSinceAdded(clusterId: string): Promise<number | null> {
     const last = await this.operations.findOne({
       where: {
@@ -301,6 +326,13 @@ export class ScalingActuatorService implements OnModuleInit {
     return Math.floor((Date.now() - new Date(at).getTime()) / 60_000);
   }
 
+  /**
+   * A machine on its way is the whole reason a loop needs a memory.
+   *
+   * A pod stays unplaceable for every minute a node takes to provision, so a
+   * pass that only looked at the fleet would buy another one on each tick and
+   * still be buying when the first arrived.
+   */
   private async inFlight(clusterId: string): Promise<boolean> {
     const count = await this.operations.count({
       where: {
