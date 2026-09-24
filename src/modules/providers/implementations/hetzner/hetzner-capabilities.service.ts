@@ -22,6 +22,7 @@ import {
   ServerTypesApi,
 } from 'src/modules/providers/implementations/hetzner/generated';
 import { getRegionCoordinates } from '../../data/region-coordinates';
+import { allServerTypes } from './all-server-types';
 import { macroRegionOf } from '@flui-cloud/infra';
 
 @Injectable()
@@ -86,15 +87,13 @@ export class HetznerCapabilitiesService
       });
 
       const serverTypesApi = new ServerTypesApi(configuration);
-      const response = await serverTypesApi.listServerTypes();
+      const serverTypes = await allServerTypes(serverTypesApi);
 
       this.logger.log(
-        `Fetched ${response.data.server_types.length} server types from Hetzner`,
+        `Fetched ${serverTypes.length} server types from Hetzner`,
       );
 
-      return this.mapHetznerServerTypesToInstanceTypes(
-        response.data.server_types,
-      );
+      return this.mapHetznerServerTypesToInstanceTypes(serverTypes);
     } catch (error) {
       this.logger.error(
         'Failed to fetch instance types from Hetzner API',

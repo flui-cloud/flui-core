@@ -37,6 +37,7 @@ import {
   CreateVolumeRequest,
 } from 'src/modules/providers/implementations/hetzner/generated';
 import { NodeSizeDto } from '../dto/node-size.dto';
+import { allServerTypes } from '../implementations/hetzner/all-server-types';
 import { PricingDto, PricingQueryDto } from '../dto/pricing.dto';
 import { NodeSizeMapper } from '../mappers/node-size.mapper';
 import { PricingMapper } from '../mappers/pricing.mapper';
@@ -1094,11 +1095,10 @@ export class HetznerProviderService implements ICloudProvider {
 
     try {
       const serverTypesApi = await this.createServerTypesApi();
-      const response = await serverTypesApi.listServerTypes();
+      const serverTypes = await allServerTypes(serverTypesApi);
 
-      let nodeSizes = this.nodeSizeMapper.mapHetznerServerTypesToDtos(
-        response.data.server_types,
-      );
+      let nodeSizes =
+        this.nodeSizeMapper.mapHetznerServerTypesToDtos(serverTypes);
 
       // Filter out ARM architecture servers
       nodeSizes = nodeSizes.filter(
@@ -1142,7 +1142,7 @@ export class HetznerProviderService implements ICloudProvider {
       });
 
       this.logger.log(
-        `Fetched ${response.data.server_types.length} node sizes, filtered to ${sortedNodeSizes.length} (excluding ARM), sorted by price`,
+        `Fetched ${serverTypes.length} node sizes, filtered to ${sortedNodeSizes.length} (excluding ARM), sorted by price`,
       );
 
       return sortedNodeSizes;
@@ -1188,8 +1188,7 @@ export class HetznerProviderService implements ICloudProvider {
     ListServerTypes200ResponseServerTypesInner[]
   > {
     const serverTypesApi = await this.createServerTypesApi();
-    const response = await serverTypesApi.listServerTypes();
-    return response.data.server_types;
+    return allServerTypes(serverTypesApi);
   }
 
   /**
