@@ -129,7 +129,7 @@ interface Harness {
   engine: ScalingEngineService;
   pods: { read: jest.Mock };
   nodes: { find: jest.Mock };
-  drain: { check: jest.Mock };
+  drain: { check: jest.Mock; roomElsewhere: jest.Mock };
 }
 
 function harness(
@@ -151,7 +151,17 @@ function harness(
       .mockResolvedValue(unreadCatalogue(capability.provider, 'unreachable')),
   };
   const facts = { read: jest.fn().mockResolvedValue({ shapes, read: true }) };
-  const drain = { check: jest.fn().mockResolvedValue(null) };
+  // Room by default, so the tests about what may be given back are about that;
+  // the ones about room set it themselves.
+  const drain = {
+    check: jest.fn().mockResolvedValue(null),
+    roomElsewhere: jest.fn().mockResolvedValue({
+      fits: true,
+      needs: { cpuMillicores: 0, memoryMi: 0 },
+      room: { cpuMillicores: 4000, memoryMi: 8192 },
+      stranded: [],
+    }),
+  };
 
   return {
     engine: new ScalingEngineService(
@@ -470,6 +480,85 @@ describe('one floor, counting the whole fleet', () => {
     );
 
     expect(assessment.intent).toMatchObject({ kind: 'remove' });
+  });
+});
+
+/**
+ * Above the target is not the same as spare. Under steady load a fleet that
+ * handed back every node it had just bought would buy it again on the next
+ * tick, and pay for each turn.
+ */
+describe('giving back only what the fleet can do without', () => {
+  const aboveTarget = () => {
+    const h = harness();
+    h.pods.read.mockResolvedValue(waiting({ count: 0, largestRequest: null }));
+    h.nodes.find.mockResolvedValue([master(), worker('worker-1')]);
+    h.drain.check.mockResolvedValue({ ok: true, blockers: [], cleared: [] });
+    return h;
+  };
+
+  it('keeps a node whose work would have nowhere else to run', async () => {
+    const h = aboveTarget();
+    h.drain.roomElsewhere.mockResolvedValue({
+      fits: false,
+      needs: { cpuMillicores: 3000, memoryMi: 512 },
+      room: { cpuMillicores: 2430, memoryMi: 5000 },
+      stranded: ['apps/heavy-1'],
+    });
+
+    const assessment = await h.engine.assess(
+      group({ minNodes: 1, desiredNodes: 1 }),
+      cluster({ minNodes: 1 }),
+    );
+
+    expect(assessment.intent).toBeNull();
+    expect(assessment.did).toBe('Kept worker-1.');
+    expect(assessment.why).toContain('apps/heavy-1 would have nowhere to run');
+  });
+
+  it('keeps it quietly — a node doing its job is not something to raise an alarm about', async () => {
+    const h = aboveTarget();
+    h.drain.roomElsewhere.mockResolvedValue({
+      fits: false,
+      needs: { cpuMillicores: 3000, memoryMi: 512 },
+      room: { cpuMillicores: 100, memoryMi: 100 },
+      stranded: ['apps/heavy-1'],
+    });
+
+    const assessment = await h.engine.assess(
+      group({ minNodes: 1, desiredNodes: 1 }),
+      cluster({ minNodes: 1 }),
+    );
+
+    expect(assessment.outcome).toBe('declined');
+    expect(assessment.asks).toBeNull();
+  });
+
+  it('removes nothing on silence when the room left cannot be read', async () => {
+    const h = aboveTarget();
+    h.drain.roomElsewhere.mockResolvedValue(null);
+
+    const assessment = await h.engine.assess(
+      group({ minNodes: 1, desiredNodes: 1 }),
+      cluster({ minNodes: 1 }),
+    );
+
+    expect(assessment.intent).toBeNull();
+    expect(assessment.why).toContain('Nothing is removed on silence');
+  });
+
+  it('says it checked, when it does give a node back', async () => {
+    const h = aboveTarget();
+
+    const assessment = await h.engine.assess(
+      group({ minNodes: 1, desiredNodes: 1 }),
+      cluster({ minNodes: 1 }),
+    );
+
+    expect(assessment.intent).toMatchObject({ kind: 'remove' });
+    expect(assessment.did).toContain(
+      'whose work fits on the machines that stay',
+    );
   });
 });
 

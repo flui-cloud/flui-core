@@ -85,7 +85,12 @@ function harness(
   capability: ProviderScalingCapability = HETZNER,
   inFlight = 0,
 ) {
-  const operations = { count: jest.fn().mockResolvedValue(inFlight) };
+  // No node has joined in these fixtures, so the pause after an addition never
+  // stands in the way of what each one is testing.
+  const operations = {
+    count: jest.fn().mockResolvedValue(inFlight),
+    findOne: jest.fn().mockResolvedValue(null),
+  };
   const groups = { count: jest.fn().mockResolvedValue(1) };
   const clusterRows = { findOne: jest.fn().mockResolvedValue(cluster) };
   const clusters = {

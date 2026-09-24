@@ -22,7 +22,18 @@ export type ActuationRefusal =
   | 'unpriced-purchase'
   | 'outside-the-network'
   | 'purchase-in-flight'
+  | 'just-added'
   | 'cluster-not-ready';
+
+/**
+ * How long a node is left alone after one has joined.
+ *
+ * Load that just outgrew the fleet rarely goes away within minutes, and a node
+ * handed back that soon is bought again at the next spike — each purchase
+ * billed as a fresh hour. The same pause the upstream cluster autoscaler takes
+ * after adding a node.
+ */
+export const HOLD_AFTER_ADD_MINUTES = 10;
 
 export interface ActuationFacts {
   canProvision: boolean;
@@ -30,6 +41,8 @@ export interface ActuationFacts {
   clusterReady: boolean;
   /** A machine already on its way. Nothing may be added while one is in flight. */
   purchaseInFlight: boolean;
+  /** Minutes since a node last joined this cluster, or null if none ever did. */
+  minutesSinceAdded: number | null;
   clusterRegion: string | null;
   /**
    * The group's own ceiling in money, or null where it set none.
@@ -93,6 +106,17 @@ export function mayAct(facts: ActuationFacts): ActuationVerdict {
       intent.kind === 'remove'
         ? 'A machine is on its way to this cluster, so the fleet is about to be a different size. Nothing is given back until it has joined or failed — a count that is about to change is not a count to act on.'
         : 'A machine is already on its way to this cluster. Nothing else is bought until it has joined or failed — an app stays stuck for the whole of a provisioning, and a loop that did not wait would buy one node a minute for it.',
+    );
+  }
+
+  if (
+    intent.kind === 'remove' &&
+    facts.minutesSinceAdded !== null &&
+    facts.minutesSinceAdded < HOLD_AFTER_ADD_MINUTES
+  ) {
+    return no(
+      'just-added',
+      `A node joined ${facts.minutesSinceAdded} minutes ago. Nothing is given back within ${HOLD_AFTER_ADD_MINUTES} minutes of a node joining — the load that called for it rarely leaves that fast, and giving it back only to buy it again is paid for twice.`,
     );
   }
 

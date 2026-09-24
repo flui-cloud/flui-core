@@ -135,6 +135,7 @@ export class UnschedulablePodsService {
   private unschedulableSince(pod: k8s.V1Pod): number | null | undefined {
     const condition = this.scheduledCondition(pod);
     if (condition?.reason !== 'Unschedulable') return undefined;
+    if (pinnedToAnotherMachine(condition.message)) return undefined;
     const at = condition.lastTransitionTime ?? pod.metadata?.creationTimestamp;
     if (!at) return null;
     const stamp = new Date(at).getTime();
@@ -152,47 +153,65 @@ export class UnschedulablePodsService {
     return this.scheduledCondition(pod)?.message ?? null;
   }
 
-  /**
-   * What the pod asks a node to hold. Init containers run one at a time and
-   * before the rest, so the pod needs the larger of the two totals, not their
-   * sum — the same arithmetic the scheduler does.
-   */
   private requestOf(pod: k8s.V1Pod): PendingPodRequest {
-    const sum = (containers: k8s.V1Container[]) =>
-      containers.reduce(
-        (total, container) => {
-          const requests = container.resources?.requests ?? {};
-          return {
-            cpuMillicores:
-              total.cpuMillicores +
-              this.kubernetesService.parseCpu(requests['cpu'] ?? '0'),
-            memoryMi:
-              total.memoryMi +
-              this.kubernetesService.parseMemory(requests['memory'] ?? '0'),
-          };
-        },
-        { cpuMillicores: 0, memoryMi: 0 },
-      );
+    return podRequest(pod, this.kubernetesService);
+  }
+}
 
-    const main = sum(pod.spec?.containers ?? []);
-    const init = (pod.spec?.initContainers ?? []).reduce(
-      (peak, container) => {
-        const one = sum([container]);
+/**
+ * What a pod asks a node to hold. Init containers run one at a time and before
+ * the rest, so the pod needs the larger of the two totals, not their sum — the
+ * same arithmetic the scheduler does. Shared by the side that buys and the
+ * side that gives back, so both weigh a pod the same way.
+ */
+export function podRequest(
+  pod: k8s.V1Pod,
+  parse: Pick<KubernetesService, 'parseCpu' | 'parseMemory'>,
+): PendingPodRequest {
+  const sum = (containers: k8s.V1Container[]) =>
+    containers.reduce(
+      (total, container) => {
+        const requests = container.resources?.requests ?? {};
         return {
-          cpuMillicores: Math.max(peak.cpuMillicores, one.cpuMillicores),
-          memoryMi: Math.max(peak.memoryMi, one.memoryMi),
+          cpuMillicores:
+            total.cpuMillicores + parse.parseCpu(requests['cpu'] ?? '0'),
+          memoryMi:
+            total.memoryMi + parse.parseMemory(requests['memory'] ?? '0'),
         };
       },
       { cpuMillicores: 0, memoryMi: 0 },
     );
 
-    return {
-      name: pod.metadata?.name ?? '',
-      namespace: pod.metadata?.namespace ?? '',
-      cpuMillicores: Math.max(main.cpuMillicores, init.cpuMillicores),
-      memoryMi: Math.max(main.memoryMi, init.memoryMi),
-    };
-  }
+  const main = sum(pod.spec?.containers ?? []);
+  const init = (pod.spec?.initContainers ?? []).reduce(
+    (peak, container) => {
+      const one = sum([container]);
+      return {
+        cpuMillicores: Math.max(peak.cpuMillicores, one.cpuMillicores),
+        memoryMi: Math.max(peak.memoryMi, one.memoryMi),
+      };
+    },
+    { cpuMillicores: 0, memoryMi: 0 },
+  );
+
+  return {
+    name: pod.metadata?.name ?? '',
+    namespace: pod.metadata?.namespace ?? '',
+    cpuMillicores: Math.max(main.cpuMillicores, init.cpuMillicores),
+    memoryMi: Math.max(main.memoryMi, init.memoryMi),
+  };
+}
+
+/**
+ * A pod whose volume lives on one machine can only ever run there, so another
+ * machine cannot help it and buying one would be paid for and left unused.
+ *
+ * Holds because every Flui storage class pins a volume by hostname; a class
+ * pinned by zone would need a different reading, since a new node in the same
+ * zone could take the pod.
+ */
+function pinnedToAnotherMachine(message: string | undefined): boolean {
+  return /volume node affinity conflict/i.test(message ?? '');
 }
 
 /**

@@ -1,5 +1,9 @@
 import { ScalingIntent } from '../scaling.core';
-import { ActuationFacts, mayAct } from './actuation.core';
+import {
+  ActuationFacts,
+  mayAct,
+  HOLD_AFTER_ADD_MINUTES,
+} from './actuation.core';
 
 const add = (over: Partial<ScalingIntent> = {}): ScalingIntent => ({
   kind: 'add',
@@ -28,6 +32,7 @@ const facts = (over: Partial<ActuationFacts> = {}): ActuationFacts => ({
   provision: 'automatic',
   clusterReady: true,
   purchaseInFlight: false,
+  minutesSinceAdded: null,
   clusterRegion: 'fsn1',
   monthlyCap: 40,
   intent: add(),
@@ -77,6 +82,26 @@ describe('the gate between deciding and acting', () => {
     expect(verdict.act).toBe(false);
     expect(verdict.because).toContain('about to be a different size');
     expect(verdict.because).not.toContain('is bought');
+  });
+
+  it('gives nothing back within the pause after a node has joined', () => {
+    const verdict = mayAct(facts({ intent: remove(), minutesSinceAdded: 3 }));
+    expect(verdict.act).toBe(false);
+    expect(verdict.refusal).toBe('just-added');
+    expect(verdict.because).toContain('3 minutes ago');
+  });
+
+  it('gives back once the pause has run out', () => {
+    const verdict = mayAct(
+      facts({ intent: remove(), minutesSinceAdded: HOLD_AFTER_ADD_MINUTES }),
+    );
+    expect(verdict.act).toBe(true);
+  });
+
+  /** The pause is about handing back, never about answering load. */
+  it('still buys straight after a node has joined, if more is waiting', () => {
+    const verdict = mayAct(facts({ intent: add(), minutesSinceAdded: 1 }));
+    expect(verdict.act).toBe(true);
   });
 
   it('will not attach a machine to a cluster that is not ready for one', () => {

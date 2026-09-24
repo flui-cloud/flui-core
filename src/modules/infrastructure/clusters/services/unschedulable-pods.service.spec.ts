@@ -154,6 +154,27 @@ describe('UnschedulablePodsService.summarise', () => {
     });
   });
 
+  /**
+   * The scheduler's own wording when the pod's volume lives on another machine.
+   * A new node could never take it, so it is not a reason to buy one.
+   */
+  it('does not count a pod held to the machine its volume lives on', () => {
+    const result = service.summarise(
+      [
+        pod({
+          name: 'db-0',
+          message:
+            '0/2 nodes are available: 1 Insufficient cpu, 1 node(s) had volume node affinity conflict.',
+        }),
+        pod({ name: 'api-1' }),
+      ],
+      NOW,
+    );
+
+    expect(result.count).toBe(1);
+    expect(result.largestRequest?.name).toBe('api-1');
+  });
+
   it("carries the scheduler's own account of the refusal", () => {
     const result = service.summarise(
       [pod({ message: '0/3 nodes are available: 3 Insufficient cpu.' })],

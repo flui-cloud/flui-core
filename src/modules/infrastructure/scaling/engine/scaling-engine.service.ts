@@ -40,6 +40,7 @@ import {
 } from './engine.core';
 import { ShapeFactsService } from './shape-facts.service';
 import { DrainCheck, drainSummary } from './drain.core';
+import { fitSummary } from './fit.core';
 import { DrainFeasibilityService } from './drain-feasibility.service';
 
 /** What one pass over one group concluded, and would have written down. */
@@ -541,11 +542,26 @@ export class ScalingEngineService {
       };
     }
 
+    // Above the target is not the same as spare. A node whose work would have
+    // nowhere else to run is kept, and quietly: it is doing its job, and the
+    // target is where the fleet rests once the load has gone.
+    const fit = await this.drain.roomElsewhere(cluster, node);
+    if (!fit) {
+      return words(
+        'Nothing.',
+        `The cluster could not be asked whether the work on ${candidate.name} would fit on the machines that stay. Nothing is removed on silence.`,
+        drain,
+      );
+    }
+    if (!fit.fits) {
+      return words(`Kept ${candidate.name}.`, fitSummary(fit), drain);
+    }
+
     return {
       force: 'opportunity',
       outcome: 'declined',
       saw,
-      did: `Would remove ${candidate.name}, which can be emptied, bringing the fleet to ${input.fleet.nodes - 1} against a target of ${group.desiredNodes}.`,
+      did: `Would remove ${candidate.name}, which can be emptied and whose work fits on the machines that stay, bringing the fleet to ${input.fleet.nodes - 1} against a target of ${group.desiredNodes}.`,
       why: notActed(input),
       asks: null,
       shape: node.serverType ?? null,

@@ -3,14 +3,20 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import * as k8s from '@kubernetes/client-node';
 import { ApplicationEntity } from '../../../applications/entities/application.entity';
-import { ClusterEntity } from '../../clusters/entities/cluster.entity';
+import {
+  ClusterEntity,
+  isControlClusterType,
+} from '../../clusters/entities/cluster.entity';
 import {
   ClusterNodeEntity,
   NodeType,
 } from '../../clusters/entities/cluster-node.entity';
 import { KubernetesService } from '../../shared/services/kubernetes.service';
 import { EncryptionService } from '../../../shared/encryption/services/encryption.service';
+import { podRequest } from '../../clusters/services/unschedulable-pods.service';
 import { DrainBudget, DrainCheck, DrainPod, checkDrain } from './drain.core';
+import { NODE_RESERVE } from './engine.core';
+import { FitCheck, MovingPod, NodeRoom, checkFit } from './fit.core';
 
 /**
  * Whether a node can be emptied, answered from the cluster itself.
@@ -80,6 +86,94 @@ export class DrainFeasibilityService {
     }
   }
 
+  /**
+   * Whether what runs on a node would still have somewhere to run without it.
+   *
+   * Null when the cluster could not be asked, and never a green light — the
+   * same rule as the drain check. What moves is what a drain would evict:
+   * pods that run on every machine and pods the machine placed itself go with
+   * it rather than elsewhere.
+   */
+  async roomElsewhere(
+    cluster: ClusterEntity,
+    node: ClusterNodeEntity,
+  ): Promise<FitCheck | null> {
+    if (!cluster.kubeconfigEncrypted) return null;
+
+    try {
+      const kubeconfig = this.encryption.decrypt(cluster.kubeconfigEncrypted);
+      const coreApi = this.kubernetes
+        .makeKubeConfig(kubeconfig)
+        .makeApiClient(k8s.CoreV1Api);
+
+      const [nodes, pods] = await Promise.all([
+        coreApi.listNode(),
+        coreApi.listPodForAllNamespaces({
+          fieldSelector: 'status.phase!=Succeeded,status.phase!=Failed',
+        }),
+      ]);
+
+      const others = (nodes.items ?? []).filter(
+        (item) => item.metadata?.name !== node.serverName,
+      );
+      // On a control cluster the master is kept free of apps while workers
+      // exist and opened up again when the last one leaves, so taking the last
+      // worker away is exactly what makes room on the master.
+      const reopensMaster =
+        isControlClusterType(cluster.clusterType) &&
+        others.length === 1 &&
+        isControlPlane(others[0]);
+
+      const requested = new Map<string, { cpu: number; memory: number }>();
+      const moving: MovingPod[] = [];
+      for (const pod of pods.items ?? []) {
+        const on = pod.spec?.nodeName;
+        if (!on) continue;
+        const ask = podRequest(pod, this.kubernetes);
+        if (on === node.serverName) {
+          if (!stays(pod)) {
+            moving.push({
+              name: `${ask.namespace}/${ask.name}`,
+              cpuMillicores: ask.cpuMillicores,
+              memoryMi: ask.memoryMi,
+            });
+          }
+          continue;
+        }
+        const sum = requested.get(on) ?? { cpu: 0, memory: 0 };
+        sum.cpu += ask.cpuMillicores;
+        sum.memory += ask.memoryMi;
+        requested.set(on, sum);
+      }
+
+      const rooms: NodeRoom[] = others
+        .filter((item) => takesWork(item, reopensMaster))
+        .map((item) => {
+          const name = item.metadata?.name ?? '';
+          const allocatable = item.status?.allocatable ?? {};
+          const used = requested.get(name) ?? { cpu: 0, memory: 0 };
+          return {
+            name,
+            cpuMillicores:
+              this.kubernetes.parseCpu(allocatable['cpu'] ?? '0') -
+              used.cpu -
+              NODE_RESERVE.cpuMillicores,
+            memoryMi:
+              this.kubernetes.parseMemory(allocatable['memory'] ?? '0') -
+              used.memory -
+              NODE_RESERVE.memoryMi,
+          };
+        });
+
+      return checkFit(moving, rooms);
+    } catch (err) {
+      this.logger.warn(
+        `Room elsewhere unavailable for ${node.serverName}: ${(err as Error).message}`,
+      );
+      return null;
+    }
+  }
+
   private async dedicatedApps(
     clusterId: string,
     node: ClusterNodeEntity,
@@ -95,6 +189,38 @@ export class DrainFeasibilityService {
     const rows = await this.applications.find({ where: where as never });
     return rows.map((row) => row.slug);
   }
+}
+
+/** Pods that run on every machine, or that the machine itself placed, go with it. */
+function stays(pod: k8s.V1Pod): boolean {
+  const owner = pod.metadata?.ownerReferences?.[0]?.kind;
+  const mirror = Boolean(
+    pod.metadata?.annotations?.['kubernetes.io/config.mirror'],
+  );
+  return owner === 'DaemonSet' || mirror;
+}
+
+function isControlPlane(node: k8s.V1Node): boolean {
+  const labels = node.metadata?.labels ?? {};
+  return (
+    'node-role.kubernetes.io/control-plane' in labels ||
+    'node-role.kubernetes.io/master' in labels
+  );
+}
+
+/**
+ * A machine that would take evicted work: ready, not cordoned, and not refusing
+ * new pods by taint. A taint is read as a refusal whatever it tolerates, which
+ * can keep a node that could have gone — the cheaper of the two mistakes.
+ */
+function takesWork(node: k8s.V1Node, reopensMaster: boolean): boolean {
+  if (node.spec?.unschedulable) return false;
+  const ready = (node.status?.conditions ?? []).find((c) => c.type === 'Ready');
+  if (ready?.status !== 'True') return false;
+  const refuses = (node.spec?.taints ?? []).some(
+    (taint) => taint.effect === 'NoSchedule' || taint.effect === 'NoExecute',
+  );
+  return !refuses || (reopensMaster && isControlPlane(node));
 }
 
 /** The claims whose volume lives on this machine and does not follow a pod. */

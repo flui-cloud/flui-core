@@ -163,6 +163,7 @@ export class ScalingActuatorService implements OnModuleInit {
       clusterReady: cluster.status === ClusterStatus.READY,
       monthlyCap: group.maxMonthlyCost,
       purchaseInFlight: await this.inFlight(cluster.id),
+      minutesSinceAdded: await this.minutesSinceAdded(cluster.id),
       clusterRegion: cluster.region ?? null,
       intent,
     });
@@ -286,6 +287,20 @@ export class ScalingActuatorService implements OnModuleInit {
    * pass that only looked at the fleet would buy another one on each tick and
    * still be buying when the first arrived.
    */
+  private async minutesSinceAdded(clusterId: string): Promise<number | null> {
+    const last = await this.operations.findOne({
+      where: {
+        resourceId: clusterId,
+        operationType: OperationType.ADD_WORKER,
+        status: OperationStatus.COMPLETED,
+      },
+      order: { completedAt: 'DESC' },
+    });
+    const at = last?.completedAt ?? last?.updatedAt;
+    if (!at) return null;
+    return Math.floor((Date.now() - new Date(at).getTime()) / 60_000);
+  }
+
   private async inFlight(clusterId: string): Promise<boolean> {
     const count = await this.operations.count({
       where: {
