@@ -4,7 +4,12 @@ import { CloudProvider } from '../../../providers/enums/cloud-provider.enum';
 import { NodeSizeDto } from '../../../providers/dto/node-size.dto';
 import { ShapeFact, ShapeFactsReading } from './engine.core';
 
-const HOLD_MS = 60 * 60 * 1000;
+/**
+ * How long a reading is reused. Short, because availability is part of it: a
+ * machine sold out an hour ago may be back, and one on offer an hour ago may be
+ * gone — a purchase decided on either is the wrong one.
+ */
+const HOLD_MS = 5 * 60 * 1000;
 
 interface Held {
   reading: ShapeFactsReading;
@@ -46,7 +51,7 @@ export class ShapeFactsService {
     try {
       const service = this.providers.getProvider(provider as CloudProvider);
       if (!service.getNodeSizes) return { shapes: [], read: false };
-      const sizes = await service.getNodeSizes(false);
+      const sizes = await service.getNodeSizes(true);
       return { shapes: sizes.map(toFact), read: true };
     } catch (err) {
       this.logger.warn(
