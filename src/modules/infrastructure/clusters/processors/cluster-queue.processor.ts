@@ -1814,11 +1814,17 @@ export class ClusterQueueProcessor {
 
   @Process('add-worker')
   async handleAddWorker(job: Job<AddWorkerJobData>): Promise<void> {
-    const { operationId, clusterId, count, providerFirewallIds, serverType } =
-      job.data;
+    const {
+      operationId,
+      clusterId,
+      count,
+      providerFirewallIds,
+      serverType,
+      region,
+    } = job.data;
     const startedAt = Date.now();
     this.logger.log(
-      `Processing add-worker: cluster=${clusterId} count=${count} shape=${serverType ?? 'cluster default'} (operation ${operationId})`,
+      `Processing add-worker: cluster=${clusterId} count=${count} shape=${serverType ?? 'cluster default'} region=${region ?? 'cluster default'} (operation ${operationId})`,
     );
 
     const preExistingNodeIds = new Set<string>();
@@ -1884,6 +1890,7 @@ export class ClusterQueueProcessor {
         operationId,
         providerFirewallIds,
         serverType,
+        region,
       );
 
       await this.updateOperationStep(operationId, 1, 100, {

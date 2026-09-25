@@ -35,6 +35,7 @@ const facts = (over: Partial<ActuationFacts> = {}): ActuationFacts => ({
   failedPurchase: null,
   minutesSinceAdded: null,
   clusterRegion: 'fsn1',
+  reachableRegions: ['fsn1'],
   monthlyCap: 40,
   intent: add(),
   ...over,
@@ -164,6 +165,28 @@ describe('the gate between deciding and acting', () => {
       refusal: 'outside-the-network',
     });
     expect(verdict.because).toContain('nbg1');
+  });
+
+  /**
+   * One network zone spans several regions: a node bought in any of them joins
+   * the same private network. Buying only at home would stop the fleet growing
+   * the moment home runs out, with the machine on offer next door.
+   */
+  it('buys in another region its network reaches', () => {
+    const verdict = mayAct(
+      facts({
+        intent: add({ region: 'nbg1' }),
+        reachableRegions: ['fsn1', 'nbg1', 'hel1'],
+      }),
+    );
+    expect(verdict.act).toBe(true);
+  });
+
+  it('buys anywhere where geography fences nothing', () => {
+    const verdict = mayAct(
+      facts({ intent: add({ region: 'par1' }), reachableRegions: null }),
+    );
+    expect(verdict.act).toBe(true);
   });
 
   /**

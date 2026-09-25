@@ -1058,8 +1058,9 @@ export class AccessService {
    * returns the most recently created key, which on a retry is the one that was
    * never installed on the node.
    *
-   * A record whose private half is no longer on disk also answers null, so the
-   * caller mints a fresh pair. Bootstrap keys only open a new server until it
+   * A record whose private half is no longer on disk, or is kept in another
+   * installation's key directory, also answers null, so the caller mints a
+   * fresh pair. Bootstrap keys only open a new server until it
    * enrols with the CA, and the key directory does not outlive the API process:
    * failing here stopped every node from ever being added again.
    */
@@ -1074,6 +1075,12 @@ export class AccessService {
     }
     const keyEntity = await this.repository.findKeyById(cluster.bootstrapKeyId);
     if (!keyEntity) {
+      return null;
+    }
+    if (!this.keyStorage.isStoredHere(keyEntity.keyPath)) {
+      this.logger.warn(
+        `Bootstrap key ${keyEntity.id} for cluster ${clusterId} is kept outside this installation's key directory; a new one will be generated`,
+      );
       return null;
     }
     let privateKey: string;

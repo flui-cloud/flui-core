@@ -52,6 +52,8 @@ export interface ShapeFactsReading {
   shapes: ShapeFact[];
   /** False when nobody could read the provider's sizes, which is not an empty catalogue. */
   read: boolean;
+  /** How long ago the provider was asked; absent on a reading that was not held. */
+  ageSeconds?: number;
 }
 
 export interface PendingDemand {
@@ -740,7 +742,50 @@ export function alarmAsk(input: LadderInput, rungs: LadderRung[]): string {
     return `Attach a machine holding ${need} and join it with \`flui node connect\`: Flui cannot create a server on ${input.group.provider}. ${shape}${because}`;
   }
 
-  return `Nothing this group may buy can be had for ${need}. ${because} Widen its shapes or regions, raise what it may spend, or attach a machine yourself.`;
+  const perMachine = whyEachMachine(input);
+  return `Nothing this group may buy can be had for ${need}. ${perMachine || because} Widen its shapes or regions, raise what it may spend, or attach a machine yourself.`;
+}
+
+/**
+ * Why each machine on the list was passed over, one sentence each.
+ *
+ * The ladder keeps one reason per step, which is the first choice's: with the
+ * first choice sold out and the second too small, the alarm named only the
+ * first and left a person wondering about the second. Fitting does not depend
+ * on the region, so a machine too small is said once; one sold out is said
+ * with every region it is sold out in.
+ */
+export function whyEachMachine(input: LadderInput): string {
+  const regions = [...regionsFor(input, true), ...regionsFor(input, false)];
+  if (!regions.length) return '';
+
+  return input.group.shapes
+    .map((shape) => {
+      const judged = regions.map((region) => judge(input, shape, region));
+      if (judged.some((c) => c.outcome === 'would-buy')) return '';
+      const small = judged.find((c) => c.outcome === 'does-not-fit');
+      if (small) {
+        const why = (small.note ?? '').replace(`${shape} leaves`, 'it leaves');
+        return `${shape} is too small: ${why || 'it would not hold what is waiting.'}`;
+      }
+      const out = judged
+        .filter((c) => c.outcome === 'unavailable')
+        .map((c) => c.region);
+      const pricey = judged.some((c) => c.outcome === 'over-budget');
+      const parts: string[] = [];
+      if (out.length) parts.push(`sold out in ${listed(out)}`);
+      if (pricey) parts.push('over the monthly cap where it is on offer');
+      const refused = judged.find((c) => c.outcome === 'refused-by-limit');
+      if (!parts.length && refused?.note) return `${shape}: ${refused.note}`;
+      return parts.length ? `${shape} is ${parts.join(', and ')}.` : '';
+    })
+    .filter(Boolean)
+    .join(' ');
+}
+
+function listed(items: string[]): string {
+  if (items.length <= 1) return items.join('');
+  return `${items.slice(0, -1).join(', ')} and ${items[items.length - 1]}`;
 }
 
 /**

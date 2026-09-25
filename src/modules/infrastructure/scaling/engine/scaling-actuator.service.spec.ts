@@ -97,7 +97,10 @@ function harness(
     addWorkers: jest.fn().mockResolvedValue({ id: 'op-1' }),
     removeWorker: jest.fn().mockResolvedValue({ id: 'op-2' }),
   };
-  const groupService = { capabilityOf: jest.fn().mockReturnValue(capability) };
+  const groupService = {
+    capabilityOf: jest.fn().mockReturnValue(capability),
+    buyableFor: jest.fn().mockResolvedValue(['fsn1', 'nbg1', 'hel1']),
+  };
   const registry = new AutoscaleReconcilerRegistry();
   const boundsRegistry = new ClusterBoundsRegistry();
 
@@ -119,7 +122,12 @@ describe('the only thing with hands', () => {
 
     const acted = await h.service.act(group(), cluster, assessment());
 
-    expect(h.clusters.addWorkers).toHaveBeenCalledWith('c-1', 1, 'cx32');
+    expect(h.clusters.addWorkers).toHaveBeenCalledWith(
+      'c-1',
+      1,
+      'cx32',
+      'fsn1',
+    );
     expect(acted).toMatchObject({ outcome: 'added', operationId: 'op-1' });
   });
 
@@ -197,6 +205,24 @@ describe('the only thing with hands', () => {
 
     expect(h.clusters.addWorkers).not.toHaveBeenCalled();
     expect(acted?.why).toContain('already on its way');
+  });
+
+  it("buys in the region the ladder chose, not the cluster's own", async () => {
+    const h = harness();
+
+    const acted = await h.service.act(
+      group(),
+      cluster,
+      assessment({ intent: intent({ region: 'hel1' }) }),
+    );
+
+    expect(h.clusters.addWorkers).toHaveBeenCalledWith(
+      'c-1',
+      1,
+      'cx32',
+      'hel1',
+    );
+    expect(acted?.did).toContain('in hel1');
   });
 
   it('raises an alarm instead of retrying a purchase that failed', async () => {

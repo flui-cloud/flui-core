@@ -170,6 +170,7 @@ export class ScalingActuatorService implements OnModuleInit {
       ),
       ...(await this.lastJoin(cluster.id)),
       clusterRegion: cluster.region ?? null,
+      reachableRegions: await this.groupService.buyableFor(cluster),
       intent,
     });
 
@@ -177,7 +178,13 @@ export class ScalingActuatorService implements OnModuleInit {
 
     try {
       if (intent.kind !== 'remove') {
-        return await this.buy(cluster, intent.shape, verdict, assessment);
+        return await this.buy(
+          cluster,
+          intent.shape,
+          intent.region,
+          verdict,
+          assessment,
+        );
       }
       // Nothing is removed unnamed: an intent that lost its node between the
       // reading and here removes nothing rather than the next best thing.
@@ -280,16 +287,23 @@ export class ScalingActuatorService implements OnModuleInit {
   private async buy(
     cluster: ClusterEntity,
     shape: string | null,
+    chosenRegion: string | null,
     verdict: ActuationVerdict,
     assessment: ScalingAssessment,
   ): Promise<Actuation> {
-    const operation = await this.clusters.addWorkers(cluster.id, 1, shape);
+    const region = chosenRegion ?? cluster.region;
+    const operation = await this.clusters.addWorkers(
+      cluster.id,
+      1,
+      shape,
+      region,
+    );
     this.logger.log(
       `Scaling bought a ${shape ?? 'default'} for cluster ${cluster.id} (operation ${operation.id})`,
     );
     return {
       outcome: 'added',
-      did: `Ordered a ${shape ?? cluster.nodeSize} in ${cluster.region}; it joins once provisioned.`,
+      did: `Ordered a ${shape ?? cluster.nodeSize} in ${region}; it joins once provisioned.`,
       why: `${assessment.did} ${verdict.because}`,
       asks: null,
       operationId: operation.id,

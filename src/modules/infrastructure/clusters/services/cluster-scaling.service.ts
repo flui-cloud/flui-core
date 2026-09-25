@@ -33,6 +33,11 @@ export interface AddWorkerJobData {
   providerFirewallIds: string[];
   /** The shape to buy. Absent means the cluster's own size, as it always was. */
   serverType?: string | null;
+  /**
+   * Where to buy it. Absent means the cluster's own region. Any other region
+   * has to be one the cluster's private network reaches.
+   */
+  region?: string | null;
 }
 
 export interface RemoveWorkerJobData {
@@ -96,6 +101,7 @@ export class ClusterScalingService {
     clusterId: string,
     count: number = 1,
     serverType?: string | null,
+    region?: string | null,
   ): Promise<InfrastructureOperationEntity> {
     if (count < 1 || count > MAX_WORKERS_PER_CALL) {
       throw new BadRequestException(
@@ -164,6 +170,7 @@ export class ClusterScalingService {
         workerCount: count,
         providerFirewallIds,
         serverType: serverType ?? cluster.nodeSize,
+        region: region ?? cluster.region,
         operationSteps: steps,
         estimatedDurationInSeconds: 240 * count,
       },
@@ -176,6 +183,7 @@ export class ClusterScalingService {
       count,
       providerFirewallIds,
       serverType: serverType ?? null,
+      region: region ?? null,
     };
 
     await this.infrastructureQueue.add('add-worker', jobData, {

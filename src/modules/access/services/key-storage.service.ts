@@ -261,10 +261,20 @@ export class KeyStorageService {
    * row is a weaker guarantee than a check. Reading one of those is harmless
    * (the seal fails), deleting one is not.
    */
-  private assertStoredPath(keyPath: string): string {
+  /**
+   * Whether a stored path lies in this installation's key directory.
+   *
+   * A key written by another API — one with its own directory, pointed at the
+   * same database — is recorded with a path this one must not follow.
+   */
+  isStoredHere(keyPath: string): boolean {
     const root = path.resolve(this.keyBasePath);
+    return path.resolve(keyPath).startsWith(root + path.sep);
+  }
+
+  private assertStoredPath(keyPath: string): string {
     const resolved = path.resolve(keyPath);
-    if (!resolved.startsWith(root + path.sep)) {
+    if (!this.isStoredHere(keyPath)) {
       throw new BadRequestException(
         'Invalid SSH key location: the stored path is outside the keys directory',
       );

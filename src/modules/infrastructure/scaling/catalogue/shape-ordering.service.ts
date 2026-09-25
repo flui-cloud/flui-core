@@ -10,6 +10,8 @@ import {
   upWhereAllowed,
 } from './catalogue.core';
 import { OrderedShapeDto, ShapeCatalogueDto } from './dto/shape-catalogue.dto';
+import { ShapeFactsService } from '../engine/shape-facts.service';
+import { ShapeFact } from '../engine/engine.core';
 
 /** What ordering needs of a group, and nothing more. */
 export interface OrderableGroup {
@@ -44,15 +46,22 @@ interface Candidate {
  */
 @Injectable()
 export class ShapeOrderingService {
-  constructor(private readonly catalogue: AvailabilityCatalogueService) {}
+  constructor(
+    private readonly catalogue: AvailabilityCatalogueService,
+    private readonly facts: ShapeFactsService,
+  ) {}
 
   async order(group: OrderableGroup): Promise<ShapeCatalogueDto> {
     // Asked of the capability, never of the provider's name. Where the machines
     // arrive from the operator there is no market to read and there never will
     // be — a different answer from a market that came back empty.
-    const reading = group.capability.hasCatalogue
+    const outside = group.capability.hasCatalogue
       ? await this.catalogue.read(group.provider)
       : unreadCatalogue(group.provider, 'no-market');
+    const own = group.capability.hasCatalogue
+      ? await this.facts.read(group.provider)
+      : null;
+    const reading = own ? withProviderStock(outside, own) : outside;
 
     const candidates = this.candidates(group, reading);
     candidates.sort(byUsefulness);
@@ -63,7 +72,10 @@ export class ShapeOrderingService {
       reading: reading.state,
       ageSeconds: reading.ageSeconds,
       stale: reading.stale,
-      says: says(reading, group.provider),
+      says:
+        reading === outside
+          ? says(reading, group.provider)
+          : `As ${group.provider} itself reports it — the same reading Flui buys from. It orders candidates and decides nothing; the provider accepts or refuses the purchase.`,
       shapes: candidates.map((candidate) =>
         this.toDto(candidate, group.regions, reading.ageSeconds),
       ),
@@ -182,6 +194,51 @@ const SAYS: Record<CatalogueReadingState, (provider: string) => string> = {
   off: () =>
     'The availability catalogue is switched off on this installation, so this is the group’s own order of preference.',
 };
+
+/**
+ * The provider's own stock first, the outside catalogue for anything it is
+ * silent about.
+ *
+ * The engine buys on the provider's word, so the page that shows the market
+ * has to show that word too: two sources that disagree — one saying sold out
+ * everywhere, the other up everywhere — leave a person unable to tell why
+ * nothing was bought. The outside catalogue keeps what only it knows.
+ */
+export function withProviderStock(
+  outside: CatalogueReading,
+  own: { shapes: ShapeFact[]; read: boolean; ageSeconds?: number },
+): CatalogueReading {
+  const known = own.read
+    ? own.shapes.filter((shape) => shape.availability?.length)
+    : [];
+  if (!known.length) return outside;
+
+  const fromProvider = known.map(toAvailability);
+  const named = new Set(fromProvider.map((entry) => entry.shape));
+  return {
+    provider: outside.provider,
+    state: 'read',
+    shapes: [
+      ...fromProvider,
+      ...outside.shapes.filter((entry) => !named.has(entry.shape)),
+    ],
+    ageSeconds: own.ageSeconds ?? null,
+    stale: false,
+  };
+}
+
+function toAvailability(shape: ShapeFact): ShapeAvailability {
+  const entries = shape.availability ?? [];
+  const upIn = entries.filter((e) => e.up).map((e) => e.region);
+  const downIn = entries.filter((e) => !e.up).map((e) => e.region);
+  return {
+    shape: shape.shape,
+    state: !downIn.length ? 'available' : upIn.length ? 'limited' : 'sold-out',
+    everywhere: upIn.length > 0 && downIn.length === 0,
+    upIn,
+    downIn,
+  };
+}
 
 function says(reading: CatalogueReading, provider: string): string {
   return SAYS[reading.state](provider);

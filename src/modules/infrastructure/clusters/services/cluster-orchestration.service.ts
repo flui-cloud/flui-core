@@ -549,6 +549,7 @@ export class ClusterOrchestrationService {
     operationId: string,
     providerFirewallIds?: string[],
     serverType?: string | null,
+    region?: string | null,
   ): Promise<ClusterNodeEntity[]> {
     this.logger.log(
       `Creating ${count} worker nodes for cluster ${cluster.name}`,
@@ -591,6 +592,7 @@ export class ClusterOrchestrationService {
             operationId,
             providerFirewallIds,
             serverType,
+            region,
             // One log per operation: several workers booting at once would
             // interleave into the same stream at conflicting offsets.
             count === 1,
@@ -636,9 +638,12 @@ export class ClusterOrchestrationService {
     operationId: string,
     providerFirewallIds?: string[],
     serverType?: string | null,
+    region?: string | null,
     captureInstallLog = false,
   ): Promise<ClusterNodeEntity> {
     const serverName = `${cluster.name}-worker-${index}`;
+    // Anywhere the cluster's private network reaches; the caller checked that.
+    const location = region || cluster.region;
     // A fleet stops being uniform the moment something chooses a shape per
     // node, so the shape travels with the request; the cluster's own size is
     // the default for every caller that never had one to give.
@@ -659,6 +664,7 @@ export class ClusterOrchestrationService {
       NodeType.WORKER,
       { workerIndex: index },
       shape,
+      location,
     );
 
     const controlClusterIp = await this.resolveWorkerObservabilityIp(cluster);
@@ -779,8 +785,8 @@ export class ClusterOrchestrationService {
           name: serverName,
           provider: cluster.provider as CloudProvider,
           server_type: shape,
-          location: cluster.region,
-          region: cluster.region,
+          location,
+          region: location,
           size: shape,
           image: cluster.image || 'ubuntu-22.04',
           sshKeys: [savedBootstrapKey.id],
@@ -805,7 +811,7 @@ export class ClusterOrchestrationService {
         provider: cluster.provider as CloudProvider,
         server_type: shape,
         image: cluster.image || 'ubuntu-24.04',
-        location: cluster.region,
+        location,
         ssh_keys:
           workerLocalSSHKeyIds.length > 0 ? workerLocalSSHKeyIds : undefined,
         user_data: finalWorkerScript,
@@ -861,7 +867,7 @@ export class ClusterOrchestrationService {
     node.hourlyPriceEur = await this.nodePriceService.resolveHourlyEur(
       cluster.provider,
       node.serverType,
-      workerServer.location ?? cluster.region,
+      workerServer.location ?? location,
     );
     if (cluster.metadata?.vnetConfig) {
       if (!workerServer.private_ip) {
@@ -889,7 +895,7 @@ export class ClusterOrchestrationService {
       serverName: node.serverName,
       providerResourceId: node.providerResourceId,
       provider: cluster.provider,
-      region: cluster.region,
+      region: location,
       location: workerServer.location,
       serverType: shape,
       nodeType: node.nodeType,
@@ -1422,8 +1428,10 @@ export class ClusterOrchestrationService {
     nodeType: NodeType,
     metadata: Record<string, unknown> = {},
     serverType?: string | null,
+    region?: string | null,
   ): Promise<ClusterNodeEntity> {
     const shape = serverType || cluster.nodeSize || null;
+    const where = region || cluster.region || null;
     const clusterId = cluster.id;
     const existing = await this.nodeRepository.findOne({
       where: { clusterId, serverName },
@@ -1442,12 +1450,12 @@ export class ClusterOrchestrationService {
         nodeType,
         status: NodeStatus.CREATING,
         provider: cluster.provider,
-        region: cluster.region || null,
+        region: where,
         serverType: shape,
         hourlyPriceEur: await this.nodePriceService.resolveHourlyEur(
           cluster.provider,
           shape,
-          cluster.region,
+          where,
         ),
         metadata,
       }),

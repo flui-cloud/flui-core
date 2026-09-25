@@ -2,15 +2,21 @@ jest.mock('@kubernetes/client-node', () => ({}));
 
 import { AccessService } from './access.service';
 
-function service(retrieve: () => Promise<string>) {
+function service(
+  retrieve: () => Promise<string>,
+  keyPath = 'system/1/private.key',
+) {
   const repository = {
     findKeyById: jest.fn().mockResolvedValue({
       id: 'key-1',
       publicKey: 'ssh-ed25519 AAAA',
-      keyPath: 'system/1/private.key',
+      keyPath,
     }),
   };
-  const keyStorage = { retrievePrivateKey: jest.fn(retrieve) };
+  const keyStorage = {
+    retrievePrivateKey: jest.fn(retrieve),
+    isStoredHere: jest.fn((path: string) => !path.startsWith('/elsewhere')),
+  };
   const clusters = {
     findOneBy: jest
       .fn()
@@ -61,5 +67,15 @@ describe("a cluster's bootstrap key", () => {
         'c1',
       ),
     ).rejects.toThrow('unable to authenticate data');
+  });
+
+  it('counts as absent when another installation keeps it, instead of refusing to add a node', async () => {
+    const retrieve = jest.fn();
+    const material = await service(
+      retrieve,
+      '/elsewhere/keys/system/1/private.key',
+    ).getBootstrapKeyMaterialForCluster('c1');
+    expect(material).toBeNull();
+    expect(retrieve).not.toHaveBeenCalled();
   });
 });

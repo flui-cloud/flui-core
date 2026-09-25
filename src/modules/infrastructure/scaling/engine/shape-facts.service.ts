@@ -38,13 +38,18 @@ export class ShapeFactsService {
 
   async read(provider: string): Promise<ShapeFactsReading> {
     const held = this.held.get(provider);
-    if (held && Date.now() - held.atMs < HOLD_MS) return held.reading;
+    if (held && Date.now() - held.atMs < HOLD_MS) {
+      return {
+        ...held.reading,
+        ageSeconds: Math.round((Date.now() - held.atMs) / 1000),
+      };
+    }
 
     const reading = await this.fetch(provider);
     // A failed read is not cached: the next tick should ask again rather than
     // repeat an hour of "could not say".
     if (reading.read) this.held.set(provider, { reading, atMs: Date.now() });
-    return reading;
+    return { ...reading, ageSeconds: 0 };
   }
 
   private async fetch(provider: string): Promise<ShapeFactsReading> {

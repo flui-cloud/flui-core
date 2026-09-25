@@ -1,6 +1,10 @@
 import { AvailabilityCatalogueService } from './availability-catalogue.service';
 import { ShapeAvailability } from './catalogue.core';
-import { OrderableGroup, ShapeOrderingService } from './shape-ordering.service';
+import {
+  OrderableGroup,
+  ShapeOrderingService,
+  withProviderStock,
+} from './shape-ordering.service';
 import {
   CatalogueSnapshot,
   VopsCatalogueClient,
@@ -35,8 +39,16 @@ function ordering(
     providers: jest.fn().mockResolvedValue(['hetzner']),
     availability: jest.fn().mockResolvedValue(snapshot),
   } as unknown as VopsCatalogueClient;
-  return new ShapeOrderingService(new AvailabilityCatalogueService(client));
+  return new ShapeOrderingService(
+    new AvailabilityCatalogueService(client),
+    silentProvider,
+  );
 }
+
+/** A provider that publishes no stock, so the outside catalogue is all there is. */
+const silentProvider = {
+  read: jest.fn().mockResolvedValue({ shapes: [], read: false }),
+} as never;
 
 const reading = (shapes: ShapeAvailability[]): CatalogueSnapshot => ({
   provider: 'hetzner',
@@ -189,6 +201,7 @@ describe('ShapeOrderingService', () => {
       } as unknown as VopsCatalogueClient;
       const service = new ShapeOrderingService(
         new AvailabilityCatalogueService(client),
+        silentProvider,
       );
 
       const result = await service.order(
@@ -223,5 +236,108 @@ describe('ShapeOrderingService', () => {
       expect(empty.reading).not.toBe(byos.reading);
       expect(empty.says).not.toBe(byos.says);
     });
+  });
+});
+
+describe("the market page shows the provider's own stock", () => {
+  const own = (entries: Array<[string, Array<[string, boolean]>]>) => ({
+    read: true,
+    ageSeconds: 40,
+    shapes: entries.map(([shape, regions]) => ({
+      shape,
+      cores: 2,
+      memoryMi: 4096,
+      deprecated: false,
+      supportsHourlyBilling: true,
+      prices: [],
+      availability: regions.map(([region, up]) => ({ region, up })),
+    })),
+  });
+
+  it('reads it from the provider when the outside catalogue did not answer', () => {
+    const reading = withProviderStock(
+      {
+        provider: 'hetzner',
+        state: 'unreachable',
+        shapes: [],
+        ageSeconds: null,
+        stale: false,
+      },
+      own([
+        [
+          'cx23',
+          [
+            ['fsn1', false],
+            ['nbg1', false],
+          ],
+        ],
+        [
+          'cx33',
+          [
+            ['fsn1', false],
+            ['nbg1', true],
+          ],
+        ],
+      ]),
+    );
+
+    expect(reading.state).toBe('read');
+    expect(reading.ageSeconds).toBe(40);
+    expect(reading.shapes).toEqual([
+      expect.objectContaining({ shape: 'cx23', state: 'sold-out', upIn: [] }),
+      expect.objectContaining({
+        shape: 'cx33',
+        state: 'limited',
+        upIn: ['nbg1'],
+      }),
+    ]);
+  });
+
+  it('takes the provider over the outside catalogue where both speak, and keeps what only the catalogue knows', () => {
+    const reading = withProviderStock(
+      {
+        provider: 'hetzner',
+        state: 'read',
+        ageSeconds: 3600,
+        stale: false,
+        shapes: [
+          {
+            shape: 'cx23',
+            state: 'available',
+            everywhere: true,
+            upIn: [],
+            downIn: [],
+          },
+          {
+            shape: 'ccx13',
+            state: 'recovered',
+            everywhere: true,
+            upIn: [],
+            downIn: [],
+          },
+        ],
+      },
+      own([['cx23', [['fsn1', false]]]]),
+    );
+
+    expect(reading.shapes.find((s) => s.shape === 'cx23')?.state).toBe(
+      'sold-out',
+    );
+    expect(reading.shapes.find((s) => s.shape === 'ccx13')?.state).toBe(
+      'recovered',
+    );
+  });
+
+  it('leaves the outside catalogue alone where the provider publishes no stock', () => {
+    const outside = {
+      provider: 'contabo',
+      state: 'not-published' as const,
+      shapes: [],
+      ageSeconds: null,
+      stale: false,
+    };
+    expect(withProviderStock(outside, { shapes: [], read: true })).toBe(
+      outside,
+    );
   });
 });

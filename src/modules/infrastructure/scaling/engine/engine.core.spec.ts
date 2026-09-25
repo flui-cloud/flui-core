@@ -1,5 +1,6 @@
 import { CatalogueReading, unreadCatalogue } from '../catalogue/catalogue.core';
 import {
+  whyEachMachine,
   LadderCapability,
   LadderInput,
   ShapeFact,
@@ -672,5 +673,51 @@ describe('the fleet a node table describes', () => {
 
   it('names no shape where the cluster records none', () => {
     expect(fleetOf([], { nodes: 2, shape: null }).shapes).toEqual([]);
+  });
+});
+
+describe('why each machine was passed over', () => {
+  /**
+   * The ladder keeps one reason per step, the first choice's. With the first
+   * choice sold out and the second too small, the alarm used to name only the
+   * first.
+   */
+  it('names every machine on the list with its own reason', () => {
+    const soldOut = shape({
+      shape: 'cx33',
+      cores: 4,
+      memoryMi: 8192,
+      prices: [
+        { region: 'fsn1', hourlyEur: 0.0136, monthlyEur: 9.93 },
+        { region: 'hel1', hourlyEur: 0.0136, monthlyEur: 9.93 },
+      ],
+      availability: [
+        { region: 'fsn1', up: false },
+        { region: 'hel1', up: false },
+      ],
+    });
+    const small = shape({
+      shape: 'cx23',
+      cores: 2,
+      memoryMi: 2048,
+      prices: [
+        { region: 'fsn1', hourlyEur: 0.0088, monthlyEur: 6.42 },
+        { region: 'hel1', hourlyEur: 0.0088, monthlyEur: 6.42 },
+      ],
+    });
+
+    const line = whyEachMachine(
+      input({
+        group: { ...input().group, shapes: ['cx33', 'cx23'] },
+        shapes: { shapes: [soldOut, small], read: true },
+      }),
+    );
+
+    expect(line).toContain('cx33 is sold out in fsn1 and hel1.');
+    expect(line).toContain('cx23 is too small: it leaves');
+  });
+
+  it('says nothing about a machine that could be bought', () => {
+    expect(whyEachMachine(input())).not.toContain('cpx41');
   });
 });

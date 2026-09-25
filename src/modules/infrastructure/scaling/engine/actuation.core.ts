@@ -53,6 +53,11 @@ export interface ActuationFacts {
   lastJoinedAt?: Date | null;
   clusterRegion: string | null;
   /**
+   * The regions a node bought for this cluster could join it from, or null
+   * where geography fences nothing (a network Flui builds, or a global one).
+   */
+  reachableRegions: string[] | null;
+  /**
    * The group's own ceiling in money, or null where it set none.
    *
    * Used only to decide whether an unpriced purchase may go ahead: a group that
@@ -157,16 +162,16 @@ export function mayAct(facts: ActuationFacts): ActuationVerdict {
   }
 
   // Regions are the cluster's private network, not a preference: a machine
-  // bought elsewhere has no way in. The ladder may still name one, because on a
-  // provider Flui cannot buy from a person can go and do exactly that.
+  // bought where that network does not reach has no way in. Where it does —
+  // several regions of one network zone — the purchase goes there.
   if (
     intent.region &&
-    facts.clusterRegion &&
-    intent.region !== facts.clusterRegion
+    facts.reachableRegions &&
+    !facts.reachableRegions.includes(intent.region)
   ) {
     return no(
       'outside-the-network',
-      `The shape that won is in ${intent.region} and this cluster's private network is in ${facts.clusterRegion}. A machine bought there could not join, so buying it is left to a person who can also arrange the network.`,
+      `The shape that won is in ${intent.region}, which this cluster's private network does not reach (it reaches ${facts.reachableRegions.join(', ')}). A machine bought there could not join, so buying it is left to a person who can also arrange the network.`,
     );
   }
 
