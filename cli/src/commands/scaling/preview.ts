@@ -118,8 +118,36 @@ export default class ScalingPreview extends Command {
       );
     }
 
+    this.printRoom(preview);
     this.printLadder(preview);
     console.log('');
+  }
+
+  /** Reserved against capacity: what decides whether the next app buys a node. */
+  private printRoom(preview: ScalingPreviewDto): void {
+    const room = preview.room;
+    console.log('');
+    if (!room) {
+      console.log(chalk.dim('  room     the cluster could not be asked'));
+      return;
+    }
+    const fit = room.largestFit;
+    console.log(
+      `  ${chalk.dim('room'.padEnd(9))}${
+        fit
+          ? `the largest app that still fits: ${gib(fit.memoryMi)} · ${cores(fit.cpuMillicores)} (on ${fit.node}); a bigger one buys a node`
+          : chalk.yellow('no node takes new apps')
+      }`,
+    );
+    for (const node of room.nodes) {
+      const mem = `${gib(node.requested.memoryMi)} of ${gib(node.allocatable.memoryMi)} memory`;
+      const cpu = `${cores(node.requested.cpuMillicores)} of ${cores(node.allocatable.cpuMillicores)}`;
+      const note = node.takesWork ? '' : chalk.dim('  (takes no new apps)');
+      console.log(
+        chalk.dim(`    ${node.name}  `) +
+          `${bar(node.requested.memoryMi, node.allocatable.memoryMi)} ${mem} · ${cpu} reserved${note}`,
+      );
+    }
   }
 
   private printLadder(preview: ScalingPreviewDto): void {
@@ -163,4 +191,18 @@ export default class ScalingPreview extends Command {
     if (outcome === 'alert') return chalk.yellow(cell);
     return chalk.dim(cell);
   }
+}
+
+function gib(mi: number): string {
+  return `${(mi / 1024).toFixed(1)} GiB`;
+}
+
+function cores(millicores: number): string {
+  return `${(millicores / 1000).toFixed(1)} CPU`;
+}
+
+/** Ten cells, filled in proportion to what is reserved. */
+function bar(used: number, total: number): string {
+  const filled = total > 0 ? Math.min(10, Math.round((used / total) * 10)) : 0;
+  return `[${'#'.repeat(filled)}${'.'.repeat(10 - filled)}]`;
 }

@@ -3186,6 +3186,18 @@ const MASK_EXEMPT: string[] = [
   'ScalingGroupResponseDto.purchaseHeld', // modules/infrastructure/scaling/dto/scaling-response.dto.ts
   'PurchaseHoldDto.failedAt', // modules/infrastructure/scaling/dto/scaling-response.dto.ts
   'PurchaseHoldDto.error', // modules/infrastructure/scaling/dto/scaling-response.dto.ts
+  'FleetRoomDto.largestFit', // modules/infrastructure/scaling/dto/scaling-preview.dto.ts
+  'FleetRoomDto.nodes', // modules/infrastructure/scaling/dto/scaling-preview.dto.ts
+  'LargestFitDto.node', // modules/infrastructure/scaling/dto/scaling-preview.dto.ts
+  'NodeRoomDto.allocatable', // modules/infrastructure/scaling/dto/scaling-preview.dto.ts
+  'NodeRoomDto.free', // modules/infrastructure/scaling/dto/scaling-preview.dto.ts
+  'NodeRoomDto.name', // modules/infrastructure/scaling/dto/scaling-preview.dto.ts
+  'NodeRoomDto.requested', // modules/infrastructure/scaling/dto/scaling-preview.dto.ts
+  'NodeRoomDto.role', // modules/infrastructure/scaling/dto/scaling-preview.dto.ts
+  'NodeRoomDto.takesWork', // modules/infrastructure/scaling/dto/scaling-preview.dto.ts
+  'RoomAmountDto.cpuMillicores', // modules/infrastructure/scaling/dto/scaling-preview.dto.ts
+  'RoomAmountDto.memoryMi', // modules/infrastructure/scaling/dto/scaling-preview.dto.ts
+  'ScalingPreviewDto.room', // modules/infrastructure/scaling/dto/scaling-preview.dto.ts
   'ScalingDecisionResponseDto.operation', // modules/infrastructure/scaling/dto/scaling-response.dto.ts
   'DecisionOperationDto.id', // modules/infrastructure/scaling/dto/scaling-response.dto.ts
   'DecisionOperationDto.state', // modules/infrastructure/scaling/dto/scaling-response.dto.ts

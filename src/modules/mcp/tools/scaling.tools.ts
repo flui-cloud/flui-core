@@ -742,6 +742,44 @@ export const SCALING_TOOLS: ToolDef[] = [
   }),
 
   defineTool({
+    name: 'scaling_preview',
+    routes: [
+      'GET /infrastructure/scaling-groups/:id/preview',
+      'GET /infrastructure/clusters/:clusterId/scaling-groups',
+    ],
+    description:
+      'What a scaling group would do if a node were needed right now, and how much room is left before one is. Buys nothing. `room.nodes` gives each node what apps RESERVE against what it can hold — reservations, not usage: a node idle on every graph can still be full for the next app, and reservations are what make Flui buy. `room.largestFit` is the largest app that still fits without buying: anything bigger waits and makes the group buy (or alarm). `ladder` is every rung the engine would walk, each with why it loses; `chosen` the one that would win; `asks` the alarm sentence when nothing can be bought. Use this to answer "are we close to scaling?" — relay largestFit in plain words.',
+    scope: MCP_SCOPE.INFRA_READ,
+    inputSchema: {
+      groupId: z
+        .string()
+        .optional()
+        .describe('The group. Omit on a cluster with a single group.'),
+      clusterId: CLUSTER_ID,
+    },
+    run: async (args, ctx) => {
+      let groupId = args.groupId;
+      if (!groupId) {
+        const clusterId = await resolveClusterId(ctx, args.clusterId);
+        const groups = await ctx.api.get<GroupDto[]>(
+          `/infrastructure/clusters/${enc(clusterId)}/scaling-groups`,
+        );
+        if (groups.length !== 1) {
+          throw new Error(
+            groups.length
+              ? 'This cluster has several scaling groups: pass groupId.'
+              : 'This cluster has no scaling group, so nothing would be bought for it.',
+          );
+        }
+        groupId = groups[0].id;
+      }
+      return ctx.api.get(
+        `/infrastructure/scaling-groups/${enc(groupId)}/preview`,
+      );
+    },
+  }),
+
+  defineTool({
     name: 'scaling_group_retry_purchase',
     routes: ['POST /infrastructure/scaling-groups/:id/retry-purchase'],
     description:

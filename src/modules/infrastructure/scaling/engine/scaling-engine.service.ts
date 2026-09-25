@@ -121,7 +121,10 @@ export class ScalingEngineService {
 
   async preview(groupId: string): Promise<ScalingPreviewDto> {
     const { group, cluster } = await this.groups.withCluster(groupId);
-    return (await this.assess(group, cluster)).preview;
+    const preview = (await this.assess(group, cluster)).preview;
+    // Asked here and not on every pass: the loop decides on what is waiting,
+    // and room is for a person reading how close the next purchase is.
+    return { ...preview, room: await this.drain.fleetRoom(cluster) };
   }
 
   async assess(
@@ -773,6 +776,7 @@ function toPreview(
     ladder: result.rungs,
     chosen: result.chosen,
     asks: result.asks,
+    room: null,
   };
 }
 

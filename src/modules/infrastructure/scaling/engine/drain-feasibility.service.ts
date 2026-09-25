@@ -17,6 +17,7 @@ import { podRequest } from '../../clusters/services/unschedulable-pods.service';
 import { DrainBudget, DrainCheck, DrainPod, checkDrain } from './drain.core';
 import { NODE_RESERVE } from './engine.core';
 import { FitCheck, MovingPod, NodeRoom, checkFit } from './fit.core';
+import { FleetRoom, NodeRoomInput, fleetRoom } from './room.core';
 
 /**
  * Whether a node can be emptied, answered from the cluster itself.
@@ -169,6 +170,62 @@ export class DrainFeasibilityService {
     } catch (err) {
       this.logger.warn(
         `Room elsewhere unavailable for ${node.serverName}: ${(err as Error).message}`,
+      );
+      return null;
+    }
+  }
+
+  /**
+   * How much each node has left for new apps, as the scheduler counts it.
+   *
+   * Null when the cluster could not be asked — never an empty fleet.
+   */
+  async fleetRoom(cluster: ClusterEntity): Promise<FleetRoom | null> {
+    if (!cluster.kubeconfigEncrypted) return null;
+    try {
+      const kubeconfig = this.encryption.decrypt(cluster.kubeconfigEncrypted);
+      const coreApi = this.kubernetes
+        .makeKubeConfig(kubeconfig)
+        .makeApiClient(k8s.CoreV1Api);
+
+      const [nodes, pods] = await Promise.all([
+        coreApi.listNode(),
+        coreApi.listPodForAllNamespaces({
+          fieldSelector: 'status.phase!=Succeeded,status.phase!=Failed',
+        }),
+      ]);
+
+      const requested = new Map<string, { cpu: number; memory: number }>();
+      for (const pod of pods.items ?? []) {
+        const on = pod.spec?.nodeName;
+        if (!on) continue;
+        const ask = podRequest(pod, this.kubernetes);
+        const sum = requested.get(on) ?? { cpu: 0, memory: 0 };
+        sum.cpu += ask.cpuMillicores;
+        sum.memory += ask.memoryMi;
+        requested.set(on, sum);
+      }
+
+      const inputs: NodeRoomInput[] = (nodes.items ?? []).map((item) => {
+        const name = item.metadata?.name ?? '';
+        const allocatable = item.status?.allocatable ?? {};
+        const used = requested.get(name) ?? { cpu: 0, memory: 0 };
+        return {
+          name,
+          role: isControlPlane(item) ? 'master' : 'worker',
+          takesWork: takesWork(item, false),
+          allocatable: {
+            cpuMillicores: this.kubernetes.parseCpu(allocatable['cpu'] ?? '0'),
+            memoryMi: this.kubernetes.parseMemory(allocatable['memory'] ?? '0'),
+          },
+          requested: { cpuMillicores: used.cpu, memoryMi: used.memory },
+        };
+      });
+
+      return fleetRoom(inputs, NODE_RESERVE);
+    } catch (err) {
+      this.logger.warn(
+        `Fleet room unavailable for ${cluster.name}: ${(err as Error).message}`,
       );
       return null;
     }

@@ -160,6 +160,7 @@ const ARGS: Record<string, Record<string, unknown>> = {
   mail_domain_publish: { domain: 'example.com' },
   scaling_group_get: { groupId: 'g1' },
   scaling_group_retry_purchase: { groupId: 'g1' },
+  scaling_preview: { groupId: 'g1' },
   scaling_overview: {},
   scaling_why: { groupId: 'g1' },
   scaling_group_set: { groupId: 'g1', bounds: { min: 1, desired: 2, max: 3 } },

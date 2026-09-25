@@ -43,6 +43,58 @@ export class LadderRungDto {
 }
 
 /** What a group would do if a node were needed right now, spending nothing. */
+export class RoomAmountDto {
+  @ApiProperty()
+  cpuMillicores: number;
+
+  @ApiProperty()
+  memoryMi: number;
+}
+
+export class NodeRoomDto {
+  @ApiProperty()
+  name: string;
+
+  @ApiProperty({ enum: ['master', 'worker'] })
+  role: 'master' | 'worker';
+
+  @ApiProperty({
+    description:
+      'Whether new apps may be placed here: ready, not cordoned, not refusing work',
+  })
+  takesWork: boolean;
+
+  @ApiProperty({ type: RoomAmountDto, description: 'What the node can hold' })
+  allocatable: RoomAmountDto;
+
+  @ApiProperty({ type: RoomAmountDto, description: 'What apps reserve on it' })
+  requested: RoomAmountDto;
+
+  @ApiProperty({
+    type: RoomAmountDto,
+    description: 'What is left for new apps, after the system reserve',
+  })
+  free: RoomAmountDto;
+}
+
+export class LargestFitDto extends RoomAmountDto {
+  @ApiProperty({ description: 'The node that has it' })
+  node: string;
+}
+
+export class FleetRoomDto {
+  @ApiProperty({ type: [NodeRoomDto] })
+  nodes: NodeRoomDto[];
+
+  @ApiProperty({
+    type: LargestFitDto,
+    nullable: true,
+    description:
+      'The largest app that still fits without buying a node. Null when no node takes work.',
+  })
+  largestFit: LargestFitDto | null;
+}
+
 export class ScalingPreviewDto {
   @ApiProperty()
   groupId: string;
@@ -78,4 +130,12 @@ export class ScalingPreviewDto {
       'The sentence addressed to a person, when the answer is an alarm',
   })
   asks: string | null;
+
+  @ApiProperty({
+    type: FleetRoomDto,
+    nullable: true,
+    description:
+      'How much room each node has left for new apps, counted the way the scheduler counts it: what apps reserve, not what they use. Null when the cluster could not be asked.',
+  })
+  room: FleetRoomDto | null;
 }
