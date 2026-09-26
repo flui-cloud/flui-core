@@ -298,7 +298,7 @@ export class ScalingGroupService {
       desiredNodes: dto.bounds.desired,
       maxNodes: dto.bounds.max,
       regions: dto.regions ?? [],
-      shapes: dto.shapes ?? [],
+      shapes: dto.shapes ?? defaultShapes(cluster, capability),
       strategy: dto.strategy ?? 'uniform',
       settleSeconds: dto.settleSeconds ?? 30,
       hourlyBillingOnly: dto.limits?.hourlyBillingOnly ?? true,
@@ -795,6 +795,14 @@ function hasVnet(cluster: {
   metadata?: { vnetConfig?: { vnetId?: string } };
 }): boolean {
   return Boolean(cluster.metadata?.vnetConfig?.vnetId);
+}
+
+/** A group that names no machine buys the one the cluster was built with, not nothing. */
+function defaultShapes(
+  cluster: { nodeSize?: string | null },
+  capability: ProviderScalingCapability,
+): string[] {
+  return capability.hasCatalogue && cluster.nodeSize ? [cluster.nodeSize] : [];
 }
 
 const PURCHASE_SHOWN_FOR_MS = 30 * 60 * 1000;

@@ -177,6 +177,44 @@ describe('writing a scaling group', () => {
     expect(saved().shapes).toEqual(['cx33', 'cx23', 'cpx31']);
   });
 
+  it('names the machine the cluster was built with when the writer names none', async () => {
+    const { service, clusters, saved } = make();
+    clusters.findOne.mockResolvedValue({
+      ...cluster('hetzner'),
+      nodeSize: 'cx23',
+    });
+    await service.create('c-1', write({ shapes: undefined }));
+    expect(saved().shapes).toEqual(['cx23']);
+  });
+
+  it('keeps an empty list of shapes that was sent on purpose', async () => {
+    const { service, clusters, saved } = make();
+    clusters.findOne.mockResolvedValue({
+      ...cluster('hetzner'),
+      nodeSize: 'cx23',
+    });
+    await service.create('c-1', write({ shapes: [] }));
+    expect(saved().shapes).toEqual([]);
+  });
+
+  it('names no machine where the provider publishes no catalogue', async () => {
+    const { service, clusters, saved } = make('byos');
+    clusters.findOne.mockResolvedValue({
+      ...cluster('byos'),
+      nodeSize: 'whatever',
+    });
+    await service.create(
+      'c-1',
+      write({
+        shapes: undefined,
+        provision: 'manual',
+        regions: [],
+        requirement: { cpu: '2', memory: '8Gi' },
+      }),
+    );
+    expect(saved().shapes).toEqual([]);
+  });
+
   it('keeps an absent ceiling absent, rather than turning it into zero', async () => {
     const { service, saved } = make();
     await service.create(
