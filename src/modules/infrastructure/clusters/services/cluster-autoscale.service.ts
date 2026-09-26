@@ -134,6 +134,7 @@ export class ClusterAutoscaleService {
       cluster.id,
     );
     const unschedulable = await this.unschedulablePodsService.read(cluster);
+    const owned = await this.bounds.boundsFor(cluster.id);
 
     const warning = this.computeWarning(
       memoryPct,
@@ -145,8 +146,8 @@ export class ClusterAutoscaleService {
     return {
       clusterId: cluster.id,
       autoscalingEnabled: cluster.autoscalingEnabled,
-      minNodes: cluster.minNodes,
-      maxNodes: cluster.maxNodes,
+      minNodes: owned ? owned.min : cluster.minNodes,
+      maxNodes: owned ? owned.max : cluster.maxNodes,
       currentNodes: cluster.nodes?.length ?? cluster.nodeCount ?? 0,
       metrics: { memoryPct, cpuPct },
       unschedulable,

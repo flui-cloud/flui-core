@@ -126,3 +126,40 @@ describe('ClusterAutoscaleService.computeWarning', () => {
     expect(result.level).toBe(AutoscaleWarningLevel.DANGER_NEEDS_SCALE);
   });
 });
+
+describe('ClusterAutoscaleService.getStatus bounds', () => {
+  const cluster = {
+    id: 'c-1',
+    provider: 'ovh',
+    minNodes: 1,
+    maxNodes: 1,
+    nodes: [{ id: 'n-1' }],
+  };
+  const build = (owned: { min: number | null; max: number | null } | null) =>
+    new ClusterAutoscaleService(
+      { findOne: jest.fn().mockResolvedValue(cluster) } as never,
+      {
+        getServerMemoryUsage: jest.fn().mockResolvedValue(10),
+        getServerCpuUsage: jest.fn().mockResolvedValue(10),
+      } as never,
+      {
+        describe: jest.fn().mockResolvedValue({
+          actuation: AutoscaleActuation.AUTOMATIC,
+          message: null,
+          facts: { nodeProvisioning: true, driven: true },
+        }),
+      } as never,
+      { read: jest.fn().mockResolvedValue(null) } as never,
+      { boundsFor: jest.fn().mockResolvedValue(owned) } as never,
+    );
+
+  it('reports the bounds a scaling group owns, the ones adding a node is fenced by', async () => {
+    const status = await build({ min: 1, max: 3 }).getStatus('c-1');
+    expect(status.maxNodes).toBe(3);
+  });
+
+  it('keeps the cluster row bounds where nothing owns them', async () => {
+    const status = await build(null).getStatus('c-1');
+    expect(status.maxNodes).toBe(1);
+  });
+});
