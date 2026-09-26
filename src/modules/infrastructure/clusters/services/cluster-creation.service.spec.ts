@@ -310,6 +310,29 @@ describe('ClusterCreationService.createCluster — provider policies', () => {
         BadRequestException,
       );
     });
+
+    it('says the same before anything is created, with the reason', async () => {
+      const { service } = setup('1.2.3.4');
+      const verdict = await service.workloadProviderVerdict(CloudProvider.OVH);
+      expect(verdict).toMatchObject({
+        provider: CloudProvider.OVH,
+        allowed: false,
+        controlProvider: CloudProvider.HETZNER,
+        overlayEnabled: false,
+      });
+      expect(verdict.reason).toContain('no private path');
+    });
+
+    it('answers yes for the control cluster’s own provider and once the overlay bridges', async () => {
+      const { service } = setup('1.2.3.4');
+      await expect(
+        service.workloadProviderVerdict(CloudProvider.HETZNER),
+      ).resolves.toMatchObject({ allowed: true, reason: null });
+      process.env.FLUI_WG_ENABLED = 'true';
+      await expect(
+        service.workloadProviderVerdict(CloudProvider.OVH),
+      ).resolves.toMatchObject({ allowed: true, overlayEnabled: true });
+    });
   });
 });
 

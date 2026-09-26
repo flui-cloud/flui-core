@@ -29,6 +29,7 @@ describe('ClusterScalingService', () => {
       queueAdd?: jest.Mock;
       saveOp?: jest.Mock;
       byosRemove?: jest.Mock;
+      managedFirewall?: { providerFirewallId?: string | null } | null;
     } = {},
   ) {
     const queueAdd = overrides.queueAdd ?? jest.fn().mockResolvedValue({});
@@ -72,6 +73,15 @@ describe('ClusterScalingService', () => {
       removeWorker: overrides.byosRemove ?? jest.fn(),
     };
     const nodeEvents = { record: jest.fn().mockResolvedValue(null) };
+    const firewallState = {
+      getFirewallByClusterId: jest
+        .fn()
+        .mockImplementation(() =>
+          overrides.managedFirewall
+            ? Promise.resolve(overrides.managedFirewall)
+            : Promise.reject(new NotFoundException('none')),
+        ),
+    };
     const svc = new ClusterScalingService(
       clusterRepo as any,
       nodeRepo as any,
@@ -83,6 +93,7 @@ describe('ClusterScalingService', () => {
       byosNodeRemoval as any,
       new ClusterBoundsRegistry(),
       nodeEvents as any,
+      firewallState as any,
     );
     return {
       svc,
@@ -185,6 +196,40 @@ describe('ClusterScalingService', () => {
         expect.objectContaining({ providerFirewallIds: [] }),
         expect.any(Object),
       );
+    });
+  });
+
+  describe('the firewall a new worker is born inside', () => {
+    it('takes the provider firewall of the cluster firewall, not the legacy row', async () => {
+      const { svc, queueAdd } = makeService({
+        cluster: baseCluster(),
+        firewallId: null,
+        managedFirewall: { providerFirewallId: 'fr-par-1:sg-1' },
+      });
+      await svc.addWorkers('c1', 1);
+      expect(queueAdd.mock.calls[0][1].providerFirewallIds).toEqual([
+        'fr-par-1:sg-1',
+      ]);
+    });
+
+    it('refuses to add a node outside a firewall that has no provider ID', async () => {
+      const { svc, queueAdd } = makeService({
+        cluster: baseCluster(),
+        managedFirewall: { providerFirewallId: null },
+      });
+      await expect(svc.addWorkers('c1', 1)).rejects.toThrow(/outside it/);
+      expect(queueAdd).not.toHaveBeenCalled();
+    });
+
+    it('still uses the legacy row for clusters that only have that', async () => {
+      const { svc, queueAdd } = makeService({
+        cluster: baseCluster(),
+        firewallId: '11535759',
+      });
+      await svc.addWorkers('c1', 1);
+      expect(queueAdd.mock.calls[0][1].providerFirewallIds).toEqual([
+        '11535759',
+      ]);
     });
   });
 

@@ -16,6 +16,7 @@ import {
   OperationType,
 } from '../../servers/entities/infrastructure-operations.entity';
 import { getOperationSteps } from '../../operations/helpers/operation-steps.helper';
+import { FirewallDesiredStateService } from '../../firewalls/services/firewall-desired-state.service';
 import { FirewallsService } from '../../firewalls/services/firewalls.service';
 import { CapabilitiesProviderFactory } from '../../../providers/core/factories/capabilities-provider.factory';
 import { ClusterNodeScalingService } from './cluster-node-scaling.service';
@@ -67,7 +68,38 @@ export class ClusterScalingService {
     private readonly byosNodeRemoval: ByosNodeRemovalService,
     private readonly bounds: ClusterBoundsRegistry,
     private readonly nodeEvents: NodeLifeEventsService,
+    private readonly firewallState: FirewallDesiredStateService,
   ) {}
+
+  /**
+   * The provider firewall a new worker must be born inside.
+   *
+   * The cluster's firewall lives in `cluster_firewalls`; the older
+   * `infrastructure_firewalls` row exists only for clusters that predate it.
+   * Reading the old table alone gave every worker added to a newer cluster no
+   * firewall at all — its kubelet and NodePorts open to the internet while the
+   * master stayed protected. A cluster that has a firewall but no provider ID
+   * for it is refused: a server outside the firewall is worse than no server.
+   */
+  private async providerFirewallIdsFor(clusterId: string): Promise<string[]> {
+    const managed = await this.firewallState
+      .getFirewallByClusterId(clusterId)
+      .catch((error: unknown) => {
+        if (error instanceof NotFoundException) return null;
+        throw error;
+      });
+    if (managed) {
+      if (!managed.providerFirewallId) {
+        throw new BadRequestException(
+          'This cluster has a firewall that was never created at the provider, so a new node would join outside it. Reconcile the firewall first.',
+        );
+      }
+      return [managed.providerFirewallId];
+    }
+    const legacy =
+      await this.firewallsService.getFirewallByClusterId(clusterId);
+    return legacy ? [legacy.id] : [];
+  }
 
   /**
    * The floor and ceiling actually in force: whatever owns them now, the
@@ -150,9 +182,7 @@ export class ClusterScalingService {
     // loop it becomes that error every time it runs.
     if (serverType) await this.assertShapeSold(cluster, serverType);
 
-    const firewall =
-      await this.firewallsService.getFirewallByClusterId(clusterId);
-    const providerFirewallIds = firewall ? [firewall.id] : [];
+    const providerFirewallIds = await this.providerFirewallIdsFor(clusterId);
 
     const steps = getOperationSteps(OperationType.ADD_WORKER, {
       workerCount: count,

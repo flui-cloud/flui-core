@@ -16,6 +16,8 @@ import { dump as dumpYaml } from 'js-yaml';
 import { deriveHostTargets } from '../../../providers/core/host/host-targets';
 
 const VECTOR_CONFIG = '/etc/vector/vector.toml';
+/** vmagent is a K3s auto-deploy manifest: K3s re-applies this file over any API edit. */
+const VMAGENT_MANIFEST = '/var/lib/rancher/k3s/server/manifests/vmagent.yaml';
 const OK = 'FLUI_TELEMETRY_OK';
 const UPDATED = 'FLUI_TELEMETRY_UPDATED';
 const ABSENT = 'FLUI_TELEMETRY_ABSENT';
@@ -55,6 +57,27 @@ export function rewriteRemoteWriteArgs(
     return rewritten;
   });
   return { args: next, changed };
+}
+
+/**
+ * Rewrites the push target inside vmagent's K3s auto-deploy manifest.
+ *
+ * Only the host and port after `-remoteWrite.url=http://` change, so the path
+ * vmagent needs stays as it was. Absent on agent nodes, which is not an error.
+ */
+export function buildVmagentManifestScript(endpoint: string): string {
+  return [
+    'set -e',
+    `F=${VMAGENT_MANIFEST}`,
+    `if [ ! -f "$F" ]; then echo ${ABSENT}; echo ${OK}; exit 0; fi`,
+    `if ! grep -q -- '-remoteWrite.url=http://' "$F"; then echo ${ABSENT}; echo ${OK}; exit 0; fi`,
+    `if grep -qF -- '-remoteWrite.url=http://${endpoint}/' "$F"; then echo ${OK}; exit 0; fi`,
+    `sed 's#-remoteWrite\\.url=http://[^/]*#-remoteWrite.url=http://${endpoint}#' "$F" > "$F.flui-tmp"`,
+    'cat "$F.flui-tmp" > "$F"',
+    'rm -f "$F.flui-tmp"',
+    `echo ${UPDATED}`,
+    `echo ${OK}`,
+  ].join('\n');
 }
 
 export interface TelemetryReconcileResult {
@@ -192,8 +215,10 @@ export class TelemetryEndpointReconciler {
   /**
    * Moves the metrics agent's push target, which does not live on the host.
    *
-   * Logs are a line in `/etc/vector/vector.toml`; metrics are a flag on a
-   * Kubernetes Deployment, so no file on any node mentions them.
+   * Logs are a line in `/etc/vector/vector.toml`; metrics are a flag on the
+   * vmagent Deployment — which K3s owns through its auto-deploy manifest on the
+   * server node, so the file is rewritten first and the API edit only makes the
+   * change immediate. An API edit alone is reverted by K3s within seconds.
    */
   async reconcileMetrics(clusterId: string): Promise<{
     endpoint?: string;
@@ -202,11 +227,20 @@ export class TelemetryEndpointReconciler {
   }> {
     const cluster = await this.clusterRepository.findOne({
       where: { id: clusterId },
+      relations: ['nodes'],
     });
     if (!cluster) throw new NotFoundException(`Cluster ${clusterId} not found`);
 
     const endpoint = await this.desiredEndpoint(cluster, this.metricsPort());
     if (!endpoint) return { changed: false, reason: 'no ingest address' };
+
+    let manifestChanged = false;
+    const manifestScript = buildVmagentManifestScript(endpoint);
+    const hosts = cluster.nodes?.length ? deriveHostTargets(cluster) : [];
+    for (const target of hosts) {
+      const out = await this.hostCommand.apply(target, manifestScript, OK);
+      if (out?.includes(UPDATED)) manifestChanged = true;
+    }
 
     if (!cluster.kubeconfigEncrypted) {
       return { endpoint, changed: false, reason: 'no kubeconfig stored' };
@@ -229,7 +263,9 @@ export class TelemetryEndpointReconciler {
       endpoint,
     );
     if (!changed)
-      return { endpoint, changed: false, reason: 'already correct' };
+      return manifestChanged
+        ? { endpoint, changed: true }
+        : { endpoint, changed: false, reason: 'already correct' };
 
     container.args = args;
     await this.kubernetes.replaceManifest(kubeconfig, dumpYaml(deployment));

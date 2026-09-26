@@ -410,21 +410,27 @@ export class ClusterCreationService {
     return !!this.managementAddress.publicAddressOf(control);
   }
 
-  private async assertWorkloadProviderMatchesControl(
-    dto: CreateClusterDto,
-    clusterType: ClusterType,
-  ): Promise<void> {
-    if (clusterType !== ClusterType.WORKLOAD) {
-      return;
-    }
-
+  /**
+   * Whether a workload cluster on this provider can join this installation
+   * now — the same answer creation enforces, readable before a person has
+   * filled in a whole form to hear it.
+   */
+  async workloadProviderVerdict(
+    provider: string,
+  ): Promise<WorkloadProviderVerdict> {
     const control = await this.clusterRepository.findOne({
       where: {
         clusterType: In([ClusterType.CONTROL, ClusterType.OBSERVABILITY]),
       },
     });
-    if (!control || control.provider === dto.provider) {
-      return;
+    const overlayEnabled = process.env.FLUI_WG_ENABLED === 'true';
+    const base = {
+      provider,
+      controlProvider: control?.provider ?? null,
+      overlayEnabled,
+    };
+    if (!control || control.provider === provider) {
+      return { ...base, allowed: true, reason: null };
     }
 
     // The question is whether these two can reach each other privately, not
@@ -435,30 +441,69 @@ export class ClusterCreationService {
       .getCapabilitiesService(control.provider as CloudProvider)
       .getStaticCapabilities().crossClusterAllowed;
     if (controlAllowsCross) {
-      return;
+      return { ...base, allowed: true, reason: null };
     }
     if (this.overlayCanBridge(control)) {
-      this.logger.log(
-        `[cross-provider] ${dto.provider} workload under a ${control.provider} ` +
-          `control: allowed over the management overlay`,
-      );
+      return { ...base, allowed: true, reason: null };
+    }
+    return {
+      ...base,
+      allowed: false,
+      reason:
+        `A workload cluster on ${provider} cannot reach this installation's ` +
+        `control cluster on ${control.provider}: there is no private path ` +
+        `between the two providers. The Flui management overlay provides one ` +
+        `once it is switched on (FLUI_WG_ENABLED) for a control cluster with a ` +
+        `reachable address.`,
+    };
+  }
+
+  private async assertWorkloadProviderMatchesControl(
+    dto: CreateClusterDto,
+    clusterType: ClusterType,
+  ): Promise<void> {
+    if (clusterType !== ClusterType.WORKLOAD) {
       return;
     }
+    const verdict = await this.workloadProviderVerdict(dto.provider);
+    if (verdict.allowed) {
+      if (verdict.controlProvider && verdict.controlProvider !== dto.provider) {
+        this.logger.log(
+          `[cross-provider] ${dto.provider} workload under a ${verdict.controlProvider} ` +
+            `control: allowed`,
+        );
+      }
+      return;
+    }
+    const control = await this.clusterRepository.findOne({
+      where: {
+        clusterType: In([ClusterType.CONTROL, ClusterType.OBSERVABILITY]),
+      },
+    });
 
     throw new BadRequestException({
       code: 'CROSS_PROVIDER_NOT_ALLOWED',
       message:
         `Workload provider '${dto.provider}' does not match the control cluster ` +
-        `provider '${control.provider}', and no private path between them is ` +
+        `provider '${verdict.controlProvider}', and no private path between them is ` +
         `available. Enable the Flui management overlay (FLUI_WG_ENABLED) on an ` +
         `installation whose control cluster has a reachable address.`,
       details: {
         workloadProvider: dto.provider,
-        controlProvider: control.provider,
-        overlayEnabled: process.env.FLUI_WG_ENABLED === 'true',
-        controlReachableAt:
-          this.managementAddress.publicAddressOf(control) ?? null,
+        controlProvider: verdict.controlProvider,
+        overlayEnabled: verdict.overlayEnabled,
+        controlReachableAt: control
+          ? (this.managementAddress.publicAddressOf(control) ?? null)
+          : null,
       },
     });
   }
+}
+
+export interface WorkloadProviderVerdict {
+  provider: string;
+  allowed: boolean;
+  controlProvider: string | null;
+  overlayEnabled: boolean;
+  reason: string | null;
 }

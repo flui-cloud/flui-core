@@ -101,6 +101,8 @@ import { OrphanVolumesService } from './services/orphan-volumes.service';
 import { CloudProvider } from 'src/modules/providers/enums/cloud-provider.enum';
 import { ClusterValidationService } from './services/cluster-validation.service';
 import { NameAvailabilityResponseDto } from './dto/name-availability.dto';
+import { WorkloadProviderResponseDto } from './dto/workload-provider.dto';
+import { ClusterCreationService } from './services/cluster-creation.service';
 import { ApiServerSanService } from '../networking/services/api-server-san.service';
 
 /**
@@ -161,6 +163,7 @@ export class ClustersController {
     private readonly fleetHistoryService: FleetHistoryService,
     private readonly clusterRebuildService: ClusterRebuildService,
     private readonly clusterValidationService: ClusterValidationService,
+    private readonly clusterCreationService: ClusterCreationService,
   ) {}
 
   @Get('name-availability')
@@ -182,6 +185,24 @@ export class ClustersController {
     @Query('provider') provider: CloudProvider,
   ): Promise<NameAvailabilityResponseDto> {
     return this.clusterValidationService.checkNameAvailability(name, provider);
+  }
+
+  @Get('workload-providers/:provider')
+  @RequireSection('infrastructure')
+  @ApiOperation({
+    summary: 'Whether a workload cluster on this provider can be created here',
+    description:
+      'Answers before anything is filled in: a workload cluster on a provider ' +
+      "other than the control cluster's needs a private path between the two. " +
+      'Creating one runs the same check and refuses with ' +
+      '`CROSS_PROVIDER_NOT_ALLOWED` where this says `allowed: false`.',
+  })
+  @ApiParam({ name: 'provider', enum: CloudProvider })
+  @ApiResponse({ status: 200, type: WorkloadProviderResponseDto })
+  async workloadProvider(
+    @Param('provider') provider: CloudProvider,
+  ): Promise<WorkloadProviderResponseDto> {
+    return this.clusterCreationService.workloadProviderVerdict(provider);
   }
 
   @Get('orphan-volumes')

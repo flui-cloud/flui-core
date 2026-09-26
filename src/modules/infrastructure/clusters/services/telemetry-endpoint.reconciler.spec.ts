@@ -8,9 +8,14 @@ jest.mock('@kubernetes/client-node', () => ({
 }));
 
 import {
+  buildVmagentManifestScript,
   rewriteRemoteWriteArgs,
   TelemetryEndpointReconciler,
 } from './telemetry-endpoint.reconciler';
+import { execFileSync } from 'child_process';
+import { mkdtempSync, readFileSync, writeFileSync } from 'fs';
+import { tmpdir } from 'os';
+import { join } from 'path';
 import { ManagementAddressResolver } from '../../shared/services/management-address.resolver';
 import { ClusterStatus, ClusterType } from '../entities/cluster.entity';
 
@@ -338,6 +343,48 @@ describe('TelemetryEndpointReconciler', () => {
       await expect(svc.reconcileMetrics('w')).resolves.toMatchObject({
         reason: 'no kubeconfig stored',
       });
+    });
+  });
+
+  describe('the vmagent manifest K3s re-applies', () => {
+    const run = (content: string | null, endpoint: string) => {
+      const dir = mkdtempSync(join(tmpdir(), 'vmagent-'));
+      const file = join(dir, 'vmagent.yaml');
+      if (content !== null) writeFileSync(file, content);
+      const script = buildVmagentManifestScript(endpoint).replace(
+        '/var/lib/rancher/k3s/server/manifests/vmagent.yaml',
+        file,
+      );
+      const out = execFileSync('sh', ['-c', script]).toString();
+      return { out, file };
+    };
+    const manifest =
+      "        args:\n          - '-remoteWrite.url=http://49.13.132.151:30428/api/v1/write'\n";
+
+    it('moves only the host and port, keeping the path and the quoting', () => {
+      const { out, file } = run(manifest, '10.250.0.1:30428');
+      expect(out).toContain('FLUI_TELEMETRY_UPDATED');
+      expect(readFileSync(file, 'utf8')).toContain(
+        "'-remoteWrite.url=http://10.250.0.1:30428/api/v1/write'",
+      );
+    });
+
+    it('changes nothing the second time', () => {
+      const first = run(manifest, '10.250.0.1:30428');
+      const again = execFileSync('sh', [
+        '-c',
+        buildVmagentManifestScript('10.250.0.1:30428').replace(
+          '/var/lib/rancher/k3s/server/manifests/vmagent.yaml',
+          first.file,
+        ),
+      ]).toString();
+      expect(again).not.toContain('FLUI_TELEMETRY_UPDATED');
+      expect(again).toContain('FLUI_TELEMETRY_OK');
+    });
+
+    it('is a no-op on a node without the manifest', () => {
+      const { out } = run(null, '10.250.0.1:30428');
+      expect(out).toContain('FLUI_TELEMETRY_ABSENT');
     });
   });
 });
