@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { MCP_SCOPE } from '../constants/mcp-scopes';
+import { enc } from './application-views.util';
 import {
   McpToolContext,
   ToolDef,
@@ -97,6 +98,77 @@ function queued(
 }
 
 export const INFRASTRUCTURE_OPERATION_TOOLS: ToolDef[] = [
+  defineTool({
+    name: 'cluster_maintenance',
+    routes: [
+      'GET /infrastructure/clusters/:id/maintenance-window',
+      'GET /infrastructure/clusters/:id/deferred-actions',
+    ],
+    description:
+      "A cluster's maintenance window — weekly slots in one time zone when changes that restart something may run — when it next opens, and every change held for it. Relay `says`.",
+    scope: MCP_SCOPE.INFRA_READ,
+    inputSchema: { clusterId: z.string().optional() },
+    run: async (args, ctx) => {
+      const clusterId = await resolveClusterId(ctx, args.clusterId);
+      return {
+        ...(await ctx.api.get<Record<string, unknown>>(
+          `/infrastructure/clusters/${enc(clusterId)}/maintenance-window`,
+        )),
+        deferred: await ctx.api.get(
+          `/infrastructure/clusters/${enc(clusterId)}/deferred-actions`,
+        ),
+      };
+    },
+  }),
+
+  defineTool({
+    name: 'cluster_maintenance_set',
+    routes: ['PUT /infrastructure/clusters/:id/maintenance-window'],
+    description:
+      "Set a cluster's maintenance window: weekly slots (days, HH:MM start, minutes) in one IANA time zone. THIS ASKS A PERSON: it passes through Flui's approval cycle when an agent calls it; stop, tell the user what was asked for, and retry once they answer.",
+    scope: MCP_SCOPE.INFRA_WRITE,
+    inputSchema: {
+      clusterId: z.string().optional(),
+      timezone: z.string(),
+      slots: z
+        .array(
+          z.object({
+            days: z
+              .array(z.enum(['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun']))
+              .min(1),
+            start: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/),
+            durationMinutes: coerceNumber(z.number().int().min(15).max(1440)),
+          }),
+        )
+        .min(1),
+    },
+    run: async (args, ctx) => {
+      const clusterId = await resolveClusterId(ctx, args.clusterId);
+      return ctx.api.put(
+        `/infrastructure/clusters/${enc(clusterId)}/maintenance-window`,
+        {
+          timezone: args.timezone,
+          slots: args.slots,
+        },
+      );
+    },
+  }),
+
+  defineTool({
+    name: 'cluster_maintenance_clear',
+    routes: ['DELETE /infrastructure/clusters/:id/maintenance-window'],
+    description:
+      "Remove a cluster's maintenance window. Changes already held keep their time. THIS ASKS A PERSON through the approval cycle when an agent calls it.",
+    scope: MCP_SCOPE.INFRA_WRITE,
+    inputSchema: { clusterId: z.string().optional() },
+    run: async (args, ctx) => {
+      const clusterId = await resolveClusterId(ctx, args.clusterId);
+      return ctx.api.delete(
+        `/infrastructure/clusters/${enc(clusterId)}/maintenance-window`,
+      );
+    },
+  }),
+
   // ── Reads: what a change would cost, and what there is to change ─────────
 
   defineTool({

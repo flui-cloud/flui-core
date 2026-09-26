@@ -3,6 +3,8 @@ import * as k8s from '@kubernetes/client-node';
 import { ApplicationEntity } from '../../applications/entities/application.entity';
 import { KubernetesService } from '../../infrastructure/shared/services/kubernetes.service';
 import { CrashPatternMatcherService } from './crash-pattern-matcher.service';
+import { waitsForRoom } from '../../infrastructure/shared/utils/waits-for-room.util';
+import { podRequest } from '../../infrastructure/clusters/services/unschedulable-pods.service';
 import { memoryRaise } from './memory-raise.core';
 import { CrashCategory } from '../enums/crash-category.enum';
 import { DiagnosisSeverity } from '../enums/diagnosis-severity.enum';
@@ -85,6 +87,31 @@ export class DiagnosticEngineService {
     const scheduled = pod.status?.conditions?.find(
       (c) => c.type === 'PodScheduled',
     );
+    if (waitsForRoom(pod)) {
+      const ask = podRequest(pod, this.kubernetesService);
+      return {
+        category: CrashCategory.UNSCHEDULABLE,
+        severity: DiagnosisSeverity.WARNING,
+        title: 'Waiting for a node with room',
+        explanation: `No node has room for what this app reserves (${ask.cpuMillicores}m of CPU and ${ask.memoryMi}Mi of memory). This is a wait, not a crash: it starts on its own as soon as a node with room joins.`,
+        evidence: {
+          events: [
+            {
+              type: 'Warning',
+              reason: 'Unschedulable',
+              message: scheduled?.message ?? '',
+              count: 1,
+            },
+          ],
+        },
+        patternMatchedKey: null,
+        suggestedAction: {
+          type: SuggestedActionType.MANUAL,
+          message:
+            "The cluster's scaling page says what happens next: the group buys a node, proposes one for a person to approve, or names why no machine fits. Lowering what the app reserves is the other way out.",
+        },
+      };
+    }
     if (scheduled?.status === 'False' && scheduled.reason === 'Unschedulable') {
       return {
         category: CrashCategory.UNSCHEDULABLE,

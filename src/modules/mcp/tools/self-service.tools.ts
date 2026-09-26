@@ -161,9 +161,12 @@ export const SELF_SERVICE_TOOLS: ToolDef[] = [
 
   defineTool({
     name: 'app_set_resources',
-    routes: ['PATCH /applications/:id/resources'],
+    routes: [
+      'PATCH /applications/:id/resources',
+      'POST /applications/:id/resources/consequence',
+    ],
     description:
-      'Change how much CPU and memory an application may use. This is the cure for the OOMKilled that app_debug reports — where app_debug already carries an appliable suggestion, app_crash_apply applies exactly that. Raise the memory LIMIT, because a container is killed for crossing its limit, never for crossing its request — the request only reserves room on a node. Quantities are Kubernetes ones: cpu as cores ("1", "0.5") or millicores ("500m"), memory as "256Mi", "1Gi". Only what you pass is changed; anything left out keeps its current value. The pods are replaced to apply it, so the application restarts.',
+      'Change how much CPU and memory an application may use. This is the cure for the OOMKilled that app_debug reports — where app_debug already carries an appliable suggestion, app_crash_apply applies exactly that. Raise the memory LIMIT, because a container is killed for crossing its limit, never for crossing its request — the request only reserves room on a node. Quantities are Kubernetes ones: cpu as cores ("1", "0.5") or millicores ("500m"), memory as "256Mi", "1Gi"; they are stored as whole Mi and millicores, and a limit below its request is refused. Only what you pass is changed; anything left out keeps its current value. The pods are replaced to apply it, so the application restarts. Pass dryRun first to write nothing and learn where the replicas would run with the new requests — on a node already there, on a machine the scaling group would buy (automatic) or only propose (manual), or nowhere yet — and say that consequence to the person before applying.',
     scope: MCP_SCOPE.APP_WRITE,
     inputSchema: {
       id: z.string(),
@@ -177,6 +180,12 @@ export const SELF_SERVICE_TOOLS: ToolDef[] = [
         .string()
         .optional()
         .describe('Defaults to the first container.'),
+      dryRun: z
+        .boolean()
+        .optional()
+        .describe(
+          'Write nothing: return the values as they would be stored, whether they would be refused, and where the replicas would run.',
+        ),
     },
     run: (args, ctx) => {
       if (!args.requests && !args.limits) {
@@ -186,6 +195,16 @@ export const SELF_SERVICE_TOOLS: ToolDef[] = [
       }
       assertQuantities(args.requests);
       assertQuantities(args.limits);
+      if (args.dryRun) {
+        return ctx.api.post(
+          `/applications/${enc(args.id)}/resources/consequence`,
+          {
+            requests: args.requests,
+            limits: args.limits,
+            containerName: args.containerName,
+          },
+        );
+      }
       return ctx.api.patch(`/applications/${enc(args.id)}/resources`, {
         requests: args.requests,
         limits: args.limits,
@@ -193,6 +212,109 @@ export const SELF_SERVICE_TOOLS: ToolDef[] = [
       });
     },
     forModel: containersView,
+  }),
+
+  defineTool({
+    name: 'app_resource_proposal',
+    routes: ['GET /applications/:id/resources/proposal'],
+    description:
+      'The memory change Flui proposes for an application, if any, and what applying it would do. Built from an open out-of-memory diagnosis and a week of memory use: a limit the app keeps reaching, or a reservation far below what it uses. Each proposal has its reasons, the values that would be written, where the replicas would then run (a node already there, a machine a scaling group would buy or only propose, or nowhere yet), whether the app stops while it restarts, and — when the limit rises — whether the app must also be configured to use the memory. `proposal` is null when nothing asks for a change. Writes nothing: tell the person the reasons and the consequence; only app_resource_proposal_apply changes anything.',
+    scope: MCP_SCOPE.APP_READ,
+    inputSchema: { id: z.string() },
+    run: (args, ctx) =>
+      ctx.api.get(`/applications/${enc(args.id)}/resources/proposal`),
+  }),
+
+  defineTool({
+    name: 'app_resource_proposal_apply',
+    routes: ['POST /applications/:id/resources/proposal/apply'],
+    description:
+      'Apply the memory change app_resource_proposal shows, as it stands now, and record who applied it and why. Call it only when the person has read the proposal and asked for it to be applied — never on your own initiative: a larger limit lets one application take memory promised to others, and a larger request can make a scaling group buy a node. The pods are replaced, so the application restarts. Refused when nothing asks for a change any more.',
+    scope: MCP_SCOPE.APP_WRITE,
+    inputSchema: { id: z.string() },
+    run: (args, ctx) =>
+      ctx.api.post(`/applications/${enc(args.id)}/resources/proposal/apply`),
+  }),
+
+  defineTool({
+    name: 'app_resource_proposal_defer',
+    routes: ['POST /applications/:id/resources/proposal/defer'],
+    description:
+      'Hold the memory change app_resource_proposal shows until the maintenance window that governs the application opens, instead of applying it now. Only when the person asked for it at the next window. Flui reads the evidence again when the window opens: a reason that went away drops it, a change with nowhere to run is raised instead of applied. Refused with the reason when no window is set (app_maintenance says so). Returns the held change with `runAt` and its `id` for app_deferred_cancel.',
+    scope: MCP_SCOPE.APP_WRITE,
+    inputSchema: { id: z.string() },
+    run: (args, ctx) =>
+      ctx.api.post(`/applications/${enc(args.id)}/resources/proposal/defer`),
+  }),
+
+  defineTool({
+    name: 'app_maintenance',
+    routes: [
+      'GET /applications/:id/maintenance',
+      'GET /applications/:id/deferred-actions',
+    ],
+    description:
+      "Which maintenance window governs an application (its cluster's, its own, or none because it takes changes at any time), when it next opens, and the changes held for it with what became of each. Relay `says`.",
+    scope: MCP_SCOPE.APP_READ,
+    inputSchema: { id: z.string() },
+    run: async (args, ctx) => ({
+      ...(await ctx.api.get<Record<string, unknown>>(
+        `/applications/${enc(args.id)}/maintenance`,
+      )),
+      deferred: await ctx.api.get(
+        `/applications/${enc(args.id)}/deferred-actions`,
+      ),
+    }),
+  }),
+
+  defineTool({
+    name: 'app_maintenance_set',
+    routes: ['PUT /applications/:id/maintenance'],
+    description:
+      "Let an application follow its cluster's maintenance window (`follow`, the default), keep one of its own (`own`, with `window`), or take such changes at any time (`anytime`). Only when the person asks.",
+    scope: MCP_SCOPE.APP_WRITE,
+    inputSchema: {
+      id: z.string(),
+      mode: z.enum(['follow', 'own', 'anytime']),
+      window: z
+        .object({
+          timezone: z.string(),
+          slots: z
+            .array(
+              z.object({
+                days: z
+                  .array(
+                    z.enum(['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun']),
+                  )
+                  .min(1),
+                start: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/),
+                durationMinutes: coerceNumber(
+                  z.number().int().min(15).max(1440),
+                ),
+              }),
+            )
+            .min(1),
+        })
+        .optional(),
+    },
+    run: (args, ctx) =>
+      ctx.api.put(`/applications/${enc(args.id)}/maintenance`, {
+        mode: args.mode,
+        window: args.window,
+      }),
+  }),
+
+  defineTool({
+    name: 'app_deferred_cancel',
+    routes: ['DELETE /applications/:id/deferred-actions/:actionId'],
+    description:
+      'Cancel a change held for the maintenance window before it runs. Only a waiting one can be cancelled.',
+    scope: MCP_SCOPE.APP_WRITE,
+    inputSchema: { id: z.string(), actionId: z.string() },
+    run: (args, ctx) =>
+      ctx.api.delete(
+        `/applications/${enc(args.id)}/deferred-actions/${enc(args.actionId)}`,
+      ),
   }),
 
   defineTool({

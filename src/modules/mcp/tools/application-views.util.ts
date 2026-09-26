@@ -180,11 +180,44 @@ export function runtimeView(data: unknown): unknown {
   const r = data as {
     deploymentName?: string;
     replicas?: { desired?: number; ready?: number; available?: number };
+    waitingForRoom?: { replicas: number; says: string } | null;
+    pods?: Array<{
+      node: string | null;
+      serverType: string | null;
+      region: string | null;
+      ready: boolean;
+    }>;
+    restartPending?: { changes: string[] } | null;
   };
   return {
     app: r.deploymentName,
     desired: r.replicas?.desired,
     ready: r.replicas?.ready,
     available: r.replicas?.available,
+    ...(r.restartPending
+      ? {
+          restartPending: r.restartPending.changes,
+          restartMeans:
+            'Saved variables have not reached the running pods; app_restart applies them. Say which ones to the person before restarting.',
+        }
+      : {}),
+    ...(r.pods?.length
+      ? {
+          runsOn: r.pods.map((p) => {
+            if (!p.node) return 'waiting for a node';
+            const notReady = p.ready ? '' : ' (not ready)';
+            return (
+              [p.node, p.serverType, p.region].filter(Boolean).join(' · ') +
+              notReady
+            );
+          }),
+        }
+      : {}),
+    ...(r.waitingForRoom
+      ? {
+          waitingForRoom: r.waitingForRoom.replicas,
+          waitingMeans: `${r.waitingForRoom.says} This is a wait on scaling, not a failure: do not restart or roll back for it.`,
+        }
+      : {}),
   };
 }

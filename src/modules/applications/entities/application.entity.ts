@@ -32,6 +32,7 @@ import {
   ApplicationHealthProbe,
   ApplicationVolume,
 } from '../interfaces/source-config.interface';
+import type { AppMaintenance } from '../../infrastructure/maintenance/maintenance-window.core';
 
 @Entity('applications')
 export class ApplicationEntity {
@@ -108,6 +109,10 @@ export class ApplicationEntity {
 
   @Column({ type: 'text', nullable: true })
   reconciliationError?: string;
+
+  /** Null follows the cluster's maintenance window. */
+  @Column({ type: 'jsonb', nullable: true })
+  maintenance: AppMaintenance | null;
 
   @Column({ type: 'json', default: '{}' })
   sourceConfig: ApplicationSourceConfig;

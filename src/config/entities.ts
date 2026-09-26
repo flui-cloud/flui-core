@@ -78,6 +78,7 @@ import { OperatingContextEntryEntity } from '../modules/operating-context/entiti
 import { SandboxTenantEntity } from '../modules/sandbox/entities/sandbox-tenant.entity';
 import { ScalingGroupEntity } from '../modules/infrastructure/scaling/entities/scaling-group.entity';
 import { ScalingDecisionEntity } from '../modules/infrastructure/scaling/entities/scaling-decision.entity';
+import { DeferredActionEntity } from '../modules/infrastructure/maintenance/deferred-action.entity';
 import { ApplicationServiceEntity } from '../modules/attached-services/entities/application-service.entity';
 
 export const entities = [
@@ -156,4 +157,5 @@ export const entities = [
   ApplicationServiceEntity,
   InfrastructureOperationLogEntity,
   WireGuardPeerEntity,
+  DeferredActionEntity,
 ];

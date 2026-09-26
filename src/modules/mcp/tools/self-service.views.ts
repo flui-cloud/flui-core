@@ -108,6 +108,20 @@ export const resourceSpec = z.object({
 
 /** Container specs and live usage, as much as the model needs to decide again. */
 export function containersView(data: unknown): unknown {
+  const dry = data as {
+    requests?: ResourceSpec;
+    limits?: ResourceSpec;
+    problem?: string | null;
+    placement?: unknown;
+  };
+  if (dry.placement) {
+    return {
+      wouldWrite: { requests: dry.requests, limits: dry.limits },
+      refusedBecause: dry.problem ?? null,
+      placement: dry.placement,
+      note: 'Nothing was written. Tell the person where the replicas would run before applying without dryRun.',
+    };
+  }
   const r = data as {
     deploymentName?: string;
     replicas?: { desired?: number; ready?: number };

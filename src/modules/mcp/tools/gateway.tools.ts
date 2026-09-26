@@ -63,18 +63,26 @@ export const GATEWAY_TOOLS: ToolDef[] = [
     },
     forModel: (data) => {
       const routes = (data as Array<Record<string, unknown>>) ?? [];
-      return routes.map((r) => ({
-        endpointId: r.endpointId,
-        host: r.host,
-        path: r.path,
-        applicationSlug: r.applicationSlug,
-        tlsEnabled: r.tlsEnabled,
-        auth: r.auth,
-        rateLimit: r.rateLimit,
-        allowIps: r.allowIps,
-        reconciliationStatus: r.reconciliationStatus,
-        errorMessage: r.errorMessage,
-      }));
+      return routes.map((r) => {
+        const phase = r.certificatePhase as
+          | { label: string; detail: string | null }
+          | undefined;
+        return {
+          endpointId: r.endpointId,
+          host: r.host,
+          path: r.path,
+          applicationSlug: r.applicationSlug,
+          tlsEnabled: r.tlsEnabled,
+          certificate: phase
+            ? { label: phase.label, detail: phase.detail }
+            : undefined,
+          auth: r.auth,
+          rateLimit: r.rateLimit,
+          allowIps: r.allowIps,
+          reconciliationStatus: r.reconciliationStatus,
+          errorMessage: r.errorMessage,
+        };
+      });
     },
   }),
   defineTool({
@@ -168,6 +176,18 @@ export const GATEWAY_TOOLS: ToolDef[] = [
         `/applications/${enc(args.id)}/gateway/routes/${enc(
           args.endpointId,
         )}/compiled`,
+      ),
+  }),
+  defineTool({
+    name: 'gateway_route_sync',
+    routes: ['POST /applications/:id/gateway/routes/:endpointId/reconcile'],
+    description:
+      'Sync one route now: address record, route and certificate. A certificate that failed is ordered again. Returns the route with `sync.actions`, one sentence per part, to repeat to the user.',
+    scope: MCP_SCOPE.APP_WRITE,
+    inputSchema: { id: z.string(), endpointId: z.string() },
+    run: (args, ctx) =>
+      ctx.api.post(
+        `/applications/${enc(args.id)}/gateway/routes/${enc(args.endpointId)}/reconcile`,
       ),
   }),
   defineTool({

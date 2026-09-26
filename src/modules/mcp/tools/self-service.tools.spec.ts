@@ -238,6 +238,29 @@ describe('changing CPU and memory', () => {
     });
   });
 
+  it('writes nothing on a dry run and says where the replicas would run', async () => {
+    const calls: Call[] = [];
+    const { data } = await call(
+      'app_set_resources',
+      { id: 'a1', requests: { memory: '6Gi' }, dryRun: true },
+      {
+        'POST /applications/a1/resources/consequence': {
+          requests: { cpu: '100m', memory: '6Gi' },
+          limits: { cpu: '500m', memory: '6Gi' },
+          problem: null,
+          placement: { verdict: 'nothing-hosts', sentence: 'It would wait.' },
+        },
+      },
+      calls,
+    );
+    expect(calls.map((c) => c.method)).toEqual(['POST']);
+    expect(data).toMatchObject({
+      wouldWrite: { requests: { memory: '6Gi' } },
+      placement: { verdict: 'nothing-hosts' },
+    });
+    expect(String(data.note)).toContain('Nothing was written');
+  });
+
   it('refuses a call that would change nothing rather than patching with nothing', async () => {
     const calls: Call[] = [];
     const { ok, text } = await call(

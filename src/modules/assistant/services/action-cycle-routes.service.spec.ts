@@ -241,8 +241,12 @@ describe('the tools whose request the chat can show', () => {
    */
   const UNGOVERNED = [
     'app_crash_apply',
+    'app_deferred_cancel',
     'app_install',
+    'app_maintenance_set',
     'app_reconcile',
+    'app_resource_proposal_apply',
+    'app_resource_proposal_defer',
     'app_restart',
     'app_rollback',
     'app_scale',
@@ -253,6 +257,7 @@ describe('the tools whose request the chat can show', () => {
     'backup_policy_resume',
     'backup_run',
     'gateway_route_add',
+    'gateway_route_sync',
     'migrate_app',
     'schedule_create',
     'schedule_trigger',

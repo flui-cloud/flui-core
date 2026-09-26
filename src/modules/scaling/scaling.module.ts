@@ -17,6 +17,11 @@ import { EndpointDiagnosisService } from './services/endpoint-diagnosis.service'
 import { PodDebugService } from './services/pod-debug.service';
 import { PodDebugController } from './controllers/pod-debug.controller';
 import { CrashDiagnosesController } from './controllers/crash-diagnoses.controller';
+import { ResourceProposalController } from './controllers/resource-proposal.controller';
+import { ResourceProposalService } from './services/resource-proposal.service';
+import { ObservabilityModule } from '../observability/observability.module';
+import { MaintenanceModule } from '../infrastructure/maintenance/maintenance.module';
+import { DeferredProposalRunnerService } from './services/deferred-proposal-runner.service';
 
 @Module({
   imports: [
@@ -30,8 +35,14 @@ import { CrashDiagnosesController } from './controllers/crash-diagnoses.controll
     SharedInfrastructureModule,
     EncryptionModule,
     forwardRef(() => ApplicationsModule),
+    forwardRef(() => ObservabilityModule),
+    MaintenanceModule,
   ],
-  controllers: [PodDebugController, CrashDiagnosesController],
+  controllers: [
+    PodDebugController,
+    CrashDiagnosesController,
+    ResourceProposalController,
+  ],
   providers: [
     CrashDiagnosesRepository,
     CrashPatternMatcherService,
@@ -40,6 +51,8 @@ import { CrashDiagnosesController } from './controllers/crash-diagnoses.controll
     CrashRecoveryService,
     EndpointDiagnosisService,
     PodDebugService,
+    ResourceProposalService,
+    DeferredProposalRunnerService,
   ],
   exports: [
     DeploymentGuardService,

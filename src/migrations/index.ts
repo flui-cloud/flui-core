@@ -49,6 +49,11 @@ import { CatchUpEntityDrift1788000000000 } from './1788000000000-CatchUpEntityDr
 import { ProtectRecordsFromClusterDelete1787900000000 } from './1787900000000-ProtectRecordsFromClusterDelete';
 import { WidenEngineVersion1787800000000 } from './1787800000000-WidenEngineVersion';
 import { ApplicationCompanions1787700000000 } from './1787700000000-ApplicationCompanions';
+import { ApplicationWaitingForRoom1789600000000 } from './1789600000000-ApplicationWaitingForRoom';
+import { SshKeySealedInDatabase1789700000000 } from './1789700000000-SshKeySealedInDatabase';
+import { EndpointCertificateDeferredSince1789800000000 } from './1789800000000-EndpointCertificateDeferredSince';
+import { MaintenanceWindows1789900000000 } from './1789900000000-MaintenanceWindows';
+import { AppEventMaintenance1789900000001 } from './1789900000001-AppEventMaintenance';
 import { MariadbRestoreStrategy1787600000000 } from './1787600000000-MariadbRestoreStrategy';
 import { BackfillArtifactApplicationId1787500000000 } from './1787500000000-BackfillArtifactApplicationId';
 
@@ -109,4 +114,9 @@ export const migrations = [
   DropDeadAutoscaleThresholds1789300000000,
   ScalingGroupPurchaseRetry1789400000000,
   ScalingDecisionOperation1789500000000,
+  ApplicationWaitingForRoom1789600000000,
+  SshKeySealedInDatabase1789700000000,
+  EndpointCertificateDeferredSince1789800000000,
+  MaintenanceWindows1789900000000,
+  AppEventMaintenance1789900000001,
 ];

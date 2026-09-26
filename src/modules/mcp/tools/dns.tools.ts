@@ -78,6 +78,32 @@ async function resolveZoneAssignment(
  */
 export const DNS_TOOLS: ToolDef[] = [
   defineTool({
+    name: 'dns_acme_resolvers',
+    routes: ['GET /clusters/:clusterId/dns-zone/acme-resolvers'],
+    description:
+      'Check whether cert-manager on a cluster checks names through public resolvers before asking for a certificate. When it does not, a name published a moment ago can be seen as missing for up to an hour and its certificate waits. Returns `says`, one sentence to repeat.',
+    scope: MCP_SCOPE.APP_READ,
+    inputSchema: { clusterId: z.string().optional() },
+    run: async (args, ctx) => {
+      const clusterId = await resolveClusterId(ctx, args.clusterId);
+      return ctx.api.get(`/clusters/${enc(clusterId)}/dns-zone/acme-resolvers`);
+    },
+  }),
+  defineTool({
+    name: 'dns_acme_resolvers_pin',
+    routes: ['POST /clusters/:clusterId/dns-zone/acme-resolvers'],
+    description:
+      'Make cert-manager on a cluster check names through public resolvers. Adds only what is missing and restarts cert-manager once, in seconds; issued certificates keep working. Nothing changes on a cluster already set.',
+    scope: MCP_SCOPE.APP_WRITE,
+    inputSchema: { clusterId: z.string().optional() },
+    run: async (args, ctx) => {
+      const clusterId = await resolveClusterId(ctx, args.clusterId);
+      return ctx.api.post(
+        `/clusters/${enc(clusterId)}/dns-zone/acme-resolvers`,
+      );
+    },
+  }),
+  defineTool({
     name: 'dns_wildcard_status',
     routes: ['GET /clusters/:clusterId/dns-zone/:assignmentId/wildcard'],
     description:

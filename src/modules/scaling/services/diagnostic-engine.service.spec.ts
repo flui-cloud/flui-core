@@ -44,6 +44,7 @@ describe('DiagnosticEngineService', () => {
         getPodLogs,
         listEventsFor,
         parseMemory: (v: string) => Number.parseInt(v, 10),
+        parseCpu: (v: string) => Number.parseInt(v, 10),
       } as any,
       { match: jest.fn().mockReturnValue(null) } as any,
     );
@@ -52,6 +53,39 @@ describe('DiagnosticEngineService', () => {
 
   const analyze = (pod: k8s.V1Pod) =>
     createService().service.analyze({ pod, app, kubeconfig: 'kubeconfig' });
+
+  it('says a pod no node has room for is waiting, not crashed, and keeps the raw message as evidence', async () => {
+    const message =
+      '0/1 nodes are available: 1 Insufficient memory. no new claims to deallocate, preemption: 0/1 nodes are available';
+    const diagnosis = await analyze({
+      metadata: { name: 'it-tools-x', namespace: 'default' },
+      spec: {
+        containers: [
+          {
+            name: 'main',
+            resources: { requests: { cpu: '50m', memory: '6144Mi' } },
+          },
+        ],
+      },
+      status: {
+        phase: 'Pending',
+        conditions: [
+          {
+            type: 'PodScheduled',
+            status: 'False',
+            reason: 'Unschedulable',
+            message,
+          },
+        ],
+      },
+    } as unknown as k8s.V1Pod);
+
+    expect(diagnosis?.title).toBe('Waiting for a node with room');
+    expect(diagnosis?.severity).toBe('warning');
+    expect(diagnosis?.explanation).toContain('6144Mi of memory');
+    expect(diagnosis?.explanation).not.toContain('preemption');
+    expect(diagnosis?.evidence.events?.[0].message).toBe(message);
+  });
 
   it('reports OOM_KILLED when the kernel reports OOMKilled', async () => {
     const diagnosis = await analyze(

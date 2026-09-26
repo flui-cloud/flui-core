@@ -17,9 +17,14 @@ export const INFRASTRUCTURE_TOOLS: ToolDef[] = [
     name: 'cluster_resources',
     routes: ['GET /infrastructure/clusters/:id/resource-availability'],
     description:
-      'Get the current CPU and memory utilization of a cluster. Call this before any catalog install to verify the cluster is not already at capacity. Returns used vs total resources, available headroom, autoscaling status, and canDeploy. If canDeploy is false with reason "insufficient_resources", the cluster is at or above the 90% safety threshold — warn the user and do NOT install unless they explicitly accept the risk or enable autoscaling first.',
+      'Get the current CPU and memory utilization of a cluster, and whether an app of a given size would run. Call this before any install; pass cpuMillicores, memoryMi and replicas to ask about that app instead of just the headroom. Returns used vs total resources, canDeploy, and — when the free total is not enough — `placement`: whether it still fits on one node, which machine the scaling group would buy (verdict "buys", with price) or only propose because the group is manual ("proposes"), or that no machine it may buy can take it and the app would wait ("nothing-hosts", with `why` machine by machine). Say `reasonMessage` to the person; never promise a node unless the verdict is "buys".',
     scope: MCP_SCOPE.APP_READ,
-    inputSchema: { clusterId: z.string().optional() },
+    inputSchema: {
+      clusterId: z.string().optional(),
+      cpuMillicores: z.number().int().positive().optional(),
+      memoryMi: z.number().int().positive().optional(),
+      replicas: z.number().int().min(1).max(20).optional(),
+    },
     // `?cpuRequest=1&memoryRequest=1` and not the in-process `(id, 0, 0)`: the
     // route parses those query values with `Number.parseInt(x) || default`, so
     // a literal 0 is falsy and silently becomes the 100m/128Mi default. One
@@ -30,13 +35,19 @@ export const INFRASTRUCTURE_TOOLS: ToolDef[] = [
       const id = await resolveClusterId(ctx, args.clusterId);
       return ctx.api.get(
         `/infrastructure/clusters/${encodeURIComponent(id)}/resource-availability`,
-        { cpuRequest: 1, memoryRequest: 1 },
+        {
+          cpuRequest: args.cpuMillicores ?? 1,
+          memoryRequest: args.memoryMi ?? 1,
+          replicas: args.replicas ?? 1,
+        },
       );
     },
     forModel: (data) => {
       const d = data as {
         canDeploy: boolean;
         reason: string | null;
+        reasonMessage?: string | null;
+        placement?: unknown;
         autoscalingEnabled: boolean;
         used: { cpu: string; memory: string };
         total: { cpu: string; memory: string };
@@ -62,7 +73,9 @@ export const INFRASTRUCTURE_TOOLS: ToolDef[] = [
 
       let warning: string | undefined;
       if (!d.canDeploy && d.reason === 'insufficient_resources') {
-        warning = `Cluster is at capacity (memory: ${memPct}%, CPU: ${cpuPct}%). Do NOT install — it will destabilize running workloads. Free up resources or add a worker node first.`;
+        warning =
+          d.reasonMessage ??
+          `Cluster has no room for this (memory: ${memPct}%, CPU: ${cpuPct}% reserved): it would wait until a node is added. Tell the person before installing.`;
       } else if (memPct >= 80 || cpuPct >= 80) {
         warning = `Cluster is under significant pressure (memory: ${memPct}%, CPU: ${cpuPct}%). Installing additional apps is risky. Inform the user before proceeding.`;
       }
@@ -70,6 +83,8 @@ export const INFRASTRUCTURE_TOOLS: ToolDef[] = [
       return {
         canDeploy: d.canDeploy,
         reason: d.reason,
+        reasonMessage: d.reasonMessage ?? null,
+        placement: d.placement ?? null,
         autoscalingEnabled: d.autoscalingEnabled,
         memoryUsedPct: memPct,
         cpuUsedPct: cpuPct,

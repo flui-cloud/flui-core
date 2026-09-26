@@ -282,6 +282,7 @@ describe('strada B — the converted slice goes over the wire', () => {
         desired: 3,
         ready: 1,
         available: 1,
+        runsOn: ['waiting for a node'],
       });
     });
   });

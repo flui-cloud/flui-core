@@ -17,6 +17,9 @@ export enum AppEventType {
   RECONCILED = 'reconciled',
   CREATED = 'created',
   DELETE = 'delete',
+
+  // What became of an action held for the maintenance window
+  MAINTENANCE = 'maintenance',
 }
 
 export enum AppEventActorType {
