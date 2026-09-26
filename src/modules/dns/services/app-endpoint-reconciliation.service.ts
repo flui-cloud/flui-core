@@ -34,6 +34,21 @@ import { describeError } from '../../shared/utils/error.util';
 import { SandboxTenantEntity } from '../../sandbox/entities/sandbox-tenant.entity';
 import { sandboxNoindexMiddlewareRef } from '../../sandbox/constants/sandbox-noindex';
 import { ENDPOINT_ID_LABEL } from '../constants/endpoint-labels';
+import { AcmeResolversService } from './acme-resolvers.service';
+import {
+  AuthoritativeAnswer,
+  DeferredCertificate,
+  PublicationVerdict,
+  deferredCertificate,
+  publicationVerdict,
+} from '../utils/certificate-deferral.core';
+import {
+  EndpointSyncFacts,
+  EndpointSyncOutcome,
+  SyncCertificateAction,
+  endpointSyncOutcome,
+  syncCertificateAction,
+} from '../utils/endpoint-sync.core';
 
 // A full reconcile — including the DNS-propagation gate — stays well under a
 // minute; anything holding the lock for this long is a crashed process, not work.
@@ -60,6 +75,7 @@ export class AppEndpointReconciliationService {
     private readonly gatewayCompiler: GatewayMiddlewareCompilerService,
     @InjectRepository(SandboxTenantEntity)
     private readonly sandboxTenants: Repository<SandboxTenantEntity>,
+    private readonly acmeResolvers: AcmeResolversService,
   ) {}
 
   private resolveCertProvider(
@@ -200,7 +216,10 @@ export class AppEndpointReconciliationService {
     });
   }
 
-  async reconcile(endpointId: string): Promise<void> {
+  async reconcile(
+    endpointId: string,
+    options: { dnsWaitMs?: number } = {},
+  ): Promise<boolean> {
     const endpoint = await this.appEndpointService.getEndpoint(endpointId);
 
     // Short-circuit: if a reconciliation is already in progress (e.g. the
@@ -214,7 +233,7 @@ export class AppEndpointReconciliationService {
       this.logger.log(
         `Reconciliation for ${endpointId} already in progress — skipping duplicate trigger`,
       );
-      return;
+      return false;
     }
 
     this.logger.log(`Starting reconciliation for endpoint ${endpointId}`);
@@ -226,6 +245,13 @@ export class AppEndpointReconciliationService {
     );
 
     try {
+      if (endpoint.certificateRequired && cluster.kubeconfigEncrypted) {
+        await this.acmeResolvers.ensure(
+          cluster.id,
+          await this.getKubeconfig(cluster),
+        );
+      }
+
       // A certificate is an enhancement over reachability, never a precondition
       // for it: DNS, Service and Ingress all come later in this method, so letting
       // a binding failure escape would cost the app its A record and its Ingress
@@ -241,39 +267,10 @@ export class AppEndpointReconciliationService {
         );
       }
 
-      let dnsRecordId: string | undefined;
-      let dnsRecordValue: string | undefined;
-
-      // DNS record + certificate emission follow the exact same pipeline for
-      // public and internal endpoints: per-app A record on the DNS provider,
-      // cert issued by cert-manager via DNS01 (wildcard issuer) or HTTP01.
-      // The ONLY difference between public and internal endpoints is:
-      //   1. FQDN pattern: `<slug>.internal.<zone>` vs `<slug>.<zone>`
-      //   2. Traefik Middleware ForwardAuth in front (see reconcileIngress):
-      //      internal endpoints gate every request through /authz/internal-app.
-      // Keeping DNS/cert identical avoids ever ending up with an internal app
-      // exposed publicly by accident — the security boundary is the
-      // Middleware, applied fail-closed before the Ingress.
-      const isIpHostname = endpoint.hostnameMode === HostnameMode.IP;
-      if (endpoint.clusterDnsZone && !isIpHostname) {
-        const result = await this.reconcileDnsRecord(
-          endpoint,
-          endpoint.clusterDnsZone,
-          cluster,
-        );
-        // Empty when the zone's wildcard already answers for this name: there
-        // is no per-app record, and nothing for teardown to delete.
-        dnsRecordId = result.recordId || undefined;
-        dnsRecordValue = result.value;
-      } else if (isIpHostname) {
-        this.logger.log(
-          `Endpoint ${endpointId} uses IP hostname mode (nip.io) — skipping DNS record management`,
-        );
-      } else {
-        this.logger.log(
-          `Endpoint ${endpointId} has no cluster DNS zone — skipping DNS record management (BYOD)`,
-        );
-      }
+      const { dnsRecordId, dnsRecordValue } = await this.reconcileEndpointDns(
+        endpoint,
+        cluster,
+      );
 
       const configuredCertProvider: CertificateProvider | undefined =
         this.resolveCertProvider(endpoint);
@@ -284,6 +281,7 @@ export class AppEndpointReconciliationService {
 
       let effectiveCertProvider = configuredCertProvider;
       let certGateMessage: string | null = null;
+      let deferral: DeferredCertificate | undefined;
       if (
         endpoint.certificateRequired &&
         configuredCertProvider &&
@@ -294,9 +292,11 @@ export class AppEndpointReconciliationService {
           cluster,
           configuredCertProvider,
           dnsRecordValue,
+          options.dnsWaitMs,
         );
         effectiveCertProvider = gate.provider;
         certGateMessage = gate.message;
+        deferral = gate.deferral;
       }
 
       await this.reconcileService(endpoint, cluster);
@@ -307,19 +307,12 @@ export class AppEndpointReconciliationService {
         effectiveCertProvider,
       );
 
-      let certStatus: CertificateStatus | null | undefined;
-      if (
-        endpoint.certificateRequired &&
-        (effectiveCertProvider || usesWildcardBinding || usesSanBinding)
-      ) {
-        if (usesSanBinding) {
-          certStatus = await this.resolveSanEndpointStatus(endpoint);
-        } else if (usesWildcardBinding) {
-          certStatus = await this.resolveWildcardEndpointStatus(endpoint);
-        } else {
-          certStatus = CertificateStatus.ISSUING;
-        }
-      }
+      const certStatus = await this.resolveReconciledCertStatus(endpoint, {
+        deferral,
+        effectiveCertProvider,
+        usesWildcardBinding,
+        usesSanBinding,
+      });
 
       // The binding failure is the more specific of the two: the gate message only
       // says TLS was skipped, while this says why the shared certificate was
@@ -334,6 +327,8 @@ export class AppEndpointReconciliationService {
         // Not `?? undefined`: both halves are this run's own diagnosis, so no
         // finding means the previous one is withdrawn, not kept.
         certMessage,
+        undefined,
+        deferral?.since ?? null,
       );
 
       this.emitEndpointCertStatus(endpoint, certStatus ?? null, certMessage);
@@ -341,6 +336,7 @@ export class AppEndpointReconciliationService {
       this.logger.log(
         `Reconciliation completed for endpoint ${endpointId} (${endpoint.fqdn})`,
       );
+      return true;
     } catch (error) {
       this.logger.error(
         `Reconciliation failed for endpoint ${endpointId}: ${error.message}`,
@@ -354,6 +350,170 @@ export class AppEndpointReconciliationService {
 
       throw error;
     }
+  }
+
+  private async reconcileEndpointDns(
+    endpoint: AppEndpointEntity,
+    cluster: ClusterEntity,
+  ): Promise<{ dnsRecordId?: string; dnsRecordValue?: string }> {
+    // DNS record + certificate emission follow the exact same pipeline for
+    // public and internal endpoints: per-app A record on the DNS provider,
+    // cert issued by cert-manager via DNS01 (wildcard issuer) or HTTP01.
+    // The ONLY difference between public and internal endpoints is:
+    //   1. FQDN pattern: `<slug>.internal.<zone>` vs `<slug>.<zone>`
+    //   2. Traefik Middleware ForwardAuth in front (see reconcileIngress):
+    //      internal endpoints gate every request through /authz/internal-app.
+    // Keeping DNS/cert identical avoids ever ending up with an internal app
+    // exposed publicly by accident — the security boundary is the
+    // Middleware, applied fail-closed before the Ingress.
+    const isIpHostname = endpoint.hostnameMode === HostnameMode.IP;
+    if (endpoint.clusterDnsZone && !isIpHostname) {
+      const result = await this.reconcileDnsRecord(
+        endpoint,
+        endpoint.clusterDnsZone,
+        cluster,
+      );
+      // Empty when the zone's wildcard already answers for this name: there
+      // is no per-app record, and nothing for teardown to delete.
+      return {
+        dnsRecordId: result.recordId || undefined,
+        dnsRecordValue: result.value,
+      };
+    }
+    if (isIpHostname) {
+      this.logger.log(
+        `Endpoint ${endpoint.id} uses IP hostname mode (nip.io) — skipping DNS record management`,
+      );
+    } else {
+      this.logger.log(
+        `Endpoint ${endpoint.id} has no cluster DNS zone — skipping DNS record management (BYOD)`,
+      );
+    }
+    return { dnsRecordId: undefined, dnsRecordValue: undefined };
+  }
+
+  private async resolveReconciledCertStatus(
+    endpoint: AppEndpointEntity,
+    {
+      deferral,
+      effectiveCertProvider,
+      usesWildcardBinding,
+      usesSanBinding,
+    }: {
+      deferral?: DeferredCertificate;
+      effectiveCertProvider?: CertificateProvider;
+      usesWildcardBinding: boolean;
+      usesSanBinding: boolean;
+    },
+  ): Promise<CertificateStatus | null | undefined> {
+    if (deferral) {
+      return deferral.status === 'failed'
+        ? CertificateStatus.FAILED
+        : CertificateStatus.PENDING;
+    }
+    if (
+      !endpoint.certificateRequired ||
+      !(effectiveCertProvider || usesWildcardBinding || usesSanBinding)
+    ) {
+      return undefined;
+    }
+    if (usesSanBinding) {
+      return this.resolveSanEndpointStatus(endpoint);
+    }
+    if (usesWildcardBinding) {
+      return this.resolveWildcardEndpointStatus(endpoint);
+    }
+    return CertificateStatus.ISSUING;
+  }
+
+  /**
+   * A person's Sync: everything `reconcile` does, plus a fresh order for a
+   * per-host certificate that has failed — cert-manager otherwise waits out
+   * its own backoff, up to a day and a half. The Certificate is recreated from
+   * the Ingress; its secret stays.
+   */
+  async syncEndpoint(endpointId: string): Promise<EndpointSyncOutcome> {
+    const before = await this.appEndpointService.getEndpoint(endpointId);
+    const shared = !!before.sanCertificateId || !!before.wildcardCertificateId;
+    let { certificate, failure } = await this.prepareSyncCertificate(
+      endpointId,
+      before,
+      shared,
+    );
+
+    const ran = await this.reconcile(endpointId);
+    const after = await this.appEndpointService.getEndpoint(endpointId);
+
+    if (ran && after.certificateDeferredSince) {
+      certificate =
+        after.certificateStatus === CertificateStatus.FAILED
+          ? 'failed'
+          : 'waiting';
+      failure = after.certificateMessage ?? null;
+    } else if (ran && after.certificateRequired && certificate !== 'retried') {
+      const live = await this.getCertificateStatus(endpointId);
+      if (live.status !== null) {
+        await this.appEndpointService.updateCertificateStatus(
+          endpointId,
+          live.status,
+          live.message,
+        );
+        this.emitEndpointCertStatus(after, live.status, live.message);
+      }
+      certificate = syncCertificateAction(shared, live.status);
+      failure = live.message;
+    }
+
+    return endpointSyncOutcome({
+      fqdn: after.fqdn,
+      alreadyRunning: !ran,
+      dns: this.syncDnsKind(after),
+      dnsValue: after.dnsRecordValue ?? null,
+      certificate: after.certificateRequired ? certificate : 'not-required',
+      certificateStatus: after.certificateStatus ?? null,
+      failure,
+    });
+  }
+
+  private async prepareSyncCertificate(
+    endpointId: string,
+    before: AppEndpointEntity,
+    shared: boolean,
+  ): Promise<{ certificate: SyncCertificateAction; failure: string | null }> {
+    if (before.certificateDeferredSince && !this.isReconcileInFlight(before)) {
+      await this.appEndpointService.restartCertificateDeferral(endpointId);
+      return { certificate: 'not-required', failure: null };
+    }
+    if (
+      !before.certificateRequired ||
+      shared ||
+      this.isReconcileInFlight(before)
+    ) {
+      return { certificate: 'not-required', failure: null };
+    }
+    const live = await this.getCertificateStatus(endpointId);
+    if (live.status !== CertificateStatus.FAILED) {
+      return { certificate: 'not-required', failure: null };
+    }
+    const cluster = await this.getCluster(before.clusterId);
+    await this.kubernetesService.deleteResource(
+      await this.getKubeconfig(cluster),
+      'Certificate',
+      this.perHostSecretName(before.fqdn),
+      before.k8sNamespace,
+    );
+    return { certificate: 'retried', failure: live.message };
+  }
+
+  private syncDnsKind(endpoint: AppEndpointEntity): EndpointSyncFacts['dns'] {
+    if (!endpoint.clusterDnsZone || endpoint.hostnameMode === HostnameMode.IP) {
+      return 'none';
+    }
+    return endpoint.dnsRecordId ? 'record' : 'wildcard';
+  }
+
+  private perHostSecretName(fqdn: string): string {
+    return `tls-${fqdn.replaceAll('.', '-').replaceAll('*', 'wildcard')}`;
   }
 
   /**
@@ -909,9 +1069,11 @@ export class AppEndpointReconciliationService {
     cluster: ClusterEntity,
     configuredCertProvider: CertificateProvider,
     dnsRecordValue: string | undefined,
+    dnsWaitMs?: number,
   ): Promise<{
     provider: CertificateProvider | undefined;
     message: string | null;
+    deferral?: DeferredCertificate;
   }> {
     const ready = await this.resolveReadyIssuerOrSelfHeal(
       endpoint,
@@ -934,19 +1096,19 @@ export class AppEndpointReconciliationService {
       zoneName &&
       dnsRecordValue
     ) {
-      const propagated = await this.waitForAuthoritativeDnsPropagation(
+      const verdict = await this.waitForAuthoritativeDnsPropagation(
         endpoint.fqdn,
         zoneName,
         dnsRecordValue,
+        dnsWaitMs,
       );
-      if (!propagated) {
-        return {
-          provider: undefined,
-          message:
-            'DNS record not yet visible on the zone authoritative nameservers — ' +
-            'TLS deferred so the ACME self-check cannot negative-cache the name. ' +
-            'Re-reconcile to enable HTTPS.',
-        };
+      if (!verdict.published) {
+        const deferral = deferredCertificate(
+          endpoint.certificateDeferredSince ?? null,
+          new Date(),
+          verdict.detail ?? '',
+        );
+        return { provider: undefined, message: deferral.message, deferral };
       }
     }
 
@@ -954,10 +1116,10 @@ export class AppEndpointReconciliationService {
   }
 
   /**
-   * Polls the zone's authoritative nameservers (queried directly, bypassing
-   * every recursive resolver and its cache) until the endpoint's record is
-   * visible. Fail-open on infrastructure errors: the gate protects against
-   * negative caching, it must never become a new way to block issuance.
+   * Asks every nameserver of the zone directly, bypassing recursive resolvers
+   * and their caches, until each answers with the address Flui wrote. Fail-open
+   * when the nameservers themselves cannot be found: the gate guards against
+   * asking too early, it must never become a new way to block issuance.
    */
   private async waitForAuthoritativeDnsPropagation(
     fqdn: string,
@@ -965,44 +1127,54 @@ export class AppEndpointReconciliationService {
     expectedValue: string,
     timeoutMs = 60_000,
     pollMs = 2_000,
-  ): Promise<boolean> {
-    let servers: string[];
+  ): Promise<PublicationVerdict> {
+    let servers: { nameserver: string; resolver: dnsPromises.Resolver }[];
     try {
       const nsNames = await dnsPromises.resolveNs(zoneName);
-      const addresses = await Promise.all(
-        nsNames.map((ns) =>
-          dnsPromises.resolve4(ns).catch(() => [] as string[]),
-        ),
+      const found = await Promise.all(
+        nsNames.map(async (ns) => {
+          const ips = await dnsPromises
+            .resolve4(ns)
+            .catch(() => [] as string[]);
+          if (!ips.length) return null;
+          const resolver = new dnsPromises.Resolver({
+            timeout: 3000,
+            tries: 1,
+          });
+          resolver.setServers(ips);
+          return { nameserver: ns, resolver };
+        }),
       );
-      servers = addresses.flat();
+      servers = found.filter((x): x is NonNullable<typeof x> => x !== null);
     } catch (err) {
       this.logger.warn(
         `Cannot resolve authoritative NS for ${zoneName} (${err instanceof Error ? err.message : String(err)}) — skipping DNS propagation gate`,
       );
-      return true;
+      return { published: true, detail: null };
     }
-    if (servers.length === 0) return true;
+    if (servers.length === 0) return { published: true, detail: null };
 
-    const resolver = new dnsPromises.Resolver({ timeout: 3000, tries: 1 });
-    resolver.setServers(servers);
     const deadline = Date.now() + timeoutMs;
-    while (Date.now() < deadline) {
-      try {
-        const answers = await resolver.resolve4(fqdn);
-        if (answers.includes(expectedValue) || answers.length > 0) {
-          return true;
-        }
-      } catch (err) {
-        // Name exists but has no A record (e.g. CNAME): no NXDOMAIN to cache.
-        if ((err as NodeJS.ErrnoException)?.code === 'ENODATA') return true;
-        // ENOTFOUND (NXDOMAIN) or query timeout: not propagated yet.
-      }
+    let verdict: PublicationVerdict;
+    for (;;) {
+      const answers: AuthoritativeAnswer[] = await Promise.all(
+        servers.map(async ({ nameserver, resolver }) => {
+          try {
+            return { nameserver, addresses: await resolver.resolve4(fqdn) };
+          } catch (err) {
+            const noData = (err as NodeJS.ErrnoException)?.code === 'ENODATA';
+            return { nameserver, addresses: null, noData };
+          }
+        }),
+      );
+      verdict = publicationVerdict(fqdn, expectedValue, answers);
+      if (verdict.published || Date.now() + pollMs > deadline) break;
       await new Promise((resolve) => setTimeout(resolve, pollMs));
     }
-    this.logger.warn(
-      `DNS record for ${fqdn} not visible on authoritative NS of ${zoneName} after ${timeoutMs}ms`,
-    );
-    return false;
+    if (!verdict.published) {
+      this.logger.warn(`[dns-gate] ${verdict.detail}`);
+    }
+    return verdict;
   }
 
   private async reconcileDnsRecord(

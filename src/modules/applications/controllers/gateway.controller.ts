@@ -30,6 +30,7 @@ import {
   ClusterGatewayRouteDto,
   CompiledGatewayRouteDto,
   GatewayRouteDto,
+  GatewayRouteSyncDto,
   GatewayStatusDto,
   SetGatewayPolicyDto,
 } from '../dto/gateway-route.dto';
@@ -123,15 +124,15 @@ export class GatewayController {
   @ApiOperation({
     summary: 'Reconcile a gateway route now',
     description:
-      'Synchronously compiles the route policies to Traefik resources and refreshes DNS/TLS/Ingress.',
+      'Compiles the route policies and brings the address record, route and certificate in line; a failed certificate is ordered again. `sync` says what was done.',
   })
   @ApiParam({ name: 'id', description: 'Application ID' })
   @ApiParam({ name: 'endpointId', description: 'Route (endpoint) ID' })
-  @ApiResponse({ status: 200, type: GatewayRouteDto })
+  @ApiResponse({ status: 200, type: GatewayRouteSyncDto })
   async reconcile(
     @Param('id') appId: string,
     @Param('endpointId') endpointId: string,
-  ): Promise<GatewayRouteDto> {
+  ): Promise<GatewayRouteSyncDto> {
     return this.gateway.reconcileRoute(appId, endpointId);
   }
 

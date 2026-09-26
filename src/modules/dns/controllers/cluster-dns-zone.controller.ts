@@ -37,7 +37,10 @@ import { ClusterWildcardResponseDto } from '../dto/cluster-wildcard-response.dto
 import { ConfigureIssuerDto } from '../dto/configure-issuer.dto';
 import { ConfigureSystemIngressDto } from '../dto/configure-system-ingress.dto';
 import { SystemDnsStatusResponseDto } from '../dto/system-dns-status-response.dto';
-import { CertDiagnosticsResponseDto } from '../dto/cert-diagnostics-response.dto';
+import {
+  AcmeResolversDto,
+  CertDiagnosticsResponseDto,
+} from '../dto/cert-diagnostics-response.dto';
 import { RequirePermission } from '../../iam/decorators/require-permission.decorator';
 import { IAM_PERMISSION } from '../../iam/constants/iam-permissions';
 import { ActionCycle } from '../../action-cycle/action-cycle.decorator';
@@ -563,6 +566,45 @@ export class ClusterDnsZoneController {
     @Body() dto: ConfigureSystemIngressDto,
   ): Promise<void> {
     await this.systemIngressService.configureSystemIngress(clusterId, dto);
+  }
+
+  @Get('acme-resolvers')
+  @RequirePermission(IAM_PERMISSION.APP_READ)
+  @ApiOperation({
+    summary: 'How cert-manager checks names before asking for a certificate',
+    description:
+      "Pinned means it asks public resolvers, so a name published a moment ago is seen as it is; otherwise it asks the cluster's own resolver, which can keep a new name cached as missing for up to an hour. Null when cert-manager cannot be read.",
+  })
+  @ApiParam({ name: 'clusterId', description: 'Cluster ID' })
+  @ApiResponse({ status: 200, type: AcmeResolversDto })
+  async getAcmeResolvers(
+    @Param('clusterId') clusterId: string,
+  ): Promise<AcmeResolversDto | null> {
+    return this.clusterDnsZoneService.acmeResolverStatus(clusterId);
+  }
+
+  @Post('acme-resolvers')
+  @RequirePermission(IAM_PERMISSION.APP_WRITE)
+  @HttpCode(HttpStatus.OK)
+  @ActionCycle({
+    action: 'POST /clusters/:clusterId/dns-zone/acme-resolvers',
+    bind: ['clusterId'],
+    sentence:
+      'make cert-manager on cluster {clusterId} check names through public resolvers',
+    consequence:
+      'cert-manager restarts once, in seconds; certificates already issued keep working. Nothing changes when it already does.',
+  })
+  @ApiOperation({
+    summary: 'Make cert-manager check names through public resolvers',
+    description:
+      'Adds only the settings that are missing and restarts cert-manager once; a cluster already set is left as it is. Flui also does this on its own the first time it reconciles an endpoint with a certificate on the cluster.',
+  })
+  @ApiParam({ name: 'clusterId', description: 'Cluster ID' })
+  @ApiResponse({ status: 200, type: AcmeResolversDto })
+  async pinAcmeResolvers(
+    @Param('clusterId') clusterId: string,
+  ): Promise<AcmeResolversDto | null> {
+    return this.clusterDnsZoneService.acmeResolverStatus(clusterId, true);
   }
 
   @Get('cert-diagnostics')

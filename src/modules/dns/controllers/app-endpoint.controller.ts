@@ -9,6 +9,8 @@ import {
   Query,
   Req,
   BadRequestException,
+  ConflictException,
+  NotFoundException,
   ForbiddenException,
   HttpCode,
   HttpStatus,
@@ -34,6 +36,7 @@ import { CertificateStatusRefreshService } from '../services/certificate-status-
 import { CreateAppEndpointDto } from '../dto/create-app-endpoint.dto';
 import { UpdateAppEndpointDto } from '../dto/update-app-endpoint.dto';
 import { AppEndpointResponseDto } from '../dto/app-endpoint-response.dto';
+import { EndpointSyncResponseDto } from '../dto/endpoint-sync.dto';
 import { CertificateStatus } from '../../providers/interfaces/certificate-provider.interface';
 
 @ApiTags('App Endpoints')
@@ -78,6 +81,7 @@ export class AppEndpointController {
   }
 
   @Post('clusters/:clusterId/endpoints')
+  @RequirePermission(IAM_PERMISSION.APP_WRITE)
   @ApiOperation({
     summary: 'Create an app endpoint for a cluster',
     description:
@@ -91,7 +95,19 @@ export class AppEndpointController {
   async createEndpoint(
     @Param('clusterId') clusterId: string,
     @Body() dto: CreateAppEndpointDto,
+    @Req() req: Request,
   ): Promise<AppEndpointResponseDto> {
+    const user = req.user as AuthenticatedUser | undefined;
+    if (!user) throw new ForbiddenException('Unauthenticated');
+    const app = await this.applications.findById(dto.applicationId);
+    if (!app)
+      throw new NotFoundException(`Application ${dto.applicationId} not found`);
+    if (app.clusterId !== clusterId) {
+      throw new BadRequestException(
+        'The application does not run on this cluster.',
+      );
+    }
+    await this.appAccess.assertCan(user, IAM_PERMISSION.APP_WRITE, app);
     const endpoint = await this.appEndpointService.createEndpoint(
       clusterId,
       dto,
@@ -103,11 +119,13 @@ export class AppEndpointController {
   }
 
   @Get('clusters/:clusterId/endpoints')
+  @RequirePermission(IAM_PERMISSION.APP_READ)
   @ApiOperation({ summary: 'List all app endpoints for a cluster' })
   @ApiParam({ name: 'clusterId', description: 'Cluster ID' })
   @ApiResponse({ status: 200, type: [AppEndpointResponseDto] })
   async listEndpoints(
     @Param('clusterId') clusterId: string,
+    @Req() req: Request,
   ): Promise<AppEndpointResponseDto[]> {
     const endpoints = await this.appEndpointService.listEndpoints(clusterId);
     await Promise.all(
@@ -116,21 +134,37 @@ export class AppEndpointController {
         .map((e) => this.refreshCertStatusIfNeeded(e.id)),
     );
     const refreshed = await this.appEndpointService.listEndpoints(clusterId);
-    return refreshed.map((e) => this.appEndpointService.toResponseDto(e));
+    const readable = await this.readableApps(
+      req.user as AuthenticatedUser | undefined,
+      refreshed.map((e) => e.applicationId),
+    );
+    return refreshed
+      .filter((e) => readable === null || readable.has(e.applicationId))
+      .map((e) => this.appEndpointService.toResponseDto(e));
   }
 
   @Get('endpoints/:id')
+  @RequirePermission(IAM_PERMISSION.APP_READ)
   @ApiOperation({ summary: 'Get an app endpoint by ID' })
   @ApiParam({ name: 'id', description: 'Endpoint ID' })
   @ApiResponse({ status: 200, type: AppEndpointResponseDto })
   @ApiResponse({ status: 404, description: 'Endpoint not found' })
-  async getEndpoint(@Param('id') id: string): Promise<AppEndpointResponseDto> {
+  async getEndpoint(
+    @Param('id') id: string,
+    @Req() req: Request,
+  ): Promise<AppEndpointResponseDto> {
+    await this.assertMayOnEndpoint(
+      id,
+      req.user as AuthenticatedUser,
+      IAM_PERMISSION.APP_READ,
+    );
     await this.refreshCertStatusIfNeeded(id);
     const endpoint = await this.appEndpointService.getEndpoint(id);
     return this.appEndpointService.toResponseDto(endpoint);
   }
 
   @Put('endpoints/:id')
+  @RequirePermission(IAM_PERMISSION.APP_WRITE)
   @ApiOperation({
     summary: 'Update an app endpoint',
     description:
@@ -142,9 +176,34 @@ export class AppEndpointController {
   async updateEndpoint(
     @Param('id') id: string,
     @Body() dto: UpdateAppEndpointDto,
+    @Req() req: Request,
   ): Promise<AppEndpointResponseDto> {
-    const endpoint = await this.appEndpointService.updateEndpoint(id, dto);
-    return this.appEndpointService.toResponseDto(endpoint);
+    await this.assertMayChangeEndpoint(id, req.user as AuthenticatedUser);
+    const before = await this.appEndpointService.getEndpoint(id);
+    const renamed =
+      dto.fqdn !== undefined &&
+      this.appEndpointService.normalizeFqdn(dto.fqdn) !== before.fqdn;
+    if (renamed) {
+      const fqdn = this.appEndpointService.normalizeFqdn(dto.fqdn as string);
+      if (!(await this.appEndpointService.isFqdnAvailable(fqdn))) {
+        throw new ConflictException(
+          `${fqdn} is already used by another endpoint.`,
+        );
+      }
+      // The old name's record, certificate and route are this endpoint's to
+      // remove before it takes the new one; left behind they keep answering.
+      await this.reconciliationService.deleteEndpointResources(id);
+      await this.appEndpointService.clearDnsRecord(id);
+      dto = { ...dto, fqdn };
+    }
+    await this.appEndpointService.updateEndpoint(id, dto);
+    if (renamed) await this.appEndpointService.markDrift(id);
+    // Same path as Add: the change is published now, and the answer carries
+    // each step's state and the error when one fails.
+    await this.reconciliationService.reconcile(id);
+    return this.appEndpointService.toResponseDto(
+      await this.appEndpointService.getEndpoint(id),
+    );
   }
 
   /**
@@ -176,9 +235,17 @@ export class AppEndpointController {
     await this.appEndpointService.deleteEndpoint(id);
   }
 
-  private async assertMayChangeEndpoint(
+  private assertMayChangeEndpoint(
     endpointId: string,
     user: AuthenticatedUser | undefined,
+  ): Promise<void> {
+    return this.assertMayOnEndpoint(endpointId, user, IAM_PERMISSION.APP_WRITE);
+  }
+
+  private async assertMayOnEndpoint(
+    endpointId: string,
+    user: AuthenticatedUser | undefined,
+    action: string,
   ): Promise<void> {
     if (!user) throw new ForbiddenException('Unauthenticated');
     const endpoint = await this.appEndpointService.getEndpoint(endpointId);
@@ -186,31 +253,58 @@ export class AppEndpointController {
     // An endpoint whose application is gone is nobody's to keep: the row is
     // orphaned, and refusing it would leave it unremovable.
     if (!app) return;
-    await this.appAccess.assertCan(user, IAM_PERMISSION.APP_WRITE, app);
+    await this.appAccess.assertCan(user, action, app);
+  }
+
+  /** The applications of these ids the caller may read; null for a caller who reads all. */
+  private async readableApps(
+    user: AuthenticatedUser | undefined,
+    ids: string[],
+  ): Promise<Set<string> | null> {
+    if (!user) throw new ForbiddenException('Unauthenticated');
+    const apps = await Promise.all(
+      [...new Set(ids)].map((id) => this.applications.findById(id)),
+    );
+    const found = apps.filter((a): a is NonNullable<typeof a> => !!a);
+    const readable = await this.appAccess.filterReadable(user, found);
+    const allowed = new Set(readable.map((a) => a.id));
+    // An endpoint whose application is gone belongs to nobody and stays listed,
+    // so it can still be found and removed.
+    for (const id of ids) if (!found.some((a) => a.id === id)) allowed.add(id);
+    return allowed;
   }
 
   @Post('endpoints/:id/reconcile')
+  @RequirePermission(IAM_PERMISSION.APP_WRITE)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
-    summary: 'Trigger reconciliation for an app endpoint',
+    summary: 'Sync an app endpoint',
     description:
-      'Create or update the DNS record, TLS certificate, and Kubernetes Ingress for this endpoint.',
+      'Bring the address record, the route and the certificate in line; a per-host certificate that failed is ordered again. `sync` says what was found and done.',
   })
   @ApiParam({ name: 'id', description: 'Endpoint ID' })
-  @ApiResponse({ status: 200, type: AppEndpointResponseDto })
-  async reconcile(@Param('id') id: string): Promise<AppEndpointResponseDto> {
-    await this.reconciliationService.reconcile(id);
+  @ApiResponse({ status: 200, type: EndpointSyncResponseDto })
+  async reconcile(
+    @Param('id') id: string,
+    @Req() req: Request,
+  ): Promise<EndpointSyncResponseDto> {
+    await this.assertMayChangeEndpoint(id, req.user as AuthenticatedUser);
+    const sync = await this.reconciliationService.syncEndpoint(id);
     const endpoint = await this.appEndpointService.getEndpoint(id);
-    return this.appEndpointService.toResponseDto(endpoint);
+    return { ...this.appEndpointService.toResponseDto(endpoint), sync };
   }
 
   @Get('endpoints/:id/status')
+  @RequirePermission(IAM_PERMISSION.APP_READ)
   @ApiOperation({
     summary: 'Get reconciliation and certificate status for an endpoint',
   })
   @ApiParam({ name: 'id', description: 'Endpoint ID' })
   @ApiResponse({ status: 200, type: AppEndpointResponseDto })
-  async getStatus(@Param('id') id: string): Promise<AppEndpointResponseDto> {
-    return this.getEndpoint(id);
+  async getStatus(
+    @Param('id') id: string,
+    @Req() req: Request,
+  ): Promise<AppEndpointResponseDto> {
+    return this.getEndpoint(id, req);
   }
 }

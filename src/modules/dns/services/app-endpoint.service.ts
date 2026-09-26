@@ -7,7 +7,7 @@ import {
   Logger,
   forwardRef,
 } from '@nestjs/common';
-import { In, QueryFailedError, Repository } from 'typeorm';
+import { In, Not, IsNull, QueryFailedError, Repository } from 'typeorm';
 import { InjectRepository } from '@nestjs/typeorm';
 import { AppEndpointEntity } from '../entities/app-endpoint.entity';
 import { SanCertificateEntity } from '../entities/san-certificate.entity';
@@ -40,6 +40,7 @@ import { EndpointHostGuardService } from './endpoint-host-guard.service';
 import { TenancySubdomainService } from './tenancy-subdomain.service';
 import { SandboxSubdomainService } from './sandbox-subdomain.service';
 import { EndpointDiagnosisService } from '../../scaling/services/endpoint-diagnosis.service';
+import { certificatePhaseOf } from '../utils/certificate-phase.core';
 
 /** An application's primary endpoint, hostname together with whether it serves. */
 export interface PrimaryEndpointState {
@@ -427,6 +428,24 @@ export class AppEndpointService {
     });
   }
 
+  /** A person asked again: the hour of waiting for the name starts over. */
+  async restartCertificateDeferral(id: string): Promise<void> {
+    await this.endpointRepository.update(id, {
+      certificateDeferredSince: null,
+    });
+  }
+
+  /** Endpoints whose certificate waits for their name to be published. */
+  async listCertificateDeferred(): Promise<AppEndpointEntity[]> {
+    return await this.endpointRepository.find({
+      where: {
+        certificateStatus: CertificateStatus.PENDING,
+        certificateRequired: true,
+        certificateDeferredSince: Not(IsNull()),
+      },
+    });
+  }
+
   async listByApplicationId(
     applicationId: string,
   ): Promise<AppEndpointEntity[]> {
@@ -549,6 +568,12 @@ export class AppEndpointService {
     this.logger.log(`Deleted app endpoint ${id} (${endpoint.fqdn})`);
   }
 
+  async markDrift(id: string): Promise<void> {
+    await this.endpointRepository.update(id, {
+      reconciliationStatus: ReconciliationStatus.DRIFT,
+    });
+  }
+
   async clearDnsRecord(id: string): Promise<void> {
     await this.endpointRepository.update(id, {
       dnsRecordId: null,
@@ -634,6 +659,7 @@ export class AppEndpointService {
     // telling the operator to go configure what is already configured.
     certificateMessage?: string | null,
     certificateExpiresAt?: Date,
+    certificateDeferredSince?: Date | null,
   ): Promise<AppEndpointEntity> {
     const endpoint = await this.getEndpoint(id);
 
@@ -649,6 +675,8 @@ export class AppEndpointService {
       endpoint.certificateMessage = certificateMessage as never;
     if (certificateExpiresAt !== undefined)
       endpoint.certificateExpiresAt = certificateExpiresAt;
+    if (certificateDeferredSince !== undefined)
+      endpoint.certificateDeferredSince = certificateDeferredSince;
 
     return await this.endpointRepository.save(endpoint);
   }
@@ -677,6 +705,7 @@ export class AppEndpointService {
         endpoint.certificateStatus === CertificateStatus.VALID,
       certificateStatus: endpoint.certificateStatus,
       certificateMessage: endpoint.certificateMessage,
+      certificatePhase: phaseOf(endpoint),
       certificateExpiresAt: endpoint.certificateExpiresAt,
       reconciliationStatus: endpoint.reconciliationStatus,
       lastReconciliationAt: endpoint.lastReconciliationAt,
@@ -726,4 +755,15 @@ export class AppEndpointService {
 
     return port;
   }
+}
+
+export function phaseOf(endpoint: AppEndpointEntity) {
+  return certificatePhaseOf({
+    certificateRequired: !!endpoint.certificateRequired,
+    certificateStatus: endpoint.certificateStatus ?? null,
+    certificateMessage: endpoint.certificateMessage ?? null,
+    certificateDeferredSince: endpoint.certificateDeferredSince ?? null,
+    sharedCertificate:
+      !!endpoint.wildcardCertificateId || !!endpoint.sanCertificateId,
+  });
 }

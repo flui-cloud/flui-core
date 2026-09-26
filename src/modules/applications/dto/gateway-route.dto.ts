@@ -19,6 +19,9 @@ import {
 import { ReconciliationStatus } from '../../infrastructure/shared/enums/reconciliation-status.enum';
 import { CertificateStatus } from '../../providers/interfaces/certificate-provider.interface';
 import { EndpointType } from '../../dns/enums/endpoint-type.enum';
+import { Sensitivity } from '../../mask/decorators/sensitivity.decorator';
+import { EndpointSyncDto } from '../../dns/dto/endpoint-sync.dto';
+import { CertificatePhaseDto } from '../../dns/dto/certificate-phase.dto';
 
 export class GatewayRouteDto {
   @ApiProperty({ description: 'Endpoint id backing this route.' })
@@ -45,6 +48,10 @@ export class GatewayRouteDto {
   @ApiPropertyOptional({ enum: CertificateStatus })
   certificateStatus?: CertificateStatus | null;
 
+  @ApiPropertyOptional({ type: CertificatePhaseDto })
+  @Sensitivity(Sensitivity.PUBLIC)
+  certificatePhase?: CertificatePhaseDto;
+
   @ApiPropertyOptional({ type: GatewayAuthPolicyDto })
   auth?: GatewayAuthPolicyDto | null;
 
@@ -59,6 +66,12 @@ export class GatewayRouteDto {
 
   @ApiPropertyOptional({ description: 'Last reconciliation error, if any.' })
   errorMessage?: string | null;
+}
+
+export class GatewayRouteSyncDto extends GatewayRouteDto {
+  @ApiProperty({ type: EndpointSyncDto })
+  @Sensitivity(Sensitivity.PUBLIC)
+  sync: EndpointSyncDto;
 }
 
 export class ClusterGatewayRouteDto extends GatewayRouteDto {

@@ -8,7 +8,10 @@ import { ApplicationsRepository } from '../repositories/applications.repository'
 import { ApplicationAccessService } from './application-access.service';
 import { AuthenticatedUser } from '../../auth/interfaces/authenticated-user.interface';
 import { ApplicationEntity } from '../entities/application.entity';
-import { AppEndpointService } from '../../dns/services/app-endpoint.service';
+import {
+  AppEndpointService,
+  phaseOf,
+} from '../../dns/services/app-endpoint.service';
 import { AppEndpointReconciliationService } from '../../dns/services/app-endpoint-reconciliation.service';
 import { GatewayMiddlewareCompilerService } from '../../dns/services/gateway-middleware-compiler.service';
 import { ClusterDnsZoneService } from '../../dns/services/cluster-dns-zone.service';
@@ -20,6 +23,7 @@ import {
   ClusterGatewayRouteDto,
   CompiledGatewayRouteDto,
   GatewayRouteDto,
+  GatewayRouteSyncDto,
   GatewayStatusDto,
   SetGatewayPolicyDto,
 } from '../dto/gateway-route.dto';
@@ -121,11 +125,11 @@ export class GatewayService {
   async reconcileRoute(
     appId: string,
     endpointId: string,
-  ): Promise<GatewayRouteDto> {
+  ): Promise<GatewayRouteSyncDto> {
     await this.getOwnedEndpoint(appId, endpointId);
-    await this.reconciliationService.reconcile(endpointId);
+    const sync = await this.reconciliationService.syncEndpoint(endpointId);
     const endpoint = await this.appEndpointService.getEndpoint(endpointId);
-    return this.toRouteDto(endpoint);
+    return { ...this.toRouteDto(endpoint), sync };
   }
 
   async status(appId: string): Promise<GatewayStatusDto> {
@@ -287,6 +291,7 @@ export class GatewayService {
         endpoint.certificateRequired &&
         endpoint.certificateStatus === CertificateStatus.VALID,
       certificateStatus: endpoint.certificateStatus ?? null,
+      certificatePhase: phaseOf(endpoint),
       auth: config?.auth ?? null,
       rateLimit: config?.rateLimit ?? null,
       allowIps: config?.allowIps ?? null,

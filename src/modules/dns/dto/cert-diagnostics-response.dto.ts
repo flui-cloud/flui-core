@@ -1,4 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
+import { Sensitivity } from '../../mask/decorators/sensitivity.decorator';
 
 export class AcmeChallengeInfoDto {
   @ApiProperty()
@@ -103,9 +104,38 @@ export class CertificateDiagnosticsDto {
   requests: CertificateRequestInfoDto[];
 }
 
+export class AcmeResolversDto {
+  @ApiProperty({
+    description:
+      "Whether cert-manager checks names through public resolvers rather than the cluster's own.",
+  })
+  @Sensitivity(Sensitivity.PUBLIC)
+  pinned: boolean;
+
+  @ApiProperty({ nullable: true, type: String })
+  @Sensitivity(Sensitivity.NETWORK_IDENTIFIER)
+  nameservers: string | null;
+
+  @ApiProperty()
+  @Sensitivity(Sensitivity.NETWORK_IDENTIFIER)
+  says: string;
+
+  @ApiProperty({ description: 'True when this call just pinned them.' })
+  @Sensitivity(Sensitivity.PUBLIC)
+  changed: boolean;
+}
+
 export class CertDiagnosticsResponseDto {
   @ApiProperty()
   clusterId: string;
+
+  @ApiProperty({
+    type: AcmeResolversDto,
+    nullable: true,
+    description: 'Null when cert-manager could not be read.',
+  })
+  @Sensitivity(Sensitivity.PUBLIC)
+  acmeResolvers: AcmeResolversDto | null;
 
   @ApiProperty()
   namespace: string;

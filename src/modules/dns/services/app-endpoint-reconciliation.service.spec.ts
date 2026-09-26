@@ -47,6 +47,7 @@ describe('AppEndpointReconciliationService.writePrimaryRecord', () => {
       null as never,
       null as never,
       { exists: jest.fn().mockResolvedValue(sandbox) } as never,
+      null as never,
     );
     return service;
   }
@@ -279,6 +280,7 @@ describe('AppEndpointReconciliationService.deleteEndpointResources', () => {
       } as never,
       { allMiddlewareNames: jest.fn().mockReturnValue([]) } as never,
       null as never,
+      null as never,
     );
     return { service, appEndpoints, k8s };
   }
@@ -398,6 +400,7 @@ describe('AppEndpointReconciliationService.reconcileDnsRecord', () => {
       { fanOutRecordToReplicas: jest.fn() } as never,
       null as never,
       { exists: jest.fn().mockResolvedValue(false) } as never,
+      null as never,
     );
     return { service, createRecord };
   }

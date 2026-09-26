@@ -1,5 +1,7 @@
 import { ApiClient } from '../api-client';
 import { ConfigStorage } from '../config-storage';
+import type { EndpointSyncOutcome } from 'src/modules/dns/utils/endpoint-sync.core';
+import type { CertificatePhase } from 'src/modules/dns/utils/certificate-phase.core';
 
 export interface AppSummary {
   id: string;
@@ -36,7 +38,40 @@ export interface AppGroup {
   catalogInstallId?: string;
   primaryComponentId?: string;
   componentCount: number;
+  replicas?: number | null;
   components: AppGroupComponent[];
+}
+
+export interface ResourcesConsequence {
+  requests: { cpu: string | null; memory: string | null };
+  limits: { cpu: string | null; memory: string | null };
+  problem: string | null;
+  placement: {
+    verdict: 'fits' | 'buys' | 'proposes' | 'nothing-hosts' | 'unknown';
+    sentence: string;
+    why: string | null;
+    largest: {
+      shape: string | null;
+      cpuMillicores: number;
+      memoryMi: number;
+    } | null;
+  };
+}
+
+export interface ResourceProposal {
+  containerName: string;
+  currentRequests: { cpu: string | null; memory: string | null };
+  currentLimits: { cpu: string | null; memory: string | null };
+  reasons: { kind: 'oom' | 'near-limit' | 'above-request'; sentence: string }[];
+  consequence: ResourcesConsequence;
+  restart: string;
+  configurationNote: string | null;
+  diagnosisId: string | null;
+}
+
+export interface ResourceProposalAnswer {
+  proposal: ResourceProposal | null;
+  usageRead: boolean;
 }
 
 export interface AppRuntime {
@@ -56,6 +91,22 @@ export interface AppRuntime {
     requests: { cpu?: string; memory?: string };
     limits: { cpu?: string; memory?: string };
     usage?: { cpu?: string; memory?: string };
+  }>;
+  /** Replicas no node has room for yet, and what scaling does about it. */
+  waitingForRoom?: {
+    replicas: number;
+    says: string;
+    verdict: string | null;
+  } | null;
+  restartPending?: { changes: string[] } | null;
+  pods?: Array<{
+    name: string;
+    node: string | null;
+    role: 'master' | 'worker' | null;
+    serverType: string | null;
+    region: string | null;
+    phase: string;
+    ready: boolean;
   }>;
 }
 
@@ -390,10 +441,8 @@ export class CliAppService {
         a.name.toLowerCase() === name.toLowerCase() ||
         a.slug.toLowerCase() === name.toLowerCase(),
     );
-    if (!app) {
-      throw new Error(`App "${name}" not found in cluster.`);
-    }
-    return app;
+    if (app) return app;
+    return appOfInstall(apps, name);
   }
 
   // Group-aware: a composed catalog install matches by its bundle name/slug (or
@@ -621,6 +670,101 @@ export class CliAppService {
   ): Promise<AppRuntime> {
     return this.apiClient.patch<AppRuntime>(
       `/applications/${appId}/resources`,
+      change,
+    );
+  }
+
+  async resourceProposal(appId: string): Promise<ResourceProposalAnswer> {
+    return this.apiClient.get<ResourceProposalAnswer>(
+      `/applications/${appId}/resources/proposal`,
+    );
+  }
+
+  async applyResourceProposal(appId: string): Promise<ResourceProposalAnswer> {
+    return this.apiClient.post<ResourceProposalAnswer>(
+      `/applications/${appId}/resources/proposal/apply`,
+      {},
+    );
+  }
+
+  async deferResourceProposal(appId: string): Promise<DeferredAction> {
+    return this.apiClient.post<DeferredAction>(
+      `/applications/${appId}/resources/proposal/defer`,
+      {},
+    );
+  }
+
+  async clusterMaintenance(clusterId: string): Promise<ClusterMaintenance> {
+    return this.apiClient.get<ClusterMaintenance>(
+      `/infrastructure/clusters/${clusterId}/maintenance-window`,
+    );
+  }
+
+  async setClusterMaintenance(
+    clusterId: string,
+    window: MaintenanceWindow,
+  ): Promise<ClusterMaintenance> {
+    return this.apiClient.put<ClusterMaintenance>(
+      `/infrastructure/clusters/${clusterId}/maintenance-window`,
+      window,
+    );
+  }
+
+  async clearClusterMaintenance(
+    clusterId: string,
+  ): Promise<ClusterMaintenance> {
+    return this.apiClient.delete<ClusterMaintenance>(
+      `/infrastructure/clusters/${clusterId}/maintenance-window`,
+    );
+  }
+
+  async clusterDeferredActions(clusterId: string): Promise<DeferredAction[]> {
+    return this.apiClient.get<DeferredAction[]>(
+      `/infrastructure/clusters/${clusterId}/deferred-actions`,
+    );
+  }
+
+  async appMaintenance(appId: string): Promise<AppMaintenanceReading> {
+    return this.apiClient.get<AppMaintenanceReading>(
+      `/applications/${appId}/maintenance`,
+    );
+  }
+
+  async setAppMaintenance(
+    appId: string,
+    body: { mode: 'follow' | 'own' | 'anytime'; window?: MaintenanceWindow },
+  ): Promise<AppMaintenanceReading> {
+    return this.apiClient.put<AppMaintenanceReading>(
+      `/applications/${appId}/maintenance`,
+      body,
+    );
+  }
+
+  async appDeferredActions(appId: string): Promise<DeferredAction[]> {
+    return this.apiClient.get<DeferredAction[]>(
+      `/applications/${appId}/deferred-actions`,
+    );
+  }
+
+  async cancelDeferredAction(
+    appId: string,
+    actionId: string,
+  ): Promise<DeferredAction> {
+    return this.apiClient.delete<DeferredAction>(
+      `/applications/${appId}/deferred-actions/${encodeURIComponent(actionId)}`,
+    );
+  }
+
+  async resourcesConsequence(
+    appId: string,
+    change: {
+      requests?: { cpu?: string; memory?: string };
+      limits?: { cpu?: string; memory?: string };
+      containerName?: string;
+    },
+  ): Promise<ResourcesConsequence> {
+    return this.apiClient.post<ResourcesConsequence>(
+      `/applications/${appId}/resources/consequence`,
       change,
     );
   }
@@ -990,8 +1134,8 @@ export class CliAppService {
   async reconcileGatewayRoute(
     appId: string,
     endpointId: string,
-  ): Promise<GatewayRoute> {
-    return this.apiClient.post<GatewayRoute>(
+  ): Promise<GatewayRoute & { sync: EndpointSyncOutcome }> {
+    return this.apiClient.post<GatewayRoute & { sync: EndpointSyncOutcome }>(
       `/applications/${appId}/gateway/routes/${encodeURIComponent(endpointId)}/reconcile`,
     );
   }
@@ -1066,6 +1210,7 @@ export interface GatewayRoute {
   endpointType: string;
   tlsEnabled: boolean;
   certificateStatus?: string | null;
+  certificatePhase?: CertificatePhase;
   auth?: GatewayAuthPolicy | null;
   rateLimit?: GatewayRateLimitPolicy | null;
   allowIps?: string[] | null;
@@ -1179,4 +1324,56 @@ export interface BackupResponse {
   };
   provider: string;
   providerCapabilities: SnapshotResponse['providerCapabilities'];
+}
+
+/**
+ * A catalog install is named by its own slug — the one `flui deploy` prints —
+ * and each of its applications by that slug and a suffix. The install slug
+ * names its application when it has one, and names the choice when it has more.
+ */
+export function appOfInstall<T extends { name: string; slug: string }>(
+  apps: T[],
+  name: string,
+): T {
+  const prefix = `${name.toLowerCase()}-`;
+  const members = apps.filter((a) => a.slug.toLowerCase().startsWith(prefix));
+  if (members.length === 1) return members[0];
+  if (members.length > 1) {
+    throw new Error(
+      `"${name}" is an install of ${members.length} apps; name one of them: ${members.map((a) => a.slug).join(', ')}.`,
+    );
+  }
+  throw new Error(`App "${name}" not found in cluster.`);
+}
+
+export interface MaintenanceWindow {
+  timezone: string;
+  slots: { days: string[]; start: string; durationMinutes: number }[];
+}
+
+export interface ClusterMaintenance {
+  window: MaintenanceWindow | null;
+  nextOpening: string | null;
+  says: string;
+}
+
+export interface AppMaintenanceReading {
+  mode: 'follow' | 'own' | 'anytime';
+  window: MaintenanceWindow | null;
+  nextOpening: string | null;
+  says: string;
+}
+
+export interface DeferredAction {
+  id: string;
+  kind: string;
+  clusterId: string;
+  applicationId: string | null;
+  applicationName: string | null;
+  requestedBy: string;
+  requestedAt: string;
+  runAt: string;
+  status: string;
+  outcome: string | null;
+  says: string;
 }

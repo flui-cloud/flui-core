@@ -46,10 +46,13 @@ import { InternalHostingMissingRequirement } from '../constants/internal-hosting
 import {
   AcmeChallengeInfoDto,
   AcmeOrderInfoDto,
+  AcmeResolversDto,
   CertDiagnosticsResponseDto,
   CertificateDiagnosticsDto,
   CertificateRequestInfoDto,
 } from '../dto/cert-diagnostics-response.dto';
+import { AcmeResolversService } from './acme-resolvers.service';
+import { acmeResolverSentence } from '../utils/acme-resolvers.core';
 
 type SolverType = 'http01' | 'dns01' | 'combined' | null;
 
@@ -100,6 +103,7 @@ export class ClusterDnsZoneService implements OnApplicationBootstrap {
     private readonly dnsZoneReconciliationService: DnsZoneReconciliationService,
     @Inject('ICredentialProvider')
     private readonly credentialProvider: ICredentialProvider,
+    private readonly acmeResolvers: AcmeResolversService,
   ) {}
 
   /**
@@ -1473,6 +1477,34 @@ export class ClusterDnsZoneService implements OnApplicationBootstrap {
     });
   }
 
+  /** How cert-manager checks names on this cluster; with `pin`, brought in line first. */
+  async acmeResolverStatus(
+    clusterId: string,
+    pin = false,
+  ): Promise<AcmeResolversDto | null> {
+    const cluster = await this.clusterRepository.findOne({
+      where: { id: clusterId },
+    });
+    if (!cluster) {
+      throw new NotFoundException(`Cluster ${clusterId} not found`);
+    }
+    const kubeconfig = await this.getKubeconfig(cluster);
+    const changed = pin
+      ? await this.acmeResolvers.ensure(clusterId, kubeconfig, { force: true })
+      : false;
+    return this.acmeResolversOf(kubeconfig, changed);
+  }
+
+  private async acmeResolversOf(
+    kubeconfig: string,
+    changed: boolean,
+  ): Promise<AcmeResolversDto | null> {
+    const reading = await this.acmeResolvers.read(kubeconfig).catch(() => null);
+    return reading
+      ? { ...reading, says: acmeResolverSentence(reading), changed }
+      : null;
+  }
+
   async getCertDiagnostics(
     clusterId: string,
     namespace?: string,
@@ -1602,6 +1634,7 @@ export class ClusterDnsZoneService implements OnApplicationBootstrap {
       clusterId,
       namespace: namespace ?? 'all',
       certificates,
+      acmeResolvers: await this.acmeResolversOf(kubeconfig, false),
     };
   }
 

@@ -16,6 +16,8 @@ import { ClusterDnsGateway } from '../gateway/cluster-dns.gateway';
  * The sweep only ever looks at endpoints recorded as `issuing`, a small set
  * that drains itself.
  */
+const DEFERRED_RETRY_WAIT_MS = 5_000;
+
 @Injectable()
 export class CertificateStatusRefreshService {
   private readonly logger = new Logger(CertificateStatusRefreshService.name);
@@ -36,6 +38,7 @@ export class CertificateStatusRefreshService {
     const endpoint = await this.appEndpointService.getEndpoint(endpointId);
     const worthDoubting =
       endpoint.certificateRequired &&
+      !endpoint.certificateDeferredSince &&
       (endpoint.certificateStatus === CertificateStatus.ISSUING ||
         endpoint.certificateStatus === CertificateStatus.FAILED ||
         endpoint.certificateStatus === null);
@@ -75,7 +78,11 @@ export class CertificateStatusRefreshService {
     }
   }
 
-  /** Every endpoint still recorded as issuing, wherever it lives. */
+  /**
+   * Every endpoint still recorded as issuing, and every one whose certificate
+   * waits for its name to be published: that wait is retried here, briefly,
+   * so it ends on its own instead of when somebody presses Sync.
+   */
   async sweep(): Promise<number> {
     const pending = await this.appEndpointService.listByCertificateStatus(
       CertificateStatus.ISSUING,
@@ -83,6 +90,18 @@ export class CertificateStatusRefreshService {
     for (const endpoint of pending) {
       await this.refreshIfNeeded(endpoint.id);
     }
-    return pending.length;
+    const deferred = await this.appEndpointService.listCertificateDeferred();
+    for (const endpoint of deferred) {
+      try {
+        await this.reconciliation.reconcile(endpoint.id, {
+          dnsWaitMs: DEFERRED_RETRY_WAIT_MS,
+        });
+      } catch (err) {
+        this.logger.warn(
+          `Retry of deferred certificate for ${endpoint.id} failed: ${(err as Error).message}`,
+        );
+      }
+    }
+    return pending.length + deferred.length;
   }
 }

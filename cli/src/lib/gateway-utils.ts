@@ -59,6 +59,12 @@ export function reconciliationLabel(status: string): string {
 
 export function tlsLabel(route: GatewayRoute): string {
   if (route.tlsEnabled) return chalk.green('https');
+  const phase = route.certificatePhase;
+  if (phase && phase.step !== 'none') {
+    return phase.step === 'failed'
+      ? chalk.red(phase.label)
+      : chalk.yellow(phase.label);
+  }
   return route.certificateStatus
     ? chalk.yellow(String(route.certificateStatus).toLowerCase())
     : chalk.dim('http');
@@ -93,6 +99,9 @@ export function printRouteDetail(route: GatewayRoute): void {
   console.log(`  ${chalk.bold('Path:')}      ${route.path}`);
   console.log(`  ${chalk.bold('Service:')}   ${route.service}`);
   console.log(`  ${chalk.bold('TLS:')}       ${tlsLabel(route)}`);
+  if (!route.tlsEnabled && route.certificatePhase?.detail) {
+    console.log(`             ${chalk.dim(route.certificatePhase.detail)}`);
+  }
   console.log(`  ${chalk.bold('Auth:')}      ${authLabel(route)}`);
   console.log(`  ${chalk.bold('RateLimit:')} ${rateLimitLabel(route)}`);
   console.log(`  ${chalk.bold('Allow IPs:')} ${allowIps}`);

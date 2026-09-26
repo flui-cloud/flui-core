@@ -7,6 +7,8 @@ import { EndpointType } from '../enums/endpoint-type.enum';
 import { CertChallenge } from '../enums/cert-challenge.enum';
 import { HostnameMode } from '../enums/hostname-mode.enum';
 import { GatewayConfigDto } from './gateway-config.dto';
+import { CertificatePhaseDto } from './certificate-phase.dto';
+import { Sensitivity } from '../../mask/decorators/sensitivity.decorator';
 
 export class AppEndpointResponseDto {
   @ApiProperty()
@@ -81,6 +83,13 @@ export class AppEndpointResponseDto {
 
   @ApiPropertyOptional()
   certificateMessage: string;
+
+  @ApiProperty({
+    type: CertificatePhaseDto,
+    description: 'Where the certificate is, said plainly.',
+  })
+  @Sensitivity(Sensitivity.PUBLIC)
+  certificatePhase: CertificatePhaseDto;
 
   @ApiPropertyOptional()
   certificateExpiresAt: Date;

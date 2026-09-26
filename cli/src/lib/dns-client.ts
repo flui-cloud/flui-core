@@ -76,6 +76,13 @@ export interface AssignZoneInput {
  * the ones that do not exist yet, which is the part that matters: a name that
  * already resolves has nothing left to propagate.
  */
+export interface AcmeResolvers {
+  pinned: boolean;
+  nameservers: string | null;
+  says: string;
+  changed: boolean;
+}
+
 export interface ClusterWildcard {
   status: 'published' | 'absent' | 'foreign' | 'unknown' | 'unavailable';
   fqdn: string | null;
@@ -145,6 +152,20 @@ export class DnsClient {
     return this.api.post<ClusterZoneAssignment>(
       `/clusters/${encodeURIComponent(clusterId)}` +
         `/dns-zone/${encodeURIComponent(assignmentId)}/reconcile`,
+    );
+  }
+
+  /** How cert-manager checks names before asking for a certificate; null when unreadable. */
+  async getAcmeResolvers(clusterId: string): Promise<AcmeResolvers | null> {
+    return this.api.get<AcmeResolvers | null>(
+      `/clusters/${encodeURIComponent(clusterId)}/dns-zone/acme-resolvers`,
+    );
+  }
+
+  /** Point those checks at public resolvers; a cluster already set is left alone. */
+  async pinAcmeResolvers(clusterId: string): Promise<AcmeResolvers | null> {
+    return this.api.post<AcmeResolvers | null>(
+      `/clusters/${encodeURIComponent(clusterId)}/dns-zone/acme-resolvers`,
     );
   }
 

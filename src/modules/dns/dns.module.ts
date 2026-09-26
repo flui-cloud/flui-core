@@ -50,6 +50,7 @@ import { DnsZoneReconciliationService } from './services/dns-zone-reconciliation
 import { DnsZoneReplicaService } from './services/dns-zone-replica.service';
 import { DnsZoneReconciliationScheduler } from './schedulers/dns-zone-reconciliation.scheduler';
 import { CertificateStatusRefreshService } from './services/certificate-status-refresh.service';
+import { AcmeResolversService } from './services/acme-resolvers.service';
 import { CertificateStatusScheduler } from './schedulers/certificate-status.scheduler';
 
 import { DnsZoneController } from './controllers/dns-zone.controller';
@@ -111,6 +112,7 @@ import { ClusterDnsGateway } from './gateway/cluster-dns.gateway';
     DnsZoneReplicaService,
     DnsZoneReconciliationScheduler,
     CertificateStatusRefreshService,
+    AcmeResolversService,
     CertificateStatusScheduler,
   ],
   controllers: [

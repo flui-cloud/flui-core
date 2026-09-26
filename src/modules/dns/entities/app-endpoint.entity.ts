@@ -120,6 +120,9 @@ export class AppEndpointEntity {
   @Column({ type: 'timestamptz', nullable: true })
   certificateExpiresAt: Date;
 
+  @Column({ type: 'timestamptz', nullable: true })
+  certificateDeferredSince: Date | null;
+
   @Column({ type: 'uuid', nullable: true })
   wildcardCertificateId: string | null;
 

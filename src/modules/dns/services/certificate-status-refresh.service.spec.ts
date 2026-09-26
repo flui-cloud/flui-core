@@ -12,6 +12,7 @@ type Endpoint = {
   certificateRequired: boolean;
   certificateStatus: CertificateStatus | null;
   certificateMessage: string | null;
+  certificateDeferredSince?: Date | null;
 };
 
 const anEndpoint = (over: Partial<Endpoint> = {}): Endpoint => ({
@@ -30,6 +31,7 @@ const build = (
 ) => {
   const updates: Array<[string, CertificateStatus, string | null]> = [];
   const emitted: unknown[] = [];
+  const reconcile = jest.fn(async () => true);
   const service = new CertificateStatusRefreshService(
     {
       getEndpoint: jest.fn(async (id: string) =>
@@ -37,6 +39,9 @@ const build = (
       ),
       listByCertificateStatus: jest.fn(async (s: CertificateStatus) =>
         endpoints.filter((e) => e.certificateStatus === s),
+      ),
+      listCertificateDeferred: jest.fn(async () =>
+        endpoints.filter((e) => e.certificateDeferredSince),
       ),
       updateCertificateStatus: jest.fn(
         async (
@@ -48,10 +53,10 @@ const build = (
         },
       ),
     } as never,
-    { getCertificateStatus: jest.fn(async () => live) } as never,
+    { getCertificateStatus: jest.fn(async () => live), reconcile } as never,
     { emitEndpointCertStatus: jest.fn((_c, p) => emitted.push(p)) } as never,
   );
-  return { service, updates, emitted };
+  return { service, updates, emitted, reconcile };
 };
 
 describe('keeping a certificate status current', () => {
@@ -79,6 +84,21 @@ describe('keeping a certificate status current', () => {
     );
     expect(await service.sweep()).toBe(2);
     expect(updates.map(([id]) => id)).toEqual(['ep1', 'ep2']);
+  });
+
+  it('retries a certificate waiting for its name to be published, briefly', async () => {
+    const { service, reconcile } = build(
+      [
+        anEndpoint({
+          id: 'ep3',
+          certificateStatus: CertificateStatus.PENDING,
+          certificateDeferredSince: new Date(),
+        }),
+      ],
+      { status: CertificateStatus.VALID, message: null },
+    );
+    expect(await service.sweep()).toBe(1);
+    expect(reconcile).toHaveBeenCalledWith('ep3', { dnsWaitMs: 5_000 });
   });
 
   /**
@@ -127,6 +147,7 @@ describe('keeping a certificate status current', () => {
       {
         getEndpoint: jest.fn(async () => endpoints[0]),
         listByCertificateStatus: jest.fn(async () => endpoints),
+        listCertificateDeferred: jest.fn(async () => []),
         updateCertificateStatus: jest.fn(),
       } as never,
       {
