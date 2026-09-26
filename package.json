@@ -98,7 +98,7 @@
     "@flui-cloud/infra": "^0.6.1",
     "@flui-cloud/mail": "^0.1.0",
     "@flui-cloud/semantic-surface": "^0.1.0",
-    "@flui-cloud/spec": "^0.10.0",
+    "@flui-cloud/spec": "^0.11.0",
     "@kubernetes/client-node": "^1.4.0",
     "@modelcontextprotocol/node": "2.0.0",
     "@modelcontextprotocol/server": "2.0.0",

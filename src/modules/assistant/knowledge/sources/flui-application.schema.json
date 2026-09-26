@@ -32,7 +32,8 @@
         "strategy": {
           "enum": ["dockerfile", "auto"],
           "default": "dockerfile",
-          "description": "`dockerfile` builds the repo Dockerfile. `auto` lets railpack detect the framework."
+          "description": "`dockerfile` builds the repo Dockerfile, the way to build. `auto` (framework detection by railpack) is deprecated and kept only so older manifests still validate.",
+          "x-flui-note": "`dockerfile` is applied everywhere. `auto` is per-runtime: a single-node vOps deploy REFUSES it with an error rather than accepting it, because the CI workflow it writes is hardcoded to a Dockerfile — accepting the value would fail in CI minutes later, on a repository the author owns."
         },
         "dockerfile": {
           "type": "string",
@@ -49,42 +50,36 @@
           "propertyNames": { "pattern": "^[A-Za-z_][A-Za-z0-9_]*$" },
           "additionalProperties": { "type": "string" },
           "description": "Docker build ARGs passed at image build time (--build-arg NAME=value). Env-INDEPENDENT and baked into the image — use for build-time configuration that is the same in every environment. For anything that differs per environment or must not be compiled into the artifact, use deploy.env instead."
+        },
+        "prepare": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "description": "Shell commands run in the checked-out repository BEFORE the image is built, each as its own CI step, in order. For a Dockerfile that is not a complete recipe on its own: a frontend bundle the backend embeds, code generation, an asset pipeline. Runs on the CI runner, not in the image and never on the deploy host, so it can see files a build context excludes — and it must install whatever toolchain it needs (`corepack enable && pnpm …`). A failing command fails the build and is named as the failing step. Nothing here reaches runtime: put runtime values in deploy.env."
         }
       }
     },
     "deploy": {
       "type": "object",
-      "required": ["port"],
       "additionalProperties": false,
+      "allOf": [{ "$ref": "#/definitions/exposureRules" }],
       "properties": {
         "port": {
           "type": "integer",
           "minimum": 1,
           "maximum": 65535,
-          "description": "The port your app listens on inside the container. MUST match what your code binds (commonly process.env.PORT)."
+          "description": "The port your app listens on inside the container. MUST match what your code binds (commonly process.env.PORT). Required unless `exposure: none` — see `deploy.exposure`."
         },
         "exposure": {
-          "enum": ["public", "internal"],
+          "enum": ["public", "internal", "none"],
           "default": "public",
-          "description": "`public` = Ingress + TLS + DNS on a public hostname. `internal` = ClusterIP only, reachable via the dashboard proxy."
+          "description": "How the workload is reached. `public` = Ingress + TLS + DNS on a public hostname. `internal` = ClusterIP only, reachable via the dashboard proxy. `none` = the workload does not listen: no port, no Service, no endpoint — a worker, a queue consumer. `none` is DECLARED, never inferred: a manifest that simply forgot `deploy.port` is refused rather than deployed as a worker, because inferring one from the other turns a typo into a silently unreachable application. `none` does NOT cover a scheduled job: a cron deployed as a long-running workload restarts in a loop and reports healthy while doing nothing of the kind — the spec has no field for a schedule yet, and this one must not be read as one.",
+          "x-flui-note": "The default is carried here and nowhere else. A runtime that fills it in must read `properties.deploy.properties.exposure.default` from this schema (the package exports it as `APPLICATION_EXPOSURE_DEFAULT`) rather than writing the literal again — a second copy of a default is a second place for it to drift, and this one decides whether an application is reachable."
         },
         "healthcheck": {
-          "type": "object",
-          "required": ["path"],
-          "additionalProperties": false,
-          "properties": {
-            "path": {
-              "type": "string",
-              "pattern": "^/",
-              "description": "HTTP path probed for readiness/liveness. MUST be a real route that returns 2xx — a wrong path (e.g. /health when the route is /api/health) makes every probe fail silently."
-            },
-            "port": {
-              "type": "integer",
-              "minimum": 1,
-              "maximum": 65535,
-              "description": "Defaults to deploy.port."
-            }
-          }
+          "$ref": "#/definitions/healthcheck"
+        },
+        "smokeTest": {
+          "$ref": "#/definitions/smokeTest"
         },
         "resources": { "$ref": "#/definitions/resources" },
         "scaling": { "$ref": "#/definitions/scaling" },
@@ -94,10 +89,40 @@
           "type": "array",
           "items": { "$ref": "#/definitions/volume" }
         },
+        "files": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/configFile" },
+          "description": "Configuration files written beside the app and mounted read-only into the container. For an application whose entrypoint reads a file rather than the environment — a volume mounted at its config directory is an empty directory, which fails in exactly the same way as having no file at all."
+        },
+        "services": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/attachedService" },
+          "description": "Infrastructure this application needs, attached to it. Each entry is a catalog building block rendered as one more container inside THIS application's pod: it shares the pod's network namespace, so the app reaches it on 127.0.0.1, and it is reachable by nothing else on the host. Attached services are not shared between installs and are never addressable across them — one application, one instance, one lifecycle."
+        },
+        "browserConfig": {
+          "type": "object",
+          "required": ["path"],
+          "additionalProperties": false,
+          "description": "Where the runtime configuration file for the BROWSER is written. Any env value declared `delivery: browser` is rendered into it as the app starts, so a value decided at deploy time — the public hostname above all — reaches client-side code that was compiled before that hostname existed. This is the way out of one-image-per-hostname for a build that inlines its public URL. The path is declared rather than guessed: nothing outside the image knows which directory it serves static files from, and a file written to the wrong one fails silently.",
+          "properties": {
+            "path": {
+              "type": "string",
+              "pattern": "^/",
+              "description": "Absolute path INSIDE the container, in a directory the app serves as a static asset (`/usr/share/nginx/html/flui-env.js`, `/app/public/flui-env.js`). The application must load it before its own bundle — `<script src=\"/flui-env.js\"></script>` in the HTML — which is a change in your repository that no deploy can make for you."
+            },
+            "global": {
+              "type": "string",
+              "pattern": "^[A-Za-z_$][A-Za-z0-9_$]*$",
+              "default": "__FLUI_ENV__",
+              "description": "Name of the global the file assigns to, as `window.<global>`. Override it to match a global your code already reads (`__APP_CONFIG__`, `ENV`), so adopting this costs no source change beyond the script tag."
+            }
+          }
+        },
         "startCommand": {
           "type": "string",
-          "description": "Override the container start command."
-        }
+          "description": "Override the container start command. It is a SHELL SCRIPT BODY, not an argv: the runtime runs it as sh -c '<value>', so do not write your own `sh -c` — that nests a second shell which re-parses the first one's expansions as source. Write the body directly (`export X=...; exec my-server`), and end with `exec` so the process keeps PID 1."
+        },
+        "replaceAtStart": { "$ref": "#/definitions/replaceAtStart" }
       }
     },
     "environments": {
@@ -112,6 +137,169 @@
     }
   },
   "definitions": {
+    "exposureRules": {
+      "description": "What `deploy.exposure` decides about the rest of the deploy block. `none` means the workload does not listen, so the three fields that only make sense for something that does listen are refused rather than ignored: a port with nothing to publish it, a domain naming a way in that will not exist, and an HTTP probe with no port to reach. Every other exposure requires `port`, which is what every manifest written before `none` existed already declared. The rules live in one named subschema so a validator can recognise them and answer with the sentence the author needs instead of the sentence a generic JSON Schema error produces.",
+      "if": {
+        "required": ["exposure"],
+        "properties": { "exposure": { "const": "none" } }
+      },
+      "then": {
+        "properties": {
+          "port": false,
+          "domain": false,
+          "healthcheck": { "properties": { "path": false } }
+        }
+      },
+      "else": { "required": ["port"] }
+    },
+    "healthcheck": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Container health probe. It is run by the runtime, not by the image: the deploy learns from it whether the application actually came up, and `application.status` reports what it answered. This definition is shared field for field with the other manifest kind — a parity test keeps the two deep-equal, so a probe written for one kind is valid on the other.",
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": ["http", "tcp", "exec"],
+          "default": "http",
+          "description": "Probe kind. Omitting it means http, so a manifest that declares only `path` is complete."
+        },
+        "path": {
+          "type": "string",
+          "pattern": "^/",
+          "description": "HTTP path probed for readiness/liveness. MUST be a real route that returns 2xx — a wrong path (e.g. /health when the route is /api/health) makes every probe fail silently. Required for an http probe."
+        },
+        "port": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535,
+          "description": "Port the probe connects to inside the container. Defaults to the container's exposed port (`deploy.port` for an Application)."
+        },
+        "command": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Argv of an `exec` probe, run inside the container. Required when type is exec. Use it when the app ships its own check and no HTTP route answers before it is ready."
+        },
+        "initialDelay": {
+          "type": "string",
+          "description": "Grace period before the first probe, as a duration (`30s`, `2m`). An application that migrates a database on first boot needs one; without it the first probe fails on a container that is merely still starting."
+        },
+        "interval": {
+          "type": "string",
+          "description": "Time between probes, as a duration (`10s`, `1m`)."
+        },
+        "timeout": {
+          "type": "string",
+          "description": "How long one probe may take before it counts as failed, as a duration (`3s`)."
+        },
+        "retries": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Consecutive failures before the container is reported unhealthy."
+        },
+        "httpHeaders": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Extra request headers for an http probe — a `Host` the framework trusts, or a header a protected route requires. Without it the probe arrives as a bare loopback request, which a Host-validating framework rejects."
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "anyOf": [
+              {
+                "not": {
+                  "required": ["type"]
+                }
+              },
+              {
+                "required": ["type"],
+                "properties": {
+                  "type": {
+                    "const": "http"
+                  }
+                }
+              }
+            ]
+          },
+          "then": {
+            "required": ["path"]
+          }
+        },
+        {
+          "if": {
+            "required": ["type"],
+            "properties": {
+              "type": {
+                "const": "exec"
+              }
+            }
+          },
+          "then": {
+            "required": ["command"]
+          }
+        }
+      ]
+    },
+    "smokeTest": {
+      "type": "object",
+      "required": ["type"],
+      "additionalProperties": false,
+      "description": "The post-deploy gate: the one check that decides whether the deploy is kept or rolled back. Distinct from `healthcheck`, which runs inside the container forever — this runs once, from the host, after the units are up. This definition is shared field for field with the other manifest kind, kept deep-equal by a parity test. A client that cannot run the kind declared here must say so; substituting a weaker check and reporting success is a defect, not a fallback.",
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": ["http", "tcp", "script", "skip"],
+          "description": "http requests `path` and compares the status; tcp connects to the published port; script runs `inline` (or `file`/`shell`); skip declares that no gate is possible and says why."
+        },
+        "reason": {
+          "type": "string",
+          "description": "Why there is no gate. Only meaningful with type: skip, where it is what a reader gets instead of a check."
+        },
+        "path": {
+          "type": "string",
+          "description": "Path requested by an http gate. Defaults to `/`."
+        },
+        "expectedStatus": {
+          "type": "integer",
+          "minimum": 100,
+          "maximum": 599,
+          "description": "Status an http gate treats as success. Declare it for an app whose root answers 302 or 401 when healthy, or the deploy rolls back an application that is serving correctly."
+        },
+        "port": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535,
+          "description": "Container port a tcp gate connects to. Defaults to the primary published port."
+        },
+        "inline": {
+          "type": "string",
+          "description": "Shell commands run as the gate, for a service that answers on a protocol rather than on HTTP (a database round-trip). Requires type: script."
+        },
+        "file": {
+          "type": "string",
+          "description": "Path to a script run as the gate, instead of `inline`."
+        },
+        "shell": {
+          "type": "string",
+          "description": "Interpreter for `inline`/`file`. Defaults to the image's `sh`."
+        },
+        "timeoutSeconds": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "How long the application has to answer for the FIRST time. This is a startup budget, not a request timeout: a cold host pulling an image and running migrations is nothing like the warm local runtime a manifest was written against, and too small a value rolls back an application that is merely slow.",
+          "x-flui-note": "The spec sets no maximum. Per-runtime: a single-node vOps deploy clamps the effective window to 120s at the low end and 600s at the high end — a smaller value never shortens the budget below the default, and a larger one is accepted and capped, so a single bad number cannot hang a deploy for an hour."
+        },
+        "retries": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Probe attempts. Attempts times the client's fixed spacing is a second way of expressing the same startup budget; the larger of the two wins."
+        }
+      }
+    },
     "resources": {
       "type": "object",
       "additionalProperties": false,
@@ -140,11 +328,18 @@
     "scaling": {
       "type": "object",
       "additionalProperties": false,
-      "x-flui-status": "planned",
-      "x-flui-note": "Not yet applied on source deploys — the manifest scaling block does not configure autoscaling yet. The app runs at a single replica.",
+      "description": "Replica range. When max is above min, replicas are added while CPU stays above 80% of the request and removed when it falls; memory is not used because it rarely falls after a peak.",
       "properties": {
-        "min": { "type": "integer", "minimum": 0 },
-        "max": { "type": "integer", "minimum": 1 }
+        "min": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Replicas the app always runs. 0 is read as 1."
+        },
+        "max": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Most replicas the app may reach. Equal to min means a fixed count."
+        }
       }
     },
     "domain": {
@@ -171,13 +366,19 @@
         },
         "certChallenge": {
           "enum": ["http-01", "dns-01"],
-          "description": "ACME challenge. `dns-01` needs a DNS zone and supports wildcards."
+          "description": "ACME challenge. `dns-01` needs a DNS zone and supports wildcards.",
+          "x-flui-note": "`http-01` is applied everywhere. `dns-01` is per-runtime: a single-node vOps deploy does not implement it — the value is accepted and carried into the plan, and when the ingress is attached it warns by name and issues the certificate over http-01 instead, so no wildcard is obtained."
         },
         "certificateProvider": {
           "enum": ["lets-encrypt", "lets-encrypt-staging"],
           "description": "Use lets-encrypt-staging for testing without hitting rate limits."
         },
-        "userCustomizable": { "type": "boolean" }
+        "userCustomizable": { "type": "boolean" },
+        "httpsRequirement": {
+          "type": "string",
+          "enum": ["required", "recommended", "none"],
+          "description": "What the APPLICATION needs, as opposed to `tls`, which is what the operator requests. Some applications cannot work over plain HTTP at all — an unconditional HTTP→HTTPS redirect, `Secure` cookies, HSTS, a service worker, WebAuthn, Web Crypto, an OAuth callback registered as https. `required`: a deploy that would not be reachable over HTTPS (TLS off, or no domain at all) is refused, naming this field. `recommended`: the same deploy is warned about by name and proceeds. `none`, and an absent field, mean silence."
+        }
       }
     },
     "envBlock": {
@@ -218,19 +419,18 @@
             },
             "valueFrom": {
               "$ref": "#/definitions/valueFrom",
-              "x-flui-note": "secretRef (a Kubernetes secretKeyRef) and service (a sibling app's in-cluster address) are applied on source deploys. generate and userInput are planned — see those branches."
+              "x-flui-note": "Every branch is applied on a source deploy: secretRef (a Kubernetes secretKeyRef), service (a sibling app's in-cluster address), generate (the value is created on the host at deploy time and never leaves it) and userInput (the deployer supplies it; a sensitive one becomes a secret, never a literal in the manifest)."
             },
             "delivery": {
               "enum": ["runtime", "browser", "build"],
               "default": "runtime",
               "x-flui-status": "planned",
-              "x-flui-note": "Not yet applied on source deploys — every value is delivered as a container env var today (runtime). browser/build are accepted but not yet honoured.",
-              "description": "How the value reaches the app. `runtime` = container env var (server-side apps). `browser` = rendered to /flui-env.js at container boot and exposed as window.__FLUI_ENV__ (static/SPA builds that can't read process.env). `build` = Docker build ARG baked into the image; INVARIANT across environments, and rejected on a value sourced from a secret."
+              "x-flui-note": "`runtime` is the default and is applied. `browser` is per-runtime: vOps applies it (rendered into `deploy.browserConfig.path` at deploy), Flui source deploys do not yet — there it is accepted and the value arrives as a runtime container env var instead. `build` is REFUSED with an error: a build-time value is baked into the image, so it is invariant across environments and belongs in `build.args`, where that invariance is a property of the block rather than a rule this field would have to enforce.",
+              "description": "How the value reaches the app. `runtime` = container env var (server-side apps). `browser` = rendered into the file named by `deploy.browserConfig.path` and exposed as `window.__FLUI_ENV__` (static/SPA builds that cannot read process.env). A browser value is served to anyone who loads the page, so it must be a literal the manifest states outright — a secret may never be delivered this way. `build` is not accepted here — declare it under `build.args`."
             },
             "secret": {
               "type": "boolean",
-              "x-flui-status": "planned",
-              "x-flui-note": "Not yet applied on source deploys — the value is currently injected as a plain env entry regardless.",
+              "x-flui-note": "Applied. The resolved value is stored as a host secret and injected by reference; it is never written into a unit file, a plan or the manifest.",
               "description": "Store the resolved value in the app Secret (encrypted), injected via secretKeyRef."
             },
             "description": { "type": "string" }
@@ -252,12 +452,11 @@
         "value": { "type": "string", "description": "Literal runtime value." },
         "secret": {
           "type": "boolean",
-          "x-flui-status": "planned",
-          "x-flui-note": "Not yet applied on source deploys — the value is currently injected as a plain env entry regardless."
+          "x-flui-note": "Applied. The resolved value is stored as a host secret and injected by reference; it is never written into a unit file, a plan or the manifest."
         },
         "valueFrom": {
           "$ref": "#/definitions/valueFrom",
-          "x-flui-note": "secretRef (a Kubernetes secretKeyRef) and service (a sibling app's in-cluster address) are applied on source deploys. generate and userInput are planned — see those branches."
+          "x-flui-note": "Every branch is applied on a source deploy: secretRef (a Kubernetes secretKeyRef), service (a sibling app's in-cluster address), generate (the value is created on the host at deploy time and never leaves it) and userInput (the deployer supplies it; a sensitive one becomes a secret, never a literal in the manifest)."
         },
         "userEditable": {
           "type": "boolean",
@@ -273,12 +472,18 @@
           "type": "object",
           "required": ["generate", "length"],
           "additionalProperties": false,
-          "x-flui-status": "planned",
-          "x-flui-note": "Not yet applied on source deploys — a value is not generated today, so the entry is dropped.",
           "properties": {
             "generate": { "const": "secret" },
-            "length": { "type": "integer", "minimum": 8, "maximum": 256 },
-            "format": { "enum": ["base64url", "hex"] }
+            "length": {
+              "type": "integer",
+              "minimum": 8,
+              "maximum": 256,
+              "description": "How many CHARACTERS of the produced string, never input bytes. So `format: hex, length: 32` is a 32-character string carrying 16 bytes of key material: an application that needs a 32-BYTE key must declare `length: 64`. An AES-256 key read as latin1 needs exactly 32 characters, so declare `length: 32` with no format."
+            },
+            "format": {
+              "enum": ["base64url", "hex"],
+              "description": "Alphabet the characters are drawn from. `hex` is [a-f0-9]; `base64url` is [A-Za-z0-9_-]. Omitted is [a-zA-Z0-9]. The value is generated character by character, so it is not an encoding of anything and `length` is the length of the result."
+            }
           }
         },
         {
@@ -295,7 +500,8 @@
             "service": {
               "type": "string",
               "pattern": "^[a-z]([a-z0-9-]{0,61}[a-z0-9])?$",
-              "description": "Name of another Flui app in the same project. Resolved to that app's in-cluster Service address (the same DNS Flui uses to wire catalog building blocks); app-to-app traffic stays inside the cluster and never round-trips the public ingress. Cross-cluster references are not resolved. Per-environment scoping arrives with the environments block."
+              "description": "Name of another Flui app in the same project. Resolved to that app's in-cluster Service address (the same DNS Flui uses to wire catalog building blocks); app-to-app traffic stays inside the cluster and never round-trips the public ingress. Cross-cluster references are not resolved. Per-environment scoping arrives with the environments block.",
+              "x-flui-note": "Per-runtime: this branch names another Flui app, and a single-node vOps deploy REFUSES it — there is no cluster and vOps never wires two installs together. A database or cache the app needs is attached under `deploy.services` and read with `fromService` / `fromBBEnv` instead."
             },
             "key": {
               "enum": ["url", "host", "port"],
@@ -308,8 +514,6 @@
           "type": "object",
           "required": ["userInput"],
           "additionalProperties": false,
-          "x-flui-status": "planned",
-          "x-flui-note": "Not yet applied on source deploys — the value is not prompted for, so the entry is dropped.",
           "properties": {
             "userInput": {
               "type": "object",
@@ -364,6 +568,107 @@
         "mountPath": { "type": "string" },
         "size": { "type": "string", "description": "e.g. \"1Gi\"." }
       }
+    },
+    "configFile": {
+      "type": "object",
+      "required": ["path", "content"],
+      "additionalProperties": false,
+      "properties": {
+        "path": {
+          "type": "string",
+          "pattern": "^/(?:[^/\u0000]+/)*[^/\u0000]+$",
+          "description": "Absolute path inside the container. Mounted read-only, so the application must not need to write it."
+        },
+        "content": {
+          "type": "string",
+          "description": "The file's literal content. `{{env.NAME}}` interpolates a key declared in deploy.env: a literal is substituted when the plan is rendered, and a secret is substituted on the host at deploy time from the secret store — so a secret's VALUE never appears in this file, in the manifest, or in the plan. `{{app.domain}}` and `{{app.scheme}}` resolve as they do in deploy.env."
+        },
+        "mode": {
+          "type": "string",
+          "pattern": "^0[0-7]{3}$",
+          "default": "0644",
+          "description": "Octal permissions of the file on the host, e.g. \"0600\". Interpolating a secret forces 0600 regardless."
+        }
+      }
+    },
+    "replaceAtStart": {
+      "type": "object",
+      "required": ["paths", "substitute"],
+      "additionalProperties": false,
+      "description": "Rewrite sentinel strings inside the IMAGE's own files, in the container, before the application starts. The last resort for a build that froze a deploy-time value into files a deploy cannot regenerate — `NEXT_PUBLIC_*` compiled into client chunks, a static export with the URL pre-rendered into the HTML. Build against a sentinel, name it here, and the deployment's real value takes its place at boot, so one image serves any hostname. Prefer `deploy.browserConfig` whenever the app can read a runtime file instead: this walks every declared path on every start and costs minutes on a small host, so raise `deploy.smokeTest.timeoutSeconds` to match. It needs `python3` or `node` and a shell inside the image; a distroless image has none of the three.",
+      "properties": {
+        "paths": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "pattern": "^/(?:[^/\\u0000*]+/)*(?:[^/\\u0000*]+|\\*\\*)$",
+            "description": "Absolute path inside the container: a file, or a directory walked recursively. A trailing `/**` is accepted and means the same as the directory. Nothing else is a pattern — `*.js` is refused rather than half-honoured."
+          },
+          "description": "The paths to rewrite. Name the narrowest directories that actually hold the sentinel: every file under them is read on every start, and `/app` where `/app/.next` would do is the difference between seconds and minutes."
+        },
+        "substitute": {
+          "type": "object",
+          "minProperties": 1,
+          "propertyNames": { "pattern": "^[^\\u001e\\u001f]{4,}$" },
+          "additionalProperties": { "type": "string" },
+          "description": "sentinel → value. The key is the literal string your build baked into the assets; choose one that cannot occur by accident (`NEXT_PUBLIC_WEBAPP_URL_PLACEHOLDER`), because every byte of it is replaced wherever it is found, in text and in binaries alike. The value follows the rules a config file's content follows: `{{env.NAME}}` takes a key declared in deploy.env — a literal substituted when the plan is rendered, a secret substituted on the host at deploy time, so no value passes through the plan — and `{{app.domain}}` / `{{app.scheme}}` resolve to the origin the app is served on. A secret written into a path the app serves to the browser becomes public; vOps warns by name, because nothing about a path says whether it is served."
+        }
+      }
+    },
+    "attachedService": {
+      "type": "object",
+      "required": ["name", "block", "env"],
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9-]{0,30}$",
+          "description": "Local name for this service, used in its container name. `app` is reserved for the application itself."
+        },
+        "block": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9-]{0,62}$",
+          "description": "Catalog id of a building block (postgresql, mariadb, valkey, redis…). Only a building block may be attached: a full catalog app is installed on its own."
+        },
+        "env": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/definitions/linkedEnv" },
+          "description": "How this application reads the attached service. Declaring none would attach a service the app has no way to address."
+        },
+        "resources": {
+          "$ref": "#/definitions/resources",
+          "description": "CPU/memory ceiling for the attached service itself. Without one it inherits the block's defaults, which are sized for a database running alone — on a single small host, an unbounded Postgres beside the application is what makes the application the one that gets killed."
+        }
+      }
+    },
+    "linkedEnv": {
+      "type": "object",
+      "required": ["name"],
+      "additionalProperties": false,
+      "description": "One environment variable of the APPLICATION, computed from an attached service.",
+      "properties": {
+        "name": { "type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_]*$" },
+        "fromService": {
+          "enum": ["host", "port", "url"],
+          "description": "Computed from the attached service: `host` is where it answers (127.0.0.1 inside the pod, cluster DNS on the platform), `port` its first port, `url` its connection URL composed from the block's own connection template. A url carries credentials, so it is always delivered as a secret."
+        },
+        "fromBBEnv": {
+          "type": "string",
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+          "description": "Name of an env the block declares. A secret one is injected by reference — its value is never copied into this manifest or into a plan."
+        },
+        "value": {
+          "type": "string",
+          "description": "A literal the block cannot derive."
+        }
+      },
+      "oneOf": [
+        { "required": ["fromService"] },
+        { "required": ["fromBBEnv"] },
+        { "required": ["value"] }
+      ]
     }
   }
 }

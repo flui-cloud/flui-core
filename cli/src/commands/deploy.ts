@@ -663,6 +663,7 @@ export default class Deploy extends Command {
             ? { certificateProvider: flags['cert-provider'] as string }
             : {}),
           ...(flags.hostname ? { hostnameMode: flags.hostname as string } : {}),
+          ...(flags.exposure ? { exposure: flags.exposure as string } : {}),
           ...(flags['skip-endpoint'] ? { skipEndpoint: true } : {}),
           ...(flags['no-tls'] ? { tls: false } : {}),
           ...(flags['allow-master'] ? { allowMasterPlacement: true } : {}),
@@ -891,7 +892,7 @@ export default class Deploy extends Command {
       if (r.warnings.length) {
         console.log(
           chalk.dim(
-            '\n  (warnings = spec-accepted fields not yet applied on source deploys)\n',
+            '\n  (warnings = fields that are accepted but not yet applied, or deprecated)\n',
           ),
         );
       }
