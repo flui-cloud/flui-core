@@ -41,6 +41,7 @@ import {
   parseCpuMillicores,
   parseMemoryMB,
 } from '../../topology/services/topology-k8s.helper';
+import { exposureRefusal } from '../utils/catalog-exposure.util';
 
 export const CATALOG_INSTALL_QUEUE = 'catalog-install';
 export const CATALOG_INSTALL_JOB = 'install-catalog-app';
@@ -92,6 +93,12 @@ export class CatalogInstallerService {
 
     this.validateUserInputs(definition, dto);
     this.validateDependencyChoices(definition, dto);
+    const exposureProblem = exposureRefusal(
+      definition.manifest.spec as never,
+      definition.appType,
+      dto.exposure,
+    );
+    if (exposureProblem) throw new BadRequestException(exposureProblem);
     // Preflight the same requirements↔cluster gate as the dashboard controller, so
     // every caller (HTTP, install-from-yaml, MCP/agent) fails fast with the structured
     // reason instead of enqueuing a job that dies at create-applications.
@@ -376,8 +383,14 @@ export class CatalogInstallerService {
       1,
     );
     if (!check.canDeploy) {
+      const placement = check.placement;
+      const why = placement?.why ? ` ${placement.why}` : '';
+      const because =
+        placement && placement.verdict !== 'unknown'
+          ? ` ${placement.sentence}${why}`
+          : '';
       throw new BadRequestException(
-        `Not enough capacity on the cluster to install ${definition.name}: it needs about ${totalCpu}m CPU and up to ${totalMemory}Mi memory at peak, but only ${check.available.cpu} CPU and ${check.available.memory} memory are free (a 10% safety margin is kept). Free up resources (remove unused apps) or add capacity to the cluster, then try again.`,
+        `Not enough capacity on the cluster to install ${definition.name}: it needs about ${totalCpu}m CPU and up to ${totalMemory}Mi memory at peak, but only ${check.available.cpu} CPU and ${check.available.memory} memory are free (a 10% safety margin is kept).${because} Free up resources (remove unused apps) or add capacity to the cluster, then try again.`,
       );
     }
   }

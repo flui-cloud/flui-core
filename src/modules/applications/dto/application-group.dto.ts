@@ -1,4 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { Sensitivity } from '../../mask/decorators/sensitivity.decorator';
 import { ApplicationCategory } from '../enums/application-category.enum';
 import { ApplicationStatus } from '../enums/application-status.enum';
 import { ApplicationResponseDto } from './application-response.dto';
@@ -67,6 +68,14 @@ export class ApplicationGroupDto {
 
   @ApiProperty({ description: 'Number of component apps (1 for standalone).' })
   componentCount: number;
+
+  @ApiProperty({
+    nullable: true,
+    description:
+      'Replicas asked for across every component; null when no component says. For a standalone app, its own.',
+  })
+  @Sensitivity(Sensitivity.PUBLIC)
+  replicas: number | null;
 
   @ApiProperty({
     type: [ApplicationResponseDto],

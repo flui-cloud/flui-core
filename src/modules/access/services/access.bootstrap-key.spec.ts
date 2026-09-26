@@ -5,17 +5,22 @@ import { AccessService } from './access.service';
 function service(
   retrieve: () => Promise<string>,
   keyPath = 'system/1/private.key',
+  sealedPrivateKey: string | null = null,
 ) {
   const repository = {
     findKeyById: jest.fn().mockResolvedValue({
       id: 'key-1',
       publicKey: 'ssh-ed25519 AAAA',
       keyPath,
+      sealedPrivateKey,
     }),
+    updateKey: jest.fn().mockResolvedValue(null),
   };
   const keyStorage = {
     retrievePrivateKey: jest.fn(retrieve),
     isStoredHere: jest.fn((path: string) => !path.startsWith('/elsewhere')),
+    encryptKeyToString: jest.fn((v: string) => `sealed:${v}`),
+    decryptKeyFromString: jest.fn((v: string) => v.replace(/^sealed:/, '')),
   };
   const clusters = {
     findOneBy: jest
@@ -23,6 +28,7 @@ function service(
       .mockResolvedValue({ id: 'c1', bootstrapKeyId: 'key-1' }),
   };
   const none = {} as never;
+  last = { repository, keyStorage };
   return new AccessService(
     repository as never,
     keyStorage as never,
@@ -38,7 +44,29 @@ function service(
   );
 }
 
+let last: { repository: any; keyStorage: any };
+
 describe("a cluster's bootstrap key", () => {
+  it('is read from its record, where it outlives a restart of the API, without the key file', async () => {
+    const retrieve = jest.fn();
+    const material = await service(
+      retrieve,
+      '/elsewhere/keys/system/1/private.key',
+      'sealed:PRIVATE',
+    ).getBootstrapKeyMaterialForCluster('c1');
+    expect(material?.privateKey).toBe('PRIVATE');
+    expect(retrieve).not.toHaveBeenCalled();
+  });
+
+  it('copies a key still read from its file into the record', async () => {
+    await service(async () => 'PRIVATE').getBootstrapKeyMaterialForCluster(
+      'c1',
+    );
+    expect(last.repository.updateKey).toHaveBeenCalledWith('key-1', {
+      sealedPrivateKey: 'sealed:PRIVATE',
+    });
+  });
+
   it('is handed back whole while its private half is on disk', async () => {
     const material = await service(
       async () => 'PRIVATE',

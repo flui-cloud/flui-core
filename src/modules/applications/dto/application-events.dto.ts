@@ -1,4 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { Sensitivity } from '../../mask/decorators/sensitivity.decorator';
 import { AppRuntimeResponseDto } from './app-management.dto';
 
 // ── Section enum ──────────────────────────────────────────────────────────────
@@ -61,6 +62,14 @@ export class RolloutProgressDto {
 
   @ApiProperty({ example: 'Waiting for pods to be ready (1/2)' })
   message: string;
+
+  @Sensitivity(Sensitivity.PUBLIC)
+  @ApiPropertyOptional({
+    example: 1,
+    description:
+      'Replicas waiting for a node with room. While this is set the rollout is waiting on scaling, not failing, and no timeout runs.',
+  })
+  waitingForRoom?: number;
 
   @ApiProperty()
   timestamp: Date;

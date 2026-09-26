@@ -9,6 +9,7 @@ export enum ApplicationStatus {
    */
   AWAITING_BUILD = 'awaiting_build',
   PROVISIONING = 'provisioning',
+  WAITING_FOR_ROOM = 'waiting_for_room',
   RUNNING = 'running',
   DEGRADED = 'degraded',
   STOPPED = 'stopped',

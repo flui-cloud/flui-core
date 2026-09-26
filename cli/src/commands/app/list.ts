@@ -108,7 +108,7 @@ export default class AppList extends Command {
       name: `${marker} ${group.name} (${group.componentCount})`,
       slug: group.slug,
       status: group.status,
-      replicas: '-',
+      replicas: group.replicas == null ? '-' : String(group.replicas),
       kind: 'composed',
       exposure: (primary?.exposure || '').toLowerCase(),
       lastDeploy: undefined,
@@ -161,6 +161,7 @@ export default class AppList extends Command {
     if (s === 'running') return chalk.green(status);
     if (s === 'stopped') return chalk.yellow(status);
     if (s === 'failed' || s === 'degraded') return chalk.red(status);
+    if (s === 'waiting_for_room') return chalk.yellow(status);
     if (s === 'provisioning' || s === 'updating') return chalk.blue(status);
     return chalk.dim(status);
   }

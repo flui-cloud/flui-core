@@ -23,7 +23,9 @@ import {
   UpdateResourcesDto,
   UpdateReplicasDto,
   AppRuntimeResponseDto,
+  ResourcesConsequenceDto,
 } from '../dto/app-management.dto';
+import { AppResourcesConsequenceService } from '../services/app-resources-consequence.service';
 
 @ApiTags('Application Management')
 @ApiBearerAuth()
@@ -41,7 +43,10 @@ import {
 // memory limits are configuration.
 @UseGuards(AppAccessGuard)
 export class AppManagementController {
-  constructor(private readonly appManagementService: AppManagementService) {}
+  constructor(
+    private readonly appManagementService: AppManagementService,
+    private readonly consequence: AppResourcesConsequenceService,
+  ) {}
 
   @Get('runtime')
   @ApiOperation({
@@ -71,6 +76,24 @@ export class AppManagementController {
     @Body() dto: UpdateResourcesDto,
   ): Promise<AppRuntimeResponseDto> {
     return this.appManagementService.updateResources(appId, dto);
+  }
+
+  @Post('resources/consequence')
+  @AppAction(IAM_PERMISSION.APP_READ)
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'What a resource change would do, before it is written',
+    description:
+      'Takes the same body as PATCH resources and writes nothing: the values as they would be stored, whether they would be refused, and where the replicas would run — on a node already there, on a machine a scaling group would buy or propose, or nowhere yet.',
+  })
+  @ApiParam({ name: 'appId', description: 'Application ID' })
+  @ApiResponse({ status: 200, type: ResourcesConsequenceDto })
+  @ApiResponse({ status: 400, description: 'Not a CPU or memory quantity' })
+  async resourcesConsequence(
+    @Param('appId') appId: string,
+    @Body() dto: UpdateResourcesDto,
+  ): Promise<ResourcesConsequenceDto> {
+    return this.consequence.consequenceOf(appId, dto);
   }
 
   @Patch('replicas')

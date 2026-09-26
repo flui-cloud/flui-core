@@ -75,6 +75,7 @@ import {
   DeployFromYamlDto,
   DeployFromYamlResponseDto,
 } from '../dto/deploy-from-yaml.dto';
+import { LostOperationsService } from '../services/lost-operations.service';
 
 @ApiTags('Applications')
 @ApiBearerAuth()
@@ -89,6 +90,7 @@ export class ApplicationsController {
     private readonly applicationDeployService: ApplicationDeployService,
     private readonly systemAppCatalogService: SystemAppCatalogService,
     private readonly reconciliationService: ApplicationReconciliationService,
+    private readonly lostOperations: LostOperationsService,
     private readonly appRevisionsRepository: AppRevisionsRepository,
     private readonly dockerHubService: DockerHubService,
     private readonly applicationWorkflowService: ApplicationWorkflowService,
@@ -316,6 +318,9 @@ export class ApplicationsController {
   ): Promise<ApplicationResponseDto> {
     if (refresh === 'true') {
       await this.reconciliationService.reconcileOne(id);
+    } else {
+      const stored = await this.applicationService.findById(id);
+      await this.lostOperations.settle(id, stored.status);
     }
     const app = await this.applicationService.findById(id);
     const dto = await this.applicationService.toResponseDtoWithOperation(app);

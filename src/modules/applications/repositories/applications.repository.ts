@@ -15,10 +15,11 @@ const OBSERVABLE_STATUSES = [
   ApplicationStatus.RUNNING,
   ApplicationStatus.DEGRADED,
   ApplicationStatus.FAILED,
+  ApplicationStatus.WAITING_FOR_ROOM,
 ] as const;
 
 /** How long an app may read `updating` before an absent deploy is believed. */
-export const ORPHANED_UPDATE_AFTER_MINUTES = 10;
+export const ORPHANED_UPDATE_AFTER_MINUTES = 1;
 
 @Injectable()
 export class ApplicationsRepository {
@@ -196,7 +197,14 @@ export class ApplicationsRepository {
    * ever. Once no operation on the app is in flight and the status has been
    * still for a while, the cluster is asked like any other.
    */
-  async findOrphanedUpdates(clusterId?: string): Promise<ApplicationEntity[]> {
+  async isOrphanedUpdate(id: string): Promise<boolean> {
+    return (await this.findOrphanedUpdates(undefined, id)).length > 0;
+  }
+
+  async findOrphanedUpdates(
+    clusterId?: string,
+    id?: string,
+  ): Promise<ApplicationEntity[]> {
     const query = this.repository
       .createQueryBuilder('app')
       .leftJoinAndSelect('app.appResources', 'appResources')
@@ -213,6 +221,7 @@ export class ApplicationsRepository {
         )`,
       );
     if (clusterId) query.andWhere('app.clusterId = :clusterId', { clusterId });
+    if (id) query.andWhere('app.id = :id', { id });
     return query.getMany();
   }
 

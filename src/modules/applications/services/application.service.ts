@@ -6,6 +6,10 @@ import {
   Inject,
   forwardRef,
 } from '@nestjs/common';
+import {
+  AvailabilityEntry,
+  applicationAvailability,
+} from '../utils/app-availability.util';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { validate as uuidValidate } from 'uuid';
@@ -812,10 +816,28 @@ export class ApplicationService {
     return dto;
   }
 
+  async availabilityOf(
+    entity: ApplicationEntity,
+  ): Promise<AvailabilityEntry[]> {
+    const revisions = await this.appRevisionsRepository.findDeployRevisions(
+      entity.id,
+    );
+    const previousGoodRelease = revisions.some(
+      (r) =>
+        r.id !== entity.currentRevisionId &&
+        r.status === ApplicationStatus.RUNNING,
+    );
+    return applicationAvailability({
+      status: entity.status,
+      previousGoodRelease,
+    });
+  }
+
   async toResponseDtoWithOperation(
     entity: ApplicationEntity,
   ): Promise<ApplicationResponseDto> {
     const dto = this.toResponseDto(entity);
+    dto.availability = await this.availabilityOf(entity);
     const lastOp = await this.getLastOperation(entity.id);
     if (lastOp) {
       dto.lastOperation = this.toOperationDto(lastOp);

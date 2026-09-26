@@ -23,6 +23,7 @@ const STATUS_SEVERITY: ApplicationStatus[] = [
   ApplicationStatus.DELETING,
   ApplicationStatus.ROLLING_BACK,
   ApplicationStatus.UPDATING,
+  ApplicationStatus.WAITING_FOR_ROOM,
   ApplicationStatus.PROVISIONING,
   ApplicationStatus.AWAITING_BUILD,
   ApplicationStatus.PENDING,
@@ -142,6 +143,7 @@ export class ApplicationGroupingService {
       catalogInstallId: install.id,
       primaryComponentId: primary?.id,
       componentCount: components.length,
+      replicas: totalReplicas(dtos),
       components: dtos,
       createdAt: install.createdAt,
       updatedAt: components.reduce(
@@ -169,6 +171,7 @@ export class ApplicationGroupingService {
       catalogSlug: dto.catalogSlug,
       catalogInstallId: dto.catalogInstallId,
       componentCount: 1,
+      replicas: totalReplicas([dto]),
       components: [dto],
       createdAt: app.createdAt,
       updatedAt: app.updatedAt,
@@ -197,4 +200,13 @@ export class ApplicationGroupingService {
     }
     return ApplicationStatus.RUNNING;
   }
+}
+
+function totalReplicas(
+  components: Array<{ replicas?: number | null }>,
+): number | null {
+  const counted = components.filter((c) => typeof c.replicas === 'number');
+  return counted.length
+    ? counted.reduce((sum, c) => sum + (c.replicas as number), 0)
+    : null;
 }

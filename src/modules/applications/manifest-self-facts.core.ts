@@ -160,10 +160,6 @@ export function manifestClaims(manifest: ApplicationManifest): ManifestClaims {
  * schema's marker:
  *
  * - `deploy.resources.profile` — no reader anywhere in `src/`.
- * - `deploy.scaling` — the deploy creates the application without it, so the
- *   app runs at one replica whatever the block says. Its one reader is this
- *   validation's own capacity estimate (`readCapacity` multiplies by
- *   `scaling.min`), which is a figure in a check and never a replica count.
  * - `deploy.env[].userEditable` — read by the catalog install path, never by
  *   the Application deploy path this manifest travels.
  * - `deploy.env[].delivery` — carried through `deploy.env` verbatim and applied
@@ -173,9 +169,6 @@ function inertFieldsOf(manifest: ApplicationManifest): string[] {
   const inert: string[] = [];
   if (manifest.deploy?.resources?.profile !== undefined) {
     inert.push('deploy.resources.profile');
-  }
-  if (manifest.deploy?.scaling !== undefined) {
-    inert.push('deploy.scaling');
   }
   const entries = normalizeManifestEnv(manifest.deploy?.env);
   if (entries.some((e) => e.userEditable !== undefined)) {

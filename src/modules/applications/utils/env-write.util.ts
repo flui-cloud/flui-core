@@ -47,7 +47,7 @@ export function applyPlainVars(
   const skipped: VarWriteResult['skipped'] = [];
   const at = indexOf(env);
 
-  for (const [name, value] of Object.entries(data)) {
+  for (const [name, value] of Object.entries(data ?? {})) {
     const i = at.get(name);
     const prev = i === undefined ? undefined : env[i];
 
@@ -91,7 +91,7 @@ export function applySensitiveVars(
   const skipped: VarWriteResult['skipped'] = [];
   const at = indexOf(env);
 
-  for (const [name, value] of Object.entries(data)) {
+  for (const [name, value] of Object.entries(data ?? {})) {
     const i = at.get(name);
     const prev = i === undefined ? undefined : env[i];
 

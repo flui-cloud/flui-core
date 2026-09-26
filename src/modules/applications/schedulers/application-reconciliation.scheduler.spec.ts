@@ -6,7 +6,29 @@ import { ApplicationReconciliationScheduler } from './application-reconciliation
 
 describe('the tick that re-reads how applications are doing', () => {
   const build = (reconcileAll: jest.Mock) =>
-    new ApplicationReconciliationScheduler({ reconcileAll } as never);
+    new ApplicationReconciliationScheduler(
+      { reconcileAll } as never,
+      { closeLost: jest.fn().mockResolvedValue(0) } as never,
+    );
+
+  it('closes operations no job carries before reading the cluster', async () => {
+    const order: string[] = [];
+    const scheduler = new ApplicationReconciliationScheduler(
+      {
+        reconcileAll: jest.fn(async () => {
+          order.push('reconcile');
+        }),
+      } as never,
+      {
+        closeLost: jest.fn(async () => {
+          order.push('close');
+          return 1;
+        }),
+      } as never,
+    );
+    await scheduler.tick();
+    expect(order).toEqual(['close', 'reconcile']);
+  });
 
   it('asks the cluster', async () => {
     const reconcileAll = jest.fn().mockResolvedValue(undefined);

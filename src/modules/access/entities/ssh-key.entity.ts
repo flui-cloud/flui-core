@@ -23,6 +23,10 @@ export class SSHKeyEntity {
   @Column()
   keyPath: string;
 
+  /** The private half, sealed with SSH_KEY_ENCRYPTION_KEY; null on rows written before it was kept here. */
+  @Column({ type: 'text', nullable: true })
+  sealedPrivateKey: string | null;
+
   @Column({ default: 'ed25519' })
   type: 'ed25519' | 'rsa';
 

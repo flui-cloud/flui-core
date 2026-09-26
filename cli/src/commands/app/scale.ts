@@ -55,6 +55,12 @@ export default class AppScale extends Command {
         `  ${chalk.bold('Desired:')}  ${r.desired ?? flags.replicas}`,
       );
       console.log(`  ${chalk.bold('Ready:')}    ${r.ready ?? 0}`);
+      if (runtime.waitingForRoom) {
+        console.log(chalk.yellow(`  ${runtime.waitingForRoom.says}`));
+      }
+      console.log(
+        chalk.dim(`  Follow it with \`flui app status ${args.name}\`.`),
+      );
       console.log('');
     } catch (error: any) {
       spinner.fail('Failed to scale application');

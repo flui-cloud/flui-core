@@ -14,6 +14,7 @@ import { getProjectPath } from '../../../common/utils/project-root.util';
 import { FrameworkType } from '../../frameworks/framework-core/enums/framework-type.enum';
 import { EncryptionService } from '../../shared/encryption/services/encryption.service';
 import { renderableEnv } from '../utils/env-write.util';
+import { ENV_HASH_ANNOTATION, envHashOf } from '../utils/env-hash.util';
 
 export interface GeneratedManifest {
   kind: ApplicationResourceKind;
@@ -197,6 +198,8 @@ const EPHEMERAL_INDENT_CRONJOB = ' '.repeat(18);
 function ephemeralLine(value: string | undefined, indent: string): string {
   return value ? `${indent}ephemeral-storage: "${value}"` : '';
 }
+
+export const DEFAULT_TARGET_CPU = 80;
 
 @Injectable()
 export class ApplicationManifestGeneratorService {
@@ -1243,6 +1246,16 @@ export class ApplicationManifestGeneratorService {
         `          averageUtilization: ${app.scaling.targetMemory}`,
       );
     }
+    if (!lines.length) {
+      lines.push(
+        '    - type: Resource',
+        '      resource:',
+        '        name: cpu',
+        '        target:',
+        '          type: Utilization',
+        `          averageUtilization: ${DEFAULT_TARGET_CPU}`,
+      );
+    }
     return lines.join('\n');
   }
 
@@ -1345,6 +1358,7 @@ export class ApplicationManifestGeneratorService {
     // Traefik instead; a per-app opt-in lands with the observability manifest block.
     return {
       'flui.cloud/config-hash': this.computeConfigHash(app, config),
+      [ENV_HASH_ANNOTATION]: envHashOf(app.env),
     };
   }
 

@@ -33,6 +33,7 @@ import { ApplicationDeployService } from './services/application-deploy.service'
 import { DeployConfigService } from './services/deploy-config.service';
 import { ApplicationReconciliationService } from './services/application-reconciliation.service';
 import { ApplicationReconciliationScheduler } from './schedulers/application-reconciliation.scheduler';
+import { LostOperationsService } from './services/lost-operations.service';
 import { WorkloadNamespaceService } from './services/workload-namespace.service';
 import { SystemAppCatalogService } from './services/system-app-catalog.service';
 import { AppConfigService } from './services/app-config.service';
@@ -86,6 +87,8 @@ import { AppManagementController } from './controllers/app-management.controller
 import { ApplicationEventsGateway } from './gateway/application-events.gateway';
 import { AppOperationRunner } from './services/app-operation-runner.service';
 import { ScalingModule } from '../scaling/scaling.module';
+import { ScalingModule as NodeScalingModule } from '../infrastructure/scaling/scaling.module';
+import { AppResourcesConsequenceService } from './services/app-resources-consequence.service';
 import { DnsModule } from '../dns/dns.module';
 import { WsAuthModule } from '../auth/ws-auth.module';
 import { StorageModule } from '../storage/storage.module';
@@ -134,6 +137,7 @@ import { VolumeExportService } from '../providers/services/volume-export.service
     BuildAgentConfigModule,
     forwardRef(() => ImageRegistryModule),
     forwardRef(() => ScalingModule),
+    forwardRef(() => NodeScalingModule),
     forwardRef(() => DnsModule),
     forwardRef(() => ClustersModule),
     WsAuthModule,
@@ -171,12 +175,14 @@ import { VolumeExportService } from '../providers/services/volume-export.service
     DeployConfigService,
     ApplicationReconciliationService,
     ApplicationReconciliationScheduler,
+    LostOperationsService,
     WorkloadNamespaceService,
     SystemAppCatalogService,
     AppConfigService,
     ScheduledJobsService,
     GatewayService,
     AppManagementService,
+    AppResourcesConsequenceService,
     ApplicationWorkflowService,
     ApplicationBuildWatcherService,
     ApplicationReleaseService,
@@ -236,6 +242,7 @@ import { VolumeExportService } from '../providers/services/volume-export.service
     AppResourcesRepository,
     ApplicationEventsGateway,
     AppManagementService,
+    AppResourcesConsequenceService,
     ApplicationWorkflowService,
     ApplicationBuildWatcherService,
     ApplicationReleaseService,

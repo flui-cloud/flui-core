@@ -80,9 +80,39 @@ export default class AppStatus extends Command {
       console.log(
         `  ${chalk.bold('Ready:')}      ${replicaColor(String(ready))}`,
       );
-      if (r.unavailable) {
+      const wait = runtime.waitingForRoom;
+      if (wait) {
+        console.log(
+          `  ${chalk.bold('Waiting:')}    ${chalk.yellow(String(wait.replicas))} ${chalk.dim('for a node with room')}`,
+        );
+        console.log(`  ${chalk.dim(wait.says)}`);
+      } else if (r.unavailable) {
         console.log(
           `  ${chalk.bold('Unavailable:')} ${chalk.red(String(r.unavailable))}`,
+        );
+      }
+
+      if (runtime.restartPending) {
+        const what = runtime.restartPending.changes.length
+          ? runtime.restartPending.changes.join(', ')
+          : 'saved variables';
+        const detail = chalk.dim(`— ${what}`);
+        console.log(
+          `  ${chalk.bold('Pending:')}    ${chalk.yellow('restart to apply')} ${detail}`,
+        );
+        console.log(chalk.dim(`  flui app restart ${args.name}`));
+      }
+      for (const pod of runtime.pods ?? []) {
+        const where = pod.node
+          ? [pod.node, pod.role, pod.serverType, pod.region]
+              .filter(Boolean)
+              .join(' · ')
+          : chalk.yellow('waiting for a node');
+        const state = pod.ready
+          ? chalk.green('ready')
+          : chalk.yellow(pod.phase.toLowerCase());
+        console.log(
+          `  ${chalk.dim(pod.name.padEnd(46))} ${state.padEnd(18)} ${where}`,
         );
       }
 
@@ -162,6 +192,7 @@ export default class AppStatus extends Command {
     if (s === 'running') return chalk.green(status);
     if (s === 'stopped') return chalk.yellow(status);
     if (s === 'failed' || s === 'degraded') return chalk.red(status);
+    if (s === 'waiting_for_room') return chalk.yellow(status);
     if (s === 'provisioning' || s === 'updating') return chalk.blue(status);
     return chalk.dim(status);
   }

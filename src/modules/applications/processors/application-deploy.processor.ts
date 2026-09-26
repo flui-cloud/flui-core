@@ -37,6 +37,7 @@ import {
   DeleteApplicationJobData,
 } from '../services/application-deploy.service';
 import { ApplicationEntity } from '../entities/application.entity';
+import { WaitingForRoomError } from '../../infrastructure/shared/utils/waits-for-room.util';
 import { ApplicationStatus } from '../enums/application-status.enum';
 import { ApplicationSourceType } from '../enums/application-source-type.enum';
 import { ApplicationResourceStatus } from '../enums/application-resource-status.enum';
@@ -60,6 +61,7 @@ import {
   ATTACHED_SERVICES_PORT,
   AttachedServicesPort,
 } from '../interfaces/attached-services.port';
+import { droppedAutoscaler } from '../utils/dropped-autoscaler.util';
 
 @Processor('application-deploy')
 export class ApplicationDeployProcessor {
@@ -475,6 +477,23 @@ export class ApplicationDeployProcessor {
         manifests,
         kubeconfig,
       );
+      const dropped = droppedAutoscaler(app, manifests);
+      if (
+        dropped &&
+        (await this.kubernetesService.getResource(
+          kubeconfig,
+          dropped.kind,
+          dropped.name,
+          dropped.namespace,
+        ))
+      ) {
+        await this.kubernetesService.deleteResource(
+          kubeconfig,
+          dropped.kind,
+          dropped.name,
+          dropped.namespace,
+        );
+      }
 
       // Open the deployment guard BEFORE waiting for readiness, so pod-level
       // crashes that happen during the wait (OOMKilled, CrashLoop, missing
@@ -508,7 +527,14 @@ export class ApplicationDeployProcessor {
         message: 'Waiting for pods to be ready...',
         timestamp: new Date(),
       });
-      await this.waitForAllReady(kubeconfig, app, manifests);
+      const waitingForRoom = await this.waitForAllReady(
+        kubeconfig,
+        app,
+        manifests,
+      );
+      const settledStatus = waitingForRoom
+        ? ApplicationStatus.WAITING_FOR_ROOM
+        : ApplicationStatus.RUNNING;
 
       // An `exposure: public` application owes a public endpoint, and a deploy
       // that cannot mint one has not succeeded — so this runs before the
@@ -563,7 +589,7 @@ export class ApplicationDeployProcessor {
         envSnapshot: appForManifests.env,
         resourcesSnapshot: appForManifests.resources,
         replicas: appForManifests.replicas,
-        status: ApplicationStatus.RUNNING,
+        status: settledStatus,
         deployedBy: 'system',
         operationId,
         k8sResourceHashes: this.buildResourceHashes(manifests),
@@ -571,7 +597,7 @@ export class ApplicationDeployProcessor {
       });
 
       await this.applicationsRepository.update(applicationId, {
-        status: ApplicationStatus.RUNNING,
+        status: settledStatus,
         currentRevisionId: revision.id,
         lastDeployedAt: new Date(),
         imageRef: deployedImageRef,
@@ -591,7 +617,7 @@ export class ApplicationDeployProcessor {
         operationId,
         operationType: opType,
         duration: Date.now() - startedAt,
-        applicationStatus: ApplicationStatus.RUNNING,
+        applicationStatus: settledStatus,
         revisionNumber,
         imageRef: finalImageRef,
         digest: this.extractDigest(finalImageRef),
@@ -809,11 +835,17 @@ export class ApplicationDeployProcessor {
     return this.applicationsRepository.findById(app.id);
   }
 
+  /**
+   * True when every workload was declared and some replicas wait for a node
+   * with room: the install is done, and starting is the app's own state from
+   * here — scaling decides when a node arrives, not a timeout.
+   */
   private async waitForAllReady(
     kubeconfig: string,
     app: ApplicationEntity,
     manifests: GeneratedManifest[],
-  ): Promise<void> {
+  ): Promise<boolean> {
+    let waitingForRoom = false;
     const waitableKinds = new Set(['Deployment', 'StatefulSet', 'DaemonSet']);
     const hasVolumes = (app.volumes?.length ?? 0) > 0;
     const timeoutMs = this.deployConfig.getReadinessTimeoutMs(hasVolumes);
@@ -823,13 +855,21 @@ export class ApplicationDeployProcessor {
         this.logger.log(
           `Waiting for ${manifest.kind}/${manifest.name} to be ready (timeout ${timeoutMs}ms)...`,
         );
-        await this.kubernetesService.waitForReady(
-          kubeconfig,
-          manifest.kind,
-          manifest.name,
-          app.k8sNamespace,
-          timeoutMs,
-        );
+        try {
+          await this.kubernetesService.waitForReady(
+            kubeconfig,
+            manifest.kind,
+            manifest.name,
+            app.k8sNamespace,
+            timeoutMs,
+            `flui-app-id=${app.id}`,
+          );
+        } catch (err) {
+          if (!(err instanceof WaitingForRoomError)) throw err;
+          this.logger.log(`[${app.id}] ${err.message} — declared, not failed`);
+          waitingForRoom = true;
+          continue;
+        }
 
         // Update resource status to READY
         const resource = await this.appResourcesRepository.findByK8sIdentity(
@@ -847,6 +887,7 @@ export class ApplicationDeployProcessor {
         }
       }
     }
+    return waitingForRoom;
   }
 
   @Process('delete-application')

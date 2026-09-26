@@ -350,3 +350,17 @@ describe('materializeDeclaredSecrets', () => {
     expect(env).toEqual([]);
   });
 });
+
+describe('removing variables without writing any', () => {
+  it('deletes the named keys when no data is sent', () => {
+    const { env } = applyPlainVars(
+      [
+        { name: 'KEEP', value: '1' },
+        { name: 'DROP', value: '2' },
+      ] as never,
+      undefined as never,
+      ['DROP'],
+    );
+    expect(env.map((e) => e.name)).toEqual(['KEEP']);
+  });
+});

@@ -1,4 +1,10 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import {
+  AVAILABILITY_KEYS,
+  AvailabilityKey,
+  AvailabilityState,
+} from '../utils/app-availability.util';
+import { Sensitivity } from '../../mask/decorators/sensitivity.decorator';
 import { ApplicationCategory } from '../enums/application-category.enum';
 import { ApplicationKind } from '../enums/application-kind.enum';
 import { ApplicationSourceType } from '../enums/application-source-type.enum';
@@ -276,6 +282,23 @@ export class ApplicationAccessDto {
   showcase: boolean;
 }
 
+export class AvailabilityEntryDto {
+  @Sensitivity(Sensitivity.PUBLIC)
+  @ApiProperty({ enum: AVAILABILITY_KEYS })
+  key: AvailabilityKey;
+
+  @Sensitivity(Sensitivity.PUBLIC)
+  @ApiProperty({ enum: ['available', 'disabled', 'hidden'] })
+  state: AvailabilityState;
+
+  @Sensitivity(Sensitivity.PUBLIC)
+  @ApiProperty({
+    nullable: true,
+    description: 'Why it is off, in words a person can act on',
+  })
+  reason: string | null;
+}
+
 export class ApplicationResponseDto {
   @ApiProperty()
   id: string;
@@ -517,6 +540,14 @@ export class ApplicationResponseDto {
     description: 'Most recent deploy/build operation for this application',
   })
   lastOperation?: AppOperationResponseDto;
+
+  @Sensitivity(Sensitivity.PUBLIC)
+  @ApiPropertyOptional({
+    type: [AvailabilityEntryDto],
+    description:
+      'Which tabs and actions make sense in the state the application is in: `available`, `disabled` with the reason, or `hidden`. The routes that act refuse with the same reason.',
+  })
+  availability?: AvailabilityEntryDto[];
 
   @ApiPropertyOptional({
     description:

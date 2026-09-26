@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { ApplicationReconciliationService } from '../services/application-reconciliation.service';
+import { LostOperationsService } from '../services/lost-operations.service';
 
 /**
  * The periodic re-read of how every application is actually doing.
@@ -20,6 +21,7 @@ export class ApplicationReconciliationScheduler {
 
   constructor(
     private readonly reconciliation: ApplicationReconciliationService,
+    private readonly lostOperations: LostOperationsService,
   ) {}
 
   @Cron(process.env.APP_RECONCILE_CRON || CronExpression.EVERY_5_MINUTES)
@@ -30,6 +32,8 @@ export class ApplicationReconciliationScheduler {
     if (this.running) return;
     this.running = true;
     try {
+      // First, so an app whose deploy was lost is read from the cluster in this same pass.
+      await this.lostOperations.closeLost();
       await this.reconciliation.reconcileAll();
     } catch (error) {
       this.logger.error(

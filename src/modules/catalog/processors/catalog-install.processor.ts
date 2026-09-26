@@ -57,6 +57,7 @@ import { CatalogInstallEntity } from '../entities/catalog-install.entity';
 import { CatalogAppDefinitionEntity } from '../entities/catalog-app-definition.entity';
 import { CatalogInstallStatus } from '../enums/catalog-install-status.enum';
 import { CatalogAppType } from '../enums/catalog-app-type.enum';
+import { catalogExposure } from '../utils/catalog-exposure.util';
 import {
   TemplateContext,
   TemplateComponentContext,
@@ -664,20 +665,15 @@ export class CatalogInstallProcessor {
     const imageRef = this.buildImageRef(spec.image);
     const isBuildingBlock =
       definition.appType === CatalogAppType.BUILDING_BLOCK;
-    const manifestExposure: 'public' | 'internal' =
-      spec.type === CatalogAppType.STANDALONE
-        ? (spec.exposure ?? 'public')
-        : 'public';
-    const privatizable =
-      !isBuildingBlock &&
-      manifestExposure !== 'internal' &&
-      (spec.type === CatalogAppType.STANDALONE
-        ? spec.privatizable !== false
-        : false);
-    const effectiveExposure: 'public' | 'internal' =
-      privatizable && install.requestedExposure === 'internal'
-        ? 'internal'
-        : manifestExposure;
+    const {
+      manifest: manifestExposure,
+      privatizable,
+      effective: effectiveExposure,
+    } = catalogExposure(
+      spec as never,
+      definition.appType,
+      install.requestedExposure,
+    );
     const exposure: ApplicationExposure = isBuildingBlock
       ? ApplicationExposure.CLUSTER
       : effectiveExposure === 'internal'
@@ -1248,7 +1244,12 @@ export class CatalogInstallProcessor {
       if (!op) return { ok: false, error: 'deploy operation not found' };
       if (op.status === OperationStatus.COMPLETED) {
         const app = await this.applicationRepo.findById(applicationId);
-        if (app?.status === ApplicationStatus.RUNNING) {
+        // Declared and waiting for a node is a finished install: starting is
+        // the application's own state from here, and scaling's to resolve.
+        if (
+          app?.status === ApplicationStatus.RUNNING ||
+          app?.status === ApplicationStatus.WAITING_FOR_ROOM
+        ) {
           return { ok: true };
         }
       }

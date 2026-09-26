@@ -217,7 +217,7 @@ export class AppConfigService {
 
     const refused = new Set(skipped.map((s) => s.name));
     const mergedData: Record<string, string> = { ...existingEncoded };
-    for (const [key, value] of Object.entries(data)) {
+    for (const [key, value] of Object.entries(data ?? {})) {
       if (refused.has(key)) continue;
       mergedData[key] = Buffer.from(value).toString('base64');
     }
@@ -630,7 +630,7 @@ export class AppConfigService {
     // Merge with existing secret data — never drop keys not in this payload
     const existingEncoded: Record<string, string> = existing?.data ?? {};
     const mergedData: Record<string, string> = { ...existingEncoded };
-    for (const [key, value] of Object.entries(data)) {
+    for (const [key, value] of Object.entries(data ?? {})) {
       mergedData[key] = Buffer.from(value).toString('base64');
     }
 

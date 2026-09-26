@@ -37,6 +37,7 @@ import {
   ApplicationEnvVar,
   GitBuildSourceConfig,
 } from '../interfaces/source-config.interface';
+import { scalingFromManifest } from '../utils/manifest-scaling.util';
 import { RepositoriesService } from '../../repositories/services/repositories.service';
 import {
   mergeAppEnv,
@@ -421,6 +422,7 @@ export class ApplicationSourceDeployService {
             normalizeManifestEnv(manifest.deploy.env),
           ),
           resources,
+          ...scalingFromManifest(manifest, null),
           healthProbe: healthProbe as any,
           startCommand: manifest.deploy.startCommand,
           volumes: (manifest.deploy.volumes as any) ?? [],
@@ -453,6 +455,7 @@ export class ApplicationSourceDeployService {
           normalizeManifestEnv(manifest.deploy.env),
         ),
         resources: resources,
+        ...scalingFromManifest(manifest, app.scaling),
         healthProbe: healthProbe as any,
         startCommand: manifest.deploy.startCommand ?? null,
         metadata: updatedMetadata,
@@ -956,6 +959,7 @@ export class ApplicationSourceDeployService {
         normalizeManifestEnv(manifest.deploy.env),
       ),
       resources: this.resolveResources(manifest),
+      ...scalingFromManifest(manifest, app.scaling),
       healthProbe: this.resolveHealthProbe(manifest) as any,
       startCommand: manifest.deploy.startCommand ?? null,
       metadata: endpointSpecJson

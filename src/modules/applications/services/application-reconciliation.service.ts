@@ -1,4 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { waitsForRoom } from '../../infrastructure/shared/utils/waits-for-room.util';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import * as crypto from 'node:crypto';
@@ -313,11 +314,19 @@ export class ApplicationReconciliationService {
       newReconciliationStatus = ReconciliationStatus.IN_SYNC;
     }
 
-    const stuckRollout = await this.detectStuckRollout(
-      app,
-      resources,
-      kubeconfig,
-    );
+    const room =
+      newStatus === ApplicationStatus.DEGRADED
+        ? await this.roomWaitOf(app, kubeconfig)
+        : null;
+    if (room) {
+      newStatus = room.someRunning
+        ? ApplicationStatus.RUNNING
+        : ApplicationStatus.WAITING_FOR_ROOM;
+    }
+
+    const stuckRollout = room
+      ? null
+      : await this.detectStuckRollout(app, resources, kubeconfig);
     if (stuckRollout) {
       if (
         stuckRollout.availableTrue &&
@@ -640,6 +649,34 @@ export class ApplicationReconciliationService {
     }
   }
 
+  /**
+   * Replicas no node has room for are waiting on scaling, not broken: an app
+   * that never started is waiting for room, and one that is serving with some
+   * replicas still to place is running.
+   */
+  private async roomWaitOf(
+    app: ApplicationEntity,
+    kubeconfig: string,
+  ): Promise<{ someRunning: boolean } | null> {
+    try {
+      const pods = await this.kubernetesService.listPodsByLabel(
+        kubeconfig,
+        app.k8sNamespace,
+        `flui-app-id=${app.id}`,
+      );
+      if (!pods.some(waitsForRoom)) return null;
+      return {
+        someRunning: pods.some(
+          (pod) =>
+            pod.status?.phase === 'Running' &&
+            (pod.status?.containerStatuses ?? []).every((c) => c.ready),
+        ),
+      };
+    } catch {
+      return null;
+    }
+  }
+
   private computeResourceStatus(
     kind: string,
     resource: K8sResource,
@@ -669,6 +706,14 @@ export class ApplicationReconciliationService {
       case 'Secret':
       case 'PersistentVolumeClaim':
         return ApplicationResourceStatus.READY;
+      case 'HorizontalPodAutoscaler': {
+        const ableToScale = (resource.status?.conditions ?? []).find(
+          (c: { type?: string }) => c.type === 'AbleToScale',
+        );
+        return ableToScale?.status === 'False'
+          ? ApplicationResourceStatus.DEGRADED
+          : ApplicationResourceStatus.READY;
+      }
       default:
         return ApplicationResourceStatus.APPLIED;
     }

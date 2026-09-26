@@ -98,6 +98,7 @@ describe('ApplicationsController fills in what it used to drop', () => {
       deploys as never,
       undefined as never,
       { reconcileByClusterId: jest.fn() } as never,
+      { settle: jest.fn() } as never,
       revisions as never,
       undefined as never,
       undefined as never,
