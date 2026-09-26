@@ -80,7 +80,8 @@ export async function getOvhNodeSizesFromNova(
           architecture: 'x86',
           deprecated: price?.deprecated ?? false,
           bareMetal: false,
-          managedFirewall: false,
+          // Flui firewalls OVH nodes on the host (nftables): every flavor is covered.
+          managedFirewall: true,
           supportsHourlyBilling: true,
           prices: [],
           locations: [],

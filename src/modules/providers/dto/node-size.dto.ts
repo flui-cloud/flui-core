@@ -51,7 +51,7 @@ export class NodeSizeDto {
   deprecated: boolean;
   /** Physical dedicated server (e.g. Scaleway Elastic Metal). Distinct from cpuType='dedicated' which is a dedicated vCPU on a shared host. */
   bareMetal: boolean;
-  /** Provider supports server-level firewall (Security Groups) for this type. False for bare metal servers on most providers. */
+  /** Flui can keep a firewall around a node of this type — the provider's own (Security Groups) or, where the provider has none usable, one on the host. False for bare metal servers on most providers. */
   managedFirewall: boolean;
   /** Pay-as-you-go hourly billing available. False = monthly commitment only → not suitable for autoscale. */
   supportsHourlyBilling: boolean;

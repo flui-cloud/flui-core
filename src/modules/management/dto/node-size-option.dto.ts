@@ -134,7 +134,7 @@ export class NodeSizeOptionDto implements NodeSizeDto {
 
   @ApiProperty({
     description:
-      'Provider supports server-level firewall (Security Groups) for this type. False for bare metal on most providers.',
+      "Flui can keep a firewall around a node of this type: the provider's own (Security Groups) or, where the provider has none usable, one on the host. False for bare metal on most providers.",
     example: true,
   })
   managedFirewall: boolean;

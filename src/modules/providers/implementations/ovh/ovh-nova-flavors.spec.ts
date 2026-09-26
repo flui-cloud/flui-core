@@ -33,6 +33,14 @@ describe('getOvhNodeSizesFromNova', () => {
     ]);
   });
 
+  it('offers every flavor as firewalled, because Flui firewalls OVH nodes on the host', async () => {
+    const sizes = await getOvhNodeSizesFromNova(
+      client({ GRA11: [c34, d24] }),
+      pricing,
+    );
+    expect(sizes.map((size) => size.managedFirewall)).toEqual([true, true]);
+  });
+
   it('reports a region the order catalog has never heard of', async () => {
     const sizes = await getOvhNodeSizesFromNova(
       client({ GRA11: [d24], 'EU-SOUTH-MIL': [c34] }),
