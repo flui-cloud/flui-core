@@ -166,6 +166,12 @@ FLUI_NETPLAN_EOF
   flui_i=0
   while [ "$flui_i" -lt 60 ]; do
     ip -4 -o addr show dev "$flui_nic" 2>/dev/null | grep -q . && break
+    # The hot-attached port is still DOWN at Neutron when networkd sends its
+    # first DISCOVER, and the client's backoff can outlast this whole wait.
+    # Asking again every ten seconds gets the lease as soon as the port is up.
+    if [ $((flui_i % 5)) -eq 4 ]; then
+      networkctl reconfigure "$flui_nic" >/dev/null 2>&1 || networkctl renew "$flui_nic" >/dev/null 2>&1 || true
+    fi
     flui_i=$((flui_i + 1))
     sleep 2
   done
