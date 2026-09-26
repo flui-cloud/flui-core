@@ -8,6 +8,7 @@ import type {
 } from 'src/modules/infrastructure/scaling/dto/scaling-response.dto';
 import { resolveClusterRef } from '../../lib/resolve-cluster';
 import {
+  DecisionQuery,
   ScalingClient,
   resolveGroup,
   scalingErrorLines,
@@ -20,7 +21,9 @@ import {
   describeSilence,
   formatBounds,
   outcomeMeaning,
+  waysOutLines,
 } from '../../lib/scaling-view';
+import { NOT_ENGINE_FORCES } from 'src/modules/infrastructure/scaling/scaling.core';
 
 /**
  * The command people actually reach for, and they reach for it when *nothing*
@@ -66,6 +69,24 @@ export default class ScalingWhy extends Command {
       description: 'How many decisions back to show, newest first',
       default: 1,
     }),
+    outcome: Flags.string({
+      description:
+        'Only these outcomes, comma separated: added, replaced, removed, declined, alerted, changed, node-ordered, node-joined, purchase-failed, node-drained, node-removed — or nodes for every machine that came or went',
+    }),
+    force: Flags.string({
+      description:
+        'Only these forces, comma separated: urgency, opportunity, person, fleet (what happened to a machine)',
+    }),
+    since: Flags.string({
+      description:
+        'Leave out rows older than this time (ISO, e.g. 2026-09-25T08:00)',
+    }),
+    until: Flags.string({
+      description: 'Leave out rows newer than this time (ISO)',
+    }),
+    before: Flags.string({
+      description: 'Next page: the time of the last row already shown',
+    }),
     output: Flags.string({
       char: 'o',
       description: 'Output format',
@@ -89,13 +110,24 @@ export default class ScalingWhy extends Command {
 
       if (args.group) {
         const { group } = await resolveGroup(client, flags.cluster, args.group);
-        const decisions = await client.decisions(group.id, limit);
+        const decisions = await client.decisions(
+          group.id,
+          limit,
+          filterOf(flags),
+        );
         spinner.stop();
         if (json) {
           console.log(JSON.stringify(decisions, null, 2));
           return;
         }
         this.printGroupHeader(group);
+        await this.printWaysOut(
+          client,
+          decisions.find((d) => !NOT_ENGINE_FORCES.includes(d.force))
+            ?.outcome === 'alerted'
+            ? group.id
+            : null,
+        );
         this.printDecisions(decisions, describeSilence(group));
         return;
       }
@@ -104,7 +136,11 @@ export default class ScalingWhy extends Command {
       absent =
         'This installation’s API cannot answer this about a cluster: it is running a build without that route. ' +
         'Name a group instead — `flui scaling why <group> --cluster <cluster>`.';
-      const decisions = await client.clusterDecisions(cluster.id, limit);
+      const decisions = await client.clusterDecisions(
+        cluster.id,
+        limit,
+        filterOf(flags),
+      );
       if (json) {
         spinner.stop();
         console.log(JSON.stringify(decisions, null, 2));
@@ -116,6 +152,13 @@ export default class ScalingWhy extends Command {
       const groups = decisions.length ? [] : await client.groupsOf(cluster.id);
       spinner.stop();
       this.printClusterHeader(cluster.name, decisions.length);
+      const latest = decisions.find(
+        (d) => !NOT_ENGINE_FORCES.includes(d.force),
+      );
+      await this.printWaysOut(
+        client,
+        latest?.outcome === 'alerted' ? latest.groupId : null,
+      );
       this.printDecisions(decisions, describeClusterSilence(groups));
     } catch (error: unknown) {
       spinner.stop();
@@ -126,6 +169,19 @@ export default class ScalingWhy extends Command {
       console.log('');
       this.exit(1);
     }
+  }
+
+  private async printWaysOut(
+    client: ScalingClient,
+    groupId: string | null,
+  ): Promise<void> {
+    if (!groupId) return;
+    const preview = await client.preview(groupId).catch(() => null);
+    const lines = waysOutLines(preview?.blocked);
+    if (!lines.length) return;
+    console.log(`  ${chalk.yellow(chalk.bold(lines[0]))}`);
+    for (const line of lines.slice(1)) console.log(`  ${line}`);
+    console.log('');
   }
 
   private printDecisions(
@@ -237,6 +293,15 @@ export default class ScalingWhy extends Command {
         return chalk.yellow(headline);
       case 'declined':
         return chalk.blue(headline);
+      case 'changed':
+        return chalk.magenta(headline);
+      case 'purchase-failed':
+        return chalk.red(headline);
+      case 'node-ordered':
+      case 'node-joined':
+      case 'node-drained':
+      case 'node-removed':
+        return chalk.cyan(headline);
       default:
         return chalk.green(headline);
     }
@@ -255,4 +320,20 @@ function groupNameOf(
   decision: ScalingDecisionResponseDto | ClusterScalingDecisionDto,
 ): string | null {
   return 'groupName' in decision ? decision.groupName : null;
+}
+
+function filterOf(flags: {
+  outcome?: string;
+  force?: string;
+  since?: string;
+  until?: string;
+  before?: string;
+}): DecisionQuery {
+  return {
+    outcome: flags.outcome,
+    force: flags.force,
+    since: flags.since,
+    until: flags.until,
+    before: flags.before,
+  };
 }

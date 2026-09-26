@@ -1,12 +1,15 @@
 import { Injectable, Logger } from '@nestjs/common';
 import type * as k8s from '@kubernetes/client-node';
 import { ClusterEntity } from '../entities/cluster.entity';
+export { waitsForRoom } from '../../shared/utils/waits-for-room.util';
 import { KubernetesService } from '../../shared/services/kubernetes.service';
 import { EncryptionService } from '../../../shared/encryption/services/encryption.service';
 
 export interface PendingPodRequest {
   name: string;
   namespace: string;
+  /** The application it belongs to, as `flui app` names it; the pod's own name when it carries none. */
+  app: string;
   cpuMillicores: number;
   memoryMi: number;
 }
@@ -159,11 +162,47 @@ export class UnschedulablePodsService {
 }
 
 /**
+ * What a pod may grow to. A container with no limit is counted at its request:
+ * it has no ceiling, and inventing one would be a figure nobody set.
+ */
+export function podLimit(
+  pod: k8s.V1Pod,
+  parse: Pick<KubernetesService, 'parseCpu' | 'parseMemory'>,
+): { cpuMillicores: number; memoryMi: number } {
+  return (pod.spec?.containers ?? []).reduce(
+    (total, container) => {
+      const limits = container.resources?.limits ?? {};
+      const requests = container.resources?.requests ?? {};
+      return {
+        cpuMillicores:
+          total.cpuMillicores +
+          parse.parseCpu(limits['cpu'] ?? requests['cpu'] ?? '0'),
+        memoryMi:
+          total.memoryMi +
+          parse.parseMemory(limits['memory'] ?? requests['memory'] ?? '0'),
+      };
+    },
+    { cpuMillicores: 0, memoryMi: 0 },
+  );
+}
+
+/**
  * What a pod asks a node to hold. Init containers run one at a time and before
  * the rest, so the pod needs the larger of the two totals, not their sum — the
  * same arithmetic the scheduler does. Shared by the side that buys and the
  * side that gives back, so both weigh a pod the same way.
  */
+/** Flui labels an application's pods with its slug; a pod without it is named as itself. */
+export function appOfPod(pod: k8s.V1Pod): string {
+  const labels = pod.metadata?.labels ?? {};
+  return (
+    labels['app.kubernetes.io/instance'] ??
+    labels['app.kubernetes.io/name'] ??
+    labels['app'] ??
+    `${pod.metadata?.namespace ?? ''}/${pod.metadata?.name ?? ''}`
+  );
+}
+
 export function podRequest(
   pod: k8s.V1Pod,
   parse: Pick<KubernetesService, 'parseCpu' | 'parseMemory'>,
@@ -197,6 +236,7 @@ export function podRequest(
   return {
     name: pod.metadata?.name ?? '',
     namespace: pod.metadata?.namespace ?? '',
+    app: appOfPod(pod),
     cpuMillicores: Math.max(main.cpuMillicores, init.cpuMillicores),
     memoryMi: Math.max(main.memoryMi, init.memoryMi),
   };

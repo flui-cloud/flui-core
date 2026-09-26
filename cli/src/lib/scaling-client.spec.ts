@@ -142,14 +142,14 @@ describe('ScalingClient', () => {
   it('reads the decisions of a whole cluster without naming a group', async () => {
     await client.clusterDecisions('c1', 5);
     expect(asked).toEqual([
-      '/infrastructure/clusters/c1/scaling-decisions?limit=5',
+      '/infrastructure/clusters/c1/scaling-decisions?limit=5&collapse=true',
     ]);
   });
 
   it('still reads one group when a group is named', async () => {
     await client.decisions('g1', 3);
     expect(asked).toEqual([
-      '/infrastructure/scaling-groups/g1/decisions?limit=3',
+      '/infrastructure/scaling-groups/g1/decisions?limit=3&collapse=true',
     ]);
   });
 

@@ -4,6 +4,8 @@ import {
   resolveShape,
   sampleFleet,
   UNKNOWN_SHAPE,
+  withLoad,
+  fleetWindow,
 } from './fleet-history.service';
 import { NodeType } from '../entities/cluster-node.entity';
 import { NodeBillableIntervalEntity } from '../entities/node-billable-interval.entity';
@@ -87,9 +89,9 @@ describe('sampleFleet', () => {
       DAY,
     );
 
-    expect(points.map((p) => p.nodes)).toEqual([1, 1, 2, 1, 1]);
+    expect(points.map((p) => p.nodes)).toEqual([1, 1, 2, 2, 1]);
     expect(points[2].byShape).toEqual({ cx23: 1, cpx41: 1 });
-    expect(points[3].byShape).toEqual({ cx23: 1 });
+    expect(points[4].byShape).toEqual({ cx23: 1 });
   });
 
   it('sums the hourly cost of the shapes that are alive', () => {
@@ -127,7 +129,7 @@ describe('sampleFleet', () => {
     expect(points[0].hourlyEur).toBe(0.0056);
   });
 
-  it('treats an interval that ends exactly on a sample as gone', () => {
+  it('counts an interval for the step it ended in, and not after', () => {
     const points = sampleFleet(
       [interval({ endedAt: at('2026-08-02T00:00:00Z') })],
       from,
@@ -135,7 +137,24 @@ describe('sampleFleet', () => {
       DAY,
     );
 
-    expect(points.map((p) => p.nodes)).toEqual([1, 0, 0, 0, 0]);
+    expect(points.map((p) => p.nodes)).toEqual([1, 1, 0, 0, 0]);
+  });
+
+  it('keeps a node that lived minutes between two daily samples', () => {
+    const points = sampleFleet(
+      [
+        interval({
+          shape: 'cx23',
+          startedAt: at('2026-08-02T13:35:00Z'),
+          endedAt: at('2026-08-02T13:48:00Z'),
+        }),
+      ],
+      from,
+      to,
+      DAY,
+    );
+
+    expect(points.map((p) => p.nodes)).toEqual([0, 0, 1, 0, 0]);
   });
 
   it('has an empty fleet before anything started', () => {
@@ -281,5 +300,81 @@ describe('FleetHistoryService — intervals whose node is gone', () => {
 
     expect(history.points.length).toBeLessThanOrEqual(401);
     expect(history.stepSeconds).toBeGreaterThan(3600);
+  });
+});
+
+describe('the load drawn under the fleet', () => {
+  it('gives each sample the reading nearest to it, and none when the cluster recorded nothing', () => {
+    const at = (h: number) => new Date(Date.UTC(2026, 8, 25, h));
+    const points = [0, 1, 2].map((h) => ({
+      at: at(h),
+      load: null,
+      byShape: {},
+      nodes: 1,
+      hourlyEur: 0,
+      unpricedNodes: 0,
+    }));
+    const reading = {
+      reservedMemoryMi: 1900,
+      capacityMemoryMi: 7751,
+      reservedCpuMillicores: 1300,
+      capacityCpuMillicores: 4000,
+    };
+    const load = new Map([
+      [at(0).getTime() + 60_000, reading],
+      [at(2).getTime(), { ...reading, reservedMemoryMi: 5000 }],
+    ]);
+    const out = withLoad(points, load, 3_600_000);
+    expect(out[0].load?.reservedMemoryMi).toBe(1900);
+    expect(out[1].load).toBeNull();
+    expect(out[2].load?.reservedMemoryMi).toBe(5000);
+    expect(withLoad(points, new Map(), 3_600_000)[0].load).toBeNull();
+  });
+});
+
+describe('fleetWindow', () => {
+  const now = Date.parse('2026-09-26T12:00:00Z');
+
+  it('samples a picked stretch at up to 400 points, never finer than a minute', () => {
+    const w = fleetWindow(
+      {
+        from: new Date('2026-09-26T10:00:00Z'),
+        to: new Date('2026-09-26T11:00:00Z'),
+      },
+      now,
+    );
+    expect(w).toEqual({
+      from: Date.parse('2026-09-26T10:00:00Z'),
+      to: Date.parse('2026-09-26T11:00:00Z'),
+      stepMs: 60_000,
+    });
+  });
+
+  it('widens the step over a long stretch so it still answers about all of it', () => {
+    const w = fleetWindow(
+      {
+        from: new Date('2026-09-01T00:00:00Z'),
+        to: new Date('2026-09-26T00:00:00Z'),
+      },
+      now,
+    );
+    expect((w.to - w.from) / w.stepMs).toBeLessThanOrEqual(400);
+  });
+
+  it('stops a stretch at now and keeps at least five minutes of it', () => {
+    const w = fleetWindow(
+      {
+        from: new Date('2026-09-26T11:59:00Z'),
+        to: new Date('2026-09-26T13:00:00Z'),
+      },
+      now,
+    );
+    expect(w.to).toBe(now);
+    expect(w.to - w.from).toBe(5 * 60_000);
+  });
+
+  it('keeps the window ending now when no ends are named', () => {
+    const w = fleetWindow({ hours: 6, stepMinutes: 10 }, now);
+    expect(w).toEqual({ from: now - 6 * 3_600_000, to: now, stepMs: 600_000 });
   });
 });

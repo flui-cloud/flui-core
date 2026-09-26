@@ -32,6 +32,18 @@ export interface AlertNotificationPayload {
  *
  * Namespace: /user
  */
+export interface ScalingNotificationPayload {
+  id: string;
+  clusterId: string;
+  groupId: string;
+  outcome: string;
+  tone: 'info' | 'success' | 'warning' | 'error';
+  title: string;
+  body: string;
+  tab: 'now' | 'history';
+  retry: boolean;
+}
+
 @WebSocketGateway({
   cors: WS_CORS,
   namespace: '/user',
@@ -88,6 +100,10 @@ export class UserEventsGateway implements OnGatewayInit {
    * Fired only on a transition — an alert starting or recovering. Alertmanager repeats
    * a firing alert every few hours; relaying those would turn the bell into a metronome.
    */
+  emitScaling(fluiUserId: string, payload: ScalingNotificationPayload): void {
+    this.server.to(`user:${fluiUserId}`).emit('scaling:event', payload);
+  }
+
   emitAlert(fluiUserId: string, payload: AlertNotificationPayload): void {
     const room = `user:${fluiUserId}`;
     this.server.to(room).emit('alert:transition', payload);

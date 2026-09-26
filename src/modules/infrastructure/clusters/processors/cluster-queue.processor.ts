@@ -59,6 +59,7 @@ import {
 
 import { ReconciliationStatus } from '../../shared/enums/reconciliation-status.enum';
 import { ApiServerSanService } from '../../networking/services/api-server-san.service';
+import { NodeLifeEventsService } from '../services/node-life-events.service';
 
 /** cert-manager's webhooks register after the cluster reports ready. */
 const ZONE_RECONCILE_ATTEMPTS = 5;
@@ -95,6 +96,7 @@ export class ClusterQueueProcessor {
     private readonly capabilitiesFactory: CapabilitiesProviderFactory,
     private readonly apiServerSan: ApiServerSanService,
     private readonly hostCommand: HostCommandService,
+    private readonly nodeEvents: NodeLifeEventsService,
   ) {}
 
   private formatVolumeRef(
@@ -1937,6 +1939,20 @@ export class ClusterQueueProcessor {
         timestamp: new Date(),
       } as InfrastructureOperationCompletedDto);
 
+      const orderedBy = await this.initiatorOf(operationId);
+      for (const node of created) {
+        await this.nodeEvents.record({
+          event: 'node-joined',
+          clusterId,
+          operationId,
+          node: node.serverName,
+          shape: node.serverType ?? serverType ?? cluster.nodeSize,
+          region: node.region ?? region ?? cluster.region,
+          minutes: Math.round((Date.now() - startedAt) / 60_000),
+          by: orderedBy,
+        });
+      }
+
       this.logger.log(
         `add-worker completed: cluster=${clusterId} added=${created.length}`,
       );
@@ -1977,6 +1993,15 @@ export class ClusterQueueProcessor {
       }
 
       await this.markOperationFailed(operationId, error, { orphansRemoved });
+      await this.nodeEvents.record({
+        event: 'purchase-failed',
+        clusterId,
+        operationId,
+        shape: serverType ?? preCluster?.nodeSize ?? null,
+        region: region ?? preCluster?.region ?? null,
+        error: error.message,
+        by: await this.initiatorOf(operationId),
+      });
       this.infraGateway.emitFailed(operationId, clusterId, {
         operationId,
         resourceId: clusterId,
@@ -1987,6 +2012,15 @@ export class ClusterQueueProcessor {
       } as InfrastructureOperationFailedDto);
       throw error;
     }
+  }
+
+  private async initiatorOf(operationId: string): Promise<string | null> {
+    const operation = await this.operationRepository.findOne({
+      where: { id: operationId },
+    });
+    const by = (operation?.metadata as { initiatedBy?: unknown } | undefined)
+      ?.initiatedBy;
+    return typeof by === 'string' ? by : null;
   }
 
   @Process('remove-worker')
@@ -2092,6 +2126,22 @@ export class ClusterQueueProcessor {
         message: 'Drain step done',
         warnings,
       });
+      const removedBy = await this.initiatorOf(operationId);
+      const drainProblem = warnings.find(
+        (w) => w.code === 'DRAIN_FAILED' || w.code === 'DRAIN_SKIPPED',
+      );
+      await this.nodeEvents.record({
+        event: 'node-drained',
+        clusterId,
+        operationId,
+        node: node.serverName,
+        shape: node.serverType ?? null,
+        region: node.region ?? null,
+        by: removedBy,
+        warning: drainProblem
+          ? `It could not be emptied cleanly (${drainProblem.reason}); it was removed anyway.`
+          : null,
+      });
 
       // STEP 2 - DELETE SERVER
       await this.updateOperationStep(operationId, 2, 0, {
@@ -2171,6 +2221,15 @@ export class ClusterQueueProcessor {
 
       await this.updateOperationStep(operationId, 2, 100, {
         message: 'Worker server deleted',
+      });
+      await this.nodeEvents.record({
+        event: 'node-removed',
+        clusterId,
+        operationId,
+        node: node.serverName,
+        shape: node.serverType ?? null,
+        region: node.region ?? null,
+        by: removedBy,
       });
 
       // STEP 3 - DELETE NODE FROM K3S CONTROL PLANE

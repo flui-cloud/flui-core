@@ -112,6 +112,7 @@ describe('UnschedulablePodsService.summarise', () => {
     expect(result.largestRequest).toEqual({
       name: 'big',
       namespace: 'batch',
+      app: 'batch/big',
       cpuMillicores: 500,
       memoryMi: 16384,
     });
@@ -235,5 +236,25 @@ describe('UnschedulablePodsService.read', () => {
       fieldSelector: 'status.phase=Pending',
     });
     expect(result?.count).toBe(0);
+  });
+});
+
+describe('the application a waiting pod belongs to', () => {
+  it('is named by its slug, the way flui app names it, not by the pod hash', () => {
+    const { appOfPod } = jest.requireActual('./unschedulable-pods.service');
+    expect(
+      appOfPod({
+        metadata: {
+          name: 'scaling-probe-4d3c28-1o7yp5-79877dbd57-w7spw',
+          namespace: 'user-x',
+          labels: {
+            'app.kubernetes.io/instance': 'scaling-probe-4d3c28-1o7yp5',
+          },
+        },
+      }),
+    ).toBe('scaling-probe-4d3c28-1o7yp5');
+    expect(appOfPod({ metadata: { name: 'loose', namespace: 'batch' } })).toBe(
+      'batch/loose',
+    );
   });
 });

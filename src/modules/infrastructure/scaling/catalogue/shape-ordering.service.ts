@@ -11,7 +11,7 @@ import {
 } from './catalogue.core';
 import { OrderedShapeDto, ShapeCatalogueDto } from './dto/shape-catalogue.dto';
 import { ShapeFactsService } from '../engine/shape-facts.service';
-import { ShapeFact } from '../engine/engine.core';
+import { ShapeFact, listMonthlyOf } from '../engine/engine.core';
 
 /** What ordering needs of a group, and nothing more. */
 export interface OrderableGroup {
@@ -76,9 +76,10 @@ export class ShapeOrderingService {
         reading === outside
           ? says(reading, group.provider)
           : `As ${group.provider} itself reports it — the same reading Flui buys from. It orders candidates and decides nothing; the provider accepts or refuses the purchase.`,
-      shapes: candidates.map((candidate) =>
-        this.toDto(candidate, group.regions, reading.ageSeconds),
-      ),
+      shapes: candidates.map((candidate) => ({
+        ...this.toDto(candidate, group.regions, reading.ageSeconds),
+        facts: specOf(own, candidate.shape, group.regions[0] ?? null),
+      })),
     };
   }
 
@@ -121,8 +122,35 @@ export class ShapeOrderingService {
       allowed: candidate.allowed,
       outlook: outlookOf(candidate.availability, regions, ageSeconds),
       why: why(candidate, regions),
+      facts: null,
     };
   }
+}
+
+/**
+ * The same price the spend ceiling counts: a machine's line on this tab and the
+ * figure a purchase is weighed against must never be two numbers.
+ */
+function specOf(
+  own: { shapes: ShapeFact[] } | null,
+  shape: string,
+  region: string | null,
+): OrderedShapeDto['facts'] {
+  const fact = own?.shapes.find((entry) => entry.shape === shape);
+  if (!fact) return null;
+  const price =
+    fact.prices.find((entry) => entry.region === region) ?? fact.prices[0];
+  return {
+    cores: fact.cores,
+    memoryMi: fact.memoryMi,
+    hourlyEur: price?.hourlyEur ?? null,
+    monthlyEur: listMonthlyOf(
+      own as never,
+      shape,
+      price?.region ?? null,
+      price?.hourlyEur ?? null,
+    ),
+  };
 }
 
 /**

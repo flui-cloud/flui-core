@@ -201,3 +201,11 @@ export class EditScalingGroupDto {
   @Type(() => NodeRequirementDto)
   requirement?: NodeRequirementDto | null;
 }
+
+export class ApprovePurchaseDto {
+  @IsString()
+  shape: string;
+
+  @IsString()
+  region: string;
+}

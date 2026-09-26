@@ -119,7 +119,12 @@ export default class ScalingGet extends Command {
     console.log(`  ${'limits'.padEnd(11)}${this.limitsLine(group)}`);
     console.log(`  ${'provision'.padEnd(11)}${group.provision}`);
     this.printActuation(group);
-    if (group.purchaseHeld) {
+    this.printPurchase(group);
+    if (group.purchaseHeld?.until) {
+      console.log(
+        `  ${'paused'.padEnd(11)}${chalk.yellow('sold out')} — the machine ordered at ${new Date(group.purchaseHeld.failedAt).toLocaleTimeString()} was not available and nothing was created; availability decides again at ${new Date(group.purchaseHeld.until).toLocaleTimeString()}`,
+      );
+    } else if (group.purchaseHeld) {
       console.log(
         `  ${'held'.padEnd(11)}${chalk.yellow('buys nothing more')} — the purchase of ${new Date(group.purchaseHeld.failedAt).toLocaleString()} failed${group.purchaseHeld.error ? `: ${group.purchaseHeld.error}` : ''}`,
       );
@@ -167,11 +172,34 @@ export default class ScalingGet extends Command {
   private printActuation(group: ScalingGroupResponseDto): void {
     const acting = describeActuation(group);
     if (!acting) return;
+    if (acting.label) {
+      const label = acting.attention
+        ? chalk.yellow(chalk.bold(acting.label))
+        : chalk.bold(acting.label);
+      console.log(`  ${'mode'.padEnd(11)}${label}`);
+    }
     const verdict = acting.acts
       ? chalk.green(acting.verdict)
       : chalk.yellow(acting.verdict);
     console.log(`  ${'acts'.padEnd(11)}${verdict}`);
     console.log(`  ${' '.repeat(11)}${chalk.dim(acting.says)}`);
+  }
+
+  private printPurchase(group: ScalingGroupResponseDto): void {
+    const purchase = group.purchase;
+    if (!purchase) return;
+    const colour = this.purchaseColour(purchase.state);
+    console.log(`  ${'purchase'.padEnd(11)}${colour(purchase.says)}`);
+    const logHint = chalk.dim(
+      `install log: flui operation ${purchase.operation.id} --log`,
+    );
+    console.log(`  ${' '.repeat(11)}${logHint}`);
+  }
+
+  private purchaseColour(state: string): (text: string) => string {
+    if (state === 'failed') return chalk.red;
+    if (state === 'joined') return chalk.green;
+    return chalk.cyan;
   }
 
   private printOrders(orders: StandingOrderResponseDto[]): void {

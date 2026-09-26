@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { ConflictException, Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { In, Not, Repository } from 'typeorm';
 import {
@@ -13,6 +13,9 @@ import {
 } from './scaling-engine.service';
 import { Actuation, ScalingActuatorService } from './scaling-actuator.service';
 import { ScalingAlarmService } from './scaling-alarm.service';
+import { ScalingBellService } from '../../clusters/services/scaling-bell.service';
+import { clusterNotFound, groupNotFound } from '../scaling-errors';
+import { NOT_ENGINE_FORCES } from '../scaling.core';
 
 /**
  * How long the same answer stays the same answer.
@@ -49,6 +52,7 @@ export class ScalingReconcilerService {
     private readonly engine: ScalingEngineService,
     private readonly actuator: ScalingActuatorService,
     private readonly alarms: ScalingAlarmService,
+    private readonly bell: ScalingBellService,
   ) {}
 
   async reconcileAll(): Promise<number> {
@@ -91,7 +95,12 @@ export class ScalingReconcilerService {
   ): Promise<boolean> {
     const assessment = await this.engine.assess(group, cluster);
     const acted = await this.actuator.act(group, cluster, assessment);
-    if (assessment.fulfilledExpansions) await this.closeExpansions(group);
+    if (
+      assessment.fulfilledExpansions ||
+      assessment.fulfilledReplacements?.length
+    ) {
+      await this.closeFulfilled(group, assessment);
+    }
 
     // Something happened to a machine, and that is never a repeat of anything:
     // the window below exists to stop a standing answer from being restated,
@@ -101,7 +110,8 @@ export class ScalingReconcilerService {
     }
 
     const row = rowOf(assessment, acted);
-    await this.decisions.save(this.decisions.create(row));
+    const saved = await this.decisions.save(this.decisions.create(row));
+    await this.bell.ring(saved);
 
     // Out of the log and onto the alert rail, so the one case that needs a
     // person reaches one instead of waiting to be found.
@@ -109,10 +119,81 @@ export class ScalingReconcilerService {
     return true;
   }
 
-  /** An expansion that brought the fleet to its target is done; it stops being listed as open. */
-  private async closeExpansions(group: ScalingGroupEntity): Promise<void> {
+  /**
+   * One purchase a person approved on a group that does not buy on its own.
+   *
+   * The engine decides exactly as on a pass and every gate of the actuator
+   * still holds — the ceilings, a purchase in flight, a failed one, the
+   * network; only the consent comes from the person instead of the group's
+   * mode, and the mode is left as it was.
+   */
+  async approvePurchase(
+    groupId: string,
+    expected: { shape: string; region: string },
+    by: string,
+  ): Promise<ScalingDecisionEntity> {
+    const group = await this.groups.findOne({ where: { id: groupId } });
+    if (!group) throw groupNotFound(groupId);
+    const cluster = await this.clusters.findOne({
+      where: { id: group.clusterId },
+    });
+    if (!cluster) throw clusterNotFound(group.clusterId);
+
+    const assessed = await this.engine.assess(group, cluster);
+    const assessment = withProposal(assessed);
+    const intent = assessment.intent;
+    if (!intent || intent.kind === 'remove') {
+      throw new ConflictException(
+        `There is nothing to buy right now: ${assessment.did}`,
+      );
+    }
+    if (intent.shape !== expected.shape || intent.region !== expected.region) {
+      throw new ConflictException(
+        `The proposal changed since the page was read: it is now a ${intent.shape} in ${intent.region}. Nothing was bought.`,
+      );
+    }
+
+    const consented = {
+      ...group,
+      provision: 'automatic',
+    } as ScalingGroupEntity;
+    const acted = await this.actuator.act(consented, cluster, assessment);
+    if (!acted?.operationId) {
+      throw new ConflictException(
+        `Nothing was bought: ${acted?.why ?? assessment.why}`,
+      );
+    }
+
+    const row = rowOf(assessment, {
+      ...acted,
+      did: `${acted.did} Approved by ${by}.`,
+      why: `${by} approved this one purchase; the group stays manual and buys nothing else on its own.`,
+    });
+    const saved = await this.decisions.save(this.decisions.create(row));
+    await this.bell.ring(saved);
+    return saved;
+  }
+
+  /**
+   * An expansion that brought the fleet to its target is done, and so is a
+   * replacement whose node has left the fleet; neither stays listed as open.
+   */
+  private async closeFulfilled(
+    group: ScalingGroupEntity,
+    assessment: Pick<
+      ScalingAssessment,
+      'fulfilledExpansions' | 'fulfilledReplacements'
+    >,
+  ): Promise<void> {
+    const gone = new Set(assessment.fulfilledReplacements ?? []);
     const remaining = (group.standingOrders ?? []).filter(
-      (order) => order.kind !== 'expand',
+      (order) =>
+        !(assessment.fulfilledExpansions && order.kind === 'expand') &&
+        !(
+          order.kind === 'replace' &&
+          order.replaces &&
+          gone.has(order.replaces)
+        ),
     );
     await this.groups.update(group.id, { standingOrders: remaining });
   }
@@ -122,7 +203,7 @@ export class ScalingReconcilerService {
     acted: Actuation | null,
   ): Promise<boolean> {
     const last = await this.decisions.findOne({
-      where: { groupId: assessment.groupId },
+      where: { groupId: assessment.groupId, force: Not(In(NOT_ENGINE_FORCES)) },
       order: { at: 'DESC' },
     });
     if (!last) return false;
@@ -158,5 +239,36 @@ function rowOf(
     pendingPods: assessment.pendingPods,
     drain: assessment.drain,
     operationId: acted?.operationId ?? null,
+  };
+}
+
+/**
+ * The settle window is the engine making sure a pod is really stuck before it
+ * spends on its own. A person approving has already decided that, so the
+ * machine the ladder chose for what is waiting is the proposal, window or not.
+ */
+function withProposal(assessment: ScalingAssessment): ScalingAssessment {
+  if (assessment.intent) return assessment;
+  const chosen = assessment.preview.chosen;
+  if (!assessment.preview.pending || !chosen?.shape || !chosen.region) {
+    return assessment;
+  }
+  return {
+    ...assessment,
+    outcome: 'added',
+    did: `Would add a ${chosen.shape} in ${chosen.region}.`,
+    shape: chosen.shape,
+    region: chosen.region,
+    hourlyEur: chosen.hourlyEur,
+    intent: {
+      kind: 'add',
+      shape: chosen.shape,
+      region: chosen.region,
+      hourlyEur: chosen.hourlyEur,
+      node: null,
+      fleetMonthlyEur: 0,
+      unpricedNodes: 0,
+      fleetNodes: 0,
+    },
   };
 }

@@ -46,7 +46,7 @@ export interface ActuationFacts {
    * The last purchase on this cluster, when it failed and nobody has asked the
    * group to try again since. Null once a later purchase went through.
    */
-  failedPurchase: { at: Date; error: string | null } | null;
+  failedPurchase: { at: Date; error: string | null; until?: Date } | null;
   /** Minutes since a node last joined this cluster, or null if none ever did. */
   minutesSinceAdded: number | null;
   /** When that node joined — said as a time, so the sentence is the same on every pass. */
@@ -109,7 +109,7 @@ export function mayAct(facts: ActuationFacts): ActuationVerdict {
   if (facts.provision !== 'automatic') {
     return no(
       'group-is-manual',
-      'This group is set to decide and not to act. Set it to buy automatically for anything here to reach a provider.',
+      'This group is manual: it names the machine and buys nothing on its own. A person can approve this one purchase, or set the group to buy automatically.',
     );
   }
 
@@ -126,8 +126,14 @@ export function mayAct(facts: ActuationFacts): ActuationVerdict {
   // pass buys again — once a minute, for as long as the cause lasts. Where the
   // failure comes after the server exists, every retry leaves one behind.
   if (intent.kind !== 'remove' && facts.failedPurchase) {
-    const { at, error } = facts.failedPurchase;
+    const { at, error, until } = facts.failedPurchase;
     const when = `at ${clock(at)}`;
+    if (until) {
+      return no(
+        'last-purchase-failed',
+        `The provider had none of that machine left when Flui ordered it ${when}; nothing was created. Flui reads availability again and decides from ${clock(until)}, without anyone asking.`,
+      );
+    }
     const cause = error ? `: ${error.replace(/[.\s]*$/, '')}.` : '.';
     return no(
       'last-purchase-failed',
@@ -135,8 +141,11 @@ export function mayAct(facts: ActuationFacts): ActuationVerdict {
     );
   }
 
+  // The stand-in of a replacement was bought to take this node's place, not
+  // for a load that may return: holding the old node back only pays for both.
   if (
     intent.kind === 'remove' &&
+    !intent.completesReplacement &&
     facts.minutesSinceAdded !== null &&
     facts.minutesSinceAdded < HOLD_AFTER_ADD_MINUTES
   ) {

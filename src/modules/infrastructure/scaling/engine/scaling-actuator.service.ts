@@ -270,7 +270,7 @@ export class ScalingActuatorService implements OnModuleInit {
         why: verdict.because,
         asks:
           assessment.asks ??
-          `${assessment.did} Add it yourself, or set this group to buy automatically — nothing here will change until one of the two happens.`,
+          `${assessment.did} Approve this one purchase (Buy on the Now tab, \`flui scaling approve --yes\`), add the machine yourself, or set this group to buy automatically.`,
         operationId: null,
       };
     }
@@ -339,7 +339,7 @@ export class ScalingActuatorService implements OnModuleInit {
   ): Promise<ActuationFacts['failedPurchase']> {
     const hold = await purchaseHold(this.operations, clusterId, retryAskedAt);
     if (!hold) return null;
-    return { at: hold.failedAt, error: hold.error };
+    return { at: hold.failedAt, error: hold.error, until: hold.until };
   }
 
   private async lastJoin(

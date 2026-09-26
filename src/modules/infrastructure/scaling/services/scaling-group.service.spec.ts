@@ -4,7 +4,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { Repository } from 'typeorm';
-import { ScalingGroupService } from './scaling-group.service';
+import { ScalingGroupService, purchaseInFlight } from './scaling-group.service';
 import { ScalingGroupEntity } from '../entities/scaling-group.entity';
 import { ScalingDecisionEntity } from '../entities/scaling-decision.entity';
 import { ClusterEntity } from '../../clusters/entities/cluster.entity';
@@ -110,6 +110,8 @@ const make = (provider = 'hetzner', existing: unknown[] = []): Fakes => {
     delete: jest.fn().mockResolvedValue({ affected: 1 }),
   };
   const decisions = {
+    create: jest.fn((row) => row),
+    save: jest.fn(async (row) => row),
     find: jest.fn().mockResolvedValue([]),
     findOne: jest.fn().mockResolvedValue(null),
     delete: jest.fn().mockResolvedValue({ affected: 0 }),
@@ -121,6 +123,12 @@ const make = (provider = 'hetzner', existing: unknown[] = []): Fakes => {
     findOne: jest.fn().mockResolvedValue({ networkZone: 'eu-central' }),
   };
   const operations = { findOne: jest.fn().mockResolvedValue(null) };
+  const nodes = {
+    find: jest.fn().mockResolvedValue([
+      { id: 'n-master', serverName: 'prod-master', nodeType: 'master' },
+      { id: 'n-w1', serverName: 'prod-worker-1', nodeType: 'worker' },
+    ]),
+  };
 
   const factory = {
     isProviderSupported: (p: string) => p in DECLARED,
@@ -137,6 +145,7 @@ const make = (provider = 'hetzner', existing: unknown[] = []): Fakes => {
       subnets as unknown as Repository<VNetSubnetEntity>,
       factory,
       operations as never,
+      nodes as never,
     ),
     groups,
     decisions,
@@ -466,7 +475,12 @@ describe('reading a group back', () => {
     groups.findOne?.mockResolvedValue(stored({ provision: 'manual' }));
     const dto = await service.get('g-1');
     expect(dto.acts.acts).toBe(false);
-    expect(dto.acts.says).toContain('decides and does not act');
+    expect(dto.acts.says).toContain('Nothing is bought on its own');
+    expect(dto.acts).toMatchObject({
+      mode: 'manual',
+      label: 'Manual — Flui does not buy',
+      attention: true,
+    });
   });
 
   it('acts once the group is set to buy, and quotes its own ceilings', async () => {
@@ -774,6 +788,55 @@ describe('changing a group', () => {
     );
   });
 
+  it('keeps a replacement by the node name, whether it was given a name or an id', async () => {
+    const { service, groups } = make();
+    groups.findOne?.mockResolvedValueOnce({ ...stored });
+    groups.findOne?.mockResolvedValueOnce(null);
+    const dto = await service.update('g-1', {
+      standingOrders: [
+        {
+          kind: 'replace',
+          shape: 'cx23',
+          region: 'fsn1',
+          wanted: 1,
+          replaces: 'n-w1',
+        },
+      ],
+    } as never);
+    expect(dto.standingOrders[0].replaces).toBe('prod-worker-1');
+  });
+
+  it('refuses a replacement of a node the cluster does not have, or of the master', async () => {
+    const { service, groups } = make();
+    groups.findOne?.mockResolvedValue({ ...stored });
+    await expect(
+      service.update('g-1', {
+        standingOrders: [
+          {
+            kind: 'replace',
+            shape: 'cx23',
+            region: 'fsn1',
+            wanted: 1,
+            replaces: 'ghost',
+          },
+        ],
+      } as never),
+    ).rejects.toThrow(/not a node of this cluster/);
+    await expect(
+      service.update('g-1', {
+        standingOrders: [
+          {
+            kind: 'replace',
+            shape: 'cx23',
+            region: 'fsn1',
+            wanted: 1,
+            replaces: 'prod-master',
+          },
+        ],
+      } as never),
+    ).rejects.toThrow(/is the master/);
+  });
+
   it('leaves untouched what the body did not mention', async () => {
     const { service, groups } = make();
     groups.findOne?.mockResolvedValueOnce({ ...stored });
@@ -802,6 +865,7 @@ describe('a group held back by a failed purchase', () => {
     expect(dto.purchaseHeld).toEqual({
       failedAt: '2026-09-24T12:28:00.000Z',
       error: 'SSH key already exists',
+      until: null,
     });
   });
 
@@ -852,6 +916,128 @@ describe('a decision that started something', () => {
       step: 'waiting for it to join the cluster',
       error: null,
       finishedAt: null,
+    });
+  });
+});
+
+describe('a purchase on its way', () => {
+  const decision = {
+    id: 'd1',
+    at: new Date('2026-09-25T13:35:00Z'),
+    shape: 'cx23',
+    region: 'fsn1',
+  };
+  const op = (over: Partial<Parameters<typeof purchaseInFlight>[1]>) => ({
+    id: 'op1',
+    state: 'running' as const,
+    progress: 60,
+    step: 'installing',
+    error: null,
+    finishedAt: null,
+    ...over,
+  });
+
+  it('says what it is doing while the operation runs', () => {
+    expect(
+      purchaseInFlight(decision, op({}), new Date('2026-09-25T13:36:00Z')),
+    ).toMatchObject({
+      state: 'buying',
+      says: 'Buying cx23 in fsn1 — installing (60%)',
+    });
+  });
+
+  it('says when it joined, for half an hour', () => {
+    const joined = op({
+      state: 'completed',
+      progress: 100,
+      finishedAt: '2026-09-25T13:37:10Z',
+    });
+    expect(
+      purchaseInFlight(decision, joined, new Date('2026-09-25T13:40:00Z')),
+    ).toMatchObject({
+      state: 'joined',
+      says: 'cx23 in fsn1 joined, 2 min after it was ordered',
+    });
+    expect(
+      purchaseInFlight(decision, joined, new Date('2026-09-25T14:30:00Z')),
+    ).toBeNull();
+  });
+
+  it('says why it failed', () => {
+    expect(
+      purchaseInFlight(
+        decision,
+        op({
+          state: 'failed',
+          error: 'SSH key rejected',
+          finishedAt: '2026-09-25T13:38:00Z',
+        }),
+        new Date('2026-09-25T13:39:00Z'),
+      ),
+    ).toMatchObject({
+      state: 'failed',
+      says: 'Buying cx23 in fsn1 failed: SSH key rejected',
+    });
+  });
+});
+
+describe('what a person does to a group is written in its decision log', () => {
+  const stored = {
+    id: 'g-1',
+    clusterId: 'c-1',
+    name: 'general',
+    minNodes: 1,
+    desiredNodes: 3,
+    maxNodes: 5,
+    regions: ['fsn1'],
+    shapes: ['cx23'],
+    strategy: 'cheapest',
+    settleSeconds: 30,
+    hourlyBillingOnly: true,
+    maxMonthlyCost: 50,
+    provision: 'automatic',
+    standingOrders: [],
+    requirement: null,
+  } as unknown as ScalingGroupEntity;
+
+  it('records a change with who made it and each setting before and after', async () => {
+    const { service, groups, decisions } = make();
+    groups.findOne?.mockResolvedValueOnce({ ...stored });
+    groups.findOne?.mockResolvedValueOnce(null);
+    await service.update(
+      'g-1',
+      { limits: { hourlyBillingOnly: true, maxMonthlyCost: 30 } },
+      'dawit@example.com',
+    );
+    expect(decisions.save?.mock.calls.at(-1)?.[0]).toMatchObject({
+      force: 'person',
+      outcome: 'changed',
+      saw: 'dawit@example.com changed the group.',
+      why: 'spend ceiling €50 → €30.',
+    });
+  });
+
+  it('writes nothing when a save changed nothing', async () => {
+    const { service, groups, decisions } = make();
+    groups.findOne?.mockResolvedValueOnce({ ...stored });
+    groups.findOne?.mockResolvedValueOnce(null);
+    await service.update(
+      'g-1',
+      { limits: { hourlyBillingOnly: true, maxMonthlyCost: 50 } },
+      'x',
+    );
+    expect(decisions.save).not.toHaveBeenCalled();
+  });
+
+  it('records who let a held group buy again', async () => {
+    const { service, groups, decisions } = make();
+    groups.findOne?.mockResolvedValue({ ...stored });
+    await service
+      .retryPurchase('g-1', 'dawit@example.com')
+      .catch(() => undefined);
+    expect(decisions.save?.mock.calls[0]?.[0]).toMatchObject({
+      force: 'person',
+      did: 'dawit@example.com let the group buy again.',
     });
   });
 });

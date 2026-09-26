@@ -1,6 +1,29 @@
 import { ApiProperty } from '@nestjs/swagger';
+import { Sensitivity } from '../../../../mask/decorators/sensitivity.decorator';
 import { AvailabilityOutlookDto } from '../../dto/scaling-response.dto';
 import { CATALOGUE_READINGS, CatalogueReadingState } from '../catalogue.core';
+
+export class ShapeSpecDto {
+  @ApiProperty()
+  @Sensitivity(Sensitivity.PUBLIC)
+  cores: number;
+
+  @ApiProperty()
+  @Sensitivity(Sensitivity.PUBLIC)
+  memoryMi: number;
+
+  @ApiProperty({ nullable: true })
+  @Sensitivity(Sensitivity.PUBLIC)
+  hourlyEur: number | null;
+
+  @ApiProperty({
+    nullable: true,
+    description:
+      'The monthly price the spend ceiling counts, for the first region the group buys in',
+  })
+  @Sensitivity(Sensitivity.PUBLIC)
+  monthlyEur: number | null;
+}
 
 export class OrderedShapeDto {
   @ApiProperty({ example: 'cx33' })
@@ -22,6 +45,15 @@ export class OrderedShapeDto {
 
   @ApiProperty({ description: 'Why it sits where it sits' })
   why: string;
+
+  @ApiProperty({
+    type: ShapeSpecDto,
+    nullable: true,
+    description:
+      "The machine as the provider describes it; null where the provider's catalogue was not read",
+  })
+  @Sensitivity(Sensitivity.PUBLIC)
+  facts: ShapeSpecDto | null;
 }
 
 export class ShapeCatalogueDto {

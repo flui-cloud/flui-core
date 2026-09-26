@@ -14,7 +14,10 @@ import {
   describePending,
   formatBounds,
   ladderRows,
+  waysOutLines,
 } from '../../lib/scaling-view';
+
+type RoomDto = NonNullable<ScalingPreviewDto['room']>;
 
 /**
  * What this group would do if a node were needed right now, spending nothing.
@@ -100,6 +103,12 @@ export default class ScalingPreview extends Command {
       `  ${chalk.cyan(chalk.bold(group.name))} ${chalk.dim(`on ${group.clusterName}`)}  ` +
         chalk.dim(`${formatBounds(group.bounds)} · ${group.provider}`),
     );
+    const label = group.acts?.label;
+    if (label) {
+      console.log(
+        `  ${group.acts.attention ? chalk.yellow(chalk.bold(label)) : chalk.bold(label)}`,
+      );
+    }
     console.log(chalk.dim('  Nothing is bought by asking this.'));
     console.log('');
 
@@ -112,41 +121,76 @@ export default class ScalingPreview extends Command {
       );
     }
     console.log(`  ${chalk.dim('chosen'.padEnd(9))}${describeChosen(preview)}`);
+    const waysOut = waysOutLines(preview.blocked);
+    if (waysOut.length) {
+      console.log(
+        `  ${chalk.dim('blocked'.padEnd(9))}${chalk.yellow(chalk.bold(waysOut[0]))}`,
+      );
+      for (const line of waysOut.slice(1))
+        console.log(`  ${' '.repeat(9)}${line}`);
+    }
     if (preview.asks) {
       console.log(
         `  ${chalk.dim('asks'.padEnd(9))}${chalk.yellow(preview.asks)}`,
       );
     }
 
-    this.printRoom(preview);
+    this.printRoom(preview, group.acts?.acts ?? false);
     this.printLadder(preview);
     console.log('');
   }
 
   /** Reserved against capacity: what decides whether the next app buys a node. */
-  private printRoom(preview: ScalingPreviewDto): void {
+  private printRoom(preview: ScalingPreviewDto, buys: boolean): void {
     const room = preview.room;
     console.log('');
     if (!room) {
       console.log(chalk.dim('  room     the cluster could not be asked'));
       return;
     }
-    const fit = room.largestFit;
     console.log(
-      `  ${chalk.dim('room'.padEnd(9))}${
-        fit
-          ? `the largest app that still fits: ${gib(fit.memoryMi)} · ${cores(fit.cpuMillicores)} (on ${fit.node}); a bigger one buys a node`
-          : chalk.yellow('no node takes new apps')
-      }`,
+      `  ${chalk.dim('room'.padEnd(9))}${this.describeLargestFit(room.largestFit, buys)}`,
     );
-    for (const node of room.nodes) {
-      const mem = `${gib(node.requested.memoryMi)} of ${gib(node.allocatable.memoryMi)} memory`;
-      const cpu = `${cores(node.requested.cpuMillicores)} of ${cores(node.allocatable.cpuMillicores)}`;
-      const note = node.takesWork ? '' : chalk.dim('  (takes no new apps)');
-      console.log(
-        chalk.dim(`    ${node.name}  `) +
-          `${bar(node.requested.memoryMi, node.allocatable.memoryMi)} ${mem} · ${cpu} reserved${note}`,
-      );
+    for (const node of room.nodes) this.printRoomNode(node);
+  }
+
+  private describeLargestFit(
+    fit: RoomDto['largestFit'],
+    buys: boolean,
+  ): string {
+    if (!fit) return chalk.yellow('no node takes new apps');
+    const bigger = buys
+      ? 'a bigger one buys a node'
+      : 'a bigger one needs a new node, and this group buys none on its own';
+    return `the largest app that still fits: ${gib(fit.memoryMi)} · ${cores(fit.cpuMillicores)} (on ${fit.node}); ${bigger}`;
+  }
+
+  private printRoomNode(node: RoomDto['nodes'][number]): void {
+    const mem = `${gib(node.requested.memoryMi)} of ${gib(node.allocatable.memoryMi)} memory`;
+    const cpu = `${cores(node.requested.cpuMillicores)} of ${cores(node.allocatable.cpuMillicores)}`;
+    const note = node.takesWork ? '' : chalk.dim('  (takes no new apps)');
+    console.log(
+      chalk.dim(`    ${node.name}  `) +
+        `${bar(node.requested.memoryMi, node.allocatable.memoryMi)} ${mem} · ${cpu} reserved${note}`,
+    );
+    const usage = [
+      node.used
+        ? `in use now ${gib(node.used.memoryMi)} · ${cores(node.used.cpuMillicores)}`
+        : null,
+      node.limits
+        ? `at their limits ${gib(node.limits.memoryMi)} · ${cores(node.limits.cpuMillicores)}`
+        : null,
+    ].filter(Boolean);
+    const indent = ' '.repeat(node.name.length + 6);
+    if (node.apps?.length) {
+      console.log(chalk.dim(`${indent}runs ${node.apps.join(', ')}`));
+    }
+    if (usage.length) {
+      const over =
+        node.limits && node.limits.memoryMi > node.allocatable.memoryMi;
+      const overNote = over ? ', more memory than the node holds' : '';
+      const line = `${indent}${usage.join(' — ')}${overNote}`;
+      console.log(over ? chalk.yellow(line) : chalk.dim(line));
     }
   }
 

@@ -71,6 +71,7 @@ describe('ClusterScalingService', () => {
     const byosNodeRemoval = {
       removeWorker: overrides.byosRemove ?? jest.fn(),
     };
+    const nodeEvents = { record: jest.fn().mockResolvedValue(null) };
     const svc = new ClusterScalingService(
       clusterRepo as any,
       nodeRepo as any,
@@ -81,9 +82,11 @@ describe('ClusterScalingService', () => {
       nodeScalingService as any,
       byosNodeRemoval as any,
       new ClusterBoundsRegistry(),
+      nodeEvents as any,
     );
     return {
       svc,
+      nodeEvents,
       queueAdd,
       saveOp,
       clusterRepo,

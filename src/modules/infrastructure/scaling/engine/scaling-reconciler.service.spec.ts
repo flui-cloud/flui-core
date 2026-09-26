@@ -78,6 +78,7 @@ function harness(last: ScalingDecisionEntity | null = null) {
     engine as unknown as ScalingEngineService,
     actuator as unknown as ScalingActuatorService,
     alarms as unknown as ScalingAlarmService,
+    { ring: jest.fn().mockResolvedValue(undefined) } as never,
   );
   return { service, decisions, engine, actuator, alarms, groups };
 }
@@ -104,6 +105,7 @@ describe('a cluster on its way out', () => {
       engine as unknown as ScalingEngineService,
       { act: jest.fn() } as unknown as ScalingActuatorService,
       { publish: jest.fn() } as unknown as ScalingAlarmService,
+      { ring: jest.fn().mockResolvedValue(undefined) } as never,
     );
 
     expect(await service.reconcileAll()).toBe(0);
@@ -211,6 +213,22 @@ describe('an expansion the fleet has fulfilled', () => {
     });
   });
 
+  it('closes a replacement once the node it named has left the fleet', async () => {
+    const h = harness();
+    h.engine.assess.mockResolvedValue(
+      assessment({
+        fulfilledExpansions: false,
+        fulfilledReplacements: ['n-1'],
+      }),
+    );
+
+    await h.service.reconcile(withOrders, cluster);
+
+    expect(h.groups.update).toHaveBeenCalledWith(withOrders.id, {
+      standingOrders: [withOrders.standingOrders[0]],
+    });
+  });
+
   it('is left alone while the fleet has not got there', async () => {
     const h = harness();
     h.engine.assess.mockResolvedValue(
@@ -220,5 +238,143 @@ describe('an expansion the fleet has fulfilled', () => {
     await h.service.reconcile(withOrders, cluster);
 
     expect(h.groups.update).not.toHaveBeenCalled();
+  });
+});
+
+describe('a purchase a person approves on a manual group', () => {
+  const intent = {
+    kind: 'add' as const,
+    shape: 'cpx22',
+    region: 'fsn1',
+    hourlyEur: 0.0267,
+    node: null,
+    fleetMonthlyEur: 8.49,
+    unpricedNodes: 0,
+    fleetNodes: 1,
+  };
+
+  function approving(acted: unknown) {
+    const manual = { ...group, provision: 'manual' } as ScalingGroupEntity;
+    const decisions = {
+      create: jest.fn((row: unknown) => row),
+      save: jest.fn(async (row: unknown) => row),
+    };
+    const actuator = { act: jest.fn().mockResolvedValue(acted) };
+    const service = new ScalingReconcilerService(
+      { findOne: jest.fn().mockResolvedValue(manual) } as never,
+      { findOne: jest.fn().mockResolvedValue(cluster) } as never,
+      decisions as never,
+      {
+        assess: jest
+          .fn()
+          .mockResolvedValue(
+            assessment({ intent, shape: 'cpx22', region: 'fsn1' }),
+          ),
+      } as never,
+      actuator as never,
+      { publish: jest.fn() } as never,
+      { ring: jest.fn().mockResolvedValue(undefined) } as never,
+    );
+    return { service, actuator, decisions };
+  }
+
+  it('buys once through the actuator, as if the group were automatic, and names who approved', async () => {
+    const { service, actuator } = approving({
+      outcome: 'added',
+      did: 'Ordered a cpx22 in fsn1; it joins once provisioned.',
+      why: 'This group buys automatically.',
+      asks: null,
+      operationId: 'op-1',
+    });
+    const row = await service.approvePurchase(
+      'g-1',
+      { shape: 'cpx22', region: 'fsn1' },
+      'ada@example.com',
+    );
+    expect(actuator.act.mock.calls[0][0].provision).toBe('automatic');
+    expect(row).toMatchObject({
+      outcome: 'added',
+      operationId: 'op-1',
+      did: 'Ordered a cpx22 in fsn1; it joins once provisioned. Approved by ada@example.com.',
+    });
+    expect(row.why).toContain('the group stays manual');
+  });
+
+  it('buys nothing when the proposal changed since the page was read', async () => {
+    const { service, actuator } = approving(null);
+    await expect(
+      service.approvePurchase('g-1', { shape: 'cx23', region: 'fsn1' }, 'ada'),
+    ).rejects.toThrow('it is now a cpx22 in fsn1');
+    expect(actuator.act).not.toHaveBeenCalled();
+  });
+
+  it("buys the ladder's choice even inside the settle window", async () => {
+    const manual = { ...group, provision: 'manual' } as ScalingGroupEntity;
+    const actuator = {
+      act: jest.fn().mockResolvedValue({
+        outcome: 'added',
+        did: 'Ordered a cpx22 in fsn1.',
+        why: 'x',
+        asks: null,
+        operationId: 'op-2',
+      }),
+    };
+    const service = new ScalingReconcilerService(
+      { findOne: jest.fn().mockResolvedValue(manual) } as never,
+      { findOne: jest.fn().mockResolvedValue(cluster) } as never,
+      {
+        create: jest.fn((r: unknown) => r),
+        save: jest.fn(async (r: unknown) => r),
+      } as never,
+      {
+        assess: jest.fn().mockResolvedValue(
+          assessment({
+            did: 'Nothing yet.',
+            intent: null,
+            preview: {
+              groupId: 'g-1',
+              pending: { app: 'ns/probe', cpu: '50m', memory: '3072Mi' },
+              opportunityHeldBecause: null,
+              ladder: [],
+              chosen: {
+                step: 1,
+                describes: 'x',
+                shape: 'cpx22',
+                region: 'fsn1',
+                hourlyEur: 0.0267,
+                outcome: 'would-buy',
+              },
+              asks: null,
+            } as never,
+          }),
+        ),
+      } as never,
+      actuator as never,
+      { publish: jest.fn() } as never,
+      { ring: jest.fn().mockResolvedValue(undefined) } as never,
+    );
+    const row = await service.approvePurchase(
+      'g-1',
+      { shape: 'cpx22', region: 'fsn1' },
+      'ada',
+    );
+    expect(actuator.act.mock.calls[0][2].intent).toMatchObject({
+      kind: 'add',
+      shape: 'cpx22',
+    });
+    expect(row.operationId).toBe('op-2');
+  });
+
+  it('says why when a gate refused', async () => {
+    const { service } = approving({
+      outcome: 'declined',
+      did: 'x',
+      why: 'A machine is already on its way to this cluster.',
+      asks: null,
+      operationId: null,
+    });
+    await expect(
+      service.approvePurchase('g-1', { shape: 'cpx22', region: 'fsn1' }, 'ada'),
+    ).rejects.toThrow('already on its way');
   });
 });

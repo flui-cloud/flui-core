@@ -136,3 +136,52 @@ export const RETRY_PURCHASE_CONSEQUENCE =
   'The group may buy again from its next pass, inside the same node and ' +
   'money ceilings. If the cause of the failure is still there, the next ' +
   'purchase fails the same way and the group holds back again.';
+
+export type ScalingModeKind = 'automatic' | 'manual' | 'alarm-only';
+
+export interface ScalingModeLabel {
+  mode: ScalingModeKind;
+  label: string;
+  attention: boolean;
+}
+
+export interface ScalingModeFacts {
+  provider: string;
+  canProvision: boolean;
+  provision: 'automatic' | 'manual';
+  maxMonthlyCost: number | null;
+  maxNodes: number;
+}
+
+/** The one name of the group's mode, the same word as its setting, said the same on every surface. */
+export function scalingModeLabel(facts: ScalingModeFacts): ScalingModeLabel {
+  if (!facts.canProvision) {
+    return {
+      mode: 'alarm-only',
+      label: `Alarm only — Flui cannot buy on ${facts.provider}`,
+      attention: false,
+    };
+  }
+  if (facts.provision !== 'automatic') {
+    return {
+      mode: 'manual',
+      label: 'Manual — Flui does not buy',
+      attention: true,
+    };
+  }
+  const nodes = `${facts.maxNodes} ${facts.maxNodes === 1 ? 'node' : 'nodes'}`;
+  return {
+    mode: 'automatic',
+    label:
+      facts.maxMonthlyCost === null
+        ? `Automatic — buys up to ${nodes}, no money ceiling`
+        : `Automatic — buys up to €${facts.maxMonthlyCost}/mo, ${nodes}`,
+    attention: false,
+  };
+}
+
+export const APPROVE_PURCHASE_CONSEQUENCE =
+  'One machine is bought now, the one the group proposes, inside its ceilings ' +
+  'in nodes and money, and billed from the moment it is created. The group ' +
+  'stays manual: nothing else is bought on its own. If the proposal changed ' +
+  'since it was read, nothing is bought.';

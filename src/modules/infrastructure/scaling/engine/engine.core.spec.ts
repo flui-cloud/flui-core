@@ -1,12 +1,17 @@
 import { CatalogueReading, unreadCatalogue } from '../catalogue/catalogue.core';
 import {
+  alarmBlock,
   whyEachMachine,
+  everyCandidate,
   LadderCapability,
   LadderInput,
   ShapeFact,
   evaluateShape,
+  evaluateStandingOrder,
   fleetOf,
+  listMonthlyOf,
   preferredShape,
+  pricePhrase,
   reasonsOf,
   requirementLine,
   walkLadder,
@@ -715,9 +720,224 @@ describe('why each machine was passed over', () => {
 
     expect(line).toContain('cx33 is sold out in fsn1 and hel1.');
     expect(line).toContain('cx23 is too small: it leaves');
+
+    const grid = everyCandidate(
+      input({
+        group: { ...input().group, shapes: ['cx33', 'cx23'] },
+        shapes: { shapes: [soldOut, small], read: true },
+      }),
+    );
+    const cells = grid.map((c) => `${c.shape}@${c.region}:${c.outcome}`);
+    expect(cells).toEqual(
+      expect.arrayContaining([
+        'cx33@fsn1:unavailable',
+        'cx23@fsn1:does-not-fit',
+      ]),
+    );
+    expect(new Set(grid.map((c) => c.shape))).toEqual(
+      new Set(['cx33', 'cx23']),
+    );
+    expect(grid).toHaveLength(2 * new Set(grid.map((c) => c.region)).size);
   });
 
   it('says nothing about a machine that could be bought', () => {
     expect(whyEachMachine(input())).not.toContain('cpx41');
+  });
+});
+
+describe('one monthly price everywhere', () => {
+  const shapes = {
+    read: true,
+    shapes: [
+      shape({
+        shape: 'cx33',
+        prices: [
+          { region: 'fsn1', hourlyEur: 0.0136, monthlyEur: 8.49 },
+          { region: 'hel1', hourlyEur: 0.0136, monthlyEur: 8.49 },
+        ],
+      }),
+      shape({
+        shape: 'cpx22',
+        prices: [{ region: 'fsn1', hourlyEur: 0.0267, monthlyEur: 19.49 }],
+      }),
+    ],
+  };
+
+  it('commits the list monthly price, not the hourly rate over 730 hours', () => {
+    const fleet = fleetOf(
+      [
+        { serverType: 'cx33', region: 'fsn1', hourlyPriceEur: 0.0136 },
+        { serverType: 'cpx22', region: 'fsn1', hourlyPriceEur: 0.0267 },
+      ],
+      { nodes: 2, shape: null },
+      shapes,
+    );
+    expect(fleet.committedMonthlyEur).toBeCloseTo(27.98, 2);
+  });
+
+  it('falls back to hourly × 730 only where no monthly price is published', () => {
+    const fleet = fleetOf(
+      [{ serverType: 'unknown', region: 'fsn1', hourlyPriceEur: 0.01 }],
+      { nodes: 1, shape: null },
+      shapes,
+    );
+    expect(fleet.committedMonthlyEur).toBeCloseTo(7.3, 5);
+  });
+
+  it('lets a purchase through that the list price keeps under the ceiling', () => {
+    const ladder = walkLadder(
+      input({
+        group: {
+          provider: 'hetzner',
+          regions: ['fsn1'],
+          shapes: ['cpx22'],
+          strategy: 'closest',
+          hourlyBillingOnly: false,
+          maxMonthlyCost: 30,
+          requirement: null,
+          capability: HETZNER,
+        },
+        fleet: fleetOf(
+          [{ serverType: 'cx33', region: 'fsn1', hourlyPriceEur: 0.0136 }],
+          { nodes: 1, shape: null },
+          shapes,
+        ),
+        demand: { name: 'app', cpuMillicores: 100, memoryMi: 1024 },
+        shapes,
+      }),
+    );
+    expect(ladder.chosen?.shape).toBe('cpx22');
+  });
+
+  it('says the monthly price the provider bills', () => {
+    expect(
+      pricePhrase({ shape: 'cx33', region: 'fsn1', hourlyEur: 0.0136 }, shapes),
+    ).toBe(' at €0.0136/h, €8.49 a month');
+    expect(listMonthlyOf(shapes, 'cx33', 'nbg1', 0.0136)).toBeCloseTo(9.928, 3);
+  });
+});
+
+describe('the block an alarm names, and the ways out', () => {
+  const demand = { name: 'app', cpuMillicores: 100, memoryMi: 6144 };
+
+  it('names the spend cap and the smallest ceiling that is enough', () => {
+    const block = alarmBlock(
+      input({
+        demand,
+        group: {
+          provider: 'hetzner',
+          regions: ['fsn1'],
+          shapes: ['cpx41'],
+          strategy: 'closest',
+          hourlyBillingOnly: false,
+          maxMonthlyCost: 25,
+          requirement: null,
+          capability: HETZNER,
+        },
+      }),
+    );
+    expect(block.headline).toBe('Scaling needed — blocked by the spend cap');
+    expect(block.exits[0]).toMatchObject({
+      kind: 'raise-cap',
+      toEur: 31,
+      label: 'Raise the cap to €31',
+    });
+    expect(block.exits.map((e) => e.kind)).toContain('attach');
+  });
+
+  it('says no machine is big enough, and names one that would be', () => {
+    const block = alarmBlock(
+      input({
+        demand,
+        group: {
+          provider: 'hetzner',
+          regions: ['fsn1'],
+          shapes: ['cx22'],
+          strategy: 'closest',
+          hourlyBillingOnly: false,
+          maxMonthlyCost: null,
+          requirement: null,
+          capability: HETZNER,
+        },
+      }),
+    );
+    expect(block.headline).toBe(
+      'Scaling needed — no machine on the list is big enough',
+    );
+    expect(block.exits.find((e) => e.kind === 'add-shape')).toMatchObject({
+      shape: 'cx32',
+      label: 'Add cx32 to the machine list',
+    });
+  });
+
+  it('names the node ceiling when the fleet is at it', () => {
+    const block = alarmBlock(input({ demand, ceiling: 2 }));
+    expect(block.headline).toContain('at its ceiling of 2 nodes');
+    expect(block.exits[0]).toMatchObject({
+      kind: 'raise-max-nodes',
+      toNodes: 3,
+    });
+  });
+
+  it('offers only attaching where Flui cannot buy', () => {
+    const block = alarmBlock(
+      input({
+        demand,
+        group: { ...input().group, capability: CONTABO, provider: 'contabo' },
+      }),
+    );
+    expect(block.exits.map((e) => e.kind)).toEqual(['attach']);
+  });
+});
+
+describe('a standing order in any region', () => {
+  it('tries the cluster region first, then the others the group may buy in', () => {
+    const rungs = evaluateStandingOrder(input(), 'cpx41', 'any');
+    expect(rungs.map((r) => r.region)).toEqual(['fsn1', 'hel1']);
+    expect(rungs.every((r) => r.outcome === 'would-buy')).toBe(true);
+  });
+
+  it('wins in the region that has it when home is sold out', () => {
+    const rungs = evaluateStandingOrder(
+      input({
+        demand: null,
+        catalogue: reading([
+          {
+            shape: 'cpx41',
+            state: 'sold-out',
+            everywhere: false,
+            upIn: ['hel1'],
+            downIn: ['fsn1'],
+          },
+        ]),
+      }),
+      'cpx41',
+      'any',
+    );
+    expect(rungs.find((r) => r.outcome === 'would-buy')?.region).toBe('hel1');
+    expect(rungs.find((r) => r.region === 'fsn1')?.outcome).toBe('unavailable');
+  });
+
+  it('keeps to the regions the network reaches', () => {
+    const rungs = evaluateStandingOrder(
+      input({ reachableRegions: ['fsn1'] }),
+      'cpx41',
+      'any',
+    );
+    expect(rungs.map((r) => r.region)).toEqual(['fsn1']);
+  });
+
+  it('says so when no region is left', () => {
+    const [rung] = evaluateStandingOrder(
+      input({ reachableRegions: [] }),
+      'cpx41',
+      'any',
+    );
+    expect(rung.outcome).toBe('unavailable');
+    expect(rung.note).toContain('names no region');
+  });
+
+  it('leaves a named region as one rung', () => {
+    expect(evaluateStandingOrder(input(), 'cx32', 'fsn1')).toHaveLength(1);
   });
 });

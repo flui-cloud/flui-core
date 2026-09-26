@@ -1,4 +1,10 @@
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  NotFoundException,
+  Optional,
+} from '@nestjs/common';
+import { PrometheusQueryService } from '../../../observability/services/prometheus-query.service';
 import { InjectRepository } from '@nestjs/typeorm';
 import { In, Repository } from 'typeorm';
 import { ClusterEntity } from '../entities/cluster.entity';
@@ -7,10 +13,12 @@ import { NodeBillableIntervalEntity } from '../entities/node-billable-interval.e
 import {
   FleetHistoryDto,
   FleetHistoryPointDto,
+  FleetLoadDto,
 } from '../dto/fleet-history.dto';
 import { NodePriceService } from './node-price.service';
 
-const HOUR_MS = 60 * 60 * 1000;
+const MINUTE_MS = 60 * 1000;
+const HOUR_MS = 60 * MINUTE_MS;
 const DAY_MS = 24 * HOUR_MS;
 
 const DEFAULT_DAYS = 30;
@@ -33,6 +41,41 @@ export interface FleetInterval {
 export interface FleetHistoryOptions {
   days?: number;
   stepHours?: number;
+  /** A window shorter than a day; wins over `days` when set. */
+  hours?: number;
+  /** A step shorter than an hour; wins over `stepHours` when set. */
+  stepMinutes?: number;
+  /** A window with both ends named, for a stretch picked on the chart; wins over the rest. */
+  from?: Date;
+  to?: Date;
+}
+
+const MIN_WINDOW_MS = 5 * MINUTE_MS;
+
+/** The window and step a history is sampled over. */
+export function fleetWindow(
+  options: FleetHistoryOptions,
+  now: number,
+): { from: number; to: number; stepMs: number } {
+  if (options.from && options.to) {
+    const to = Math.min(options.to.getTime(), now);
+    const from = Math.min(options.from.getTime(), to - MIN_WINDOW_MS);
+    const span = to - from;
+    const asked = options.stepMinutes ? options.stepMinutes * MINUTE_MS : 0;
+    const fitted = Math.ceil(span / MAX_POINTS / MINUTE_MS) * MINUTE_MS;
+    return { from, to, stepMs: Math.max(asked, fitted, MINUTE_MS) };
+  }
+  const span = options.hours
+    ? clamp(options.hours, 1, MAX_DAYS * 24) * HOUR_MS
+    : clamp(options.days ?? DEFAULT_DAYS, 1, MAX_DAYS) * DAY_MS;
+  const step = options.stepMinutes
+    ? clamp(options.stepMinutes, 1, MAX_STEP_HOURS * 60) * MINUTE_MS
+    : clamp(options.stepHours ?? DEFAULT_STEP_HOURS, 1, MAX_STEP_HOURS) *
+      HOUR_MS;
+  // Widened rather than truncated, so a long window answers about the whole
+  // span it was asked about instead of about its tail.
+  const stepMs = Math.max(step, span / MAX_POINTS);
+  return { from: now - span, to: now, stepMs };
 }
 
 /**
@@ -52,9 +95,12 @@ export function resolveShape(interval: {
 }
 
 /**
- * How many nodes of each shape were alive at each sample, and what they cost
+ * How many nodes of each shape were alive during each step, and what they cost
  * per hour. One series per shape, because "3 nodes" says neither whether the
  * next pod fits nor why the bill moved; which three does.
+ *
+ * A node counts for a step if it lived at any moment of it, not only at the
+ * instant the step ends, so a short-lived node is never lost between samples.
  */
 export function sampleFleet(
   intervals: FleetInterval[],
@@ -73,7 +119,7 @@ export function sampleFleet(
     for (const interval of intervals) {
       const alive =
         interval.startedAt <= at &&
-        (interval.endedAt === null || interval.endedAt > at);
+        (interval.endedAt === null || interval.endedAt > at - stepMs);
       if (!alive) continue;
 
       byShape[interval.shape] = (byShape[interval.shape] ?? 0) + 1;
@@ -84,6 +130,7 @@ export function sampleFleet(
 
     points.push({
       at: new Date(at),
+      load: null,
       byShape,
       nodes,
       // Six decimals is the column's own precision; summing floats past it
@@ -120,6 +167,7 @@ export class FleetHistoryService {
     @InjectRepository(NodeBillableIntervalEntity)
     private readonly intervalRepository: Repository<NodeBillableIntervalEntity>,
     private readonly nodePriceService: NodePriceService,
+    @Optional() private readonly prometheus?: PrometheusQueryService,
   ) {}
 
   async getHistory(
@@ -133,7 +181,7 @@ export class FleetHistoryService {
       throw new NotFoundException(`Cluster ${clusterId} not found`);
     }
 
-    const { from, to, stepMs } = this.resolveWindow(options);
+    const { from, to, stepMs } = fleetWindow(options, Date.now());
     const rows = await this.loadIntervals(clusterId, from, to);
     const priced = await this.price(rows);
 
@@ -145,10 +193,14 @@ export class FleetHistoryService {
       from: new Date(from),
       to: new Date(to),
       stepSeconds: stepMs / 1000,
-      points: sampleFleet(
-        priced.map((entry) => entry.fleet),
-        from,
-        to,
+      points: withLoad(
+        sampleFleet(
+          priced.map((entry) => entry.fleet),
+          from,
+          to,
+          stepMs,
+        ),
+        await this.load(clusterId, from, to, stepMs),
         stepMs,
       ),
       orphanedIntervals: orphaned.length,
@@ -157,23 +209,65 @@ export class FleetHistoryService {
     };
   }
 
-  private resolveWindow(options: FleetHistoryOptions): {
-    from: number;
-    to: number;
-    stepMs: number;
-  } {
-    const days = clamp(options.days ?? DEFAULT_DAYS, 1, MAX_DAYS);
-    const stepHours = clamp(
-      options.stepHours ?? DEFAULT_STEP_HOURS,
-      1,
-      MAX_STEP_HOURS,
-    );
-    const to = Date.now();
-    const span = days * DAY_MS;
-    // Widened rather than truncated, so a long window answers about the whole
-    // span it was asked about instead of about its tail.
-    const stepMs = Math.max(stepHours * HOUR_MS, span / MAX_POINTS);
-    return { from: to - span, to, stepMs };
+  /**
+   * Reserved and allocatable over the window, read from the cluster's own
+   * kube-state-metrics. Reserved counts running pods only: a pod waiting for
+   * room reserves nothing on any node yet.
+   */
+  private async load(
+    clusterId: string,
+    from: number,
+    to: number,
+    stepMs: number,
+  ): Promise<Map<number, FleetLoadDto>> {
+    if (!this.prometheus) return new Map();
+    const c = `cluster_id="${clusterId}"`;
+    const running = `max by (namespace, pod) (kube_pod_status_phase{${c},phase="Running"} == 1)`;
+    const reserved = (resource: string) =>
+      `sum(kube_pod_container_resource_requests{${c},resource="${resource}"} * on (namespace, pod) group_left() ${running})`;
+    const capacity = (resource: string) =>
+      `sum(kube_node_status_allocatable{${c},resource="${resource}"})`;
+    const step = `${Math.round(stepMs / 1000)}s`;
+    const range = async (query: string) => {
+      try {
+        const res = await this.prometheus!.queryRange(
+          query,
+          Math.floor(from / 1000),
+          Math.floor(to / 1000),
+          step,
+        );
+        return (res?.data?.result?.[0]?.values ?? []) as Array<
+          [number, string]
+        >;
+      } catch (err) {
+        this.logger.warn(
+          `Load history unavailable for ${clusterId}: ${(err as Error).message}`,
+        );
+        return [];
+      }
+    };
+    const [memRes, memCap, cpuRes, cpuCap] = await Promise.all([
+      range(reserved('memory')),
+      range(capacity('memory')),
+      range(reserved('cpu')),
+      range(capacity('cpu')),
+    ]);
+    const byTime = (values: Array<[number, string]>) =>
+      new Map(values.map(([t, v]) => [t * 1000, Number(v)]));
+    const mr = byTime(memRes);
+    const mc = byTime(memCap);
+    const cr = byTime(cpuRes);
+    const cc = byTime(cpuCap);
+    const out = new Map<number, FleetLoadDto>();
+    for (const [t, capMem] of mc) {
+      out.set(t, {
+        reservedMemoryMi: Math.round((mr.get(t) ?? 0) / 1024 / 1024),
+        capacityMemoryMi: Math.round(capMem / 1024 / 1024),
+        reservedCpuMillicores: Math.round((cr.get(t) ?? 0) * 1000),
+        capacityCpuMillicores: Math.round((cc.get(t) ?? 0) * 1000),
+      });
+    }
+    return out;
   }
 
   private loadIntervals(
@@ -283,4 +377,27 @@ export class FleetHistoryService {
 function clamp(value: number, min: number, max: number): number {
   if (!Number.isFinite(value)) return min;
   return Math.min(Math.max(Math.trunc(value), min), max);
+}
+
+/** Each sample takes the load reading nearest to it, within half a step. */
+export function withLoad(
+  points: FleetHistoryPointDto[],
+  load: Map<number, FleetLoadDto>,
+  stepMs: number,
+): FleetHistoryPointDto[] {
+  if (!load.size) return points;
+  const times = [...load.keys()].sort((a, b) => a - b);
+  return points.map((point) => {
+    const at = point.at.getTime();
+    let best: number | null = null;
+    for (const t of times) {
+      if (
+        Math.abs(t - at) <= stepMs / 2 &&
+        (best === null || Math.abs(t - at) < Math.abs(best - at))
+      ) {
+        best = t;
+      }
+    }
+    return { ...point, load: best === null ? null : (load.get(best) ?? null) };
+  });
 }

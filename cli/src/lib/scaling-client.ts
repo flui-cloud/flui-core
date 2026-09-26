@@ -184,6 +184,16 @@ export class ScalingClient {
     );
   }
 
+  approvePurchase(
+    id: string,
+    machine: { shape: string; region: string },
+  ): Promise<ScalingDecisionResponseDto> {
+    return this.api.post<ScalingDecisionResponseDto>(
+      `/infrastructure/scaling-groups/${id}/approve-purchase`,
+      machine,
+    );
+  }
+
   /** The same engine the reconciler runs, asked on demand and spending nothing. */
   preview(id: string): Promise<ScalingPreviewDto> {
     return this.api.get<ScalingPreviewDto>(
@@ -191,9 +201,13 @@ export class ScalingClient {
     );
   }
 
-  decisions(id: string, limit: number): Promise<ScalingDecisionResponseDto[]> {
+  decisions(
+    id: string,
+    limit: number,
+    filter: DecisionQuery = {},
+  ): Promise<ScalingDecisionResponseDto[]> {
     return this.api.get<ScalingDecisionResponseDto[]>(
-      `/infrastructure/scaling-groups/${id}/decisions?limit=${limit}`,
+      `/infrastructure/scaling-groups/${id}/decisions?${queryOf(limit, filter)}`,
     );
   }
 
@@ -204,11 +218,31 @@ export class ScalingClient {
   clusterDecisions(
     clusterId: string,
     limit: number,
+    filter: DecisionQuery = {},
   ): Promise<ClusterScalingDecisionDto[]> {
     return this.api.get<ClusterScalingDecisionDto[]>(
-      `/infrastructure/clusters/${clusterId}/scaling-decisions?limit=${limit}`,
+      `/infrastructure/clusters/${clusterId}/scaling-decisions?${queryOf(limit, filter)}`,
     );
   }
+}
+
+export interface DecisionQuery {
+  outcome?: string;
+  force?: string;
+  since?: string;
+  until?: string;
+  before?: string;
+}
+
+function queryOf(limit: number, filter: DecisionQuery): string {
+  const params = new URLSearchParams({
+    limit: String(limit),
+    collapse: 'true',
+  });
+  for (const [key, value] of Object.entries(filter)) {
+    if (value) params.set(key, value);
+  }
+  return params.toString();
 }
 
 export interface ResolvedGroup {

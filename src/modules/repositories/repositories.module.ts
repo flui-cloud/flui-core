@@ -33,7 +33,7 @@ import { RepositoriesController } from './controllers/repositories.controller';
 import { GitHubOAuthController } from './controllers/github-oauth.controller';
 import { GitHubSetupController } from './controllers/github-setup.controller';
 import { GithubAppOAuthController } from './controllers/github-app-oauth.controller';
-import { UserEventsGateway } from '../auth/gateway/user-events.gateway';
+import { UserEventsModule } from '../auth/gateway/user-events.module';
 import { WsAuthModule } from '../auth/ws-auth.module';
 import { ClustersModule } from '../infrastructure/clusters/clusters.module';
 import { SharedInfrastructureModule } from '../infrastructure/shared/shared-infrastructure.module';
@@ -45,6 +45,7 @@ import { ApplicationsModule } from '../applications/applications.module';
 
 @Module({
   imports: [
+    UserEventsModule,
     ConfigModule,
     HttpModule,
     TypeOrmModule.forFeature([
@@ -91,7 +92,6 @@ import { ApplicationsModule } from '../applications/applications.module';
     GithubAppInstallStateService,
     GithubAppManifestStateService,
     GithubAppUserAuthService,
-    UserEventsGateway,
     EnvExtractorService,
     DockerfileAnalyzerService,
     WorkflowGeneratorService,
@@ -116,7 +116,7 @@ import { ApplicationsModule } from '../applications/applications.module';
     GitHubTokenResolverService,
     GithubAppUserAuthService,
     GithubAppManifestStateService,
-    UserEventsGateway,
+    UserEventsModule,
     EnvExtractorService,
     DockerfileAnalyzerService,
     WorkflowGeneratorService,

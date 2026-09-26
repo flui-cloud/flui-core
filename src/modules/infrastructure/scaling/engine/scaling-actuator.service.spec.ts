@@ -147,7 +147,7 @@ describe('the only thing with hands', () => {
     );
 
     expect(h.clusters.addWorkers).not.toHaveBeenCalled();
-    expect(acted?.why).toContain('decide and not to act');
+    expect(acted?.why).toContain('buys nothing on its own');
   });
 
   it('asks a person when urgency is held back only by consent', async () => {

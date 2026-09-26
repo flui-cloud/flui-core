@@ -1,4 +1,23 @@
 import { ApiProperty } from '@nestjs/swagger';
+import { Sensitivity } from '../../../mask/decorators/sensitivity.decorator';
+
+export class FleetLoadDto {
+  @ApiProperty({ description: 'Memory reserved by running pods' })
+  @Sensitivity(Sensitivity.PUBLIC)
+  reservedMemoryMi: number;
+
+  @ApiProperty({ description: 'Memory the nodes can hold' })
+  @Sensitivity(Sensitivity.PUBLIC)
+  capacityMemoryMi: number;
+
+  @ApiProperty({ description: 'CPU reserved by running pods' })
+  @Sensitivity(Sensitivity.PUBLIC)
+  reservedCpuMillicores: number;
+
+  @ApiProperty({ description: 'CPU the nodes can hold' })
+  @Sensitivity(Sensitivity.PUBLIC)
+  capacityCpuMillicores: number;
+}
 
 export class FleetHistoryPointDto {
   @ApiProperty({ description: 'Instant this sample describes' })
@@ -28,6 +47,15 @@ export class FleetHistoryPointDto {
     description: 'Nodes alive at this instant with no price to add',
   })
   unpricedNodes: number;
+
+  @ApiProperty({
+    type: FleetLoadDto,
+    nullable: true,
+    description:
+      'What running apps reserved against what the nodes could hold at this instant — the figures scaling decides on. Null where the cluster records no such metrics for that instant.',
+  })
+  @Sensitivity(Sensitivity.PUBLIC)
+  load: FleetLoadDto | null;
 }
 
 export class FleetHistoryDto {

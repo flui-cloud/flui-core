@@ -12,6 +12,9 @@ const node = (
   takesWork,
   allocatable: { cpuMillicores: alloc[0], memoryMi: alloc[1] },
   requested: { cpuMillicores: used[0], memoryMi: used[1] },
+  limits: { cpuMillicores: used[0], memoryMi: used[1] },
+  used: null,
+  apps: [],
 });
 
 describe('how much room the fleet has left', () => {

@@ -1,4 +1,6 @@
 import { ApiProperty } from '@nestjs/swagger';
+import { Sensitivity } from '../../../mask/decorators/sensitivity.decorator';
+import { ScalingModeKind } from '../scaling-consequence';
 import {
   CandidateOutcome,
   DecisionOutcome,
@@ -157,7 +159,32 @@ export class StandingOrderResponseDto {
  * *provider* permits, and a group set only to decide would otherwise read as
  * one that buys.
  */
-export class ScalingActuationDto {
+export class ScalingModeDto {
+  @ApiProperty({
+    enum: ['automatic', 'manual', 'alarm-only'],
+    description:
+      '`alarm-only` where the provider has no create API, whatever the group says',
+  })
+  @Sensitivity(Sensitivity.PUBLIC)
+  mode: ScalingModeKind;
+
+  @ApiProperty({
+    example: 'Manual — Flui does not buy',
+    description:
+      'The mode in the same words on every surface: "Manual — Flui does not buy", "Automatic — buys up to €30/mo, 3 nodes", "Alarm only — Flui cannot buy on contabo"',
+  })
+  @Sensitivity(Sensitivity.PUBLIC)
+  label: string;
+
+  @ApiProperty({
+    description:
+      'True where a person may expect scaling that will not happen: a group Flui could buy for, set to manual',
+  })
+  @Sensitivity(Sensitivity.PUBLIC)
+  attention: boolean;
+}
+
+export class ScalingActuationDto extends ScalingModeDto {
   @ApiProperty({
     description: 'Whether a decision by this group would reach a provider',
   })
@@ -180,6 +207,76 @@ export class PurchaseHoldDto {
     description: 'What the provider or Flui said',
   })
   error: string | null;
+
+  @ApiProperty({
+    nullable: true,
+    description:
+      'Set when the machine was sold out: nothing was created, and the hold ends by itself at this time, when availability decides again. Null means it holds until a person asks to try again.',
+  })
+  @Sensitivity(Sensitivity.PUBLIC)
+  until: string | null;
+}
+
+export class DecisionOperationDto {
+  @ApiProperty({
+    description:
+      'GET /infrastructure/operations/:id for the whole record, /log for the node install log',
+  })
+  id: string;
+
+  @ApiProperty({
+    enum: ['pending', 'running', 'completed', 'failed', 'cancelled'],
+  })
+  state: 'pending' | 'running' | 'completed' | 'failed' | 'cancelled';
+
+  @ApiProperty({ description: '0–100' })
+  progress: number;
+
+  @ApiProperty({ nullable: true, description: 'What it is doing, or last did' })
+  step: string | null;
+
+  @ApiProperty({ nullable: true, description: 'Why it failed' })
+  error: string | null;
+
+  @ApiProperty({ nullable: true })
+  finishedAt: string | null;
+}
+
+export class PurchaseInFlightDto {
+  @Sensitivity(Sensitivity.PUBLIC)
+  @ApiProperty({ description: 'The decision that ordered it' })
+  decisionId: string;
+
+  @Sensitivity(Sensitivity.PUBLIC)
+  @ApiProperty({ example: '2026-09-25T13:35:00.000Z' })
+  decidedAt: string;
+
+  @Sensitivity(Sensitivity.PUBLIC)
+  @ApiProperty({ nullable: true })
+  shape: string | null;
+
+  @Sensitivity(Sensitivity.PUBLIC)
+  @ApiProperty({ nullable: true })
+  region: string | null;
+
+  @Sensitivity(Sensitivity.PUBLIC)
+  @ApiProperty({
+    enum: ['buying', 'joined', 'failed'],
+    description:
+      '`buying` while the operation runs; `joined` for a while after it completed; `failed` until the group is let buy again',
+  })
+  state: 'buying' | 'joined' | 'failed';
+
+  @Sensitivity(Sensitivity.ARBITRARY_TEXT)
+  @ApiProperty({
+    description:
+      'One line: "Buying cx23 in fsn1 — installing (60%)", "cx23 in fsn1 joined at 13:37, 2 min after it was ordered"',
+  })
+  says: string;
+
+  @Sensitivity(Sensitivity.PUBLIC)
+  @ApiProperty({ type: DecisionOperationDto })
+  operation: DecisionOperationDto;
 }
 
 export class ScalingGroupResponseDto {
@@ -257,6 +354,15 @@ export class ScalingGroupResponseDto {
       'Set while a failed purchase holds this group back: nothing more is bought until someone asks it to try again (POST /infrastructure/scaling-groups/:id/retry-purchase) or a later purchase goes through.',
   })
   purchaseHeld: PurchaseHoldDto | null;
+
+  @Sensitivity(Sensitivity.PUBLIC)
+  @ApiProperty({
+    type: PurchaseInFlightDto,
+    nullable: true,
+    description:
+      'The last purchase this group ordered, while it is on its way and for 30 minutes after it joined or failed. Null when nothing was bought lately.',
+  })
+  purchase: PurchaseInFlightDto | null;
 }
 
 export class ConsideredCandidateDto {
@@ -285,31 +391,6 @@ export class ConsideredCandidateDto {
   note?: string;
 }
 
-export class DecisionOperationDto {
-  @ApiProperty({
-    description:
-      'GET /infrastructure/operations/:id for the whole record, /log for the node install log',
-  })
-  id: string;
-
-  @ApiProperty({
-    enum: ['pending', 'running', 'completed', 'failed', 'cancelled'],
-  })
-  state: 'pending' | 'running' | 'completed' | 'failed' | 'cancelled';
-
-  @ApiProperty({ description: '0–100' })
-  progress: number;
-
-  @ApiProperty({ nullable: true, description: 'What it is doing, or last did' })
-  step: string | null;
-
-  @ApiProperty({ nullable: true, description: 'Why it failed' })
-  error: string | null;
-
-  @ApiProperty({ nullable: true })
-  finishedAt: string | null;
-}
-
 export class ScalingDecisionResponseDto {
   @ApiProperty()
   id: string;
@@ -321,7 +402,7 @@ export class ScalingDecisionResponseDto {
   force: ScalingForce;
 
   @ApiProperty({
-    enum: ['added', 'replaced', 'removed', 'declined', 'alerted'],
+    enum: ['added', 'replaced', 'removed', 'declined', 'alerted', 'changed'],
   })
   outcome: DecisionOutcome;
 
@@ -364,6 +445,22 @@ export class ScalingDecisionResponseDto {
       'The purchase or removal this decision started, as it stands now. Null where the decision started nothing.',
   })
   operation: DecisionOperationDto | null;
+
+  @ApiProperty({
+    required: false,
+    description:
+      'With collapse=true: how many identical decisions in a row this one stands for (1 when it stands alone)',
+  })
+  @Sensitivity(Sensitivity.PUBLIC)
+  repeats?: number;
+
+  @ApiProperty({
+    required: false,
+    description:
+      'With collapse=true and repeats above 1: when the first of them was taken; `at` is the latest',
+  })
+  @Sensitivity(Sensitivity.PUBLIC)
+  since?: string;
 }
 
 /**
@@ -476,6 +573,15 @@ export class ClusterScalingRowDto {
       'Whether any group of this cluster is set to act, not merely to decide. False beside a provider Flui can buy from is the case worth naming: the provider allows a purchase that no group here will make.',
   })
   acts: boolean;
+
+  @ApiProperty({
+    type: ScalingModeDto,
+    nullable: true,
+    description:
+      "The first group's mode, as its own page says it. Null with no group.",
+  })
+  @Sensitivity(Sensitivity.PUBLIC)
+  mode: ScalingModeDto | null;
 
   @ApiProperty()
   openOrders: number;

@@ -103,6 +103,26 @@ describe('the gate between deciding and acting', () => {
     expect(verdict.because).toContain('ask this group to try again');
   });
 
+  it('says a sold-out order ends by itself, without asking anyone to try again', () => {
+    const verdict = mayAct(
+      facts({
+        failedPurchase: {
+          at: new Date('2026-09-24T14:17:30Z'),
+          error:
+            'Hetzner API Error: server type unavailable (resource_unavailable)',
+          until: new Date('2026-09-24T14:27:30Z'),
+        },
+      }),
+    );
+    expect(verdict).toMatchObject({
+      act: false,
+      refusal: 'last-purchase-failed',
+    });
+    expect(verdict.because).toContain('nothing was created');
+    expect(verdict.because).toContain('from 14:27 UTC');
+    expect(verdict.because).not.toContain('try again');
+  });
+
   /**
    * The same failure, read a minute apart, must say the same thing: a repeated
    * decision is only recognised as one while its sentence does not change.
@@ -123,6 +143,17 @@ describe('the gate between deciding and acting', () => {
       }),
     );
     expect(verdict.act).toBe(true);
+  });
+
+  it('gives back the node a replacement bought a stand-in for, without the pause', () => {
+    const verdict = mayAct(
+      facts({
+        intent: remove({ completesReplacement: true }),
+        minutesSinceAdded: 1,
+        lastJoinedAt: new Date('2026-09-24T14:18:39Z'),
+      }),
+    );
+    expect(verdict.refusal).not.toBe('just-added');
   });
 
   it('gives nothing back within the pause after a node has joined', () => {

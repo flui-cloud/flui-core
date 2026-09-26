@@ -13,7 +13,11 @@ import {
 } from '../../clusters/entities/cluster-node.entity';
 import { KubernetesService } from '../../shared/services/kubernetes.service';
 import { EncryptionService } from '../../../shared/encryption/services/encryption.service';
-import { podRequest } from '../../clusters/services/unschedulable-pods.service';
+import {
+  appOfPod,
+  podLimit,
+  podRequest,
+} from '../../clusters/services/unschedulable-pods.service';
 import { DrainBudget, DrainCheck, DrainPod, checkDrain } from './drain.core';
 import { NODE_RESERVE } from './engine.core';
 import { FitCheck, MovingPod, NodeRoom, checkFit } from './fit.core';
@@ -134,7 +138,7 @@ export class DrainFeasibilityService {
         if (on === node.serverName) {
           if (!stays(pod)) {
             moving.push({
-              name: `${ask.namespace}/${ask.name}`,
+              name: ask.app,
               cpuMillicores: ask.cpuMillicores,
               memoryMi: ask.memoryMi,
             });
@@ -180,7 +184,10 @@ export class DrainFeasibilityService {
    *
    * Null when the cluster could not be asked — never an empty fleet.
    */
-  async fleetRoom(cluster: ClusterEntity): Promise<FleetRoom | null> {
+  async fleetRoom(
+    cluster: ClusterEntity,
+    releasing: (pod: k8s.V1Pod) => boolean = () => false,
+  ): Promise<FleetRoom | null> {
     if (!cluster.kubeconfigEncrypted) return null;
     try {
       const kubeconfig = this.encryption.decrypt(cluster.kubeconfigEncrypted);
@@ -196,15 +203,28 @@ export class DrainFeasibilityService {
       ]);
 
       const requested = new Map<string, { cpu: number; memory: number }>();
+      const limited = new Map<string, { cpu: number; memory: number }>();
+      const appsOn = new Map<string, Set<string>>();
       for (const pod of pods.items ?? []) {
         const on = pod.spec?.nodeName;
-        if (!on) continue;
+        if (!on || releasing(pod)) continue;
         const ask = podRequest(pod, this.kubernetes);
         const sum = requested.get(on) ?? { cpu: 0, memory: 0 };
         sum.cpu += ask.cpuMillicores;
         sum.memory += ask.memoryMi;
         requested.set(on, sum);
+        const cap = podLimit(pod, this.kubernetes);
+        const ceiling = limited.get(on) ?? { cpu: 0, memory: 0 };
+        ceiling.cpu += cap.cpuMillicores;
+        ceiling.memory += cap.memoryMi;
+        limited.set(on, ceiling);
+        if (pod.metadata?.labels?.['flui-app-id']) {
+          const here = appsOn.get(on) ?? new Set<string>();
+          here.add(appOfPod(pod));
+          appsOn.set(on, here);
+        }
       }
+      const usage = await this.nodeUsage(kubeconfig);
 
       const inputs: NodeRoomInput[] = (nodes.items ?? []).map((item) => {
         const name = item.metadata?.name ?? '';
@@ -219,6 +239,14 @@ export class DrainFeasibilityService {
             memoryMi: this.kubernetes.parseMemory(allocatable['memory'] ?? '0'),
           },
           requested: { cpuMillicores: used.cpu, memoryMi: used.memory },
+          limits: {
+            cpuMillicores: limited.get(name)?.cpu ?? 0,
+            memoryMi: limited.get(name)?.memory ?? 0,
+          },
+          used: usage?.get(name) ?? null,
+          apps: [...(appsOn.get(name) ?? [])].sort((a, b) =>
+            a < b ? -1 : Number(a > b),
+          ),
         };
       });
 
@@ -227,6 +255,27 @@ export class DrainFeasibilityService {
       this.logger.warn(
         `Fleet room unavailable for ${cluster.name}: ${(err as Error).message}`,
       );
+      return null;
+    }
+  }
+
+  private async nodeUsage(
+    kubeconfig: string,
+  ): Promise<Map<string, { cpuMillicores: number; memoryMi: number }> | null> {
+    try {
+      const metrics = await new k8s.Metrics(
+        this.kubernetes.makeKubeConfig(kubeconfig),
+      ).getNodeMetrics();
+      return new Map(
+        (metrics.items ?? []).map((item) => [
+          item.metadata?.name ?? '',
+          {
+            cpuMillicores: this.kubernetes.parseCpu(item.usage?.cpu ?? '0'),
+            memoryMi: this.kubernetes.parseMemory(item.usage?.memory ?? '0'),
+          },
+        ]),
+      );
+    } catch {
       return null;
     }
   }

@@ -102,11 +102,11 @@ export default class ScalingList extends Command {
 
     console.log(
       chalk.dim(
-        `  ${'CLUSTER'.padEnd(20)} ${'SCALING'.padEnd(18)} ${'GROUPS'.padEnd(22)} ` +
+        `  ${'CLUSTER'.padEnd(20)} ${'MODE'.padEnd(38)} ${'GROUPS'.padEnd(22)} ` +
           `${'NODES'.padEnd(6)} ${'BOUNDS'.padEnd(12)} ${'MONTHLY'.padEnd(18)} WAITING`,
       ),
     );
-    console.log(chalk.dim('  ' + '─'.repeat(110)));
+    console.log(chalk.dim('  ' + '─'.repeat(130)));
 
     for (const row of rows) {
       const bounds = row.bounds
@@ -181,8 +181,11 @@ export default class ScalingList extends Command {
   }
 
   private capabilityCell(row: ClusterScalingRowDto): string {
-    const label = capabilityLabel(row.capability);
-    const cell = label.padEnd(18);
+    if (row.mode?.label) {
+      const cell = row.mode.label.padEnd(38);
+      return row.mode.attention ? chalk.yellow(cell) : cell;
+    }
+    const cell = capabilityLabel(row.capability).padEnd(38);
     return row.capability.canProvision ? cell : chalk.yellow(cell);
   }
 

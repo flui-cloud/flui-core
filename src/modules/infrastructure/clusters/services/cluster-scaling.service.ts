@@ -25,6 +25,7 @@ import {
 } from './cluster-bounds.registry';
 import { ByosNodeRemovalService } from './byos-node-removal.service';
 import { CloudProvider } from '../../../providers/enums/cloud-provider.enum';
+import { NodeLifeEventsService } from './node-life-events.service';
 
 export interface AddWorkerJobData {
   operationId: string;
@@ -65,6 +66,7 @@ export class ClusterScalingService {
     private readonly nodeScalingService: ClusterNodeScalingService,
     private readonly byosNodeRemoval: ByosNodeRemovalService,
     private readonly bounds: ClusterBoundsRegistry,
+    private readonly nodeEvents: NodeLifeEventsService,
   ) {}
 
   /**
@@ -102,6 +104,7 @@ export class ClusterScalingService {
     count: number = 1,
     serverType?: string | null,
     region?: string | null,
+    by?: string | null,
   ): Promise<InfrastructureOperationEntity> {
     if (count < 1 || count > MAX_WORKERS_PER_CALL) {
       throw new BadRequestException(
@@ -173,6 +176,7 @@ export class ClusterScalingService {
         region: region ?? cluster.region,
         operationSteps: steps,
         estimatedDurationInSeconds: 240 * count,
+        initiatedBy: by ?? null,
       },
     });
     const saved = await this.operationRepository.save(operation);
@@ -190,6 +194,19 @@ export class ClusterScalingService {
       attempts: 1,
       timeout: 900000,
     });
+
+    if (by) {
+      for (let i = 0; i < count; i++) {
+        await this.nodeEvents.record({
+          event: 'node-ordered',
+          clusterId,
+          operationId: saved.id,
+          shape: serverType ?? cluster.nodeSize,
+          region: region ?? cluster.region,
+          by,
+        });
+      }
+    }
 
     this.logger.log(
       `Queued add-worker (${count}) for cluster ${clusterId} (operation ${saved.id})`,
@@ -227,6 +244,7 @@ export class ClusterScalingService {
   async removeWorker(
     clusterId: string,
     nodeId: string,
+    by?: string | null,
   ): Promise<InfrastructureOperationEntity> {
     const cluster = await this.clusterRepository.findOne({
       where: { id: clusterId },
@@ -295,6 +313,7 @@ export class ClusterScalingService {
         nodeName: node.serverName,
         operationSteps: steps,
         estimatedDurationInSeconds: 180,
+        initiatedBy: by ?? null,
       },
     });
     const saved = await this.operationRepository.save(operation);

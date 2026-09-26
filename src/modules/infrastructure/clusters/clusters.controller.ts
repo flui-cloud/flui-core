@@ -9,6 +9,7 @@ import {
   Query,
   Header,
   Req,
+  BadRequestException,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -66,6 +67,7 @@ import {
   UpdateClusterVNetDto,
 } from './dto/update-cluster-vnet.dto';
 import { ClusterScalingService } from './services/cluster-scaling.service';
+import { byOf } from '../scaling/scaling-actor';
 import { ClusterStorageService } from './services/cluster-storage.service';
 import { ClusterStorageUsageService } from './services/cluster-storage-usage.service';
 import { AddWorkerDto, AddWorkerResponseDto } from './dto/add-worker.dto';
@@ -240,10 +242,14 @@ export class ClustersController {
   async addWorkers(
     @Param('id') clusterId: string,
     @Body() dto: AddWorkerDto,
+    @Req() req: Record<string, unknown>,
   ): Promise<AddWorkerResponseDto> {
     const operation = await this.clusterScalingService.addWorkers(
       clusterId,
       dto?.count ?? 1,
+      undefined,
+      undefined,
+      byOf(req),
     );
     return {
       operation_id: operation.id,
@@ -282,10 +288,12 @@ export class ClustersController {
   async removeWorker(
     @Param('id') clusterId: string,
     @Param('nodeId') nodeId: string,
+    @Req() req: Record<string, unknown>,
   ): Promise<RemoveWorkerResponseDto> {
     const operation = await this.clusterScalingService.removeWorker(
       clusterId,
       nodeId,
+      byOf(req),
     );
     return {
       operation_id: operation.id,
@@ -576,16 +584,47 @@ export class ClustersController {
     required: false,
     description: 'Sampling step, 1-168, default 24',
   })
+  @ApiQuery({
+    name: 'hours',
+    required: false,
+    description:
+      'Window length in hours, for a window shorter than a day; wins over days',
+  })
+  @ApiQuery({
+    name: 'stepMinutes',
+    required: false,
+    description:
+      'Sampling step in minutes, for a step shorter than an hour; wins over stepHours',
+  })
+  @ApiQuery({
+    name: 'from',
+    required: false,
+    description:
+      'ISO start of a window with both ends named (with `to`); wins over days and hours',
+  })
+  @ApiQuery({
+    name: 'to',
+    required: false,
+    description: 'ISO end of that window',
+  })
   @ApiResponse({ status: 200, type: FleetHistoryDto })
   @ApiResponse({ status: 404, description: 'Cluster not found' })
   async getFleetHistory(
     @Param('id') clusterId: string,
     @Query('days') days?: string,
     @Query('stepHours') stepHours?: string,
+    @Query('hours') hours?: string,
+    @Query('stepMinutes') stepMinutes?: string,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
   ): Promise<FleetHistoryDto> {
     return this.fleetHistoryService.getHistory(clusterId, {
       days: parsePositive(days),
       stepHours: parsePositive(stepHours),
+      hours: parsePositive(hours),
+      stepMinutes: parsePositive(stepMinutes),
+      from: dateOrUndefined(from, 'from'),
+      to: dateOrUndefined(to, 'to'),
     });
   }
 
@@ -937,7 +976,8 @@ export class ClustersController {
       'Returns all nodes in the cluster, each with the shape it actually is: ' +
       'provider, region, serverType and hourlyPriceEur. The last three are null ' +
       'where the provider records no such thing — a BYOS machine is the ' +
-      "operator's own, so a null price means no price is known, never free.",
+      "operator's own, so a null price means no price is known, never free. " +
+      'takesNewApps is read from the cluster (a taint or a cordon refuses new apps; on a control cluster with workers that is master protection); null when the cluster could not be asked.',
   })
   @ApiParam({
     name: 'id',
@@ -949,7 +989,10 @@ export class ClustersController {
   })
   @ApiResponse({ status: 404, description: 'Cluster not found' })
   async getClusterNodes(@Param('id') id: string) {
-    const nodes = await this.clustersService.getClusterNodes(id);
+    const [nodes, takingWork] = await Promise.all([
+      this.clustersService.getClusterNodes(id),
+      this.clustersService.nodesTakingWork(id),
+    ]);
     return nodes.map((n) => ({
       id: n.id,
       serverName: n.serverName,
@@ -961,6 +1004,7 @@ export class ClustersController {
       region: n.region ?? null,
       serverType: n.serverType ?? null,
       hourlyPriceEur: n.hourlyPriceEur ?? null,
+      takesNewApps: takingWork?.get(n.serverName) ?? null,
       createdAt: n.createdAt,
       metadata: n.metadata,
     }));
@@ -1573,4 +1617,16 @@ function parsePositive(raw?: string): number | undefined {
   if (raw === undefined) return undefined;
   const value = Number.parseInt(raw, 10);
   return Number.isFinite(value) && value > 0 ? value : undefined;
+}
+
+function dateOrUndefined(
+  raw: string | undefined,
+  name: string,
+): Date | undefined {
+  if (!raw) return undefined;
+  const at = new Date(raw);
+  if (Number.isNaN(at.getTime())) {
+    throw new BadRequestException(`${name} is not a date: ${raw}`);
+  }
+  return at;
 }

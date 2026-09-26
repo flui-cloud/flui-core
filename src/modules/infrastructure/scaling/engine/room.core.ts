@@ -14,6 +14,12 @@ export interface NodeRoomInput {
   takesWork: boolean;
   allocatable: { cpuMillicores: number; memoryMi: number };
   requested: { cpuMillicores: number; memoryMi: number };
+  /** What the same pods may grow to, each container at its limit. */
+  limits: { cpuMillicores: number; memoryMi: number };
+  /** What they use right now; null when the node's usage could not be read. */
+  used: { cpuMillicores: number; memoryMi: number } | null;
+  /** The applications with a replica here, by the name `flui app` takes. */
+  apps: string[];
 }
 
 export interface NodeRoom extends NodeRoomInput {

@@ -76,6 +76,9 @@ const group = (
   acts: {
     acts: true,
     says: 'This installation may commit up to €200 a month on its own, and only through groups set to buy automatically.',
+    mode: 'automatic',
+    label: 'Automatic — buys up to €40/mo, 5 nodes',
+    attention: false,
   },
   standingOrders: [
     {
@@ -90,6 +93,7 @@ const group = (
   ],
   requirement: null,
   purchaseHeld: null,
+  purchase: null,
   ...over,
 });
 
@@ -435,11 +439,16 @@ describe('describeActuation', () => {
         acts: {
           acts: false,
           says: 'This group decides and does not act. Set it to buy automatically for anything it decides to reach a provider.',
+          mode: 'manual',
+          label: 'Manual — Flui does not buy',
+          attention: true,
         },
       }),
     );
     expect(acting?.verdict).toBe('no');
     expect(acting?.says).toContain('decides and does not act');
+    expect(acting?.label).toBe('Manual — Flui does not buy');
+    expect(acting?.attention).toBe(true);
   });
 
   /** An installation one build behind said nothing, which is not "it does nothing". */

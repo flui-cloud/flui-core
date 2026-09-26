@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Optional } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { In, Not, Repository } from 'typeorm';
 import {
@@ -14,11 +14,14 @@ import { ScalingDecisionEntity } from '../entities/scaling-decision.entity';
 import { ProviderScalingCapability } from '../scaling-capability';
 import { fleetOf, roundEur } from '../engine/engine.core';
 import { clusterNotFound } from '../scaling-errors';
+import { scalingModeLabel } from '../scaling-consequence';
+import { ShapeFactsService } from '../engine/shape-facts.service';
 import { ScalingGroupService } from './scaling-group.service';
 import {
   ClusterScalingRowDto,
   OpenAlarmDto,
 } from '../dto/scaling-response.dto';
+import { NOT_ENGINE_FORCES } from '../scaling.core';
 
 /**
  * One row per cluster, including the clusters a filter would have eaten.
@@ -39,6 +42,7 @@ export class ScalingOverviewService {
     @InjectRepository(ClusterNodeEntity)
     private readonly nodes: Repository<ClusterNodeEntity>,
     private readonly groupService: ScalingGroupService,
+    @Optional() private readonly shapes?: ShapeFactsService,
   ) {}
 
   async rows(): Promise<ClusterScalingRowDto[]> {
@@ -88,9 +92,14 @@ export class ScalingOverviewService {
     const mine = allGroups.filter((g) => g.clusterId === cluster.id);
     const group = mine[0] ?? null;
     const capability = this.groupService.capabilityOf(cluster.provider);
+    const shapes =
+      capability.hasCatalogue && this.shapes
+        ? await this.shapes.read(cluster.provider)
+        : null;
     const fleet = fleetOf(
       allNodes.filter((n) => n.clusterId === cluster.id),
       { nodes: cluster.nodeCount ?? 0, shape: cluster.nodeSize ?? null },
+      shapes,
     );
     const current = await this.currentDecisions(mine);
     const openAlarm = openAlarmOf(current);
@@ -121,6 +130,15 @@ export class ScalingOverviewService {
       monthlyCap: group?.maxMonthlyCost ?? null,
       pendingPods: pendingPodsOf(current),
       acts: this.actsOf(capability, mine),
+      mode: group
+        ? scalingModeLabel({
+            provider: cluster.provider,
+            canProvision: capability.canProvision,
+            provision: group.provision,
+            maxMonthlyCost: group.maxMonthlyCost,
+            maxNodes: group.maxNodes,
+          })
+        : null,
       openOrders: group?.standingOrders?.length ?? 0,
       blockedOrders: blockedOrdersOf(current),
       openAlarm,
@@ -167,7 +185,7 @@ export class ScalingOverviewService {
     const latest = await Promise.all(
       groups.map((group) =>
         this.decisions.findOne({
-          where: { groupId: group.id },
+          where: { groupId: group.id, force: Not(In(NOT_ENGINE_FORCES)) },
           order: { at: 'DESC' },
         }),
       ),

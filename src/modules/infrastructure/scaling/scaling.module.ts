@@ -51,7 +51,7 @@ import { DrainFeasibilityService } from './engine/drain-feasibility.service';
     EncryptionModule,
     // The rail a scaling alarm leaves on. Already reached through clusters;
     // named here because this module now depends on it directly.
-    ObservabilityModule,
+    forwardRef(() => ObservabilityModule),
   ],
   controllers: [ScalingController],
   providers: [

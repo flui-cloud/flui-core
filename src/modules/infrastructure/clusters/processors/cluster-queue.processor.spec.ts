@@ -207,6 +207,7 @@ describe('ClusterQueueProcessor.handleRemoveWorker', () => {
     const processor = Object.create(
       ClusterQueueProcessor.prototype,
     ) as ClusterQueueProcessor;
+    const nodeEvents = { record: jest.fn().mockResolvedValue(null) };
     Object.assign(processor, {
       logger: {
         log: jest.fn(),
@@ -230,6 +231,7 @@ describe('ClusterQueueProcessor.handleRemoveWorker', () => {
         emitFailed: jest.fn(),
       },
       hostCommand: { run: runImpl },
+      nodeEvents,
     });
 
     const run = () =>
@@ -242,7 +244,7 @@ describe('ClusterQueueProcessor.handleRemoveWorker', () => {
         },
       } as never);
 
-    return { run, operation, nodeRepository };
+    return { run, operation, nodeRepository, nodeEvents };
   }
 
   /** Answers the drain with a failure and the readiness probe with `ready`. */
@@ -280,6 +282,22 @@ describe('ClusterQueueProcessor.handleRemoveWorker', () => {
     expect(t.operation.metadata.warnings).toEqual([]);
   });
 
+  it('writes that the node was emptied and then deleted at the provider', async () => {
+    const t = build(jest.fn().mockResolvedValue(''));
+
+    await t.run();
+
+    expect(t.nodeEvents.record.mock.calls.map((c) => c[0].event)).toEqual([
+      'node-drained',
+      'node-removed',
+    ]);
+    expect(t.nodeEvents.record.mock.calls[1][0]).toMatchObject({
+      clusterId: 'cluster-1',
+      node: 'workload-1-worker-1',
+      by: null,
+    });
+  });
+
   it('refuses to destroy a node that is still ready and would not drain', async () => {
     const t = build(drainFailsWith("'True'"));
 
@@ -308,5 +326,8 @@ describe('ClusterQueueProcessor.handleRemoveWorker', () => {
         (w) => w.code,
       ),
     ).toContain('DRAIN_FAILED');
+    expect(t.nodeEvents.record.mock.calls[0][0].warning).toContain(
+      'could not be emptied cleanly',
+    );
   });
 });

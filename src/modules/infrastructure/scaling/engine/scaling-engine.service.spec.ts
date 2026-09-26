@@ -80,6 +80,7 @@ const waiting = (over: Partial<UnschedulablePods> = {}): UnschedulablePods => ({
   largestRequest: {
     name: 'checkout-7d8f',
     namespace: 'flui-apps',
+    app: 'checkout',
     cpuMillicores: 500,
     memoryMi: 4096,
   },
@@ -681,7 +682,7 @@ describe('the preview', () => {
     expect(preview).toMatchObject({
       groupId: 'g-1',
       pending: {
-        app: 'flui-apps/checkout-7d8f',
+        app: 'checkout',
         cpu: '500m',
         memory: '4096Mi',
       },

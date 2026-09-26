@@ -1,5 +1,9 @@
-import { ApiProperty } from '@nestjs/swagger';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { Sensitivity } from '../../../mask/decorators/sensitivity.decorator';
+import { IsInt, IsOptional, IsString, Max, Min } from 'class-validator';
 import { CANDIDATE_OUTCOMES, CandidateOutcome } from '../scaling.core';
+import { WHAT_IF_VERDICTS, WhatIfVerdict } from '../engine/what-if.core';
+import { ALARM_EXIT_KINDS, AlarmExitKind } from '../engine/engine.core';
 
 export class PendingPodDto {
   @ApiProperty({ example: 'flui-apps/checkout-7d8f' })
@@ -72,6 +76,29 @@ export class NodeRoomDto {
 
   @ApiProperty({
     type: RoomAmountDto,
+    description:
+      'What the same apps may grow to, each at its limit (its request where it sets none)',
+  })
+  @Sensitivity(Sensitivity.PUBLIC)
+  limits: RoomAmountDto;
+
+  @ApiProperty({
+    type: RoomAmountDto,
+    nullable: true,
+    description: 'What they use right now; null when usage could not be read',
+  })
+  @Sensitivity(Sensitivity.PUBLIC)
+  used: RoomAmountDto | null;
+
+  @ApiProperty({
+    type: [String],
+    description: 'The applications with a replica on this node',
+  })
+  @Sensitivity(Sensitivity.PUBLIC)
+  apps: string[];
+
+  @ApiProperty({
+    type: RoomAmountDto,
     description: 'What is left for new apps, after the system reserve',
   })
   free: RoomAmountDto;
@@ -93,6 +120,49 @@ export class FleetRoomDto {
       'The largest app that still fits without buying a node. Null when no node takes work.',
   })
   largestFit: LargestFitDto | null;
+}
+
+export class AlarmExitDto {
+  @Sensitivity(Sensitivity.PUBLIC)
+  @ApiProperty({ enum: ALARM_EXIT_KINDS })
+  kind: AlarmExitKind;
+
+  @Sensitivity(Sensitivity.PUBLIC)
+  @ApiProperty({ example: 'Raise the cap to €30' })
+  label: string;
+
+  @Sensitivity(Sensitivity.PUBLIC)
+  @ApiProperty({
+    nullable: true,
+    description:
+      'raise-cap: the smallest monthly ceiling that lets the nearest machine through',
+  })
+  toEur: number | null;
+
+  @Sensitivity(Sensitivity.PUBLIC)
+  @ApiProperty({
+    nullable: true,
+    description: 'raise-max-nodes: the ceiling to set',
+  })
+  toNodes: number | null;
+
+  @Sensitivity(Sensitivity.PUBLIC)
+  @ApiProperty({
+    nullable: true,
+    description:
+      'add-shape: a machine the group does not name that would be bought now',
+  })
+  shape: string | null;
+}
+
+export class AlarmBlockDto {
+  @Sensitivity(Sensitivity.PUBLIC)
+  @ApiProperty({ example: 'Scaling needed — blocked by the spend cap' })
+  headline: string;
+
+  @Sensitivity(Sensitivity.PUBLIC)
+  @ApiProperty({ type: [AlarmExitDto] })
+  exits: AlarmExitDto[];
 }
 
 export class ScalingPreviewDto {
@@ -131,6 +201,15 @@ export class ScalingPreviewDto {
   })
   asks: string | null;
 
+  @Sensitivity(Sensitivity.PUBLIC)
+  @ApiProperty({
+    type: AlarmBlockDto,
+    nullable: true,
+    description:
+      'When nothing would be bought: the main block in one headline and the ways out, each computed (the ceiling that is enough, the machine that would work). `asks` stays the long form.',
+  })
+  blocked: AlarmBlockDto | null;
+
   @ApiProperty({
     type: FleetRoomDto,
     nullable: true,
@@ -138,4 +217,95 @@ export class ScalingPreviewDto {
       'How much room each node has left for new apps, counted the way the scheduler counts it: what apps reserve, not what they use. Null when the cluster could not be asked.',
   })
   room: FleetRoomDto | null;
+}
+
+export class WhatIfRequestDto {
+  @ApiProperty({ example: '500m', description: 'CPU each replica reserves' })
+  @IsString()
+  @Sensitivity(Sensitivity.PUBLIC)
+  cpu: string;
+
+  @ApiProperty({ example: '2Gi', description: 'Memory each replica reserves' })
+  @IsString()
+  @Sensitivity(Sensitivity.PUBLIC)
+  memory: string;
+
+  @ApiPropertyOptional({ example: 1, minimum: 1, maximum: 20 })
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(20)
+  @Sensitivity(Sensitivity.PUBLIC)
+  replicas?: number;
+}
+
+export class MachineRoomDto {
+  @ApiProperty({
+    nullable: true,
+    description: 'The machine type, or null for a node already in the cluster',
+  })
+  @Sensitivity(Sensitivity.PUBLIC)
+  shape: string | null;
+
+  @ApiProperty()
+  @Sensitivity(Sensitivity.PUBLIC)
+  cpuMillicores: number;
+
+  @ApiProperty()
+  @Sensitivity(Sensitivity.PUBLIC)
+  memoryMi: number;
+}
+
+export class WhatIfAnswerDto {
+  @ApiProperty({
+    enum: WHAT_IF_VERDICTS,
+    description:
+      '`fits`: room on a node already there. `buys`: an automatic group would buy `shape` in `region`. `proposes`: a manual group would name that machine and buy nothing. `nothing-hosts`: no machine the group may buy can take it, so the app would wait. `unknown`: the cluster could not be asked.',
+  })
+  @Sensitivity(Sensitivity.PUBLIC)
+  verdict: WhatIfVerdict;
+
+  @ApiProperty({ description: 'The consequence in one sentence' })
+  @Sensitivity(Sensitivity.ARBITRARY_TEXT)
+  sentence: string;
+
+  @ApiProperty({ nullable: true, description: 'The node it would run on' })
+  @Sensitivity(Sensitivity.NETWORK_IDENTIFIER)
+  node: string | null;
+
+  @ApiProperty({ nullable: true })
+  @Sensitivity(Sensitivity.PUBLIC)
+  groupId: string | null;
+
+  @ApiProperty({ nullable: true, enum: ['automatic', 'manual'] })
+  @Sensitivity(Sensitivity.PUBLIC)
+  provision: 'automatic' | 'manual' | null;
+
+  @ApiProperty({ nullable: true })
+  @Sensitivity(Sensitivity.PUBLIC)
+  shape: string | null;
+
+  @ApiProperty({ nullable: true })
+  @Sensitivity(Sensitivity.PUBLIC)
+  region: string | null;
+
+  @ApiProperty({ nullable: true, description: 'Null is unknown, never free' })
+  @Sensitivity(Sensitivity.PUBLIC)
+  monthlyEur: number | null;
+
+  @ApiProperty({
+    nullable: true,
+    description: 'Why no machine can take it, machine by machine',
+  })
+  @Sensitivity(Sensitivity.ARBITRARY_TEXT)
+  why: string | null;
+
+  @ApiProperty({
+    type: MachineRoomDto,
+    nullable: true,
+    description:
+      'The largest single replica anything could hold: the biggest node already there or the biggest machine a group may buy inside its money ceiling',
+  })
+  @Sensitivity(Sensitivity.PUBLIC)
+  largest: MachineRoomDto | null;
 }

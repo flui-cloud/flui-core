@@ -1,6 +1,6 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { In, Not, Repository } from 'typeorm';
+import { In, IsNull, Not, Repository } from 'typeorm';
 import {
   ClusterEntity,
   ClusterStatus,
@@ -16,7 +16,11 @@ import {
   buyableRegionsOf,
   scalingCapabilityOf,
 } from '../scaling-capability';
-import { StandingOrderConfig } from '../scaling.core';
+import {
+  ANY_REGION,
+  NOT_ENGINE_FORCES,
+  StandingOrderConfig,
+} from '../scaling.core';
 import { PurchaseHold, purchaseHold } from '../engine/purchase-hold';
 import {
   InfrastructureOperationEntity,
@@ -34,12 +38,21 @@ import {
   ScalingDecisionResponseDto,
   DecisionOperationDto,
   ScalingGroupResponseDto,
+  PurchaseInFlightDto,
 } from '../dto/scaling-response.dto';
+import { scalingModeLabel } from '../scaling-consequence';
 import {
   clusterNotFound,
   groupNameTaken,
   groupNotFound,
 } from '../scaling-errors';
+import { groupChanges, snapshotOf } from './group-changes.core';
+import { DecisionFilter, decisionWhere } from './decision-filter.core';
+import { collapseRepeats } from './collapse-decisions.core';
+import {
+  ClusterNodeEntity,
+  NodeType,
+} from '../../clusters/entities/cluster-node.entity';
 
 const DEFAULT_DECISION_LIMIT = 50;
 const MAX_DECISION_LIMIT = 200;
@@ -67,6 +80,8 @@ export class ScalingGroupService {
     private readonly capabilities: CapabilitiesProviderFactory,
     @InjectRepository(InfrastructureOperationEntity)
     private readonly operations: Repository<InfrastructureOperationEntity>,
+    @InjectRepository(ClusterNodeEntity)
+    private readonly nodes: Repository<ClusterNodeEntity>,
   ) {}
 
   capabilityOf(provider: string): ProviderScalingCapability {
@@ -124,9 +139,19 @@ export class ScalingGroupService {
     });
     const drains = await Promise.all(rows.map((row) => this.lastDrain(row.id)));
     const holds = await Promise.all(rows.map((row) => this.holdOf(row)));
+    const purchases = await Promise.all(
+      rows.map((row) => this.purchaseOf(row)),
+    );
     const buyable = await this.buyableFor(cluster);
     return rows.map((row, index) =>
-      this.toDto(row, cluster, drains[index], buyable, holds[index]),
+      this.toDto(
+        row,
+        cluster,
+        drains[index],
+        buyable,
+        holds[index],
+        purchases[index],
+      ),
     );
   }
 
@@ -139,6 +164,7 @@ export class ScalingGroupService {
       await this.lastDrain(group.id),
       await this.buyableFor(cluster),
       await this.holdOf(group),
+      await this.purchaseOf(group),
     );
   }
 
@@ -147,11 +173,58 @@ export class ScalingGroupService {
    * whether anything is bought is still the next pass's decision, inside the
    * group's own bounds and ceiling.
    */
-  async retryPurchase(id: string): Promise<ScalingGroupResponseDto> {
+  async retryPurchase(
+    id: string,
+    by = 'a person',
+  ): Promise<ScalingGroupResponseDto> {
     const group = await this.groupOrFail(id);
+    const hold = await this.holdOf(group);
     group.purchaseRetryAt = new Date();
     await this.groups.save(group);
+    const reason = hold?.error
+      ? ' (' + withoutTrailingStops(hold.error) + ')'
+      : '';
+    await this.recordPerson(
+      group,
+      `${by} let the group buy again.`,
+      hold
+        ? `The purchase that failed at ${hold.failedAt.toISOString().slice(11, 16)} UTC no longer holds it back${reason}.`
+        : 'Nothing was holding it back.',
+      by,
+    );
     return this.get(id);
+  }
+
+  /**
+   * One row in the decision log for what a person did to the group, so a
+   * purchase can be read against the rules it was made under.
+   */
+  private async recordPerson(
+    group: ScalingGroupEntity,
+    did: string,
+    detail: string,
+    by: string,
+  ): Promise<void> {
+    await this.decisions.save(
+      this.decisions.create({
+        groupId: group.id,
+        clusterId: group.clusterId,
+        at: new Date(),
+        force: 'person',
+        outcome: 'changed',
+        saw: `${by} changed the group.`,
+        did,
+        why: detail,
+        asks: null,
+        shape: null,
+        region: null,
+        hourlyPriceEur: null,
+        considered: [],
+        pendingPods: null,
+        drain: null,
+        operationId: null,
+      }),
+    );
   }
 
   private async operationsOf(
@@ -163,6 +236,27 @@ export class ScalingGroupService {
     if (!ids.length) return new Map();
     const found = await this.operations.find({ where: { id: In(ids) } });
     return new Map(found.map((op) => [op.id, op]));
+  }
+
+  private async purchaseOf(
+    group: ScalingGroupEntity,
+  ): Promise<PurchaseInFlightDto | null> {
+    const [last] = await this.decisions.find({
+      where: {
+        groupId: group.id,
+        operationId: Not(IsNull()),
+        outcome: In(['added', 'replaced']),
+      },
+      order: { at: 'DESC' },
+      take: 1,
+    });
+    if (!last?.operationId) return null;
+    const operation = await this.operations.findOne({
+      where: { id: last.operationId },
+    });
+    return operation
+      ? purchaseInFlight(last, decisionOperation(operation), new Date())
+      : null;
   }
 
   private holdOf(group: ScalingGroupEntity): Promise<PurchaseHold | null> {
@@ -184,7 +278,7 @@ export class ScalingGroupService {
    */
   private async lastDrain(groupId: string): Promise<DrainCheck | null> {
     const last = await this.decisions.findOne({
-      where: { groupId },
+      where: { groupId, force: Not(In(NOT_ENGINE_FORCES)) },
       order: { at: 'DESC' },
     });
     return last?.drain ?? null;
@@ -216,6 +310,7 @@ export class ScalingGroupService {
 
     const buyable = await this.buyableFor(cluster);
     this.assertCoherent(draft, capability, hasVnet(cluster), buyable);
+    await this.resolveReplacedNodes(draft, clusterId);
     await this.assertNameFree(clusterId, draft.name, null);
 
     return this.toDto(await this.groups.save(draft), cluster, null, buyable);
@@ -224,8 +319,10 @@ export class ScalingGroupService {
   async update(
     id: string,
     dto: EditScalingGroupDto,
+    by = 'a person',
   ): Promise<ScalingGroupResponseDto> {
     const group = await this.groupOrFail(id);
+    const before = snapshotOf(group);
     const cluster = await this.clusterOrFail(group.clusterId);
     const capability = this.capabilityOf(cluster.provider);
 
@@ -254,9 +351,21 @@ export class ScalingGroupService {
 
     const buyable = await this.buyableFor(cluster);
     this.assertCoherent(group, capability, hasVnet(cluster), buyable);
+    if (dto.standingOrders !== undefined) {
+      await this.resolveReplacedNodes(group, group.clusterId);
+    }
     await this.assertNameFree(group.clusterId, group.name, group.id);
 
     const saved = await this.groups.save(group);
+    const changes = groupChanges(before, snapshotOf(saved));
+    if (changes.length) {
+      await this.recordPerson(
+        saved,
+        `${by} changed ${changes.length === 1 ? 'one setting' : changes.length + ' settings'}.`,
+        `${changes.join('; ')}.`,
+        by,
+      );
+    }
     return this.toDto(saved, cluster, null, buyable, await this.holdOf(saved));
   }
 
@@ -271,6 +380,17 @@ export class ScalingGroupService {
   }
 
   /** The stored row beside its cluster, for the engine that reads both. */
+  async ofCluster(
+    clusterId: string,
+  ): Promise<{ cluster: ClusterEntity; groups: ScalingGroupEntity[] }> {
+    const cluster = await this.clusterOrFail(clusterId);
+    const groups = await this.groups.find({
+      where: { clusterId },
+      order: { createdAt: 'ASC' },
+    });
+    return { cluster, groups };
+  }
+
   async withCluster(
     id: string,
   ): Promise<{ group: ScalingGroupEntity; cluster: ClusterEntity }> {
@@ -281,15 +401,17 @@ export class ScalingGroupService {
   async decisionsOf(
     id: string,
     limit = DEFAULT_DECISION_LIMIT,
+    filter: DecisionFilter = {},
   ): Promise<ScalingDecisionResponseDto[]> {
     const group = await this.groupOrFail(id);
     const rows = await this.decisions.find({
-      where: { groupId: group.id },
+      where: { groupId: group.id, ...decisionWhere(filter) },
       order: { at: 'DESC' },
       take: bounded(limit),
     });
     const operations = await this.operationsOf(rows);
-    return rows.map((row) => toDecisionDto(row, operations));
+    const dtos = rows.map((row) => toDecisionDto(row, operations));
+    return filter.collapse ? collapseRepeats(dtos) : dtos;
   }
 
   /**
@@ -303,6 +425,7 @@ export class ScalingGroupService {
   async decisionsOfCluster(
     clusterId: string,
     limit = DEFAULT_DECISION_LIMIT,
+    filter: DecisionFilter = {},
   ): Promise<ClusterScalingDecisionDto[]> {
     const cluster = await this.clusterOrFail(clusterId);
     const groups = await this.groups.find({
@@ -311,12 +434,12 @@ export class ScalingGroupService {
     const names = new Map(groups.map((group) => [group.id, group.name]));
 
     const rows = await this.decisions.find({
-      where: { clusterId: cluster.id },
+      where: { clusterId: cluster.id, ...decisionWhere(filter) },
       order: { at: 'DESC' },
       take: bounded(limit),
     });
     const operations = await this.operationsOf(rows);
-    return rows.map((row) => ({
+    const dtos = rows.map((row) => ({
       ...toDecisionDto(row, operations),
       groupId: row.groupId,
       // A decision outlives nothing here — the group takes its decisions with it
@@ -324,6 +447,7 @@ export class ScalingGroupService {
       // that no longer answers, not a name worth inventing.
       groupName: names.get(row.groupId) ?? 'removed group',
     }));
+    return filter.collapse ? collapseRepeats(dtos) : dtos;
   }
 
   private async clusterOrFail(clusterId: string): Promise<ClusterEntity> {
@@ -433,6 +557,42 @@ export class ScalingGroupService {
   }
 
   /**
+   * A replacement names a node of this cluster, by name or id, and is kept by
+   * name — the name is what the engine and every page match it against. A
+   * reference to nothing would silently turn the drain into an ordinary
+   * scale-in of whichever node is dearest.
+   */
+  private async resolveReplacedNodes(
+    group: ScalingGroupEntity,
+    clusterId: string,
+  ): Promise<void> {
+    const orders = group.standingOrders.filter(
+      (o) => o.kind === 'replace' && o.replaces,
+    );
+    if (!orders.length) return;
+    const nodes = await this.nodes.find({
+      where: { clusterId },
+      select: { id: true, serverName: true, nodeType: true },
+    });
+    for (const order of orders) {
+      const node = nodes.find(
+        (n) => n.serverName === order.replaces || n.id === order.replaces,
+      );
+      if (!node) {
+        throw new BadRequestException(
+          `A replacement names "${order.replaces}", which is not a node of this cluster. Name it as \`flui node list\` shows it.`,
+        );
+      }
+      if (node.nodeType === NodeType.MASTER) {
+        throw new BadRequestException(
+          `${node.serverName} is the master: it cannot be drained and given back.`,
+        );
+      }
+      order.replaces = node.serverName;
+    }
+  }
+
+  /**
    * A standing order may only wait for something the group is allowed to buy.
    * An order naming a shape outside `shapes` is a purchase the group would
    * refuse the moment the shape came back — a wait that can never end.
@@ -454,7 +614,10 @@ export class ScalingGroupService {
           `Standing order waits for "${order.shape}", which this group may not buy`,
         );
       }
-      if (!group.regions.includes(order.region)) {
+      if (
+        order.region !== ANY_REGION &&
+        !group.regions.includes(order.region)
+      ) {
         throw new BadRequestException(
           `Standing order waits in "${order.region}", where this group may not buy`,
         );
@@ -474,17 +637,26 @@ export class ScalingGroupService {
     cluster: ClusterEntity,
   ): ScalingActuationDto {
     const capability = this.capabilityOf(cluster.provider);
+    const named = scalingModeLabel({
+      provider: cluster.provider,
+      canProvision: capability.canProvision,
+      provision: group.provision,
+      maxMonthlyCost: group.maxMonthlyCost,
+      maxNodes: group.maxNodes,
+    });
 
     if (!capability.canProvision) {
       return {
         acts: false,
         says: `Flui cannot create a server on ${cluster.provider}, so this group decides and a person acts. That is the whole of scaling here, not a step toward it.`,
+        ...named,
       };
     }
     if (group.provision !== 'automatic') {
       return {
         acts: false,
-        says: 'This group decides and does not act. Set it to buy automatically for anything it decides to reach a provider.',
+        says: 'Flui names the machine it would buy and a person buys it, or switches the group to automatic. Nothing is bought on its own.',
+        ...named,
       };
     }
     return {
@@ -493,6 +665,7 @@ export class ScalingGroupService {
         group.maxMonthlyCost === null
           ? `This group buys through the provider API on its own, up to ${group.maxNodes} nodes. It names no ceiling in money.`
           : `This group buys through the provider API on its own, up to €${group.maxMonthlyCost} a month and ${group.maxNodes} nodes.`,
+      ...named,
     };
   }
 
@@ -502,6 +675,7 @@ export class ScalingGroupService {
     drain: DrainCheck | null = null,
     buyableRegions: string[] | null = null,
     hold: PurchaseHold | null = null,
+    purchase: PurchaseInFlightDto | null = null,
   ): ScalingGroupResponseDto {
     return {
       id: group.id,
@@ -537,8 +711,13 @@ export class ScalingGroupService {
       })),
       requirement: group.requirement ?? null,
       purchaseHeld: hold
-        ? { failedAt: hold.failedAt.toISOString(), error: hold.error }
+        ? {
+            failedAt: hold.failedAt.toISOString(),
+            error: hold.error,
+            until: hold.until?.toISOString() ?? null,
+          }
         : null,
+      purchase,
     };
   }
 }
@@ -616,4 +795,55 @@ function hasVnet(cluster: {
   metadata?: { vnetConfig?: { vnetId?: string } };
 }): boolean {
   return Boolean(cluster.metadata?.vnetConfig?.vnetId);
+}
+
+const PURCHASE_SHOWN_FOR_MS = 30 * 60 * 1000;
+
+export function purchaseInFlight(
+  decision: Pick<ScalingDecisionEntity, 'id' | 'at' | 'shape' | 'region'>,
+  operation: DecisionOperationDto,
+  now: Date,
+): PurchaseInFlightDto | null {
+  const machine = `${decision.shape ?? 'a node'}${decision.region ? ' in ' + decision.region : ''}`;
+  const base = {
+    decisionId: decision.id,
+    decidedAt: decision.at.toISOString(),
+    shape: decision.shape ?? null,
+    region: decision.region ?? null,
+    operation,
+  };
+  if (operation.state === 'pending' || operation.state === 'running') {
+    const step = operation.step ?? 'starting';
+    return {
+      ...base,
+      state: 'buying',
+      says: `Buying ${machine} — ${step} (${operation.progress}%)`,
+    };
+  }
+  const finished = operation.finishedAt ? new Date(operation.finishedAt) : null;
+  if (!finished || now.getTime() - finished.getTime() > PURCHASE_SHOWN_FOR_MS) {
+    return null;
+  }
+  if (operation.state === 'completed') {
+    const minutes = Math.max(
+      1,
+      Math.round((finished.getTime() - decision.at.getTime()) / 60000),
+    );
+    return {
+      ...base,
+      state: 'joined',
+      says: `${machine} joined, ${minutes} min after it was ordered`,
+    };
+  }
+  return {
+    ...base,
+    state: 'failed',
+    says: `Buying ${machine} failed${operation.error ? ': ' + operation.error : ''}`,
+  };
+}
+
+function withoutTrailingStops(text: string): string {
+  let end = text.length;
+  while (end > 0 && (text[end - 1] === '.' || /\s/.test(text[end - 1]))) end--;
+  return text.slice(0, end);
 }

@@ -173,6 +173,7 @@ describe('clusters controller — the fence around the cluster key', () => {
           provide: ClustersService,
           useValue: {
             listClusters: async () => [{ id: CLUSTER, name: 'control' }],
+            nodesTakingWork: async () => null,
             getClusterNodes: async () => [
               {
                 id: 'node-1',

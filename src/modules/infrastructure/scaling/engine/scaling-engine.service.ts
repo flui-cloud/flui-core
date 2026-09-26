@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Not, Repository } from 'typeorm';
+import * as k8s from '@kubernetes/client-node';
 import { ClusterEntity } from '../../clusters/entities/cluster.entity';
 import {
   ClusterNodeEntity,
@@ -32,9 +33,12 @@ import {
   PendingDemand,
   ShapeFactsReading,
   budgetFloorNote,
-  evaluateShape,
+  evaluateStandingOrder,
+  everyCandidate,
   fleetOf,
   monthlyFrom,
+  pricePhrase,
+  alarmBlock,
   reasonsOf,
   walkLadder,
 } from './engine.core';
@@ -42,6 +46,12 @@ import { ShapeFactsService } from './shape-facts.service';
 import { DrainCheck, drainSummary } from './drain.core';
 import { fitSummary } from './fit.core';
 import { DrainFeasibilityService } from './drain-feasibility.service';
+import {
+  WhatIfAnswer,
+  WhatIfAsk,
+  WhatIfGroup,
+  answerWhatIf,
+} from './what-if.core';
 
 /** What one pass over one group concluded, and would have written down. */
 export interface ScalingAssessment {
@@ -76,12 +86,19 @@ export interface ScalingAssessment {
    * so a preview never changes a group.
    */
   fulfilledExpansions: boolean;
+  /** Nodes named by replace orders that are no longer in the fleet: those orders are done. */
+  fulfilledReplacements: string[];
 }
 
 /** Everything a decision carries but the identity of what it was decided about. */
 type DecisionDraft = Omit<
   ScalingAssessment,
-  'groupId' | 'clusterId' | 'preview' | 'pendingPods' | 'fulfilledExpansions'
+  | 'groupId'
+  | 'clusterId'
+  | 'preview'
+  | 'pendingPods'
+  | 'fulfilledExpansions'
+  | 'fulfilledReplacements'
 >;
 
 /** A node the fleet could give back, named so something can actually remove it. */
@@ -127,6 +144,45 @@ export class ScalingEngineService {
     return { ...preview, room: await this.drain.fleetRoom(cluster) };
   }
 
+  async whatIf(
+    clusterId: string,
+    ask: WhatIfAsk,
+    releasing?: (pod: k8s.V1Pod) => boolean,
+  ): Promise<WhatIfAnswer> {
+    const { cluster, groups } = await this.groups.ofCluster(clusterId);
+    const room = await this.drain.fleetRoom(cluster, releasing);
+    const rows = await this.fleetRows(cluster);
+    const fleet = fleetOf(rows, {
+      nodes: cluster.nodeCount ?? 0,
+      shape: cluster.nodeSize ?? null,
+    });
+    const demand: PendingDemand = {
+      name: 'this app',
+      cpuMillicores: ask.cpuMillicores,
+      memoryMi: ask.memoryMi,
+    };
+    const capability = this.groups.capabilityOf(cluster.provider);
+    const judged: WhatIfGroup[] = [];
+    for (const group of groups) {
+      const input = await this.ladderInput(
+        group,
+        cluster,
+        capability,
+        fleet,
+        demand,
+        group.maxNodes,
+        rows,
+      );
+      judged.push({
+        id: group.id,
+        provision: group.provision,
+        input,
+        ladder: walkLadder(input),
+      });
+    }
+    return answerWhatIf(ask, room, judged);
+  }
+
   async assess(
     group: ScalingGroupEntity,
     cluster: ClusterEntity,
@@ -145,11 +201,12 @@ export class ScalingEngineService {
       fleet,
       demandOf(waiting),
       group.maxNodes,
+      rows,
     );
 
     const urgency = walkLadder(input);
     const held = heldBecause(waiting);
-    const preview = toPreview(group.id, waiting, held, urgency);
+    const preview = toPreview(group.id, waiting, held, urgency, input);
 
     const decision = await this.decide(
       input,
@@ -168,6 +225,10 @@ export class ScalingEngineService {
       fulfilledExpansions:
         fleet.nodes >= group.desiredNodes &&
         (group.standingOrders ?? []).some((order) => order.kind === 'expand'),
+      fulfilledReplacements: (group.standingOrders ?? [])
+        .filter((order) => order.kind === 'replace' && order.replaces)
+        .map((order) => order.replaces as string)
+        .filter((name) => !rows.some((row) => row.serverName === name)),
     };
   }
 
@@ -303,13 +364,16 @@ export class ScalingEngineService {
       order.kind === 'replace'
         ? Math.min(group.desiredNodes + 1, group.maxNodes)
         : group.desiredNodes;
-    const rungs = orders.map((order) =>
-      evaluateShape(
+    // An order in `any` region expands into one rung per region, and the one
+    // that wins carries the region it won in to the purchase.
+    const tried = orders.flatMap((order) =>
+      evaluateStandingOrder(
         { ...input, ceiling: patientCeiling(order) },
         order.shape,
         order.region,
-      ),
+      ).map((rung) => ({ order: { ...order, region: rung.region }, rung })),
     );
+    const rungs = tried.map((t) => t.rung);
     const wonAt = rungs.findIndex((rung) => rung.outcome === 'would-buy');
 
     if (wonAt === -1) {
@@ -336,8 +400,7 @@ export class ScalingEngineService {
       };
     }
 
-    const order = orders[wonAt];
-    const rung = rungs[wonAt];
+    const { order, rung } = tried[wonAt];
     const losers = rungs
       .filter((_, index) => index !== wonAt)
       .map(toConsidered);
@@ -347,7 +410,7 @@ export class ScalingEngineService {
     }
 
     if (!input.group.capability.canProvision) {
-      const asks = `${rung.shape} is available in ${rung.region}${priced(rung)}. Buy one and join it with \`flui node connect\` to reach the target of ${group.desiredNodes} nodes. Flui cannot create a server on ${input.group.provider}.`;
+      const asks = `${rung.shape} is available in ${rung.region}${priced(rung, input)}. Buy one and join it with \`flui node connect\` to reach the target of ${group.desiredNodes} nodes. Flui cannot create a server on ${input.group.provider}.`;
       return {
         force: 'opportunity',
         outcome: 'alerted',
@@ -368,7 +431,7 @@ export class ScalingEngineService {
       force: 'opportunity',
       outcome: 'declined',
       saw,
-      did: `Would add a ${rung.shape} in ${rung.region}${priced(rung)}.`,
+      did: `Would add a ${rung.shape} in ${rung.region}${priced(rung, input)}.`,
       why: notActed(input),
       asks: null,
       shape: rung.shape,
@@ -454,7 +517,7 @@ export class ScalingEngineService {
       force: 'opportunity',
       outcome: 'declined',
       saw,
-      did: `Would buy a ${rung.shape} in ${rung.region}${priced(rung)} to replace ${target.serverName}, which can be emptied.`,
+      did: `Would buy a ${rung.shape} in ${rung.region}${priced(rung, input)} to replace ${target.serverName}, which can be emptied.`,
       why: notActed(input),
       asks: null,
       shape: rung.shape,
@@ -612,7 +675,7 @@ export class ScalingEngineService {
         force,
         outcome: 'declined',
         saw,
-        did: `Would add a ${result.chosen.shape} in ${result.chosen.region}${priced(result.chosen)}.`,
+        did: `Would add a ${result.chosen.shape} in ${result.chosen.region}${priced(result.chosen, input)}.`,
         why: notActed(input),
         asks: null,
         shape: result.chosen.shape,
@@ -625,6 +688,9 @@ export class ScalingEngineService {
     }
 
     const alarm = result.rungs[result.rungs.length - 1];
+    const grid = input.group.capability.hasCatalogue
+      ? everyCandidate(input)
+      : [];
     return {
       force,
       outcome: 'alerted',
@@ -637,7 +703,9 @@ export class ScalingEngineService {
       shape: alarm.shape,
       region: alarm.region,
       hourlyEur: alarm.hourlyEur,
-      considered,
+      considered: grid.length
+        ? [...grid, ...considered.filter((c) => c.outcome === 'alert')]
+        : considered,
       intent: null,
       drain: null,
     };
@@ -650,10 +718,18 @@ export class ScalingEngineService {
     fleet: FleetFacts,
     demand: PendingDemand | null,
     ceiling: number,
+    rows?: ClusterNodeEntity[],
   ): Promise<LadderInput> {
     const shapes: ShapeFactsReading = capability.hasCatalogue
       ? await this.shapes.read(cluster.provider)
       : { shapes: [], read: false };
+    const priced = rows
+      ? fleetOf(
+          rows,
+          { nodes: cluster.nodeCount ?? 0, shape: cluster.nodeSize ?? null },
+          shapes,
+        )
+      : fleet;
     const catalogue = capability.hasCatalogue
       ? await this.catalogue.read(cluster.provider)
       : unreadCatalogue(cluster.provider, 'no-market');
@@ -672,7 +748,7 @@ export class ScalingEngineService {
       clusterRegion: cluster.region,
       reachableRegions: await this.groups.buyableFor(cluster),
       ceiling,
-      fleet,
+      fleet: priced,
       demand,
       shapes,
       catalogue,
@@ -708,7 +784,7 @@ function sawPending(waiting: UnschedulablePods): string {
       ? 'for an unknown time'
       : `for ${waiting.oldestWaitingSeconds}s`;
   const what = largest
-    ? ` The biggest needs ${largest.cpuMillicores}m and ${largest.memoryMi}Mi (${largest.name}).`
+    ? ` The biggest needs ${largest.cpuMillicores}m and ${largest.memoryMi}Mi (${largest.app}).`
     : '';
   return `${thing(waiting.count)} with nowhere to run, waiting ${oldest}.${what}`;
 }
@@ -750,7 +826,7 @@ function demandOf(waiting: UnschedulablePods | null): PendingDemand | null {
   const largest = waiting?.largestRequest;
   if (!largest) return null;
   return {
-    name: `${largest.namespace}/${largest.name}`,
+    name: largest.app,
     cpuMillicores: largest.cpuMillicores,
     memoryMi: largest.memoryMi,
   };
@@ -761,6 +837,7 @@ function toPreview(
   waiting: UnschedulablePods | null,
   held: string | null,
   result: LadderResult,
+  input: LadderInput,
 ): ScalingPreviewDto {
   const demand = demandOf(waiting);
   return {
@@ -773,11 +850,37 @@ function toPreview(
         }
       : null,
     opportunityHeldBecause: held,
-    ladder: result.rungs,
+    ladder: result.chosen ? result.rungs : fullLadder(input, result.rungs),
     chosen: result.chosen,
     asks: result.asks,
+    blocked: result.chosen ? null : alarmBlock(input),
     room: null,
   };
+}
+
+/**
+ * With nothing to buy, every machine in every region, as the alarm's sentence
+ * weighs them, then the alarm itself — a table shorter than the sentence beside
+ * it leaves a person wondering about the rest.
+ */
+function fullLadder(input: LadderInput, rungs: LadderRung[]): LadderRung[] {
+  if (!input.group.capability.hasCatalogue) return rungs;
+  const grid = everyCandidate(input).map((c, index) => ({
+    step: index + 1,
+    describes: `${c.shape} in ${c.region}`,
+    shape: c.shape,
+    region: c.region,
+    hourlyEur: c.hourlyEur,
+    outcome: c.outcome,
+    note: c.note,
+  }));
+  const alarm = rungs
+    .filter((rung) => rung.outcome === 'alert')
+    .map((rung) => ({
+      ...rung,
+      step: grid.length + 1,
+    }));
+  return grid.length ? [...grid, ...alarm] : rungs;
 }
 
 /** A purchase, with everything the thing that buys would need to weigh it. */
@@ -837,11 +940,8 @@ function toConsidered(rung: LadderRung): ConsideredCandidate {
   };
 }
 
-function priced(rung: LadderRung): string {
-  const monthly = monthlyFrom(rung.hourlyEur);
-  return monthly === null
-    ? ' (no price published)'
-    : ` at €${rung.hourlyEur}/h, about €${monthly} a month`;
+function priced(rung: LadderRung, input: LadderInput): string {
+  return pricePhrase(rung, input.shapes) ?? ' (no price published)';
 }
 
 /**

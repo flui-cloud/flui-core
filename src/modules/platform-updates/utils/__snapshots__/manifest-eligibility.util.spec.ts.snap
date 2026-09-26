@@ -4,6 +4,7 @@ exports[`against the real templates classifies every control template exactly as
 {
   "00-secrets.yaml": "needs 45",
   "01-namespace.yaml": "no values needed",
+  "01b-platform-priority.yaml": "no values needed",
   "02-postgres.yaml": "no values needed",
   "03-redis.yaml": "no values needed",
   "04-prometheus-config.yaml": "needs 6",

@@ -43,8 +43,32 @@ export const STANDING_ORDER_KINDS = ['expand', 'replace'] as const;
  */
 export type StandingOrderKind = (typeof STANDING_ORDER_KINDS)[number];
 
-export const SCALING_FORCES = ['urgency', 'opportunity'] as const;
+/**
+ * `person` is not a force on the fleet: it is a row that says a person changed
+ * the rules the engine decides under, so a later purchase can be read against
+ * the rules it was made with. `fleet` is not a decision either: it is what
+ * happened to a machine afterwards — ordered by hand, joined, failed, emptied,
+ * deleted — whoever asked for it.
+ */
+export const SCALING_FORCES = [
+  'urgency',
+  'opportunity',
+  'person',
+  'fleet',
+] as const;
 export type ScalingForce = (typeof SCALING_FORCES)[number];
+
+/** Rows the engine did not decide, which its "what did I last say" readers skip. */
+export const NOT_ENGINE_FORCES: ScalingForce[] = ['person', 'fleet'];
+
+export const NODE_EVENTS = [
+  'node-ordered',
+  'node-joined',
+  'purchase-failed',
+  'node-drained',
+  'node-removed',
+] as const;
+export type NodeEvent = (typeof NODE_EVENTS)[number];
 
 export const DECISION_OUTCOMES = [
   'added',
@@ -52,8 +76,18 @@ export const DECISION_OUTCOMES = [
   'removed',
   'declined',
   'alerted',
+  'changed',
+  ...NODE_EVENTS,
 ] as const;
 export type DecisionOutcome = (typeof DECISION_OUTCOMES)[number];
+
+/** Everything that says a machine came or went, decided or done. */
+export const NODE_OUTCOMES: DecisionOutcome[] = [
+  'added',
+  'replaced',
+  'removed',
+  ...NODE_EVENTS,
+];
 
 export const CANDIDATE_OUTCOMES = [
   'would-buy',
@@ -72,9 +106,13 @@ export const CANDIDATE_OUTCOMES = [
 export type CandidateOutcome = (typeof CANDIDATE_OUTCOMES)[number];
 
 /** What a standing order is *configured* as, before anything looks at a market. */
+/** A standing order's region when any region the group may buy in will do. */
+export const ANY_REGION = 'any';
+
 export interface StandingOrderConfig {
   kind: StandingOrderKind;
   shape: string;
+  /** A region, or `any`: the first region of the group that sells the shape. */
   region: string;
   /** How many are still wanted, to reach the target patiently. */
   wanted: number;

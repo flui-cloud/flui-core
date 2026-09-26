@@ -5,8 +5,10 @@ import {
 } from '../catalogue/catalogue.core';
 import {
   CandidateOutcome,
+  ConsideredCandidate,
   NodeRequirement,
   PlacementStrategy,
+  ANY_REGION,
 } from '../scaling.core';
 
 export const MONTH_HOURS = 730;
@@ -71,10 +73,36 @@ export interface FleetFacts {
   unpricedNodes: number;
 }
 
-/** A node row, reduced to the two things a fleet reading takes from it. */
+/** A node row, reduced to what a fleet reading takes from it. */
 export interface PricedNodeRow {
   serverType?: string | null;
+  region?: string | null;
   hourlyPriceEur?: number | null;
+}
+
+/**
+ * What a shape costs in a month, the way the provider bills it: its published
+ * monthly price, which is also the cap on an hourly bill. Hourly × 730 only
+ * where the provider publishes no monthly figure — it runs 15–17% above the
+ * list price on Hetzner, and a ceiling checked against it trips early.
+ */
+export function listMonthlyOf(
+  shapes: ShapeFactsReading | null | undefined,
+  shape: string | null | undefined,
+  region: string | null | undefined,
+  hourlyEur: number | null,
+): number | null {
+  const fact = shape
+    ? shapes?.shapes.find((entry) => entry.shape === shape)
+    : undefined;
+  const price =
+    fact?.prices.find((entry) => entry.region === region) ??
+    (region ? undefined : fact?.prices[0]);
+  if (price?.monthlyEur !== null && price?.monthlyEur !== undefined) {
+    return price.monthlyEur;
+  }
+  const hourly = hourlyEur ?? price?.hourlyEur ?? null;
+  return hourly === null ? null : hourly * MONTH_HOURS;
 }
 
 /**
@@ -89,6 +117,7 @@ export interface PricedNodeRow {
 export function fleetOf(
   rows: PricedNodeRow[],
   fallback: { nodes: number; shape: string | null },
+  shapes?: ShapeFactsReading | null,
 ): FleetFacts {
   if (!rows.length) {
     return {
@@ -111,7 +140,14 @@ export function fleetOf(
       .map((row) => row.serverType)
       .filter((shape): shape is string => Boolean(shape)),
     committedMonthlyEur: priced.reduce(
-      (total, row) => total + row.hourlyPriceEur * MONTH_HOURS,
+      (total, row) =>
+        total +
+        (listMonthlyOf(
+          shapes,
+          row.serverType,
+          row.region,
+          row.hourlyPriceEur,
+        ) ?? row.hourlyPriceEur * MONTH_HOURS),
       0,
     ),
     unpricedNodes: rows.length - priced.length,
@@ -710,10 +746,7 @@ export function requirementLine(input: LadderInput): string {
 }
 
 function manualPurchaseAsk(rung: LadderRung, input: LadderInput): string {
-  const price =
-    rung.hourlyEur === null
-      ? ', price unknown'
-      : ` at €${rung.hourlyEur}/h, about €${round(rung.hourlyEur * MONTH_HOURS)} a month`;
+  const price = pricePhrase(rung, input.shapes) ?? ', price unknown';
   return `Buy a ${rung.shape} in ${rung.region}${price} and join it with \`flui node connect\`. Flui cannot create a server on ${input.group.provider}.`;
 }
 
@@ -783,6 +816,30 @@ export function whyEachMachine(input: LadderInput): string {
     .join(' ');
 }
 
+/**
+ * Every machine the group names, in every region it may buy in, each judged the
+ * way the alarm sentence judges it. The ladder keeps one rung per step; an alarm
+ * that shows only those makes a table shorter than the sentence beside it.
+ */
+export function everyCandidate(input: LadderInput): ConsideredCandidate[] {
+  const regions = [
+    ...regionsFor(input, true),
+    ...regionsFor(input, false),
+  ].filter((region, index, all) => all.indexOf(region) === index);
+  return input.group.shapes.flatMap((shape) =>
+    regions.map((region) => {
+      const judged = judge(input, shape, region);
+      return {
+        shape,
+        region,
+        hourlyEur: judged.hourlyEur,
+        outcome: judged.outcome,
+        ...(judged.note ? { note: judged.note } : {}),
+      };
+    }),
+  );
+}
+
 function listed(items: string[]): string {
   if (items.length <= 1) return items.join('');
   return `${items.slice(0, -1).join(', ')} and ${items[items.length - 1]}`;
@@ -795,6 +852,34 @@ function listed(items: string[]): string {
  * machine in a particular place, and every reason a rung can lose applies to it
  * unchanged.
  */
+/**
+ * A standing order that names no region waits for the first region of the
+ * group that sells the machine: one rung per region it may buy in, the
+ * cluster's own first, so the fleet stays close when it can.
+ */
+export function evaluateStandingOrder(
+  input: LadderInput,
+  shape: string,
+  region: string,
+): LadderRung[] {
+  if (region !== ANY_REGION) return [evaluateShape(input, shape, region)];
+  const regions = [...regionsFor(input, true), ...regionsFor(input, false)];
+  if (!regions.length) {
+    return [
+      {
+        step: 1,
+        describes: `${shape} in any region`,
+        shape,
+        region: ANY_REGION,
+        hourlyEur: null,
+        outcome: 'unavailable',
+        note: `This group names no region its network reaches where ${shape} is sold.`,
+      },
+    ];
+  }
+  return regions.map((r) => evaluateShape(input, shape, r));
+}
+
 export function evaluateShape(
   input: LadderInput,
   shape: string,
@@ -829,10 +914,177 @@ export function reasonsOf(rungs: LadderRung[]): string {
   return [...new Set(notes)].join(' ');
 }
 
+/** ` at €0.0136/h, €8.49 a month`, with the month the provider bills. */
+export function pricePhrase(
+  rung: Pick<LadderRung, 'shape' | 'region' | 'hourlyEur'>,
+  shapes: ShapeFactsReading | null | undefined,
+): string | null {
+  const monthly = listMonthlyOf(
+    shapes,
+    rung.shape,
+    rung.region,
+    rung.hourlyEur,
+  );
+  if (monthly === null) return null;
+  const hourly = rung.hourlyEur === null ? '' : ` at €${rung.hourlyEur}/h,`;
+  return `${hourly} €${round(monthly)} a month`;
+}
+
 export function monthlyFrom(hourlyEur: number | null): number | null {
   return hourlyEur === null ? null : round(hourlyEur * MONTH_HOURS);
 }
 
 export function roundEur(value: number): number {
   return round(value);
+}
+
+export const ALARM_EXIT_KINDS = [
+  'raise-cap',
+  'raise-max-nodes',
+  'add-shape',
+  'attach',
+] as const;
+export type AlarmExitKind = (typeof ALARM_EXIT_KINDS)[number];
+
+export interface AlarmExit {
+  kind: AlarmExitKind;
+  label: string;
+  /** For `raise-cap`: the smallest ceiling that lets the nearest machine through. */
+  toEur: number | null;
+  /** For `raise-max-nodes`. */
+  toNodes: number | null;
+  /** For `add-shape`: a machine the group does not name that would work now. */
+  shape: string | null;
+}
+
+export interface AlarmBlock {
+  /** "Scaling needed — blocked by the spend cap" */
+  headline: string;
+  exits: AlarmExit[];
+}
+
+const exit = (
+  kind: AlarmExitKind,
+  label: string,
+  extra: Partial<AlarmExit> = {},
+): AlarmExit => ({
+  kind,
+  label,
+  toEur: null,
+  toNodes: null,
+  shape: null,
+  ...extra,
+});
+
+/**
+ * What stands in the way of a purchase, as one headline and the ways out a
+ * person can take, each computed rather than suggested: the ceiling that would
+ * be enough, the machine that would work.
+ */
+export function alarmBlock(input: LadderInput): AlarmBlock {
+  const attach = exit('attach', 'Attach a machine yourself');
+  if (!input.group.capability.canProvision) {
+    return {
+      headline: `Scaling needed — Flui cannot buy a machine on ${input.group.provider}`,
+      exits: [attach],
+    };
+  }
+
+  const regions = [...regionsFor(input, true), ...regionsFor(input, false)];
+  const judged = input.group.shapes.flatMap((shape) =>
+    regions.map((region) => judge(input, shape, region)),
+  );
+  const exits: AlarmExit[] = [];
+  let headline = 'Scaling needed — nothing this group may buy can be had';
+
+  const atCeiling = input.fleet.nodes >= input.ceiling;
+  const overBudget = judged.filter((c) => c.outcome === 'over-budget');
+  const soldOut = judged.filter((c) => c.outcome === 'unavailable');
+  const fits = judged.some((c) => c.outcome !== 'does-not-fit');
+
+  if (atCeiling) {
+    headline = `Scaling needed — the group is at its ceiling of ${input.ceiling} nodes`;
+    exits.push(
+      exit(
+        'raise-max-nodes',
+        `Raise the node ceiling to ${input.fleet.nodes + 1}`,
+        {
+          toNodes: input.fleet.nodes + 1,
+        },
+      ),
+    );
+  } else if (overBudget.length) {
+    headline = 'Scaling needed — blocked by the spend cap';
+  } else if (!judged.length) {
+    headline = 'Scaling needed — the group names no machine it may buy';
+  } else if (!fits) {
+    headline = 'Scaling needed — no machine on the list is big enough';
+  } else if (soldOut.length) {
+    headline = 'Scaling needed — every machine on the list is sold out';
+  }
+
+  const cheapestOver = overBudget
+    .map((c) => monthlyOf(c))
+    .filter((m): m is number => m !== null)
+    .sort((a, b) => a - b)[0];
+  if (cheapestOver !== undefined) {
+    const to = Math.ceil(input.fleet.committedMonthlyEur + cheapestOver);
+    exits.push(exit('raise-cap', `Raise the cap to €${to}`, { toEur: to }));
+  }
+
+  const suggestion = shapeToAdd(input, regions);
+  exits.push(
+    exit(
+      'add-shape',
+      suggestion
+        ? `Add ${suggestion.shape} to the machine list`
+        : 'Add a machine type',
+      { shape: suggestion?.shape ?? null },
+    ),
+  );
+  if (suggestion?.overBudgetTo && cheapestOver === undefined) {
+    exits.push(
+      exit(
+        'raise-cap',
+        `Raise the cap to €${suggestion.overBudgetTo} (${suggestion.shape} needs it)`,
+        { toEur: suggestion.overBudgetTo },
+      ),
+    );
+  }
+  exits.push(attach);
+  return { headline, exits };
+}
+
+/**
+ * The cheapest machine the group does not name that would be bought right now;
+ * failing that, the cheapest one only the money ceiling keeps out, with the
+ * ceiling that would let it in.
+ */
+function shapeToAdd(
+  input: LadderInput,
+  regions: string[],
+): { shape: string; overBudgetTo: number | null } | null {
+  const judged = input.shapes.shapes
+    .filter(
+      (fact) => !input.group.shapes.includes(fact.shape) && !fact.deprecated,
+    )
+    .flatMap((fact) =>
+      regions.map((region) => judge(input, fact.shape, region)),
+    );
+  const cheapest = (outcome: CandidateOutcome) =>
+    judged
+      .filter((c) => c.outcome === outcome)
+      .sort(
+        (a, b) => (monthlyOf(a) ?? Infinity) - (monthlyOf(b) ?? Infinity),
+      )[0];
+  const now = cheapest('would-buy');
+  if (now) return { shape: now.shape, overBudgetTo: null };
+  const pricey = cheapest('over-budget');
+  const monthly = pricey ? monthlyOf(pricey) : null;
+  return pricey && monthly !== null
+    ? {
+        shape: pricey.shape,
+        overBudgetTo: Math.ceil(input.fleet.committedMonthlyEur + monthly),
+      }
+    : null;
 }

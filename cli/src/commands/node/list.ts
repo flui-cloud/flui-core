@@ -39,7 +39,11 @@ export default class NodeList extends Command {
       const isControlCluster =
         entity?.clusterType === 'control' ||
         entity?.clusterType === 'observability';
-      const masterProtected = !!entity?.metadata?.masterProtection;
+      const master = nodes.find((n) => n.nodeType === 'master');
+      const masterProtected =
+        typeof master?.takesNewApps === 'boolean'
+          ? !master.takesNewApps
+          : !!entity?.metadata?.masterProtection;
 
       spinner.stop();
 

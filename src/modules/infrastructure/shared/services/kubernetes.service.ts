@@ -3,6 +3,10 @@ import * as k8s from '@kubernetes/client-node';
 import { Writable, Readable } from 'node:stream';
 import { describeQuotaRefusal } from '../../../shared/utils/quota-refusal.util';
 import { withRequestTimeout } from '../utils/kube-request-timeout.util';
+import {
+  WaitingForRoomError,
+  roomWaitSeconds,
+} from '../utils/waits-for-room.util';
 
 export interface ContainerResources {
   cpu: string | null;
@@ -90,6 +94,9 @@ const EVENT_CHECK_INTERVAL_MS = 30_000;
 /** `eventTime` on the newer API, `lastTimestamp` on the older one. */
 const timeOfEvent = (event: k8s.CoreV1Event): number =>
   new Date(event.lastTimestamp ?? event.eventTime ?? 0).getTime();
+
+/** Long enough for the scheduler to have tried every node, short enough not to look like a hang. */
+const ROOM_SETTLE_SECONDS = 45;
 
 @Injectable()
 export class KubernetesService {
@@ -372,6 +379,7 @@ export class KubernetesService {
     name: string,
     namespace: string = 'default',
     timeoutMs: number = 300000, // 5 minutes default
+    roomSelector?: string,
   ): Promise<boolean> {
     const startTime = Date.now();
     const pollInterval = 5000; // 5 seconds
@@ -407,6 +415,20 @@ export class KubernetesService {
           );
         }
 
+        if (roomSelector) {
+          const pods = await this.listPodsByLabel(
+            kubeconfigContent,
+            namespace,
+            roomSelector,
+          );
+          const waiting = pods.filter(
+            (pod) => (roomWaitSeconds(pod) ?? -1) >= ROOM_SETTLE_SECONDS,
+          );
+          if (waiting.length) {
+            throw new WaitingForRoomError(`${kind}/${name}`, waiting.length);
+          }
+        }
+
         if (Date.now() >= nextEventCheck) {
           nextEventCheck = Date.now() + EVENT_CHECK_INTERVAL_MS;
           await this.throwIfRefusedInEvents(
@@ -421,6 +443,7 @@ export class KubernetesService {
         await this.sleep(pollInterval);
       } catch (error) {
         if (error instanceof AdmissionRefusedError) throw error;
+        if (error instanceof WaitingForRoomError) throw error;
         this.logger.error(
           `Error checking ${kind}/${name} readiness: ${error.message}`,
         );
@@ -1283,6 +1306,7 @@ export class KubernetesService {
     kind: string,
     namespace: string,
     name: string,
+    annotations: Record<string, string> = {},
   ): Promise<void> {
     const patch = {
       apiVersion: 'apps/v1',
@@ -1292,6 +1316,7 @@ export class KubernetesService {
         template: {
           metadata: {
             annotations: {
+              ...annotations,
               'kubectl.kubernetes.io/restartedAt': new Date().toISOString(),
             },
           },
@@ -1596,6 +1621,36 @@ export class KubernetesService {
    * Strategic merge patch only replaces the image of the named container,
    * leaving init containers, sidecars and other spec fields untouched.
    */
+  /** Sets a container's whole argument list; strategic merge replaces arrays without a merge key. */
+  async patchDeploymentContainerArgs(
+    kubeconfigContent: string,
+    namespace: string,
+    deploymentName: string,
+    containerName: string,
+    args: string[],
+  ): Promise<void> {
+    const kc = this.loadKubeconfig(kubeconfigContent);
+    const client = k8s.KubernetesObjectApi.makeApiClient(kc);
+    await client.patch(
+      {
+        apiVersion: 'apps/v1',
+        kind: 'Deployment',
+        metadata: { name: deploymentName, namespace },
+        spec: {
+          template: { spec: { containers: [{ name: containerName, args }] } },
+        } as unknown as k8s.V1DeploymentSpec,
+      } as k8s.V1Deployment,
+      undefined,
+      undefined,
+      'flui-api',
+      undefined,
+      k8s.PatchStrategy.StrategicMergePatch,
+    );
+    this.logger.log(
+      `Deployment ${deploymentName} container ${containerName} args updated in namespace ${namespace}`,
+    );
+  }
+
   async patchDeploymentContainerImage(
     kubeconfigContent: string,
     namespace: string,
@@ -1816,6 +1871,7 @@ export class KubernetesService {
       ReplicaSet: 'apps/v1',
       Job: 'batch/v1',
       CronJob: 'batch/v1',
+      HorizontalPodAutoscaler: 'autoscaling/v2',
       Ingress: 'networking.k8s.io/v1',
       IngressRoute: 'traefik.containo.us/v1alpha1',
       Certificate: 'cert-manager.io/v1',
@@ -2329,6 +2385,12 @@ export class KubernetesService {
     if (value.endsWith('m')) {
       return Number.parseInt(value.slice(0, -1), 10) || 0;
     }
+    if (value.endsWith('n')) {
+      return Math.round((Number.parseFloat(value) || 0) / 1_000_000);
+    }
+    if (value.endsWith('u')) {
+      return Math.round((Number.parseFloat(value) || 0) / 1_000);
+    }
     return Math.round((Number.parseFloat(value) || 0) * 1000);
   }
 
@@ -2350,6 +2412,10 @@ export class KubernetesService {
     if (value.endsWith('M')) return Number.parseInt(value, 10) || 0;
     if (value.endsWith('G'))
       return Math.round((Number.parseFloat(value) || 0) * 954); // 1e9 / 1048576
+    if (value.endsWith('m'))
+      return Math.round(
+        (Number.parseInt(value, 10) || 0) / 1000 / (1024 * 1024),
+      );
     // Plain bytes
     return Math.round((Number.parseInt(value, 10) || 0) / (1024 * 1024));
   }

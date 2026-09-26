@@ -1,5 +1,7 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { Sensitivity } from '../../../mask/decorators/sensitivity.decorator';
 import { AutoscaleActuation } from '../services/autoscale-actuation';
+import { WhatIfAnswerDto } from '../../scaling/dto/scaling-preview.dto';
 
 export type ResourceAvailabilityReason =
   | 'insufficient_resources'
@@ -34,7 +36,7 @@ export class ResourceAvailabilityResponseDto {
     description:
       'Machine-readable reason when resources are not freely available. ' +
       'null = ok; "insufficient_resources" = not enough capacity, autoscaling OFF; ' +
-      '"autoscaling_pending" = not enough capacity now but autoscaling will handle it.',
+      '"autoscaling_pending" = not enough capacity now and the scaling group will buy the machine named in `placement`.',
   })
   reason: ResourceAvailabilityReason;
 
@@ -89,4 +91,13 @@ export class ResourceAvailabilityResponseDto {
       'actually appear. null when the request fits.',
   })
   reasonMessage: string | null;
+
+  @ApiPropertyOptional({
+    type: WhatIfAnswerDto,
+    nullable: true,
+    description:
+      'Where it would run when the free total is not enough: on a node already there, on a machine a scaling group would buy or only propose, or nowhere yet — with the reason machine by machine. Null when it fits or when scaling could not be asked.',
+  })
+  @Sensitivity(Sensitivity.PUBLIC)
+  placement: WhatIfAnswerDto | null;
 }

@@ -46,6 +46,10 @@ import { BillingIntervalsService } from './billing-intervals.service';
 import { VolumeBillableKind } from '../entities/volume-billable-interval.entity';
 import { NodePriceService } from './node-price.service';
 import * as crypto from 'node:crypto';
+import {
+  apiRunsInCluster,
+  installLogTarget,
+} from '../utils/install-log-target.util';
 
 @Injectable()
 export class ClusterOrchestrationService {
@@ -910,15 +914,22 @@ export class ClusterOrchestrationService {
       60,
       `Server ${serverName} is up; waiting for it to join the cluster...`,
     );
-    const tail = captureInstallLog
-      ? () =>
-          this.tailInstallLog(
-            operationId,
-            cluster.id,
-            node.ipAddress,
-            bootstrapKey.privateKey,
-          )
-      : undefined;
+    const logHost = installLogTarget({
+      publicIp: node.ipAddress,
+      privateIp: node.privateIp,
+      controlCluster: isControlClusterType(cluster.clusterType),
+      apiInCluster: apiRunsInCluster(),
+    });
+    const tail =
+      captureInstallLog && logHost
+        ? () =>
+            this.tailInstallLog(
+              operationId,
+              cluster.id,
+              logHost,
+              bootstrapKey.privateKey,
+            )
+        : undefined;
 
     try {
       await this.waitForNodeReady(
@@ -1873,6 +1884,8 @@ export class ClusterOrchestrationService {
     );
   }
 
+  private readonly tailWarned = new Set<string>();
+
   private static readonly INSTALL_LOG_SOURCE_FILE =
     '/var/log/cloud-init-output.log';
 
@@ -1916,9 +1929,18 @@ export class ClusterOrchestrationService {
         );
       }
     } catch (err) {
-      this.logger.debug(
-        `Install log tail attempt failed (will retry next tick): ${err.message}`,
-      );
+      // Said once per operation where it can be seen: a tail that never works
+      // reads, from outside, exactly like a node with nothing to say.
+      if (!this.tailWarned.has(operationId)) {
+        this.tailWarned.add(operationId);
+        this.logger.warn(
+          `Install log of ${nodeIp} unreadable for operation ${operationId} (retried every tick): ${err.message}`,
+        );
+      } else {
+        this.logger.debug(
+          `Install log tail attempt failed again: ${err.message}`,
+        );
+      }
     }
   }
 }

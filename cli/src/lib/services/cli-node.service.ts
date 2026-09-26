@@ -9,6 +9,8 @@ export interface NodeSummary {
   status: string;
   providerResourceId?: string;
   createdAt: string;
+  /** Read from the cluster; null when it could not be asked, absent from an older API. */
+  takesNewApps?: boolean | null;
   metadata?: Record<string, any>;
 }
 

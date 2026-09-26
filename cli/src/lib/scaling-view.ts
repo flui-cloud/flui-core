@@ -113,6 +113,9 @@ export function pendingPodsWarns(
 export interface ActuationView {
   acts: boolean;
   verdict: string;
+  /** "Manual — Flui does not buy", the same words the dashboard shows. */
+  label: string | null;
+  attention: boolean;
   /** The API's own sentence, carried word for word — it owns the wording. */
   says: string;
 }
@@ -135,6 +138,8 @@ export function describeActuation(
   return {
     acts: acts.acts,
     verdict: acts.acts ? 'yes' : 'no',
+    label: acts.label ?? null,
+    attention: acts.attention ?? false,
     says: acts.says,
   };
 }
@@ -174,7 +179,9 @@ export function describeDrain(
 
 /** How a standing order reads in one line, before anything about its drain. */
 export function describeStandingOrder(order: StandingOrderResponseDto): string {
-  const where = `${order.wanted} × ${order.shape} at ${order.region}`;
+  const region =
+    order.region === 'any' ? 'in any region' : `at ${order.region}`;
+  const where = `${order.wanted} × ${order.shape} ${region}`;
   return order.kind === 'replace'
     ? `${where}, draining ${order.replaces ?? '?'}`
     : where;
@@ -277,6 +284,7 @@ export function describeStrategy(strategy: PlacementStrategy): string {
 export function describeSettle(seconds: number): string {
   return (
     `${seconds}s — how long work must have been stuck before this buys. ` +
+    'Flui checks once a minute, so it acts up to a minute after that. ' +
     'Never a wait for a cheaper shape.'
   );
 }
@@ -358,6 +366,12 @@ const OUTCOME_MEANINGS: Record<DecisionOutcome, string> = {
   removed: 'a node was drained and removed',
   declined: 'nothing was done, on purpose',
   alerted: 'nothing could be bought — this asks a person',
+  changed: 'a person changed the group',
+  'node-ordered': 'a person ordered a machine',
+  'node-joined': 'a machine joined the cluster',
+  'purchase-failed': 'an order for a machine did not complete',
+  'node-drained': 'a node was emptied',
+  'node-removed': 'a machine was deleted at the provider',
 };
 
 export function outcomeMeaning(outcome: DecisionOutcome): string {
@@ -417,7 +431,10 @@ export function describeDecision(
   return {
     outcome: decision.outcome,
     headline: `${decision.outcome} · ${decision.force}`,
-    at: formatMoment(decision.at),
+    at:
+      decision.repeats && decision.repeats > 1 && decision.since
+        ? `${formatMoment(decision.at)} · ×${decision.repeats} since ${formatMoment(decision.since)}`
+        : formatMoment(decision.at),
     age: relativeAge(decision.at, now),
     lines,
     candidates: (decision.considered ?? []).map((candidate) => ({
@@ -595,4 +612,30 @@ export function toScalingGroupDocument(
       ? { cpu: group.requirement.cpu, memory: group.requirement.memory }
       : null,
   };
+}
+
+/** The ways out of an alarm, one per line, as the API computed them. */
+export function waysOutLines(
+  blocked: ScalingPreviewDto['blocked'] | undefined,
+): string[] {
+  if (!blocked) return [];
+  return [
+    blocked.headline,
+    ...blocked.exits.map((exit) => `  → ${exit.label}${exitCommand(exit)}`),
+  ];
+}
+
+function exitCommand(
+  exit: NonNullable<ScalingPreviewDto['blocked']>['exits'][number],
+): string {
+  switch (exit.kind) {
+    case 'raise-cap':
+      return '  (flui scaling apply -f, limits.maxMonthlyCost)';
+    case 'raise-max-nodes':
+      return '  (flui scaling apply -f, bounds.max)';
+    case 'add-shape':
+      return '  (flui scaling apply -f, shapes)';
+    case 'attach':
+      return '  (flui node connect)';
+  }
 }

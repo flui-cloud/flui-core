@@ -1,3 +1,7 @@
+import * as k8s from '@kubernetes/client-node';
+import { ModuleRef } from '@nestjs/core';
+import { ScalingEngineService } from '../scaling/engine/scaling-engine.service';
+import { WhatIfAnswer } from '../scaling/engine/what-if.core';
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, Not } from 'typeorm';
@@ -80,6 +84,7 @@ export class ClustersService {
     private readonly encryptionService: EncryptionService,
     private readonly kubernetesService: KubernetesService,
     private readonly actuationService: AutoscaleActuationService,
+    private readonly moduleRef: ModuleRef,
   ) {}
 
   /**
@@ -177,6 +182,39 @@ export class ClustersService {
    */
   async getClusterNodes(clusterId: string): Promise<ClusterNodeEntity[]> {
     return await this.clusterOperationsService.getClusterNodes(clusterId);
+  }
+
+  /**
+   * Whether each node takes new apps, read from the cluster itself: a taint or
+   * a cordon is the fact, and any flag stored about it is only a memory of it.
+   * Null when the cluster could not be asked.
+   */
+  async nodesTakingWork(
+    clusterId: string,
+  ): Promise<Map<string, boolean> | null> {
+    const cluster = await this.clusterRepository.findOne({
+      where: { id: clusterId },
+    });
+    if (!cluster?.kubeconfigEncrypted) return null;
+    try {
+      const coreApi = this.kubernetesService
+        .makeKubeConfig(
+          this.encryptionService.decrypt(cluster.kubeconfigEncrypted),
+        )
+        .makeApiClient(k8s.CoreV1Api);
+      const nodes = await coreApi.listNode();
+      return new Map(
+        (nodes.items ?? []).map((node) => [
+          node.metadata?.name ?? '',
+          !node.spec?.unschedulable &&
+            !(node.spec?.taints ?? []).some(
+              (t) => t.effect === 'NoSchedule' || t.effect === 'NoExecute',
+            ),
+        ]),
+      );
+    } catch {
+      return null;
+    }
   }
 
   async registerByosNode(
@@ -335,9 +373,25 @@ export class ClustersService {
 
     let canDeploy: boolean;
     let reason: ResourceAvailabilityReason = null;
+    const placement =
+      hasEnoughCpu && hasEnoughMemory
+        ? null
+        : await this.placementFor(
+            clusterId,
+            cpuRequest,
+            memoryRequest,
+            replicas,
+          );
+    const answered =
+      placement && placement.verdict !== 'unknown' ? placement : null;
 
     if (hasEnoughCpu && hasEnoughMemory) {
       canDeploy = true;
+    } else if (answered?.verdict === 'fits') {
+      canDeploy = true;
+    } else if (answered) {
+      canDeploy = answered.verdict === 'buys' && willGrow;
+      reason = canDeploy ? 'autoscaling_pending' : 'insufficient_resources';
     } else if (willGrow) {
       canDeploy = true;
       reason = 'autoscaling_pending';
@@ -366,8 +420,34 @@ export class ClustersService {
       used: { cpu: formatCpu(used.cpu), memory: formatMem(used.memory) },
       autoscalingEnabled,
       actuation,
-      reasonMessage: reason ? describeCapacityOutcome(actuation, reason) : null,
+      reasonMessage: reason
+        ? (answered?.sentence ?? describeCapacityOutcome(actuation, reason))
+        : null,
+      placement,
     };
+  }
+
+  private async placementFor(
+    clusterId: string,
+    cpuMillicores: number,
+    memoryMi: number,
+    replicas: number,
+  ): Promise<WhatIfAnswer | null> {
+    try {
+      const engine = this.moduleRef.get(ScalingEngineService, {
+        strict: false,
+      });
+      return await engine.whatIf(clusterId, {
+        cpuMillicores,
+        memoryMi,
+        replicas,
+      });
+    } catch (err) {
+      this.logger.warn(
+        `Scaling could not say where ${memoryMi}Mi would run on ${clusterId}: ${(err as Error).message}`,
+      );
+      return null;
+    }
   }
 
   async getBuildResources(

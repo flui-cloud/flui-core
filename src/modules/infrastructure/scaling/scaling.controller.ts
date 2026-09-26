@@ -8,6 +8,8 @@ import {
   Patch,
   Post,
   Query,
+  Req,
+  BadRequestException,
 } from '@nestjs/common';
 import {
   ApiBearerAuth,
@@ -24,11 +26,17 @@ import { ActionCycle } from '../../action-cycle/action-cycle.decorator';
 import {
   SCALING_CONSEQUENCE,
   RETRY_PURCHASE_CONSEQUENCE,
+  APPROVE_PURCHASE_CONSEQUENCE,
   scalingConsequenceClause,
 } from './scaling-consequence';
-import { ScalingGroupService } from './services/scaling-group.service';
+import {
+  ScalingGroupService,
+  toDecisionDto,
+} from './services/scaling-group.service';
+import { parseDecisionFilter } from './services/decision-filter.core';
 import { ScalingOverviewService } from './services/scaling-overview.service';
 import {
+  ApprovePurchaseDto,
   EditScalingGroupDto,
   WriteScalingGroupDto,
 } from './dto/scaling-group.dto';
@@ -40,7 +48,19 @@ import {
 } from './dto/scaling-response.dto';
 import { ShapeOrderingService } from './catalogue/shape-ordering.service';
 import { ScalingEngineService } from './engine/scaling-engine.service';
-import { ScalingPreviewDto } from './dto/scaling-preview.dto';
+import { ScalingReconcilerService } from './engine/scaling-reconciler.service';
+import { byOf } from './scaling-actor';
+import {
+  ScalingPreviewDto,
+  WhatIfAnswerDto,
+  WhatIfRequestDto,
+} from './dto/scaling-preview.dto';
+import { WhatIfAsk } from './engine/what-if.core';
+import {
+  ResourceQuantityError,
+  cpuMillicoresOf,
+  memoryMiOf,
+} from '../../shared/utils/resource-quantity.util';
 import { ShapeCatalogueDto } from './catalogue/dto/shape-catalogue.dto';
 
 /** Said the same way on every route that can answer it, so a caller reads one string. */
@@ -84,6 +104,7 @@ export class ScalingController {
     private readonly overview: ScalingOverviewService,
     private readonly ordering: ShapeOrderingService,
     private readonly engine: ScalingEngineService,
+    private readonly reconciler: ScalingReconcilerService,
   ) {}
 
   @Get('scaling')
@@ -127,13 +148,51 @@ export class ScalingController {
   })
   @ApiParam({ name: 'clusterId', description: CLUSTER_ID })
   @ApiQuery({ name: 'limit', required: false, example: 50 })
+  @ApiQuery({
+    name: 'outcome',
+    required: false,
+    description:
+      'Comma list: added, replaced, removed, declined, alerted, changed',
+  })
+  @ApiQuery({
+    name: 'force',
+    required: false,
+    description: 'Comma list: urgency, opportunity, person',
+  })
+  @ApiQuery({
+    name: 'since',
+    required: false,
+    description: 'ISO time, inclusive',
+  })
+  @ApiQuery({
+    name: 'until',
+    required: false,
+    description: 'ISO time, inclusive',
+  })
+  @ApiQuery({
+    name: 'before',
+    required: false,
+    description:
+      'The `at` of the last row read: returns the next page, older rows only',
+  })
+  @ApiQuery({
+    name: 'collapse',
+    required: false,
+    description:
+      'true: identical decisions in a row come back as one, with `repeats` and `since`',
+  })
   @ApiResponse({ status: 200, type: [ClusterScalingDecisionDto] })
   @ApiResponse(CLUSTER_MISSING)
   async clusterDecisions(
     @Param('clusterId') clusterId: string,
     @Query('limit') limit?: string,
+    @Query() query: Record<string, string> = {},
   ): Promise<ClusterScalingDecisionDto[]> {
-    return this.groups.decisionsOfCluster(clusterId, parseLimit(limit));
+    return this.groups.decisionsOfCluster(
+      clusterId,
+      parseLimit(limit),
+      parseDecisionFilter(query),
+    );
   }
 
   @Get('clusters/:clusterId/scaling-groups')
@@ -222,8 +281,13 @@ export class ScalingController {
   async update(
     @Param('id') id: string,
     @Body() dto: EditScalingGroupDto,
+    @Req()
+    req: { user?: { email?: string; displayName?: string } } & Record<
+      string,
+      unknown
+    >,
   ): Promise<ScalingGroupResponseDto> {
-    return this.groups.update(id, dto);
+    return this.groups.update(id, dto, byOf(req));
   }
 
   @Post('scaling-groups/:id/retry-purchase')
@@ -246,8 +310,13 @@ export class ScalingController {
   @ApiResponse(GROUP_MISSING)
   async retryPurchase(
     @Param('id') id: string,
+    @Req()
+    req: { user?: { email?: string; displayName?: string } } & Record<
+      string,
+      unknown
+    >,
   ): Promise<ScalingGroupResponseDto> {
-    return this.groups.retryPurchase(id);
+    return this.groups.retryPurchase(id, byOf(req));
   }
 
   @Delete('scaling-groups/:id')
@@ -263,6 +332,41 @@ export class ScalingController {
   @ApiResponse(GROUP_MISSING)
   async remove(@Param('id') id: string): Promise<void> {
     return this.groups.remove(id);
+  }
+
+  @Post('scaling-groups/:id/approve-purchase')
+  @RequirePermission(IAM_PERMISSION.CLUSTER_MANAGE)
+  @ActionCycle({
+    action: 'POST /infrastructure/scaling-groups/:id/approve-purchase',
+    bind: ['id'],
+    sentence: 'buy the machine scaling group {id} proposes, once',
+    consequence: APPROVE_PURCHASE_CONSEQUENCE,
+  })
+  @HttpCode(200)
+  @ApiOperation({
+    summary: 'Buy, once, the machine a manual group proposes',
+    description:
+      'For a group set to manual: the engine decides as on a pass and the purchase goes through every gate an automatic one would (ceilings in nodes and money, a purchase in flight, a failed one, the network). The body names the machine the person saw; if the proposal has changed since, nothing is bought and 409 says what it is now. The group stays manual. The decision row names who approved it.',
+  })
+  @ApiParam({ name: 'id', description: GROUP_ID })
+  @ApiResponse({ status: 200, type: ScalingDecisionResponseDto })
+  @ApiResponse({
+    status: 409,
+    description: 'Nothing to buy, the proposal changed, or a gate refused',
+  })
+  @ApiResponse(GROUP_MISSING)
+  async approvePurchase(
+    @Param('id') id: string,
+    @Body() body: ApprovePurchaseDto,
+    @Req()
+    req: { user?: { email?: string; displayName?: string } } & Record<
+      string,
+      unknown
+    >,
+  ): Promise<ScalingDecisionResponseDto> {
+    return toDecisionDto(
+      await this.reconciler.approvePurchase(id, body, byOf(req)),
+    );
   }
 
   @Get('scaling-groups/:id/catalogue')
@@ -293,6 +397,25 @@ export class ScalingController {
     return this.engine.preview(id);
   }
 
+  @Post('clusters/:clusterId/scaling/what-if')
+  @RequirePermission(IAM_PERMISSION.CLUSTER_READ)
+  @HttpCode(200)
+  @ApiOperation({
+    summary: 'What would happen if an app asked for this much',
+    description:
+      'Asked before anything is written: whether the replicas fit on the nodes already there, which machine a group would buy (or, set to manual, propose) for them, or why none can take them. The same room and ladder the reconciler uses; spends nothing and changes nothing.',
+  })
+  @ApiParam({ name: 'clusterId', description: CLUSTER_ID })
+  @ApiResponse({ status: 200, type: WhatIfAnswerDto })
+  @ApiResponse({ status: 400, description: 'Not a CPU or memory quantity' })
+  @ApiResponse(CLUSTER_MISSING)
+  async whatIf(
+    @Param('clusterId') clusterId: string,
+    @Body() body: WhatIfRequestDto,
+  ): Promise<WhatIfAnswerDto> {
+    return this.engine.whatIf(clusterId, askOf(body));
+  }
+
   @Get('scaling-groups/:id/decisions')
   @RequirePermission(IAM_PERMISSION.CLUSTER_READ)
   @ApiOperation({
@@ -302,13 +425,51 @@ export class ScalingController {
   })
   @ApiParam({ name: 'id', description: GROUP_ID })
   @ApiQuery({ name: 'limit', required: false, example: 50 })
+  @ApiQuery({
+    name: 'outcome',
+    required: false,
+    description:
+      'Comma list: added, replaced, removed, declined, alerted, changed',
+  })
+  @ApiQuery({
+    name: 'force',
+    required: false,
+    description: 'Comma list: urgency, opportunity, person',
+  })
+  @ApiQuery({
+    name: 'since',
+    required: false,
+    description: 'ISO time, inclusive',
+  })
+  @ApiQuery({
+    name: 'until',
+    required: false,
+    description: 'ISO time, inclusive',
+  })
+  @ApiQuery({
+    name: 'before',
+    required: false,
+    description:
+      'The `at` of the last row read: returns the next page, older rows only',
+  })
+  @ApiQuery({
+    name: 'collapse',
+    required: false,
+    description:
+      'true: identical decisions in a row come back as one, with `repeats` and `since`',
+  })
   @ApiResponse({ status: 200, type: [ScalingDecisionResponseDto] })
   @ApiResponse(GROUP_MISSING)
   async decisions(
     @Param('id') id: string,
     @Query('limit') limit?: string,
+    @Query() query: Record<string, string> = {},
   ): Promise<ScalingDecisionResponseDto[]> {
-    return this.groups.decisionsOf(id, parseLimit(limit));
+    return this.groups.decisionsOf(
+      id,
+      parseLimit(limit),
+      parseDecisionFilter(query),
+    );
   }
 }
 
@@ -316,3 +477,20 @@ function parseLimit(limit?: string): number | undefined {
   const parsed = limit ? Number(limit) : undefined;
   return Number.isFinite(parsed) ? (parsed as number) : undefined;
 }
+
+function askOf(body: WhatIfRequestDto): WhatIfAsk {
+  try {
+    return {
+      cpuMillicores: cpuMillicoresOf(body.cpu),
+      memoryMi: memoryMiOf(body.memory),
+      replicas: body.replicas ?? 1,
+    };
+  } catch (err) {
+    if (err instanceof ResourceQuantityError) {
+      throw new BadRequestException(err.message);
+    }
+    throw err;
+  }
+}
+
+/** Who acted, as the decision log names them: the person, or an agent acting for them. */

@@ -86,6 +86,10 @@ import { NodePriceService } from './services/node-price.service';
 import { NodeShapeBackfillService } from './services/node-shape-backfill.service';
 import { UnschedulablePodsService } from './services/unschedulable-pods.service';
 import { FleetHistoryService } from './services/fleet-history.service';
+import { NodeLifeEventsService } from './services/node-life-events.service';
+import { ScalingBellService } from './services/scaling-bell.service';
+import { UserEntity } from '../../auth/entities/user.entity';
+import { UserEventsModule } from '../../auth/gateway/user-events.module';
 
 @Module({
   imports: [
@@ -111,6 +115,7 @@ import { FleetHistoryService } from './services/fleet-history.service';
     EncryptionModule,
     InfrastructureOperationsModule,
     ObservabilityModule,
+    UserEventsModule,
     forwardRef(() => DnsModule),
 
     // Cluster entities
@@ -137,6 +142,8 @@ import { FleetHistoryService } from './services/fleet-history.service';
       VNetSubnetEntity,
       // Read-only access for node-lock check (no module dep on ApplicationsModule)
       ApplicationEntity,
+      // Who hears the scaling bell: the instance's administrators.
+      UserEntity,
     ]),
 
     // Shared queue for infrastructure operations
@@ -146,6 +153,8 @@ import { FleetHistoryService } from './services/fleet-history.service';
   ],
   controllers: [ClustersController, ClusterOrphanedClaimsController],
   providers: [
+    NodeLifeEventsService,
+    ScalingBellService,
     ClusterRebuildService,
     ClusterRebuildProcessor,
     // Main orchestrator service
@@ -194,6 +203,7 @@ import { FleetHistoryService } from './services/fleet-history.service';
   ],
   exports: [
     ClustersService,
+    ScalingBellService,
     // The sandbox is the only caller: it is the only place with tenancies that
     // are told they have a storage ceiling.
     NodeStorageQuotaService,
