@@ -37,6 +37,7 @@ import { SanCertificateEntity } from '../modules/dns/entities/san-certificate.en
 import { ApplicationEntity } from '../modules/applications/entities/application.entity';
 import { AppRevisionEntity } from '../modules/applications/entities/app-revision.entity';
 import { AppResourceEntity } from '../modules/applications/entities/app-resource.entity';
+import { ScheduledJobEntity } from '../modules/applications/entities/scheduled-job.entity';
 import { AppBuildEntity } from '../modules/app-builds/entities/app-build.entity';
 import { BuildCacheSnapshotEntity } from '../modules/app-builds/entities/build-cache-snapshot.entity';
 import { UserEntity } from '../modules/auth/entities/user.entity';
@@ -113,6 +114,7 @@ export const entities = [
   ApplicationEntity,
   AppRevisionEntity,
   AppResourceEntity,
+  ScheduledJobEntity,
   AppBuildEntity,
   BuildCacheSnapshotEntity,
   UserEntity,

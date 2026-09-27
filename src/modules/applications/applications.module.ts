@@ -1,3 +1,5 @@
+import { ScheduledJobsImportService } from './services/scheduled-jobs-import.service';
+import { ScheduledJobEntity } from './entities/scheduled-job.entity';
 import { Module, forwardRef } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { ConfigModule } from '@nestjs/config';
@@ -55,6 +57,7 @@ import { BackupJobEntity } from '../backups/entities/backup-job.entity';
 import { BackupDestinationEntity } from '../backups/entities/backup-destination.entity';
 import { BackupArtifactEntity } from '../backups/entities/backup-artifact.entity';
 import { BackupArtifactLocationEntity } from '../backups/entities/backup-artifact-location.entity';
+import { BackupPolicyEntity } from '../backups/entities/backup-policy.entity';
 import { SnapshotStorageCapabilityService } from './services/snapshot-storage-capability.service';
 import { VolumeBackupsService } from './services/volume-backups.service';
 import { DedicatedPlacementService } from './services/dedicated-placement.service';
@@ -94,6 +97,8 @@ import { DnsModule } from '../dns/dns.module';
 import { WsAuthModule } from '../auth/ws-auth.module';
 import { StorageModule } from '../storage/storage.module';
 import { VolumeExportService } from '../providers/services/volume-export.service';
+import { StatefulSetVolumeSwapService } from './services/statefulset-volume-swap.service';
+import { SpareVolumesService } from './services/spare-volumes.service';
 
 @Module({
   imports: [
@@ -106,9 +111,11 @@ import { VolumeExportService } from '../providers/services/volume-export.service
       BackupJobEntity,
       BackupArtifactEntity,
       BackupArtifactLocationEntity,
+      BackupPolicyEntity,
       ApplicationEntity,
       AppRevisionEntity,
       AppResourceEntity,
+      ScheduledJobEntity,
       InfrastructureOperationEntity,
       ClusterEntity,
       ProjectEntity,
@@ -181,6 +188,7 @@ import { VolumeExportService } from '../providers/services/volume-export.service
     SystemAppCatalogService,
     AppConfigService,
     ScheduledJobsService,
+    ScheduledJobsImportService,
     GatewayService,
     AppManagementService,
     AppResourcesConsequenceService,
@@ -204,6 +212,8 @@ import { VolumeExportService } from '../providers/services/volume-export.service
     SnapshotStorageCapabilityService,
     VolumeExportService,
     VolumeBackupsService,
+    StatefulSetVolumeSwapService,
+    SpareVolumesService,
     DedicatedPlacementService,
     ApplicationEventsGateway,
     AppOperationRunner,

@@ -54,6 +54,51 @@ export const CRON_TOOLS: ToolDef[] = [
       }),
   }),
   defineTool({
+    name: 'schedule_update',
+    routes: ['PATCH /applications/:id/schedules/:name'],
+    description:
+      'Change a scheduled job: its cron expression (5 fields), time zone (IANA, e.g. Europe/Rome), command or overlap policy. Only the fields passed change.',
+    scope: MCP_SCOPE.APP_WRITE,
+    inputSchema: {
+      id: z.string(),
+      name: z.string(),
+      schedule: z.string().optional(),
+      command: z.string().optional(),
+      timezone: z.string().optional(),
+      concurrencyPolicy: z.enum(['Allow', 'Forbid', 'Replace']).optional(),
+    },
+    run: (args, ctx) =>
+      ctx.api.patch(`${schedules(args.id)}/${enc(args.name)}`, {
+        schedule: args.schedule,
+        command: args.command,
+        timezone: args.timezone,
+        concurrencyPolicy: args.concurrencyPolicy,
+      }),
+  }),
+  defineTool({
+    name: 'schedule_suspend',
+    routes: ['PATCH /applications/:id/schedules/:name'],
+    description:
+      'Suspend a scheduled job: no new runs start until it is resumed. A run already going finishes.',
+    scope: MCP_SCOPE.APP_WRITE,
+    inputSchema: { id: z.string(), name: z.string() },
+    run: (args, ctx) =>
+      ctx.api.patch(`${schedules(args.id)}/${enc(args.name)}`, {
+        enabled: false,
+      }),
+  }),
+  defineTool({
+    name: 'schedule_resume',
+    routes: ['PATCH /applications/:id/schedules/:name'],
+    description: 'Resume a suspended scheduled job.',
+    scope: MCP_SCOPE.APP_WRITE,
+    inputSchema: { id: z.string(), name: z.string() },
+    run: (args, ctx) =>
+      ctx.api.patch(`${schedules(args.id)}/${enc(args.name)}`, {
+        enabled: true,
+      }),
+  }),
+  defineTool({
     name: 'schedule_trigger',
     routes: ['POST /applications/:id/schedules/:name/trigger'],
     description:

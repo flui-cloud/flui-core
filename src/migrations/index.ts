@@ -55,6 +55,10 @@ import { EndpointCertificateDeferredSince1789800000000 } from './1789800000000-E
 import { MaintenanceWindows1789900000000 } from './1789900000000-MaintenanceWindows';
 import { AppEventMaintenance1789900000001 } from './1789900000001-AppEventMaintenance';
 import { MariadbRestoreStrategy1787600000000 } from './1787600000000-MariadbRestoreStrategy';
+import { LogicalDumpRestoreStrategy1790000000002 } from './1790000000002-LogicalDumpRestoreStrategy';
+import { EndpointRoutePath1790000000003 } from './1790000000003-EndpointRoutePath';
+import { ScheduledJobs1790000000004 } from './1790000000004-ScheduledJobs';
+import { DestinationCostDecimal1790000000005 } from './1790000000005-DestinationCostDecimal';
 import { BackfillArtifactApplicationId1787500000000 } from './1787500000000-BackfillArtifactApplicationId';
 import { WireGuardHubKeySealed1790000000000 } from './1790000000000-WireGuardHubKeySealed';
 import { RecoverNodeAccessOperation1790000000001 } from './1790000000001-RecoverNodeAccessOperation';
@@ -123,4 +127,8 @@ export const migrations = [
   AppEventMaintenance1789900000001,
   WireGuardHubKeySealed1790000000000,
   RecoverNodeAccessOperation1790000000001,
+  LogicalDumpRestoreStrategy1790000000002,
+  EndpointRoutePath1790000000003,
+  ScheduledJobs1790000000004,
+  DestinationCostDecimal1790000000005,
 ];

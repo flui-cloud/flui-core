@@ -3226,8 +3226,11 @@ const MASK_EXEMPT: string[] = [
   'ScheduledJobDto.activeRuns', // modules/applications/dto/scheduled-job.dto.ts
   'ScheduledJobDto.command', // modules/applications/dto/scheduled-job.dto.ts
   'ScheduledJobDto.concurrencyPolicy', // modules/applications/dto/scheduled-job.dto.ts
+  'ScheduledJobDto.consecutiveFailures', // modules/applications/dto/scheduled-job.dto.ts
   'ScheduledJobDto.createdAt', // modules/applications/dto/scheduled-job.dto.ts
   'ScheduledJobDto.enabled', // modules/applications/dto/scheduled-job.dto.ts
+  'ScheduledJobDto.failing', // modules/applications/dto/scheduled-job.dto.ts
+  'ScheduledJobDto.lastRunStatus', // modules/applications/dto/scheduled-job.dto.ts
   'ScheduledJobDto.lastScheduleTime', // modules/applications/dto/scheduled-job.dto.ts
   'ScheduledJobDto.lastSuccessfulTime', // modules/applications/dto/scheduled-job.dto.ts
   'ScheduledJobDto.name', // modules/applications/dto/scheduled-job.dto.ts
@@ -3237,10 +3240,12 @@ const MASK_EXEMPT: string[] = [
   'ScheduledJobRunDto.completionTime', // modules/applications/dto/scheduled-job.dto.ts
   'ScheduledJobRunDto.jobName', // modules/applications/dto/scheduled-job.dto.ts
   'ScheduledJobRunDto.manual', // modules/applications/dto/scheduled-job.dto.ts
+  'ScheduledJobRunDto.reason', // modules/applications/dto/scheduled-job.dto.ts
   'ScheduledJobRunDto.startTime', // modules/applications/dto/scheduled-job.dto.ts
   'ScheduledJobRunDto.status', // modules/applications/dto/scheduled-job.dto.ts
   'ScheduledJobRunLogsDto.jobName', // modules/applications/dto/scheduled-job.dto.ts
   'ScheduledJobRunLogsDto.logs', // modules/applications/dto/scheduled-job.dto.ts
+  'ScheduledJobRunLogsDto.reason', // modules/applications/dto/scheduled-job.dto.ts
   'SearchAssistDto.index', // modules/database-console/dto/search-console.dto.ts
   'SearchCountDto.body', // modules/database-console/dto/search-console.dto.ts
   'SearchCountDto.index', // modules/database-console/dto/search-console.dto.ts

@@ -1,3 +1,4 @@
+import { Sensitivity } from '../../mask/decorators/sensitivity.decorator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
   IsBoolean,
@@ -8,6 +9,10 @@ import {
   MaxLength,
   MinLength,
 } from 'class-validator';
+import {
+  IsCronSchedule,
+  IsIanaTimezone,
+} from '../validators/schedule.validators';
 
 export const CRON_CONCURRENCY_POLICIES = [
   'Allow',
@@ -36,8 +41,7 @@ export class CreateScheduledJobDto {
     description: 'Standard cron expression (5 fields).',
     example: '0 3 * * *',
   })
-  @IsString()
-  @MinLength(1)
+  @IsCronSchedule()
   schedule!: string;
 
   @ApiProperty({
@@ -54,7 +58,7 @@ export class CreateScheduledJobDto {
     example: 'Europe/Rome',
   })
   @IsOptional()
-  @IsString()
+  @IsIanaTimezone()
   timezone?: string;
 
   @ApiPropertyOptional({
@@ -79,8 +83,7 @@ export class CreateScheduledJobDto {
 export class UpdateScheduledJobDto {
   @ApiPropertyOptional({ description: 'Standard cron expression (5 fields).' })
   @IsOptional()
-  @IsString()
-  @MinLength(1)
+  @IsCronSchedule()
   schedule?: string;
 
   @ApiPropertyOptional({ description: 'Shell command executed by the job.' })
@@ -91,7 +94,7 @@ export class UpdateScheduledJobDto {
 
   @ApiPropertyOptional({ description: 'IANA timezone.' })
   @IsOptional()
-  @IsString()
+  @IsIanaTimezone()
   timezone?: string;
 
   @ApiPropertyOptional({
@@ -149,6 +152,32 @@ export class ScheduledJobDto {
 
   @ApiPropertyOptional({ description: 'CronJob creation timestamp.' })
   createdAt?: string | null;
+
+  @ApiPropertyOptional({ enum: ['Succeeded', 'Failed'], nullable: true })
+  lastRunStatus?: 'Running' | 'Succeeded' | 'Failed' | 'Unknown' | null;
+
+  @ApiPropertyOptional({ description: 'Failed runs in a row, newest first.' })
+  consecutiveFailures?: number;
+
+  @ApiPropertyOptional({
+    description: 'True after 3 failed runs in a row.',
+  })
+  failing?: boolean;
+
+  @Sensitivity(Sensitivity.PUBLIC)
+  @ApiPropertyOptional({
+    enum: ['user', 'manifest'],
+    description:
+      'Who owns it: a person, or the application flui.yaml (read-only here).',
+  })
+  origin?: 'user' | 'manifest';
+
+  @Sensitivity(Sensitivity.PUBLIC)
+  @ApiPropertyOptional({
+    description:
+      'False while the cluster does not have it yet; the next release or a run puts it back.',
+  })
+  onCluster?: boolean;
 }
 
 export type ScheduledJobRunStatus =
@@ -172,6 +201,12 @@ export class ScheduledJobRunDto {
 
   @ApiPropertyOptional()
   completionTime?: string | null;
+
+  @ApiPropertyOptional({
+    description:
+      'Why a failed run failed, in plain words, when the cluster still says.',
+  })
+  reason?: string | null;
 }
 
 export class TriggerScheduledJobResponseDto {
@@ -185,6 +220,9 @@ export class ScheduledJobRunLogsDto {
   @ApiProperty()
   jobName!: string;
 
-  @ApiProperty({ description: 'Pod logs for the run (empty if no pod yet).' })
+  @ApiProperty({ description: 'Output of the run (empty when there is none).' })
   logs!: string;
+
+  @ApiPropertyOptional({ description: 'Why the run failed, when it did.' })
+  reason?: string | null;
 }

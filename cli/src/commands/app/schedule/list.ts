@@ -66,13 +66,31 @@ export default class AppScheduleList extends Command {
       for (const s of items) {
         const name = s.name.padEnd(24).slice(0, 24);
         const schedule = s.schedule.padEnd(16).slice(0, 16);
-        const state = (
-          s.enabled ? chalk.green('enabled') : chalk.yellow('suspended')
-        ).padEnd(10);
+        let state = s.enabled
+          ? chalk.green('enabled')
+          : chalk.yellow('suspended');
+        if (s.failing) state = chalk.red('failing');
+        state = state.padEnd(10);
         const last = (s.lastScheduleTime ?? '—').padEnd(22).slice(0, 22);
         const cmd =
           s.command.length > 40 ? s.command.slice(0, 37) + '...' : s.command;
-        console.log(`  ${name} ${schedule} ${state} ${last} ${chalk.dim(cmd)}`);
+        const notes = [
+          s.origin === 'manifest' ? 'from flui.yaml' : '',
+          s.onCluster === false
+            ? 'not on the cluster yet — back at the next release'
+            : '',
+        ].filter(Boolean);
+        console.log(
+          `  ${name} ${schedule} ${state} ${last} ${chalk.dim(cmd)}` +
+            (notes.length ? chalk.yellow(`  (${notes.join('; ')})`) : ''),
+        );
+      }
+      for (const s of items.filter((i) => i.failing)) {
+        console.log(
+          chalk.red(
+            `\n  ${s.name} failed its last ${s.consecutiveFailures} runs — see: flui app schedule logs ${args.app} ${s.name}`,
+          ),
+        );
       }
       console.log('');
       console.log(chalk.dim(`  ${items.length} schedule(s)`));

@@ -144,7 +144,10 @@ export class ScheduledJobsController {
     @Param('name') name: string,
     @Param('jobName') jobName: string,
   ): Promise<ScheduledJobRunLogsDto> {
-    const logs = await this.scheduledJobs.getRunLogs(appId, name, jobName);
-    return { jobName, logs };
+    const [logs, reason] = await Promise.all([
+      this.scheduledJobs.getRunLogs(appId, name, jobName),
+      this.scheduledJobs.getRunFailure(appId, jobName).catch(() => null),
+    ]);
+    return { jobName, logs, reason };
   }
 }

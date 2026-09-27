@@ -61,7 +61,7 @@ export default class AppScheduleLogs extends Command {
         jobName = runs[0].jobName;
       }
 
-      const { logs } = await service.getScheduledJobRunLogs(
+      const { logs, reason } = await service.getScheduledJobRunLogs(
         app.id,
         args.name,
         jobName,
@@ -69,10 +69,9 @@ export default class AppScheduleLogs extends Command {
       spinner.stop();
 
       console.log(chalk.dim(`\n  Run: ${jobName}\n`));
+      if (reason) console.log(chalk.red(`  Failed: ${reason}\n`));
       if (!logs.trim()) {
-        console.log(
-          chalk.dim('  (no logs — the run pod may be gone or empty)'),
-        );
+        console.log(chalk.dim('  (the run printed nothing)'));
       } else {
         console.log(logs);
       }

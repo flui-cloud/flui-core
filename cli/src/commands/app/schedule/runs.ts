@@ -89,6 +89,7 @@ export default class AppScheduleRuns extends Command {
         const trigger = (r.manual ? 'manual' : 'cron').padEnd(9);
         const started = r.startTime ?? '—';
         console.log(`  ${job} ${status} ${trigger} ${started}`);
+        if (r.reason) console.log(chalk.red(`      ${r.reason}`));
       }
       console.log('');
       console.log(chalk.dim(`  ${runs.length} run(s)`));
