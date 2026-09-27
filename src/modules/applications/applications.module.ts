@@ -89,6 +89,7 @@ import { AppOperationRunner } from './services/app-operation-runner.service';
 import { ScalingModule } from '../scaling/scaling.module';
 import { ScalingModule as NodeScalingModule } from '../infrastructure/scaling/scaling.module';
 import { AppResourcesConsequenceService } from './services/app-resources-consequence.service';
+import { AppAutoscalingService } from './services/app-autoscaling.service';
 import { DnsModule } from '../dns/dns.module';
 import { WsAuthModule } from '../auth/ws-auth.module';
 import { StorageModule } from '../storage/storage.module';
@@ -183,6 +184,7 @@ import { VolumeExportService } from '../providers/services/volume-export.service
     GatewayService,
     AppManagementService,
     AppResourcesConsequenceService,
+    AppAutoscalingService,
     ApplicationWorkflowService,
     ApplicationBuildWatcherService,
     ApplicationReleaseService,
@@ -243,6 +245,7 @@ import { VolumeExportService } from '../providers/services/volume-export.service
     ApplicationEventsGateway,
     AppManagementService,
     AppResourcesConsequenceService,
+    AppAutoscalingService,
     ApplicationWorkflowService,
     ApplicationBuildWatcherService,
     ApplicationReleaseService,

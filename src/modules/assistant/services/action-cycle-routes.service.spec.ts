@@ -105,7 +105,6 @@ describe('the tools whose request the chat can show', () => {
   it.each([
     'app_deploy',
     'cluster_create',
-    'cluster_node_add',
     'cluster_node_remove',
     'cluster_power',
     'cluster_storage_expand',
@@ -196,7 +195,6 @@ describe('the tools whose request the chat can show', () => {
     'cluster_autoscale_set',
     'cluster_create',
     'cluster_firewall_enable',
-    'cluster_node_add',
     'cluster_node_remove',
     'cluster_node_resize',
     'cluster_node_uncordon',
@@ -240,6 +238,7 @@ describe('the tools whose request the chat can show', () => {
    * counting them here rather than reasoning about them from the names.
    */
   const UNGOVERNED = [
+    'app_autoscale',
     'app_crash_apply',
     'app_deferred_cancel',
     'app_install',

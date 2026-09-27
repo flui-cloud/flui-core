@@ -537,6 +537,35 @@ export const APPLICATION_TOOLS: ToolDef[] = [
     forModel: runtimeView,
   }),
   defineTool({
+    name: 'app_autoscale',
+    routes: ['PUT /applications/:id/autoscaling'],
+    description:
+      'Let an application’s replica count follow its CPU load, between `min` and `max` (1–20), or turn that off with `enabled: false`. Works for apps published from an image as well as from a repository. The cluster is changed at once. Replicas that find no room wait for a node, which is what makes the cluster’s scaling group buy one — say so when the group is manual. For an app deployed from flui.yaml the range lives in its manifest (`deploy.scaling`): the call is refused (409) and you should propose the manifest change instead; only `targetCPU` can be changed here. Refused (400) for an app that keeps data on each replica.',
+    scope: MCP_SCOPE.APP_WRITE,
+    inputSchema: {
+      id: z.string(),
+      enabled: z.boolean(),
+      min: z.number().int().min(1).max(20).optional(),
+      max: z.number().int().min(1).max(20).optional(),
+      targetCPU: z
+        .number()
+        .int()
+        .min(10)
+        .max(95)
+        .optional()
+        .describe(
+          'Average CPU use per replica, in percent of what it reserves, above which one is added.',
+        ),
+    },
+    run: (args, ctx) =>
+      ctx.api.put(`/applications/${enc(args.id)}/autoscaling`, {
+        enabled: args.enabled,
+        min: args.min,
+        max: args.max,
+        targetCPU: args.targetCPU,
+      }),
+  }),
+  defineTool({
     name: 'app_restart',
     routes: ['POST /applications/:id/restart'],
     description:

@@ -78,6 +78,7 @@ describe('permission groups — the taxonomy', () => {
       [
         'api_key_request',
         'app_alerts',
+        'app_autoscale',
         'app_crash_apply',
         'app_deferred_cancel',
         'app_debug',

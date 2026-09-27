@@ -1,6 +1,7 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Sensitivity } from '../../mask/decorators/sensitivity.decorator';
 import {
+  IsBoolean,
   IsInt,
   IsOptional,
   IsString,
@@ -58,6 +59,73 @@ export class UpdateResourcesDto {
   @IsOptional()
   @IsString()
   containerName?: string;
+}
+
+export class UpdateAutoscalingDto {
+  @ApiProperty({ description: 'Whether the replica count follows the load' })
+  @IsBoolean()
+  enabled: boolean;
+
+  @ApiPropertyOptional({ minimum: 1, maximum: 20, example: 1 })
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(20)
+  min?: number;
+
+  @ApiPropertyOptional({ minimum: 1, maximum: 20, example: 4 })
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(20)
+  max?: number;
+
+  @ApiPropertyOptional({
+    minimum: 10,
+    maximum: 95,
+    example: 70,
+    description:
+      'Average CPU use, in percent of what each replica reserves, above which a replica is added',
+  })
+  @IsOptional()
+  @IsInt()
+  @Min(10)
+  @Max(95)
+  targetCPU?: number;
+}
+
+export class AppAutoscalingDto {
+  @ApiProperty()
+  @Sensitivity(Sensitivity.PUBLIC)
+  enabled: boolean;
+
+  @ApiProperty()
+  @Sensitivity(Sensitivity.PUBLIC)
+  min: number;
+
+  @ApiProperty()
+  @Sensitivity(Sensitivity.PUBLIC)
+  max: number;
+
+  @ApiProperty()
+  @Sensitivity(Sensitivity.PUBLIC)
+  targetCPU: number;
+
+  @ApiProperty({
+    enum: ['app', 'manifest'],
+    description:
+      '`manifest`: the range comes from flui.yaml `deploy.scaling` and is changed there',
+  })
+  @Sensitivity(Sensitivity.PUBLIC)
+  rangeFrom: 'app' | 'manifest';
+
+  @ApiProperty({
+    description:
+      'Whether the cluster runs a replica autoscaler for this app right now; null when it could not be asked',
+    nullable: true,
+  })
+  @Sensitivity(Sensitivity.PUBLIC)
+  running: boolean | null;
 }
 
 export class UpdateReplicasDto {

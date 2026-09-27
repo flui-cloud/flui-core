@@ -404,6 +404,15 @@ export interface AppEndpoint {
   errorMessage?: string;
 }
 
+export interface AppAutoscaling {
+  enabled: boolean;
+  min: number;
+  max: number;
+  targetCPU: number;
+  rangeFrom: 'app' | 'manifest';
+  running: boolean | null;
+}
+
 export class CliAppService {
   private readonly apiClient: ApiClient;
   private readonly clusterId: string;
@@ -580,6 +589,16 @@ export class CliAppService {
     return this.apiClient.patch<AppSummary>(`/applications/${appId}`, {
       deployOnPush: enabled,
     });
+  }
+
+  async autoscale(
+    appId: string,
+    body: { enabled: boolean; min?: number; max?: number; targetCPU?: number },
+  ): Promise<AppAutoscaling> {
+    return this.apiClient.put<AppAutoscaling>(
+      `/applications/${appId}/autoscaling`,
+      body,
+    );
   }
 
   async scale(appId: string, replicas: number): Promise<AppRuntime> {

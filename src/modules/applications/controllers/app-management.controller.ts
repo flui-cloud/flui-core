@@ -3,6 +3,7 @@ import {
   Get,
   Patch,
   Post,
+  Put,
   Body,
   Param,
   HttpCode,
@@ -22,10 +23,13 @@ import { IAM_PERMISSION } from '../../iam/constants/iam-permissions';
 import {
   UpdateResourcesDto,
   UpdateReplicasDto,
+  UpdateAutoscalingDto,
+  AppAutoscalingDto,
   AppRuntimeResponseDto,
   ResourcesConsequenceDto,
 } from '../dto/app-management.dto';
 import { AppResourcesConsequenceService } from '../services/app-resources-consequence.service';
+import { AppAutoscalingService } from '../services/app-autoscaling.service';
 
 @ApiTags('Application Management')
 @ApiBearerAuth()
@@ -46,6 +50,7 @@ export class AppManagementController {
   constructor(
     private readonly appManagementService: AppManagementService,
     private readonly consequence: AppResourcesConsequenceService,
+    private readonly autoscaling: AppAutoscalingService,
   ) {}
 
   @Get('runtime')
@@ -110,6 +115,36 @@ export class AppManagementController {
     @Body() dto: UpdateReplicasDto,
   ): Promise<AppRuntimeResponseDto> {
     return this.appManagementService.updateReplicas(appId, dto);
+  }
+
+  @Get('autoscaling')
+  @ApiOperation({
+    summary: 'Replica autoscaling: the range and whether it runs',
+    description:
+      '`rangeFrom: manifest` means min and max come from flui.yaml `deploy.scaling`. `running` says whether the cluster runs the autoscaler now (null: it could not be asked).',
+  })
+  @ApiParam({ name: 'appId', description: 'Application ID' })
+  @ApiResponse({ status: 200, type: AppAutoscalingDto })
+  async getAutoscaling(
+    @Param('appId') appId: string,
+  ): Promise<AppAutoscalingDto> {
+    return this.autoscaling.get(appId);
+  }
+
+  @Put('autoscaling')
+  @AppAction(IAM_PERMISSION.SCALE_EXECUTE)
+  @ApiOperation({
+    summary: 'Let the replica count follow the load, between min and max',
+    description:
+      'Stores the range and CPU target and brings the cluster to it at once: the autoscaler is created, updated, or removed when `enabled` is false. Replicas that find no room wait for a node, which is what makes the scaling group buy one. Refused (409) for min, max or enabled on an app deployed from flui.yaml — change `deploy.scaling` there; 400 for an app that keeps data on each replica.',
+  })
+  @ApiParam({ name: 'appId', description: 'Application ID' })
+  @ApiResponse({ status: 200, type: AppAutoscalingDto })
+  async setAutoscaling(
+    @Param('appId') appId: string,
+    @Body() dto: UpdateAutoscalingDto,
+  ): Promise<AppAutoscalingDto> {
+    return this.autoscaling.set(appId, dto);
   }
 
   @Post('restart')

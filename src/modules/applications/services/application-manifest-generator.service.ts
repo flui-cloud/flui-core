@@ -686,6 +686,13 @@ export class ApplicationManifestGeneratorService {
     };
   }
 
+  /** The replica autoscaler an app should run with right now, or null when it should run none. */
+  autoscalerFor(app: ApplicationEntity): GeneratedManifest | null {
+    if (!app.scaling?.enabled || app.workloadKind === 'StatefulSet')
+      return null;
+    return this.generateHpa(app);
+  }
+
   private generateHpa(app: ApplicationEntity): GeneratedManifest {
     const labels = this.buildLabels(app);
 

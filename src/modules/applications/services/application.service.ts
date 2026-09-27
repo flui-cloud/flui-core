@@ -4,8 +4,10 @@ import {
   NotFoundException,
   BadRequestException,
   Inject,
+  Optional,
   forwardRef,
 } from '@nestjs/common';
+import { AppAutoscalingService } from './app-autoscaling.service';
 import {
   AvailabilityEntry,
   applicationAvailability,
@@ -96,6 +98,7 @@ export class ApplicationService {
     private readonly clusterDnsZoneService: ClusterDnsZoneService,
     @Inject(forwardRef(() => AppEndpointService))
     private readonly appEndpointService: AppEndpointService,
+    @Optional() private readonly autoscaling?: AppAutoscalingService,
   ) {}
 
   /**
@@ -448,7 +451,24 @@ export class ApplicationService {
       );
     }
 
-    return this.applicationsRepository.update(id, updateData);
+    const saved = await this.applicationsRepository.update(id, updateData);
+    await this.reconcileAutoscaler(dto, saved);
+    return saved;
+  }
+
+  /** A change to `scaling` is brought to the cluster at once, whichever route wrote it. */
+  private async reconcileAutoscaler(
+    dto: UpdateApplicationDto,
+    app: ApplicationEntity,
+  ): Promise<void> {
+    if (dto.scaling === undefined) return;
+    await this.autoscaling
+      ?.reconcile(app)
+      .catch((err: Error) =>
+        this.logger.warn(
+          `[${app.id}] scaling was saved but the replica autoscaler was not brought to it: ${err.message}`,
+        ),
+      );
   }
 
   async delete(id: string): Promise<void> {
