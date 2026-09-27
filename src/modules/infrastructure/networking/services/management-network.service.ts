@@ -29,6 +29,7 @@ import {
   resolveSwitch,
 } from '../management-network.state';
 import { WireGuardPeerService } from './wireguard-peer.service';
+import { controlEndProblem } from '../control-end-health';
 
 const WG_DEFAULT_PORT = 51821;
 
@@ -87,6 +88,9 @@ export class ManagementNetworkService implements OnModuleInit {
               : null,
             keyed: Boolean(hub.publicKey),
           }
+        : null,
+      hubProblem: current.enabled
+        ? (controlEndProblem()?.message ?? null)
         : null,
       members: await this.members(),
     };

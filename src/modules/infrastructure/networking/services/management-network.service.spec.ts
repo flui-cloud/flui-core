@@ -1,6 +1,7 @@
 import { BadRequestException } from '@nestjs/common';
 import { ClusterType } from '../../clusters/entities/cluster.entity';
 import { managementNetworkOn } from '../management-network.state';
+import { controlEndFailed, controlEndHealthy } from '../control-end-health';
 import { ManagementNetworkService } from './management-network.service';
 
 const control = (over: Record<string, unknown> = {}) => ({
@@ -121,5 +122,32 @@ describe('the members of the Flui network', () => {
         status: 'active',
       }),
     ]);
+  });
+});
+
+describe('why members stay pending', () => {
+  afterEach(() => controlEndHealthy());
+
+  it("says what stopped the control's end from being set up", async () => {
+    const { service } = make(
+      control({ metadata: { managementNetwork: { enabled: true } } }),
+      '5.6.7.8',
+    );
+    controlEndFailed(
+      "could not read the control cluster's key: Cannot reach node 5.6.7.8:22 over SSH",
+    );
+    expect((await service.status()).hubProblem).toContain(
+      'Cannot reach node 5.6.7.8:22',
+    );
+  });
+
+  it('says nothing once the control applies again', async () => {
+    const { service } = make(
+      control({ metadata: { managementNetwork: { enabled: true } } }),
+      '5.6.7.8',
+    );
+    controlEndFailed('could not apply');
+    controlEndHealthy();
+    expect((await service.status()).hubProblem).toBeNull();
   });
 });

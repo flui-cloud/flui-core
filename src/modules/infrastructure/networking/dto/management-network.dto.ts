@@ -77,6 +77,14 @@ export class ManagementNetworkDto {
   @ApiProperty({ type: ManagementNetworkHubDto, nullable: true })
   hub: ManagementNetworkHubDto | null;
 
+  @ApiProperty({
+    nullable: true,
+    description:
+      "Why the control's end could not be set up on the last attempt (members stay pending until it is); null once it applies",
+  })
+  @Sensitivity(Sensitivity.ARBITRARY_TEXT)
+  hubProblem: string | null;
+
   @ApiProperty({ type: [ManagementNetworkMemberDto] })
   members: ManagementNetworkMemberDto[];
 }

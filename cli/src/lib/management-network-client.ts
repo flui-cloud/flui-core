@@ -15,6 +15,8 @@ export interface ManagementNetwork {
   source: 'setting' | 'install' | 'default';
   unavailable: string | null;
   hub: { address: string; endpoint: string | null; keyed: boolean } | null;
+  /** Why the control's end could not be set up on the last attempt; absent from older APIs. */
+  hubProblem?: string | null;
   members: ManagementNetworkMember[];
 }
 

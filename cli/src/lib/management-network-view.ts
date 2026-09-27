@@ -41,6 +41,12 @@ export function printManagementNetwork(network: ManagementNetwork): void {
   if (network.unavailable)
     console.log(chalk.yellow(`  ${network.unavailable}`));
   if (network.hub) console.log(hubLine(network.hub));
+  if (network.hubProblem)
+    console.log(
+      chalk.red(
+        `  The control's end is not set up, so members stay pending: ${network.hubProblem}`,
+      ),
+    );
   if (!network.members.length) {
     console.log(chalk.dim('  No member yet.\n'));
     return;

@@ -41,6 +41,7 @@ import {
 } from '../jump-host';
 import { WireGuardPeerRole } from '../entities/wireguard-peer.entity';
 import { EncryptionService } from '../../../shared/encryption/services/encryption.service';
+import { controlEndFailed, controlEndHealthy } from '../control-end-health';
 
 export interface ControlEndState {
   address: string;
@@ -148,9 +149,9 @@ export class WireGuardHubService {
       publicKey = key;
       captured = extractPrivateKey(out);
     } catch (error) {
-      this.logger.error(
-        `[wg] could not read the control cluster's key: ${(error as Error).message}`,
-      );
+      const message = `could not read the control cluster's key: ${(error as Error).message}`;
+      this.logger.error(`[wg] ${message}`);
+      controlEndFailed(message);
       return undefined;
     }
 
@@ -327,11 +328,12 @@ export class WireGuardHubService {
         buildApplyScript(config),
         APPLIED_MARKER,
       );
+      controlEndHealthy();
       return true;
     } catch (error) {
-      this.logger.error(
-        `[wg] could not apply the control cluster's config: ${(error as Error).message}`,
-      );
+      const message = `could not apply the control cluster's config: ${(error as Error).message}`;
+      this.logger.error(`[wg] ${message}`);
+      controlEndFailed(message);
       return false;
     }
   }
