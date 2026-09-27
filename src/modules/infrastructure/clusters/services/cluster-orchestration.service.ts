@@ -50,6 +50,7 @@ import {
   apiRunsInCluster,
   installLogTarget,
 } from '../utils/install-log-target.util';
+import { managementNetworkOn } from '../../networking/management-network.state';
 
 @Injectable()
 export class ClusterOrchestrationService {
@@ -507,7 +508,7 @@ export class ClusterOrchestrationService {
         `[createMasterNode] Failed to fetch kubeconfig from ${node.ipAddress}: ${err.message}`,
         err.stack,
       );
-      throw err;
+      throw await this.explainedByConsole(cluster, node, err);
     }
     // Same catch-up on the success path — the kubeconfig write and the log
     // tail are two independent SSH calls, so success here doesn't guarantee
@@ -1569,7 +1570,7 @@ export class ClusterOrchestrationService {
     mode: 'overlay' | 'mesh';
     peers: BootstrapPeer[];
   }> {
-    if (process.env.FLUI_WG_ENABLED !== 'true') {
+    if (!managementNetworkOn()) {
       return { mode: 'overlay', peers: [] };
     }
     const subnetId = await this.wgPeers.managedSubnetId(
@@ -1795,6 +1796,44 @@ export class ClusterOrchestrationService {
   private static readonly KUBECONFIG_KEY_GRACE_MS = 180_000;
 
   /**
+   * When a node stops installing for a reason it knows, it says so on its
+   * console and never reaches the step that installs the key — so what Flui
+   * sees next is an SSH refusal that names the wrong cause. Read the console
+   * where the provider serves it, and lead with the node's own sentence.
+   */
+  private async explainedByConsole(
+    cluster: ClusterEntity,
+    node: ClusterNodeEntity,
+    err: Error,
+  ): Promise<Error> {
+    const provider = this.providerFactory.getProvider(
+      cluster.provider as CloudProvider,
+    ) as {
+      getConsoleOutput?: (serverId: string, length?: number) => Promise<string>;
+    };
+    if (
+      typeof provider.getConsoleOutput !== 'function' ||
+      !node.providerResourceId
+    ) {
+      return err;
+    }
+    try {
+      const console = await provider.getConsoleOutput(
+        node.providerResourceId,
+        80,
+      );
+      const fatal = fatalFromConsole(console);
+      return fatal
+        ? new Error(
+            `${node.serverName} stopped installing: ${fatal} (then: ${err.message})`,
+          )
+        : err;
+    } catch {
+      return err;
+    }
+  }
+
+  /**
    * Fetch kubeconfig from master node via SSH using the bootstrap key.
    * Polls until k3s has written /etc/rancher/k3s/k3s.yaml, then replaces
    * 127.0.0.1 with the public IP.
@@ -1943,4 +1982,16 @@ export class ClusterOrchestrationService {
       }
     }
   }
+}
+
+/** The reason a bootstrap gave up with, as it wrote it on the console. */
+export function fatalFromConsole(console: string): string | null {
+  const lines = console
+    .split('\n')
+    .map((l) => l.replace(/^\[[\s\d.]+\]\s*/, '').trim())
+    .filter((l) => /\[Bootstrap\]\s*FATAL:/i.test(l));
+  const last = lines.at(-1);
+  return last
+    ? last.replace(/^.*?\[Bootstrap\]\s*FATAL:\s*/i, '').trim()
+    : null;
 }

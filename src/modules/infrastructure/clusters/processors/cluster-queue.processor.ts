@@ -1,6 +1,12 @@
 import { Processor, Process, InjectQueue } from '@nestjs/bull';
-import { Logger } from '@nestjs/common';
+import { Logger, Optional } from '@nestjs/common';
+import { ModuleRef } from '@nestjs/core';
 import { Job, Queue } from 'bull';
+import { CrossProviderFirewallService } from '../../firewalls/services/cross-provider-firewall.service';
+import {
+  NodeAccessRecoveryService,
+  RecoverNodeAccessJob,
+} from '../services/node-access-recovery.service';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import {
@@ -60,6 +66,7 @@ import {
 import { ReconciliationStatus } from '../../shared/enums/reconciliation-status.enum';
 import { ApiServerSanService } from '../../networking/services/api-server-san.service';
 import { NodeLifeEventsService } from '../services/node-life-events.service';
+import { managementNetworkOn } from '../../networking/management-network.state';
 
 /** cert-manager's webhooks register after the cluster reports ready. */
 const ZONE_RECONCILE_ATTEMPTS = 5;
@@ -97,6 +104,7 @@ export class ClusterQueueProcessor {
     private readonly apiServerSan: ApiServerSanService,
     private readonly hostCommand: HostCommandService,
     private readonly nodeEvents: NodeLifeEventsService,
+    @Optional() private readonly moduleRef?: ModuleRef,
   ) {}
 
   private formatVolumeRef(
@@ -996,10 +1004,13 @@ export class ClusterQueueProcessor {
         // is created in the database before the job is enqueued. Without the DB record,
         // waitForAllDeletions() cannot observe the job result and silently treats the
         // node as deleted (operation-not-found → assuming completed).
+        // Deleting a cluster deletes its machines, and a cluster's machines are
+        // running: the server-level `force` only waives that check, which is
+        // not what the cluster-level `force` (carry on past errors) means.
         const savedOperation = await this.serversService.deleteServer({
           server_id: node.providerResourceId,
           provider: cluster.provider as CloudProvider,
-          force,
+          force: true,
         });
 
         deleteOperations.push({
@@ -1185,12 +1196,12 @@ export class ClusterQueueProcessor {
               // With force=true, log but continue
               if (force) {
                 this.logger.warn(
-                  `Node deletion failed for ${opInfo?.nodeName} (force mode, continuing): ${operation.metadata?.error || 'Unknown error'}`,
+                  `Node deletion failed for ${opInfo?.nodeName} (force mode, continuing): ${operation.metadata?.error || operation.errorMessage || 'Unknown error'}`,
                 );
               } else {
                 // Without force, throw error
                 throw new Error(
-                  `Node deletion failed for ${opInfo?.nodeName}: ${operation.metadata?.error || 'Unknown error'}`,
+                  `Node deletion failed for ${opInfo?.nodeName}: ${operation.metadata?.error || operation.errorMessage || 'Unknown error'}`,
                 );
               }
             }
@@ -1262,6 +1273,29 @@ export class ClusterQueueProcessor {
   /**
    * Update operation step helper
    */
+  /**
+   * The control's tunnel port admits only its members, so a new node is let
+   * through as soon as it has an address. A refusal stays on the operation:
+   * it is why the node will not reach the control.
+   */
+  private async admitOnControlTunnel(
+    clusterId: string,
+  ): Promise<{ code: string; message: string } | null> {
+    if (!managementNetworkOn()) return null;
+    const firewall = this.moduleRef?.get(CrossProviderFirewallService, {
+      strict: false,
+    });
+    if (!firewall) return null;
+    try {
+      await firewall.admitOverlayMembers(clusterId);
+      return null;
+    } catch (error) {
+      const message = `The control's firewall did not admit the new node on the Flui network: ${(error as Error).message}`;
+      this.logger.warn(`[add-worker] ${clusterId}: ${message}`);
+      return { code: 'CONTROL_TUNNEL_NOT_ADMITTED', message };
+    }
+  }
+
   private async updateOperationStep(
     operationId: string,
     stepIndex: number,
@@ -1767,6 +1801,15 @@ export class ClusterQueueProcessor {
    * job at all: it takes minutes, and its outcome — including a rollback that
    * put the master back exactly as it was — belongs in the operation record.
    */
+  @Process('recover-node-access')
+  async handleRecoverNodeAccess(job: Job<RecoverNodeAccessJob>): Promise<void> {
+    const recovery = this.moduleRef?.get(NodeAccessRecoveryService, {
+      strict: false,
+    });
+    if (!recovery) throw new Error('Node access recovery is not available');
+    await recovery.run(job.data);
+  }
+
   @Process('enrol-cluster-overlay')
   async handleEnrolClusterOverlay(
     job: Job<{ operationId: string; clusterId: string }>,
@@ -1904,6 +1947,8 @@ export class ClusterQueueProcessor {
         message: 'Workers joined K3s cluster',
       });
 
+      const admission = await this.admitOnControlTunnel(clusterId);
+
       // Master-protection: a control cluster crossing single-node → multi-node
       // gets its master tainted so new pods land on the fresh worker(s).
       await this.maybeProtectMasterOnScaleOut(
@@ -1928,6 +1973,7 @@ export class ClusterQueueProcessor {
         status: OperationStatus.COMPLETED,
         message: `Added ${created.length} worker${created.length > 1 ? 's' : ''}`,
         addedNodeIds: created.map((n) => n.id),
+        ...(admission ? { warnings: [admission] } : {}),
         completedAt: new Date().toISOString(),
       });
       this.infraGateway.emitCompleted(operationId, clusterId, {
