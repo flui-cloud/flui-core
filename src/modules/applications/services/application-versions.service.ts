@@ -250,6 +250,7 @@ export class ApplicationVersionsService {
     response: AvailableVersionsResponseDto,
     runningRef: string | null,
   ): AvailableVersionsResponseDto {
+    const declared = this.parseImageRef(response.currentImageRef ?? '');
     if (runningRef) {
       response = { ...response, currentImageRef: runningRef };
     }
@@ -261,6 +262,27 @@ export class ApplicationVersionsService {
           response.versions.map((v) => ({
             ...v,
             isCurrentlyDeployed: false,
+          })),
+        ),
+      };
+    }
+    // Several tags often share one digest (`v1.11`, `v1.11.0`, `v1.11.0-amd64`):
+    // the one the application declares is the one it runs.
+    const declaredIndex = declared.tag
+      ? response.versions.findIndex(
+          (v) =>
+            (v.tag === declared.tag ||
+              (v.allTags ?? []).includes(declared.tag!)) &&
+            (!current.digest || !v.digest || v.digest === current.digest),
+        )
+      : -1;
+    if (declaredIndex >= 0) {
+      return {
+        ...response,
+        versions: sortVersionsForDisplay(
+          response.versions.map((v, i) => ({
+            ...v,
+            isCurrentlyDeployed: i === declaredIndex,
           })),
         ),
       };
@@ -280,6 +302,18 @@ export class ApplicationVersionsService {
       if (isCurrent) alreadyFlagged = true;
       return { ...v, isCurrentlyDeployed: isCurrent };
     });
+    // A registry can list a tag under one platform's digest while the node
+    // reports the digest of the multi-platform index: the running digest then
+    // matches nothing.
+    // The tag the application declares is the answer in that case.
+    if (!alreadyFlagged && declared.tag) {
+      const index = versions.findIndex(
+        (v) =>
+          v.tag === declared.tag || (v.allTags ?? []).includes(declared.tag!),
+      );
+      if (index >= 0)
+        versions[index] = { ...versions[index], isCurrentlyDeployed: true };
+    }
     return { ...response, versions: sortVersionsForDisplay(versions) };
   }
 

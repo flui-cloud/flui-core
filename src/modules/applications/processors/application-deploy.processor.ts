@@ -62,6 +62,7 @@ import {
   AttachedServicesPort,
 } from '../interfaces/attached-services.port';
 import { droppedAutoscaler } from '../utils/dropped-autoscaler.util';
+import { ScheduledJobsService } from '../services/scheduled-jobs.service';
 
 @Processor('application-deploy')
 export class ApplicationDeployProcessor {
@@ -105,6 +106,8 @@ export class ApplicationDeployProcessor {
     @Optional()
     @Inject(ATTACHED_SERVICES_PORT)
     private readonly attachedServices?: AttachedServicesPort,
+    @Optional()
+    private readonly scheduledJobs?: ScheduledJobsService,
   ) {}
 
   /**
@@ -603,6 +606,16 @@ export class ApplicationDeployProcessor {
         imageRef: deployedImageRef,
         observedImageRef: deployedImageRef,
       });
+
+      if (deployedImageRef) {
+        await this.scheduledJobs
+          ?.realignImage(applicationId, deployedImageRef)
+          .catch((err: Error) =>
+            this.logger.warn(
+              `[deploy] schedules of ${applicationId} kept their image: ${err.message}`,
+            ),
+          );
+      }
 
       await this.updateOperation(
         operationId,

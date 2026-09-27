@@ -59,6 +59,7 @@ import {
   envChanges,
   envHashOf,
 } from '../utils/env-hash.util';
+import { StatefulSetVolumeSwapService } from './statefulset-volume-swap.service';
 
 /** Rollout poll interval (ms) */
 const ROLLOUT_POLL_INTERVAL_MS = 3000;
@@ -82,6 +83,8 @@ export class AppManagementService {
     private readonly gateway: ApplicationEventsGateway,
     private readonly runner: AppOperationRunner,
     @Optional() private readonly moduleRef?: ModuleRef,
+    @Optional()
+    private readonly statefulSetVolumeSwap?: StatefulSetVolumeSwapService,
   ) {}
 
   // ── Public API ─────────────────────────────────────────────────────────────
@@ -357,14 +360,34 @@ export class AppManagementService {
           name: deploymentName,
           resource: deployment,
         } = await this.getWorkloadOrThrow(app, kubeconfig);
+        if (kind === 'StatefulSet' && this.statefulSetVolumeSwap) {
+          return this.swapStatefulSetVolume(
+            app,
+            kubeconfig,
+            deploymentName,
+            volumeName,
+            newClaimName,
+          );
+        }
         const volumes: any[] = deployment.spec?.template?.spec?.volumes ?? [];
-        const target = volumes.find((v) => v.name === volumeName);
+        // By the application's name for the volume or by the volume it is
+        // mounted from today: both are what a person reads in a listing.
+        const target =
+          volumes.find((v) => v.name === volumeName) ??
+          volumes.find(
+            (v) => v.persistentVolumeClaim?.claimName === volumeName,
+          );
         if (!target?.persistentVolumeClaim) {
+          const known = volumes
+            .filter((v) => v.persistentVolumeClaim)
+            .map((v) => v.name);
           throw new NotFoundException(
-            `Volume "${volumeName}" with a PVC not found on ${kind} "${deploymentName}".`,
+            `Volume "${volumeName}" with a PVC not found on ${kind} "${deploymentName}".` +
+              (known.length ? ` Its volumes: ${known.join(', ')}.` : ''),
           );
         }
         const previousClaim = target.persistentVolumeClaim.claimName;
+        volumeName = target.name;
 
         await this.kubernetesService.patchWorkloadVolumeClaimName(
           kubeconfig,
@@ -406,6 +429,68 @@ export class AppManagementService {
       },
     );
     return { ...result, operationId };
+  }
+
+  /**
+   * A database's claim cannot be repointed, so its volumes are exchanged
+   * instead (see StatefulSetVolumeSwapService). A swap that fails before
+   * touching anything removes the restored volume it was given: it would
+   * otherwise stay, unused and paid for, where no list shows it.
+   */
+  private async swapStatefulSetVolume(
+    app: ApplicationEntity,
+    kubeconfig: string,
+    statefulSet: string,
+    volumeName: string,
+    restoredClaim: string,
+  ): Promise<AppRuntimeResponseDto> {
+    let result: { claim: string; previousClaim: string };
+    try {
+      result = await this.statefulSetVolumeSwap!.swap({
+        kubeconfig,
+        namespace: app.k8sNamespace,
+        statefulSet,
+        volumeName,
+        restoredClaim,
+        appId: app.id,
+      });
+    } catch (err) {
+      const stillThere = await this.kubernetesService
+        .getResource(
+          kubeconfig,
+          'PersistentVolumeClaim',
+          restoredClaim,
+          app.k8sNamespace,
+        )
+        .catch(() => null);
+      if (stillThere) {
+        await this.kubernetesService
+          .deleteResource(
+            kubeconfig,
+            'PersistentVolumeClaim',
+            restoredClaim,
+            app.k8sNamespace,
+          )
+          .catch(() => undefined);
+        throw new BadRequestException(
+          `${(err as Error).message}. The restored volume was removed; restore the copy again to retry.`,
+        );
+      }
+      throw err;
+    }
+    await this.appRevisionsRepository.createAuditEvent({
+      applicationId: app.id,
+      eventType: AppEventType.RESTART,
+      actor: { type: AppEventActorType.API },
+      changeMetadata: {
+        operation: 'volume-swap',
+        volumeName,
+        restoredFrom: restoredClaim,
+        previousKeptAs: result.previousClaim,
+      },
+    });
+    this.watchRollout(app, kubeconfig, 'pvc-swap', RolloutSection.PODS, true);
+    return this.buildRuntimeResponse(app, kubeconfig);
   }
 
   // ── Rollout watcher ────────────────────────────────────────────────────────

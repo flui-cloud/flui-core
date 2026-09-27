@@ -156,10 +156,15 @@ export class DockerHubService {
           (img) => img.architecture === 'amd64' && img.os === 'linux',
         );
         const compatible = !!amd64Image;
-        const platforms = images.map((img) => {
-          const variant = img.variant ? `/${img.variant}` : '';
-          return `${img.os}/${img.architecture}${variant}`;
-        });
+        // Attestation manifests are listed as `unknown/unknown`: not platforms.
+        const platforms = images
+          .filter(
+            (img) => img.os !== 'unknown' && img.architecture !== 'unknown',
+          )
+          .map((img) => {
+            const variant = img.variant ? `/${img.variant}` : '';
+            return `${img.os}/${img.architecture}${variant}`;
+          });
 
         const { hint, reason } = this.resolveDeployHint(image, t.name);
 

@@ -463,8 +463,15 @@ export class ApplicationsController {
     status: 400,
     description: 'Cannot delete system-protected application',
   })
-  async delete(@Param('id') id: string): Promise<DeleteApplicationResponseDto> {
+  async delete(
+    @Param('id') id: string,
+    @Query('onlyThis') onlyThis?: string,
+  ): Promise<DeleteApplicationResponseDto> {
     this.logger.log(`[DELETE] HTTP DELETE /applications/${id} received`);
+    await this.applicationDeployService.assertNotSplittingBundle(
+      id,
+      onlyThis === 'true',
+    );
     try {
       const operation =
         await this.applicationDeployService.deleteApplication(id);

@@ -114,6 +114,7 @@ describe('ApplicationsController fills in what it used to drop', () => {
       undefined as never,
       management as never,
       undefined as never,
+      undefined as never,
     );
     return {
       controller,

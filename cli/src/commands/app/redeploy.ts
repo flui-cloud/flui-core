@@ -55,9 +55,10 @@ export default class AppRedeploy extends Command {
         return;
       }
 
-      // A system application has no owner, and the registry route judges by
-      // ownership — so for those the request goes the way the dashboard goes.
-      if (app.userId) {
+      // The registry route knows only images this platform built from a
+      // repository, and judges by ownership. An application from an image or
+      // the catalog, or a system one, goes the way the dashboard goes.
+      if (app.userId && app.sourceType === 'git_build') {
         await service.redeployTag(app.id, args.target);
       } else {
         await service.deployImageRef(

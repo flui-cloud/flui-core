@@ -41,6 +41,9 @@ import { DedicatedPlacementService } from './dedicated-placement.service';
 import { findSystemAppByLabel } from '../constants/system-app-catalog';
 import { matchesAnyPattern } from '../utils/version-pattern';
 import { normalizeMonorepoImageRef } from '../utils/image-ref.util';
+import { CatalogInstallEntity } from '../../catalog/entities/catalog-install.entity';
+import { CatalogInstallStatus } from '../../catalog/enums/catalog-install-status.enum';
+import { liveBundleSiblings } from '../utils/bundle-siblings.util';
 
 export interface DeployApplicationJobData {
   operationId: string;
@@ -87,6 +90,8 @@ export class ApplicationDeployService {
     private readonly appRevisionsRepository: AppRevisionsRepository,
     private readonly buildAgentConfig: BuildAgentConfigService,
     private readonly placementService: DedicatedPlacementService,
+    @InjectRepository(CatalogInstallEntity)
+    private readonly catalogInstalls: Repository<CatalogInstallEntity>,
   ) {}
 
   async deploy(
@@ -296,6 +301,33 @@ export class ApplicationDeployService {
     );
 
     return savedOperation;
+  }
+
+  /**
+   * Refuse to delete one component of a bundle whose other components are
+   * still running, unless that is explicitly what is meant: the bundle is
+   * removed with `DELETE /applications/:id/install`.
+   */
+  async assertNotSplittingBundle(id: string, onlyThis: boolean): Promise<void> {
+    if (onlyThis) return;
+    const app = await this.applicationService.findById(id);
+    const bundle = await liveBundleSiblings(
+      this.applicationRepository,
+      this.catalogInstalls,
+      app,
+    );
+    if (!bundle?.siblings.length) return;
+    if (bundle.install.status === CatalogInstallStatus.UNINSTALLING) return;
+    const names = bundle.siblings.map((s) => s.name);
+    throw new ConflictException({
+      code: 'PART_OF_BUNDLE',
+      message:
+        `${app.name} is part of ${bundle.install.displayName}, together with ${names.join(', ')}. ` +
+        'Remove the whole bundle, or delete only this component (onlyThis=true) — the rest keeps running.',
+      installId: bundle.install.id,
+      bundleName: bundle.install.displayName,
+      components: [app.name, ...names],
+    });
   }
 
   async deleteApplication(
