@@ -2,7 +2,10 @@ import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import * as dnsPromises from 'node:dns/promises';
-import { ClusterEntity } from '../../infrastructure/clusters/entities/cluster.entity';
+import {
+  ClusterEntity,
+  isControlClusterType,
+} from '../../infrastructure/clusters/entities/cluster.entity';
 import { KubernetesService } from '../../infrastructure/shared/services/kubernetes.service';
 import { EncryptionService } from '../../shared/encryption/services/encryption.service';
 import { DnsProviderFactory } from '../../providers/services/dns-provider.factory';
@@ -31,9 +34,12 @@ import { DnsZoneReconciliationService } from './dns-zone-reconciliation.service'
 import { resolveRecordName } from '../utils/resolve-record-name.util';
 import { GatewayMiddlewareCompilerService } from './gateway-middleware-compiler.service';
 import { describeError } from '../../shared/utils/error.util';
+import { stripTrailingSlashes } from '../../../common/utils/url.util';
 import { SandboxTenantEntity } from '../../sandbox/entities/sandbox-tenant.entity';
 import { sandboxNoindexMiddlewareRef } from '../../sandbox/constants/sandbox-noindex';
 import { ENDPOINT_ID_LABEL } from '../constants/endpoint-labels';
+import { invalidGatewayCidrs } from '../validators/gateway-cidr.validator';
+import { gatewayForwardAuthAddress } from '../utils/gateway-forward-auth-address.util';
 import { AcmeResolversService } from './acme-resolvers.service';
 import {
   AuthoritativeAnswer,
@@ -53,6 +59,9 @@ import {
 // A full reconcile — including the DNS-propagation gate — stays well under a
 // minute; anything holding the lock for this long is a crashed process, not work.
 const STALE_RECONCILE_LOCK_MS = 10 * 60 * 1000;
+
+const MIDDLEWARES_ANNOTATION =
+  'traefik.ingress.kubernetes.io/router.middlewares';
 
 @Injectable()
 export class AppEndpointReconciliationService {
@@ -672,6 +681,13 @@ export class AppEndpointReconciliationService {
   async deleteEndpointResources(endpointId: string): Promise<void> {
     const endpoint = await this.appEndpointService.getEndpoint(endpointId);
     const cluster = await this.getCluster(endpoint.clusterId);
+    // The host's DNS record and certificate belong to the host, not to one of
+    // its routes: they go with the last route, never with the first.
+    const others = await this.appEndpointService.otherRoutesOnHost(endpoint);
+    const hostStillServed = others.length > 0;
+    const certificateStillUsed = others.some(
+      (o) => o.k8sNamespace === endpoint.k8sNamespace,
+    );
 
     try {
       const kubeconfig = await this.getKubeconfig(cluster);
@@ -694,7 +710,8 @@ export class AppEndpointReconciliationService {
       if (
         endpoint.certificateRequired &&
         !endpoint.wildcardCertificateId &&
-        !endpoint.sanCertificateId
+        !endpoint.sanCertificateId &&
+        !certificateStillUsed
       ) {
         const safeName = endpoint.fqdn
           .replaceAll('.', '-')
@@ -778,7 +795,12 @@ export class AppEndpointReconciliationService {
       );
     }
 
-    if (endpoint.dnsRecordId && endpoint.clusterDnsZone) {
+    if (hostStillServed) {
+      this.logger.log(
+        `Kept DNS for ${endpoint.fqdn}: ${others.length} other route(s) still answer on it`,
+      );
+      await this.appEndpointService.clearDnsRecord(endpoint.id);
+    } else if (endpoint.dnsRecordId && endpoint.clusterDnsZone) {
       const dnsZone = endpoint.clusterDnsZone.dnsZone;
       let primaryDeleteError: unknown;
       try {
@@ -1474,8 +1496,14 @@ export class AppEndpointReconciliationService {
   ): Promise<void> {
     const kubeconfig = await this.getKubeconfig(cluster);
     const ingressName = this.ingressNameFor(endpoint);
+    const existingIngress = await this.kubernetesService.getResource(
+      kubeconfig,
+      'Ingress',
+      ingressName,
+      endpoint.k8sNamespace,
+    );
 
-    await this.cleanupStaleHostResources(kubeconfig, endpoint, ingressName);
+    await this.cleanupStaleHostResources(kubeconfig, endpoint, existingIngress);
 
     const { hasCert, usesSharedSecret, tlsSecretName, issuerName } =
       this.resolveIngressTlsContext(endpoint, effectiveCertProvider);
@@ -1508,6 +1536,7 @@ export class AppEndpointReconciliationService {
     const gateway = await this.reconcileGatewayMiddlewares(
       kubeconfig,
       endpoint,
+      cluster,
     );
     const noindexMiddlewareRef =
       await this.sandboxNoindexMiddlewareRef(endpoint);
@@ -1529,12 +1558,7 @@ export class AppEndpointReconciliationService {
           ...(hasCert && !usesSharedSecret
             ? { 'cert-manager.io/cluster-issuer': issuerName }
             : {}),
-          ...(middlewareRefs.length
-            ? {
-                'traefik.ingress.kubernetes.io/router.middlewares':
-                  middlewareRefs.join(','),
-              }
-            : {}),
+          ...this.middlewaresAnnotation(middlewareRefs, existingIngress),
         },
         labels: {
           'managed-by': 'flui-cloud',
@@ -1578,7 +1602,73 @@ export class AppEndpointReconciliationService {
     );
     this.logger.log(`Applied Ingress ${ingressName} for ${endpoint.fqdn}`);
 
+    await this.verifyIngressMiddlewares(
+      kubeconfig,
+      endpoint,
+      ingressName,
+      middlewareRefs,
+      gateway.middlewareNames,
+    );
+
     await this.deleteLegacyIngressIfOwned(kubeconfig, endpoint);
+  }
+
+  /**
+   * The Ingress is updated by a merge patch, where a key left out keeps its old
+   * value: removing the last policy must send an explicit null, or the route
+   * stays behind a middleware the configuration no longer has. On creation the
+   * key is simply omitted.
+   */
+  private middlewaresAnnotation(
+    refs: string[],
+    existingIngress: {
+      metadata?: { annotations?: Record<string, string> };
+    } | null,
+  ): Record<string, string | null> {
+    if (refs.length) return { [MIDDLEWARES_ANNOTATION]: refs.join(',') };
+    return existingIngress?.metadata?.annotations?.[MIDDLEWARES_ANNOTATION] !==
+      undefined
+      ? { [MIDDLEWARES_ANNOTATION]: null }
+      : {};
+  }
+
+  /**
+   * "In sync" has to mean the traffic follows the configuration, so the route
+   * is read back from the cluster rather than trusted from the apply call.
+   */
+  private async verifyIngressMiddlewares(
+    kubeconfig: string,
+    endpoint: AppEndpointEntity,
+    ingressName: string,
+    expectedRefs: string[],
+    gatewayMiddlewareNames: string[],
+  ): Promise<void> {
+    const live = await this.kubernetesService.getResource(
+      kubeconfig,
+      'Ingress',
+      ingressName,
+      endpoint.k8sNamespace,
+    );
+    const liveRefs: string =
+      live?.metadata?.annotations?.[MIDDLEWARES_ANNOTATION] ?? '';
+    if (liveRefs !== expectedRefs.join(',')) {
+      throw new Error(
+        `Route ${endpoint.fqdn} does not carry its policies yet: expected [${expectedRefs.join(', ') || 'none'}], found [${liveRefs || 'none'}]`,
+      );
+    }
+    for (const name of gatewayMiddlewareNames) {
+      const middleware = await this.kubernetesService.getResource(
+        kubeconfig,
+        'Middleware',
+        name,
+        endpoint.k8sNamespace,
+      );
+      if (!middleware) {
+        throw new Error(
+          `Route ${endpoint.fqdn} references policy ${name}, which is missing on the cluster`,
+        );
+      }
+    }
   }
 
   private async sandboxNoindexMiddlewareRef(
@@ -1609,14 +1699,8 @@ export class AppEndpointReconciliationService {
   private async cleanupStaleHostResources(
     kubeconfig: string,
     endpoint: AppEndpointEntity,
-    ingressName: string,
+    existingIngress: { spec?: { rules?: { host?: string }[] } } | null,
   ): Promise<void> {
-    const existingIngress = await this.kubernetesService.getResource(
-      kubeconfig,
-      'Ingress',
-      ingressName,
-      endpoint.k8sNamespace,
-    );
     const existingHost: string | undefined =
       existingIngress?.spec?.rules?.[0]?.host;
     if (!existingHost || existingHost === endpoint.fqdn) return;
@@ -1687,12 +1771,23 @@ export class AppEndpointReconciliationService {
   private async reconcileGatewayMiddlewares(
     kubeconfig: string,
     endpoint: AppEndpointEntity,
-  ): Promise<{ refs: string[]; path: string }> {
+    cluster: ClusterEntity,
+  ): Promise<{ refs: string[]; path: string; middlewareNames: string[] }> {
     const config = endpoint.gatewayConfig;
+
+    const invalidIps = invalidGatewayCidrs(config?.allowIps);
+    if (invalidIps.length) {
+      throw new Error(
+        `The IP filter of ${endpoint.fqdn} has entries that are not IP addresses or ranges: ${invalidIps.join(', ')}. Fix or remove them; the route keeps its previous policies until then.`,
+      );
+    }
 
     let forwardAuthAddress: string | undefined;
     if (config?.auth?.sso) {
-      forwardAuthAddress = this.resolveGatewayForwardAuthAddress();
+      forwardAuthAddress = this.resolveGatewayForwardAuthAddress(
+        endpoint,
+        cluster,
+      );
       if (!forwardAuthAddress) {
         throw new Error(
           `Refusing to apply Ingress for endpoint ${endpoint.id} (${endpoint.fqdn}): gateway SSO is enabled but no Flui API public URL is discoverable (PUBLIC_API_URL / FLUI_API_ENDPOINT / API_BASE_URL). Failing closed so the route is NOT exposed without its auth gate.`,
@@ -1715,6 +1810,7 @@ export class AppEndpointReconciliationService {
 
     const desired = new Set(compiled.middlewares.map((m) => m.name));
     await this.deleteGatewayMiddlewares(kubeconfig, endpoint, desired);
+    await this.deleteOrphanGatewayMiddlewares(kubeconfig, endpoint);
 
     if (compiled.middlewares.length) {
       this.logger.log(
@@ -1722,7 +1818,56 @@ export class AppEndpointReconciliationService {
       );
     }
 
-    return { refs: compiled.refs, path: compiled.path };
+    return {
+      refs: compiled.refs,
+      path: compiled.path,
+      middlewareNames: [...desired],
+    };
+  }
+
+  /**
+   * Middlewares whose route is gone from the namespace — left by a route
+   * deleted while their cleanup could not run.
+   */
+  private async deleteOrphanGatewayMiddlewares(
+    kubeconfig: string,
+    endpoint: AppEndpointEntity,
+  ): Promise<void> {
+    const onCluster = await this.kubernetesService.listResourcesByLabel(
+      kubeconfig,
+      'Middleware',
+      endpoint.k8sNamespace,
+      'flui-resource-type=gateway-middleware',
+    );
+    if (!onCluster.length) return;
+    const liveIds = new Set(
+      (
+        await this.appEndpointService.listByNamespace(
+          endpoint.clusterId,
+          endpoint.k8sNamespace,
+        )
+      ).map((e) => e.id),
+    );
+    liveIds.add(endpoint.id);
+    for (const middleware of onCluster) {
+      const owner = middleware.metadata?.labels?.[ENDPOINT_ID_LABEL];
+      if (!owner || liveIds.has(owner)) continue;
+      try {
+        await this.kubernetesService.deleteResource(
+          kubeconfig,
+          'Middleware',
+          middleware.metadata.name,
+          endpoint.k8sNamespace,
+        );
+        this.logger.log(
+          `Deleted orphan gateway middleware ${endpoint.k8sNamespace}/${middleware.metadata.name} (route ${owner} no longer exists)`,
+        );
+      } catch (err) {
+        this.logger.warn(
+          `Orphan gateway middleware delete skipped for ${endpoint.k8sNamespace}/${middleware.metadata.name}: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    }
   }
 
   /** Delete this endpoint's gateway Middlewares, except the ones in `keep`. */
@@ -1748,15 +1893,26 @@ export class AppEndpointReconciliationService {
     }
   }
 
-  private resolveGatewayForwardAuthAddress(): string | undefined {
-    let fluiApiUrl =
-      process.env.PUBLIC_API_URL ||
-      process.env.FLUI_API_ENDPOINT ||
-      process.env.API_BASE_URL ||
-      process.env.WEBHOOK_BASE_URL ||
-      '';
-    while (fluiApiUrl.endsWith('/')) fluiApiUrl = fluiApiUrl.slice(0, -1);
-    return fluiApiUrl ? `${fluiApiUrl}/api/v1/authz/gateway` : undefined;
+  /**
+   * Where Traefik asks whether a request may pass. The route id is in the
+   * address; on the cluster the API itself runs on, the check stays inside the
+   * cluster instead of going back out through the public entrypoint.
+   */
+  private resolveGatewayForwardAuthAddress(
+    endpoint: AppEndpointEntity,
+    cluster: ClusterEntity,
+  ): string | undefined {
+    return gatewayForwardAuthAddress(endpoint.id, {
+      apiRunsOnThisCluster:
+        !!process.env.KUBERNETES_SERVICE_HOST &&
+        isControlClusterType(cluster.clusterType),
+      publicApiUrl:
+        process.env.PUBLIC_API_URL ||
+        process.env.FLUI_API_ENDPOINT ||
+        process.env.API_BASE_URL ||
+        process.env.WEBHOOK_BASE_URL ||
+        '',
+    });
   }
 
   /**
@@ -1820,13 +1976,13 @@ export class AppEndpointReconciliationService {
       forwardAuthAddress =
         'http://flui-authz.flui-system.svc.cluster.local/authz';
     } else {
-      const fluiApiUrl = (
+      const fluiApiUrl = stripTrailingSlashes(
         process.env.PUBLIC_API_URL ||
-        process.env.FLUI_API_ENDPOINT ||
-        process.env.API_BASE_URL ||
-        process.env.WEBHOOK_BASE_URL ||
-        ''
-      ).replace(/\/+$/, '');
+          process.env.FLUI_API_ENDPOINT ||
+          process.env.API_BASE_URL ||
+          process.env.WEBHOOK_BASE_URL ||
+          '',
+      );
       if (!fluiApiUrl) {
         this.logger.error(
           'No Flui API public URL discoverable and flui-authz not installed on cluster — cannot apply ForwardAuth Middleware. Install flui-authz via POST /authz/install or configure PUBLIC_API_URL.',

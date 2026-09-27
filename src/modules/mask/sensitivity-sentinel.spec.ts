@@ -3702,6 +3702,7 @@ const MASK_EXEMPT: string[] = [
   'WebDomainSyncResultDto.authDomain', // modules/dns/dto/web-domain-sync-result.dto.ts
   'WebDomainSyncResultDto.configMapUpdated', // modules/dns/dto/web-domain-sync-result.dto.ts
   'WebDomainSyncResultDto.deploymentRestarted', // modules/dns/dto/web-domain-sync-result.dto.ts
+  'WorkloadProviderResponseDto.environmentNetwork', // modules/infrastructure/clusters/dto/workload-provider.dto.ts
 ];
 
 describe('every response-DTO field carries a Sensitivity, or is named on MASK_EXEMPT', () => {

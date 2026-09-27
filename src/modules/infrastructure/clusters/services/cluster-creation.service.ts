@@ -1,4 +1,9 @@
-import { Injectable, Logger, BadRequestException } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  BadRequestException,
+  Optional,
+} from '@nestjs/common';
 import { ManagementAddressResolver } from '../../shared/services/management-address.resolver';
 import { InjectRepository } from '@nestjs/typeorm';
 import { In, Repository } from 'typeorm';
@@ -19,6 +24,8 @@ import { EncryptionService } from '../../../shared/encryption/services/encryptio
 import { ClusterFirewallIntegrationService } from './cluster-firewall-integration.service';
 import { CapabilitiesProviderFactory } from '../../../providers/core/factories/capabilities-provider.factory';
 import { CloudProvider } from '../../../providers/enums/cloud-provider.enum';
+import { ProviderFactory } from '../../../providers/core/factories/provider.factory';
+import { shapeNameOf } from '../../../providers/core/catalogue/shape-name';
 import { sanitizeApiServerFirewallRules } from '../../firewalls/templates/firewall-rules.template';
 import { FirewallReconciliationService } from '../../firewalls/services/firewall-reconciliation.service';
 import { FirewallRuleDto } from '../../../providers/dto/firewall.dto';
@@ -58,6 +65,7 @@ export class ClusterCreationService {
     private readonly firewallReconciliation: FirewallReconciliationService,
     private readonly managementAddress: ManagementAddressResolver,
     private readonly byosVNetService: ByosVNetService,
+    @Optional() private readonly providers?: ProviderFactory,
   ) {}
 
   /**
@@ -150,7 +158,7 @@ export class ClusterCreationService {
       name: dto.name,
       provider: dto.provider,
       region: dto.region,
-      nodeSize: dto.nodeSize,
+      nodeSize: await this.shapeNameFor(dto.provider, dto.nodeSize),
       nodeCount: 0, // Will be updated as nodes are created
       minNodes: dto.minNodes,
       maxNodes: dto.maxNodes,
@@ -325,6 +333,27 @@ export class ClusterCreationService {
     );
   }
 
+  /**
+   * The size as the provider's catalogue names it: a client may send the id
+   * (`109` on Hetzner), and every later reader — the scaling group, the node
+   * list, billing — expects the name. Unchanged when the catalogue is unread.
+   */
+  private async shapeNameFor(
+    provider: string,
+    nodeSize: string,
+  ): Promise<string> {
+    if (!nodeSize) return nodeSize;
+    try {
+      const service = this.providers?.getProvider(provider as CloudProvider);
+      return shapeNameOf(
+        nodeSize,
+        (await service?.getNodeSizes?.(false)) ?? [],
+      );
+    } catch {
+      return nodeSize;
+    }
+  }
+
   /** Whether this provider leaves Flui to build the private network. */
   private buildsItsOwnNetwork(provider: CloudProvider): boolean {
     return !!this.capabilitiesFactory
@@ -422,10 +451,15 @@ export class ClusterCreationService {
       },
     });
     const overlayEnabled = managementNetworkOn();
+    const envSubnet = await this.environmentSubnet();
     const base = {
       provider,
       controlProvider: control?.provider ?? null,
       overlayEnabled,
+      environmentNetwork:
+        envSubnet && envSubnet.vnet?.provider === provider
+          ? { name: envSubnet.vnet.name, ipRange: envSubnet.ipRange }
+          : null,
     };
     if (!control || control.provider === provider) {
       return { ...base, allowed: true, reason: null };
@@ -504,4 +538,5 @@ export interface WorkloadProviderVerdict {
   controlProvider: string | null;
   overlayEnabled: boolean;
   reason: string | null;
+  environmentNetwork: { name: string; ipRange: string } | null;
 }

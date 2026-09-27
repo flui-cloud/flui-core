@@ -1,5 +1,6 @@
 import {
   All,
+  Body,
   Controller,
   ForbiddenException,
   Headers,
@@ -8,6 +9,9 @@ import {
   Ip,
   Logger,
   NotFoundException,
+  Param,
+  ParseUUIDPipe,
+  Post,
   Req,
   Res,
   UnauthorizedException,
@@ -24,6 +28,12 @@ import { JwtAuthGuard } from '../../auth/guards/jwt-auth.guard';
 import { AuthenticatedUser } from '../../auth/interfaces/authenticated-user.interface';
 import { InternalAppAuthzService } from '../services/internal-app-authz.service';
 import { GatewayAuthzService } from '../services/gateway-authz.service';
+import {
+  GATEWAY_SSO_CALLBACK,
+  GatewaySsoService,
+} from '../services/gateway-sso.service';
+import { OptionalAuth } from '../../auth/decorators/optional-auth.decorator';
+import { GatewaySsoCodeDto } from '../dto/gateway-sso-code.dto';
 import {
   InternalAppAuditService,
   InternalAppAuditReason,
@@ -68,6 +78,7 @@ export class AuthzController {
     private readonly authzService: InternalAppAuthzService,
     private readonly gatewayAuthzService: GatewayAuthzService,
     private readonly auditService: InternalAppAuditService,
+    private readonly gatewaySso: GatewaySsoService,
   ) {}
 
   @All('gateway')
@@ -107,6 +118,107 @@ export class AuthzController {
     res.setHeader('X-Auth-User', user.userId);
     if (user.email) res.setHeader('X-Auth-Email', user.email);
     res.setHeader('X-Auth-App', appSlug);
+  }
+
+  @All('gateway/:endpointId')
+  @OptionalAuth()
+  @ApiOperation({
+    summary: 'ForwardAuth decision for one gateway SSO route',
+    description:
+      "Called by Traefik on every request to a route whose gateway config enables SSO; the route id is part of the address the route was published with. Accepts a Flui credential (Bearer) or the route's own sign-in cookie and, when the route sets a minRole, asks the PolicyEngine whether the user holds it on the target application. A browser without either is redirected to sign in; any other client gets 401.",
+  })
+  @ApiResponse({
+    status: 200,
+    description:
+      'Access allowed. Response carries `X-Auth-User`, `X-Auth-Email` and `X-Auth-App` headers.',
+  })
+  @ApiResponse({
+    status: 302,
+    description:
+      'A browser without a session is sent to sign in, or back to the page it asked for once the sign-in code is spent.',
+  })
+  @ApiResponse({ status: 401, description: 'Missing or invalid session.' })
+  @ApiResponse({
+    status: 403,
+    description: 'Route has no SSO gate or the user lacks the required role.',
+  })
+  @ApiResponse({ status: 404, description: 'The route does not exist.' })
+  async gatewayRoute(
+    @Req() req: ForwardAuthRequest,
+    @Res() res: Response,
+    @Param('endpointId', ParseUUIDPipe) endpointId: string,
+  ): Promise<void> {
+    const forwardedUri = headerValue(req, 'x-forwarded-uri');
+    const [path, query = ''] = (forwardedUri ?? '').split('?');
+
+    if (path.endsWith(GATEWAY_SSO_CALLBACK)) {
+      const { cookie, returnUrl } = await this.gatewaySso.exchangeCode(
+        endpointId,
+        new URLSearchParams(query).get('code'),
+      );
+      res.setHeader('Set-Cookie', cookie);
+      res.setHeader('Cache-Control', 'no-store');
+      res.redirect(HttpStatus.FOUND, returnUrl);
+      return;
+    }
+
+    const user =
+      req.user ??
+      (await this.gatewaySso.userFromCookie(
+        endpointId,
+        headerValue(req, 'cookie'),
+      ));
+    if (!user) {
+      if (!this.isBrowserNavigation(req)) throw new UnauthorizedException();
+      const fqdn = await this.gatewaySso.endpointFqdn(endpointId);
+      const back =
+        GatewaySsoService.originalUrl(fqdn, forwardedUri) ?? `https://${fqdn}/`;
+      res.setHeader('Cache-Control', 'no-store');
+      res.redirect(
+        HttpStatus.FOUND,
+        this.gatewaySso.loginUrl(endpointId, back),
+      );
+      return;
+    }
+
+    const { appSlug } = await this.gatewayAuthzService.authorizeRoute(
+      user,
+      endpointId,
+    );
+
+    res.setHeader('X-Auth-User', user.userId);
+    if (user.email) res.setHeader('X-Auth-Email', user.email);
+    res.setHeader('X-Auth-App', appSlug);
+    res.status(HttpStatus.OK).end();
+  }
+
+  @Post('gateway/:endpointId/sso-code')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'One-time sign-in code for a gateway route',
+    description:
+      "Called by the dashboard for a signed-in person: returns the address on the route's own host that exchanges the code for the route's sign-in cookie. Refused unless the person may open the route and the return address is on the route's host.",
+  })
+  async gatewaySsoCode(
+    @Req() req: { user?: AuthenticatedUser },
+    @Param('endpointId', ParseUUIDPipe) endpointId: string,
+    @Body() body: GatewaySsoCodeDto,
+  ): Promise<{ redirect: string }> {
+    if (!req.user) throw new UnauthorizedException();
+    return this.gatewaySso.issueCode(req.user, endpointId, body.returnUrl);
+  }
+
+  /**
+   * A person's browser opening a page, as opposed to a script or an API
+   * client: those keep getting a 401 they can act on, not a login page.
+   */
+  private isBrowserNavigation(req: ForwardAuthRequest): boolean {
+    const method = (
+      headerValue(req, 'x-forwarded-method') ?? 'GET'
+    ).toUpperCase();
+    if (method !== 'GET' && method !== 'HEAD') return false;
+    if (headerValue(req, 'authorization')) return false;
+    return (headerValue(req, 'accept') ?? '').includes('text/html');
   }
 
   @All('internal-app')

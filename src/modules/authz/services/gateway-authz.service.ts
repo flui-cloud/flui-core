@@ -39,9 +39,8 @@ const MIN_ROLE_PERMISSION: Partial<Record<IamRole, string>> = {
 
 /**
  * ForwardAuth decision for gateway SSO routes. The route's Middleware points
- * Traefik here; the endpoint (and its gateway config) is resolved from the
- * forwarded host, so the DB stays the single source of truth — nothing is
- * baked into the middleware beyond the address.
+ * Traefik here with the route id in the address; its gateway config is read
+ * from the DB, so nothing is baked into the middleware beyond the address.
  */
 @Injectable()
 export class GatewayAuthzService {
@@ -53,6 +52,26 @@ export class GatewayAuthzService {
     @Inject(POLICY_ENGINE) private readonly policy: PolicyEngine,
   ) {}
 
+  /**
+   * The route named by the middleware's own address. Its identity never comes
+   * from a header: a forwarded host is rewritten by any proxy the check passes
+   * through.
+   */
+  async authorizeRoute(
+    user: AuthenticatedUser,
+    endpointId: string,
+  ): Promise<GatewayAuthzDecision> {
+    const endpoint = await this.endpoints.findOne({
+      where: { id: endpointId },
+      relations: ['application', 'cluster'],
+    });
+    if (!endpoint) {
+      throw new NotFoundException(`route ${endpointId} does not exist`);
+    }
+    return this.decide(user, endpoint);
+  }
+
+  /** Middlewares written before the route id was part of the address. */
   async authorize(
     user: AuthenticatedUser,
     forwardedHost: string | undefined,
@@ -73,7 +92,14 @@ export class GatewayAuthzService {
         `forwarded host "${fqdn}" does not resolve to a known route`,
       );
     }
+    return this.decide(user, endpoint);
+  }
 
+  private async decide(
+    user: AuthenticatedUser,
+    endpoint: AppEndpointEntity,
+  ): Promise<GatewayAuthzDecision> {
+    const fqdn = endpoint.fqdn;
     const auth = endpoint.gatewayConfig?.auth;
     if (!auth?.sso) {
       // Defensive: the SSO middleware only exists while sso=true. If a stale

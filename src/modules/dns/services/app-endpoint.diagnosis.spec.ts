@@ -53,6 +53,7 @@ function build(metadata: Record<string, unknown>) {
   const service = new AppEndpointService(
     {
       findOne: jest.fn(async () => null),
+      find: jest.fn(async () => []),
       create: (entity: Record<string, unknown>) => entity,
       save: jest.fn(async (entity: Record<string, unknown>) => entity),
     } as never,

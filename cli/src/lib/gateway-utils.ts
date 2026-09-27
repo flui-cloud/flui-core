@@ -1,3 +1,4 @@
+import { isIP } from 'node:net';
 import chalk from 'chalk';
 import { CliAppService, GatewayRoute } from './services/cli-app.service';
 
@@ -115,4 +116,25 @@ export function splitCidrList(value: string): string[] {
     .split(',')
     .map((s) => s.trim())
     .filter(Boolean);
+}
+
+export function parseCidrList(value: string): string[] {
+  const entries = splitCidrList(value);
+  const invalid = entries.filter((e) => !isCidr(e));
+  if (invalid.length) {
+    throw new Error(
+      `${invalid.map((e) => '"' + e + '"').join(', ')} is not a valid IPv4/IPv6 address or CIDR range (e.g. 203.0.113.7 or 203.0.113.0/24)`,
+    );
+  }
+  return entries;
+}
+
+function isCidr(value: string): boolean {
+  const parts = value.split('/');
+  if (parts.length > 2) return false;
+  const family = isIP(parts[0]);
+  if (!family) return false;
+  if (parts.length === 1) return true;
+  if (!/^\d{1,3}$/.test(parts[1])) return false;
+  return Number(parts[1]) <= (family === 4 ? 32 : 128);
 }

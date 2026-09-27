@@ -10,6 +10,7 @@ import { CapabilitiesProviderFactory } from '../../../providers/core/factories/c
 import { CloudProvider } from '../../../providers/enums/cloud-provider.enum';
 import { ProviderFactory } from '../../../providers/core/factories/provider.factory';
 import { NodeSizeDto } from '../../../providers/dto/node-size.dto';
+import { shapeNameOf } from '../../../providers/core/catalogue/shape-name';
 import { ScalingGroupEntity } from '../entities/scaling-group.entity';
 import { ScalingDecisionEntity } from '../entities/scaling-decision.entity';
 import { DrainCheck } from '../engine/drain.core';
@@ -940,18 +941,6 @@ function hasVnet(cluster: {
 
 function fleetBound(nodes: number): number {
   return Math.min(Math.max(nodes, MIN_FLEET_NODES), MAX_FLEET_NODES);
-}
-
-/**
- * The catalogue names a shape (`cpx22`), while a cluster may have been built
- * from the provider's id for it (`109`): the name is what a group can buy.
- */
-export function shapeNameOf(
-  nodeSize: string,
-  sizes: Pick<NodeSizeDto, 'id' | 'name'>[],
-): string {
-  const size = sizes.find((s) => s.name === nodeSize || s.id === nodeSize);
-  return size?.name || nodeSize;
 }
 
 const PURCHASE_SHOWN_FOR_MS = 30 * 60 * 1000;

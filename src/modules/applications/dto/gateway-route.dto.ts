@@ -11,11 +11,10 @@ import {
   ValidateNested,
 } from 'class-validator';
 import {
-  GATEWAY_CIDR_MESSAGE,
-  GATEWAY_CIDR_REGEX,
   GatewayAuthPolicyDto,
   GatewayRateLimitPolicyDto,
 } from '../../dns/dto/gateway-config.dto';
+import { IsGatewayCidrList } from '../../dns/validators/gateway-cidr.validator';
 import { ReconciliationStatus } from '../../infrastructure/shared/enums/reconciliation-status.enum';
 import { CertificateStatus } from '../../providers/interfaces/certificate-provider.interface';
 import { EndpointType } from '../../dns/enums/endpoint-type.enum';
@@ -137,7 +136,7 @@ export class AddGatewayRouteDto {
 
   @ApiPropertyOptional({ type: [String] })
   @IsOptional()
-  @Matches(GATEWAY_CIDR_REGEX, { each: true, message: GATEWAY_CIDR_MESSAGE })
+  @IsGatewayCidrList()
   allowIps?: string[];
 }
 
@@ -179,7 +178,7 @@ export class SetGatewayPolicyDto {
     description: 'CIDR allowlist. Null (or empty) removes the IP filter.',
   })
   @IsOptional()
-  @Matches(GATEWAY_CIDR_REGEX, { each: true, message: GATEWAY_CIDR_MESSAGE })
+  @IsGatewayCidrList()
   allowIps?: string[] | null;
 }
 

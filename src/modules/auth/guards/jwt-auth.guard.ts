@@ -2,6 +2,7 @@ import { ExecutionContext, Injectable } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { AuthGuard } from '@nestjs/passport';
 import { IS_PUBLIC_KEY } from '../decorators/public.decorator';
+import { IS_OPTIONAL_AUTH_KEY } from '../decorators/optional-auth.decorator';
 import {
   CURRENT_API_KEY_ID,
   ApiKeyStrategy,
@@ -36,6 +37,16 @@ export class JwtAuthGuard extends AuthGuard('jwt') {
       authHeader.replace(/^Bearer\s+/i, '') ||
       extractJwtFromFluiSessionCookie(request) ||
       '';
+
+    if (
+      !token &&
+      this.reflector.getAllAndOverride<boolean>(IS_OPTIONAL_AUTH_KEY, [
+        context.getHandler(),
+        context.getClass(),
+      ])
+    ) {
+      return true;
+    }
 
     // API key M2M — valid for both local and OIDC modes
     if (token.startsWith('flui_')) {

@@ -4,11 +4,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { Repository } from 'typeorm';
-import {
-  ScalingGroupService,
-  purchaseInFlight,
-  shapeNameOf,
-} from './scaling-group.service';
+import { ScalingGroupService, purchaseInFlight } from './scaling-group.service';
 import { ScalingGroupEntity } from '../entities/scaling-group.entity';
 import { ScalingDecisionEntity } from '../entities/scaling-decision.entity';
 import { ClusterEntity } from '../../clusters/entities/cluster.entity';
@@ -1249,24 +1245,5 @@ describe('moving the floor', () => {
     groups.findOne?.mockResolvedValueOnce(null);
     const dto = await service.setFloor('g-1', 1);
     expect(dto.bounds).toEqual({ min: 1, desired: 1, max: 2 });
-  });
-});
-
-describe('the name a group buys by', () => {
-  const sizes = [
-    { id: '109', name: 'cpx22' },
-    { id: 'b2-7', name: 'b2-7' },
-  ];
-
-  it('turns a provider id into its catalogue name', () => {
-    expect(shapeNameOf('109', sizes)).toBe('cpx22');
-  });
-
-  it('keeps a name that already is one', () => {
-    expect(shapeNameOf('cpx22', sizes)).toBe('cpx22');
-  });
-
-  it('keeps what it cannot find', () => {
-    expect(shapeNameOf('cx99', sizes)).toBe('cx99');
   });
 });

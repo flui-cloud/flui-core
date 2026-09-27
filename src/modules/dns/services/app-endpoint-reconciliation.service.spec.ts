@@ -247,6 +247,7 @@ describe('AppEndpointReconciliationService.deleteEndpointResources', () => {
     const appEndpoints = {
       getEndpoint: jest.fn().mockResolvedValue(endpoint),
       clearDnsRecord: jest.fn().mockResolvedValue(undefined),
+      otherRoutesOnHost: jest.fn().mockResolvedValue([]),
     };
     const k8s = {
       deleteResource: jest.fn().mockResolvedValue(undefined),
@@ -296,6 +297,18 @@ describe('AppEndpointReconciliationService.deleteEndpointResources', () => {
       service.deleteEndpointResources('endpoint-1'),
     ).resolves.toBeUndefined();
     expect(deleteRecord).toHaveBeenCalledWith('zone-1', 'guest/A:192.0.2.10');
+    expect(appEndpoints.clearDnsRecord).toHaveBeenCalledWith('endpoint-1');
+  });
+
+  it('keeps the host’s DNS while another route still answers on it', async () => {
+    const deleteRecord = jest.fn().mockResolvedValue(undefined);
+    const { service, appEndpoints } = build(deleteRecord);
+    appEndpoints.otherRoutesOnHost.mockResolvedValue([
+      { id: 'endpoint-2', k8sNamespace: 'user-guest-abc123' },
+    ]);
+
+    await service.deleteEndpointResources('endpoint-1');
+    expect(deleteRecord).not.toHaveBeenCalled();
     expect(appEndpoints.clearDnsRecord).toHaveBeenCalledWith('endpoint-1');
   });
 

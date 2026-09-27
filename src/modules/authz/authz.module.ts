@@ -1,3 +1,5 @@
+import { GatewaySsoService } from './services/gateway-sso.service';
+import { UserEntity } from '../auth/entities/user.entity';
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { BullModule } from '@nestjs/bull';
@@ -29,6 +31,7 @@ import { AuthzInstallProcessor } from './processors/authz-install.processor';
       ClusterEntity,
       InfrastructureOperationEntity,
       AppEndpointEntity,
+      UserEntity,
     ]),
     BullModule.registerQueue({ name: AUTHZ_INSTALL_QUEUE }),
     ApplicationsModule,
@@ -41,6 +44,7 @@ import { AuthzInstallProcessor } from './processors/authz-install.processor';
   providers: [
     InternalAppAuthzService,
     GatewayAuthzService,
+    GatewaySsoService,
     InternalAppAuditService,
     ClusterAuthzInstallRepository,
     AuthzInstallService,

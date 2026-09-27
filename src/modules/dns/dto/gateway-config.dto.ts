@@ -12,6 +12,7 @@ import {
   ValidateNested,
 } from 'class-validator';
 import { IamRole, ROLE_LADDER } from '../../iam/constants/iam-roles';
+import { IsGatewayCidrList } from '../validators/gateway-cidr.validator';
 
 /**
  * The ladder, not every key in `IAM_ROLE`.
@@ -24,11 +25,6 @@ import { IamRole, ROLE_LADDER } from '../../iam/constants/iam-roles';
  * roles a gate can usefully name.
  */
 export const GATEWAY_MIN_ROLES: IamRole[] = ROLE_LADDER;
-
-/** IPv4/IPv6 address or CIDR. Shape check only — Traefik validates semantics. */
-export const GATEWAY_CIDR_REGEX = /^[0-9a-fA-F.:]+(\/\d{1,3})?$/;
-export const GATEWAY_CIDR_MESSAGE =
-  'allowIps entries must be IPv4/IPv6 addresses or CIDR ranges';
 
 export class GatewayAuthPolicyDto {
   @ApiProperty({
@@ -110,9 +106,6 @@ export class GatewayConfigDto {
   })
   @IsOptional()
   @IsArray()
-  @Matches(GATEWAY_CIDR_REGEX, {
-    each: true,
-    message: GATEWAY_CIDR_MESSAGE,
-  })
+  @IsGatewayCidrList()
   allowIps?: string[];
 }

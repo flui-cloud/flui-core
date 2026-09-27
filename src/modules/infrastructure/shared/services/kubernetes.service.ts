@@ -3,6 +3,7 @@ import * as k8s from '@kubernetes/client-node';
 import { Writable, Readable } from 'node:stream';
 import { describeQuotaRefusal } from '../../../shared/utils/quota-refusal.util';
 import { withRequestTimeout } from '../utils/kube-request-timeout.util';
+import { apiVersionForKind } from '../utils/kube-api-version.util';
 import {
   WaitingForRoomError,
   roomWaitSeconds,
@@ -325,11 +326,20 @@ export class KubernetesService {
     const client = k8s.KubernetesObjectApi.makeApiClient(kc);
 
     try {
-      await client.delete({
-        apiVersion: this.getApiVersionForKind(kind),
-        kind,
-        metadata: { name, namespace },
-      });
+      // Background, not the API's default: for a Job or CronJob the default
+      // orphans the pods it created.
+      await client.delete(
+        {
+          apiVersion: this.getApiVersionForKind(kind),
+          kind,
+          metadata: { name, namespace },
+        },
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        'Background',
+      );
       this.logger.log(`Deleted ${kind}/${name} in namespace ${namespace}`);
     } catch (error) {
       if (this.httpCode(error) === 404) {
@@ -554,7 +564,7 @@ export class KubernetesService {
         name: jobName,
         namespace,
         labels: {
-          ...(jobTemplate.metadata?.labels ?? {}),
+          ...jobTemplate.metadata?.labels,
           'flui.cloud/manual-run': 'true',
         },
         annotations: { 'cronjob.kubernetes.io/instantiate': 'manual' },
@@ -1195,9 +1205,10 @@ export class KubernetesService {
               resolve(stdout);
             } else {
               const detail = stderr.trim();
+              const suffix = detail ? ' — ' + detail.slice(-500) : '';
               reject(
                 new Error(
-                  `exec failed: ${status?.message ?? 'unknown error'}${detail ? ` — ${detail.slice(-500)}` : ''}`,
+                  `exec failed: ${status?.message ?? 'unknown error'}${suffix}`,
                 ),
               );
             }
@@ -1259,9 +1270,10 @@ export class KubernetesService {
               resolve();
             } else {
               const detail = stderr.trim();
+              const suffix = detail ? ' — ' + detail.slice(-500) : '';
               reject(
                 new Error(
-                  `exec failed: ${status?.message ?? 'unknown error'}${detail ? ` — ${detail.slice(-500)}` : ''}`,
+                  `exec failed: ${status?.message ?? 'unknown error'}${suffix}`,
                 ),
               );
             }
@@ -1520,6 +1532,59 @@ export class KubernetesService {
       kind,
       metadata: { name, namespace, labels, annotations },
     });
+  }
+
+  /**
+   * Read any object, cluster-scoped ones included (pass no namespace). Null
+   * when it does not exist.
+   */
+  async readObject(
+    kubeconfigContent: string,
+    apiVersion: string,
+    kind: string,
+    name: string,
+    namespace?: string,
+  ): Promise<any> {
+    const kc = this.loadKubeconfig(kubeconfigContent);
+    const client = k8s.KubernetesObjectApi.makeApiClient(kc);
+    try {
+      const res: any = await client.read({
+        apiVersion,
+        kind,
+        metadata: namespace ? { name, namespace } : { name },
+      } as k8s.KubernetesObject & { metadata: { name: string } });
+      return res?.body ?? res;
+    } catch (error) {
+      if (this.httpCode(error) === 404) return null;
+      throw error;
+    }
+  }
+
+  /** JSON merge patch on any object: a null value removes the field. */
+  async mergePatchObject(
+    kubeconfigContent: string,
+    patch: Record<string, unknown>,
+  ): Promise<void> {
+    const kc = this.loadKubeconfig(kubeconfigContent);
+    const client = k8s.KubernetesObjectApi.makeApiClient(kc);
+    await client.patch(
+      patch as unknown as k8s.KubernetesObject,
+      undefined,
+      undefined,
+      'flui-api',
+      undefined,
+      k8s.PatchStrategy.MergePatch,
+    );
+  }
+
+  /** Create an object as given, failing when it already exists. */
+  async createObject(
+    kubeconfigContent: string,
+    object: Record<string, unknown>,
+  ): Promise<void> {
+    const kc = this.loadKubeconfig(kubeconfigContent);
+    const client = k8s.KubernetesObjectApi.makeApiClient(kc);
+    await client.create(object as unknown as k8s.KubernetesObject);
   }
 
   /** Scale a workload (`kubectl scale <kind>/<name> --replicas=<n>`). */
@@ -1855,49 +1920,7 @@ export class KubernetesService {
   // Helper methods
 
   private getApiVersionForKind(kind: string): string {
-    const apiVersionMap: Record<string, string> = {
-      Pod: 'v1',
-      Service: 'v1',
-      ConfigMap: 'v1',
-      Secret: 'v1',
-      PersistentVolumeClaim: 'v1',
-      Namespace: 'v1',
-      Deployment: 'apps/v1',
-      StatefulSet: 'apps/v1',
-      DaemonSet: 'apps/v1',
-      // Without this the map's `v1` default would send a ReplicaSet lookup to
-      // the core API, which has no such kind. It is read when walking a pod
-      // back to the Deployment that owns it.
-      ReplicaSet: 'apps/v1',
-      Job: 'batch/v1',
-      CronJob: 'batch/v1',
-      HorizontalPodAutoscaler: 'autoscaling/v2',
-      Ingress: 'networking.k8s.io/v1',
-      IngressRoute: 'traefik.containo.us/v1alpha1',
-      Certificate: 'cert-manager.io/v1',
-      CertificateRequest: 'cert-manager.io/v1',
-      ClusterIssuer: 'cert-manager.io/v1',
-      Issuer: 'cert-manager.io/v1',
-      Challenge: 'acme.cert-manager.io/v1',
-      Order: 'acme.cert-manager.io/v1',
-      ServiceAccount: 'v1',
-      ClusterRole: 'rbac.authorization.k8s.io/v1',
-      ClusterRoleBinding: 'rbac.authorization.k8s.io/v1',
-      MutatingWebhookConfiguration: 'admissionregistration.k8s.io/v1',
-      ValidatingWebhookConfiguration: 'admissionregistration.k8s.io/v1',
-      Role: 'rbac.authorization.k8s.io/v1',
-      RoleBinding: 'rbac.authorization.k8s.io/v1',
-      APIService: 'apiregistration.k8s.io/v1',
-      Backup: 'velero.io/v1',
-      Restore: 'velero.io/v1',
-      BackupStorageLocation: 'velero.io/v1',
-      VolumeSnapshotLocation: 'velero.io/v1',
-      Schedule: 'velero.io/v1',
-      PodVolumeBackup: 'velero.io/v1',
-      PodVolumeRestore: 'velero.io/v1',
-    };
-
-    return apiVersionMap[kind] || 'v1';
+    return apiVersionForKind(kind);
   }
 
   private checkResourceReady(kind: string, resource: any): boolean {

@@ -41,6 +41,10 @@ import { TenancySubdomainService } from './tenancy-subdomain.service';
 import { SandboxSubdomainService } from './sandbox-subdomain.service';
 import { EndpointDiagnosisService } from '../../scaling/services/endpoint-diagnosis.service';
 import { certificatePhaseOf } from '../utils/certificate-phase.core';
+import {
+  mayShareHost,
+  normalizeRoutePath,
+} from '../utils/route-host-sharing.util';
 
 /** An application's primary endpoint, hostname together with whether it serves. */
 export interface PrimaryEndpointState {
@@ -269,21 +273,19 @@ export class AppEndpointService {
     // Only when the caller named the host. A hostname Flui derives from a slug
     // is already inside the cluster's own subdomain and unique there; a
     // hostname somebody asked for is the one that can belong to somebody else.
-    if (dto.fqdn) {
+    const routePath = normalizeRoutePath(dto.routePath);
+    const siblings = await this.endpointRepository.find({
+      where: { fqdn },
+      relations: ['application'],
+    });
+    if (siblings.length > 0) {
+      this.assertHostShareable(siblings, application, fqdn, routePath);
+    } else if (dto.fqdn) {
       await this.hostGuard.assertClaimable(
         cluster,
         application.k8sNamespace,
         fqdn,
       );
-    }
-
-    if (await this.isFqdnTaken(fqdn)) {
-      throw new ConflictException({
-        statusCode: 409,
-        error: 'endpoint_fqdn_conflict',
-        message: 'Domain is already in use',
-        fqdn,
-      });
     }
 
     const sanCertificateId = dto.sanCertificateId
@@ -300,6 +302,7 @@ export class AppEndpointService {
       clusterDnsZoneId: dto.clusterDnsZoneId ?? null,
       endpointType,
       fqdn,
+      routePath,
       serviceName: application.name,
       // System apps (RAW_MANIFEST) already have a K8s Service named after their slug.
       // User apps follow the ${slug}-svc convention created by the manifest generator.
@@ -326,7 +329,7 @@ export class AppEndpointService {
         throw new ConflictException({
           statusCode: 409,
           error: 'endpoint_fqdn_conflict',
-          message: 'Domain is already in use',
+          message: `${fqdn}${routePath === '/' ? '' : routePath} is already in use`,
           fqdn,
         });
       }
@@ -383,6 +386,52 @@ export class AppEndpointService {
 
   normalizeFqdn(fqdn: string): string {
     return fqdn.trim().toLowerCase();
+  }
+
+  /**
+   * A second route on a host already in use: allowed for the host's own
+   * project, on a path nobody on the host answers for yet.
+   */
+  private assertHostShareable(
+    siblings: AppEndpointEntity[],
+    application: ApplicationEntity,
+    fqdn: string,
+    routePath: string,
+  ): void {
+    const foreign = siblings.some(
+      (s) => !s.application || !mayShareHost(s.application, application),
+    );
+    if (foreign) {
+      throw new ConflictException({
+        statusCode: 409,
+        error: 'endpoint_fqdn_conflict',
+        message: `${fqdn} is already in use by an application of another project`,
+        fqdn,
+      });
+    }
+    const samePath = siblings.find((s) => (s.routePath ?? '/') === routePath);
+    if (samePath) {
+      throw new ConflictException({
+        statusCode: 409,
+        error: 'endpoint_path_conflict',
+        message:
+          `${fqdn}${routePath === '/' ? '' : routePath} already routes to ` +
+          `${samePath.application?.name ?? 'another application'}. Choose another path.`,
+        fqdn,
+        routePath,
+      });
+    }
+  }
+
+  /** The other endpoints answering on the same host, on other paths. */
+  async otherRoutesOnHost(endpoint: {
+    id: string;
+    fqdn: string;
+  }): Promise<AppEndpointEntity[]> {
+    const all = await this.endpointRepository.find({
+      where: { fqdn: endpoint.fqdn },
+    });
+    return all.filter((e) => e.id !== endpoint.id);
   }
 
   async isFqdnAvailable(fqdn: string): Promise<boolean> {
@@ -592,8 +641,20 @@ export class AppEndpointService {
   ): Promise<AppEndpointEntity> {
     const endpoint = await this.getEndpoint(id);
     endpoint.gatewayConfig = gatewayConfig;
+    endpoint.routePath = normalizeRoutePath(gatewayConfig?.path);
     endpoint.reconciliationStatus = ReconciliationStatus.DRIFT;
-    return await this.endpointRepository.save(endpoint);
+    try {
+      return await this.endpointRepository.save(endpoint);
+    } catch (err) {
+      if (this.isUniqueFqdnViolation(err)) {
+        throw new ConflictException({
+          statusCode: 409,
+          error: 'endpoint_path_conflict',
+          message: `${endpoint.fqdn}${endpoint.routePath} already routes to another application. Choose another path.`,
+        });
+      }
+      throw err;
+    }
   }
 
   async setWildcardBinding(

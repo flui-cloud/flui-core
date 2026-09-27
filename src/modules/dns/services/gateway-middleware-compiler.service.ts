@@ -1,3 +1,4 @@
+import { normalizeRoutePath } from '../utils/route-host-sharing.util';
 import { Injectable } from '@nestjs/common';
 import { AppEndpointEntity } from '../entities/app-endpoint.entity';
 import { EndpointGatewayConfig } from '../interfaces/endpoint-gateway-config.interface';
@@ -99,9 +100,7 @@ export class GatewayMiddlewareCompilerService {
   }
 
   normalizePath(path: string | undefined): string {
-    if (!path || path === '/') return '/';
-    const withSlash = path.startsWith('/') ? path : `/${path}`;
-    return withSlash.replace(/\/+$/, '') || '/';
+    return normalizeRoutePath(path);
   }
 
   private build(

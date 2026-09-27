@@ -6,7 +6,7 @@ import {
   GatewayMinRole,
 } from '../../../lib/services/cli-app.service';
 import { resolveCluster } from '../../../lib/resolve-cluster';
-import { printRouteDetail, splitCidrList } from '../../../lib/gateway-utils';
+import { printRouteDetail, parseCidrList } from '../../../lib/gateway-utils';
 
 export default class GatewayRoutesAdd extends Command {
   static readonly description =
@@ -78,7 +78,7 @@ export default class GatewayRoutesAdd extends Command {
       const service = await CliAppService.create(clusterId);
       const app = await service.getAppByName(args.app);
 
-      const allowIps = (flags['allow-ip'] ?? []).flatMap(splitCidrList);
+      const allowIps = (flags['allow-ip'] ?? []).flatMap(parseCidrList);
       const route = await service.addGatewayRoute(app.id, {
         host: args.host,
         path: flags.path,

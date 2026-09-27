@@ -1,3 +1,4 @@
+import { Sensitivity } from '../../mask/decorators/sensitivity.decorator';
 import {
   IsBoolean,
   IsEnum,
@@ -36,6 +37,15 @@ export class CreateAppEndpointDto {
   @IsOptional()
   @IsString()
   fqdn?: string;
+
+  @Sensitivity(Sensitivity.PUBLIC)
+  @ApiPropertyOptional({
+    description:
+      'Path prefix this endpoint answers for on its host (default `/`). A host can carry several paths, all owned by applications of one project.',
+  })
+  @IsOptional()
+  @IsString()
+  routePath?: string;
 
   @ApiPropertyOptional({
     description:

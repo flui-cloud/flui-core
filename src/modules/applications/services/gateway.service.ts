@@ -28,12 +28,8 @@ import {
   SetGatewayPolicyDto,
 } from '../dto/gateway-route.dto';
 import { ReconciliationStatus } from '../../infrastructure/shared/enums/reconciliation-status.enum';
-
-function stripTrailingSlashes(url: string): string {
-  let end = url.length;
-  while (end > 0 && url[end - 1] === '/') end--;
-  return url.slice(0, end);
-}
+import { isControlClusterType } from '../../infrastructure/clusters/entities/cluster.entity';
+import { gatewayForwardAuthAddress } from '../../dns/utils/gateway-forward-auth-address.util';
 
 /**
  * App-scoped gateway control plane. Routes ARE the app's endpoints: an app
@@ -77,6 +73,7 @@ export class GatewayService {
       {
         applicationId: app.id,
         fqdn: dto.host,
+        routePath: dto.path,
         clusterDnsZoneId: clusterDnsZoneId ?? undefined,
         certificateRequired: dto.certificateRequired ?? true,
       },
@@ -191,11 +188,15 @@ export class GatewayService {
   ): Promise<CompiledGatewayRouteDto> {
     const endpoint = await this.getOwnedEndpoint(appId, endpointId);
     // Preview must not fail closed: show a placeholder when unresolved.
-    const apiUrl = stripTrailingSlashes(process.env.PUBLIC_API_URL ?? '');
     const compiled = this.gatewayCompiler.compile(
       endpoint,
       endpoint.gatewayConfig,
-      `${apiUrl || '<flui-api-public-url>'}/api/v1/authz/gateway`,
+      gatewayForwardAuthAddress(endpoint.id, {
+        apiRunsOnThisCluster:
+          !!process.env.KUBERNETES_SERVICE_HOST &&
+          isControlClusterType(endpoint.cluster?.clusterType),
+        publicApiUrl: process.env.PUBLIC_API_URL || '<flui-api-public-url>',
+      }),
     );
     return {
       endpointId,

@@ -23,7 +23,9 @@ import { HostnameMode } from '../enums/hostname-mode.enum';
 import { EndpointGatewayConfig } from '../interfaces/endpoint-gateway-config.interface';
 
 @Entity('app_endpoints')
-@Index(['fqdn'], { unique: true })
+@Index('IDX_app_endpoints_fqdn_route_path', ['fqdn', 'routePath'], {
+  unique: true,
+})
 export class AppEndpointEntity {
   @PrimaryGeneratedColumn('uuid')
   id: string;
@@ -83,6 +85,15 @@ export class AppEndpointEntity {
 
   @Column({ type: 'varchar' })
   fqdn: string;
+
+  /**
+   * The part of the host this endpoint answers for, normalised (`/`, `/api`).
+   * A host is shared between routes of one project, one path each, so the
+   * pair is what is unique — kept as a column because a jsonb field cannot
+   * carry that constraint.
+   */
+  @Column({ type: 'varchar', default: '/' })
+  routePath: string;
 
   @Column({ type: 'varchar' })
   serviceName: string;

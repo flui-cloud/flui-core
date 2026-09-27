@@ -90,7 +90,7 @@ export default class GatewayExplain extends Command {
         );
         console.log(
           chalk.dim(
-            '       Requests from any other source are rejected (403).',
+            '       Requests from any other source get a plain "Forbidden" page (403).',
           ),
         );
       }

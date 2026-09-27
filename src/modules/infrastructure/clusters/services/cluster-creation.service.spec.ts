@@ -9,6 +9,7 @@ describe('ClusterCreationService.createCluster — provider policies', () => {
     observabilityCluster,
     envVnetProvider = CloudProvider.HETZNER,
     controlEgressIps = [],
+    sizes = [],
   }: {
     capabilities: {
       vnetRequired: boolean;
@@ -19,6 +20,7 @@ describe('ClusterCreationService.createCluster — provider policies', () => {
     observabilityCluster?: unknown;
     envVnetProvider?: CloudProvider;
     controlEgressIps?: string[];
+    sizes?: { id: string; name: string }[];
   }) {
     const clusterRepo = {
       findOne: jest.fn().mockResolvedValue(observabilityCluster ?? null),
@@ -36,7 +38,11 @@ describe('ClusterCreationService.createCluster — provider policies', () => {
       id: 'subnet-1',
       vnetId: 'vnet-1',
       ipRange: '10.10.1.0/24',
-      vnet: { provider: envVnetProvider, implementation: 'provider-native' },
+      vnet: {
+        provider: envVnetProvider,
+        implementation: 'provider-native',
+        name: 'flui-env-vnet',
+      },
     };
     const vnetSubnetRepo = {
       findOne: jest.fn().mockResolvedValue(envSubnet),
@@ -85,8 +91,13 @@ describe('ClusterCreationService.createCluster — provider policies', () => {
       // it says about the control cluster's reachable address.
       new ManagementAddressResolver(),
       byosVNet as never,
+      {
+        getProvider: () => ({
+          getNodeSizes: jest.fn().mockResolvedValue(sizes),
+        }),
+      } as never,
     );
-    return { service, firewallIntegration, byosVNet };
+    return { service, firewallIntegration, byosVNet, clusterRepo };
   }
 
   const baseDto = {
@@ -122,6 +133,20 @@ describe('ClusterCreationService.createCluster — provider policies', () => {
     await service.createCluster(baseDto as never);
 
     expect(firewallIntegration.createAndReconcileFirewall).toHaveBeenCalled();
+  });
+
+  it('keeps the size by the name the catalogue gives it, not by the provider id a client sent', async () => {
+    const { service, clusterRepo } = build({
+      capabilities: { vnetRequired: true, crossClusterAllowed: false },
+      observabilityCluster: { provider: CloudProvider.HETZNER },
+      sizes: [{ id: '109', name: 'cpx22' }],
+    });
+
+    await service.createCluster({ ...baseDto, nodeSize: '109' } as never);
+
+    expect(clusterRepo.create).toHaveBeenCalledWith(
+      expect.objectContaining({ nodeSize: 'cpx22' }),
+    );
   });
 
   it('builds the network before queuing, on a provider that has none', async () => {
@@ -323,6 +348,18 @@ describe('ClusterCreationService.createCluster — provider policies', () => {
         overlayEnabled: false,
       });
       expect(verdict.reason).toContain('no private path');
+    });
+
+    it('names the network a cluster on the control’s provider joins, and none for another provider', async () => {
+      const { service } = setup('1.2.3.4');
+      await expect(
+        service.workloadProviderVerdict(CloudProvider.HETZNER),
+      ).resolves.toMatchObject({
+        environmentNetwork: { name: 'flui-env-vnet', ipRange: '10.10.1.0/24' },
+      });
+      await expect(
+        service.workloadProviderVerdict(CloudProvider.OVH),
+      ).resolves.toMatchObject({ environmentNetwork: null });
     });
 
     it('answers yes for the control cluster’s own provider and once the overlay bridges', async () => {

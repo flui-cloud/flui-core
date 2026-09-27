@@ -1,6 +1,16 @@
 import { ApiProperty } from '@nestjs/swagger';
 import { Sensitivity } from '../../../mask/decorators/sensitivity.decorator';
 
+export class EnvironmentNetworkDto {
+  @Sensitivity(Sensitivity.ARBITRARY_TEXT)
+  @ApiProperty({ description: "The environment network's name." })
+  name: string;
+
+  @Sensitivity(Sensitivity.NETWORK_IDENTIFIER)
+  @ApiProperty({ description: 'The subnet the cluster joins, as a CIDR.' })
+  ipRange: string;
+}
+
 export class WorkloadProviderResponseDto {
   @Sensitivity(Sensitivity.PUBLIC)
   @ApiProperty({ description: 'The provider asked about.' })
@@ -37,4 +47,12 @@ export class WorkloadProviderResponseDto {
       'Why the provider cannot host a workload cluster here. Null when allowed.',
   })
   reason: string | null;
+
+  @ApiProperty({
+    nullable: true,
+    type: EnvironmentNetworkDto,
+    description:
+      "The network a cluster on this provider joins without being asked: the control cluster's own, shared by every cluster on its provider. Null where the cluster brings its own.",
+  })
+  environmentNetwork: EnvironmentNetworkDto | null;
 }

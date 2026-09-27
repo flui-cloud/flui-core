@@ -6,7 +6,7 @@ import { resolveCluster } from '../../../lib/resolve-cluster';
 import {
   printRouteDetail,
   resolveGatewayRoute,
-  splitCidrList,
+  parseCidrList,
 } from '../../../lib/gateway-utils';
 
 export default class GatewayAllowIpAdd extends Command {
@@ -50,7 +50,7 @@ export default class GatewayAllowIpAdd extends Command {
       const app = await service.getAppByName(args.app);
       const route = await resolveGatewayRoute(service, app.id, args.route);
       const merged = [
-        ...new Set([...(route.allowIps ?? []), ...splitCidrList(args.cidr)]),
+        ...new Set([...(route.allowIps ?? []), ...parseCidrList(args.cidr)]),
       ];
       const updated = await service.setGatewayPolicy(app.id, route.endpointId, {
         allowIps: merged,
