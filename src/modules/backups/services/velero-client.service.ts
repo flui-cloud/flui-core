@@ -98,7 +98,12 @@ export class VeleroClientService {
     const extraLabelsBlock = spec.extraLabels
       ? this.formatLabels(spec.extraLabels, 4)
       : '';
+    await this.k8s.applyManifest(
+      kubeconfig,
+      JSON.stringify(volumePolicyConfigMap()),
+    );
     const yaml = this.templates.render('velero/velero-backup.yaml.tpl', {
+      VOLUME_POLICY_NAME: VOLUME_POLICY_CONFIGMAP,
       BACKUP_NAME: spec.backupName,
       NAMESPACE: VELERO_NAMESPACE,
       POLICY_ID: spec.policyId ?? '',
@@ -138,11 +143,11 @@ export class VeleroClientService {
     await this.k8s.applyManifest(kubeconfig, yaml);
   }
 
-  async getBackup(kubeconfig: string, name: string): Promise<any | null> {
+  async getBackup(kubeconfig: string, name: string): Promise<any> {
     return this.k8s.getResource(kubeconfig, 'Backup', name, VELERO_NAMESPACE);
   }
 
-  async getRestore(kubeconfig: string, name: string): Promise<any | null> {
+  async getRestore(kubeconfig: string, name: string): Promise<any> {
     return this.k8s.getResource(kubeconfig, 'Restore', name, VELERO_NAMESPACE);
   }
 
@@ -202,6 +207,7 @@ export class VeleroClientService {
     timeoutMs: number = 3 * 60 * 1000,
   ): Promise<void> {
     const start = Date.now();
+    let reason: string | undefined;
     while (Date.now() - start < timeoutMs) {
       const obj = await this.k8s.getResource(
         kubeconfig,
@@ -209,13 +215,12 @@ export class VeleroClientService {
         bslName,
         VELERO_NAMESPACE,
       );
-      const phase = obj?.body?.status?.phase ?? obj?.status?.phase;
-      if (phase === 'Available') return;
+      const status = obj?.body?.status ?? obj?.status;
+      if (status?.phase === 'Available') return;
+      reason = status?.message ?? reason;
       await sleep(VELERO_BACKUP_POLL_INTERVAL_MS);
     }
-    throw new Error(
-      `Velero BackupStorageLocation ${bslName} did not become Available within ${timeoutMs}ms`,
-    );
+    throw new StorageLocationUnavailableError(describeUnavailable(reason));
   }
 
   /**
@@ -297,4 +302,57 @@ export class VeleroClientService {
           `${pvb?.spec?.pod?.namespace ?? '?'}/${pvb?.spec?.volume ?? '?'}=${pvb?.status?.phase ?? 'no-status'}`,
       );
   }
+}
+
+export class StorageLocationUnavailableError extends Error {}
+
+/**
+ * Velero's own reason, in Flui's words. The common one is a folder shared
+ * with other backups: Velero owns its prefix and refuses a location with
+ * anything else at the top of it.
+ */
+export function describeUnavailable(reason: string | undefined): string {
+  const invalid = /invalid top-level directories: \[([^\]]*)\]/.exec(
+    reason ?? '',
+  )?.[1];
+  if (invalid) {
+    return (
+      `The backup storage cannot be used for cluster backups: other backups (${invalid}) ` +
+      "share the cluster backups' folder. Give cluster backups a folder of their own with " +
+      '`flui backup destination upgrade-layout <destination>`.'
+    );
+  }
+  const detail = reason ? ': ' + reason : ' (it did not answer in time)';
+  return `The backup storage cannot be used for cluster backups${detail}.`;
+}
+
+export const VOLUME_POLICY_CONFIGMAP = 'flui-volume-policy';
+
+/**
+ * Scratch space is not data. A pod's temporary directories — a proxy's tmp,
+ * an agent's buffer, Velero's own scratch — are rebuilt empty on start, so
+ * copying them makes every backup larger and every restore slower for nothing.
+ */
+export function volumePolicyConfigMap(): Record<string, unknown> {
+  return {
+    apiVersion: 'v1',
+    kind: 'ConfigMap',
+    metadata: {
+      name: VOLUME_POLICY_CONFIGMAP,
+      namespace: VELERO_NAMESPACE,
+      labels: { 'managed-by': 'flui-cloud' },
+    },
+    data: {
+      'policy.yaml': [
+        'version: v1',
+        'volumePolicies:',
+        '  - conditions:',
+        '      volumeTypes:',
+        '        - emptyDir',
+        '    action:',
+        '      type: skip',
+        '',
+      ].join('\n'),
+    },
+  };
 }

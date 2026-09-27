@@ -1,3 +1,4 @@
+import { Sensitivity } from '../../mask/decorators/sensitivity.decorator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
   IsArray,
@@ -16,7 +17,6 @@ import { BackupScope } from '../enums/backup-scope.enum';
 import { BackupPolicyProfile } from '../enums/backup-policy-status.enum';
 import { BackupEngineClass } from '../enums/backup-engine-class.enum';
 import { DestinationRole } from '../enums/destination-role.enum';
-import { BackupScopeSelector } from '../entities/backup-policy.entity';
 
 export class PolicyDestinationInputDto {
   @ApiProperty()
@@ -44,6 +44,29 @@ export class PolicyDestinationInputDto {
   @IsInt()
   @Min(1)
   retentionMaxCopiesOverride?: number;
+}
+
+/** What a person may set on a policy; anything else in `metadata` is Flui's. */
+export class BackupPolicyOptionsDto {
+  @Sensitivity(Sensitivity.PUBLIC)
+  @ApiPropertyOptional({
+    type: [String],
+    description: 'Volume copies: volume names to leave out.',
+  })
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  excludeVolumes?: string[];
+
+  @Sensitivity(Sensitivity.PUBLIC)
+  @ApiPropertyOptional({
+    description:
+      'Volume copies: stop the application for the length of each copy, so ' +
+      'it is taken at rest. The run records how long it was stopped.',
+  })
+  @IsOptional()
+  @IsBoolean()
+  pauseDuringCopy?: boolean;
 }
 
 export class CreateBackupPolicyDto {
@@ -110,4 +133,11 @@ export class CreateBackupPolicyDto {
   @ValidateNested({ each: true })
   @Type(() => PolicyDestinationInputDto)
   destinations: PolicyDestinationInputDto[];
+
+  @Sensitivity(Sensitivity.PUBLIC)
+  @ApiPropertyOptional({ type: BackupPolicyOptionsDto })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => BackupPolicyOptionsDto)
+  metadata?: BackupPolicyOptionsDto;
 }

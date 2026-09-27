@@ -60,10 +60,16 @@ export default class BackupDestinationCreate extends Command {
     'use-sse': Flags.boolean({
       description: 'Use server-side encryption (SSE-S3) at the provider',
     }),
-    'cost-per-gb-month-cents': Flags.integer({
+    'cost-per-gb-month-cents': Flags.string({
       description:
-        'Provider cost in cents/GB·month (used for billing estimate)',
-      min: 0,
+        'What the storage costs, in euro cents per GB per month (e.g. 1.606), used for estimates',
+      parse: async (v) => {
+        const n = Number(v);
+        if (!Number.isFinite(n) || n < 0) {
+          throw new Error(`"${v}" is not a price in cents per GB per month`);
+        }
+        return v;
+      },
     }),
   };
 
@@ -105,7 +111,10 @@ export default class BackupDestinationCreate extends Command {
         encryptionPassphrase: passphrase,
         forcePathStyle: flags['force-path-style'],
         useSse: flags['use-sse'],
-        costPerGbMonthCents: flags['cost-per-gb-month-cents'],
+        costPerGbMonthCents:
+          flags['cost-per-gb-month-cents'] === undefined
+            ? undefined
+            : Number(flags['cost-per-gb-month-cents']),
       });
       spinner.succeed(`Created destination ${chalk.cyan(dest.id)}`);
       this.log('');

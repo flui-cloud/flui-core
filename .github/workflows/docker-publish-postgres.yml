@@ -18,6 +18,11 @@ env:
 jobs:
   build-and-push:
     runs-on: ubuntu-latest
+    # 15 and 16 exist so a catalog bundle pinned to them can move onto this
+    # image without a major upgrade; 17 keeps its historical tags.
+    strategy:
+      matrix:
+        pg_major: ['15', '16', '17']
     permissions:
       contents: read
       packages: write
@@ -46,13 +51,15 @@ jobs:
           images: ${{ env.IMAGE_NAME }}
           flavor: latest=false
           tags: |
-            type=raw,value=17-dev
-            type=sha,prefix=,format=short
+            type=raw,value=${{ matrix.pg_major }}-dev
+            type=sha,prefix=${{ matrix.pg_major }}-,format=short
+            type=sha,prefix=,format=short,enable=${{ matrix.pg_major == '17' }}
 
       - name: Build and push
         uses: docker/build-push-action@v6
         with:
           context: images/postgres
+          build-args: PG_MAJOR=${{ matrix.pg_major }}
           platforms: linux/amd64,linux/arm64
           push: true
           tags: ${{ steps.meta.outputs.tags }}

@@ -24,6 +24,8 @@ export enum RestoreStrategy {
   PG_PITR = 'pg_pitr',
   /** A MariaDB base backup brought forward by its binary logs. */
   MARIADB_PITR = 'mariadb_pitr',
+  /** A logical dump loaded into a new database. */
+  LOGICAL_DUMP = 'logical_dump',
 }
 
 export enum PreDeploySnapshotPolicy {

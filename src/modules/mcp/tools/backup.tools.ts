@@ -7,9 +7,11 @@ import { defineTool, ToolDef } from './mcp-tool.util';
 const enc = encodeURIComponent;
 
 /**
- * Backup control tools: read the backup posture, run an on-demand backup, and
- * pause/resume a policy's schedule. Creating destinations/policies and restoring
- * are config-heavy / high-blast operations left to the CLI + dashboard.
+ * Backup control tools: read the backup posture, list backups, run an
+ * on-demand backup, pause/resume a policy's schedule, and restore a database
+ * backup into a NEW database (nothing existing is touched). Creating
+ * destinations/policies and restoring over existing resources are
+ * config-heavy / high-blast operations left to the CLI + dashboard.
  */
 export const BACKUP_TOOLS: ToolDef[] = [
   defineTool({
@@ -61,5 +63,59 @@ export const BACKUP_TOOLS: ToolDef[] = [
     inputSchema: { policyId: z.string() },
     run: (args, ctx) =>
       ctx.api.post(`/backup-policies/${enc(args.policyId)}/resume`, {}),
+  }),
+  defineTool({
+    name: 'backup_destination_set_cost',
+    routes: ['PATCH /backup-destinations/:id/cost'],
+    description:
+      'Set what a backup destination costs, in euro cents per GB per month (e.g. 1.606), so backup cost estimates use it. Pass null to go back to the published list price, when Flui has one for the provider. Get destinationId from backup_status.',
+    scope: MCP_SCOPE.BACKUP_WRITE,
+    inputSchema: {
+      destinationId: z.string(),
+      costPerGbMonthCents: z.number().min(0).nullable(),
+    },
+    run: (args, ctx) =>
+      ctx.api.patch(`/backup-destinations/${enc(args.destinationId)}/cost`, {
+        costPerGbMonthCents: args.costPerGbMonthCents,
+      }),
+  }),
+  defineTool({
+    name: 'backup_list',
+    routes: ['GET /backup-artifacts'],
+    description:
+      'List the backups of one application (pass applicationId — it may be a database that no longer exists) or of one cluster (pass clusterId). Each backup has an id; a database backup id is what backup_restore_database takes.',
+    scope: MCP_SCOPE.BACKUP_READ,
+    inputSchema: {
+      applicationId: z.string().optional(),
+      clusterId: z.string().optional(),
+    },
+    run: (args, ctx) => {
+      const query = args.applicationId
+        ? `applicationId=${enc(args.applicationId)}`
+        : `clusterId=${enc(args.clusterId ?? '')}`;
+      return ctx.api.get(`/backup-artifacts?${query}`);
+    },
+  }),
+  defineTool({
+    name: 'backup_restore_database',
+    routes: ['POST /backup-artifacts/:id/restore-database'],
+    description:
+      'Restore a database backup (id from backup_list) into a NEW database named `name` — also when the original database was deleted. Omit `at` for everything that was archived, or pass an ISO-8601 instant. clusterId defaults to the original cluster while it exists. Nothing existing is modified.',
+    scope: MCP_SCOPE.BACKUP_WRITE,
+    inputSchema: {
+      artifactId: z.string(),
+      name: z.string(),
+      at: z.string().optional(),
+      clusterId: z.string().optional(),
+    },
+    run: (args, ctx) =>
+      ctx.api.post(
+        `/backup-artifacts/${enc(args.artifactId)}/restore-database`,
+        {
+          name: args.name,
+          ...(args.at ? { recoveryTargetTime: args.at } : {}),
+          ...(args.clusterId ? { clusterId: args.clusterId } : {}),
+        },
+      ),
   }),
 ];

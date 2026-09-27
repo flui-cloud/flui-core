@@ -14,6 +14,18 @@ export interface CatalogApp {
   license?: string;
 }
 
+export interface CatalogInputPrompt {
+  name: string;
+  label?: string;
+  default?: string;
+  sensitive?: boolean;
+  description?: string;
+  pattern?: string;
+  patternDescription?: string;
+  minLength?: number;
+  maxLength?: number;
+}
+
 export interface CatalogInstall {
   id: string;
   slug: string;
@@ -83,6 +95,13 @@ export class CatalogClient {
       `/catalog/${encodeURIComponent(slug)}/install`,
       input,
     );
+  }
+
+  async getPrompts(slug: string): Promise<CatalogInputPrompt[]> {
+    const detail = await this.api.get<{
+      userInputPrompts?: CatalogInputPrompt[];
+    }>(`/catalog/${encodeURIComponent(slug)}`);
+    return detail.userInputPrompts ?? [];
   }
 
   async getInstall(id: string): Promise<CatalogInstall> {

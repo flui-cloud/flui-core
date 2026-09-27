@@ -13,9 +13,10 @@ export interface BackupDestination {
   forcePathStyle?: boolean;
   useSse?: boolean;
   usableForEtcdL1?: boolean;
-  costPerGbMonthCents?: number;
+  costPerGbMonthCents?: number | null;
   health?: string;
   usageBytes?: number;
+  metadata?: { costSource?: string } & Record<string, unknown>;
   createdAt?: string;
   updatedAt?: string;
 }
@@ -131,6 +132,11 @@ export interface BackupJob {
   finishedAt?: string;
   bytesTransferred?: number;
   errorMessage?: string;
+  metadata?: {
+    volumesCopied?: string[];
+    /** Per volume, seconds the application was stopped for its copy. */
+    stoppedSeconds?: Record<string, number>;
+  } & Record<string, unknown>;
 }
 
 export interface RestoreJob {
@@ -217,6 +223,24 @@ export class BackupClient {
     id: string,
   ): Promise<{ healthy: boolean; error?: string }> {
     return this.api.post(`/backup-destinations/${id}/test`);
+  }
+
+  async upgradeDestinationLayout(
+    id: string,
+    force = false,
+  ): Promise<{ layout: string; changed: boolean; leftBehind: string[] }> {
+    return this.api.post(`/backup-destinations/${id}/upgrade-layout`, {
+      force,
+    });
+  }
+
+  async setDestinationCost(
+    id: string,
+    costPerGbMonthCents: number | null,
+  ): Promise<BackupDestination> {
+    return this.api.patch(`/backup-destinations/${id}/cost`, {
+      costPerGbMonthCents,
+    });
   }
 
   async refreshDestinationUsage(id: string): Promise<{ ok: boolean }> {

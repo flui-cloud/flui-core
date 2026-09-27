@@ -73,6 +73,17 @@ spec:
           valueFrom:
             generate: secret
             length: 32
+      # Binary logs let the database be backed up continuously, like the
+      # standalone MariaDB; without them it can only be dumped on a schedule.
+      configFiles:
+        - path: /etc/mysql/conf.d/flui.cnf
+          content: |
+            [mariadb]
+            log_bin = /var/lib/mysql/binlog
+            server_id = 1
+            binlog_format = ROW
+            max_binlog_size = 64M
+            binlog_expire_logs_seconds = 864000
       resources:
         requests:
           cpu: 100m

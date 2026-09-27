@@ -144,6 +144,15 @@ export class RestoreJobsService {
           'Database restore requires targetSelector.newInstall { name, clusterId }',
         );
       }
+      if (
+        dto.recoveryTargetTime &&
+        this.engines.forEngine(artifact.engine).pointInTime === false
+      ) {
+        throw new BadRequestException(
+          'This database is backed up by scheduled dumps, which restore the moment each was taken and ' +
+            'nothing in between. Restore without a time, choosing the backup taken before the moment you need.',
+        );
+      }
     }
 
     const op = await this.opRepo.save(

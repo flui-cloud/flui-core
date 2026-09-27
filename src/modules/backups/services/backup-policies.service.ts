@@ -20,6 +20,8 @@ import { DestinationPlacementValidator } from './destination-placement.validator
 import { PgBackrestService } from './pgbackrest.service';
 import { ContinuousBackupEngineRegistry } from './continuous-backup-engine.registry';
 
+const DEFAULT_DUMP_SCHEDULE = '0 3 * * *';
+
 @Injectable()
 export class BackupPoliciesService {
   private readonly logger = new Logger(BackupPoliciesService.name);
@@ -76,7 +78,7 @@ export class BackupPoliciesService {
       );
     }
 
-    const engine = this.engines.forEngine(declaredEngine);
+    const engine = await this.engines.chooseFor(declaredEngine, appId);
     // Minted before anything is written, and carried on the policy: it names
     // the life of the data directory this protection covers. An engine whose
     // log names restart on a fresh volume would otherwise write, into the
@@ -88,19 +90,19 @@ export class BackupPoliciesService {
     });
 
     try {
-      return await this.create(userId, {
-        ...dto,
-        engine: engine.engine,
-        ...(generation
-          ? {
-              metadata: {
-                ...((dto as { metadata?: Record<string, unknown> }).metadata ??
-                  {}),
-                generation,
-              },
-            }
-          : {}),
-      } as CreateBackupPolicyDto & { engine: string });
+      return await this.create(
+        userId,
+        {
+          ...dto,
+          // A dump protects only up to the moment it was taken, so one that is
+          // never scheduled protects nothing written after the first.
+          cronSchedule:
+            dto.cronSchedule ??
+            (engine.pointInTime === false ? DEFAULT_DUMP_SCHEDULE : undefined),
+          engine: engine.engine,
+        } as CreateBackupPolicyDto & { engine: string },
+        generation ? { generation } : undefined,
+      );
     } catch (err) {
       await engine.disable(appId).catch((cleanupErr: any) => {
         this.logger.error(
@@ -115,6 +117,8 @@ export class BackupPoliciesService {
   async create(
     userId: string,
     dto: CreateBackupPolicyDto,
+    /** Flui's own facts about the policy, never taken from the request. */
+    internal?: Record<string, unknown>,
   ): Promise<BackupPolicyEntity> {
     const primaries = dto.destinations.filter(
       (d) => d.role === DestinationRole.PRIMARY,
@@ -196,6 +200,18 @@ export class BackupPoliciesService {
       cronSchedule: dto.cronSchedule,
       retentionDays: dto.retentionDays ?? 30,
       retentionMaxCopies: dto.retentionMaxCopies,
+      // Only the options a person may set, then Flui's own: a request that
+      // named `generation` would otherwise choose where a database's history
+      // is written.
+      metadata: {
+        ...(dto.metadata?.excludeVolumes?.length
+          ? { excludeVolumes: dto.metadata.excludeVolumes }
+          : {}),
+        ...(dto.metadata?.pauseDuringCopy === true
+          ? { pauseDuringCopy: true }
+          : {}),
+        ...internal,
+      },
       enabled: true,
       status: BackupPolicyStatus.ACTIVE,
       profile: dto.profile ?? this.inferProfile(dto.destinations.length),
@@ -292,7 +308,7 @@ export class BackupPoliciesService {
         : prevPlatform.heartbeat,
     };
     await this.repo.update(id, {
-      metadata: { ...(policy.metadata ?? {}), platform },
+      metadata: { ...policy.metadata, platform },
     });
     this.logger.log(
       `[backup-policies] platform config set on ${id} (recipient=${cfg.recipient.slice(0, 12)}…, heartbeat=${cfg.heartbeatUrl ? 'set' : 'unchanged'})`,

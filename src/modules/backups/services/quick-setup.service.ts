@@ -110,6 +110,7 @@ export class QuickSetupService {
           mirrored: null,
         },
         backupUnavailableReason: singleEst.unavailableReason,
+        backupPricingSource: singleEst.primary?.pricingSource,
         estimatedDataGb: singleEst.estimatedDataGb,
         estimatedDataSource: singleEst.estimatedDataSource,
         backupScope: {

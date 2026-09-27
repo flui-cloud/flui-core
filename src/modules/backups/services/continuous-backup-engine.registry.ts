@@ -2,6 +2,10 @@ import { BadRequestException, Injectable } from '@nestjs/common';
 import { ContinuousBackupEngine } from './continuous-backup-engine.interface';
 import { PgBackrestService } from './pgbackrest.service';
 import { MariadbPitrService } from './mariadb-pitr.service';
+import {
+  MariadbDumpService,
+  PostgresDumpService,
+} from './logical-dump.service';
 
 /**
  * Finds the engine that owns a policy or an artifact.
@@ -16,11 +20,50 @@ import { MariadbPitrService } from './mariadb-pitr.service';
 export class ContinuousBackupEngineRegistry {
   private readonly engines: ReadonlyMap<string, ContinuousBackupEngine>;
 
-  constructor(pgbackrest: PgBackrestService, mariadb: MariadbPitrService) {
+  private readonly dumpFallback: ReadonlyMap<string, ContinuousBackupEngine>;
+
+  constructor(
+    pgbackrest: PgBackrestService,
+    mariadb: MariadbPitrService,
+    postgresDump: PostgresDumpService,
+    mariadbDump: MariadbDumpService,
+  ) {
     this.engines = new Map<string, ContinuousBackupEngine>([
       [pgbackrest.engine, pgbackrest],
       [mariadb.engine, mariadb],
+      [postgresDump.engine, postgresDump],
+      [mariadbDump.engine, mariadbDump],
     ]);
+    this.dumpFallback = new Map<string, ContinuousBackupEngine>([
+      [pgbackrest.engine, postgresDump],
+      [mariadb.engine, mariadbDump],
+    ]);
+  }
+
+  /**
+   * The engine that will protect this database: continuous when its image
+   * can ship its log, a scheduled dump when it cannot — the databases inside
+   * catalog bundles run the vendor's image. The continuous engine's refusal is
+   * kept when the dump cannot run either, because it names what is missing.
+   */
+  async chooseFor(
+    declaredEngine: string | undefined | null,
+    appId: string,
+  ): Promise<ContinuousBackupEngine> {
+    const continuous = this.forEngine(declaredEngine);
+    try {
+      await continuous.requireTooling(appId);
+      return continuous;
+    } catch (err) {
+      const dump = this.dumpFallback.get(continuous.engine);
+      if (!dump || !(err instanceof BadRequestException)) throw err;
+      try {
+        await dump.requireTooling(appId);
+      } catch {
+        throw err;
+      }
+      return dump;
+    }
   }
 
   /**

@@ -3,6 +3,7 @@ import chalk from 'chalk';
 import { CatalogClient, CatalogInstall } from '../../lib/catalog-client';
 import { resolveClusterRef } from '../../lib/resolve-cluster';
 import { printContextBanner } from '../../lib/context-banner';
+import { promptInput, promptMaskedInput } from '../../lib/prompts';
 
 function colorStatus(status: string): string {
   switch (status) {
@@ -86,13 +87,18 @@ export default class CatalogInstallCmd extends Command {
     const cluster = await resolveClusterRef(flags.cluster);
     const catalog = CatalogClient.fromConfig();
 
+    const userInputs = parsePairs(flags.input) ?? {};
+    if (process.stdin.isTTY && !flags.json) {
+      await this.askMissingInputs(catalog, args.slug, userInputs);
+    }
+
     let install = await catalog.install(args.slug, {
       clusterId: cluster.id,
       displayName: flags.name ?? args.slug,
       domain: flags.domain,
       skipEndpoint: flags['skip-endpoint'],
       allowMasterPlacement: flags['allow-master-placement'],
-      userInputs: parsePairs(flags.input),
+      userInputs: Object.keys(userInputs).length ? userInputs : undefined,
       envOverrides: parsePairs(flags.env),
     });
 
@@ -121,6 +127,45 @@ export default class CatalogInstallCmd extends Command {
     );
 
     if (install.status === 'FAILED') this.exit(1);
+  }
+
+  /**
+   * The inputs the app needs and the command did not carry, asked for here,
+   * so the person learns which ones they are before the install is refused.
+   */
+  private async askMissingInputs(
+    catalog: CatalogClient,
+    slug: string,
+    userInputs: Record<string, string>,
+  ): Promise<void> {
+    const prompts = await catalog.getPrompts(slug).catch(() => []);
+    for (const p of prompts) {
+      if (userInputs[p.name] !== undefined || p.default !== undefined) continue;
+      const label = p.label ?? p.name;
+      if (p.description) this.log(chalk.dim(`   ${p.description}`));
+      const validate = (value: string): string | undefined => {
+        if (p.minLength !== undefined && value.length < p.minLength)
+          return `At least ${p.minLength} characters.`;
+        if (p.maxLength !== undefined && value.length > p.maxLength)
+          return `At most ${p.maxLength} characters.`;
+        if (p.pattern && !new RegExp(p.pattern).test(value))
+          return p.patternDescription ?? `Must match ${p.pattern}.`;
+        return undefined;
+      };
+      if (p.sensitive) {
+        for (;;) {
+          const value = await promptMaskedInput(label);
+          const problem = validate(value);
+          if (!problem) {
+            userInputs[p.name] = value;
+            break;
+          }
+          this.log(chalk.red(`  ${problem}`));
+        }
+      } else {
+        userInputs[p.name] = await promptInput({ message: label, validate });
+      }
+    }
   }
 
   private async pollUntilSettled(

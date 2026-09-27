@@ -1,7 +1,10 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { In, Repository } from 'typeorm';
-import { ClusterEntity } from '../../infrastructure/clusters/entities/cluster.entity';
+import { In, Not, Repository } from 'typeorm';
+import {
+  ClusterEntity,
+  ClusterStatus,
+} from '../../infrastructure/clusters/entities/cluster.entity';
 import { BackupPolicyEntity } from '../entities/backup-policy.entity';
 import { BackupDestinationEntity } from '../entities/backup-destination.entity';
 import { BackupJobEntity } from '../entities/backup-job.entity';
@@ -43,6 +46,8 @@ export interface BackupStatusResponse {
   generatedAt: string;
 }
 
+const GONE_CLUSTER_STATUSES = [ClusterStatus.DELETED, ClusterStatus.LOST];
+
 @Injectable()
 export class BackupStatusService {
   private readonly logger = new Logger(BackupStatusService.name);
@@ -67,11 +72,25 @@ export class BackupStatusService {
     const last24h = new Date(now.getTime() - 24 * 60 * 60 * 1000);
     const last30d = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
 
-    const clusters = await this.clusterRepo.find({ where: {} });
+    // Only clusters that still exist: a deleted or lost cluster is neither
+    // protected nor unprotected.
+    const clusters = await this.clusterRepo.find({
+      where: { status: Not(In(GONE_CLUSTER_STATUSES)) },
+    });
+    const liveClusterIds = new Set(clusters.map((c) => c.id));
     const userPolicies = await this.policyRepo.find({ where: { userId } });
     const userDestinations = await this.destRepo.find({ where: { userId } });
 
-    const clustersWithPolicy = new Set(userPolicies.map((p) => p.clusterId));
+    const isActive = (p: BackupPolicyEntity) =>
+      p.enabled && p.status === BackupPolicyStatus.ACTIVE;
+    const clustersWithPolicy = new Set(
+      userPolicies
+        .filter((p) => isActive(p) && liveClusterIds.has(p.clusterId))
+        .map((p) => p.clusterId),
+    );
+    const orphanPolicies = userPolicies.filter(
+      (p) => isActive(p) && !liveClusterIds.has(p.clusterId),
+    ).length;
     const clustersTotal = clusters.length;
     const clustersWithBackups = clustersWithPolicy.size;
     const clustersWithoutBackups = Math.max(
@@ -80,15 +99,16 @@ export class BackupStatusService {
     );
 
     const activePolicies = userPolicies.filter(
-      (p) => p.enabled && p.status === BackupPolicyStatus.ACTIVE,
+      (p) => isActive(p) && liveClusterIds.has(p.clusterId),
     ).length;
     const degradedPolicies = userPolicies.filter(
       (p) => p.status === BackupPolicyStatus.DEGRADED,
     ).length;
 
-    const failedDestinations = userDestinations.filter(
+    const failed = userDestinations.filter(
       (d) => d.healthStatus === DestinationHealthStatus.FAILED,
-    ).length;
+    );
+    const failedDestinations = failed.length;
     const healthyDestinations = userDestinations.filter(
       (d) => d.healthStatus === DestinationHealthStatus.HEALTHY,
     ).length;
@@ -127,7 +147,10 @@ export class BackupStatusService {
       clustersWithBackups,
       clustersWithoutBackups,
       degradedPolicies,
+      orphanPolicies,
       failedDestinations,
+      failedDestinationReason: failed.find((d) => d.lastHealthError)
+        ?.lastHealthError,
       failedJobsLast24h,
       lastSuccessfulBackupAt,
       now,
@@ -164,7 +187,9 @@ export class BackupStatusService {
     clustersWithBackups: number;
     clustersWithoutBackups: number;
     degradedPolicies: number;
+    orphanPolicies: number;
     failedDestinations: number;
+    failedDestinationReason?: string;
     failedJobsLast24h: number;
     lastSuccessfulBackupAt?: Date;
     now: Date;
@@ -175,9 +200,9 @@ export class BackupStatusService {
         severity: 'info',
         code: 'NO_CLUSTERS',
         message:
-          'Crea il tuo primo cluster per iniziare a usare Flui. I backup si attivano in 1 click dopo.',
-        ctaLabel: 'Crea cluster',
-        ctaPath: '/clusters/new',
+          'Create your first cluster to start using Flui. Backups can be turned on with one click afterwards.',
+        ctaLabel: 'Create cluster',
+        ctaPath: '/cluster',
       });
       return alerts;
     }
@@ -187,7 +212,7 @@ export class BackupStatusService {
         code: 'CLUSTERS_WITHOUT_BACKUPS',
         message: `${input.clustersWithoutBackups} of ${input.clustersTotal} clusters have no backups.`,
         ctaLabel: 'Enable backups',
-        ctaPath: '/clusters',
+        ctaPath: '/management/backup/overview',
       });
     }
     if (input.degradedPolicies > 0) {
@@ -196,16 +221,28 @@ export class BackupStatusService {
         code: 'DEGRADED_POLICIES',
         message: `${input.degradedPolicies} policy(ies) degraded — cross-provider replication is failing. Check the credentials.`,
         ctaLabel: 'Check destinations',
-        ctaPath: '/backups/destinations',
+        ctaPath: '/management/backup/destinations',
+      });
+    }
+    if (input.orphanPolicies > 0) {
+      alerts.push({
+        severity: 'warning',
+        code: 'ORPHAN_POLICIES',
+        message: `${input.orphanPolicies} backup ${input.orphanPolicies === 1 ? 'policy points' : 'policies point'} at a cluster that no longer exists. They protect nothing; their backups stay restorable.`,
+        ctaLabel: 'Open policies',
+        ctaPath: '/management/backup/policies',
       });
     }
     if (input.failedDestinations > 0) {
+      const reason = input.failedDestinationReason
+        ? ' ' + input.failedDestinationReason
+        : '';
       alerts.push({
         severity: 'critical',
         code: 'FAILED_DESTINATIONS',
-        message: `${input.failedDestinations} destination(s) unreachable. The next backups may fail.`,
+        message: `${input.failedDestinations} destination(s) unusable. The next backups will fail.${reason}`,
         ctaLabel: 'Open destinations',
-        ctaPath: '/backups/destinations',
+        ctaPath: '/management/backup/destinations',
       });
     }
     if (input.failedJobsLast24h > 0) {
@@ -214,7 +251,7 @@ export class BackupStatusService {
         code: 'FAILED_JOBS_24H',
         message: `${input.failedJobsLast24h} backup run(s) failed in the last 24h.`,
         ctaLabel: 'Open history',
-        ctaPath: '/backups/jobs',
+        ctaPath: '/management/backup/jobs',
       });
     }
     if (
@@ -229,7 +266,7 @@ export class BackupStatusService {
         message:
           'No backup has completed in 36 hours. The scheduler may be stopped, or the destinations unreachable.',
         ctaLabel: 'Diagnose',
-        ctaPath: '/backups',
+        ctaPath: '/management/backup/jobs',
       });
     }
     if (alerts.length === 0) {
@@ -254,10 +291,10 @@ export class BackupStatusService {
     clustersWithBackups: number;
   }): { label: string; path: string } | undefined {
     if (input.clustersTotal === 0) {
-      return { label: 'Crea il primo cluster', path: '/clusters/new' };
+      return { label: 'Create your first cluster', path: '/cluster' };
     }
     if (input.clustersWithBackups === 0) {
-      return { label: 'Attiva i backup', path: '/clusters' };
+      return { label: 'Enable backups', path: '/management/backup/overview' };
     }
     return undefined;
   }

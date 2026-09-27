@@ -28,6 +28,11 @@ export default class BackupJobShow extends Command {
       this.log(
         `   ${chalk.bold('Bytes:')}     ${(j.bytesTransferred / 1024 ** 2).toFixed(2)} MB`,
       );
+    const stopped = Object.entries(j.metadata?.stoppedSeconds ?? {});
+    for (const [volume, seconds] of stopped) {
+      const copying = chalk.dim('while copying ' + volume);
+      this.log(`   ${chalk.bold('Stopped:')}   ${seconds}s ${copying}`);
+    }
     if (j.errorMessage)
       this.log(chalk.red(`   ${chalk.bold('Error:')}     ${j.errorMessage}`));
     this.log('');

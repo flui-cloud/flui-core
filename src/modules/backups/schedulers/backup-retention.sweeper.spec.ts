@@ -33,6 +33,7 @@ describe('BackupRetentionSweeper', () => {
       dbArtifacts?: any[];
       newestDbArtifact?: any;
       engineKeys?: (appId: string, ref: string) => string[];
+      pathPrefix?: string;
     } = {},
   ) {
     const deletedArtifacts: string[] = [];
@@ -67,7 +68,9 @@ describe('BackupRetentionSweeper', () => {
     const destRepo = {
       findOne: jest.fn(async () => ({ id: 'd1', provider: 'scaleway' })),
     };
-    const destinations = { toCredentials: jest.fn(() => ({})) };
+    const destinations = {
+      toCredentials: jest.fn(() => ({ pathPrefix: opts.pathPrefix })),
+    };
     const deleteObjects = opts.deleteObjects ?? jest.fn(async () => {});
     const storage = {
       forProvider: jest.fn(() => ({
@@ -289,6 +292,7 @@ describe('BackupRetentionSweeper', () => {
         `mariadb/${appId}/base/${ref}/binlog_info`,
         `mariadb/${appId}/base/${ref}/base.mbstream`,
       ],
+      pathPrefix: '/flui/dest-1/',
       deleteObjects: jest.fn(async (_c: any, keys: string[]) => {
         deleted.push(keys);
       }),
@@ -297,8 +301,8 @@ describe('BackupRetentionSweeper', () => {
     await sweeper.sweep();
 
     expect(deleted).toEqual([
-      ['mariadb/app-1/base/base-old/binlog_info'],
-      ['mariadb/app-1/base/base-old/base.mbstream'],
+      ['flui/dest-1/mariadb/app-1/base/base-old/binlog_info'],
+      ['flui/dest-1/mariadb/app-1/base/base-old/base.mbstream'],
     ]);
     expect(deletedArtifacts).toEqual(['a1']);
   });

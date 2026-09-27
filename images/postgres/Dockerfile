@@ -1,7 +1,9 @@
-# Flui-managed Postgres: postgres 17 + pgBackRest, born migratable.
+# Flui-managed Postgres: postgres + pgBackRest, born migratable.
 # pgBackRest comes from the PGDG apt repo (already configured in the official
-# postgres:17 image) so it is new enough to support PG17 (>= 2.53).
-FROM docker.io/library/postgres:17
+# postgres images) so it is new enough to support PG17 (>= 2.53).
+# PG_MAJOR selects the server major; 17 is the catalog's own.
+ARG PG_MAJOR=17
+FROM docker.io/library/postgres:${PG_MAJOR}
 
 RUN set -eux; \
     apt-get update; \

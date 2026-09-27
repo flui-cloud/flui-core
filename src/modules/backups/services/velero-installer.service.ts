@@ -15,6 +15,7 @@ import {
   VELERO_AWS_PLUGIN_IMAGE,
   VELERO_CREDENTIALS_SECRET_NAME,
 } from '../backups.constants';
+import { veleroBslPrefix } from '../utils/destination-layout.util';
 
 export interface VeleroInstallContext {
   kubeconfig: string;
@@ -197,7 +198,7 @@ export class VeleroInstallerService {
       accessKey,
       secretKey,
       forcePathStyle: dest.forcePathStyle,
-      pathPrefix: dest.pathPrefix,
+      pathPrefix: veleroBslPrefix(dest),
     });
 
     await this.k8s.applyManifest(

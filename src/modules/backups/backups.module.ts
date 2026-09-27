@@ -73,12 +73,19 @@ import { BackupPolicyScheduler } from './schedulers/backup-policy.scheduler';
 import { BackupRetentionSweeper } from './schedulers/backup-retention.sweeper';
 import { RunVolumeCopyProcessor } from './processors/run-volume-copy.processor';
 import { MariadbPitrService } from './services/mariadb-pitr.service';
+import {
+  MariadbDumpService,
+  PostgresDumpService,
+} from './services/logical-dump.service';
+import { SqliteVolumeExclusionService } from './services/sqlite-volume-exclusion.service';
 import { ContinuousBackupEngineRegistry } from './services/continuous-backup-engine.registry';
 import { RebuildDataRestorer } from './services/rebuild-data-restorer.service';
 import { DeclaredEngineResolver } from './services/declared-engine.resolver';
 import { BackupStatusService } from './services/backup-status.service';
 
 import { BACKUP_QUEUE } from './backups.constants';
+import { AppProtectionController } from './controllers/app-protection.controller';
+import { AppProtectionService } from './services/app-protection.service';
 
 @Module({
   imports: [
@@ -113,6 +120,7 @@ import { BACKUP_QUEUE } from './backups.constants';
   ],
   controllers: [
     BackupDestinationsController,
+    AppProtectionController,
     BackupPoliciesController,
     BackupJobsController,
     BackupArtifactsController,
@@ -150,6 +158,9 @@ import { BACKUP_QUEUE } from './backups.constants';
     BackupRetentionSweeper,
     RunVolumeCopyProcessor,
     MariadbPitrService,
+    PostgresDumpService,
+    MariadbDumpService,
+    SqliteVolumeExclusionService,
     ContinuousBackupEngineRegistry,
     RebuildDataRestorer,
     DeclaredEngineResolver,
@@ -157,6 +168,7 @@ import { BACKUP_QUEUE } from './backups.constants';
     PgBackrestService,
     DestinationPlacementValidator,
     DbPitrService,
+    AppProtectionService,
     PlatformKeyBundleService,
     PlatformBackupService,
     RunPlatformBackupProcessor,

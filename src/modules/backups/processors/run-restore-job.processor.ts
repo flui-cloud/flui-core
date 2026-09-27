@@ -24,6 +24,7 @@ import {
   BACKUP_JOB_TYPES,
   APP_RESOURCE_LABEL,
 } from '../backups.constants';
+import { markDestinationUnusable } from '../utils/mark-destination-unusable.util';
 
 export interface RunRestoreJobData {
   restoreJobId: string;
@@ -111,10 +112,14 @@ export class RunRestoreJobProcessor {
       // The BSL must be Available and Velero's backup-sync controller must have
       // discovered the backup from the bucket before the Restore CR is created;
       // otherwise Velero terminally FailedValidations it ("backup not found").
-      await this.veleroClient.waitForStorageLocationAvailable(
-        kubeconfig,
-        this.installer.bslName(sourceDest.id),
-      );
+      await this.veleroClient
+        .waitForStorageLocationAvailable(
+          kubeconfig,
+          this.installer.bslName(sourceDest.id),
+        )
+        .catch((err) =>
+          markDestinationUnusable(this.destRepo, sourceDest.id, err),
+        );
       await this.veleroClient.waitForBackupSynced(
         kubeconfig,
         artifact.veleroBackupName,

@@ -23,6 +23,8 @@ import { RestoreJobStatus } from '../enums/restore-job.enum';
 import { BackupEngineClass } from '../enums/backup-engine-class.enum';
 import { BACKUP_QUEUE, BACKUP_JOB_TYPES } from '../backups.constants';
 import { RunRestoreJobData } from './run-restore-job.processor';
+import { DbRestorePlan, planDbRestore } from '../utils/db-restore-plan.util';
+import { resolveRestoreIdentities } from '../utils/db-restore-identities.util';
 
 const INSTALL_POLL_INTERVAL_MS = 5_000;
 const INSTALL_POLL_TIMEOUT_MS = 15 * 60 * 1000;
@@ -109,38 +111,70 @@ export class RunDbRestoreProcessor {
 
       const summary: Record<string, any> = artifact.manifestSummary ?? {};
       const engine = this.engines.forEngine(artifact.engine);
-      const effectiveTarget: Date | null = restore.recoveryTargetTime ?? null;
-      // The base is named here, always, and never left to the recovery to
-      // choose for itself. Two reasons, and both are about the same instant:
-      // a recovery that picks its own base from the repository can pick one
-      // the retention sweeper is about to delete — the in-flight guard
-      // protects the artifact this job names, not whatever the container
-      // decided — and a base taken after the moment asked for would replay
-      // nothing and hand back later state under an earlier label.
-      const restoreSet = artifact.engineRef ?? null;
-      if (effectiveTarget && artifact.createdAt > effectiveTarget) {
+      const requestedTarget: Date | null = restore.recoveryTargetTime ?? null;
+      // A base is named only when it is restored as it stood. "Everything
+      // archived" leaves the choice to the recovery, which takes the newest
+      // base — the one it has to replay from anyway.
+      if (requestedTarget && artifact.createdAt > requestedTarget) {
         throw new Error(
           `Backup ${artifact.engineRef ?? artifact.id} was taken at ` +
             `${artifact.createdAt.toISOString()}, after the ` +
-            `${effectiveTarget.toISOString()} asked for. Restoring it would ` +
+            `${requestedTarget.toISOString()} asked for. Restoring it would ` +
             'return state from after that moment while reporting the moment. ' +
             'Choose a backup taken before it.',
         );
       }
 
-      await this.validateAgainstLiveRepo(engine, sourceAppId, effectiveTarget);
+      if (engine.pointInTime === false && requestedTarget) {
+        throw new Error(
+          `This database is backed up by scheduled dumps, which restore the moment each was taken ` +
+            `(${artifact.createdAt.toISOString()} for this one) and nothing in between. ` +
+            'Restore it without a time, choosing the backup taken before the moment you need.',
+        );
+      }
 
-      const identities = this.resolveIdentities(
+      const info = await this.validateAgainstLiveRepo(
+        engine,
+        sourceAppId,
+        requestedTarget,
+      );
+      const newest =
+        await this.artifactRepo.findLatestDbArtifactForApp(sourceAppId);
+      const newestArchived = info?.newestRecoverable
+        ? new Date(info.newestRecoverable)
+        : null;
+      let plan = planDbRestore({
+        requestedTarget,
+        artifactEngineRef: artifact.engineRef ?? null,
+        artifactIsNewest: !newest || newest.id === artifact.id,
+        newestArchived:
+          newestArchived && !Number.isNaN(newestArchived.getTime())
+            ? newestArchived
+            : null,
+        noChangesArchived: !!info && !info.newestRecoverable,
+        replaysToEndWithoutTarget: engine.replaysToEndWithoutTarget,
+        now: new Date(),
+      });
+      this.logger.log(
+        `[run-db-restore] restoreJob=${restoreJobId} mode=${plan.mode}` +
+          (plan.restoreSet ? ` set=${plan.restoreSet}` : '') +
+          (plan.recoveryTargetTime
+            ? ` target=${plan.recoveryTargetTime.toISOString()}`
+            : '') +
+          (plan.note ? ` (${plan.note})` : ''),
+      );
+
+      const identities = resolveRestoreIdentities(
         sourceApp,
         summary,
         sourceAppId,
       );
-      const envOverrides: Record<string, string> = {
+      const envFor = (p: DbRestorePlan): Record<string, string> => ({
         ...engine.buildRestoreEnv(
           sourceAppId,
           dest,
-          effectiveTarget ?? undefined,
-          restoreSet ?? undefined,
+          p.recoveryTargetTime,
+          p.restoreSet,
           // From the artifact, not from the application's current policy: the
           // objects being restored were written into the generation that was
           // current when they were taken, and a database restored more than
@@ -150,9 +184,11 @@ export class RunDbRestoreProcessor {
         // Boot as the source's role/db — they are the ones that exist in the
         // recovered data. The password is put right once the data is down.
         ...engine.identityEnv(identities),
-      };
+      });
 
-      await this.requireRestoreAwareCatalogApp(engine);
+      if (!engine.loadIntoRestored) {
+        await this.requireRestoreAwareCatalogApp(engine);
+      }
 
       await setStep(OperationStep.RESTORE_CREATE_VELERO_CR, 30);
       // installer.install() persists the email onto the install row, and the
@@ -162,25 +198,54 @@ export class RunDbRestoreProcessor {
       const triggeringUser = await this.userRepo.findOne({
         where: { id: restore.userId },
       });
-      const { install } = await this.installer.install(
-        engine.catalogSlug,
-        {
-          clusterId: newInstall.clusterId,
-          displayName: newInstall.name,
-          envOverrides,
-        },
-        restore.userId,
-        triggeringUser?.email,
-      );
-      await this.restoreRepo.update(restoreJobId, {
-        previewResult: { createdInstallId: install.id },
-      });
+      const attempt = async (p: DbRestorePlan) => {
+        const { install } = await this.installer.install(
+          engine.catalogSlug,
+          {
+            clusterId: newInstall.clusterId,
+            displayName: newInstall.name,
+            envOverrides: envFor(p),
+          },
+          restore.userId,
+          triggeringUser?.email,
+        );
+        await this.restoreRepo.update(restoreJobId, {
+          previewResult: { createdInstallId: install.id },
+        });
+        return { install, finalInstall: await this.waitForInstall(install.id) };
+      };
 
       await setStep(OperationStep.RESTORE_WATCH_PROGRESS, 60);
-      const finalInstall = await this.waitForInstall(install.id);
+      let { install, finalInstall } = await attempt(plan);
+      // Past the last archived commit, Postgres stops with an error instead of
+      // at the end: it is the one reply that proves nothing archived came after
+      // the moment, so "everything archived" is that moment's state.
+      if (
+        finalInstall.status !== CatalogInstallStatus.RUNNING &&
+        plan.mode === 'point-in-time' &&
+        (await this.endedBeforeTarget(engine, finalInstall))
+      ) {
+        this.logger.log(
+          `[run-db-restore] restoreJob=${restoreJobId}: nothing archived after ${plan.recoveryTargetTime?.toISOString()} — restoring everything archived instead`,
+        );
+        await this.removeFailedInstall(install.id, restore.userId);
+        plan = planDbRestore({
+          requestedTarget: null,
+          artifactEngineRef: artifact.engineRef ?? null,
+          artifactIsNewest: true,
+          newestArchived: null,
+          noChangesArchived: false,
+          replaysToEndWithoutTarget: engine.replaysToEndWithoutTarget,
+          now: new Date(),
+        });
+        ({ install, finalInstall } = await attempt(plan));
+      }
       if (finalInstall.status !== CatalogInstallStatus.RUNNING) {
         throw new Error(
-          `Restore install ${install.id} ended in status ${finalInstall.status}`,
+          `The restored database did not start. ${await this.removeFailedInstall(install.id, restore.userId)}` +
+            (plan.mode === 'point-in-time'
+              ? ` If nothing was written after ${plan.recoveryTargetTime?.toISOString()}, restore without a time to recover everything that was archived.`
+              : ''),
         );
       }
       const newAppId = finalInstall.applicationIds?.[0];
@@ -197,6 +262,22 @@ export class RunDbRestoreProcessor {
       await setStep(OperationStep.RESTORE_POSTPROCESS, 85);
       if (engine.reconcileAfterRestore) {
         await engine.reconcileAfterRestore(newAppId);
+      }
+      if (engine.loadIntoRestored) {
+        if (!artifact.engineRef) {
+          throw new Error('The backup does not name the dump it holds');
+        }
+        try {
+          await engine.loadIntoRestored(newAppId, {
+            sourceAppId,
+            engineRef: artifact.engineRef,
+            destination: dest,
+          });
+        } catch (err: any) {
+          throw new Error(
+            `${err?.message ?? err}. ${await this.removeFailedInstall(finalInstall.id, restore.userId)}`,
+          );
+        }
       }
 
       // The restore overrides carry live S3 credentials for the SOURCE's
@@ -242,62 +323,32 @@ export class RunDbRestoreProcessor {
     }
   }
 
-  private envValue(app: ApplicationEntity, name: string): string | undefined {
-    return app.env?.find((e) => e.name === name)?.value;
+  private async endedBeforeTarget(
+    engine: ContinuousBackupEngine,
+    install: CatalogInstallEntity,
+  ): Promise<boolean> {
+    const appId = install.applicationIds?.[0];
+    if (!appId || !engine.endedBeforeTarget) return false;
+    return engine.endedBeforeTarget(appId).catch(() => false);
   }
 
   /**
-   * The role and database the restored instance has to boot as.
-   *
-   * From the artifact first, because the source application is exactly what a
-   * disaster restore does not have. `pgUser`/`pgDb` are read after it for
-   * artifacts written before engines existed, when those were the only names
-   * this summary carried; the live application is consulted last and only to
-   * cover rows older still, which recorded neither.
+   * A restore that failed leaves nothing worth keeping: an empty data volume
+   * and a server restarting forever. Removing it is part of failing.
    */
-  private resolveIdentities(
-    sourceApp: ApplicationEntity | null,
-    summary: Record<string, any>,
-    sourceAppId: string,
-  ): { user: string; database: string } {
-    const recorded = summary.identities as
-      | { user?: string; database?: string }
-      | undefined;
-    const user =
-      recorded?.user ??
-      (summary.pgUser as string | undefined) ??
-      (sourceApp ? this.envValue(sourceApp, 'POSTGRES_USER') : undefined) ??
-      (sourceApp ? this.envValue(sourceApp, 'MARIADB_USER') : undefined) ??
-      sourceAppId;
-    const database =
-      recorded?.database ??
-      (summary.pgDb as string | undefined) ??
-      (sourceApp ? this.envValue(sourceApp, 'POSTGRES_DB') : undefined) ??
-      (sourceApp ? this.envValue(sourceApp, 'MARIADB_DATABASE') : undefined) ??
-      user;
-    return { user, database };
-  }
-
-  /**
-   * Restoring an OLD artifact must mean that artifact's state: without a
-   * target, recovery replays all WAL to the latest point regardless of which
-   * artifact was picked — only the newest artifact means "latest". Pin the
-   * backup set restored to its own consistency point (--type=immediate); a
-   * derived TIME target equal to the backup's stop is rejected by pgBackRest,
-   * which wants stop strictly < target.
-   */
-  private async deriveRestoreSet(
-    sourceAppId: string,
-    artifact: { id: string; engineRef?: string | null },
-  ): Promise<string | null> {
-    if (!artifact.engineRef) return null;
-    const latest =
-      await this.artifactRepo.findLatestDbArtifactForApp(sourceAppId);
-    if (!latest || latest.id === artifact.id) return null;
-    this.logger.log(
-      `[run-db-restore] artifact ${artifact.id} is not the newest — restoring backup set ${artifact.engineRef} to its consistency point`,
-    );
-    return artifact.engineRef;
+  private async removeFailedInstall(
+    installId: string,
+    userId: string,
+  ): Promise<string> {
+    try {
+      await this.installer.uninstall(installId, userId);
+      return 'The new database it created is being removed.';
+    } catch (err: any) {
+      this.logger.warn(
+        `[run-db-restore] could not remove failed install ${installId}: ${err?.message}`,
+      );
+      return `The new database it created (${installId}) could not be removed automatically; delete it.`;
+    }
   }
 
   /**
@@ -309,7 +360,7 @@ export class RunDbRestoreProcessor {
     engine: ContinuousBackupEngine,
     sourceAppId: string,
     effectiveTarget: Date | null,
-  ): Promise<void> {
+  ): Promise<Awaited<ReturnType<ContinuousBackupEngine['info']>> | null> {
     const engineName = engine.engine;
     let info: Awaited<ReturnType<ContinuousBackupEngine['info']>>;
     try {
@@ -318,7 +369,7 @@ export class RunDbRestoreProcessor {
       this.logger.warn(
         `[run-db-restore] source repo not verifiable via live pod (${err?.message}) — proceeding against S3 directly`,
       );
-      return;
+      return null;
     }
     if (info.backupCount === 0) {
       throw new Error('The source repository holds no base backup');
@@ -342,6 +393,7 @@ export class RunDbRestoreProcessor {
         );
       }
     }
+    return info;
   }
 
   /** Drop the one-shot restore env from the stored install/app rows. */

@@ -16,7 +16,9 @@ export default class BackupEnableDatabase extends Command {
   static readonly description =
     'Protect a database with continuous backup: every change is ' +
     'shipped off-cluster as it happens, so it can be restored to any moment ' +
-    'in the retained window rather than to the last nightly copy.';
+    'in the retained window rather than to the last nightly copy. A database ' +
+    'whose image cannot do that — the ones inside catalog bundles — gets ' +
+    'scheduled dumps instead (daily at 03:00 UTC unless --schedule says otherwise).';
 
   static readonly examples = [
     '<%= config.bin %> <%= command.id %> my-database --destination <destId>',
@@ -64,25 +66,34 @@ export default class BackupEnableDatabase extends Command {
         destinations,
         profile: profileFor(destinations),
       });
-      spinner.succeed('Continuous backup enabled');
       // The engine the server recorded, not a guess in the client: writing
       // "Postgres" on a MariaDB was a false line in the one message that
       // confirms what has just been protected.
-      const engine = (policy as { engine?: string }).engine;
+      const recorded = policy as { engine?: string; cronSchedule?: string };
+      const engine = recorded.engine;
+      const dumps = engine?.endsWith('-dump') ?? false;
+      spinner.succeed(
+        dumps
+          ? 'Scheduled dumps enabled — this image cannot back up continuously'
+          : 'Continuous backup enabled',
+      );
       printEnabled(
         policy,
         engine ? `${app.slug} (${engine})` : app.slug,
-        'continuously',
+        dumps ? `on schedule ${recorded.cronSchedule} (UTC)` : 'continuously',
       );
       console.log(
         chalk.dim(
-          '   The first base backup is running now — until it finishes there is\n' +
-            '   nothing for the shipped changes to be replayed onto.\n',
+          dumps
+            ? '   The first dump is running now. Each dump restores the moment it was\n' +
+                '   taken, into a new database; changes after the last one are not kept.\n'
+            : '   The first base backup is running now — until it finishes there is\n' +
+                '   nothing for the shipped changes to be replayed onto.\n',
         ),
       );
       console.log(
         chalk.dim(
-          `   flui backup status --app ${app.slug}   the recoverable window\n`,
+          `   flui backup status --app ${app.slug}   what is recoverable\n`,
         ),
       );
     } catch (error: any) {

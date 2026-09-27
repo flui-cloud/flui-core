@@ -125,6 +125,9 @@ export class RunDbBackupProcessor {
         // characters against Postgres's 30, which is how that was found.
         engineVersion: facts.engineVersion?.slice(0, 64),
         engineRef: label,
+        ...(typeof info.latestSizeBytes === 'number'
+          ? { sizeBytes: String(info.latestSizeBytes) }
+          : {}),
         manifestSummary: {
           applicationId: appId,
           backupType: type,

@@ -178,6 +178,21 @@ export interface ContinuousBackupEngine {
    */
   awaitWritable?(appId: string): Promise<void>;
 
+  /**
+   * Whether a restore given neither a moment nor a backup replays everything
+   * in the repository. When it does not, "everything" has to be asked for as a
+   * moment.
+   */
+  readonly replaysToEndWithoutTarget: boolean;
+
+  /**
+   * Whether a restored instance stopped because its recovery reached the end
+   * of the archive before the moment asked for — that is, nothing archived
+   * happened after it. Engines that simply replay up to the moment leave it
+   * out.
+   */
+  endedBeforeTarget?(restoredAppId: string): Promise<boolean>;
+
   /** The recoverable window, read from what actually reached the repository. */
   info(appId: string): Promise<{
     latestLabel: string | null;
@@ -185,6 +200,8 @@ export interface ContinuousBackupEngine {
     newestRecoverable: string | null;
     /** Base backups the repository holds — zero means nothing to replay onto. */
     backupCount: number;
+    /** What the newest base occupies in the repository, when the engine says. */
+    latestSizeBytes?: number | null;
   }>;
 
   /** Everything the artifact must carry for a restore years from now. */
@@ -230,4 +247,26 @@ export interface ContinuousBackupEngine {
    * connection.
    */
   reconcileAfterRestore?(newAppId: string): Promise<void>;
+
+  /**
+   * Whether a restore can stop at a moment between two backups. An engine
+   * that answers `false` restores exactly what one backup holds.
+   */
+  readonly pointInTime?: boolean;
+
+  /**
+   * Put the backup's data into a database that was installed empty.
+   *
+   * For engines whose backup is loaded through the server rather than laid
+   * down as a data directory before it boots: the new install needs no
+   * restore mode, and the load is a step of its own.
+   */
+  loadIntoRestored?(
+    newAppId: string,
+    source: {
+      sourceAppId: string;
+      engineRef: string;
+      destination: BackupDestinationEntity;
+    },
+  ): Promise<void>;
 }

@@ -14,6 +14,7 @@ import { ClusterBillingService } from '../../infrastructure/clusters/services/cl
 import { BackupDestinationRepository } from '../repositories/backup-destination.repository';
 import { BackupArtifactRepository } from '../repositories/backup-artifact.repository';
 import { StorageBackendProvider } from '../../storage/enums/storage-backend-provider.enum';
+import { listPriceFor } from '../utils/storage-list-price.util';
 
 interface ProviderPricing {
   baseCentsPerMonth: number;
@@ -58,6 +59,8 @@ export interface DestinationCostBreakdown {
   provider: StorageBackendProvider | string;
   centsPerMonth: number | null;
   unavailableReason?: string;
+  /** Where the price came from, in words, so the figure can be judged. */
+  pricingSource?: string;
 }
 
 export interface BackupEstimateResult {
@@ -265,9 +268,14 @@ export class BillingEstimatorService {
     if (destinationId) {
       const dest = await this.destRepo.findById(destinationId);
       if (dest?.costPerGbMonthCents != null) {
+        const listed = listPriceFor(provider);
         return {
           provider,
           centsPerMonth: Math.round(dataGb * dest.costPerGbMonthCents),
+          pricingSource:
+            dest.metadata?.costSource === 'list-price' && listed
+              ? listed.source
+              : 'Price set on this destination',
         };
       }
     }
@@ -277,7 +285,19 @@ export class BillingEstimatorService {
       const billable = Math.max(0, dataGb - pricing.includedGb);
       const cents =
         pricing.baseCentsPerMonth + billable * pricing.marginalCentsPerGb;
-      return { provider, centsPerMonth: Math.round(cents) };
+      return {
+        provider,
+        centsPerMonth: Math.round(cents),
+        pricingSource: 'Price configured on this Flui installation',
+      };
+    }
+    const listed = listPriceFor(provider);
+    if (listed) {
+      return {
+        provider,
+        centsPerMonth: Math.round(dataGb * listed.centsPerGbMonth),
+        pricingSource: listed.source,
+      };
     }
     return {
       provider,

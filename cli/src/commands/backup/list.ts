@@ -98,7 +98,7 @@ export default class BackupList extends Command {
     if (items.some((a) => this.takenAs(a) === 'engine')) {
       this.log(
         chalk.dim(
-          '   engine = the database wrote a consistent image first; nothing was stopped',
+          '   engine = the database produced a consistent backup itself; nothing was stopped',
         ),
       );
     }
@@ -112,7 +112,7 @@ export default class BackupList extends Command {
     if (items.some((a) => this.takenAs(a) === '—')) {
       this.log(
         chalk.dim(
-          '   —  = taken before Flui recorded this, not a statement about the copy',
+          '   —  = a volume copy made before Flui recorded how copies are taken',
         ),
       );
     }
@@ -120,9 +120,15 @@ export default class BackupList extends Command {
   }
 
   private takenAs(a: BackupArtifact): string {
+    // A database's own backup is consistent by construction, and a cluster
+    // backup reads running volumes: neither has a quiesce of its own, and
+    // "—" would read as "unknown".
+    if (a.engineClass === 'database') return 'engine';
+    if (a.engineClass === 'volume') return 'live';
     const quiesce = a.manifestSummary?.quiesce;
     if (quiesce === 'writers-stopped') return 'at rest';
-    if (quiesce === 'engine-hook') return 'engine';
+    if (quiesce === 'engine-hook' || quiesce === 'sqlite-snapshot')
+      return 'engine';
     if (quiesce !== 'none') return '—';
     const writers = a.manifestSummary?.writersAtStart;
     return typeof writers === 'number' ? `live · ${writers}` : 'live';

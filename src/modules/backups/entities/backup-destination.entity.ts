@@ -91,8 +91,17 @@ export class BackupDestinationEntity {
   @Column({ type: 'timestamptz', nullable: true })
   usageRefreshedAt?: Date;
 
-  @Column({ type: 'int', nullable: true })
-  costPerGbMonthCents?: number;
+  @Column({
+    type: 'numeric',
+    precision: 10,
+    scale: 4,
+    nullable: true,
+    transformer: {
+      to: (v?: number | null) => v,
+      from: (v?: string | null) => (v == null ? v : Number(v)),
+    },
+  })
+  costPerGbMonthCents?: number | null;
 
   @Column({ type: 'jsonb', default: {} })
   metadata: Record<string, any>;

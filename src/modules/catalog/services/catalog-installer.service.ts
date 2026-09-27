@@ -721,8 +721,11 @@ export class CatalogInstallerService {
       const provided = dto.userInputs?.[envVar.name];
       const effective = provided ?? prompt.default;
 
+      const named = prompt.label
+        ? `${prompt.label} (${envVar.name})`
+        : envVar.name;
       if (effective === undefined || effective === '') {
-        errors.push(`${envVar.name}: required`);
+        errors.push(`${named}: required`);
         continue;
       }
 
@@ -731,16 +734,14 @@ export class CatalogInstallerService {
         effective.length < prompt.minLength
       ) {
         errors.push(
-          `${envVar.name}: must be at least ${prompt.minLength} characters`,
+          `${named}: must be at least ${prompt.minLength} characters`,
         );
       }
       if (
         prompt.maxLength !== undefined &&
         effective.length > prompt.maxLength
       ) {
-        errors.push(
-          `${envVar.name}: must be at most ${prompt.maxLength} characters`,
-        );
+        errors.push(`${named}: must be at most ${prompt.maxLength} characters`);
       }
       if (prompt.pattern) {
         let re: RegExp;
@@ -755,14 +756,14 @@ export class CatalogInstallerService {
         if (!re.test(effective)) {
           const description =
             prompt.patternDescription ?? `does not match ${prompt.pattern}`;
-          errors.push(`${envVar.name}: ${description}`);
+          errors.push(`${named}: ${description}`);
         }
       }
     }
 
     if (errors.length) {
       throw new BadRequestException({
-        message: 'User input validation failed',
+        message: `Some inputs this app needs are missing or invalid — ${errors.join('; ')}`,
         errors,
       });
     }

@@ -10,6 +10,8 @@ import { formatBytes } from '../../lib/format-bytes';
 
 interface DbPitrStatus {
   continuousBackupEnabled: boolean;
+  pointInTime?: boolean;
+  backupCount?: number;
   cronSchedule: string | null;
   window: { oldest: string | null; newest: string | null } | null;
   lastBackup: { engineRef: string | null; at: string } | null;
@@ -36,6 +38,16 @@ interface FleetStatus {
  * a clone that its own deletion would remove — so every engine is answered here
  * together rather than one command at a time.
  */
+interface AppProtection {
+  protectedOffCluster: boolean;
+  policies: Array<{
+    name: string;
+    enabled: boolean;
+    destination: { name: string } | null;
+    lastRun: { status: string; at: string | null; error: string | null } | null;
+  }>;
+}
+
 export default class BackupStatus extends Command {
   static readonly description =
     'Show what is protected and how. With --app, everything protecting one ' +
@@ -89,7 +101,7 @@ export default class BackupStatus extends Command {
       this.log(chalk.yellow(`  Degraded policies       ${s.degradedPolicies}`));
     }
     if (s.failedDestinations > 0) {
-      this.log(chalk.red(`  Unreachable destinations ${s.failedDestinations}`));
+      this.log(chalk.red(`  Unusable destinations   ${s.failedDestinations}`));
     }
     if (s.failedJobsLast24h > 0) {
       this.log(chalk.red(`  Failed runs (24h)       ${s.failedJobsLast24h}`));
@@ -116,20 +128,28 @@ export default class BackupStatus extends Command {
     const app = await appService.getAppByName(ref);
     const api = this.apiClient();
 
-    const [pitr, artifacts] = await Promise.all([
+    const [pitr, artifacts, protection] = await Promise.all([
       api
         .get<DbPitrStatus>(`/applications/${app.id}/db-pitr/status`)
         .catch(() => null),
       BackupClient.fromConfig()
         .listArtifacts({ applicationId: app.id })
         .catch(() => [] as BackupArtifact[]),
+      api
+        .get<AppProtection>(`/applications/${app.id}/backup-protection`)
+        .catch(() => null),
     ]);
 
     const copies = artifacts.filter((a) => a.engineClass === 'volume_copy');
     const offCluster = copies.filter(
       (a) => a.manifestSummary?.sink === 's3-archive',
     );
-    const result = { application: app.slug, pitr, copies: copies.length };
+    const result = {
+      application: app.slug,
+      pitr,
+      copies: copies.length,
+      protection,
+    };
     if (!this.jsonEnabled()) {
       this.log('');
       this.log(`  ${chalk.bold(app.slug)}`);
@@ -137,14 +157,50 @@ export default class BackupStatus extends Command {
 
       const on = pitr?.continuousBackupEnabled;
       this.printContinuous(on, pitr);
+      this.printPolicies(protection);
       this.printCopies(copies);
-      this.printVerdict(on, copies.length, offCluster.length);
+      this.printVerdict(
+        on,
+        copies.length,
+        offCluster.length,
+        pitr?.pointInTime === false,
+      );
       this.log('');
     }
     return result;
   }
 
+  /** Every policy covering the app, with where it writes and its last run. */
+  private printPolicies(protection: AppProtection | null) {
+    if (!protection?.policies.length) return;
+    this.log(`  ${chalk.bold('Backup policies')}`);
+    for (const p of protection.policies) {
+      const last = p.lastRun ? this.describeLastRun(p.lastRun) : 'no run yet';
+      this.log(
+        `    ${p.name.padEnd(28)} ${(p.enabled ? chalk.green('on') : chalk.yellow('stopped')).padEnd(8)} → ${p.destination?.name ?? '?'}  ${chalk.dim(last)}`,
+      );
+      if (p.lastRun?.error) this.log(chalk.red(`      ${p.lastRun.error}`));
+    }
+    this.log('');
+  }
+
+  private describeLastRun(run: { status: string; at: string | null }): string {
+    const at = run.at ? ' ' + run.at.slice(0, 16).replace('T', ' ') : '';
+    return `last run ${run.status.replace('_', ' ')}${at}`;
+  }
+
   private printContinuous(on: boolean | undefined, pitr: DbPitrStatus | null) {
+    if (on && pitr?.pointInTime === false) {
+      this.log(
+        `  ${chalk.bold('Scheduled dumps')}     ${chalk.green('on')}${pitr.cronSchedule ? chalk.dim('  ' + pitr.cronSchedule + ' UTC') : ''}`,
+      );
+      if (pitr.window?.newest) {
+        this.log(
+          `    ${pitr.backupCount ?? 0} dump(s), newest ${pitr.window.newest.replace('T', ' ').slice(0, 19)}${chalk.dim('  (restores that moment, into a new database)')}`,
+        );
+      }
+      return;
+    }
     this.log(
       `  ${chalk.bold('Continuous backup')}   ${
         on ? chalk.green('on') : chalk.dim('off')
@@ -155,7 +211,7 @@ export default class BackupStatus extends Command {
       `    recoverable from    ${pitr.window.oldest.replace('T', ' ').slice(0, 19)}`,
     );
     this.log(
-      `    up to               ${pitr.window.newest?.replace('T', ' ').slice(0, 19) ?? 'now'}`,
+      `    up to               ${pitr.window.newest?.replace('T', ' ').slice(0, 19) ?? 'now'}${chalk.dim('  (last change archived)')}`,
     );
   }
 
@@ -183,11 +239,16 @@ export default class BackupStatus extends Command {
     on: boolean | undefined,
     copies: number,
     offCluster: number,
+    dumps = false,
   ) {
     this.log('');
     if (on) {
       this.log(
-        chalk.green('  Protected off-cluster, with point-in-time recovery.'),
+        chalk.green(
+          dumps
+            ? '  Protected off-cluster by scheduled dumps: a restore returns the latest one.'
+            : '  Protected off-cluster, with point-in-time recovery.',
+        ),
       );
       return;
     }

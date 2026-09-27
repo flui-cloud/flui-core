@@ -6,6 +6,7 @@ import { ConfigStorage } from '../../lib/config-storage';
 interface DbPitrStatus {
   applicationId: string;
   continuousBackupEnabled: boolean;
+  pointInTime?: boolean;
   policyId: string | null;
   cronSchedule: string | null;
   backupCount: number;
@@ -51,6 +52,26 @@ export default class DbBackupStatus extends Command {
 
     if (!this.jsonEnabled()) {
       const on = status.continuousBackupEnabled;
+      if (on && status.pointInTime === false) {
+        this.log(
+          `Scheduled dumps: ${chalk.green('enabled')}` +
+            (status.cronSchedule
+              ? chalk.gray(`  (${status.cronSchedule} UTC)`)
+              : ''),
+        );
+        this.log(
+          `Dumps: ${status.backupCount}` +
+            (status.window?.newest
+              ? chalk.gray(`  newest ${status.window.newest}`)
+              : ''),
+        );
+        this.log(
+          chalk.gray(
+            'Each dump restores the moment it was taken, into a new database: flui db pitr-restore without --at.',
+          ),
+        );
+        return status;
+      }
       this.log(
         `Continuous backup: ${on ? chalk.green('enabled') : chalk.yellow('disabled')}` +
           (status.cronSchedule
@@ -60,7 +81,7 @@ export default class DbBackupStatus extends Command {
       if (status.window) {
         this.log(
           `Recoverable window: ${chalk.cyan(status.window.oldest ?? '—')} ` +
-            `→ ${chalk.cyan(status.window.newest ?? '—')} ${chalk.gray('(newest ≈ now with live WAL)')}`,
+            `→ ${chalk.cyan(status.window.newest ?? '—')} ${chalk.gray('(the last change that reached the backup storage)')}`,
         );
       } else {
         this.log(
@@ -72,7 +93,7 @@ export default class DbBackupStatus extends Command {
       this.log(`Base backups: ${status.backupCount}`);
       if (status.lastBackup) {
         this.log(
-          `Last backup: ${chalk.cyan(status.lastBackup.engineRef ?? '—')} ${chalk.gray(`at ${status.lastBackup.at}`)}`,
+          `Last backup: ${chalk.cyan(status.lastBackup.engineRef ?? '—')} ${chalk.gray('at ' + status.lastBackup.at)}`,
         );
       }
       if (!on) {

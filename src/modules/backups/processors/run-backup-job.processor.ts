@@ -19,6 +19,7 @@ import { BackupArtifactRepository } from '../repositories/backup-artifact.reposi
 import { BackupPolicyRepository } from '../repositories/backup-policy.repository';
 import { VeleroClientService } from '../services/velero-client.service';
 import { VeleroInstallerService } from '../services/velero-installer.service';
+import { SqliteVolumeExclusionService } from '../services/sqlite-volume-exclusion.service';
 import { BackupDestinationRepository } from '../repositories/backup-destination.repository';
 import { BackupJobStatus } from '../enums/backup-job.enum';
 import { ArtifactLocationState } from '../enums/artifact-location-state.enum';
@@ -34,6 +35,11 @@ import {
   FLUI_LABELS,
 } from '../backups.constants';
 import { BackupScope } from '../enums/backup-scope.enum';
+import { veleroBackupKeyPrefix } from '../utils/destination-layout.util';
+import { markDestinationUnusable } from '../utils/mark-destination-unusable.util';
+import { DestinationHealthStatus } from '../enums/destination-health.enum';
+
+const STORAGE_LOCATION_TIMEOUT_MS = 2 * 60 * 1000;
 
 @Processor(BACKUP_QUEUE)
 export class RunBackupJobProcessor {
@@ -53,6 +59,7 @@ export class RunBackupJobProcessor {
     private readonly veleroClient: VeleroClientService,
     private readonly installer: VeleroInstallerService,
     @InjectQueue(BACKUP_QUEUE) private readonly queue: Queue,
+    private readonly sqliteExclusion: SqliteVolumeExclusionService,
   ) {}
 
   @Process(BACKUP_JOB_TYPES.RUN_BACKUP)
@@ -107,6 +114,17 @@ export class RunBackupJobProcessor {
       await this.ensureVeleroReady(kubeconfig, primaryDestEntity, policy);
 
       await setStep(OperationStep.BACKUP_RUN_CREATE_VELERO_CR, 20);
+      const coveredByCopies =
+        (policy?.includePvcs ?? true)
+          ? await this.sqliteExclusion
+              .excludeCoveredVolumes(kubeconfig, backupJob.clusterId)
+              .catch((err: any) => {
+                this.logger.warn(
+                  `[run-backup] could not leave SQLite volumes to their copies: ${err?.message}`,
+                );
+                return [] as string[];
+              })
+          : [];
       const ttlHours = (policy?.retentionDays ?? 30) * 24;
       await this.veleroClient.createBackup(kubeconfig, {
         backupName: veleroBackupName,
@@ -129,7 +147,7 @@ export class RunBackupJobProcessor {
       // A Completed backup says nothing about whether volume data came with it
       // — record what was actually captured so "the backup succeeded" and "my
       // database is in it" stop being the same sentence.
-      const coverage = policy?.includePvcs
+      const measured = policy?.includePvcs
         ? await this.veleroClient
             .summarizeVolumeCoverage(kubeconfig, veleroBackupName, namespaces)
             .catch((err: any) => {
@@ -138,6 +156,15 @@ export class RunBackupJobProcessor {
               );
               return null;
             })
+        : null;
+      // Left out on purpose and protected elsewhere: not a gap in this backup.
+      const coverage = measured
+        ? {
+            ...measured,
+            skipped: measured.skipped.filter(
+              (key) => !coveredByCopies.includes(key),
+            ),
+          }
         : null;
       if (coverage?.skipped.length) {
         this.logger.warn(
@@ -167,6 +194,9 @@ export class RunBackupJobProcessor {
                 volumesSkipped: coverage.skipped,
               }
             : {}),
+          ...(coveredByCopies.length
+            ? { volumesCoveredByCopies: coveredByCopies }
+            : {}),
         },
       });
       const savedArtifact = await this.artifactRepo.saveArtifact(artifact);
@@ -176,11 +206,13 @@ export class RunBackupJobProcessor {
         destinationId: primaryDestEntity.id,
         role: DestinationRole.PRIMARY,
         state: ArtifactLocationState.AVAILABLE,
-        // Relative to the destination's own pathPrefix, which Velero's BSL is
-        // configured with directly (toVeleroBSL's `prefix`) and which
+        // Relative to the destination's own pathPrefix, which
         // GenericS3Backend.getUsage()/listObjects() re-prepend via joinPrefix —
         // baking pathPrefix in here too would double it.
-        objectKeyPrefix: `backups/${veleroBackupName}/`,
+        objectKeyPrefix: veleroBackupKeyPrefix(
+          primaryDestEntity,
+          veleroBackupName,
+        ),
       };
       await this.artifactRepo.saveLocation(
         primaryLoc as BackupArtifactLocationEntity,
@@ -199,10 +231,12 @@ export class RunBackupJobProcessor {
         veleroBackupName,
       );
 
-      const finalStatus =
-        replicas.length > 0
-          ? BackupJobStatus.REPLICATING
-          : BackupJobStatus.COMPLETED;
+      // Volumes left out are said, not folded into "completed": a backup that
+      // skipped a database is not the backup its owner thinks they have.
+      let finalStatus = coverage?.skipped.length
+        ? BackupJobStatus.PARTIALLY_COMPLETED
+        : BackupJobStatus.COMPLETED;
+      if (replicas.length > 0) finalStatus = BackupJobStatus.REPLICATING;
       await this.jobsService.update(backupJobId, {
         status: finalStatus,
         finishedAt: replicas.length > 0 ? undefined : new Date(),
@@ -241,12 +275,16 @@ export class RunBackupJobProcessor {
     veleroBackupName: string,
   ): Promise<void> {
     for (const r of replicas) {
+      const replicaDest = await this.destRepo.findById(r.destinationId);
       const replicaLoc: Partial<BackupArtifactLocationEntity> = {
         artifactId,
         destinationId: r.destinationId,
         role: DestinationRole.REPLICA,
         state: ArtifactLocationState.PENDING,
-        objectKeyPrefix: `backups/${veleroBackupName}/`,
+        objectKeyPrefix: veleroBackupKeyPrefix(
+          replicaDest ?? {},
+          veleroBackupName,
+        ),
       };
       const savedLoc = await this.artifactRepo.saveLocation(
         replicaLoc as BackupArtifactLocationEntity,
@@ -302,6 +340,7 @@ export class RunBackupJobProcessor {
       // self-heal before we wait for readiness.
       await this.installer.applyNodeAgent(kubeconfig);
       await this.installer.waitForNodeAgentReady(kubeconfig);
+      await this.requireStorageLocation(kubeconfig, primaryDest);
       return;
     }
     const replicaDestEntities = policy
@@ -318,6 +357,32 @@ export class RunBackupJobProcessor {
       destinations: [primaryDest, ...replicaDestEntities],
       primaryDestinationId: primaryDest.id,
     });
+    await this.requireStorageLocation(kubeconfig, primaryDest);
+  }
+
+  /**
+   * A location Velero has declared unusable fails every backup and every
+   * restore without saying why; checking it here, on activation and on every
+   * run, turns that into a failed run and a destination marked failed.
+   */
+  private async requireStorageLocation(
+    kubeconfig: string,
+    dest: BackupDestinationEntity,
+  ): Promise<void> {
+    await this.veleroClient
+      .waitForStorageLocationAvailable(
+        kubeconfig,
+        this.installer.bslName(dest.id),
+        STORAGE_LOCATION_TIMEOUT_MS,
+      )
+      .catch((err) => markDestinationUnusable(this.destRepo, dest.id, err));
+    if (dest.healthStatus === DestinationHealthStatus.FAILED) {
+      await this.destRepo.update(dest.id, {
+        healthStatus: DestinationHealthStatus.HEALTHY,
+        lastHealthError: null as unknown as string,
+        lastHealthCheckAt: new Date(),
+      });
+    }
   }
 
   private async assertBackupUsable(

@@ -37,6 +37,16 @@ export default class BackupDestinationShow extends Command {
       this.log(
         `   ${chalk.bold('Usage:')}      ${(d.usageBytes / 1024 ** 3).toFixed(2)} GB`,
       );
+    const priceSource =
+      d.metadata?.costSource === 'list-price'
+        ? chalk.dim(' (published list price)')
+        : '';
+    this.log(
+      `   ${chalk.bold('Price:')}      ` +
+        (d.costPerGbMonthCents == null
+          ? chalk.dim('not set — flui backup destination set-cost')
+          : `${d.costPerGbMonthCents} cents per GB per month` + priceSource),
+    );
     this.log('');
   }
 }

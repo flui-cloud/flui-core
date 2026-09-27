@@ -253,13 +253,18 @@ describe('the tools whose request the chat can show', () => {
     'app_start',
     'app_variable_request',
     'app_variable_set',
+    'backup_destination_set_cost',
     'backup_policy_resume',
+    'backup_restore_database',
     'backup_run',
     'gateway_route_add',
     'gateway_route_sync',
     'migrate_app',
     'schedule_create',
+    'schedule_resume',
+    'schedule_suspend',
     'schedule_trigger',
+    'schedule_update',
   ];
 
   it('counts every write the registry publishes, on both sides of the line', () => {

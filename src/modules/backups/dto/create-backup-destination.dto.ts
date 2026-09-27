@@ -1,10 +1,10 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
+  IsNumber,
   IsString,
   IsEnum,
   IsOptional,
   IsBoolean,
-  IsInt,
   Matches,
   MaxLength,
   Min,
@@ -99,7 +99,7 @@ export class CreateBackupDestinationDto {
 
   @ApiPropertyOptional()
   @IsOptional()
-  @IsInt()
+  @IsNumber({ maxDecimalPlaces: 4 })
   @Min(0)
   costPerGbMonthCents?: number;
 }

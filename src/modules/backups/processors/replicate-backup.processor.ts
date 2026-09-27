@@ -26,6 +26,10 @@ import {
   RCLONE_IMAGE,
 } from '../backups.constants';
 import { StorageBackendProvider } from '../../storage/enums/storage-backend-provider.enum';
+import {
+  trimSlashes,
+  veleroBackupKeyPrefix,
+} from '../utils/destination-layout.util';
 
 export interface ReplicateBackupJobData {
   artifactId: string;
@@ -164,9 +168,9 @@ export class ReplicateBackupProcessor {
         JOB_ID: artifactId,
         RCLONE_IMAGE,
         SRC_BUCKET: srcCreds.bucket,
-        SRC_PREFIX: this.normalizePrefix(srcCreds.pathPrefix, veleroBackupName),
+        SRC_PREFIX: this.normalizePrefix(src, veleroBackupName),
         DST_BUCKET: dstCreds.bucket,
-        DST_PREFIX: this.normalizePrefix(dstCreds.pathPrefix, veleroBackupName),
+        DST_PREFIX: this.normalizePrefix(dst, veleroBackupName),
       });
 
       // Ensure namespace exists in obs cluster
@@ -198,9 +202,10 @@ export class ReplicateBackupProcessor {
             l.state === ArtifactLocationState.UPLOADING,
         );
         if (!stillPending) {
-          const anyFailed = artifact.locations.some(
-            (l) => l.state === ArtifactLocationState.FAILED,
-          );
+          const anyFailed =
+            artifact.locations.some(
+              (l) => l.state === ArtifactLocationState.FAILED,
+            ) || !!artifact.manifestSummary?.volumesSkipped?.length;
           await this.jobRepo.update(artifact.backupJobId, {
             status: anyFailed
               ? BackupJobStatus.PARTIALLY_COMPLETED
@@ -247,11 +252,11 @@ export class ReplicateBackupProcessor {
   }
 
   private normalizePrefix(
-    pathPrefix: string | undefined,
+    dest: { pathPrefix?: string | null; metadata?: Record<string, unknown> },
     name: string,
   ): string {
-    const base = (pathPrefix ?? '').replaceAll(/^\/+|\/+$/g, '');
-    const tail = `backups/${name}/`;
+    const base = trimSlashes(dest.pathPrefix);
+    const tail = veleroBackupKeyPrefix(dest, name);
     return base ? `${base}/${tail}` : tail;
   }
 

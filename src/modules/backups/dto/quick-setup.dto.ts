@@ -89,6 +89,8 @@ export class SetupOptionsResponse {
       mirrored: number | null;
     };
     backupUnavailableReason?: string;
+    /** The price the backup estimate used, and where it comes from. */
+    backupPricingSource?: string;
     estimatedDataGb: number | null;
     estimatedDataSource?: 'last-backup' | 'pvc-requests';
     backupScope: {

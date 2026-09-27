@@ -1,3 +1,4 @@
+import { listPriceFor } from '../utils/storage-list-price.util';
 import {
   ConflictException,
   Injectable,
@@ -20,6 +21,12 @@ import {
 } from '../enums/destination-health.enum';
 import { StorageBackendCredentials } from '../../storage/interfaces/backup-storage-backend.interface';
 import { StorageBackendProvider } from '../../storage/enums/storage-backend-provider.enum';
+import {
+  ENGINE_PREFIXED_LAYOUT,
+  VELERO_TOP_LEVEL_DIRS,
+  trimSlashes,
+  usesEngineLayout,
+} from '../utils/destination-layout.util';
 
 @Injectable()
 export class BackupDestinationsService {
@@ -75,6 +82,7 @@ export class BackupDestinationsService {
         dto.usableForEtcdL1 ?? this.defaultEtcdL1Capable(dto.provider),
       costPerGbMonthCents: dto.costPerGbMonthCents,
       healthStatus: DestinationHealthStatus.UNKNOWN,
+      metadata: { layout: ENGINE_PREFIXED_LAYOUT },
     });
     return this.repo.save(entity);
   }
@@ -131,6 +139,96 @@ export class BackupDestinationsService {
       );
     }
     await this.repo.delete(id);
+  }
+
+  /**
+   * The owner's price for this storage, or back to the list price. Marked so
+   * an estimate can say whose figure it used.
+   */
+  async setCost(
+    id: string,
+    userId: string,
+    costPerGbMonthCents: number | null,
+  ): Promise<BackupDestinationEntity> {
+    const dest = await this.findById(id);
+    if (dest.userId !== userId) {
+      throw new NotFoundException(`Backup destination ${id} not found`);
+    }
+    const listed = listPriceFor(dest.provider);
+    const metadata = { ...dest.metadata };
+    delete metadata.costSource;
+    let cost = costPerGbMonthCents;
+    if (cost === null && listed) {
+      cost = listed.centsPerGbMonth;
+      metadata.costSource = 'list-price';
+    }
+    await this.repo.update(id, { costPerGbMonthCents: cost, metadata });
+    return this.findById(id);
+  }
+
+  /**
+   * Give cluster backups a folder of their own in a destination created before
+   * engines had one each.
+   *
+   * Nothing is moved here: moving backups is the owner's call. Cluster backups
+   * already at the top are listed with the commands that move them, and only
+   * `force` switches without them — they stay in the bucket but are no longer
+   * listed or restorable until moved. The next backup or restore on each
+   * cluster points Velero at the new folder.
+   */
+  async upgradeLayout(
+    id: string,
+    userId: string,
+    force = false,
+  ): Promise<{ layout: string; changed: boolean; leftBehind: string[] }> {
+    const dest = await this.findById(id);
+    if (dest.userId !== userId) {
+      throw new NotFoundException(`Backup destination ${id} not found`);
+    }
+    if (usesEngineLayout(dest)) {
+      return { layout: ENGINE_PREFIXED_LAYOUT, changed: false, leftBehind: [] };
+    }
+    const backend = this.storageFactory.forProvider(dest.provider);
+    const creds = this.toCredentials(dest);
+    const present: string[] = [];
+    for (const dir of VELERO_TOP_LEVEL_DIRS) {
+      const page = await backend.listObjects(creds, `${dir}/`);
+      if (page.keys.length) present.push(dir);
+    }
+    if (present.length && !force) {
+      const root = [dest.bucket, trimSlashes(dest.pathPrefix)]
+        .filter(Boolean)
+        .join('/');
+      const presentDirs = present.map((d) => d + '/').join(', ');
+      throw new ConflictException({
+        message:
+          `Cluster backups are stored at the top of this destination (${presentDirs}). ` +
+          'Move them into velero/ first, or they will no longer be listed or restorable; then run this again. ' +
+          'With an rclone remote <remote> for this bucket: ' +
+          present
+            .map(
+              (d) =>
+                `rclone move <remote>:${root}/${d} <remote>:${root}/velero/${d}`,
+            )
+            .join(' ; '),
+        code: 'DESTINATION_LAYOUT_HAS_CLUSTER_BACKUPS',
+        leftBehind: present,
+      });
+    }
+    await this.repo.update(id, {
+      metadata: { ...dest.metadata, layout: ENGINE_PREFIXED_LAYOUT },
+    });
+    const leftBehindNote = present.length
+      ? ` leaving ${present.join(', ')} behind`
+      : '';
+    this.logger.log(
+      `Destination ${id} moved to the engine-prefixed layout${leftBehindNote}`,
+    );
+    return {
+      layout: ENGINE_PREFIXED_LAYOUT,
+      changed: true,
+      leftBehind: present,
+    };
   }
 
   toCredentials(dest: BackupDestinationEntity): StorageBackendCredentials {

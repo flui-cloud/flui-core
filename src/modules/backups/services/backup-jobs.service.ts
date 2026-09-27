@@ -158,5 +158,38 @@ export class BackupJobsService {
 
   async update(id: string, patch: Partial<BackupJobEntity>): Promise<void> {
     await this.jobRepo.update(id, patch);
+    if (
+      patch.status === BackupJobStatus.COMPLETED ||
+      patch.status === BackupJobStatus.PARTIALLY_COMPLETED
+    ) {
+      await this.refreshDestinationAfter(id);
+    }
+  }
+
+  /**
+   * What a destination holds is measured after something was written to it:
+   * nothing else schedules the measurement, and an overview reading "0 B"
+   * next to a backup that just landed says the backups are not there.
+   */
+  private async refreshDestinationAfter(jobId: string): Promise<void> {
+    try {
+      const job = await this.jobRepo.findById(jobId);
+      const policy = job?.policyId
+        ? await this.policiesService.findById(job.policyId)
+        : null;
+      const destinationId = policy
+        ? this.policiesService.primaryDestinationOf(policy)?.destinationId
+        : undefined;
+      if (!destinationId) return;
+      await this.queue.add(
+        BACKUP_JOB_TYPES.HEALTH_CHECK_DESTINATION,
+        { destinationId },
+        { removeOnComplete: true, removeOnFail: true, attempts: 1 },
+      );
+    } catch (err: any) {
+      this.logger.warn(
+        `[backup-jobs] usage refresh not queued after job ${jobId}: ${err?.message}`,
+      );
+    }
   }
 }

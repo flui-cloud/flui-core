@@ -1,3 +1,4 @@
+import { listPriceFor } from '../utils/storage-list-price.util';
 import { Processor, Process, InjectQueue } from '@nestjs/bull';
 import { Logger } from '@nestjs/common';
 import { Job, Queue } from 'bull';
@@ -26,6 +27,7 @@ import { BackupPolicyProfile } from '../enums/backup-policy-status.enum';
 import { BACKUP_QUEUE, BACKUP_JOB_TYPES } from '../backups.constants';
 import { QUICK_SETUP_BULL_JOB_NAME } from '../services/quick-setup.service';
 import * as crypto from 'node:crypto';
+import { ENGINE_PREFIXED_LAYOUT } from '../utils/destination-layout.util';
 
 interface QuickSetupJobData {
   userId: string;
@@ -264,7 +266,12 @@ export class QuickSetupProcessor {
       usableForEtcdL1: result.usableForEtcdL1,
       healthStatus: DestinationHealthStatus.HEALTHY,
       lastHealthCheckAt: new Date(),
-      metadata: { autoProvisioned: true },
+      costPerGbMonthCents: listPriceFor(provider)?.centsPerGbMonth ?? null,
+      metadata: {
+        autoProvisioned: true,
+        layout: ENGINE_PREFIXED_LAYOUT,
+        ...(listPriceFor(provider) ? { costSource: 'list-price' } : {}),
+      },
     });
     return this.destRepo.save(dest);
   }

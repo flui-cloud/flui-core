@@ -16,18 +16,22 @@ export default class DbPitrRestore extends Command {
     'Restore a Flui Postgres database as-of a point in time into a NEW install.\n' +
     'Non-destructive: the source is never touched — a fresh install is created and\n' +
     'recovered from the continuous backup (WAL/PITR). Connect to it with its own\n' +
-    'Flui-managed credentials once it is running.';
+    'Flui-managed credentials once it is running.\n' +
+    'For a database that no longer exists, pass --artifact with one of its backups\n' +
+    '(see `flui backup list`).';
 
   static readonly examples = [
     '<%= config.bin %> <%= command.id %> <app-id> --name pg-restored',
     '<%= config.bin %> <%= command.id %> <app-id> --name pg-asof --at "2026-07-03T12:00:00Z"',
     '<%= config.bin %> <%= command.id %> <app-id> --name pg-dr --cluster <cluster-id>',
+    '<%= config.bin %> <%= command.id %> --artifact <backup-id> --name pg-back',
   ];
 
   static readonly args = {
     app: Args.string({
-      description: 'Source database application id (see `flui app list`)',
-      required: true,
+      description:
+        'Source database application id (see `flui app list`); omit with --artifact',
+      required: false,
     }),
   };
 
@@ -43,6 +47,10 @@ export default class DbPitrRestore extends Command {
     cluster: Flags.string({
       description: 'Target cluster id (defaults to the source app cluster)',
     }),
+    artifact: Flags.string({
+      description:
+        'Restore from this backup (see `flui backup list`) — works when the database no longer exists',
+    }),
     yes: Flags.boolean({
       description: 'Skip the confirmation prompt',
       default: false,
@@ -55,12 +63,22 @@ export default class DbPitrRestore extends Command {
     const apiKey = cfg.getApiKeyOrThrow();
     const api = new ApiClient({ baseUrl: cfg.getApiUrlOrThrow(), apiKey });
 
+    if (Boolean(args.app) === Boolean(flags.artifact)) {
+      this.error(
+        'Name the database to restore, or pass --artifact with one of its backups (not both).',
+      );
+    }
+    const source = args.app ?? `backup ${flags.artifact}`;
+    const path = flags.artifact
+      ? `/backup-artifacts/${encodeURIComponent(flags.artifact)}/restore-database`
+      : `/applications/${args.app}/db-pitr/restore`;
+
     const asOf = flags.at
       ? `as of ${chalk.cyan(flags.at)}`
       : chalk.cyan('latest');
     if (!flags.yes) {
       const ok = await confirmPrompt(
-        `Restore database ${args.app} (${asOf}) into a new install "${flags.name}"?`,
+        `Restore database ${source} (${asOf}) into a new install "${flags.name}"?`,
         true,
       );
       if (!ok) {
@@ -72,14 +90,11 @@ export default class DbPitrRestore extends Command {
     const spinner = ora('Creating restore job…').start();
     let job: RestoreJob;
     try {
-      job = await api.post<RestoreJob>(
-        `/applications/${args.app}/db-pitr/restore`,
-        {
-          name: flags.name,
-          ...(flags.at ? { recoveryTargetTime: flags.at } : {}),
-          ...(flags.cluster ? { clusterId: flags.cluster } : {}),
-        },
-      );
+      job = await api.post<RestoreJob>(path, {
+        name: flags.name,
+        ...(flags.at ? { recoveryTargetTime: flags.at } : {}),
+        ...(flags.cluster ? { clusterId: flags.cluster } : {}),
+      });
     } catch (e) {
       spinner.fail('Could not start the restore.');
       this.error(e instanceof Error ? e.message : String(e));

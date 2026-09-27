@@ -1,4 +1,9 @@
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { ApplicationEntity } from '../../applications/entities/application.entity';
@@ -10,14 +15,20 @@ import { RestoreJobEntity } from '../entities/restore-job.entity';
 import { RestoreTargetKind } from '../enums/restore-job.enum';
 import { DestinationRole } from '../enums/destination-role.enum';
 import { DbPitrRestoreDto } from '../dto/db-pitr-restore.dto';
+import { BackupJobEntity } from '../entities/backup-job.entity';
+import { BackupEngineClass } from '../enums/backup-engine-class.enum';
+import { ClusterEntity } from '../../infrastructure/clusters/entities/cluster.entity';
 
 export interface DbPitrStatus {
   applicationId: string;
   continuousBackupEnabled: boolean;
+  /** The engine protecting it; `*-dump` restores whole dumps, not moments. */
+  engine: string | null;
+  pointInTime: boolean;
   policyId: string | null;
   cronSchedule: string | null;
   backupCount: number;
-  /** [oldest, newest] recoverable window; newest understates it (WAL ≈ now). */
+  /** [oldest, newest] recoverable window; newest is the last archived change. */
   window: { oldest: string | null; newest: string | null } | null;
   lastBackup: { engineRef: string | null; at: string } | null;
   latestArtifactId: string | null;
@@ -39,6 +50,10 @@ export class DbPitrService {
     private readonly policyRepo: BackupPolicyRepository,
     private readonly restoreJobs: RestoreJobsService,
     private readonly engines: ContinuousBackupEngineRegistry,
+    @InjectRepository(BackupJobEntity)
+    private readonly jobRepo: Repository<BackupJobEntity>,
+    @InjectRepository(ClusterEntity)
+    private readonly clusterRepo: Repository<ClusterEntity>,
   ) {}
 
   async status(appId: string): Promise<DbPitrStatus> {
@@ -51,6 +66,7 @@ export class DbPitrService {
     // database that has one — a understatement that reads as "unprotected".
     let backupCount = 0;
     let window: DbPitrStatus['window'] = null;
+    const engine = policy ? this.engines.forEngine(policy.engine) : null;
     try {
       const info = await this.engines.forEngine(policy?.engine).info(appId);
       backupCount = info.backupCount;
@@ -67,6 +83,8 @@ export class DbPitrService {
     return {
       applicationId: appId,
       continuousBackupEnabled: !!policy?.enabled,
+      engine: engine?.engine ?? null,
+      pointInTime: engine ? engine.pointInTime !== false : true,
       policyId: policy?.id ?? null,
       cronSchedule: policy?.cronSchedule ?? null,
       backupCount,
@@ -115,6 +133,55 @@ export class DbPitrService {
     if (!app) throw new NotFoundException(`Application ${appId} not found`);
     const clusterId = dto.clusterId ?? app.clusterId;
 
+    return this.restoreJobs.create(userId, {
+      artifactId: artifact.id,
+      sourceDestinationId,
+      targetClusterId: clusterId,
+      targetKind: RestoreTargetKind.DATABASE,
+      targetSelector: { newInstall: { name: dto.name, clusterId } },
+      recoveryTargetTime: dto.recoveryTargetTime,
+    });
+  }
+
+  /**
+   * Restore a database from one of its backups, whether or not the database
+   * still exists — the case the backup exists for. Only the person whose
+   * backup it is may restore it; the new install lands on the named cluster,
+   * or on the source's cluster while that cluster is still there.
+   */
+  async restoreArtifact(
+    userId: string,
+    artifactId: string,
+    dto: DbPitrRestoreDto,
+  ): Promise<RestoreJobEntity> {
+    const artifact = await this.artifactRepo.findArtifact(artifactId);
+    const job = artifact?.backupJobId
+      ? await this.jobRepo.findOne({ where: { id: artifact.backupJobId } })
+      : null;
+    if (!artifact || job?.userId !== userId) {
+      throw new NotFoundException(`Backup ${artifactId} not found`);
+    }
+    if (artifact.engineClass !== BackupEngineClass.DATABASE) {
+      throw new BadRequestException(
+        'This backup is not a database backup; restore it from the cluster or the application instead.',
+      );
+    }
+    const sourceDestinationId = this.primaryDestinationOf(artifact);
+    if (!sourceDestinationId) {
+      throw new NotFoundException(
+        'Backup has no primary destination to restore from',
+      );
+    }
+    const clusterId =
+      dto.clusterId ??
+      ((await this.clusterRepo.exists({ where: { id: artifact.clusterId } }))
+        ? artifact.clusterId
+        : undefined);
+    if (!clusterId) {
+      throw new BadRequestException(
+        'The cluster this database ran on no longer exists: choose the cluster to restore it into.',
+      );
+    }
     return this.restoreJobs.create(userId, {
       artifactId: artifact.id,
       sourceDestinationId,

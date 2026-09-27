@@ -30,6 +30,7 @@ import {
   identityEnv,
   mintGeneration,
 } from './mariadb-pitr.util';
+import { trimSlashes } from '../utils/destination-layout.util';
 
 /**
  * Continuous backup for MariaDB: a base backup plus its binary logs.
@@ -55,6 +56,7 @@ export class MariadbPitrService implements ContinuousBackupEngine {
   readonly restoreEnvPrefix = 'FLUI_MARIADB_';
   readonly restoreStrategy = RestoreStrategy.MARIADB_PITR;
   readonly selfPrunesRepository = false;
+  readonly replaysToEndWithoutTarget = false;
 
   constructor(
     private readonly k8s: KubernetesService,
@@ -351,7 +353,7 @@ export class MariadbPitrService implements ContinuousBackupEngine {
     dest: BackupDestinationEntity,
     generation?: string,
   ): Promise<void> {
-    const prefix = (dest.pathPrefix ?? '').replace(/^\/+|\/+$/g, '');
+    const prefix = trimSlashes(dest.pathPrefix);
     const remote = `flui:${dest.bucket}/${prefix ? prefix + '/' : ''}${this.artifactObjectPrefix(appId, generation).replace(/\/$/, '')}`;
     const config = [
       `export FLUI_S3_REMOTE=${JSON.stringify(remote)}`,
@@ -487,7 +489,7 @@ export class MariadbPitrService implements ContinuousBackupEngine {
         'FILE=$(echo "$POS" | sed -E "s/.*filename \x27([^\x27]+)\x27.*/\\1/")',
         'POSN=$(echo "$POS" | sed -E "s/.*position \x27([0-9]+)\x27.*/\\1/")',
         'GTID=$(echo "$POS" | sed -E "s/.*change \x27([^\x27]*)\x27.*/\\1/")',
-        'printf "%s\\t%s\\t%s\\n" "$FILE" "$POSN" "$GTID" | rclone rcat "$DEST/binlog_info" --s3-no-check-bucket',
+        String.raw`printf "%s\t%s\t%s\n" "$FILE" "$POSN" "$GTID" | rclone rcat "$DEST/binlog_info" --s3-no-check-bucket`,
         'echo "FLUI_BASE_OK=$LABEL POS=$FILE:$POSN"',
       ].join('\n'),
     );

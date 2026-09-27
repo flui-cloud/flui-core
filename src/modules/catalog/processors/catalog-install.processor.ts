@@ -79,6 +79,7 @@ import { SandboxTenantEntity } from '../../sandbox/entities/sandbox-tenant.entit
 import { OidcProviderAdminClient } from '../../oidc/services/oidc-provider-admin.service';
 import { ClusterEntity } from '../../infrastructure/clusters/entities/cluster.entity';
 import { buildSystemNipHostname } from '../../dns/utils/nip-hostname.util';
+import { stripTrailingSlashes } from '../../../common/utils/url.util';
 import { randomUUID } from 'node:crypto';
 import { KubernetesService } from '../../infrastructure/shared/services/kubernetes.service';
 import { EncryptionService } from '../../shared/encryption/services/encryption.service';
@@ -97,6 +98,28 @@ interface OidcWireResult {
   issuerUrl: string;
   clientId: string;
   clientSecret: string;
+}
+
+function renderPlaceholders(
+  template: string,
+  lookup: (key: string) => string,
+): string {
+  let out = '';
+  let from = 0;
+  let open = template.indexOf('{{');
+  while (open !== -1) {
+    const close = template.indexOf('}', open + 2);
+    if (close === -1) break;
+    if (close > open + 2 && template[close + 1] === '}') {
+      out +=
+        template.slice(from, open) + lookup(template.slice(open + 2, close));
+      from = close + 2;
+      open = template.indexOf('{{', from);
+    } else {
+      open = template.indexOf('{{', close);
+    }
+  }
+  return out + template.slice(from);
 }
 
 @Processor(CATALOG_INSTALL_QUEUE)
@@ -674,11 +697,11 @@ export class CatalogInstallProcessor {
       definition.appType,
       install.requestedExposure,
     );
-    const exposure: ApplicationExposure = isBuildingBlock
-      ? ApplicationExposure.CLUSTER
-      : effectiveExposure === 'internal'
-        ? ApplicationExposure.INTERNAL
-        : ApplicationExposure.PUBLIC;
+    let exposure: ApplicationExposure;
+    if (isBuildingBlock) exposure = ApplicationExposure.CLUSTER;
+    else if (effectiveExposure === 'internal')
+      exposure = ApplicationExposure.INTERNAL;
+    else exposure = ApplicationExposure.PUBLIC;
 
     this.logger.log(
       `[exposure-debug] install=${install.id} slug=${install.slug} ` +
@@ -730,6 +753,7 @@ export class CatalogInstallProcessor {
         this.resolveCompanions(spec.companions, install) ??
         this.continuousBackupCompanions(
           (spec as CatalogSpecBuildingBlock).engine,
+          spec.volumes,
         ),
       labels: {
         'flui.cloud/catalog-app': definition.slug,
@@ -753,8 +777,8 @@ export class CatalogInstallProcessor {
     applicationId: string,
     spec: CatalogSpecStandalone,
   ): Promise<void> {
-    const exposedPort = spec.ports.find((p) => p.expose);
-    if (!exposedPort || spec.domain?.auto === false) {
+    const hasExposedPort = spec.ports.some((p) => p.expose);
+    if (!hasExposedPort || spec.domain?.auto === false) {
       this.logger.log(
         `Install ${install.id}: no exposed port or domain.auto=false — skipping endpoint`,
       );
@@ -1102,19 +1126,27 @@ export class CatalogInstallProcessor {
    */
   private continuousBackupCompanions(
     engine: string | undefined,
+    volumes: Array<{ name: string; mountPath: string }> | undefined,
   ): CompanionsSpec | undefined {
     if (engine !== 'mariadb') {
       return undefined;
     }
     const image = process.env.MARIADB_SHIPPER_IMAGE?.trim();
     if (!image) return undefined;
+    // By where it is mounted, not by name: a bundle names its database volume
+    // as it likes, and a mount of a volume the pod does not have is a pod the
+    // cluster refuses to create.
+    const dataVolume = volumes?.find(
+      (v) => stripTrailingSlashes(v.mountPath) === '/var/lib/mysql',
+    )?.name;
+    if (!dataVolume) return undefined;
 
     const mounts = (readOnly: boolean) => [
       // `mariadb-backup` is a physical tool: it reads the data directory's
       // files directly and `--host` only fetches metadata, so the companion
       // must have the volume. Read-only is enough — proven, a base backup
       // streams to completion against a data directory it cannot write.
-      { name: 'data', mountPath: '/var/lib/mysql', readOnly },
+      { name: dataVolume, mountPath: '/var/lib/mysql', readOnly },
     ];
     return {
       initContainers: [
@@ -1649,8 +1681,8 @@ export class CatalogInstallProcessor {
   ): CreateApplicationDto {
     const imageRef = this.buildImageRef(component.image);
     const primaryPort = component.ports?.[0];
-    const exposedPort = (component.ports ?? []).find((p) => p.expose);
-    const exposure: ApplicationExposure = exposedPort
+    const hasExposedPort = (component.ports ?? []).some((p) => p.expose);
+    const exposure: ApplicationExposure = hasExposedPort
       ? ApplicationExposure.PUBLIC
       : ApplicationExposure.CLUSTER;
 
@@ -1705,7 +1737,8 @@ export class CatalogInstallProcessor {
         this.resolveCompanions(
           (component as { companions?: CatalogCompanions }).companions,
           install,
-        ) ?? this.continuousBackupCompanions(component.engine),
+        ) ??
+        this.continuousBackupCompanions(component.engine, component.volumes),
       labels: {
         'flui.cloud/catalog-app': definition.slug,
         'flui.cloud/catalog-install': install.id,
@@ -1743,8 +1776,8 @@ export class CatalogInstallProcessor {
       );
       return null;
     }
-    const exposedPort = (component.ports ?? []).find((p) => p.expose);
-    if (!exposedPort) return null;
+    const hasExposedPort = (component.ports ?? []).some((p) => p.expose);
+    if (!hasExposedPort) return null;
 
     const requestedDomain = isPrimary ? install.requestedDomain : undefined;
     const assignment = requestedDomain
@@ -2003,7 +2036,7 @@ export class CatalogInstallProcessor {
       if (c.fqdn) ctx[`components.${name}.fqdn`] = c.fqdn;
     }
     const render = (s: string): string =>
-      s.replace(/\{\{([^}]+)\}\}/g, (_, k) => ctx[k.trim()] ?? '');
+      renderPlaceholders(s, (k) => ctx[k.trim()] ?? '');
 
     for (const step of steps) {
       if (!this.postInstallStepMatches(step, mode, install, spec)) continue;
@@ -2034,7 +2067,7 @@ export class CatalogInstallProcessor {
         method: step.http.method,
         headers: {
           'Content-Type': 'application/json',
-          ...(step.http.headers ?? {}),
+          ...step.http.headers,
         },
         body: step.http.body ? render(step.http.body) : undefined,
       });

@@ -14,6 +14,7 @@ import { StorageBackendFactory } from '../../storage/factories/storage-backend.f
 import { ContinuousBackupEngineRegistry } from '../services/continuous-backup-engine.registry';
 import { BackupPolicyRepository } from '../repositories/backup-policy.repository';
 import { StorageBackendProvider } from '../../storage/enums/storage-backend-provider.enum';
+import { trimSlashes } from '../utils/destination-layout.util';
 
 /**
  * How many artifacts one pass may delete.
@@ -383,8 +384,11 @@ export class BackupRetentionSweeper {
     const backend = this.storage.forProvider(
       dest.provider as StorageBackendProvider,
     );
+    // Engines name their keys relative to the destination's prefix, and
+    // `deleteObjects` takes full keys — the ones `listObjects` returns.
+    const root = trimSlashes(creds.pathPrefix);
     for (const key of keys) {
-      await backend.deleteObjects(creds, [key]);
+      await backend.deleteObjects(creds, [root ? `${root}/${key}` : key]);
     }
   }
 

@@ -16,6 +16,7 @@ import {
   ArtifactEngineFacts,
   ContinuousBackupEngine,
 } from './continuous-backup-engine.interface';
+import { trimSlashes } from '../utils/destination-layout.util';
 
 const DEFAULT_PGDATA = '/var/lib/postgresql/data/pgdata';
 const PGBACKREST_STANZA = 'main';
@@ -38,15 +39,17 @@ export interface PgBackupInfo {
   /** Newest backup label, or null when the repo has no backups yet. */
   latestLabel: string | null;
   /**
-   * Recoverable window from base backups: [oldest, newest] as ISO or null.
-   * With archiving active the true newest edge is ~now (continuous WAL);
-   * newestRecoverable understates it — do not gate restore targets on it.
+   * Recoverable window: from the end of the oldest base to the last WAL
+   * segment that reached the repository (the last base's end when the server
+   * cannot say).
    */
   oldestRecoverable: string | null;
   newestRecoverable: string | null;
   /** Completion time of the most recent FULL backup (drives full cadence). */
   lastFullAt: string | null;
   backupCount: number;
+  /** What the newest backup occupies in the repository, compressed. */
+  latestSizeBytes?: number | null;
 }
 
 /**
@@ -63,6 +66,7 @@ export class PgBackrestService implements ContinuousBackupEngine {
   readonly restoreEnvPrefix = 'FLUI_PG_';
   readonly restoreStrategy = RestoreStrategy.PG_PITR;
   readonly selfPrunesRepository = true;
+  readonly replaysToEndWithoutTarget = true;
 
   private readonly logger = new Logger(PgBackrestService.name);
 
@@ -218,7 +222,7 @@ export class PgBackrestService implements ContinuousBackupEngine {
   }
 
   private repoPath(dest: BackupDestinationEntity, appId: string): string {
-    const prefix = (dest.pathPrefix ?? '').replace(/^\/+|\/+$/g, '');
+    const prefix = trimSlashes(dest.pathPrefix);
     return `/${prefix ? prefix + '/' : ''}pgbackrest/${appId}`;
   }
 
@@ -387,6 +391,36 @@ export class PgBackrestService implements ContinuousBackupEngine {
     this.logger.log(`[pgbackrest] disabled continuous backup for app=${appId}`);
   }
 
+  /**
+   * Postgres refuses a recovery target it never meets — a moment after the
+   * last commit in the archive — and says so in its log before exiting.
+   */
+  async endedBeforeTarget(restoredAppId: string): Promise<boolean> {
+    const target = await this.resolveTarget(restoredAppId);
+    const pods = await this.k8s
+      .listPodsByLabel(
+        target.kubeconfig,
+        target.namespace,
+        target.labelSelector,
+      )
+      .catch(() => [] as any[]);
+    for (const pod of pods) {
+      const name = pod?.metadata?.name;
+      if (!name) continue;
+      const logs = await this.k8s
+        .getPodLogs(
+          target.kubeconfig,
+          name,
+          target.namespace,
+          target.container,
+          200,
+        )
+        .catch(() => '');
+      if (RECOVERY_ENDED_BEFORE_TARGET.test(logs)) return true;
+    }
+    return false;
+  }
+
   /** Run a base backup. `type` is full|incr|diff. Returns the new backup label. */
   async baseBackup(
     appId: string,
@@ -412,16 +446,25 @@ export class PgBackrestService implements ContinuousBackupEngine {
     return info.latestLabel;
   }
 
-  /** Read the repo state + recoverable window from `pgbackrest info`. */
+  /**
+   * The repository's bases from `pgbackrest info`, and the recent edge of the
+   * window from the server's archiver: the moment its last WAL segment
+   * reached the repository. Every change archived by then is recoverable,
+   * not only what the last base covers.
+   */
   async info(appId: string): Promise<PgBackupInfo> {
     const target = await this.resolveTarget(appId);
     const out = await this.exec(
       target,
       [
         `gosu postgres pgbackrest --config=${target.confPath} --stanza=${PGBACKREST_STANZA} info --output=json`,
+        `echo "${LAST_ARCHIVED_MARKER}$(gosu postgres psql -U ${target.pgUser} -d ${target.pgDb} -tAc "SELECT CASE WHEN current_setting('archive_command') LIKE '%pgbackrest%' THEN floor(extract(epoch from last_archived_time)) END FROM pg_stat_archiver" 2>/dev/null)"`,
       ].join('\n'),
     );
-    return this.parseInfo(out);
+    return withArchivedEdge(
+      this.parseInfo(out.split(LAST_ARCHIVED_MARKER)[0]),
+      out,
+    );
   }
 
   /**
@@ -507,12 +550,36 @@ export class PgBackrestService implements ContinuousBackupEngine {
       newestRecoverable: toIso(last.timestamp?.stop),
       lastFullAt: toIso(lastFull?.timestamp?.stop),
       backupCount: backups.length,
+      latestSizeBytes:
+        last.info?.repository?.delta ?? last.info?.repository?.size ?? null,
     };
   }
+}
+
+const LAST_ARCHIVED_MARKER = 'FLUI_LAST_ARCHIVED=';
+const RECOVERY_ENDED_BEFORE_TARGET =
+  /recovery ended before configured recovery target was reached/;
+
+export function withArchivedEdge(
+  info: PgBackupInfo,
+  execOutput: string,
+): PgBackupInfo {
+  const epoch = Number(
+    new RegExp(String.raw`${LAST_ARCHIVED_MARKER}(\d+)`).exec(execOutput)?.[1],
+  );
+  if (!info.backupCount || !Number.isFinite(epoch) || epoch <= 0) return info;
+  const archived = new Date(epoch * 1000);
+  const newest = info.newestRecoverable
+    ? new Date(info.newestRecoverable)
+    : null;
+  return newest && newest >= archived
+    ? info
+    : { ...info, newestRecoverable: archived.toISOString() };
 }
 
 interface PgBackrestInfoBackup {
   label?: string;
   type?: string;
   timestamp?: { start?: number; stop?: number };
+  info?: { repository?: { size?: number; delta?: number } };
 }
