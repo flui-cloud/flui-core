@@ -201,7 +201,6 @@ export class ClusterCreationService {
     const desiredRules = await this.buildDesiredFirewallRules(
       dto.firewallRules || [],
       envSubnet.ipRange,
-      clusterType,
     );
 
     // Managed-API firewalls (Hetzner, Scaleway) are a cloud resource that can
@@ -310,7 +309,6 @@ export class ClusterCreationService {
   private async buildDesiredFirewallRules(
     providedRules: FirewallRuleDto[],
     subnetCidr: string,
-    clusterType: ClusterType,
   ): Promise<FirewallRuleDto[]> {
     if (providedRules.length === 0) return providedRules;
     // Resolved here rather than left to the 5-minute peer reconciler: the master
@@ -319,7 +317,6 @@ export class ClusterCreationService {
       await this.firewallReconciliation.resolveControlEgressIps();
     return FirewallReconciliationService.ensureDualStackWildcards(
       FirewallReconciliationService.ensureWorkloadSshFromControl(
-        clusterType,
         FirewallReconciliationService.ensureRequiredIngress(
           sanitizeApiServerFirewallRules(providedRules, subnetCidr),
         ),

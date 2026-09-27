@@ -58,6 +58,17 @@ describe('FirewallReconciliationService — host firewall', () => {
       ]);
     });
 
+    it('keeps the control as the source of the rule that closes :22 behind the tunnel', () => {
+      const svc = build(makeCapabilities(false));
+      const viaControl: FirewallRuleDto = {
+        ...sshRule,
+        description: 'flui:xprovider:ssh-via-control',
+        sourceIps: ['49.13.132.151/32'],
+      };
+      const out = svc.normalizeRulesForCapability('ovh', [viaControl]);
+      expect(out[0].sourceIps).toEqual(['49.13.132.151/32']);
+    });
+
     it('leaves the :22 allowlist intact when allowlisting is supported (managed-edge)', () => {
       const svc = build(makeCapabilities(true));
       const out = svc.normalizeRulesForCapability('hetzner', [sshRule]);
@@ -146,12 +157,8 @@ describe('FirewallReconciliationService.ensureWorkloadSshFromControl', () => {
     port: '22',
     sourceIps,
   });
-  const run = (rules: FirewallRuleDto[], ips: string[], type = 'workload') =>
-    FirewallReconciliationService.ensureWorkloadSshFromControl(
-      type as any,
-      rules,
-      ips,
-    );
+  const run = (rules: FirewallRuleDto[], ips: string[]) =>
+    FirewallReconciliationService.ensureWorkloadSshFromControl(rules, ips);
 
   it('adds the control plane while keeping the operator allowlisted', () => {
     const out = run([ssh(['203.0.113.9/32'])], ['198.51.100.7']);
@@ -163,9 +170,16 @@ describe('FirewallReconciliationService.ensureWorkloadSshFromControl', () => {
     expect(out[0].sourceIps).not.toContain('0.0.0.0/0');
   });
 
-  it('leaves the control cluster alone — the CLI drives it from a known IP', () => {
-    const rules = [ssh(['203.0.113.9/32'])];
-    expect(run(rules, ['198.51.100.7'], 'control')).toEqual(rules);
+  it("admits the control's own nodes on the control too, since the API may run on a worker and SSH to the master", () => {
+    const out = run(
+      [ssh(['203.0.113.9/32'])],
+      ['49.13.132.151', '178.105.168.161'],
+    );
+    expect(out[0].sourceIps).toEqual([
+      '203.0.113.9/32',
+      '49.13.132.151/32',
+      '178.105.168.161/32',
+    ]);
   });
 
   it('is idempotent — a second pass adds nothing', () => {

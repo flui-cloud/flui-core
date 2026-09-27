@@ -17,6 +17,7 @@ import {
 import { getFirewallRulesForClusterType } from '../templates/firewall-rules.template';
 import { FirewallRuleDto } from '../../../providers/dto/firewall.dto';
 import { CloudProvider } from '../../../providers/enums/cloud-provider.enum';
+import { SSH_VIA_CONTROL_RULE } from '../../../providers/core/firewall/nftables-ruleset';
 
 @Injectable()
 export class FirewallReconciliationService {
@@ -58,7 +59,6 @@ export class FirewallReconciliationService {
     ]) as FirewallRuleDto[];
     const rules = FirewallReconciliationService.ensureDualStackWildcards(
       FirewallReconciliationService.ensureWorkloadSshFromControl(
-        cluster.clusterType,
         FirewallReconciliationService.ensureRequiredIngress(
           this.normalizeRulesForCapability(cluster.provider, baseRules),
         ),
@@ -113,8 +113,14 @@ export class FirewallReconciliationService {
 
     if (supportsSshAllowlist) return rules;
 
+    // The rule that closes 22 behind the tunnel keeps its sources: the host
+    // renders them as "ssh from the control", the one way in the API has
+    // besides the tunnel itself.
     return rules.map((rule) =>
-      rule.direction === 'in' && rule.protocol === 'tcp' && rule.port === '22'
+      rule.direction === 'in' &&
+      rule.protocol === 'tcp' &&
+      rule.port === '22' &&
+      rule.description !== SSH_VIA_CONTROL_RULE
         ? { ...rule, sourceIps: ['0.0.0.0/0', '::/0'] }
         : rule,
     );
@@ -204,8 +210,9 @@ export class FirewallReconciliationService {
    * out. The operator's own IPs are preserved, and an explicit 0.0.0.0/0 is left
    * alone; we only ever *add* the control's addresses.
    *
-   * The control cluster is exempt: it is driven from the operator's machine by
-   * the CLI, which allowlists its own detected IP and SSHes from that same host.
+   * The control cluster is held to it as well: flui-api runs on any of its
+   * nodes and reaches the control master over SSH (overlay hub, host firewall,
+   * jump host), and a pod moved onto a worker leaves by that worker's address.
    */
   /**
    * Asks the provider what it would send, when it can answer.
@@ -236,13 +243,10 @@ export class FirewallReconciliationService {
   }
 
   static ensureWorkloadSshFromControl(
-    clusterType: ClusterEntity['clusterType'],
     rules: FirewallRuleDto[],
     controlIps: string[],
   ): FirewallRuleDto[] {
-    if (isControlClusterType(clusterType) || controlIps.length === 0) {
-      return rules;
-    }
+    if (controlIps.length === 0) return rules;
 
     const cidrs = controlIps.map((ip) => (ip.includes('/') ? ip : `${ip}/32`));
     const isInboundSsh = (r: FirewallRuleDto) =>
@@ -343,7 +347,6 @@ export class FirewallReconciliationService {
     const requiredRules =
       FirewallReconciliationService.ensureDualStackWildcards(
         FirewallReconciliationService.ensureWorkloadSshFromControl(
-          cluster.clusterType,
           FirewallReconciliationService.ensureRequiredIngress(normalizedRules),
           await this.resolveControlEgressIps(),
         ),
