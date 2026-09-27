@@ -40,6 +40,7 @@ export enum OperationType {
   /** Adds a cluster's management address to its API server certificate — the
    *  one operation that restarts K3s on a live master. */
   ENROL_CLUSTER_OVERLAY = 'enrol_cluster_overlay',
+  RECOVER_NODE_ACCESS = 'recover_node_access',
   REBUILD_CLUSTER = 'rebuild_cluster',
   // Application build operations
   BUILD_APPLICATION = 'build_application',

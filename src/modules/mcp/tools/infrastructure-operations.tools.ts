@@ -175,7 +175,7 @@ export const INFRASTRUCTURE_OPERATION_TOOLS: ToolDef[] = [
     name: 'cluster_capacity_plan',
     routes: ['GET /infrastructure/clusters/:id/capacity-plan'],
     description:
-      "The master node's current capacity and the resize candidates for it, each with a monthly cost delta. This is the price tag on cluster_node_add, cluster_node_remove and cluster_autoscale_set — read it and tell the person the number BEFORE asking them to approve one of those, not after. Reports free/used/allocatable capacity and the current server type.",
+      "The master node's current capacity and the resize candidates for it, each with a monthly cost delta. This is the price tag on raising a scaling group's minimum, cluster_node_remove and cluster_autoscale_set — read it and tell the person the number BEFORE asking them to approve one of those, not after. Reports free/used/allocatable capacity and the current server type.",
     scope: MCP_SCOPE.INFRA_READ,
     inputSchema: clusterArg,
     run: async (args, ctx) => {
@@ -322,22 +322,46 @@ export const INFRASTRUCTURE_OPERATION_TOOLS: ToolDef[] = [
   }),
 
   defineTool({
-    name: 'cluster_node_add',
-    routes: ['POST /infrastructure/clusters/:id/workers'],
+    name: 'management_network_status',
+    routes: ['GET /infrastructure/management-network'],
     description:
-      'Add 1-5 worker nodes to an existing cluster. Each node is a machine that is paid for from the moment it boots, so read cluster_capacity_plan first and tell the person the monthly delta. Requires the cluster to have a VNet and to be READY. Takes 3-6 minutes per node.',
+      'The Flui network (the tunnel that lets clusters on another provider than the control be reached and managed): whether it is on and why (`source`), `unavailable` — what makes it impossible here, in words to relay — the control end, and every member with its status and last handshake. `stale` means that tunnel has gone quiet. Read this before creating a cluster on another provider than the control: without the network that is refused.',
+    scope: MCP_SCOPE.INFRA_READ,
+    inputSchema: {},
+    run: (_args, ctx) => ctx.api.get('/infrastructure/management-network'),
+  }),
+
+  defineTool({
+    name: 'management_network_set',
+    routes: ['PUT /infrastructure/management-network'],
+    description:
+      'Switch the Flui network on or off for the whole installation. THIS ASKS A PERSON (action cycle): stop, tell the user what was asked, and retry the identical call once they have answered. Switching on is refused with the reason where it cannot work (relay `unavailable` from management_network_status first). Switching off tears nothing down, but no cluster joins it any more and clusters on another provider cannot be created.',
     scope: MCP_SCOPE.INFRA_WRITE,
+    inputSchema: { enabled: z.boolean() },
+    run: (args, ctx) =>
+      ctx.api.put('/infrastructure/management-network', {
+        enabled: args.enabled,
+      }),
+  }),
+
+  defineTool({
+    name: 'cluster_node_recover_access',
+    routes: ['POST /infrastructure/clusters/:id/nodes/:nodeId/recover-access'],
+    description:
+      'Emergency access to a node whose SSH is closed, through its provider rather than its network. Only when the person asked for it: on OVH the node is rebooted twice (rescue system, then its own disk) and is down for several minutes; on Hetzner and Scaleway port 22 is opened on the provider firewall to one address (`sourceIp`, required from an agent — ask the person for their public address) until they remove it. A machine the person brought (BYOS) is refused: its console is theirs. Returns an operation; follow it with operation_status and relay its outcome.',
+    scope: MCP_SCOPE.INFRA_DESTRUCTIVE,
     inputSchema: {
       ...clusterArg,
-      count: coerceNumber(z.number().int().min(1).max(5)).optional(),
+      nodeId: NODE_ID,
+      sourceIp: z.string().optional(),
     },
     run: async (args, ctx) => {
       const id = await resolveClusterId(ctx, args.clusterId);
       const operation = await ctx.api.post<QueuedOperation>(
-        `/infrastructure/clusters/${encoded(id)}/workers`,
-        { count: args.count ?? 1 },
+        `/infrastructure/clusters/${encoded(id)}/nodes/${encoded(args.nodeId)}/recover-access`,
+        args.sourceIp ? { sourceIp: args.sourceIp } : {},
       );
-      return queued(ctx, operation, `Add ${args.count ?? 1} worker node(s)`);
+      return queued(ctx, operation, `Recover access to node ${args.nodeId}`);
     },
   }),
 
@@ -345,7 +369,7 @@ export const INFRASTRUCTURE_OPERATION_TOOLS: ToolDef[] = [
     name: 'cluster_node_remove',
     routes: ['DELETE /infrastructure/clusters/:id/workers/:nodeId'],
     description:
-      'Cordon, drain and delete one worker node at the provider. The machine is gone afterwards and anything on it that was not on shared storage goes with it. The drain has a 120s timeout: if a PodDisruptionBudget blocks eviction the node is removed anyway and the operation reports a DRAIN_FAILED warning — read the warnings and say so. Refused on the master and when it would breach minNodes.',
+      'Detach a machine the person attached themselves (a BYOS node): cordon, drain and remove it from the cluster. Any other node is refused (410): nodes Flui bought go back through the scaling group — lower its minimum with scaling_group_set, and on a manual group approve the removal with scaling_approve_removal. The drain has a 120s timeout: if a PodDisruptionBudget blocks eviction the node is removed anyway and the operation reports a DRAIN_FAILED warning — read the warnings and say so. Refused on the master and below the floor.',
     // The one act in this area that takes a machine away from under running
     // workloads, so it sits behind the server-wide destructive flag as well as
     // behind the person's approval. Adding a node back is not the same as not

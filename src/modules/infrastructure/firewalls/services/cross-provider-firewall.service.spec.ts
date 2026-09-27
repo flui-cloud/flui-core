@@ -75,7 +75,8 @@ const peerOf = (rules: FirewallRuleDto[]) =>
 
 describe('CrossProviderFirewallService', () => {
   let service: CrossProviderFirewallService;
-  let wgEgress: jest.Mock;
+  let wgLivePeers: jest.Mock;
+  let memberClusters: ClusterEntity[];
   let wgNodeOverlay: jest.Mock;
   let wgControlPeer: jest.Mock;
   let list: jest.Mock;
@@ -88,7 +89,9 @@ describe('CrossProviderFirewallService', () => {
     // The control is resolved from the cluster repository (a BYOS control owns
     // no firewall). Default: derive control-type clusters from the same
     // firewall fixtures; tests for firewall-less controls override this.
-    clusterFind = jest.fn(async () => {
+    memberClusters = [];
+    clusterFind = jest.fn(async (opts?: { where?: unknown }) => {
+      if (opts?.where && !Array.isArray(opts.where)) return memberClusters;
       const fws: ClusterFirewallEntity[] = (await list()) ?? [];
       return fws
         .map((f) => f.cluster)
@@ -99,7 +102,7 @@ describe('CrossProviderFirewallService', () => {
               c.clusterType === ClusterType.OBSERVABILITY),
         );
     });
-    wgEgress = jest.fn().mockResolvedValue([]);
+    wgLivePeers = jest.fn().mockResolvedValue([]);
     wgNodeOverlay = jest.fn().mockResolvedValue(undefined);
     wgControlPeer = jest.fn().mockResolvedValue(null);
     const mod = await Test.createTestingModule({
@@ -124,7 +127,7 @@ describe('CrossProviderFirewallService', () => {
         {
           provide: WireGuardPeerService,
           useValue: {
-            memberEgressIps: wgEgress,
+            livePeers: wgLivePeers,
             nodeOverlayFor: wgNodeOverlay,
             controlPeer: wgControlPeer,
           },
@@ -138,7 +141,7 @@ describe('CrossProviderFirewallService', () => {
     service = mod.get(CrossProviderFirewallService);
     delete process.env.FLUI_OBS_INGEST_NODEPORTS;
     delete process.env.FLUI_OBS_INGEST_ENABLE_PUBLIC;
-    delete process.env.FLUI_WG_ENABLED;
+    process.env.FLUI_WG_ENABLED = 'false';
     delete process.env.FLUI_WG_PORT;
   });
 
@@ -412,59 +415,74 @@ describe('CrossProviderFirewallService', () => {
   });
 
   describe('the WireGuard overlay port', () => {
-    const withOverlay = async (egress: string[]) => {
+    const member = (clusterId: string, endpointHost: string | null = null) => ({
+      role: 'member',
+      clusterId,
+      nodeId: `${clusterId}-n`,
+      endpointHost,
+    });
+    const withOverlay = async (
+      peers: unknown[],
+      clusters: ClusterEntity[] = [],
+    ) => {
       process.env.FLUI_WG_ENABLED = 'true';
-      wgEgress.mockResolvedValue(egress);
+      wgLivePeers.mockResolvedValue(peers);
+      memberClusters = clusters;
       list.mockResolvedValue([firewall('fw-ctl', control())]);
       await service.reconcileAllPeers();
       return peerOf(rulesFor('fw-ctl'));
     };
 
-    it('opens UDP on the control to any address', async () => {
-      // Not scoped to known peers: a member has to dial in before it can be
-      // known, and could not dial in until it was. WireGuard answers an unknown
-      // peer with silence, so the address never was the identity.
-      expect(await withOverlay(['5.6.7.8/32'])).toEqual([
+    it('admits only the members, from where they dialled in', async () => {
+      expect(await withOverlay([member('w', '5.6.7.8')])).toEqual([
         {
           description: 'flui:xprovider:wg-listen',
           direction: 'in',
           protocol: 'udp',
           port: '51821',
-          sourceIps: ['0.0.0.0/0', '::/0'],
+          sourceIps: ['5.6.7.8/32'],
         },
       ]);
     });
 
+    it('admits a node before its first handshake, by the address Flui gave it', async () => {
+      // A reserved peer has no endpoint yet; its node's public address is known.
+      const workload = cluster({
+        id: 'w',
+        provider: 'ovh',
+        clusterType: ClusterType.WORKLOAD,
+        nodes: [{ ipAddress: '1.2.3.4' }, { ipAddress: '2001:db8::1' }] as any,
+      });
+      const [rule] = await withOverlay([member('w')], [workload]);
+      expect(rule.sourceIps).toEqual(['1.2.3.4/32', '2001:db8::1/128']);
+    });
+
+    it('closes the port when no cluster is a member', async () => {
+      expect(await withOverlay([])).toEqual([]);
+    });
+
     it('opens nothing while the overlay is off', async () => {
-      wgEgress.mockResolvedValue(['5.6.7.8/32']);
+      wgLivePeers.mockResolvedValue([member('w', '5.6.7.8')]);
       list.mockResolvedValue([firewall('fw-ctl', control())]);
       await service.reconcileAllPeers();
       expect(peerOf(rulesFor('fw-ctl'))).toEqual([]);
     });
 
-    it('opens it before any peer exists, which is the whole point', async () => {
-      // Seen live: revoking the last peers closed the port, and the next node
-      // created could not join until a firewall pass reopened it.
-      expect(await withOverlay([])).toHaveLength(1);
-    });
-
     it('honours a configured port', async () => {
       process.env.FLUI_WG_PORT = '51999';
-      const rules = await withOverlay(['5.6.7.8/32']);
+      const rules = await withOverlay([member('w', '5.6.7.8')]);
       expect(rules[0]).toMatchObject({ port: '51999' });
     });
 
     it('ignores a nonsensical port rather than rendering it', async () => {
       process.env.FLUI_WG_PORT = 'banana';
-      const rules = await withOverlay(['5.6.7.8/32']);
+      const rules = await withOverlay([member('w', '5.6.7.8')]);
       expect(rules[0]).toMatchObject({ port: '51821' });
     });
 
-    it('keeps the public rules working when the peer table cannot be read', async () => {
-      // The overlay is not entitled to break the rules that keep existing
-      // clusters manageable.
+    it('leaves the control alone and keeps the workload rules when the members cannot be read', async () => {
       process.env.FLUI_WG_ENABLED = 'true';
-      wgEgress.mockRejectedValue(new Error('db down'));
+      wgLivePeers.mockRejectedValue(new Error('db down'));
       const workload = cluster({
         id: 'w',
         provider: 'ovh',
@@ -478,15 +496,34 @@ describe('CrossProviderFirewallService', () => {
 
       await service.reconcileAllPeers();
 
-      // The tunnel port no longer depends on that table at all.
-      expect(peerOf(rulesFor('fw-ctl'))).toHaveLength(1);
+      expect(apply.mock.calls.some((c) => c[0] === 'fw-ctl')).toBe(false);
       expect(peerOf(rulesFor('fw-w'))).toHaveLength(1);
+    });
+
+    it('admits a cluster being enrolled on the control alone, and says so when it cannot', async () => {
+      process.env.FLUI_WG_ENABLED = 'true';
+      const workload = cluster({
+        id: 'w',
+        provider: 'ovh',
+        clusterType: ClusterType.WORKLOAD,
+        nodes: [{ ipAddress: '1.2.3.4' }] as any,
+      });
+      memberClusters = [workload];
+      list.mockResolvedValue([firewall('fw-ctl', control())]);
+
+      await service.admitOverlayMembers('w');
+      expect(peerOf(rulesFor('fw-ctl'))[0].sourceIps).toEqual(['1.2.3.4/32']);
+
+      apply.mockRejectedValueOnce(new Error('provider said no'));
+      await expect(service.admitOverlayMembers('w')).rejects.toThrow(
+        'provider said no',
+      );
     });
 
     it('sits alongside the obs ingest rules rather than replacing them', async () => {
       process.env.FLUI_OBS_INGEST_ENABLE_PUBLIC = 'true';
       process.env.FLUI_WG_ENABLED = 'true';
-      wgEgress.mockResolvedValue(['5.6.7.8/32']);
+      wgLivePeers.mockResolvedValue([member('w', '5.6.7.8')]);
       const workload = cluster({
         id: 'w',
         provider: 'ovh',
@@ -611,6 +648,89 @@ describe('CrossProviderFirewallService', () => {
       await service.reconcileAllPeers();
 
       expect(peerOf(rulesFor('fw-w'))).toHaveLength(1);
+    });
+  });
+
+  describe('port 22 of a workload on the Flui network', () => {
+    const workload = () =>
+      cluster({
+        id: 'w',
+        provider: 'scaleway',
+        clusterType: ClusterType.WORKLOAD,
+        nodes: [
+          { id: 'n1', nodeType: 'master', ipAddress: '1.2.3.4' },
+          { id: 'n2', nodeType: 'worker', ipAddress: '1.2.3.5' },
+        ] as any,
+      });
+    const peer = (nodeId: string, status: string) => ({
+      role: 'member',
+      clusterId: 'w',
+      nodeId,
+      status,
+      endpointHost: null,
+    });
+    const reconcile = async (peers: unknown[]) => {
+      process.env.FLUI_WG_ENABLED = 'true';
+      wgLivePeers.mockResolvedValue(peers);
+      list.mockResolvedValue([
+        firewall('fw-ctl', control()),
+        firewall('fw-w', workload()),
+      ]);
+      await service.reconcileAllPeers();
+      return rulesFor('fw-w');
+    };
+
+    it('stops facing the internet while every node is up on the tunnel: only the control is let in', async () => {
+      const rules = await reconcile([
+        peer('n1', 'active'),
+        peer('n2', 'active'),
+      ]);
+      const ssh = rules.filter((r) => r.port === '22');
+      expect(ssh).toEqual([
+        {
+          description: 'flui:xprovider:ssh-via-control',
+          direction: 'in',
+          protocol: 'tcp',
+          port: '22',
+          sourceIps: ['5.6.7.8/32'],
+        },
+      ]);
+    });
+
+    it('opens again on the pass after a node goes quiet', async () => {
+      const rules = await reconcile([
+        peer('n1', 'active'),
+        peer('n2', 'stale'),
+      ]);
+      expect(
+        rules.some((r) => r.description === 'flui:xprovider:ssh-via-control'),
+      ).toBe(false);
+      expect(rules.filter((r) => r.port === '22').length).toBeGreaterThan(0);
+    });
+
+    it('stays open while a node is not on the tunnel at all', async () => {
+      const rules = await reconcile([peer('n1', 'active')]);
+      expect(
+        rules.some((r) => r.description === 'flui:xprovider:ssh-via-control'),
+      ).toBe(false);
+    });
+
+    it('stays as it was when the Flui network is off', async () => {
+      process.env.FLUI_WG_ENABLED = 'false';
+      wgLivePeers.mockResolvedValue([
+        peer('n1', 'active'),
+        peer('n2', 'active'),
+      ]);
+      list.mockResolvedValue([
+        firewall('fw-ctl', control()),
+        firewall('fw-w', workload()),
+      ]);
+      await service.reconcileAllPeers();
+      expect(
+        rulesFor('fw-w').some(
+          (r) => r.description === 'flui:xprovider:ssh-via-control',
+        ),
+      ).toBe(false);
     });
   });
 });

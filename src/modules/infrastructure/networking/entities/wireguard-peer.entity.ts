@@ -110,6 +110,14 @@ export class WireGuardPeerEntity {
   @Column({ type: 'timestamptz', nullable: true })
   lastHandshakeAt?: Date | null;
 
+  /**
+   * The control's private key, encrypted. Only the control peer has one: kept
+   * so a rebuilt control comes back with the same identity and no member has
+   * to be re-keyed.
+   */
+  @Column({ type: 'text', nullable: true, select: false })
+  privateKeySealed?: string | null;
+
   @Column({
     type: 'enum',
     enum: WireGuardPeerStatus,

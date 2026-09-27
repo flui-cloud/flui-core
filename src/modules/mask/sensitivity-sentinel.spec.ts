@@ -2036,6 +2036,9 @@ const MASK_EXEMPT: string[] = [
   'GitHubSetupStatusResponseDto.appSlug', // modules/repositories/dto/github-oauth.dto.ts
   'GitHubSetupStatusResponseDto.authMethod', // modules/repositories/dto/github-oauth.dto.ts
   'GitHubSetupStatusResponseDto.configured', // modules/repositories/dto/github-oauth.dto.ts
+  'GiveBackDto.node', // modules/infrastructure/scaling/dto/scaling-preview.dto.ts
+  'GiveBackDto.nodeId', // modules/infrastructure/scaling/dto/scaling-preview.dto.ts
+  'GiveBackDto.onItsOwn', // modules/infrastructure/scaling/dto/scaling-preview.dto.ts
   'GrafanaDatasourceDto.access', // modules/grafana/dto/grafana-datasource.dto.ts
   'GrafanaDatasourceDto.isDefault', // modules/grafana/dto/grafana-datasource.dto.ts
   'GrafanaDatasourceDto.jsonData', // modules/grafana/dto/grafana-datasource.dto.ts
@@ -2397,6 +2400,8 @@ const MASK_EXEMPT: string[] = [
   'MailWindowDto.from', // modules/mail/dto/mail-overview.dto.ts
   'MailWindowDto.name', // modules/mail/dto/mail-overview.dto.ts
   'MailWindowDto.to', // modules/mail/dto/mail-overview.dto.ts
+  'ManagementNetworkDto.hub', // modules/infrastructure/networking/dto/management-network.dto.ts
+  'ManagementNetworkDto.members', // modules/infrastructure/networking/dto/management-network.dto.ts
   'ManifestCheckDto.detail', // modules/applications/dto/deploy-from-yaml.dto.ts
   'ManifestCheckDto.id', // modules/applications/dto/deploy-from-yaml.dto.ts
   'ManifestCheckDto.status', // modules/applications/dto/deploy-from-yaml.dto.ts
@@ -3213,6 +3218,7 @@ const MASK_EXEMPT: string[] = [
   'ScalingLimitsResponseDto.maxMonthlyCost', // modules/infrastructure/scaling/dto/scaling-response.dto.ts
   'ScalingPreviewDto.asks', // modules/infrastructure/scaling/dto/scaling-preview.dto.ts
   'ScalingPreviewDto.chosen', // modules/infrastructure/scaling/dto/scaling-preview.dto.ts
+  'ScalingPreviewDto.giveBack', // modules/infrastructure/scaling/dto/scaling-preview.dto.ts
   'ScalingPreviewDto.groupId', // modules/infrastructure/scaling/dto/scaling-preview.dto.ts
   'ScalingPreviewDto.ladder', // modules/infrastructure/scaling/dto/scaling-preview.dto.ts
   'ScalingPreviewDto.opportunityHeldBecause', // modules/infrastructure/scaling/dto/scaling-preview.dto.ts
@@ -3310,6 +3316,7 @@ const MASK_EXEMPT: string[] = [
   'SetGatewayPolicyDto.auth', // modules/applications/dto/gateway-route.dto.ts
   'SetGatewayPolicyDto.path', // modules/applications/dto/gateway-route.dto.ts
   'SetGatewayPolicyDto.rateLimit', // modules/applications/dto/gateway-route.dto.ts
+  'SetManagementNetworkDto.enabled', // modules/infrastructure/networking/dto/management-network.dto.ts
   'SetPlatformConfigDto.heartbeatUrl', // modules/backups/dto/set-platform-config.dto.ts
   'SetPlatformConfigDto.recipient', // modules/backups/dto/set-platform-config.dto.ts
   'SetupOptionsResponse.eligible', // modules/backups/dto/quick-setup.dto.ts
@@ -3605,6 +3612,10 @@ const MASK_EXEMPT: string[] = [
   'UpdateMeDto.name', // modules/auth/dto/update-me.dto.ts
   'UpdateNodeMetadataDto.metadata', // modules/infrastructure/clusters/dto/update-node-metadata.dto.ts
   'UpdateProviderRegionsDto.enabledRegions', // modules/management/dto/update-regions.dto.ts
+  'UpdateAutoscalingDto.enabled', // modules/applications/dto/app-management.dto.ts
+  'UpdateAutoscalingDto.max', // modules/applications/dto/app-management.dto.ts
+  'UpdateAutoscalingDto.min', // modules/applications/dto/app-management.dto.ts
+  'UpdateAutoscalingDto.targetCPU', // modules/applications/dto/app-management.dto.ts
   'UpdateReplicasDto.replicas', // modules/applications/dto/app-management.dto.ts
   'UpdateResourcesDto.containerName', // modules/applications/dto/app-management.dto.ts
   'UpdateResourcesDto.limits', // modules/applications/dto/app-management.dto.ts

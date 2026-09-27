@@ -49,7 +49,7 @@ describe('KubeconfigEndpointPromoter', () => {
     process.env.FLUI_WG_ENABLED = 'true';
   });
   afterEach(() => {
-    delete process.env.FLUI_WG_ENABLED;
+    process.env.FLUI_WG_ENABLED = 'false';
   });
 
   it('moves the server line onto the overlay once the tunnel answers', async () => {
@@ -154,7 +154,7 @@ describe('KubeconfigEndpointPromoter', () => {
   });
 
   it('does nothing at all while the overlay is switched off', async () => {
-    delete process.env.FLUI_WG_ENABLED;
+    process.env.FLUI_WG_ENABLED = 'false';
     const { promoter, save } = build(workload('91.99.53.190'), {
       nodeAddress: '10.250.0.4',
       enrolled: true,

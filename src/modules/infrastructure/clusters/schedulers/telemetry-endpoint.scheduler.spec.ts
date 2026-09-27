@@ -33,12 +33,27 @@ describe('TelemetryEndpointScheduler', () => {
 
   afterEach(() => {
     delete process.env.FLUI_TELEMETRY_RECONCILE;
+    delete process.env.FLUI_WG_ENABLED;
   });
 
-  it('does nothing at all while switched off', async () => {
+  it('does nothing at all while the Flui network is off', async () => {
+    process.env.FLUI_WG_ENABLED = 'false';
     const { scheduler, reconcile } = build([{ id: 'c1', name: 'a' }]);
     await scheduler.tick();
     expect(reconcile).not.toHaveBeenCalled();
+  });
+
+  it('does nothing when telemetry was opted out of the tunnel', async () => {
+    process.env.FLUI_TELEMETRY_RECONCILE = 'false';
+    const { scheduler, reconcile } = build([{ id: 'c1', name: 'a' }]);
+    await scheduler.tick();
+    expect(reconcile).not.toHaveBeenCalled();
+  });
+
+  it('runs with the Flui network on, with no second switch to turn', async () => {
+    const { scheduler, reconcile } = build([{ id: 'c1', name: 'a' }]);
+    await scheduler.tick();
+    expect(reconcile).toHaveBeenCalled();
   });
 
   it('repoints every ready workload cluster once enabled', async () => {

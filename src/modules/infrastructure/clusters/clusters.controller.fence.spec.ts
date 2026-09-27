@@ -34,6 +34,8 @@ import { ApiServerSanService } from '../networking/services/api-server-san.servi
 import { FleetHistoryService } from './services/fleet-history.service';
 import { ClusterRebuildService } from './services/cluster-rebuild.service';
 import { ClusterValidationService } from './services/cluster-validation.service';
+import { ClusterCreationService } from './services/cluster-creation.service';
+import { NodeAccessRecoveryService } from './services/node-access-recovery.service';
 import { FirewallsService } from '../firewalls/services/firewalls.service';
 import { KubernetesService } from '../shared/services/kubernetes.service';
 import { GrafanaDatasourceService } from '../../grafana/services/grafana-datasource.service';
@@ -242,6 +244,8 @@ describe('clusters controller — the fence around the cluster key', () => {
             checkNameAvailability: async () => ({ available: true }),
           },
         },
+        { provide: ClusterCreationService, useValue: {} },
+        { provide: NodeAccessRecoveryService, useValue: {} },
       ],
     }).compile();
 

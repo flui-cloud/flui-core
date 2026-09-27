@@ -33,14 +33,17 @@ export default class Ssh extends Command {
       const app = await getNestApp();
       const sshService = app.get(CliSshService);
 
-      const { target, clusterName, nodeLabel } = await resolveSshTarget(
+      const { target, jump, clusterName, nodeLabel } = await resolveSshTarget(
         args.node,
       );
 
       spinner.succeed(`Connecting to ${nodeLabel} of ${clusterName}...`);
       const portSuffix = target.port === 22 ? '' : ` -p ${target.port}`;
       console.log(
-        chalk.dim(`   SSH: ${target.user}@${target.host}${portSuffix}`),
+        chalk.dim(
+          `   SSH: ${target.user}@${target.host}${portSuffix}` +
+            (jump ? ` through the control (${jump.host})` : ''),
+        ),
       );
 
       const exitHint =
@@ -52,7 +55,7 @@ export default class Ssh extends Command {
       console.log(exitHint);
 
       // SSH into the node
-      await sshService.sshConnect(target.host, target.user, target.port);
+      await sshService.sshConnect(target.host, target.user, target.port, jump);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       spinner.fail('SSH connection failed');

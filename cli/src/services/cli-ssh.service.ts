@@ -171,7 +171,14 @@ export class CliSshService {
 
     // Get certificate signed by CA (5-minute validity)
     this.logger.debug('Signing ephemeral key with CA...');
-    const certificate = await this.caService.signPublicKey(publicKey, 300);
+    // `flui-jump` lets the same certificate cross the control on the way to a
+    // workload node; the control accepts it for that user and nothing else.
+    const certificate = await this.caService.signPublicKey(publicKey, 300, [
+      'root',
+      'ubuntu',
+      'admin',
+      'flui-jump',
+    ]);
 
     // Write certificate
     fs.writeFileSync(certificatePath, certificate, { mode: 0o644 });
@@ -200,6 +207,7 @@ export class CliSshService {
     host: string,
     username: string = 'root',
     port = 22,
+    jump?: { host: string; user: string; port: number },
   ): Promise<void> {
     const { privateKeyPath, certificatePath, cleanup } =
       await this.generateEphemeralKeypair();
@@ -228,6 +236,9 @@ export class CliSshService {
           'PubkeyAuthentication=yes',
           '-o',
           'PreferredAuthentications=publickey',
+          ...(jump
+            ? ['-o', proxyThrough(jump, privateKeyPath, certificatePath)]
+            : []),
           `${username}@${host}`,
         ],
         { stdio: 'inherit' },
@@ -257,6 +268,7 @@ export class CliSshService {
     command: string,
     username: string = 'root',
     port = 22,
+    jump?: { host: string; user: string; port: number },
   ): Promise<string> {
     const { privateKeyPath, certificatePath, cleanup } =
       await this.generateEphemeralKeypair();
@@ -281,6 +293,9 @@ export class CliSshService {
           'PubkeyAuthentication=yes',
           '-o',
           'PreferredAuthentications=publickey',
+          ...(jump
+            ? ['-o', proxyThrough(jump, privateKeyPath, certificatePath)]
+            : []),
           '-o',
           'BatchMode=yes',
           '-o',
@@ -333,6 +348,8 @@ export class CliSshService {
     onReady?: () => void;
     /** Number of `Forwarding from …` lines expected on stderr before declaring readiness. */
     expectedForwardLines?: number;
+    /** Reach the host through the control, on its Flui network address. */
+    jump?: { host: string; user: string; port: number };
   }): Promise<{ status: number | null; signal: NodeJS.Signals | null }> {
     const username = opts.username ?? 'root';
     const { privateKeyPath, certificatePath, cleanup } =
@@ -361,6 +378,9 @@ export class CliSshService {
       'ServerAliveCountMax=3',
       '-o',
       'ExitOnForwardFailure=yes',
+      ...(opts.jump
+        ? ['-o', proxyThrough(opts.jump, privateKeyPath, certificatePath)]
+        : []),
     ];
 
     for (const f of opts.forwards) {
@@ -1066,4 +1086,26 @@ export class CliSshService {
 
     return { cleanup };
   }
+}
+
+/**
+ * The control forwards to the node and does nothing else, with the same
+ * certificate, so a workload's port 22 never has to face the internet.
+ */
+export function proxyThrough(
+  jump: { host: string; user: string; port: number },
+  privateKeyPath: string,
+  certificatePath: string,
+): string {
+  return [
+    'ProxyCommand=ssh',
+    `-i ${privateKeyPath}`,
+    `-o CertificateFile=${certificatePath}`,
+    '-o StrictHostKeyChecking=no',
+    '-o UserKnownHostsFile=/dev/null',
+    '-o PasswordAuthentication=no',
+    `-p ${jump.port}`,
+    '-W %h:%p',
+    `${jump.user}@${jump.host}`,
+  ].join(' ');
 }

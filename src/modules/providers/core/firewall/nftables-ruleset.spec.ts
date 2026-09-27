@@ -4,6 +4,7 @@ import {
   decodeRulesComment,
   DEFAULT_INTERNAL_CIDRS,
   NftRenderOptions,
+  SSH_VIA_CONTROL_RULE,
 } from './nftables-ruleset';
 import { FirewallRule } from '../../interfaces/firewall-provider.interface';
 
@@ -364,5 +365,37 @@ describe('the Flui WireGuard overlay', () => {
     expect(
       render({ wgOnlyPorts: [{ port: 30100, protocol: 'udp' }] }),
     ).toContain('iifname "flui0" udp dport 30100 accept');
+  });
+});
+
+describe('SSH on a workload reached through the control', () => {
+  const via = {
+    description: SSH_VIA_CONTROL_RULE,
+    direction: 'in' as const,
+    protocol: 'tcp' as const,
+    port: '22',
+    sourceIps: ['5.6.7.8/32', '5.6.7.9/32'],
+  };
+
+  it('lets SSH in over the Flui network and from the control only, not from anywhere', () => {
+    const ruleset = renderFluiNftRuleset([via], {
+      supportsSshAllowlist: false,
+      wgInterface: 'flui0',
+    });
+    expect(ruleset).toContain(
+      'iifname "flui0" tcp dport 22 accept comment "ssh over the Flui network"',
+    );
+    expect(ruleset).toContain(
+      'ip saddr { 5.6.7.8/32, 5.6.7.9/32 } tcp dport 22 accept comment "ssh from the control"',
+    );
+    expect(ruleset).not.toContain('ssh anti-lockout');
+  });
+
+  it('keeps the anti-lockout rule while the workload is not reached through the control', () => {
+    const ruleset = renderFluiNftRuleset([], {
+      supportsSshAllowlist: false,
+      wgInterface: 'flui0',
+    });
+    expect(ruleset).toContain('tcp dport 22 accept comment "ssh anti-lockout"');
   });
 });

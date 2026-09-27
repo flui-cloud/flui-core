@@ -1,5 +1,7 @@
 import {
   Controller,
+  GoneException,
+  HttpCode,
   Get,
   Post,
   Delete,
@@ -66,11 +68,14 @@ import {
   AttachClusterToVNetResponseDto,
   UpdateClusterVNetDto,
 } from './dto/update-cluster-vnet.dto';
-import { ClusterScalingService } from './services/cluster-scaling.service';
+import {
+  ClusterScalingService,
+  NODES_THROUGH_GROUP,
+} from './services/cluster-scaling.service';
+import { NodeAccessRecoveryService } from './services/node-access-recovery.service';
 import { byOf } from '../scaling/scaling-actor';
 import { ClusterStorageService } from './services/cluster-storage.service';
 import { ClusterStorageUsageService } from './services/cluster-storage-usage.service';
-import { AddWorkerDto, AddWorkerResponseDto } from './dto/add-worker.dto';
 import {
   RebuildClusterDto,
   RebuildClusterResponseDto,
@@ -164,6 +169,7 @@ export class ClustersController {
     private readonly clusterRebuildService: ClusterRebuildService,
     private readonly clusterValidationService: ClusterValidationService,
     private readonly clusterCreationService: ClusterCreationService,
+    private readonly nodeAccessRecovery: NodeAccessRecoveryService,
   ) {}
 
   @Get('name-availability')
@@ -236,49 +242,66 @@ export class ClustersController {
 
   @Post(':id/workers')
   @RequireSection('infrastructure')
-  // The mockup's own example, and the shape a concession is written in: the
-  // route pattern *plus* `{id}` bound to one cluster. "Allow always" here means
-  // "add nodes to this cluster", never "infrastructure" — which is the whole
-  // difference between opening a door and opening a floor.
-  @ActionCycle({
-    action: 'POST /infrastructure/clusters/:id/workers',
-    bind: ['id'],
-    sentence: 'add worker nodes to cluster {id}',
-    estimate: '/infrastructure/clusters/:id/capacity-plan',
-  })
+  @RequirePermission(IAM_PERMISSION.CLUSTER_MANAGE)
+  @HttpCode(410)
   @ApiOperation({
-    summary: 'Add 1..5 worker nodes to an existing cluster',
+    summary: 'Gone: nodes are added through the scaling group',
+    deprecated: true,
     description:
-      'Provisions new worker nodes inheriting region/size/image from the cluster, ' +
-      'attaches them to the cluster VNet (required) and joins them to K3s. ' +
-      'Returns an operation ID — track progress via WebSocket namespace /infrastructure. ' +
-      'Fails with 400 if cluster has no VNet, is not READY, count is out of [1,5], ' +
-      'or projected node count exceeds maxNodes.',
+      "A cluster's nodes change through its scaling group. Raise the group's minimum (PATCH /infrastructure/scaling-groups/:id); a manual group then proposes the machine and a person approves it (approve-purchase).",
   })
   @ApiParam({ name: 'id', description: 'Cluster ID' })
-  @ApiBody({ type: AddWorkerDto, required: false })
-  @ApiResponse({ status: 202, type: AddWorkerResponseDto })
-  @ApiResponse({ status: 400, description: 'Invalid request' })
-  @ApiResponse({ status: 404, description: 'Cluster not found' })
-  async addWorkers(
+  @ApiResponse({
+    status: 410,
+    description: 'Nodes change through the scaling group',
+  })
+  addWorkers(): never {
+    throw new GoneException(NODES_THROUGH_GROUP);
+  }
+
+  @Post(':id/nodes/:nodeId/recover-access')
+  @RequireSection('infrastructure')
+  @RequirePermission(IAM_PERMISSION.CLUSTER_MANAGE)
+  @ActionCycle({
+    action: 'POST /infrastructure/clusters/:id/nodes/:nodeId/recover-access',
+    bind: ['id', 'nodeId'],
+    sentence:
+      'get back into node {nodeId} of cluster {id} through its provider',
+    consequence:
+      'On OVH the node is rebooted twice: once into a rescue system that resets its host firewall on its own disk, once back into itself, and the firewall is applied again. On Hetzner and Scaleway port 22 is opened on the provider firewall to the one address given, until you remove it.',
+  })
+  @ApiOperation({
+    summary:
+      'Emergency access to a node whose SSH is closed, through the provider',
+    description:
+      "OVH: rescue from a Debian image found by name, reset Flui's host firewall on the node's disk, boot it again, re-apply the firewall. Hetzner/Scaleway: open 22 on the provider firewall to `sourceIp` (the caller's address when omitted). BYOS: refused — the machine's owner holds its console. Returns an operation.",
+  })
+  @ApiParam({ name: 'id', description: 'Cluster ID' })
+  @ApiParam({ name: 'nodeId', description: 'Cluster node ID or server name' })
+  async recoverAccess(
     @Param('id') clusterId: string,
-    @Body() dto: AddWorkerDto,
-    @Req() req: Record<string, unknown>,
-  ): Promise<AddWorkerResponseDto> {
-    const operation = await this.clusterScalingService.addWorkers(
+    @Param('nodeId') nodeId: string,
+    @Body() body: { sourceIp?: string } | undefined,
+    @Req()
+    req: Record<string, unknown> & {
+      ip?: string;
+      headers?: Record<string, string | string[] | undefined>;
+    },
+  ) {
+    const forwarded = req.headers?.['x-forwarded-for'];
+    const caller =
+      (Array.isArray(forwarded) ? forwarded[0] : forwarded)
+        ?.split(',')[0]
+        ?.trim() ??
+      req.ip ??
+      null;
+    const operation = await this.nodeAccessRecovery.start(
       clusterId,
-      dto?.count ?? 1,
-      undefined,
-      undefined,
-      byOf(req),
+      nodeId,
+      body?.sourceIp ?? caller,
+      byOf(req) ?? 'a person',
     );
-    return {
-      operation_id: operation.id,
-      resource_id: operation.resourceId,
-      status: 'pending',
-      estimated_duration: '3-6 minutes per worker',
-      created_at: operation.createdAt,
-    };
+    return { operation_id: operation.id, status: 'pending' };
   }
 
   @Delete(':id/workers/:nodeId')
@@ -294,12 +317,11 @@ export class ClustersController {
     estimate: '/infrastructure/clusters/:id/capacity-plan',
   })
   @ApiOperation({
-    summary: 'Cordon, drain and remove a worker node',
+    summary: 'Detach a machine you attached yourself',
     description:
-      'Cordons the worker, attempts a kubectl drain (timeout 120s), then deletes the underlying server. ' +
-      'If drain fails (e.g. PDB blocks eviction), the operation completes anyway with ' +
-      'a metadata.warnings entry { code: "DRAIN_FAILED" }. ' +
-      'Cannot be used on the master node or when removing would violate cluster.minNodes.',
+      'Only for a machine a person attached (a BYOS node): drains it and removes it from the cluster. ' +
+      'Every node Flui bought goes back through the scaling group, by lowering its minimum (410 here). ' +
+      'Cannot be used on the master node or below the floor.',
   })
   @ApiParam({ name: 'id', description: 'Cluster ID' })
   @ApiParam({ name: 'nodeId', description: 'Cluster node ID (worker)' })
@@ -311,7 +333,7 @@ export class ClustersController {
     @Param('nodeId') nodeId: string,
     @Req() req: Record<string, unknown>,
   ): Promise<RemoveWorkerResponseDto> {
-    const operation = await this.clusterScalingService.removeWorker(
+    const operation = await this.clusterScalingService.removeAttachedWorker(
       clusterId,
       nodeId,
       byOf(req),

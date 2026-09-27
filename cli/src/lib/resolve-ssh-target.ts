@@ -1,11 +1,16 @@
 import { isControlClusterType } from 'src/modules/infrastructure/clusters/entities/cluster.entity';
 import { ClusterSummary, listClusters } from './cluster-listing';
 import { resolveClusterSshTarget, SshTarget } from './cluster-ssh-target';
+import { ManagementNetworkClient } from './management-network-client';
+
+export const JUMP_USER = 'flui-jump';
 
 export interface ResolvedSshTarget {
   target: SshTarget;
   clusterName: string;
   nodeLabel: string;
+  /** Set when the node is reached through the control, on its Flui network address. */
+  jump?: SshTarget;
 }
 
 /**
@@ -40,7 +45,7 @@ function formatClusterList(clusters: ClusterSummary[]): string {
 function resolveNodeIp(
   cluster: ClusterSummary,
   nodeName: string,
-): { ip: string; label: string } {
+): { ip: string; label: string; serverName?: string } {
   const nodes = cluster.nodes ?? [];
 
   if (nodeName === 'master') {
@@ -51,7 +56,7 @@ function resolveNodeIp(
         `Master of "${cluster.name}" has no IP address yet — it may still be provisioning.`,
       );
     }
-    return { ip, label: 'Master Node' };
+    return { ip, label: 'Master Node', serverName: master?.serverName };
   }
 
   const workerIndex = Number.parseInt(nodeName.replace('worker-', ''), 10);
@@ -66,12 +71,20 @@ function resolveNodeIp(
         `Node "worker-${workerIndex}" not found in "${cluster.name}".`,
       );
     }
-    return { ip: worker.ipAddress, label: `Worker Node ${workerIndex}` };
+    return {
+      ip: worker.ipAddress,
+      label: `Worker Node ${workerIndex}`,
+      serverName: worker.serverName,
+    };
   }
 
   const named = nodes.find((n) => n.serverName === nodeName);
   if (named?.ipAddress) {
-    return { ip: named.ipAddress, label: nodeName };
+    return {
+      ip: named.ipAddress,
+      label: nodeName,
+      serverName: named.serverName,
+    };
   }
 
   const available = nodes
@@ -117,11 +130,57 @@ export async function resolveSshTarget(
     );
   }
 
-  const { ip, label } = resolveNodeIp(cluster, nodeName);
+  const { ip, label, serverName } = resolveNodeIp(cluster, nodeName);
+  const target = resolveClusterSshTarget(cluster, ip);
 
-  return {
-    target: resolveClusterSshTarget(cluster, ip),
-    clusterName: cluster.name,
-    nodeLabel: label,
-  };
+  if (!isControlClusterType(cluster.clusterType)) {
+    const control = clusters.find((c) => isControlClusterType(c.clusterType));
+    const route = await throughControl(cluster, serverName, control);
+    if (route) {
+      return {
+        target: { ...target, host: route.address, port: 22 },
+        jump: route.jump,
+        clusterName: cluster.name,
+        nodeLabel: label,
+      };
+    }
+  }
+
+  return { target, clusterName: cluster.name, nodeLabel: label };
+}
+
+/**
+ * A workload node on the Flui network is reached through the control, on its
+ * network address: the control is the bastion, and a workload's port 22 never
+ * needs to face the internet. Anything that cannot be read leaves the direct
+ * route as it was.
+ */
+async function throughControl(
+  cluster: ClusterSummary,
+  serverName: string | undefined,
+  control: ClusterSummary | undefined,
+): Promise<{ address: string; jump: SshTarget } | null> {
+  const controlHost = control?.masterIpAddress;
+  if (!serverName || !controlHost) return null;
+  try {
+    const network = await ManagementNetworkClient.open().status();
+    if (!network.enabled) return null;
+    const member = network.members.find(
+      (m) =>
+        m.clusterId === cluster.id &&
+        m.nodeName === serverName &&
+        m.status === 'active',
+    );
+    if (!member) return null;
+    const controlTarget = resolveClusterSshTarget(
+      control as ClusterSummary,
+      controlHost,
+    );
+    return {
+      address: member.address,
+      jump: { ...controlTarget, user: JUMP_USER },
+    };
+  } catch {
+    return null;
+  }
 }

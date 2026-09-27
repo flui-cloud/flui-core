@@ -7,6 +7,7 @@ import { NodeType } from '../entities/cluster-node.entity';
 import { EncryptionService } from '../../../shared/encryption/services/encryption.service';
 import { WireGuardPeerService } from '../../networking/services/wireguard-peer.service';
 import { ApiServerSanService } from '../../networking/services/api-server-san.service';
+import { managementNetworkOn } from '../../networking/management-network.state';
 
 const SERVER_LINE = /(\bserver:\s*https:\/\/)([^\s:/]+|\[[^\]]+\])(:\d+)?/;
 const CA_DATA = /certificate-authority-data:\s*(\S+)/;
@@ -39,7 +40,7 @@ export class KubeconfigEndpointPromoter {
   ) {}
 
   async promoteAll(): Promise<number> {
-    if (process.env.FLUI_WG_ENABLED !== 'true') return 0;
+    if (!managementNetworkOn()) return 0;
     const clusters = await this.clusters.find({
       where: { clusterType: ClusterType.WORKLOAD, deletedAt: IsNull() },
       relations: ['nodes'],

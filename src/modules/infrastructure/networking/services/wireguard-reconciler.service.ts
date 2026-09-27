@@ -1,4 +1,10 @@
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  NotFoundException,
+  Optional,
+} from '@nestjs/common';
+import { ModuleRef } from '@nestjs/core';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { ClusterEntity } from '../../clusters/entities/cluster.entity';
@@ -6,6 +12,7 @@ import { HostCommandService } from '../../../providers/core/host/host-command.se
 import { WireGuardPeerService } from './wireguard-peer.service';
 import { pairNodesWithTargets } from './wireguard-node-targets';
 import { WireGuardHubService } from './wireguard-hub.service';
+import { CrossProviderFirewallService } from '../../firewalls/services/cross-provider-firewall.service';
 import {
   APPLIED_MARKER,
   buildApplyScript,
@@ -50,6 +57,7 @@ export class WireGuardReconciler {
     private readonly peerService: WireGuardPeerService,
     private readonly hostCommand: HostCommandService,
     private readonly hub: WireGuardHubService,
+    @Optional() private readonly moduleRef?: ModuleRef,
   ) {}
 
   /**
@@ -77,6 +85,7 @@ export class WireGuardReconciler {
       await this.peerService.revokeMember(peer.nodeId as string);
     }
 
+    const admission = await this.admitOnControl(clusterId);
     const enrolments = await this.enrolCluster(clusterId);
     // Before the members' own configs: a node that just presented a key is not
     // reachable from the hub until the hub's config names it, and waiting for
@@ -85,7 +94,9 @@ export class WireGuardReconciler {
       await this.hub.applyControlConfig();
     const applications = await this.applyCluster(clusterId);
 
-    const failed = [...enrolments, ...applications].filter((o) => o.error);
+    const failed = [...admission, ...enrolments, ...applications].filter(
+      (o) => o.error,
+    );
     return {
       revoked: stale.length,
       enrolled: enrolments.filter((o) => o.publicKey).length,
@@ -93,6 +104,36 @@ export class WireGuardReconciler {
       unsupported: enrolments.filter((o) => o.unsupported).length,
       failed,
     };
+  }
+
+  /**
+   * The control's tunnel port admits only its members, so this cluster's nodes
+   * are let through before they are asked to dial in. A refusal is returned as
+   * an outcome: it is why a node could not reach the control, not a log line.
+   */
+  private async admitOnControl(
+    clusterId: string,
+  ): Promise<NodeEnrolmentOutcome[]> {
+    const firewall = this.moduleRef?.get(CrossProviderFirewallService, {
+      strict: false,
+    });
+    if (!firewall) return [];
+    try {
+      await firewall.admitOverlayMembers(clusterId);
+      return [];
+    } catch (error) {
+      const message = (error as Error).message;
+      this.logger.error(
+        `[wg] control firewall did not admit ${clusterId}: ${message}`,
+      );
+      return [
+        {
+          nodeId: 'control',
+          host: 'control firewall',
+          error: `the control's firewall could not admit this cluster's nodes: ${message}`,
+        },
+      ];
+    }
   }
 
   /**

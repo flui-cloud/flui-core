@@ -139,6 +139,11 @@ export default class EnvCreate extends Command {
         "Skip the confirmation when --node-size is below the documented minimum for a control cluster's own stack (Postgres, Redis, Zitadel, observability all run on this one node — an undersized node may never reach READY).",
       default: false,
     }),
+    'no-flui-network': Flags.boolean({
+      description:
+        'Leave the Flui network off: for a control no other cluster can reach (for example behind NAT) or a host without WireGuard. Clusters on another provider than the control then cannot be created. Switch it later with `flui env overlay enable|disable`.',
+      default: false,
+    }),
     'no-shared-storage': Flags.boolean({
       description:
         'Disable Flui shared storage (NFS+fscache). Default: shared storage enabled — master gets a Volume hosting the NFS export, workers mount it. Disable to fall back to local-path on each node bundled disk.',
@@ -1295,6 +1300,13 @@ export default class EnvCreate extends Command {
 
             const apiBaseUrl = `https://api.${baseDomain}`;
 
+            if (flags['no-flui-network']) {
+              await switchFluiNetworkOff(
+                apiBaseUrl,
+                cluster?.metadata?.fluiApiKey as string | undefined,
+              );
+            }
+
             if (flags['auth-mode'] === 'oidc') {
               const fluiApiKey = cluster?.metadata?.fluiApiKey as
                 | string
@@ -1592,5 +1604,33 @@ export default class EnvCreate extends Command {
     } finally {
       await closeNestApp();
     }
+  }
+}
+
+/** The opt-out is written as the installation's stored state, which a refresh of the installer does not undo. */
+async function switchFluiNetworkOff(
+  apiBaseUrl: string,
+  apiKey: string | undefined,
+): Promise<void> {
+  if (!apiKey) {
+    console.log(
+      chalk.yellow(
+        '⚠ The Flui network was left on: no API key to switch it off with. Run `flui env overlay disable`.',
+      ),
+    );
+    return;
+  }
+  try {
+    await new ApiClient({ baseUrl: `${apiBaseUrl}/api/v1`, apiKey }).put(
+      '/infrastructure/management-network',
+      { enabled: false },
+    );
+    console.log(chalk.green('✅ Flui network left off'));
+  } catch (err: any) {
+    console.log(
+      chalk.yellow(
+        `⚠ The Flui network could not be switched off (${err.message}). Run \`flui env overlay disable\`.`,
+      ),
+    );
   }
 }

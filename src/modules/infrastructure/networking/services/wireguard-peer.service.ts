@@ -24,6 +24,7 @@ import {
   renderWireGuardConfig,
   WG_DEFAULT_PORT,
 } from '../wireguard-config';
+import { managementNetworkOn } from '../management-network.state';
 
 export interface EnrolMemberInput {
   clusterId: string;
@@ -44,6 +45,11 @@ export interface EnrolMemberInput {
  * part be tested without a machine, and it keeps a reconcile that fails
  * halfway from leaving the database describing a world that was never built.
  */
+export interface HandshakeTransition {
+  kind: 'went-quiet' | 'came-back';
+  peer: WireGuardPeerEntity;
+}
+
 @Injectable()
 export class WireGuardPeerService {
   private readonly logger = new Logger(WireGuardPeerService.name);
@@ -176,6 +182,23 @@ export class WireGuardPeerService {
     });
   }
 
+  /** The control's sealed private key, when one has been kept. */
+  async sealedControlKey(): Promise<string | null> {
+    const row = await this.peers
+      .createQueryBuilder('p')
+      .addSelect('p.privateKeySealed')
+      .where('p.role = :role', { role: WireGuardPeerRole.CONTROL })
+      .andWhere('p.revokedAt IS NULL')
+      .getOne();
+    return row?.privateKeySealed ?? null;
+  }
+
+  async sealControlKey(sealed: string): Promise<void> {
+    const control = await this.controlPeer();
+    if (!control) return;
+    await this.peers.update({ id: control.id }, { privateKeySealed: sealed });
+  }
+
   /**
    * Records the control cluster's own end of the overlay.
    *
@@ -193,6 +216,9 @@ export class WireGuardPeerService {
     this.assertPublicKey(params.publicKey);
     const existing = await this.controlPeer();
     if (existing) {
+      // A rebuilt control is a new cluster row carrying the same identity:
+      // the address stays, the row follows the cluster.
+      existing.clusterId = params.clusterId;
       existing.publicKey = params.publicKey;
       existing.endpointHost = params.endpointHost;
       existing.listenPort = params.listenPort ?? WG_DEFAULT_PORT;
@@ -371,7 +397,7 @@ export class WireGuardPeerService {
         control: {
           publicKey: control.publicKey,
           address: control.managementIp,
-          endpoint: `${control.endpointHost}:${control.listenPort ?? WG_DEFAULT_PORT}`,
+          endpoint: controlEndpoint(control),
         },
       }),
     );
@@ -389,7 +415,7 @@ export class WireGuardPeerService {
   async overlayFor(
     clusterId: string,
   ): Promise<{ controlAddress: string; enrolled: boolean } | undefined> {
-    if (process.env.FLUI_WG_ENABLED !== 'true') return undefined;
+    if (!managementNetworkOn()) return undefined;
     const control = await this.controlPeer();
     if (!control) return undefined;
     const live = await this.livePeers();
@@ -414,7 +440,7 @@ export class WireGuardPeerService {
   async nodeOverlayFor(
     nodeId: string,
   ): Promise<{ nodeAddress: string; enrolled: boolean } | undefined> {
-    if (process.env.FLUI_WG_ENABLED !== 'true') return undefined;
+    if (!managementNetworkOn()) return undefined;
     const peer = await this.peers.findOne({
       where: { nodeId, revokedAt: IsNull() },
     });
@@ -476,7 +502,7 @@ export class WireGuardPeerService {
             ? {
                 publicKey: control.publicKey,
                 address: control.managementIp,
-                endpoint: `${control.endpointHost}:${control.listenPort ?? WG_DEFAULT_PORT}`,
+                endpoint: controlEndpoint(control),
               }
             : undefined,
         listenPort: self.listenPort ?? WG_DEFAULT_PORT,
@@ -514,13 +540,13 @@ export class WireGuardPeerService {
   async controlHandshakeDetails(): Promise<
     { publicKey: string; address: string; endpoint: string } | undefined
   > {
-    if (process.env.FLUI_WG_ENABLED !== 'true') return undefined;
+    if (!managementNetworkOn()) return undefined;
     const control = await this.controlPeer();
     if (!control?.publicKey || !control.endpointHost) return undefined;
     return {
       publicKey: control.publicKey,
       address: control.managementIp,
-      endpoint: `${control.endpointHost}:${control.listenPort ?? WG_DEFAULT_PORT}`,
+      endpoint: controlEndpoint(control),
     };
   }
 
@@ -554,18 +580,16 @@ export class WireGuardPeerService {
   }
 
   /** Source addresses the control's firewall must admit on the WireGuard port. */
-  async memberEgressIps(): Promise<string[]> {
-    const members = (await this.livePeers()).filter(
-      (p) => p.role === WireGuardPeerRole.MEMBER && p.endpointHost,
-    );
-    return [...new Set(members.map((m) => `${m.endpointHost}/32`))];
-  }
-
-  async markHandshake(publicKey: string, at: Date | undefined): Promise<void> {
+  /** Records a handshake reading and says whether the peer just went quiet or came back. */
+  async markHandshake(
+    publicKey: string,
+    at: Date | undefined,
+  ): Promise<HandshakeTransition | null> {
     const peer = await this.peers.findOne({
       where: { publicKey, revokedAt: IsNull() },
     });
-    if (!peer) return;
+    if (!peer) return null;
+    const before = peer.status;
     peer.lastHandshakeAt = at ?? peer.lastHandshakeAt ?? null;
     if (at) {
       peer.status = WireGuardPeerStatus.ACTIVE;
@@ -573,6 +597,18 @@ export class WireGuardPeerService {
       peer.status = WireGuardPeerStatus.STALE;
     }
     await this.peers.save(peer);
+    if (peer.role !== WireGuardPeerRole.MEMBER) return null;
+    if (
+      before === WireGuardPeerStatus.ACTIVE &&
+      peer.status === WireGuardPeerStatus.STALE
+    )
+      return { kind: 'went-quiet', peer };
+    if (
+      before === WireGuardPeerStatus.STALE &&
+      peer.status === WireGuardPeerStatus.ACTIVE
+    )
+      return { kind: 'came-back', peer };
+    return null;
   }
 
   private assertPublicKey(value: string): void {
@@ -583,4 +619,34 @@ export class WireGuardPeerService {
       );
     }
   }
+}
+
+/**
+ * Where members dial the control: its name when the installation has one, so a
+ * control rebuilt on another address is found again once DNS follows; its
+ * address otherwise.
+ */
+export function controlEndpoint(
+  control: { endpointHost?: string | null; listenPort?: number | null },
+  env = process.env,
+): string {
+  const host = controlEndpointName(env) ?? control.endpointHost;
+  return `${host}:${control.listenPort ?? WG_DEFAULT_PORT}`;
+}
+
+export function controlEndpointName(env = process.env): string | undefined {
+  const declared = env.FLUI_WG_ENDPOINT_NAME?.trim();
+  if (declared) return declared;
+  let host: string | undefined;
+  try {
+    host = env.API_BASE_URL ? new URL(env.API_BASE_URL).hostname : undefined;
+  } catch {
+    return undefined;
+  }
+  if (!host || host === 'localhost') return undefined;
+  // An address, or a name that only spells one (nip.io, sslip.io), moves with
+  // the address and brings nothing a rebuild could use.
+  if (/^[\d.]+$/.test(host) || host.includes(':')) return undefined;
+  if (/\.(nip|sslip)\.io$/i.test(host)) return undefined;
+  return host;
 }

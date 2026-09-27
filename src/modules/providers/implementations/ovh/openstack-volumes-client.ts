@@ -197,6 +197,62 @@ export class FluiOpenStackClient extends OpenStackClient {
     }
   }
 
+  // ── Rescue: the way back into a node whose network is closed ──
+
+  /**
+   * Boots the server from `imageRef`, keeping its own disk attached but not
+   * mounted. The image must be another distribution: rescued with its own image
+   * the guest mounts its original root by label and boots the locked system.
+   */
+  async rescueServer(
+    region: string,
+    serverId: string,
+    imageRef: string,
+  ): Promise<void> {
+    const nova = await this.endpoint('compute', region);
+    await this.post(`${nova}/servers/${serverId}/action`, {
+      rescue: { rescue_image_ref: imageRef },
+    });
+  }
+
+  async unrescueServer(region: string, serverId: string): Promise<void> {
+    const nova = await this.endpoint('compute', region);
+    try {
+      await this.post(`${nova}/servers/${serverId}/action`, { unrescue: null });
+    } catch (error) {
+      // 202 with an empty body, the same parser trap as os-reboot.
+      if (!(error instanceof SyntaxError)) throw error;
+    }
+  }
+
+  async serverStatus(region: string, serverId: string): Promise<string | null> {
+    const nova = await this.endpoint('compute', region);
+    const body = await this.get<{ server?: { status?: string } }>(
+      `${nova}/servers/${serverId}`,
+    );
+    return body.server?.status ?? null;
+  }
+
+  /** Public images of the region whose name matches, newest first. */
+  async findImages(
+    region: string,
+    name: RegExp,
+  ): Promise<{ id: string; name: string }[]> {
+    const glance = await this.endpoint('image', region);
+    const body = await this.get<{
+      images?: {
+        id: string;
+        name?: string;
+        created_at?: string;
+        visibility?: string;
+      }[];
+    }>(`${glance}/v2/images?visibility=public&status=active&limit=500`);
+    return (body.images ?? [])
+      .filter((image) => image.name && name.test(image.name))
+      .sort((a, b) => (b.created_at ?? '').localeCompare(a.created_at ?? ''))
+      .map((image) => ({ id: image.id, name: image.name as string }));
+  }
+
   // ── Nova volume attachments (join/leave a volume to a server) ──
 
   async listServerVolumeAttachments(

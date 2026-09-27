@@ -23,6 +23,11 @@ import { WireGuardReconciliationScheduler } from './schedulers/wireguard-reconci
 import { HostCommandService } from '../../providers/core/host/host-command.service';
 import { ManagementAddressResolver } from '../shared/services/management-address.resolver';
 import { VNetsService } from '../vnets/services/vnets.service';
+import { EncryptionService } from '../../shared/encryption/services/encryption.service';
+import { ClusterNodeEntity } from '../clusters/entities/cluster-node.entity';
+import { ManagementNetworkService } from './services/management-network.service';
+import { FluiNetworkBellService } from './services/flui-network-bell.service';
+import { UserEntity } from '../../auth/entities/user.entity';
 
 /**
  * Resolves this module's own graph, because the type-checker cannot.
@@ -46,12 +51,17 @@ import { VNetsService } from '../vnets/services/vnets.service';
     WireGuardReconciler,
     WireGuardReconciliationScheduler,
     ApiServerSanService,
+    ManagementNetworkService,
+    FluiNetworkBellService,
     // What NetworkingModule gets from the modules it imports. Listing them is
     // the point: if a class needs something no import supplies, it is missing
     // from here too and the resolution below fails.
     ManagementAddressResolver,
     { provide: HostCommandService, useValue: {} },
     { provide: VNetsService, useValue: {} },
+    { provide: EncryptionService, useValue: {} },
+    { provide: getRepositoryToken(ClusterNodeEntity), useValue: {} },
+    { provide: getRepositoryToken(UserEntity), useValue: {} },
     { provide: getRepositoryToken(WireGuardPeerEntity), useValue: {} },
     { provide: getRepositoryToken(VNetEntity), useValue: {} },
     { provide: getRepositoryToken(ClusterEntity), useValue: {} },

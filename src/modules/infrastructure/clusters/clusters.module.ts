@@ -54,6 +54,7 @@ import { KubeconfigEndpointPromoter } from './services/kubeconfig-endpoint.promo
 import { KubeconfigEndpointScheduler } from './schedulers/kubeconfig-endpoint.scheduler';
 import { ClusterPowerManagementService } from './services/cluster-power-management.service';
 import { ClusterSshCleanupService } from './services/cluster-ssh-cleanup.service';
+import { NodeAccessRecoveryService } from './services/node-access-recovery.service';
 import { K3sScriptService } from './services/k3s-script.service';
 import { ByosNodeJoinService } from './services/byos-node-join.service';
 import { ByosNodeRemovalService } from './services/byos-node-removal.service';
@@ -174,6 +175,7 @@ import { UserEventsModule } from '../../auth/gateway/user-events.module';
     KubeconfigEndpointScheduler,
     ClusterPowerManagementService,
     ClusterSshCleanupService,
+    NodeAccessRecoveryService,
     ClusterBillingService,
     BillingIntervalsService,
     ClusterAutoscaleService,

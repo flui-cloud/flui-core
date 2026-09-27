@@ -1,5 +1,9 @@
 import { BadRequestException } from '@nestjs/common';
-import { WireGuardPeerService } from './wireguard-peer.service';
+import {
+  WireGuardPeerService,
+  controlEndpoint,
+  controlEndpointName,
+} from './wireguard-peer.service';
 import {
   WireGuardPeerRole,
   WireGuardPeerStatus,
@@ -237,27 +241,16 @@ describe('WireGuardPeerService', () => {
     });
   });
 
-  it('lists member egress addresses for the control firewall', async () => {
-    await enrolControl();
-    await svc.enrolMember({
-      clusterId: 'w',
-      nodeId: 'n1',
-      publicKey: KEY_B,
-      endpointHost: '5.6.7.8',
-    });
-    expect(await svc.memberEgressIps()).toEqual(['5.6.7.8/32']);
-  });
-
   describe('overlayFor', () => {
     beforeEach(() => {
       process.env.FLUI_WG_ENABLED = 'true';
     });
     afterEach(() => {
-      delete process.env.FLUI_WG_ENABLED;
+      process.env.FLUI_WG_ENABLED = 'false';
     });
 
     it('is undefined while the overlay is switched off', async () => {
-      delete process.env.FLUI_WG_ENABLED;
+      process.env.FLUI_WG_ENABLED = 'false';
       await enrolControl();
       await expect(svc.overlayFor('w')).resolves.toBeUndefined();
     });
@@ -358,7 +351,7 @@ describe('WireGuardPeerService', () => {
       process.env.FLUI_WG_ENABLED = 'true';
     });
     afterEach(() => {
-      delete process.env.FLUI_WG_ENABLED;
+      process.env.FLUI_WG_ENABLED = 'false';
     });
 
     it('gives a node everything it needs to raise the tunnel unaided', async () => {
@@ -378,7 +371,7 @@ describe('WireGuardPeerService', () => {
     });
 
     it('is undefined while the overlay is off', async () => {
-      delete process.env.FLUI_WG_ENABLED;
+      process.env.FLUI_WG_ENABLED = 'false';
       await enrolControl();
       await expect(svc.controlHandshakeDetails()).resolves.toBeUndefined();
     });
@@ -631,5 +624,37 @@ describe('WireGuardPeerService', () => {
       });
       expect(again.subnetId).toBe('sub-a');
     });
+  });
+});
+
+describe('where members dial the control', () => {
+  it('uses the installation name, so a rebuilt control is found again', () => {
+    expect(
+      controlEndpoint(
+        { endpointHost: '5.6.7.8', listenPort: 51821 },
+        { API_BASE_URL: 'https://api.example.org' },
+      ),
+    ).toBe('api.example.org:51821');
+  });
+
+  it('keeps the address where the name only spells one', () => {
+    expect(
+      controlEndpoint(
+        { endpointHost: '5.6.7.8', listenPort: null },
+        { API_BASE_URL: 'https://api.happy-cat.5-6-7-8.nip.io' },
+      ),
+    ).toBe('5.6.7.8:51821');
+    expect(
+      controlEndpointName({ API_BASE_URL: 'http://localhost:3000' }),
+    ).toBeUndefined();
+  });
+
+  it('prefers a name the operator declared', () => {
+    expect(
+      controlEndpointName({
+        FLUI_WG_ENDPOINT_NAME: 'wg.example.org',
+        API_BASE_URL: 'https://api.example.org',
+      }),
+    ).toBe('wg.example.org');
   });
 });

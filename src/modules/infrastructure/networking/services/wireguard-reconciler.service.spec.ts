@@ -23,7 +23,12 @@ describe('WireGuardReconciler', () => {
     hub = { applyControlConfig: jest.fn() };
   });
 
-  const build = (clusterRow: any, host: any, peerSvc: any = {}) =>
+  const build = (
+    clusterRow: any,
+    host: any,
+    peerSvc: any = {},
+    moduleRef?: any,
+  ) =>
     new WireGuardReconciler(
       { findOne: jest.fn().mockResolvedValue(clusterRow) } as any,
       {
@@ -37,6 +42,7 @@ describe('WireGuardReconciler', () => {
       } as any,
       host as any,
       hub as any,
+      moduleRef,
     );
 
   describe('enrolCluster', () => {
@@ -254,6 +260,57 @@ describe('WireGuardReconciler', () => {
       expect(peerSvc.revokeMember).toHaveBeenCalledWith('gone');
       expect(peerSvc.revokeMember).not.toHaveBeenCalledWith('n1');
       expect(result.revoked).toBe(1);
+    });
+
+    it('admits the cluster on the control before asking its nodes to dial in', async () => {
+      const admit = jest.fn().mockResolvedValue(undefined);
+      const order: string[] = [];
+      admit.mockImplementation(async () => order.push('admit'));
+      const apply = jest.fn(async () => {
+        order.push('enrol');
+        return `${KEY_MARKER}=${KEY_A}\n${READY_MARKER}`;
+      });
+      const svc = build(
+        cluster([{ id: 'n1', ipAddress: '1.1.1.1', metadata: {} }]),
+        { apply },
+        peersOf([]),
+        { get: () => ({ admitOverlayMembers: admit }) },
+      );
+
+      await svc.reconcileCluster('c1');
+
+      expect(admit).toHaveBeenCalledWith('c1');
+      expect(order[0]).toBe('admit');
+    });
+
+    it('reports a control firewall that refused, instead of only logging it', async () => {
+      const svc = build(
+        cluster([{ id: 'n1', ipAddress: '1.1.1.1', metadata: {} }]),
+        {
+          apply: jest
+            .fn()
+            .mockResolvedValue(`${KEY_MARKER}=${KEY_A}\n${READY_MARKER}`),
+        },
+        peersOf([]),
+        {
+          get: () => ({
+            admitOverlayMembers: jest
+              .fn()
+              .mockRejectedValue(new Error('rule limit reached')),
+          }),
+        },
+      );
+
+      const result = await svc.reconcileCluster('c1');
+
+      expect(result.failed).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            host: 'control firewall',
+            error: expect.stringContaining('rule limit reached'),
+          }),
+        ]),
+      );
     });
 
     it('leaves another cluster’s peers alone', async () => {

@@ -56,6 +56,8 @@ import { MaintenanceWindows1789900000000 } from './1789900000000-MaintenanceWind
 import { AppEventMaintenance1789900000001 } from './1789900000001-AppEventMaintenance';
 import { MariadbRestoreStrategy1787600000000 } from './1787600000000-MariadbRestoreStrategy';
 import { BackfillArtifactApplicationId1787500000000 } from './1787500000000-BackfillArtifactApplicationId';
+import { WireGuardHubKeySealed1790000000000 } from './1790000000000-WireGuardHubKeySealed';
+import { RecoverNodeAccessOperation1790000000001 } from './1790000000001-RecoverNodeAccessOperation';
 
 // Explicit array, not a dist glob: nest build webpack-bundles to one file,
 // so a `dist/migrations/*.js` glob resolves to nothing at runtime.
@@ -119,4 +121,6 @@ export const migrations = [
   EndpointCertificateDeferredSince1789800000000,
   MaintenanceWindows1789900000000,
   AppEventMaintenance1789900000001,
+  WireGuardHubKeySealed1790000000000,
+  RecoverNodeAccessOperation1790000000001,
 ];

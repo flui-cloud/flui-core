@@ -35,6 +35,7 @@ import {
   isValidNipHostnameToken,
 } from '../../../dns/utils/nip-token.util';
 import { HostnameMode } from '../../../dns/enums/hostname-mode.enum';
+import { managementNetworkOn } from '../../networking/management-network.state';
 
 /**
  * Service responsible for cluster creation logic
@@ -406,7 +407,7 @@ export class ClusterCreationService {
    * circular.
    */
   private overlayCanBridge(control: ClusterEntity): boolean {
-    if (process.env.FLUI_WG_ENABLED !== 'true') return false;
+    if (!managementNetworkOn()) return false;
     return !!this.managementAddress.publicAddressOf(control);
   }
 
@@ -423,7 +424,7 @@ export class ClusterCreationService {
         clusterType: In([ClusterType.CONTROL, ClusterType.OBSERVABILITY]),
       },
     });
-    const overlayEnabled = process.env.FLUI_WG_ENABLED === 'true';
+    const overlayEnabled = managementNetworkOn();
     const base = {
       provider,
       controlProvider: control?.provider ?? null,
@@ -453,8 +454,8 @@ export class ClusterCreationService {
         `A workload cluster on ${provider} cannot reach this installation's ` +
         `control cluster on ${control.provider}: there is no private path ` +
         `between the two providers. The Flui management overlay provides one ` +
-        `once it is switched on (FLUI_WG_ENABLED) for a control cluster with a ` +
-        `reachable address.`,
+        `once it is switched on (\`flui env overlay enable\`) for a control ` +
+        `cluster with a reachable address.`,
     };
   }
 
@@ -486,7 +487,7 @@ export class ClusterCreationService {
       message:
         `Workload provider '${dto.provider}' does not match the control cluster ` +
         `provider '${verdict.controlProvider}', and no private path between them is ` +
-        `available. Enable the Flui management overlay (FLUI_WG_ENABLED) on an ` +
+        `available. Switch the Flui network on (\`flui env overlay enable\`) on an ` +
         `installation whose control cluster has a reachable address.`,
       details: {
         workloadProvider: dto.provider,

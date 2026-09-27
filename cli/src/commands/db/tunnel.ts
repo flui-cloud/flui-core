@@ -9,6 +9,8 @@ import { listClusters, ClusterSummary } from '../../lib/cluster-listing';
 import { CliSshService } from '../../services/cli-ssh.service';
 import { readSecretKey } from '../../lib/db-secret';
 import { resolveClusterSshTarget } from '../../lib/cluster-ssh-target';
+import { resolveSshTarget } from '../../lib/resolve-ssh-target';
+import { isControlClusterType } from 'src/modules/infrastructure/clusters/entities/cluster.entity';
 import {
   systemDbTarget,
   SYSTEM_DB_TARGET_NAMES,
@@ -131,7 +133,15 @@ export default class DbTunnel extends Command {
       // The foundations always live on the control cluster, which is the one
       // most likely to be BYOS; resolving it for both paths is a no-op anywhere
       // else, since a provisioned cluster resolves to exactly <ip>:22 as root.
-      const sshTarget = resolveClusterSshTarget(dbCluster, masterIp);
+      const direct = resolveClusterSshTarget(dbCluster, masterIp);
+      // A workload on the Flui network is reached through the control, on its
+      // network address; anything else keeps the direct route.
+      const routed = isControlClusterType(dbCluster.clusterType)
+        ? null
+        : await resolveSshTarget(`${dbCluster.name}/master`).catch(() => null);
+      const sshTarget = routed?.jump
+        ? { ...routed.target, jump: routed.jump }
+        : direct;
       spinner.succeed(`${label} → ${dbCluster.name} (${info.namespace})`);
 
       const remoteCommand = this.buildRemoteCommand(
@@ -178,6 +188,7 @@ export default class DbTunnel extends Command {
             host: sshTarget.host,
             username: sshTarget.user,
             port: sshTarget.port,
+            jump: 'jump' in sshTarget ? sshTarget.jump : undefined,
             forwards: [{ localPort, remotePort: localPort }],
             remoteCommand,
             expectedForwardLines: 1,

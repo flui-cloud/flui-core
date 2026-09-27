@@ -1,8 +1,13 @@
 import { WireGuardHubService } from './wireguard-hub.service';
 import { ManagementAddressResolver } from '../../shared/services/management-address.resolver';
-import { KEY_MARKER, READY_MARKER } from '../wireguard-host';
+import {
+  KEY_MARKER,
+  PRIVATE_KEY_MARKER,
+  READY_MARKER,
+} from '../wireguard-host';
 
 const KEY_A = 'h0FoHrdl/fI6kj27RRzbjxQQEqb1Iibt/b3oYbknZtE=';
+const KEY_B = 'cGVlcmtleUJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmI=';
 
 const cluster = (nodes: any[]) => ({
   id: 'c1',
@@ -38,6 +43,8 @@ describe('WireGuardHubService', () => {
             .mockResolvedValue({ managementIp: '10.250.0.1' }),
           renderControlConfig: jest.fn().mockResolvedValue('[Interface]\n'),
           markHandshake: jest.fn(),
+          sealedControlKey: jest.fn().mockResolvedValue(null),
+          sealControlKey: jest.fn(),
         } as any,
         {
           apply: jest
@@ -47,11 +54,67 @@ describe('WireGuardHubService', () => {
         } as any,
         new ManagementAddressResolver(),
         vnets as any,
+        {
+          encrypt: (v: string) => `sealed:${v}`,
+          decrypt: (v: string) => v.replace(/^sealed:/, ''),
+        } as any,
       );
 
       await svc.ensureControlEnd();
 
       expect(vnets.ensureFluiNetwork).toHaveBeenCalled();
+    });
+  });
+
+  describe('the control key survives a rebuild', () => {
+    const master = cluster([
+      { id: 'm', ipAddress: '1.1.1.1', metadata: {}, nodeType: 'master' },
+    ]);
+    const build = (sealed: string | null, output: string) => {
+      const apply = jest.fn().mockResolvedValue(output);
+      const peers = {
+        ensureControlPeer: jest
+          .fn()
+          .mockResolvedValue({ managementIp: '10.250.0.1' }),
+        renderControlConfig: jest.fn().mockResolvedValue('[Interface]\n'),
+        markHandshake: jest.fn(),
+        sealedControlKey: jest.fn().mockResolvedValue(sealed),
+        sealControlKey: jest.fn(),
+      };
+      const svc = new WireGuardHubService(
+        { findOne: jest.fn().mockResolvedValue(master) } as any,
+        peers as any,
+        { apply, run: jest.fn().mockResolvedValue('') } as any,
+        new ManagementAddressResolver(),
+        { ensureFluiNetwork: jest.fn() } as any,
+        {
+          encrypt: (v: string) => `sealed:${v}`,
+          decrypt: (v: string) => v.replace(/^sealed:/, ''),
+        } as any,
+      );
+      return { svc, apply, peers };
+    };
+
+    it('keeps the key the control already has, sealed, the first time', async () => {
+      const { svc, apply, peers } = build(
+        null,
+        `${KEY_MARKER}=${KEY_A}\n${PRIVATE_KEY_MARKER}=${KEY_B}\n${READY_MARKER}`,
+      );
+      await svc.ensureControlEnd();
+      expect(apply.mock.calls[0][1]).toContain(PRIVATE_KEY_MARKER);
+      expect(peers.sealControlKey).toHaveBeenCalledWith(`sealed:${KEY_B}`);
+    });
+
+    it('hands a rebuilt master the kept key instead of a new one', async () => {
+      const { svc, apply, peers } = build(
+        `sealed:${KEY_B}`,
+        `${KEY_MARKER}=${KEY_A}\n${READY_MARKER}`,
+      );
+      await svc.ensureControlEnd();
+      const script = apply.mock.calls[0][1] as string;
+      expect(script).toContain(KEY_B);
+      expect(script).not.toContain(`echo ${PRIVATE_KEY_MARKER}`);
+      expect(peers.sealControlKey).not.toHaveBeenCalled();
     });
   });
 
@@ -63,6 +126,7 @@ describe('WireGuardHubService', () => {
         {} as any,
         new ManagementAddressResolver(),
         { ensureFluiNetwork: jest.fn() } as any,
+        {} as any,
       );
 
     it('withdraws the members of a cluster that no longer exists', async () => {

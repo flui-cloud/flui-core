@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { In, Repository } from 'typeorm';
 import {
   ClusterEntity,
   ClusterStatus,
@@ -9,6 +9,11 @@ import {
 } from '../../clusters/entities/cluster.entity';
 import { FirewallRuleDto } from '../../../providers/dto/firewall.dto';
 import { NodeType } from '../../clusters/entities/cluster-node.entity';
+import {
+  WireGuardPeerRole,
+  WireGuardPeerStatus,
+} from '../../networking/entities/wireguard-peer.entity';
+import { SSH_VIA_CONTROL_RULE } from '../../../providers/core/firewall/nftables-ruleset';
 import { ClusterFirewallEntity } from '../entities/cluster-firewall.entity';
 import { ManagementAddressResolver } from '../../shared/services/management-address.resolver';
 import { WireGuardPeerService } from '../../networking/services/wireguard-peer.service';
@@ -20,6 +25,7 @@ import {
 } from '../../networking/observability-ingest';
 import { FirewallDesiredStateService } from './firewall-desired-state.service';
 import { FirewallReconciliationService } from './firewall-reconciliation.service';
+import { managementNetworkOn } from '../../networking/management-network.state';
 
 /** Marks the dynamic, cluster-topology-derived rules this service owns. */
 const PEER_RULE_PREFIX = 'flui:xprovider:';
@@ -94,17 +100,22 @@ export class CrossProviderFirewallService {
     }
 
     // The one inbound rule the overlay needs anywhere: members dial out and
-    // hold the tunnel open, so only the control cluster has to listen.
-    const wgEgressIps = await this.overlayEgressIps();
+    // hold the tunnel open, so only the control cluster has to listen — and
+    // only to its members.
+    const wgSources = await this.overlaySourcesOrNull();
 
     for (const fw of firewalls) {
       if (!fw.cluster || fw.cluster.status === ClusterStatus.DELETED) continue;
+      const isControl = fw.cluster.id === control.id;
+      // Unreadable members: the control keeps the rule it has rather than
+      // closing the tunnel on everyone for one failed read.
+      if (isControl && wgSources === null) continue;
       try {
         await this.reconcileFirewallPeers(
           fw,
           control,
           crossWorkloadNodeIps,
-          wgEgressIps,
+          wgSources ?? [],
         );
       } catch (err: any) {
         this.logger.error(
@@ -112,6 +123,23 @@ export class CrossProviderFirewallService {
         );
       }
     }
+  }
+
+  /**
+   * Lets the nodes of `clusterId` through the control's tunnel port before they
+   * dial in, and drops members that have left. Throws, so an enrolment can
+   * record why a node could not reach the control.
+   */
+  async admitOverlayMembers(clusterId?: string): Promise<void> {
+    if (!this.overlayEnabled()) return;
+    const control = await this.resolveControlCluster();
+    if (!control) return;
+    const fw = (await this.desiredState.listFirewalls()).find(
+      (f) => f.cluster?.id === control.id,
+    );
+    if (!fw) return;
+    const sources = await this.overlaySources(clusterId ? [clusterId] : []);
+    await this.reconcileFirewallPeers(fw, control, [], sources);
   }
 
   /** Load control-type clusters (with nodes) straight from the repository so a
@@ -187,8 +215,10 @@ export class CrossProviderFirewallService {
       wgEgressIps,
       nodeOverlay,
     );
-    const baseRules = (fw.desiredRules ?? []).filter(
-      (r) => !this.isPeerRule(r),
+    const sshViaControl = await this.sshViaControlRule(cluster, control);
+    if (sshViaControl) peerRules.push(sshViaControl);
+    const baseRules = baseRulesOf(fw, Boolean(sshViaControl), (r) =>
+      this.isPeerRule(r),
     );
     const merged = [...baseRules, ...peerRules];
     // updateAndApplyRules is a no-op when the canonical hash is unchanged, so
@@ -205,25 +235,8 @@ export class CrossProviderFirewallService {
   ): FirewallRuleDto[] {
     if (isControlClusterType(cluster.clusterType)) {
       const rules: FirewallRuleDto[] = [];
-      if (this.overlayEnabled()) {
-        rules.push({
-          description: `${PEER_RULE_PREFIX}wg-listen`,
-          direction: 'in',
-          protocol: 'udp',
-          port: String(this.wgPort()),
-          // Open, deliberately. Scoping this to the egress addresses of peers
-          // already known is circular: a member has to dial in before it can be
-          // known, and cannot dial in until it is. Live consequence — a cluster
-          // whose peer table had just been emptied left the port closed, and the
-          // first new member waited out a firewall pass before it could join.
-          // The same scoping also breaks WireGuard's roaming: a peer whose
-          // public address changes stops being admitted under its old one.
-          // Nothing is lost by opening it. WireGuard authenticates by public
-          // key and answers an unknown peer with silence, so the address was
-          // never the identity — it only narrowed who could be ignored.
-          sourceIps: ['0.0.0.0/0', '::/0'],
-        });
-      }
+      const listen = this.wgListenRule(wgEgressIps);
+      if (listen) rules.push(listen);
       // Unauthenticated ingest stays vnet-only unless explicitly opted in.
       if (!this.publicObsIngestEnabled()) return rules;
       if (crossWorkloadNodeIps.length === 0) return rules;
@@ -294,6 +307,61 @@ export class CrossProviderFirewallService {
     ];
   }
 
+  /**
+   * Only the members: the addresses they dialled in from and the addresses of
+   * their nodes, which Flui knows before a node first dials in. That is what
+   * breaks the circle of "known only after it has joined".
+   */
+  private wgListenRule(sources: string[]): FirewallRuleDto | null {
+    if (!this.overlayEnabled() || !sources.length) return null;
+    return {
+      description: `${PEER_RULE_PREFIX}wg-listen`,
+      direction: 'in',
+      protocol: 'udp',
+      port: String(this.wgPort()),
+      sourceIps: sources,
+    };
+  }
+
+  /**
+   * A workload whose every node is up on the Flui network is reached through
+   * the control, so its port 22 stops facing the internet: only the control's
+   * address is let in (the tunnel itself never shows on a provider firewall,
+   * and a host firewall admits it by interface). The moment any of its nodes
+   * goes quiet this rule is not produced and the public rule comes back on the
+   * same pass.
+   */
+  private async sshViaControlRule(
+    cluster: ClusterEntity,
+    control: ClusterEntity,
+  ): Promise<FirewallRuleDto | null> {
+    if (!this.overlayEnabled() || isControlClusterType(cluster.clusterType))
+      return null;
+    // Every control node: the API can run on any of them, so any is where the
+    // SSH comes from.
+    const controlIps = FirewallReconciliationService.controlEgressIps(control);
+    if (!controlIps.length) return null;
+    // Unreadable members prove nothing about the tunnel: the port stays as it was.
+    const live = await this.wgPeers.livePeers().catch(() => null);
+    if (!live) return null;
+    const members = live.filter(
+      (p) => p.role === WireGuardPeerRole.MEMBER && p.clusterId === cluster.id,
+    );
+    const nodes = (cluster.nodes ?? []).length;
+    if (!members.length || members.length < nodes) return null;
+    if (members.some((p) => p.status !== WireGuardPeerStatus.ACTIVE))
+      return null;
+    return {
+      description: SSH_VIA_CONTROL_RULE,
+      direction: 'in',
+      protocol: 'tcp',
+      port: '22',
+      sourceIps: controlIps.map((ip) =>
+        ip.includes(':') ? `${ip}/128` : `${ip}/32`,
+      ),
+    };
+  }
+
   /** The host the stored kubeconfig names, or nothing if there is none to read. */
   private addressedAt(cluster: ClusterEntity): string | undefined {
     if (!cluster.kubeconfigEncrypted) return undefined;
@@ -317,27 +385,64 @@ export class CrossProviderFirewallService {
   }
 
   /**
-   * Addresses the overlay's peers dial in from, empty when the overlay is off.
-   *
-   * A failure here must not take the whole firewall reconcile with it: the
-   * public rules this service also owns are what keep existing clusters
+   * Addresses the overlay's members may dial in from, or null when they could
+   * not be read. A failure here must not take the whole firewall reconcile with
+   * it: the public rules this service also owns keep existing clusters
    * manageable, and they are not the overlay's to break.
    */
-  private async overlayEgressIps(): Promise<string[]> {
-    if (process.env.FLUI_WG_ENABLED !== 'true') return [];
+  private async overlaySourcesOrNull(): Promise<string[] | null> {
+    if (!this.overlayEnabled()) return [];
     try {
-      return await this.wgPeers.memberEgressIps();
+      return await this.overlaySources();
     } catch (err: any) {
       this.logger.warn(
-        `[fw-xprovider] could not read overlay peers (${err?.message ?? err}) — ` +
-          `leaving the WireGuard port closed this pass`,
+        `[fw-xprovider] could not read overlay members (${err?.message ?? err}) — ` +
+          `keeping the control's tunnel rule as it is this pass`,
       );
-      return [];
+      return null;
     }
   }
 
+  /**
+   * Every live member's last endpoint, plus the public address of every node
+   * of a cluster that has a member — reserved addresses included, so a node is
+   * admitted before its first handshake. A cluster that left has no live peer
+   * and drops out.
+   */
+  private async overlaySources(
+    extraClusterIds: string[] = [],
+  ): Promise<string[]> {
+    const members = (await this.wgPeers.livePeers()).filter(
+      (p) => p.role === WireGuardPeerRole.MEMBER,
+    );
+    const clusterIds = [
+      ...new Set([...members.map((m) => m.clusterId), ...extraClusterIds]),
+    ].filter(Boolean);
+    const clusters = clusterIds.length
+      ? await this.clusterRepository.find({
+          where: { id: In(clusterIds) },
+          relations: ['nodes'],
+        })
+      : [];
+    const hosts = [
+      ...members.map((m) => m.endpointHost),
+      ...clusters
+        .filter(
+          (c) =>
+            !isControlClusterType(c.clusterType) &&
+            c.status !== ClusterStatus.DELETED,
+        )
+        .flatMap((c) => (c.nodes ?? []).map((n) => n.ipAddress)),
+    ]
+      .map((h) => this.trim(h))
+      .filter((h): h is string => !!h);
+    return [...new Set(hosts)]
+      .sort()
+      .map((h) => (h.includes(':') ? `${h}/128` : `${h}/32`));
+  }
+
   private overlayEnabled(): boolean {
-    return process.env.FLUI_WG_ENABLED === 'true';
+    return managementNetworkOn();
   }
 
   private wgPort(): number {
@@ -362,4 +467,22 @@ export class CrossProviderFirewallService {
     }
     return ports.map(String);
   }
+}
+
+/** A rule that opens port 22 to more than the control: the one that goes. */
+function isPublicSsh(rule: FirewallRuleDto): boolean {
+  return (
+    rule.direction === 'in' && rule.protocol === 'tcp' && rule.port === '22'
+  );
+}
+
+/** What the operator wrote, less what this service owns and, once SSH goes through the control, the public 22. */
+function baseRulesOf(
+  fw: ClusterFirewallEntity,
+  sshThroughControl: boolean,
+  isPeerRule: (rule: FirewallRuleDto) => boolean,
+): FirewallRuleDto[] {
+  return (fw.desiredRules ?? []).filter(
+    (r) => !isPeerRule(r) && !(sshThroughControl && isPublicSsh(r)),
+  );
 }

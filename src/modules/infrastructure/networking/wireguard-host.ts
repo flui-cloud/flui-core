@@ -8,6 +8,7 @@ export const KEY_MARKER = 'FLUI_WG_PUBKEY';
 export const READY_MARKER = 'FLUI_WG_READY';
 export const APPLIED_MARKER = 'FLUI_WG_APPLIED';
 export const UNSUPPORTED_MARKER = 'FLUI_WG_UNSUPPORTED';
+export const PRIVATE_KEY_MARKER = 'FLUI_WG_PRIVATE';
 
 const KEY_DIR = '/etc/wireguard';
 const INSTALL_LOG = '/var/log/flui-wg-install.log';
@@ -21,7 +22,20 @@ const INSTALL_LOG = '/var/log/flui-wg-install.log';
  * one. The private key is created here, on the node, with a restrictive umask,
  * and never leaves — Flui only ever learns the public half, from this output.
  */
-export function buildKeyEnrolmentScript(iface: string = WG_INTERFACE): string {
+export interface KeyScriptOptions {
+  /** A key to put back on the host, replacing whatever it has. */
+  restore?: string;
+  /** Print the private key once, so it can be sealed where a rebuild finds it. */
+  capture?: boolean;
+}
+
+export function buildKeyEnrolmentScript(
+  iface: string = WG_INTERFACE,
+  options: KeyScriptOptions = {},
+): string {
+  if (options.restore && !isWireGuardPublicKey(options.restore)) {
+    throw new Error('Refusing to write something that is not a WireGuard key');
+  }
   const key = `${KEY_DIR}/${iface}.key`;
   const pub = `${KEY_DIR}/${iface}.pub`;
   return [
@@ -54,6 +68,14 @@ export function buildKeyEnrolmentScript(iface: string = WG_INTERFACE): string {
     'fi',
     `mkdir -p ${KEY_DIR}`,
     `chmod 700 ${KEY_DIR}`,
+    ...(options.restore
+      ? [
+          `if [ "$(cat ${key} 2>/dev/null)" != '${options.restore}' ]; then`,
+          `  ( umask 077; printf '%s\\n' '${options.restore}' > ${key} )`,
+          `  wg pubkey < ${key} > ${pub}`,
+          'fi',
+        ]
+      : []),
     `if [ ! -s ${key} ]; then`,
     '  ( umask 077; wg genkey > ' + key + ' )',
     `  wg pubkey < ${key} > ${pub}`,
@@ -61,6 +83,7 @@ export function buildKeyEnrolmentScript(iface: string = WG_INTERFACE): string {
     `if [ ! -s ${pub} ]; then wg pubkey < ${key} > ${pub}; fi`,
     `chmod 600 ${key}`,
     `echo ${KEY_MARKER}=$(cat ${pub})`,
+    ...(options.capture ? [`echo ${PRIVATE_KEY_MARKER}=$(cat ${key})`] : []),
     `echo ${READY_MARKER}`,
     // Trailing newline: piped into a shell, a script without one runs its last
     // line into whatever follows — seen live as `FLUI_WG_READYecho ...`.
@@ -142,9 +165,61 @@ export function buildApplyScript(
     `  wg-quick up ${conf}`,
     'fi',
     `systemctl enable wg-quick@${iface} >/dev/null 2>&1 || true`,
+    ...reresolveLines(iface, conf),
     `echo ${APPLIED_MARKER}`,
     '',
   ].join('\n');
+}
+
+const RERESOLVE = '/usr/local/sbin/flui-wg-reresolve';
+const RERESOLVE_CRON = '/etc/cron.d/flui-wg-reresolve';
+
+/**
+ * WireGuard resolves a peer's name once, when the config is loaded. A member
+ * whose control was rebuilt on another address would dial the old one for
+ * ever, so every two minutes a quiet peer named by host gets its name read
+ * again. Installed only where some peer is named rather than addressed.
+ */
+export function buildReresolveScript(
+  iface: string = WG_INTERFACE,
+  conf = `${KEY_DIR}/${iface}.conf`,
+): string {
+  return [
+    '#!/bin/sh',
+    `CONF=${conf}`,
+    'now=$(date +%s)',
+    'pub=""',
+    'while IFS= read -r line; do',
+    '  case "$line" in',
+    '    PublicKey*) pub=$(echo "$line" | sed "s/^[^=]*= *//") ;;',
+    '    Endpoint*)',
+    '      ep=$(echo "$line" | sed "s/^[^=]*= *//")',
+    '      host=${ep%:*}',
+    '      case "$host" in *[a-zA-Z]*) ;; *) continue ;; esac',
+    `      last=$(wg show ${iface} latest-handshakes 2>/dev/null | awk -v k="$pub" '$1==k {print $2}')`,
+    '      if [ -z "$last" ] || [ $((now - last)) -gt 150 ]; then',
+    `        wg set ${iface} peer "$pub" endpoint "$ep" >/dev/null 2>&1 || true`,
+    '      fi',
+    '      ;;',
+    '  esac',
+    'done < "$CONF"',
+    '',
+  ].join('\n');
+}
+
+function reresolveLines(iface: string, conf: string): string[] {
+  const script = Buffer.from(buildReresolveScript(iface), 'utf-8').toString(
+    'base64',
+  );
+  return [
+    `if grep -Eq '^Endpoint *= *[^0-9[:space:]]' ${conf}; then`,
+    `  echo '${script}' | base64 -d > ${RERESOLVE}`,
+    `  chmod 755 ${RERESOLVE}`,
+    `  echo '*/2 * * * * root ${RERESOLVE}' > ${RERESOLVE_CRON}`,
+    'else',
+    `  rm -f ${RERESOLVE_CRON}`,
+    'fi',
+  ];
 }
 
 export interface WireGuardPeerState {
@@ -237,4 +312,16 @@ export function extractPublicKey(output: string): string | undefined {
     .slice(KEY_MARKER.length + 1)
     .trim();
   return isWireGuardPublicKey(value) ? value : undefined;
+}
+
+/** The private key a capture printed, if it is one. */
+export function extractPrivateKey(output: string): string | undefined {
+  const line = output
+    .split('\n')
+    .find((l) => l.trim().startsWith(`${PRIVATE_KEY_MARKER}=`));
+  const value = line
+    ?.trim()
+    .slice(PRIVATE_KEY_MARKER.length + 1)
+    .trim();
+  return value && isWireGuardPublicKey(value) ? value : undefined;
 }

@@ -9,6 +9,8 @@ import {
 } from '../../clusters/entities/cluster.entity';
 import { WireGuardReconciler } from '../services/wireguard-reconciler.service';
 import { WireGuardHubService } from '../services/wireguard-hub.service';
+import { FluiNetworkBellService } from '../services/flui-network-bell.service';
+import { managementNetworkOn } from '../management-network.state';
 
 /**
  * Brings every cluster's overlay back to its desired state on a loop.
@@ -21,7 +23,7 @@ import { WireGuardHubService } from '../services/wireguard-hub.service';
  * loop covers all of them and cannot forget one; six hooks would eventually
  * disagree with each other.
  *
- * Off unless `FLUI_WG_ENABLED` — and a no-op besides on installations whose
+ * Off while the Flui network is switched off — and a no-op besides on installations whose
  * clusters all share a private network, since none of them need the overlay.
  */
 @Injectable()
@@ -34,11 +36,12 @@ export class WireGuardReconciliationScheduler {
     private readonly clusters: Repository<ClusterEntity>,
     private readonly reconciler: WireGuardReconciler,
     private readonly hub: WireGuardHubService,
+    private readonly bell: FluiNetworkBellService,
   ) {}
 
   @Cron(process.env.FLUI_WG_RECONCILE_CRON || CronExpression.EVERY_10_MINUTES)
   async tick(): Promise<void> {
-    if (process.env.FLUI_WG_ENABLED !== 'true') return;
+    if (!managementNetworkOn()) return;
     // SSH to every node of every cluster is not quick; overlapping ticks would
     // fight over the same interfaces.
     if (this.running) return;
@@ -73,8 +76,21 @@ export class WireGuardReconciliationScheduler {
     // logged and the pass continues — the workload loop below refuses on its
     // own when the control has no key, and one unreachable control should not
     // also cost the diagnostics the rest of the pass produces.
+    let quiet = new Set<string>();
     try {
       const control = await this.hub.ensureControlEnd();
+      if (control) {
+        const wentQuiet = control.transitions.filter(
+          (t) => t.kind === 'went-quiet',
+        );
+        quiet = new Set(wentQuiet.map((t) => t.peer.clusterId));
+        for (const t of wentQuiet) {
+          this.logger.warn(
+            `[wg-reconcile] ${t.peer.managementIp} (cluster ${t.peer.clusterId}) went quiet — repairing it first`,
+          );
+        }
+        await this.bell.ring(control.transitions);
+      }
       if (!control) {
         this.logger.warn(
           `[wg-reconcile] the control cluster has no end of the overlay — ` +
@@ -99,7 +115,12 @@ export class WireGuardReconciliationScheduler {
       },
     });
 
-    for (const cluster of clusters) {
+    // A cluster whose tunnel just went quiet is repaired before the rest.
+    const ordered = [
+      ...clusters.filter((c) => quiet.has(c.id)),
+      ...clusters.filter((c) => !quiet.has(c.id)),
+    ];
+    for (const cluster of ordered) {
       try {
         const result = await this.reconciler.reconcileCluster(cluster.id);
         const touched =

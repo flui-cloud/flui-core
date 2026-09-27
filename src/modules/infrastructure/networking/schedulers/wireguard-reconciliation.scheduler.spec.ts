@@ -17,7 +17,9 @@ describe('WireGuardReconciliationScheduler', () => {
       publicKey: 'k',
       host: '1.1.1.1',
       applied: true,
+      transitions: [],
     }),
+    ring = jest.fn(),
   ) => {
     reconcileCluster.mockResolvedValue(ok);
     const revokeOrphanPeers = jest.fn().mockResolvedValue(0);
@@ -25,15 +27,23 @@ describe('WireGuardReconciliationScheduler', () => {
       { find: jest.fn().mockResolvedValue(clusters) } as any,
       { reconcileCluster } as any,
       { ensureControlEnd, revokeOrphanPeers } as any,
+      { ring } as any,
     );
-    return { scheduler, reconcileCluster, ensureControlEnd, revokeOrphanPeers };
+    return {
+      scheduler,
+      reconcileCluster,
+      ensureControlEnd,
+      revokeOrphanPeers,
+      ring,
+    };
   };
 
   afterEach(() => {
-    delete process.env.FLUI_WG_ENABLED;
+    process.env.FLUI_WG_ENABLED = 'false';
   });
 
   it('does nothing at all while the overlay is switched off', async () => {
+    process.env.FLUI_WG_ENABLED = 'false';
     const { scheduler, reconcileCluster } = build([{ id: 'c1', name: 'a' }]);
     await scheduler.tick();
     expect(reconcileCluster).not.toHaveBeenCalled();
@@ -182,6 +192,7 @@ describe('WireGuardReconciliationScheduler', () => {
         ensureControlEnd: jest.fn().mockResolvedValue(undefined),
         revokeOrphanPeers: jest.fn().mockResolvedValue(0),
       } as any,
+      { ring: jest.fn() } as any,
     );
 
     await scheduler.tick();
@@ -189,5 +200,50 @@ describe('WireGuardReconciliationScheduler', () => {
     const where = find.mock.calls[0][0].where;
     expect(where.status).toBe('ready');
     expect(JSON.stringify(where.clusterType)).toContain('workload');
+  });
+
+  it('repairs a cluster whose tunnel went quiet before the others, and rings the bell', async () => {
+    process.env.FLUI_WG_ENABLED = 'true';
+    const transitions = [
+      {
+        kind: 'went-quiet',
+        peer: { clusterId: 'c2', managementIp: '10.250.0.3' },
+      },
+    ];
+    const order: string[] = [];
+    const reconcileCluster = jest.fn(async (id: string) => {
+      order.push(id);
+      return {
+        enrolled: 0,
+        applied: 1,
+        revoked: 0,
+        unsupported: 0,
+        failed: [],
+      };
+    });
+    const ring = jest.fn();
+    const scheduler = new WireGuardReconciliationScheduler(
+      {
+        find: jest.fn().mockResolvedValue([
+          { id: 'c1', name: 'a' },
+          { id: 'c2', name: 'b' },
+        ]),
+      } as any,
+      { reconcileCluster } as any,
+      {
+        ensureControlEnd: jest.fn().mockResolvedValue({
+          address: '10.250.0.1',
+          applied: true,
+          transitions,
+        }),
+        revokeOrphanPeers: jest.fn().mockResolvedValue(0),
+      } as any,
+      { ring } as any,
+    );
+
+    await scheduler.tick();
+
+    expect(order).toEqual(['c2', 'c1']);
+    expect(ring).toHaveBeenCalledWith(transitions);
   });
 });

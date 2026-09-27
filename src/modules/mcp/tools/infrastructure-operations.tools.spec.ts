@@ -181,11 +181,6 @@ describe('what the person is asked, and with what attached', () => {
    */
   it.each([
     [
-      'POST /infrastructure/clusters/:id/workers',
-      '/infrastructure/clusters/:id/capacity-plan',
-      'cluster_capacity_plan',
-    ],
-    [
       'DELETE /infrastructure/clusters/:id/workers/:nodeId',
       '/infrastructure/clusters/:id/capacity-plan',
       'cluster_capacity_plan',
@@ -235,17 +230,23 @@ describe('what the person is asked, and with what attached', () => {
     const unbound = writes
       .flatMap((t) => t.routes ?? [])
       .filter((a) => a !== 'POST /infrastructure/clusters')
+      // One switch for the whole installation: there is no resource to bind.
+      .filter((a) => a !== 'PUT /infrastructure/management-network')
       .filter((a) => !CYCLED.get(a)?.bound);
     expect(unbound.sort()).toEqual([]);
   });
 });
 
 describe('the destructive flag, and the line that is not crossed', () => {
-  it('marks removing a node destructive and nothing else', () => {
+  it('marks removing a node and the emergency access to one destructive, and nothing else', () => {
     const destructive = INFRASTRUCTURE_OPERATION_TOOLS.filter(
       (t) => SCOPE_TIER[t.scope] === 'destructive',
     ).map((t) => t.name);
-    expect(destructive).toEqual(['cluster_node_remove']);
+    // Recovering access reboots a node twice, or opens its port 22.
+    expect(destructive.sort()).toEqual([
+      'cluster_node_recover_access',
+      'cluster_node_remove',
+    ]);
   });
 
   it('hides it while the server-wide flag is off, and shows it once it is on', () => {
@@ -357,8 +358,8 @@ describe('a pending request on a machine-room call', () => {
             undefined,
             {
               proposalId: 'p-9',
-              action: 'POST /infrastructure/clusters/:id/workers',
-              sentence: 'add worker nodes to cluster c1',
+              action: 'POST /infrastructure/clusters/:id/storage/expand',
+              sentence: 'grow the shared storage of cluster c1',
               offersAlways: true,
               decideUrl: 'https://console.test/agents/requests/p-9',
               estimateWithheld: true,
@@ -380,12 +381,12 @@ describe('a pending request on a machine-room call', () => {
   };
 
   const tool = INFRASTRUCTURE_OPERATION_TOOLS.find(
-    (t) => t.name === 'cluster_node_add',
+    (t) => t.name === 'cluster_storage_expand',
   ) as ToolDef;
 
   it('comes back as a wait pointing at the page, not as a failure', async () => {
     const calls: string[] = [];
-    const result = await runTool(ctx(calls), tool, { count: 1 });
+    const result = await runTool(ctx(calls), tool, { targetSizeGb: 50 });
 
     expect(isInputRequired(result)).toBe(true);
     expect((result as { isError?: boolean }).isError).toBeUndefined();
@@ -401,7 +402,7 @@ describe('a pending request on a machine-room call', () => {
 
   it('changed nothing on the way — the wait is the whole outcome', async () => {
     const calls: string[] = [];
-    await runTool(ctx(calls), tool, { count: 1 });
+    await runTool(ctx(calls), tool, { targetSizeGb: 50 });
     // Resolving the sole cluster is the only thing it managed to do.
     expect(calls).toEqual(['GET /infrastructure/clusters']);
   });

@@ -9,10 +9,16 @@ import { WireGuardHubService } from './services/wireguard-hub.service';
 import { ApiServerSanService } from './services/api-server-san.service';
 import { WireGuardReconciliationScheduler } from './schedulers/wireguard-reconciliation.scheduler';
 import { ClusterEntity } from '../clusters/entities/cluster.entity';
+import { ClusterNodeEntity } from '../clusters/entities/cluster-node.entity';
+import { ManagementNetworkService } from './services/management-network.service';
+import { FluiNetworkBellService } from './services/flui-network-bell.service';
+import { UserEntity } from '../../auth/entities/user.entity';
+import { ManagementNetworkController } from './controllers/management-network.controller';
 import { InfrastructureOperationEntity } from '../servers/entities/infrastructure-operations.entity';
 import { ProvidersModule } from '../../providers/providers.module';
 import { SharedInfrastructureModule } from '../shared/shared-infrastructure.module';
 import { VNetsModule } from '../vnets/vnets.module';
+import { EncryptionModule } from '../../shared/encryption/encryption.module';
 
 /**
  * The management overlay: who is on it, at which address, with which key.
@@ -27,6 +33,8 @@ import { VNetsModule } from '../vnets/vnets.module';
       WireGuardPeerEntity,
       VNetEntity,
       ClusterEntity,
+      ClusterNodeEntity,
+      UserEntity,
       InfrastructureOperationEntity,
     ]),
     // Enrolling an existing cluster restarts K3s on its master: minutes long,
@@ -40,8 +48,13 @@ import { VNetsModule } from '../vnets/vnets.module';
     // The overlay is a network, and an operator looking for it looks in VNet
     // management. Nothing else here creates that row.
     VNetsModule,
+    // The control's key is kept sealed, so a rebuilt control is the same peer.
+    EncryptionModule,
   ],
+  controllers: [ManagementNetworkController],
   providers: [
+    ManagementNetworkService,
+    FluiNetworkBellService,
     WireGuardPeerService,
     WireGuardHubService,
     WireGuardReconciler,
@@ -49,6 +62,7 @@ import { VNetsModule } from '../vnets/vnets.module';
     ApiServerSanService,
   ],
   exports: [
+    ManagementNetworkService,
     WireGuardPeerService,
     WireGuardHubService,
     WireGuardReconciler,

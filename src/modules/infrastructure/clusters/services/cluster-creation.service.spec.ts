@@ -262,7 +262,7 @@ describe('ClusterCreationService.createCluster — provider policies', () => {
 
   describe('the cross-provider gate is about the path, not the provider', () => {
     afterEach(() => {
-      delete process.env.FLUI_WG_ENABLED;
+      process.env.FLUI_WG_ENABLED = 'false';
     });
 
     const control = (masterIpAddress: string | null) => ({
@@ -289,6 +289,7 @@ describe('ClusterCreationService.createCluster — provider policies', () => {
       });
 
     it('refuses when no private path exists', async () => {
+      process.env.FLUI_WG_ENABLED = 'false';
       const { service } = setup('1.2.3.4');
       await expect(service.createCluster(dto as never)).rejects.toBeInstanceOf(
         BadRequestException,
@@ -312,6 +313,7 @@ describe('ClusterCreationService.createCluster — provider policies', () => {
     });
 
     it('says the same before anything is created, with the reason', async () => {
+      process.env.FLUI_WG_ENABLED = 'false';
       const { service } = setup('1.2.3.4');
       const verdict = await service.workloadProviderVerdict(CloudProvider.OVH);
       expect(verdict).toMatchObject({

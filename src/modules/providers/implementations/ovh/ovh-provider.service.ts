@@ -392,6 +392,43 @@ export class OvhProviderService implements ICloudProvider {
     return client.getConsoleOutput(details.location, serverId, length);
   }
 
+  /**
+   * Boots a node from a Debian image found by name in its region, leaving its
+   * own disk attached and unmounted — the path verified in
+   * internal-docs/OVH_PROVIDER_NOTES.md §5. Never the default image: rescued
+   * with its own image a node boots the very system it is being rescued from.
+   */
+  async rescueForRecovery(
+    serverId: string,
+  ): Promise<{ region: string; image: string }> {
+    const svc = await this.delegate();
+    const details = await svc.getServerDetailsAsDto(serverId);
+    if (!details)
+      throw new NotFoundException(`OVH server ${serverId} not found.`);
+    const client = await this.client();
+    const [image] = await client.findImages(
+      details.location,
+      /^Debian 1[2-9]$/i,
+    );
+    if (!image) {
+      throw new Error(
+        `No Debian image is published in ${details.location}, so this node cannot be rescued automatically`,
+      );
+    }
+    await client.rescueServer(details.location, serverId, image.id);
+    return { region: details.location, image: image.name };
+  }
+
+  async unrescue(serverId: string, region: string): Promise<void> {
+    const client = await this.client();
+    await client.unrescueServer(region, serverId);
+  }
+
+  async rescueStatus(serverId: string, region: string): Promise<string | null> {
+    const client = await this.client();
+    return client.serverStatus(region, serverId);
+  }
+
   async createServer(
     config: CreateServerConfig,
   ): Promise<ServerCreationResult> {

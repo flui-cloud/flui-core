@@ -5,6 +5,7 @@ import {
   ClusterEntity,
   ClusterStatus,
   ClusterType,
+  isControlClusterType,
 } from '../../clusters/entities/cluster.entity';
 import {
   ClusterNodeEntity,
@@ -13,7 +14,10 @@ import {
 import { ManagementAddressResolver } from '../../shared/services/management-address.resolver';
 import { HostCommandService } from '../../../providers/core/host/host-command.service';
 import { HostTarget } from '../../../providers/core/host/host-targets';
-import { WireGuardPeerService } from './wireguard-peer.service';
+import {
+  HandshakeTransition,
+  WireGuardPeerService,
+} from './wireguard-peer.service';
 import { VNetsService } from '../../vnets/services/vnets.service';
 import { pairNodesWithTargets } from './wireguard-node-targets';
 import {
@@ -23,11 +27,20 @@ import {
   WireGuardInterfaceState,
   buildApplyScript,
   buildKeyEnrolmentScript,
+  extractPrivateKey,
   extractPublicKey,
   isHandshakeFresh,
   parseWireGuardDump,
 } from '../wireguard-host';
 import { WG_INTERFACE } from '../wireguard-config';
+import {
+  JUMP_APPLIED_MARKER,
+  JUMP_REFUSED_MARKER,
+  JUMP_UNCHANGED_MARKER,
+  buildJumpHostScript,
+} from '../jump-host';
+import { WireGuardPeerRole } from '../entities/wireguard-peer.entity';
+import { EncryptionService } from '../../../shared/encryption/services/encryption.service';
 
 export interface ControlEndState {
   address: string;
@@ -37,6 +50,10 @@ export interface ControlEndState {
   /** Members the control has seen a recent handshake from. */
   fresh: number;
   stale: number;
+  /** Members that went quiet or came back in this reading. */
+  transitions: HandshakeTransition[];
+  /** The control as the way in to workload nodes: `applied`, `unchanged`, or why not. */
+  jumpHost: string;
 }
 
 /**
@@ -59,6 +76,7 @@ export class WireGuardHubService {
     private readonly hostCommand: HostCommandService,
     private readonly managementAddress: ManagementAddressResolver,
     private readonly vnets: VNetsService,
+    private readonly encryption: EncryptionService,
   ) {}
 
   /**
@@ -93,11 +111,29 @@ export class WireGuardHubService {
       );
     }
 
+    // The key is the control's identity on the network: kept sealed so a
+    // rebuilt master is handed the same one and no member needs re-keying.
+    const sealed = await this.peerService.sealedControlKey();
+    let restore: string | undefined;
+    if (sealed) {
+      try {
+        restore = this.encryption.decrypt(sealed);
+      } catch (error) {
+        this.logger.error(
+          `[wg] the kept control key cannot be opened (${(error as Error).message}) — leaving the master's key as it is`,
+        );
+      }
+    }
+
     let publicKey: string;
+    let captured: string | undefined;
     try {
       const out = await this.hostCommand.apply(
         paired.target,
-        buildKeyEnrolmentScript(),
+        buildKeyEnrolmentScript(WG_INTERFACE, {
+          restore,
+          capture: !sealed,
+        }),
         READY_MARKER,
         { timeoutMs: 180_000 },
       );
@@ -110,6 +146,7 @@ export class WireGuardHubService {
       const key = extractPublicKey(out);
       if (!key) return undefined;
       publicKey = key;
+      captured = extractPrivateKey(out);
     } catch (error) {
       this.logger.error(
         `[wg] could not read the control cluster's key: ${(error as Error).message}`,
@@ -122,8 +159,13 @@ export class WireGuardHubService {
       publicKey,
       endpointHost,
     });
+    if (captured) {
+      await this.peerService.sealControlKey(this.encryption.encrypt(captured));
+      this.logger.log('[wg] the control key is now kept, sealed');
+    }
 
     const applied = await this.applyControlConfig(paired.target);
+    const jumpHost = await this.ensureJumpHost(paired.target);
 
     // Read here because this is the one place already holding the control's
     // endpoint, and nothing downstream may act on a peer until it has
@@ -135,8 +177,60 @@ export class WireGuardHubService {
       publicKey,
       host: paired.target.host,
       applied,
+      jumpHost,
       ...health,
     };
+  }
+
+  /**
+   * The control master lets a person through to a workload node on its Flui
+   * network address, and nowhere else. Refused changes are reported, never
+   * forced: the script keeps nothing that would alter how root logs in.
+   */
+  private async ensureJumpHost(target: HostTarget): Promise<string> {
+    try {
+      const members = await this.memberAddresses();
+      const out = await this.hostCommand.run(
+        target,
+        buildJumpHostScript(members),
+        {
+          timeoutMs: 60_000,
+        },
+      );
+      if (out.includes(JUMP_APPLIED_MARKER)) return 'applied';
+      if (out.includes(JUMP_UNCHANGED_MARKER)) return 'unchanged';
+      const refused = out
+        .split('\n')
+        .find((l) => l.startsWith(JUMP_REFUSED_MARKER))
+        ?.slice(JUMP_REFUSED_MARKER.length)
+        .trim();
+      const reason = refused || 'the script did not finish';
+      this.logger.warn(
+        `[wg] the control did not take the jump user: ${reason}`,
+      );
+      return `refused: ${reason}`;
+    } catch (error) {
+      const message = (error as Error).message;
+      this.logger.warn(`[wg] the jump user could not be set up: ${message}`);
+      return `failed: ${message}`;
+    }
+  }
+
+  private async memberAddresses(): Promise<string[]> {
+    const clusters = await this.clusters.find({
+      select: { id: true, clusterType: true },
+    });
+    const onControl = new Set(
+      clusters
+        .filter((c) => isControlClusterType(c.clusterType))
+        .map((c) => c.id),
+    );
+    return (await this.peerService.livePeers())
+      .filter(
+        (p) =>
+          p.role === WireGuardPeerRole.MEMBER && !onControl.has(p.clusterId),
+      )
+      .map((p) => p.managementIp);
   }
 
   /**
@@ -251,28 +345,32 @@ export class WireGuardHubService {
    * tunnel" is asking about a member, and the only host that can answer for all
    * of them is the one they all dial.
    */
-  async refreshFromControl(
-    target: HostTarget,
-  ): Promise<{ fresh: number; stale: number }> {
+  async refreshFromControl(target: HostTarget): Promise<{
+    fresh: number;
+    stale: number;
+    transitions: HandshakeTransition[];
+  }> {
     let fresh = 0;
     let stale = 0;
+    const transitions: HandshakeTransition[] = [];
     try {
       const state = await this.readState(target);
       for (const peer of state.peers) {
         const ok = isHandshakeFresh(peer);
         if (ok) fresh += 1;
         else stale += 1;
-        await this.peerService.markHandshake(
+        const transition = await this.peerService.markHandshake(
           peer.publicKey,
           ok ? peer.latestHandshakeAt : undefined,
         );
+        if (transition) transitions.push(transition);
       }
     } catch (error) {
       this.logger.warn(
         `[wg] could not read the control's state: ${(error as Error).message}`,
       );
     }
-    return { fresh, stale };
+    return { fresh, stale, transitions };
   }
 
   /**

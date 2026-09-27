@@ -8,6 +8,7 @@ import {
   ClusterType,
 } from '../entities/cluster.entity';
 import { TelemetryEndpointReconciler } from '../services/telemetry-endpoint.reconciler';
+import { managementNetworkOn } from '../../networking/management-network.state';
 
 /**
  * Keeps every workload cluster pushing its telemetry at an address that is
@@ -38,7 +39,12 @@ export class TelemetryEndpointScheduler {
       CronExpression.EVERY_30_MINUTES,
   )
   async tick(): Promise<void> {
-    if (process.env.FLUI_TELEMETRY_RECONCILE !== 'true') return;
+    // The Flui network on means telemetry rides it; the variable only opts out.
+    if (
+      !managementNetworkOn() ||
+      process.env.FLUI_TELEMETRY_RECONCILE === 'false'
+    )
+      return;
     // Rewriting Vector's config over SSH on every node is not quick, and two
     // passes would fight over the same file.
     if (this.running) return;

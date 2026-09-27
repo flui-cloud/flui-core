@@ -121,6 +121,38 @@ function renderInboundRule(rule: FirewallRule): string[] {
   return lines;
 }
 
+/**
+ * Marks the rule that says a workload is reached through the control: while it
+ * is present the host lets SSH in over the Flui network and from the control's
+ * address only, instead of from anywhere.
+ */
+export const SSH_VIA_CONTROL_RULE = 'flui:xprovider:ssh-via-control';
+
+function sshThroughControl(
+  ports: number[],
+  sources: string[],
+  wgIface: string | undefined,
+): string[] {
+  const { v4, v6 } = classifySources(sources);
+  return ports.flatMap((p) => [
+    ...(wgIface
+      ? [
+          `\t\tiifname "${wgIface}" tcp dport ${p} accept comment "ssh over the Flui network"`,
+        ]
+      : []),
+    ...(v4.length
+      ? [
+          `\t\tip saddr { ${v4.join(', ')} } tcp dport ${p} accept comment "ssh from the control"`,
+        ]
+      : []),
+    ...(v6.length
+      ? [
+          `\t\tip6 saddr { ${v6.join(', ')} } tcp dport ${p} accept comment "ssh from the control"`,
+        ]
+      : []),
+  ]);
+}
+
 export function renderFluiNftRuleset(
   rules: FirewallRule[],
   options: NftRenderOptions,
@@ -164,9 +196,14 @@ export function renderFluiNftRuleset(
 
   const sshPorts = [...new Set((options.sshPorts ?? []).filter(isUsablePort))];
   if (!sshPorts.length) sshPorts.push(22);
-  const sshLines = sshPorts.map(
-    (p) => `\t\ttcp dport ${p} accept comment "ssh anti-lockout"`,
+  const viaControl = rules.find(
+    (r) => r.direction === 'in' && r.description === SSH_VIA_CONTROL_RULE,
   );
+  const sshLines = viaControl
+    ? sshThroughControl(sshPorts, viaControl.sourceIps ?? [], wgIface)
+    : sshPorts.map(
+        (p) => `\t\ttcp dport ${p} accept comment "ssh anti-lockout"`,
+      );
 
   const body = [
     '#!/usr/sbin/nft -f',

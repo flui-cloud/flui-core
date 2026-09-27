@@ -13,10 +13,14 @@ import {
   APPLIED_MARKER,
   buildApplyScript,
   buildKeyEnrolmentScript,
+  buildReresolveScript,
+  extractPrivateKey,
   extractPublicKey,
   isHandshakeFresh,
   KEY_MARKER,
   parseWireGuardDump,
+  PRIVATE_KEY_MARKER,
+  READY_MARKER,
   UNSUPPORTED_MARKER,
 } from './wireguard-host';
 import {
@@ -379,5 +383,72 @@ describe('extractPublicKey', () => {
 
   it('returns nothing when the marker is absent', () => {
     expect(extractPublicKey('installed ok')).toBeUndefined();
+  });
+});
+
+describe('the control key kept across a rebuild', () => {
+  const KEY = 'h0FoHrdl/fI6kj27RRzbjxQQEqb1Iibt/b3oYbknZtE=';
+
+  it('writes the kept key back when the host has another one', () => {
+    const script = buildKeyEnrolmentScript('flui0', { restore: KEY });
+    expect(script).toContain(`!= '${KEY}'`);
+    expect(script).toContain(
+      `printf '%s\\n' '${KEY}' > /etc/wireguard/flui0.key`,
+    );
+  });
+
+  it('refuses to write something that is not a key', () => {
+    expect(() =>
+      buildKeyEnrolmentScript('flui0', { restore: "x'; rm -rf / #" }),
+    ).toThrow('not a WireGuard key');
+  });
+
+  it('prints the private key only when asked to keep it, and before the ready line', () => {
+    const plain = buildKeyEnrolmentScript('flui0');
+    expect(plain).not.toContain(PRIVATE_KEY_MARKER);
+    const capture = buildKeyEnrolmentScript('flui0', { capture: true });
+    expect(capture.indexOf(PRIVATE_KEY_MARKER)).toBeLessThan(
+      capture.indexOf(`echo ${READY_MARKER}`),
+    );
+    expect(
+      extractPrivateKey(`FLUI_WG_PUBKEY=x\n${PRIVATE_KEY_MARKER}=${KEY}\n`),
+    ).toBe(KEY);
+  });
+});
+
+describe('a member reads the control name again when the tunnel goes quiet', () => {
+  const run = (lastHandshakeAgo: number | null, endpoint: string) => {
+    const dir = mkdtempSync(join(tmpdir(), 'flui-reresolve-'));
+    const conf = join(dir, 'flui0.conf');
+    const log = join(dir, 'wg.log');
+    writeFileSync(
+      conf,
+      `[Interface]\nAddress = 10.250.0.2/32\n\n[Peer]\nPublicKey = ${KEY_A}\nEndpoint = ${endpoint}\nAllowedIPs = 10.250.0.1/32\n`,
+    );
+    const now = Math.floor(Date.now() / 1000);
+    const handshake = lastHandshakeAgo === null ? 0 : now - lastHandshakeAgo;
+    writeFileSync(
+      join(dir, 'wg'),
+      `#!/bin/sh\nif [ "$1" = show ]; then printf '%s\\t%s\\n' '${KEY_A}' '${handshake}'; else echo "$@" >> ${log}; fi\n`,
+      { mode: 0o755 },
+    );
+    const script = join(dir, 'reresolve.sh');
+    writeFileSync(script, buildReresolveScript('flui0', conf), { mode: 0o755 });
+    execFileSync('sh', [script], { env: { PATH: `${dir}:/usr/bin:/bin` } });
+    return existsSync(log) ? readFileSync(log, 'utf-8') : '';
+  };
+
+  it('sets the endpoint again from its name after a quiet spell', () => {
+    expect(run(600, 'control.example.org:51821')).toContain(
+      `set flui0 peer ${KEY_A} endpoint control.example.org:51821`,
+    );
+  });
+
+  it('leaves a peer that is talking alone', () => {
+    expect(run(30, 'control.example.org:51821')).toBe('');
+  });
+
+  it('leaves a peer named by address alone', () => {
+    expect(run(600, '5.6.7.8:51821')).toBe('');
   });
 });

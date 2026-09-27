@@ -5,6 +5,7 @@ export interface SecretReader {
     command: string,
     username?: string,
     port?: number,
+    jump?: { host: string; user: string; port: number },
   ): Promise<string>;
 }
 
@@ -13,6 +14,8 @@ export interface SecretHost {
   host: string;
   user?: string;
   port?: number;
+  /** Set when the master is reached through the control, on its Flui network address. */
+  jump?: { host: string; user: string; port: number };
 }
 
 /**
@@ -32,7 +35,7 @@ export async function readSecretKey(
   for (const secretKey of secretKeys) {
     const cmd = `kubectl -n ${namespace} get secret ${secretName} -o jsonpath='{.data.${secretKey}}'`;
     const b64 = (
-      await ssh.sshExec(target.host, cmd, target.user, target.port)
+      await ssh.sshExec(target.host, cmd, target.user, target.port, target.jump)
     ).trim();
     if (b64) return Buffer.from(b64, 'base64').toString('utf8');
   }
