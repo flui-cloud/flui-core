@@ -1,7 +1,6 @@
 import { Command, Flags } from '@oclif/core';
 import chalk from 'chalk';
 import ora from 'ora';
-import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import * as os from 'node:os';
 import { getNestApp, closeNestApp } from '../../lib/nest-app';
@@ -9,10 +8,12 @@ import { CliControlClusterService } from '../../services/cli-control-cluster.ser
 import { CliSshService } from '../../services/cli-ssh.service';
 import { printContextBanner } from '../../lib/context-banner';
 import { resolveClusterSshTarget } from '../../lib/cluster-ssh-target';
+import { SealedCa } from '../../lib/vault/sealed-ca';
+import { openProfileKey } from '../../lib/vault/open-profile-key';
 
 export default class EnvRepairSshCa extends Command {
   static readonly description =
-    'Backfill the SSH CA private key into the cluster flui-secrets Secret. Used to repair clusters that were provisioned before the CA seeding flow was complete — symptom is the Dashboard SSH terminal failing with "CA private key not available". Reads the CA private key from the active profile (~/.flui/profiles/<profile>/ca/ca_key) and patches the in-cluster Secret over SSH+cert.';
+    'Backfill the SSH CA private key into the cluster flui-secrets Secret. Used to repair clusters that were provisioned before the CA seeding flow was complete — symptom is the Dashboard SSH terminal failing with "CA private key not available". Opens the CA private key of the active profile from the vault and patches the in-cluster Secret over SSH+cert.';
 
   static readonly examples = [
     '<%= config.bin %> <%= command.id %>',
@@ -36,36 +37,19 @@ export default class EnvRepairSshCa extends Command {
 
     const profile =
       flags.profile ?? process.env.FLUI_PROFILE ?? this.readActiveProfile();
-    const caKeyPath = path.join(
-      os.homedir(),
-      '.flui',
-      'profiles',
-      profile,
-      'ca',
-      'ca_key',
-    );
-
-    const spinner = ora('Reading local CA private key...').start();
+    const spinner = ora('Opening the SSH CA from the vault...').start();
     let caPrivateKey: string;
     try {
-      caPrivateKey = (await fs.readFile(caKeyPath, 'utf-8')).trimEnd() + '\n';
+      await openProfileKey(profile);
+      caPrivateKey = new SealedCa(profile).privateKey().trimEnd() + '\n';
       if (!caPrivateKey.includes('PRIVATE KEY')) {
-        spinner.fail('CA private key file does not look like an OpenSSH key');
+        spinner.fail('The SSH CA does not look like an OpenSSH key');
         this.exit(1);
         return;
       }
-      spinner.succeed(
-        `CA private key loaded from ${chalk.dim(caKeyPath)} (${caPrivateKey.length} bytes)`,
-      );
+      spinner.succeed(`SSH CA of profile "${profile}" opened`);
     } catch (err: any) {
-      spinner.fail(
-        `Could not read CA private key at ${caKeyPath}: ${err.message}`,
-      );
-      this.log(
-        chalk.yellow(
-          '\n  Hint: this profile may have never been initialized with a CA, or the path is wrong.',
-        ),
-      );
+      spinner.fail(`Could not open the SSH CA: ${err.message}`);
       this.exit(1);
       return;
     }

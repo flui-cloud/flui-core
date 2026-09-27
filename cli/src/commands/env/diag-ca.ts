@@ -1,4 +1,6 @@
 import { Command } from '@oclif/core';
+import { existsSync } from 'node:fs';
+import { SealedCa } from '../../lib/vault/sealed-ca';
 import chalk from 'chalk';
 import ora from 'ora';
 import { getNestApp, closeNestApp } from '../../lib/nest-app';
@@ -74,27 +76,23 @@ export default class EnvDiagCA extends Command {
 
   private checkLocalCaFiles(): void {
     console.log(chalk.bold('\n1. CLI CA Files:'));
-    const fs = require('node:fs');
-    const path = require('node:path');
-    const os = require('node:os');
+    const ca = new SealedCa();
+    const privateState = ca.isSealed()
+      ? chalk.green('✓ Sealed in the vault')
+      : ca.hasPlaintextKey()
+        ? chalk.yellow('⚠ Plaintext — run "flui vault unlock" to seal it')
+        : chalk.red('✗ Missing');
+    const hasPublicKey = existsSync(ca.publicKeyPath);
 
-    const caDir = path.join(os.homedir(), '.flui', 'ca');
-    const caPrivateKeyPath = path.join(caDir, 'ca_key');
-    const caPublicKeyPath = path.join(caDir, 'ca_key.pub');
-
-    const hasPrivateKey = fs.existsSync(caPrivateKeyPath);
-    const hasPublicKey = fs.existsSync(caPublicKeyPath);
-
+    console.log(`   Private Key: ${privateState}`);
     console.log(
-      `   Private Key: ${hasPrivateKey ? chalk.green('✓ Found') : chalk.red('✗ Missing')} (${caPrivateKeyPath})`,
-    );
-    console.log(
-      `   Public Key:  ${hasPublicKey ? chalk.green('✓ Found') : chalk.red('✗ Missing')} (${caPublicKeyPath})`,
+      `   Public Key:  ${hasPublicKey ? chalk.green('✓ Found') : chalk.red('✗ Missing')} (${ca.publicKeyPath})`,
     );
 
     if (hasPublicKey) {
-      const publicKey = fs.readFileSync(caPublicKeyPath, 'utf-8').trim();
-      console.log(chalk.dim(`   Preview: ${publicKey.substring(0, 50)}...`));
+      console.log(
+        chalk.dim(`   Preview: ${ca.publicKey().substring(0, 50)}...`),
+      );
     }
   }
 

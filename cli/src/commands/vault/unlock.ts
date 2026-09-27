@@ -5,6 +5,7 @@ import { ProfileManager } from '../../lib/profile-manager';
 import { ConfigStorage } from '../../lib/config-storage';
 import { VaultFile, WrongPassphraseError } from '../../lib/vault/vault-file';
 import { deriveProfileKey } from '../../lib/vault/vault-crypto';
+import { SealedCa } from '../../lib/vault/sealed-ca';
 import { askAgent, socketPath } from '../../lib/vault/vault-agent';
 import {
   DEFAULT_IDLE_MS,
@@ -106,7 +107,7 @@ export default class VaultUnlock extends Command {
     if (migrated > 0) {
       this.log(
         chalk.cyan(
-          `   Moved ${migrated} stored secret(s) into the vault and removed the old key files.\n`,
+          `   Moved ${migrated} stored secret(s) into the vault and removed their plaintext copies.\n`,
         ),
       );
     }
@@ -114,7 +115,8 @@ export default class VaultUnlock extends Command {
   }
 
   /**
-   * Moves every profile off the key-file arrangement.
+   * Moves every profile off the key-file arrangement and seals any SSH CA
+   * still stored in plaintext.
    *
    * Done here rather than lazily, because a profile left behind keeps its key
    * next to its data — the exact weakness the vault exists to remove. Doing it
@@ -125,9 +127,10 @@ export default class VaultUnlock extends Command {
     let moved = 0;
     for (const profile of ProfileManager.listProfiles()) {
       const storage = new ConfigStorage(profile);
-      if (!storage.hasLegacyKeyFile()) continue;
       try {
-        moved += storage.adoptVaultKey(deriveProfileKey(master, profile));
+        const key = deriveProfileKey(master, profile);
+        if (storage.hasLegacyKeyFile()) moved += storage.adoptVaultKey(key);
+        if (new SealedCa(profile).sealExisting(key)) moved += 1;
       } catch (error) {
         this.log(
           chalk.yellow(
