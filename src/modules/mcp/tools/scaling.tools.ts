@@ -432,7 +432,7 @@ export const SCALING_TOOLS: ToolDef[] = [
       'GET /infrastructure/clusters/:clusterId/scaling-groups',
     ],
     description:
-      'Read a cluster’s scaling group — what it may buy, how far it may grow, what it may spend and what the provider actually allows. Pass `groupId` for one group, or `clusterId` (or nothing, with a single cluster) for every group a cluster holds. Read the three bounds as three ROLES, not three numbers: `min` is a floor held right now; `desired` is a target approached only opportunistically and is deliberately NOT AWS’s desired capacity — being below it buys nothing on its own; `max` is how far urgency may reach right now. `settleSeconds` is not patience and never waits for a cheaper shape: it waits to be sure a pod is genuinely stuck rather than mid-schedule. `strategy` chooses only among shapes that ALREADY FIT — fitting is a precondition, never a strategy, so no strategy will ever pick a shape the pending pod cannot run on. A `monthlyCapEur` of null is no ceiling at all, never a ceiling of zero. Check `capability` before proposing anything: it is read from flags, never from the provider’s name. Then check `acts`, which answers the only question anybody has here — WOULD THIS GROUP DO ANYTHING — and is not the same as `capability`: the provider may allow a purchase that a group set only to decide will never make. `acts.says` is the API’s own sentence; relay it rather than rewording it. On a `replace` standing order, `drainable` says whether the node it would empty can be emptied: `ok: false` means that order will never proceed, and `null` is no answer at all rather than a yes.',
+      'Read a cluster’s scaling group — what it may buy, how far it may grow, what it may spend and what the provider actually allows. Pass `groupId` for one group, or `clusterId` (or nothing, with a single cluster) for every group a cluster holds. Read the three bounds as three ROLES, not three numbers: `min` is a floor held right now; `desired` is a target approached only opportunistically and is deliberately NOT AWS’s desired capacity — being below it buys nothing on its own; `max` is how far urgency may reach right now. `settleSeconds` is not patience and never waits for a cheaper shape: it waits to be sure a pod is genuinely stuck rather than mid-schedule. `strategy` chooses only among shapes that ALREADY FIT — fitting is a precondition, never a strategy, so no strategy will ever pick a shape the pending pod cannot run on. A `monthlyCapEur` of null is no ceiling at all, never a ceiling of zero — and an automatic group without one buys nothing on its own (`acts.acts` is false). Check `capability` before proposing anything: it is read from flags, never from the provider’s name. Then check `acts`, which answers the only question anybody has here — WOULD THIS GROUP DO ANYTHING — and is not the same as `capability`: the provider may allow a purchase that a group set only to decide will never make. `acts.says` is the API’s own sentence; relay it rather than rewording it. On a `replace` standing order, `drainable` says whether the node it would empty can be emptied: `ok: false` means that order will never proceed, and `null` is no answer at all rather than a yes.',
     scope: MCP_SCOPE.INFRA_READ,
     inputSchema: {
       groupId: z
@@ -635,7 +635,7 @@ export const SCALING_TOOLS: ToolDef[] = [
       'PATCH /infrastructure/scaling-groups/:id',
     ],
     description:
-      'Write or change a cluster’s scaling group — the standing authority for how large it may grow and how much it may spend unattended. Pass `groupId` to change an existing group, or `clusterId` (or nothing, with a single cluster) plus `name` and `bounds` to write a new one. THIS ASKS A PERSON: the route is inside Flui’s action cycle, so the call comes back as a request carrying the figure it derived from your own bounds and limits — "up to 5 nodes, up to €40 a month, without asking you" — and you must stop, tell the user exactly what was asked for, and retry the identical call once they have answered. `bounds` is replaced whole and so is `limits`: sending `limits` without `maxMonthlyCost` REMOVES the monthly ceiling, it does not leave it alone, so restate the cap every time. `provision: "automatic"` is refused wherever `capability.canProvision` is false — read scaling_group_get first and do not retry it there. Where there is no catalogue, `shapes` and `regions` are refused and `requirement` (what a machine must hold) is required instead; where there is one, the reverse. A standing order may only name a shape and a region the group is already allowed to buy, or it is a wait that can never end; `region: "any"` waits for the first of the group’s regions that has the shape, its own first. An `expand` order buys only while the fleet is below `bounds.desired`, whatever the load: to "add one cx33 in fsn1 as soon as it can be had", raise `desired` by one in the same call and add the order; it closes itself once the fleet reaches the target. Every bound counts the whole fleet, master included, so all three sit between 1 and 20. `provision: "automatic"` is what makes a group act without asking again, and `maxMonthlyCost` with `bounds.max` are the ceilings it acts within — all three on the group, where a reader can see them. The answer carries `acts` and `acts.says`; relay that sentence rather than rewording it, and never state a monthly figure that is not the one the group itself carries.',
+      'Write or change a cluster’s scaling group — the standing authority for how large it may grow and how much it may spend unattended. Pass `groupId` to change an existing group, or `clusterId` (or nothing, with a single cluster) plus `name` and `bounds` to write a new one. THIS ASKS A PERSON: the route is inside Flui’s action cycle, so the call comes back as a request carrying the figure it derived from your own bounds and limits — "up to 5 nodes, up to €40 a month, without asking you" — and you must stop, tell the user exactly what was asked for, and retry the identical call once they have answered. `bounds` is replaced whole and so is `limits`: sending `limits` without `maxMonthlyCost` REMOVES the monthly ceiling, it does not leave it alone, so restate the cap every time. `provision: "automatic"` is refused wherever `capability.canProvision` is false — read scaling_group_get first and do not retry it there — and refused without `limits.maxMonthlyCost` above 0: ask the person for a monthly ceiling in euros before proposing automatic, never invent one. Where there is no catalogue, `shapes` and `regions` are refused and `requirement` (what a machine must hold) is required instead; where there is one, the reverse. A standing order may only name a shape and a region the group is already allowed to buy, or it is a wait that can never end; `region: "any"` waits for the first of the group’s regions that has the shape, its own first. An `expand` order buys only while the fleet is below `bounds.desired`, whatever the load: to "add one cx33 in fsn1 as soon as it can be had", raise `desired` by one in the same call and add the order; it closes itself once the fleet reaches the target. Every bound counts the whole fleet, master included, so all three sit between 1 and 20. `provision: "automatic"` is what makes a group act without asking again, and `maxMonthlyCost` with `bounds.max` are the ceilings it acts within — all three on the group, where a reader can see them. The answer carries `acts` and `acts.says`; relay that sentence rather than rewording it, and never state a monthly figure that is not the one the group itself carries.',
     scope: MCP_SCOPE.INFRA_WRITE,
     inputSchema: {
       groupId: z
@@ -706,7 +706,7 @@ export const SCALING_TOOLS: ToolDef[] = [
             .nullable()
             .optional()
             .describe(
-              'In currency, not in node count. Leaving it out removes the ceiling; it does not set it to zero.',
+              'In euros, not in node count. Leaving it out removes the ceiling; it does not set it to zero. Required, above 0, when provision is automatic.',
             ),
         })
         .optional()
@@ -835,6 +835,43 @@ export const SCALING_TOOLS: ToolDef[] = [
       ctx.api.post(
         `/infrastructure/scaling-groups/${enc(args.groupId)}/approve-purchase`,
         { shape: args.shape, region: args.region },
+      ),
+  }),
+
+  defineTool({
+    name: 'scaling_group_floor',
+    routes: ['PATCH /infrastructure/scaling-groups/:id/floor'],
+    description:
+      'Add or remove a node — the only way a cluster changes its nodes: move its scaling group’s floor (`min`, master included). One more: min + 1. One fewer: min − 1. The target moves with it. THIS ASKS A PERSON (action cycle). Then read `acts`: a manual group only proposes — show scaling_preview `chosen` (to buy, with its price) or `giveBack` (the node to remove) and, only if the person asks, call scaling_approve_purchase or scaling_approve_removal; an automatic group acts within its ceilings on its own. BYOS machines are attached with `flui node connect` instead.',
+    scope: MCP_SCOPE.INFRA_WRITE,
+    inputSchema: {
+      groupId: z.string(),
+      min: coerceNumber(z.number().int().min(1).max(20)),
+    },
+    run: (args, ctx) =>
+      ctx.api.patch<GroupDto>(
+        `/infrastructure/scaling-groups/${enc(args.groupId)}/floor`,
+        { min: args.min },
+      ),
+    forModel: (data) => groupView(data as GroupDto),
+  }),
+
+  defineTool({
+    name: 'scaling_approve_removal',
+    routes: ['POST /infrastructure/scaling-groups/:id/approve-removal'],
+    description:
+      'Give back, once, the node a MANUAL scaling group names (scaling_preview `giveBack`), after its minimum was lowered. Only when the person asked for it in this conversation: the node is drained and deleted, and what was on it moves to the nodes that stay. Pass the node the person saw; if the group names another now, nothing is removed and the refusal says which. The group stays manual. Follow it with operation_status.',
+    scope: MCP_SCOPE.INFRA_DESTRUCTIVE,
+    inputSchema: {
+      groupId: z.string(),
+      node: z
+        .string()
+        .describe('Node name or ID from scaling_preview `giveBack`.'),
+    },
+    run: (args, ctx) =>
+      ctx.api.post(
+        `/infrastructure/scaling-groups/${enc(args.groupId)}/approve-removal`,
+        { node: args.node },
       ),
   }),
 

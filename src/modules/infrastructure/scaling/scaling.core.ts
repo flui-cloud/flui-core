@@ -31,8 +31,41 @@ export type PlacementStrategy = (typeof PLACEMENT_STRATEGIES)[number];
 export const MIN_FLEET_NODES = 1;
 export const MAX_FLEET_NODES = 20;
 
+export interface FleetBounds {
+  min: number;
+  desired: number;
+  max: number;
+}
+
+/**
+ * The bounds once a person asks for `min` nodes: floor and target both move
+ * there, and the ceiling never sits below them. This is what "one node more"
+ * and "one node fewer" mean on a group.
+ */
+export function boundsAtFloor(bounds: FleetBounds, min: number): FleetBounds {
+  return { min, desired: min, max: Math.max(bounds.max, min) };
+}
+
 export const PROVISION_MODES = ['automatic', 'manual'] as const;
 export type ProvisionMode = (typeof PROVISION_MODES)[number];
+
+/**
+ * Consent to buy without a person is given in money: an automatic group with
+ * no ceiling in euros is stored as it was written and buys nothing on its own.
+ */
+export function buysOnItsOwn(group: {
+  provision: ProvisionMode;
+  maxMonthlyCost: number | null;
+}): boolean {
+  return (
+    group.provision === 'automatic' &&
+    group.maxMonthlyCost !== null &&
+    group.maxMonthlyCost > 0
+  );
+}
+
+export const NO_MONEY_CEILING =
+  'This group is set to automatic but names no monthly ceiling in euros, so it buys nothing on its own. Set a monthly ceiling to let it buy, or approve this one purchase.';
 
 export const STANDING_ORDER_KINDS = ['expand', 'replace'] as const;
 

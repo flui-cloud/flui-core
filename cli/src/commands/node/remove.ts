@@ -9,7 +9,7 @@ const MAX_WAIT_MS = 300_000; // 5 min
 
 export default class NodeRemove extends Command {
   static readonly description =
-    'Cordon, drain and remove a worker node from the cluster. Cannot remove the master.';
+    'Detach a machine you attached yourself (`flui node connect`): cordon, drain and remove it from the cluster. Nodes Flui bought go back through the scaling group instead: `flui scaling floor <n>`. Cannot remove the master.';
 
   static readonly examples = [
     '<%= config.bin %> <%= command.id %> <node-id>',

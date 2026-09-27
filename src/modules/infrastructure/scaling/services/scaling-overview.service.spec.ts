@@ -113,12 +113,24 @@ const make = (opts: {
     } as unknown as Repository<ClusterNodeEntity>,
     {
       capabilityOf: () => opts.capability ?? HETZNER,
+      ensureDefaultGroup: jest.fn().mockResolvedValue(null),
     } as unknown as ScalingGroupService,
   );
   return { service, decisions };
 };
 
 describe('the row a cluster gets whether or not anybody set it up', () => {
+  it('says a cluster with no group has nothing that buys', async () => {
+    const { service } = make({ clusters: [cluster({})], groups: [] });
+    const [row] = await service.rows();
+    expect(row.acts).toBe(false);
+    expect(row.mode).toEqual({
+      mode: 'manual',
+      label: 'No group — Flui does not buy',
+      attention: true,
+    });
+  });
+
   it('says out loud that a cluster has no group', async () => {
     const { service } = make({ clusters: [cluster({})], groups: [] });
     const [row] = await service.rows();

@@ -165,6 +165,20 @@ export class AlarmBlockDto {
   exits: AlarmExitDto[];
 }
 
+export class GiveBackDto {
+  @ApiProperty({ description: 'Cluster node ID' })
+  nodeId: string;
+
+  @ApiProperty({ example: 'prod-eu-worker-2' })
+  node: string;
+
+  @ApiProperty({
+    description:
+      'Whether the group gives it back on its own; false means a person approves it (approve-removal).',
+  })
+  onItsOwn: boolean;
+}
+
 export class ScalingPreviewDto {
   @ApiProperty()
   groupId: string;
@@ -209,6 +223,14 @@ export class ScalingPreviewDto {
       'When nothing would be bought: the main block in one headline and the ways out, each computed (the ceiling that is enough, the machine that would work). `asks` stays the long form.',
   })
   blocked: AlarmBlockDto | null;
+
+  @ApiProperty({
+    type: GiveBackDto,
+    nullable: true,
+    description:
+      'The node the group would give back now, the fleet being above its target. Null when nothing would go.',
+  })
+  giveBack: GiveBackDto | null;
 
   @ApiProperty({
     type: FleetRoomDto,

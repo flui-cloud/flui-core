@@ -47,6 +47,7 @@ const group = (over: Partial<ScalingGroupEntity> = {}): ScalingGroupEntity =>
     id: 'g-1',
     clusterId: 'c-1',
     provision: 'automatic',
+    maxMonthlyCost: 40,
     ...over,
   }) as ScalingGroupEntity;
 
@@ -91,7 +92,7 @@ function harness(
     count: jest.fn().mockResolvedValue(inFlight),
     findOne: jest.fn().mockResolvedValue(null),
   };
-  const groups = { count: jest.fn().mockResolvedValue(1) };
+  const groups = { find: jest.fn().mockResolvedValue([group()]) };
   const clusterRows = { findOne: jest.fn().mockResolvedValue(cluster) };
   const clusters = {
     addWorkers: jest.fn().mockResolvedValue({ id: 'op-1' }),
@@ -375,7 +376,13 @@ describe('what a cluster says about itself', () => {
 
   it('promises nothing where every group only decides', async () => {
     const h = harness();
-    h.groups.count.mockResolvedValue(0);
+    h.groups.find.mockResolvedValue([]);
+    expect(await h.service.drivesCluster('c-1')).toBe(false);
+  });
+
+  it('promises nothing where the automatic group names no money ceiling', async () => {
+    const h = harness();
+    h.groups.find.mockResolvedValue([group({ maxMonthlyCost: null })]);
     expect(await h.service.drivesCluster('c-1')).toBe(false);
   });
 

@@ -140,7 +140,7 @@ export default class NodeConnect extends Command {
         console.log(
           chalk.yellow(
             `\n⚠️  This cluster is provider '${cluster.provider}', not BYOS.\n` +
-              '   Use `flui node add` to provision and join managed worker nodes.\n',
+              '   Its nodes change through its scaling group: `flui scaling floor <n>`.\n',
           ),
         );
         return;

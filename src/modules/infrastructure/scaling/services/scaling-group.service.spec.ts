@@ -94,10 +94,13 @@ const cluster = (provider: string, vnet = 'vnet-1'): ClusterEntity =>
 
 interface Fakes {
   service: ScalingGroupService;
-  groups: { [K in keyof Repository<ScalingGroupEntity>]?: jest.Mock };
+  groups: { [K in keyof Repository<ScalingGroupEntity>]?: jest.Mock } & {
+    count: jest.Mock;
+  };
   decisions: { [K in keyof Repository<ScalingDecisionEntity>]?: jest.Mock };
   clusters: { findOne: jest.Mock };
   operations: { findOne: jest.Mock };
+  nodes: { find: jest.Mock; count: jest.Mock };
   saved: () => ScalingGroupEntity;
 }
 
@@ -108,6 +111,7 @@ const make = (provider = 'hetzner', existing: unknown[] = []): Fakes => {
     create: jest.fn((row: ScalingGroupEntity) => ({ ...row })),
     save: jest.fn(async (row: ScalingGroupEntity) => ({ id: 'g-1', ...row })),
     delete: jest.fn().mockResolvedValue({ affected: 1 }),
+    count: jest.fn().mockResolvedValue(2),
   };
   const decisions = {
     create: jest.fn((row) => row),
@@ -128,6 +132,7 @@ const make = (provider = 'hetzner', existing: unknown[] = []): Fakes => {
       { id: 'n-master', serverName: 'prod-master', nodeType: 'master' },
       { id: 'n-w1', serverName: 'prod-worker-1', nodeType: 'worker' },
     ]),
+    count: jest.fn().mockResolvedValue(2),
   };
 
   const factory = {
@@ -151,6 +156,7 @@ const make = (provider = 'hetzner', existing: unknown[] = []): Fakes => {
     decisions,
     clusters,
     operations,
+    nodes,
     saved: () => groups.save.mock.calls[0][0] as ScalingGroupEntity,
   };
 };
@@ -219,9 +225,22 @@ describe('writing a scaling group', () => {
     const { service, saved } = make();
     await service.create(
       'c-1',
-      write({ limits: { hourlyBillingOnly: false } }),
+      write({ limits: { hourlyBillingOnly: false }, provision: 'manual' }),
     );
     expect(saved().maxMonthlyCost).toBeNull();
+  });
+
+  it('refuses an automatic group with no monthly ceiling in euros', async () => {
+    const { service } = make();
+    await expect(
+      service.create('c-1', write({ limits: { hourlyBillingOnly: true } })),
+    ).rejects.toThrow('needs a monthly ceiling in euros');
+    await expect(
+      service.create(
+        'c-1',
+        write({ limits: { hourlyBillingOnly: true, maxMonthlyCost: 0 } }),
+      ),
+    ).rejects.toBeInstanceOf(BadRequestException);
   });
 
   it('refuses a floor above the target', async () => {
@@ -534,13 +553,15 @@ describe('reading a group back', () => {
     expect(dto.acts.says).toContain('5 nodes');
   });
 
-  it('says plainly when a group named no ceiling in money', async () => {
+  it('says an automatic group with no money ceiling buys nothing', async () => {
     const { service, groups } = make();
     groups.findOne?.mockResolvedValue(
       stored({ provision: 'automatic', maxMonthlyCost: null }),
     );
     const dto = await service.get('g-1');
-    expect(dto.acts.says).toContain('no ceiling in money');
+    expect(dto.acts.acts).toBe(false);
+    expect(dto.acts.says).toContain('names no monthly ceiling in euros');
+    expect(dto.acts).toMatchObject({ mode: 'automatic', attention: true });
   });
 
   it('never claims a group acts where nothing can create a server', async () => {
@@ -578,6 +599,24 @@ describe('reading a group back', () => {
     groups.findOne?.mockResolvedValue(stored());
     await service.remove('g-1');
     expect(decisions.delete).toHaveBeenCalledWith({ groupId: 'g-1' });
+    expect(groups.delete).toHaveBeenCalledWith({ id: 'g-1' });
+  });
+
+  it('keeps the only group of a cluster Flui buys for', async () => {
+    const { service, groups } = make();
+    groups.findOne?.mockResolvedValue(stored());
+    groups.count.mockResolvedValue(1);
+    await expect(service.remove('g-1')).rejects.toThrow(
+      'only scaling group of the cluster',
+    );
+    expect(groups.delete).not.toHaveBeenCalled();
+  });
+
+  it('removes the only group where Flui cannot buy', async () => {
+    const { service, groups } = make('byos');
+    groups.findOne?.mockResolvedValue(stored());
+    groups.count.mockResolvedValue(1);
+    await service.remove('g-1');
     expect(groups.delete).toHaveBeenCalledWith({ id: 'g-1' });
   });
 
@@ -757,8 +796,39 @@ describe('changing a group', () => {
     groups.findOne?.mockResolvedValueOnce(null);
     const dto = await service.update('g-1', {
       limits: { hourlyBillingOnly: true },
+      provision: 'manual',
     });
     expect(dto.limits.maxMonthlyCost).toBeNull();
+  });
+
+  it('refuses switching to automatic without a monthly ceiling', async () => {
+    const { service, groups } = make();
+    groups.findOne?.mockResolvedValueOnce({
+      ...stored,
+      provision: 'manual',
+      maxMonthlyCost: null,
+    });
+    await expect(
+      service.update('g-1', { provision: 'automatic' }),
+    ).rejects.toThrow('needs a monthly ceiling in euros');
+  });
+
+  it('refuses removing the ceiling of an automatic group', async () => {
+    const { service, groups } = make();
+    groups.findOne?.mockResolvedValueOnce({ ...stored });
+    await expect(
+      service.update('g-1', { limits: { hourlyBillingOnly: true } }),
+    ).rejects.toThrow('needs a monthly ceiling in euros');
+  });
+
+  it('lets an automatic group written before the rule change its name without a ceiling', async () => {
+    const { service, groups } = make();
+    groups.findOne?.mockResolvedValueOnce({ ...stored, maxMonthlyCost: null });
+    groups.findOne?.mockResolvedValueOnce(null);
+    const dto = await service.update('g-1', { name: 'renamed' });
+    expect(dto.provision).toBe('automatic');
+    expect(dto.limits.maxMonthlyCost).toBeNull();
+    expect(dto.acts.acts).toBe(false);
   });
 
   it('refuses bounds that would leave the floor above the ceiling', async () => {
@@ -1077,5 +1147,72 @@ describe('what a person does to a group is written in its decision log', () => {
       force: 'person',
       did: 'dawit@example.com let the group buy again.',
     });
+  });
+});
+
+describe('the group every cluster changes its nodes through', () => {
+  it('writes a manual group holding the nodes the cluster has now', async () => {
+    const { service, saved } = make();
+    const group = await service.ensureDefaultGroup(cluster('hetzner'));
+    expect(group).not.toBeNull();
+    expect(saved()).toMatchObject({
+      name: 'default',
+      minNodes: 2,
+      desiredNodes: 2,
+      provision: 'manual',
+      maxMonthlyCost: null,
+    });
+  });
+
+  it('keeps the group a cluster already has', async () => {
+    const { service, groups } = make();
+    groups.findOne?.mockResolvedValue({ id: 'g-9' });
+    const group = await service.ensureDefaultGroup(cluster('hetzner'));
+    expect(group).toEqual({ id: 'g-9' });
+    expect(groups.save).not.toHaveBeenCalled();
+  });
+
+  it('writes nothing where Flui cannot buy from a catalogue', async () => {
+    const { service, groups } = make('byos');
+    expect(await service.ensureDefaultGroup(cluster('byos'))).toBeNull();
+    expect(groups.save).not.toHaveBeenCalled();
+  });
+});
+
+describe('moving the floor', () => {
+  const stored = {
+    id: 'g-1',
+    clusterId: 'c-1',
+    name: 'default',
+    minNodes: 2,
+    desiredNodes: 2,
+    maxNodes: 2,
+    regions: ['a1'],
+    shapes: ['cx23'],
+    strategy: 'uniform',
+    settleSeconds: 30,
+    hourlyBillingOnly: true,
+    maxMonthlyCost: null,
+    provision: 'manual',
+    standingOrders: [],
+    requirement: null,
+  } as unknown as ScalingGroupEntity;
+
+  it('raises the target and the ceiling with it for one node more', async () => {
+    const { service, groups } = make();
+    groups.findOne?.mockResolvedValueOnce({ ...stored });
+    groups.findOne?.mockResolvedValueOnce({ ...stored });
+    groups.findOne?.mockResolvedValueOnce(null);
+    const dto = await service.setFloor('g-1', 3);
+    expect(dto.bounds).toEqual({ min: 3, desired: 3, max: 3 });
+  });
+
+  it('lowers the target with it for one node fewer, keeping the ceiling', async () => {
+    const { service, groups } = make();
+    groups.findOne?.mockResolvedValueOnce({ ...stored });
+    groups.findOne?.mockResolvedValueOnce({ ...stored });
+    groups.findOne?.mockResolvedValueOnce(null);
+    const dto = await service.setFloor('g-1', 1);
+    expect(dto.bounds).toEqual({ min: 1, desired: 1, max: 2 });
   });
 });

@@ -79,6 +79,7 @@ function harness(last: ScalingDecisionEntity | null = null) {
     actuator as unknown as ScalingActuatorService,
     alarms as unknown as ScalingAlarmService,
     { ring: jest.fn().mockResolvedValue(undefined) } as never,
+    { findOne: jest.fn().mockResolvedValue(null) } as never,
   );
   return { service, decisions, engine, actuator, alarms, groups };
 }
@@ -106,6 +107,7 @@ describe('a cluster on its way out', () => {
       { act: jest.fn() } as unknown as ScalingActuatorService,
       { publish: jest.fn() } as unknown as ScalingAlarmService,
       { ring: jest.fn().mockResolvedValue(undefined) } as never,
+      { findOne: jest.fn().mockResolvedValue(null) } as never,
     );
 
     expect(await service.reconcileAll()).toBe(0);
@@ -274,6 +276,7 @@ describe('a purchase a person approves on a manual group', () => {
       actuator as never,
       { publish: jest.fn() } as never,
       { ring: jest.fn().mockResolvedValue(undefined) } as never,
+      { findOne: jest.fn().mockResolvedValue(null) } as never,
     );
     return { service, actuator, decisions };
   }
@@ -352,6 +355,7 @@ describe('a purchase a person approves on a manual group', () => {
       actuator as never,
       { publish: jest.fn() } as never,
       { ring: jest.fn().mockResolvedValue(undefined) } as never,
+      { findOne: jest.fn().mockResolvedValue(null) } as never,
     );
     const row = await service.approvePurchase(
       'g-1',
@@ -376,5 +380,88 @@ describe('a purchase a person approves on a manual group', () => {
     await expect(
       service.approvePurchase('g-1', { shape: 'cpx22', region: 'fsn1' }, 'ada'),
     ).rejects.toThrow('already on its way');
+  });
+});
+
+describe('a person approving the node a manual group gives back', () => {
+  const group = {
+    id: 'g-1',
+    clusterId: 'c-1',
+    provision: 'manual',
+  } as ScalingGroupEntity;
+  const cluster = { id: 'c-1', provider: 'hetzner' } as ClusterEntity;
+  const removal = {
+    kind: 'remove',
+    shape: null,
+    region: null,
+    hourlyEur: null,
+    node: 'n-2',
+    fleetMonthlyEur: 10,
+    unpricedNodes: 0,
+    fleetNodes: 3,
+  };
+
+  function approving(acted: unknown, intent: unknown = removal) {
+    const actuator = { act: jest.fn().mockResolvedValue(acted) };
+    const service = new ScalingReconcilerService(
+      { findOne: jest.fn().mockResolvedValue(group) } as never,
+      { findOne: jest.fn().mockResolvedValue(cluster) } as never,
+      {
+        create: jest.fn((row: unknown) => row),
+        save: jest.fn(async (row: unknown) => row),
+      } as never,
+      {
+        assess: jest.fn().mockResolvedValue(
+          assessment({
+            force: 'opportunity',
+            did: 'Would remove prod-worker-2.',
+            intent: intent as ScalingAssessment['intent'],
+          }),
+        ),
+      } as never,
+      actuator as never,
+      { publish: jest.fn() } as never,
+      { ring: jest.fn().mockResolvedValue(undefined) } as never,
+      {
+        findOne: jest
+          .fn()
+          .mockResolvedValue({ id: 'n-2', serverName: 'prod-worker-2' }),
+      } as never,
+    );
+    return { service, actuator };
+  }
+
+  it('gives the node back through the actuator and names who approved', async () => {
+    const { service, actuator } = approving({
+      outcome: 'removed',
+      did: 'Drained and removed prod-worker-2.',
+      why: 'x',
+      asks: null,
+      operationId: 'op-3',
+    });
+    const row = await service.approveRemoval(
+      'g-1',
+      { node: 'prod-worker-2' },
+      'ada',
+    );
+    expect(actuator.act.mock.calls[0][0].provision).toBe('automatic');
+    expect(actuator.act.mock.calls[0][3]).toBe(true);
+    expect(row.did).toContain('Approved by ada.');
+    expect(row.why).toContain('removes nothing else on its own');
+  });
+
+  it('removes nothing when the group names another node now', async () => {
+    const { service, actuator } = approving(null);
+    await expect(
+      service.approveRemoval('g-1', { node: 'prod-worker-1' }, 'ada'),
+    ).rejects.toThrow('would now give back prod-worker-2');
+    expect(actuator.act).not.toHaveBeenCalled();
+  });
+
+  it('removes nothing when the fleet is not above its target', async () => {
+    const { service } = approving(null, null);
+    await expect(
+      service.approveRemoval('g-1', { node: 'prod-worker-2' }, 'ada'),
+    ).rejects.toThrow('nothing to give back');
   });
 });

@@ -1,5 +1,9 @@
 import { ClusterBoundsRegistry } from './cluster-bounds.registry';
-import { BadRequestException, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  GoneException,
+  NotFoundException,
+} from '@nestjs/common';
 
 // cluster-scaling → cluster-node-scaling → kubernetes.service pulls in the
 // ESM-only @kubernetes/client-node, which jest can't transform. The service is
@@ -230,6 +234,16 @@ describe('ClusterScalingService', () => {
       expect(queueAdd.mock.calls[0][1].providerFirewallIds).toEqual([
         '11535759',
       ]);
+    });
+  });
+
+  describe('removeAttachedWorker', () => {
+    it('sends a node Flui bought back to the scaling group', async () => {
+      const { svc, queueAdd } = makeService({ cluster: baseCluster() });
+      await expect(
+        svc.removeAttachedWorker('c-1', 'n-w1', 'ada'),
+      ).rejects.toBeInstanceOf(GoneException);
+      expect(queueAdd).not.toHaveBeenCalled();
     });
   });
 

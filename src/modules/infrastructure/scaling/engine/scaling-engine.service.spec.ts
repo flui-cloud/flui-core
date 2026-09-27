@@ -130,7 +130,8 @@ interface Harness {
   engine: ScalingEngineService;
   pods: { read: jest.Mock };
   nodes: { find: jest.Mock };
-  drain: { check: jest.Mock; roomElsewhere: jest.Mock };
+  drain: { check: jest.Mock; roomElsewhere: jest.Mock; fleetRoom: jest.Mock };
+  groups: { withCluster: jest.Mock; nodeOnItsWay: jest.Mock };
 }
 
 function harness(
@@ -145,6 +146,7 @@ function harness(
     // regions the group and the catalogue name and no others.
     buyableFor: jest.fn().mockResolvedValue(null),
     withCluster: jest.fn(),
+    nodeOnItsWay: jest.fn().mockResolvedValue(false),
   };
   const catalogue = {
     read: jest
@@ -156,6 +158,7 @@ function harness(
   // the ones about room set it themselves.
   const drain = {
     check: jest.fn().mockResolvedValue(null),
+    fleetRoom: jest.fn().mockResolvedValue(null),
     roomElsewhere: jest.fn().mockResolvedValue({
       fits: true,
       needs: { cpuMillicores: 0, memoryMi: 0 },
@@ -176,8 +179,34 @@ function harness(
     pods,
     nodes,
     drain,
+    groups,
   };
 }
+
+describe('the preview a person reads', () => {
+  const capped = () => group({ maxMonthlyCost: 1 });
+
+  it('shows what blocks a purchase when nothing is on its way', async () => {
+    const h = harness();
+    h.groups.withCluster.mockResolvedValue({
+      group: capped(),
+      cluster: cluster(),
+    });
+    const preview = await h.engine.preview('g-1');
+    expect(preview.blocked?.headline).toContain('spend cap');
+  });
+
+  it('raises no spend-cap alarm while the node that will host the work is on its way', async () => {
+    const h = harness();
+    h.groups.withCluster.mockResolvedValue({
+      group: capped(),
+      cluster: cluster(),
+    });
+    h.groups.nodeOnItsWay.mockResolvedValue(true);
+    const preview = await h.engine.preview('g-1');
+    expect(preview.blocked).toBeNull();
+  });
+});
 
 describe('the settle window', () => {
   it('holds while the pod may still be caught mid-schedule', async () => {

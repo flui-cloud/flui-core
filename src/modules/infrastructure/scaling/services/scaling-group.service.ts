@@ -18,13 +18,19 @@ import {
 } from '../scaling-capability';
 import {
   ANY_REGION,
+  MAX_FLEET_NODES,
+  MIN_FLEET_NODES,
   NOT_ENGINE_FORCES,
+  NO_MONEY_CEILING,
   StandingOrderConfig,
+  boundsAtFloor,
+  buysOnItsOwn,
 } from '../scaling.core';
 import { PurchaseHold, purchaseHold } from '../engine/purchase-hold';
 import {
   InfrastructureOperationEntity,
   OperationStatus,
+  OperationType,
 } from '../../servers/entities/infrastructure-operations.entity';
 import {
   EditScalingGroupDto,
@@ -51,10 +57,12 @@ import { DecisionFilter, decisionWhere } from './decision-filter.core';
 import { collapseRepeats } from './collapse-decisions.core';
 import {
   ClusterNodeEntity,
+  NodeStatus,
   NodeType,
 } from '../../clusters/entities/cluster-node.entity';
 
 const DEFAULT_DECISION_LIMIT = 50;
+const DEFAULT_GROUP_NAME = 'default';
 const MAX_DECISION_LIMIT = 200;
 
 /**
@@ -131,8 +139,61 @@ export class ScalingGroupService {
     );
   }
 
+  /**
+   * The group a cluster changes its nodes through, written the first time the
+   * cluster is read without one: manual, holding the nodes it has now, so
+   * nothing is bought or given back until a person moves the floor.
+   *
+   * Only where Flui can buy from a catalogue. A provider without one changes
+   * nodes by a person attaching a machine, and a group there would only guess
+   * what a machine must hold.
+   */
+  async ensureDefaultGroup(
+    cluster: ClusterEntity,
+  ): Promise<ScalingGroupEntity | null> {
+    const capability = this.capabilityOf(cluster.provider);
+    if (!capability.canProvision || !capability.hasCatalogue) return null;
+    if (cluster.status === ClusterStatus.DELETED) return null;
+    const existing = await this.groups.findOne({
+      where: { clusterId: cluster.id },
+      order: { createdAt: 'ASC' },
+    });
+    if (existing) return existing;
+
+    const counted = await this.nodes.count({
+      where: { clusterId: cluster.id, status: Not(NodeStatus.DELETING) },
+    });
+    const nodes = fleetBound(counted || cluster.nodeCount || MIN_FLEET_NODES);
+    const draft = this.groups.create({
+      clusterId: cluster.id,
+      name: DEFAULT_GROUP_NAME,
+      minNodes: nodes,
+      desiredNodes: nodes,
+      maxNodes: fleetBound(Math.max(nodes, cluster.maxNodes ?? nodes)),
+      regions: cluster.region ? [cluster.region] : [],
+      shapes: defaultShapes(cluster, capability),
+      strategy: 'uniform',
+      settleSeconds: 30,
+      hourlyBillingOnly: true,
+      maxMonthlyCost: null,
+      provision: 'manual',
+      standingOrders: [],
+      requirement: null,
+    });
+    try {
+      return await this.groups.save(draft);
+    } catch {
+      // Two first reads at once: the unique name lets one of them write.
+      return this.groups.findOne({
+        where: { clusterId: cluster.id },
+        order: { createdAt: 'ASC' },
+      });
+    }
+  }
+
   async listForCluster(clusterId: string): Promise<ScalingGroupResponseDto[]> {
     const cluster = await this.clusterOrFail(clusterId);
+    await this.ensureDefaultGroup(cluster);
     const rows = await this.groups.find({
       where: { clusterId },
       order: { createdAt: 'ASC' },
@@ -259,6 +320,18 @@ export class ScalingGroupService {
       : null;
   }
 
+  /** A node being added to this cluster, by the group or by a person approving one. */
+  async nodeOnItsWay(clusterId: string): Promise<boolean> {
+    const count = await this.operations.count({
+      where: {
+        resourceId: clusterId,
+        operationType: OperationType.ADD_WORKER,
+        status: In([OperationStatus.PENDING, OperationStatus.IN_PROGRESS]),
+      },
+    });
+    return count > 0;
+  }
+
   private holdOf(group: ScalingGroupEntity): Promise<PurchaseHold | null> {
     return purchaseHold(
       this.operations,
@@ -310,6 +383,7 @@ export class ScalingGroupService {
 
     const buyable = await this.buyableFor(cluster);
     this.assertCoherent(draft, capability, hasVnet(cluster), buyable);
+    assertMoneyCeiling(draft);
     await this.resolveReplacedNodes(draft, clusterId);
     await this.assertNameFree(clusterId, draft.name, null);
 
@@ -351,6 +425,9 @@ export class ScalingGroupService {
 
     const buyable = await this.buyableFor(cluster);
     this.assertCoherent(group, capability, hasVnet(cluster), buyable);
+    if (dto.provision !== undefined || dto.limits !== undefined) {
+      assertMoneyCeiling(group);
+    }
     if (dto.standingOrders !== undefined) {
       await this.resolveReplacedNodes(group, group.clusterId);
     }
@@ -369,12 +446,40 @@ export class ScalingGroupService {
     return this.toDto(saved, cluster, null, buyable, await this.holdOf(saved));
   }
 
+  /** Moves the floor and the target to `min` (`boundsAtFloor`). */
+  async setFloor(
+    id: string,
+    min: number,
+    by = 'a person',
+  ): Promise<ScalingGroupResponseDto> {
+    const group = await this.groupOrFail(id);
+    const bounds = boundsAtFloor(
+      {
+        min: group.minNodes,
+        desired: group.desiredNodes,
+        max: group.maxNodes,
+      },
+      min,
+    );
+    return this.update(id, { bounds }, by);
+  }
+
   /**
    * The decisions go with it: they are what this group saw and chose, and
    * nothing else can answer for them once it is gone.
    */
   async remove(id: string): Promise<void> {
     const group = await this.groupOrFail(id);
+    const cluster = await this.clusterOrFail(group.clusterId);
+    const capability = this.capabilityOf(cluster.provider);
+    const siblings = await this.groups.count({
+      where: { clusterId: group.clusterId },
+    });
+    if (siblings <= 1 && capability.canProvision && capability.hasCatalogue) {
+      throw new BadRequestException(
+        'This is the only scaling group of the cluster, and its nodes change through it: set it to "manual" to stop it buying, or lower its minimum to give nodes back',
+      );
+    }
     await this.decisions.delete({ groupId: group.id });
     await this.groups.delete({ id: group.id });
   }
@@ -659,12 +764,12 @@ export class ScalingGroupService {
         ...named,
       };
     }
+    if (!buysOnItsOwn(group)) {
+      return { acts: false, says: NO_MONEY_CEILING, ...named };
+    }
     return {
       acts: true,
-      says:
-        group.maxMonthlyCost === null
-          ? `This group buys through the provider API on its own, up to ${group.maxNodes} nodes. It names no ceiling in money.`
-          : `This group buys through the provider API on its own, up to €${group.maxMonthlyCost} a month and ${group.maxNodes} nodes.`,
+      says: `This group buys through the provider API on its own, up to €${group.maxMonthlyCost} a month and ${group.maxNodes} nodes.`,
       ...named,
     };
   }
@@ -736,6 +841,19 @@ function standingOrder(dto: StandingOrderDto): StandingOrderConfig {
   };
 }
 
+/**
+ * Checked where the promise is made — a new group, or a change to its mode or
+ * limits — so an automatic group written before the rule keeps its row and
+ * only stops buying.
+ */
+function assertMoneyCeiling(group: ScalingGroupEntity): void {
+  if (group.provision === 'automatic' && !buysOnItsOwn(group)) {
+    throw new BadRequestException(
+      'A group that buys on its own needs a monthly ceiling in euros: set limits.maxMonthlyCost above 0, or leave the group on "manual"',
+    );
+  }
+}
+
 /** The block is replaced whole, so an omitted cap is a cap removed. */
 function applyLimits(
   group: ScalingGroupEntity,
@@ -795,6 +913,10 @@ function hasVnet(cluster: {
   metadata?: { vnetConfig?: { vnetId?: string } };
 }): boolean {
   return Boolean(cluster.metadata?.vnetConfig?.vnetId);
+}
+
+function fleetBound(nodes: number): number {
+  return Math.min(Math.max(nodes, MIN_FLEET_NODES), MAX_FLEET_NODES);
 }
 
 /** A group that names no machine buys the one the cluster was built with, not nothing. */

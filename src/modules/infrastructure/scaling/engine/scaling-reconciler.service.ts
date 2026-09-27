@@ -6,6 +6,7 @@ import {
   ClusterStatus,
 } from '../../clusters/entities/cluster.entity';
 import { ScalingGroupEntity } from '../entities/scaling-group.entity';
+import { ClusterNodeEntity } from '../../clusters/entities/cluster-node.entity';
 import { ScalingDecisionEntity } from '../entities/scaling-decision.entity';
 import {
   ScalingAssessment,
@@ -53,6 +54,8 @@ export class ScalingReconcilerService {
     private readonly actuator: ScalingActuatorService,
     private readonly alarms: ScalingAlarmService,
     private readonly bell: ScalingBellService,
+    @InjectRepository(ClusterNodeEntity)
+    private readonly nodes: Repository<ClusterNodeEntity>,
   ) {}
 
   async reconcileAll(): Promise<number> {
@@ -157,7 +160,7 @@ export class ScalingReconcilerService {
       ...group,
       provision: 'automatic',
     } as ScalingGroupEntity;
-    const acted = await this.actuator.act(consented, cluster, assessment);
+    const acted = await this.actuator.act(consented, cluster, assessment, true);
     if (!acted?.operationId) {
       throw new ConflictException(
         `Nothing was bought: ${acted?.why ?? assessment.why}`,
@@ -172,6 +175,63 @@ export class ScalingReconcilerService {
     const saved = await this.decisions.save(this.decisions.create(row));
     await this.bell.ring(saved);
     return saved;
+  }
+
+  /**
+   * One node a person approved giving back, on a group that does not act on
+   * its own. The engine names the node as on a pass; if it names another one
+   * now, nothing is removed and the answer says which.
+   */
+  async approveRemoval(
+    groupId: string,
+    expected: { node: string },
+    by: string,
+  ): Promise<ScalingDecisionEntity> {
+    const group = await this.groups.findOne({ where: { id: groupId } });
+    if (!group) throw groupNotFound(groupId);
+    const cluster = await this.clusters.findOne({
+      where: { id: group.clusterId },
+    });
+    if (!cluster) throw clusterNotFound(group.clusterId);
+
+    const assessment = await this.engine.assess(group, cluster);
+    const intent = assessment.intent;
+    if (intent?.kind !== 'remove' || !intent.node) {
+      throw new ConflictException(
+        `There is nothing to give back right now: ${assessment.did}`,
+      );
+    }
+    const named = await this.nodeName(intent.node);
+    if (expected.node !== intent.node && expected.node !== named) {
+      throw new ConflictException(
+        `The group would now give back ${named ?? intent.node}, not ${expected.node}. Nothing was removed.`,
+      );
+    }
+
+    const consented = {
+      ...group,
+      provision: 'automatic',
+    } as ScalingGroupEntity;
+    const acted = await this.actuator.act(consented, cluster, assessment, true);
+    if (!acted?.operationId) {
+      throw new ConflictException(
+        `Nothing was removed: ${acted?.why ?? assessment.why}`,
+      );
+    }
+
+    const row = rowOf(assessment, {
+      ...acted,
+      did: `${acted.did} Approved by ${by}.`,
+      why: `${by} approved giving back this node; the group stays manual and removes nothing else on its own.`,
+    });
+    const saved = await this.decisions.save(this.decisions.create(row));
+    await this.bell.ring(saved);
+    return saved;
+  }
+
+  private async nodeName(nodeId: string): Promise<string | null> {
+    const node = await this.nodes.findOne({ where: { id: nodeId } });
+    return node?.serverName ?? null;
   }
 
   /**

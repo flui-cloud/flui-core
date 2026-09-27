@@ -1,4 +1,9 @@
-import { ProvisionMode, ScalingIntent } from '../scaling.core';
+import {
+  NO_MONEY_CEILING,
+  ProvisionMode,
+  ScalingIntent,
+  buysOnItsOwn,
+} from '../scaling.core';
 
 /**
  * Why a decision stayed a decision.
@@ -19,6 +24,7 @@ import { ProvisionMode, ScalingIntent } from '../scaling.core';
 export type ActuationRefusal =
   | 'provider-cannot-buy'
   | 'group-is-manual'
+  | 'no-money-ceiling'
   | 'unpriced-purchase'
   | 'outside-the-network'
   | 'purchase-in-flight'
@@ -66,6 +72,8 @@ export interface ActuationFacts {
    * itself is enforced on the ladder, which knows the fleet and says it better.
    */
   monthlyCap: number | null;
+  /** A person approved this one purchase, so the group's own consent is not needed. */
+  approvedByPerson?: boolean;
   intent: ScalingIntent;
 }
 
@@ -106,12 +114,8 @@ export function mayAct(facts: ActuationFacts): ActuationVerdict {
     );
   }
 
-  if (facts.provision !== 'automatic') {
-    return no(
-      'group-is-manual',
-      'This group is manual: it names the machine and buys nothing on its own. A person can approve this one purchase, or set the group to buy automatically.',
-    );
-  }
+  const consent = consentRefusal(facts);
+  if (consent) return consent;
 
   if (facts.purchaseInFlight) {
     return no(
@@ -122,38 +126,11 @@ export function mayAct(facts: ActuationFacts): ActuationVerdict {
     );
   }
 
-  // A purchase that failed is no longer in flight, so without this the next
-  // pass buys again — once a minute, for as long as the cause lasts. Where the
-  // failure comes after the server exists, every retry leaves one behind.
-  if (intent.kind !== 'remove' && facts.failedPurchase) {
-    const { at, error, until } = facts.failedPurchase;
-    const when = `at ${clock(at)}`;
-    if (until) {
-      return no(
-        'last-purchase-failed',
-        `The provider had none of that machine left when Flui ordered it ${when}; nothing was created. Flui reads availability again and decides from ${clock(until)}, without anyone asking.`,
-      );
-    }
-    const cause = error ? `: ${error.replace(/[.\s]*$/, '')}.` : '.';
-    return no(
-      'last-purchase-failed',
-      `The last machine Flui tried to add here failed ${when}${cause} Nothing more is bought until that is looked at — a failing purchase retried every minute can leave a server behind each time. Once the cause is fixed, ask this group to try again.`,
-    );
-  }
+  const failed = failedPurchaseRefusal(facts);
+  if (failed) return failed;
 
-  // The stand-in of a replacement was bought to take this node's place, not
-  // for a load that may return: holding the old node back only pays for both.
-  if (
-    intent.kind === 'remove' &&
-    !intent.completesReplacement &&
-    facts.minutesSinceAdded !== null &&
-    facts.minutesSinceAdded < HOLD_AFTER_ADD_MINUTES
-  ) {
-    return no(
-      'just-added',
-      `${joinedPhrase(facts.lastJoinedAt ?? null)} Nothing is given back within ${HOLD_AFTER_ADD_MINUTES} minutes of a node joining — the load that called for it rarely leaves that fast, and giving it back only to buy it again is paid for twice.`,
-    );
-  }
+  const held = justAddedRefusal(facts);
+  if (held) return held;
 
   if (!facts.clusterReady) {
     return no(
@@ -199,6 +176,76 @@ export function mayAct(facts: ActuationFacts): ActuationVerdict {
   };
 }
 
+function justAddedRefusal(facts: ActuationFacts): ActuationVerdict | null {
+  const { intent } = facts;
+  // The stand-in of a replacement was bought to take this node's place, not
+  // for a load that may return: holding the old node back only pays for both.
+  if (
+    intent.kind === 'remove' &&
+    !intent.completesReplacement &&
+    facts.minutesSinceAdded !== null &&
+    facts.minutesSinceAdded < HOLD_AFTER_ADD_MINUTES
+  ) {
+    return no(
+      'just-added',
+      `${joinedPhrase(facts.lastJoinedAt ?? null)} Nothing is given back within ${HOLD_AFTER_ADD_MINUTES} minutes of a node joining — the load that called for it rarely leaves that fast, and giving it back only to buy it again is paid for twice.`,
+    );
+  }
+  return null;
+}
+
+/** Whether the group, or a person for it, consented to acting at all. */
+function consentRefusal(facts: ActuationFacts): ActuationVerdict | null {
+  const { intent } = facts;
+  if (facts.provision !== 'automatic') {
+    return no(
+      'group-is-manual',
+      intent.kind === 'remove'
+        ? 'This group is manual: it names the node it would give back and removes nothing on its own. A person can approve this removal, or set the group to act automatically.'
+        : 'This group is manual: it names the machine and buys nothing on its own. A person can approve this one purchase, or set the group to buy automatically.',
+    );
+  }
+
+  if (
+    !facts.approvedByPerson &&
+    !buysOnItsOwn({
+      provision: facts.provision,
+      maxMonthlyCost: facts.monthlyCap,
+    })
+  ) {
+    return no(
+      'no-money-ceiling',
+      intent.kind === 'remove'
+        ? 'This group is set to automatic but names no monthly ceiling in euros, so it acts on nothing on its own — it gives nothing back either. Set a monthly ceiling to let it act.'
+        : NO_MONEY_CEILING,
+    );
+  }
+  return null;
+}
+
+function failedPurchaseRefusal(facts: ActuationFacts): ActuationVerdict | null {
+  const { intent } = facts;
+  // A purchase that failed is no longer in flight, so without this the next
+  // pass buys again — once a minute, for as long as the cause lasts. Where the
+  // failure comes after the server exists, every retry leaves one behind.
+  if (intent.kind !== 'remove' && facts.failedPurchase) {
+    const { at, error, until } = facts.failedPurchase;
+    const when = `at ${clock(at)}`;
+    if (until) {
+      return no(
+        'last-purchase-failed',
+        `The provider had none of that machine left when Flui ordered it ${when}; nothing was created. Flui reads availability again and decides from ${clock(until)}, without anyone asking.`,
+      );
+    }
+    const cause = error ? `: ${withoutTrailingStops(error)}.` : '.';
+    return no(
+      'last-purchase-failed',
+      `The last machine Flui tried to add here failed ${when}${cause} Nothing more is bought until that is looked at — a failing purchase retried every minute can leave a server behind each time. Once the cause is fixed, ask this group to try again.`,
+    );
+  }
+  return null;
+}
+
 /**
  * A time rather than an age: a decision repeated on every pass is recognised
  * as the same one only while its sentence does not change, and "3 minutes ago"
@@ -212,4 +259,10 @@ function joinedPhrase(at: Date | null): string {
   if (!at) return 'A node joined moments ago.';
   const until = new Date(at.getTime() + HOLD_AFTER_ADD_MINUTES * 60_000);
   return `A node joined at ${clock(at)}; nothing goes back before ${clock(until)}.`;
+}
+
+function withoutTrailingStops(text: string): string {
+  let end = text.length;
+  while (end > 0 && (text[end - 1] === '.' || /\s/.test(text[end - 1]))) end--;
+  return text.slice(0, end);
 }

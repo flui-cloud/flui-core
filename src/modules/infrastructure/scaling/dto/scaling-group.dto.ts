@@ -202,6 +202,19 @@ export class EditScalingGroupDto {
   requirement?: NodeRequirementDto | null;
 }
 
+export class ScalingFloorDto {
+  @IsInt()
+  @Min(MIN_FLEET_NODES)
+  @Max(MAX_FLEET_NODES)
+  min: number;
+}
+
+export class ApproveRemovalDto {
+  /** The node the person saw, by name or ID. */
+  @IsString()
+  node: string;
+}
+
 export class ApprovePurchaseDto {
   @IsString()
   shape: string;

@@ -1,3 +1,5 @@
+import { buysOnItsOwn } from './scaling.core';
+
 /**
  * What a scaling group authorises, said in one line of prose.
  *
@@ -169,15 +171,33 @@ export function scalingModeLabel(facts: ScalingModeFacts): ScalingModeLabel {
       attention: true,
     };
   }
+  if (!buysOnItsOwn(facts)) {
+    return {
+      mode: 'automatic',
+      label: 'Automatic without a monthly ceiling — Flui does not buy',
+      attention: true,
+    };
+  }
   const nodes = `${facts.maxNodes} ${facts.maxNodes === 1 ? 'node' : 'nodes'}`;
   return {
     mode: 'automatic',
-    label:
-      facts.maxMonthlyCost === null
-        ? `Automatic — buys up to ${nodes}, no money ceiling`
-        : `Automatic — buys up to €${facts.maxMonthlyCost}/mo, ${nodes}`,
+    label: `Automatic — buys up to €${facts.maxMonthlyCost}/mo, ${nodes}`,
     attention: false,
   };
+}
+
+/** A cluster with no group has nothing that buys, whatever its provider allows. */
+export function noGroupLabel(
+  provider: string,
+  canProvision: boolean,
+): ScalingModeLabel {
+  return canProvision
+    ? { mode: 'manual', label: 'No group — Flui does not buy', attention: true }
+    : {
+        mode: 'alarm-only',
+        label: `Alarm only — Flui cannot buy on ${provider}`,
+        attention: false,
+      };
 }
 
 export const APPROVE_PURCHASE_CONSEQUENCE =
@@ -185,3 +205,16 @@ export const APPROVE_PURCHASE_CONSEQUENCE =
   'in nodes and money, and billed from the moment it is created. The group ' +
   'stays manual: nothing else is bought on its own. If the proposal changed ' +
   'since it was read, nothing is bought.';
+
+export const APPROVE_REMOVAL_CONSEQUENCE =
+  'One node is drained and given back now, the one the group names, and ' +
+  'billing for it stops once it is deleted. Its work moves to the nodes that ' +
+  'stay. The group stays manual: nothing else is removed on its own. If the ' +
+  'group names another node since it was read, nothing is removed.';
+
+export const FLOOR_CONSEQUENCE =
+  'The group holds at least this many nodes, master included. Raised above ' +
+  'the nodes there are: a manual group proposes the machine and buys it only ' +
+  'once a person approves; an automatic one buys it within its ceilings. ' +
+  'Lowered: the target moves with the floor and the group gives back what is ' +
+  'above it — a manual group asks a person first.';

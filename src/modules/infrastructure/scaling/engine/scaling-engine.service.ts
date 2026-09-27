@@ -22,6 +22,7 @@ import {
   ScalingForce,
   ScalingIntent,
   StandingOrderConfig,
+  buysOnItsOwn,
 } from '../scaling.core';
 import { ScalingGroupService } from '../services/scaling-group.service';
 import { ScalingPreviewDto } from '../dto/scaling-preview.dto';
@@ -138,10 +139,39 @@ export class ScalingEngineService {
 
   async preview(groupId: string): Promise<ScalingPreviewDto> {
     const { group, cluster } = await this.groups.withCluster(groupId);
-    const preview = (await this.assess(group, cluster)).preview;
+    const assessment = await this.assess(group, cluster);
+    const preview = assessment.preview;
+    // The ladder counts the node on its way into the spend and finds no room
+    // for a second one, which nobody needs: the waiting work lands on the first.
+    const blocked =
+      preview.blocked && (await this.groups.nodeOnItsWay(cluster.id))
+        ? null
+        : preview.blocked;
     // Asked here and not on every pass: the loop decides on what is waiting,
     // and room is for a person reading how close the next purchase is.
-    return { ...preview, room: await this.drain.fleetRoom(cluster) };
+    return {
+      ...preview,
+      blocked,
+      giveBack: await this.giveBackOf(group, cluster, assessment),
+      room: await this.drain.fleetRoom(cluster),
+    };
+  }
+
+  private async giveBackOf(
+    group: ScalingGroupEntity,
+    cluster: ClusterEntity,
+    assessment: ScalingAssessment,
+  ): Promise<ScalingPreviewDto['giveBack']> {
+    const intent = assessment.intent;
+    if (intent?.kind !== 'remove' || !intent.node) return null;
+    const node = await this.nodes.findOne({ where: { id: intent.node } });
+    return {
+      nodeId: intent.node,
+      node: node?.serverName ?? intent.node,
+      onItsOwn:
+        this.groups.capabilityOf(cluster.provider).canProvision &&
+        buysOnItsOwn(group),
+    };
   }
 
   async whatIf(
@@ -855,6 +885,7 @@ function toPreview(
     asks: result.asks,
     blocked: result.chosen ? null : alarmBlock(input),
     room: null,
+    giveBack: null,
   };
 }
 

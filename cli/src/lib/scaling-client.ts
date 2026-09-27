@@ -194,6 +194,28 @@ export class ScalingClient {
     );
   }
 
+  approveRemoval(
+    id: string,
+    node: string,
+  ): Promise<ScalingDecisionResponseDto> {
+    return this.api.post<ScalingDecisionResponseDto>(
+      `/infrastructure/scaling-groups/${id}/approve-removal`,
+      { node },
+    );
+  }
+
+  /** How a cluster gains or loses a node: the target follows the floor. */
+  setFloor(id: string, min: number): Promise<ScalingGroupResponseDto> {
+    return this.api.patch<ScalingGroupResponseDto>(
+      `/infrastructure/scaling-groups/${id}/floor`,
+      { min },
+    );
+  }
+
+  remove(id: string): Promise<void> {
+    return this.api.delete<void>(`/infrastructure/scaling-groups/${id}`);
+  }
+
   /** The same engine the reconciler runs, asked on demand and spending nothing. */
   preview(id: string): Promise<ScalingPreviewDto> {
     return this.api.get<ScalingPreviewDto>(

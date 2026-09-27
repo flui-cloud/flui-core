@@ -27,6 +27,8 @@ import {
   SCALING_CONSEQUENCE,
   RETRY_PURCHASE_CONSEQUENCE,
   APPROVE_PURCHASE_CONSEQUENCE,
+  APPROVE_REMOVAL_CONSEQUENCE,
+  FLOOR_CONSEQUENCE,
   scalingConsequenceClause,
 } from './scaling-consequence';
 import {
@@ -37,6 +39,8 @@ import { parseDecisionFilter } from './services/decision-filter.core';
 import { ScalingOverviewService } from './services/scaling-overview.service';
 import {
   ApprovePurchaseDto,
+  ApproveRemovalDto,
+  ScalingFloorDto,
   EditScalingGroupDto,
   WriteScalingGroupDto,
 } from './dto/scaling-group.dto';
@@ -290,6 +294,35 @@ export class ScalingController {
     return this.groups.update(id, dto, byOf(req));
   }
 
+  @Patch('scaling-groups/:id/floor')
+  @RequirePermission(IAM_PERMISSION.CLUSTER_MANAGE)
+  @ActionCycle({
+    action: 'PATCH /infrastructure/scaling-groups/:id/floor',
+    bind: ['id'],
+    sentence: 'change how many nodes scaling group {id} holds at least',
+    consequence: FLOOR_CONSEQUENCE,
+  })
+  @ApiOperation({
+    summary:
+      'Move the floor of a scaling group — how a cluster gains or loses a node',
+    description:
+      'Sets `min` and the target with it; the ceiling never sits below them. A cluster changes its nodes only through its group: raise the floor for one more (a manual group then proposes the machine for approve-purchase, an automatic one buys it within its ceilings), lower it for one fewer (a manual group then names the node for approve-removal, an automatic one gives it back).',
+  })
+  @ApiParam({ name: 'id', description: GROUP_ID })
+  @ApiResponse({ status: 200, type: ScalingGroupResponseDto })
+  @ApiResponse(GROUP_MISSING)
+  async setFloor(
+    @Param('id') id: string,
+    @Body() body: ScalingFloorDto,
+    @Req()
+    req: { user?: { email?: string; displayName?: string } } & Record<
+      string,
+      unknown
+    >,
+  ): Promise<ScalingGroupResponseDto> {
+    return this.groups.setFloor(id, body.min, byOf(req));
+  }
+
   @Post('scaling-groups/:id/retry-purchase')
   @RequirePermission(IAM_PERMISSION.CLUSTER_MANAGE)
   // It reopens spending, so it meets the same question as writing the group.
@@ -325,10 +358,11 @@ export class ScalingController {
   @ApiOperation({
     summary: 'Remove a scaling group and the decisions it took',
     description:
-      'Removes no node and stops no machine: nothing runs off this group yet.',
+      'Removes no node and stops no machine. The only group of a cluster Flui buys for cannot be removed: its nodes change through it (400).',
   })
   @ApiParam({ name: 'id', description: GROUP_ID })
   @ApiResponse({ status: 204, description: 'Removed' })
+  @ApiResponse({ status: 400, description: 'The only group of the cluster' })
   @ApiResponse(GROUP_MISSING)
   async remove(@Param('id') id: string): Promise<void> {
     return this.groups.remove(id);
@@ -366,6 +400,41 @@ export class ScalingController {
   ): Promise<ScalingDecisionResponseDto> {
     return toDecisionDto(
       await this.reconciler.approvePurchase(id, body, byOf(req)),
+    );
+  }
+
+  @Post('scaling-groups/:id/approve-removal')
+  @RequirePermission(IAM_PERMISSION.CLUSTER_MANAGE)
+  @ActionCycle({
+    action: 'POST /infrastructure/scaling-groups/:id/approve-removal',
+    bind: ['id'],
+    sentence: 'give back the node scaling group {id} names, once',
+    consequence: APPROVE_REMOVAL_CONSEQUENCE,
+  })
+  @HttpCode(200)
+  @ApiOperation({
+    summary: 'Give back, once, the node a manual group names',
+    description:
+      'For a group set to manual whose fleet is above its target (the minimum was lowered): the engine decides as on a pass and the node goes through every gate an automatic removal would (a node on its way, one that just joined, a drain that cannot finish). The body names the node the person saw (preview `giveBack`); if the group names another since, nothing is removed and 409 says which. The group stays manual.',
+  })
+  @ApiParam({ name: 'id', description: GROUP_ID })
+  @ApiResponse({ status: 200, type: ScalingDecisionResponseDto })
+  @ApiResponse({
+    status: 409,
+    description: 'Nothing to give back, another node named, or a gate refused',
+  })
+  @ApiResponse(GROUP_MISSING)
+  async approveRemoval(
+    @Param('id') id: string,
+    @Body() body: ApproveRemovalDto,
+    @Req()
+    req: { user?: { email?: string; displayName?: string } } & Record<
+      string,
+      unknown
+    >,
+  ): Promise<ScalingDecisionResponseDto> {
+    return toDecisionDto(
+      await this.reconciler.approveRemoval(id, body, byOf(req)),
     );
   }
 

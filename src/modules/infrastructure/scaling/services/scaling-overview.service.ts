@@ -14,14 +14,14 @@ import { ScalingDecisionEntity } from '../entities/scaling-decision.entity';
 import { ProviderScalingCapability } from '../scaling-capability';
 import { fleetOf, roundEur } from '../engine/engine.core';
 import { clusterNotFound } from '../scaling-errors';
-import { scalingModeLabel } from '../scaling-consequence';
+import { noGroupLabel, scalingModeLabel } from '../scaling-consequence';
 import { ShapeFactsService } from '../engine/shape-facts.service';
 import { ScalingGroupService } from './scaling-group.service';
 import {
   ClusterScalingRowDto,
   OpenAlarmDto,
 } from '../dto/scaling-response.dto';
-import { NOT_ENGINE_FORCES } from '../scaling.core';
+import { NOT_ENGINE_FORCES, buysOnItsOwn } from '../scaling.core';
 
 /**
  * One row per cluster, including the clusters a filter would have eaten.
@@ -52,6 +52,9 @@ export class ScalingOverviewService {
     });
     if (!clusters.length) return [];
 
+    await Promise.all(
+      clusters.map((cluster) => this.groupService.ensureDefaultGroup(cluster)),
+    );
     const ids = clusters.map((c) => c.id);
     const groups = await this.groups.find({
       where: { clusterId: In(ids) },
@@ -69,6 +72,7 @@ export class ScalingOverviewService {
       where: { id: clusterId, status: Not(ClusterStatus.DELETED) },
     });
     if (!cluster) throw clusterNotFound(clusterId);
+    await this.groupService.ensureDefaultGroup(cluster);
     const groups = await this.groups.find({
       where: { clusterId },
       order: { createdAt: 'ASC' },
@@ -138,7 +142,7 @@ export class ScalingOverviewService {
             maxMonthlyCost: group.maxMonthlyCost,
             maxNodes: group.maxNodes,
           })
-        : null,
+        : noGroupLabel(cluster.provider, capability.canProvision),
       openOrders: group?.standingOrders?.length ?? 0,
       blockedOrders: blockedOrdersOf(current),
       openAlarm,
@@ -166,7 +170,7 @@ export class ScalingOverviewService {
     groups: ScalingGroupEntity[],
   ): boolean {
     if (!capability.canProvision) return false;
-    return groups.some((group) => group.provision === 'automatic');
+    return groups.some(buysOnItsOwn);
   }
 
   /**

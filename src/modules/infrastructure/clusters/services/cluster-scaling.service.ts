@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  GoneException,
   Injectable,
   Logger,
   NotFoundException,
@@ -49,6 +50,9 @@ export interface RemoveWorkerJobData {
 }
 
 const MAX_WORKERS_PER_CALL = 5;
+
+export const NODES_THROUGH_GROUP =
+  "A cluster's nodes change through its scaling group: raise its floor to add one (`flui scaling floor <n>`, or + on the cluster's Scaling tab), lower it to give one back. A manual group asks you to approve the purchase or the removal.";
 
 @Injectable()
 export class ClusterScalingService {
@@ -269,6 +273,28 @@ export class ClusterScalingService {
     throw new BadRequestException(
       `Provider "${cluster.provider}" does not sell "${serverType}".`,
     );
+  }
+
+  /**
+   * The one node a person still removes by hand: a machine they attached
+   * themselves. Every node Flui bought goes back through the scaling group,
+   * by lowering its minimum.
+   */
+  async removeAttachedWorker(
+    clusterId: string,
+    nodeId: string,
+    by?: string | null,
+  ): Promise<InfrastructureOperationEntity> {
+    const cluster = await this.clusterRepository.findOne({
+      where: { id: clusterId },
+    });
+    if (!cluster) {
+      throw new NotFoundException(`Cluster ${clusterId} not found`);
+    }
+    if ((cluster.provider as CloudProvider) !== CloudProvider.BYOS) {
+      throw new GoneException(NODES_THROUGH_GROUP);
+    }
+    return this.removeWorker(clusterId, nodeId, by);
   }
 
   async removeWorker(

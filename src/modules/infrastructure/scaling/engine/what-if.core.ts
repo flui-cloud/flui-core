@@ -77,8 +77,11 @@ export function placeOnFleet(ask: WhatIfAsk, room: FleetRoom): string | null {
  * system reserve set aside. Availability is not weighed: a machine sold out
  * today is still one the group can buy tomorrow, and the money ceiling is.
  */
-export function largestBuyable(input: LadderInput): MachineRoom | null {
-  const cap = input.group.maxMonthlyCost;
+export function largestBuyable(
+  input: LadderInput,
+  withinCap = true,
+): MachineRoom | null {
+  const cap = withinCap ? input.group.maxMonthlyCost : null;
   const committed = input.fleet.committedMonthlyEur;
   let best: MachineRoom | null = null;
   for (const name of input.group.shapes) {
@@ -228,8 +231,20 @@ export function answerWhatIf(
     provision: first.provision,
     largest,
     why: first.ladder.asks,
-    sentence: holds(largestBuyable(first.input), ask)
-      ? `${miss}, and no machine the group may buy that could take it can be had right now: it would wait for room.`
-      : `${miss}, and it is bigger than any machine the group may buy: it would wait for room.`,
+    sentence: nothingHostsSentence(miss, first.input, ask),
   };
+}
+
+function nothingHostsSentence(
+  miss: string,
+  input: LadderInput,
+  ask: WhatIfAsk,
+): string {
+  if (holds(largestBuyable(input), ask)) {
+    return `${miss}, and no machine the group may buy that could take it can be had right now: it would wait for room.`;
+  }
+  if (holds(largestBuyable(input, false), ask)) {
+    return `${miss}, and a machine that could take it would pass the group's ceiling of €${input.group.maxMonthlyCost} a month: it would wait until the ceiling is raised.`;
+  }
+  return `${miss}, and it is bigger than any machine the group may buy: it would wait for room.`;
 }

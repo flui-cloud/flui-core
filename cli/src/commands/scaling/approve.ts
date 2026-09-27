@@ -8,7 +8,7 @@ import {
 
 export default class ScalingApprove extends Command {
   static readonly description =
-    'Buy, once, the machine a manual scaling group proposes. Without --yes it only shows the proposal. The purchase meets every limit an automatic group would (nodes, money, a purchase already on its way); the group stays manual and buys nothing else on its own.';
+    'Carry out, once, what a manual scaling group proposes: buy the machine it names (floor raised) or give back the node it names (floor lowered). Without --yes it only shows the proposal. Every limit an automatic group meets still holds; the group stays manual and does nothing else on its own.';
 
   static readonly examples = [
     '<%= config.bin %> <%= command.id %>',
@@ -30,7 +30,7 @@ export default class ScalingApprove extends Command {
     }),
     yes: Flags.boolean({
       char: 'y',
-      description: 'Buy the proposed machine now',
+      description: 'Buy the proposed machine, or give back the named node, now',
       default: false,
     }),
   };
@@ -43,6 +43,12 @@ export default class ScalingApprove extends Command {
       const { group } = await resolveGroup(client, flags.cluster, args.group);
       const preview = await client.preview(group.id);
       const chosen = preview.chosen;
+      const giveBack = preview.giveBack;
+
+      if (giveBack && !giveBack.onItsOwn) {
+        await this.giveBack(client, group, giveBack.node, flags.yes);
+        return;
+      }
 
       if (!chosen?.shape || !chosen.region) {
         console.log(
@@ -89,6 +95,32 @@ export default class ScalingApprove extends Command {
       }
       console.log('');
       this.exit(1);
+    }
+  }
+
+  private async giveBack(
+    client: ScalingClient,
+    group: { id: string; name: string },
+    node: string,
+    yes: boolean,
+  ): Promise<void> {
+    console.log(
+      `\n  ${group.name} would give back ${chalk.bold(node)}: it is drained and deleted, its work moves to the nodes that stay.`,
+    );
+    if (!yes) {
+      console.log(
+        chalk.dim('  Nothing removed. Run again with --yes to give it back.\n'),
+      );
+      return;
+    }
+    const removal = await client.approveRemoval(group.id, node);
+    console.log(chalk.green(`  ✔ ${removal.did}`));
+    if (removal.operation) {
+      console.log(
+        chalk.dim(
+          `  Follow it: flui operation ${removal.operation.id} --follow\n`,
+        ),
+      );
     }
   }
 }

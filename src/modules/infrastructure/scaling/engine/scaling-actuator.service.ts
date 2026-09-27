@@ -21,6 +21,7 @@ import { ScalingGroupService } from '../services/scaling-group.service';
 import { ScalingAssessment } from './scaling-engine.service';
 import { ActuationFacts, ActuationVerdict, mayAct } from './actuation.core';
 import { purchaseHold } from './purchase-hold';
+import { buysOnItsOwn } from '../scaling.core';
 
 /** What acting changed about the decision that was going to be written. */
 export interface Actuation {
@@ -92,6 +93,10 @@ export class ScalingActuatorService implements OnModuleInit {
    * pair wins, so the fence never sits tighter than any one group's own ceiling.
    */
   async boundsFor(clusterId: string): Promise<ClusterBounds | null> {
+    const cluster = await this.clusterRows.findOne({
+      where: { id: clusterId },
+    });
+    if (cluster) await this.groupService.ensureDefaultGroup(cluster);
     const groups = await this.groups.find({ where: { clusterId } });
     if (groups.length === 0) return null;
     return {
@@ -132,10 +137,10 @@ export class ScalingActuatorService implements OnModuleInit {
    * on its own — with no sentence to go and edit.
    */
   async drivesCluster(clusterId: string): Promise<boolean> {
-    const automatic = await this.groups.count({
+    const automatic = await this.groups.find({
       where: { clusterId, provision: 'automatic' },
     });
-    if (!automatic) return false;
+    if (!automatic.some(buysOnItsOwn)) return false;
     const cluster = await this.clusterRows.findOne({
       where: { id: clusterId },
     });
@@ -153,6 +158,7 @@ export class ScalingActuatorService implements OnModuleInit {
     group: ScalingGroupEntity,
     cluster: ClusterEntity,
     assessment: ScalingAssessment,
+    approvedByPerson = false,
   ): Promise<Actuation | null> {
     const intent = assessment.intent;
     if (!intent) return this.onItsWay(cluster, assessment);
@@ -163,6 +169,7 @@ export class ScalingActuatorService implements OnModuleInit {
       provision: group.provision,
       clusterReady: cluster.status === ClusterStatus.READY,
       monthlyCap: group.maxMonthlyCost,
+      approvedByPerson,
       purchaseInFlight: await this.inFlight(cluster.id),
       failedPurchase: await this.failedPurchase(
         cluster.id,
@@ -261,7 +268,8 @@ export class ScalingActuatorService implements OnModuleInit {
     }
 
     if (
-      verdict.refusal === 'group-is-manual' &&
+      (verdict.refusal === 'group-is-manual' ||
+        verdict.refusal === 'no-money-ceiling') &&
       assessment.force === 'urgency'
     ) {
       return {
@@ -270,7 +278,9 @@ export class ScalingActuatorService implements OnModuleInit {
         why: verdict.because,
         asks:
           assessment.asks ??
-          `${assessment.did} Approve this one purchase (Buy on the Now tab, \`flui scaling approve --yes\`), add the machine yourself, or set this group to buy automatically.`,
+          (verdict.refusal === 'no-money-ceiling'
+            ? `${assessment.did} Approve this one purchase (Buy on the Now tab, \`flui scaling approve --yes\`), or set a monthly ceiling so the group buys on its own.`
+            : `${assessment.did} Approve this one purchase (Buy on the Now tab, \`flui scaling approve --yes\`), or set this group to buy automatically.`),
         operationId: null,
       };
     }

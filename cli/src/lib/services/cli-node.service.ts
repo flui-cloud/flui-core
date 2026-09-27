@@ -14,14 +14,6 @@ export interface NodeSummary {
   metadata?: Record<string, any>;
 }
 
-export interface AddWorkerResult {
-  operation_id: string;
-  resource_id: string;
-  status: string;
-  estimated_duration: string;
-  created_at: string;
-}
-
 export interface RemoveWorkerResult {
   operation_id: string;
   resource_id: string;
@@ -60,13 +52,6 @@ export class CliNodeService {
   async listNodes(): Promise<NodeSummary[]> {
     return this.apiClient.get<NodeSummary[]>(
       `/infrastructure/clusters/${this.clusterId}/nodes`,
-    );
-  }
-
-  async addWorkers(count: number): Promise<AddWorkerResult> {
-    return this.apiClient.post<AddWorkerResult>(
-      `/infrastructure/clusters/${this.clusterId}/workers`,
-      { count },
     );
   }
 

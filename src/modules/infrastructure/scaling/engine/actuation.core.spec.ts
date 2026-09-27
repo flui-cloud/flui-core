@@ -232,11 +232,31 @@ describe('the gate between deciding and acting', () => {
     expect(verdict.because).toContain('€40');
   });
 
-  it('buys an unpriced shape where the group named no ceiling at all', () => {
+  it('buys an unpriced shape a person approved on a group with no ceiling', () => {
     const verdict = mayAct(
-      facts({ monthlyCap: null, intent: add({ hourlyEur: null }) }),
+      facts({
+        monthlyCap: null,
+        approvedByPerson: true,
+        intent: add({ hourlyEur: null }),
+      }),
     );
     expect(verdict.act).toBe(true);
+  });
+
+  it('treats an automatic group with no money ceiling as one that does not buy', () => {
+    const verdict = mayAct(facts({ monthlyCap: null }));
+    expect(verdict).toMatchObject({ act: false, refusal: 'no-money-ceiling' });
+    expect(verdict.because).toContain('monthly ceiling');
+  });
+
+  it('gives nothing back on its own either without a money ceiling', () => {
+    const verdict = mayAct(facts({ monthlyCap: null, intent: remove() }));
+    expect(verdict).toMatchObject({ act: false, refusal: 'no-money-ceiling' });
+    expect(verdict.because).toContain('gives nothing back');
+  });
+
+  it('reads a ceiling of zero as no ceiling', () => {
+    expect(mayAct(facts({ monthlyCap: 0 })).refusal).toBe('no-money-ceiling');
   });
 
   it('does not ask a removal for a price or a region it has no use for', () => {

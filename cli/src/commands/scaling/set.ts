@@ -21,6 +21,7 @@ export default class ScalingSet extends Command {
   static readonly examples = [
     '<%= config.bin %> <%= command.id %> default --max-monthly 30',
     '<%= config.bin %> <%= command.id %> default --provision manual',
+    '<%= config.bin %> <%= command.id %> default --provision automatic --max-monthly 40',
     '<%= config.bin %> <%= command.id %> default --shapes cx33,cx23 --regions fsn1,nbg1 --dry-run',
     '<%= config.bin %> <%= command.id %> default --max 4 --desired 2',
     '<%= config.bin %> <%= command.id %> default --max-monthly none',
@@ -41,7 +42,7 @@ export default class ScalingSet extends Command {
     }),
     'max-monthly': Flags.string({
       description:
-        'Most the group may spend in a month, in euros; "none" removes the ceiling',
+        'Most the group may spend in a month, in euros; "none" removes the ceiling (only on a manual group: automatic needs one)',
     }),
     'hourly-only': Flags.boolean({
       description: 'Buy only machines billed by the hour',
@@ -49,7 +50,7 @@ export default class ScalingSet extends Command {
     }),
     provision: Flags.string({
       description:
-        'automatic: Flui buys on its own; manual: Flui proposes and a person buys',
+        'automatic: Flui buys on its own, within --max-monthly (required); manual: Flui proposes and a person buys',
       options: [...PROVISION_MODES],
     }),
     shapes: Flags.string({
