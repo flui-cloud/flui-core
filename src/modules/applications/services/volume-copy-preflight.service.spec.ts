@@ -104,6 +104,24 @@ describe('VolumeCopyPreflightService', () => {
     });
   });
 
+  it('copies a live SQLite with its online backup instead of refusing', async () => {
+    const { service, pauseLease } = make({
+      writers: ['linkding-0'],
+      engine: 'sqlite',
+    });
+
+    await expect(service.check(input)).resolves.toEqual({
+      paused: [],
+      facts: {
+        quiesce: 'sqlite-snapshot',
+        writersAtStart: 1,
+        dataDirectoryDetected: 'sqlite',
+        hook: 'sqlite-online-backup',
+      },
+    });
+    expect(pauseLease.acquire).not.toHaveBeenCalled();
+  });
+
   it('pauses instead of probing, and says the writers were stopped', async () => {
     const { service, pauseLease, volumeExport } = make({
       writers: ['pg-0'],

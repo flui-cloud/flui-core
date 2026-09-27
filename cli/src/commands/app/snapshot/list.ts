@@ -5,6 +5,7 @@ import {
   CliAppService,
   SnapshotResponse,
   SnapshotListResponse,
+  SpareVolume,
 } from '../../../lib/services/cli-app.service';
 import { resolveClusterRef } from '../../../lib/resolve-cluster';
 import { formatBytes } from '../../../lib/format-bytes';
@@ -45,6 +46,7 @@ export default class AppSnapshotList extends Command {
 
       let items: SnapshotResponse[];
       let unsupportedReason: string | undefined;
+      let spare: SpareVolume[] = [];
       if (flags.app) {
         const app = await service.getAppByName(flags.app);
         const response: SnapshotListResponse = await service.listAppSnapshots(
@@ -52,6 +54,7 @@ export default class AppSnapshotList extends Command {
         );
         items = response.items;
         if (!response.supported) unsupportedReason = response.reason;
+        spare = await service.listSpareVolumes(app.id).catch(() => []);
       } else {
         items = await service.listClusterSnapshots();
       }
@@ -70,12 +73,13 @@ export default class AppSnapshotList extends Command {
 
       if (items.length === 0) {
         console.log(chalk.dim('  No snapshots found.'));
+        this.printSpare(spare, flags.app);
         return;
       }
 
       console.log('');
       console.log(
-        `  ${chalk.bold('EXPORT ID'.padEnd(48))} ${chalk.bold('SINK'.padEnd(12))} ${chalk.bold('REQ'.padEnd(7))} ${chalk.bold('USED'.padEnd(10))} ${chalk.bold('READY'.padEnd(6))} ${chalk.bold('SOURCE PVC')}`,
+        `  ${chalk.bold('EXPORT ID'.padEnd(48))} ${chalk.bold('SINK'.padEnd(12))} ${chalk.bold('REQ'.padEnd(7))} ${chalk.bold('USED'.padEnd(10))} ${chalk.bold('READY'.padEnd(6))} ${chalk.bold('VOLUME')}`,
       );
       console.log('  ' + '─'.repeat(130));
       for (const s of items) {
@@ -94,6 +98,7 @@ export default class AppSnapshotList extends Command {
       console.log('');
       console.log(chalk.dim(`  ${items.length} snapshot(s) total`));
       console.log('');
+      this.printSpare(spare, flags.app);
     } catch (error: any) {
       spinner.fail('Failed to list snapshots');
       const msg =
@@ -101,5 +106,30 @@ export default class AppSnapshotList extends Command {
       console.log(chalk.red(`\n  Error: ${msg}\n`));
       this.exit(1);
     }
+  }
+
+  /** Volumes the app owns but does not run on — paid for, so always shown. */
+  private printSpare(spare: SpareVolume[], app?: string): void {
+    if (!spare.length) return;
+    console.log(
+      chalk.bold(
+        '  Restored and previous volumes (not in use by the application)',
+      ),
+    );
+    for (const v of spare) {
+      const what =
+        v.kind === 'previous'
+          ? 'data the application used before a swap'
+          : `restored from ${v.restoredFrom ?? 'a copy'}, never put in use`;
+      console.log(
+        `  ${v.name.padEnd(48)} ${(v.size ?? '—').padEnd(7)} ${chalk.dim(what)}`,
+      );
+    }
+    console.log(
+      chalk.dim(
+        `\n  Put one in use: flui app snapshot swap ${app} <volume>` +
+          `\n  Delete one:     flui app snapshot discard ${app} <volume>\n`,
+      ),
+    );
   }
 }

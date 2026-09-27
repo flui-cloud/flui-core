@@ -32,6 +32,8 @@ import { SandboxTenantEntity } from '../sandbox/entities/sandbox-tenant.entity';
 import { ClustersModule } from '../infrastructure/clusters/clusters.module';
 import { SharedInfrastructureModule } from '../infrastructure/shared/shared-infrastructure.module';
 import { EncryptionModule } from '../shared/encryption/encryption.module';
+import { BackupPolicyEntity } from '../backups/entities/backup-policy.entity';
+import { BackupArtifactEntity } from '../backups/entities/backup-artifact.entity';
 
 @Module({
   imports: [
@@ -41,6 +43,8 @@ import { EncryptionModule } from '../shared/encryption/encryption.module';
       InfrastructureOperationEntity,
       ClusterEntity,
       SandboxTenantEntity,
+      BackupPolicyEntity,
+      BackupArtifactEntity,
     ]),
     BullModule.registerQueue({ name: CATALOG_INSTALL_QUEUE }),
     ApplicationsModule,

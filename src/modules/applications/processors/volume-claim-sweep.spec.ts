@@ -91,6 +91,8 @@ describe('the volumes a StatefulSet leaves behind', () => {
       null as never,
       null as never,
       null as never,
+      null as never,
+      null as never,
       kubernetes as never,
       null as never,
       null as never,

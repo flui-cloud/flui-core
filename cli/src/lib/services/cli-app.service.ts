@@ -303,6 +303,15 @@ export interface RemovalPreviewVolume {
   attributedBy: string;
 }
 
+export interface SpareVolume {
+  name: string;
+  kind: 'restored' | 'previous';
+  size: string | null;
+  createdAt: string | null;
+  inUse: boolean;
+  restoredFrom: string | null;
+}
+
 export interface RemovalPreview {
   removes: 'catalog-install' | 'application';
   label: string;
@@ -313,6 +322,7 @@ export interface RemovalPreview {
   volumesKnown: boolean;
   dataWarning: string | null;
   note?: string;
+  backupNote?: string | null;
 }
 
 export interface UninstallResult {
@@ -412,6 +422,9 @@ export interface AppAutoscaling {
   rangeFrom: 'app' | 'manifest';
   running: boolean | null;
 }
+
+/** A copy, a restore or a swap waits for the volume work on the cluster. */
+const VOLUME_COPY_TIMEOUT_MS = 35 * 60 * 1000;
 
 export class CliAppService {
   private readonly apiClient: ApiClient;
@@ -949,6 +962,7 @@ export class CliAppService {
     return this.apiClient.post<SnapshotResponse>(
       `/applications/${appId}/snapshots`,
       body,
+      { timeoutMs: VOLUME_COPY_TIMEOUT_MS },
     );
   }
 
@@ -1000,6 +1014,19 @@ export class CliAppService {
     }>(
       `/applications/${appId}/snapshots/${encodeURIComponent(snapshotId)}/restore`,
       {},
+      { timeoutMs: VOLUME_COPY_TIMEOUT_MS },
+    );
+  }
+
+  async listSpareVolumes(appId: string): Promise<SpareVolume[]> {
+    return this.apiClient.get<SpareVolume[]>(
+      `/applications/${appId}/volumes/spare`,
+    );
+  }
+
+  async deleteSpareVolume(appId: string, name: string): Promise<void> {
+    await this.apiClient.delete(
+      `/applications/${appId}/volumes/spare/${encodeURIComponent(name)}`,
     );
   }
 
@@ -1011,6 +1038,7 @@ export class CliAppService {
     return this.apiClient.post<unknown>(
       `/applications/${appId}/volumes/${encodeURIComponent(volumeName)}/swap`,
       { newClaimName },
+      { timeoutMs: VOLUME_COPY_TIMEOUT_MS },
     );
   }
 
@@ -1101,8 +1129,12 @@ export class CliAppService {
     appId: string,
     name: string,
     jobName: string,
-  ): Promise<{ jobName: string; logs: string }> {
-    return this.apiClient.get<{ jobName: string; logs: string }>(
+  ): Promise<{ jobName: string; logs: string; reason?: string | null }> {
+    return this.apiClient.get<{
+      jobName: string;
+      logs: string;
+      reason?: string | null;
+    }>(
       `/applications/${appId}/schedules/${encodeURIComponent(name)}/runs/${encodeURIComponent(jobName)}/logs`,
     );
   }
@@ -1180,6 +1212,11 @@ export interface ScheduledJob {
   lastScheduleTime?: string | null;
   lastSuccessfulTime?: string | null;
   createdAt?: string | null;
+  lastRunStatus?: string | null;
+  consecutiveFailures?: number;
+  failing?: boolean;
+  origin?: 'user' | 'manifest';
+  onCluster?: boolean;
 }
 
 export interface CreateScheduledJobInput {
@@ -1205,6 +1242,7 @@ export interface ScheduledJobRun {
   manual: boolean;
   startTime?: string | null;
   completionTime?: string | null;
+  reason?: string | null;
 }
 
 export type GatewayMinRole = 'viewer' | 'operator' | 'maintainer';
@@ -1313,6 +1351,8 @@ export interface SnapshotResponse {
     pvcClonePricePerGbMonthEur: number | null;
     s3ArchivePricePerGbMonthEur: number | null;
   };
+  interruptionSeconds?: number;
+  applicationBack?: boolean;
 }
 
 export interface BackupDestinationInput {

@@ -193,6 +193,38 @@ export class VolumePauseLeaseService {
   }
 
   /**
+   * Resolves once every released workload reports all its replicas ready, or
+   * false after the timeout. "Copied" is not "back": a database restarting
+   * after a copy refuses connections for a while, and the person who asked
+   * for the pause is owed the moment it answers again.
+   */
+  async waitUntilReady(
+    kubeconfig: string,
+    workloads: ReadonlyArray<PausedWorkload>,
+    timeoutMs = 3 * 60 * 1000,
+    pollMs = 2_000,
+  ): Promise<boolean> {
+    const deadline = Date.now() + timeoutMs;
+    for (const workload of workloads) {
+      for (;;) {
+        const live = await this.k8s
+          .getResource(
+            kubeconfig,
+            workload.kind,
+            workload.name,
+            workload.namespace,
+          )
+          .catch(() => null);
+        const wanted = live?.spec?.replicas ?? workload.replicas;
+        if ((live?.status?.readyReplicas ?? 0) >= wanted) break;
+        if (Date.now() > deadline) return false;
+        await new Promise((r) => setTimeout(r, pollMs));
+      }
+    }
+    return true;
+  }
+
+  /**
    * Finds every paused workload in a cluster and releases the expired ones.
    *
    * `force` is for shutdown and boot, where there is no copy left that could

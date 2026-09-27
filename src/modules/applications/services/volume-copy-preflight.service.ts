@@ -201,6 +201,21 @@ export class VolumeCopyPreflightService {
       input.pvcName,
     );
 
+    // SQLite has an online backup that reads a consistent image while the
+    // application keeps writing, so the copy uses it instead of stopping
+    // anything or refusing.
+    if (dataDirectoryDetected === 'sqlite') {
+      return {
+        paused: [],
+        facts: {
+          quiesce: 'sqlite-snapshot',
+          writersAtStart,
+          dataDirectoryDetected,
+          hook: 'sqlite-online-backup',
+        },
+      };
+    }
+
     // Whether acknowledging the risk is even a coherent choice depends on the
     // engine. An engine that survives a power cut survives a live copy, so
     // taking one knowingly is a real decision. An engine whose store is
@@ -225,17 +240,20 @@ export class VolumeCopyPreflightService {
         dataDirectoryDetected,
         writersAtStart,
         options: acknowledgeable ? ['pause', 'allowInconsistent'] : ['pause'],
+        // Surface-neutral: each surface turns `options` into its own way
+        // forward (a flag, a button), so none is named here.
         message: acknowledgeable
           ? `This volume holds a ${dataDirectoryDetected} data directory and ` +
             `${writersAtStart} process(es) are writing to it. A file copy taken ` +
             'now can be torn — and the copy tool retries, so it would report ' +
-            'success anyway. Either pass --pause to stop it, copy at rest and ' +
-            'start it again, or --allow-inconsistent to take it as it is.'
+            'success anyway. Stop the application for the length of the copy ' +
+            '(it starts again right after), or take the copy as it is, knowing ' +
+            'it may not restore cleanly.'
           : `This volume holds a ${dataDirectoryDetected} store, which writes ` +
-            'its files in place. A copy taken while it runs cannot be opened ' +
-            'again, so Flui will not take one — there is no flag for this. ' +
-            'Stop the application and copy it at rest with --pause, or leave ' +
-            'this volume out of the policy if it can be rebuilt.',
+            'its files in place: a copy taken while it runs cannot be opened ' +
+            'again, so Flui will not take one while it runs. Stop the ' +
+            'application for the length of the copy (it starts again right ' +
+            'after), or leave this volume out of the policy if it can be rebuilt.',
       });
     }
 

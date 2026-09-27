@@ -17,6 +17,11 @@ import {
 } from '../interfaces/volume-export.interface';
 
 const TAR_IMAGE = 'busybox:1.37';
+import {
+  SQLITE_LOCAL_FINISH,
+  renderSqliteSnapshotInit,
+  renderSqliteStageVolume,
+} from './sqlite-snapshot.util';
 const RCLONE_IMAGE = 'rclone/rclone:1.67';
 
 /**
@@ -148,9 +153,17 @@ const SINK_LABEL = 'flui.cloud/export-sink';
 const COPY_JOB_TIMEOUT_SECONDS = 30 * 60;
 
 /** A Kubernetes label value: alphanumeric ends, `-_.` inside, at most 63. */
+function isAlphanumeric(char: string): boolean {
+  return /[A-Za-z0-9]/.test(char);
+}
+
 function asLabelValue(raw: string): string {
   const cleaned = raw.replaceAll(/[^A-Za-z0-9._-]/g, '-').slice(0, 63);
-  return cleaned.replace(/^[^A-Za-z0-9]+/, '').replace(/[^A-Za-z0-9]+$/, '');
+  let start = 0;
+  let end = cleaned.length;
+  while (start < end && !isAlphanumeric(cleaned[start])) start++;
+  while (end > start && !isAlphanumeric(cleaned[end - 1])) end--;
+  return cleaned.slice(start, end);
 }
 
 /**
@@ -237,6 +250,21 @@ export class VolumeExportService implements IVolumeExport {
 
   async deleteExport(input: DeleteExportInput): Promise<void> {
     if (input.sink === 'pvc-clone') {
+      // A copy still running (or never scheduled) keeps holding the source
+      // volume through its Job: deleting the copy must stop that too.
+      await this.k8s
+        .deleteResource(
+          input.kubeconfig,
+          'Job',
+          this.copyJobName(input.exportId),
+          input.namespace,
+        )
+        .catch(() => undefined);
+      await this.cleanupCopyJob(
+        input.kubeconfig,
+        input.namespace,
+        this.copyJobName(input.exportId),
+      );
       try {
         await this.k8s.deleteResource(
           input.kubeconfig,
@@ -296,6 +324,25 @@ export class VolumeExportService implements IVolumeExport {
     });
     await this.k8s.applyManifest(input.kubeconfig, pvcManifest);
 
+    // A copy kept on the cluster lives on one node's disk: the restore has to
+    // run there to read it.
+    const copyNode =
+      input.preferredNode ??
+      (input.sink === 'pvc-clone'
+        ? ((
+            await this.k8s
+              .getResource(
+                input.kubeconfig,
+                'PersistentVolumeClaim',
+                input.exportId,
+                input.namespace,
+              )
+              .catch(() => null)
+          )?.metadata?.annotations?.['volume.kubernetes.io/selected-node'] as
+            | string
+            | undefined)
+        : undefined);
+
     const jobName = `${input.newPvcName}-restore`;
     const jobManifest =
       input.sink === 'pvc-clone'
@@ -304,7 +351,7 @@ export class VolumeExportService implements IVolumeExport {
             namespace: input.namespace,
             sourcePvcName: input.exportId,
             destPvcName: input.newPvcName,
-            nodeSelectorHostname: input.preferredNode,
+            nodeSelectorHostname: copyNode,
             labels: newPvcLabels,
           })
         : this.renderS3RestoreJobManifest({
@@ -370,11 +417,7 @@ export class VolumeExportService implements IVolumeExport {
     // (e.g. `<app>-<rand>-snap-<ts>-<description>-copy` easily hits 64+).
     // Hash-suffix the name once we cross the line so the operation never
     // fails just because the user picked a descriptive snapshot name.
-    const naturalName = `${input.exportName}-copy`;
-    const jobName =
-      naturalName.length <= 63
-        ? naturalName
-        : `copy-${this.shortId(input.exportName)}`;
+    const jobName = this.copyJobName(input.exportName);
     const jobManifest = this.renderTarCopyJobManifest({
       jobName,
       namespace: input.namespace,
@@ -382,6 +425,7 @@ export class VolumeExportService implements IVolumeExport {
       destPvcName: input.exportName,
       nodeSelectorHostname: sourceNode,
       labels: exportLabels,
+      consistentSqlite: input.consistentSqlite,
     });
     await this.k8s.applyManifest(input.kubeconfig, jobManifest);
     await this.waitForJobCompletion(
@@ -455,6 +499,7 @@ export class VolumeExportService implements IVolumeExport {
       },
       nodeSelectorHostname: sourceNode,
       labels: exportLabels,
+      consistentSqlite: input.consistentSqlite,
     });
     await this.k8s.applyManifest(input.kubeconfig, jobManifest);
     await this.waitForJobCompletion(
@@ -630,6 +675,13 @@ export class VolumeExportService implements IVolumeExport {
     }
   }
 
+  private copyJobName(exportName: string): string {
+    const naturalName = `${exportName}-copy`;
+    return naturalName.length <= 63
+      ? naturalName
+      : `copy-${this.shortId(exportName)}`;
+  }
+
   private async cleanupCopyJob(
     kubeconfig: string,
     namespace: string,
@@ -792,6 +844,25 @@ export class VolumeExportService implements IVolumeExport {
 
   // ─── manifest renderers ────────────────────────────────────────────────────
 
+  /**
+   * A copy pod has to run where the volume's data is. When that node keeps
+   * other work away with a taint — a master that hosts only pinned databases
+   * — the pod must tolerate it, or it waits in Pending forever and the copy
+   * never starts.
+   */
+  private renderPlacementBlock(hostname?: string): string {
+    if (!hostname) return '';
+    return [
+      '      nodeSelector:',
+      `        kubernetes.io/hostname: ${hostname}`,
+      '      tolerations:',
+      '        - operator: Exists',
+      '          effect: NoSchedule',
+      '        - operator: Exists',
+      '          effect: PreferNoSchedule',
+    ].join('\n');
+  }
+
   private renderProbeJobManifest(args: {
     jobName: string;
     namespace: string;
@@ -801,12 +872,9 @@ export class VolumeExportService implements IVolumeExport {
   }): string {
     const labelLinesMeta = this.renderLabelLines(args.labels, '    ');
     const labelLinesPod = this.renderLabelLines(args.labels, '        ');
-    const nodeSelectorBlock = args.nodeSelectorHostname
-      ? [
-          '      nodeSelector:',
-          `        kubernetes.io/hostname: ${args.nodeSelectorHostname}`,
-        ].join('\n')
-      : '';
+    const nodeSelectorBlock = this.renderPlacementBlock(
+      args.nodeSelectorHostname,
+    );
     // One walk, then match against what it found. A `find` per marker was
     // affordable at five markers and triples the probe's cost at fourteen, on
     // a volume whose top three levels can already hold tens of thousands of
@@ -912,15 +980,14 @@ export class VolumeExportService implements IVolumeExport {
     destPvcName: string;
     nodeSelectorHostname?: string;
     labels: Record<string, string>;
+    consistentSqlite?: boolean;
   }): string {
+    const sqlite = !!args.consistentSqlite;
     const labelLinesMeta = this.renderLabelLines(args.labels, '    ');
     const labelLinesPod = this.renderLabelLines(args.labels, '        ');
-    const nodeSelectorBlock = args.nodeSelectorHostname
-      ? [
-          '      nodeSelector:',
-          `        kubernetes.io/hostname: ${args.nodeSelectorHostname}`,
-        ].join('\n')
-      : '';
+    const nodeSelectorBlock = this.renderPlacementBlock(
+      args.nodeSelectorHostname,
+    );
     return [
       'apiVersion: batch/v1',
       'kind: Job',
@@ -940,27 +1007,34 @@ export class VolumeExportService implements IVolumeExport {
       '    spec:',
       '      restartPolicy: Never',
       ...(nodeSelectorBlock ? [nodeSelectorBlock] : []),
+      ...(sqlite ? renderSqliteSnapshotInit() : []),
       '      containers:',
       '        - name: copy',
       `          image: ${TAR_IMAGE}`,
       '          command:',
       '            - /bin/sh',
       '            - -c',
-      String.raw`            - 'set -e; cd /src && tar -cf - . | tar -C /dst -xf - && sync && echo FLUI_ACTUAL_BYTES=$(du -sb /dst | awk "{print \$1}")'`,
+      sqlite
+        ? String.raw`            - 'set -e; cd /src && tar -cf - . | tar -C /dst -xf - && ${SQLITE_LOCAL_FINISH} && sync && echo FLUI_ACTUAL_BYTES=$(du -sb /dst | awk "{print \$1}")'`
+        : String.raw`            - 'set -e; cd /src && tar -cf - . | tar -C /dst -xf - && sync && echo FLUI_ACTUAL_BYTES=$(du -sb /dst | awk "{print \$1}")'`,
       '          volumeMounts:',
       '            - name: src',
       '              mountPath: /src',
       '              readOnly: true',
       '            - name: dst',
       '              mountPath: /dst',
+      ...(sqlite
+        ? ['            - name: stage', '              mountPath: /stage']
+        : []),
       '      volumes:',
       '        - name: src',
       '          persistentVolumeClaim:',
       `            claimName: ${args.sourcePvcName}`,
-      '            readOnly: true',
+      `            readOnly: ${sqlite ? 'false' : 'true'}`,
       '        - name: dst',
       '          persistentVolumeClaim:',
       `            claimName: ${args.destPvcName}`,
+      ...(sqlite ? renderSqliteStageVolume() : []),
       '',
     ].join('\n');
   }
@@ -973,15 +1047,14 @@ export class VolumeExportService implements IVolumeExport {
     s3: NonNullable<DeleteExportInput['s3']>;
     nodeSelectorHostname?: string;
     labels: Record<string, string>;
+    consistentSqlite?: boolean;
   }): string {
+    const sqlite = !!args.consistentSqlite;
     const labelLinesMeta = this.renderLabelLines(args.labels, '    ');
     const labelLinesPod = this.renderLabelLines(args.labels, '        ');
-    const nodeSelectorBlock = args.nodeSelectorHostname
-      ? [
-          '      nodeSelector:',
-          `        kubernetes.io/hostname: ${args.nodeSelectorHostname}`,
-        ].join('\n')
-      : '';
+    const nodeSelectorBlock = this.renderPlacementBlock(
+      args.nodeSelectorHostname,
+    );
     const remote = `flui:${args.s3.bucket}/${args.keyPrefix}`;
     return [
       'apiVersion: batch/v1',
@@ -1002,6 +1075,7 @@ export class VolumeExportService implements IVolumeExport {
       '    spec:',
       '      restartPolicy: Never',
       ...(nodeSelectorBlock ? [nodeSelectorBlock] : []),
+      ...(sqlite ? renderSqliteSnapshotInit() : []),
       '      containers:',
       '        - name: rclone',
       `          image: ${RCLONE_IMAGE}`,
@@ -1010,17 +1084,23 @@ export class VolumeExportService implements IVolumeExport {
       '            - -c',
       // `--metadata` carries uid, gid and mode. Without it a non-root
       // application can read its restored files but not write them.
-      String.raw`            - 'rclone -v --retries 2 --metadata --s3-no-check-bucket sync /src "${remote}" && echo FLUI_ACTUAL_BYTES=$(du -sb /src | awk "{print \$1}")'`,
+      sqlite
+        ? String.raw`            - 'rclone -v --retries 2 --metadata --s3-no-check-bucket --filter-from /stage/excludes sync /src "${remote}" && rclone -v --retries 2 --metadata --s3-no-check-bucket copy /stage/data "${remote}" && echo FLUI_ACTUAL_BYTES=$(du -sb /src | awk "{print \$1}")'`
+        : String.raw`            - 'rclone -v --retries 2 --metadata --s3-no-check-bucket sync /src "${remote}" && echo FLUI_ACTUAL_BYTES=$(du -sb /src | awk "{print \$1}")'`,
       this.renderS3EnvBlock(args.s3),
       '          volumeMounts:',
       '            - name: src',
       '              mountPath: /src',
       '              readOnly: true',
+      ...(sqlite
+        ? ['            - name: stage', '              mountPath: /stage']
+        : []),
       '      volumes:',
       '        - name: src',
       '          persistentVolumeClaim:',
       `            claimName: ${args.sourcePvcName}`,
-      '            readOnly: true',
+      `            readOnly: ${sqlite ? 'false' : 'true'}`,
+      ...(sqlite ? renderSqliteStageVolume() : []),
       '',
     ].join('\n');
   }
@@ -1036,12 +1116,9 @@ export class VolumeExportService implements IVolumeExport {
   }): string {
     const labelLinesMeta = this.renderLabelLines(args.labels, '    ');
     const labelLinesPod = this.renderLabelLines(args.labels, '        ');
-    const nodeSelectorBlock = args.nodeSelectorHostname
-      ? [
-          '      nodeSelector:',
-          `        kubernetes.io/hostname: ${args.nodeSelectorHostname}`,
-        ].join('\n')
-      : '';
+    const nodeSelectorBlock = this.renderPlacementBlock(
+      args.nodeSelectorHostname,
+    );
     const remote = `flui:${args.s3.bucket}/${args.keyPrefix}`;
     return [
       'apiVersion: batch/v1',

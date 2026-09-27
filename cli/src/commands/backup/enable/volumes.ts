@@ -37,6 +37,12 @@ export default class BackupEnableVolumes extends Command {
       char: 'c',
       description: 'Cluster name or ID (default: auto-detect)',
     }),
+    pause: Flags.boolean({
+      description:
+        'Stop the application for the length of each copy, so every volume is ' +
+        'copied at rest. Each run records how long it was stopped.',
+      default: false,
+    }),
     exclude: Flags.string({
       multiple: true,
       description:
@@ -71,8 +77,15 @@ export default class BackupEnableVolumes extends Command {
         enabled: flags.enabled,
         destinations,
         profile: profileFor(destinations),
-        ...(flags.exclude?.length
-          ? { metadata: { excludeVolumes: flags.exclude } }
+        ...(flags.exclude?.length || flags.pause
+          ? {
+              metadata: {
+                ...(flags.exclude?.length
+                  ? { excludeVolumes: flags.exclude }
+                  : {}),
+                ...(flags.pause ? { pauseDuringCopy: true } : {}),
+              },
+            }
           : {}),
       });
       spinner.succeed('Scheduled volume copies enabled');
@@ -87,8 +100,9 @@ export default class BackupEnableVolumes extends Command {
       console.log(
         chalk.dim(
           '   Volumes are decided one by one on every run, so a volume added later is\n' +
-            '   picked up. One holding a database is skipped and named in the run —\n' +
-            '   for those use `flui backup enable database`, or stop the app and copy it.\n',
+            "   picked up. SQLite files are copied with SQLite's own online backup; any\n" +
+            '   other database is skipped and named in the run — for those use\n' +
+            '   `flui backup enable database`, or --pause to copy with the app stopped.\n',
         ),
       );
     } catch (error: any) {

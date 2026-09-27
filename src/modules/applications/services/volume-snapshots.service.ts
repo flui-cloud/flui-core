@@ -52,6 +52,10 @@ export interface SnapshotResponse extends ExportSummary {
   providerCapabilities: VolumeExportCapabilities;
   /** Set only when there is something true to say about this copy. */
   warning?: string;
+  /** With a pause: seconds from stopping the application to it answering again. */
+  interruptionSeconds?: number;
+  /** With a pause: whether the application was ready again before Flui stopped waiting. */
+  applicationBack?: boolean;
 }
 
 export interface SnapshotListResponse extends SnapshotCapability {
@@ -98,6 +102,7 @@ export class VolumeSnapshotsService {
         metadata: { pvcName, description: request.description },
       },
       async (): Promise<SnapshotResponse> => {
+        const pausedAt = Date.now();
         const { facts, paused } = await this.preflight.check({
           kubeconfig,
           namespace: app.k8sNamespace,
@@ -124,12 +129,19 @@ export class VolumeSnapshotsService {
             sourcePvcName: pvcName,
             exportName: snapshotName,
             labels: baseLabels,
+            consistentSqlite: facts.quiesce === 'sqlite-snapshot',
           });
         } finally {
           // Before the ledger write on purpose: bookkeeping must never extend
           // the outage, and a failed copy must still give the app back.
           await this.pauseLease.release(kubeconfig, paused);
         }
+        const backReady = paused.length
+          ? await this.pauseLease.waitUntilReady(kubeconfig, paused)
+          : undefined;
+        const interruptionSeconds = paused.length
+          ? Math.round((Date.now() - pausedAt) / 1000)
+          : undefined;
         this.logger.log(
           `[snapshot] Created ${exp.sink} ${exp.exportId} for app=${app.slug} cluster=${cluster.id} (provider=${provider})`,
         );
@@ -159,6 +171,9 @@ export class VolumeSnapshotsService {
           provider,
           providerCapabilities: ops.capabilities,
           warning: describeCopyRisk(facts, exp.writesObservedDuringCopy),
+          ...(interruptionSeconds !== undefined
+            ? { interruptionSeconds, applicationBack: backReady }
+            : {}),
         };
       },
     );

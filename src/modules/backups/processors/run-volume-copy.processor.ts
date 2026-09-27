@@ -88,16 +88,12 @@ export class RunVolumeCopyProcessor {
     });
 
     const volumes = await this.resolveVolumes(app, policy);
-    const { copied, needsDecision, failed } = await this.copyEach(
-      volumes,
-      app,
-      policy,
-      destination.id,
-    );
+    const { copied, needsDecision, failed, stoppedSeconds } =
+      await this.copyEach(volumes, app, policy, destination.id);
 
-    // A run that copied everything it was allowed to copy did its job, even if
-    // that was nothing: the volumes it left alone are waiting on a person, not
-    // on Flui. Only a real error makes the run a failure.
+    // A run that left volumes for a person to decide on is partial while it
+    // copied something; when it copied nothing, nothing is protected, and
+    // calling that partial read as "mostly fine".
     const status = this.statusOf(copied, needsDecision, failed);
 
     await this.jobsService.update(backupJobId, {
@@ -111,6 +107,7 @@ export class RunVolumeCopyProcessor {
         volumesCopied: copied,
         volumesNeedingDecision: needsDecision,
         volumesFailed: failed,
+        ...(Object.keys(stoppedSeconds).length ? { stoppedSeconds } : {}),
       },
       ...(failed.length > 0 || needsDecision.length > 0
         ? {
@@ -137,21 +134,32 @@ export class RunVolumeCopyProcessor {
   private async copyEach(
     volumes: string[],
     app: { id: string; slug: string },
-    policy: { id: string; userId: string; retentionDays?: number | null },
+    policy: {
+      id: string;
+      userId: string;
+      retentionDays?: number | null;
+      metadata?: Record<string, any> | null;
+    },
     destinationId: string,
   ): Promise<{
     copied: string[];
     needsDecision: VolumeOutcome[];
     failed: VolumeOutcome[];
+    stoppedSeconds: Record<string, number>;
   }> {
+    // Chosen on the policy by the person who accepted the stop; never
+    // decided here, because stopping an application is theirs to allow.
+    const pause = policy.metadata?.pauseDuringCopy === true;
+    const stoppedSeconds: Record<string, number> = {};
     const copied: string[] = [];
     const needsDecision: VolumeOutcome[] = [];
     const failed: VolumeOutcome[] = [];
 
     for (const volumeName of volumes) {
       try {
-        await this.volumeBackups.createForApp({
+        const res = await this.volumeBackups.createForApp({
           applicationId: app.id,
+          pause,
           volumeName,
           destinationId,
           userId: policy.userId,
@@ -164,6 +172,9 @@ export class RunVolumeCopyProcessor {
             ? new Date(Date.now() + policy.retentionDays * 86_400_000)
             : undefined,
         });
+        if (res.interruptionSeconds !== undefined) {
+          stoppedSeconds[volumeName] = res.interruptionSeconds;
+        }
         copied.push(volumeName);
       } catch (err: any) {
         const code = err?.response?.code ?? err?.code;
@@ -184,7 +195,7 @@ export class RunVolumeCopyProcessor {
       }
     }
 
-    return { copied, needsDecision, failed };
+    return { copied, needsDecision, failed, stoppedSeconds };
   }
 
   private statusOf(
@@ -197,9 +208,11 @@ export class RunVolumeCopyProcessor {
         ? BackupJobStatus.FAILED
         : BackupJobStatus.PARTIALLY_COMPLETED;
     }
-    return needsDecision.length > 0
-      ? BackupJobStatus.PARTIALLY_COMPLETED
-      : BackupJobStatus.COMPLETED;
+    if (needsDecision.length === 0) return BackupJobStatus.COMPLETED;
+    // Nothing reached the destination: that is a failure, not a partial one.
+    return copied.length === 0
+      ? BackupJobStatus.FAILED
+      : BackupJobStatus.PARTIALLY_COMPLETED;
   }
 
   /**

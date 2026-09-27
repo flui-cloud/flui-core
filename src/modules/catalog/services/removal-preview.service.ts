@@ -23,6 +23,9 @@ import {
   AttachedServicesPort,
 } from '../../applications/interfaces/attached-services.port';
 import { DB_ENGINE_LABEL } from '../../database-console/engine/engine-profile';
+import { BackupPolicyEntity } from '../../backups/entities/backup-policy.entity';
+import { BackupArtifactEntity } from '../../backups/entities/backup-artifact.entity';
+import { describeBackupsAfterRemoval } from '../../backups/utils/deleted-application-backups.util';
 
 /**
  * What `DELETE /applications/:id/install` is about to take away.
@@ -54,6 +57,12 @@ export class RemovalPreviewService {
     @Optional()
     @Inject(ATTACHED_SERVICES_PORT)
     private readonly attachedServices?: AttachedServicesPort,
+    @Optional()
+    @InjectRepository(BackupPolicyEntity)
+    private readonly backupPolicies?: Repository<BackupPolicyEntity>,
+    @Optional()
+    @InjectRepository(BackupArtifactEntity)
+    private readonly backupArtifacts?: Repository<BackupArtifactEntity>,
   ) {}
 
   async preview(applicationId: string): Promise<RemovalPreviewDto> {
@@ -90,6 +99,7 @@ export class RemovalPreviewService {
       volumesKnown: false,
       dataWarning: null,
       snapshotOffer: attached.offer,
+      backupNote: await this.backupNote(members.map((m) => m.id)),
     };
 
     const cluster = await this.clusters.findOne({
@@ -138,6 +148,22 @@ export class RemovalPreviewService {
       volumesKnown: true,
       dataWarning: this.warn(deduped.length, totalBytes),
     };
+  }
+
+  private async backupNote(applicationIds: string[]): Promise<string | null> {
+    if (!this.backupPolicies || !this.backupArtifacts) return null;
+    try {
+      return await describeBackupsAfterRemoval(
+        this.backupPolicies,
+        this.backupArtifacts,
+        applicationIds,
+      );
+    } catch (err) {
+      this.logger.warn(
+        `removal preview could not read backups: ${(err as Error).message}`,
+      );
+      return null;
+    }
   }
 
   /**

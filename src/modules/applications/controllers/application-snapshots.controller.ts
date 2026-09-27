@@ -27,6 +27,7 @@ import {
   BackupDestination,
 } from '../services/volume-backups.service';
 import { ApplicationVolumeResizeService } from '../services/application-volume-resize.service';
+import { SpareVolumesService } from '../services/spare-volumes.service';
 
 @ApiTags('Applications')
 @ApiBearerAuth()
@@ -38,6 +39,7 @@ export class ApplicationSnapshotsController {
     private readonly volumeBackupsService: VolumeBackupsService,
     private readonly appManagementService: AppManagementService,
     private readonly volumeResizeService: ApplicationVolumeResizeService,
+    private readonly spareVolumes: SpareVolumesService,
   ) {}
 
   // ── Volume snapshots ──────────────────────────────────────
@@ -151,6 +153,32 @@ export class ApplicationSnapshotsController {
       body.newClaimName,
       (req.user as AuthenticatedUser | undefined)?.userId,
     );
+  }
+
+  @Get('applications/:id/volumes/spare')
+  @ApiOperation({
+    summary: 'Restored and previous volumes the application does not run on',
+    description:
+      'A copy restored beside the application and not put in use, and the data it ran on before a swap. Each is a full volume and is paid for.',
+  })
+  @ApiParam({ name: 'id', description: 'Application ID' })
+  async listSpareVolumes(@Param('id') id: string) {
+    return this.spareVolumes.list(id);
+  }
+
+  @Delete('applications/:id/volumes/spare/:name')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiOperation({
+    summary:
+      'Delete a restored or previous volume the application does not use',
+  })
+  @ApiParam({ name: 'id', description: 'Application ID' })
+  @ApiParam({ name: 'name', description: 'The volume, from the list' })
+  async deleteSpareVolume(
+    @Param('id') id: string,
+    @Param('name') name: string,
+  ): Promise<void> {
+    await this.spareVolumes.remove(id, name);
   }
 
   // ── Volume size ───────────────────────────────────────────

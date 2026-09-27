@@ -55,6 +55,11 @@ interface ExportInputBase {
    * identify orphans.
    */
   labels: Record<string, string>;
+  /**
+   * Copy each SQLite database with SQLite's online backup rather than as a
+   * file, because something is writing to it.
+   */
+  consistentSqlite?: boolean;
 }
 
 export interface PvcCloneExportInput extends ExportInputBase {

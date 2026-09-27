@@ -22,7 +22,11 @@ import { ArtifactLocationState } from '../../backups/enums/artifact-location-sta
  * inconsistent with each other. Recording `idle` would have been the ledger
  * asserting the one thing the operation never checked.
  */
-export type QuiesceMode = 'none' | 'writers-stopped' | 'engine-hook';
+export type QuiesceMode =
+  | 'none'
+  | 'writers-stopped'
+  | 'engine-hook'
+  | 'sqlite-snapshot';
 
 export interface RecordedVolumeCopy {
   clusterId: string;

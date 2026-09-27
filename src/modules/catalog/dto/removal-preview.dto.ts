@@ -161,4 +161,13 @@ export class RemovalPreviewDto {
       'data before the removal takes it. Empty when it attached none.',
   })
   snapshotOffer: RemovalSnapshotOfferDto[];
+
+  @Sensitivity(Sensitivity.PUBLIC)
+  @ApiPropertyOptional({
+    example:
+      'Backups already taken stay in the backup storage and can be restored after this (latest 2026-09-26 21:18 UTC, kept until its retention removes it). Its backup policy stops; nothing new is backed up.',
+    description:
+      'What happens to the backups of what is removed. Null when it has none.',
+  })
+  backupNote?: string | null;
 }

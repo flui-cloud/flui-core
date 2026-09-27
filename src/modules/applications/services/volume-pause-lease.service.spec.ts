@@ -262,3 +262,24 @@ describe('VolumePauseLeaseService', () => {
     });
   });
 });
+
+describe('VolumePauseLeaseService.waitUntilReady', () => {
+  it('waits for the released database to report ready, not just scaled', async () => {
+    const states = [
+      { spec: { replicas: 1 }, status: { readyReplicas: 0 } },
+      { spec: { replicas: 1 }, status: { readyReplicas: 0 } },
+      { spec: { replicas: 1 }, status: { readyReplicas: 1 } },
+    ];
+    const k8s = { getResource: jest.fn(async () => states.shift()) };
+    const service = new VolumePauseLeaseService(k8s as never);
+    await expect(
+      service.waitUntilReady(
+        'kc',
+        [{ kind: 'StatefulSet', name: 'pg', namespace: 'db', replicas: 1 }],
+        1_000,
+        1,
+      ),
+    ).resolves.toBe(true);
+    expect(k8s.getResource).toHaveBeenCalledTimes(3);
+  });
+});

@@ -7,11 +7,11 @@ import { confirmPrompt } from '../../../lib/prompts';
 
 export default class AppSnapshotSwap extends Command {
   static readonly description =
-    'Swap the application volume to a different PVC (typically one created by `flui app snapshot restore`). Triggers a rolling restart. The previous PVC is preserved as a backup.';
+    'Make the application use a restored volume (one created by `flui app snapshot restore`). The application restarts; the data it used before is kept as a separate volume until you delete it.';
 
   static readonly examples = [
     '<%= config.bin %> <%= command.id %> my-app my-app-data-restored-20260511',
-    '<%= config.bin %> <%= command.id %> my-app new-pvc --volume data --force',
+    '<%= config.bin %> <%= command.id %> my-app my-app-data-restored-20260511 --volume data --yes',
   ];
 
   static readonly args = {
@@ -20,7 +20,8 @@ export default class AppSnapshotSwap extends Command {
       required: true,
     }),
     newPvcName: Args.string({
-      description: 'PVC name to swap into the application',
+      description:
+        'The restored volume (as printed by `flui app snapshot restore`)',
       required: true,
     }),
   };
@@ -36,7 +37,8 @@ export default class AppSnapshotSwap extends Command {
     }),
     force: Flags.boolean({
       char: 'f',
-      description: 'Skip confirmation',
+      aliases: ['yes'],
+      description: 'Skip confirmation (also --yes)',
     }),
   };
 
@@ -49,7 +51,7 @@ export default class AppSnapshotSwap extends Command {
       const volumeName = flags.volume ?? 'data';
       if (!flags.force) {
         const ok = await confirmPrompt(
-          `Swap volume "${volumeName}" of "${args.name}" to PVC "${args.newPvcName}"? This triggers a rolling restart.`,
+          `Make "${args.name}" use the restored volume ${args.newPvcName} for "${volumeName}"? The application restarts.`,
         );
         if (!ok) {
           console.log(chalk.dim('  Aborted.'));
@@ -60,10 +62,12 @@ export default class AppSnapshotSwap extends Command {
         `Swapping ${volumeName} → ${args.newPvcName}...`,
       ).start();
       await service.swapAppVolume(app.id, volumeName, args.newPvcName);
-      spinner.succeed('Swap applied, rolling restart triggered');
+      spinner.succeed(
+        'The application now uses the restored volume and is restarting',
+      );
       console.log(
         chalk.dim(
-          `\n  Old PVC kept as backup. Use \`flui env kubectl get pvc -n <ns>\` to inspect, delete when ready.`,
+          `\n  The data it used before is kept as a separate volume: see \`flui app snapshot list --app ${args.name}\`.`,
         ),
       );
     } catch (error: any) {

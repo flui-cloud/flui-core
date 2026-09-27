@@ -8,9 +8,9 @@ import { renderCopyRefusal } from '../../../lib/render-copy-refusal';
 
 export default class AppSnapshotCreate extends Command {
   static readonly description =
-    'Create a snapshot of an application volume. Today on every provider this ' +
-    'is a full PVC clone built via the copy-pod export primitive (sink=pvc-clone) ' +
-    'because workload PVCs use local-path. Cost: a full Volume per snapshot.';
+    'Take a copy of an application volume, kept on the cluster beside it. ' +
+    'Each copy is a full volume of the same size, and is paid for as one ' +
+    'until you delete it.';
 
   static readonly examples = [
     '<%= config.bin %> <%= command.id %> my-app',
@@ -33,7 +33,7 @@ export default class AppSnapshotCreate extends Command {
     volume: Flags.string({
       char: 'v',
       description:
-        'Volume (PVC) name when the app has multiple volumes. Required if more than one PVC exists.',
+        'Which volume to copy, when the application has more than one.',
     }),
     description: Flags.string({
       char: 'd',
@@ -74,23 +74,30 @@ export default class AppSnapshotCreate extends Command {
         console.log(chalk.yellow(`  ! ${snap.warning}`));
       }
       console.log('');
-      console.log(`  ${chalk.bold('Provider:')}  ${snap.provider}`);
-      console.log(`  ${chalk.bold('Sink:')}      ${snap.sink}`);
-      console.log(`  ${chalk.bold('Namespace:')} ${snap.namespace}`);
       if (snap.sourcePvcName) {
-        console.log(`  ${chalk.bold('Source:')}    ${snap.sourcePvcName}`);
+        console.log(`  ${chalk.bold('Volume:')}    ${snap.sourcePvcName}`);
       }
       if (snap.sizeGb !== undefined) {
         const actual =
           snap.actualBytes === undefined
             ? 'unknown'
             : formatBytes(snap.actualBytes);
-        console.log(`  ${chalk.bold('Source request:')}  ${snap.sizeGb} GiB`);
-        console.log(`  ${chalk.bold('Disk usage:')}      ${actual}`);
+        console.log(`  ${chalk.bold('Volume size:')} ${snap.sizeGb} GiB`);
+        console.log(`  ${chalk.bold('Data copied:')} ${actual}`);
       }
       console.log(
-        `  ${chalk.bold('Ready:')}     ${snap.ready ? 'yes' : 'pending'}`,
+        `  ${chalk.bold('Copy ready:')} ${snap.ready ? 'yes' : 'pending'}`,
       );
+      if (snap.interruptionSeconds !== undefined) {
+        console.log(
+          `  ${chalk.bold('Stopped for:')} ${snap.interruptionSeconds}s` +
+            (snap.applicationBack
+              ? ' — the application is answering again'
+              : chalk.yellow(
+                  ' — the application was not ready yet when Flui stopped waiting; check it',
+                )),
+        );
+      }
       console.log(`  ${chalk.bold('Created:')}   ${snap.createdAt}`);
 
       const caps = snap.providerCapabilities;
@@ -98,7 +105,7 @@ export default class AppSnapshotCreate extends Command {
         console.log('');
         console.log(
           chalk.yellow(
-            '  ! pvc-clone snapshots are billed as a full Volume each — delete when no longer needed:',
+            '  ! Each copy is paid for as a full volume — delete it when no longer needed:',
           ),
         );
         console.log(

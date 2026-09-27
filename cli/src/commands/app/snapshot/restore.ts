@@ -6,7 +6,7 @@ import { resolveClusterRef } from '../../../lib/resolve-cluster';
 
 export default class AppSnapshotRestore extends Command {
   static readonly description =
-    'Restore a snapshot into a new side-by-side PVC. The application is not touched — the new PVC is created in the same namespace and can be promoted later with `flui app snapshot swap`.';
+    'Restore a copy into a new volume beside the application. The application is not touched until you make it use the new volume with --swap or `flui app snapshot swap`.';
 
   static readonly examples = [
     '<%= config.bin %> <%= command.id %> my-app my-app-snap-20260510-abcdef',
@@ -31,7 +31,7 @@ export default class AppSnapshotRestore extends Command {
     }),
     swap: Flags.boolean({
       description:
-        'Immediately swap the restored PVC into the live application (rolling restart). Old PVC is preserved as a backup.',
+        'Make the application use the restored volume right away (it restarts). The data it used before is kept as a separate volume.',
     }),
     volume: Flags.string({
       char: 'v',
@@ -48,23 +48,48 @@ export default class AppSnapshotRestore extends Command {
       const service = await CliAppService.create(clusterId);
       const app = await service.getAppByName(args.name);
       const result = await service.restoreAppSnapshot(app.id, args.snapshotId);
-      spinner.succeed(`Restored to new PVC: ${result.newPvcName}`);
+      spinner.succeed(`Restored into a new volume: ${result.newPvcName}`);
 
       console.log('');
       console.log(`  ${chalk.bold('App:')}        ${app.name}`);
       console.log(`  ${chalk.bold('From snap:')}  ${args.snapshotId}`);
-      console.log(`  ${chalk.bold('New PVC:')}    ${result.newPvcName}`);
+      console.log(`  ${chalk.bold('New volume:')} ${result.newPvcName}`);
 
       if (flags.swap) {
         const volumeName = flags.volume ?? 'data';
         const swapSpinner = ora(
           `Swapping volume "${volumeName}" to ${result.newPvcName}...`,
         ).start();
-        await service.swapAppVolume(app.id, volumeName, result.newPvcName);
-        swapSpinner.succeed('Volume swapped, rollout triggered');
+        try {
+          await service.swapAppVolume(app.id, volumeName, result.newPvcName);
+        } catch (swapError: any) {
+          swapSpinner.fail('Swap failed');
+          // Created by this command a moment ago and never used: leaving it
+          // would be a full volume paid for that nobody asked to keep.
+          await service
+            .deleteSpareVolume(app.id, result.newPvcName)
+            .then(() =>
+              console.log(
+                chalk.dim(
+                  `  Removed the restored volume ${result.newPvcName}.`,
+                ),
+              ),
+            )
+            .catch(() =>
+              console.log(
+                chalk.yellow(
+                  `  The restored volume ${result.newPvcName} is still there: flui app snapshot discard ${app.name} ${result.newPvcName}`,
+                ),
+              ),
+            );
+          throw swapError;
+        }
+        swapSpinner.succeed(
+          'The application now uses the restored volume and is restarting',
+        );
         console.log(
           chalk.dim(
-            `\n  Old PVC kept as backup. Use \`flui env kubectl get pvc -n <ns>\` to inspect, delete when no longer needed.`,
+            `\n  The data it used before is kept as a separate volume: see \`flui app snapshot list --app ${app.name}\`.`,
           ),
         );
       } else {

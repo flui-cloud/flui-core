@@ -167,6 +167,10 @@ export default class AppDelete extends Command {
       return;
     }
 
+    if (preview.backupNote) {
+      console.log(chalk.dim(`  ${preview.backupNote}\n`));
+    }
+
     if (preview.volumes.length === 0) {
       console.log(
         chalk.dim('  No persistent volume is attached to this app.\n'),
@@ -279,8 +283,15 @@ export default class AppDelete extends Command {
         this.exit(1);
       }
       waitSpinner.text = `Uninstalling ${appName}… (${current.status.toLowerCase()})`;
-    } catch {
-      /* polling error — keep trying */
+    } catch (error: any) {
+      // The install row is gone once the uninstall has finished.
+      if ((error?.statusCode ?? error?.response?.status) === 404) {
+        waitSpinner.succeed(
+          chalk.green(`"${appName}" uninstalled successfully`),
+        );
+        console.log('');
+        return true;
+      }
     }
     return false;
   }

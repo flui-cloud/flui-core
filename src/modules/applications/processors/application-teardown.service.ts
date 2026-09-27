@@ -32,6 +32,10 @@ import { ApplicationResourceKind } from '../enums/application-resource-kind.enum
 import { AppResourceEntity } from '../entities/app-resource.entity';
 import { ApplicationVolumeClaimsService } from '../services/application-volume-claims.service';
 import { writeOperationProgress } from './operation-progress.util';
+import { BackupPolicyEntity } from '../../backups/entities/backup-policy.entity';
+import { closePoliciesOfDeletedApplication } from '../../backups/utils/deleted-application-backups.util';
+import { liveBundleSiblings } from '../utils/bundle-siblings.util';
+import { describeError } from '../../shared/utils/error.util';
 
 /**
  * Everything the application queue does when an application goes away:
@@ -53,6 +57,10 @@ export class ApplicationTeardownService {
     private readonly clusterRepository: Repository<ClusterEntity>,
     @InjectRepository(CatalogInstallEntity)
     private readonly catalogInstallRepository: Repository<CatalogInstallEntity>,
+    @InjectRepository(BackupPolicyEntity)
+    private readonly backupPolicies: Repository<BackupPolicyEntity>,
+    @InjectRepository(ApplicationEntity)
+    private readonly applicationEntities: Repository<ApplicationEntity>,
     private readonly kubernetesService: KubernetesService,
     private readonly encryptionService: EncryptionService,
     private readonly applicationsRepository: ApplicationsRepository,
@@ -258,6 +266,12 @@ export class ApplicationTeardownService {
       });
 
       await this.applicationsRepository.softDelete(applicationId);
+      await closePoliciesOfDeletedApplication(this.backupPolicies, app).catch(
+        (err: unknown) =>
+          this.logger.warn(
+            `[DELETE] backup policies of ${applicationId} left as they were: ${describeError(err)}`,
+          ),
+      );
 
       // Cascade to the catalog install parent, if any. An Application owned
       // by a catalog install carries metadata.catalogInstallId; once the app
@@ -265,7 +279,29 @@ export class ApplicationTeardownService {
       // and deletedAt=NULL (we'd see phantom installs in the Catalog tab of
       // the dashboard). Idempotent: already-uninstalled rows are skipped.
       const catalogInstallId = app.metadata?.catalogInstallId;
-      if (catalogInstallId) {
+      const bundle = catalogInstallId
+        ? await liveBundleSiblings(
+            this.applicationEntities,
+            this.catalogInstallRepository,
+            app,
+          ).catch(() => null)
+        : null;
+      if (bundle?.siblings.length) {
+        // The rest of the bundle is still running: it stays a bundle, one
+        // component short, instead of disappearing from the lists while its
+        // database keeps running unseen.
+        await this.catalogInstallRepository
+          .update(bundle.install.id, {
+            applicationIds: bundle.install.applicationIds.filter(
+              (id) => id !== applicationId,
+            ),
+          })
+          .catch((err: unknown) =>
+            this.logger.warn(
+              `[DELETE] could not drop ${applicationId} from install ${bundle.install.id}: ${describeError(err)}`,
+            ),
+          );
+      } else if (catalogInstallId) {
         try {
           await this.catalogInstallRepository.update(
             { id: catalogInstallId, deletedAt: IsNull() },

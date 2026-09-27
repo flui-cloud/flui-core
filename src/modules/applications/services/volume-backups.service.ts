@@ -30,6 +30,7 @@ import { ObjectStorageProvisionerFactory } from '../../storage/factories/object-
 import { StorageBackendProvider } from '../../storage/enums/storage-backend-provider.enum';
 import { AppOperationRunner } from './app-operation-runner.service';
 import { OperationType } from '../../infrastructure/servers/entities/infrastructure-operations.entity';
+import { exportsRoot } from '../../backups/utils/destination-layout.util';
 
 export interface BackupDestination {
   bucket: string;
@@ -88,6 +89,10 @@ export interface BackupResponse {
   providerCapabilities: VolumeExportCapabilities;
   /** Set only when there is something true to say about this copy. */
   warning?: string;
+  /** With a pause: seconds from stopping the application to it answering again. */
+  interruptionSeconds?: number;
+  /** With a pause: whether the application was ready again before Flui stopped waiting. */
+  applicationBack?: boolean;
 }
 
 export interface DeleteBackupForAppRequest {
@@ -137,7 +142,7 @@ export class VolumeBackupsService {
     );
 
     const keyPrefix = this.buildKeyPrefix(
-      destination.keyPrefix ?? `flui/${cluster.id}`,
+      exportsRoot(destination.keyPrefix, `flui/${cluster.id}`),
       app.slug,
       request.description,
     );
@@ -151,6 +156,7 @@ export class VolumeBackupsService {
         userId: request.userId,
       },
       async (): Promise<BackupResponse> => {
+        const pausedAt = Date.now();
         const { facts, paused } = await this.preflight.check({
           kubeconfig,
           namespace: app.k8sNamespace,
@@ -179,12 +185,19 @@ export class VolumeBackupsService {
             accessKeyId: destination.accessKeyId,
             secretAccessKey: destination.secretAccessKey,
             labels,
+            consistentSqlite: facts.quiesce === 'sqlite-snapshot',
           });
         } finally {
           // Before the ledger write and the S3 bookkeeping on purpose: neither
           // may extend the outage, and a failed copy must still give the app back.
           await this.pauseLease.release(kubeconfig, paused);
         }
+        const backReady = paused.length
+          ? await this.pauseLease.waitUntilReady(kubeconfig, paused)
+          : undefined;
+        const interruptionSeconds = paused.length
+          ? Math.round((Date.now() - pausedAt) / 1000)
+          : undefined;
         this.logger.log(
           `[backup] Archived app=${app.slug} pvc=${pvcName} → s3://${destination.bucket}/${keyPrefix} (size=${exp.sourceSizeGb}GB)`,
         );
@@ -222,6 +235,9 @@ export class VolumeBackupsService {
           provider,
           providerCapabilities: ops.capabilities,
           warning: describeCopyRisk(facts, exp.writesObservedDuringCopy),
+          ...(interruptionSeconds !== undefined
+            ? { interruptionSeconds, applicationBack: backReady }
+            : {}),
         };
       },
     );
