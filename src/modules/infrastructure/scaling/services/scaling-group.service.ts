@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable, Optional } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { In, IsNull, Not, Repository } from 'typeorm';
 import {
@@ -8,6 +8,8 @@ import {
 import { VNetSubnetEntity } from '../../vnets/entities/vnet-subnet.entity';
 import { CapabilitiesProviderFactory } from '../../../providers/core/factories/capabilities-provider.factory';
 import { CloudProvider } from '../../../providers/enums/cloud-provider.enum';
+import { ProviderFactory } from '../../../providers/core/factories/provider.factory';
+import { NodeSizeDto } from '../../../providers/dto/node-size.dto';
 import { ScalingGroupEntity } from '../entities/scaling-group.entity';
 import { ScalingDecisionEntity } from '../entities/scaling-decision.entity';
 import { DrainCheck } from '../engine/drain.core';
@@ -90,7 +92,28 @@ export class ScalingGroupService {
     private readonly operations: Repository<InfrastructureOperationEntity>,
     @InjectRepository(ClusterNodeEntity)
     private readonly nodes: Repository<ClusterNodeEntity>,
+    @Optional() private readonly providers?: ProviderFactory,
   ) {}
+
+  /** A group that names no machine buys the one the cluster was built with, not nothing. */
+  private async defaultShapes(
+    cluster: { provider: string; nodeSize?: string | null },
+    capability: ProviderScalingCapability,
+  ): Promise<string[]> {
+    if (!capability.hasCatalogue || !cluster.nodeSize) return [];
+    return [
+      shapeNameOf(cluster.nodeSize, await this.sizesOf(cluster.provider)),
+    ];
+  }
+
+  private async sizesOf(provider: string): Promise<NodeSizeDto[]> {
+    try {
+      const service = this.providers?.getProvider(provider as CloudProvider);
+      return (await service?.getNodeSizes?.(false)) ?? [];
+    } catch {
+      return [];
+    }
+  }
 
   capabilityOf(provider: string): ProviderScalingCapability {
     const known = this.capabilities.isProviderSupported(
@@ -171,7 +194,7 @@ export class ScalingGroupService {
       desiredNodes: nodes,
       maxNodes: fleetBound(Math.max(nodes, cluster.maxNodes ?? nodes)),
       regions: cluster.region ? [cluster.region] : [],
-      shapes: defaultShapes(cluster, capability),
+      shapes: await this.defaultShapes(cluster, capability),
       strategy: 'uniform',
       settleSeconds: 30,
       hourlyBillingOnly: true,
@@ -371,7 +394,7 @@ export class ScalingGroupService {
       desiredNodes: dto.bounds.desired,
       maxNodes: dto.bounds.max,
       regions: dto.regions ?? [],
-      shapes: dto.shapes ?? defaultShapes(cluster, capability),
+      shapes: dto.shapes ?? (await this.defaultShapes(cluster, capability)),
       strategy: dto.strategy ?? 'uniform',
       settleSeconds: dto.settleSeconds ?? 30,
       hourlyBillingOnly: dto.limits?.hourlyBillingOnly ?? true,
@@ -919,12 +942,16 @@ function fleetBound(nodes: number): number {
   return Math.min(Math.max(nodes, MIN_FLEET_NODES), MAX_FLEET_NODES);
 }
 
-/** A group that names no machine buys the one the cluster was built with, not nothing. */
-function defaultShapes(
-  cluster: { nodeSize?: string | null },
-  capability: ProviderScalingCapability,
-): string[] {
-  return capability.hasCatalogue && cluster.nodeSize ? [cluster.nodeSize] : [];
+/**
+ * The catalogue names a shape (`cpx22`), while a cluster may have been built
+ * from the provider's id for it (`109`): the name is what a group can buy.
+ */
+export function shapeNameOf(
+  nodeSize: string,
+  sizes: Pick<NodeSizeDto, 'id' | 'name'>[],
+): string {
+  const size = sizes.find((s) => s.name === nodeSize || s.id === nodeSize);
+  return size?.name || nodeSize;
 }
 
 const PURCHASE_SHOWN_FOR_MS = 30 * 60 * 1000;
