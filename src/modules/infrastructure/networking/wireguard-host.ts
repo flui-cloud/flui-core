@@ -134,6 +134,10 @@ export function buildApplyScript(
     `  ( umask 077; wg-quick strip ${conf} > ${conf}.stripped )`,
     `  wg syncconf ${iface} ${conf}.stripped`,
     `  rm -f ${conf}.stripped`,
+    // syncconf leaves the link as it found it: a tunnel someone took down with
+    // `ip link set down` stays down, and a repair that only reapplies peers
+    // repairs nothing.
+    `  ip link set ${iface} up`,
     // syncconf applies peers but not their routes — only `wg-quick up` does
     // that, and it only runs when the interface is absent. Without this a peer
     // added to a live tunnel handshakes and shows in `wg show` while every

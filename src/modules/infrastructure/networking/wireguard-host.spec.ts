@@ -140,6 +140,13 @@ describe('buildApplyScript', () => {
     expect(script).toContain('wg syncconf flui0');
   });
 
+  it('brings a tunnel that was taken down back up, after syncing its peers', () => {
+    const sync = script.indexOf('wg syncconf flui0');
+    const up = script.indexOf('ip link set flui0 up');
+    expect(up).toBeGreaterThan(sync);
+    expect(up).toBeLessThan(script.indexOf('ip route replace'));
+  });
+
   it('writes atomically, so a half-written config is never loaded', () => {
     expect(script).toContain(
       'mv /etc/wireguard/flui0.conf.new /etc/wireguard/flui0.conf',
