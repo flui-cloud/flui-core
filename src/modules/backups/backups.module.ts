@@ -86,6 +86,7 @@ import { BackupStatusService } from './services/backup-status.service';
 import { BACKUP_QUEUE } from './backups.constants';
 import { AppProtectionController } from './controllers/app-protection.controller';
 import { AppProtectionService } from './services/app-protection.service';
+import { AppCoverageService } from './services/app-coverage.service';
 
 @Module({
   imports: [
@@ -169,6 +170,7 @@ import { AppProtectionService } from './services/app-protection.service';
     DestinationPlacementValidator,
     DbPitrService,
     AppProtectionService,
+    AppCoverageService,
     PlatformKeyBundleService,
     PlatformBackupService,
     RunPlatformBackupProcessor,
@@ -184,6 +186,7 @@ import { AppProtectionService } from './services/app-protection.service';
     BackupStatusService,
     DbPitrService,
     RebuildDataRestorer,
+    AppCoverageService,
   ],
 })
 export class BackupsModule {}

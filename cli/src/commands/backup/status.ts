@@ -32,6 +32,36 @@ interface FleetStatus {
   alerts: Array<{ severity: string; message: string }>;
 }
 
+interface FleetCoverage {
+  summary: {
+    applications: number;
+    holdingData: number;
+    protected: number;
+    toVerify: number;
+    alarms: number;
+  };
+  applications: Array<{
+    name: string;
+    clusterName: string | null;
+    holdsData: boolean;
+    coverage: string;
+    reason: string;
+    alarm: boolean;
+    policy: { name: string } | null;
+    lastSuccessAt: string | null;
+  }>;
+}
+
+const COVERAGE_REASON: Record<string, string> = {
+  no_policy: 'no policy covers it',
+  no_schedule: 'its policy has no schedule',
+  never_succeeded: 'no backup has succeeded yet',
+  left_out: 'the last backup left its volumes out',
+  stale: 'last backup is older than two scheduled runs',
+  label_selector: 'covered by a label selector, check it',
+  awaiting_first_run: 'waiting for the first scheduled run',
+};
+
 /**
  * The interesting cases are the gaps *between* engines — a database inside a
  * cluster policy that Velero silently skips, an application whose only copy is
@@ -86,8 +116,11 @@ export default class BackupStatus extends Command {
 
   private async forFleet(): Promise<unknown> {
     const api = this.apiClient();
-    const status = await api.get<FleetStatus>('/backups/status');
-    if (this.jsonEnabled()) return status;
+    const [status, coverage] = await Promise.all([
+      api.get<FleetStatus>('/backups/status'),
+      api.get<FleetCoverage>('/fleet/backup-protection').catch(() => null),
+    ]);
+    if (this.jsonEnabled()) return { ...status, applications: coverage };
 
     const s = status.summary;
     this.log('');
@@ -116,6 +149,7 @@ export default class BackupStatus extends Command {
         this.log(`  ${this.severity(alert.severity)} ${alert.message}`);
       }
     }
+    if (coverage) this.printCoverage(coverage);
     this.log('');
     this.log(chalk.dim('   flui backup status --app <name>   one application'));
     this.log('');
@@ -168,6 +202,26 @@ export default class BackupStatus extends Command {
       this.log('');
     }
     return result;
+  }
+
+  /** Applications holding data, the unprotected ones first. */
+  private printCoverage(coverage: FleetCoverage) {
+    const s = coverage.summary;
+    const protectedShare = chalk.dim(
+      `(${s.protected} of ${s.applications} apps protected)`,
+    );
+    this.log('');
+    this.log(`  Apps holding data       ${s.holdingData}  ${protectedShare}`);
+    const shown = coverage.applications.filter(
+      (a) => a.holdsData && a.coverage !== 'protected',
+    );
+    for (const a of shown) {
+      const mark = a.alarm ? chalk.red('✗') : chalk.yellow('?');
+      const where = a.clusterName ? chalk.dim(` on ${a.clusterName}`) : '';
+      this.log(
+        `    ${mark} ${a.name}${where}  ${chalk.dim(COVERAGE_REASON[a.reason] ?? a.reason)}`,
+      );
+    }
   }
 
   /** Every policy covering the app, with where it writes and its last run. */

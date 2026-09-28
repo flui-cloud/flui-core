@@ -73,6 +73,7 @@ const ARGS: Record<string, Record<string, unknown>> = {
   repo_map: { repository: '11111111-1111-1111-1111-111111111111' },
   repo_map_apply: { repository: '11111111-1111-1111-1111-111111111111' },
   backup_status: {},
+  backup_coverage: {},
   backup_policy_list: {},
   backup_run: { policyId: 'p1' },
   backup_policy_pause: { policyId: 'p1' },

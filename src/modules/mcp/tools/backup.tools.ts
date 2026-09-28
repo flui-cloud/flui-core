@@ -24,6 +24,16 @@ export const BACKUP_TOOLS: ToolDef[] = [
     run: (_args, ctx) => ctx.api.get('/backups/status'),
   }),
   defineTool({
+    name: 'backup_coverage',
+    routes: ['GET /fleet/backup-protection'],
+    description:
+      'Which applications a recent backup would bring back, across every cluster (or one, with clusterId). Each application says whether it holds data (database, persistent volume or stateful), its coverage (protected | pending | to_verify | unprotected), the reason, the policy that covers it and the last successful backup. Protected means a covering policy succeeded within two runs of its schedule; `alarm` is true for a user application holding data that is unprotected. Use it to answer "which of my apps have no backup". Applications come first when they alarm, databases first among them.',
+    scope: MCP_SCOPE.BACKUP_READ,
+    inputSchema: { clusterId: z.string().optional() },
+    run: (args, ctx) =>
+      ctx.api.get('/fleet/backup-protection', { clusterId: args.clusterId }),
+  }),
+  defineTool({
     name: 'backup_policy_list',
     routes: ['GET /backup-policies'],
     description:

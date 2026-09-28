@@ -43,6 +43,7 @@ import { ScalingModule } from './modules/scaling/scaling.module';
 import { CatalogModule } from './modules/catalog/catalog.module';
 import { AuthzModule } from './modules/authz/authz.module';
 import { BackupsModule } from './modules/backups/backups.module';
+import { FleetModule } from './modules/fleet/fleet.module';
 import { DbLifecycleModule } from './modules/db-lifecycle/db-lifecycle.module';
 import { StorageModule } from './modules/storage/storage.module';
 import { AppMigrationModule } from './modules/app-migration/app-migration.module';
@@ -145,6 +146,7 @@ const boolOr = (raw: string | undefined, fallback: boolean): boolean =>
     AuthzModule,
     StorageModule,
     BackupsModule,
+    FleetModule,
     DbLifecycleModule,
     AppMigrationModule,
     FullMigrationModule,
