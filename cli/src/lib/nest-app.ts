@@ -2,6 +2,7 @@ import { NestFactory } from '@nestjs/core';
 import { INestApplication } from '@nestjs/common';
 import { CliModule } from '../cli.module';
 import { ProfileManager } from './profile-manager';
+import { withCliEncryptionKey } from './vault/encryption-key-env';
 
 let appInstance: INestApplication | null = null;
 
@@ -28,10 +29,12 @@ export async function getNestApp(): Promise<INestApplication> {
 
     // Create full NestJS application (with HTTP server but we won't listen)
     // This is required for TypeORM and Bull to work properly
-    appInstance = await NestFactory.create(CliModule, {
-      logger: ['error', 'warn'], // Only show errors and warnings
-      abortOnError: true, // Exit on errors to see what's wrong
-    });
+    appInstance = await withCliEncryptionKey(() =>
+      NestFactory.create(CliModule, {
+        logger: ['error', 'warn'], // Only show errors and warnings
+        abortOnError: true, // Exit on errors to see what's wrong
+      }),
+    );
 
     // Don't call init() - NestFactory.create() already initializes the app
   }

@@ -4,6 +4,7 @@ import * as path from 'node:path';
 import * as os from 'node:os';
 import { spawn, spawnSync } from 'node:child_process';
 import { CliCaService } from './cli-ca.service';
+import { SealedSshKey } from '../lib/vault/sealed-ssh-key';
 
 interface Ssh2ExecStream {
   on(event: string, cb: (...args: unknown[]) => void): Ssh2ExecStream;
@@ -31,89 +32,53 @@ interface Ssh2Client {
 @Injectable()
 export class CliSshService {
   private readonly logger = new Logger(CliSshService.name);
-  private readonly fluiDir = path.join(os.homedir(), '.flui');
-  private readonly sshDir = path.join(this.fluiDir, 'ssh');
-  private readonly privateKeyPath = path.join(this.sshDir, 'id_rsa');
-  private readonly publicKeyPath = path.join(this.sshDir, 'id_rsa.pub');
+  private readonly managedKey = new SealedSshKey();
 
-  constructor(private readonly caService: CliCaService) {
-    this.ensureSshDir();
-  }
+  constructor(private readonly caService: CliCaService) {}
 
   /**
-   * Ensure ~/.flui/ssh directory exists
-   */
-  private ensureSshDir(): void {
-    if (!fs.existsSync(this.sshDir)) {
-      fs.mkdirSync(this.sshDir, { recursive: true, mode: 0o700 });
-      this.logger.log(`Created SSH directory: ${this.sshDir}`);
-    }
-  }
-
-  /**
-   * Get or generate SSH key pair
-   * Returns the public key content for server provisioning
+   * Flui's own SSH key: the public half for provisioning, and the path that
+   * names it. The private half is sealed in the vault; a key left in plaintext
+   * by an older CLI is used until `flui vault unlock` seals it.
    */
   async getOrCreateSshKey(): Promise<{
     publicKey: string;
     privateKeyPath: string;
     publicKeyPath: string;
   }> {
-    // Check if key already exists
-    if (
-      fs.existsSync(this.privateKeyPath) &&
-      fs.existsSync(this.publicKeyPath)
-    ) {
-      this.logger.debug('Using existing SSH key');
-      const publicKey = fs.readFileSync(this.publicKeyPath, 'utf-8').trim();
-      return {
-        publicKey,
-        privateKeyPath: this.privateKeyPath,
-        publicKeyPath: this.publicKeyPath,
-      };
-    }
-
-    // Generate new SSH key pair
-    this.logger.log('Generating new SSH key pair for Flui CLI...');
-
-    try {
-      // Use ssh-keygen to generate key pair
-      spawnSync(
-        'ssh-keygen',
-        [
-          '-t',
-          'rsa',
-          '-b',
-          '4096',
-          '-f',
-          this.privateKeyPath,
-          '-N',
-          '',
-          '-C',
-          `flui-cli@${os.hostname()}`,
-        ],
-        { stdio: 'pipe' },
+    if (!this.managedKey.exists()) {
+      this.logger.log(
+        'Generating a new SSH key for Flui, sealed in the vault...',
       );
-
-      // Set correct permissions
-      fs.chmodSync(this.privateKeyPath, 0o600);
-      fs.chmodSync(this.publicKeyPath, 0o644);
-
-      const publicKey = fs.readFileSync(this.publicKeyPath, 'utf-8').trim();
-
-      this.logger.log('SSH key pair generated successfully');
-      this.logger.log(`Private key: ${this.privateKeyPath}`);
-      this.logger.log(`Public key: ${this.publicKeyPath}`);
-
-      return {
-        publicKey,
-        privateKeyPath: this.privateKeyPath,
-        publicKeyPath: this.publicKeyPath,
-      };
-    } catch (error) {
-      this.logger.error('Failed to generate SSH key:', error);
-      throw new Error(`SSH key generation failed: ${error.message}`);
+      this.managedKey.create();
     }
+    return {
+      publicKey: this.managedKey.publicKey(),
+      privateKeyPath: this.managedKey.reference,
+      publicKeyPath: this.managedKey.publicKeyPath,
+    };
+  }
+
+  /**
+   * Runs `use` with a file holding the key `keyPath` names. Flui's own key is
+   * sealed, so it gets a private copy for the length of the call; any other
+   * path is the operator's and is used as it is.
+   */
+  private async withKeyFile<T>(
+    keyPath: string,
+    use: (file: string) => Promise<T> | T,
+  ): Promise<T> {
+    if (this.managedKey.isManaged(keyPath) && !fs.existsSync(keyPath)) {
+      return this.managedKey.withPrivateKeyFile(use);
+    }
+    return use(keyPath);
+  }
+
+  private keyAvailable(keyPath: string): boolean {
+    return (
+      fs.existsSync(keyPath) ||
+      (this.managedKey.isManaged(keyPath) && this.managedKey.exists())
+    );
   }
 
   /**
@@ -122,18 +87,6 @@ export class CliSshService {
   async getPublicKey(): Promise<string> {
     const { publicKey } = await this.getOrCreateSshKey();
     return publicKey;
-  }
-
-  /**
-   * Get SSH private key path for SSH connections
-   */
-  getPrivateKeyPath(): string {
-    if (!fs.existsSync(this.privateKeyPath)) {
-      throw new Error(
-        'SSH private key not found. Run getOrCreateSshKey() first.',
-      );
-    }
-    return this.privateKeyPath;
   }
 
   /**
@@ -475,6 +428,19 @@ export class CliSshService {
     port?: number;
     timeoutMs?: number;
   }): Promise<string> {
+    return this.withKeyFile(opts.keyPath, (keyFile) =>
+      this.sshExecWithKeyFile({ ...opts, keyPath: keyFile }),
+    );
+  }
+
+  private sshExecWithKeyFile(opts: {
+    host: string;
+    command: string;
+    user?: string;
+    keyPath: string;
+    port?: number;
+    timeoutMs?: number;
+  }): string {
     const result = spawnSync(
       'ssh',
       [
@@ -534,6 +500,9 @@ export class CliSshService {
   }
 
   publicKeyFor(keyPath: string): string | null {
+    if (this.managedKey.isManaged(keyPath) && this.managedKey.exists()) {
+      return this.managedKey.publicKey();
+    }
     const pub = `${keyPath}.pub`;
     if (fs.existsSync(pub)) {
       const content = fs.readFileSync(pub, 'utf-8').trim();
@@ -752,7 +721,7 @@ export class CliSshService {
     }
 
     for (const keyPath of candidates) {
-      if (!fs.existsSync(keyPath)) continue;
+      if (!this.keyAvailable(keyPath)) continue;
       if (await this.canAuthWithKey({ host: opts.host, port, user, keyPath })) {
         log(`SSH key already authorized (${keyPath})`);
         return { keyPath, installed: false };
@@ -808,14 +777,16 @@ export class CliSshService {
     port?: number;
     onData?: (chunk: string) => void;
   }): Promise<void> {
-    return this.streamScript({
-      host: opts.host,
-      script: opts.script,
-      user: opts.user,
-      port: opts.port,
-      onData: opts.onData,
-      authArgs: ['-i', opts.keyPath],
-    });
+    return this.withKeyFile(opts.keyPath, (keyFile) =>
+      this.streamScript({
+        host: opts.host,
+        script: opts.script,
+        user: opts.user,
+        port: opts.port,
+        onData: opts.onData,
+        authArgs: ['-i', keyFile],
+      }),
+    );
   }
 
   /**

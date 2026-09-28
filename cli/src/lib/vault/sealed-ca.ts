@@ -151,6 +151,36 @@ export class SealedCa {
     return true;
   }
 
+  /**
+   * Rewrites `ca_key.pub` from the sealed CA when the two disagree.
+   *
+   * The public file is what new nodes are told to trust, and it is plaintext: an
+   * older CLI that minted a CA of its own overwrote it. The sealed private key
+   * is the one the nodes already trust, so it decides.
+   */
+  realignPublicKey(key: ProfileKey): boolean {
+    if (!existsSync(this.sealedPath)) return false;
+    const privateKey = open(key, readFileSync(this.sealedPath, 'utf-8'));
+    const derived = this.withScratchDir((scratch) => {
+      const keyPath = join(scratch, 'ca_key');
+      writeFileSync(keyPath, privateKey, { mode: 0o600 });
+      return execFileSync('ssh-keygen', ['-y', '-f', keyPath], {
+        stdio: 'pipe',
+      })
+        .toString('utf-8')
+        .trim();
+    });
+    const current = existsSync(this.pubPath)
+      ? readFileSync(this.pubPath, 'utf-8').trim()
+      : '';
+    if (keyMaterial(current) === keyMaterial(derived)) return false;
+    const [type, body] = derived.split(/\s+/);
+    writeFileSync(this.pubPath, `${type} ${body} flui-ca-cli\n`, {
+      mode: 0o644,
+    });
+    return true;
+  }
+
   private requireKey(): ProfileKey {
     const key = getProfileKey(this.profile);
     if (key) return key;
@@ -173,4 +203,8 @@ export class SealedCa {
       rmSync(scratch, { recursive: true, force: true });
     }
   }
+}
+
+function keyMaterial(publicKey: string): string {
+  return publicKey.split(/\s+/).slice(0, 2).join(' ');
 }

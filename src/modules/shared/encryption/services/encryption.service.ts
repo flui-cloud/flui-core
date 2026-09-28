@@ -4,25 +4,53 @@ import * as crypto from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
+import {
+  ENCRYPTION_KEY_UNAVAILABLE_VAR,
+  EncryptionKeyUnavailableError,
+  openWithPlatformKey,
+  sealWithPlatformKey,
+} from '../platform-cipher';
 
 @Injectable()
 export class EncryptionService {
   private readonly logger = new Logger(EncryptionService.name);
-  private readonly algorithm = 'aes-256-gcm';
-  private readonly encryptionKey: Buffer;
+  private readonly resolvedKey: Buffer | null;
+  private readonly unavailableReason: string | null = null;
 
   constructor(private readonly configService: ConfigService) {
-    this.encryptionKey = this.resolveEncryptionKey();
+    const unavailable = this.configService.get<string>(
+      ENCRYPTION_KEY_UNAVAILABLE_VAR,
+    );
+    if (unavailable) {
+      this.unavailableReason = unavailable;
+      this.resolvedKey = null;
+      return;
+    }
+    this.resolvedKey = this.resolveEncryptionKey();
+  }
+
+  /**
+   * The key, or the reason there is none. Thrown here rather than at boot: in
+   * the CLI a locked vault must not stop commands that never open a secret.
+   */
+  private get encryptionKey(): Buffer {
+    if (this.resolvedKey) return this.resolvedKey;
+    throw new EncryptionKeyUnavailableError(
+      this.unavailableReason ?? 'No encryption key is available.',
+    );
   }
 
   /**
    * Resolve encryption key with 3-level fallback:
    * 1. Env var ENCRYPTION_KEY — K8s production (from Kubernetes Secret)
-   * 2. File ~/.flui/encryption.key — local development (shared CLI/API)
-   * 3. Error if neither is available
+   * 2. File ~/.flui/encryption.key — local development of the API
+   * 3. Generate that file
+   *
+   * The Flui CLI never reaches 2 or 3: it resolves the key from the vault
+   * before starting this module and passes either ENCRYPTION_KEY or
+   * FLUI_ENCRYPTION_KEY_UNAVAILABLE.
    */
   private resolveEncryptionKey(): Buffer {
-    // 1. Env var (K8s production or .env)
     const envKey = this.configService.get<string>('ENCRYPTION_KEY');
     if (envKey) {
       const keyBuffer = Buffer.from(envKey, 'hex');
@@ -33,7 +61,6 @@ export class EncryptionService {
       return keyBuffer;
     }
 
-    // 2. File ~/.flui/encryption.key (shared with CLI) — read or generate
     const fluiDir = path.join(os.homedir(), '.flui');
     const keyFilePath = path.join(fluiDir, 'encryption.key');
     try {
@@ -48,11 +75,10 @@ export class EncryptionService {
       return keyBuffer;
     } catch (error) {
       if (error.code !== 'ENOENT') {
-        throw error; // Re-throw if not "file not found"
+        throw error;
       }
     }
 
-    // 3. Auto-generate key file (first install or after deletion)
     this.logger.log(
       'No encryption key found. Generating new key at ~/.flui/encryption.key',
     );
@@ -118,24 +144,9 @@ export class EncryptionService {
    * @returns Base64 encoded encrypted data (iv + authTag + encrypted)
    */
   encrypt(plaintext: string): string {
+    const key = this.encryptionKey;
     try {
-      const iv = crypto.randomBytes(16);
-      const cipher = crypto.createCipheriv(
-        this.algorithm,
-        this.encryptionKey,
-        iv,
-      );
-
-      const encrypted = Buffer.concat([
-        cipher.update(plaintext, 'utf8'),
-        cipher.final(),
-      ]);
-
-      const authTag = cipher.getAuthTag();
-
-      // Format: iv (16 bytes) + authTag (16 bytes) + encrypted data
-      const combined = Buffer.concat([iv, authTag, encrypted]);
-      return combined.toString('base64');
+      return sealWithPlatformKey(key, plaintext);
     } catch (error) {
       this.logger.error('Encryption failed', error.stack);
       throw new Error('Failed to encrypt data');
@@ -148,26 +159,9 @@ export class EncryptionService {
    * @returns Decrypted plaintext
    */
   decrypt(encryptedData: string): string {
+    const key = this.encryptionKey;
     try {
-      const buffer = Buffer.from(encryptedData, 'base64');
-
-      const iv = buffer.subarray(0, 16);
-      const authTag = buffer.subarray(16, 32);
-      const encrypted = buffer.subarray(32);
-
-      const decipher = crypto.createDecipheriv(
-        this.algorithm,
-        this.encryptionKey,
-        iv,
-      );
-      decipher.setAuthTag(authTag);
-
-      const decrypted = Buffer.concat([
-        decipher.update(encrypted),
-        decipher.final(),
-      ]);
-
-      return decrypted.toString('utf8');
+      return openWithPlatformKey(key, encryptedData);
     } catch (error) {
       this.logger.error('Decryption failed', error.stack);
       throw new Error('Failed to decrypt data');

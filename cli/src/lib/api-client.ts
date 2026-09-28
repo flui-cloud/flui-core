@@ -65,11 +65,7 @@ export class ApiClient {
         data,
       );
     } else if (error.request) {
-      return new ApiError(
-        'API server not reachable. Please check the API URL and network connection.',
-        undefined,
-        error.message,
-      );
+      return new ApiError(unansweredMessage(error), undefined, error.message);
     } else {
       return new ApiError(error.message);
     }
@@ -213,4 +209,28 @@ export class ApiClient {
     const path = `/management/cache/providers/${provider}/node-sizes`;
     return this.delete<void>(path);
   }
+}
+
+/**
+ * What happened to a request that got no answer, in words that point at the
+ * cause: a request still running past the client's timeout is not an API that
+ * cannot be reached, and "not reachable" sent people looking at the network.
+ */
+export function unansweredMessage(
+  error: Pick<AxiosError, 'code' | 'message' | 'config'>,
+): string {
+  const url = `${error.config?.baseURL ?? ''}${error.config?.url ?? ''}`;
+  if (error.code === 'ECONNABORTED' || error.code === 'ETIMEDOUT') {
+    const seconds = error.config?.timeout
+      ? Math.round(error.config.timeout / 1000)
+      : null;
+    return (
+      `The Flui API did not answer ${url} within ${seconds ?? 'the allowed'} seconds. ` +
+      'The request may still be running on the API — check before retrying.'
+    );
+  }
+  if (error.code === 'ECONNREFUSED' || error.code === 'ENOTFOUND') {
+    return `The Flui API at ${url} cannot be reached (${error.code}). Check the API URL and the network.`;
+  }
+  return `The Flui API at ${url} gave no answer (${error.code ?? 'no code'}: ${error.message}).`;
 }

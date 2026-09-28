@@ -188,4 +188,30 @@ describe('SealedCa', () => {
     writeFileSync(join(profileDir, 'placeholder'), '');
     expect(ca().sealExisting(Buffer.from(KEY) as never)).toBe(false);
   });
+
+  it('rewrites ca_key.pub from the sealed CA when an older CLI replaced it', () => {
+    setProfileKey(PROFILE, Buffer.from(KEY) as never);
+    const trusted = ca().create();
+    const rogue = join(home, 'rogue');
+    execFileSync('ssh-keygen', ['-t', 'ed25519', '-f', rogue, '-N', '', '-q'], {
+      stdio: 'pipe',
+    });
+    writeFileSync(join(caDir, 'ca_key.pub'), readFileSync(`${rogue}.pub`));
+
+    expect(ca().realignPublicKey(KEY)).toBe(true);
+
+    const material = (k: string) => k.split(/\s+/).slice(0, 2).join(' ');
+    expect(material(ca().publicKey())).toBe(material(trusted));
+    expect(ca().realignPublicKey(KEY)).toBe(false);
+  });
+
+  it('leaves a matching ca_key.pub alone, comment included', () => {
+    setProfileKey(PROFILE, Buffer.from(KEY) as never);
+    ca().create();
+    const withComment = `${ca().publicKey()} a comment of my own\n`;
+    writeFileSync(join(caDir, 'ca_key.pub'), withComment);
+
+    expect(ca().realignPublicKey(KEY)).toBe(false);
+    expect(readFileSync(join(caDir, 'ca_key.pub'), 'utf-8')).toBe(withComment);
+  });
 });

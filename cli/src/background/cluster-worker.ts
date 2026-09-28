@@ -17,6 +17,7 @@ import { CliClusterRepository } from '../lib/repositories/cli-cluster.repository
 import { CliOperationRepository } from '../lib/repositories/cli-operation.repository';
 import { CliLoggerService } from '../services/cli-logger.service';
 import { openProfileKey } from '../lib/vault/open-profile-key';
+import { withCliEncryptionKey } from '../lib/vault/encryption-key-env';
 
 const logger = new Logger('ClusterWorker');
 
@@ -38,9 +39,11 @@ async function main() {
   await openProfileKey();
 
   // Bootstrap NestJS application context
-  const app = await NestFactory.createApplicationContext(CliModule, {
-    logger: ['error', 'warn', 'log'],
-  });
+  const app = await withCliEncryptionKey(() =>
+    NestFactory.createApplicationContext(CliModule, {
+      logger: ['error', 'warn', 'log'],
+    }),
+  );
 
   try {
     const jobData = JSON.parse(jobDataJson);

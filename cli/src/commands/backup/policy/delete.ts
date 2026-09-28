@@ -12,7 +12,13 @@ export default class BackupPolicyDelete extends Command {
     id: Args.string({ required: true }),
   };
   static readonly flags = {
-    yes: Flags.boolean({ char: 'y', default: false }),
+    yes: Flags.boolean({
+      char: 'y',
+      default: false,
+      aliases: ['force'],
+      charAliases: ['f'],
+      description: 'Skip confirmation (also --force, -f)',
+    }),
   };
 
   async run(): Promise<void> {

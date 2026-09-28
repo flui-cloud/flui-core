@@ -1,7 +1,6 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
-import { randomBytes, randomInt } from 'node:crypto';
+import { randomInt } from 'node:crypto';
 import { v4 as uuidv4 } from 'uuid';
-import { ConfigStorage } from '../lib/config-storage';
 import {
   ClusterEntity,
   ClusterStatus,
@@ -30,6 +29,9 @@ import { ProviderFactory } from 'src/modules/providers/services/provider.factory
 import { FirewallProviderFactory } from 'src/modules/providers/core/factories/firewall-provider.factory';
 import { belongsToContext } from '../lib/context-stamp';
 import { CloudProvider } from 'src/modules/providers/enums/cloud-provider.enum';
+import { parsePlatformKeyHex } from 'src/modules/shared/encryption/platform-cipher';
+import { PLATFORM_KEY_FIELD } from '../lib/vault/encryption-key-migration';
+import { requireOpenVault } from '../lib/vault/require-vault';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
@@ -67,6 +69,7 @@ export class CliClustersService {
     operation: InfrastructureOperationEntity;
   }> {
     this.logger.log(`Creating cluster: ${createClusterDto.name}`);
+    requireOpenVault();
 
     // Get or create SSH key pair
     const { publicKey: sshPublicKey } =
@@ -88,44 +91,15 @@ export class CliClustersService {
     // Generate CLI API key (pre-seeded into flui-secrets for BootstrapSeeder)
     const fluiApiKey = `flui_${uuidv4().replaceAll('-', '')}`;
 
-    // Read provider credentials for bootstrap injection.
-    // Hetzner uses a single API token; Scaleway uses an Access Key ID + Secret Key pair.
-    // Both shapes are propagated to the cluster pod so BootstrapSeeder can re-create
-    // the right credential rows server-side without an extra HTTP roundtrip.
-    const configStorage = new ConfigStorage();
-    let providerToken = '';
-    let providerScalewayAccessKey = '';
-    let providerScalewaySecretKey = '';
-    let providerOvhAccessKey = '';
-    let providerOvhSecretKey = '';
-    let providerRegions = '';
-    if (createClusterDto.provider === 'scaleway') {
-      const creds = configStorage.getCredentials('scaleway') as {
-        accessKey?: string;
-        secretKey?: string;
-      } | null;
-      providerScalewayAccessKey = creds?.accessKey || '';
-      providerScalewaySecretKey = creds?.secretKey || '';
-      // Scaleway authenticates HTTP calls with the Secret Key (X-Auth-Token);
-      // keep providerToken populated so legacy code paths still work.
-      providerToken = providerScalewaySecretKey;
-      providerRegions = 'fr-par,nl-ams,pl-waw';
-    } else if (createClusterDto.provider === 'ovh') {
-      const creds = configStorage.getCredentials('ovh') as {
-        accessKey?: string;
-        secretKey?: string;
-      } | null;
-      providerOvhAccessKey = creds?.accessKey || '';
-      providerOvhSecretKey = creds?.secretKey || '';
-      providerToken = providerOvhSecretKey;
-      // OVH has no static region list — regions come from the OpenStack
-      // service catalog the credential itself resolves at call time (see
-      // OpenStackHttpClient.regions()), so there's nothing fixed to seed here.
-      providerRegions = '';
-    } else {
-      providerToken = configStorage.getToken(createClusterDto.provider) || '';
-      providerRegions = 'nbg1,fsn1,hel1,ash,hil';
-    }
+    // Provider credentials are not copied here: the installer reads them from
+    // the vault when it needs them.
+    const providerRegions =
+      createClusterDto.provider === 'scaleway'
+        ? 'fr-par,nl-ams,pl-waw'
+        : createClusterDto.provider === 'ovh'
+          ? ''
+          : 'nbg1,fsn1,hel1,ash,hil';
+    const restoredPlatformKey = this.restoredPlatformKey();
 
     // Generate JWT secret and admin credentials for local auth mode
     const jwtSecret = this.generateSecurePassword(64);
@@ -212,20 +186,13 @@ export class CliClustersService {
           zitadelAdminTempPassword,
         ),
         // Bootstrap seeder vars — injected into flui-secrets, read by BootstrapSeeder at API startup
-        fluiApiKey, // plain text — written into K8s secret, not stored encrypted here
-        providerTokenEncrypted: this.encryptionService.encrypt(providerToken),
-        providerScalewayAccessKeyEncrypted: providerScalewayAccessKey
-          ? this.encryptionService.encrypt(providerScalewayAccessKey)
-          : '',
-        providerScalewaySecretKeyEncrypted: providerScalewaySecretKey
-          ? this.encryptionService.encrypt(providerScalewaySecretKey)
-          : '',
-        providerOvhAccessKeyEncrypted: providerOvhAccessKey
-          ? this.encryptionService.encrypt(providerOvhAccessKey)
-          : '',
-        providerOvhSecretKeyEncrypted: providerOvhSecretKey
-          ? this.encryptionService.encrypt(providerOvhSecretKey)
-          : '',
+        fluiApiKeyEncrypted: this.encryptionService.encrypt(fluiApiKey),
+        // The key this installation's API will run with, kept on the record
+        // so a reinstall sends the same one even after the profile's changes.
+        [PLATFORM_KEY_FIELD]: this.encryptionService.encrypt(
+          restoredPlatformKey ??
+            this.encryptionService.exportKeyMaterialForBundle().keyHex,
+        ),
         providerRegions,
       },
       sshKeyIds: createClusterDto.sshKeys || [],
@@ -1037,57 +1004,29 @@ export class CliClustersService {
   }
 
   /**
-   * Get or create encryption key from ~/.flui/encryption.key
-   * Same pattern as CA: generate once, reuse forever.
-   * This key is shared between CLI and API (local dev) and deployed
-   * to K8s clusters as ENCRYPTION_KEY in the flui-secrets Secret.
+   * A control plane rebuilt from a platform backup has to boot with the key
+   * its restored rows were sealed with, or every encrypted column — provider
+   * tokens, kubeconfigs, app secrets — loads unreadable.
+   * `flui backup platform restore` writes it into install-keys.env under
+   * exactly this name. Deliberately NOT `ENCRYPTION_KEY`: that one is in
+   * flui-core's dev .env, and silently pinning a new cluster to a developer's
+   * local key would be worse than asking for one more word.
+   *
+   * Recorded on the new cluster only, sealed like its other secrets: the
+   * profile keeps its own key, which is what opens everything else it holds.
    */
-  private getOrCreateEncryptionKey(): string {
-    const keyDir = path.join(os.homedir(), '.flui');
-    const keyFilePath = path.join(keyDir, 'encryption.key');
-
-    // A control plane rebuilt from a platform backup has to boot with the key
-    // its restored rows were sealed with, or every encrypted column — provider
-    // tokens, kubeconfigs, app secrets — loads unreadable. Rebuilding from the
-    // original workstation gets that key by accident, from the file below;
-    // rebuilding from anywhere else needs it passed in.
-    // `flui backup platform restore` writes it into install-keys.env under
-    // exactly this name. Deliberately NOT `ENCRYPTION_KEY`: that one is in
-    // flui-core's dev .env, and silently pinning a new cluster to a developer's
-    // local key would be worse than asking for one more word.
+  private restoredPlatformKey(): string | null {
     const fromEnv = process.env.FLUI_RESTORE_ENCRYPTION_KEY?.trim();
-    if (fromEnv) {
-      if (fromEnv.length !== 64) {
-        throw new Error(
-          'FLUI_RESTORE_ENCRYPTION_KEY must be the 64-character hex key from install-keys.env',
-        );
-      }
-      this.logger.log(
-        'Using the encryption key from FLUI_RESTORE_ENCRYPTION_KEY (rebuilding an existing installation)',
-      );
-      return fromEnv;
-    }
-
-    // Reuse existing key
-    if (fs.existsSync(keyFilePath)) {
-      const existingKey = fs.readFileSync(keyFilePath, 'utf-8').trim();
-      if (existingKey.length === 64) {
-        this.logger.log('Reusing encryption key from ~/.flui/encryption.key');
-        return existingKey;
-      }
-      this.logger.warn(
-        'Invalid encryption key in ~/.flui/encryption.key, regenerating',
+    if (!fromEnv) return null;
+    if (!parsePlatformKeyHex(fromEnv)) {
+      throw new Error(
+        'FLUI_RESTORE_ENCRYPTION_KEY must be the 64-character hex key from install-keys.env',
       );
     }
-
-    // Generate new key
-    const newKey = randomBytes(32).toString('hex');
-    if (!fs.existsSync(keyDir)) {
-      fs.mkdirSync(keyDir, { recursive: true });
-    }
-    fs.writeFileSync(keyFilePath, newKey, { encoding: 'utf-8', mode: 0o600 });
-    this.logger.log('Generated new encryption key at ~/.flui/encryption.key');
-    return newKey;
+    this.logger.log(
+      'Using the encryption key from FLUI_RESTORE_ENCRYPTION_KEY (rebuilding an existing installation)',
+    );
+    return fromEnv.toLowerCase();
   }
 
   /**

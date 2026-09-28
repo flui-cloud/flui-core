@@ -6,6 +6,7 @@ import { printContextBanner } from '../../lib/context-banner';
 import { buildNipBaseDomain } from '../../lib/nip-base-domain.util';
 import { CliControlClusterService } from '../../services/cli-control-cluster.service';
 import { EncryptionService } from 'src/modules/shared/encryption/services/encryption.service';
+import { EncryptionKeyUnavailableError } from 'src/modules/shared/encryption/platform-cipher';
 import { ClusterStatus } from 'src/modules/infrastructure/clusters/entities/cluster.entity';
 
 export default class EnvCredentials extends Command {
@@ -44,7 +45,8 @@ export default class EnvCredentials extends Command {
     if (!value) return '';
     try {
       return svc.decrypt(value);
-    } catch {
+    } catch (error) {
+      if (error instanceof EncryptionKeyUnavailableError) throw error;
       return '';
     }
   }

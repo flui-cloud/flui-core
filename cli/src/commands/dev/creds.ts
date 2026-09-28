@@ -3,12 +3,13 @@ import chalk from 'chalk';
 import ora from 'ora';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import * as os from 'node:os';
 import { getNestApp, closeNestApp } from '../../lib/nest-app';
 import { CliControlClusterService } from '../../services/cli-control-cluster.service';
 import { CliSshService } from '../../services/cli-ssh.service';
 import { ConfigStorage } from '../../lib/config-storage';
 import { EncryptionService } from 'src/modules/shared/encryption/services/encryption.service';
+import { EncryptionKeyUnavailableError } from 'src/modules/shared/encryption/platform-cipher';
+import { CliClusterCreatorService } from '../../services/cli-cluster-creator.service';
 import { ClusterStatus } from 'src/modules/infrastructure/clusters/entities/cluster.entity';
 import {
   resolveClusterSshTarget,
@@ -23,6 +24,7 @@ interface FluiSecrets {
   jwtSecret?: string;
   adminEmail?: string;
   fluiApiKey?: string;
+  encryptionKey?: string;
   sshCaPrivateKey?: string;
   sshCaPublicKey?: string;
   zitadelPat?: string;
@@ -112,15 +114,11 @@ export default class DevCreds extends Command {
       );
       spinner.succeed('flui-secrets read');
 
-      // Local encryption key — shared with API via ~/.flui/encryption.key.
-      const encryptionKeyPath = path.join(
-        os.homedir(),
-        '.flui',
-        'encryption.key',
-      );
-      const encryptionKey = fs.existsSync(encryptionKeyPath)
-        ? fs.readFileSync(encryptionKeyPath, 'utf-8').trim()
-        : '';
+      // The key the cluster's API runs with, which the local API needs to open
+      // the same rows: from flui-secrets when readable, else from the record.
+      const encryptionKey =
+        fluiSecrets.encryptionKey ||
+        app.get(CliClusterCreatorService).platformEncryptionKey(cluster);
 
       const apiPath = await this.resolveApiPath(flags['api-path'], flags.save);
       const apiDir = path.isAbsolute(apiPath)
@@ -201,7 +199,8 @@ export default class DevCreds extends Command {
           redis: encryptionService.decrypt(metadata.redisPasswordEncrypted),
           grafana: encryptionService.decrypt(metadata.grafanaPasswordEncrypted),
         };
-      } catch {
+      } catch (error) {
+        if (error instanceof EncryptionKeyUnavailableError) throw error;
         return null;
       }
     }
@@ -287,6 +286,7 @@ export default class DevCreds extends Command {
         sshCaPublicKey: decode(data.SSH_CA_PUBLIC_KEY),
         zitadelPat: decode(data.ZITADEL_SERVICE_ACCOUNT_PAT),
         sshKeyEncryptionKey: decode(data.SSH_KEY_ENCRYPTION_KEY),
+        encryptionKey: decode(data.ENCRYPTION_KEY),
       };
     } catch {
       return {};

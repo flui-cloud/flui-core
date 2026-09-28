@@ -1,7 +1,7 @@
+import './load-env';
 import { NestFactory } from '@nestjs/core';
 import { corsOriginDelegate } from './config/cors-origin.config';
 import { AppModule } from './app.module';
-import * as dotenv from 'dotenv';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import helmet from 'helmet';
 import { ValidationPipe, Logger, ConsoleLogger } from '@nestjs/common';
@@ -9,8 +9,6 @@ import { HttpExceptionFilter } from './filters/http-exception.filter';
 import { MalformedIdentifierFilter } from './filters/malformed-identifier.filter';
 import { runWithActorContext } from './modules/auth/utils/actor-context';
 import Redis from 'ioredis';
-
-dotenv.config();
 
 async function performPreBootstrapChecks(): Promise<void> {
   const logger = new Logger('PreBootstrap');

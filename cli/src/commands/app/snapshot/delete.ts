@@ -10,7 +10,7 @@ export default class AppSnapshotDelete extends Command {
 
   static readonly examples = [
     '<%= config.bin %> <%= command.id %> my-app my-app-snap-20260510-abcdef',
-    '<%= config.bin %> <%= command.id %> my-app my-app-snap-... --force',
+    '<%= config.bin %> <%= command.id %> my-app my-app-snap-... --yes',
   ];
 
   static readonly args = {
@@ -29,15 +29,17 @@ export default class AppSnapshotDelete extends Command {
       char: 'c',
       description: 'Cluster name or ID (default: auto-detect)',
     }),
-    force: Flags.boolean({
-      char: 'f',
-      description: 'Skip confirmation',
+    yes: Flags.boolean({
+      char: 'y',
+      aliases: ['force'],
+      charAliases: ['f'],
+      description: 'Skip confirmation (also --force, -f)',
     }),
   };
 
   async run(): Promise<void> {
     const { args, flags } = await this.parse(AppSnapshotDelete);
-    if (!flags.force) {
+    if (!flags.yes) {
       const ok = await confirmPrompt(
         `Delete snapshot "${args.snapshotId}" of app "${args.name}"?`,
       );

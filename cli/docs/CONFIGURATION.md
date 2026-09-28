@@ -10,10 +10,10 @@ are stored, and how to control which value wins when multiple sources are availa
 
 The CLI splits configuration into two storage areas with different rules:
 
-| Area              | Stores                                                | Encryption | Project override? |
-| ----------------- | ----------------------------------------------------- | ---------- | ----------------- |
-| **Token vault**   | Cloud provider API tokens, the Flui API key           | AES-256-GCM | No                |
-| **Preferences**   | Non-secret user/project values (email, defaults, …)   | Plain text | Yes (read-only)   |
+| Area            | Stores                                              | Encryption  | Project override? |
+| --------------- | --------------------------------------------------- | ----------- | ----------------- |
+| **Token vault** | Cloud provider API tokens, the Flui API key         | AES-256-GCM | No                |
+| **Preferences** | Non-secret user/project values (email, defaults, …) | Plain text  | Yes (read-only)   |
 
 A single registry — the **preferences schema** — declares every non-secret key the
 CLI knows about: its env var, its project-overridability, its default, and its
@@ -29,14 +29,14 @@ at the first hit:
 explicit (flag passed in code) > env var > project-local file > user-global file > default > missing
 ```
 
-| Layer            | What it is                                                                          |
-| ---------------- | ----------------------------------------------------------------------------------- |
-| `explicit`       | A value passed directly to `resolver.resolve(key, explicit)` — usually a CLI flag.  |
-| `env`            | The env var declared in the schema (e.g. `FLUI_EMAIL`, `FLUI_CERTIFICATE_MODE`).    |
-| `project`        | `./flui.config.json` in the current working directory, if `projectOverridable`.     |
-| `user`           | Active profile file at `~/.flui/profiles/<active>/config.json`, `preferences` block.|
-| `default`        | The `defaultValue` in the schema, if any.                                           |
-| `missing`        | None of the above produced a value.                                                 |
+| Layer      | What it is                                                                           |
+| ---------- | ------------------------------------------------------------------------------------ |
+| `explicit` | A value passed directly to `resolver.resolve(key, explicit)` — usually a CLI flag.   |
+| `env`      | The env var declared in the schema (e.g. `FLUI_EMAIL`, `FLUI_CERTIFICATE_MODE`).     |
+| `project`  | `./flui.config.json` in the current working directory, if `projectOverridable`.      |
+| `user`     | Active profile file at `~/.flui/profiles/<active>/config.json`, `preferences` block. |
+| `default`  | The `defaultValue` in the schema, if any.                                            |
+| `missing`  | None of the above produced a value.                                                  |
 
 Token resolution does **not** use this cascade. Tokens are read only from the
 active profile's encrypted vault. Env-var fallback exists only for the Flui API
@@ -47,14 +47,15 @@ key (`FLUI_API_KEY`), kept for CI ergonomics.
 ```
 ~/.flui/
 ├── context                           # Active profile (plain text, one line)
-├── profiles/
-│   ├── default/
-│   │   ├── config.json               # tokens + apiKey + apiUrl + preferences (per profile)
-│   │   ├── .key                      # AES key for this profile
-│   │   ├── ca/                       # SSH CA material
-│   │   └── ...
-│   └── <other-profile>/
-└── encryption.key                    # Shared with the API in dev export
+├── vault.json                        # Vault header (salt, verifier; no key)
+└── profiles/
+    ├── default/
+    │   ├── config.json               # tokens + apiKey + apiUrl + preferences (per profile)
+    │   ├── encryption.key.sealed     # Key of the encrypted values in clusters.json, sealed by the vault
+    │   ├── ca/                       # SSH CA: ca_key.sealed + ca_key.pub
+    │   ├── ssh/                      # Flui's SSH key: id_rsa.sealed + id_rsa.pub
+    │   └── ...
+    └── <other-profile>/
 
 ./flui.config.json                    # Optional, project-local, committable
 ```
@@ -111,16 +112,16 @@ Source of truth: [`src/config/preferences-schema.ts`](../src/config/preferences-
 
 Each entry declares:
 
-| Field                  | Purpose                                                             |
-| ---------------------- | ------------------------------------------------------------------- |
-| `key`                  | Stable identifier — also the JSON key in storage.                   |
-| `description`          | One-line explanation shown in `flui config show` / prompts / help.  |
-| `envVar`               | Env var name that overrides storage layers.                         |
-| `projectOverridable`   | When `true`, `./flui.config.json` may shadow the user-global value. |
-| `defaultValue`         | Last-resort value before "missing".                                 |
-| `required`             | When `true`, commands consuming this key must prompt or fail.       |
-| `allowedValues`        | Optional enum used by validation and CLI option lists.              |
-| `validate(value)`      | Custom validator returning an error message or `null`.              |
+| Field                | Purpose                                                             |
+| -------------------- | ------------------------------------------------------------------- |
+| `key`                | Stable identifier — also the JSON key in storage.                   |
+| `description`        | One-line explanation shown in `flui config show` / prompts / help.  |
+| `envVar`             | Env var name that overrides storage layers.                         |
+| `projectOverridable` | When `true`, `./flui.config.json` may shadow the user-global value. |
+| `defaultValue`       | Last-resort value before "missing".                                 |
+| `required`           | When `true`, commands consuming this key must prompt or fail.       |
+| `allowedValues`      | Optional enum used by validation and CLI option lists.              |
+| `validate(value)`    | Custom validator returning an error message or `null`.              |
 
 To add a new preference:
 
@@ -154,13 +155,13 @@ must come from a flag, env var, project file, user-global file, or schema defaul
 
 ## Commands reference
 
-| Command                           | What it does                                                  |
-| --------------------------------- | ------------------------------------------------------------- |
-| `flui config show`                | Print every preference resolved through the cascade.          |
-| `flui config get <key>`           | Print one preference + its source.                            |
-| `flui config set <key> <value>`   | Schema-dispatched: preference or provider token.              |
-| `flui config remove <key>`        | Schema-dispatched: clear preference or remove token.          |
-| `flui config list`                | Tokens + preferences. Filter with `--tokens` / `--preferences`.|
+| Command                         | What it does                                                    |
+| ------------------------------- | --------------------------------------------------------------- |
+| `flui config show`              | Print every preference resolved through the cascade.            |
+| `flui config get <key>`         | Print one preference + its source.                              |
+| `flui config set <key> <value>` | Schema-dispatched: preference or provider token.                |
+| `flui config remove <key>`      | Schema-dispatched: clear preference or remove token.            |
+| `flui config list`              | Tokens + preferences. Filter with `--tokens` / `--preferences`. |
 
 ## Why this design
 
@@ -221,7 +222,7 @@ Use `flui config list --tokens` instead.
 ```
 
 `get` always reports the source layer — the fastest way to debug "why is the
-CLI using *that* value?".
+CLI using _that_ value?".
 
 ### 3. Project file as override
 
@@ -366,6 +367,22 @@ Removed configuration for: hetzner
 
 Same dispatch as `set`. Tokens require typing the provider name as a
 deletion safeguard; preferences do not (they're plain text and easy to recreate).
+
+### 11. Reaching the control when the Flui API does not answer
+
+`flui ssh master` (and `flui ssh <control>/master`) needs neither the API nor the dashboard: the
+control cluster is on this profile's record (`~/.flui/profiles/<profile>/clusters.json`), and the
+five-minute SSH certificate is signed on this machine by the profile's SSH CA. What it does need:
+
+- the vault unlocked (`flui vault unlock`), because the CA is sealed in it;
+- the address you connect from allowed on port 22 of the control's firewall — if it changed, run
+  `flui env update-firewall --add` first: it writes to the provider directly when the API does not
+  answer, and brings Flui's saved rules in line on the next run;
+- no older `flui` process still running from before a CLI update (`flui vault unlock` lists them):
+  an old process can mint a CA the control does not trust.
+
+Once in, start the Flui API again from the master's shell. Workload clusters are still looked up
+through the API, since only the control is on this machine's record.
 
 ## Future work
 

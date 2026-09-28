@@ -41,6 +41,7 @@ import { CliLoggerService } from './cli-logger.service';
 import { CliVnetRepository } from '../lib/repositories/cli-vnet.repository';
 import { ApiClient, ApiError } from '../lib/api-client';
 import { ConfigStorage } from '../lib/config-storage';
+import { PLATFORM_KEY_FIELD } from '../lib/vault/encryption-key-migration';
 import { CliByosPurgeService } from './cli-byos-purge.service';
 import { resolveClusterSshTarget } from '../lib/cluster-ssh-target';
 import { checkTcpPort } from '../lib/utils/tcp-port';
@@ -1689,10 +1690,100 @@ export class CliClusterCreatorService {
    */
   getClusterApiKey(cluster: ClusterEntity): string | null {
     try {
-      return this.decryptClusterSecrets(cluster).fluiApiKey || null;
+      return this.clusterApiKey(cluster) || null;
     } catch {
       return null;
     }
+  }
+
+  /**
+   * The ENCRYPTION_KEY this cluster's own API runs with, as recorded on the
+   * cluster. Records written before the vault carry none until `flui vault
+   * unlock` adds it, and until then the key they were given is the profile's.
+   */
+  platformEncryptionKey(cluster: ClusterEntity): string {
+    const meta = (cluster.metadata ?? {}) as Record<string, any>;
+    return meta[PLATFORM_KEY_FIELD]
+      ? this.encryptionService.decrypt(meta[PLATFORM_KEY_FIELD])
+      : this.encryptionService.exportKeyMaterialForBundle().keyHex;
+  }
+
+  /** Sealed since the vault; records written before keep it in plaintext. */
+  clusterApiKey(cluster: ClusterEntity): string {
+    const meta = (cluster.metadata ?? {}) as Record<string, any>;
+    return meta.fluiApiKeyEncrypted
+      ? this.encryptionService.decrypt(meta.fluiApiKeyEncrypted)
+      : meta.fluiApiKey || '';
+  }
+
+  /**
+   * The provider credentials an installation is seeded with, read from the
+   * vault at the moment they are needed. Records written before that kept a
+   * copy sealed with the profile's encryption key; it is read only when the
+   * vault holds nothing for the provider.
+   */
+  private providerCredentials(
+    provider: string,
+    meta: Record<string, any>,
+    tryDecrypt: (v?: string) => string,
+  ): {
+    providerToken: string;
+    providerScalewayAccessKey: string;
+    providerScalewaySecretKey: string;
+    providerOvhAccessKey: string;
+    providerOvhSecretKey: string;
+  } {
+    const storage = new ConfigStorage();
+    let fromVault = {
+      providerToken: '',
+      providerScalewayAccessKey: '',
+      providerScalewaySecretKey: '',
+      providerOvhAccessKey: '',
+      providerOvhSecretKey: '',
+    };
+    if (provider === 'scaleway' || provider === 'ovh') {
+      const creds = storage.getCredentials(provider) as {
+        accessKey?: string;
+        secretKey?: string;
+      } | null;
+      const accessKey = creds?.accessKey || '';
+      const secretKey = creds?.secretKey || '';
+      fromVault =
+        provider === 'scaleway'
+          ? {
+              ...fromVault,
+              providerToken: secretKey,
+              providerScalewayAccessKey: accessKey,
+              providerScalewaySecretKey: secretKey,
+            }
+          : {
+              ...fromVault,
+              providerToken: secretKey,
+              providerOvhAccessKey: accessKey,
+              providerOvhSecretKey: secretKey,
+            };
+    } else {
+      fromVault.providerToken = storage.getToken(provider) || '';
+    }
+
+    const legacy = (field: string): string =>
+      meta[field] ? tryDecrypt(meta[field]) : '';
+    return {
+      providerToken:
+        fromVault.providerToken || legacy('providerTokenEncrypted'),
+      providerScalewayAccessKey:
+        fromVault.providerScalewayAccessKey ||
+        legacy('providerScalewayAccessKeyEncrypted'),
+      providerScalewaySecretKey:
+        fromVault.providerScalewaySecretKey ||
+        legacy('providerScalewaySecretKeyEncrypted'),
+      providerOvhAccessKey:
+        fromVault.providerOvhAccessKey ||
+        legacy('providerOvhAccessKeyEncrypted'),
+      providerOvhSecretKey:
+        fromVault.providerOvhSecretKey ||
+        legacy('providerOvhSecretKeyEncrypted'),
+    };
   }
 
   private decryptClusterSecrets(cluster: ClusterEntity): {
@@ -1718,10 +1809,10 @@ export class CliClusterCreatorService {
     const meta = (cluster.metadata ?? {}) as any;
     const tryDecrypt = (v?: string) =>
       v ? this.encryptionService.decrypt(v) : '';
-    const encryptionKeyPath = path.join(
-      os.homedir(),
-      '.flui',
-      'encryption.key',
+    const provider = this.providerCredentials(
+      cluster.provider,
+      meta,
+      tryDecrypt,
     );
     return {
       postgresPassword: this.encryptionService.decrypt(
@@ -1733,19 +1824,9 @@ export class CliClusterCreatorService {
       grafanaPassword: this.encryptionService.decrypt(
         meta.grafanaPasswordEncrypted,
       ),
-      encryptionKey: fs.existsSync(encryptionKeyPath)
-        ? fs.readFileSync(encryptionKeyPath, 'utf-8').trim()
-        : '',
-      fluiApiKey: meta.fluiApiKey || '',
-      providerToken: tryDecrypt(meta.providerTokenEncrypted),
-      providerScalewayAccessKey: tryDecrypt(
-        meta.providerScalewayAccessKeyEncrypted,
-      ),
-      providerScalewaySecretKey: tryDecrypt(
-        meta.providerScalewaySecretKeyEncrypted,
-      ),
-      providerOvhAccessKey: tryDecrypt(meta.providerOvhAccessKeyEncrypted),
-      providerOvhSecretKey: tryDecrypt(meta.providerOvhSecretKeyEncrypted),
+      encryptionKey: this.platformEncryptionKey(cluster),
+      fluiApiKey: this.clusterApiKey(cluster),
+      ...provider,
       providerRegions: meta.providerRegions || '',
       zitadelMasterkey: tryDecrypt(meta.zitadelMasterkeyEncrypted),
       zitadelDbAdminPassword: tryDecrypt(meta.zitadelDbAdminPasswordEncrypted),

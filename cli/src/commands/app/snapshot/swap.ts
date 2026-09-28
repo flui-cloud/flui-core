@@ -35,10 +35,11 @@ export default class AppSnapshotSwap extends Command {
       char: 'v',
       description: 'Application volume name (default: the single volume)',
     }),
-    force: Flags.boolean({
-      char: 'f',
-      aliases: ['yes'],
-      description: 'Skip confirmation (also --yes)',
+    yes: Flags.boolean({
+      char: 'y',
+      aliases: ['force'],
+      charAliases: ['f'],
+      description: 'Skip confirmation (also --force, -f)',
     }),
   };
 
@@ -49,7 +50,7 @@ export default class AppSnapshotSwap extends Command {
       const service = await CliAppService.create(clusterId);
       const app = await service.getAppByName(args.name);
       const volumeName = flags.volume ?? 'data';
-      if (!flags.force) {
+      if (!flags.yes) {
         const ok = await confirmPrompt(
           `Make "${args.name}" use the restored volume ${args.newPvcName} for "${volumeName}"? The application restarts.`,
         );

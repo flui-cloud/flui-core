@@ -9,6 +9,7 @@ import { getNestApp, closeNestApp } from '../../lib/nest-app';
 import { buildNipBaseDomain } from '../../lib/nip-base-domain.util';
 import { CliControlClusterService } from '../../services/cli-control-cluster.service';
 import { CliSshService } from '../../services/cli-ssh.service';
+import { CliClusterCreatorService } from '../../services/cli-cluster-creator.service';
 import { CloudProvider } from 'src/modules/providers/enums/cloud-provider.enum';
 import { ClusterStatus } from 'src/modules/infrastructure/clusters/entities/cluster.entity';
 import { OperationStatus } from 'src/modules/infrastructure/servers/entities/infrastructure-operations.entity';
@@ -51,6 +52,7 @@ import { emitEvent } from '../../lib/progress-events';
 import { SshMode } from '../../lib/ssh-mode';
 import { PREFERENCES } from '../../config/preferences-schema';
 import { contextLabelPair, contextTag } from '../../lib/context-stamp';
+import { requireOpenVault } from '../../lib/vault/require-vault';
 
 export default class EnvCreate extends Command {
   static readonly description = 'Create control cluster infrastructure on K3s';
@@ -487,6 +489,12 @@ export default class EnvCreate extends Command {
         `Authentication mode '${flags['auth-mode']}' is not supported. Only 'oidc' is available.`,
         { exit: 1 },
       );
+    }
+
+    try {
+      requireOpenVault();
+    } catch (error) {
+      this.error((error as Error).message, { exit: 1 });
     }
 
     if (flags.host) {
@@ -1300,17 +1308,16 @@ export default class EnvCreate extends Command {
 
             const apiBaseUrl = `https://api.${baseDomain}`;
 
+            const fluiApiKey = cluster
+              ? (app.get(CliClusterCreatorService).getClusterApiKey(cluster) ??
+                undefined)
+              : undefined;
+
             if (flags['no-flui-network']) {
-              await switchFluiNetworkOff(
-                apiBaseUrl,
-                cluster?.metadata?.fluiApiKey as string | undefined,
-              );
+              await switchFluiNetworkOff(apiBaseUrl, fluiApiKey);
             }
 
             if (flags['auth-mode'] === 'oidc') {
-              const fluiApiKey = cluster?.metadata?.fluiApiKey as
-                | string
-                | undefined;
               if (fluiApiKey) {
                 console.log(
                   chalk.dim(

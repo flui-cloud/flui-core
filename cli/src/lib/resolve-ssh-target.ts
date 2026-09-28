@@ -1,5 +1,6 @@
 import { isControlClusterType } from 'src/modules/infrastructure/clusters/entities/cluster.entity';
 import { ClusterSummary, listClusters } from './cluster-listing';
+import { CliClusterRepository } from './repositories/cli-cluster.repository';
 import { resolveClusterSshTarget, SshTarget } from './cluster-ssh-target';
 import { ManagementNetworkClient } from './management-network-client';
 
@@ -103,6 +104,25 @@ export async function resolveSshTarget(
   ref: string,
 ): Promise<ResolvedSshTarget> {
   const { clusterName, nodeName } = parseNodeRef(ref);
+
+  // The control is on this machine's record, and its node is reached with a
+  // certificate this CLI signs: nothing about it needs the API, which is the
+  // way back in when the API is the thing that is down.
+  const local = (await new CliClusterRepository().find()) as ClusterSummary[];
+  const localControl = local.find(
+    (c) =>
+      isControlClusterType(c.clusterType) &&
+      (!clusterName || c.name.toLowerCase() === clusterName.toLowerCase()),
+  );
+  if (localControl) {
+    const { ip, label } = resolveNodeIp(localControl, nodeName);
+    return {
+      target: resolveClusterSshTarget(localControl, ip),
+      clusterName: localControl.name,
+      nodeLabel: label,
+    };
+  }
+
   const { clusters, apiError } = await listClusters();
 
   if (clusters.length === 0) {

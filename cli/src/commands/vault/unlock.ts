@@ -1,11 +1,22 @@
 import { Command, Flags } from '@oclif/core';
 import chalk from 'chalk';
 import { spawn } from 'node:child_process';
+import { join } from 'node:path';
 import { ProfileManager } from '../../lib/profile-manager';
 import { ConfigStorage } from '../../lib/config-storage';
 import { VaultFile, WrongPassphraseError } from '../../lib/vault/vault-file';
 import { deriveProfileKey } from '../../lib/vault/vault-crypto';
 import { SealedCa } from '../../lib/vault/sealed-ca';
+import { SealedSshKey } from '../../lib/vault/sealed-ssh-key';
+import {
+  migrateEncryptionKeys,
+  type EncryptionKeyMigrationReport,
+  type ProfileToMigrate,
+} from '../../lib/vault/encryption-key-migration';
+import {
+  otherFluiProcesses,
+  redactCommand,
+} from '../../lib/vault/flui-processes';
 import { askAgent, socketPath } from '../../lib/vault/vault-agent';
 import {
   DEFAULT_IDLE_MS,
@@ -93,6 +104,7 @@ export default class VaultUnlock extends Command {
       throw error;
     }
 
+    this.warnOtherFluiProcesses();
     const migrated = this.migrateProfiles(master);
     await this.startAgent(passphrase);
 
@@ -115,8 +127,9 @@ export default class VaultUnlock extends Command {
   }
 
   /**
-   * Moves every profile off the key-file arrangement and seals any SSH CA
-   * still stored in plaintext.
+   * Moves every profile off the key-file arrangement and seals what older CLIs
+   * left in plaintext: the SSH CA, the encryption key of the local data, and
+   * Flui's own SSH key.
    *
    * Done here rather than lazily, because a profile left behind keeps its key
    * next to its data — the exact weakness the vault exists to remove. Doing it
@@ -125,23 +138,147 @@ export default class VaultUnlock extends Command {
    */
   private migrateProfiles(master: ReturnType<VaultFile['unlock']>): number {
     let moved = 0;
+    const toMigrate: ProfileToMigrate[] = [];
+    let sshSealed = 0;
+    let sshFailed = false;
+    const warn = (profile: string, error: unknown): void => {
+      this.log(
+        chalk.yellow(
+          `   ⚠ Profile "${profile}" was left as it is: ${
+            error instanceof Error
+              ? error.message
+              : String(error as string | number | boolean | null | undefined)
+          }`,
+        ),
+      );
+    };
+
     for (const profile of ProfileManager.listProfiles()) {
       const storage = new ConfigStorage(profile);
+      const key = deriveProfileKey(master, profile);
+      toMigrate.push({
+        name: profile,
+        dir: ProfileManager.getProfileDir(profile),
+        key,
+      });
       try {
-        const key = deriveProfileKey(master, profile);
         if (storage.hasLegacyKeyFile()) moved += storage.adoptVaultKey(key);
         if (new SealedCa(profile).sealExisting(key)) moved += 1;
       } catch (error) {
+        warn(profile, error);
+      }
+      try {
+        if (new SealedCa(profile).realignPublicKey(key)) {
+          this.log(
+            chalk.yellow(
+              `   ⚠ Profile "${profile}": ca_key.pub did not match the sealed SSH CA; rewritten from the sealed copy.`,
+            ),
+          );
+        }
+      } catch (error) {
+        warn(profile, error);
+      }
+      try {
+        if (new SealedSshKey(profile).sealLegacy(key)) sshSealed += 1;
+      } catch (error) {
+        sshFailed = true;
+        warn(profile, error);
+      }
+    }
+
+    moved += this.reportEncryptionKeys(
+      migrateEncryptionKeys({
+        profiles: toMigrate,
+        baseDir: ProfileManager.BASE_DIR,
+        cwd: process.cwd(),
+      }),
+    );
+    moved += this.finishSshKey(toMigrate.length, sshSealed, sshFailed);
+    return moved;
+  }
+
+  private reportEncryptionKeys(report: EncryptionKeyMigrationReport): number {
+    let moved = 0;
+    for (const outcome of report.profiles) {
+      if (outcome.status === 'migrated') {
+        moved += 1;
+        const parts = [
+          `encryption key sealed in the vault (taken from ${outcome.keyFrom})`,
+        ];
+        if (outcome.resealed > 0)
+          parts.push(`${outcome.resealed} value(s) re-sealed with it`);
+        if (outcome.stamped > 0)
+          parts.push(
+            `the key already installed on ${outcome.stamped} cluster(s) recorded with them`,
+          );
+        this.log(
+          chalk.cyan(`   Profile "${outcome.profile}": ${parts.join('; ')}.`),
+        );
+      } else if (outcome.status === 'failed') {
         this.log(
           chalk.yellow(
-            `   ⚠ Profile "${profile}" was left as it is: ${
-              error instanceof Error ? error.message : String(error)
-            }`,
+            `   ⚠ Profile "${outcome.profile}": encryption key not moved — ${outcome.reason}`,
           ),
         );
       }
     }
+    const legacyPath = join(ProfileManager.BASE_DIR, 'encryption.key');
+    if (report.legacyFile === 'removed') {
+      this.log(
+        chalk.cyan(
+          `   Removed ${legacyPath}: every profile keeps its encryption key in the vault now.`,
+        ),
+      );
+    } else if (report.legacyFile === 'kept') {
+      this.log(
+        chalk.yellow(
+          `   ⚠ ${legacyPath} was kept, because the profile(s) above still depend on it.`,
+        ),
+      );
+    }
     return moved;
+  }
+
+  /** The plaintext key is shared by every profile, so it goes only once all of them hold it sealed. */
+  private finishSshKey(
+    profiles: number,
+    sealed: number,
+    failed: boolean,
+  ): number {
+    const legacy = new SealedSshKey();
+    if (!legacy.hasLegacy()) return 0;
+    if (failed || profiles === 0) {
+      this.log(
+        chalk.yellow(
+          `   ⚠ ${legacy.reference} was kept: not every profile could seal it.`,
+        ),
+      );
+      return sealed;
+    }
+    legacy.removeLegacy();
+    this.log(
+      chalk.cyan(
+        `   Flui's SSH key is sealed in the vault of ${profiles} profile(s); removed ${legacy.reference}.`,
+      ),
+    );
+    return sealed;
+  }
+
+  private warnOtherFluiProcesses(): void {
+    const others = otherFluiProcesses();
+    if (others.length === 0) return;
+    this.log(
+      chalk.yellow(
+        `\n   ⚠ ${others.length} other flui process(es) running:\n` +
+          others
+            .map((p) => `      ${p.pid}  ${redactCommand(p.command)}`)
+            .join('\n') +
+          '\n   One started by an older CLI still runs the old code, and it can create a new SSH CA\n' +
+          '   that your nodes do not trust. Stop them before updating the CLI:  kill ' +
+          others.map((p) => p.pid).join(' ') +
+          '\n',
+      ),
+    );
   }
 
   /**

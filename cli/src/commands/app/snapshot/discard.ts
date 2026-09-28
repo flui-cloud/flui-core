@@ -30,7 +30,12 @@ export default class AppSnapshotDiscard extends Command {
       char: 'c',
       description: 'Cluster name or ID (default: auto-detect)',
     }),
-    yes: Flags.boolean({ char: 'y', description: 'Skip confirmation' }),
+    yes: Flags.boolean({
+      char: 'y',
+      aliases: ['force'],
+      charAliases: ['f'],
+      description: 'Skip confirmation (also --force, -f)',
+    }),
   };
 
   async run(): Promise<void> {
