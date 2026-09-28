@@ -68,7 +68,10 @@ import { IAM_PERMISSION } from '../../iam/constants/iam-permissions';
 import { AppAccessGuard, AppAction } from '../guards/app-access.guard';
 import { ActionCycle } from '../../action-cycle/action-cycle.decorator';
 import { deployFromYamlClause, deployValidatesOnly } from '../deploy-clause';
-import { ApplicationAccessService } from '../services/application-access.service';
+import {
+  ApplicationAccessService,
+  withholdDataFrom,
+} from '../services/application-access.service';
 import { DockerHubService } from '../../images/services/dockerhub.service';
 import { ApplicationSourceDeployService } from '../services/application-source-deploy.service';
 import {
@@ -264,7 +267,12 @@ export class ApplicationsController {
     // applications with no address at all. The enrichment costs two queries for
     // the whole page, not one per application.
     const dtos = await this.applicationService.toResponseDtosWithUrls(visible);
-    return dtos.map((dto) => ({ ...dto, access: access.get(dto.id) }));
+    return dtos.map((dto) =>
+      withholdDataFrom(
+        { ...dto, access: access.get(dto.id) },
+        access.get(dto.id),
+      ),
+    );
   }
 
   @Get('clusters/:clusterId/applications/grouped')
@@ -328,7 +336,10 @@ export class ApplicationsController {
       req.user as AuthenticatedUser,
       [app],
     );
-    return { ...dto, access: access.get(app.id) };
+    return withholdDataFrom(
+      { ...dto, access: access.get(app.id) },
+      access.get(app.id),
+    );
   }
 
   @Get('applications/:id/operations')

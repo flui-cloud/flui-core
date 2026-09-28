@@ -68,6 +68,20 @@ export class IamRoleBindingResponseDto {
   @Sensitivity(Sensitivity.PUBLIC)
   @ApiProperty()
   createdAt: Date;
+
+  @Sensitivity(Sensitivity.PUBLIC)
+  @ApiPropertyOptional({
+    nullable: true,
+    description: 'When the grant stops counting. Null is a standing grant.',
+  })
+  expiresAt: Date | null;
+
+  @Sensitivity(Sensitivity.TENANT_IDENTITY)
+  @ApiPropertyOptional({
+    nullable: true,
+    description: 'Who created the grant.',
+  })
+  grantedBy: string | null;
 }
 
 /**

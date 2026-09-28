@@ -7,9 +7,11 @@ import {
   RestorePreviewDto,
 } from '../dto/create-restore-job.dto';
 import { RequireSection } from '../../iam/decorators/require-section.decorator';
+import { DataDoor } from '../../iam/decorators/data-door.decorator';
 
 @ApiTags('Backups')
 @ApiBearerAuth()
+@DataDoor()
 @Controller('restore-jobs')
 @RequireSection('backup')
 export class RestoreJobsController {

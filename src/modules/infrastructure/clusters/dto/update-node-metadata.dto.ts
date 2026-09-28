@@ -6,12 +6,9 @@ import { IsObject } from 'class-validator';
  */
 export class UpdateNodeMetadataDto {
   @ApiProperty({
-    description: 'Metadata object to merge with existing node metadata',
-    example: {
-      registered: true,
-      registeredAt: '2025-12-30T18:00:00Z',
-      customLabel: 'worker-01',
-    },
+    description:
+      'Node metadata is kept by Flui; every key is currently refused with 400.',
+    example: {},
   })
   @IsObject()
   metadata: Record<string, any>;

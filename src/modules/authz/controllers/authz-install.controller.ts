@@ -24,6 +24,8 @@ import { AuthzInstallResponseDto } from '../dto/authz-install-response.dto';
 import { ClusterAuthzInstallEntity } from '../entities/cluster-authz-install.entity';
 import { RequirePermission } from '../../iam/decorators/require-permission.decorator';
 import { IAM_PERMISSION } from '../../iam/constants/iam-permissions';
+import { RequireSection } from '../../iam/decorators/require-section.decorator';
+import { SECTION } from '../../iam/constants/iam-sections';
 
 @ApiTags('authz')
 @Controller('authz/install')
@@ -33,6 +35,8 @@ export class AuthzInstallController {
   constructor(private readonly service: AuthzInstallService) {}
 
   @Post()
+  @RequireSection(SECTION.INFRASTRUCTURE)
+  @RequirePermission(IAM_PERMISSION.CLUSTER_MANAGE)
   @HttpCode(HttpStatus.ACCEPTED)
   @ApiOperation({
     summary: 'Install flui-authz on a workload cluster (OIDC only)',

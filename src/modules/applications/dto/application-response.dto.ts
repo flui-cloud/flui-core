@@ -280,6 +280,13 @@ export class ApplicationAccessDto {
       'True when this application is part of the shared showcase — run by the platform’s operators and shown to others read-only. Label it as such; unlabelled content inside someone’s own space reads as a failure of isolation.',
   })
   showcase: boolean;
+
+  @Sensitivity(Sensitivity.PUBLIC)
+  @ApiProperty({
+    description:
+      'False when the caller may see this application but not its data — logs, variable values, consoles, backups. The values are then not sent.',
+  })
+  dataAccess: boolean;
 }
 
 export class AvailabilityEntryDto {
@@ -359,6 +366,8 @@ export class ApplicationResponseDto {
     secret?: boolean;
     /** Declared but not delivered yet — the masked value is a placeholder, not a stored secret. */
     pending?: boolean;
+    /** The caller may see the application but not its data: the value is not sent. */
+    withheld?: boolean;
   }>;
 
   @ApiProperty()

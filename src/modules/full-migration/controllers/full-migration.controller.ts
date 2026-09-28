@@ -16,6 +16,7 @@ import { fullMigrationClause } from '../migration-clause';
 import { IAM_PERMISSION } from '../../iam/constants/iam-permissions';
 import { FullMigrationService } from '../services/full-migration.service';
 import { CreateFullMigrationDto } from '../dto/create-full-migration.dto';
+import { DataDoor } from '../../iam/decorators/data-door.decorator';
 
 /**
  * Full-app migration orchestrator (MVP-5c): move a live app + its managed
@@ -45,6 +46,7 @@ export class FullMigrationController {
   }
 
   @Post()
+  @DataDoor()
   @RequirePermission(IAM_PERMISSION.MIGRATION_EXECUTE)
   // Every call asks. The migration does not exist until this call makes it, so
   // there is no id an "always" could be pinned to, and a standing yes would
@@ -77,6 +79,7 @@ export class FullMigrationController {
   }
 
   @Post(':id/cutover')
+  @DataDoor()
   @RequirePermission(IAM_PERMISSION.MIGRATION_EXECUTE)
   @ActionCycle({
     action: 'POST /full-migrations/:id/cutover',
@@ -92,6 +95,7 @@ export class FullMigrationController {
   }
 
   @Post(':id/destroy-source')
+  @DataDoor()
   @RequirePermission(IAM_PERMISSION.MIGRATION_EXECUTE)
   @ActionCycle({
     action: 'POST /full-migrations/:id/destroy-source',

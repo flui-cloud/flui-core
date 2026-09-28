@@ -9,6 +9,7 @@ import { TerminalTargetResolver } from './services/terminal-target.resolver';
 import { AccessModule } from '../access/access.module';
 import { WsAuthModule } from '../auth/ws-auth.module';
 import { IamModule } from '../iam/iam.module';
+import { AuditModule } from '../audit/audit.module';
 import { ClusterNodeEntity } from '../infrastructure/clusters/entities/cluster-node.entity';
 import { ClusterEntity } from '../infrastructure/clusters/entities/cluster.entity';
 import { ServerEntity } from '../infrastructure/servers/entities/server.entity';
@@ -18,6 +19,7 @@ import { ServerEntity } from '../infrastructure/servers/entities/server.entity';
     AccessModule, // For CertificateSignerService
     WsAuthModule,
     IamModule,
+    AuditModule,
     TypeOrmModule.forFeature([ClusterNodeEntity, ClusterEntity, ServerEntity]),
   ],
   providers: [

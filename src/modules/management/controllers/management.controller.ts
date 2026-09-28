@@ -43,6 +43,7 @@ import { PricingResponseDto } from '../dto/pricing-response.dto';
 import { RequireSection } from '../../iam/decorators/require-section.decorator';
 import { RequirePermission } from '../../iam/decorators/require-permission.decorator';
 import { IAM_PERMISSION } from '../../iam/constants/iam-permissions';
+import { DataDoor } from '../../iam/decorators/data-door.decorator';
 
 @ApiTags('Provider Management')
 @Controller('management')
@@ -133,6 +134,8 @@ export class ManagementController {
   }
 
   @Post('providers/:provider/configure')
+  @DataDoor()
+  @RequirePermission(IAM_PERMISSION.CLUSTER_MANAGE)
   @ApiOperation({ summary: 'Configure a new provider' })
   @ApiParam({ name: 'provider', enum: CloudProvider })
   @ApiResponse({
@@ -168,6 +171,8 @@ export class ManagementController {
   }
 
   @Put('providers/:provider/enable')
+  @DataDoor()
+  @RequirePermission(IAM_PERMISSION.CLUSTER_MANAGE)
   @ApiOperation({ summary: 'Enable or disable a provider' })
   @ApiParam({ name: 'provider', enum: CloudProvider })
   @ApiResponse({
@@ -184,6 +189,8 @@ export class ManagementController {
   }
 
   @Put('providers/:provider/credentials')
+  @DataDoor()
+  @RequirePermission(IAM_PERMISSION.CLUSTER_MANAGE)
   @ApiOperation({
     summary:
       'Rotate or replace the credentials of an already configured provider',
@@ -208,6 +215,7 @@ export class ManagementController {
   }
 
   @Patch('providers/:provider/credentials/expiry')
+  @RequirePermission(IAM_PERMISSION.CLUSTER_MANAGE)
   @ApiOperation({
     summary:
       'Update the expiry of the active credential without rotating its value',
@@ -230,6 +238,7 @@ export class ManagementController {
   }
 
   @Put('providers/:provider/regions')
+  @RequirePermission(IAM_PERMISSION.CLUSTER_MANAGE)
   @ApiOperation({ summary: 'Update enabled regions for a configured provider' })
   @ApiParam({ name: 'provider', enum: CloudProvider })
   @ApiResponse({

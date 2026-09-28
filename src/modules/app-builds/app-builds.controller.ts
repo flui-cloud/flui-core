@@ -29,6 +29,7 @@ import {
   TriggerBuildResponseDto,
 } from './dto/app-build-response.dto';
 import { BuildCheckResponseDto } from './dto/build-check-response.dto';
+import { DataDoor } from '../iam/decorators/data-door.decorator';
 
 /**
  * Builds of one application, mounted on `applications/:applicationId/**`.
@@ -95,6 +96,7 @@ export class AppBuildsController {
   }
 
   @Get(':applicationId/builds')
+  @DataDoor()
   @ApiOperation({ summary: 'List builds for an application' })
   @ApiResponse({ status: 200, type: [AppBuildResponseDto] })
   async listBuilds(
@@ -104,6 +106,7 @@ export class AppBuildsController {
   }
 
   @Get(':applicationId/builds/latest')
+  @DataDoor()
   @ApiOperation({ summary: 'Get the latest build for an application' })
   @ApiResponse({ status: 200, type: AppBuildResponseDto })
   async getLatestBuild(
@@ -133,6 +136,7 @@ export class AppBuildsController {
   }
 
   @Get('builds/:buildId')
+  @DataDoor()
   @ApiOperation({ summary: 'Get a specific build by ID' })
   @ApiResponse({ status: 200, type: AppBuildResponseDto })
   async getBuild(
@@ -143,6 +147,7 @@ export class AppBuildsController {
   }
 
   @Post('builds/:buildId/refresh')
+  @DataDoor()
   @ApiOperation({
     summary:
       'Force a re-poll of the external build provider (GitHub Actions) and return the updated row',

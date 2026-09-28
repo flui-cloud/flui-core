@@ -16,6 +16,7 @@ import {
 } from '../dto/platform-components.dto';
 import { RequireSection } from '../../../iam/decorators/require-section.decorator';
 import { ActionCycle } from '../../../action-cycle/action-cycle.decorator';
+import { DataDoor } from '../../../iam/decorators/data-door.decorator';
 
 @ApiTags('Infrastructure - Platform Components')
 @ApiBearerAuth()
@@ -62,6 +63,7 @@ export class PlatformComponentsController {
   }
 
   @Get(':componentKey/pods/:podName/logs')
+  @DataDoor()
   @ApiOperation({
     summary: 'Get logs for a component pod',
     description:

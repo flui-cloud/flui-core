@@ -85,6 +85,24 @@ export const IAM_PERMISSION = {
    * manages infrastructure should acquire that by implication.
    */
   PLATFORM_UPDATE: 'platform:update',
+  /**
+   * Bring the manifests on the master into line with a bootstrap ref that is not
+   * a published release — a branch, a commit, a tag nobody announced.
+   *
+   * `platform:update` moves an installation between releases somebody published
+   * and described. A free ref is a different act: it runs whatever that ref
+   * holds, with nothing written about it. Kept apart so the role that keeps an
+   * installation current does not also run unreleased work by implication.
+   */
+  PLATFORM_PREVIEW: 'platform:preview',
+  /**
+   * Reach the data of an application: its logs, its variables' values, a
+   * console inside it, a shell on the nodes it runs on, a restore or a copy of
+   * its volumes. Required on top of whatever the route already asks for, by
+   * marking the route `@DataDoor()`. Held by every role except
+   * platform_operator.
+   */
+  DATA_ACCESS: 'data:access',
   // Enter a management section without being able to change anything in it.
   // Not a governing permission: it opens the door at the lowest level the
   // section model has, and SectionAccessGuard refuses every unsafe verb behind

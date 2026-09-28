@@ -131,14 +131,16 @@ export class TerminalTargetResolver {
     // the one path that ends in a root shell. Asked before the grant, because a
     // ceiling only ever takes away.
     const ceiling = credentialCeiling(user);
-    if (ceiling && !ceiling.has(IAM_PERMISSION.CLUSTER_MANAGE)) return false;
+    const needed = [IAM_PERMISSION.CLUSTER_MANAGE, IAM_PERMISSION.DATA_ACCESS];
+    if (ceiling && needed.some((p) => !ceiling.has(p))) return false;
 
     const principal: IamPrincipal = principalFromUser(user);
-    return this.policy.check(
-      principal,
-      IAM_PERMISSION.CLUSTER_MANAGE,
-      resource,
-    );
+    for (const permission of needed) {
+      if (!(await this.policy.check(principal, permission, resource))) {
+        return false;
+      }
+    }
+    return true;
   }
 
   /**

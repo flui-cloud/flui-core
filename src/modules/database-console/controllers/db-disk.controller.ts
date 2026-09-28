@@ -3,6 +3,7 @@ import { AuthenticatedUser } from '../../auth/interfaces/authenticated-user.inte
 import { AppOwnershipGuard } from '../guards/app-ownership.guard';
 import { PlatformFoundationGuard } from '../guards/platform-foundation.guard';
 import { DbDiskInfo, DbDiskService } from '../services/db-disk.service';
+import { DataDoor } from '../../iam/decorators/data-door.decorator';
 
 /**
  * Disk usage + near-full alert for a database app. Interim `df`-based reading (no storage-layer
@@ -10,6 +11,7 @@ import { DbDiskInfo, DbDiskService } from '../services/db-disk.service';
  * which the DB runs out of space. Native per-volume metrics are tracked in the shared backlog.
  */
 @UseGuards(PlatformFoundationGuard, AppOwnershipGuard)
+@DataDoor()
 @Controller('applications/:id/db-disk')
 export class DbDiskController {
   constructor(private readonly disk: DbDiskService) {}

@@ -24,6 +24,7 @@ import {
 import { RequireSection } from '../iam/decorators/require-section.decorator';
 import { SECTION } from '../iam/constants/iam-sections';
 import { RequirePermission } from '../iam/decorators/require-permission.decorator';
+import { DataDoor } from '../iam/decorators/data-door.decorator';
 import { IAM_PERMISSION } from '../iam/constants/iam-permissions';
 import { AccessService } from './services/access.service';
 import { CreateSSHKeyDto } from './dto/create-ssh-key.dto';
@@ -39,6 +40,7 @@ import { CloudProvider } from '../providers/enums/cloud-provider.enum';
 @ApiTags('Access Management')
 @ApiBearerAuth()
 @Controller('access')
+@RequireSection(SECTION.INFRASTRUCTURE)
 export class AccessController {
   constructor(private readonly accessService: AccessService) {}
 
@@ -109,6 +111,7 @@ export class AccessController {
   }
 
   @Post('ssh-keys')
+  @RequirePermission(IAM_PERMISSION.CLUSTER_MANAGE)
   @ApiOperation({ summary: 'Add SSH key' })
   @ApiResponse({
     status: 201,
@@ -136,6 +139,7 @@ export class AccessController {
   }
 
   @Patch('ssh-keys/:id')
+  @RequirePermission(IAM_PERMISSION.CLUSTER_MANAGE)
   @ApiOperation({
     summary: 'Update SSH key',
     description:
@@ -216,6 +220,8 @@ export class AccessController {
   }
 
   @Post('bearer')
+  @RequirePermission(IAM_PERMISSION.CLUSTER_MANAGE)
+  @DataDoor()
   @ApiOperation({ summary: 'Generate bearer token for cloud provider' })
   @ApiResponse({
     status: 201,
@@ -232,6 +238,8 @@ export class AccessController {
   }
 
   @Post('bearer/refresh')
+  @RequirePermission(IAM_PERMISSION.CLUSTER_MANAGE)
+  @DataDoor()
   @ApiOperation({ summary: 'Refresh bearer token' })
   @HttpCode(HttpStatus.OK)
   @ApiResponse({
@@ -244,14 +252,25 @@ export class AccessController {
   }
 
   @Get('bearer')
-  @ApiOperation({ summary: 'List all bearer tokens' })
+  @RequirePermission(IAM_PERMISSION.CLUSTER_MANAGE)
+  @ApiOperation({
+    summary: 'List the stored provider credentials, without their secrets',
+  })
   @ApiResponse({
     status: 200,
-    description: 'Returns all bearer tokens',
-    type: [BearerTokenDto],
+    description:
+      'Which provider credentials are stored and until when their tokens last. Secrets and tokens are never returned.',
   })
   async listBearerTokens() {
-    return await this.accessService.listBearerTokens();
+    const rows = await this.accessService.listBearerTokens();
+    return rows.map((row) => ({
+      id: row.id,
+      provider: row.provider,
+      purpose: row.purpose,
+      isActive: row.isActive,
+      tokenExpiresAt: row.token_expires_at ?? null,
+      createdAt: row.createdAt,
+    }));
   }
 
   @Delete('bearer/:id')
@@ -267,6 +286,7 @@ export class AccessController {
   }
 
   @Get('api-tokens')
+  @RequirePermission(IAM_PERMISSION.CLUSTER_MANAGE)
   @ApiOperation({ summary: 'List all stored API tokens' })
   @ApiResponse({
     status: 200,
@@ -278,6 +298,7 @@ export class AccessController {
   }
 
   @Post('api-tokens')
+  @RequirePermission(IAM_PERMISSION.CLUSTER_MANAGE)
   @ApiOperation({ summary: 'Store API token from external provider' })
   @ApiResponse({
     status: 201,
@@ -289,6 +310,7 @@ export class AccessController {
   }
 
   @Get('api-tokens/:id')
+  @RequirePermission(IAM_PERMISSION.CLUSTER_MANAGE)
   @ApiOperation({ summary: 'Get API token information by ID' })
   @ApiResponse({
     status: 200,

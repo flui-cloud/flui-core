@@ -21,6 +21,7 @@ import { RequireSection } from '../../iam/decorators/require-section.decorator';
 import { SECTION } from '../../iam/constants/iam-sections';
 import { RequirePermission } from '../../iam/decorators/require-permission.decorator';
 import { IAM_PERMISSION } from '../../iam/constants/iam-permissions';
+import { DataDoor } from '../../iam/decorators/data-door.decorator';
 import { DnsZoneService } from '../services/dns-zone.service';
 import { Public } from '../../auth/decorators/public.decorator';
 import { CreateDnsZoneDto } from '../dto/create-dns-zone.dto';
@@ -38,6 +39,7 @@ export class DnsZoneController {
   // The registry is instance-wide and registering calls the provider account,
   // so it sits with the sibling delete rather than with the reads below.
   @Post()
+  @DataDoor()
   @RequireSection(SECTION.INFRASTRUCTURE)
   @RequirePermission(IAM_PERMISSION.CLUSTER_MANAGE)
   @ApiOperation({
@@ -112,6 +114,7 @@ export class DnsZoneController {
   }
 
   @Delete(':id')
+  @DataDoor()
   @RequireSection(SECTION.INFRASTRUCTURE)
   @RequirePermission(IAM_PERMISSION.CLUSTER_MANAGE)
   @HttpCode(HttpStatus.NO_CONTENT)

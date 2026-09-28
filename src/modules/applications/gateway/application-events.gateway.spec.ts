@@ -48,6 +48,7 @@ describe('subscribing to an application room', () => {
     } | null;
     operation?: { userId?: string | null } | null;
     sections?: { key: string; level: string }[];
+    withheld?: string[];
   }) => {
     const applications = {
       findOne: jest.fn().mockResolvedValue(opts.app ?? null),
@@ -63,6 +64,9 @@ describe('subscribing to an application room', () => {
     };
     const policy = {
       resolveSectionAccess: jest.fn().mockResolvedValue(opts.sections ?? []),
+      check: jest.fn((_p: unknown, action: string) =>
+        Promise.resolve(!(opts.withheld ?? []).includes(action)),
+      ),
     };
     return {
       gateway: new ApplicationEventsGateway(
@@ -164,6 +168,24 @@ describe('subscribing to an application room', () => {
         build: { id: 'b1', applicationId: 'a1' },
       });
       const client = socket(person('other-guest'));
+
+      await gateway.handleBuildSubscribe({ buildId: 'b1' }, client as never);
+
+      expect(client.joined).toEqual([]);
+      expect(client.emitted[0]).toEqual({
+        event: 'subscription:refused',
+        payload: { buildId: 'b1', reason: 'not_found' },
+      });
+    });
+
+    it('refuses the owner of the application when data:access is withheld', async () => {
+      const { gateway } = build({
+        app: { id: 'a1' },
+        mayRead: true,
+        build: { id: 'b1', applicationId: 'a1' },
+        withheld: [IAM_PERMISSION.DATA_ACCESS],
+      });
+      const client = socket(person('owner'));
 
       await gateway.handleBuildSubscribe({ buildId: 'b1' }, client as never);
 
@@ -291,5 +313,92 @@ describe('an administrator’s agent key does not inherit the bypass', () => {
     // Not read at all: the refusal comes from the credential, so it cannot
     // reveal whether the application exists.
     expect(applications.findOne).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * The build room streams the build's log lines, a read of data like the HTTP
+ * route for the same lines, which the audit middleware records: the socket
+ * must audit it too.
+ */
+describe('subscribing to a build room is audited', () => {
+  const gatewayFor = (opts: { mayRead: boolean; withheld?: string[] }) => {
+    const record = jest.fn().mockResolvedValue(undefined);
+    const gateway = new ApplicationEventsGateway(
+      {} as never,
+      { findOne: jest.fn().mockResolvedValue({ id: 'a1' }) } as never,
+      { can: jest.fn().mockResolvedValue(opts.mayRead) } as never,
+      {
+        findOne: jest.fn().mockResolvedValue({ id: 'b1', applicationId: 'a1' }),
+      } as never,
+      { findOne: jest.fn() } as never,
+      {
+        resolveSectionAccess: jest.fn().mockResolvedValue([]),
+        check: jest.fn((_p: unknown, action: string) =>
+          Promise.resolve(!(opts.withheld ?? []).includes(action)),
+        ),
+      } as never,
+      { record } as never,
+    );
+    return { gateway, record };
+  };
+
+  it('records an accepted subscription as a read of data', async () => {
+    const { gateway, record } = gatewayFor({ mayRead: true });
+
+    await gateway.handleBuildSubscribe(
+      { buildId: 'b1' },
+      socket(person('owner')) as never,
+    );
+
+    expect(record).toHaveBeenCalledWith({
+      userId: 'owner',
+      email: 'owner@try.flui.cloud',
+      actorKind: 'user',
+      actorKeyId: null,
+      action: 'build log subscribed',
+      target: { buildId: 'b1' },
+      outcome: 'ok',
+      dataAccess: true,
+    });
+  });
+
+  it('records a refused subscription', async () => {
+    const { gateway, record } = gatewayFor({
+      mayRead: true,
+      withheld: [IAM_PERMISSION.DATA_ACCESS],
+    });
+
+    await gateway.handleBuildSubscribe(
+      { buildId: 'b1' },
+      socket(person('operator')) as never,
+    );
+
+    expect(record).toHaveBeenCalledWith(
+      expect.objectContaining({
+        userId: 'operator',
+        target: { buildId: 'b1' },
+        outcome: 'refused',
+        dataAccess: true,
+      }),
+    );
+  });
+
+  it('keeps working when no audit service is wired', async () => {
+    const gateway = new ApplicationEventsGateway(
+      {} as never,
+      { findOne: jest.fn().mockResolvedValue({ id: 'a1' }) } as never,
+      { can: jest.fn().mockResolvedValue(true) } as never,
+      {
+        findOne: jest.fn().mockResolvedValue({ id: 'b1', applicationId: 'a1' }),
+      } as never,
+      { findOne: jest.fn() } as never,
+      { check: jest.fn().mockResolvedValue(true) } as never,
+    );
+    const client = socket(person('owner'));
+
+    await gateway.handleBuildSubscribe({ buildId: 'b1' }, client as never);
+
+    expect(client.joined).toEqual(['build:b1']);
   });
 });

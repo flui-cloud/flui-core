@@ -24,6 +24,7 @@ import { AppAccessGuard } from '../../applications/guards/app-access.guard';
 import { AppManagementService } from '../../applications/services/app-management.service';
 import { UpdateResourcesDto } from '../../applications/dto/app-management.dto';
 import { SuggestedActionType } from '../enums/suggested-action-type.enum';
+import { DataDoor } from '../../iam/decorators/data-door.decorator';
 
 /**
  * The crash history of one application, and the gestures that dismiss an
@@ -50,6 +51,7 @@ export class CrashDiagnosesController {
   ) {}
 
   @Get()
+  @DataDoor()
   @ApiOperation({ summary: 'List crash diagnoses for an application' })
   @ApiQuery({
     name: 'status',
@@ -78,6 +80,7 @@ export class CrashDiagnosesController {
   }
 
   @Get(':diagnosisId')
+  @DataDoor()
   @ApiOperation({ summary: 'Get a single crash diagnosis' })
   async getOne(
     @Param('id') applicationId: string,

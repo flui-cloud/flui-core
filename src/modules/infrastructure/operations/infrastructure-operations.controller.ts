@@ -36,6 +36,7 @@ import {
   installLogChunk,
   parseLogCursor,
 } from './helpers/install-log-chunk.helper';
+import { DataDoor } from '../../iam/decorators/data-door.decorator';
 
 @ApiTags('Infrastructure - Operations')
 @ApiBearerAuth()
@@ -87,6 +88,7 @@ export class InfrastructureOperationsController {
   }
 
   @Get(':operationId/log')
+  @DataDoor()
   @RequirePermission(IAM_PERMISSION.APP_READ)
   @ApiOperation({
     summary: 'Download the captured install log for an operation',
@@ -126,6 +128,7 @@ export class InfrastructureOperationsController {
   }
 
   @Get(':operationId/log/chunk')
+  @DataDoor()
   // `cluster:read`, unlike the download: this is what an agent follows through
   // `infrastructure:look`, whose scope carries `cluster:read` and not `app:read`.
   @RequirePermission(IAM_PERMISSION.CLUSTER_READ)

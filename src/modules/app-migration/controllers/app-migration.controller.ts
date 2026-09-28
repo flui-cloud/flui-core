@@ -15,6 +15,7 @@ import { ActionCycle } from '../../action-cycle/action-cycle.decorator';
 import { IAM_PERMISSION } from '../../iam/constants/iam-permissions';
 import { AppMigrationService } from '../services/app-migration.service';
 import { CreateAppMigrationDto } from '../dto/create-app-migration.dto';
+import { DataDoor } from '../../iam/decorators/data-door.decorator';
 
 /**
  * Application migration machine (plan §6 step 2): move a live app's workload to
@@ -44,6 +45,7 @@ export class AppMigrationController {
   }
 
   @Post()
+  @DataDoor()
   @RequirePermission(IAM_PERMISSION.MIGRATION_EXECUTE)
   @ApiOperation({
     summary: "Migrate an application's workload to another cluster",
@@ -65,6 +67,7 @@ export class AppMigrationController {
   }
 
   @Post(':id/cutover')
+  @DataDoor()
   @RequirePermission(IAM_PERMISSION.MIGRATION_EXECUTE)
   @ActionCycle({
     action: 'POST /app-migrations/:id/cutover',
@@ -81,6 +84,7 @@ export class AppMigrationController {
   }
 
   @Post(':id/destroy-source')
+  @DataDoor()
   @RequirePermission(IAM_PERMISSION.MIGRATION_EXECUTE)
   @ActionCycle({
     action: 'POST /app-migrations/:id/destroy-source',

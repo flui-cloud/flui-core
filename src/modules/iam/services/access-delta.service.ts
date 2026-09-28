@@ -17,6 +17,7 @@ import {
   ResourceAttributes,
 } from '../interfaces/iam.types';
 import { IAM_PERMISSION } from '../constants/iam-permissions';
+import { isInForce } from './policy-engine.service';
 import { SectionAccess, sectionLabel } from '../constants/iam-sections';
 import {
   AccessDeltaAppDto,
@@ -426,6 +427,6 @@ export class AccessDeltaService {
     const rows = await this.bindings.find({
       where: { principalType: target.type, principalRef: target.ref },
     });
-    return { bindings: rows, isAdmin: false };
+    return { bindings: rows.filter(isInForce), isAdmin: false };
   }
 }

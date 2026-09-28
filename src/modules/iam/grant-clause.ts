@@ -14,7 +14,9 @@ export function grantClauseOf(body: unknown): string | undefined {
   const who = text(b.principalRef);
   if (!role || !who) return undefined;
   const kind = text(b.principalType)?.replaceAll('_', ' ') ?? 'principal';
-  return `${role} to ${kind} ${who}, ${reachOf(b)}`;
+  const expiresAt = text(b.expiresAt);
+  const until = expiresAt ? `, until ${expiresAt}` : '';
+  return `${role} to ${kind} ${who}, ${reachOf(b)}${until}`;
 }
 
 /**

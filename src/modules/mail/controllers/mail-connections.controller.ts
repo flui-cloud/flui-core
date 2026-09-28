@@ -39,6 +39,7 @@ import type { AuthenticatedUser } from '../../auth/interfaces/authenticated-user
 import { RequireSection } from '../../iam/decorators/require-section.decorator';
 import { RequirePermission } from '../../iam/decorators/require-permission.decorator';
 import { IAM_PERMISSION } from '../../iam/constants/iam-permissions';
+import { DataDoor } from '../../iam/decorators/data-door.decorator';
 
 @ApiTags('Mail')
 @Controller('mail/connections')
@@ -70,6 +71,8 @@ export class MailConnectionsController {
   }
 
   @Post()
+  @DataDoor()
+  @RequirePermission(IAM_PERMISSION.CLUSTER_MANAGE)
   @ApiOperation({
     summary: 'Connect a provider, and set everything up that can be set up',
     description:
@@ -99,6 +102,8 @@ export class MailConnectionsController {
   }
 
   @Post(':id/activate')
+  @DataDoor()
+  @RequirePermission(IAM_PERMISSION.CLUSTER_MANAGE)
   @ApiOperation({
     summary: 'Make this the provider that carries its scope',
     description:
@@ -132,6 +137,8 @@ export class MailConnectionsController {
   }
 
   @Post(':id/publish')
+  @DataDoor()
+  @RequirePermission(IAM_PERMISSION.CLUSTER_MANAGE)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Write this provider’s records into the zone',
@@ -212,6 +219,8 @@ export class MailConnectionsController {
   }
 
   @Post(':id/webhook')
+  @DataDoor()
+  @RequirePermission(IAM_PERMISSION.CLUSTER_MANAGE)
   @ApiOperation({
     summary: 'Ask the provider again to deliver events here',
     description:

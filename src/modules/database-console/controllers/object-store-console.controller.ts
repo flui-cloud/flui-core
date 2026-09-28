@@ -42,6 +42,7 @@ import { AppOwnershipGuard } from '../guards/app-ownership.guard';
 import { PlatformFoundationGuard } from '../guards/platform-foundation.guard';
 import { RequirePermission } from '../../iam/decorators/require-permission.decorator';
 import { IAM_PERMISSION } from '../../iam/constants/iam-permissions';
+import { DataDoor } from '../../iam/decorators/data-door.decorator';
 
 /** Filename for the download dialog — the last path segment of the key. */
 function fileNameOf(key: string): string {
@@ -55,6 +56,7 @@ function fileNameOf(key: string): string {
  * backend over an ephemeral tunnel — the store stays cluster-internal.
  */
 @UseGuards(PlatformFoundationGuard, AppOwnershipGuard)
+@DataDoor()
 @Controller('applications/:id/object-store')
 export class ObjectStoreConsoleController {
   constructor(

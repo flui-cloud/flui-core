@@ -21,6 +21,8 @@ import { CreateSanCertificateDto } from '../dto/create-san-certificate.dto';
 import { SanCertificateResponseDto } from '../dto/san-certificate-response.dto';
 import { RequirePermission } from '../../iam/decorators/require-permission.decorator';
 import { IAM_PERMISSION } from '../../iam/constants/iam-permissions';
+import { RequireSection } from '../../iam/decorators/require-section.decorator';
+import { SECTION } from '../../iam/constants/iam-sections';
 import { ActionCycle } from '../../action-cycle/action-cycle.decorator';
 
 @ApiTags('SAN Certificates')
@@ -30,6 +32,8 @@ export class SanCertificateController {
   constructor(private readonly service: SanCertificateService) {}
 
   @Post('clusters/:clusterId/san-certificates')
+  @RequireSection(SECTION.INFRASTRUCTURE)
+  @RequirePermission(IAM_PERMISSION.CLUSTER_MANAGE)
   @HttpCode(HttpStatus.ACCEPTED)
   @ActionCycle({
     action: 'POST /clusters/:clusterId/san-certificates',
@@ -77,6 +81,7 @@ export class SanCertificateController {
   }
 
   @Delete('san-certificates/:id')
+  @RequireSection(SECTION.INFRASTRUCTURE)
   @RequirePermission(IAM_PERMISSION.CLUSTER_MANAGE)
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({

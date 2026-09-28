@@ -27,6 +27,7 @@ import {
   SecretReadResponseDto,
   SecretReadResultDto,
 } from '../dto/secret-read-response.dto';
+import { DataDoor } from '../../iam/decorators/data-door.decorator';
 
 /**
  * Secrets console (OpenBao KV v2): browse the path tree, read versioned secrets,
@@ -34,6 +35,7 @@ import {
  * Paths may contain slashes, so they travel in the body, not the URL.
  */
 @UseGuards(PlatformFoundationGuard, AppOwnershipGuard)
+@DataDoor()
 @Controller('applications/:id/secrets')
 export class SecretsConsoleController {
   constructor(private readonly secrets: SecretsQueryService) {}

@@ -57,6 +57,17 @@ export const APP_TAB_PERMISSION: Record<AppTabKey, IamPermission> = {
   [APP_TAB.GATEWAY]: IAM_PERMISSION.APP_WRITE,
 };
 
+/** Tabs that render the application's own data, and so also need `data:access`. */
+export const APP_TAB_SHOWS_DATA: ReadonlySet<AppTabKey> = new Set([
+  APP_TAB.LOGS,
+  APP_TAB.BUILDS,
+  APP_TAB.CLIENTS,
+  APP_TAB.CONFIGURATION,
+  APP_TAB.SNAPSHOTS,
+  APP_TAB.SCHEDULES,
+  APP_TAB.GATEWAY,
+]);
+
 export const ALL_APP_TAB_KEYS: AppTabKey[] = Object.keys(
   APP_TAB_PERMISSION,
 ) as AppTabKey[];
@@ -65,7 +76,10 @@ export const ALL_APP_TAB_KEYS: AppTabKey[] = Object.keys(
 export function tabsForPermissions(
   permissions: ReadonlySet<string>,
 ): AppTabKey[] {
-  return ALL_APP_TAB_KEYS.filter((tab) =>
-    permissions.has(APP_TAB_PERMISSION[tab]),
+  return ALL_APP_TAB_KEYS.filter(
+    (tab) =>
+      permissions.has(APP_TAB_PERMISSION[tab]) &&
+      (!APP_TAB_SHOWS_DATA.has(tab) ||
+        permissions.has(IAM_PERMISSION.DATA_ACCESS)),
   );
 }

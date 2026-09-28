@@ -586,6 +586,7 @@ describe('resource fence (direct API calls)', () => {
       // permission check is satisfied by any scoped grant that holds it.
       expect(BUILTIN_ROLES[SHOWCASE_GRANT.role].permissions).toEqual([
         IAM_PERMISSION.APP_READ,
+        IAM_PERMISSION.DATA_ACCESS,
       ]);
     });
   });

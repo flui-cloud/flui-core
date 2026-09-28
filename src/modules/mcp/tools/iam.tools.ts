@@ -91,6 +91,7 @@ function grantView(raw: unknown): unknown {
       scopeRef?: string | null;
       selector?: unknown;
       createdAt?: string;
+      expiresAt?: string | null;
     };
     return {
       grantId: g.id,
@@ -98,6 +99,12 @@ function grantView(raw: unknown): unknown {
       role: g.role,
       reaches: reachOf(g.scopeType, g.scopeRef, g.selector),
       createdAt: g.createdAt,
+      ...(g.expiresAt
+        ? {
+            expiresAt: g.expiresAt,
+            inForce: new Date(g.expiresAt).getTime() > Date.now(),
+          }
+        : {}),
     };
   });
 }
@@ -200,7 +207,7 @@ export const IAM_TOOLS: ToolDef[] = [
       role: z
         .enum(ASSIGNABLE_ROLE_KEYS as [string, ...string[]])
         .describe(
-          'The rung, cumulative from viewer up: viewer reads, operator runs, maintainer changes, owner administers.',
+          'The rung, cumulative from viewer up: viewer reads, operator runs, maintainer changes, owner administers. Off the ladder, `platform_operator` runs the clusters, nodes, updates and backups and reaches no application data — for an outside operator, usually with `expiresAt`.',
         ),
       scopeType: z
         .enum(['global', 'section', 'cluster', 'selector'])
@@ -229,6 +236,12 @@ export const IAM_TOOLS: ToolDef[] = [
         .describe(
           'Only with `scopeType: selector`. The named attributes are AND-ed, and it is a standing rule: it also covers applications that come to match it later.',
         ),
+      expiresAt: z.iso
+        .datetime({ offset: true })
+        .optional()
+        .describe(
+          'When the grant ends on its own, as an ISO 8601 timestamp in the future. Leave out for a standing grant. Prefer an expiry whenever the access is for a task or a person outside the organisation.',
+        ),
     },
     scope: MCP_SCOPE.IAM_WRITE,
     run: (args, ctx) => ctx.api.post('/iam/grants', args),
@@ -248,5 +261,37 @@ export const IAM_TOOLS: ToolDef[] = [
     scope: MCP_SCOPE.IAM_WRITE,
     run: (args, ctx) => ctx.api.delete(`/iam/grants/${enc(args.grantId)}`),
     forModel: writtenView,
+  }),
+  defineTool({
+    name: 'audit_event_list',
+    routes: ['GET /audit/events'],
+    description:
+      'Who did what on this instance, newest first: every change, every refusal, and every read that reached application data (logs, consoles, shells, restores). Use it to answer "what did this person do" or "who looked at this application\'s data". Changes nothing.',
+    inputSchema: {
+      email: z.email().optional().describe('Only what this person did.'),
+      since: z.iso
+        .datetime({ offset: true })
+        .optional()
+        .describe('Only from this moment on, ISO 8601.'),
+      dataAccess: z
+        .boolean()
+        .optional()
+        .describe('True for only the actions that reached application data.'),
+      outcome: z
+        .enum(['ok', 'refused', 'failed'])
+        .optional()
+        .describe('Only actions with this outcome.'),
+      limit: z.number().int().min(1).max(500).optional(),
+    },
+    scope: MCP_SCOPE.IAM_READ,
+    run: (args, ctx) => {
+      const query = new URLSearchParams();
+      for (const [k, v] of Object.entries(args)) {
+        if (v !== undefined) query.set(k, String(v));
+      }
+      const qs = query.toString();
+      const suffix = qs ? `?${qs}` : '';
+      return ctx.api.get(`/audit/events${suffix}`);
+    },
   }),
 ];

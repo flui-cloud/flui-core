@@ -21,6 +21,7 @@ import {
   CacheKeyDto,
   CacheSetDto,
 } from '../dto/cache-console.dto';
+import { DataDoor } from '../../iam/decorators/data-door.decorator';
 
 /**
  * Cache console (Memcached): server stats + exact-key get/set/delete and flush.
@@ -29,6 +30,7 @@ import {
  * unsafe in a path, so reads/deletes take the key in the body.
  */
 @UseGuards(PlatformFoundationGuard, AppOwnershipGuard)
+@DataDoor()
 @Controller('applications/:id/cache')
 export class CacheConsoleController {
   constructor(private readonly cache: CacheQueryService) {}

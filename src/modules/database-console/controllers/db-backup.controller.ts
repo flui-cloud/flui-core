@@ -18,6 +18,7 @@ import { AuthenticatedUser } from '../../auth/interfaces/authenticated-user.inte
 import { AppOwnershipGuard } from '../guards/app-ownership.guard';
 import { PlatformFoundationGuard } from '../guards/platform-foundation.guard';
 import { DbBackupInfo, DbBackupService } from '../services/db-backup.service';
+import { DataDoor } from '../../iam/decorators/data-door.decorator';
 
 /**
  * Logical DB backup/restore (pg_dump/mariadb-dump). `info` reports whether the engine is
@@ -25,6 +26,7 @@ import { DbBackupInfo, DbBackupService } from '../services/db-backup.service';
  * into the database (destructive — requires ?confirm=true, plus the client's own confirmation).
  */
 @UseGuards(PlatformFoundationGuard, AppOwnershipGuard)
+@DataDoor()
 @Controller('applications/:id/db-backup')
 export class DbBackupController {
   constructor(private readonly backup: DbBackupService) {}

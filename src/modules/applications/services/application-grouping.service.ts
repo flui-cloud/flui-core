@@ -10,7 +10,10 @@ import {
   ApplicationGroupType,
 } from '../dto/application-group.dto';
 import { ApplicationService } from './application.service';
-import { ApplicationAccessService } from './application-access.service';
+import {
+  ApplicationAccessService,
+  withholdDataFrom,
+} from './application-access.service';
 import { ApplicationResponseDto } from '../dto/application-response.dto';
 import { ReconciliationStatus } from '../../infrastructure/shared/enums/reconciliation-status.enum';
 import { AuthenticatedUser } from '../../auth/interfaces/authenticated-user.interface';
@@ -83,8 +86,9 @@ export class ApplicationGroupingService {
     // on `access`, and a list that omits it forces the interface to guess.
     if (user) {
       const access = await this.access.summarise(user, apps);
-      for (const dto of dtos) {
+      for (const [i, dto] of dtos.entries()) {
         dto.access = access.get(dto.id);
+        dtos[i] = withholdDataFrom(dto, dto.access);
       }
     }
 

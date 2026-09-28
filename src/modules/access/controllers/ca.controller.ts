@@ -7,6 +7,7 @@ import {
   Query,
   Body,
   UseGuards,
+  Req,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -15,7 +16,10 @@ import {
   ApiQuery,
   ApiBearerAuth,
 } from '@nestjs/swagger';
+import { Request } from 'express';
 import { AdminGuard } from '../../auth/guards/admin.guard';
+import { AuthenticatedUser } from '../../auth/interfaces/authenticated-user.interface';
+import { DataDoor } from '../../iam/decorators/data-door.decorator';
 import { Admin } from '../../auth/decorators/admin.decorator';
 import { CAManagerService } from '../services/ca-manager.service';
 import {
@@ -164,6 +168,7 @@ export class CAController {
   @Post('test-certificate')
   @UseGuards(AdminGuard)
   @Admin()
+  @DataDoor()
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary:
@@ -209,7 +214,10 @@ export class CAController {
       },
     },
   })
-  async generateTestCertificate(@Query('ttl') ttl = 180) {
+  async generateTestCertificate(
+    @Query('ttl') ttl = 180,
+    @Req() req?: Request & { user?: AuthenticatedUser },
+  ) {
     const requested = Number(ttl);
     const ttlSeconds =
       Number.isFinite(requested) && requested > 0
@@ -218,6 +226,11 @@ export class CAController {
     const cert = await this.certificateSigner.generateEphemeralCertificate(
       'test',
       ttlSeconds,
+      {
+        purpose: 'test certificate',
+        userId: req?.user?.userId,
+        email: req?.user?.email,
+      },
     );
 
     const expiresAt = new Date(Date.now() + ttlSeconds * 1000);

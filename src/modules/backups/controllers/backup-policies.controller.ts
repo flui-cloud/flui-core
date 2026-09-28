@@ -36,6 +36,7 @@ import { RequireSection } from '../../iam/decorators/require-section.decorator';
 import { RequirePermission } from '../../iam/decorators/require-permission.decorator';
 import { ActionCycle } from '../../action-cycle/action-cycle.decorator';
 import { IAM_PERMISSION } from '../../iam/constants/iam-permissions';
+import { DataDoor } from '../../iam/decorators/data-door.decorator';
 
 /**
  * The permissions on the routes an agent reaches take nothing from anybody:
@@ -81,6 +82,8 @@ export class BackupPoliciesController {
    * was never set up.
    */
   @Post('enable-database')
+  @DataDoor()
+  @RequirePermission(IAM_PERMISSION.CLUSTER_MANAGE)
   async enableDatabase(
     @Req() req: Request,
     @Body() dto: CreateBackupPolicyDto,
@@ -118,6 +121,8 @@ export class BackupPoliciesController {
   }
 
   @Post()
+  @DataDoor()
+  @RequirePermission(IAM_PERMISSION.CLUSTER_MANAGE)
   async create(@Req() req: Request, @Body() dto: CreateBackupPolicyDto) {
     const policy = await this.service.create(this.userId(req), dto);
 
@@ -200,6 +205,8 @@ export class BackupPoliciesController {
   }
 
   @Post(':id/platform-config')
+  @DataDoor()
+  @RequirePermission(IAM_PERMISSION.CLUSTER_MANAGE)
   async setPlatformConfig(
     @Param('id') id: string,
     @Body() dto: SetPlatformConfigDto,

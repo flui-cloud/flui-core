@@ -1,4 +1,5 @@
 import { SCOPE_AUTHORITY } from '../constants/api-key-scopes';
+import { MCP_SCOPE } from '../../mcp/constants/mcp-scopes';
 
 /**
  * The ceiling a credential declares, read off the principal and applied on the
@@ -21,6 +22,26 @@ import { SCOPE_AUTHORITY } from '../constants/api-key-scopes';
  */
 
 export const MCP_SCOPE_PREFIX = 'mcp:';
+
+/**
+ * These named scopes reach the data routes — logs, build output, consoles,
+ * node console output, backups, migrations — so they carry `data:access`.
+ *
+ * Named by scope, not derived from the permissions a scope carries: `app:read`
+ * is also carried by scopes whose purpose is to browse the catalogue, validate
+ * a manifest or list migrations, and none of those ever needed the data.
+ */
+const DATA_ACCESS = 'data:access';
+const REACHED_DATA_BEFORE: ReadonlySet<string> = new Set<string>([
+  MCP_SCOPE.APP_READ,
+  MCP_SCOPE.OBS_READ,
+  MCP_SCOPE.APP_WRITE,
+  MCP_SCOPE.BACKUP_WRITE,
+  MCP_SCOPE.INFRA_WRITE,
+  MCP_SCOPE.INFRA_DESTRUCTIVE,
+  MCP_SCOPE.MIGRATION_WRITE,
+  MCP_SCOPE.MIGRATION_DESTRUCTIVE,
+]);
 
 /** A principal as far as the ceiling is concerned: whatever carries scopes. */
 export interface ScopedCredential {
@@ -82,6 +103,9 @@ export function credentialCeiling(
   for (const scope of scopes) {
     const authority = SCOPE_AUTHORITY[scope as keyof typeof SCOPE_AUTHORITY];
     for (const permission of authority?.allows ?? []) allowed.add(permission);
+  }
+  if (scopes.some((scope) => REACHED_DATA_BEFORE.has(scope))) {
+    allowed.add(DATA_ACCESS);
   }
   return allowed;
 }

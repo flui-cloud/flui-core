@@ -35,6 +35,7 @@ import {
   ShellResult,
 } from '../engine/document-engine';
 import { DbConnectionInfo } from '../interfaces/db-connection';
+import { DataDoor } from '../../iam/decorators/data-door.decorator';
 
 const DEFAULT_FIND_LIMIT = 100;
 const DEFAULT_SKIP = 0;
@@ -58,6 +59,7 @@ function parseShellQuery(
 
 /** Document (FerretDB / Mongo-wire) console: browse + read-only-gated command. */
 @UseGuards(PlatformFoundationGuard, AppOwnershipGuard)
+@DataDoor()
 @Controller('applications/:id/doc')
 export class DocumentConsoleController {
   constructor(

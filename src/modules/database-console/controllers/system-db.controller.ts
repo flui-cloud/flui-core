@@ -3,6 +3,7 @@ import { AuthenticatedUser } from '../../auth/interfaces/authenticated-user.inte
 import { PlatformAuthorityGuard } from '../guards/platform-authority.guard';
 import { SystemDbAccessService } from '../services/system-db-access.service';
 import { DbConnectionInfo } from '../interfaces/db-connection';
+import { DataDoor } from '../../iam/decorators/data-door.decorator';
 
 /**
  * The road onto the platform's own database, and it is not a console.
@@ -21,6 +22,7 @@ import { DbConnectionInfo } from '../interfaces/db-connection';
  * Flui never speaks SQL to its own database on somebody's behalf.
  */
 @UseGuards(PlatformAuthorityGuard)
+@DataDoor()
 @Controller('system/db')
 export class SystemDbController {
   constructor(private readonly access: SystemDbAccessService) {}

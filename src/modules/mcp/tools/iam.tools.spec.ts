@@ -248,6 +248,7 @@ describe('the access tools', () => {
         access_grant_list: MCP_SCOPE.IAM_READ,
         access_grant_add: MCP_SCOPE.IAM_WRITE,
         access_grant_remove: MCP_SCOPE.IAM_WRITE,
+        audit_event_list: MCP_SCOPE.IAM_READ,
       });
     });
   });

@@ -43,6 +43,9 @@ import {
 } from '../dto/cert-diagnostics-response.dto';
 import { RequirePermission } from '../../iam/decorators/require-permission.decorator';
 import { IAM_PERMISSION } from '../../iam/constants/iam-permissions';
+import { DataDoor } from '../../iam/decorators/data-door.decorator';
+import { RequireSection } from '../../iam/decorators/require-section.decorator';
+import { SECTION } from '../../iam/constants/iam-sections';
 import { ActionCycle } from '../../action-cycle/action-cycle.decorator';
 
 @ApiTags('Cluster DNS Zone')
@@ -67,6 +70,7 @@ export class ClusterDnsZoneController {
   }
 
   @Post()
+  @DataDoor()
   // Was open to any authenticated caller while removing the same assignment
   // needed CLUSTER_MANAGE. It decides which zone a cluster publishes under and
   // which address its ACME accounts register with.
@@ -146,6 +150,8 @@ export class ClusterDnsZoneController {
   }
 
   @Put()
+  @DataDoor()
+  @RequirePermission(IAM_PERMISSION.CLUSTER_MANAGE)
   @ApiOperation({
     summary:
       'Update certificate configuration for the primary DNS zone assignment',
@@ -171,6 +177,8 @@ export class ClusterDnsZoneController {
   }
 
   @Put(':assignmentId')
+  @DataDoor()
+  @RequirePermission(IAM_PERMISSION.CLUSTER_MANAGE)
   @ApiOperation({
     summary: 'Update certificate configuration for one DNS zone assignment',
     description:
@@ -195,6 +203,8 @@ export class ClusterDnsZoneController {
   }
 
   @Post(':assignmentId/reconcile')
+  @RequireSection(SECTION.INFRASTRUCTURE)
+  @RequirePermission(IAM_PERMISSION.CLUSTER_MANAGE)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Reconcile one DNS zone assignment',
@@ -330,6 +340,8 @@ export class ClusterDnsZoneController {
   }
 
   @Post('configure-issuer')
+  @DataDoor()
+  @RequirePermission(IAM_PERMISSION.CLUSTER_MANAGE)
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({
     summary: 'Create or update cert-manager ClusterIssuers in the cluster',
@@ -351,6 +363,8 @@ export class ClusterDnsZoneController {
   }
 
   @Post('configure-issuer/dns-secret')
+  @DataDoor()
+  @RequirePermission(IAM_PERMISSION.CLUSTER_MANAGE)
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({
     summary:
@@ -375,6 +389,8 @@ export class ClusterDnsZoneController {
   }
 
   @Post('configure-issuer/dns-issuers')
+  @DataDoor()
+  @RequirePermission(IAM_PERMISSION.CLUSTER_MANAGE)
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({
     summary: 'Apply wildcard ClusterIssuers (dns01 solver)',
@@ -438,6 +454,8 @@ export class ClusterDnsZoneController {
   }
 
   @Post('configure-issuer/:type')
+  @DataDoor()
+  @RequirePermission(IAM_PERMISSION.CLUSTER_MANAGE)
   @HttpCode(HttpStatus.NO_CONTENT)
   // Bound to the issuer type as well as to the cluster: conceding "always
   // rewrite the http issuers here" must not also concede the wildcard ones.
@@ -548,6 +566,9 @@ export class ClusterDnsZoneController {
   }
 
   @Post('configure-system-ingress')
+  @DataDoor()
+  @RequireSection(SECTION.INFRASTRUCTURE)
+  @RequirePermission(IAM_PERMISSION.CLUSTER_MANAGE)
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({
     summary: 'Create or update system Ingress resources (flui-api, flui-web)',
@@ -633,6 +654,9 @@ export class ClusterDnsZoneController {
   }
 
   @Post('sync-auth-domain')
+  @DataDoor()
+  @RequireSection(SECTION.INFRASTRUCTURE)
+  @RequirePermission(IAM_PERMISSION.CLUSTER_MANAGE)
   @ApiOperation({
     summary: 'Sync the auth provider domain to the configured FQDN',
     description:
@@ -660,6 +684,9 @@ export class ClusterDnsZoneController {
   }
 
   @Post('sync-api-domain')
+  @DataDoor()
+  @RequireSection(SECTION.INFRASTRUCTURE)
+  @RequirePermission(IAM_PERMISSION.CLUSTER_MANAGE)
   @ApiOperation({
     summary: 'Sync flui-api, flui-web and zitadel domains into flui-secrets',
     description:
@@ -687,6 +714,9 @@ export class ClusterDnsZoneController {
   }
 
   @Post('sync-web-domain')
+  @DataDoor()
+  @RequireSection(SECTION.INFRASTRUCTURE)
+  @RequirePermission(IAM_PERMISSION.CLUSTER_MANAGE)
   @ApiOperation({
     summary: 'Sync flui-web ConfigMap with the configured domains',
     description:
@@ -713,6 +743,7 @@ export class ClusterDnsZoneController {
   }
 
   @Delete()
+  @DataDoor()
   @RequirePermission(IAM_PERMISSION.CLUSTER_MANAGE)
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({
@@ -729,6 +760,7 @@ export class ClusterDnsZoneController {
   }
 
   @Delete(':assignmentId')
+  @DataDoor()
   @RequirePermission(IAM_PERMISSION.CLUSTER_MANAGE)
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({

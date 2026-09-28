@@ -1,4 +1,6 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
+import { AuditService } from '../../audit/audit.service';
+import { currentActor } from '../../auth/utils/actor-context';
 import { SSHKeyGeneratorService } from './ssh-key-generator.service';
 import { CAManagerService } from './ca-manager.service';
 import { promises as fs } from 'node:fs';
@@ -34,6 +36,14 @@ export interface EphemeralCertificate {
   tenantId?: string;
 }
 
+/** Why a certificate is being issued, and for whom — what the audit record says. */
+export interface CertificateIssuance {
+  purpose: 'terminal' | 'test certificate' | 'host command' | 'node removal';
+  target?: string;
+  userId?: string;
+  email?: string;
+}
+
 /**
  * Internal service for generating ephemeral SSH certificates
  * Used only by the terminal service for WebSocket SSH connections
@@ -46,6 +56,7 @@ export class CertificateSignerService {
   constructor(
     private readonly keyGenerator: SSHKeyGeneratorService,
     private readonly caManager: CAManagerService,
+    @Optional() private readonly audit?: AuditService,
   ) {}
 
   /**
@@ -56,6 +67,7 @@ export class CertificateSignerService {
   async generateEphemeralCertificate(
     tenantId?: string,
     ttlSeconds: number = 180,
+    issuance?: CertificateIssuance,
   ): Promise<EphemeralCertificate> {
     this.logger.debug(
       `Generating ephemeral certificate for tenant ${tenantId || 'global'}, TTL: ${ttlSeconds}s`,
@@ -80,6 +92,24 @@ export class CertificateSignerService {
 
     const expiresAt = new Date();
     expiresAt.setSeconds(expiresAt.getSeconds() + ttlSeconds);
+
+    const actor = currentActor();
+    await this.audit?.record({
+      userId: issuance?.userId ?? null,
+      email: issuance?.email ?? null,
+      actorKind: actor?.kind ?? 'system',
+      actorKeyId: actor?.keyId ?? null,
+      action: 'ssh certificate issued',
+      target: {
+        purpose: issuance?.purpose ?? 'unspecified',
+        ...(issuance?.target ? { host: issuance.target } : {}),
+        principals: principals.join(','),
+        ttlSeconds: String(ttlSeconds),
+        fingerprint: ephemeralKeyPair.fingerprint,
+      },
+      outcome: 'ok',
+      dataAccess: true,
+    });
 
     return {
       certificate,

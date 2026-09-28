@@ -5,6 +5,7 @@ export type InternalAppAuditReason =
   | 'missing_forwarded_host'
   | 'app_not_found'
   | 'not_internal'
+  | 'not_permitted'
   | 'session_invalid'
   | null;
 

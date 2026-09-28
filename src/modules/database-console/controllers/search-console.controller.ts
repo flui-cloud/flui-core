@@ -30,11 +30,13 @@ import {
 } from '../engine/search-engine';
 import { RawRestResponse } from '../engine/raw-rest';
 import { SearchConnectionInfo } from '../interfaces/search-connection';
+import { DataDoor } from '../../iam/decorators/data-door.decorator';
 
 const DEFAULT_SIZE = 20;
 
 /** Read-only search console (OpenSearch / ES-wire): browse indices + run query DSL. */
 @UseGuards(PlatformFoundationGuard, AppOwnershipGuard)
+@DataDoor()
 @Controller('applications/:id/search')
 export class SearchConsoleController {
   constructor(

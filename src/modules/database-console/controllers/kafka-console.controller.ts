@@ -23,6 +23,7 @@ import {
   KafkaAssistService,
 } from '../services/kafka-assist.service';
 import { KafkaAssistDto, KafkaRunDto } from '../dto/kafka-console.dto';
+import { DataDoor } from '../../iam/decorators/data-door.decorator';
 
 /**
  * Kafka console: a kafka-shell command runner + an NL copilot. Topics/cluster
@@ -30,6 +31,7 @@ import { KafkaAssistDto, KafkaRunDto } from '../dto/kafka-console.dto';
  * read-only flag); `assist` turns a prompt into a kafka-shell command.
  */
 @UseGuards(PlatformFoundationGuard, AppOwnershipGuard)
+@DataDoor()
 @Controller('applications/:id/kafka')
 export class KafkaConsoleController {
   constructor(

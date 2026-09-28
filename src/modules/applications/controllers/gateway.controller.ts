@@ -22,6 +22,7 @@ import {
 import { AppAccessGuard } from '../guards/app-access.guard';
 import { RequirePermission } from '../../iam/decorators/require-permission.decorator';
 import { IAM_PERMISSION } from '../../iam/constants/iam-permissions';
+import { DataDoor } from '../../iam/decorators/data-door.decorator';
 import { AuthenticatedUser } from '../../auth/interfaces/authenticated-user.interface';
 import { ActionCycle } from '../../action-cycle/action-cycle.decorator';
 import { GatewayService } from '../services/gateway.service';
@@ -43,6 +44,7 @@ export class GatewayController {
   constructor(private readonly gateway: GatewayService) {}
 
   @Get('routes')
+  @DataDoor()
   @ApiOperation({
     summary: 'List gateway routes',
     description:
@@ -137,6 +139,7 @@ export class GatewayController {
   }
 
   @Get('routes/:endpointId/compiled')
+  @DataDoor()
   @ApiOperation({
     summary: 'Preview the compiled Traefik resources for a route',
     description:

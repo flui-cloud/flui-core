@@ -28,6 +28,9 @@ import {
 } from '../services/volume-backups.service';
 import { ApplicationVolumeResizeService } from '../services/application-volume-resize.service';
 import { SpareVolumesService } from '../services/spare-volumes.service';
+import { DataDoor } from '../../iam/decorators/data-door.decorator';
+import { RequirePermission } from '../../iam/decorators/require-permission.decorator';
+import { IAM_PERMISSION } from '../../iam/constants/iam-permissions';
 
 @ApiTags('Applications')
 @ApiBearerAuth()
@@ -103,6 +106,7 @@ export class ApplicationSnapshotsController {
   }
 
   @Post('applications/:id/snapshots/:snapshotId/restore')
+  @DataDoor()
   @HttpCode(HttpStatus.CREATED)
   @ApiOperation({
     summary: 'Restore a snapshot into a new side-by-side PVC',
@@ -125,6 +129,7 @@ export class ApplicationSnapshotsController {
   }
 
   @Post('applications/:id/volumes/:volumeName/swap')
+  @DataDoor()
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Swap an application volume PVC',
@@ -217,6 +222,7 @@ export class ApplicationSnapshotsController {
   }
 
   @Get('clusters/:clusterId/snapshots')
+  @RequirePermission(IAM_PERMISSION.CLUSTER_READ)
   @ApiOperation({
     summary: 'List snapshots cluster-wide (all apps)',
     description:
@@ -231,6 +237,7 @@ export class ApplicationSnapshotsController {
   // ── Volume backups (s3-archive sink) ──────────────────────────
 
   @Post('applications/:id/backups')
+  @DataDoor()
   @HttpCode(HttpStatus.CREATED)
   @ApiOperation({
     summary: 'Archive an application volume to S3-compatible storage',

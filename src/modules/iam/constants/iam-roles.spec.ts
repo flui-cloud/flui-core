@@ -79,14 +79,24 @@ describe('the ladder', () => {
    * one day become roles in the identity provider, and six would mean shipping
    * two platform-written tenancies into a place people pick from a list.
    */
-  it('is the four roles a person may be given, in order', () => {
+  it('is four rungs, in order', () => {
     expect(ROLE_LADDER).toEqual([
       IAM_ROLE.VIEWER,
       IAM_ROLE.OPERATOR,
       IAM_ROLE.MAINTAINER,
       IAM_ROLE.OWNER,
     ]);
-    expect(ROLE_LADDER).toEqual(ASSIGNABLE_ROLE_KEYS);
+  });
+
+  it('leaves the platform operator off the ladder: it manages more than a maintainer reads, and reads less', () => {
+    expect(ROLE_LADDER).not.toContain(IAM_ROLE.PLATFORM_OPERATOR);
+    const op = BUILTIN_ROLES[IAM_ROLE.PLATFORM_OPERATOR].permissions;
+    expect(op).toContain(IAM_PERMISSION.CLUSTER_MANAGE);
+    expect(op).toContain(IAM_PERMISSION.PLATFORM_UPDATE);
+    expect(op).not.toContain(IAM_PERMISSION.DATA_ACCESS);
+    expect(op.filter((p) => p.startsWith('app:'))).toEqual([
+      IAM_PERMISSION.APP_READ,
+    ]);
   });
 
   /**
@@ -135,17 +145,18 @@ describe('the owner role', () => {
    * that is the rung that sentence names. What stays is what cannot be undone:
    * destroying a cluster, and deciding who else runs the place.
    */
-  it('keeps the two irreversible acts to itself', () => {
+  it('keeps the two irreversible acts and unreleased work to itself', () => {
     const onlyOwner = [
       IAM_PERMISSION.CLUSTER_DESTROY,
       IAM_PERMISSION.IAM_MANAGE_USERS,
+      IAM_PERMISSION.PLATFORM_PREVIEW,
     ];
     for (const permission of onlyOwner) {
       expect(OWNER.permissions).toContain(permission);
       expect(MAINTAINER.permissions).not.toContain(permission);
     }
-    // And nothing else: the delta between the top two rungs is those two and
-    // no third, so a permission added to `owner` alone turns this red.
+    // And nothing else: the delta between the top two rungs is exactly these,
+    // so a permission added to `owner` alone turns this red.
     const delta = OWNER.permissions.filter(
       (p) => !MAINTAINER.permissions.includes(p),
     );
@@ -154,12 +165,13 @@ describe('the owner role', () => {
 });
 
 describe('which roles reach the wire', () => {
-  it('is the four a person may grant, and not the two the platform assigns', () => {
+  it('is the four rungs and the platform operator, and not the two the platform assigns', () => {
     expect(ASSIGNABLE_ROLE_KEYS).toEqual([
       IAM_ROLE.VIEWER,
       IAM_ROLE.OPERATOR,
       IAM_ROLE.MAINTAINER,
       IAM_ROLE.OWNER,
+      IAM_ROLE.PLATFORM_OPERATOR,
     ]);
     expect(ASSIGNABLE_ROLE_KEYS).not.toContain(IAM_ROLE.SANDBOX);
     expect(ASSIGNABLE_ROLE_KEYS).not.toContain(IAM_ROLE.SHOWCASE_VIEWER);

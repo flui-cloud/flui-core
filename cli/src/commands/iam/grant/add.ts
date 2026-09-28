@@ -3,6 +3,7 @@ import chalk from 'chalk';
 import { ApiClient } from '../../../lib/api-client';
 import { ConfigStorage } from '../../../lib/config-storage';
 import { AccessDelta, printAccessDelta } from '../../../lib/access-delta';
+import { describeExpiry, parseGrantExpiry } from '../../../lib/grant-expiry';
 
 interface IamSelector {
   slugs?: string[];
@@ -22,6 +23,7 @@ interface CreateGrantBody {
   scopeType: string;
   scopeRef?: string;
   selector?: IamSelector;
+  expiresAt?: string;
 }
 
 export default class IamGrantAdd extends Command {
@@ -35,6 +37,7 @@ export default class IamGrantAdd extends Command {
     '<%= config.bin %> <%= command.id %> -t group -p platform -r viewer -s cluster --cluster c1',
     '<%= config.bin %> <%= command.id %> -p bob@acme.com -r operator -s selector --kind DATABASE',
     '<%= config.bin %> <%= command.id %> -p ci-deployer -t service_account -r operator -s selector --app acme-api --app acme-web',
+    '<%= config.bin %> <%= command.id %> -p support@partner.example -r maintainer --expires 8h',
   ];
 
   static readonly flags = {
@@ -54,8 +57,16 @@ export default class IamGrantAdd extends Command {
       char: 'r',
       description:
         'Role to grant. `owner` is the top of the ladder and conferring it ' +
-        'requires iam:manage-users at global scope — i.e. an owner makes an owner.',
-      options: ['viewer', 'operator', 'maintainer', 'owner'],
+        'requires iam:manage-users at global scope — i.e. an owner makes an owner. ' +
+        '`platform_operator` runs clusters, nodes, updates and backups without reaching ' +
+        'any application data; grant it with --expires.',
+      options: [
+        'viewer',
+        'operator',
+        'maintainer',
+        'owner',
+        'platform_operator',
+      ],
       required: true,
     }),
     scope: Flags.string({
@@ -93,6 +104,11 @@ export default class IamGrantAdd extends Command {
     selector: Flags.string({
       description: 'Raw selector JSON (overrides individual selector flags)',
     }),
+    expires: Flags.string({
+      description:
+        'End the grant on its own: a duration from now (30m, 8h, 7d, 2w) or a date (2026-10-01). ' +
+        'Without it the grant stands until removed.',
+    }),
     'dry-run': Flags.boolean({
       description:
         'Say what this grant would open — and what the same change closes — and create nothing',
@@ -115,6 +131,14 @@ export default class IamGrantAdd extends Command {
       role: flags.role,
       scopeType: flags.scope,
     };
+
+    if (flags.expires) {
+      try {
+        body.expiresAt = parseGrantExpiry(flags.expires).toISOString();
+      } catch (error: unknown) {
+        this.error((error as Error).message, { exit: 1 });
+      }
+    }
 
     if (flags.scope === 'cluster') {
       if (!flags.cluster) {
@@ -180,8 +204,11 @@ export default class IamGrantAdd extends Command {
 
     const principal = chalk.bold(`${flags.type}:${flags.principal}`);
     const id = chalk.dim(`(${created.id})`);
+    const until = body.expiresAt
+      ? ` ${chalk.yellow(describeExpiry(body.expiresAt).text)}`
+      : '';
     console.log(
-      `\n  ${chalk.green('✓')} Granted ${chalk.bold(flags.role)} to ${principal} ${id}\n`,
+      `\n  ${chalk.green('✓')} Granted ${chalk.bold(flags.role)} to ${principal}${until} ${id}\n`,
     );
     if (created.delta) printAccessDelta(created.delta);
   }

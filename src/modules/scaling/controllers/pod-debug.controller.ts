@@ -4,6 +4,7 @@ import { Throttle, ThrottlerGuard } from '@nestjs/throttler';
 import { PodDebugService } from '../services/pod-debug.service';
 import { PodDebugInfoDto } from '../dto/pod-debug.dto';
 import { AppAccessGuard } from '../../applications/guards/app-access.guard';
+import { DataDoor } from '../../iam/decorators/data-door.decorator';
 
 /**
  * Pod-level diagnostics for one application: phase, containers, restart counts
@@ -16,6 +17,7 @@ import { AppAccessGuard } from '../../applications/guards/app-access.guard';
  */
 @ApiTags('applications')
 @ApiBearerAuth()
+@DataDoor()
 @Controller('applications/:id/debug')
 @UseGuards(ThrottlerGuard, AppAccessGuard)
 @Throttle({ default: { ttl: 60_000, limit: 10 } })

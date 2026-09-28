@@ -28,6 +28,7 @@ import {
   MessagingPeekDto,
   MessagingPublishDto,
 } from '../dto/messaging-console.dto';
+import { DataDoor } from '../../iam/decorators/data-door.decorator';
 
 const DEFAULT_PEEK_LIMIT = 20;
 
@@ -36,6 +37,7 @@ const DEFAULT_PEEK_LIMIT = 20;
  * plus produce (publish) and non-destructive peek of stored messages.
  */
 @UseGuards(PlatformFoundationGuard, AppOwnershipGuard)
+@DataDoor()
 @Controller('applications/:id/messaging')
 export class MessagingConsoleController {
   constructor(private readonly messaging: MessagingQueryService) {}

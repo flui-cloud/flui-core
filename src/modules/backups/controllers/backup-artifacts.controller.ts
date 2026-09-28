@@ -8,6 +8,7 @@ import { RequirePermission } from '../../iam/decorators/require-permission.decor
 import { IAM_PERMISSION } from '../../iam/constants/iam-permissions';
 import { DbPitrService } from '../services/db-pitr.service';
 import { DbPitrRestoreDto } from '../dto/db-pitr-restore.dto';
+import { DataDoor } from '../../iam/decorators/data-door.decorator';
 
 /**
  * One read surface over the ledger, covering every engine: a cluster snapshot,
@@ -16,6 +17,7 @@ import { DbPitrRestoreDto } from '../dto/db-pitr-restore.dto';
  */
 @ApiTags('Backups')
 @ApiBearerAuth()
+@DataDoor()
 @Controller('backup-artifacts')
 @RequireSection('backup')
 export class BackupArtifactsController {

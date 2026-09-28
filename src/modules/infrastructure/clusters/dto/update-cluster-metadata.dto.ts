@@ -6,11 +6,10 @@ import { IsObject } from 'class-validator';
  */
 export class UpdateClusterMetadataDto {
   @ApiProperty({
-    description: 'Metadata object to merge with existing metadata',
+    description:
+      'Metadata to merge with the existing metadata. Only `byos` (host, port, user, nodeNetwork) is accepted; any other key is refused with 400.',
     example: {
-      isControlCluster: true,
-      purpose: 'control',
-      customField: 'value',
+      byos: { port: 2222, user: 'root' },
     },
   })
   @IsObject()

@@ -19,6 +19,11 @@ import {
   AppLogsQueryDto,
   AppLogVolumeQueryDto,
 } from '../dto/app-logs-query.dto';
+import {
+  logqlCaseInsensitive,
+  logqlDuration,
+  logqlString,
+} from '../utils/logql.util';
 
 /**
  * Loki Query Service
@@ -199,7 +204,7 @@ export class LokiQueryService {
   ): Promise<{ apps: string[]; namespaces: string[] }> {
     const now = Date.now();
     const params: Record<string, string | number> = {
-      'match[]': `{cluster_id="${clusterId}"}`,
+      'match[]': `{cluster_id=${logqlString(clusterId)}}`,
       start: (now - 24 * 60 * 60 * 1000) * 1000000,
       end: now * 1000000,
     };
@@ -240,17 +245,17 @@ export class LokiQueryService {
   ): Promise<ServerLogsResponseDto> {
     // Build LogQL query using cluster_id (matches DB UUID directly)
     let logQL = serverId
-      ? `{cluster_id="${clusterId}",server_id="${serverId}"}`
-      : `{cluster_id="${clusterId}"}`;
+      ? `{cluster_id=${logqlString(clusterId)},server_id=${logqlString(serverId)}}`
+      : `{cluster_id=${logqlString(clusterId)}}`;
 
     // Add component filter
     if (component) {
-      logQL += ` | json | component="${component}"`;
+      logQL += ` | json | component=${logqlString(component)}`;
     }
 
     // Add search filter
     if (search) {
-      logQL += ` |~ "(?i)${search}"`; // Case insensitive search
+      logQL += ` |~ ${logqlCaseInsensitive(search)}`;
     }
 
     const response = await this.queryLogs(logQL, limit, start, end);
@@ -334,24 +339,26 @@ export class LokiQueryService {
     clusterId: string,
     query: AppLogsQueryDto,
   ): Promise<AppLogsResponseDto> {
-    const labelFilters: string[] = [`cluster_id="${clusterId}"`];
+    const labelFilters: string[] = [`cluster_id=${logqlString(clusterId)}`];
 
-    if (query.namespace) labelFilters.push(`namespace="${query.namespace}"`);
-    if (query.app) labelFilters.push(`app="${query.app}"`);
-    if (query.container) labelFilters.push(`container="${query.container}"`);
-    if (query.pod) labelFilters.push(`pod="${query.pod}"`);
-    if (query.stream) labelFilters.push(`stream="${query.stream}"`);
+    if (query.namespace)
+      labelFilters.push(`namespace=${logqlString(query.namespace)}`);
+    if (query.app) labelFilters.push(`app=${logqlString(query.app)}`);
+    if (query.container)
+      labelFilters.push(`container=${logqlString(query.container)}`);
+    if (query.pod) labelFilters.push(`pod=${logqlString(query.pod)}`);
+    if (query.stream) labelFilters.push(`stream=${logqlString(query.stream)}`);
 
     // level is an indexed label (Vector sets it), add it directly to the stream selector.
     // Regex match so a multi-level filter (e.g. "error|warn") works; Loki anchors the regex,
     // so a single value like "error" still matches exactly.
-    if (query.level) labelFilters.push(`level=~"${query.level}"`);
+    if (query.level) labelFilters.push(`level=~${logqlString(query.level)}`);
 
     const logQL_base = `{${labelFilters.join(',')}}`;
 
     // Full-text search is a line filter, applied after the selector
     const logQL = query.search
-      ? `${logQL_base} |~ "(?i)${query.search}"`
+      ? `${logQL_base} |~ ${logqlCaseInsensitive(query.search)}`
       : logQL_base;
 
     const response = await this.queryLogs(
@@ -437,13 +444,15 @@ export class LokiQueryService {
     clusterId: string,
     query: AppLogVolumeQueryDto,
   ): Promise<AppLogVolumeResponseDto> {
-    const step = query.step ?? '5m';
+    const step = logqlDuration(query.step ?? '5m');
 
-    const labelFilters: string[] = [`cluster_id="${clusterId}"`];
-    if (query.namespace) labelFilters.push(`namespace="${query.namespace}"`);
-    if (query.app) labelFilters.push(`app="${query.app}"`);
-    if (query.container) labelFilters.push(`container="${query.container}"`);
-    if (query.stream) labelFilters.push(`stream="${query.stream}"`);
+    const labelFilters: string[] = [`cluster_id=${logqlString(clusterId)}`];
+    if (query.namespace)
+      labelFilters.push(`namespace=${logqlString(query.namespace)}`);
+    if (query.app) labelFilters.push(`app=${logqlString(query.app)}`);
+    if (query.container)
+      labelFilters.push(`container=${logqlString(query.container)}`);
+    if (query.stream) labelFilters.push(`stream=${logqlString(query.stream)}`);
 
     const selector = `{${labelFilters.join(',')}}`;
 
@@ -527,7 +536,7 @@ export class LokiQueryService {
     search: string,
     limit: number = 100,
   ): Promise<LogEntryDto[]> {
-    const logQL = `{job=~"flui-.*"} |~ "(?i)${search}"`;
+    const logQL = `{job=~"flui-.*"} |~ ${logqlCaseInsensitive(search)}`;
 
     const response = await this.queryLogs(logQL, limit);
 

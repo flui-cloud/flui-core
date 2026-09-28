@@ -27,6 +27,7 @@ import { RequireSection } from '../../iam/decorators/require-section.decorator';
 import { RequirePermission } from '../../iam/decorators/require-permission.decorator';
 import { SECTION } from '../../iam/constants/iam-sections';
 import { IAM_PERMISSION } from '../../iam/constants/iam-permissions';
+import { DataDoor } from '../../iam/decorators/data-door.decorator';
 
 /**
  * Server Metrics Controller
@@ -247,6 +248,7 @@ export class ServerMetricsController {
    * Get logs for a cluster or specific server in a cluster
    */
   @Get('clusters/:clusterId/logs')
+  @DataDoor()
   @ApiOperation({
     summary: 'Get cluster logs',
     description:
@@ -300,6 +302,7 @@ export class ServerMetricsController {
    * Get error logs for a cluster or specific server in a cluster
    */
   @Get('clusters/:clusterId/logs/errors')
+  @DataDoor()
   @ApiOperation({
     summary: 'Get cluster error logs',
     description:

@@ -192,8 +192,48 @@ describe('credentialCeiling — null is not the empty set', () => {
         IAM_PERMISSION.APP_DEPLOY,
         IAM_PERMISSION.SCALE_EXECUTE,
         IAM_PERMISSION.CLUSTER_READ,
+        // Follows app:read: these scopes keep reaching data routes.
+        IAM_PERMISSION.DATA_ACCESS,
       ].sort(),
     );
+  });
+
+  it('gives data:access only to scopes that already reached data routes', () => {
+    expect(
+      credentialCeiling({ scopes: [MCP_SCOPE.INFRA_READ] })?.has(
+        IAM_PERMISSION.DATA_ACCESS,
+      ),
+    ).toBe(false);
+  });
+
+  const carriesData = (scope: string) =>
+    credentialCeiling({ scopes: [scope] })?.has(IAM_PERMISSION.DATA_ACCESS);
+
+  it.each([
+    [
+      MCP_SCOPE.MIGRATION_READ,
+      'lists migrations and reads none of the data they move',
+    ],
+    [
+      MCP_SCOPE.CATALOG_READ,
+      'browses the catalogue, which holds no application data',
+    ],
+    [MCP_SCOPE.SPEC_VALIDATE, 'validates a manifest it was handed'],
+  ])('does not give data:access to %s: it %s', (scope, _why) => {
+    expect(carriesData(scope)).toBe(false);
+  });
+
+  it.each([
+    [MCP_SCOPE.APP_READ, 'reads application logs and build output'],
+    [MCP_SCOPE.OBS_READ, 'reads logs'],
+    [MCP_SCOPE.APP_WRITE, 'writes variables and drives consoles'],
+    [MCP_SCOPE.BACKUP_WRITE, 'sets up backups, which copy data out'],
+    [MCP_SCOPE.INFRA_WRITE, 'reads node console output and operation logs'],
+    [MCP_SCOPE.INFRA_DESTRUCTIVE, 'recovers access to a node'],
+    [MCP_SCOPE.MIGRATION_WRITE, 'moves an application and its data'],
+    [MCP_SCOPE.MIGRATION_DESTRUCTIVE, 'destroys the source of a migration'],
+  ])('keeps data:access for %s: it %s', (scope, _why) => {
+    expect(carriesData(scope)).toBe(true);
   });
 
   it('does not hand the delete to a key that only operates', () => {

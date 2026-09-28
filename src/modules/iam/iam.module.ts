@@ -1,3 +1,5 @@
+import { GrantNoticeService } from './services/grant-notice.service';
+import { GrantNoticeScheduler } from './schedulers/grant-notice.scheduler';
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { IamRoleBindingEntity } from './entities/iam-role-binding.entity';
@@ -27,6 +29,8 @@ import { UserEntity } from '../auth/entities/user.entity';
     AccessPolicyService,
     AccessDeltaService,
     { provide: POLICY_ENGINE, useClass: PolicyEngineService },
+    GrantNoticeService,
+    GrantNoticeScheduler,
   ],
   exports: [POLICY_ENGINE, IamService, AccessDeltaService],
 })

@@ -251,3 +251,38 @@ describe('the delta on a revocation', () => {
     expect(delta.summary).toContain('platform admin');
   });
 });
+
+/**
+ * A grant past its expiry is not enforced, so it is not something a
+ * revocation can take away. The user path already asked the engine, which
+ * drops it; a group or a service account was read straight from the table.
+ */
+describe('an expired grant held by a group', () => {
+  const expired = binding({
+    principalType: 'group',
+    principalRef: 'devs',
+    ...({ expiresAt: new Date(Date.now() - 60_000) } as Partial<Row>),
+  });
+
+  it('is not counted as access the group holds', async () => {
+    const service = build([expired]);
+    const delta = await service.previewRevocation('g1');
+
+    expect(delta.permissionsLost).toEqual([]);
+    expect(delta.applicationsLostCount).toBe(0);
+    expect(delta.losesNothing).toBe(true);
+  });
+
+  it('still counts one that is in force', async () => {
+    const service = build([
+      binding({
+        principalType: 'group',
+        principalRef: 'devs',
+        ...({ expiresAt: new Date(Date.now() + 60_000) } as Partial<Row>),
+      }),
+    ]);
+    const delta = await service.previewRevocation('g1');
+
+    expect(delta.losesNothing).toBe(false);
+  });
+});

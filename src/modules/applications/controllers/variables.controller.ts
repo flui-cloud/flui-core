@@ -32,6 +32,7 @@ import {
   VariableSetSummaryDto,
   VariableType,
 } from '../dto/app-config.dto';
+import { DataDoor } from '../../iam/decorators/data-door.decorator';
 
 @ApiTags('Variables')
 @ApiBearerAuth()
@@ -48,6 +49,7 @@ export class VariablesController {
   // authenticated caller could read the configuration of any application by id,
   // which is another tenancy's data even when the sensitive values are masked.
   @Get('applications/:appId')
+  @DataDoor()
   @UseGuards(AppAccessGuard)
   @ApiOperation({
     summary: 'Read application variables',
@@ -76,6 +78,7 @@ export class VariablesController {
   }
 
   @Put('applications/:appId')
+  @DataDoor()
   @UseGuards(AppAccessGuard)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
@@ -150,6 +153,7 @@ export class VariablesController {
   // is the platform's own configuration. The section is what says "the machine
   // room", and it demands `cluster:read` at global scope.
   @Get('clusters/:clusterId/namespaces/:namespace')
+  @DataDoor()
   @RequireSection(SECTION.CLUSTERS)
   @RequirePermission(IAM_PERMISSION.CLUSTER_READ)
   @ApiOperation({
@@ -229,6 +233,7 @@ export class VariablesController {
   //  PUT  /variables/clusters/:clusterId/namespaces/:namespace/:name
 
   @Get('clusters/:clusterId/namespaces/:namespace/:name')
+  @DataDoor()
   @RequireSection(SECTION.CLUSTERS)
   @RequirePermission(IAM_PERMISSION.CLUSTER_READ)
   @ApiOperation({
@@ -292,6 +297,7 @@ export class VariablesController {
   // ConfigMap any workload or platform component consumes. It sits with the
   // rest of infrastructure management rather than with the read above.
   @Put('clusters/:clusterId/namespaces/:namespace/:name')
+  @DataDoor()
   @RequireSection(SECTION.INFRASTRUCTURE)
   @RequirePermission(IAM_PERMISSION.CLUSTER_MANAGE)
   @HttpCode(HttpStatus.OK)

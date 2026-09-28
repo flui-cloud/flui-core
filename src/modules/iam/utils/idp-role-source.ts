@@ -1,9 +1,5 @@
 import { IamBinding } from '../interfaces/iam.types';
-import {
-  ASSIGNABLE_ROLE_KEYS,
-  BUILTIN_ROLES,
-  IamRole,
-} from '../constants/iam-roles';
+import { BUILTIN_ROLES, IamRole, ROLE_LADDER } from '../constants/iam-roles';
 import { MCP_SCOPE_PREFIX } from '../../auth/utils/credential-ceiling.util';
 import { GRANTABLE_SCOPES } from '../../auth/constants/api-key-scopes';
 
@@ -28,11 +24,10 @@ import { GRANTABLE_SCOPES } from '../../auth/constants/api-key-scopes';
  *     could carry a selector, a cluster or a section, so every binding this
  *     function returns is `global` with a `null` selector. It cannot express a
  *     delegation even if somebody wanted it to;
- *   - the allowlist is `assignable: true`, which is exactly the four rungs of
- *     the ladder. `sandbox` and `showcase_viewer` — the two roles whose whole
- *     meaning is a selector — are `assignable: false` and can therefore never
- *     arrive from the provider. Decision 102 says "four roles land in Zitadel,
- *     not six"; this is the line that enforces it rather than documenting it;
+ *   - the allowlist is the ladder, exactly the four rungs. `sandbox` and
+ *     `showcase_viewer` — the two roles whose whole meaning is a selector —
+ *     can never arrive from the provider, and neither can `platform_operator`:
+ *     it is lent for a time, and a provider role cannot expire;
  *   - both sources are additive-only. Neither can subtract, so folding them is
  *     a union and a union has no precedence.
  *
@@ -52,9 +47,7 @@ import { GRANTABLE_SCOPES } from '../../auth/constants/api-key-scopes';
  * `roles: {}`, so this returns `[]` and an installation without an IdP behaves
  * exactly as it did before this source existed.
  */
-const IDP_SOURCED_ROLES: ReadonlySet<string> = new Set<string>(
-  ASSIGNABLE_ROLE_KEYS,
-);
+const IDP_SOURCED_ROLES: ReadonlySet<string> = new Set<string>(ROLE_LADDER);
 
 /** One entry of the vocabulary Flui provisions on the provider's project. */
 export interface IdpProjectRole {
@@ -68,11 +61,12 @@ export interface IdpProjectRole {
  * added to the model has to appear in the provider without anybody remembering
  * to copy it, and a rung that is not assignable must never appear at all.
  */
-export const IDP_COARSE_ROLES: ReadonlyArray<IdpProjectRole> =
-  ASSIGNABLE_ROLE_KEYS.map((key: IamRole) => ({
+export const IDP_COARSE_ROLES: ReadonlyArray<IdpProjectRole> = ROLE_LADDER.map(
+  (key: IamRole) => ({
     key,
     displayName: `Flui — ${BUILTIN_ROLES[key].name}`,
-  }));
+  }),
+);
 
 /**
  * The other half of the vocabulary: one project role per MCP scope, so an agent

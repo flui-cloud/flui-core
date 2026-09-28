@@ -5,12 +5,7 @@ import {
   idpRoleBindings,
   isAgentScopeKey,
 } from './idp-role-source';
-import {
-  ASSIGNABLE_ROLE_KEYS,
-  BUILTIN_ROLES,
-  IAM_ROLE,
-  ROLE_LADDER,
-} from '../constants/iam-roles';
+import { BUILTIN_ROLES, IAM_ROLE, ROLE_LADDER } from '../constants/iam-roles';
 import { GRANTABLE_SCOPES } from '../../auth/constants/api-key-scopes';
 import { MCP_SCOPE_PREFIX } from '../../auth/utils/credential-ceiling.util';
 
@@ -24,8 +19,8 @@ describe('the identity provider as a source of role', () => {
      * The load-bearing one. Everything else in this file is a consequence.
      */
     it('can only ever produce global bindings with no selector', () => {
-      const bindings = idpRoleBindings(claim(...ASSIGNABLE_ROLE_KEYS));
-      expect(bindings).toHaveLength(ASSIGNABLE_ROLE_KEYS.length);
+      const bindings = idpRoleBindings(claim(...ROLE_LADDER));
+      expect(bindings).toHaveLength(ROLE_LADDER.length);
       for (const b of bindings) {
         expect(b.scopeType).toBe('global');
         expect(b.scopeRef).toBeNull();
@@ -54,12 +49,15 @@ describe('the identity provider as a source of role', () => {
     });
 
     it('accepts exactly the four rungs of the ladder', () => {
-      expect(ASSIGNABLE_ROLE_KEYS).toEqual(ROLE_LADDER);
       for (const rung of ROLE_LADDER) {
         expect(idpRoleBindings(claim(rung))).toEqual([
           { role: rung, scopeType: 'global', scopeRef: null, selector: null },
         ]);
       }
+    });
+
+    it('never takes the platform operator from the provider: a provider role cannot expire', () => {
+      expect(idpRoleBindings(claim('platform_operator'))).toEqual([]);
     });
 
     it('ignores anything it does not recognise, including near misses', () => {
@@ -79,7 +77,7 @@ describe('the identity provider as a source of role', () => {
 
   describe('the two IdP vocabularies do not overlap each other', () => {
     it('no rung is readable as an agent scope, and no agent scope as a rung', () => {
-      for (const rung of ASSIGNABLE_ROLE_KEYS) {
+      for (const rung of ROLE_LADDER) {
         expect(isAgentScopeKey(rung)).toBe(false);
       }
       for (const scope of GRANTABLE_SCOPES) {
@@ -99,7 +97,7 @@ describe('the identity provider as a source of role', () => {
       const keys = IDP_PROJECT_ROLES.map((r) => r.key);
       expect(new Set(keys).size).toBe(keys.length);
       for (const key of keys) {
-        const isRung = ASSIGNABLE_ROLE_KEYS.includes(key as never);
+        const isRung = ROLE_LADDER.includes(key as never);
         expect(isRung).not.toBe(isAgentScopeKey(key));
       }
     });
@@ -126,9 +124,7 @@ describe('the identity provider as a source of role', () => {
     });
 
     it('carries one role per assignable rung — and no others', () => {
-      expect(IDP_COARSE_ROLES.map((r) => r.key)).toEqual([
-        ...ASSIGNABLE_ROLE_KEYS,
-      ]);
+      expect(IDP_COARSE_ROLES.map((r) => r.key)).toEqual([...ROLE_LADDER]);
     });
 
     it('gives every provisioned role a display name', () => {

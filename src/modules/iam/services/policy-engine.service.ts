@@ -22,6 +22,11 @@ import {
 } from '../constants/iam-sections';
 import { idpRoleBindings } from '../utils/idp-role-source';
 
+/** A grant with an expiry stops counting the moment it passes, on every request. */
+export function isInForce(b: { expiresAt?: Date | null }): boolean {
+  return !b.expiresAt || new Date(b.expiresAt).getTime() > Date.now();
+}
+
 /**
  * SQL-backed PolicyEngine.
  *
@@ -69,7 +74,9 @@ export class PolicyEngineService implements PolicyEngine {
    */
   async bindingsFor(principal: IamPrincipal): Promise<IamBinding[]> {
     const groupNames = await this.resolveGroups(principal.email);
-    const stored = await this.findBindingsFor(principal, groupNames);
+    const stored = (await this.findBindingsFor(principal, groupNames)).filter(
+      isInForce,
+    );
     // The identity provider is a second *source* of binding, not a second
     // authority: what arrives from it is folded through the same `accessFrom`
     // as everything else, so nothing downstream — including the delta preview,

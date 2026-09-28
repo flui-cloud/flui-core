@@ -24,6 +24,7 @@ import { ObjectStoragePresetsService } from '../../storage/services/object-stora
 import { RequireSection } from '../../iam/decorators/require-section.decorator';
 import { RequirePermission } from '../../iam/decorators/require-permission.decorator';
 import { IAM_PERMISSION } from '../../iam/constants/iam-permissions';
+import { DataDoor } from '../../iam/decorators/data-door.decorator';
 
 @ApiTags('Backups')
 @ApiBearerAuth()
@@ -46,6 +47,7 @@ export class BackupDestinationsController {
   // already said so. The section alone let any account that can see the Backup
   // section create one.
   @Post()
+  @DataDoor()
   @RequirePermission(IAM_PERMISSION.CLUSTER_MANAGE)
   async create(@Req() req: Request, @Body() dto: CreateBackupDestinationDto) {
     return this.service.create(this.userId(req), dto);

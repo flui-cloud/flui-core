@@ -24,11 +24,13 @@ import {
   KeyspaceSummary,
   ScanResult,
 } from '../engine/keyvalue-engine';
+import { DataDoor } from '../../iam/decorators/data-door.decorator';
 
 const DEFAULT_SCAN_COUNT = 100;
 
 /** Key-value (Redis/Valkey) console surface: keyspace browse + a read-only-gated command. */
 @UseGuards(PlatformFoundationGuard, AppOwnershipGuard)
+@DataDoor()
 @Controller('applications/:id/kv')
 export class KvConsoleController {
   constructor(

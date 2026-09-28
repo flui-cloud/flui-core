@@ -6,6 +6,9 @@ import {
   Query,
   Param,
   Body,
+  ForbiddenException,
+  Inject,
+  Req,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -30,13 +33,51 @@ import { CloudProvider } from 'src/modules/providers/enums/cloud-provider.enum';
 import { RequireSection } from '../../iam/decorators/require-section.decorator';
 import { RequirePermission } from '../../iam/decorators/require-permission.decorator';
 import { IAM_PERMISSION } from '../../iam/constants/iam-permissions';
+import { DataDoor } from '../../iam/decorators/data-door.decorator';
+import {
+  POLICY_ENGINE,
+  PolicyEngine,
+} from '../../iam/interfaces/policy-engine.interface';
+import { principalFromUser } from '../../iam/interfaces/iam.types';
+import { AuthenticatedUser } from '../../auth/interfaces/authenticated-user.interface';
+import { ceilingWithholds } from '../../auth/utils/credential-ceiling.util';
+import { noteDataAccess } from '../../audit/audit-request';
+
+/**
+ * The fields of {@link CreateServerDto} that only Flui's own orchestration may
+ * set. A cloud-init script runs as root on the new machine; labels, firewalls
+ * and networks decide which cluster and which private network it joins.
+ */
+const INTERNAL_ONLY_FIELDS = [
+  'user_data',
+  'uuid',
+  'labels',
+  'firewalls',
+  'diskSizeGb',
+  'networks',
+  'attachedVolumes',
+] as const;
+
+export const SSH_KEYS_NEED_DATA_ACCESS =
+  'Adding your own SSH keys to a new server gives a shell on it, which ' +
+  'requires the data:access permission. Create the server without ssh_keys, ' +
+  'or ask an administrator for data:access.';
+
+function acceptedFromApi(dto: CreateServerDto): CreateServerDto {
+  const accepted = Object.assign(new CreateServerDto(), dto);
+  for (const field of INTERNAL_ONLY_FIELDS) delete accepted[field];
+  return accepted;
+}
 
 @ApiTags('Infrastructure - Servers')
 @ApiBearerAuth()
 @Controller('infrastructure/servers')
 @RequireSection('infrastructure')
 export class ServersController {
-  constructor(private readonly serversService: ServersService) {}
+  constructor(
+    private readonly serversService: ServersService,
+    @Inject(POLICY_ENGINE) private readonly policy: PolicyEngine,
+  ) {}
 
   @Get()
   @ApiOperation({
@@ -104,6 +145,7 @@ export class ServersController {
   }
 
   @Get(':id/console-output')
+  @DataDoor()
   // A console buffer can contain far more than a details DTO does (anything
   // the guest printed to its serial line, cloud-init included) — gated the
   // same as delete, not left at the class-level read-only default.
@@ -152,6 +194,7 @@ export class ServersController {
   }
 
   @Post()
+  @RequirePermission(IAM_PERMISSION.CLUSTER_MANAGE)
   @ApiOperation({
     summary: 'Create a new server',
     description: 'Initiates server creation via queue (async operation)',
@@ -163,10 +206,17 @@ export class ServersController {
     type: CreateServerResponseDto,
   })
   @ApiResponse({ status: 400, description: 'Invalid request data' })
+  @ApiResponse({
+    status: 403,
+    description: 'ssh_keys were given without the data:access permission',
+  })
   async createServer(
     @Body() dto: CreateServerDto,
+    @Req() req: { user?: AuthenticatedUser },
   ): Promise<CreateServerResponseDto> {
-    const operation = await this.serversService.createServer(dto);
+    const accepted = acceptedFromApi(dto);
+    if (accepted.ssh_keys?.length) await this.assertMayAddKeys(req);
+    const operation = await this.serversService.createServer(accepted);
     return {
       operation_id: operation.id,
       status: this.mapStatus(operation.status),
@@ -251,6 +301,23 @@ export class ServersController {
     }>;
   }> {
     return await this.serversService.checkProvidersHealth();
+  }
+
+  private async assertMayAddKeys(req: {
+    user?: AuthenticatedUser;
+  }): Promise<void> {
+    noteDataAccess(req);
+    const user = req.user;
+    if (
+      !user ||
+      ceilingWithholds(user, IAM_PERMISSION.DATA_ACCESS) ||
+      !(await this.policy.check(
+        principalFromUser(user),
+        IAM_PERMISSION.DATA_ACCESS,
+      ))
+    ) {
+      throw new ForbiddenException(SSH_KEYS_NEED_DATA_ACCESS);
+    }
   }
 
   private mapStatus(

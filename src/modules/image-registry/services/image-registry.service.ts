@@ -438,11 +438,11 @@ export class ImageRegistryService {
     );
   }
 
-  async redeployGhcrTag(appId: string, tag: string, userId: string) {
-    const { owner, packageName, app } = await this.resolveGhcrContext(
-      appId,
-      userId,
-    );
+  /** Access (`app:deploy`) is checked by the route. */
+  async redeployGhcrTag(appId: string, tag: string) {
+    const app = await this.applicationsRepository.findById(appId);
+    if (!app) throw new NotFoundException('Application not found');
+    const { owner, packageName } = await this.ghcrContextFor(app);
 
     const versions = await this.ghcrPackagesService.listVersions(
       app.userId,
@@ -487,8 +487,6 @@ export class ImageRegistryService {
     const image = await this.getImage(imageId);
     const app = await this.applicationsRepository.findById(image.appId);
     if (!app) throw new NotFoundException('Application not found');
-    if (app.userId !== userId)
-      throw new ForbiddenException('Not owner of this application');
 
     const op = await this.applicationDeployService.triggerDeployWithImage(
       app.id,
@@ -506,7 +504,10 @@ export class ImageRegistryService {
     if (!app) throw new NotFoundException('Application not found');
     if (app.userId !== userId)
       throw new ForbiddenException('Not owner of this application');
+    return this.ghcrContextFor(app);
+  }
 
+  private async ghcrContextFor(app: ApplicationEntity) {
     const repositoryId = (app.sourceConfig as GitBuildSourceConfig)
       ?.repositoryId;
     if (!repositoryId) {

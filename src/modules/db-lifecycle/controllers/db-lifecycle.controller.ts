@@ -5,6 +5,7 @@ import { RequirePermission } from '../../iam/decorators/require-permission.decor
 import { IAM_PERMISSION } from '../../iam/constants/iam-permissions';
 import { DbReplicationService } from '../services/db-replication.service';
 import { ReplicateDto } from '../dto/replicate.dto';
+import { DataDoor } from '../../iam/decorators/data-door.decorator';
 
 /**
  * Same-cluster logical-replication primitives (Stage 2) — the building blocks
@@ -13,6 +14,7 @@ import { ReplicateDto } from '../dto/replicate.dto';
  */
 @ApiTags('DB Lifecycle')
 @ApiBearerAuth()
+@DataDoor()
 @Controller('db-replication')
 @RequireSection('backup')
 export class DbLifecycleController {

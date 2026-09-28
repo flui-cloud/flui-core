@@ -1,8 +1,10 @@
 import {
+  BadRequestException,
   ForbiddenException,
   Inject,
   Injectable,
   NotFoundException,
+  Optional,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { IsNull, Repository } from 'typeorm';
@@ -15,6 +17,7 @@ import {
   mayConferRole,
 } from '../constants/iam-roles';
 import { CreateGrantDto } from '../dto/create-grant.dto';
+import { GrantNoticeService } from './grant-notice.service';
 import { CreateGroupDto } from '../dto/create-group.dto';
 import { ApplicationEntity } from '../../applications/entities/application.entity';
 import { UserEntity } from '../../auth/entities/user.entity';
@@ -86,6 +89,7 @@ export class IamService {
     @InjectRepository(UserEntity)
     private readonly users: Repository<UserEntity>,
     @Inject(POLICY_ENGINE) private readonly policy: PolicyEngine,
+    @Optional() private readonly notices?: GrantNoticeService,
   ) {}
 
   /** Apps across all clusters, projected to selector axes — powers the grant-builder. */
@@ -184,6 +188,12 @@ export class IamService {
     caller: IamPrincipal,
   ): Promise<IamRoleBindingEntity> {
     await this.assertMayConfer(caller, dto.role);
+    const expiresAt = dto.expiresAt ? new Date(dto.expiresAt) : null;
+    if (expiresAt && expiresAt.getTime() <= Date.now()) {
+      throw new BadRequestException(
+        'expiresAt must be in the future: a grant that has already expired would give nothing.',
+      );
+    }
     const entity = this.bindings.create({
       principalType: dto.principalType,
       principalRef: dto.principalRef,
@@ -191,8 +201,12 @@ export class IamService {
       scopeType: dto.scopeType,
       scopeRef: dto.scopeRef ?? null,
       selector: dto.selector ?? null,
+      expiresAt,
+      grantedBy: caller.email || null,
     });
-    return this.bindings.save(entity);
+    const saved = await this.bindings.save(entity);
+    await this.notices?.granted(saved);
+    return saved;
   }
 
   /** One binding, or 404. Named so a caller can read it *before* deleting it. */

@@ -6,7 +6,7 @@ import {
   ConnectedSocket,
   OnGatewayInit,
 } from '@nestjs/websockets';
-import { Inject, Logger } from '@nestjs/common';
+import { Inject, Logger, Optional } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Server, Socket } from 'socket.io';
@@ -37,7 +37,11 @@ import {
   BuildFailedDto,
   ReleaseStatusChangedDto,
 } from '../dto/application-events.dto';
+import { principalFromUser } from '../../iam/interfaces/iam.types';
 import { WS_CORS } from '../../../config/cors-origin.config';
+import { AuditService } from '../../audit/audit.service';
+import { AuditOutcome } from '../../audit/entities/audit-event.entity';
+import { actorOf } from '../../auth/utils/actor.util';
 import {
   carriesAdminReach,
   ceilingWithholds,
@@ -92,6 +96,7 @@ export class ApplicationEventsGateway implements OnGatewayInit {
     @InjectRepository(InfrastructureOperationEntity)
     private readonly operations: Repository<InfrastructureOperationEntity>,
     @Inject(POLICY_ENGINE) private readonly policy: PolicyEngine,
+    @Optional() private readonly audit?: AuditService,
   ) {}
 
   afterInit(server: Server): void {
@@ -161,6 +166,16 @@ export class ApplicationEventsGateway implements OnGatewayInit {
     );
   }
 
+  private async mayReadData(client: Socket): Promise<boolean> {
+    const user = client.data.user as AuthenticatedUser | undefined;
+    if (!user) return false;
+    if (ceilingWithholds(user, IAM_PERMISSION.DATA_ACCESS)) return false;
+    return this.policy.check(
+      principalFromUser(user),
+      IAM_PERMISSION.DATA_ACCESS,
+    );
+  }
+
   @SubscribeMessage('unsubscribe:application')
   handleUnsubscribe(
     @MessageBody() data: { appId: string },
@@ -192,16 +207,41 @@ export class ApplicationEventsGateway implements OnGatewayInit {
       ? await this.builds.findOne({ where: { id: buildId } })
       : null;
 
-    if (!(await this.mayReadBuild(build, client))) {
+    if (
+      !(await this.mayReadBuild(build, client)) ||
+      !(await this.mayReadData(client))
+    ) {
       this.logger.warn(`Client ${client.id} refused build ${buildId}`);
       client.emit('subscription:refused', { buildId, reason: 'not_found' });
+      this.recordBuildSubscription(client, buildId, 'refused');
       return;
     }
 
+    this.recordBuildSubscription(client, buildId, 'ok');
     const roomName = `build:${buildId}`;
     client.join(roomName);
     this.logger.log(`Client ${client.id} subscribed to build ${buildId}`);
     client.emit('subscribed', { buildId, room: roomName });
+  }
+
+  private recordBuildSubscription(
+    client: Socket,
+    buildId: string,
+    outcome: AuditOutcome,
+  ): void {
+    if (!this.audit) return;
+    const user = client.data.user as AuthenticatedUser | undefined;
+    const actor = actorOf(user);
+    void this.audit.record({
+      userId: user?.userId ?? null,
+      email: user?.email ?? null,
+      actorKind: actor.kind,
+      actorKeyId: actor.keyId ?? null,
+      action: 'build log subscribed',
+      target: { buildId: String(buildId) },
+      outcome,
+      dataAccess: true,
+    });
   }
 
   @SubscribeMessage('unsubscribe:build')

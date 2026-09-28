@@ -31,6 +31,7 @@ import { RequireSection } from '../../iam/decorators/require-section.decorator';
 import { RequirePermission } from '../../iam/decorators/require-permission.decorator';
 import { IAM_PERMISSION } from '../../iam/constants/iam-permissions';
 import { SECTION } from '../../iam/constants/iam-sections';
+import { DataDoor } from '../../iam/decorators/data-door.decorator';
 
 /**
  * Application Logs Controller
@@ -59,6 +60,7 @@ export class ApplicationLogsController {
    * Use this to verify label names before querying.
    */
   @Get('loki/debug')
+  @DataDoor()
   // Returns a real log line drawn from `{cluster_id=~".+"}` — any stream in the
   // cluster, whoever it belongs to — plus the whole label inventory. It is a
   // diagnostic for whoever runs the instance, not a route a tenant may call.
@@ -103,6 +105,7 @@ export class ApplicationLogsController {
    * removes. Its gate is the one decision 6 will give the rest of this family.
    */
   @Get('clusters/:clusterId/apps/log-sources')
+  @DataDoor()
   @RequireSection(SECTION.INFRASTRUCTURE)
   // `app:read` on top of the section: the `infrastructure` section admits only
   // `full`, which is `cluster:manage` at global scope, and every role holding
@@ -140,6 +143,7 @@ export class ApplicationLogsController {
   // that is intended. A tenant reads its own application through
   // `GET /observability/applications/:id/logs`, which the CLI now uses.
   @Get('clusters/:clusterId/apps/logs')
+  @DataDoor()
   @RequireSection(SECTION.INFRASTRUCTURE)
   // Same pair, same reason as `log-sources` above.
   @RequirePermission(IAM_PERMISSION.APP_READ)
@@ -223,6 +227,7 @@ export class ApplicationLogsController {
   }
 
   @Get('applications/:id/logs')
+  @DataDoor()
   @UseGuards(AppAccessGuard)
   @ApiOperation({
     summary: 'Get logs for an application',
@@ -260,6 +265,7 @@ export class ApplicationLogsController {
    * are fetched. This is the same technique Grafana uses for its log volume panel.
    */
   @Get('clusters/:clusterId/apps/logs/volume')
+  @DataDoor()
   @RequireSection(SECTION.INFRASTRUCTURE)
   @ApiOperation({
     summary: 'Get log volume over time (chart data)',
@@ -333,6 +339,7 @@ export class ApplicationLogsController {
   }
 
   @Get('applications/:id/logs/volume')
+  @DataDoor()
   @UseGuards(AppAccessGuard)
   @ApiOperation({
     summary: 'Get log volume for an application',

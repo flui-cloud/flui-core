@@ -15,6 +15,8 @@ export interface CreateConnectionOptions {
   useBootstrapKey?: boolean;
   /** Required when useBootstrapKey is true — used to retrieve the cluster's bootstrap private key */
   clusterId?: string;
+  /** Who opens the shell, for the record of the certificate issued to it. */
+  requestedBy?: { userId?: string; email?: string };
   onData: (data: string) => void;
   onError: (error: Error) => void;
   onClose: () => void;
@@ -44,6 +46,7 @@ export class TerminalService {
       cols,
       useBootstrapKey,
       clusterId,
+      requestedBy,
       onData,
       onError,
       onClose,
@@ -83,7 +86,13 @@ export class TerminalService {
         );
         const cert = await this.certificateSigner.generateEphemeralCertificate(
           tenantId,
-          1800, // 30 minutes TTL
+          1800,
+          {
+            purpose: 'terminal',
+            target: serverIp,
+            userId: requestedBy?.userId,
+            email: requestedBy?.email,
+          },
         );
         credentials = {
           privateKey: cert.privateKey,

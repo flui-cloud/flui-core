@@ -1,3 +1,4 @@
+import { AuditModule } from '../audit/audit.module';
 import { Module, forwardRef } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { ConfigModule } from '@nestjs/config';
@@ -43,6 +44,7 @@ const apiTokenRepositoryProvider = {
   imports: [
     ConfigModule,
     HttpModule,
+    AuditModule,
     forwardRef(() => ProvidersModule),
     CommonModule,
     TypeOrmModule.forFeature([

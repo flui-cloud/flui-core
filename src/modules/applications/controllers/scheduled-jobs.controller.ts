@@ -28,6 +28,7 @@ import {
   TriggerScheduledJobResponseDto,
   UpdateScheduledJobDto,
 } from '../dto/scheduled-job.dto';
+import { DataDoor } from '../../iam/decorators/data-door.decorator';
 
 @ApiTags('Scheduled Jobs')
 @ApiBearerAuth()
@@ -37,6 +38,7 @@ export class ScheduledJobsController {
   constructor(private readonly scheduledJobs: ScheduledJobsService) {}
 
   @Get()
+  @DataDoor()
   @ApiOperation({
     summary: 'List scheduled jobs',
     description:
@@ -118,6 +120,7 @@ export class ScheduledJobsController {
   }
 
   @Get(':name/runs')
+  @DataDoor()
   @ApiOperation({
     summary: 'List runs of a scheduled job',
     description:
@@ -134,6 +137,7 @@ export class ScheduledJobsController {
   }
 
   @Get(':name/runs/:jobName/logs')
+  @DataDoor()
   @ApiOperation({ summary: 'Read logs for a single run' })
   @ApiParam({ name: 'id', description: 'Application ID' })
   @ApiParam({ name: 'name', description: 'Schedule name' })

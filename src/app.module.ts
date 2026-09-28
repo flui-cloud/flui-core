@@ -2,6 +2,7 @@ import { Module, OnModuleInit, Logger } from '@nestjs/common';
 import { APP_GUARD } from '@nestjs/core';
 import { migrations } from './migrations';
 import { AccessModule } from './modules/access/access.module';
+import { AuditModule } from './modules/audit/audit.module';
 import { AdoptionModule } from './modules/adoption/adoption.module';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { entities } from './config/entities';
@@ -120,6 +121,7 @@ const boolOr = (raw: string | undefined, fallback: boolean): boolean =>
       inject: [ConfigService],
     }),
     AccessModule,
+    AuditModule,
     AdoptionModule,
     InstancesModule,
     ManagementModule,

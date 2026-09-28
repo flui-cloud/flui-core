@@ -1,4 +1,10 @@
-import { IsIn, IsObject, IsOptional, IsString } from 'class-validator';
+import {
+  IsIn,
+  IsISO8601,
+  IsObject,
+  IsOptional,
+  IsString,
+} from 'class-validator';
 import {
   IamPrincipalType,
   IamScopeType,
@@ -29,4 +35,9 @@ export class CreateGrantDto {
   @IsOptional()
   @IsObject()
   selector?: IamSelector;
+
+  // Absent means a standing grant.
+  @IsOptional()
+  @IsISO8601({ strict: true })
+  expiresAt?: string;
 }

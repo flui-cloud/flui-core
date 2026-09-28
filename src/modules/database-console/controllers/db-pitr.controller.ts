@@ -16,6 +16,7 @@ import {
   DbPitrStatus,
 } from '../../backups/services/db-pitr.service';
 import { DbPitrRestoreDto } from '../../backups/dto/db-pitr-restore.dto';
+import { DataDoor } from '../../iam/decorators/data-door.decorator';
 
 /**
  * DB-tab continuous-backup (PITR) surface for a database application. Read-only
@@ -25,6 +26,7 @@ import { DbPitrRestoreDto } from '../../backups/dto/db-pitr-restore.dto';
  */
 @ApiTags('Database Console')
 @UseGuards(PlatformFoundationGuard, AppOwnershipGuard)
+@DataDoor()
 @Controller('applications/:id/db-pitr')
 export class DbPitrController {
   constructor(private readonly pitr: DbPitrService) {}

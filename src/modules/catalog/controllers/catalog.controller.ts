@@ -349,6 +349,8 @@ export class CatalogController {
     @Req() req: Request,
   ): Promise<CatalogInstallResponseDto> {
     const user = req.user as AuthenticatedUser | undefined;
+    await this.assertMayWriteInstall(id, user);
+    await this.assertMayWriteInstall(dto.targetInstallId, user);
     const install = await this.installer.connect(
       id,
       dto.targetInstallId,
@@ -373,6 +375,7 @@ export class CatalogController {
     @Req() req: Request,
   ): Promise<CatalogInstallResponseDto> {
     const user = req.user as AuthenticatedUser | undefined;
+    await this.assertMayWriteInstall(id, user);
     const install = await this.installer.disconnect(id, user?.userId);
     return this.toResponse(install);
   }
@@ -440,6 +443,29 @@ export class CatalogController {
       await this.applicationAccess.assertCan(
         user,
         IAM_PERMISSION.APP_DELETE,
+        app,
+      );
+    }
+  }
+
+  /**
+   * `app:write` on every application of an install, for both ends of a link:
+   * connecting hands the target's credentials to the client's pod. An unknown
+   * install or one without applications is left to the installer to refuse.
+   */
+  private async assertMayWriteInstall(
+    installId: string,
+    user: AuthenticatedUser | undefined,
+  ): Promise<void> {
+    if (!user) throw new ForbiddenException('Unauthenticated');
+    if (!installId) return;
+    const install = await this.installRepo.findById(installId);
+    for (const appId of install?.applicationIds ?? []) {
+      const app = await this.applications.findById(appId);
+      if (!app) continue;
+      await this.applicationAccess.assertCan(
+        user,
+        IAM_PERMISSION.APP_WRITE,
         app,
       );
     }

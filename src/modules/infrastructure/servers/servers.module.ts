@@ -10,6 +10,7 @@ import { InfrastructureQueueProcessor } from './processors/infrastructure-queue.
 import { BullModule } from '@nestjs/bull';
 import { SharedInfrastructureModule } from '../shared/shared-infrastructure.module';
 import { InfrastructureOperationsModule } from '../operations/infrastructure-operations.module';
+import { IamModule } from '../../iam/iam.module';
 
 @Module({
   imports: [
@@ -17,6 +18,7 @@ import { InfrastructureOperationsModule } from '../operations/infrastructure-ope
     AccessModule,
     SharedInfrastructureModule,
     InfrastructureOperationsModule,
+    IamModule,
     TypeOrmModule.forFeature([ServerEntity, InfrastructureOperationEntity]),
     BullModule.registerQueue({
       name: 'infrastructure',

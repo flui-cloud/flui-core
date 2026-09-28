@@ -2,6 +2,7 @@ import { Command, Flags } from '@oclif/core';
 import chalk from 'chalk';
 import { ApiClient } from '../../../lib/api-client';
 import { ConfigStorage } from '../../../lib/config-storage';
+import { describeExpiry } from '../../../lib/grant-expiry';
 
 interface IamSelector {
   slugs?: string[];
@@ -22,6 +23,8 @@ interface IamGrant {
   scopeType: 'global' | 'cluster' | 'section' | 'selector';
   scopeRef: string | null;
   selector: IamSelector | null;
+  expiresAt?: string | null;
+  grantedBy?: string | null;
 }
 
 export function describeScope(g: IamGrant): string {
@@ -110,9 +113,13 @@ export default class IamGrantList extends Command {
     );
     for (const g of grants) {
       const who = `${g.principalType}:${g.principalRef}`;
-      console.log(
-        `  ${who.padEnd(whoW)}  ${g.role.padEnd(roleW)}  ${describeScope(g)}  ${chalk.dim(g.id)}`,
-      );
+      const expiry = describeExpiry(g.expiresAt);
+      const expiryText = expiry.expired
+        ? chalk.dim(expiry.text)
+        : chalk.yellow(expiry.text);
+      const until = g.expiresAt ? `  ${expiryText}` : '';
+      const line = `  ${who.padEnd(whoW)}  ${g.role.padEnd(roleW)}  ${describeScope(g)}${until}  ${chalk.dim(g.id)}`;
+      console.log(expiry.expired ? chalk.dim(line) : line);
     }
     console.log('');
   }

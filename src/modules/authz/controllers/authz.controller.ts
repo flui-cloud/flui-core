@@ -27,7 +27,10 @@ import {
 } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../../auth/guards/jwt-auth.guard';
 import { AuthenticatedUser } from '../../auth/interfaces/authenticated-user.interface';
-import { InternalAppAuthzService } from '../services/internal-app-authz.service';
+import {
+  InternalAppAuthzService,
+  InternalAppNotPermittedException,
+} from '../services/internal-app-authz.service';
 import { GatewayAuthzService } from '../services/gateway-authz.service';
 import {
   GATEWAY_SSO_CALLBACK,
@@ -310,7 +313,7 @@ export class AuthzController {
   @ApiOperation({
     summary: 'ForwardAuth decision for internal apps',
     description:
-      'Called by the user-cluster Ingress on every request to a `*.internal.*` host. Validates the Flui session (JWT in cookie or Bearer) and checks that the targeted app exists and has exposure=internal. Emits an audit event on each call.',
+      'Called by the user-cluster Ingress on every request to a `*.internal.*` host. Validates the Flui session (JWT in cookie or Bearer), checks that the targeted app exists and has exposure=internal, and that the caller holds app:read on it and data:access. Emits an audit event on each call.',
   })
   @ApiResponse({
     status: 200,
@@ -368,6 +371,7 @@ export class AuthzController {
         clientIp,
         userAgent,
       });
+      await this.authzService.assertMayOpen(user, app);
 
       res.setHeader('X-Auth-User', user.userId);
       if (user.email) res.setHeader('X-Auth-Email', user.email);
@@ -394,6 +398,8 @@ export class AuthzController {
         reason = err.message.includes('forwarded host')
           ? 'missing_forwarded_host'
           : 'app_not_found';
+      } else if (err instanceof InternalAppNotPermittedException) {
+        reason = 'not_permitted';
       } else if (err instanceof ForbiddenException) {
         reason = 'not_internal';
       } else {

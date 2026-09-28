@@ -9,7 +9,7 @@ import {
   MessageBody,
 } from '@nestjs/websockets';
 import { Server, Socket } from 'socket.io';
-import { Logger } from '@nestjs/common';
+import { Logger, Optional } from '@nestjs/common';
 import { TerminalService } from '../services/terminal.service';
 import {
   TERMINAL_DISABLED_MESSAGE,
@@ -20,6 +20,9 @@ import { installWsAuth } from '../../auth/utils/ws-auth-middleware.util';
 import { WS_CORS } from '../../../config/cors-origin.config';
 import { TerminalTargetResolver } from '../services/terminal-target.resolver';
 import { AuthenticatedUser } from '../../auth/interfaces/authenticated-user.interface';
+import { AuditService } from '../../audit/audit.service';
+import { AuditOutcome } from '../../audit/entities/audit-event.entity';
+import { actorOf } from '../../auth/utils/actor.util';
 
 /** Worded as a miss, not as a refusal: whose a machine is must not be learnable by asking. */
 export const TERMINAL_NO_SUCH_SERVER = 'No such server.';
@@ -63,6 +66,7 @@ export class TerminalGateway
     private readonly wsAuth: WsAuthService,
     private readonly feature: TerminalFeatureConfig,
     private readonly targets: TerminalTargetResolver,
+    @Optional() private readonly audit?: AuditService,
   ) {}
 
   afterInit(server: Server) {
@@ -135,6 +139,7 @@ export class TerminalGateway
         message: TERMINAL_NO_SUCH_SERVER,
         code: TERMINAL_NO_SUCH_SERVER_CODE,
       });
+      this.recordOpen(user, serverId, 'refused');
       return;
     }
     const serverIp = target.serverIp;
@@ -164,6 +169,7 @@ export class TerminalGateway
         cols,
         useBootstrapKey,
         clusterId,
+        requestedBy: { userId: user?.userId, email: user?.email },
         onData: (data: string) => {
           socket.emit('terminal:data', { data });
         },
@@ -184,6 +190,7 @@ export class TerminalGateway
         },
       });
 
+      this.recordOpen(user, serverId, 'ok');
       this.logger.log(`✅ SSH connection established successfully`);
       this.logger.log(
         `📤 Emitting terminal:connected event with sessionId: ${sessionId}`,
@@ -198,6 +205,7 @@ export class TerminalGateway
         timestamp: new Date().toISOString(),
       });
     } catch (error) {
+      this.recordOpen(user, serverId, 'failed');
       this.logger.error(`❌ Failed to connect: ${error.message}`);
       this.logger.error(`   Stack: ${error.stack}`);
 
@@ -267,6 +275,25 @@ export class TerminalGateway
     } catch (error) {
       this.logger.error(`Failed to disconnect: ${error.message}`);
     }
+  }
+
+  private recordOpen(
+    user: AuthenticatedUser | undefined,
+    serverId: string,
+    outcome: AuditOutcome,
+  ): void {
+    if (!this.audit) return;
+    const actor = actorOf(user);
+    void this.audit.record({
+      userId: user?.userId ?? null,
+      email: user?.email ?? null,
+      actorKind: actor.kind,
+      actorKeyId: actor.keyId ?? null,
+      action: 'terminal opened',
+      target: { serverId: String(serverId) },
+      outcome,
+      dataAccess: true,
+    });
   }
 
   private extractTenantId(socket: Socket): string | undefined {

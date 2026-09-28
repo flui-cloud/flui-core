@@ -26,6 +26,14 @@ const API_VERSION = 'flui.cloud/v1beta1';
 const isAssignableRole = (role: string): boolean =>
   BUILTIN_ROLES[role as keyof typeof BUILTIN_ROLES]?.assignable !== false;
 
+/**
+ * A grant with an expiry is an act in time — someone let in until a date — not
+ * configuration. It is neither exported, nor pruned, nor taken as the standing
+ * grant a document asks for: applying a document must not turn a loan into a
+ * permanent grant, nor erase the record of one.
+ */
+const isStanding = (b: IamRoleBindingEntity): boolean => !b.expiresAt;
+
 // Config-as-Code: export RoleBindings as a kind:AccessPolicy doc and apply one
 // back (idempotent; `prune` = full sync). Groups are managed separately.
 @Injectable()
@@ -56,7 +64,7 @@ export class AccessPolicyService {
       metadata: { name: 'flui-access' },
       spec: {
         bindings: bindings
-          .filter((b) => isAssignableRole(b.role))
+          .filter((b) => isAssignableRole(b.role) && isStanding(b))
           .map((b) => this.toPolicyBinding(b)),
       },
     };
@@ -76,7 +84,7 @@ export class AccessPolicyService {
     caller: IamPrincipal,
   ): Promise<ApplyPolicyResult> {
     const desired = doc.spec.bindings.map((b) => this.toCreateDto(b));
-    const existing = await this.iam.listGrants();
+    const existing = (await this.iam.listGrants()).filter(isStanding);
     const existingByKey = new Map(
       existing.map((e) => [this.keyOf(this.entityToDto(e)), e]),
     );

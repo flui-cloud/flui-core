@@ -13,6 +13,7 @@ import { InfrastructureOperationEntity } from '../infrastructure/servers/entitie
 import { ClusterEntity } from '../infrastructure/clusters/entities/cluster.entity';
 import { ProjectEntity } from '../projects/entities/project.entity';
 import { IamModule } from '../iam/iam.module';
+import { AuditModule } from '../audit/audit.module';
 import { ApplicationAccessService } from './services/application-access.service';
 import { AppAccessGuard } from './guards/app-access.guard';
 import { RepositoryCredentialEntity } from '../repositories/entities/repository-credential.entity';
@@ -151,6 +152,7 @@ import { SpareVolumesService } from './services/spare-volumes.service';
     WsAuthModule,
     StorageModule,
     IamModule,
+    AuditModule,
   ],
   controllers: [
     ApplicationsController,

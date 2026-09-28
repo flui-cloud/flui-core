@@ -32,6 +32,94 @@ export interface AppAccessSummary {
   tabs: AppTabKey[];
   readOnly: boolean;
   showcase: boolean;
+  /** False when the caller may see the application but not its data. */
+  dataAccess: boolean;
+}
+
+interface EnvCarrier {
+  env?: Array<{
+    name: string;
+    value: string;
+    secret?: boolean;
+    pending?: boolean;
+    withheld?: boolean;
+  }>;
+  sourceConfig?: Record<string, unknown>;
+}
+
+/**
+ * What a source says about itself without saying what it carries: which kind
+ * it is, where it comes from and which revision. The screens that show an
+ * application without its data read these and nothing else — the origin
+ * column, the deploy branch, the rebuild form.
+ */
+const SOURCE_SHAPE_KEYS = [
+  'type',
+  'repositoryId',
+  'branch',
+  'gitUrl',
+  'commitSha',
+  'framework',
+  'buildMode',
+  'subPath',
+  'imageRef',
+  'pullPolicy',
+  'repoUrl',
+  'chartName',
+  'chartVersion',
+] as const;
+
+function withoutUserinfo(url: unknown): unknown {
+  if (typeof url !== 'string') return url;
+  try {
+    const parsed = new URL(url);
+    if (!parsed.username && !parsed.password) return url;
+    parsed.username = '';
+    parsed.password = '';
+    return parsed.toString();
+  } catch {
+    return url.replace(/\/\/[^/@]*@/, '//');
+  }
+}
+
+function sourceShapeOf(
+  config: Record<string, unknown>,
+): Record<string, unknown> {
+  const shape: Record<string, unknown> = {};
+  for (const key of SOURCE_SHAPE_KEYS) {
+    if (config[key] !== undefined) shape[key] = config[key];
+  }
+  for (const key of ['gitUrl', 'repoUrl'] as const) {
+    if (shape[key] !== undefined) shape[key] = withoutUserinfo(shape[key]);
+  }
+  return { ...shape, withheld: true };
+}
+
+/**
+ * Someone who may see an application but not its data gets the names of its
+ * variables and none of their values, and the shape of its source without the
+ * build arguments, registry credentials, chart values or manifests it holds.
+ */
+export function withholdDataFrom<T extends EnvCarrier>(
+  dto: T,
+  summary: { dataAccess?: boolean } | undefined,
+): T {
+  if (summary?.dataAccess !== false) return dto;
+  if (!dto.env && !dto.sourceConfig) return dto;
+  return {
+    ...dto,
+    ...(dto.env && {
+      env: dto.env.map(({ name, secret }) => ({
+        name,
+        value: '',
+        secret,
+        withheld: true,
+      })),
+    }),
+    ...(dto.sourceConfig && {
+      sourceConfig: sourceShapeOf(dto.sourceConfig),
+    }),
+  };
 }
 
 /**
@@ -122,6 +210,7 @@ export class ApplicationAccessService {
         tabs: tabsForPermissions(permissions),
         readOnly: !permissions.has(IAM_PERMISSION.APP_WRITE),
         showcase: isShowcase(app.tags),
+        dataAccess: permissions.has(IAM_PERMISSION.DATA_ACCESS),
       });
     }
     return summaries;

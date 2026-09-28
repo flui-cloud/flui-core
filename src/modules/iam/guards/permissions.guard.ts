@@ -23,12 +23,16 @@ import {
   ceilingRefusal,
   credentialCeiling,
 } from '../../auth/utils/credential-ceiling.util';
+import { noteAuditPermission, noteDataAccess } from '../../audit/audit-request';
+import { DATA_DOOR_KEY } from '../decorators/data-door.decorator';
+import { IAM_PERMISSION } from '../constants/iam-permissions';
 
 export { CREDENTIAL_CEILING_CODE } from '../../auth/utils/credential-ceiling.util';
 
 /**
  * Global authorization gate. Runs after JwtAuthGuard. Default-deny for routes
- * carrying @RequirePermission; pass-through otherwise (so un-migrated routes keep
+ * carrying @RequirePermission or @DataDoor (which adds `data:access` to what
+ * the route asks); pass-through otherwise (so un-migrated routes keep
  * their current guards during rollout). Only hits the DB when a permission is required.
  *
  * Two questions are asked here, and they are not the same question.
@@ -48,11 +52,20 @@ export class PermissionsGuard implements CanActivate {
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
-    const required = this.reflector.getAllAndOverride<string>(
+    const targets = [context.getHandler(), context.getClass()];
+    const declared = this.reflector.getAllAndOverride<string>(
       REQUIRED_PERMISSION_KEY,
-      [context.getHandler(), context.getClass()],
+      targets,
     );
-    if (!required) return true;
+    const door = !!this.reflector.getAllAndOverride<boolean>(
+      DATA_DOOR_KEY,
+      targets,
+    );
+    if (!declared && !door) return true;
+    const required = [
+      ...(declared ? [declared] : []),
+      ...(door ? [IAM_PERMISSION.DATA_ACCESS] : []),
+    ];
 
     const req = context.switchToHttp().getRequest<{
       user?: AuthenticatedUser;
@@ -62,6 +75,8 @@ export class PermissionsGuard implements CanActivate {
       [SANDBOX_GUEST_REQUEST]?: unknown;
       [SANDBOX_FENCE_ADMITTED]?: boolean;
     }>();
+    if (declared) noteAuditPermission(req, declared);
+    if (door) noteDataAccess(req);
     // Answered from the example world before the handler is reached — there is
     // no privileged read behind this to protect. Refusing here would close a
     // section the fence has deliberately opened, which is how a guest ends up
@@ -91,13 +106,20 @@ export class PermissionsGuard implements CanActivate {
     // Asked before the IAM check: the credential question and the resource
     // question have different answers and different repairs.
     const ceiling = credentialCeiling(user);
-    if (ceiling && !ceiling.has(required)) {
-      throw new ForbiddenException(ceilingRefusal(required, user));
+    const beyondCeiling = required.find((p) => ceiling && !ceiling.has(p));
+    if (beyondCeiling) {
+      noteAuditPermission(req, beyondCeiling);
+      throw new ForbiddenException(ceilingRefusal(beyondCeiling, user));
     }
 
     const principal: IamPrincipal = principalFromUser(user);
-    if (!(await this.policy.check(principal, required))) {
-      throw new ForbiddenException(`Missing required permission: ${required}`);
+    for (const permission of required) {
+      if (!(await this.policy.check(principal, permission))) {
+        noteAuditPermission(req, permission);
+        throw new ForbiddenException(
+          `Missing required permission: ${permission}`,
+        );
+      }
     }
     return true;
   }

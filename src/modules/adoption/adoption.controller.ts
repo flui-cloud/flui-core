@@ -25,6 +25,9 @@ import { ClusterInventoryDto } from '../infrastructure/clusters/dto/cluster-inve
 import { CAManagerService } from '../access/services/ca-manager.service';
 import { RequireSection } from '../iam/decorators/require-section.decorator';
 import { SECTION } from '../iam/constants/iam-sections';
+import { IAM_PERMISSION } from '../iam/constants/iam-permissions';
+import { RequirePermission } from '../iam/decorators/require-permission.decorator';
+import { DataDoor } from '../iam/decorators/data-door.decorator';
 import { Public } from '../auth/decorators/public.decorator';
 import { AdoptionTokenService } from './services/adoption-token.service';
 import {
@@ -74,6 +77,8 @@ export class AdoptionController {
 
   @Post('token')
   @RequireSection(SECTION.INFRASTRUCTURE)
+  @RequirePermission(IAM_PERMISSION.CLUSTER_MANAGE)
+  @DataDoor()
   @ApiBearerAuth()
   @HttpCode(HttpStatus.CREATED)
   @ApiOperation({

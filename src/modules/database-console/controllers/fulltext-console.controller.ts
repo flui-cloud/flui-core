@@ -28,12 +28,14 @@ import {
   FulltextRawDto,
   FulltextSearchDto,
 } from '../dto/fulltext-console.dto';
+import { DataDoor } from '../../iam/decorators/data-door.decorator';
 
 /**
  * Full-text (Meilisearch) console: index list + search browse, a raw REST Dev
  * Tools passthrough (writes gated by the read-only flag), and an NL copilot.
  */
 @UseGuards(PlatformFoundationGuard, AppOwnershipGuard)
+@DataDoor()
 @Controller('applications/:id/fulltext')
 export class FulltextConsoleController {
   constructor(

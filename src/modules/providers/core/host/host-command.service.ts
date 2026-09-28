@@ -42,6 +42,7 @@ export class HostCommandService {
     const cert = await this.certificateSigner.generateEphemeralCertificate(
       undefined,
       options.certTtlSeconds ?? DEFAULT_CERT_TTL_SECONDS,
+      { purpose: 'host command', target: target.host },
     );
     try {
       return await this.nativeSsh.execCommand(

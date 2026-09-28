@@ -1,5 +1,6 @@
 import {
   ForbiddenException,
+  Inject,
   Injectable,
   Logger,
   NotFoundException,
@@ -7,6 +8,15 @@ import {
 import { ApplicationsRepository } from '../../applications/repositories/applications.repository';
 import { ApplicationExposure } from '../../applications/enums/application-exposure.enum';
 import { ApplicationEntity } from '../../applications/entities/application.entity';
+import { ApplicationAccessService } from '../../applications/services/application-access.service';
+import { AuthenticatedUser } from '../../auth/interfaces/authenticated-user.interface';
+import { ceilingWithholds } from '../../auth/utils/credential-ceiling.util';
+import { IAM_PERMISSION } from '../../iam/constants/iam-permissions';
+import {
+  POLICY_ENGINE,
+  PolicyEngine,
+} from '../../iam/interfaces/policy-engine.interface';
+import { principalFromUser } from '../../iam/interfaces/iam.types';
 
 export interface InternalAppAuthzRequest {
   forwardedHost: string | undefined;
@@ -21,14 +31,12 @@ export interface InternalAppAuthzDecision {
   appSlug: string;
 }
 
+export class InternalAppNotPermittedException extends ForbiddenException {}
+
 /**
  * Resolves the internal app targeted by a ForwardAuth subrequest and decides
- * whether the current user is allowed to reach it.
- *
- * MVP authorization model: any authenticated user is allowed to open any app
- * marked `exposure=internal`. This is the single-tenant / self-hosted
- * baseline. When workspace / ownership is introduced, this is the single
- * place to enforce ownerId / membership checks.
+ * whether the current user is allowed to reach it: `app:read` on that app and
+ * `data:access`, since opening an internal app shows what it holds.
  */
 @Injectable()
 export class InternalAppAuthzService {
@@ -36,6 +44,8 @@ export class InternalAppAuthzService {
 
   constructor(
     private readonly applicationsRepository: ApplicationsRepository,
+    private readonly access: ApplicationAccessService,
+    @Inject(POLICY_ENGINE) private readonly policy: PolicyEngine,
   ) {}
 
   /**
@@ -73,5 +83,24 @@ export class InternalAppAuthzService {
       );
     }
     return { app, appSlug: slug };
+  }
+
+  async assertMayOpen(
+    user: AuthenticatedUser,
+    app: ApplicationEntity,
+  ): Promise<void> {
+    const permitted =
+      !ceilingWithholds(user, IAM_PERMISSION.APP_READ) &&
+      !ceilingWithholds(user, IAM_PERMISSION.DATA_ACCESS) &&
+      (await this.access.can(user, IAM_PERMISSION.APP_READ, app)) &&
+      (await this.policy.check(
+        principalFromUser(user),
+        IAM_PERMISSION.DATA_ACCESS,
+      ));
+    if (!permitted) {
+      throw new InternalAppNotPermittedException(
+        `Not allowed to open internal app "${app.slug}"`,
+      );
+    }
   }
 }

@@ -29,6 +29,7 @@ export const IAM_ROLE = {
   OPERATOR: 'operator',
   MAINTAINER: 'maintainer',
   OWNER: 'owner',
+  PLATFORM_OPERATOR: 'platform_operator',
   SANDBOX: 'sandbox',
   SHOWCASE_VIEWER: 'showcase_viewer',
 } as const;
@@ -76,7 +77,11 @@ export const BUILTIN_ROLES: Record<IamRole, IamRoleDef> = {
     key: 'viewer',
     name: 'Viewer',
     description: 'Read-only across everything in scope.',
-    permissions: [IAM_PERMISSION.APP_READ, IAM_PERMISSION.CLUSTER_READ],
+    permissions: [
+      IAM_PERMISSION.APP_READ,
+      IAM_PERMISSION.DATA_ACCESS,
+      IAM_PERMISSION.CLUSTER_READ,
+    ],
     assignable: true,
   },
   /**
@@ -98,6 +103,7 @@ export const BUILTIN_ROLES: Record<IamRole, IamRoleDef> = {
       'View, deploy, operate and remove the apps in scope. Cannot manage access or infrastructure.',
     permissions: [
       IAM_PERMISSION.APP_READ,
+      IAM_PERMISSION.DATA_ACCESS,
       IAM_PERMISSION.APP_WRITE,
       IAM_PERMISSION.APP_DEPLOY,
       IAM_PERMISSION.APP_CREATE,
@@ -123,6 +129,7 @@ export const BUILTIN_ROLES: Record<IamRole, IamRoleDef> = {
       'Operator + the installation itself: clusters, access, integrations, the showcase and the demo.',
     permissions: [
       IAM_PERMISSION.APP_READ,
+      IAM_PERMISSION.DATA_ACCESS,
       IAM_PERMISSION.APP_WRITE,
       IAM_PERMISSION.APP_DEPLOY,
       IAM_PERMISSION.APP_CREATE,
@@ -165,6 +172,7 @@ export const BUILTIN_ROLES: Record<IamRole, IamRoleDef> = {
       'Everything, everywhere, including who else may run this installation.',
     permissions: [
       IAM_PERMISSION.APP_READ,
+      IAM_PERMISSION.DATA_ACCESS,
       IAM_PERMISSION.APP_WRITE,
       IAM_PERMISSION.APP_DEPLOY,
       IAM_PERMISSION.APP_CREATE,
@@ -181,6 +189,7 @@ export const BUILTIN_ROLES: Record<IamRole, IamRoleDef> = {
       IAM_PERMISSION.SHOWCASE_PUBLISH,
       IAM_PERMISSION.SANDBOX_OPERATE,
       IAM_PERMISSION.PLATFORM_UPDATE,
+      IAM_PERMISSION.PLATFORM_PREVIEW,
     ],
     assignable: true,
     // Only an owner makes an owner. A `maintainer` holds `iam:assign-role` and
@@ -188,6 +197,24 @@ export const BUILTIN_ROLES: Record<IamRole, IamRoleDef> = {
     // the top role through the access screen, which is the same privilege ladder
     // section 8 closed on `PATCH /auth/users/:id/role`, entered by another door.
     conferredBy: IAM_PERMISSION.IAM_MANAGE_USERS,
+  },
+  /**
+   * Not a rung of the ladder, deliberately: it holds `cluster:manage` and
+   * `platform:update`, which the ladder puts above every `app:*`, yet of the
+   * application verbs only `app:read`, with no `data:access`.
+   */
+  [IAM_ROLE.PLATFORM_OPERATOR]: {
+    key: 'platform_operator',
+    name: 'Platform operator',
+    description:
+      'Runs the installation — clusters, nodes, updates, backups — without reaching the data of any application.',
+    permissions: [
+      IAM_PERMISSION.APP_READ,
+      IAM_PERMISSION.CLUSTER_READ,
+      IAM_PERMISSION.CLUSTER_MANAGE,
+      IAM_PERMISSION.PLATFORM_UPDATE,
+    ],
+    assignable: true,
   },
   /**
    * A public guest on the shared demo instance. Deliberately NOT "operator minus
@@ -203,6 +230,7 @@ export const BUILTIN_ROLES: Record<IamRole, IamRoleDef> = {
       'A guest of the public demo. Owns its own applications for the life of its tenancy and reaches nothing else.',
     permissions: [
       IAM_PERMISSION.APP_READ,
+      IAM_PERMISSION.DATA_ACCESS,
       IAM_PERMISSION.APP_WRITE,
       IAM_PERMISSION.APP_CREATE,
       IAM_PERMISSION.APP_DEPLOY,
@@ -247,7 +275,8 @@ export const BUILTIN_ROLES: Record<IamRole, IamRoleDef> = {
     name: 'Showcase viewer',
     description:
       'Read-only over the applications the platform’s operators put on display, and nothing else.',
-    permissions: [IAM_PERMISSION.APP_READ],
+    // `data:access` widens nothing: the guest also holds `sandbox`, which carries it.
+    permissions: [IAM_PERMISSION.APP_READ, IAM_PERMISSION.DATA_ACCESS],
     // Comes with a tenancy, like the role above it.
     assignable: false,
   },

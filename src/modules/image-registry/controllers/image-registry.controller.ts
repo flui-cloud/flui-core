@@ -12,6 +12,7 @@ import {
   ParseIntPipe,
   ForbiddenException,
   NotFoundException,
+  UseGuards,
 } from '@nestjs/common';
 import {
   ApiBearerAuth,
@@ -33,6 +34,10 @@ import { RequirePermission } from '../../iam/decorators/require-permission.decor
 import { IAM_PERMISSION } from '../../iam/constants/iam-permissions';
 import { ApplicationAccessService } from '../../applications/services/application-access.service';
 import { ApplicationsRepository } from '../../applications/repositories/applications.repository';
+import {
+  AppAccessGuard,
+  AppAction,
+} from '../../applications/guards/app-access.guard';
 
 @ApiTags('Image Registry')
 @ApiBearerAuth()
@@ -62,6 +67,17 @@ export class ImageRegistryController {
     const app = await this.applications.findById(image.appId);
     if (!app) throw new NotFoundException(`Image ${imageId} not found`);
     await this.appAccess.assertCan(user, IAM_PERMISSION.APP_WRITE, app);
+  }
+
+  private async assertMayDeployImage(
+    imageId: string,
+    user: AuthenticatedUser | undefined,
+  ): Promise<void> {
+    if (!user) throw new ForbiddenException('Unauthenticated');
+    const image = await this.imageRegistryService.getImage(imageId);
+    const app = await this.applications.findById(image.appId);
+    if (!app) throw new NotFoundException(`Image ${imageId} not found`);
+    await this.appAccess.assertCan(user, IAM_PERMISSION.APP_DEPLOY, app);
   }
 
   @Get()
@@ -144,6 +160,7 @@ export class ImageRegistryController {
   }
 
   @Post(':imageId/deploy')
+  @RequirePermission(IAM_PERMISSION.APP_DEPLOY)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Deploy this image',
@@ -156,8 +173,12 @@ export class ImageRegistryController {
     @Param('imageId') imageId: string,
     @Req() req: Request,
   ): Promise<{ operationId: string; status: string }> {
-    const { userId } = req.user as AuthenticatedUser;
-    const op = await this.imageRegistryService.deployImageById(imageId, userId);
+    const user = req.user as AuthenticatedUser;
+    await this.assertMayDeployImage(imageId, user);
+    const op = await this.imageRegistryService.deployImageById(
+      imageId,
+      user.userId,
+    );
     return { operationId: op.id, status: op.status };
   }
 
@@ -233,6 +254,8 @@ export class ImageRegistryController {
   }
 
   @Post('apps/:appId/ghcr/:tag/deploy')
+  @UseGuards(AppAccessGuard)
+  @AppAction(IAM_PERMISSION.APP_DEPLOY)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Redeploy an older GHCR tag (rollback)',
@@ -242,16 +265,10 @@ export class ImageRegistryController {
   @ApiResponse({ status: 200, description: 'Deploy triggered' })
   @ApiResponse({ status: 404, description: 'Tag not found on GHCR' })
   async redeployGhcrTag(
-    @Req() req: Request,
     @Param('appId') appId: string,
     @Param('tag') tag: string,
   ): Promise<{ operationId: string; status: string }> {
-    const { userId } = req.user as AuthenticatedUser;
-    const op = await this.imageRegistryService.redeployGhcrTag(
-      appId,
-      tag,
-      userId,
-    );
+    const op = await this.imageRegistryService.redeployGhcrTag(appId, tag);
     return { operationId: op.id, status: op.status };
   }
 }

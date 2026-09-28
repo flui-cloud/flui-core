@@ -17,11 +17,13 @@ import { DbQueryService } from '../services/db-query.service';
 import { DbAssistResult, DbAssistService } from '../services/db-assist.service';
 import { DbConnectionInfoResponseDto } from '../dto/db-connection-info-response.dto';
 import { SchemaTree, SqlQueryResult } from '../engine/sql-engine';
+import { DataDoor } from '../../iam/decorators/data-door.decorator';
 
 const DEFAULT_STATEMENT_TIMEOUT_MS = 30_000;
 const DEFAULT_MAX_ROWS = 1000;
 
 @UseGuards(PlatformFoundationGuard, AppOwnershipGuard)
+@DataDoor()
 @Controller('applications/:id/db')
 export class DbConsoleController {
   constructor(

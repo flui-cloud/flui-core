@@ -16,6 +16,7 @@ import { dbMigrationClause } from '../migration-clause';
 import { IAM_PERMISSION } from '../../iam/constants/iam-permissions';
 import { DbMigrationService } from '../services/db-migration.service';
 import { CreateDbMigrationDto } from '../dto/create-db-migration.dto';
+import { DataDoor } from '../../iam/decorators/data-door.decorator';
 
 /**
  * Database migration machine (plan §6, inner core). Management-plane / admin
@@ -44,6 +45,7 @@ export class DbMigrationController {
   }
 
   @Post()
+  @DataDoor()
   @RequirePermission(IAM_PERMISSION.MIGRATION_EXECUTE)
   // Every call asks. The migration does not exist until this call makes it, so
   // there is no id an "always" could be pinned to, and a standing yes would
@@ -76,6 +78,7 @@ export class DbMigrationController {
   }
 
   @Post(':id/cutover')
+  @DataDoor()
   @RequirePermission(IAM_PERMISSION.MIGRATION_EXECUTE)
   @ActionCycle({
     action: 'POST /db-migrations/:id/cutover',

@@ -25,6 +25,7 @@ import { AppBuildService } from '../services/app-build.service';
 import { BuildAccessService } from '../services/build-access.service';
 import { TriggerStandaloneBuildDto } from '../dto/trigger-standalone-build.dto';
 import { AppBuildResponseDto } from '../dto/app-build-response.dto';
+import { DataDoor } from '../../iam/decorators/data-door.decorator';
 
 /**
  * Builds that do not belong to an application yet — the wizard builds a
@@ -81,6 +82,7 @@ export class StandaloneBuildsController {
    * Get a build by ID (works for both standalone and app-linked builds).
    */
   @Get(':buildId')
+  @DataDoor()
   @ApiOperation({ summary: 'Get a build by ID' })
   @ApiResponse({ status: 200, type: AppBuildResponseDto })
   async getBuild(
