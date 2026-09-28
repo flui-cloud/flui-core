@@ -347,7 +347,7 @@ describe('the urgency ladder', () => {
 
     expect(result.rungs[0]).toMatchObject({ outcome: 'refused-by-limit' });
     expect(result.rungs[0].note).toContain('may not go past 2');
-    expect(result.asks).toContain('raise what it may spend');
+    expect(result.asks).toContain('raise its spending ceiling');
   });
 });
 
@@ -820,7 +820,7 @@ describe('one monthly price everywhere', () => {
 describe('the block an alarm names, and the ways out', () => {
   const demand = { name: 'app', cpuMillicores: 100, memoryMi: 6144 };
 
-  it('names the spend cap and the smallest ceiling that is enough', () => {
+  it('names the spending ceiling and the smallest one that is enough', () => {
     const block = alarmBlock(
       input({
         demand,
@@ -836,11 +836,13 @@ describe('the block an alarm names, and the ways out', () => {
         },
       }),
     );
-    expect(block.headline).toBe('Scaling needed — blocked by the spend cap');
+    expect(block.headline).toBe(
+      'Scaling needed — blocked by the spending ceiling',
+    );
     expect(block.exits[0]).toMatchObject({
       kind: 'raise-cap',
       toEur: 31,
-      label: 'Raise the cap to €31',
+      label: 'Raise the spending ceiling to €31',
     });
     expect(block.exits.map((e) => e.kind)).toContain('attach');
   });
@@ -870,9 +872,9 @@ describe('the block an alarm names, and the ways out', () => {
     });
   });
 
-  it('names the node ceiling when the fleet is at it', () => {
+  it('names the node maximum when the fleet is at it', () => {
     const block = alarmBlock(input({ demand, ceiling: 2 }));
-    expect(block.headline).toContain('at its ceiling of 2 nodes');
+    expect(block.headline).toContain('at its maximum of 2 nodes');
     expect(block.exits[0]).toMatchObject({
       kind: 'raise-max-nodes',
       toNodes: 3,
@@ -939,5 +941,83 @@ describe('a standing order in any region', () => {
 
   it('leaves a named region as one rung', () => {
     expect(evaluateStandingOrder(input(), 'cx32', 'fsn1')).toHaveLength(1);
+  });
+});
+
+describe('the ways out name only machines that would hold the app', () => {
+  const demand = { name: 'app', cpuMillicores: 100, memoryMi: 1536 };
+  const small = shape({
+    shape: 'small',
+    cores: 2,
+    memoryMi: 2048,
+    architecture: 'x86',
+    prices: [{ region: 'fsn1', hourlyEur: 0.001, monthlyEur: 1 }],
+  });
+  const arm = shape({
+    shape: 'arm16',
+    cores: 4,
+    memoryMi: 16384,
+    architecture: 'arm',
+    prices: [{ region: 'fsn1', hourlyEur: 0.002, monthlyEur: 2 }],
+  });
+  const big = shape({
+    shape: 'big',
+    cores: 4,
+    memoryMi: 8192,
+    architecture: 'x86',
+    prices: [{ region: 'fsn1', hourlyEur: 0.01, monthlyEur: 8 }],
+  });
+  const onList = (shapes: string[]) =>
+    input({
+      demand,
+      group: {
+        provider: 'hetzner',
+        regions: ['fsn1'],
+        shapes,
+        strategy: 'closest',
+        hourlyBillingOnly: false,
+        maxMonthlyCost: null,
+        requirement: null,
+        capability: HETZNER,
+      },
+      shapes: { shapes: [small, arm, big, CX22], read: true },
+    });
+
+  it('keeps a machine too small once the measured system share is taken', () => {
+    const fixed = alarmBlock({ ...onList(['cx22']), ceiling: 5 });
+    expect(fixed.exits.find((e) => e.kind === 'add-shape')?.shape).toBe(
+      'small',
+    );
+
+    const measured = alarmBlock({
+      ...onList(['cx22']),
+      architecture: 'x86',
+      reserve: { cpuMillicores: 400, memoryMi: 1100 },
+    });
+    expect(measured.exits.find((e) => e.kind === 'add-shape')?.shape).toBe(
+      'big',
+    );
+  });
+
+  it('never proposes an ARM machine to a cluster that runs on x86', () => {
+    const block = alarmBlock({
+      ...onList(['cx22']),
+      architecture: 'x86',
+      reserve: { cpuMillicores: 400, memoryMi: 1100 },
+    });
+    expect(block.exits.map((e) => e.shape)).not.toContain('arm16');
+    expect(block.exits.map((e) => e.label).join(' ')).not.toContain('arm16');
+  });
+
+  it('refuses an ARM machine on the list by name, saying why', () => {
+    const result = walkLadder({ ...onList(['arm16']), architecture: 'x86' });
+    expect(result.chosen).toBeNull();
+    expect(result.rungs[0]).toMatchObject({ outcome: 'refused-by-limit' });
+    expect(result.rungs[0].note).toContain('ARM machine');
+  });
+
+  it('refuses nothing on architecture where the fleet does not say', () => {
+    const result = walkLadder({ ...onList(['arm16']), architecture: null });
+    expect(result.chosen?.shape).toBe('arm16');
   });
 });

@@ -228,7 +228,7 @@ function readBounds(
   if (!record) {
     problems.push(
       input === undefined
-        ? 'missing `bounds`: a group needs a floor, a target and a ceiling'
+        ? 'missing `bounds`: a group needs a minimum, a target and a maximum of nodes'
         : `\`bounds\` must be a block with min, desired and max, got ${describeType(input)}`,
     );
     return fallback;
@@ -255,7 +255,7 @@ function readBounds(
   }
   if (desired > max) {
     problems.push(
-      `bounds.desired (${desired}) is above bounds.max (${max}): the ceiling is as far as urgency may go ` +
+      `bounds.desired (${desired}) is above bounds.max (${max}): the maximum is as far as urgency may go ` +
         'right now, so the target cannot sit above it',
     );
   }
@@ -297,7 +297,7 @@ function readLimits(
     if (typeof cap !== 'number' || !Number.isFinite(cap) || cap < 0) {
       problems.push(
         '`limits.maxMonthlyCost` must be an amount of money, 0 or more ' +
-          '(leave it out for no ceiling at all — which is not the same as 0)',
+          '(leave it out for no spending ceiling at all — which is not the same as 0)',
       );
     } else {
       maxMonthlyCost = cap;

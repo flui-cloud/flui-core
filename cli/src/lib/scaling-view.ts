@@ -1,6 +1,7 @@
 import type {
   ClusterScalingRowDto,
   DrainCheckDto,
+  ScalingCostDto,
   ProviderScalingCapabilityDto,
   ScalingActuationDto,
   ScalingDecisionResponseDto,
@@ -203,7 +204,7 @@ export function formatBounds(bounds: {
   desired: number;
   max: number;
 }): string {
-  return `floor ${bounds.min} · target ${bounds.desired} · ceiling ${bounds.max}`;
+  return `min ${bounds.min} · target ${bounds.desired} · max ${bounds.max} nodes`;
 }
 
 function formatMoment(iso: string): string {
@@ -325,7 +326,7 @@ export function boundRows(
 ): BoundRow[] {
   return [
     {
-      role: 'floor',
+      role: 'minimum',
       field: 'min',
       value: bounds.min,
       meaning: BOUND_MEANINGS.min,
@@ -337,7 +338,7 @@ export function boundRows(
       meaning: BOUND_MEANINGS.desired,
     },
     {
-      role: 'ceiling',
+      role: 'maximum',
       field: 'max',
       value: bounds.max,
       meaning:
@@ -350,7 +351,7 @@ const CANDIDATE_REASONS: Record<CandidateOutcome, string> = {
   'would-buy': 'this is the one it would buy',
   unavailable: 'nothing to buy there right now',
   'does-not-fit': 'too small for the work that is waiting',
-  'over-budget': 'the monthly ceiling would be passed',
+  'over-budget': 'the spending ceiling would be passed',
   'refused-by-limit':
     'available and affordable, and this group’s own rules exclude it',
   alert: 'nothing can be bought here — a person is asked instead',
@@ -630,12 +631,67 @@ function exitCommand(
 ): string {
   switch (exit.kind) {
     case 'raise-cap':
-      return '  (flui scaling apply -f, limits.maxMonthlyCost)';
+      return exit.toEur === null
+        ? '  (flui scaling set --max-monthly)'
+        : `  (flui scaling set --max-monthly ${exit.toEur})`;
     case 'raise-max-nodes':
-      return '  (flui scaling apply -f, bounds.max)';
+      return exit.toNodes === null
+        ? '  (flui scaling set --max)'
+        : `  (flui scaling set --max ${exit.toNodes})`;
     case 'add-shape':
-      return '  (flui scaling apply -f, shapes)';
+      return '  (flui scaling set --shapes)';
     case 'attach':
       return '  (flui node connect)';
   }
+}
+
+export interface CostLine {
+  label: string;
+  value: string;
+}
+
+/**
+ * What the node limits cost, as the API priced them: one line per scenario and
+ * the spending ceiling under them. Never a sum of its own — a figure the API
+ * could not price stays a dash.
+ */
+export function costLines(cost: ScalingCostDto | null | undefined): {
+  says: string;
+  scenarios: CostLine[];
+  ceiling: string;
+  ceilingStops: boolean;
+  suggested: number | null;
+} | null {
+  if (!cost || !Array.isArray(cost.scenarios)) return null;
+  return {
+    says: cost.says,
+    scenarios: cost.scenarios.map((scenario) => ({
+      label: scenario.label,
+      value: eurRange(scenario.lowEur, scenario.highEur),
+    })),
+    ceiling: cost.ceiling.says,
+    ceilingStops: cost.ceiling.stopsBeforeMax,
+    suggested: cost.suggestedCeilingEur,
+  };
+}
+
+function eurRange(low: number | null, high: number | null): string {
+  if (low === null || high === null) return `${NO_PRICE} (no hourly price)`;
+  return low === high
+    ? formatEurPerMonth(low)
+    : `${formatEur(low)} – ${formatEurPerMonth(high)}`;
+}
+
+/** Every bound counts the whole fleet, master included. */
+export const MAX_NODES_ALLOWED = 20;
+
+export function boundProblem(
+  flag: string,
+  value: number | undefined,
+): string | null {
+  if (value === undefined) return null;
+  if (!Number.isInteger(value) || value < 1 || value > MAX_NODES_ALLOWED) {
+    return `--${flag} takes a number of nodes from 1 to ${MAX_NODES_ALLOWED} (master included), not ${value}`;
+  }
+  return null;
 }

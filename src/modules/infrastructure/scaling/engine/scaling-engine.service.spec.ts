@@ -193,7 +193,7 @@ describe('the preview a person reads', () => {
       cluster: cluster(),
     });
     const preview = await h.engine.preview('g-1');
-    expect(preview.blocked?.headline).toContain('spend cap');
+    expect(preview.blocked?.headline).toContain('spending ceiling');
   });
 
   it('raises no spend-cap alarm while the node that will host the work is on its way', async () => {
@@ -205,6 +205,27 @@ describe('the preview a person reads', () => {
     h.groups.nodeOnItsWay.mockResolvedValue(true);
     const preview = await h.engine.preview('g-1');
     expect(preview.blocked).toBeNull();
+  });
+
+  it('answers without the room when the cluster does not say it in time', async () => {
+    jest.useFakeTimers();
+    try {
+      const h = harness();
+      h.groups.withCluster.mockResolvedValue({
+        group: group(),
+        cluster: cluster(),
+      });
+      h.drain.fleetRoom.mockReturnValue(new Promise(() => undefined));
+
+      const answered = h.engine.preview('g-1');
+      await jest.advanceTimersByTimeAsync(8_000);
+      const preview = await answered;
+
+      expect(preview.room).toBeNull();
+      expect(preview.ladder.length).toBeGreaterThan(0);
+    } finally {
+      jest.useRealTimers();
+    }
   });
 });
 

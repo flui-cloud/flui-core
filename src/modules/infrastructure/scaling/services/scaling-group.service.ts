@@ -30,6 +30,8 @@ import {
   buysOnItsOwn,
 } from '../scaling.core';
 import { PurchaseHold, purchaseHold } from '../engine/purchase-hold';
+import { ShapeFactsService } from '../engine/shape-facts.service';
+import { ScalingCost, scalingCost } from '../cost-scenarios.core';
 import {
   InfrastructureOperationEntity,
   OperationStatus,
@@ -37,6 +39,7 @@ import {
 } from '../../servers/entities/infrastructure-operations.entity';
 import {
   EditScalingGroupDto,
+  ScalingCostRequestDto,
   ScalingLimitsDto,
   StandingOrderDto,
   WriteScalingGroupDto,
@@ -94,7 +97,78 @@ export class ScalingGroupService {
     @InjectRepository(ClusterNodeEntity)
     private readonly nodes: Repository<ClusterNodeEntity>,
     @Optional() private readonly providers?: ProviderFactory,
+    @Optional() private readonly facts?: ShapeFactsService,
   ) {}
+
+  /**
+   * What these node limits cost with the provider's own prices. Computed here
+   * once for every surface, so no screen multiplies a price of its own.
+   */
+  async costOf(
+    group: Pick<
+      ScalingGroupEntity,
+      'minNodes' | 'maxNodes' | 'shapes' | 'regions' | 'maxMonthlyCost'
+    >,
+    cluster: ClusterEntity,
+    buyable: string[] | null,
+  ): Promise<ScalingCost> {
+    const capability = this.capabilityOf(cluster.provider);
+    const declared = group.regions?.length
+      ? group.regions
+      : [cluster.region].filter(Boolean);
+    const regions = buyable
+      ? declared.filter((region) => buyable.includes(region))
+      : declared;
+    const facts =
+      capability.hasCatalogue && this.facts
+        ? await this.facts.read(cluster.provider)
+        : null;
+    return scalingCost({
+      provider: cluster.provider,
+      hasCatalogue: capability.hasCatalogue,
+      min: group.minNodes,
+      max: group.maxNodes,
+      shapes: group.shapes ?? [],
+      regions,
+      maxMonthlyCost: group.maxMonthlyCost,
+      facts,
+    });
+  }
+
+  /** The same reading for a draft that is not written yet. */
+  async costOfDraft(
+    clusterId: string,
+    dto: ScalingCostRequestDto,
+  ): Promise<ScalingCost> {
+    const cluster = await this.clusterOrFail(clusterId);
+    const capability = this.capabilityOf(cluster.provider);
+    const stored = await this.groups.findOne({
+      where: { clusterId },
+      order: { createdAt: 'ASC' },
+    });
+    const min = dto.bounds?.min ?? stored?.minNodes ?? MIN_FLEET_NODES;
+    const max = dto.bounds?.max ?? stored?.maxNodes ?? min;
+    const { maxMonthlyCost = stored?.maxMonthlyCost ?? null } = dto;
+    if (min > max) {
+      throw new BadRequestException(
+        'The minimum cannot sit above the maximum: min must be <= max',
+      );
+    }
+    return this.costOf(
+      {
+        minNodes: min,
+        maxNodes: max,
+        shapes:
+          dto.shapes ??
+          stored?.shapes ??
+          (await this.defaultShapes(cluster, capability)),
+        regions: dto.regions ?? stored?.regions ?? [],
+        maxMonthlyCost,
+      },
+      cluster,
+      await this.buyableFor(cluster),
+    );
+  }
 
   /** A group that names no machine buys the one the cluster was built with, not nothing. */
   private async defaultShapes(
@@ -228,10 +302,14 @@ export class ScalingGroupService {
       rows.map((row) => this.purchaseOf(row)),
     );
     const buyable = await this.buyableFor(cluster);
+    const costs = await Promise.all(
+      rows.map((row) => this.costOf(row, cluster, buyable)),
+    );
     return rows.map((row, index) =>
       this.toDto(
         row,
         cluster,
+        costs[index],
         drains[index],
         buyable,
         holds[index],
@@ -243,11 +321,13 @@ export class ScalingGroupService {
   async get(id: string): Promise<ScalingGroupResponseDto> {
     const group = await this.groupOrFail(id);
     const cluster = await this.clusterOrFail(group.clusterId);
+    const buyable = await this.buyableFor(cluster);
     return this.toDto(
       group,
       cluster,
+      await this.costOf(group, cluster, buyable),
       await this.lastDrain(group.id),
-      await this.buyableFor(cluster),
+      buyable,
       await this.holdOf(group),
       await this.purchaseOf(group),
     );
@@ -411,7 +491,14 @@ export class ScalingGroupService {
     await this.resolveReplacedNodes(draft, clusterId);
     await this.assertNameFree(clusterId, draft.name, null);
 
-    return this.toDto(await this.groups.save(draft), cluster, null, buyable);
+    const saved = await this.groups.save(draft);
+    return this.toDto(
+      saved,
+      cluster,
+      await this.costOf(saved, cluster, buyable),
+      null,
+      buyable,
+    );
   }
 
   async update(
@@ -467,7 +554,14 @@ export class ScalingGroupService {
         by,
       );
     }
-    return this.toDto(saved, cluster, null, buyable, await this.holdOf(saved));
+    return this.toDto(
+      saved,
+      cluster,
+      await this.costOf(saved, cluster, buyable),
+      null,
+      buyable,
+      await this.holdOf(saved),
+    );
   }
 
   /** Moves the floor and the target to `min` (`boundsAtFloor`). */
@@ -793,7 +887,7 @@ export class ScalingGroupService {
     }
     return {
       acts: true,
-      says: `This group buys through the provider API on its own, up to €${group.maxMonthlyCost} a month and ${group.maxNodes} nodes.`,
+      says: `This group buys through the provider API on its own, up to ${group.maxNodes} ${group.maxNodes === 1 ? 'node' : 'nodes'}. Under that, the engine never lets the fleet's monthly list price pass the spending ceiling of €${group.maxMonthlyCost} a month.`,
       ...named,
     };
   }
@@ -801,6 +895,7 @@ export class ScalingGroupService {
   private toDto(
     group: ScalingGroupEntity,
     cluster: ClusterEntity,
+    cost: ScalingCost,
     drain: DrainCheck | null = null,
     buyableRegions: string[] | null = null,
     hold: PurchaseHold | null = null,
@@ -847,6 +942,7 @@ export class ScalingGroupService {
           }
         : null,
       purchase,
+      cost,
     };
   }
 }
@@ -873,7 +969,7 @@ function standingOrder(dto: StandingOrderDto): StandingOrderConfig {
 function assertMoneyCeiling(group: ScalingGroupEntity): void {
   if (group.provision === 'automatic' && !buysOnItsOwn(group)) {
     throw new BadRequestException(
-      'A group that buys on its own needs a monthly ceiling in euros: set limits.maxMonthlyCost above 0, or leave the group on "manual"',
+      'A group that buys on its own needs a spending ceiling, the safety net the engine checks before every purchase: set limits.maxMonthlyCost above 0 (the group reports a suggested one that covers its worst case), or leave the group on "manual"',
     );
   }
 }

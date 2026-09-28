@@ -27,6 +27,7 @@ import { ObservabilityModule } from '../../observability/observability.module';
 import { ScalingAlarmService } from './engine/scaling-alarm.service';
 import { ScalingActuatorService } from './engine/scaling-actuator.service';
 import { DrainFeasibilityService } from './engine/drain-feasibility.service';
+import { NodeReserveService } from './engine/node-reserve.service';
 
 @Module({
   imports: [
@@ -67,6 +68,7 @@ import { DrainFeasibilityService } from './engine/drain-feasibility.service';
     // would tie the decision loop to everything that acts.
     UnschedulablePodsService,
     DrainFeasibilityService,
+    NodeReserveService,
     ScalingEngineService,
     ScalingActuatorService,
     ScalingAlarmService,

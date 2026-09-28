@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { IsNull, Repository } from 'typeorm';
 import { NodeBillableIntervalEntity } from '../entities/node-billable-interval.entity';
@@ -8,6 +8,7 @@ import {
 } from '../entities/volume-billable-interval.entity';
 import { ClusterEntity } from '../entities/cluster.entity';
 import { NodeType } from '../entities/cluster-node.entity';
+import { CostRatesService } from './cost-rates.service';
 
 interface OpenNodeIntervalInput {
   clusterId: string;
@@ -43,6 +44,7 @@ export class BillingIntervalsService {
     private readonly nodeIntervalRepo: Repository<NodeBillableIntervalEntity>,
     @InjectRepository(VolumeBillableIntervalEntity)
     private readonly volumeIntervalRepo: Repository<VolumeBillableIntervalEntity>,
+    @Optional() private readonly rates?: CostRatesService,
   ) {}
 
   async openNodeInterval(input: OpenNodeIntervalInput): Promise<void> {
@@ -63,13 +65,51 @@ export class BillingIntervalsService {
         nodeType: input.nodeType,
         startedAt: input.startedAt ?? new Date(),
         endedAt: null,
-        metadata: input.metadata ?? {},
+        metadata: {
+          ...input.metadata,
+          ...(await this.nodePrice(input)),
+        },
       });
       await this.nodeIntervalRepo.save(entity);
     } catch (err) {
       this.logger.warn(
         `openNodeInterval failed for node ${input.nodeId}: ${(err as Error).message}`,
       );
+    }
+  }
+
+  /** The price the node is bought at, kept with its lifetime so a later list-price change never rewrites what it cost. */
+  private async nodePrice(
+    input: OpenNodeIntervalInput,
+  ): Promise<{ price?: unknown }> {
+    if (!this.rates) return {};
+    try {
+      const price = await this.rates.stampNode(
+        input.provider,
+        input.serverType,
+        input.region,
+        input.location,
+        'recorded',
+      );
+      return price ? { price } : {};
+    } catch (err) {
+      this.logger.warn(
+        `No price recorded for node ${input.nodeId}: ${(err as Error).message}`,
+      );
+      return {};
+    }
+  }
+
+  private async volumePrice(provider: string): Promise<{ price?: unknown }> {
+    if (!this.rates) return {};
+    try {
+      const price = await this.rates.stampVolume(provider, 'recorded');
+      return price ? { price } : {};
+    } catch (err) {
+      this.logger.warn(
+        `No price recorded for a ${provider} volume: ${(err as Error).message}`,
+      );
+      return {};
     }
   }
 
@@ -104,7 +144,10 @@ export class BillingIntervalsService {
         sizeGb: input.sizeGb,
         startedAt: input.startedAt ?? new Date(),
         endedAt: null,
-        metadata: input.metadata ?? {},
+        metadata: {
+          ...input.metadata,
+          ...(await this.volumePrice(input.provider)),
+        },
       });
       await this.volumeIntervalRepo.save(entity);
     } catch (err) {

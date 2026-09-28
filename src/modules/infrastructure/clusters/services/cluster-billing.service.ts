@@ -1,60 +1,42 @@
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { LessThanOrEqual, MoreThanOrEqual, IsNull, Repository } from 'typeorm';
+import { IsNull, Repository } from 'typeorm';
 import { ClusterEntity } from '../entities/cluster.entity';
 import { NodeBillableIntervalEntity } from '../entities/node-billable-interval.entity';
-import {
-  VolumeBillableIntervalEntity,
-  VolumeBillableKind,
-} from '../entities/volume-billable-interval.entity';
+import { VolumeBillableIntervalEntity } from '../entities/volume-billable-interval.entity';
 import { ProviderFactory } from 'src/modules/providers/services/provider.factory';
 import { HetznerProviderService } from 'src/modules/providers/services/hetzner-provider.service';
 import { CloudProvider } from 'src/modules/providers/enums/cloud-provider.enum';
-import { NodeSizeDto } from 'src/modules/providers/dto/node-size.dto';
 import {
   ClusterBillingResponseDto,
   NodeMonthToDateDto,
   VolumeMonthToDateDto,
-  RunRateDto,
   BillingPeriodDto,
   BillingBreakdownDto,
   TrafficInfoDto,
 } from '../dto/cluster-billing.dto';
+import {
+  Amount,
+  ZERO,
+  accrueNode,
+  accrueVolume,
+  addAmount,
+  CalendarMonth,
+  calendarMonth,
+  nodeAmount,
+} from '../costs/cost-accrual';
+import { billingOf } from '../costs/provider-billing';
+import {
+  CostRatesService,
+  StampedNodePrice,
+  StampedVolumePrice,
+} from './cost-rates.service';
 
-interface ServerTypePricing {
-  priceHourlyGross: string;
-  priceHourlyNet: string;
-  priceMonthlyGross: string;
-  priceMonthlyNet: string;
-}
-
-type ServerTypePricingMap = Map<string, Map<string, ServerTypePricing>>;
-
-const CACHE_TTL_MS = 15 * 60 * 1000;
-const BYTES_PER_TB = 1_000_000_000_000;
 const MS_PER_HOUR = 3_600_000;
-const MS_PER_DAY = 24 * MS_PER_HOUR;
-const HOURS_PER_MONTH = 730;
-
-// €/GB·month for Flui-managed block storage. Hetzner: €0.044 gross; Scaleway
-// SBS 5k IOPS: €0.05 gross. Net values are gross / 1.19 (Hetzner VAT) and
-// gross / 1.20 (Scaleway VAT) — net used only when net VAT is requested.
-const VOLUME_RATES_PER_GB_MONTH: Record<
-  string,
-  { gross: number; net: number }
-> = {
-  [CloudProvider.HETZNER]: { gross: 0.044, net: 0.044 / 1.19 },
-  [CloudProvider.SCALEWAY]: { gross: 0.05, net: 0.05 / 1.2 },
-};
 
 @Injectable()
 export class ClusterBillingService {
   private readonly logger = new Logger(ClusterBillingService.name);
-  private pricingCache: {
-    data: ServerTypePricingMap;
-    fetchedAt: number;
-    provider: CloudProvider;
-  } | null = null;
 
   constructor(
     @InjectRepository(ClusterEntity)
@@ -64,10 +46,12 @@ export class ClusterBillingService {
     @InjectRepository(VolumeBillableIntervalEntity)
     private readonly volumeIntervalRepo: Repository<VolumeBillableIntervalEntity>,
     private readonly providerFactory: ProviderFactory,
+    private readonly rates: CostRatesService,
   ) {}
 
   async getClusterBilling(
     clusterId: string,
+    now: Date = new Date(),
   ): Promise<ClusterBillingResponseDto> {
     const cluster = await this.clusterRepository.findOne({
       where: { id: clusterId },
@@ -77,53 +61,49 @@ export class ClusterBillingService {
       throw new NotFoundException(`Cluster ${clusterId} not found`);
     }
 
-    const now = new Date();
     const billingPeriod = this.computeBillingPeriod(now);
 
     // BYOS (and any provider Flui doesn't price): no provider pricing API — you
     // pay your own infra provider, Flui bills nothing — so report zeros, not 500.
-    if (!this.providerHasPricing(cluster.provider)) {
+    if (!this.rates.isPriced(cluster.provider)) {
       return this.zeroBilling(cluster, billingPeriod, now);
     }
 
-    const providerEnum = cluster.provider as CloudProvider;
-    const provider = this.providerFactory.getProvider(providerEnum);
-    const pricingMap = await this.getServerTypePricing(providerEnum, provider);
-
-    const [nodeMtd, volumeMtd, runRate, traffic] = await Promise.all([
-      this.computeNodeMonthToDate(cluster, pricingMap, billingPeriod, now),
-      this.computeVolumeMonthToDate(cluster, billingPeriod, now),
-      this.computeRunRate(cluster, pricingMap),
-      this.computeTraffic(cluster, provider, pricingMap),
+    const month = calendarMonth(now);
+    const billing = billingOf(cluster.provider);
+    const caps = billing?.capsAtMonthlyPrice ?? false;
+    const [nodeIntervals, volumeIntervals, vat] = await Promise.all([
+      this.intervalsOf(this.nodeIntervalRepo, cluster.id, month.start, now),
+      this.intervalsOf(this.volumeIntervalRepo, cluster.id, month.start, now),
+      this.rates.vat(cluster.provider),
     ]);
 
-    const mtdComputeGross = nodeMtd.reduce(
-      (sum, n) => sum + Number.parseFloat(n.costGross),
-      0,
-    );
-    const mtdComputeNet = nodeMtd.reduce(
-      (sum, n) => sum + Number.parseFloat(n.costNet),
-      0,
-    );
-    const mtdStorageGross = volumeMtd.reduce(
-      (sum, v) => sum + Number.parseFloat(v.costGross),
-      0,
-    );
-    const mtdStorageNet = volumeMtd.reduce(
-      (sum, v) => sum + Number.parseFloat(v.costNet),
-      0,
-    );
-    const mtdTrafficGross = Number.parseFloat(traffic.overageCostGross);
-    const mtdTrafficNet = Number.parseFloat(traffic.overageCostNet);
+    const tally = newTally();
+    await this.tallyNodes(tally, cluster, nodeIntervals, month, now, caps);
+    await this.tallyVolumes(tally, cluster, volumeIntervals, month, now);
+    const { spent, forecast, runRate, nodes, volumes } = tally;
 
-    const monthToDateBreakdown: BillingBreakdownDto = {
-      computeGross: mtdComputeGross.toFixed(4),
-      computeNet: mtdComputeNet.toFixed(4),
-      storageGross: mtdStorageGross.toFixed(4),
-      storageNet: mtdStorageNet.toFixed(4),
-      trafficGross: mtdTrafficGross.toFixed(4),
-      trafficNet: mtdTrafficNet.toFixed(4),
+    const traffic = await this.computeTraffic(cluster);
+    const trafficAmount: Amount = {
+      net: Number.parseFloat(traffic.overageCostNet),
+      gross: Number.parseFloat(traffic.overageCostGross),
     };
+
+    const monthToDateBreakdown = breakdownOf(
+      spent.compute,
+      spent.storage,
+      trafficAmount,
+      4,
+    );
+    const spentTotal = addAmount(
+      addAmount(spent.compute, spent.storage),
+      trafficAmount,
+    );
+    const forecastTotal = addAmount(
+      addAmount(forecast.compute, forecast.storage),
+      trafficAmount,
+    );
+    const runRateTotal = addAmount(runRate.compute, runRate.storage);
 
     return {
       clusterId: cluster.id,
@@ -133,261 +113,221 @@ export class ClusterBillingService {
       currency: 'EUR',
       billingPeriod,
       monthToDate: {
-        totalGross: (
-          mtdComputeGross +
-          mtdStorageGross +
-          mtdTrafficGross
-        ).toFixed(4),
-        totalNet: (mtdComputeNet + mtdStorageNet + mtdTrafficNet).toFixed(4),
+        totalGross: grossOf(spentTotal).toFixed(4),
+        totalNet: spentTotal.net.toFixed(4),
         breakdown: monthToDateBreakdown,
-        nodes: nodeMtd,
-        volumes: volumeMtd,
+        nodes: [...nodes.values()],
+        volumes: [...volumes.values()],
         traffic,
       },
-      runRate,
+      forecast: {
+        totalGross: grossOf(forecastTotal).toFixed(2),
+        totalNet: forecastTotal.net.toFixed(2),
+        breakdown: breakdownOf(
+          forecast.compute,
+          forecast.storage,
+          trafficAmount,
+          2,
+        ),
+        remainingHours: Math.max(
+          0,
+          Math.floor((month.end.getTime() - now.getTime()) / MS_PER_HOUR),
+        ),
+      },
+      runRate: {
+        monthlyGross: grossOf(runRateTotal).toFixed(2),
+        monthlyNet: runRateTotal.net.toFixed(2),
+        breakdown: breakdownOf(runRate.compute, runRate.storage, ZERO, 2),
+        activeNodes: tally.activeNodes,
+        activeVolumes: tally.activeVolumes,
+      },
+      vat: { included: vat.included, ratePercent: vat.ratePercent },
+      billedAs: billing?.billedAs ?? null,
+      unpricedItems: tally.unpriced,
+      listPricedItems: tally.listPriced,
       calculatedAt: now,
     };
   }
 
-  // ─── Compute (nodes) ───────────────────────────────────────────────────────
-
-  private async computeNodeMonthToDate(
+  private async tallyNodes(
+    tally: Tally,
     cluster: ClusterEntity,
-    pricingMap: ServerTypePricingMap,
-    period: BillingPeriodDto,
+    intervals: NodeBillableIntervalEntity[],
+    month: CalendarMonth,
     now: Date,
-  ): Promise<NodeMonthToDateDto[]> {
-    const periodStart = new Date(period.start);
-    const periodEnd = now;
-
-    const intervals = await this.nodeIntervalRepo.find({
-      where: [
-        {
-          clusterId: cluster.id,
-          startedAt: LessThanOrEqual(periodEnd),
-          endedAt: IsNull(),
-        },
-        {
-          clusterId: cluster.id,
-          startedAt: LessThanOrEqual(periodEnd),
-          endedAt: MoreThanOrEqual(periodStart),
-        },
-      ],
-      order: { startedAt: 'ASC' },
-    });
-
-    const byNode = new Map<string, NodeMonthToDateDto>();
+    caps: boolean,
+  ): Promise<void> {
     for (const iv of intervals) {
-      const from = new Date(
-        Math.max(iv.startedAt.getTime(), periodStart.getTime()),
-      );
-      const to = iv.endedAt
-        ? new Date(Math.min(iv.endedAt.getTime(), periodEnd.getTime()))
-        : periodEnd;
-      const hours = Math.max(
-        0,
-        Math.ceil((to.getTime() - from.getTime()) / MS_PER_HOUR),
-      );
-      if (hours === 0) continue;
-
-      const pricing = this.resolveLocationPricing(
-        pricingMap,
+      const rate = await this.rates.nodeRate(
+        iv.provider || cluster.provider,
         iv.serverType,
         cluster.region,
         iv.location,
+        iv.metadata?.price as StampedNodePrice | undefined,
       );
-      if (!pricing) {
+      if (!iv.endedAt) tally.activeNodes++;
+      if (!rate) {
+        tally.unpriced++;
         this.logger.warn(
-          `No pricing for type=${iv.serverType} region=${cluster.region} — interval ${iv.id} skipped`,
+          `No price for type=${iv.serverType} region=${cluster.region}: interval ${iv.id} not counted`,
         );
         continue;
       }
-
-      const hourlyGross = Number.parseFloat(pricing.priceHourlyGross);
-      const hourlyNet = Number.parseFloat(pricing.priceHourlyNet);
-      const monthlyGross = Number.parseFloat(pricing.priceMonthlyGross);
-      const monthlyNet = Number.parseFloat(pricing.priceMonthlyNet);
-      const segmentGross = Math.min(hours * hourlyGross, monthlyGross);
-      const segmentNet = Math.min(hours * hourlyNet, monthlyNet);
-
-      const existing = byNode.get(iv.nodeId);
-      if (existing) {
-        existing.billableHours += hours;
-        existing.costGross = (
-          Number.parseFloat(existing.costGross) + segmentGross
-        ).toFixed(4);
-        existing.costNet = (
-          Number.parseFloat(existing.costNet) + segmentNet
-        ).toFixed(4);
-        existing.segments.push({
-          serverType: iv.serverType,
-          startedAt: iv.startedAt.toISOString(),
-          endedAt: iv.endedAt ? iv.endedAt.toISOString() : null,
-          hours,
-          costGross: segmentGross.toFixed(4),
-          costNet: segmentNet.toFixed(4),
-        });
-      } else {
-        byNode.set(iv.nodeId, {
-          nodeId: iv.nodeId,
-          serverName: iv.serverName,
-          nodeType: iv.nodeType,
-          currentServerType: iv.serverType,
-          providerResourceId: iv.providerResourceId ?? null,
-          status: iv.endedAt ? 'terminated' : 'active',
-          billableHours: hours,
-          costGross: segmentGross.toFixed(4),
-          costNet: segmentNet.toFixed(4),
-          segments: [
-            {
-              serverType: iv.serverType,
-              startedAt: iv.startedAt.toISOString(),
-              endedAt: iv.endedAt ? iv.endedAt.toISOString() : null,
-              hours,
-              costGross: segmentGross.toFixed(4),
-              costNet: segmentNet.toFixed(4),
-            },
-          ],
-        });
+      if (rate.basis === 'list') tally.listPriced++;
+      const accrual = accrueNode(iv, rate, month, now, caps);
+      tally.spent.compute = addAmount(tally.spent.compute, accrual.spent);
+      tally.forecast.compute = addAmount(
+        tally.forecast.compute,
+        accrual.forecast,
+      );
+      if (!iv.endedAt) {
+        tally.runRate.compute = addAmount(
+          tally.runRate.compute,
+          nodeAmount(rate, month.hours, caps),
+        );
+      }
+      if (accrual.spentHours > 0) {
+        this.addSegment(tally.nodes, iv, accrual.spentHours, accrual.spent);
       }
     }
-
-    return [...byNode.values()];
   }
 
-  // ─── Compute (volumes) ─────────────────────────────────────────────────────
-
-  private async computeVolumeMonthToDate(
+  private async tallyVolumes(
+    tally: Tally,
     cluster: ClusterEntity,
-    period: BillingPeriodDto,
+    intervals: VolumeBillableIntervalEntity[],
+    month: CalendarMonth,
     now: Date,
-  ): Promise<VolumeMonthToDateDto[]> {
-    const periodStart = new Date(period.start);
-    const periodEnd = now;
-
-    const intervals = await this.volumeIntervalRepo.find({
-      where: [
-        {
-          clusterId: cluster.id,
-          startedAt: LessThanOrEqual(periodEnd),
-          endedAt: IsNull(),
-        },
-        {
-          clusterId: cluster.id,
-          startedAt: LessThanOrEqual(periodEnd),
-          endedAt: MoreThanOrEqual(periodStart),
-        },
-      ],
-      order: { startedAt: 'ASC' },
-    });
-
-    const rates = VOLUME_RATES_PER_GB_MONTH[cluster.provider];
-    if (!rates) return [];
-
-    const byVolume = new Map<string, VolumeMonthToDateDto>();
+  ): Promise<void> {
     for (const iv of intervals) {
-      const from = new Date(
-        Math.max(iv.startedAt.getTime(), periodStart.getTime()),
+      const stamped = iv.metadata?.price as StampedVolumePrice | undefined;
+      const rate = await this.rates.volumeRate(cluster.provider, stamped);
+      if (!iv.endedAt) tally.activeVolumes++;
+      if (!rate) {
+        tally.unpriced++;
+        continue;
+      }
+      if (!stamped) tally.listPriced++;
+      const accrual = accrueVolume(iv, iv.sizeGb, rate, month, now);
+      tally.spent.storage = addAmount(tally.spent.storage, accrual.spent);
+      tally.forecast.storage = addAmount(
+        tally.forecast.storage,
+        accrual.forecast,
       );
-      const to = iv.endedAt
-        ? new Date(Math.min(iv.endedAt.getTime(), periodEnd.getTime()))
-        : periodEnd;
-      const days = Math.max(0, (to.getTime() - from.getTime()) / MS_PER_DAY);
-      if (days === 0) continue;
-
-      const totalDaysInMonth = period.totalHours / 24;
-      const fraction = days / totalDaysInMonth;
-      const segmentGross = fraction * iv.sizeGb * rates.gross;
-      const segmentNet = fraction * iv.sizeGb * rates.net;
-
-      const key = iv.volumeProviderId;
-      const existing = byVolume.get(key);
-      if (existing) {
-        existing.costGross = (
-          Number.parseFloat(existing.costGross) + segmentGross
-        ).toFixed(4);
-        existing.costNet = (
-          Number.parseFloat(existing.costNet) + segmentNet
-        ).toFixed(4);
-      } else {
-        byVolume.set(key, {
-          volumeProviderId: iv.volumeProviderId,
-          kind: iv.kind,
-          currentSizeGb: iv.sizeGb,
-          status: iv.endedAt ? 'terminated' : 'active',
-          costGross: segmentGross.toFixed(4),
-          costNet: segmentNet.toFixed(4),
+      if (!iv.endedAt) {
+        tally.runRate.storage = addAmount(tally.runRate.storage, {
+          net: iv.sizeGb * rate.perGbMonthNet,
+          gross:
+            rate.perGbMonthGross === null
+              ? null
+              : iv.sizeGb * rate.perGbMonthGross,
         });
       }
-    }
-
-    return [...byVolume.values()];
-  }
-
-  // ─── Run rate (current config × full month) ────────────────────────────────
-
-  private async computeRunRate(
-    cluster: ClusterEntity,
-    pricingMap: ServerTypePricingMap,
-  ): Promise<RunRateDto> {
-    const openNodes = await this.nodeIntervalRepo.find({
-      where: { clusterId: cluster.id, endedAt: IsNull() },
-    });
-    const openVolumes = await this.volumeIntervalRepo.find({
-      where: { clusterId: cluster.id, endedAt: IsNull() },
-    });
-
-    let computeGross = 0;
-    let computeNet = 0;
-    for (const node of openNodes) {
-      const pricing = this.resolveLocationPricing(
-        pricingMap,
-        node.serverType,
-        cluster.region,
-        node.location,
-      );
-      if (!pricing) continue;
-      computeGross += Number.parseFloat(pricing.priceMonthlyGross);
-      computeNet += Number.parseFloat(pricing.priceMonthlyNet);
-    }
-
-    const rates = VOLUME_RATES_PER_GB_MONTH[cluster.provider];
-    let storageGross = 0;
-    let storageNet = 0;
-    if (rates) {
-      for (const v of openVolumes) {
-        storageGross += v.sizeGb * rates.gross;
-        storageNet += v.sizeGb * rates.net;
+      if (accrual.spentHours > 0) {
+        this.addVolume(tally.volumes, iv, accrual.spent);
       }
     }
+  }
 
-    return {
-      monthlyGross: (computeGross + storageGross).toFixed(2),
-      monthlyNet: (computeNet + storageNet).toFixed(2),
-      breakdown: {
-        computeGross: computeGross.toFixed(2),
-        computeNet: computeNet.toFixed(2),
-        storageGross: storageGross.toFixed(2),
-        storageNet: storageNet.toFixed(2),
-        trafficGross: '0.00',
-        trafficNet: '0.00',
-      },
-      activeNodes: openNodes.length,
-      activeVolumes: openVolumes.length,
+  private intervalsOf<
+    T extends { clusterId: string; startedAt: Date; endedAt?: Date | null },
+  >(
+    repo: Repository<T>,
+    clusterId: string,
+    from: Date,
+    to: Date,
+  ): Promise<T[]> {
+    return repo
+      .createQueryBuilder('interval')
+      .where('interval.clusterId = :clusterId', { clusterId })
+      .andWhere('interval.startedAt <= :to', { to })
+      .andWhere('(interval.endedAt IS NULL OR interval.endedAt >= :from)', {
+        from,
+      })
+      .orderBy('interval.startedAt', 'ASC')
+      .getMany();
+  }
+
+  private addSegment(
+    nodes: Map<string, NodeMonthToDateDto>,
+    iv: NodeBillableIntervalEntity,
+    hours: number,
+    cost: Amount,
+  ): void {
+    const segment = {
+      serverType: iv.serverType,
+      startedAt: iv.startedAt.toISOString(),
+      endedAt: iv.endedAt ? iv.endedAt.toISOString() : null,
+      hours,
+      costGross: grossOf(cost).toFixed(4),
+      costNet: cost.net.toFixed(4),
     };
+    const existing = nodes.get(iv.nodeId);
+    if (existing) {
+      existing.billableHours += hours;
+      existing.costGross = (
+        Number.parseFloat(existing.costGross) + grossOf(cost)
+      ).toFixed(4);
+      existing.costNet = (
+        Number.parseFloat(existing.costNet) + cost.net
+      ).toFixed(4);
+      existing.currentServerType = iv.serverType;
+      existing.status = iv.endedAt ? 'terminated' : 'active';
+      existing.segments.push(segment);
+      return;
+    }
+    nodes.set(iv.nodeId, {
+      nodeId: iv.nodeId,
+      serverName: iv.serverName,
+      nodeType: iv.nodeType,
+      currentServerType: iv.serverType,
+      providerResourceId: iv.providerResourceId ?? null,
+      status: iv.endedAt ? 'terminated' : 'active',
+      billableHours: hours,
+      costGross: segment.costGross,
+      costNet: segment.costNet,
+      segments: [segment],
+    });
+  }
+
+  private addVolume(
+    volumes: Map<string, VolumeMonthToDateDto>,
+    iv: VolumeBillableIntervalEntity,
+    cost: Amount,
+  ): void {
+    const existing = volumes.get(iv.volumeProviderId);
+    if (existing) {
+      existing.costGross = (
+        Number.parseFloat(existing.costGross) + grossOf(cost)
+      ).toFixed(4);
+      existing.costNet = (
+        Number.parseFloat(existing.costNet) + cost.net
+      ).toFixed(4);
+      existing.currentSizeGb = iv.sizeGb;
+      existing.status = iv.endedAt ? 'terminated' : 'active';
+      return;
+    }
+    volumes.set(iv.volumeProviderId, {
+      volumeProviderId: iv.volumeProviderId,
+      kind: iv.kind,
+      currentSizeGb: iv.sizeGb,
+      status: iv.endedAt ? 'terminated' : 'active',
+      costGross: grossOf(cost).toFixed(4),
+      costNet: cost.net.toFixed(4),
+    });
   }
 
   // ─── Traffic (Hetzner only, current snapshot) ──────────────────────────────
 
   private async computeTraffic(
     cluster: ClusterEntity,
-    provider: unknown,
-    pricingMap: ServerTypePricingMap,
   ): Promise<TrafficInfoDto> {
     if (cluster.provider !== CloudProvider.HETZNER) {
       return this.zeroTraffic();
     }
-    const hetzner = provider as HetznerProviderService;
+    const hetzner = this.providerFactory.getProvider(
+      CloudProvider.HETZNER,
+    ) as unknown as HetznerProviderService;
     const openNodes = await this.nodeIntervalRepo.find({
       where: { clusterId: cluster.id, endedAt: IsNull() },
     });
@@ -419,7 +359,6 @@ export class ClusterBillingService {
         );
       }
     }
-    void pricingMap;
     return {
       outgoingBytes,
       ingoingBytes,
@@ -441,11 +380,6 @@ export class ClusterBillingService {
       overageCostGross: '0.0000',
       overageCostNet: '0.0000',
     };
-  }
-
-  private providerHasPricing(provider: string): boolean {
-    const supported = this.providerFactory.getSupportedProviders() as string[];
-    return supported.includes(provider);
   }
 
   private zeroBilling(
@@ -490,6 +424,16 @@ export class ClusterBillingService {
         activeNodes: 0,
         activeVolumes: 0,
       },
+      forecast: {
+        totalGross: '0.00',
+        totalNet: '0.00',
+        breakdown: breakdownOf(ZERO, ZERO, ZERO, 2),
+        remainingHours: 0,
+      },
+      vat: { included: false, ratePercent: null },
+      billedAs: null,
+      unpricedItems: 0,
+      listPricedItems: 0,
       calculatedAt: now,
     };
   }
@@ -514,64 +458,56 @@ export class ClusterBillingService {
       elapsedHours,
     };
   }
-
-  private async getServerTypePricing(
-    providerEnum: CloudProvider,
-    provider: {
-      getNodeSizes?: (includeAvailability?: boolean) => Promise<NodeSizeDto[]>;
-    },
-  ): Promise<ServerTypePricingMap> {
-    const now = Date.now();
-    if (
-      this.pricingCache?.provider === providerEnum &&
-      now - this.pricingCache.fetchedAt < CACHE_TTL_MS
-    ) {
-      return this.pricingCache.data;
-    }
-    if (!provider.getNodeSizes) {
-      throw new Error(
-        `Provider ${providerEnum} does not implement getNodeSizes`,
-      );
-    }
-    const sizes = await provider.getNodeSizes();
-    const pricingMap: ServerTypePricingMap = new Map();
-    for (const size of sizes) {
-      const locationMap = new Map<string, ServerTypePricing>();
-      for (const price of size.prices ?? []) {
-        locationMap.set(price.location, {
-          priceHourlyGross: price.priceHourly?.gross ?? '0',
-          priceHourlyNet: price.priceHourly?.net ?? '0',
-          priceMonthlyGross: price.priceMonthly?.gross ?? '0',
-          priceMonthlyNet: price.priceMonthly?.net ?? '0',
-        });
-      }
-      pricingMap.set(size.name, locationMap);
-    }
-    this.pricingCache = {
-      data: pricingMap,
-      fetchedAt: now,
-      provider: providerEnum,
-    };
-    return pricingMap;
-  }
-
-  private resolveLocationPricing(
-    pricingMap: ServerTypePricingMap,
-    serverTypeName: string,
-    region: string,
-    location?: string | null,
-  ): ServerTypePricing | null {
-    const typeMap = pricingMap.get(serverTypeName);
-    if (!typeMap) return null;
-    return (
-      typeMap.get(region) ??
-      (location ? (typeMap.get(location) ?? null) : null) ??
-      typeMap.values().next().value ??
-      null
-    );
-  }
 }
 
-void BYTES_PER_TB;
-void HOURS_PER_MONTH;
-void VolumeBillableKind;
+interface Split {
+  compute: Amount;
+  storage: Amount;
+}
+
+interface Tally {
+  spent: Split;
+  forecast: Split;
+  runRate: Split;
+  nodes: Map<string, NodeMonthToDateDto>;
+  volumes: Map<string, VolumeMonthToDateDto>;
+  activeNodes: number;
+  activeVolumes: number;
+  unpriced: number;
+  listPriced: number;
+}
+
+function newTally(): Tally {
+  const split = (): Split => ({ compute: { ...ZERO }, storage: { ...ZERO } });
+  return {
+    spent: split(),
+    forecast: split(),
+    runRate: split(),
+    nodes: new Map(),
+    volumes: new Map(),
+    activeNodes: 0,
+    activeVolumes: 0,
+    unpriced: 0,
+    listPriced: 0,
+  };
+}
+
+function grossOf(amount: Amount): number {
+  return amount.gross ?? amount.net;
+}
+
+function breakdownOf(
+  compute: Amount,
+  storage: Amount,
+  traffic: Amount,
+  decimals: number,
+): BillingBreakdownDto {
+  return {
+    computeGross: grossOf(compute).toFixed(decimals),
+    computeNet: compute.net.toFixed(decimals),
+    storageGross: grossOf(storage).toFixed(decimals),
+    storageNet: storage.net.toFixed(decimals),
+    trafficGross: grossOf(traffic).toFixed(decimals),
+    trafficNet: traffic.net.toFixed(decimals),
+  };
+}

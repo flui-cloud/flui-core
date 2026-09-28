@@ -3,6 +3,7 @@ import type * as k8s from '@kubernetes/client-node';
 import { ClusterEntity } from '../entities/cluster.entity';
 export { waitsForRoom } from '../../shared/utils/waits-for-room.util';
 import { KubernetesService } from '../../shared/services/kubernetes.service';
+import { withTimeout } from '../../shared/utils/with-timeout.util';
 import { EncryptionService } from '../../../shared/encryption/services/encryption.service';
 
 export interface PendingPodRequest {
@@ -252,19 +253,4 @@ export function podRequest(
  */
 function pinnedToAnotherMachine(message: string | undefined): boolean {
   return /volume node affinity conflict/i.test(message ?? '');
-}
-
-/**
- * Null on timeout, which is the same answer as any other failure to ask: the
- * caller already has to tell "could not ask" apart from "nothing is waiting",
- * and a slow cluster is not a quiet one either.
- */
-function withTimeout<T>(work: Promise<T>, ms: number): Promise<T | null> {
-  return new Promise<T | null>((resolve) => {
-    const timer = setTimeout(() => resolve(null), ms);
-    work
-      .then((value) => resolve(value))
-      .catch(() => resolve(null))
-      .finally(() => clearTimeout(timer));
-  });
 }

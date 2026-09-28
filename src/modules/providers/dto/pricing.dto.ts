@@ -26,4 +26,5 @@ export class PricingDto {
   currency: string;
   vatRate: string;
   serverTypes: ServerTypePricingDto[];
+  volumePerGbMonth?: PriceDetailDto;
 }

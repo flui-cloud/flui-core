@@ -320,7 +320,9 @@ describe('what a fleet costs, and what it cannot be said to cost', () => {
     });
     const [row] = await service.rows();
     expect(row.monthlyEur).toBe(43.8);
-    expect(row.needsPerson).toBe('Over its own ceiling of €40 a month.');
+    expect(row.needsPerson).toBe(
+      'Over its own spending ceiling of €40 a month.',
+    );
   });
 
   it('says the figure it went over the ceiling with is a floor', async () => {

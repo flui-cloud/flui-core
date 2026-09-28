@@ -1,4 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
+import { Sensitivity } from '../../../mask/decorators/sensitivity.decorator';
 
 export class BillingPeriodDto {
   @ApiProperty({ example: '2026-05-01T00:00:00.000Z' })
@@ -168,7 +169,7 @@ export class MonthToDateDto {
 export class RunRateDto {
   @ApiProperty({
     description:
-      'Cost of running the current configuration (active nodes + active volumes) for a full month. Independent of how many hours have elapsed.',
+      'Monthly cost of the current configuration (active nodes + active volumes) over a whole month. Not a forecast of this month: see forecast.',
     example: '21.4500',
   })
   monthlyGross: string;
@@ -184,6 +185,41 @@ export class RunRateDto {
 
   @ApiProperty({ example: 1 })
   activeVolumes: number;
+}
+
+export class BillingForecastDto {
+  @ApiProperty({
+    description:
+      'Expected at the end of the month: what was spent so far plus the machines and volumes running now, kept running until the month ends. Equal to totalNet when the provider states no VAT.',
+    example: '12.31',
+  })
+  @Sensitivity(Sensitivity.PUBLIC)
+  totalGross: string;
+
+  @ApiProperty({ example: '10.35' })
+  @Sensitivity(Sensitivity.PUBLIC)
+  totalNet: string;
+
+  @ApiProperty({ type: BillingBreakdownDto })
+  @Sensitivity(Sensitivity.PUBLIC)
+  breakdown: BillingBreakdownDto;
+
+  @ApiProperty({ example: 110, description: 'Whole hours left in the month' })
+  @Sensitivity(Sensitivity.PUBLIC)
+  remainingHours: number;
+}
+
+export class BillingVatDto {
+  @ApiProperty({
+    description:
+      'Gross amounts include VAT at the rate the provider applies to the account. When false the provider publishes no VAT and every amount excludes it (gross equals net).',
+  })
+  @Sensitivity(Sensitivity.PUBLIC)
+  included: boolean;
+
+  @ApiProperty({ nullable: true, example: '19' })
+  @Sensitivity(Sensitivity.PUBLIC)
+  ratePercent: string | null;
 }
 
 export class ClusterBillingResponseDto {
@@ -210,6 +246,36 @@ export class ClusterBillingResponseDto {
 
   @ApiProperty({ type: RunRateDto })
   runRate: RunRateDto;
+
+  @ApiProperty({ type: BillingForecastDto })
+  @Sensitivity(Sensitivity.PUBLIC)
+  forecast: BillingForecastDto;
+
+  @ApiProperty({ type: BillingVatDto })
+  @Sensitivity(Sensitivity.PUBLIC)
+  vat: BillingVatDto;
+
+  @ApiProperty({
+    nullable: true,
+    example:
+      'Billed by the hour, never more than the monthly price in one month',
+  })
+  @Sensitivity(Sensitivity.PUBLIC)
+  billedAs: string | null;
+
+  @ApiProperty({
+    description:
+      'Machines and volumes this month that Flui could not price, so the totals leave them out',
+  })
+  @Sensitivity(Sensitivity.PUBLIC)
+  unpricedItems: number;
+
+  @ApiProperty({
+    description:
+      'Machines and volumes priced at the list price of today, because they started before Flui kept the price they were bought at',
+  })
+  @Sensitivity(Sensitivity.PUBLIC)
+  listPricedItems: number;
 
   @ApiProperty()
   calculatedAt: Date;

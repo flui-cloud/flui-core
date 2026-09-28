@@ -1,4 +1,4 @@
-import { ShapeFactsService } from './shape-facts.service';
+import { SHAPES_DEADLINE_MS, ShapeFactsService } from './shape-facts.service';
 
 function withProvider(getNodeSizes: jest.Mock) {
   return new ShapeFactsService({
@@ -44,5 +44,46 @@ describe('the shapes the engine chooses from', () => {
     expect(getNodeSizes).toHaveBeenCalledTimes(2);
     expect(later.shapes[0].availability?.[0].up).toBe(true);
     jest.useRealTimers();
+  });
+});
+
+describe('a provider slow to list its sizes', () => {
+  afterEach(() => jest.useRealTimers());
+
+  it('is reported as unread once the deadline passes, and the late answer serves the next caller', async () => {
+    jest.useFakeTimers();
+    let answer!: (sizes: unknown[]) => void;
+    const getNodeSizes = jest.fn().mockReturnValue(
+      new Promise((resolve) => {
+        answer = resolve;
+      }),
+    );
+    const facts = withProvider(getNodeSizes);
+
+    const first = facts.read('ovh');
+    await jest.advanceTimersByTimeAsync(SHAPES_DEADLINE_MS);
+    expect(await first).toEqual({ shapes: [], read: false });
+
+    answer([size(true)]);
+    await Promise.resolve();
+    const next = await facts.read('ovh');
+
+    expect(getNodeSizes).toHaveBeenCalledTimes(1);
+    expect(next.read).toBe(true);
+    expect(next.shapes[0].shape).toBe('cx33');
+  });
+
+  it('joins a read already running instead of asking the provider twice', async () => {
+    jest.useFakeTimers();
+    const getNodeSizes = jest
+      .fn()
+      .mockReturnValue(new Promise(() => undefined));
+    const facts = withProvider(getNodeSizes);
+
+    const reads = [facts.read('ovh'), facts.read('ovh')];
+    await jest.advanceTimersByTimeAsync(SHAPES_DEADLINE_MS);
+    await Promise.all(reads);
+
+    expect(getNodeSizes).toHaveBeenCalledTimes(1);
   });
 });

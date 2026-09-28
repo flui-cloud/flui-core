@@ -866,7 +866,7 @@ describe('scaling_group_set', () => {
       () => GROUP,
     );
     expect(String(data.authorises)).toContain(
-      'up to 5 nodes, up to €40 a month, without asking you',
+      'up to 5 nodes, never past a spending ceiling of €40 a month, without asking you',
     );
     expect(String(data.note)).toContain('up to 5 nodes');
   });
@@ -910,7 +910,9 @@ describe('scaling_group_set', () => {
       { groupId: 'g1', provision: 'automatic' },
       () => UNGRANTED,
     );
-    expect(String(data.authorises)).toContain('up to €40 a month');
+    expect(String(data.authorises)).toContain(
+      'spending ceiling of €40 a month',
+    );
     expect(String(data.actsMeans)).not.toMatch(/€/);
   });
 });
@@ -918,7 +920,7 @@ describe('scaling_group_set', () => {
 describe('the sentence a person answers is derived, never written down', () => {
   it('is the group’s own ceiling and its own cap', () => {
     expect(scalingConsequenceOf(GROUP)).toBe(
-      'up to 5 nodes, up to €40 a month, without asking you',
+      'up to 5 nodes, never past a spending ceiling of €40 a month, without asking you',
     );
     expect(
       scalingConsequenceOf({ ...GROUP, bounds: { ...GROUP.bounds, max: 12 } }),
@@ -931,7 +933,7 @@ describe('the sentence a person answers is derived, never written down', () => {
       limits: { hourlyBillingOnly: false, maxMonthlyCost: null },
     };
     const sentence = scalingConsequenceOf(uncapped);
-    expect(sentence).toContain('no ceiling on the monthly bill');
+    expect(sentence).toContain('with no spending ceiling');
     expect(sentence).not.toContain('€0');
   });
 
@@ -954,7 +956,9 @@ describe('the sentence a person answers is derived, never written down', () => {
           limits: { maxMonthlyCost: 40 },
           provision: 'automatic',
         }),
-      ).toBe('up to 5 nodes, up to €40 a month, without asking you');
+      ).toBe(
+        'up to 5 nodes, never past a spending ceiling of €40 a month, without asking you',
+      );
     });
 
     /** The block is replaced whole, so an omitted cap is a cap being removed. */
@@ -964,7 +968,7 @@ describe('the sentence a person answers is derived, never written down', () => {
           bounds: { max: 5 },
           limits: { hourlyBillingOnly: true },
         }),
-      ).toBe('up to 5 nodes, with no ceiling on the monthly bill');
+      ).toBe('up to 5 nodes, with no spending ceiling');
     });
 
     it('stays silent about limits the request does not mention', () => {
@@ -1028,5 +1032,76 @@ describe('what the descriptions teach a model', () => {
     for (const smell of ['confirm', 'approved', 'allowDestructive']) {
       expect(source).not.toContain(smell);
     }
+  });
+});
+
+describe('scaling_cost', () => {
+  const COST = {
+    priced: true,
+    says: "Priced on cx22 (€0.0060/h, €4.35 a month), the provider's list price.",
+    cheapest: null,
+    dearest: null,
+    unpricedShapes: [],
+    scenarios: [
+      {
+        kind: 'at-min',
+        label: 'Always at the minimum, 1 node',
+        lowEur: 4.35,
+        highEur: 4.35,
+      },
+      {
+        kind: 'worst-case',
+        label: 'At the maximum (3 nodes) all month',
+        lowEur: 13.05,
+        highEur: 20,
+      },
+    ],
+    ceiling: {
+      monthlyEur: 10,
+      nodesWithin: 2,
+      stopsBeforeMax: true,
+      says: 'Spending ceiling €10.00 a month, below the worst case.',
+    },
+    suggestedCeilingEur: 20,
+  };
+
+  it('asks the cluster route with the node limits and relays the scenarios', async () => {
+    const { calls, data } = await call(
+      'scaling_cost',
+      { clusterId: 'c1', min: 1, max: 3, maxMonthlyCost: 10 },
+      () => COST,
+    );
+    expect(calls[0]).toMatchObject({
+      method: 'POST',
+      path: '/infrastructure/clusters/c1/scaling/cost',
+      body: { bounds: { min: 1, max: 3 }, maxMonthlyCost: 10 },
+    });
+    expect(data.scenarios).toEqual([
+      { scenario: 'Always at the minimum, 1 node', eurPerMonth: 4.35 },
+      {
+        scenario: 'At the maximum (3 nodes) all month',
+        eurPerMonth: { from: 13.05, to: 20 },
+      },
+    ]);
+    expect(data.spendingCeiling).toMatchObject({ stopsBeforeMax: true });
+    expect(String(data.means)).toContain('safety net');
+  });
+
+  it('refuses half a pair of limits', async () => {
+    const { raw } = await call(
+      'scaling_cost',
+      { clusterId: 'c1', min: 2 },
+      () => COST,
+    );
+    expect(raw).toContain('Pass both `min` and `max`');
+  });
+
+  it('carries the cost of a group read beside its limits', async () => {
+    const { data } = await call('scaling_group_get', { groupId: 'g1' }, () => ({
+      ...GROUP,
+      cost: COST,
+    }));
+    const group = (data.groups as Array<Record<string, unknown>>)[0];
+    expect(group.cost).toMatchObject({ suggestedCeilingEur: 20 });
   });
 });

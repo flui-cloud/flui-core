@@ -188,6 +188,23 @@ export const INFRASTRUCTURE_OPERATION_TOOLS: ToolDef[] = [
   }),
 
   defineTool({
+    name: 'cost_overview',
+    routes: ['GET /infrastructure/costs'],
+    description:
+      'What the machines and volumes of every cluster cost, month by month and provider by provider, deleted clusters included, with the current month forecast to its end (spent so far plus what runs now, kept running). Amounts are in EUR excluding VAT; `vat` says, per provider, whether a VAT-inclusive figure exists and at which rate the provider charges the account. Read only. Say "excluding VAT" when you quote a net figure, and never add VAT yourself. `unpriced` counts machines Flui could not price, left out of the totals; `listPriced` counts ones priced at today\'s list price because they predate the recorded price.',
+    scope: MCP_SCOPE.INFRA_READ,
+    inputSchema: {
+      months: coerceNumber(z.number().int().min(1).max(24)).optional(),
+    },
+    run: (args, ctx) =>
+      ctx.api.get(
+        '/infrastructure/costs',
+        args.months ? { months: args.months } : undefined,
+      ),
+    forModel: (data) => costsForModel(data as CostsWire),
+  }),
+
+  defineTool({
     name: 'cluster_node_list',
     routes: ['GET /infrastructure/clusters/:id/nodes'],
     description:
@@ -630,3 +647,86 @@ export const INFRASTRUCTURE_OPERATION_TOOLS: ToolDef[] = [
       ctx.api.post(`/mail/domains/${encoded(args.domain)}/publish`),
   }),
 ];
+
+interface CostMonthWire {
+  month: string;
+  current: boolean;
+  spentNet: number;
+  spentGross: number | null;
+  forecastNet: number | null;
+  forecastGross: number | null;
+}
+
+interface CostsWire {
+  currency: string;
+  totals: CostMonthWire[];
+  recordedSince: string | null;
+  notes: string[];
+  providers: Array<{
+    provider: string;
+    priced: boolean;
+    billedAs: string | null;
+    vatIncluded: boolean;
+    vatRatePercent: string | null;
+    months: CostMonthWire[];
+    unpriced: number;
+    listPriced: number;
+    note: string | null;
+    clusters: Array<{
+      clusterName: string;
+      removed: boolean;
+      months: CostMonthWire[];
+      unpriced: number;
+    }>;
+  }>;
+}
+
+function monthView(m: CostMonthWire) {
+  return {
+    month: m.month,
+    spent: m.spentNet,
+    ...(m.current ? { forecast: m.forecastNet } : {}),
+    ...(m.spentGross !== null ? { spentInclVat: m.spentGross } : {}),
+    ...(m.current && m.forecastGross !== null
+      ? { forecastInclVat: m.forecastGross }
+      : {}),
+  };
+}
+
+export function costsForModel(data: CostsWire) {
+  return {
+    currency: data.currency,
+    amounts: 'excluding VAT unless named InclVat',
+    recordedSince: data.recordedSince ?? null,
+    total: (data.totals ?? []).map(monthView),
+    providers: (data.providers ?? []).map((p) => ({
+      provider: p.provider,
+      ...(p.priced
+        ? {
+            billedAs: p.billedAs,
+            vat: p.vatIncluded
+              ? `the provider charges ${p.vatRatePercent ?? 'an unstated'}% VAT on this account`
+              : 'the provider publishes prices without VAT; the rate is not known to Flui',
+            months: (p.months ?? []).map(monthView),
+          }
+        : { note: p.note }),
+      unpriced: p.unpriced,
+      listPriced: p.listPriced,
+      clusters: (p.clusters ?? []).map((c) => {
+        const current = (c.months ?? []).find((m) => m.current);
+        return {
+          name: c.clusterName,
+          ...(c.removed ? { removed: true } : {}),
+          ...(p.priced && current
+            ? {
+                spentThisMonth: current.spentNet,
+                forecast: current.forecastNet,
+              }
+            : {}),
+          ...(c.unpriced ? { unpriced: c.unpriced } : {}),
+        };
+      }),
+    })),
+    notes: data.notes ?? [],
+  };
+}

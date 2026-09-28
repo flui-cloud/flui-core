@@ -243,7 +243,7 @@ describe('writing a scaling group', () => {
     const { service } = make();
     await expect(
       service.create('c-1', write({ limits: { hourlyBillingOnly: true } })),
-    ).rejects.toThrow('needs a monthly ceiling in euros');
+    ).rejects.toThrow('needs a spending ceiling');
     await expect(
       service.create(
         'c-1',
@@ -569,7 +569,7 @@ describe('reading a group back', () => {
     );
     const dto = await service.get('g-1');
     expect(dto.acts.acts).toBe(false);
-    expect(dto.acts.says).toContain('names no monthly ceiling in euros');
+    expect(dto.acts.says).toContain('has no spending ceiling');
     expect(dto.acts).toMatchObject({ mode: 'automatic', attention: true });
   });
 
@@ -819,7 +819,7 @@ describe('changing a group', () => {
     });
     await expect(
       service.update('g-1', { provision: 'automatic' }),
-    ).rejects.toThrow('needs a monthly ceiling in euros');
+    ).rejects.toThrow('needs a spending ceiling');
   });
 
   it('refuses removing the ceiling of an automatic group', async () => {
@@ -827,7 +827,7 @@ describe('changing a group', () => {
     groups.findOne?.mockResolvedValueOnce({ ...stored });
     await expect(
       service.update('g-1', { limits: { hourlyBillingOnly: true } }),
-    ).rejects.toThrow('needs a monthly ceiling in euros');
+    ).rejects.toThrow('needs a spending ceiling');
   });
 
   it('lets an automatic group written before the rule change its name without a ceiling', async () => {
@@ -1130,7 +1130,7 @@ describe('what a person does to a group is written in its decision log', () => {
       force: 'person',
       outcome: 'changed',
       saw: 'dawit@example.com changed the group.',
-      why: 'spend ceiling €50 → €30.',
+      why: 'spending ceiling €50 → €30.',
     });
   });
 
@@ -1245,5 +1245,70 @@ describe('moving the floor', () => {
     groups.findOne?.mockResolvedValueOnce(null);
     const dto = await service.setFloor('g-1', 1);
     expect(dto.bounds).toEqual({ min: 1, desired: 1, max: 2 });
+  });
+});
+
+describe('what the node limits cost', () => {
+  const withFacts = () => {
+    const f = make('hetzner');
+    const facts = {
+      read: jest.fn().mockResolvedValue({
+        read: true,
+        shapes: [
+          {
+            shape: 'cx23',
+            cores: 2,
+            memoryMi: 4096,
+            deprecated: false,
+            supportsHourlyBilling: true,
+            architecture: 'x86',
+            availability: null,
+            prices: [{ region: 'a1', hourlyEur: 10 / 730, monthlyEur: 10 }],
+          },
+        ],
+      }),
+    };
+    (f.service as unknown as { facts: unknown }).facts = facts;
+    return { ...f, facts };
+  };
+
+  it('reads the scenarios off the group with the provider price', async () => {
+    const { service, groups } = withFacts();
+    groups.findOne!.mockResolvedValue({
+      id: 'g-1',
+      clusterId: 'c-1',
+      name: 'default',
+      minNodes: 1,
+      desiredNodes: 1,
+      maxNodes: 5,
+      regions: ['a1'],
+      shapes: ['cx23'],
+      provision: 'automatic',
+      maxMonthlyCost: 20,
+      standingOrders: [],
+    });
+    const dto = await service.get('g-1');
+    expect(dto.cost.scenarios.map((s) => s.lowEur)).toEqual([
+      10, 10.22, 16.58, 50,
+    ]);
+    expect(dto.cost.ceiling).toMatchObject({
+      nodesWithin: 2,
+      stopsBeforeMax: true,
+    });
+    expect(dto.cost.suggestedCeilingEur).toBe(50);
+  });
+
+  it('prices a draft that is not written yet, and refuses a min above the max', async () => {
+    const { service } = withFacts();
+    const cost = await service.costOfDraft('c-1', {
+      bounds: { min: 2, max: 3 },
+      shapes: ['cx23'],
+    });
+    expect(cost.scenarios.find((s) => s.kind === 'worst-case')?.lowEur).toBe(
+      30,
+    );
+    await expect(
+      service.costOfDraft('c-1', { bounds: { min: 4, max: 3 } }),
+    ).rejects.toThrow('min must be <= max');
   });
 });

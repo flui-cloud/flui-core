@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Optional } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Not, Repository } from 'typeorm';
 import * as k8s from '@kubernetes/client-node';
@@ -47,12 +47,22 @@ import { ShapeFactsService } from './shape-facts.service';
 import { DrainCheck, drainSummary } from './drain.core';
 import { fitSummary } from './fit.core';
 import { DrainFeasibilityService } from './drain-feasibility.service';
+import { NodeReserveService } from './node-reserve.service';
+import { fleetArchitecture } from './reserve.core';
+import { withTimeout } from '../../shared/utils/with-timeout.util';
 import {
   WhatIfAnswer,
   WhatIfAsk,
   WhatIfGroup,
   answerWhatIf,
 } from './what-if.core';
+
+/**
+ * How long a preview waits for the room on each node. It is read beside the
+ * assessment rather than after it, and a cluster that has not answered by then
+ * shows as not asked instead of holding the page.
+ */
+const PREVIEW_ROOM_DEADLINE_MS = 8_000;
 
 /** What one pass over one group concluded, and would have written down. */
 export interface ScalingAssessment {
@@ -135,10 +145,17 @@ export class ScalingEngineService {
     private readonly catalogue: AvailabilityCatalogueService,
     private readonly shapes: ShapeFactsService,
     private readonly drain: DrainFeasibilityService,
+    @Optional() private readonly reserves?: NodeReserveService,
   ) {}
 
   async preview(groupId: string): Promise<ScalingPreviewDto> {
     const { group, cluster } = await this.groups.withCluster(groupId);
+    // Asked here and not on every pass: the loop decides on what is waiting,
+    // and room is for a person reading how close the next purchase is.
+    const room = withTimeout(
+      this.drain.fleetRoom(cluster),
+      PREVIEW_ROOM_DEADLINE_MS,
+    );
     const assessment = await this.assess(group, cluster);
     const preview = assessment.preview;
     // The ladder counts the node on its way into the spend and finds no room
@@ -147,13 +164,11 @@ export class ScalingEngineService {
       preview.blocked && (await this.groups.nodeOnItsWay(cluster.id))
         ? null
         : preview.blocked;
-    // Asked here and not on every pass: the loop decides on what is waiting,
-    // and room is for a person reading how close the next purchase is.
     return {
       ...preview,
       blocked,
       giveBack: await this.giveBackOf(group, cluster, assessment),
-      room: await this.drain.fleetRoom(cluster),
+      room: await room,
     };
   }
 
@@ -763,8 +778,19 @@ export class ScalingEngineService {
     const catalogue = capability.hasCatalogue
       ? await this.catalogue.read(cluster.provider)
       : unreadCatalogue(cluster.provider, 'no-market');
+    const onNodes = priced.shapes.length
+      ? priced.shapes
+      : [cluster.nodeSize].filter((shape): shape is string => Boolean(shape));
+    // Only a waiting app is weighed against what a new node holds, so only
+    // then is the cluster asked how much of a node the system takes.
+    const reserve =
+      demand && rows && this.reserves
+        ? await this.reserves.read(cluster, rows, shapes.shapes)
+        : null;
 
     return {
+      ...(reserve ? { reserve } : {}),
+      architecture: fleetArchitecture(onNodes, shapes.shapes),
       group: {
         provider: cluster.provider,
         regions: group.regions ?? [],

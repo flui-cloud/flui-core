@@ -21,6 +21,13 @@ export const MONTH_HOURS = 730;
  */
 export const NODE_RESERVE = { cpuMillicores: 200, memoryMi: 512 };
 
+export type MachineArchitecture = 'x86' | 'arm';
+
+export interface NodeReserve {
+  cpuMillicores: number;
+  memoryMi: number;
+}
+
 export interface ShapePrice {
   region: string;
   hourlyEur: number | null;
@@ -40,6 +47,8 @@ export interface ShapeFact {
   memoryMi: number;
   deprecated: boolean;
   supportsHourlyBilling: boolean;
+  /** Absent where the provider does not say; never guessed from the name. */
+  architecture?: MachineArchitecture | null;
   prices: ShapePrice[];
   /**
    * The provider's own availability, per region.
@@ -189,6 +198,13 @@ export interface LadderInput {
   demand: PendingDemand | null;
   shapes: ShapeFactsReading;
   catalogue: CatalogueReading;
+  /**
+   * What a new node gives the system before an app can have any of it, as
+   * measured on the nodes already running. Absent: `NODE_RESERVE`.
+   */
+  reserve?: NodeReserve;
+  /** What every node of the fleet runs on. Null or absent: unknown or mixed. */
+  architecture?: MachineArchitecture | null;
 }
 
 export interface LadderRung {
@@ -493,7 +509,7 @@ function judge(input: LadderInput, shape: string, region: string): Candidate {
 export function budgetFloorNote(input: LadderInput): string | null {
   const cap = input.group.maxMonthlyCost;
   if (cap === null || input.fleet.unpricedNodes === 0) return null;
-  return `€${round(input.fleet.committedMonthlyEur)} a month is committed over the priced nodes alone: ${input.fleet.unpricedNodes} node(s) carry no price, so the figure weighed against the €${cap} ceiling is a floor and not the bill.`;
+  return `€${round(input.fleet.committedMonthlyEur)} a month is committed over the priced nodes alone: ${input.fleet.unpricedNodes} node(s) carry no price, so the figure weighed against the €${cap} spending ceiling is a floor and not the bill.`;
 }
 
 interface Verdict {
@@ -551,7 +567,23 @@ function refusedBy(input: LadderInput, candidate: Candidate): Verdict | null {
     };
   }
 
-  const fit = doesNotFit(candidate.fact, input.demand);
+  const arch = input.architecture;
+  if (
+    arch &&
+    candidate.fact.architecture &&
+    candidate.fact.architecture !== arch
+  ) {
+    return {
+      outcome: REFUSED_BY_LIMIT,
+      note: `${candidate.shape} is an ${archWord(candidate.fact.architecture)} machine and this cluster runs on ${archWord(arch)}: what runs here would not start on it.`,
+    };
+  }
+
+  const fit = doesNotFit(
+    candidate.fact,
+    input.demand,
+    input.reserve ?? NODE_RESERVE,
+  );
   if (fit) return fit;
 
   if (!candidate.fact.prices.some((p) => p.region === candidate.region)) {
@@ -567,17 +599,22 @@ function refusedBy(input: LadderInput, candidate: Candidate): Verdict | null {
   return overBudget(input, candidate);
 }
 
+function archWord(arch: MachineArchitecture): string {
+  return arch === 'arm' ? 'ARM' : 'x86';
+}
+
 function doesNotFit(
   fact: ShapeFact,
   demand: PendingDemand | null,
+  reserve: NodeReserve,
 ): Verdict | null {
   if (!demand) return null;
-  const cpu = fact.cores * 1000 - NODE_RESERVE.cpuMillicores;
-  const memory = fact.memoryMi - NODE_RESERVE.memoryMi;
+  const cpu = fact.cores * 1000 - reserve.cpuMillicores;
+  const memory = fact.memoryMi - reserve.memoryMi;
   if (cpu >= demand.cpuMillicores && memory >= demand.memoryMi) return null;
   return {
     outcome: 'does-not-fit',
-    note: `${fact.shape} leaves ${Math.max(0, Math.round(cpu))}m and ${Math.max(0, Math.round(memory))}Mi free, and the app waiting needs ${demand.cpuMillicores}m and ${demand.memoryMi}Mi.`,
+    note: `${fact.shape} leaves ${Math.max(0, Math.round(cpu))}m and ${Math.max(0, Math.round(memory))}Mi free once the system takes its share, and the app waiting needs ${demand.cpuMillicores}m and ${demand.memoryMi}Mi.`,
   };
 }
 
@@ -641,7 +678,7 @@ function overBudget(input: LadderInput, candidate: Candidate): Verdict | null {
     : '';
   return {
     outcome: 'over-budget',
-    note: `€${round(committed)} a month is already committed and ${candidate.shape} in ${candidate.region} adds €${round(monthly)}, against a ceiling of €${cap}${unpriced}.`,
+    note: `€${round(committed)} a month is already committed and ${candidate.shape} in ${candidate.region} adds €${round(monthly)}, against a spending ceiling of €${cap}${unpriced}.`,
   };
 }
 
@@ -776,7 +813,7 @@ export function alarmAsk(input: LadderInput, rungs: LadderRung[]): string {
   }
 
   const perMachine = whyEachMachine(input);
-  return `Nothing this group may buy can be had for ${need}. ${perMachine || because} Widen its shapes or regions, raise what it may spend, or attach a machine yourself.`;
+  return `Nothing this group may buy can be had for ${need}. ${perMachine || because} Widen its shapes or regions, raise its spending ceiling, or attach a machine yourself.`;
 }
 
 /**
@@ -807,7 +844,7 @@ export function whyEachMachine(input: LadderInput): string {
       const pricey = judged.some((c) => c.outcome === 'over-budget');
       const parts: string[] = [];
       if (out.length) parts.push(`sold out in ${listed(out)}`);
-      if (pricey) parts.push('over the monthly cap where it is on offer');
+      if (pricey) parts.push('over the spending ceiling where it is on offer');
       const refused = judged.find((c) => c.outcome === 'refused-by-limit');
       if (!parts.length && refused?.note) return `${shape}: ${refused.note}`;
       return parts.length ? `${shape} is ${parts.join(', and ')}.` : '';
@@ -949,7 +986,7 @@ export type AlarmExitKind = (typeof ALARM_EXIT_KINDS)[number];
 export interface AlarmExit {
   kind: AlarmExitKind;
   label: string;
-  /** For `raise-cap`: the smallest ceiling that lets the nearest machine through. */
+  /** For `raise-cap`: the smallest spending ceiling that lets the nearest machine through. */
   toEur: number | null;
   /** For `raise-max-nodes`. */
   toNodes: number | null;
@@ -958,7 +995,7 @@ export interface AlarmExit {
 }
 
 export interface AlarmBlock {
-  /** "Scaling needed — blocked by the spend cap" */
+  /** "Scaling needed — blocked by the spending ceiling" */
   headline: string;
   exits: AlarmExit[];
 }
@@ -1003,18 +1040,14 @@ export function alarmBlock(input: LadderInput): AlarmBlock {
   const fits = judged.some((c) => c.outcome !== 'does-not-fit');
 
   if (atCeiling) {
-    headline = `Scaling needed — the group is at its ceiling of ${input.ceiling} nodes`;
+    headline = `Scaling needed — the group is at its maximum of ${input.ceiling} nodes`;
     exits.push(
-      exit(
-        'raise-max-nodes',
-        `Raise the node ceiling to ${input.fleet.nodes + 1}`,
-        {
-          toNodes: input.fleet.nodes + 1,
-        },
-      ),
+      exit('raise-max-nodes', `Raise max nodes to ${input.fleet.nodes + 1}`, {
+        toNodes: input.fleet.nodes + 1,
+      }),
     );
   } else if (overBudget.length) {
-    headline = 'Scaling needed — blocked by the spend cap';
+    headline = 'Scaling needed — blocked by the spending ceiling';
   } else if (!judged.length) {
     headline = 'Scaling needed — the group names no machine it may buy';
   } else if (!fits) {
@@ -1029,7 +1062,9 @@ export function alarmBlock(input: LadderInput): AlarmBlock {
     .sort((a, b) => a - b)[0];
   if (cheapestOver !== undefined) {
     const to = Math.ceil(input.fleet.committedMonthlyEur + cheapestOver);
-    exits.push(exit('raise-cap', `Raise the cap to €${to}`, { toEur: to }));
+    exits.push(
+      exit('raise-cap', `Raise the spending ceiling to €${to}`, { toEur: to }),
+    );
   }
 
   const suggestion = shapeToAdd(input, regions);
@@ -1046,7 +1081,7 @@ export function alarmBlock(input: LadderInput): AlarmBlock {
     exits.push(
       exit(
         'raise-cap',
-        `Raise the cap to €${suggestion.overBudgetTo} (${suggestion.shape} needs it)`,
+        `Raise the spending ceiling to €${suggestion.overBudgetTo} (${suggestion.shape} needs it)`,
         { toEur: suggestion.overBudgetTo },
       ),
     );

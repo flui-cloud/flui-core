@@ -40,6 +40,7 @@ import { ScalingOverviewService } from './services/scaling-overview.service';
 import {
   ApprovePurchaseDto,
   ApproveRemovalDto,
+  ScalingCostRequestDto,
   ScalingFloorDto,
   EditScalingGroupDto,
   WriteScalingGroupDto,
@@ -47,6 +48,7 @@ import {
 import {
   ClusterScalingDecisionDto,
   ClusterScalingRowDto,
+  ScalingCostDto,
   ScalingDecisionResponseDto,
   ScalingGroupResponseDto,
 } from './dto/scaling-response.dto';
@@ -483,6 +485,28 @@ export class ScalingController {
     @Body() body: WhatIfRequestDto,
   ): Promise<WhatIfAnswerDto> {
     return this.engine.whatIf(clusterId, askOf(body));
+  }
+
+  @Post('clusters/:clusterId/scaling/cost')
+  @RequirePermission(IAM_PERMISSION.CLUSTER_READ)
+  @HttpCode(200)
+  @ApiOperation({
+    summary: 'What these node limits would cost, before they are written',
+    description:
+      'The same reading every group carries in `cost`, for a draft: scenarios from the minimum to the maximum with the provider list prices, and where the spending ceiling would stop the fleet. Fields left out are read from the cluster’s first group. A machine with no published price is named and never priced. Spends nothing and changes nothing.',
+  })
+  @ApiParam({ name: 'clusterId', description: CLUSTER_ID })
+  @ApiResponse({ status: 200, type: ScalingCostDto })
+  @ApiResponse({
+    status: 400,
+    description: 'The minimum sits above the maximum',
+  })
+  @ApiResponse(CLUSTER_MISSING)
+  async cost(
+    @Param('clusterId') clusterId: string,
+    @Body() body: ScalingCostRequestDto,
+  ): Promise<ScalingCostDto> {
+    return this.groups.costOfDraft(clusterId, body);
   }
 
   @Get('scaling-groups/:id/decisions')

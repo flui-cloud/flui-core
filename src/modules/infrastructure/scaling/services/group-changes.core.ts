@@ -49,7 +49,7 @@ export function groupChanges(
   const bounds = (g: GroupFields) =>
     `${g.minNodes}/${g.desiredNodes}/${g.maxNodes}`;
   if (bounds(before) !== bounds(after)) {
-    out.push(`nodes floor/target/ceiling ${bounds(before)} → ${bounds(after)}`);
+    out.push(`nodes min/target/max ${bounds(before)} → ${bounds(after)}`);
   }
   if (!same(before.shapes, after.shapes)) {
     out.push(`machines ${list(before.shapes)} → ${list(after.shapes)}`);
@@ -59,7 +59,7 @@ export function groupChanges(
   }
   if (before.maxMonthlyCost !== after.maxMonthlyCost) {
     out.push(
-      `spend ceiling ${eur(before.maxMonthlyCost)} → ${eur(after.maxMonthlyCost)}`,
+      `spending ceiling ${eur(before.maxMonthlyCost)} → ${eur(after.maxMonthlyCost)}`,
     );
   }
   if (before.provision !== after.provision) {

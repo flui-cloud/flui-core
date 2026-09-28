@@ -153,6 +153,7 @@ const ARGS: Record<string, Record<string, unknown>> = {
   app_variables: { applicationId: 'a1' },
   app_variable_set: { applicationId: 'a1', variables: { LOG_LEVEL: 'debug' } },
   cluster_capacity_plan: {},
+  cost_overview: {},
   cluster_node_list: {},
   cluster_node_scale_preview: { nodeId: 'n1' },
   cluster_storage_status: {},
@@ -194,6 +195,7 @@ const ARGS: Record<string, Record<string, unknown>> = {
   scaling_approve_removal: { groupId: 'g1', node: 'prod-eu-worker-2' },
   scaling_group_floor: { groupId: 'g1', min: 2 },
   scaling_preview: { groupId: 'g1' },
+  scaling_cost: { min: 1, max: 3 },
   scaling_overview: {},
   scaling_why: { groupId: 'g1' },
   scaling_group_set: { groupId: 'g1', bounds: { min: 1, desired: 2, max: 3 } },
@@ -470,6 +472,7 @@ describe('strada B — the whole tool catalogue goes over the wire', () => {
     // The machine room. Every write here lands on a route carrying
     // `@ActionCycle`, which is where the pause is — never in the tool.
     ['cluster_capacity_plan', 'GET /infrastructure/clusters/c1/capacity-plan'],
+    ['cost_overview', 'GET /infrastructure/costs'],
     ['cluster_create', 'POST /infrastructure/clusters'],
     ['cluster_node_remove', 'DELETE /infrastructure/clusters/c1/workers/n1'],
     ['cluster_power', 'POST /infrastructure/clusters/c1/stop'],

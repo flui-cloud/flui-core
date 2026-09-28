@@ -50,8 +50,9 @@ export const PROVISION_MODES = ['automatic', 'manual'] as const;
 export type ProvisionMode = (typeof PROVISION_MODES)[number];
 
 /**
- * Consent to buy without a person is given in money: an automatic group with
- * no ceiling in euros is stored as it was written and buys nothing on its own.
+ * The limits are in nodes; the spending ceiling is the safety net under them,
+ * and an automatic group without one is stored as it was written and buys
+ * nothing on its own.
  */
 export function buysOnItsOwn(group: {
   provision: ProvisionMode;
@@ -65,7 +66,7 @@ export function buysOnItsOwn(group: {
 }
 
 export const NO_MONEY_CEILING =
-  'This group is set to automatic but names no monthly ceiling in euros, so it buys nothing on its own. Set a monthly ceiling to let it buy, or approve this one purchase.';
+  'This group is set to automatic but has no spending ceiling, so it buys nothing on its own. The ceiling is the safety net checked before every purchase: set one to let it buy, or approve this one purchase.';
 
 export const STANDING_ORDER_KINDS = ['expand', 'replace'] as const;
 

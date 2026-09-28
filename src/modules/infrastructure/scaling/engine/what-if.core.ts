@@ -87,6 +87,14 @@ export function largestBuyable(
   for (const name of input.group.shapes) {
     const fact = input.shapes.shapes.find((entry) => entry.shape === name);
     if (!fact || fact.deprecated) continue;
+    if (
+      input.architecture &&
+      fact.architecture &&
+      fact.architecture !== input.architecture
+    ) {
+      continue;
+    }
+    const reserve = input.reserve ?? NODE_RESERVE;
     const affordable =
       cap === null ||
       fact.prices.some((price) => {
@@ -96,11 +104,8 @@ export function largestBuyable(
     if (!affordable) continue;
     const room: MachineRoom = {
       shape: name,
-      cpuMillicores: Math.max(
-        0,
-        fact.cores * 1000 - NODE_RESERVE.cpuMillicores,
-      ),
-      memoryMi: Math.max(0, fact.memoryMi - NODE_RESERVE.memoryMi),
+      cpuMillicores: Math.max(0, fact.cores * 1000 - reserve.cpuMillicores),
+      memoryMi: Math.max(0, fact.memoryMi - reserve.memoryMi),
     };
     if (!best || room.memoryMi > best.memoryMi) best = room;
   }
@@ -244,7 +249,7 @@ function nothingHostsSentence(
     return `${miss}, and no machine the group may buy that could take it can be had right now: it would wait for room.`;
   }
   if (holds(largestBuyable(input, false), ask)) {
-    return `${miss}, and a machine that could take it would pass the group's ceiling of €${input.group.maxMonthlyCost} a month: it would wait until the ceiling is raised.`;
+    return `${miss}, and a machine that could take it would pass the group's spending ceiling of €${input.group.maxMonthlyCost} a month: it would wait until the spending ceiling is raised.`;
   }
   return `${miss}, and it is bigger than any machine the group may buy: it would wait for room.`;
 }

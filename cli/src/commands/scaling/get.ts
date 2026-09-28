@@ -13,6 +13,7 @@ import { dumpScalingGroupDocument } from '../../lib/scaling-file';
 import {
   NO_PRICE,
   boundRows,
+  costLines,
   describeActuation,
   describeCapability,
   describeDrain,
@@ -25,7 +26,7 @@ import {
 
 export default class ScalingGet extends Command {
   static readonly description =
-    'Show a scaling group: its three bounds, where and what it may buy, and what it may spend.';
+    'Show a scaling group: its limits in nodes, what they cost with the provider prices (from the minimum to the maximum), where and what it may buy, and the spending ceiling underneath.';
 
   static readonly examples = [
     '<%= config.bin %> <%= command.id %>',
@@ -98,6 +99,7 @@ export default class ScalingGet extends Command {
       );
     }
     console.log('');
+    this.printCost(group);
 
     console.log(
       `  ${'regions'.padEnd(11)}${group.regions.length ? group.regions.join(', ') : chalk.dim('none named')}`,
@@ -157,10 +159,34 @@ export default class ScalingGet extends Command {
     );
     parts.push(
       group.limits.maxMonthlyCost === null
-        ? chalk.dim(`no monthly ceiling (${NO_PRICE}, which is not 0)`)
-        : `at most ${formatEurPerMonth(group.limits.maxMonthlyCost)}`,
+        ? chalk.dim(`no spending ceiling (${NO_PRICE}, which is not 0)`)
+        : `spending ceiling ${formatEurPerMonth(group.limits.maxMonthlyCost)} ${chalk.dim('(safety net, always enforced)')}`,
     );
     return parts.join(chalk.dim(' · '));
+  }
+
+  /** The limits are in nodes; this is what they cost, as the API priced them. */
+  private printCost(group: ScalingGroupResponseDto): void {
+    const cost = costLines(group.cost);
+    if (!cost) return;
+    console.log(`  ${chalk.dim('cost')}       ${chalk.dim(cost.says)}`);
+    for (const line of cost.scenarios) {
+      console.log(
+        `  ${' '.repeat(11)}${line.label.padEnd(46)}${chalk.bold(line.value)}`,
+      );
+    }
+    const ceiling = cost.ceilingStops
+      ? chalk.yellow(cost.ceiling)
+      : chalk.dim(cost.ceiling);
+    console.log(`  ${' '.repeat(11)}${ceiling}`);
+    if (group.limits.maxMonthlyCost === null && cost.suggested !== null) {
+      console.log(
+        chalk.dim(
+          `  ${' '.repeat(11)}A ceiling covering the worst case: flui scaling set ${group.name} --max-monthly ${cost.suggested}`,
+        ),
+      );
+    }
+    console.log('');
   }
 
   /**

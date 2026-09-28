@@ -36,6 +36,14 @@ export class PricingMapper {
       currency: pricing.currency,
       vatRate: pricing.vat_rate,
       serverTypes: mappedServerTypes,
+      ...(pricing.volume?.price_per_gb_month
+        ? {
+            volumePerGbMonth: {
+              net: pricing.volume.price_per_gb_month.net,
+              gross: pricing.volume.price_per_gb_month.gross,
+            },
+          }
+        : {}),
     };
   }
 

@@ -246,7 +246,7 @@ describe('the gate between deciding and acting', () => {
   it('treats an automatic group with no money ceiling as one that does not buy', () => {
     const verdict = mayAct(facts({ monthlyCap: null }));
     expect(verdict).toMatchObject({ act: false, refusal: 'no-money-ceiling' });
-    expect(verdict.because).toContain('monthly ceiling');
+    expect(verdict.because).toContain('no spending ceiling');
   });
 
   it('gives nothing back on its own either without a money ceiling', () => {

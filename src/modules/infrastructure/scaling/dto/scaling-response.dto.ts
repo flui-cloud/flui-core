@@ -1,6 +1,7 @@
 import { ApiProperty } from '@nestjs/swagger';
 import { Sensitivity } from '../../../mask/decorators/sensitivity.decorator';
 import { ScalingModeKind } from '../scaling-consequence';
+import { COST_SCENARIO_KINDS, CostScenarioKind } from '../cost-scenarios.core';
 import {
   CandidateOutcome,
   DecisionOutcome,
@@ -171,7 +172,7 @@ export class ScalingModeDto {
   @ApiProperty({
     example: 'Manual — Flui does not buy',
     description:
-      'The mode in the same words on every surface: "Manual — Flui does not buy", "Automatic — buys up to €30/mo, 3 nodes", "Alarm only — Flui cannot buy on contabo"',
+      'The mode in the same words on every surface: "Manual — Flui does not buy", "Automatic — buys up to 3 nodes (spending ceiling €30/mo)", "Alarm only — Flui cannot buy on contabo"',
   })
   @Sensitivity(Sensitivity.PUBLIC)
   label: string;
@@ -279,6 +280,134 @@ export class PurchaseInFlightDto {
   operation: DecisionOperationDto;
 }
 
+export class NodePriceDto {
+  @Sensitivity(Sensitivity.PUBLIC)
+  @ApiProperty({ example: 'DEV1-M' })
+  shape: string;
+
+  @Sensitivity(Sensitivity.PUBLIC)
+  @ApiProperty({ example: 'fr-par-1' })
+  region: string;
+
+  @Sensitivity(Sensitivity.PUBLIC)
+  @ApiProperty({
+    nullable: true,
+    description: 'Null where the provider publishes no hourly price',
+  })
+  hourlyEur: number | null;
+
+  @Sensitivity(Sensitivity.PUBLIC)
+  @ApiProperty({
+    description:
+      'The provider monthly price, or hourly × 730 where it publishes none',
+  })
+  monthlyEur: number;
+}
+
+export class CostScenarioDto {
+  @Sensitivity(Sensitivity.PUBLIC)
+  @ApiProperty({ enum: COST_SCENARIO_KINDS })
+  kind: CostScenarioKind;
+
+  @Sensitivity(Sensitivity.PUBLIC)
+  @ApiProperty({ example: 'At the maximum (5 nodes) 4 hours a day' })
+  label: string;
+
+  @Sensitivity(Sensitivity.PUBLIC)
+  @ApiProperty({
+    nullable: true,
+    description:
+      'With the cheapest machine on the list. Null where it cannot be priced (a peak with no hourly price).',
+  })
+  lowEur: number | null;
+
+  @Sensitivity(Sensitivity.PUBLIC)
+  @ApiProperty({
+    nullable: true,
+    description: 'With the dearest machine on the list',
+  })
+  highEur: number | null;
+}
+
+export class SpendingCeilingDto {
+  @Sensitivity(Sensitivity.PUBLIC)
+  @ApiProperty({
+    nullable: true,
+    description: 'The spending ceiling a month, null when none is set',
+  })
+  monthlyEur: number | null;
+
+  @Sensitivity(Sensitivity.PUBLIC)
+  @ApiProperty({
+    nullable: true,
+    description:
+      'About how many nodes of the dearest machine the ceiling lets the fleet reach',
+  })
+  nodesWithin: number | null;
+
+  @Sensitivity(Sensitivity.PUBLIC)
+  @ApiProperty({
+    description:
+      'True where the ceiling stops buying before the node maximum is reached',
+  })
+  stopsBeforeMax: boolean;
+
+  @Sensitivity(Sensitivity.PUBLIC)
+  @ApiProperty({ description: 'The ceiling said in one line' })
+  says: string;
+}
+
+/**
+ * What the node limits cost, from the provider's own prices: scenarios from
+ * the minimum to the maximum, and where the spending ceiling sits under them.
+ */
+export class ScalingCostDto {
+  @Sensitivity(Sensitivity.PUBLIC)
+  @ApiProperty({
+    description:
+      'False where no price could be read or none is published: no figure below is then invented',
+  })
+  priced: boolean;
+
+  @Sensitivity(Sensitivity.PUBLIC)
+  @ApiProperty({
+    example:
+      "Priced on DEV1-M (€0.0198/h, €14.45 a month), the provider's list price.",
+  })
+  says: string;
+
+  @Sensitivity(Sensitivity.PUBLIC)
+  @ApiProperty({ type: NodePriceDto, nullable: true })
+  cheapest: NodePriceDto | null;
+
+  @Sensitivity(Sensitivity.PUBLIC)
+  @ApiProperty({ type: NodePriceDto, nullable: true })
+  dearest: NodePriceDto | null;
+
+  @Sensitivity(Sensitivity.PUBLIC)
+  @ApiProperty({
+    type: [String],
+    description: 'Machines on the list with no published price, left out',
+  })
+  unpricedShapes: string[];
+
+  @Sensitivity(Sensitivity.PUBLIC)
+  @ApiProperty({ type: [CostScenarioDto] })
+  scenarios: CostScenarioDto[];
+
+  @Sensitivity(Sensitivity.PUBLIC)
+  @ApiProperty({ type: SpendingCeilingDto })
+  ceiling: SpendingCeilingDto;
+
+  @Sensitivity(Sensitivity.PUBLIC)
+  @ApiProperty({
+    nullable: true,
+    description:
+      'A spending ceiling that covers the worst case, so it only stops a runaway',
+  })
+  suggestedCeilingEur: number | null;
+}
+
 export class ScalingGroupResponseDto {
   @ApiProperty()
   id: string;
@@ -363,6 +492,14 @@ export class ScalingGroupResponseDto {
       'The last purchase this group ordered, while it is on its way and for 30 minutes after it joined or failed. Null when nothing was bought lately.',
   })
   purchase: PurchaseInFlightDto | null;
+
+  @Sensitivity(Sensitivity.PUBLIC)
+  @ApiProperty({
+    type: ScalingCostDto,
+    description:
+      'What the node limits cost with the provider prices, from the minimum to the maximum, and where the spending ceiling sits',
+  })
+  cost: ScalingCostDto;
 }
 
 export class ConsideredCandidateDto {

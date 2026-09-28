@@ -13,6 +13,7 @@ import {
 } from '../../clusters/entities/cluster-node.entity';
 import { KubernetesService } from '../../shared/services/kubernetes.service';
 import { EncryptionService } from '../../../shared/encryption/services/encryption.service';
+import { withTimeout } from '../../shared/utils/with-timeout.util';
 import {
   appOfPod,
   podLimit,
@@ -22,6 +23,13 @@ import { DrainBudget, DrainCheck, DrainPod, checkDrain } from './drain.core';
 import { NODE_RESERVE } from './engine.core';
 import { FitCheck, MovingPod, NodeRoom, checkFit } from './fit.core';
 import { FleetRoom, NodeRoomInput, fleetRoom } from './room.core';
+
+/**
+ * The metrics client calls `fetch` itself, outside the deadline every other
+ * Kubernetes request carries, so a stalled metrics server would otherwise hold
+ * the reading for as long as the operating system keeps the connection.
+ */
+const USAGE_TIMEOUT_MS = 6_000;
 
 /**
  * Whether a node can be emptied, answered from the cluster itself.
@@ -263,9 +271,13 @@ export class DrainFeasibilityService {
     kubeconfig: string,
   ): Promise<Map<string, { cpuMillicores: number; memoryMi: number }> | null> {
     try {
-      const metrics = await new k8s.Metrics(
-        this.kubernetes.makeKubeConfig(kubeconfig),
-      ).getNodeMetrics();
+      const metrics = await withTimeout(
+        new k8s.Metrics(
+          this.kubernetes.makeKubeConfig(kubeconfig),
+        ).getNodeMetrics(),
+        USAGE_TIMEOUT_MS,
+      );
+      if (!metrics) return null;
       return new Map(
         (metrics.items ?? []).map((item) => [
           item.metadata?.name ?? '',

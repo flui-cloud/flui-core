@@ -33,8 +33,8 @@ export interface ScalingAuthority {
 function moneyPhrase(cap: number | null | undefined): string | null {
   if (cap === undefined) return null;
   return cap === null
-    ? 'with no ceiling on the monthly bill'
-    : `up to €${cap} a month`;
+    ? 'with no spending ceiling'
+    : `never past a spending ceiling of €${cap} a month`;
 }
 
 /** The bare authority, with no provider in the picture. */
@@ -110,8 +110,8 @@ export function scalingConsequenceOf(
 
   const money =
     group.limits.maxMonthlyCost === null
-      ? 'with no ceiling on the monthly bill'
-      : `up to €${group.limits.maxMonthlyCost} a month`;
+      ? 'with no spending ceiling'
+      : `never past a spending ceiling of €${group.limits.maxMonthlyCost} a month`;
 
   if (!group.capability.canProvision) {
     return `${nodes}, ${money} — and Flui buys none of them here: it names a shape and its price in an alarm, and a person buys it`;
@@ -128,15 +128,16 @@ export function scalingConsequenceOf(
  * depends on a field in the very body being written.
  */
 export const SCALING_CONSEQUENCE =
-  'This becomes the standing limit the cluster is sized and billed against. ' +
+  'This becomes the standing limit the cluster is sized against, in nodes. ' +
   'A group set to buy automatically acts on it without asking again, up to ' +
-  'the ceilings it names in nodes and in money; one set to decide writes down ' +
-  'what it would have bought and stops. Where the provider has no create API ' +
-  'at all, this is simply the figure an alarm quotes to a person.';
+  'its maximum of nodes, and the engine never lets the fleet pass the ' +
+  'spending ceiling underneath; one set to decide writes down what it would ' +
+  'have bought and stops. Where the provider has no create API at all, this ' +
+  'is simply the figure an alarm quotes to a person.';
 
 export const RETRY_PURCHASE_CONSEQUENCE =
-  'The group may buy again from its next pass, inside the same node and ' +
-  'money ceilings. If the cause of the failure is still there, the next ' +
+  'The group may buy again from its next pass, inside the same node limits ' +
+  'and spending ceiling. If the cause of the failure is still there, the next ' +
   'purchase fails the same way and the group holds back again.';
 
 export type ScalingModeKind = 'automatic' | 'manual' | 'alarm-only';
@@ -174,14 +175,14 @@ export function scalingModeLabel(facts: ScalingModeFacts): ScalingModeLabel {
   if (!buysOnItsOwn(facts)) {
     return {
       mode: 'automatic',
-      label: 'Automatic without a monthly ceiling — Flui does not buy',
+      label: 'Automatic without a spending ceiling — Flui does not buy',
       attention: true,
     };
   }
   const nodes = `${facts.maxNodes} ${facts.maxNodes === 1 ? 'node' : 'nodes'}`;
   return {
     mode: 'automatic',
-    label: `Automatic — buys up to €${facts.maxMonthlyCost}/mo, ${nodes}`,
+    label: `Automatic — buys up to ${nodes} (spending ceiling €${facts.maxMonthlyCost}/mo)`,
     attention: false,
   };
 }
@@ -201,8 +202,8 @@ export function noGroupLabel(
 }
 
 export const APPROVE_PURCHASE_CONSEQUENCE =
-  'One machine is bought now, the one the group proposes, inside its ceilings ' +
-  'in nodes and money, and billed from the moment it is created. The group ' +
+  'One machine is bought now, the one the group proposes, inside its node ' +
+  'limits and spending ceiling, and billed from the moment it is created. The group ' +
   'stays manual: nothing else is bought on its own. If the proposal changed ' +
   'since it was read, nothing is bought.';
 
@@ -215,6 +216,7 @@ export const APPROVE_REMOVAL_CONSEQUENCE =
 export const FLOOR_CONSEQUENCE =
   'The group holds at least this many nodes, master included. Raised above ' +
   'the nodes there are: a manual group proposes the machine and buys it only ' +
-  'once a person approves; an automatic one buys it within its ceilings. ' +
+  'once a person approves; an automatic one buys it within its maximum and ' +
+  'its spending ceiling. ' +
   'Lowered: the target moves with the floor and the group gives back what is ' +
   'above it — a manual group asks a person first.';

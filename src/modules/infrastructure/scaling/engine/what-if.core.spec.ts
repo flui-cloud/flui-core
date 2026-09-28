@@ -153,7 +153,9 @@ describe('what if an app asked for this much', () => {
       group(big, 'automatic', { maxMonthlyCost: 10 }),
     ]);
     expect(answer.verdict).toBe('nothing-hosts');
-    expect(answer.sentence).toContain("would pass the group's ceiling of €10");
+    expect(answer.sentence).toContain(
+      "would pass the group's spending ceiling of €10",
+    );
     expect(answer.sentence).not.toContain('bigger than any machine');
   });
 

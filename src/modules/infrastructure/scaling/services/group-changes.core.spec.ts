@@ -33,14 +33,14 @@ describe('groupChanges', () => {
       }),
     ).toEqual([
       'machines cx33, cpx32 → cx33',
-      'spend ceiling €50 → €30',
+      'spending ceiling €50 → €30',
       'mode automatic → manual',
     ]);
   });
 
   it('says when a ceiling is removed', () => {
     expect(groupChanges(base, { ...base, maxMonthlyCost: null })).toEqual([
-      'spend ceiling €50 → none',
+      'spending ceiling €50 → none',
     ]);
   });
 });

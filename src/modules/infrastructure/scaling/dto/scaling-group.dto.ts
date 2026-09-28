@@ -202,6 +202,45 @@ export class EditScalingGroupDto {
   requirement?: NodeRequirementDto | null;
 }
 
+export class CostBoundsDto {
+  @IsInt()
+  @Min(MIN_FLEET_NODES)
+  @Max(MAX_FLEET_NODES)
+  min: number;
+
+  @IsInt()
+  @Min(MIN_FLEET_NODES)
+  @Max(MAX_FLEET_NODES)
+  max: number;
+}
+
+/**
+ * A draft asked about before it is written: what these node limits would cost
+ * on this cluster's provider. Every field left out is read from the cluster's
+ * first group, or its defaults where it has none.
+ */
+export class ScalingCostRequestDto {
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => CostBoundsDto)
+  bounds?: CostBoundsDto;
+
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  shapes?: string[];
+
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  regions?: string[];
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  maxMonthlyCost?: number | null;
+}
+
 export class ScalingFloorDto {
   @IsInt()
   @Min(MIN_FLEET_NODES)

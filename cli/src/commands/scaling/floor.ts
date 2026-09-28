@@ -8,7 +8,7 @@ import {
 
 export default class ScalingFloor extends Command {
   static readonly description =
-    "Add or remove a node: move the scaling group's floor (fewest nodes, master included). The target moves with it. A manual group then proposes the machine to buy or the node to give back, and `flui scaling approve --yes` carries it out; an automatic group acts on its own within its ceilings.";
+    "Add or remove a node: move the scaling group's floor (fewest nodes, master included). The target moves with it. A manual group then proposes the machine to buy or the node to give back, and `flui scaling approve --yes` carries it out; an automatic group acts on its own within its maximum of nodes and its spending ceiling.";
 
   static readonly examples = [
     '<%= config.bin %> <%= command.id %> 3',
@@ -44,7 +44,7 @@ export default class ScalingFloor extends Command {
       const { min, desired, max } = saved.bounds;
       console.log(
         chalk.green(
-          `\n  ✔ ${saved.name}: floor ${min} · target ${desired} · ceiling ${max}`,
+          `\n  ✔ ${saved.name}: min ${min} · target ${desired} · max ${max} nodes`,
         ),
       );
       console.log(`  ${saved.acts.says}`);

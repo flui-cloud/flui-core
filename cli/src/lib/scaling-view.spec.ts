@@ -33,6 +33,8 @@ import {
   pendingPodsCell,
   pendingPodsWarns,
   toScalingGroupDocument,
+  boundProblem,
+  costLines,
 } from './scaling-view';
 
 const hetzner: ProviderScalingCapabilityDto = {
@@ -77,7 +79,7 @@ const group = (
     acts: true,
     says: 'This installation may commit up to €200 a month on its own, and only through groups set to buy automatically.',
     mode: 'automatic',
-    label: 'Automatic — buys up to €40/mo, 5 nodes',
+    label: 'Automatic — buys up to 5 nodes (spending ceiling €40/mo)',
     attention: false,
   },
   standingOrders: [
@@ -94,6 +96,40 @@ const group = (
   requirement: null,
   purchaseHeld: null,
   purchase: null,
+  cost: {
+    priced: true,
+    says: "Priced on cx32 (€0.0110/h, €8.00 a month), the provider's list price.",
+    cheapest: null,
+    dearest: null,
+    unpricedShapes: [],
+    scenarios: [
+      {
+        kind: 'at-min',
+        label: 'Always at the minimum, 1 node',
+        lowEur: 8,
+        highEur: 8,
+      },
+      {
+        kind: 'short-peak',
+        label: 'At the maximum (5 nodes) for 4 hours, once',
+        lowEur: null,
+        highEur: null,
+      },
+      {
+        kind: 'worst-case',
+        label: 'At the maximum (5 nodes) all month',
+        lowEur: 40,
+        highEur: 60,
+      },
+    ],
+    ceiling: {
+      monthlyEur: 40,
+      nodesWithin: 5,
+      stopsBeforeMax: false,
+      says: 'Spending ceiling €40.00 a month, checked before every purchase.',
+    },
+    suggestedCeilingEur: 60,
+  },
   ...over,
 });
 
@@ -213,7 +249,7 @@ describe('describeDecision', () => {
       }),
     );
     expect(view.candidates[0].reason).toContain('own rules');
-    expect(view.candidates[1].reason).toContain('monthly ceiling');
+    expect(view.candidates[1].reason).toContain('spending ceiling');
     expect(view.candidates[0].price).toBe('€0.0074/h');
   });
 
@@ -686,5 +722,27 @@ describe('the preview — what it would do, spending nothing', () => {
         }),
       ),
     ).toBe('cx32 at fsn1 · €0.0074/h');
+  });
+});
+
+describe('what the node limits cost', () => {
+  it('prints each scenario as the API priced it, a range where the machines differ', () => {
+    const lines = costLines(group().cost);
+    expect(lines?.scenarios.map((l) => l.value)).toEqual([
+      '€8.00/mo',
+      '— (no hourly price)',
+      '€40.00 – €60.00/mo',
+    ]);
+    expect(lines?.suggested).toBe(60);
+  });
+
+  it('says nothing where an older API sent no cost', () => {
+    expect(costLines(undefined)).toBeNull();
+  });
+
+  it('refuses a node bound outside 1 to 20 by name, never silently', () => {
+    expect(boundProblem('max', 25)).toContain('from 1 to 20');
+    expect(boundProblem('max', 20)).toBeNull();
+    expect(boundProblem('min', undefined)).toBeNull();
   });
 });

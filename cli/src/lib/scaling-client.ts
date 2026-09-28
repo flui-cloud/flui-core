@@ -1,9 +1,11 @@
 import type {
   ClusterScalingDecisionDto,
   ClusterScalingRowDto,
+  ScalingCostDto,
   ScalingDecisionResponseDto,
   ScalingGroupResponseDto,
 } from 'src/modules/infrastructure/scaling/dto/scaling-response.dto';
+import type { ScalingCostRequestDto } from 'src/modules/infrastructure/scaling/dto/scaling-group.dto';
 import type { ScalingPreviewDto } from 'src/modules/infrastructure/scaling/dto/scaling-preview.dto';
 import { SCALING_ERROR } from 'src/modules/infrastructure/scaling/scaling-errors';
 import { ApiClient, ApiError } from './api-client';
@@ -214,6 +216,17 @@ export class ScalingClient {
 
   remove(id: string): Promise<void> {
     return this.api.delete<void>(`/infrastructure/scaling-groups/${id}`);
+  }
+
+  /** What node limits would cost on a cluster, priced by the API from the provider list. */
+  cost(
+    clusterId: string,
+    draft: ScalingCostRequestDto,
+  ): Promise<ScalingCostDto> {
+    return this.api.post<ScalingCostDto>(
+      `/infrastructure/clusters/${clusterId}/scaling/cost`,
+      draft,
+    );
   }
 
   /** The same engine the reconciler runs, asked on demand and spending nothing. */

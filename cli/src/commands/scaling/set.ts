@@ -10,13 +10,34 @@ import {
   PLACEMENT_STRATEGIES,
   PROVISION_MODES,
 } from 'src/modules/infrastructure/scaling/scaling.core';
-import type { ScalingGroupResponseDto } from 'src/modules/infrastructure/scaling/dto/scaling-response.dto';
+import type {
+  ScalingCostDto,
+  ScalingGroupResponseDto,
+} from 'src/modules/infrastructure/scaling/dto/scaling-response.dto';
 import type { EditScalingGroupDto } from 'src/modules/infrastructure/scaling/dto/scaling-group.dto';
 import { changeOf } from '../../lib/scaling-set';
+import { boundProblem, costLines } from '../../lib/scaling-view';
+
+function hasSpendingCeiling(maxMonthlyCost: unknown): boolean {
+  return Number(maxMonthlyCost) > 0;
+}
+
+function printCost(cost: ScalingCostDto | null | undefined): void {
+  const lines = costLines(cost);
+  if (!lines) return;
+  console.log('');
+  console.log(`  ${chalk.dim(lines.says)}`);
+  for (const line of lines.scenarios) {
+    console.log(`    ${line.label.padEnd(46)}${chalk.bold(line.value)}`);
+  }
+  console.log(
+    `  ${lines.ceilingStops ? chalk.yellow(lines.ceiling) : chalk.dim(lines.ceiling)}`,
+  );
+}
 
 export default class ScalingSet extends Command {
   static readonly description =
-    'Change one or more settings of a scaling group and leave the rest as they are. The ceilings are kept unless you name them: changing the machines does not remove the monthly cap. --dry-run shows each setting before and after and writes nothing.';
+    'Change one or more settings of a scaling group and leave the rest as they are. Limits are in nodes (--min, --max); the cost follows and is shown as scenarios. The spending ceiling (--max-monthly) is the safety net underneath, required to buy automatically, and kept unless you name it. --dry-run shows each setting before and after, with what the limits would cost, and writes nothing.';
 
   static readonly examples = [
     '<%= config.bin %> <%= command.id %> default --max-monthly 30',
@@ -42,7 +63,7 @@ export default class ScalingSet extends Command {
     }),
     'max-monthly': Flags.string({
       description:
-        'Most the group may spend in a month, in euros; "none" removes the ceiling (only on a manual group: automatic needs one)',
+        'Spending ceiling in euros a month: the safety net the engine checks before every purchase. "none" removes it (only on a manual group: automatic needs one)',
     }),
     'hourly-only': Flags.boolean({
       description: 'Buy only machines billed by the hour',
@@ -50,7 +71,7 @@ export default class ScalingSet extends Command {
     }),
     provision: Flags.string({
       description:
-        'automatic: Flui buys on its own, within --max-monthly (required); manual: Flui proposes and a person buys',
+        'automatic: Flui buys on its own up to --max nodes, never past the spending ceiling (required); manual: Flui proposes and a person buys',
       options: [...PROVISION_MODES],
     }),
     shapes: Flags.string({
@@ -59,11 +80,15 @@ export default class ScalingSet extends Command {
     regions: Flags.string({
       description: 'Regions it may buy in, comma separated',
     }),
-    min: Flags.integer({ description: 'Floor: fewest nodes, master included' }),
+    min: Flags.integer({
+      description: 'Min nodes: fewest, master included (1-20)',
+    }),
     desired: Flags.integer({
       description: 'Target: nodes it keeps without load',
     }),
-    max: Flags.integer({ description: 'Ceiling: most nodes, master included' }),
+    max: Flags.integer({
+      description: 'Max nodes: most, master included (1-20)',
+    }),
     strategy: Flags.string({
       description: 'How it picks among machines that fit',
       options: [...PLACEMENT_STRATEGIES],
@@ -81,9 +106,30 @@ export default class ScalingSet extends Command {
     const { args, flags } = await this.parse(ScalingSet);
 
     try {
+      for (const [flag, value] of [
+        ['min', flags.min],
+        ['desired', flags.desired],
+        ['max', flags.max],
+      ] as const) {
+        const problem = boundProblem(flag, value);
+        if (problem) this.error(problem);
+      }
       const client = ScalingClient.open();
       const { group } = await resolveGroup(client, flags.cluster, args.group);
       const change = changeOf(group, flags);
+      const next = merged(group, change);
+      if (
+        next.provision === 'automatic' &&
+        !hasSpendingCeiling(next.limits.maxMonthlyCost)
+      ) {
+        const suggested = group.cost?.suggestedCeilingEur;
+        this.error(
+          'Buying automatically needs a spending ceiling, the safety net checked before every purchase.' +
+            (suggested
+              ? ` One covering this group's worst case: --max-monthly ${suggested}`
+              : ' Pass --max-monthly.'),
+        );
+      }
       if (!Object.keys(change).length) {
         this.error(
           'Nothing to change: pass at least one setting (see --help).',
@@ -106,14 +152,23 @@ export default class ScalingSet extends Command {
       for (const line of lines) console.log(`  ${chalk.cyan('•')} ${line}`);
 
       if (flags['dry-run']) {
+        const cost = await client.cost(group.clusterId, {
+          bounds: { min: next.bounds.min, max: next.bounds.max },
+          shapes: next.shapes,
+          regions: next.regions,
+          maxMonthlyCost: next.limits.maxMonthlyCost,
+        });
+        printCost(cost);
         console.log(chalk.dim('\n  Nothing was written (--dry-run).\n'));
         return;
       }
 
       const written = await client.update(group.id, change as never);
       console.log(
-        `\n  ${chalk.green('✔')} ${written.name} changed. ${written.acts.says}\n`,
+        `\n  ${chalk.green('✔')} ${written.name} changed. ${written.acts.says}`,
       );
+      printCost(written.cost);
+      console.log('');
     } catch (error: unknown) {
       console.log('');
       for (const line of scalingErrorLines(error)) console.log(line);

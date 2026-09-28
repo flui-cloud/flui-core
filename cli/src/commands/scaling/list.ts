@@ -150,9 +150,10 @@ export default class ScalingList extends Command {
     console.log('');
     console.log(
       chalk.dim(
-        '  BOUNDS is floor/target/ceiling. The floor is held now and always; the target is only\n' +
-          '  approached when the market allows; the ceiling is as far as urgency may go right now.\n' +
-          '  A ceiling of 0 is a fleet that should hold no nodes, not a group switched off.',
+        '  BOUNDS is min/target/max nodes. The minimum is held now and always; the target is only\n' +
+          '  approached when the market allows; the maximum is as far as urgency may go right now.\n' +
+          '  CEILING is the spending ceiling: the safety net checked before every purchase.\n' +
+          '  `flui scaling get` shows what the limits cost, from the minimum to the maximum.',
       ),
     );
     console.log(
@@ -218,7 +219,7 @@ export default class ScalingList extends Command {
     console.log(
       chalk.dim(
         `  ${'NAME'.padEnd(20)} ${'BOUNDS'.padEnd(12)} ${'STRATEGY'.padEnd(10)} ` +
-          `${'PROVISION'.padEnd(11)} ${'CAP'.padEnd(12)} SHAPES`,
+          `${'PROVISION'.padEnd(11)} ${'CEILING'.padEnd(12)} SHAPES`,
       ),
     );
     console.log(chalk.dim('  ' + '─'.repeat(96)));

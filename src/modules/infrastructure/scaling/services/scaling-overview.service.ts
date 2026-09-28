@@ -310,8 +310,8 @@ export function needsPerson(facts: RowFacts): string | null {
     // being over the ceiling is certain and being under it never was.
     reasons.push(
       facts.unpricedNodes
-        ? `Already over its own ceiling of €${group.maxMonthlyCost} a month, and €${facts.monthlyEur} is a floor — ${facts.unpricedNodes} node(s) carry no price.`
-        : `Over its own ceiling of €${group.maxMonthlyCost} a month.`,
+        ? `Already over its own spending ceiling of €${group.maxMonthlyCost} a month, and €${facts.monthlyEur} is a floor — ${facts.unpricedNodes} node(s) carry no price.`
+        : `Over its own spending ceiling of €${group.maxMonthlyCost} a month.`,
     );
   }
   if (facts.openAlarm) {

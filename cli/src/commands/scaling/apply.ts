@@ -14,6 +14,7 @@ import {
   describeSettle,
   describeStrategy,
   formatBounds,
+  costLines,
 } from '../../lib/scaling-view';
 
 export default class ScalingApply extends Command {
@@ -166,6 +167,16 @@ export default class ScalingApply extends Command {
       chalk.dim(`    settle     ${describeSettle(group.settleSeconds)}`),
     );
     console.log(chalk.dim(`    provision  ${group.provision}`));
+    const cost = costLines(group.cost);
+    if (cost) {
+      console.log(chalk.dim(`    cost       ${cost.says}`));
+      for (const line of cost.scenarios) {
+        console.log(
+          chalk.dim(`               ${line.label.padEnd(46)}${line.value}`),
+        );
+      }
+      console.log(chalk.dim(`               ${cost.ceiling}`));
+    }
     console.log(chalk.dim(`    ${describeCapability(group.capability)}`));
     console.log(
       chalk.dim('    Ask what it decided, and why, with `flui scaling why`.'),

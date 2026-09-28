@@ -89,6 +89,10 @@ import { NodePriceService } from './services/node-price.service';
 import { NodeShapeBackfillService } from './services/node-shape-backfill.service';
 import { UnschedulablePodsService } from './services/unschedulable-pods.service';
 import { FleetHistoryService } from './services/fleet-history.service';
+import { CostRatesService } from './services/cost-rates.service';
+import { CostsService } from './services/costs.service';
+import { CostRecordBackfillService } from './services/cost-record-backfill.service';
+import { CostsController } from './costs.controller';
 import { NodeLifeEventsService } from './services/node-life-events.service';
 import { ScalingBellService } from './services/scaling-bell.service';
 import { UserEntity } from '../../auth/entities/user.entity';
@@ -154,7 +158,11 @@ import { UserEventsModule } from '../../auth/gateway/user-events.module';
       name: 'infrastructure',
     }),
   ],
-  controllers: [ClustersController, ClusterOrphanedClaimsController],
+  controllers: [
+    ClustersController,
+    ClusterOrphanedClaimsController,
+    CostsController,
+  ],
   providers: [
     NodeLifeEventsService,
     ScalingBellService,
@@ -190,6 +198,9 @@ import { UserEventsModule } from '../../auth/gateway/user-events.module';
     NodeShapeBackfillService,
     UnschedulablePodsService,
     FleetHistoryService,
+    CostRatesService,
+    CostsService,
+    CostRecordBackfillService,
     ClusterVNetService,
     ClusterScalingService,
     ClusterStorageService,

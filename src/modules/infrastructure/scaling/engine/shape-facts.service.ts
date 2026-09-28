@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ProviderFactory } from '../../../providers/core/factories/provider.factory';
 import { CloudProvider } from '../../../providers/enums/cloud-provider.enum';
 import { NodeSizeDto } from '../../../providers/dto/node-size.dto';
+import { withTimeout } from '../../shared/utils/with-timeout.util';
 import { ShapeFact, ShapeFactsReading } from './engine.core';
 
 /**
@@ -10,6 +11,14 @@ import { ShapeFact, ShapeFactsReading } from './engine.core';
  * gone — a purchase decided on either is the wrong one.
  */
 const HOLD_MS = 5 * 60 * 1000;
+
+/**
+ * How long a pass or a preview waits for the provider's sizes. OVH asks every
+ * region it has for its flavors, and one slow region held a preview for over
+ * two minutes. A read that misses this keeps running and fills the reading
+ * for the next caller, which then answers at once.
+ */
+export const SHAPES_DEADLINE_MS = 10_000;
 
 interface Held {
   reading: ShapeFactsReading;
@@ -33,6 +42,7 @@ interface Held {
 export class ShapeFactsService {
   private readonly logger = new Logger(ShapeFactsService.name);
   private readonly held = new Map<string, Held>();
+  private readonly inFlight = new Map<string, Promise<ShapeFactsReading>>();
 
   constructor(private readonly providers: ProviderFactory) {}
 
@@ -45,11 +55,34 @@ export class ShapeFactsService {
       };
     }
 
-    const reading = await this.fetch(provider);
-    // A failed read is not cached: the next tick should ask again rather than
-    // repeat an hour of "could not say".
-    if (reading.read) this.held.set(provider, { reading, atMs: Date.now() });
+    const reading = await withTimeout(
+      this.fetchOnce(provider),
+      SHAPES_DEADLINE_MS,
+    );
+    if (!reading) {
+      this.logger.warn(
+        `Shape catalogue for ${provider} did not answer in ${SHAPES_DEADLINE_MS}ms; still reading it for the next caller`,
+      );
+      return { shapes: [], read: false };
+    }
     return { ...reading, ageSeconds: 0 };
+  }
+
+  private fetchOnce(provider: string): Promise<ShapeFactsReading> {
+    const running = this.inFlight.get(provider);
+    if (running !== undefined) return running;
+    const fetching = this.fetch(provider)
+      .then((reading) => {
+        // A failed read is not cached: the next tick should ask again rather
+        // than repeat an hour of "could not say".
+        if (reading.read) {
+          this.held.set(provider, { reading, atMs: Date.now() });
+        }
+        return reading;
+      })
+      .finally(() => this.inFlight.delete(provider));
+    this.inFlight.set(provider, fetching);
+    return fetching;
   }
 
   private async fetch(provider: string): Promise<ShapeFactsReading> {
@@ -74,6 +107,10 @@ function toFact(size: NodeSizeDto): ShapeFact {
     memoryMi: Math.round(size.memory * 1024),
     deprecated: size.deprecated,
     supportsHourlyBilling: size.supportsHourlyBilling,
+    architecture:
+      size.architecture === 'arm' || size.architecture === 'x86'
+        ? size.architecture
+        : null,
     availability: size.availability
       ? size.availability.map((entry) => ({
           region: entry.location,
