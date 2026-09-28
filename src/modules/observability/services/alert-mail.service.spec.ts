@@ -94,6 +94,40 @@ describe('AlertMailService', () => {
 
   // Same switch as every other product email: unset means email is not set up
   // here, rather than a sender invented on an unverified domain.
+  it('emails administrators a warning nobody owns once the installation opted in', async () => {
+    const { service, sent } = build();
+    const delivered = await service.deliver(
+      'fired',
+      event({ severity: 'warning' }),
+      { ownerUserId: null, adminWarnings: true },
+    );
+    expect(delivered).toBe(true);
+    expect(sent[0].to).toEqual([{ email: 'admin@example.test' }]);
+  });
+
+  it('keeps an application’s warning out of the inbox even when opted in', async () => {
+    const { service, sent } = build({ owner: { email: 'owner@example.test' } });
+    await service.deliver('fired', event({ severity: 'warning' }), {
+      ownerUserId: 'u1',
+      adminWarnings: true,
+    });
+    expect(sent).toHaveLength(0);
+  });
+
+  it('sends to chosen addresses and reports a refusal instead of throwing', async () => {
+    const { service, sent } = build();
+    expect(
+      await service.sendTo('fired', event(), ['oncall@example.test']),
+    ).toEqual({ sent: true });
+    expect(sent[0].to).toEqual([{ email: 'oncall@example.test' }]);
+
+    const unconfigured = build({ from: '' });
+    expect(
+      (await unconfigured.service.sendTo('fired', event(), ['x@example.test']))
+        .sent,
+    ).toBe(false);
+  });
+
   it('says nothing at all when no sender is configured', async () => {
     const { service, sent } = build({ from: '' });
 

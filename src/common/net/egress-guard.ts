@@ -39,6 +39,9 @@ import type { AxiosRequestConfig, AxiosResponse } from 'axios';
  * that is not supported today, and when it is, this is the door it comes through.
  */
 
+const LINK_LOCAL_V4 = 'link-local (this is where cloud metadata lives)';
+const LINK_LOCAL_V6 = 'link-local';
+
 const BLOCKED_V4 = [
   { label: 'this host', cidr: '0.0.0.0/8' },
   { label: 'loopback', cidr: '127.0.0.0/8' },
@@ -46,10 +49,7 @@ const BLOCKED_V4 = [
   { label: 'the private network', cidr: '172.16.0.0/12' },
   { label: 'the private network', cidr: '192.168.0.0/16' },
   { label: 'carrier-grade NAT', cidr: '100.64.0.0/10' },
-  {
-    label: 'link-local (this is where cloud metadata lives)',
-    cidr: '169.254.0.0/16',
-  },
+  { label: LINK_LOCAL_V4, cidr: '169.254.0.0/16' },
   { label: 'a benchmarking range', cidr: '198.18.0.0/15' },
   { label: 'multicast', cidr: '224.0.0.0/4' },
   { label: 'a reserved range', cidr: '240.0.0.0/4' },
@@ -166,10 +166,20 @@ function blockedV6Reason(address: string): string | null {
   if (g.every((x) => x === 0)) return 'the unspecified address';
   if (zeroTo(7) && g[7] === 1) return 'loopback';
   if ((g[0] & 0xfe00) === 0xfc00) return 'a unique local address';
-  if ((g[0] & 0xffc0) === 0xfe80) return 'link-local';
+  if ((g[0] & 0xffc0) === 0xfe80) return LINK_LOCAL_V6;
   if ((g[0] & 0xffc0) === 0xfec0) return 'a site-local address';
   if ((g[0] & 0xff00) === 0xff00) return 'multicast';
   return null;
+}
+
+/**
+ * Why this address is refused even for a host the installation allowed, or
+ * `null`. Only link-local: the allow-list exists for a receiver on the cluster
+ * or the LAN, and no such receiver lives where the cloud metadata service does.
+ */
+export function alwaysBlockedReason(address: string): string | null {
+  const reason = blockedReason(address);
+  return reason === LINK_LOCAL_V4 || reason === LINK_LOCAL_V6 ? reason : null;
 }
 
 export class EgressRefusedError extends Error {
@@ -189,10 +199,19 @@ export interface EgressPolicy {
   allowedHosts?: string[];
 }
 
-function isAllowed(hostname: string, policy: EgressPolicy): boolean {
-  const allowed = policy.allowedHosts ?? [];
-  const host = hostname.toLowerCase().replace(/^\[|\]$/g, '');
-  return allowed.some((h) => h.trim().toLowerCase() === host);
+const bareHost = (hostname: string): string =>
+  hostname
+    .trim()
+    .toLowerCase()
+    .replace(/^\[|\]$/g, '');
+
+/** Whether the installation named this host as an exception. */
+export function isAllowedHost(
+  hostname: string,
+  policy: EgressPolicy = egressPolicyFromEnv(),
+): boolean {
+  const host = bareHost(hostname);
+  return (policy.allowedHosts ?? []).some((h) => bareHost(h) === host);
 }
 
 /**
@@ -239,11 +258,12 @@ export function assertUrlAllowed(
     );
   }
 
-  if (isAllowed(parsed.hostname, policy)) return parsed;
-
+  const judge = isAllowedHost(parsed.hostname, policy)
+    ? alwaysBlockedReason
+    : blockedReason;
   const literal = parsed.hostname.replace(/^\[|\]$/g, '');
   if (isIP(literal)) {
-    const reason = blockedReason(literal);
+    const reason = judge(literal);
     if (reason) throw new EgressRefusedError(parsed.hostname, reason);
   }
 
@@ -271,10 +291,9 @@ export function guardedLookup(policy: EgressPolicy = egressPolicyFromEnv()) {
     options: unknown,
     callback: LookupCallback,
   ): void => {
-    if (isAllowed(hostname, policy)) {
-      dnsLookup(hostname, options as never, callback as never);
-      return;
-    }
+    const judge = isAllowedHost(hostname, policy)
+      ? alwaysBlockedReason
+      : blockedReason;
 
     dnsLookup(
       hostname,
@@ -290,7 +309,7 @@ export function guardedLookup(policy: EgressPolicy = egressPolicyFromEnv()) {
           ? address.map((a) => a.address)
           : [address];
         for (const candidate of addresses) {
-          const reason = blockedReason(candidate);
+          const reason = judge(candidate);
           if (reason) {
             return callback(
               Object.assign(new EgressRefusedError(hostname, reason), {

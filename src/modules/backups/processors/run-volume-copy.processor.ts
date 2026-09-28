@@ -65,6 +65,20 @@ export class RunVolumeCopyProcessor {
   @Process(BACKUP_JOB_TYPES.RUN_VOLUME_COPY)
   async handle(job: Job<RunVolumeCopyData>): Promise<void> {
     const { backupJobId } = job.data;
+    try {
+      await this.run(backupJobId);
+    } catch (err: any) {
+      this.logger.error(`[volume-copy] Failed: ${err?.message}`);
+      await this.jobsService.update(backupJobId, {
+        status: BackupJobStatus.FAILED,
+        errorMessage: err?.message ?? String(err),
+        finishedAt: new Date(),
+      });
+      throw err;
+    }
+  }
+
+  private async run(backupJobId: string): Promise<void> {
     const backupJob = await this.jobsService.findById(backupJobId);
     const policy = backupJob.policyId
       ? await this.policyRepo.findById(backupJob.policyId)

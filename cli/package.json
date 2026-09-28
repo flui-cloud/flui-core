@@ -108,6 +108,15 @@
       "auth": {
         "description": "Authentication management"
       },
+      "audit": {
+        "description": "Who did what on this installation"
+      },
+      "alerts": {
+        "description": "Where alerts are sent besides the dashboard bell"
+      },
+      "alerts:destination": {
+        "description": "Email addresses and signed webhooks that receive alerts"
+      },
       "network": {
         "description": "Private networks: the ones a provider offers and the ones Flui builds"
       },

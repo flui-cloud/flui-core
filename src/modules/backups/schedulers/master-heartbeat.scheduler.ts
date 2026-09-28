@@ -7,11 +7,47 @@ import { BackupPolicyEntity } from '../entities/backup-policy.entity';
 import { BackupJobEntity } from '../entities/backup-job.entity';
 import { BackupEngineClass } from '../enums/backup-engine-class.enum';
 import { BackupJobStatus } from '../enums/backup-job.enum';
+import { BackupPolicyStatus } from '../enums/backup-policy-status.enum';
+import { CronExpressionParser } from 'cron-parser';
 import { guardedRequest } from '../../../common/net/egress-guard';
+import { RELEASE } from '../../../config/release.config';
 
-/** A backup older than this makes the heartbeat go silent — the operator's absence
- * evaluator then alarms on BOTH master death and a silently-failing backup. */
-const BACKUP_FRESHNESS_MS = 45 * 60 * 1000;
+const MIN_FRESHNESS_MS = 45 * 60 * 1000;
+const FRESHNESS_SLACK_MS = 15 * 60 * 1000;
+
+/**
+ * Whether the last platform backup keeps the heartbeat going — when it does not,
+ * the operator's absence evaluator alarms on BOTH master death and a
+ * silently-failing backup.
+ *
+ * Judged against the schedule itself, not against a window: the backup is fresh
+ * when it is no older than the last run the schedule asked for, once that run
+ * has had 15 minutes to finish. A window derived from the gap between two runs
+ * is wrong for any schedule whose gaps differ (weekdays only, twice a day). A
+ * success in the last 45 minutes is always fresh, and with no readable schedule
+ * that is the whole rule.
+ */
+export function isPlatformBackupFresh(
+  lastSuccessAt: Date | null | undefined,
+  cronSchedule: string | null | undefined,
+  now: Date = new Date(),
+): boolean {
+  if (!lastSuccessAt) return false;
+  const last = new Date(lastSuccessAt).getTime();
+  if (now.getTime() - last <= MIN_FRESHNESS_MS) return true;
+  if (!cronSchedule) return false;
+  try {
+    const due = CronExpressionParser.parse(cronSchedule, {
+      currentDate: new Date(now.getTime() - FRESHNESS_SLACK_MS),
+      tz: 'UTC',
+    })
+      .prev()
+      .getTime();
+    return last >= due;
+  } catch {
+    return false;
+  }
+}
 
 /**
  * Dead-man's switch (MVP-4, §7): the master POSTs a heartbeat to an operator-
@@ -40,11 +76,17 @@ export class MasterHeartbeatScheduler {
       const url = this.heartbeatUrl(policies);
       if (!url) return; // no platform heartbeat configured — nothing to do
 
-      const last = await this.lastSuccessfulPlatformBackup(policies);
+      // A paused or degraded policy is one the scheduler no longer runs: its
+      // schedule promises nothing, so it cannot vouch for the backup.
+      const running = policies.filter(
+        (p) => p.enabled && p.status === BackupPolicyStatus.ACTIVE,
+      );
+      const last = await this.lastSuccessfulPlatformBackup(running);
       const lastAt = last?.finishedAt ?? null;
-      const fresh =
-        !!lastAt &&
-        Date.now() - new Date(lastAt).getTime() <= BACKUP_FRESHNESS_MS;
+      const now = new Date();
+      const fresh = running.some((p) =>
+        isPlatformBackupFresh(lastAt, p.cronSchedule, now),
+      );
 
       if (!fresh) {
         const lastLabel = lastAt
@@ -65,6 +107,7 @@ export class MasterHeartbeatScheduler {
         url,
         data: {
           ts: new Date().toISOString(),
+          version: RELEASE.version,
           lastPlatformBackupAt: lastAt,
           lastPlatformBackupStatus: 'ok',
         },

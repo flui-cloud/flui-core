@@ -19,6 +19,16 @@ const EMAILED_SEVERITIES = new Set(['critical']);
 export interface AlertMailSubject {
   /** The owner of the application the alert is about, when it has one. */
   ownerUserId?: string | null;
+  /**
+   * The installation opted administrators into warnings about what nobody
+   * owns. An application's warnings still reach nobody's inbox.
+   */
+  adminWarnings?: boolean;
+}
+
+export interface AlertMailOutcome {
+  sent: boolean;
+  error?: string;
 }
 
 /**
@@ -58,11 +68,8 @@ export class AlertMailService {
     event: AlertEventEntity,
     subject: AlertMailSubject = {},
   ): Promise<boolean> {
-    const from = this.config.get<string>('MAIL_FROM');
-    if (!from) return false;
-    if (!EMAILED_SEVERITIES.has((event.severity ?? '').toLowerCase())) {
-      return false;
-    }
+    if (!this.configured()) return false;
+    if (!this.emailed(event, subject)) return false;
 
     const to = await this.recipients(subject.ownerUserId ?? null);
     if (to.length === 0) {
@@ -72,6 +79,26 @@ export class AlertMailService {
       return false;
     }
 
+    const outcome = await this.sendTo(kind, event, to);
+    if (outcome.error) {
+      this.logger.warn(`Could not email ${event.alertname}: ${outcome.error}`);
+    }
+    return outcome.sent;
+  }
+
+  /**
+   * The same message to addresses somebody chose, with no severity gate of
+   * its own: whoever added the address already said what it wants to hear.
+   */
+  async sendTo(
+    kind: 'fired' | 'resolved',
+    event: AlertEventEntity,
+    to: string[],
+  ): Promise<AlertMailOutcome> {
+    const from = this.config.get<string>('MAIL_FROM');
+    if (!from) {
+      return { sent: false, error: 'Email is not set up on this installation' };
+    }
     try {
       await this.sender.send({
         from: {
@@ -83,15 +110,23 @@ export class AlertMailService {
         text: this.body(kind, event),
         reference: `alert:${event.fingerprint}:${kind}`,
       });
-      return true;
+      return { sent: true };
     } catch (error) {
-      this.logger.warn(
-        `Could not email ${event.alertname}: ${
-          error instanceof Error ? error.message : String(error)
-        }`,
-      );
-      return false;
+      return {
+        sent: false,
+        error: error instanceof Error ? error.message : String(error),
+      };
     }
+  }
+
+  private emailed(event: AlertEventEntity, subject: AlertMailSubject): boolean {
+    const severity = (event.severity ?? '').toLowerCase();
+    if (EMAILED_SEVERITIES.has(severity)) return true;
+    return (
+      severity === 'warning' &&
+      Boolean(subject.adminWarnings) &&
+      !subject.ownerUserId
+    );
   }
 
   /**

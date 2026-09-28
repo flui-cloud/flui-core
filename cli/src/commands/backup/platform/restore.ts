@@ -1,10 +1,14 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import * as crypto from 'node:crypto';
 import { gunzipSync } from 'node:zlib';
 import { Command, Flags } from '@oclif/core';
 import chalk from 'chalk';
 import { promptMaskedInput } from '../../../lib/prompts';
+import {
+  openPlatformDump,
+  SecureKeyFile,
+  writeSecureKeys,
+} from '../../../lib/platform-dump';
 
 // age-encryption is ESM-only; the Function indirection keeps a genuine dynamic
 // import that survives the tsc→CommonJS rewrite. Same trick as `platform init`.
@@ -12,9 +16,6 @@ type AgeModule = typeof import('age-encryption');
 const loadAge = new Function(
   'return import("age-encryption")',
 ) as () => Promise<AgeModule>;
-
-/** FLUIPB1\0 + iv(16) + ciphertext + gcm tag(16) — written by PlatformBackupService. */
-const DUMP_MAGIC = Buffer.from('FLUIPB1\0', 'binary');
 
 interface CapturedClusterSecret {
   namespace: string;
@@ -33,6 +34,7 @@ interface KeyBundleManifest {
   sshCa?: { privateKey: string; publicKey: string | null; source: string };
   zitadelPat: string | null;
   clusterSecrets?: CapturedClusterSecret[];
+  secureKeys?: SecureKeyFile[];
   databases: string[];
   zitadelCovered: boolean;
   insecureDefaults: string[];
@@ -196,30 +198,24 @@ export default class BackupPlatformRestore extends Command {
       }
     }
 
+    const secureKeys = manifest.secureKeys ?? [];
+    if (secureKeys.length) {
+      try {
+        writeSecureKeys(outDir, secureKeys);
+      } catch (err) {
+        this.error((err as Error).message);
+      }
+      written.push(path.join(outDir, 'secure-keys'));
+    }
+
     this.report(manifest, outDir, written, secrets);
   }
 
   private decryptDump(framed: Buffer, dek: Buffer): Buffer {
-    if (!framed.subarray(0, DUMP_MAGIC.length).equals(DUMP_MAGIC)) {
-      this.error(
-        'That file is not a Flui platform dump (missing the FLUIPB1 header).',
-      );
-    }
-    const ivStart = DUMP_MAGIC.length;
-    const iv = framed.subarray(ivStart, ivStart + 16);
-    const tag = framed.subarray(-16);
-    const ciphertext = framed.subarray(ivStart + 16, -16);
-
-    const decipher = crypto.createDecipheriv('aes-256-gcm', dek, iv);
-    decipher.setAuthTag(tag);
     try {
-      const gz = Buffer.concat([decipher.update(ciphertext), decipher.final()]);
-      return gunzipSync(gz);
+      return openPlatformDump(framed, dek);
     } catch (err) {
-      this.error(
-        `The dump did not decrypt with this bundle's key — bundle and dump are ` +
-          `from different runs, or the file is truncated: ${(err as Error).message}`,
-      );
+      this.error((err as Error).message);
     }
   }
 
@@ -265,21 +261,21 @@ export default class BackupPlatformRestore extends Command {
       this.log('');
     }
 
+    const steps = [
+      `give it the keys in ${chalk.cyan('install-keys.env')} before first boot`,
+      `load ${chalk.cyan('flui-control-plane.sql')} into its Postgres`,
+      ...(secrets.length
+        ? [`re-apply the Secrets in ${chalk.cyan('cluster-secrets.json')}`]
+        : []),
+      ...(manifest.secureKeys?.length
+        ? [
+            `put the files of ${chalk.cyan('secure-keys/')} into the API's key directory (/secure/keys), keeping their permissions`,
+          ]
+        : []),
+      `run ${chalk.cyan('retire-old-control-row.sql')}`,
+    ];
     this.log(`   ${chalk.bold('Next')}, on the fresh installation:`);
-    this.log(
-      `     1. give it the keys in ${chalk.cyan('install-keys.env')} before first boot`,
-    );
-    this.log(
-      `     2. load ${chalk.cyan('flui-control-plane.sql')} into its Postgres`,
-    );
-    if (secrets.length) {
-      this.log(
-        `     3. re-apply the Secrets in ${chalk.cyan('cluster-secrets.json')}`,
-      );
-      this.log(`     4. run ${chalk.cyan('retire-old-control-row.sql')}`);
-    } else {
-      this.log(`     3. run ${chalk.cyan('retire-old-control-row.sql')}`);
-    }
+    steps.forEach((step, i) => this.log(`     ${i + 1}. ${step}`));
     this.log('');
     this.log(
       chalk.dim(

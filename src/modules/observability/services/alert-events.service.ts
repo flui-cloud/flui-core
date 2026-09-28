@@ -1,7 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
-import { In, LessThan, Repository } from 'typeorm';
+import { In, IsNull, LessThan, Not, Repository } from 'typeorm';
 import {
   AlertEventEntity,
   AlertEventStatus,
@@ -40,6 +40,13 @@ export interface AlertTransition {
  * retries without leaving a false alarm on screen for a working day.
  */
 const STALE_AFTER_HOURS = 6;
+
+/**
+ * Kinds Flui raises itself and closes from the database, not from memory.
+ * Nothing repeats them, so a quiet row is not a lost resolve: a backup that
+ * keeps failing stays one open episode until the next success closes it.
+ */
+export const SELF_CLOSING_KINDS = ['backup'];
 const DEFAULT_RETENTION_DAYS = 90;
 
 /**
@@ -111,10 +118,27 @@ export class AlertEventsService {
       existing.endsAt = alert.endsAt ?? new Date();
       existing.resolvedBy = 'alertmanager';
     }
-    const saved = await this.events.save(existing);
 
-    return wasFiring && alert.status === 'resolved'
-      ? { kind: 'resolved', event: saved }
+    if (!wasFiring || alert.status !== 'resolved') {
+      await this.events.save(existing);
+      return null;
+    }
+
+    // Conditional on the row still firing, so two resolves racing for one
+    // episode close it once and announce it once.
+    const result = await this.events.update(
+      { id: existing.id, status: 'firing' },
+      {
+        status: existing.status,
+        lastSeenAt: existing.lastSeenAt,
+        annotations: existing.annotations,
+        labels: existing.labels,
+        endsAt: existing.endsAt,
+        resolvedBy: existing.resolvedBy,
+      },
+    );
+    return (result.affected ?? 0) > 0
+      ? { kind: 'resolved', event: existing }
       : null;
   }
 
@@ -207,11 +231,18 @@ export class AlertEventsService {
    * Closes rows whose `resolved` notification never arrived — the API being down or
    * redeploying at the wrong moment is enough, and Alertmanager sends `send_resolved`
    * once. Left alone they read as a permanent false alarm.
+   *
+   * Two clauses because `NOT IN` is never true for a NULL kind, and most
+   * Alertmanager rows carry none.
    */
   async resolveStale(): Promise<number> {
     const cutoff = new Date(Date.now() - STALE_AFTER_HOURS * 3600 * 1000);
+    const quiet = { status: 'firing' as const, lastSeenAt: LessThan(cutoff) };
     const stale = await this.events.find({
-      where: { status: 'firing', lastSeenAt: LessThan(cutoff) },
+      where: [
+        { ...quiet, fluiKind: IsNull() },
+        { ...quiet, fluiKind: Not(In(SELF_CLOSING_KINDS)) },
+      ],
     });
     if (stale.length === 0) return 0;
 

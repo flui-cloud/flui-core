@@ -25,7 +25,10 @@ function durationToMs(since: string): number | undefined {
   return value * unitMs[match[2]];
 }
 
-/** Application logs from Loki and edge HTTP traffic from Traefik (read tier). */
+/**
+ * Application logs from Loki, edge HTTP traffic from Traefik, alert history,
+ * and where the installation's alerts are delivered.
+ */
 export const OBSERVABILITY_TOOLS: ToolDef[] = [
   defineTool({
     name: 'app_traffic',
@@ -199,5 +202,65 @@ export const OBSERVABILITY_TOOLS: ToolDef[] = [
         note: 'The matching lines are rendered to the user and are NOT included in this result, so do not claim to quote or analyze them from here. Tell the user the logs are displayed. If they want analysis they will select specific lines and send them as text in a later message — analyze THOSE directly when they arrive.',
       };
     },
+  }),
+  defineTool({
+    name: 'alert_destination_list',
+    routes: ['GET /observability/alert-destinations'],
+    description:
+      'List where this installation sends its alerts besides the dashboard bell and the built-in administrator email: email addresses and signed webhooks, each with the least severity it receives (warning or critical), its scope ("infrastructure" or "all" applications\' alerts too), whether it is enabled, and how its last delivery went (last_status is the HTTP status a webhook answered, "sent" for an email, or "failed" with last_error). Signing secrets are never returned.',
+    scope: MCP_SCOPE.INFRA_READ,
+    inputSchema: {},
+    run: (_args, ctx) => ctx.api.get('/observability/alert-destinations'),
+  }),
+  defineTool({
+    name: 'alert_destination_add',
+    routes: ['POST /observability/alert-destinations'],
+    description:
+      'Add somewhere this installation sends its alerts: kind "email" with an address, or kind "webhook" with a public https URL that receives a signed JSON POST ({ alert, severity, state, summary, description, application, node, startsAt, endsAt, installation }). min_severity is the least severe alert it receives: "critical" (default) or "warning". scope is what it hears: "infrastructure" (default: only alerts no application owns — nodes, disks, certificates, platform backups) or "all" (every application\'s alerts too), which is refused unless the person you act for has the data:access permission. Addresses inside the installation\'s own network are refused. IMPORTANT: a webhook\'s signing secret is shown once to whoever creates it and is withheld from you — if the receiver must verify signatures, tell the person to add the webhook themselves from the dashboard or with `flui alerts destination add`, where they will see the secret. Follow up with alert_destination_test to check it receives.',
+    scope: MCP_SCOPE.INFRA_WRITE,
+    inputSchema: {
+      kind: z.enum(['email', 'webhook']),
+      target: z.string().describe('An email address, or an https URL.'),
+      min_severity: z.enum(['warning', 'critical']).optional(),
+      scope: z.enum(['infrastructure', 'all']).optional(),
+    },
+    run: (args, ctx) =>
+      ctx.api.post('/observability/alert-destinations', {
+        kind: args.kind,
+        target: args.target,
+        minSeverity: args.min_severity,
+        scope: args.scope,
+      }),
+    forModel: (data) => {
+      const { secret, ...rest } = (data ?? {}) as Record<string, unknown>;
+      return secret
+        ? {
+            ...rest,
+            note: 'The signing secret was generated and is not shown to agents. Nobody can retrieve it later; if the receiver verifies signatures, a person has to add this webhook again themselves to see it.',
+          }
+        : rest;
+    },
+  }),
+  defineTool({
+    name: 'alert_destination_remove',
+    routes: ['DELETE /observability/alert-destinations/:id'],
+    description:
+      'Remove an alert destination (id from alert_destination_list). Alerts stop being sent there; the dashboard bell and the built-in administrator email are not affected.',
+    scope: MCP_SCOPE.INFRA_WRITE,
+    inputSchema: { id: z.string() },
+    run: async (args, ctx) => {
+      await ctx.api.delete(`/observability/alert-destinations/${enc(args.id)}`);
+      return { id: args.id, removed: true };
+    },
+  }),
+  defineTool({
+    name: 'alert_destination_test',
+    routes: ['POST /observability/alert-destinations/:id/test'],
+    description:
+      'Send a synthetic FluiTestAlert to one alert destination (id from alert_destination_list), whatever its severity floor, and report whether it arrived: ok, status (HTTP status or "sent") and error. A failure here is the destination\'s answer, not a problem with the alert itself.',
+    scope: MCP_SCOPE.INFRA_WRITE,
+    inputSchema: { id: z.string() },
+    run: (args, ctx) =>
+      ctx.api.post(`/observability/alert-destinations/${enc(args.id)}/test`),
   }),
 ];

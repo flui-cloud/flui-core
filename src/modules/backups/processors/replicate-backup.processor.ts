@@ -16,6 +16,7 @@ import { BackupDestinationRepository } from '../repositories/backup-destination.
 import { BackupJobRepository } from '../repositories/backup-job.repository';
 import { BackupPolicyRepository } from '../repositories/backup-policy.repository';
 import { BackupDestinationsService } from '../services/backup-destinations.service';
+import { BackupJobsService } from '../services/backup-jobs.service';
 import { TemplateRendererService } from '../services/template-renderer.service';
 import { ArtifactLocationState } from '../enums/artifact-location-state.enum';
 import { BackupPolicyStatus } from '../enums/backup-policy-status.enum';
@@ -89,6 +90,7 @@ export class ReplicateBackupProcessor {
     private readonly encryption: EncryptionService,
     private readonly k8s: KubernetesService,
     private readonly templates: TemplateRendererService,
+    private readonly jobsService: BackupJobsService,
   ) {}
 
   @Process(BACKUP_JOB_TYPES.REPLICATE_BACKUP)
@@ -206,7 +208,7 @@ export class ReplicateBackupProcessor {
             artifact.locations.some(
               (l) => l.state === ArtifactLocationState.FAILED,
             ) || !!artifact.manifestSummary?.volumesSkipped?.length;
-          await this.jobRepo.update(artifact.backupJobId, {
+          await this.jobsService.update(artifact.backupJobId, {
             status: anyFailed
               ? BackupJobStatus.PARTIALLY_COMPLETED
               : BackupJobStatus.COMPLETED,

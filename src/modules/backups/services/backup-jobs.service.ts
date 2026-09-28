@@ -1,4 +1,9 @@
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import {
+  Optional,
+  Injectable,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bull';
 import { Queue } from 'bull';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -12,6 +17,7 @@ import {
   BackupJobTriggerType,
 } from '../enums/backup-job.enum';
 import { BackupEngineClass } from '../enums/backup-engine-class.enum';
+import { BackupAlertService } from './backup-alert.service';
 import { BackupJobEntity } from '../entities/backup-job.entity';
 import { BackupArtifactEntity } from '../entities/backup-artifact.entity';
 import {
@@ -37,6 +43,7 @@ export class BackupJobsService {
     @InjectRepository(InfrastructureOperationEntity)
     private readonly opRepo: Repository<InfrastructureOperationEntity>,
     @InjectQueue(BACKUP_QUEUE) private readonly queue: Queue,
+    @Optional() private readonly alerts?: BackupAlertService,
   ) {}
 
   async createOnDemand(
@@ -158,6 +165,7 @@ export class BackupJobsService {
 
   async update(id: string, patch: Partial<BackupJobEntity>): Promise<void> {
     await this.jobRepo.update(id, patch);
+    if (patch.status) void this.alerts?.settled(id, patch.status);
     if (
       patch.status === BackupJobStatus.COMPLETED ||
       patch.status === BackupJobStatus.PARTIALLY_COMPLETED

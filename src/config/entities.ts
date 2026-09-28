@@ -38,6 +38,7 @@ import { ApplicationEntity } from '../modules/applications/entities/application.
 import { AppRevisionEntity } from '../modules/applications/entities/app-revision.entity';
 import { AppResourceEntity } from '../modules/applications/entities/app-resource.entity';
 import { ScheduledJobEntity } from '../modules/applications/entities/scheduled-job.entity';
+import { AuditEventEntity } from '../modules/audit/entities/audit-event.entity';
 import { AppBuildEntity } from '../modules/app-builds/entities/app-build.entity';
 import { BuildCacheSnapshotEntity } from '../modules/app-builds/entities/build-cache-snapshot.entity';
 import { UserEntity } from '../modules/auth/entities/user.entity';
@@ -70,6 +71,7 @@ import { AppMigrationEntity } from '../modules/app-migration/entities/app-migrat
 import { FullMigrationEntity } from '../modules/full-migration/entities/full-migration.entity';
 import { DemoConfigEntity } from '../modules/demo/entities/demo-config.entity';
 import { AlertEventEntity } from '../modules/observability/entities/alert-event.entity';
+import { AlertDestinationEntity } from '../modules/observability/entities/alert-destination.entity';
 import { MailSuppressionEntity } from '../modules/mail/entities/mail-suppression.entity';
 import { MailEventEntity } from '../modules/mail/entities/mail-event.entity';
 import { MailConnectionEntity } from '../modules/mail/entities/mail-connection.entity';
@@ -115,6 +117,7 @@ export const entities = [
   AppRevisionEntity,
   AppResourceEntity,
   ScheduledJobEntity,
+  AuditEventEntity,
   AppBuildEntity,
   BuildCacheSnapshotEntity,
   UserEntity,
@@ -147,6 +150,7 @@ export const entities = [
   FullMigrationEntity,
   DemoConfigEntity,
   AlertEventEntity,
+  AlertDestinationEntity,
   MailSuppressionEntity,
   MailEventEntity,
   MailConnectionEntity,

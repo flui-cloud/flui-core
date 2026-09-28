@@ -12,14 +12,12 @@ import { AlertsWebhookService } from './alerts-webhook.service';
 import { ApplicationEntity } from '../../applications/entities/application.entity';
 import { ApplicationTrafficService } from '../../observability/services/application-traffic.service';
 import { AlertEventsService } from '../../observability/services/alert-events.service';
-import { UserEventsGateway } from '../../auth/gateway/user-events.gateway';
-import { AlertMailService } from '../../observability/services/alert-mail.service';
+import { AlertRoutingService } from '../../observability/services/alert-routing.service';
 import { AlertmanagerWebhookDto } from '../dto/alertmanager-webhook.dto';
 
 const TOKEN = 'super-secret-token';
 
-/** What the email path was asked to deliver, so a test can read the recipient. */
-const emailed = jest.fn().mockResolvedValue(true);
+const routed = jest.fn().mockResolvedValue(undefined);
 
 const payload = (
   labels: Record<string, string>,
@@ -43,14 +41,12 @@ describe('AlertsWebhookService', () => {
   let find: jest.Mock;
   let configGet: jest.Mock;
   let record: jest.Mock;
-  let emitAlert: jest.Mock;
 
   beforeEach(async () => {
     findOne = jest.fn().mockResolvedValue(null);
     find = jest.fn().mockResolvedValue([]);
     configGet = jest.fn().mockReturnValue(TOKEN);
     record = jest.fn().mockResolvedValue([]);
-    emitAlert = jest.fn();
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -67,8 +63,7 @@ describe('AlertsWebhookService', () => {
           useValue: new ApplicationTrafficService({} as never),
         },
         { provide: AlertEventsService, useValue: { record } },
-        { provide: UserEventsGateway, useValue: { emitAlert } },
-        { provide: AlertMailService, useValue: { deliver: emailed } },
+        { provide: AlertRoutingService, useValue: { deliver: routed } },
       ],
     }).compile();
 
@@ -288,13 +283,10 @@ describe('AlertsWebhookService', () => {
       expect(res.resolved).toBe(0);
     });
 
-    // A node alert owns no application, so there is no bell to ring: the email
-    // path is its only delivery.
-    it('takes an ownerless alert to the email path, which the bell cannot reach', async () => {
-      emailed.mockClear();
-      emitAlert.mockClear();
-      // The recorder decides what counts as news; here it says one alert
-      // started, so the announcement has something to carry.
+    // A node alert owns no application: routing is told so, and decides who
+    // hears about it instead of the webhook deciding nobody does.
+    it('hands an ownerless alert to routing with no owner', async () => {
+      routed.mockClear();
       record.mockResolvedValueOnce([
         {
           kind: 'fired',
@@ -319,9 +311,65 @@ describe('AlertsWebhookService', () => {
         }),
       );
 
-      expect(emitAlert).not.toHaveBeenCalled();
-      expect(emailed).toHaveBeenCalledTimes(1);
-      expect(emailed.mock.calls[0][2]).toEqual({ ownerUserId: null });
+      expect(routed).toHaveBeenCalledTimes(1);
+      expect(routed.mock.calls[0][0]).toBe('fired');
+      expect(routed.mock.calls[0][2]).toEqual({ ownerUserId: null });
+    });
+
+    it('hands an application alert to routing with its owner', async () => {
+      routed.mockClear();
+      find.mockResolvedValue([
+        { id: 'app-1', slug: 'shop', k8sNamespace: 'user-a', userId: 'u-9' },
+      ]);
+      record.mockResolvedValueOnce([
+        {
+          kind: 'fired',
+          event: {
+            id: 'e2',
+            fingerprint: 'fp2',
+            alertname: 'FluiAppDown',
+            severity: 'critical',
+            applicationId: 'app-1',
+            annotations: {},
+            startsAt: new Date(),
+          },
+        },
+      ]);
+
+      await service.handle(
+        { header: TOKEN },
+        payload({
+          flui_kind: 'application',
+          alertname: 'FluiAppDown',
+          namespace: 'user-a',
+          label_app_kubernetes_io_name: 'shop',
+        }),
+      );
+
+      expect(routed.mock.calls[0][2]).toEqual({ ownerUserId: 'u-9' });
+    });
+
+    it('answers Alertmanager without waiting for delivery', async () => {
+      routed.mockClear();
+      routed.mockReturnValueOnce(new Promise(() => undefined));
+      record.mockResolvedValueOnce([
+        {
+          kind: 'fired',
+          event: {
+            id: 'e3',
+            fingerprint: 'fp3',
+            alertname: 'FluiNodeDown',
+            severity: 'critical',
+            applicationId: null,
+            annotations: {},
+            startsAt: new Date(),
+          },
+        },
+      ]);
+
+      await expect(
+        service.handle({ header: TOKEN }, payload({ flui_kind: 'node' })),
+      ).resolves.toEqual(expect.objectContaining({ received: true }));
     });
 
     it('accepts an unknown kind without failing the delivery', async () => {

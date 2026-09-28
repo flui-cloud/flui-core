@@ -37,6 +37,8 @@ import { VeleroInstallerService } from './services/velero-installer.service';
 import { VeleroClientService } from './services/velero-client.service';
 import { TemplateRendererService } from './services/template-renderer.service';
 import { EtcdSnapshotService } from './services/etcd-snapshot.service';
+import { BackupAlertService } from './services/backup-alert.service';
+import { AlertEventEntity } from '../observability/entities/alert-event.entity';
 
 import { InstallVeleroProcessor } from './processors/install-velero.processor';
 import {
@@ -92,6 +94,7 @@ import { AppCoverageService } from './services/app-coverage.service';
   imports: [
     ConfigModule,
     TypeOrmModule.forFeature([
+      AlertEventEntity,
       BackupDestinationEntity,
       BackupPolicyEntity,
       BackupPolicyDestinationEntity,
@@ -144,6 +147,7 @@ import { AppCoverageService } from './services/app-coverage.service';
     VeleroClientService,
     TemplateRendererService,
     EtcdSnapshotService,
+    BackupAlertService,
     InstallVeleroProcessor,
     RunBackupJobProcessor,
     PreDeployTriggerProcessor,

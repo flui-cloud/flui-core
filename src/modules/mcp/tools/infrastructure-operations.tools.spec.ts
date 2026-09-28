@@ -232,6 +232,8 @@ describe('what the person is asked, and with what attached', () => {
       .filter((a) => a !== 'POST /infrastructure/clusters')
       // One switch for the whole installation: there is no resource to bind.
       .filter((a) => a !== 'PUT /infrastructure/management-network')
+      // Adding an alert destination creates the resource it would be bound to.
+      .filter((a) => a !== 'POST /observability/alert-destinations')
       .filter((a) => !CYCLED.get(a)?.bound);
     expect(unbound.sort()).toEqual([]);
   });

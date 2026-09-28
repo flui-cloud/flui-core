@@ -5,8 +5,10 @@ import {
   assertUrlAllowed,
   blockedReason,
   egressPolicyFromEnv,
+  guardedLookup,
   guardedRequest,
   guardedRequestOptions,
+  isAllowedHost,
 } from './egress-guard';
 
 /**
@@ -103,6 +105,29 @@ describe('which addresses this installation will connect to', () => {
       expect(() =>
         assertUrlAllowed('http://10.0.0.5:11434/v1', policy),
       ).toThrow(EgressRefusedError);
+    });
+
+    // The allow-list is for a receiver on the cluster or the LAN; nothing an
+    // installation runs lives at the metadata address, so naming it opens nothing.
+    it('keeps link-local refused even for a host the installation allowed', () => {
+      const policy = {
+        allowedHosts: ['169.254.169.254', '[fe80::1]', 'metadata.internal'],
+      };
+      expect(() =>
+        assertUrlAllowed('http://169.254.169.254/latest/', policy),
+      ).toThrow(EgressRefusedError);
+      expect(() => assertUrlAllowed('http://[fe80::1]/x', policy)).toThrow(
+        EgressRefusedError,
+      );
+      expect(isAllowedHost('METADATA.internal', policy)).toBe(true);
+    });
+
+    it('keeps link-local refused when an allowed name resolves there', async () => {
+      const lookup = guardedLookup({ allowedHosts: ['169.254.169.254'] });
+      const err = await new Promise<unknown>((resolve) =>
+        lookup('169.254.169.254', {}, (e) => resolve(e)),
+      );
+      expect(err).toBeInstanceOf(EgressRefusedError);
     });
 
     it('reads the exceptions from the environment, never from a request', () => {

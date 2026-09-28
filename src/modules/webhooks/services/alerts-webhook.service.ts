@@ -5,13 +5,12 @@ import { In, Repository } from 'typeorm';
 import { timingSafeEqual } from 'node:crypto';
 import { ApplicationEntity } from '../../applications/entities/application.entity';
 import { ApplicationTrafficService } from '../../observability/services/application-traffic.service';
-import { AlertMailService } from '../../observability/services/alert-mail.service';
+import { AlertRoutingService } from '../../observability/services/alert-routing.service';
 import {
   AlertEventsService,
   AlertTransition,
   IncomingAlert,
 } from '../../observability/services/alert-events.service';
-import { UserEventsGateway } from '../../auth/gateway/user-events.gateway';
 import {
   AlertmanagerAlertDto,
   AlertmanagerWebhookDto,
@@ -42,8 +41,7 @@ interface ResolutionContext {
  *
  * Alertmanager owns grouping, deduplication, silences and inhibition; it knows nothing
  * about Flui projects or RBAC, so it delivers everything here and Flui resolves the
- * subject. This is the seam where tenant-aware delivery plugs in — today it resolves
- * and records, it does not yet notify anyone.
+ * subject. It resolves and records; delivery is `AlertRoutingService`'s.
  */
 /**
  * The application an alert is about. Flui names an app's workload after its
@@ -68,8 +66,7 @@ export class AlertsWebhookService {
     private readonly applications: Repository<ApplicationEntity>,
     private readonly traffic: ApplicationTrafficService,
     private readonly alertEvents: AlertEventsService,
-    private readonly userEvents: UserEventsGateway,
-    private readonly alertMail: AlertMailService,
+    private readonly routing: AlertRoutingService,
   ) {}
 
   async handle(
@@ -124,38 +121,19 @@ export class AlertsWebhookService {
    * A transition is what a human would call news: it started, or it recovered. The
    * repeats in between update the row and tell nobody.
    *
-   * Two deliveries, and they answer different questions. The bell reaches whoever
-   * owns the application and happens to be looking; the email reaches somebody who
-   * is not. An alert with no owner — a node, a disk, a cluster — has no bell to
-   * ring at all, so the email path runs for those too, addressed to the
-   * instance's administrators.
-   *
-   * Still the seam the rest plugs into: user webhooks and ntfy, routed by severity.
+   * Who hears about it is routing's question, not this one's: here the subject is
+   * resolved to an owner, or to nobody, and handed over. Not awaited — a slow mail
+   * provider or webhook must not hold open the request Alertmanager is making.
    */
   private announce(
     transitions: AlertTransition[],
     context: ResolutionContext,
   ): void {
     for (const { kind, event } of transitions) {
-      const userId = event.applicationId
-        ? context.owners.get(event.applicationId)
-        : undefined;
-
-      // Deliberately outside the `userId` guard below, and not awaited: a slow
-      // mail provider must not hold open the request Alertmanager is making.
-      void this.alertMail.deliver(kind, event, { ownerUserId: userId ?? null });
-
-      if (!userId) continue;
-      this.userEvents.emitAlert(userId, {
-        id: event.id,
-        kind,
-        alertname: event.alertname,
-        severity: event.severity,
-        summary: event.annotations?.summary ?? event.alertname,
-        applicationId: event.applicationId ?? null,
-        applicationSlug: event.applicationSlug ?? null,
-        startsAt: event.startsAt.toISOString(),
-      });
+      const ownerUserId = event.applicationId
+        ? (context.owners.get(event.applicationId) ?? null)
+        : null;
+      void this.routing.deliver(kind, event, { ownerUserId });
     }
   }
 

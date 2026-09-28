@@ -1,6 +1,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { ConfigService } from '@nestjs/config';
 import { getRepositoryToken } from '@nestjs/typeorm';
+import { In, IsNull, Not } from 'typeorm';
 import { AlertEventsService, IncomingAlert } from './alert-events.service';
 import { AlertEventEntity } from '../entities/alert-event.entity';
 
@@ -26,6 +27,7 @@ describe('AlertEventsService', () => {
   let findOne: jest.Mock;
   let find: jest.Mock;
   let save: jest.Mock;
+  let update: jest.Mock;
   let del: jest.Mock;
   let configGet: jest.Mock;
 
@@ -33,6 +35,7 @@ describe('AlertEventsService', () => {
     findOne = jest.fn().mockResolvedValue(null);
     find = jest.fn().mockResolvedValue([]);
     save = jest.fn().mockImplementation((entity) => Promise.resolve(entity));
+    update = jest.fn().mockResolvedValue({ affected: 1 });
     del = jest.fn().mockResolvedValue({ affected: 0 });
     configGet = jest.fn().mockReturnValue(undefined);
 
@@ -45,6 +48,7 @@ describe('AlertEventsService', () => {
             findOne,
             find,
             save,
+            update,
             delete: del,
             create: (data: Partial<AlertEventEntity>) => ({ ...data }),
           },
@@ -109,6 +113,34 @@ describe('AlertEventsService', () => {
       expect(transitions[0].event.resolvedBy).toBe('alertmanager');
     });
 
+    // Two resolves for one episode can arrive together (an Alertmanager retry
+    // racing the group flush); only the one that actually closed the row is news.
+    it('reports a resolve once when two arrive for the same firing row', async () => {
+      findOne.mockImplementation(async () => ({
+        id: 'row-1',
+        status: 'firing',
+        annotations: {},
+        labels: {},
+      }));
+      update
+        .mockResolvedValueOnce({ affected: 1 })
+        .mockResolvedValueOnce({ affected: 0 });
+
+      const [first, second] = await Promise.all([
+        service.record([incoming({ status: 'resolved' })]),
+        service.record([incoming({ status: 'resolved' })]),
+      ]);
+
+      expect([...first, ...second]).toHaveLength(1);
+      expect(update).toHaveBeenCalledWith(
+        { id: 'row-1', status: 'firing' },
+        expect.objectContaining({
+          status: 'resolved',
+          resolvedBy: 'alertmanager',
+        }),
+      );
+    });
+
     it('does not announce a resolve for an episode it never saw fire', async () => {
       const transitions = await service.record([
         incoming({ status: 'resolved' }),
@@ -158,6 +190,21 @@ describe('AlertEventsService', () => {
           resolvedBy: 'timeout',
           // The end time is when it was last seen — the only honest value available.
           endsAt: lastSeenAt,
+        }),
+      ]);
+    });
+
+    // A failing backup is not repeated by Alertmanager; its episode ends at the
+    // next successful run, however many hours that takes.
+    it('leaves a failed-backup episode open', async () => {
+      await service.resolveStale();
+
+      const where = find.mock.calls[0][0].where;
+      expect(where).toEqual([
+        expect.objectContaining({ status: 'firing', fluiKind: IsNull() }),
+        expect.objectContaining({
+          status: 'firing',
+          fluiKind: Not(In(['backup'])),
         }),
       ]);
     });

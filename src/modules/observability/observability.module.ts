@@ -30,6 +30,12 @@ import { AlertEventEntity } from './entities/alert-event.entity';
 import { UserEntity } from '../auth/entities/user.entity';
 import { MailModule } from '../mail/mail.module';
 import { AlertMailService } from './services/alert-mail.service';
+import { AlertRoutingService } from './services/alert-routing.service';
+import { AlertDestinationsService } from './services/alert-destinations.service';
+import { AlertDestinationsController } from './controllers/alert-destinations.controller';
+import { AlertDestinationEntity } from './entities/alert-destination.entity';
+import { EncryptionModule } from '../shared/encryption/encryption.module';
+import { IamModule } from '../iam/iam.module';
 
 // External modules
 import { ApplicationsModule } from '../applications/applications.module';
@@ -61,10 +67,13 @@ import { ApplicationsModule } from '../applications/applications.module';
       ClusterNodeEntity,
       ClusterEntity,
       AlertEventEntity,
+      AlertDestinationEntity,
       UserEntity,
     ]),
     ApplicationsModule,
     MailModule,
+    EncryptionModule,
+    IamModule,
   ],
   controllers: [
     ObservabilityController,
@@ -74,6 +83,7 @@ import { ApplicationsModule } from '../applications/applications.module';
     ApplicationTrafficController,
     ApplicationLogsController,
     AlertEventsController,
+    AlertDestinationsController,
   ],
   providers: [
     PrometheusQueryService,
@@ -83,6 +93,8 @@ import { ApplicationsModule } from '../applications/applications.module';
     ApplicationTrafficService,
     AlertEventsService,
     AlertMailService,
+    AlertRoutingService,
+    AlertDestinationsService,
     AlertMaintenanceScheduler,
   ],
   exports: [
@@ -93,6 +105,7 @@ import { ApplicationsModule } from '../applications/applications.module';
     ApplicationTrafficService,
     AlertEventsService,
     AlertMailService,
+    AlertRoutingService,
   ],
 })
 export class ObservabilityModule {}
