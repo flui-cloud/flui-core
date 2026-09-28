@@ -537,6 +537,8 @@ describe('api keys — the guest', () => {
       'infrastructure:look',
       'infrastructure:change',
       'infrastructure:destroy',
+      // Updating the installation asks for `platform:update`, which no tenancy holds.
+      'platform:change',
     ]);
   });
 

@@ -278,6 +278,7 @@ describe('reading a key back as groups', () => {
       // not move: a key issued to deploy applications is not thereby a key
       // that can stop the cluster they run on.
       'infrastructure:destroy',
+      'platform:change',
     ]);
   });
 

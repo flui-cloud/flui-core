@@ -4,7 +4,6 @@ import { Job } from 'bull';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { RELEASE } from '../../../config/release.config';
-import { ApplicationDeployService } from '../../applications/services/application-deploy.service';
 import {
   InfrastructureOperationEntity,
   OperationStatus,
@@ -12,16 +11,15 @@ import {
   PlatformUpdateOperationMetadata,
 } from '../../infrastructure/servers/entities/infrastructure-operations.entity';
 import { PlatformUpdatesService } from '../services/platform-updates.service';
-import { DeclaredImageService } from '../services/declared-image.service';
+import { ImageRolloutService } from '../services/image-rollout.service';
+import { PlatformUpgradeExecutorService } from '../services/platform-upgrade-executor.service';
 import {
   PLATFORM_UPDATE_JOB,
   PLATFORM_UPDATE_QUEUE,
+  PLATFORM_UPGRADE_JOB,
   PlatformUpdateJobData,
 } from '../services/platform-update-runner.service';
 import { PlatformComponentKey } from '../constants/platform-update-components';
-
-const CHILD_POLL_INTERVAL_MS = 5_000;
-const CHILD_TIMEOUT_MS = 10 * 60 * 1_000;
 
 /**
  * Applies a platform release, one component at a time, through the same deploy
@@ -40,10 +38,15 @@ export class PlatformUpdateProcessor {
   constructor(
     @InjectRepository(InfrastructureOperationEntity)
     private readonly operationRepository: Repository<InfrastructureOperationEntity>,
-    private readonly deployService: ApplicationDeployService,
     private readonly platformUpdates: PlatformUpdatesService,
-    private readonly declaredImages: DeclaredImageService,
+    private readonly images: ImageRolloutService,
+    private readonly upgrades: PlatformUpgradeExecutorService,
   ) {}
+
+  @Process(PLATFORM_UPGRADE_JOB)
+  async runUpgrade(job: Job<PlatformUpdateJobData>): Promise<void> {
+    await this.upgrades.execute(job.data.operationId);
+  }
 
   @Process(PLATFORM_UPDATE_JOB)
   async run(job: Job<PlatformUpdateJobData>): Promise<void> {
@@ -109,32 +112,21 @@ export class PlatformUpdateProcessor {
     component: PlatformUpdateOperationMetadata['components'][number],
     applicationId: string | undefined,
   ): Promise<void> {
-    if (!applicationId) {
-      throw new Error(
-        `${component.name} has no system-app row on the control cluster to deploy through.`,
-      );
+    if (applicationId) {
+      await this.markComponent(operationId, metadata, component.key, 'running');
     }
-    await this.markComponent(operationId, metadata, component.key, 'running');
-    const child = await this.deployService.setDesiredImage(
-      applicationId,
-      component.imageRef,
-    );
-    const outcome = await this.awaitOperation(child.id);
-    if (outcome !== OperationStatus.COMPLETED) {
-      await this.markComponent(operationId, metadata, component.key, 'failed');
-      throw new Error(
-        `${component.name} did not roll out to ${component.targetVersion} (deploy ${child.id} ended ${outcome}).`,
-      );
-    }
-    // The live Deployment now runs the new tag; the manifest on the master still
-    // declares the old one, and k3s re-applies that directory at every start. So
-    // the update is only finished once the declaration agrees — otherwise the
-    // next reboot quietly undoes it, with no error and nothing to blame.
-    const declared = await this.declaredImages.pin(component.imageRef);
-    if (declared.outcome === 'failed') {
-      this.logger.warn(
-        `${component.name} rolled out, but its manifest still declares the old image: ${declared.reason}`,
-      );
+    try {
+      await this.images.rollout(component, applicationId);
+    } catch (err) {
+      if (applicationId) {
+        await this.markComponent(
+          operationId,
+          metadata,
+          component.key,
+          'failed',
+        );
+      }
+      throw err;
     }
     await this.markComponent(operationId, metadata, component.key, 'done');
   }
@@ -151,9 +143,7 @@ export class PlatformUpdateProcessor {
     applicationId: string | undefined,
   ): Promise<void> {
     if (!applicationId) {
-      throw new Error(
-        'Flui API has no system-app row on the control cluster to deploy through.',
-      );
+      await this.images.replaceControlPlane(component, applicationId);
     }
     const components = metadata.components.map((c) =>
       c.key === component.key ? { ...c, status: 'running' as const } : c,
@@ -170,26 +160,7 @@ export class PlatformUpdateProcessor {
         awaitingSince: new Date().toISOString(),
       },
     });
-    this.logger.log(
-      `Rolling out the control plane to ${component.targetVersion}; this process ends here and the new pod finishes the operation.`,
-    );
-    await this.deployService.setDesiredImage(applicationId, component.imageRef);
-  }
-
-  private async awaitOperation(id: string): Promise<OperationStatus> {
-    const deadline = Date.now() + CHILD_TIMEOUT_MS;
-    while (Date.now() < deadline) {
-      const child = await this.operationRepository.findOne({ where: { id } });
-      if (
-        child &&
-        child.status !== OperationStatus.PENDING &&
-        child.status !== OperationStatus.IN_PROGRESS
-      ) {
-        return child.status;
-      }
-      await new Promise((r) => setTimeout(r, CHILD_POLL_INTERVAL_MS));
-    }
-    return OperationStatus.FAILED;
+    await this.images.replaceControlPlane(component, applicationId);
   }
 
   private async markComponent(

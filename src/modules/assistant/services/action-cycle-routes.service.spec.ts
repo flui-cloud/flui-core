@@ -262,6 +262,7 @@ describe('the tools whose request the chat can show', () => {
     'gateway_route_add',
     'gateway_route_sync',
     'migrate_app',
+    'platform_update_plan',
     'schedule_create',
     'schedule_resume',
     'schedule_suspend',

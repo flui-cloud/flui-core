@@ -1,21 +1,111 @@
-import { ConflictException, Injectable, Logger } from '@nestjs/common';
+import { ConflictException, Injectable } from '@nestjs/common';
 import { randomBytes } from 'node:crypto';
 import * as k8s from '@kubernetes/client-node';
 import { KubernetesService } from '../../infrastructure/shared/services/kubernetes.service';
+import { SAFE_NAME } from '../utils/manifest-render.util';
 
 const MANIFEST_DIR = '/var/lib/rancher/k3s/server/manifests';
 const STAGING_DIR = '/var/lib/rancher/k3s/server/flui-refresh-staging';
 export const BACKUP_DIR = '/var/lib/rancher/k3s/server/flui-refresh-backup';
 const LOCK_DIR = '/var/lib/rancher/k3s/server/.flui-refresh.lock';
 const JOB_NAMESPACE = 'flui-local-storage';
+const FALLBACK_JOB_NAMESPACE = 'kube-system';
 const JOB_TIMEOUT_MS = 180_000;
 const JOB_POLL_MS = 2_000;
 
 export interface HeldFile {
   sha: string;
   carriesSecret: boolean;
-  /** Absent for a file carrying a Secret: its content never leaves the master. */
+  /**
+   * Only the digest came back because a template of this file names a secret
+   * variable, so the rendered copy may hold its value.
+   */
+  withheld?: boolean;
+  /** For a withheld file: every resource in it carries the owner label. */
+  declaresProvenance?: boolean;
+  /** Absent for a file carrying a Secret or withheld: it never leaves the master. */
   content?: string;
+}
+
+/**
+ * Files that rendered a secret value into their body in releases published
+ * before `manifests/SECRETS` existed. Always withheld: a master can still hold
+ * such a copy long after the release that wrote it is forgotten.
+ */
+export const WITHHELD_BY_HISTORY: readonly string[] = [
+  '02-postgres.yaml',
+  '03-redis.yaml',
+  '04d-alertmanager.yaml',
+  '08-grafana.yaml',
+  '09-flui-api.yaml',
+];
+
+/**
+ * The read job's script. The body of a file carrying a Secret, or named in
+ * `withhold`, is never printed — pod logs are the channel it would travel on.
+ */
+export function readScript(
+  withhold: Iterable<string> | 'all',
+  dir: string = MANIFEST_DIR,
+): string {
+  const names =
+    withhold === 'all'
+      ? []
+      : [...new Set([...withhold, ...WITHHELD_BY_HISTORY])].filter((n) =>
+          SAFE_NAME.test(n),
+        );
+  return [
+    'set -e',
+    `cd ${dir} 2>/dev/null || { echo "NODIR"; exit 0; }`,
+    `ALL=${withhold === 'all' ? 1 : 0}`,
+    `WITHHOLD=" ${names.join(' ')} "`,
+    'held_back() {',
+    '  [ "$ALL" = 1 ] && return 0',
+    '  case "$WITHHOLD" in *" $1 "*) return 0;; esac',
+    '  return 1',
+    '}',
+    'for f in *.yaml; do',
+    '  [ -e "$f" ] || continue',
+    '  sha=$(sha256sum "$f" | cut -d" " -f1)',
+    '  if grep -qE "^kind:[[:space:]]*Secret" "$f"; then',
+    '    echo "FILE $f $sha secret"',
+    '  elif held_back "$f"; then',
+    '    kinds=$(grep -cE "^kind:" "$f" || true)',
+    '    owners=$(grep -cE "^[[:space:]]+flui.cloud/owner-kind:" "$f" || true)',
+    '    echo "FILE $f $sha withheld $kinds $owners"',
+    '  else',
+    '    echo "FILE $f $sha plain"',
+    '    echo "BODY $(base64 -w0 < "$f")"',
+    '  fi',
+    'done',
+  ].join('\n');
+}
+
+export function parseReadLogs(logs: string): Map<string, HeldFile> {
+  const held = new Map<string, HeldFile>();
+  let last: string | null = null;
+  for (const line of logs.split('\n')) {
+    if (line.startsWith('FILE ')) {
+      const [, name, sha, kind, kinds, owners] = line.trim().split(/\s+/);
+      const entry: HeldFile = { sha, carriesSecret: kind === 'secret' };
+      if (kind === 'withheld') {
+        const resources = Number(kinds);
+        entry.withheld = true;
+        entry.declaresProvenance = resources > 0 && Number(owners) >= resources;
+      }
+      held.set(name, entry);
+      last = kind === 'plain' ? name : null;
+    } else if (line.startsWith('BODY ') && last) {
+      const entry = held.get(last);
+      if (entry) {
+        entry.content = Buffer.from(line.slice(5).trim(), 'base64').toString(
+          'utf8',
+        );
+      }
+      last = null;
+    }
+  }
+  return held;
 }
 
 export interface FileToWrite {
@@ -29,55 +119,31 @@ export interface FileToWrite {
  *
  * Two jobs, neither privileged and neither taking the host's process namespace:
  * a `hostPath` mount of the one directory is all either needs. The first never
- * returns the content of a file carrying a Secret — that would travel through
- * pod logs. The second writes, and only after every digest still matches.
+ * returns the content of a file that may carry a secret, since its output
+ * travels through pod logs. The second writes, and only after every digest
+ * still matches.
  */
 @Injectable()
 export class ManifestMasterService {
-  private readonly logger = new Logger(ManifestMasterService.name);
-
   constructor(private readonly kubernetesService: KubernetesService) {}
 
-  async read(kubeconfig: string, node: string): Promise<Map<string, HeldFile>> {
-    const script = [
-      'set -e',
-      `cd ${MANIFEST_DIR} 2>/dev/null || { echo "NODIR"; exit 0; }`,
-      'for f in *.yaml; do',
-      '  [ -e "$f" ] || continue',
-      '  sha=$(sha256sum "$f" | cut -d" " -f1)',
-      '  if grep -qE "^kind:[[:space:]]*Secret" "$f"; then',
-      '    echo "FILE $f $sha secret"',
-      '  else',
-      '    echo "FILE $f $sha plain"',
-      '    echo "BODY $(base64 -w0 "$f")"',
-      '  fi',
-      'done',
-    ].join('\n');
-
+  /**
+   * @param withhold files whose templates name a secret variable, on top of
+   *   {@link WITHHELD_BY_HISTORY}; `'all'` returns digests only.
+   */
+  async read(
+    kubeconfig: string,
+    node: string,
+    withhold: Iterable<string> | 'all' = [],
+  ): Promise<Map<string, HeldFile>> {
     const logs = await this.runJob(
       kubeconfig,
       node,
       'flui-manifest-read',
-      script,
+      readScript(withhold),
       false,
     );
-    const held = new Map<string, HeldFile>();
-    let last: string | null = null;
-    for (const line of logs.split('\n')) {
-      if (line.startsWith('FILE ')) {
-        const [, name, sha, kind] = line.trim().split(/\s+/);
-        held.set(name, { sha, carriesSecret: kind === 'secret' });
-        last = name;
-      } else if (line.startsWith('BODY ') && last) {
-        const entry = held.get(last);
-        if (entry) {
-          entry.content = Buffer.from(line.slice(5).trim(), 'base64').toString(
-            'utf8',
-          );
-        }
-      }
-    }
-    return held;
+    return parseReadLogs(logs);
   }
 
   /**
@@ -164,33 +230,63 @@ export class ManifestMasterService {
     payload?: string,
   ): Promise<string> {
     const name = `${prefix}-${Date.now()}-${randomBytes(3).toString('hex')}`;
+    const namespace = await this.jobNamespace(kubeconfig);
 
     try {
       if (payload !== undefined) {
         await this.kubernetesService.applyManifest(
           kubeconfig,
-          this.payloadManifest(name, payload),
+          this.payloadManifest(name, namespace, payload),
         );
       }
       await this.kubernetesService.applyManifest(
         kubeconfig,
-        this.jobManifest(name, node, script, writable, payload !== undefined),
+        this.jobManifest(
+          name,
+          namespace,
+          node,
+          script,
+          writable,
+          payload !== undefined,
+        ),
       );
-      await this.awaitJob(kubeconfig, name);
-      return await this.readJobLogs(kubeconfig, name);
+      await this.awaitJob(kubeconfig, name, namespace);
+      return await this.readJobLogs(kubeconfig, name, namespace);
     } finally {
       await this.kubernetesService
-        .deleteResource(kubeconfig, 'Job', name, JOB_NAMESPACE)
+        .deleteResource(kubeconfig, 'Job', name, namespace)
         .catch(() => undefined);
       if (payload !== undefined) {
         await this.kubernetesService
-          .deleteResource(kubeconfig, 'ConfigMap', name, JOB_NAMESPACE)
+          .deleteResource(kubeconfig, 'ConfigMap', name, namespace)
           .catch(() => undefined);
       }
     }
   }
 
-  private payloadManifest(name: string, payload: string): string {
+  /**
+   * `flui-local-storage` where the cluster has it; `kube-system` on a master
+   * installed before that namespace existed.
+   */
+  async jobNamespace(kubeconfig: string): Promise<string> {
+    try {
+      const ns = await this.kubernetesService.readObject(
+        kubeconfig,
+        'v1',
+        'Namespace',
+        JOB_NAMESPACE,
+      );
+      return ns ? JOB_NAMESPACE : FALLBACK_JOB_NAMESPACE;
+    } catch {
+      return FALLBACK_JOB_NAMESPACE;
+    }
+  }
+
+  private payloadManifest(
+    name: string,
+    namespace: string,
+    payload: string,
+  ): string {
     const indented = payload
       .split('\n')
       .map((l) => `    ${l}`)
@@ -200,7 +296,7 @@ export class ManifestMasterService {
       'kind: ConfigMap',
       'metadata:',
       `  name: ${name}`,
-      `  namespace: ${JOB_NAMESPACE}`,
+      `  namespace: ${namespace}`,
       'data:',
       '  payload: |',
       indented,
@@ -218,6 +314,7 @@ export class ManifestMasterService {
    */
   private jobManifest(
     name: string,
+    namespace: string,
     node: string,
     script: string,
     writable: boolean,
@@ -228,7 +325,7 @@ export class ManifestMasterService {
       'kind: Job',
       'metadata:',
       `  name: ${name}`,
-      `  namespace: ${JOB_NAMESPACE}`,
+      `  namespace: ${namespace}`,
       '  labels:',
       '    flui.cloud/managed-by: flui-cloud',
       '    flui-resource-type: manifest-refresh',
@@ -290,18 +387,24 @@ export class ManifestMasterService {
     return lines.join('\n');
   }
 
-  private async awaitJob(kubeconfig: string, name: string): Promise<void> {
+  private async awaitJob(
+    kubeconfig: string,
+    name: string,
+    namespace: string,
+  ): Promise<void> {
     const start = Date.now();
     while (Date.now() - start < JOB_TIMEOUT_MS) {
       const job = await this.kubernetesService.getResource(
         kubeconfig,
         'Job',
         name,
-        JOB_NAMESPACE,
+        namespace,
       );
       if ((job?.status?.succeeded ?? 0) > 0) return;
       if ((job?.status?.failed ?? 0) > 0) {
-        const logs = await this.readJobLogs(kubeconfig, name).catch(() => '');
+        const logs = await this.readJobLogs(kubeconfig, name, namespace).catch(
+          () => '',
+        );
         throw new Error(
           `The job on the master failed. ${logs.split('\n').filter(Boolean).slice(-3).join(' ')}`.trim(),
         );
@@ -311,19 +414,19 @@ export class ManifestMasterService {
     throw new Error('The job on the master did not finish in time.');
   }
 
-  private async readJobLogs(kubeconfig: string, name: string): Promise<string> {
+  private async readJobLogs(
+    kubeconfig: string,
+    name: string,
+    namespace: string,
+  ): Promise<string> {
     const kc = this.kubernetesService.makeKubeConfig(kubeconfig);
     const coreApi = kc.makeApiClient(k8s.CoreV1Api);
     const pods = await coreApi.listNamespacedPod({
-      namespace: JOB_NAMESPACE,
+      namespace,
       labelSelector: `flui-manifest-job=${name}`,
     });
     const podName = pods.items?.[0]?.metadata?.name;
     if (!podName) throw new Error(`no pod found for job ${name}`);
-    return this.kubernetesService.getPodLogs(
-      kubeconfig,
-      podName,
-      JOB_NAMESPACE,
-    );
+    return this.kubernetesService.getPodLogs(kubeconfig, podName, namespace);
   }
 }

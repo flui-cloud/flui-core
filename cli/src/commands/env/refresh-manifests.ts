@@ -67,6 +67,11 @@ export default class EnvRefreshManifests extends Command {
       description:
         'Permit a file that changes the image of a workload holding a volume. Read the release notes first.',
     }),
+    'overwrite-modified': Flags.boolean({
+      default: false,
+      description:
+        'Replace a file that was changed on the master, which no release reproduces. What was there is kept in the backup folder the apply prints.',
+    }),
     json: Flags.boolean({ default: false }),
   };
 
@@ -94,6 +99,7 @@ export default class EnvRefreshManifests extends Command {
         ref: flags.ref,
         only: flags.only,
         allowStatefulImageChange: flags['allow-stateful-image-change'],
+        allowOverwriteModified: flags['overwrite-modified'],
         ...(flags.apply ? { planId: flags.plan } : {}),
       };
       // It runs a short job on the master and waits for it.
@@ -108,7 +114,13 @@ export default class EnvRefreshManifests extends Command {
         this.log(JSON.stringify(result, null, 2));
         return;
       }
-      this.render(result, flags.apply);
+      const carried = [
+        flags['allow-stateful-image-change']
+          ? ' --allow-stateful-image-change'
+          : '',
+        flags['overwrite-modified'] ? ' --overwrite-modified' : '',
+      ].join('');
+      this.render(result, flags.apply, carried);
     } catch (error) {
       spinner.fail(
         flags.apply ? 'Could not apply' : 'Could not read the master',
@@ -120,7 +132,7 @@ export default class EnvRefreshManifests extends Command {
     }
   }
 
-  private render(plan: Plan, applied: boolean): void {
+  private render(plan: Plan, applied: boolean, carried = ''): void {
     const changing = plan.entries.filter(
       (e) => e.action === 'replace' || e.action === 'add',
     );
@@ -148,7 +160,7 @@ export default class EnvRefreshManifests extends Command {
       this.renderApplied(plan);
       return;
     }
-    this.renderNextStep(plan, changing.length > 0);
+    this.renderNextStep(plan, changing.length > 0, carried);
   }
 
   private renderChanging(
@@ -198,13 +210,17 @@ export default class EnvRefreshManifests extends Command {
     );
   }
 
-  private renderNextStep(plan: Plan, anythingToDo: boolean): void {
+  private renderNextStep(
+    plan: Plan,
+    anythingToDo: boolean,
+    carried: string,
+  ): void {
     if (!anythingToDo) {
       this.log('');
       return;
     }
     const ref = plan.ref ? ` --ref ${plan.ref}` : '';
-    const command = `flui env refresh-manifests${ref} --apply --plan ${plan.planId}`;
+    const command = `flui env refresh-manifests${ref}${carried} --apply --plan ${plan.planId}`;
     this.log(`   ${chalk.dim('plan')} ${chalk.bold(plan.planId)}`);
     this.log(chalk.dim(`   To apply: ${command}\n`));
   }

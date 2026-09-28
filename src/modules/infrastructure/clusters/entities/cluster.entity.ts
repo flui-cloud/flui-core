@@ -56,6 +56,10 @@ export function isControlClusterType(
   return value === ClusterType.CONTROL || value === ClusterType.OBSERVABILITY;
 }
 
+export const CONTROL_CLUSTER_TYPES: readonly ClusterType[] = Object.values(
+  ClusterType,
+).filter((type) => isControlClusterType(type));
+
 @Entity('infrastructure_clusters')
 export class ClusterEntity {
   @PrimaryColumn('uuid')
@@ -99,6 +103,14 @@ export class ClusterEntity {
 
   @Column({ nullable: true })
   k3sVersion?: string;
+
+  /** The bootstrap-scripts ref the master was installed from. */
+  @Column({ type: 'varchar', length: 100, nullable: true })
+  bootstrapRef?: string | null;
+
+  /** Null outside a release. */
+  @Column({ type: 'varchar', length: 64, nullable: true })
+  platformRelease?: string | null;
 
   @Column({ nullable: true })
   masterNodeId?: string;

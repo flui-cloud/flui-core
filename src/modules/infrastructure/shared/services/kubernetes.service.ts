@@ -1560,6 +1560,27 @@ export class KubernetesService {
     }
   }
 
+  /** A missing object is not an error. */
+  async deleteObject(
+    kubeconfigContent: string,
+    apiVersion: string,
+    kind: string,
+    name: string,
+    namespace?: string,
+  ): Promise<void> {
+    const kc = this.loadKubeconfig(kubeconfigContent);
+    const client = k8s.KubernetesObjectApi.makeApiClient(kc);
+    try {
+      await client.delete({
+        apiVersion,
+        kind,
+        metadata: namespace ? { name, namespace } : { name },
+      } as k8s.KubernetesObject);
+    } catch (error) {
+      if (this.httpCode(error) !== 404) throw error;
+    }
+  }
+
   /** JSON merge patch on any object: a null value removes the field. */
   async mergePatchObject(
     kubeconfigContent: string,

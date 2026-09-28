@@ -15,6 +15,11 @@ import {
   pinImageIn,
 } from '../utils/declared-image.util';
 import { FileToWrite, ManifestMasterService } from './manifest-master.service';
+import { InstallValuesService } from './install-values.service';
+import {
+  MasterAccess,
+  ProvenRead,
+} from '../interfaces/install-values.interface';
 
 export type DeclaredImageOutcome =
   /** A manifest was rewritten to name this tag. */
@@ -41,6 +46,51 @@ export interface DeclaredImageResult {
   reason?: string;
 }
 
+function unreproducedRefusal(
+  name: string,
+  bare: string,
+  templates: readonly string[] | undefined,
+): string[] {
+  const mayDeclare = (templates ?? []).some((t) => t.includes(`${bare}:`));
+  if (!mayDeclare) return [];
+  return [
+    `${name}: may declare ${bare}, but no published release reproduces its copy, so it is neither read nor rewritten`,
+  ];
+}
+
+function sortDeclaringFiles(
+  files: ProvenRead['files'],
+  templates: ProvenRead['templates'],
+  imageRef: string,
+  bare: string,
+): { toWrite: FileToWrite[]; declaredIn: string[]; refusals: string[] } {
+  const toWrite: FileToWrite[] = [];
+  const declaredIn: string[] = [];
+  const refusals: string[] = [];
+  for (const [name, file] of files) {
+    if (file.carriesSecret) continue;
+    if (file.content === undefined) {
+      refusals.push(...unreproducedRefusal(name, bare, templates.get(name)));
+      continue;
+    }
+    const outcome = pinImageIn(file.content, imageRef);
+    if (outcome.refusal) {
+      refusals.push(`${name}: ${outcome.refusal}`);
+      continue;
+    }
+    if (!outcome.declared) continue;
+    declaredIn.push(name);
+    if (outcome.changed) {
+      toWrite.push({
+        name,
+        content: outcome.content,
+        expectCurrentSha: file.sha,
+      });
+    }
+  }
+  return { toWrite, declaredIn, refusals };
+}
+
 /**
  * Keeping the image a master *declares* in step with the one it *runs*.
  *
@@ -62,6 +112,7 @@ export class DeclaredImageService {
     private readonly kubernetesService: KubernetesService,
     private readonly encryptionService: EncryptionService,
     private readonly master: ManifestMasterService,
+    private readonly installValues: InstallValuesService,
   ) {}
 
   /**
@@ -69,68 +120,24 @@ export class DeclaredImageService {
    *   `ghcr.io/flui-cloud/core:0.13.0-rc.8`. The repository half decides which
    *   lines are ours to touch; the tag half is what gets written.
    */
-  async pin(imageRef: string): Promise<DeclaredImageResult> {
-    const access = await this.masterAccess();
-    if ('reason' in access) {
-      return {
-        pinned: false,
-        outcome: 'failed',
-        files: [],
-        reason: access.reason,
-      };
-    }
-    const { kubeconfig, node } = access;
-
+  async pin(
+    imageRef: string,
+    options: { images?: string[] } = {},
+  ): Promise<DeclaredImageResult> {
     try {
-      const held = await this.master.read(kubeconfig, node);
-      const toWrite: FileToWrite[] = [];
-      const declaredIn: string[] = [];
-      const refusals: string[] = [];
-
-      for (const [name, file] of held) {
-        // A file whose content never left the master carries a Secret, and no
-        // Flui component's image is declared inside one.
-        if (file.content === undefined) continue;
-
-        const outcome = pinImageIn(file.content, imageRef);
-        if (outcome.refusal) {
-          refusals.push(`${name}: ${outcome.refusal}`);
-          continue;
-        }
-        if (!outcome.declared) continue;
-
-        declaredIn.push(name);
-        if (outcome.changed) {
-          toWrite.push({
-            name,
-            content: outcome.content,
-            expectCurrentSha: file.sha,
-          });
-        }
-      }
-
-      if (refusals.length > 0) {
-        return {
-          pinned: false,
-          outcome: 'failed',
-          files: [],
-          reason: `left alone — ${refusals.join('; ')}`,
-        };
-      }
-      if (declaredIn.length === 0) {
-        return {
-          pinned: true,
-          outcome: 'undeclared',
-          files: [],
-          reason: `no manifest on this master declares ${bareRepository(imageRef.split(':')[0])}, so nothing there can reassert an older one`,
-        };
-      }
+      const scan = await this.scan(imageRef, options.images);
+      if ('result' in scan) return scan.result;
+      const { access, toWrite, declaredIn } = scan;
       if (toWrite.length === 0) {
         return { pinned: true, outcome: 'already', files: declaredIn };
       }
-
       const planId = `declare-${Date.now()}`;
-      const wrote = await this.master.write(kubeconfig, node, planId, toWrite);
+      const wrote = await this.master.write(
+        access.kubeconfig,
+        access.node,
+        planId,
+        toWrite,
+      );
       return { pinned: true, outcome: 'written', files: wrote };
     } catch (error) {
       // The rollout itself succeeded; failing to write the declaration is worth
@@ -139,6 +146,91 @@ export class DeclaredImageService {
       this.logger.warn(`Could not pin ${imageRef} in the manifests: ${reason}`);
       return { pinned: false, outcome: 'failed', files: [], reason };
     }
+  }
+
+  /** Whether the master already declares this image, without writing anything. */
+  async check(
+    imageRef: string,
+    options: { images?: string[] } = {},
+  ): Promise<DeclaredImageResult> {
+    try {
+      const scan = await this.scan(imageRef, options.images);
+      if ('result' in scan) return scan.result;
+      if (scan.toWrite.length === 0) {
+        return { pinned: true, outcome: 'already', files: scan.declaredIn };
+      }
+      return {
+        pinned: false,
+        outcome: 'failed',
+        files: scan.declaredIn,
+        reason: `${scan.toWrite.map((f) => f.name).join(', ')} still declare another tag`,
+      };
+    } catch (error) {
+      return {
+        pinned: false,
+        outcome: 'failed',
+        files: [],
+        reason: (error as Error).message,
+      };
+    }
+  }
+
+  private async scan(
+    imageRef: string,
+    images: string[] = [],
+  ): Promise<
+    | { result: DeclaredImageResult }
+    | {
+        access: MasterAccess;
+        toWrite: FileToWrite[];
+        declaredIn: string[];
+      }
+  > {
+    const access = await this.installValues.controlMaster().catch((error) => ({
+      reason: (error as Error).message,
+    }));
+    if ('reason' in access) {
+      return {
+        result: {
+          pinned: false,
+          outcome: 'failed',
+          files: [],
+          reason: access.reason,
+        },
+      };
+    }
+    const bare = bareRepository(imageRef.split(':')[0]);
+    const read = await this.installValues.readProven(access, {
+      images: [imageRef, ...images],
+    });
+    const { toWrite, declaredIn, refusals } = sortDeclaringFiles(
+      read.files,
+      read.templates,
+      imageRef,
+      bare,
+    );
+
+    if (refusals.length > 0) {
+      return {
+        result: {
+          pinned: false,
+          outcome: 'failed',
+          files: [],
+          reason: `left alone — ${refusals.join('; ')}`,
+        },
+      };
+    }
+    if (declaredIn.length === 0) {
+      return {
+        result: {
+          pinned: true,
+          outcome: 'undeclared',
+          files: [],
+          reason: `no manifest on this master declares ${bare}, so nothing there can reassert an older one`,
+        },
+      };
+    }
+    return { access, toWrite, declaredIn };
   }
 
   /**
@@ -201,23 +293,6 @@ export class DeclaredImageService {
       },
       relations: ['nodes'],
     });
-  }
-
-  private async masterAccess(): Promise<
-    { kubeconfig: string; node: string } | { reason: string }
-  > {
-    const cluster = await this.controlCluster();
-    if (!cluster?.kubeconfigEncrypted) {
-      return { reason: 'No kubeconfig for the cluster.' };
-    }
-    const master = (cluster.nodes ?? []).find((n) => n.nodeType === 'master');
-    if (!master?.serverName) {
-      return { reason: 'The cluster has no master node recorded to write on.' };
-    }
-    return {
-      kubeconfig: this.encryptionService.decrypt(cluster.kubeconfigEncrypted),
-      node: master.serverName,
-    };
   }
 }
 

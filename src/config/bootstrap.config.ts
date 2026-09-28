@@ -25,6 +25,36 @@ export function getScriptsBaseUrl(useLatest = false): string {
   return `${BOOTSTRAP_REPO_RAW_BASE}/${resolveBootstrapRef(useLatest)}/scripts`;
 }
 
+/**
+ * The bootstrap-scripts ref a scripts URL installs from, or null when the URL
+ * is an override that names no ref in this repository's layout.
+ */
+export function bootstrapRefOf(scriptsBaseUrl: string): string | null {
+  const match = /\/bootstrap-scripts\/([^/]+)\/scripts\/?$/.exec(
+    scriptsBaseUrl,
+  );
+  return match ? decodeURIComponent(match[1]) : null;
+}
+
+/**
+ * What a cluster installed from this URL is built from. The release version is
+ * claimed only when the URL installs that release's own ref: an override points
+ * somewhere no published release describes.
+ */
+export function installedReleaseOf(
+  scriptsBaseUrl: string,
+  release: { version: string | null; bootstrapRef: string },
+): { bootstrapRef: string | null; platformRelease: string | null } {
+  const bootstrapRef = bootstrapRefOf(scriptsBaseUrl);
+  return {
+    bootstrapRef,
+    platformRelease:
+      bootstrapRef !== null && bootstrapRef === release.bootstrapRef
+        ? release.version
+        : null,
+  };
+}
+
 export interface BootstrapConfig {
   /**
    * Base URL for downloading scripts

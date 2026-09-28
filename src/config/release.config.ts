@@ -15,12 +15,22 @@ export interface ComponentImageTags {
   fluiAuthz: string;
 }
 
+export interface SystemComponentVersions {
+  certManager: string;
+  /** rancher/system-upgrade-controller, which upgrades K3s from Plans. */
+  systemUpgradeController: string;
+}
+
 export interface ReleaseManifest {
   /** Platform release version, recorded on the cluster at install. */
   version: string;
   bootstrapRef: string;
   /** Pinned Docker image tags, per Flui component. */
   images: ComponentImageTags;
+  /** K3s every new node of this release installs. */
+  k3s: { version: string };
+  /** Versions of the system components the installer puts in place. */
+  systemComponents: SystemComponentVersions;
 }
 
 export const RELEASE: ReleaseManifest = {
@@ -40,6 +50,11 @@ export const RELEASE: ReleaseManifest = {
     fluiWeb: '0.13.0-rc.8',
     // Pinned by its own version, not the platform's, and it did not move.
     fluiAuthz: '0.6.0',
+  },
+  k3s: { version: 'v1.35.4+k3s1' },
+  systemComponents: {
+    certManager: 'v1.17.1',
+    systemUpgradeController: 'v0.20.2',
   },
 };
 

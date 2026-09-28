@@ -12,6 +12,8 @@ import {
   Header,
   Req,
   BadRequestException,
+  ForbiddenException,
+  Inject,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -109,6 +111,23 @@ import { NameAvailabilityResponseDto } from './dto/name-availability.dto';
 import { WorkloadProviderResponseDto } from './dto/workload-provider.dto';
 import { ClusterCreationService } from './services/cluster-creation.service';
 import { ApiServerSanService } from '../networking/services/api-server-san.service';
+import { DataDoor } from '../../iam/decorators/data-door.decorator';
+import {
+  POLICY_ENGINE,
+  PolicyEngine,
+} from '../../iam/interfaces/policy-engine.interface';
+import { principalFromUser } from '../../iam/interfaces/iam.types';
+import { ceilingWithholds } from '../../auth/utils/credential-ceiling.util';
+import { noteDataAccess } from '../../audit/audit-request';
+import {
+  assertWritableClusterMetadata,
+  assertWritableNodeMetadata,
+} from './utils/writable-metadata.util';
+
+export const CLUSTER_ACCESS_NEEDS_DATA_ACCESS =
+  'Your own SSH keys or OS image on a new cluster give a shell on its nodes, ' +
+  'which requires the data:access permission. Create the cluster without ' +
+  'sshKeys and image, or ask an administrator for data:access.';
 
 /**
  * `@RequireSection(...)` sits on each route instead of on the class, which is
@@ -170,6 +189,7 @@ export class ClustersController {
     private readonly clusterValidationService: ClusterValidationService,
     private readonly clusterCreationService: ClusterCreationService,
     private readonly nodeAccessRecovery: NodeAccessRecoveryService,
+    @Inject(POLICY_ENGINE) private readonly policy: PolicyEngine,
   ) {}
 
   @Get('name-availability')
@@ -260,6 +280,7 @@ export class ClustersController {
   }
 
   @Post(':id/nodes/:nodeId/recover-access')
+  @DataDoor()
   @RequireSection('infrastructure')
   @RequirePermission(IAM_PERMISSION.CLUSTER_MANAGE)
   @ActionCycle({
@@ -348,6 +369,7 @@ export class ClustersController {
   }
 
   @Get(':id/rebuild-plan')
+  @DataDoor()
   @RequireSection('infrastructure')
   @RequirePermission(IAM_PERMISSION.CLUSTER_MANAGE)
   @ApiOperation({
@@ -370,6 +392,7 @@ export class ClustersController {
   }
 
   @Post(':id/rebuild')
+  @DataDoor()
   @RequireSection('infrastructure')
   @RequirePermission(IAM_PERMISSION.CLUSTER_MANAGE)
   @ApiOperation({
@@ -405,7 +428,9 @@ export class ClustersController {
   }
 
   @Post(':id/byos-nodes')
+  @DataDoor()
   @RequireSection('infrastructure')
+  @RequirePermission(IAM_PERMISSION.CLUSTER_MANAGE)
   @ApiOperation({
     summary: 'Register a node joined to a BYOS cluster out-of-band',
     description:
@@ -497,7 +522,9 @@ export class ClustersController {
   }
 
   @Post(':id/join-tokens')
+  @DataDoor()
   @RequireSection('infrastructure')
+  @RequirePermission(IAM_PERMISSION.CLUSTER_MANAGE)
   @ApiOperation({
     summary: 'Issue a short-lived worker join token for a BYOS cluster',
     description:
@@ -767,7 +794,10 @@ export class ClustersController {
   @ApiResponse({ status: 400, description: 'Invalid request data' })
   async createCluster(
     @Body() dto: CreateClusterDto,
+    @Req() req: Request & { user?: AuthenticatedUser },
   ): Promise<CreateClusterResponseDto> {
+    assertWritableClusterMetadata(dto.metadata);
+    if (dto.sshKeys?.length || dto.image) await this.assertMayReachNodes(req);
     const operation = await this.clustersService.createCluster(dto);
     return {
       operation_id: operation.id,
@@ -1083,11 +1113,12 @@ export class ClustersController {
 
   @Patch(':id/metadata')
   @RequireSection('infrastructure')
+  @RequirePermission(IAM_PERMISSION.CLUSTER_MANAGE)
   @ApiOperation({
     summary: 'Update cluster metadata',
     description:
       'Merges new metadata with existing cluster metadata. ' +
-      'If isControlCluster (legacy: isObservabilityCluster) is set, the cluster type will be automatically adjusted.',
+      'Only the BYOS SSH target (`byos`) is writable; other keys are refused with 400.',
   })
   @ApiParam({
     name: 'id',
@@ -1105,11 +1136,13 @@ export class ClustersController {
     @Param('id') clusterId: string,
     @Body() dto: UpdateClusterMetadataDto,
   ): Promise<ClusterResponseDto> {
+    assertWritableClusterMetadata(dto.metadata);
     return this.clustersService.updateClusterMetadata(clusterId, dto.metadata);
   }
 
   @Patch(':clusterId/nodes/:nodeId/metadata')
   @RequireSection('infrastructure')
+  @RequirePermission(IAM_PERMISSION.CLUSTER_MANAGE)
   @ApiOperation({
     summary: 'Update node metadata',
     description: 'Merges new metadata with existing node metadata.',
@@ -1147,6 +1180,7 @@ export class ClustersController {
     @Param('nodeId') nodeId: string,
     @Body() dto: UpdateNodeMetadataDto,
   ) {
+    assertWritableNodeMetadata(dto.metadata);
     const node = await this.clustersService.updateNodeMetadata(
       clusterId,
       nodeId,
@@ -1640,6 +1674,23 @@ export class ClustersController {
     @Param('id') clusterId: string,
   ): Promise<BuildResourcesResponseDto> {
     return this.clustersService.getBuildResources(clusterId);
+  }
+
+  private async assertMayReachNodes(req: {
+    user?: AuthenticatedUser;
+  }): Promise<void> {
+    noteDataAccess(req);
+    const user = req.user;
+    if (
+      !user ||
+      ceilingWithholds(user, IAM_PERMISSION.DATA_ACCESS) ||
+      !(await this.policy.check(
+        principalFromUser(user),
+        IAM_PERMISSION.DATA_ACCESS,
+      ))
+    ) {
+      throw new ForbiddenException(CLUSTER_ACCESS_NEEDS_DATA_ACCESS);
+    }
   }
 }
 

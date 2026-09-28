@@ -174,6 +174,15 @@ export const SCOPE_AUTHORITY: Record<McpScope, ScopeAuthority> = {
     requires: IAM_PERMISSION.CLUSTER_MANAGE,
     allows: [IAM_PERMISSION.CLUSTER_MANAGE],
   },
+  /**
+   * Plan and apply a platform release — the one scope carrying
+   * `platform:update`, and only that: a key that updates the platform does not
+   * thereby manage clusters, and the reverse holds too.
+   */
+  [MCP_SCOPE.PLATFORM_UPDATE]: {
+    requires: IAM_PERMISSION.PLATFORM_UPDATE,
+    allows: [IAM_PERMISSION.PLATFORM_UPDATE],
+  },
   [MCP_SCOPE.SPEC_VALIDATE]: {
     requires: IAM_PERMISSION.APP_READ,
     allows: [IAM_PERMISSION.APP_READ],

@@ -4,6 +4,10 @@ import {
   OperationStatus,
   PlatformUpdateOperationMetadata,
 } from '../../infrastructure/servers/entities/infrastructure-operations.entity';
+import {
+  PlatformUpgradeMetadata,
+  UpgradePhaseKey,
+} from '../interfaces/platform-upgrade.interface';
 
 function operation(over: {
   targetVersion: string;
@@ -40,8 +44,128 @@ function build(rows: unknown[]) {
     find: jest.fn().mockResolvedValue(rows),
     save: jest.fn().mockImplementation((v) => v),
   };
-  return { service: new PlatformUpdateResumeService(repo as never), repo };
+  const queue = { add: jest.fn() };
+  return {
+    service: new PlatformUpdateResumeService(repo as never, queue as never),
+    repo,
+    queue,
+  };
 }
+
+const MIN = 60_000;
+
+function phased(over: {
+  targetVersion: string;
+  awaitingSelfRestart?: boolean;
+  running: UpgradePhaseKey;
+  deadlineInMs: number;
+}) {
+  const base = operation({
+    targetVersion: over.targetVersion,
+    awaitingSelfRestart: over.awaitingSelfRestart ?? false,
+    awaitingSince: new Date(Date.now() - 20 * MIN).toISOString(),
+  }) as unknown as { metadata: PlatformUpgradeMetadata };
+  const order: UpgradePhaseKey[] = [
+    'backup',
+    'manifests',
+    'images',
+    'k3s',
+    'verify',
+  ];
+  const at = order.indexOf(over.running);
+  base.metadata = {
+    ...base.metadata,
+    schema: 2,
+    planId: 'plan-1',
+    bootstrapRef: 'abc',
+    k3sVersion: 'v1.36.1+k3s1',
+    withoutBackup: false,
+    phases: order.map((key, i) => ({
+      key,
+      title: key,
+      status: i < at ? 'done' : i === at ? 'running' : 'pending',
+      ...(key === 'backup' ? { backupJobId: 'job-7' } : {}),
+      ...(i === at
+        ? { deadlineAt: new Date(Date.now() + over.deadlineInMs).toISOString() }
+        : {}),
+    })),
+  };
+  return base as never;
+}
+
+describe('PlatformUpdateResumeService — phased updates', () => {
+  it('continues with K3s and the checks after the restart, instead of completing', async () => {
+    const { service, repo, queue } = build([
+      phased({
+        targetVersion: RELEASE.version,
+        awaitingSelfRestart: true,
+        running: 'images',
+        deadlineInMs: 5 * MIN,
+      }),
+    ]);
+    await service.onApplicationBootstrap();
+
+    const saved = repo.save.mock.calls[0][0];
+    expect(saved.status).toBe(OperationStatus.IN_PROGRESS);
+    expect(saved.metadata.awaitingSelfRestart).toBe(false);
+    expect(
+      saved.metadata.phases.find((p: { key: string }) => p.key === 'images')
+        .status,
+    ).toBe('done');
+    expect(saved.metadata.components[0].status).toBe('done');
+    expect(queue.add).toHaveBeenCalledWith(
+      'run-platform-upgrade',
+      { operationId: 'op-1' },
+      expect.objectContaining({ attempts: 1 }),
+    );
+  });
+
+  it('keeps the phase deadline rather than the 15-minute rule while it has time left', async () => {
+    const { service, repo } = build([
+      phased({
+        targetVersion: '99.0.0',
+        awaitingSelfRestart: true,
+        running: 'images',
+        deadlineInMs: 5 * MIN,
+      }),
+    ]);
+    await service.failStalled();
+    expect(repo.save).not.toHaveBeenCalled();
+  });
+
+  it('fails the phase that overran its deadline, keeping where it stopped and what to do', async () => {
+    const { service, repo } = build([
+      phased({
+        targetVersion: RELEASE.version,
+        running: 'k3s',
+        deadlineInMs: -MIN,
+      }),
+    ]);
+    await service.failStalled();
+
+    const saved = repo.save.mock.calls[0][0];
+    expect(saved.status).toBe(OperationStatus.FAILED);
+    expect(saved.metadata.failedPhase).toBe('k3s');
+    expect(saved.metadata.guidance).toMatch(/never downgrade/i);
+    expect(saved.metadata.guidance).toContain('job-7');
+  });
+
+  it('says the API never came back once the images phase overran', async () => {
+    const { service, repo } = build([
+      phased({
+        targetVersion: '99.0.0',
+        awaitingSelfRestart: true,
+        running: 'images',
+        deadlineInMs: -MIN,
+      }),
+    ]);
+    await service.failStalled();
+    const saved = repo.save.mock.calls[0][0];
+    expect(saved.status).toBe(OperationStatus.FAILED);
+    expect(saved.errorMessage).toContain('never came back on 99.0.0');
+    expect(saved.metadata.failedPhase).toBe('images');
+  });
+});
 
 describe('PlatformUpdateResumeService', () => {
   it('closes the parked operation when the new pod is the target version', async () => {

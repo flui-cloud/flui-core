@@ -88,6 +88,7 @@ export enum OperationType {
   MIGRATE_FULL_APP = 'migrate_full_app',
   // Platform lifecycle
   UPDATE_PLATFORM = 'update_platform',
+  UPGRADE_K3S = 'upgrade_k3s',
 }
 
 export enum OperationStatus {
@@ -323,6 +324,9 @@ export enum OperationStep {
   PLATFORM_UPDATE_COMPONENTS = 'platform_update_components',
   PLATFORM_UPDATE_CONTROL_PLANE = 'platform_update_control_plane',
   PLATFORM_UPDATE_VERIFY = 'platform_update_verify',
+  PLATFORM_UPDATE_BACKUP = 'platform_update_backup',
+  PLATFORM_UPDATE_MANIFESTS = 'platform_update_manifests',
+  PLATFORM_UPDATE_K3S = 'platform_update_k3s',
 }
 
 // Base metadata interface - allows additional runtime properties
@@ -412,6 +416,38 @@ export interface PlatformUpdateOperationMetadata extends BaseOperationMetadata {
   awaitingSince?: string;
 }
 
+export interface K3sNodeUpgradeState {
+  name: string;
+  role: 'server' | 'agent';
+  fromVersion: string | null;
+  version: string | null;
+  status: 'pending' | 'upgrading' | 'done' | 'failed';
+  job?: string;
+  message?: string;
+}
+
+/**
+ * One cluster's K3s upgrade, one minor version at a time. Kept in the
+ * operation so a run interrupted anywhere — the API restarting with the
+ * control's own server — picks up at the step it was on.
+ */
+export interface K3sClusterUpgradeState {
+  clusterId: string;
+  targetVersion: string;
+  steps: string[];
+  stepIndex: number;
+  status: 'running' | 'done' | 'failed';
+  stepStartedAt?: string;
+  unreachableSince?: string | null;
+  nodes: K3sNodeUpgradeState[];
+  error?: string;
+  updatedAt: string;
+}
+
+export interface K3sUpgradeOperationMetadata extends BaseOperationMetadata {
+  k3sUpgrades?: Record<string, K3sClusterUpgradeState>;
+}
+
 // Union type for all metadata types
 export type OperationMetadata =
   | CreateServerOperationMetadata
@@ -420,6 +456,7 @@ export type OperationMetadata =
   | DeleteClusterOperationMetadata
   | ClearBuildCacheOperationMetadata
   | PlatformUpdateOperationMetadata
+  | K3sUpgradeOperationMetadata
   | BaseOperationMetadata;
 
 @Entity('infrastructure_operations')

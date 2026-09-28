@@ -1,6 +1,13 @@
-import { Injectable, Logger, OnApplicationBootstrap } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  OnApplicationBootstrap,
+  Optional,
+} from '@nestjs/common';
+import { InjectQueue } from '@nestjs/bull';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { InjectRepository } from '@nestjs/typeorm';
+import { Queue } from 'bull';
 import { Repository } from 'typeorm';
 import { RELEASE } from '../../../config/release.config';
 import {
@@ -10,6 +17,20 @@ import {
   OperationType,
   PlatformUpdateOperationMetadata,
 } from '../../infrastructure/servers/entities/infrastructure-operations.entity';
+import {
+  PLATFORM_UPDATE_QUEUE,
+  PlatformUpdateJobData,
+  enqueueUpgrade,
+} from '../constants/platform-update-queue';
+import {
+  PlatformUpgradeMetadata,
+  isUpgradeMetadata,
+} from '../interfaces/platform-upgrade.interface';
+import {
+  continuedAfterRestart,
+  failedMetadata,
+  overduePhase,
+} from '../utils/upgrade-state.util';
 
 const STALL_TIMEOUT_MS = 15 * 60 * 1_000;
 
@@ -31,12 +52,21 @@ export class PlatformUpdateResumeService implements OnApplicationBootstrap {
   constructor(
     @InjectRepository(InfrastructureOperationEntity)
     private readonly operationRepository: Repository<InfrastructureOperationEntity>,
+    @Optional()
+    @InjectQueue(PLATFORM_UPDATE_QUEUE)
+    private readonly queue?: Queue<PlatformUpdateJobData>,
   ) {}
 
   async onApplicationBootstrap(): Promise<void> {
     const pending = await this.awaiting();
     for (const operation of pending) {
       const metadata = operation.metadata as PlatformUpdateOperationMetadata;
+      if (isUpgradeMetadata(metadata)) {
+        if (metadata.targetVersion === RELEASE.version) {
+          await this.continueUpgrade(operation, metadata);
+        }
+        continue;
+      }
       if (metadata.targetVersion !== RELEASE.version) {
         // The old pod restarted for its own reasons while the rollout was in
         // flight. Deciding failure here would fail an update still running.
@@ -53,9 +83,11 @@ export class PlatformUpdateResumeService implements OnApplicationBootstrap {
     process.env.PLATFORM_UPDATE_WATCHDOG_CRON || CronExpression.EVERY_MINUTE,
   )
   async failStalled(): Promise<void> {
+    await this.failOverduePhases();
     const pending = await this.awaiting();
     for (const operation of pending) {
       const metadata = operation.metadata as PlatformUpdateOperationMetadata;
+      if (isUpgradeMetadata(metadata)) continue;
       const since = metadata.awaitingSince
         ? Date.parse(metadata.awaitingSince)
         : operation.createdAt.getTime();
@@ -80,6 +112,69 @@ export class PlatformUpdateResumeService implements OnApplicationBootstrap {
       };
       await this.operationRepository.save(operation);
     }
+  }
+
+  /**
+   * The phased update does not complete here: the pod on the new version
+   * records the images as rolled out and carries on with K3s and the checks.
+   */
+  private async continueUpgrade(
+    operation: InfrastructureOperationEntity,
+    metadata: PlatformUpgradeMetadata,
+  ): Promise<void> {
+    operation.metadata = continuedAfterRestart(metadata, new Date());
+    await this.operationRepository.save(operation);
+    if (this.queue) await enqueueUpgrade(this.queue, operation.id);
+    this.logger.log(
+      `Platform update ${operation.id}: the API is on ${RELEASE.version}; continuing with K3s and the checks.`,
+    );
+  }
+
+  /** Each phase of a planned update has its own deadline. */
+  private async failOverduePhases(): Promise<void> {
+    const running = await this.inProgress();
+    for (const operation of running) {
+      const metadata = operation.metadata;
+      if (!isUpgradeMetadata(metadata)) continue;
+      const overdue = overduePhase(metadata, Date.now());
+      if (!overdue) continue;
+      if (
+        overdue.key === 'images' &&
+        metadata.awaitingSelfRestart &&
+        metadata.targetVersion === RELEASE.version
+      ) {
+        await this.continueUpgrade(operation, metadata);
+        continue;
+      }
+      const message =
+        overdue.key === 'images' && metadata.awaitingSelfRestart
+          ? `The API never came back on ${metadata.targetVersion}; it is still serving ${RELEASE.version}.`
+          : `${overdue.title} did not finish before its deadline.`;
+      this.logger.error(`Platform update ${operation.id} stalled: ${message}`);
+      const now = new Date();
+      const failed = failedMetadata(
+        metadata,
+        overdue.key,
+        message,
+        RELEASE.version,
+        now,
+      );
+      operation.status = OperationStatus.FAILED;
+      operation.errorMessage = `${message} ${failed.guidance ?? ''}`.trim();
+      operation.completedAt = now;
+      operation.metadata = failed;
+      await this.operationRepository.save(operation);
+    }
+  }
+
+  private async inProgress(): Promise<InfrastructureOperationEntity[]> {
+    return this.operationRepository.find({
+      where: {
+        operationType: OperationType.UPDATE_PLATFORM,
+        status: OperationStatus.IN_PROGRESS,
+      },
+      order: { createdAt: 'DESC' },
+    });
   }
 
   private async awaiting(): Promise<InfrastructureOperationEntity[]> {

@@ -279,6 +279,7 @@ export class ByosNodeRemovalService {
     const cert = await this.certificateSigner.generateEphemeralCertificate(
       undefined,
       CERT_TTL_SECONDS,
+      { purpose: 'node removal', target: target.host },
     );
     return this.nativeSsh.execCommand(
       target.host,

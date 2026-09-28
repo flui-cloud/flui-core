@@ -40,6 +40,7 @@ export const PERMISSION_AREA = {
   MAIL: 'mail',
   ACCESS: 'access',
   INFRASTRUCTURE: 'infrastructure',
+  PLATFORM: 'platform',
 } as const;
 
 export type PermissionArea =
@@ -313,6 +314,20 @@ export const PERMISSION_GROUPS: PermissionGroupDef[] = [
       MCP_SCOPE.INFRA_WRITE,
       MCP_SCOPE.INFRA_DESTRUCTIVE,
     ],
+  },
+  /**
+   * Updating the installation itself, kept apart from operating the machines
+   * for the same reason `platform:update` is kept apart from `cluster:manage`:
+   * it replaces the control plane and runs migrations a rollback does not undo.
+   */
+  {
+    key: 'platform:change',
+    area: PERMISSION_AREA.PLATFORM,
+    depth: PERMISSION_DEPTH.CHANGE,
+    label: 'Update the platform',
+    summary:
+      'Plan a new Flui release phase by phase — backup, system manifests, platform images, K3s and the checks — and apply that plan, which stops to ask you first, naming the release, because it replaces the control plane and runs database migrations only the backup can undo.',
+    scopes: [MCP_SCOPE.PLATFORM_UPDATE],
   },
 ];
 

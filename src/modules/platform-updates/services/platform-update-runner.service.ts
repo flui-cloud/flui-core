@@ -3,11 +3,16 @@ import {
   ConflictException,
   Injectable,
   Logger,
+  Optional,
 } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bull';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Queue } from 'bull';
 import { In, Repository } from 'typeorm';
+import {
+  ClusterEntity,
+  ClusterStatus,
+} from '../../infrastructure/clusters/entities/cluster.entity';
 import { RELEASE } from '../../../config/release.config';
 import {
   InfrastructureOperationEntity,
@@ -18,12 +23,30 @@ import {
 } from '../../infrastructure/servers/entities/infrastructure-operations.entity';
 import { PlatformUpdatesService } from './platform-updates.service';
 import { PLATFORM_UPDATE_COMPONENTS } from '../constants/platform-update-components';
+import { ReleaseManifestService } from './release-manifest.service';
+import { nonImageReasons } from '../utils/platform-upgrade.util';
+import {
+  PLATFORM_UPDATE_JOB,
+  PLATFORM_UPDATE_QUEUE,
+  PlatformUpdateJobData,
+} from '../constants/platform-update-queue';
 
-export const PLATFORM_UPDATE_QUEUE = 'platform-update';
-export const PLATFORM_UPDATE_JOB = 'run-platform-update';
+export {
+  PLATFORM_UPDATE_QUEUE,
+  PLATFORM_UPDATE_JOB,
+  PLATFORM_UPGRADE_JOB,
+  enqueueUpgrade,
+} from '../constants/platform-update-queue';
+export type { PlatformUpdateJobData } from '../constants/platform-update-queue';
 
-export interface PlatformUpdateJobData {
-  operationId: string;
+/** Held for the moment an update is recorded, across every API pod. */
+const START_LOCK = '7318229150001';
+
+export interface UpdateTransaction {
+  findRunning(): Promise<InfrastructureOperationEntity | null>;
+  save(
+    operation: InfrastructureOperationEntity,
+  ): Promise<InfrastructureOperationEntity>;
 }
 
 export const PLATFORM_UPDATE_STEPS = [
@@ -59,10 +82,43 @@ export class PlatformUpdateRunnerService {
     private readonly operationRepository: Repository<InfrastructureOperationEntity>,
     @InjectQueue(PLATFORM_UPDATE_QUEUE)
     private readonly queue: Queue<PlatformUpdateJobData>,
+    @Optional() private readonly releases?: ReleaseManifestService,
+    @Optional()
+    @InjectRepository(ClusterEntity)
+    private readonly clusterRepository?: Repository<ClusterEntity>,
   ) {}
 
   async findRunning(): Promise<InfrastructureOperationEntity | null> {
-    return this.operationRepository.findOne({
+    return this.runningIn(this.operationRepository);
+  }
+
+  /**
+   * Looking for a running update and recording one are a single step: without
+   * the lock, two requests arriving together both find none and both start.
+   */
+  async exclusive<T>(work: (tx: UpdateTransaction) => Promise<T>): Promise<T> {
+    return this.operationRepository.manager.transaction(async (em) => {
+      const rows: Array<{ locked?: boolean }> = await em.query(
+        'SELECT pg_try_advisory_xact_lock($1::bigint) AS locked',
+        [START_LOCK],
+      );
+      if (!rows?.[0]?.locked) {
+        throw new ConflictException(
+          'Another platform update is being started at this moment. Look at the running update, or try again.',
+        );
+      }
+      const repository = em.getRepository(InfrastructureOperationEntity);
+      return work({
+        findRunning: () => this.runningIn(repository),
+        save: (operation) => repository.save(operation),
+      });
+    });
+  }
+
+  private runningIn(
+    repository: Repository<InfrastructureOperationEntity>,
+  ): Promise<InfrastructureOperationEntity | null> {
+    return repository.findOne({
       where: {
         operationType: OperationType.UPDATE_PLATFORM,
         status: In([OperationStatus.PENDING, OperationStatus.IN_PROGRESS]),
@@ -111,6 +167,7 @@ export class PlatformUpdateRunnerService {
     if (blocker) {
       throw new BadRequestException(`${blocker.title}. ${blocker.detail}`);
     }
+    await this.assertImageOnly(targetVersion);
 
     const imageRefs = await this.platformUpdates.imageRefsFor(
       status.components,
@@ -149,20 +206,35 @@ export class PlatformUpdateRunnerService {
       operationSteps: PLATFORM_UPDATE_STEPS,
     };
 
-    const operation = await this.operationRepository.save(
-      this.operationRepository.create({
-        operationType: OperationType.UPDATE_PLATFORM,
-        status: OperationStatus.PENDING,
-        resourceType: 'platform',
-        resourceName: `Flui ${targetVersion}`,
-        resourceId: targetVersion,
-        userId,
-        totalSteps: PLATFORM_UPDATE_STEPS.length,
-        currentStepIndex: 0,
-        currentStepProgress: 0,
-        metadata,
-      }),
-    );
+    const recorded = await this.exclusive(async (tx) => {
+      const other = await tx.findRunning();
+      if (other) {
+        const meta = other.metadata as PlatformUpdateOperationMetadata;
+        if (meta.targetVersion === targetVersion) {
+          return { operation: other, created: false };
+        }
+        throw new ConflictException(
+          `An update to ${meta.targetVersion} is already running.`,
+        );
+      }
+      const operation = await tx.save(
+        this.operationRepository.create({
+          operationType: OperationType.UPDATE_PLATFORM,
+          status: OperationStatus.PENDING,
+          resourceType: 'platform',
+          resourceName: `Flui ${targetVersion}`,
+          resourceId: targetVersion,
+          userId,
+          totalSteps: PLATFORM_UPDATE_STEPS.length,
+          currentStepIndex: 0,
+          currentStepProgress: 0,
+          metadata,
+        }),
+      );
+      return { operation, created: true };
+    });
+    if (!recorded.created) return recorded.operation;
+    const { operation } = recorded;
 
     await this.queue.add(
       PLATFORM_UPDATE_JOB,
@@ -175,5 +247,33 @@ export class PlatformUpdateRunnerService {
       `Platform update ${RELEASE.version} → ${targetVersion} queued (operation ${operation.id})`,
     );
     return operation;
+  }
+
+  /** What every ready cluster was last seen running; unknown counts as behind. */
+  private async observedK3s(): Promise<Array<string | null>> {
+    if (!this.clusterRepository) return [];
+    const clusters = await this.clusterRepository.find({
+      where: { status: ClusterStatus.READY },
+    });
+    return clusters.map((c) => c.k3sVersion ?? null);
+  }
+
+  /**
+   * A release that also upgrades K3s or rewrites manifests has phases this
+   * path does not run; applying only its images would leave the rest behind
+   * with nobody told.
+   */
+  private async assertImageOnly(targetVersion: string): Promise<void> {
+    if (!this.releases) return;
+    const release = await this.releases
+      .getManifest()
+      .then((m) => m.manifest.releases.find((r) => r.version === targetVersion))
+      .catch(() => undefined);
+    if (!release) return;
+    const reasons = nonImageReasons(release, await this.observedK3s());
+    if (reasons.length === 0) return;
+    throw new BadRequestException(
+      `Release ${targetVersion} does more than move images: ${reasons.join('; ')}. Plan it first (POST /platform/updates/plan, or \`flui env upgrade\`) and apply that plan.`,
+    );
   }
 }

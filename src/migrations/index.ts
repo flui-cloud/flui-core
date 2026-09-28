@@ -59,6 +59,12 @@ import { LogicalDumpRestoreStrategy1790000000002 } from './1790000000002-Logical
 import { EndpointRoutePath1790000000003 } from './1790000000003-EndpointRoutePath';
 import { ScheduledJobs1790000000004 } from './1790000000004-ScheduledJobs';
 import { DestinationCostDecimal1790000000005 } from './1790000000005-DestinationCostDecimal';
+import { RoleBindingExpiry1790000000006 } from './1790000000006-RoleBindingExpiry';
+import { AuditEvents1790000000007 } from './1790000000007-AuditEvents';
+import { AlertDestinations1790000000008 } from './1790000000008-AlertDestinations';
+import { ClusterReleaseRecord1790000000009 } from './1790000000009-ClusterReleaseRecord';
+import { K3sUpgradeOperation1790000000010 } from './1790000000010-K3sUpgradeOperation';
+import { AlertDestinationScope1790000000011 } from './1790000000011-AlertDestinationScope';
 import { BackfillArtifactApplicationId1787500000000 } from './1787500000000-BackfillArtifactApplicationId';
 import { WireGuardHubKeySealed1790000000000 } from './1790000000000-WireGuardHubKeySealed';
 import { RecoverNodeAccessOperation1790000000001 } from './1790000000001-RecoverNodeAccessOperation';
@@ -131,4 +137,10 @@ export const migrations = [
   EndpointRoutePath1790000000003,
   ScheduledJobs1790000000004,
   DestinationCostDecimal1790000000005,
+  RoleBindingExpiry1790000000006,
+  AuditEvents1790000000007,
+  AlertDestinations1790000000008,
+  ClusterReleaseRecord1790000000009,
+  K3sUpgradeOperation1790000000010,
+  AlertDestinationScope1790000000011,
 ];

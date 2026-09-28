@@ -115,6 +115,15 @@ export const MCP_SCOPE = {
    * widening it is a decision for somebody else to take out loud.
    */
   INFRA_DESTRUCTIVE: 'mcp:infra:destructive',
+  /**
+   * Planning and applying a platform release: backup, system manifests,
+   * platform images, K3s and the checks, as one planned operation.
+   *
+   * Kept out of every tier and apart from `cluster:manage`: it replaces the
+   * control plane and runs migrations a rollback does not undo, so an agent
+   * that operates clusters does not acquire it by implication.
+   */
+  PLATFORM_UPDATE: 'mcp:platform:update',
   SPEC_VALIDATE: 'mcp:spec:validate',
   APP_WRITE: 'mcp:app:write',
   BACKUP_WRITE: 'mcp:backup:write',
@@ -182,6 +191,10 @@ export const SCOPE_TIER: Record<McpScope, McpTier> = {
   // scope below.
   [MCP_SCOPE.INFRA_WRITE]: 'write',
   [MCP_SCOPE.INFRA_DESTRUCTIVE]: 'destructive',
+  // `write` and not `destructive`: the same scope reads the plan, and a read
+  // must not hide behind `MCP_ALLOW_DESTRUCTIVE`. What makes applying safe is
+  // not this flag but the approval every apply meets on its route.
+  [MCP_SCOPE.PLATFORM_UPDATE]: 'write',
   [MCP_SCOPE.SPEC_VALIDATE]: 'plan',
   [MCP_SCOPE.APP_WRITE]: 'write',
   [MCP_SCOPE.BACKUP_WRITE]: 'write',

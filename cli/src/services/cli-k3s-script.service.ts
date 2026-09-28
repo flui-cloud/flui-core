@@ -8,10 +8,17 @@ import {
 } from '../lib/redact-bootstrap-secrets';
 import { CliLoggerService } from './cli-logger.service';
 import { getScriptsBaseUrl } from '../config/bootstrap.config';
-import { resolveEffectiveImageTags } from '../config/release-override';
+import {
+  getEffectiveRelease,
+  resolveEffectiveImageTags,
+} from '../config/release-override';
+import { RELEASE } from '../../../src/config/release.config';
 import { renderFluiNftRuleset } from '../../../src/modules/providers/core/firewall/nftables-ruleset';
 import { getFirewallRulesForClusterType } from '../../../src/modules/infrastructure/firewalls/templates/firewall-rules.template';
-import { nfsAllowedNetworks } from '../../../src/modules/infrastructure/clusters/services/k3s-script.service';
+import {
+  installedReleaseEnv,
+  nfsAllowedNetworks,
+} from '../../../src/modules/infrastructure/clusters/services/k3s-script.service';
 
 export interface K3sMasterConfig {
   serverId?: string; // Database node ID (ClusterNodeEntity.id) - used for observability metrics
@@ -196,7 +203,11 @@ export class CliK3sScriptService {
           CLUSTER_ID: config.clusterId,
           CLUSTER_NAME: config.clusterName,
           K3S_TOKEN: config.k3sToken,
-          K3S_VERSION: config.k3sVersion || 'v1.35.4+k3s1',
+          K3S_VERSION: config.k3sVersion || RELEASE.k3s.version,
+          ...installedReleaseEnv(
+            scriptsBaseUrl,
+            getEffectiveRelease(config.useLatest ?? false),
+          ),
           // Pinned Flui image tags — consumed by the system manifests via envsubst.
           FLUI_API_IMAGE_TAG: imageTags.fluiApi,
           FLUI_WEB_IMAGE_TAG: imageTags.fluiWeb,
@@ -326,7 +337,7 @@ export class CliK3sScriptService {
         CLUSTER_NAME: config.clusterName,
         K3S_TOKEN: config.k3sToken,
         K3S_URL: `https://${config.masterIp}:6443`,
-        K3S_VERSION: config.k3sVersion || 'v1.35.4+k3s1',
+        K3S_VERSION: config.k3sVersion || RELEASE.k3s.version,
         MASTER_IP: config.masterIp,
         FLUI_CA_PUBLIC_KEY: config.caPublicKey || '',
         // Flui shared storage (NFS+fscache, scaling doc §14)

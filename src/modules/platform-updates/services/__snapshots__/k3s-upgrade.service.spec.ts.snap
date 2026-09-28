@@ -1,0 +1,104 @@
+// Jest Snapshot v1, https://goo.gl/fbAQLP
+
+exports[`the K3s Plans cordons the server without draining it, and drains agents one at a time after it 1`] = `
+[
+  {
+    "apiVersion": "upgrade.cattle.io/v1",
+    "kind": "Plan",
+    "metadata": {
+      "labels": {
+        "app.kubernetes.io/managed-by": "flui-cloud",
+        "flui.cloud/k3s-upgrade": "true",
+        "flui.cloud/managed": "true",
+        "flui.cloud/owner-id": "flui-core",
+        "flui.cloud/owner-kind": "platform",
+        "flui.cloud/scope": "system",
+      },
+      "name": "flui-k3s-server",
+      "namespace": "system-upgrade",
+    },
+    "spec": {
+      "concurrency": 1,
+      "cordon": true,
+      "nodeSelector": {
+        "matchExpressions": [
+          {
+            "key": "node-role.kubernetes.io/control-plane",
+            "operator": "In",
+            "values": [
+              "true",
+            ],
+          },
+        ],
+      },
+      "serviceAccountName": "system-upgrade",
+      "tolerations": [
+        {
+          "effect": "NoSchedule",
+          "key": "node-role.kubernetes.io/control-plane",
+          "operator": "Exists",
+        },
+        {
+          "effect": "NoSchedule",
+          "key": "node-role.kubernetes.io/master",
+          "operator": "Exists",
+        },
+        {
+          "key": "CriticalAddonsOnly",
+          "operator": "Exists",
+        },
+      ],
+      "upgrade": {
+        "image": "rancher/k3s-upgrade",
+      },
+      "version": "v1.36.2+k3s1",
+    },
+  },
+  {
+    "apiVersion": "upgrade.cattle.io/v1",
+    "kind": "Plan",
+    "metadata": {
+      "labels": {
+        "app.kubernetes.io/managed-by": "flui-cloud",
+        "flui.cloud/k3s-upgrade": "true",
+        "flui.cloud/managed": "true",
+        "flui.cloud/owner-id": "flui-core",
+        "flui.cloud/owner-kind": "platform",
+        "flui.cloud/scope": "system",
+      },
+      "name": "flui-k3s-agent",
+      "namespace": "system-upgrade",
+    },
+    "spec": {
+      "concurrency": 1,
+      "cordon": true,
+      "drain": {
+        "deleteEmptydirData": true,
+        "force": true,
+        "ignoreDaemonSets": true,
+        "timeout": "10m",
+      },
+      "nodeSelector": {
+        "matchExpressions": [
+          {
+            "key": "node-role.kubernetes.io/control-plane",
+            "operator": "DoesNotExist",
+          },
+        ],
+      },
+      "prepare": {
+        "args": [
+          "prepare",
+          "flui-k3s-server",
+        ],
+        "image": "rancher/k3s-upgrade",
+      },
+      "serviceAccountName": "system-upgrade",
+      "upgrade": {
+        "image": "rancher/k3s-upgrade",
+      },
+      "version": "v1.36.2+k3s1",
+    },
+  },
+]
+`;

@@ -97,6 +97,7 @@ import { NodeLifeEventsService } from './services/node-life-events.service';
 import { ScalingBellService } from './services/scaling-bell.service';
 import { UserEntity } from '../../auth/entities/user.entity';
 import { UserEventsModule } from '../../auth/gateway/user-events.module';
+import { IamModule } from '../../iam/iam.module';
 
 @Module({
   imports: [
@@ -123,6 +124,7 @@ import { UserEventsModule } from '../../auth/gateway/user-events.module';
     InfrastructureOperationsModule,
     ObservabilityModule,
     UserEventsModule,
+    IamModule,
     forwardRef(() => DnsModule),
 
     // Cluster entities

@@ -25,6 +25,7 @@ const ARGS: Record<string, Record<string, unknown>> = {
   spec_validate: { yaml: 'kind: Application' },
   access_revocation_preview: { grantId: 'g1' },
   access_grant_list: {},
+  audit_event_list: {},
   access_grant_add: {
     principalType: 'user',
     principalRef: 'bob@acme.com',
@@ -58,6 +59,15 @@ const ARGS: Record<string, Record<string, unknown>> = {
   app_removal_preview: { id: 'a1' },
   app_traffic: { id: 'a1' },
   app_alerts: { id: 'a1' },
+  alert_destination_list: {},
+  alert_destination_add: {
+    kind: 'webhook',
+    target: 'https://hooks.example.com/flui',
+    min_severity: 'warning',
+    scope: 'infrastructure',
+  },
+  alert_destination_remove: { id: 'd1' },
+  alert_destination_test: { id: 'd1' },
   log_sources: {},
   app_logs: {},
   template_list: {},
@@ -201,6 +211,9 @@ const ARGS: Record<string, Record<string, unknown>> = {
   scaling_overview: {},
   scaling_why: { groupId: 'g1' },
   scaling_group_set: { groupId: 'g1', bounds: { min: 1, desired: 2, max: 3 } },
+  platform_update_status: {},
+  platform_update_plan: { targetVersion: '0.20.0' },
+  platform_update_apply: { targetVersion: '0.20.0', planId: 'p1' },
 };
 
 /**
@@ -425,6 +438,13 @@ describe('strada B — the whole tool catalogue goes over the wire', () => {
     ['app_uninstall', 'DELETE /applications/a1/install'],
     ['app_traffic', 'GET /observability/applications/a1/traffic'],
     ['app_alerts', 'GET /observability/applications/a1/alerts'],
+    ['alert_destination_list', 'GET /observability/alert-destinations'],
+    ['alert_destination_add', 'POST /observability/alert-destinations'],
+    ['alert_destination_remove', 'DELETE /observability/alert-destinations/d1'],
+    [
+      'alert_destination_test',
+      'POST /observability/alert-destinations/d1/test',
+    ],
     ['schedule_list', 'GET /applications/a1/schedules'],
     ['schedule_delete', 'DELETE /applications/a1/schedules/nightly'],
     ['gateway_route_add', 'POST /applications/a1/gateway/routes'],
@@ -470,6 +490,7 @@ describe('strada B — the whole tool catalogue goes over the wire', () => {
     ['access_grant_list', 'GET /iam/grants'],
     ['access_grant_add', 'POST /iam/grants'],
     ['access_grant_remove', 'DELETE /iam/grants/g1'],
+    ['audit_event_list', 'GET /audit/events'],
     ['operating_context_read', 'GET /operating-context/advice'],
     ['get_started', 'GET /auth/agent-skill'],
     // The machine room. Every write here lands on a route carrying
@@ -496,6 +517,9 @@ describe('strada B — the whole tool catalogue goes over the wire', () => {
     ],
     ['san_certificate_create', 'POST /clusters/c1/san-certificates'],
     ['mail_domain_publish', 'POST /mail/domains/example.com/publish'],
+    ['platform_update_status', 'GET /platform/updates/current'],
+    ['platform_update_plan', 'POST /platform/updates/plan'],
+    ['platform_update_apply', 'POST /platform/updates'],
   ])('%s lands on %s', async (name, expected) => {
     const calls = await pathsOf(name);
     expect(calls.map((c) => `${c.method} ${c.path}`)).toContain(expected);

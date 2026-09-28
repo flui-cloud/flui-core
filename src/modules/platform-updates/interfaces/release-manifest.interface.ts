@@ -17,6 +17,12 @@ export interface PlatformReleaseEntry {
   requiresBootstrap: boolean;
   /** Oldest installed version that may jump straight to this one. */
   minFrom?: string;
+  /** Schema 2: K3s the release installs. Absent on schema-1 entries. */
+  k3s?: { version: string };
+  /** Schema 2: system component versions, keyed by component. */
+  systemComponents?: Record<string, string>;
+  /** Schema 2: bootstrap manifest sets the release changes. */
+  manifestSets?: Array<'control' | 'workload' | 'common'>;
 }
 
 export interface PlatformReleaseManifest {

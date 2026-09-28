@@ -8,6 +8,10 @@ import {
   isControlClusterType,
 } from 'src/modules/infrastructure/clusters/entities/cluster.entity';
 import { CreateClusterDto } from 'src/modules/infrastructure/clusters/dto/create-cluster.dto';
+import { RELEASE } from 'src/config/release.config';
+import { installedReleaseOf } from 'src/config/bootstrap.config';
+import { getScriptsBaseUrl } from '../config/bootstrap.config';
+import { getEffectiveRelease } from '../config/release-override';
 import { HostnameMode } from 'src/modules/dns/enums/hostname-mode.enum';
 import {
   generateNipHostnameToken,
@@ -152,7 +156,11 @@ export class CliClustersService {
       status: ClusterStatus.CREATING,
       clusterType,
       k3sTokenEncrypted,
-      k3sVersion: createClusterDto.k3sVersion || 'v1.35.4+k3s1',
+      k3sVersion: createClusterDto.k3sVersion || RELEASE.k3s.version,
+      ...installedReleaseOf(
+        getScriptsBaseUrl(!!metadata.useLatest),
+        getEffectiveRelease(!!metadata.useLatest),
+      ),
       endpointHostnameMode: hostnameMode,
       nipHostnameToken,
       sharedStorageEnabled: createClusterDto.sharedStorageEnabled,

@@ -21,6 +21,7 @@ import { OPERATING_CONTEXT_TOOLS } from './operating-context.tools';
 import { SELF_SERVICE_TOOLS } from './self-service.tools';
 import { INFRASTRUCTURE_OPERATION_TOOLS } from './infrastructure-operations.tools';
 import { SCALING_TOOLS } from './scaling.tools';
+import { PLATFORM_UPDATE_TOOLS } from './platform-update.tools';
 
 /**
  * The single source of truth for Flui tools. Consumed by the MCP server (external
@@ -39,6 +40,7 @@ export const ALL_TOOLS: ToolDef[] = [
   ...INFRASTRUCTURE_TOOLS,
   ...INFRASTRUCTURE_OPERATION_TOOLS,
   ...SCALING_TOOLS,
+  ...PLATFORM_UPDATE_TOOLS,
   ...DNS_TOOLS,
   ...APPLICATION_TOOLS,
   ...OBSERVABILITY_TOOLS,

@@ -15,8 +15,9 @@ interface ParsedVersion {
 function parse(raw: string): ParsedVersion | null {
   const cleaned = raw.trim().replace(/^v/, '');
   const [core, ...rest] = cleaned.split('-');
-  const parts = core.split('.').map((p) => Number.parseInt(p, 10));
-  if (parts.length === 0 || parts.some((p) => Number.isNaN(p))) return null;
+  const fields = core.split('.');
+  if (fields.length > 3 || fields.some((p) => !/^\d+$/.test(p))) return null;
+  const parts = fields.map((p) => Number.parseInt(p, 10));
   while (parts.length < 3) parts.push(0);
   const prerelease = rest.join('-');
   return {

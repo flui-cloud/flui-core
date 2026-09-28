@@ -26,6 +26,7 @@ import { CloudProvider } from '../../../providers/enums/cloud-provider.enum';
 import { getScriptsBaseUrl } from '../../../../config/bootstrap.config';
 import { buildSystemNipHostname } from '../../../dns/utils/nip-hostname.util';
 import { SharedStorageExportReconciler } from './shared-storage-export.reconciler';
+import { K3S_DEFAULT_VERSION } from '../constants';
 
 const TOKEN_TTL_MS = 30 * 60 * 1000;
 const RULESET_PATH = '/etc/flui/flui-firewall.nft';
@@ -173,6 +174,7 @@ export class ByosNodeJoinService {
       serverName: token.serverName,
       serverId: node.id,
       k3sToken,
+      k3sVersion: cluster.k3sVersion || K3S_DEFAULT_VERSION,
       masterIp: token.masterIp,
       caPublicKey,
       scriptsBaseUrl,
@@ -302,6 +304,7 @@ export class ByosNodeJoinService {
     serverName: string;
     serverId: string;
     k3sToken: string;
+    k3sVersion: string;
     masterIp: string;
     caPublicKey: string;
     scriptsBaseUrl: string;
@@ -322,6 +325,7 @@ export INSTANCE_ID='${esc(p.serverName)}'
 export INSTANCE_NAME='${esc(p.serverName)}'
 export CLOUD_PROVIDER='byos'
 export K3S_TOKEN='${esc(p.k3sToken)}'
+export K3S_VERSION='${esc(p.k3sVersion)}'
 export K3S_URL='https://${p.masterIp}:6443'
 export MASTER_IP='${p.masterIp}'
 export FLUI_CA_PUBLIC_KEY='${esc(p.caPublicKey)}'

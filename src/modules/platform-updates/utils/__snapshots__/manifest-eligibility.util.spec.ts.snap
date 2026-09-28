@@ -2,7 +2,7 @@
 
 exports[`against the real templates classifies every control template exactly as recorded 1`] = `
 {
-  "00-secrets.yaml": "needs 45",
+  "00-secrets.yaml": "needs 47",
   "01-namespace.yaml": "no values needed",
   "01b-platform-priority.yaml": "no values needed",
   "02-postgres.yaml": "no values needed",
@@ -12,12 +12,12 @@ exports[`against the real templates classifies every control template exactly as
   "04a-kube-state-metrics.yaml": "no values needed",
   "04b-vmagent.yaml": "needs 1",
   "04c-vmalert.yaml": "no values needed",
-  "04d-alertmanager.yaml": "needs 1",
+  "04d-alertmanager.yaml": "no values needed",
   "05-prometheus.yaml": "no values needed",
   "05-vmsingle.yaml": "no values needed",
   "06-loki.yaml": "needs 2",
   "07-grafana-datasources.yaml": "no values needed",
-  "08-grafana.yaml": "needs 1",
+  "08-grafana.yaml": "no values needed",
   "09-flui-api.yaml": "needs 2",
   "10-flui-web.yaml": "needs 2",
   "11-zitadel.yaml": "needs 6",

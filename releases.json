@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "releases": [
     {
       "version": "0.13.0-rc.8",
@@ -21,7 +21,14 @@
         "New: `flui env refresh-manifests` brings the manifests a cluster restarts from into line with a release. It shows what would change and writes nothing unless asked, never touches a file holding a secret, and supplies no values."
       ],
       "migrations": 0,
-      "requiresBootstrap": true
+      "requiresBootstrap": true,
+      "k3s": {
+        "version": "v1.35.4+k3s1"
+      },
+      "systemComponents": {
+        "certManager": "v1.17.1",
+        "systemUpgradeController": "v0.20.2"
+      }
     },
     {
       "version": "0.13.0-rc.7",

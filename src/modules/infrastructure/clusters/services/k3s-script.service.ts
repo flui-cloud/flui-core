@@ -1,6 +1,10 @@
 import { Injectable, Logger } from '@nestjs/common';
 
-import { BOOTSTRAP_CONFIG } from 'src/config/bootstrap.config';
+import {
+  BOOTSTRAP_CONFIG,
+  installedReleaseOf,
+} from 'src/config/bootstrap.config';
+import { RELEASE } from 'src/config/release.config';
 import { K3S_DEFAULT_VERSION } from '../constants';
 import {
   BootstrapPeer,
@@ -197,6 +201,18 @@ const POD_NETWORK = '10.42.0.0/16';
 const CIDR_RE = /^[0-9a-fA-F:.]+\/\d{1,3}$/;
 const ANYWHERE = new Set(['0.0.0.0/0', '::/0']);
 
+/** What the installer records as the release a master was built from. */
+export function installedReleaseEnv(
+  scriptsBaseUrl: string,
+  release: { version: string | null; bootstrapRef: string } = RELEASE,
+): { FLUI_BOOTSTRAP_REF: string; FLUI_RELEASE_VERSION: string } {
+  const installed = installedReleaseOf(scriptsBaseUrl, release);
+  return {
+    FLUI_BOOTSTRAP_REF: installed.bootstrapRef ?? '',
+    FLUI_RELEASE_VERSION: installed.platformRelease ?? '',
+  };
+}
+
 /**
  * The export runs with no_root_squash, so a client list that falls back to
  * "anyone" hands root on the shared volume to the internet. Without a private
@@ -334,6 +350,7 @@ export class K3sScriptService {
           CLUSTER_NAME: config.clusterName,
           K3S_TOKEN: config.k3sToken,
           K3S_VERSION: config.k3sVersion || K3S_DEFAULT_VERSION,
+          ...installedReleaseEnv(BOOTSTRAP_CONFIG.scriptsBaseUrl),
           DEPLOY_OBSERVABILITY_STACK: config.deployObservabilityStack
             ? 'true'
             : 'false',

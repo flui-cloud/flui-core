@@ -1,4 +1,8 @@
-import { compareVersions, isNewerThan } from './version-compare';
+import {
+  compareVersions,
+  isNewerThan,
+  isReleaseVersion,
+} from './version-compare';
 
 describe('compareVersions', () => {
   it('orders by numeric parts', () => {
@@ -29,6 +33,14 @@ describe('compareVersions', () => {
     expect(compareVersions('latest', '0.13.0')).toBeNull();
     expect(compareVersions('0.13.0', 'master')).toBeNull();
     expect(compareVersions('sha-a1b2c3d', '0.13.0')).toBeNull();
+  });
+
+  it('refuses a commit that happens to start with digits', () => {
+    expect(compareVersions('979d7ef', '0.13.0')).toBeNull();
+    expect(compareVersions('0.13.0', '1e2f3a4')).toBeNull();
+    expect(compareVersions('0.13.0x', '0.13.0')).toBeNull();
+    expect(isReleaseVersion('979d7ef')).toBe(false);
+    expect(isReleaseVersion('0.13.0-rc.8')).toBe(true);
   });
 
   it('never calls an uncomparable pair an upgrade', () => {

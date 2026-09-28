@@ -25,14 +25,21 @@
 import { execFileSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { RELEASE } from '../src/config/release.config';
+import { RELEASE, ReleaseManifest } from '../src/config/release.config';
 import { compareVersions } from '../src/modules/platform-updates/utils/version-compare';
 
 const ROOT = path.resolve(__dirname, '..');
 const INDEX_FILE = path.join(ROOT, 'releases.json');
 const MIGRATIONS_INDEX = 'src/migrations/index.ts';
+export const RELEASE_INDEX_SCHEMA_VERSION = 2;
 
-interface ReleaseEntry {
+type ManifestSet = 'control' | 'workload' | 'common';
+const MANIFEST_SETS: ManifestSet[] = ['control', 'workload', 'common'];
+const BOOTSTRAP_DIR =
+  process.env.BOOTSTRAP_SCRIPTS_DIR ??
+  path.resolve(ROOT, '../bootstrap-scripts');
+
+export interface ReleaseEntry {
   version: string;
   publishedAt: string;
   bootstrapRef: string;
@@ -41,9 +48,12 @@ interface ReleaseEntry {
   migrations: number;
   requiresBootstrap: boolean;
   minFrom?: string;
+  k3s?: { version: string };
+  systemComponents?: Record<string, string>;
+  manifestSets?: ManifestSet[];
 }
 
-interface ReleaseIndex {
+export interface ReleaseIndex {
   schemaVersion: number;
   releases: ReleaseEntry[];
 }
@@ -164,25 +174,67 @@ function verifyTag(): void {
   }
 }
 
-function main(): void {
-  verifyTag();
-  const index = readIndex();
-  const others = index.releases.filter((r) => r.version !== RELEASE.version);
-  const existing = index.releases.find((r) => r.version === RELEASE.version);
+/**
+ * The manifest sets whose files differ between two bootstrap refs, read from a
+ * checkout of the bootstrap repository; null when it cannot be told.
+ */
+export function changedManifestSets(
+  repo: string,
+  from: string,
+  to: string,
+): ManifestSet[] | null {
+  try {
+    const out = execFileSync(
+      'git',
+      [
+        '-C',
+        repo,
+        'diff',
+        '--name-only',
+        from,
+        to,
+        '--',
+        ...MANIFEST_SETS.map((set) => `manifests/${set}`),
+      ],
+      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] },
+    );
+    const changed = new Set(
+      out
+        .split('\n')
+        .map((line) => /^manifests\/([^/]+)\//.exec(line.trim())?.[1])
+        .filter(Boolean),
+    );
+    return MANIFEST_SETS.filter((set) => changed.has(set));
+  } catch {
+    return null;
+  }
+}
 
-  const previous = previousVersion(index);
-  const previousEntry = others.find((r) => r.version === previous) ?? null;
-
-  const notes = flagValues('notes');
-  const minFrom = flagValues('min-from')[0] ?? existing?.minFrom;
-
-  const entry: ReleaseEntry = {
-    version: RELEASE.version,
-    publishedAt: existing?.publishedAt ?? publishedAt(RELEASE.version),
-    bootstrapRef: RELEASE.bootstrapRef,
-    images: { ...RELEASE.images },
-    notes: notes.length > 0 ? notes : (existing?.notes ?? []),
-    migrations: migrationsSince(previous),
+export function buildEntry(input: {
+  release: ReleaseManifest;
+  existing: ReleaseEntry | null;
+  previousEntry: ReleaseEntry | null;
+  publishedAt: string;
+  migrations: number;
+  notes: string[];
+  minFrom?: string;
+  manifestSets?: ManifestSet[] | null;
+}): ReleaseEntry {
+  const { release, existing, previousEntry } = input;
+  const requiresBootstrap = previousEntry
+    ? previousEntry.bootstrapRef !== release.bootstrapRef
+    : true;
+  const manifestSets =
+    input.manifestSets ??
+    existing?.manifestSets ??
+    (requiresBootstrap ? [...MANIFEST_SETS] : []);
+  return {
+    version: release.version,
+    publishedAt: input.publishedAt,
+    bootstrapRef: release.bootstrapRef,
+    images: { ...release.images },
+    notes: input.notes.length > 0 ? input.notes : (existing?.notes ?? []),
+    migrations: input.migrations,
     // With no predecessor in the index there is nothing to compare against —
     // which happens when a release was tagged but never indexed. `false` is not
     // the neutral answer it looks like: it is read as "no bootstrap change" and
@@ -190,18 +242,60 @@ function main(): void {
     // would take the new images and never re-run the manifests. Unknown
     // therefore resolves to `true`: running the bootstrap again costs a
     // reinstall, skipping it costs the release.
-    requiresBootstrap: previousEntry
-      ? previousEntry.bootstrapRef !== RELEASE.bootstrapRef
-      : true,
-    ...(minFrom ? { minFrom } : {}),
+    requiresBootstrap,
+    ...(input.minFrom ? { minFrom: input.minFrom } : {}),
+    k3s: { version: release.k3s.version },
+    systemComponents: { ...release.systemComponents },
+    manifestSets: [...manifestSets],
   };
+}
 
+/** Entries of other releases are kept verbatim: a schema-1 entry stays one. */
+export function buildIndex(
+  index: ReleaseIndex,
+  entry: ReleaseEntry,
+): ReleaseIndex {
+  const others = index.releases.filter((r) => r.version !== entry.version);
   const releases = [...others, entry].sort(
     (a, b) => compareVersions(b.version, a.version) ?? 0,
   );
+  return { schemaVersion: RELEASE_INDEX_SCHEMA_VERSION, releases };
+}
+
+function main(): void {
+  verifyTag();
+  const index = readIndex();
+  const others = index.releases.filter((r) => r.version !== RELEASE.version);
+  const existing =
+    index.releases.find((r) => r.version === RELEASE.version) ?? null;
+
+  const previous = previousVersion(index);
+  const previousEntry = others.find((r) => r.version === previous) ?? null;
+
+  const entry = buildEntry({
+    release: RELEASE,
+    existing,
+    previousEntry,
+    publishedAt: existing?.publishedAt ?? publishedAt(RELEASE.version),
+    migrations: migrationsSince(previous),
+    notes: flagValues('notes'),
+    minFrom: flagValues('min-from')[0] ?? existing?.minFrom,
+    manifestSets: !previousEntry
+      ? null
+      : previousEntry.bootstrapRef === RELEASE.bootstrapRef
+        ? []
+        : fs.existsSync(BOOTSTRAP_DIR)
+          ? changedManifestSets(
+              BOOTSTRAP_DIR,
+              previousEntry.bootstrapRef,
+              RELEASE.bootstrapRef,
+            )
+          : null,
+  });
+
   fs.writeFileSync(
     INDEX_FILE,
-    `${JSON.stringify({ schemaVersion: index.schemaVersion ?? 1, releases }, null, 2)}\n`,
+    `${JSON.stringify(buildIndex(index, entry), null, 2)}\n`,
   );
 
   console.log(
@@ -216,4 +310,4 @@ function main(): void {
   }
 }
 
-main();
+if (require.main === module) main();

@@ -1,14 +1,20 @@
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import {
-  carriesSecret,
-  declaresProvenance,
-  documentsOf,
   judge,
   placeholdersIn,
   planDigest,
-  statefulImageChanges,
+  renderedRelease,
+  sha256,
 } from './manifest-eligibility.util';
+import {
+  carriesSecret,
+  declaresProvenance,
+  documentsOf,
+  requiredSecretsOf,
+  statefulImageChanges,
+} from './manifest-documents.util';
+import { parseSecretsIndex, secretBearingFiles } from './install-values.util';
 
 /**
  * The fixtures are the real templates, when this machine has them beside the
@@ -332,5 +338,247 @@ ifTemplates('against the real templates', () => {
         : 'no values needed';
     }
     expect(verdicts).toMatchSnapshot();
+  });
+});
+
+describe('rendering a templated file with recorded values', () => {
+  const templated = owned(
+    '\n  host: "${FLUI_BASE_DOMAIN}"\n  id: "${CLUSTER_ID}"',
+  );
+  const rendered = owned('\n  host: "a.nip.io"\n  id: "c1"');
+
+  it('admits it when every value is proven, and compares the rendered copy', () => {
+    const values = { FLUI_BASE_DOMAIN: 'a.nip.io', CLUSTER_ID: 'c1' };
+    expect(
+      judge({
+        name: '12.yaml',
+        release: templated,
+        current: rendered,
+        declaredByRelease: true,
+        values,
+      }).action,
+    ).toBe('unchanged');
+    const verdict = judge({
+      name: '12.yaml',
+      release: templated,
+      current: owned(),
+      declaredByRelease: true,
+      values,
+    });
+    expect(verdict.action).toBe('replace');
+    expect(verdict.renderedWith).toEqual(['CLUSTER_ID', 'FLUI_BASE_DOMAIN']);
+    expect(
+      renderedRelease({
+        name: '12.yaml',
+        release: templated,
+        declaredByRelease: true,
+        values,
+      }),
+    ).toBe(rendered);
+  });
+
+  it('refuses when one value is not proven, and says why', () => {
+    const verdict = judge({
+      name: '12.yaml',
+      release: templated,
+      current: owned(),
+      declaredByRelease: true,
+      values: { FLUI_BASE_DOMAIN: 'a.nip.io' },
+      unproven: {
+        CLUSTER_ID:
+          "06-loki.yaml: no candidate values reproduce the master's copy",
+      },
+    });
+    expect(verdict.action).toBe('skip');
+    expect(verdict.reason).toMatch(/needs CLUSTER_ID \(06-loki\.yaml/);
+  });
+
+  it('never supplies a secret, whatever the record holds', () => {
+    const verdict = judge({
+      name: 'x.yaml',
+      release: owned('\n  p: "${GRAFANA_PASSWORD}"'),
+      current: owned(),
+      declaredByRelease: true,
+      values: { GRAFANA_PASSWORD: 'leaked' },
+      secretVariables: new Set(['GRAFANA_PASSWORD']),
+    });
+    expect(verdict.action).toBe('skip');
+    expect(verdict.reason).toMatch(/a secret only the installer supplies/);
+  });
+
+  it('takes a raw file as it ships, shell variables and all', () => {
+    const release = owned('\n  script: "mkdir ${VOL_DIR}"');
+    expect(
+      judge({ name: '01a.yaml', release, declaredByRelease: true, raw: true })
+        .action,
+    ).toBe('add');
+  });
+
+  it('puts the values into the plan digest', () => {
+    const entries = [{ name: 'a', action: 'replace' as const }];
+    expect(planDigest('c', entries, 'v1')).not.toBe(
+      planDigest('c', entries, 'v2'),
+    );
+  });
+});
+
+describe('a file whose copy on the master was not read back', () => {
+  const release = owned('');
+  const base = {
+    name: '04d-alertmanager.yaml',
+    release,
+    declaredByRelease: true,
+  };
+
+  it('is unchanged when the digests agree', () => {
+    expect(
+      judge({
+        ...base,
+        currentWithheld: {
+          sha: sha256(release),
+          declaresProvenance: true,
+          runningImages: new Map(),
+        },
+      }).action,
+    ).toBe('unchanged');
+  });
+
+  it('is replaced on provenance and the running images', () => {
+    expect(
+      judge({
+        ...base,
+        currentWithheld: {
+          sha: 'other',
+          declaresProvenance: true,
+          runningImages: new Map(),
+        },
+      }).action,
+    ).toBe('replace');
+  });
+
+  it('is left alone when the running images could not be read', () => {
+    expect(
+      judge({
+        ...base,
+        currentWithheld: { sha: 'other', declaresProvenance: true },
+      }).reason,
+    ).toMatch(/could not be read/);
+  });
+
+  it('is left alone when its copy is not ours', () => {
+    expect(
+      judge({
+        ...base,
+        currentWithheld: {
+          sha: 'other',
+          declaresProvenance: false,
+          runningImages: new Map(),
+        },
+      }).reason,
+    ).toMatch(/declares no provenance/);
+  });
+});
+
+describe('a file changed by hand on the master', () => {
+  const release = owned('');
+  const modified = {
+    name: '06-custom.yaml',
+    release,
+    declaredByRelease: true,
+    currentModified: true,
+    currentWithheld: {
+      sha: 'edited',
+      declaresProvenance: true,
+      runningImages: new Map<string, string>(),
+    },
+  };
+
+  it('is reported as modified and left alone', () => {
+    const verdict = judge(modified);
+    expect(verdict.action).toBe('skip');
+    expect(verdict.reason).toMatch(/modified on this master/);
+  });
+
+  it('is replaced only when overwriting it is asked for', () => {
+    expect(judge(modified, { allowOverwriteModified: true }).action).toBe(
+      'replace',
+    );
+  });
+
+  it('is still unchanged when it already matches the release', () => {
+    expect(
+      judge({
+        ...modified,
+        currentWithheld: { ...modified.currentWithheld, sha: sha256(release) },
+      }).action,
+    ).toBe('unchanged');
+  });
+});
+
+describe('a file whose pods read a Secret the installation lacks', () => {
+  const base = {
+    name: '08-grafana.yaml',
+    release: owned(''),
+    current: owned('\n  b: "2"'),
+    declaredByRelease: true,
+  };
+
+  it('creates it first when the release says where the value already lives', () => {
+    const verdict = judge({
+      ...base,
+      missingSecrets: [{ ref: 'flui-control/grafana-admin', derivable: true }],
+    });
+    expect(verdict.action).toBe('replace');
+    expect(verdict.createsSecrets).toEqual(['flui-control/grafana-admin']);
+  });
+
+  it('is left alone otherwise', () => {
+    const verdict = judge({
+      ...base,
+      missingSecrets: [{ ref: 'flui-control/grafana-admin', derivable: false }],
+    });
+    expect(verdict.action).toBe('skip');
+    expect(verdict.reason).toMatch(/flui-control\/grafana-admin/);
+  });
+});
+
+ifTemplates('secrets read from Secrets (decision 3)', () => {
+  it('Alertmanager and Grafana read their credentials from Secrets', () => {
+    expect(
+      requiredSecretsOf(documentsOf(template('control/04d-alertmanager.yaml'))),
+    ).toEqual(['flui-control/alertmanager-webhook']);
+    expect(
+      requiredSecretsOf(documentsOf(template('control/08-grafana.yaml'))),
+    ).toEqual(['flui-control/grafana-admin']);
+  });
+
+  it('leaves no refreshable control file rendering a secret', () => {
+    const secrets = parseSecretsIndex(
+      readFileSync(join(BOOTSTRAP, 'SECRETS'), 'utf8'),
+    );
+    const files = readdirSync(join(BOOTSTRAP, 'control'))
+      .filter((f) => f.endsWith('.yaml'))
+      .map((name) => ({ name, template: template(`control/${name}`) }));
+    const bearing = secretBearingFiles(files, new Set(secrets.keys()));
+    expect(bearing).toEqual(['00-secrets.yaml', '11-zitadel.yaml']);
+    for (const name of bearing) {
+      expect(carriesSecret(documentsOf(template(`control/${name}`)))).toBe(
+        true,
+      );
+    }
+  });
+
+  it('lists every Secret the release derives from a location that exists at install', () => {
+    const secrets = parseSecretsIndex(
+      readFileSync(join(BOOTSTRAP, 'SECRETS'), 'utf8'),
+    );
+    expect(secrets.get('ALERTS_WEBHOOK_TOKEN')).toEqual([
+      'flui-system/flui-secrets/ALERTS_WEBHOOK_TOKEN',
+      'flui-control/alertmanager-webhook/token',
+    ]);
+    expect(secrets.get('GRAFANA_PASSWORD')).toEqual([
+      'flui-system/flui-secrets/GRAFANA_ADMIN_PASSWORD',
+      'flui-control/grafana-admin/password',
+    ]);
   });
 });

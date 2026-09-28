@@ -580,6 +580,8 @@ export class BootstrapSeeder implements OnModuleInit {
         ? this.encryptionService.encrypt(process.env.K3S_TOKEN)
         : '',
       k3sVersion: process.env.K3S_VERSION,
+      bootstrapRef: process.env.FLUI_BOOTSTRAP_REF || null,
+      platformRelease: process.env.FLUI_RELEASE_VERSION || null,
       masterIpAddress: masterIp,
       masterPrivateIp: privateIp,
       nipHostnameToken,
@@ -678,6 +680,12 @@ export class BootstrapSeeder implements OnModuleInit {
       this.logger.log(
         `✅ Cluster ${existingCluster.name} backfilled with vnetConfig`,
       );
+    }
+    if (process.env.FLUI_BOOTSTRAP_REF && !existingCluster.bootstrapRef) {
+      existingCluster.bootstrapRef = process.env.FLUI_BOOTSTRAP_REF;
+      existingCluster.platformRelease =
+        process.env.FLUI_RELEASE_VERSION || null;
+      dirty = true;
     }
     if (privateIp && !existingCluster.masterPrivateIp) {
       existingCluster.masterPrivateIp = privateIp;

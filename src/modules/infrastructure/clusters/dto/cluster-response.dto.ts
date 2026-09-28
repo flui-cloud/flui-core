@@ -1,6 +1,7 @@
 import { Sensitivity } from '../../../mask/decorators/sensitivity.decorator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { ClusterType } from '../entities/cluster.entity';
+import { RELEASE } from '../../../../config/release.config';
 
 export class VNetAttachmentInfoDto {
   @ApiProperty({
@@ -130,7 +131,7 @@ export class ClusterResponseDto {
 
   @ApiPropertyOptional({
     description: 'K3s version',
-    example: 'v1.35.4+k3s1',
+    example: RELEASE.k3s.version,
   })
   k3sVersion?: string;
 

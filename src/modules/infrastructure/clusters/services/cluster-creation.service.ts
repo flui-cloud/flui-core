@@ -7,6 +7,11 @@ import {
 import { ManagementAddressResolver } from '../../shared/services/management-address.resolver';
 import { InjectRepository } from '@nestjs/typeorm';
 import { In, Repository } from 'typeorm';
+import {
+  BOOTSTRAP_CONFIG,
+  installedReleaseOf,
+} from '../../../../config/bootstrap.config';
+import { RELEASE } from '../../../../config/release.config';
 import { InjectQueue } from '@nestjs/bull';
 import { Queue } from 'bull';
 import {
@@ -164,6 +169,7 @@ export class ClusterCreationService {
       maxNodes: dto.maxNodes,
       k3sTokenEncrypted,
       k3sVersion: dto.k3sVersion,
+      ...installedReleaseOf(BOOTSTRAP_CONFIG.scriptsBaseUrl, RELEASE),
       status: ClusterStatus.CREATING,
       clusterType,
       sshKeyIds: dto.sshKeys,

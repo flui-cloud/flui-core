@@ -21,6 +21,8 @@ interface Entry {
   notes: string[];
   migrations: number;
   requiresBootstrap: boolean;
+  k3s?: { version: string };
+  systemComponents?: Record<string, string>;
 }
 
 const INDEX = JSON.parse(
@@ -37,6 +39,12 @@ describe('the published release index', () => {
     const entry = INDEX.releases.find((r) => r.version === RELEASE.version)!;
     expect(entry.bootstrapRef).toBe(RELEASE.bootstrapRef);
     expect(entry.images).toEqual({ ...RELEASE.images });
+    expect(entry.k3s).toEqual(RELEASE.k3s);
+    expect(entry.systemComponents).toEqual({ ...RELEASE.systemComponents });
+  });
+
+  it('is published at schema 2', () => {
+    expect(INDEX.schemaVersion).toBe(2);
   });
 
   it('names every release once', () => {

@@ -78,17 +78,45 @@ function build(opts: {
     metadata: Partial<PlatformUpdateOperationMetadata>;
   } | null;
   imageRefs?: Record<string, string>;
+  release?: Record<string, unknown>;
+  clusterK3s?: Array<string | null>;
 }) {
   const saved: any[] = [];
   const queue = { add: jest.fn() };
-  const operationRepository = {
-    findOne: jest.fn().mockResolvedValue(opts.running ?? null),
+  let locked = false;
+  const operationRepository: any = {
+    findOne: jest.fn(async () => saved[0] ?? opts.running ?? null),
     find: jest.fn().mockResolvedValue([]),
     create: jest.fn().mockImplementation((v) => ({ id: 'op-1', ...v })),
     save: jest.fn().mockImplementation((v) => {
       saved.push(v);
       return v;
     }),
+  };
+  operationRepository.manager = {
+    transaction: async (work: (em: unknown) => Promise<unknown>) => {
+      const em = {
+        query: async () => {
+          if (locked) return [{ locked: false }];
+          locked = true;
+          return [{ locked: true }];
+        },
+        getRepository: () => operationRepository,
+      };
+      try {
+        return await work(em);
+      } finally {
+        locked = false;
+      }
+    },
+  };
+  const clusters = {
+    find: jest.fn(async () =>
+      (opts.clusterK3s ?? [RELEASE.k3s.version]).map((k3sVersion, i) => ({
+        id: `c${i}`,
+        k3sVersion,
+      })),
+    ),
   };
   const platformUpdates = {
     getStatus: jest.fn().mockResolvedValue(opts.status ?? status()),
@@ -100,10 +128,22 @@ function build(opts: {
       },
     ),
   };
+  const releases = opts.release
+    ? {
+        getManifest: jest.fn().mockResolvedValue({
+          manifest: {
+            schemaVersion: 2,
+            releases: [{ version: TARGET, ...opts.release }],
+          },
+        }),
+      }
+    : undefined;
   const service = new PlatformUpdateRunnerService(
     platformUpdates as never,
     operationRepository as never,
     queue as never,
+    releases as never,
+    clusters as never,
   );
   return { service, queue, operationRepository, saved };
 }
@@ -186,6 +226,66 @@ describe('PlatformUpdateRunnerService.start', () => {
     await expect(service.start(TARGET)).rejects.toBeInstanceOf(
       ConflictException,
     );
+  });
+});
+
+describe('the image-only path, kept for the release that ships the phased update', () => {
+  it('still applies a release that only moves images, unchanged', async () => {
+    const { service, queue } = build({
+      release: { k3s: { version: RELEASE.k3s.version } },
+    });
+    await service.start(TARGET, 'user-1');
+    expect(queue.add).toHaveBeenCalledWith(
+      'run-platform-update',
+      { operationId: 'op-1' },
+      { attempts: 1 },
+    );
+  });
+
+  it('refuses a release that also upgrades K3s or changes manifests, and says how to plan it', async () => {
+    const { service, queue } = build({
+      release: { k3s: { version: 'v9.0.0+k3s1' }, manifestSets: ['common'] },
+    });
+    await expect(service.start(TARGET)).rejects.toThrow(/plan/i);
+    expect(queue.add).not.toHaveBeenCalled();
+  });
+});
+
+describe('two updates started at the same moment', () => {
+  it('records one operation and refuses the other', async () => {
+    const { service, saved } = build({});
+    const results = await Promise.allSettled([
+      service.start(TARGET, 'u1'),
+      service.start('99.0.0', 'u2'),
+      service.start(TARGET, 'u3'),
+    ]);
+    expect(saved).toHaveLength(1);
+    expect(
+      results.some(
+        (r) => r.status === 'rejected' && r.reason instanceof ConflictException,
+      ),
+    ).toBe(true);
+  });
+});
+
+describe('the K3s the image-only path compares against', () => {
+  it('is what the clusters run, not what this API was built with', async () => {
+    const { service, queue } = build({
+      release: { k3s: { version: RELEASE.k3s.version } },
+      clusterK3s: [RELEASE.k3s.version, 'v1.20.0+k3s1'],
+    });
+    await expect(service.start(TARGET)).rejects.toThrow(/K3s/);
+    expect(queue.add).not.toHaveBeenCalled();
+  });
+
+  it('refuses a release that changes the bootstrap even without a manifest list', async () => {
+    const { service } = build({
+      release: {
+        k3s: { version: RELEASE.k3s.version },
+        requiresBootstrap: true,
+      },
+    });
+    await expect(service.start(TARGET)).rejects.toThrow(/bootstrap/);
   });
 });
 

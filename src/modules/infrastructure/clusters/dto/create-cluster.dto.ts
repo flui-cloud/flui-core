@@ -18,6 +18,7 @@ import {
 import { Type } from 'class-transformer';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { CloudProvider } from 'src/modules/providers/enums/cloud-provider.enum';
+import { RELEASE } from 'src/config/release.config';
 import { AsyncOperationResponseDto } from 'src/modules/common/dto';
 import { FirewallRuleDto } from 'src/modules/providers/dto/firewall.dto';
 import { HostnameMode } from 'src/modules/dns/enums/hostname-mode.enum';
@@ -168,8 +169,8 @@ export class CreateClusterDto {
       'Cooldown period (seconds) between consecutive scale events. Overrides global default.',
   })
   @ApiPropertyOptional({
-    example: 'v1.35.4+k3s1',
-    description: 'K3s version (default: v1.35.4+k3s1)',
+    example: RELEASE.k3s.version,
+    description: `K3s version (default: ${RELEASE.k3s.version})`,
   })
   @IsOptional()
   @IsString()
