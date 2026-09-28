@@ -121,6 +121,9 @@ export class ClusterOrchestrationService {
     // hosts the NFS export; workers mount it via NFSv4 + fscache.
     const sharedStorageEnabled = cluster.sharedStorageEnabled !== false;
     const sharedStorageVolumeSizeGb = cluster.sharedStorageVolumeSizeGb ?? 20;
+    const sharedStoragePrivateNetworks = sharedStorageEnabled
+      ? await this.privateNetworksOf(cluster)
+      : [];
 
     // Generate master init script WITH serverId (node.id from database)
     // Reserved before the machine boots so the address can go into the API
@@ -163,6 +166,7 @@ export class ClusterOrchestrationService {
         ? {
             enabled: true,
             volumeSizeGb: sharedStorageVolumeSizeGb,
+            privateNetworks: sharedStoragePrivateNetworks,
           }
         : undefined,
     });
@@ -222,6 +226,7 @@ export class ClusterOrchestrationService {
             ? {
                 enabled: true,
                 volumeSizeGb: sharedStorageVolumeSizeGb,
+                privateNetworks: sharedStoragePrivateNetworks,
               }
             : undefined,
         })
@@ -1562,6 +1567,34 @@ export class ClusterOrchestrationService {
    * cluster that cannot be created. In `mesh` mode the tunnel *is* the
    * cluster's private network, so a failure is not something to continue past.
    */
+  /** The ranges of the subnet(s) this cluster's nodes sit on, or none. */
+  private async privateNetworksOf(cluster: ClusterEntity): Promise<string[]> {
+    const vnetConfig = (
+      cluster.metadata as {
+        vnetConfig?: { vnetId?: string; subnetId?: string };
+      } | null
+    )?.vnetConfig;
+    if (!vnetConfig?.subnetId && !vnetConfig?.vnetId) return [];
+    try {
+      const subnets = vnetConfig.subnetId
+        ? await this.vnetSubnetRepository.find({
+            where: { id: vnetConfig.subnetId },
+          })
+        : await this.vnetSubnetRepository.find({
+            where: { vnetId: vnetConfig.vnetId },
+          });
+      return subnets
+        .map((s) => s.ipRange?.trim())
+        .filter((r): r is string => !!r);
+    } catch (err) {
+      this.logger.warn(
+        `Could not read the private network of ${cluster.name} ` +
+          `(${(err as Error).message}) — shared storage will not be exported`,
+      );
+      return [];
+    }
+  }
+
   private async overlayPlanFor(
     cluster: ClusterEntity,
     nodeId: string,

@@ -9,6 +9,7 @@ import {
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { Sensitivity } from '../../../mask/decorators/sensitivity.decorator';
 import { FirewallRuleDto } from '../../../providers/dto/firewall.dto';
 import { ReconciliationStatus } from '../entities/cluster-firewall.entity';
 import { ClusterStatus } from '../../clusters/entities/cluster.entity';
@@ -85,6 +86,70 @@ export class UpdateFirewallRulesDto {
   desiredRules: FirewallRuleDto[];
 }
 
+export enum HostFirewallLayerState {
+  NOT_APPLICABLE = 'not-applicable',
+  OFF = 'off',
+  PENDING = 'pending',
+  APPLIED = 'applied',
+  BLOCKED = 'blocked',
+  FAILED = 'failed',
+  REMOVING = 'removing',
+}
+
+export class HostFirewallLayerDto {
+  @Sensitivity(Sensitivity.PUBLIC)
+  @ApiProperty({
+    description:
+      'Whether this cluster can have a host firewall beneath its provider firewall (workload clusters on providers with their own firewall).',
+  })
+  applicable: boolean;
+
+  @Sensitivity(Sensitivity.PUBLIC)
+  @ApiProperty({ description: 'Whether the host firewall is turned on' })
+  enabled: boolean;
+
+  @Sensitivity(Sensitivity.PUBLIC)
+  @ApiProperty({
+    enum: HostFirewallLayerState,
+    description:
+      'off: not turned on; pending: on, not applied yet; applied: on every node; blocked: on, but not safe to apply yet (see reason); failed: the last attempt failed (see reason); removing: turned off, still on the nodes.',
+  })
+  state: HostFirewallLayerState;
+
+  @Sensitivity(Sensitivity.ARBITRARY_TEXT)
+  @ApiPropertyOptional({
+    nullable: true,
+    type: String,
+    description: 'Why the host firewall is blocked or failed',
+  })
+  reason: string | null;
+
+  @Sensitivity(Sensitivity.PUBLIC)
+  @ApiPropertyOptional({ nullable: true, type: String })
+  appliedAt: string | null;
+
+  @Sensitivity(Sensitivity.PUBLIC)
+  @ApiPropertyOptional({
+    nullable: true,
+    type: Number,
+    description: 'Nodes the ruleset was last applied to',
+  })
+  appliedNodes: number | null;
+
+  @Sensitivity(Sensitivity.PUBLIC)
+  @ApiPropertyOptional({ nullable: true, type: String })
+  lastAttemptAt: string | null;
+}
+
+export class SetHostFirewallLayerDto {
+  @Sensitivity(Sensitivity.PUBLIC)
+  @ApiProperty({
+    description: 'Turn the host firewall on (true) or off (false)',
+  })
+  @IsBoolean()
+  enabled: boolean;
+}
+
 export class FirewallResponseDto {
   @ApiProperty({ description: 'Firewall ID' })
   id: string;
@@ -146,6 +211,14 @@ export class FirewallResponseDto {
     type: FirewallClusterInfoDto,
   })
   clusterInfo?: FirewallClusterInfoDto;
+
+  @Sensitivity(Sensitivity.PUBLIC)
+  @ApiPropertyOptional({
+    description:
+      'The host firewall on the nodes, beneath the provider firewall. Its failures never change reconciliationStatus.',
+    type: HostFirewallLayerDto,
+  })
+  hostLayer?: HostFirewallLayerDto;
 
   @ApiProperty({ description: 'Creation timestamp' })
   createdAt: Date;

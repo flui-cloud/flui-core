@@ -175,6 +175,11 @@ describe('clusters controller — the fence around the cluster key', () => {
           provide: ClustersService,
           useValue: {
             listClusters: async () => [{ id: CLUSTER, name: 'control' }],
+            getCluster: async () => ({
+              id: CLUSTER,
+              name: 'control',
+              provider: 'hetzner',
+            }),
             nodesTakingWork: async () => null,
             getClusterNodes: async () => [
               {
@@ -191,12 +196,12 @@ describe('clusters controller — the fence around the cluster key', () => {
         {
           provide: FirewallsService,
           useValue: {
-            getFirewallByClusterId: async () => ({
+            describeClusterFirewall: async () => ({
               id: 'fw-1',
               name: 'control',
               provider: 'hetzner',
               rules: [],
-              appliedToServerIds: [],
+              appliedToServerCount: 0,
               labels: {},
               createdAt: new Date(),
               updatedAt: new Date(),

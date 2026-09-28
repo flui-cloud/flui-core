@@ -1249,23 +1249,11 @@ export class ClustersController {
   async getClusterFirewall(
     @Param('id') clusterId: string,
   ): Promise<ProviderFirewallDto> {
-    const firewall =
-      await this.firewallsService.getFirewallByClusterId(clusterId);
-
-    if (!firewall) {
-      throw new Error(`No firewall found for cluster ${clusterId}`);
-    }
-
-    return {
-      id: firewall.id,
-      name: firewall.name,
-      provider: firewall.provider,
-      rules: firewall.rules,
-      appliedToServerCount: firewall.appliedToServerIds?.length || 0,
-      labels: firewall.labels,
-      createdAt: firewall.createdAt,
-      updatedAt: firewall.updatedAt,
-    };
+    const cluster = await this.clustersService.getCluster(clusterId);
+    return this.firewallsService.describeClusterFirewall(
+      clusterId,
+      cluster.provider as CloudProvider,
+    );
   }
 
   @Post(':id/reconcile-tags')

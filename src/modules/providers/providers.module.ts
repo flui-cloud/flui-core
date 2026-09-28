@@ -300,6 +300,7 @@ import { DnsProvider } from './enums/dns-provider.enum';
     ObjectStoragePresetsService,
     PROVIDER_BOOTSTRAP_SEEDER_REGISTRY,
     HostCommandService,
+    NftablesFirewallBackend,
   ],
 })
 export class ProvidersModule {}

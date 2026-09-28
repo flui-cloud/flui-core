@@ -44,6 +44,10 @@ export class ClusterFirewallIntegrationService {
         `Firewall DB record ${firewall.id} created for cluster ${cluster.id}, triggering provider reconciliation`,
       );
 
+      await this.firewallReconciliationService.enableHostLayerAtCreation(
+        firewall.id,
+      );
+
       // Reconcile firewall (create provider firewall)
       const reconciledFirewall =
         await this.firewallReconciliationService.reconcile(firewall.id);
@@ -65,6 +69,19 @@ export class ClusterFirewallIntegrationService {
         error.stack,
       );
       throw error;
+    }
+  }
+
+  /** Puts the host firewall on the nodes that now exist; never throws. */
+  async syncHostLayer(clusterId: string): Promise<void> {
+    try {
+      await this.firewallReconciliationService.syncHostLayerForCluster(
+        clusterId,
+      );
+    } catch (error) {
+      this.logger.warn(
+        `Host firewall of cluster ${clusterId} not synced: ${error.message}`,
+      );
     }
   }
 

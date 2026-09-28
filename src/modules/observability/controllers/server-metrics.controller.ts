@@ -99,7 +99,7 @@ export class ServerMetricsController {
       if (metricsMap.size === 0) {
         const serverPart = serverId ? ` server ${serverId}` : '';
         throw new NotFoundException(
-          `No metrics found for cluster ${clusterId}${serverPart}. Ensure Node Exporter is running and Prometheus is scraping.`,
+          `No metrics have reached Flui from cluster ${clusterId}${serverPart} yet. A new cluster starts sending them within a few minutes; a cluster on another provider than the control sends them through the Flui network.`,
         );
       }
 

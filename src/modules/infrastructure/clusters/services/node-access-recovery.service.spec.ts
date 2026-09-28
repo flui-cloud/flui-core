@@ -9,6 +9,7 @@ import {
   NodeAccessRecoveryService,
   RECOVERY_RULE,
   buildRescueRepairScript,
+  keyFingerprint,
 } from './node-access-recovery.service';
 
 const node = {
@@ -24,7 +25,10 @@ const cluster = (provider: string) => ({
   nodes: [node],
 });
 
-function make(provider: string, over: { repair?: string } = {}) {
+function make(
+  provider: string,
+  over: { repair?: string; refuse?: boolean } = {},
+) {
   const order: string[] = [];
   const saved: any[] = [];
   const ovh = {
@@ -38,6 +42,7 @@ function make(provider: string, over: { repair?: string } = {}) {
     rescueStatus: jest.fn(async () =>
       order.includes('unrescue') ? 'ACTIVE' : 'RESCUE',
     ),
+    consoleUrl: jest.fn(async () => 'https://console.example/vnc?token=t'),
   };
   const firewall = {
     ensureClusterFirewall: jest.fn(async () => {
@@ -60,18 +65,23 @@ function make(provider: string, over: { repair?: string } = {}) {
     { add: jest.fn() } as never,
     { getProvider: () => ovh } as never,
     {
-      getBootstrapKeyMaterialForCluster: jest
-        .fn()
-        .mockResolvedValue({ id: 'k', publicKey: 'p', privateKey: 'PRIVATE' }),
+      getBootstrapKeyMaterialForCluster: jest.fn().mockResolvedValue({
+        id: 'k',
+        publicKey:
+          'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILkOTD3HFFmc0q6pbmNuyNMw4Ux9+ehdzlnB94eb+hAy flui',
+        privateKey: 'PRIVATE',
+      }),
     } as never,
     {
       execCommand: jest.fn(async () => {
+        if (over.refuse) throw new Error('Permission denied (publickey)');
         order.push('repair');
         return over.repair ?? 'FLUI_RECOVER_DONE';
       }),
     } as never,
     firewall as never,
   );
+  (service as unknown as { rescueKeyWaitMs: number }).rescueKeyWaitMs = 0;
   return { service, order, saved, firewall };
 }
 
@@ -136,6 +146,34 @@ describe('getting back into a node through its provider', () => {
     expect(order).not.toContain('firewall');
     expect(saved.at(-1)).toMatchObject({ status: 'FAILED' });
     expect(saved.at(-1).metadata.error).toContain('could not be told apart');
+  });
+});
+
+describe('a rescue system that never takes the key', () => {
+  it('boots the node back, and says which image, which key and where its console is', async () => {
+    const { service, order, saved } = make('ovh', { refuse: true });
+    await service.run({
+      operationId: 'op1',
+      clusterId: 'c1',
+      nodeId: 'n1',
+      sourceIp: null,
+    });
+    expect(order).toContain('unrescue');
+    const error = saved.at(-1).metadata.error as string;
+    expect(saved.at(-1)).toMatchObject({ status: 'FAILED' });
+    expect(error).toContain('Debian 12');
+    expect(error).toContain('SHA256:');
+    expect(error).toContain('https://console.example/vnc');
+    expect(error).toContain('Permission denied (publickey)');
+  });
+
+  it('prints the key fingerprint the way OpenSSH does', () => {
+    expect(
+      keyFingerprint(
+        'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILkOTD3HFFmc0q6pbmNuyNMw4Ux9+ehdzlnB94eb+hAy flui',
+      ),
+    ).toBe('SHA256:gCa/s4qtnCkJrqauqTIOH1UEkTABB1wcmHeQAl3wGDc');
+    expect(keyFingerprint('garbage')).toBe('unknown');
   });
 });
 

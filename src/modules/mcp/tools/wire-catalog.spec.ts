@@ -174,6 +174,7 @@ const ARGS: Record<string, Record<string, unknown>> = {
   cluster_power: { action: 'stop' },
   cluster_autoscale_set: { autoscalingEnabled: true },
   cluster_firewall_enable: {},
+  cluster_host_firewall_set: { enabled: true },
   platform_component_redeploy: { componentKey: 'traefik' },
   dns_issuer_configure: { type: 'http', acmeEmail: 'ops@example.com' },
   san_certificate_create: {
@@ -185,6 +186,7 @@ const ARGS: Record<string, Record<string, unknown>> = {
   scaling_group_get: { groupId: 'g1' },
   scaling_group_retry_purchase: { groupId: 'g1' },
   app_autoscale: { id: 'a1', enabled: true, min: 1, max: 3 },
+  cluster_provider_check: { provider: 'scaleway' },
   management_network_status: {},
   management_network_set: { enabled: true },
   cluster_node_recover_access: { nodeId: 'n1', sourceIp: '203.0.113.7' },
@@ -477,6 +479,7 @@ describe('strada B — the whole tool catalogue goes over the wire', () => {
     ],
     ['cluster_autoscale_set', 'PATCH /infrastructure/clusters/c1/autoscale'],
     ['cluster_firewall_enable', 'POST /firewalls/cluster/c1/enable'],
+    ['cluster_host_firewall_set', 'POST /firewalls/cluster/c1/host-layer'],
     [
       'platform_component_redeploy',
       'POST /infrastructure/clusters/c1/platform-components/traefik/actions/redeploy',

@@ -25,7 +25,10 @@ import {
   FirewallResponseDto,
   ListFirewallsQueryDto,
   ReconciliationStatusDto,
+  SetHostFirewallLayerDto,
 } from '../dto/cluster-firewall.dto';
+import { HostFirewallLayerService } from '../services/host-firewall-layer.service';
+import { ClusterFirewallEntity } from '../entities/cluster-firewall.entity';
 import { ImportFirewallDto } from '../dto/import-firewall.dto';
 import { HetznerFirewallService } from '../../../providers/services/hetzner-firewall.service';
 import { RequireSection } from '../../../iam/decorators/require-section.decorator';
@@ -42,7 +45,14 @@ export class ClusterFirewallsController {
     private readonly desiredStateService: FirewallDesiredStateService,
     private readonly reconciliationService: FirewallReconciliationService,
     private readonly hetznerFirewallService: HetznerFirewallService,
+    private readonly hostLayer: HostFirewallLayerService,
   ) {}
+
+  private present(firewall: ClusterFirewallEntity): FirewallResponseDto {
+    const dto = this.desiredStateService.toResponseDto(firewall);
+    dto.hostLayer = this.hostLayer.toDto(firewall);
+    return dto;
+  }
 
   @Get()
   @ApiOperation({
@@ -68,7 +78,7 @@ export class ClusterFirewallsController {
     @Query() filters: ListFirewallsQueryDto,
   ): Promise<FirewallResponseDto[]> {
     const firewalls = await this.desiredStateService.listFirewalls(filters);
-    return firewalls.map((f) => this.desiredStateService.toResponseDto(f));
+    return firewalls.map((f) => this.present(f));
   }
 
   @Post('import')
@@ -179,7 +189,7 @@ export class ClusterFirewallsController {
   @ApiResponse({ status: 404, description: 'Firewall not found' })
   async getFirewall(@Param('id') id: string): Promise<FirewallResponseDto> {
     const firewall = await this.desiredStateService.getFirewallById(id);
-    return this.desiredStateService.toResponseDto(firewall);
+    return this.present(firewall);
   }
 
   @Get('cluster/:clusterId')
@@ -199,7 +209,7 @@ export class ClusterFirewallsController {
   ): Promise<FirewallResponseDto> {
     const firewall =
       await this.desiredStateService.getFirewallByClusterId(clusterId);
-    return this.desiredStateService.toResponseDto(firewall);
+    return this.present(firewall);
   }
 
   @Post('cluster/:clusterId/enable')
@@ -231,7 +241,38 @@ export class ClusterFirewallsController {
   ): Promise<FirewallResponseDto> {
     const firewall =
       await this.reconciliationService.ensureClusterFirewall(clusterId);
-    return this.desiredStateService.toResponseDto(firewall);
+    return this.present(firewall);
+  }
+
+  @Post('cluster/:clusterId/host-layer')
+  @RequirePermission(IAM_PERMISSION.CLUSTER_MANAGE)
+  @HttpCode(HttpStatus.OK)
+  @ActionCycle({
+    action: 'POST /firewalls/cluster/:clusterId/host-layer',
+    bind: ['clusterId'],
+    sentence: 'turn the host firewall of cluster {clusterId} on or off',
+    consequence:
+      'When on, each node refuses on its own every port the cluster firewall does not open, including traffic between nodes that does not come over the private network.',
+  })
+  @ApiOperation({
+    summary: 'Turn the host firewall of a workload cluster on or off',
+    description:
+      'Workload clusters on providers with their own firewall (Hetzner, Scaleway) can also filter on each node, with the same rules. On for clusters created from now on; clusters that already exist stay off until turned on here. The result is applied now and reported in hostLayer; a failure here never changes the cluster firewall status.',
+  })
+  @ApiParam({ name: 'clusterId', description: 'Cluster ID' })
+  @ApiResponse({ status: 200, type: FirewallResponseDto })
+  @ApiResponse({
+    status: 400,
+    description:
+      'Not offered on this cluster (control cluster, or a provider without its own firewall)',
+  })
+  @ApiResponse({ status: 404, description: 'Firewall not found for cluster' })
+  async setHostLayer(
+    @Param('clusterId') clusterId: string,
+    @Body() dto: SetHostFirewallLayerDto,
+  ): Promise<FirewallResponseDto> {
+    const firewall = await this.hostLayer.setEnabled(clusterId, dto.enabled);
+    return this.present(firewall);
   }
 
   @Put(':id/desired-rules')
@@ -260,7 +301,7 @@ export class ClusterFirewallsController {
       id,
       dto.desiredRules,
     );
-    return this.desiredStateService.toResponseDto(firewall);
+    return this.present(firewall);
   }
 
   @Post(':id/reconcile')
@@ -279,7 +320,7 @@ export class ClusterFirewallsController {
   @ApiResponse({ status: 500, description: 'Reconciliation failed' })
   async reconcile(@Param('id') id: string): Promise<FirewallResponseDto> {
     const firewall = await this.reconciliationService.reconcile(id);
-    return this.desiredStateService.toResponseDto(firewall);
+    return this.present(firewall);
   }
 
   @Get(':id/status')

@@ -1,5 +1,6 @@
 import { BadRequestException } from '@nestjs/common';
 import { ClusterEntity } from 'src/modules/infrastructure/clusters/entities/cluster.entity';
+import { NodeType } from 'src/modules/infrastructure/clusters/entities/cluster-node.entity';
 import { CloudProvider } from '../../enums/cloud-provider.enum';
 
 export interface HostTarget {
@@ -20,6 +21,14 @@ export function deriveHostTargets(cluster: ClusterEntity): HostTarget[] {
   return cluster.provider === CloudProvider.BYOS
     ? deriveByosTargets(cluster)
     : deriveProvisionedTargets(cluster);
+}
+
+/** Where Flui reaches the cluster's master, by the same rules as every node. */
+export function deriveMasterHostTarget(cluster: ClusterEntity): HostTarget {
+  const masters = (cluster.nodes ?? []).filter(
+    (n) => n.nodeType === NodeType.MASTER,
+  );
+  return deriveHostTargets({ ...cluster, nodes: masters } as ClusterEntity)[0];
 }
 
 function deriveProvisionedTargets(cluster: ClusterEntity): HostTarget[] {

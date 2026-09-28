@@ -410,6 +410,8 @@ export class ClusterQueueProcessor {
           );
           throw error;
         }
+      } else if (firewallBackend === 'managed-api') {
+        await this.clusterFirewallIntegrationService.syncHostLayer(clusterId);
       }
 
       // === STEP 2 (all topologies): KUBECONFIG ===
@@ -530,6 +532,7 @@ export class ClusterQueueProcessor {
 
         cluster.nodeCount = 1 + workerCount;
         await this.clusterRepository.save(cluster);
+        await this.clusterFirewallIntegrationService.syncHostLayer(clusterId);
 
         // === MULTI-NODE: STEP 4 = FINALIZE ===
         await this.updateOperationStep(operationId, 4, 50, {
@@ -1948,6 +1951,7 @@ export class ClusterQueueProcessor {
       });
 
       const admission = await this.admitOnControlTunnel(clusterId);
+      await this.clusterFirewallIntegrationService.syncHostLayer(clusterId);
 
       // Master-protection: a control cluster crossing single-node → multi-node
       // gets its master tainted so new pods land on the fresh worker(s).
@@ -2611,13 +2615,19 @@ export class ClusterQueueProcessor {
         `✅ Cluster ${cluster.name} successfully registered in Grafana`,
       );
     } catch (error) {
-      // Log error but don't fail cluster creation
-      this.logger.error(
-        `Failed to register cluster ${cluster.name} in Grafana: ${error.message}`,
-        error.stack,
-      );
+      // Grafana is an operator's tool beside Flui: a failure here never fails
+      // the cluster, but it has to say where it asked, or a wrong GRAFANA_URL
+      // (an API running outside the cluster) reads like a broken Grafana.
+      const where = [
+        error.config?.baseURL,
+        error.config?.method?.toUpperCase(),
+        error.config?.url,
+      ]
+        .filter(Boolean)
+        .join(' ');
+      const request = where ? ` (${where})` : '';
       this.logger.warn(
-        'Cluster creation succeeded but Grafana registration failed - datasources can be added manually',
+        `Cluster ${cluster.name} is ready, but it was not added to Grafana: ${error.message}${request}. Retry with POST /infrastructure/clusters/${cluster.id}/refresh-grafana.`,
       );
     }
   }

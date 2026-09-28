@@ -124,6 +124,22 @@ export default class ClusterCreate extends Command {
           `so the provider default will be used.`,
       );
     }
+    const verdict = await apiClient
+      .get<{
+        allowed: boolean;
+        reason: string | null;
+      }>(
+        `/infrastructure/clusters/workload-providers/${encodeURIComponent(provider)}`,
+      )
+      .catch(() => null);
+    if (verdict && !verdict.allowed) {
+      this.error(
+        verdict.reason ??
+          `A workload cluster on ${provider} cannot be created on this installation.`,
+        { exit: 1 },
+      );
+    }
+
     const nodeSize = flags['node-size'] ?? getRecommendedServerType(provider);
 
     const fluiNetwork = flags['flui-network'] || !!flags['network-cidr'];

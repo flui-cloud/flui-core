@@ -424,6 +424,11 @@ export class OvhProviderService implements ICloudProvider {
     await client.unrescueServer(region, serverId);
   }
 
+  async consoleUrl(serverId: string, region: string): Promise<string | null> {
+    const client = await this.client();
+    return client.consoleUrl(region, serverId);
+  }
+
   async rescueStatus(serverId: string, region: string): Promise<string | null> {
     const client = await this.client();
     return client.serverStatus(region, serverId);

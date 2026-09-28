@@ -3,6 +3,7 @@ import {
   NotFoundException,
   BadRequestException,
   Logger,
+  Optional,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
@@ -14,6 +15,7 @@ import { ClusterResponseDto } from '../dto/cluster-response.dto';
 import { CloudProvider } from '../../../providers/enums/cloud-provider.enum';
 import { ByosVNetService } from './byos-vnet.service';
 import { BillingIntervalsService } from './billing-intervals.service';
+import { SharedStorageExportReconciler } from './shared-storage-export.reconciler';
 
 /**
  * Service for additional cluster operations
@@ -32,6 +34,8 @@ export class ClusterOperationsService {
     private readonly clusterMapperService: ClusterMapperService,
     private readonly byosVNetService: ByosVNetService,
     private readonly billingIntervals: BillingIntervalsService,
+    @Optional()
+    private readonly sharedStorageExport?: SharedStorageExportReconciler,
   ) {}
 
   async getKubeconfig(clusterId: string): Promise<string> {
@@ -167,6 +171,7 @@ export class ClusterOperationsService {
       `✅ BYOS node registered on cluster ${clusterId}: ${saved.serverName} ` +
         `(${nodeType}, privateIp=${saved.privateIp ?? 'none'})`,
     );
+    this.sharedStorageExport?.reconcileSoon(clusterId, 'a node joined');
     return saved;
   }
 
@@ -197,6 +202,12 @@ export class ClusterOperationsService {
 
     cluster.metadata = { ...cluster.metadata, ...metadata };
     const updated = await this.clusterRepository.save(cluster);
+    if ((metadata as { byos?: { nodeNetwork?: unknown } })?.byos?.nodeNetwork) {
+      this.sharedStorageExport?.reconcileSoon(
+        clusterId,
+        'a node network was declared',
+      );
+    }
 
     return this.clusterMapperService.mapToDto(updated);
   }

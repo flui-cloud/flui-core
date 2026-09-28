@@ -297,10 +297,68 @@ export class FirewallDesiredStateService {
   ): Promise<void> {
     const firewall = await this.getFirewallById(firewallId);
     firewall.metadata = {
-      ...(firewall.metadata ?? {}),
+      ...firewall.metadata,
       payloadFingerprint: fingerprint,
     };
     await this.firewallRepository.save(firewall);
+  }
+
+  /** The last check of which nodes the provider firewall covers. */
+  async rememberAttachment(
+    firewallId: string,
+    attachment: object,
+  ): Promise<ClusterFirewallEntity> {
+    const firewall = await this.getFirewallById(firewallId);
+    firewall.metadata = { ...firewall.metadata, attachment };
+    return this.firewallRepository.save(firewall);
+  }
+
+  /** SSH sources found only on the provider and kept, for the status to say so. */
+  async rememberSshSourcesKept(
+    firewallId: string,
+    sources: string[],
+  ): Promise<void> {
+    const firewall = await this.getFirewallById(firewallId);
+    firewall.metadata = {
+      ...firewall.metadata,
+      sshSourcesKept: { sources, at: new Date().toISOString() },
+    };
+    await this.firewallRepository.save(firewall);
+  }
+
+  /**
+   * Public SSH rules set aside while SSH to a workload goes through the
+   * control, kept so they come back as they were when the tunnel goes quiet.
+   */
+  async rememberSuspendedSsh(
+    firewallId: string,
+    rules: FirewallRuleDto[],
+  ): Promise<void> {
+    const firewall = await this.getFirewallById(firewallId);
+    const metadata = { ...firewall.metadata };
+    if (rules.length) metadata.suspendedPublicSsh = rules;
+    else delete metadata.suspendedPublicSsh;
+    firewall.metadata = metadata;
+    await this.firewallRepository.save(firewall);
+  }
+
+  /**
+   * The host firewall's own record, merged into a freshly read row so a
+   * concurrent write to the provider firewall's fields is not undone.
+   */
+  async rememberHostLayer(
+    firewallId: string,
+    patch: Record<string, unknown>,
+  ): Promise<ClusterFirewallEntity> {
+    const firewall = await this.getFirewallById(firewallId);
+    const current =
+      (firewall.metadata as { hostLayer?: Record<string, unknown> } | null)
+        ?.hostLayer ?? {};
+    firewall.metadata = {
+      ...firewall.metadata,
+      hostLayer: { enabled: false, ...current, ...patch },
+    };
+    return this.firewallRepository.save(firewall);
   }
 
   calculateHash(rules: FirewallRuleDto[]): string {
@@ -378,7 +436,9 @@ export class FirewallDesiredStateService {
   }
 
   /**
-   * Compute firewall coverage status from cluster node state (no provider calls)
+   * Coverage as the last check against the provider found it: every node
+   * attached (FULL), some outside (PARTIAL), or not known yet (UNKNOWN). No
+   * provider call here — reconciliation records the check.
    */
   private computeCoverage(firewall: ClusterFirewallEntity): {
     coverageStatus: FirewallCoverageStatus;
@@ -419,11 +479,26 @@ export class FirewallDesiredStateService {
 
     let coverageStatus: FirewallCoverageStatus;
 
+    const attachment = (
+      firewall.metadata as {
+        attachment?: { attachedNodeIds?: string[]; error?: string };
+      } | null
+    )?.attachment;
+    const hostEnforced = firewall.providerFirewallId?.startsWith('nft-');
+
     if (orphanedClusterStatuses.includes(cluster.status)) {
       coverageStatus = FirewallCoverageStatus.ORPHANED;
     } else if (totalNodes === 0) {
       coverageStatus = FirewallCoverageStatus.ORPHANED;
-    } else if (readyNodes === totalNodes) {
+    } else if (hostEnforced) {
+      coverageStatus =
+        firewall.lastAppliedHash &&
+        firewall.lastAppliedHash === firewall.desiredHash
+          ? FirewallCoverageStatus.FULL
+          : FirewallCoverageStatus.UNKNOWN;
+    } else if (!attachment || attachment.error) {
+      coverageStatus = FirewallCoverageStatus.UNKNOWN;
+    } else if (nodes.every((n) => attachment.attachedNodeIds?.includes(n.id))) {
       coverageStatus = FirewallCoverageStatus.FULL;
     } else {
       coverageStatus = FirewallCoverageStatus.PARTIAL;

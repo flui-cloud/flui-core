@@ -11,6 +11,7 @@ import { getScriptsBaseUrl } from '../config/bootstrap.config';
 import { resolveEffectiveImageTags } from '../config/release-override';
 import { renderFluiNftRuleset } from '../../../src/modules/providers/core/firewall/nftables-ruleset';
 import { getFirewallRulesForClusterType } from '../../../src/modules/infrastructure/firewalls/templates/firewall-rules.template';
+import { nfsAllowedNetworks } from '../../../src/modules/infrastructure/clusters/services/k3s-script.service';
 
 export interface K3sMasterConfig {
   serverId?: string; // Database node ID (ClusterNodeEntity.id) - used for observability metrics
@@ -256,6 +257,9 @@ export class CliK3sScriptService {
           FLUI_SHARED_STORAGE_VOLUME_GB: String(
             config.sharedStorage?.volumeSizeGb ?? 0,
           ),
+          FLUI_NFS_ALLOWED_NETWORKS: nfsAllowedNetworks([
+            config.envVnet?.subnetIpRange ?? '',
+          ]),
         },
         // BYOS and OVH: neither has a working pre-create managed firewall
         // (BYOS has no provider API at all; OVH's Neutron security groups

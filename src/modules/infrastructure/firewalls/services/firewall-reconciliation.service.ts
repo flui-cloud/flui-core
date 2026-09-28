@@ -1,4 +1,9 @@
-import { Injectable, Logger, BadRequestException } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  BadRequestException,
+  Optional,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { FirewallDesiredStateService } from './firewall-desired-state.service';
@@ -18,6 +23,14 @@ import { getFirewallRulesForClusterType } from '../templates/firewall-rules.temp
 import { FirewallRuleDto } from '../../../providers/dto/firewall.dto';
 import { CloudProvider } from '../../../providers/enums/cloud-provider.enum';
 import { SSH_VIA_CONTROL_RULE } from '../../../providers/core/firewall/nftables-ruleset';
+import { HostFirewallLayerService } from './host-firewall-layer.service';
+import { keepLiveSshSources } from '../utils/keep-live-ssh-sources';
+import { IFirewallProvider } from '../../../providers/interfaces/firewall-provider.interface';
+import {
+  FirewallAttachment,
+  attachmentOf,
+  serverIdOf,
+} from '../utils/firewall-attachment';
 
 @Injectable()
 export class FirewallReconciliationService {
@@ -30,7 +43,26 @@ export class FirewallReconciliationService {
     private readonly labelService: LabelService,
     @InjectRepository(ClusterEntity)
     private readonly clusterRepository: Repository<ClusterEntity>,
+    @Optional()
+    private readonly hostLayer?: HostFirewallLayerService,
   ) {}
+
+  /** After the provider firewall, never instead of it and never failing it. */
+  private async syncHostLayer(
+    firewall: ClusterFirewallEntity,
+    rules: FirewallRuleDto[],
+  ): Promise<ClusterFirewallEntity> {
+    if (!this.hostLayer) return firewall;
+    try {
+      const fresh = await this.desiredStateService.getFirewallById(firewall.id);
+      return await this.hostLayer.sync(fresh, rules);
+    } catch (err: any) {
+      this.logger.warn(
+        `Host firewall of ${firewall.id} not synced: ${err?.message ?? err}`,
+      );
+      return firewall;
+    }
+  }
 
   async ensureClusterFirewall(
     clusterId: string,
@@ -74,6 +106,33 @@ export class FirewallReconciliationService {
       rules,
     );
     return this.reconcile(firewall.id);
+  }
+
+  /**
+   * The host firewall is turned on when Flui creates the cluster's firewall,
+   * never retroactively: a cluster that already runs opts in explicitly.
+   */
+  async enableHostLayerAtCreation(firewallId: string): Promise<void> {
+    if (!this.hostLayer) return;
+    try {
+      await this.hostLayer.enableAtCreation(
+        await this.desiredStateService.getFirewallById(firewallId),
+      );
+    } catch (err: any) {
+      this.logger.warn(
+        `Could not turn on the host firewall of ${firewallId}: ${err?.message ?? err}`,
+      );
+    }
+  }
+
+  /** Brings the host firewall of a cluster in line now, if it has one. */
+  async syncHostLayerForCluster(clusterId: string): Promise<void> {
+    const firewall = await this.findFirewallByClusterId(clusterId);
+    if (!firewall) return;
+    await this.syncHostLayer(
+      firewall,
+      this.desiredStateService.canonicalizeRules(firewall.desiredRules),
+    );
   }
 
   async reconcileClusterFirewallIfExists(
@@ -351,7 +410,7 @@ export class FirewallReconciliationService {
           await this.resolveControlEgressIps(),
         ),
       );
-    const canonicalRules =
+    let canonicalRules =
       this.desiredStateService.canonicalizeRules(requiredRules);
     const newDesiredHash =
       this.desiredStateService.calculateHash(canonicalRules);
@@ -382,7 +441,10 @@ export class FirewallReconciliationService {
       this.logger.log(
         `No changes detected for firewall ${firewallId}, skipping update`,
       );
-      return firewall;
+      return this.syncHostLayer(
+        await this.verifyAttachment(firewall),
+        canonicalRules,
+      );
     }
     if (
       newDesiredHash === firewall.desiredHash &&
@@ -407,6 +469,11 @@ export class FirewallReconciliationService {
 
       // Apply to provider FIRST (fail fast if provider has issues)
       if (firewall.providerFirewallId) {
+        canonicalRules = await this.keepHandAddedSsh(
+          provider,
+          firewall,
+          canonicalRules,
+        );
         this.logger.log(
           `Applying rules to existing provider firewall ${firewall.providerFirewallId}`,
         );
@@ -474,7 +541,10 @@ export class FirewallReconciliationService {
       this.logger.log(
         `Firewall ${firewallId} updated and applied successfully`,
       );
-      return savedFirewall;
+      return this.syncHostLayer(
+        await this.verifyAttachment(savedFirewall),
+        canonicalRules,
+      );
     } catch (error) {
       this.logger.error(
         `Failed to apply rules to provider for firewall ${firewallId}: ${error.message}`,
@@ -491,6 +561,100 @@ export class FirewallReconciliationService {
       // Re-throw to return HTTP 500 to client
       throw error;
     }
+  }
+
+  /**
+   * Whether every node of the cluster sits behind the provider firewall, as
+   * the provider says — and a node found outside it is attached on the spot.
+   * A worker created without the firewall was exposed for an hour on 26/9
+   * while the status read "FULL". Only for firewalls the provider enforces;
+   * a host firewall is applied to every node or fails.
+   */
+  async verifyAttachment(
+    firewall: ClusterFirewallEntity,
+  ): Promise<ClusterFirewallEntity> {
+    const cluster = firewall.cluster;
+    if (!cluster || !firewall.providerFirewallId) return firewall;
+    if (!this.isProviderEnforced(cluster.provider)) return firewall;
+    const provider = this.firewallProviderFactory.getFirewallProvider(
+      cluster.provider as CloudProvider,
+    );
+    if (!provider) return firewall;
+
+    const nodes = (cluster.nodes ?? []).filter((n) => !!n.id);
+    const record: FirewallAttachment = {
+      checkedAt: new Date().toISOString(),
+      attachedNodeIds: [],
+      missingNodeIds: [],
+      repairedNodeIds: [],
+    };
+    try {
+      const live = await provider.getFirewall(firewall.providerFirewallId);
+      const { attached, missing } = attachmentOf(
+        nodes,
+        (live?.appliedTo ?? []).map((a) => a.serverId),
+      );
+      record.attachedNodeIds = attached.map((n) => n.id);
+      const repairable = missing.filter((n) => serverIdOf(n));
+      if (repairable.length) {
+        this.logger.warn(
+          `Firewall ${firewall.id}: node(s) ${repairable.map((n) => n.id).join(', ')} were outside the ${cluster.provider} firewall — attaching them`,
+        );
+        try {
+          await provider.applyToServers(
+            firewall.providerFirewallId,
+            repairable.map((n) => serverIdOf(n) as string),
+          );
+          record.repairedNodeIds = repairable.map((n) => n.id);
+          record.attachedNodeIds.push(...record.repairedNodeIds);
+        } catch (error) {
+          record.error = `could not attach: ${error instanceof Error ? error.message : String(error)}`;
+        }
+      }
+      record.missingNodeIds = nodes
+        .filter((n) => !record.attachedNodeIds.includes(n.id))
+        .map((n) => n.id);
+    } catch (error) {
+      record.error = `could not read the provider firewall: ${error instanceof Error ? error.message : String(error)}`;
+    }
+    return this.desiredStateService.rememberAttachment(firewall.id, record);
+  }
+
+  private isProviderEnforced(provider: string): boolean {
+    try {
+      return (
+        this.capabilitiesFactory.isProviderSupported(
+          provider as CloudProvider,
+        ) &&
+        this.capabilitiesFactory
+          .getCapabilitiesService(provider as CloudProvider)
+          .getStaticCapabilities().firewall.backend === 'managed-api'
+      );
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * An SSH source live on the provider and missing from Flui's rules is kept,
+   * and said: a reconcile that removed it in silence is how an operator's
+   * address added by hand locked them out of the control.
+   */
+  private async keepHandAddedSsh(
+    provider: IFirewallProvider,
+    firewall: ClusterFirewallEntity,
+    rules: FirewallRuleDto[],
+  ): Promise<FirewallRuleDto[]> {
+    const live = await provider
+      .getFirewall(firewall.providerFirewallId)
+      .catch(() => null);
+    const { rules: merged, kept } = keepLiveSshSources(rules, live?.rules);
+    if (kept.length === 0) return rules;
+    this.logger.warn(
+      `Firewall ${firewall.id}: SSH source(s) ${kept.join(', ')} are on the provider but not in Flui's rules — kept and added to them`,
+    );
+    await this.desiredStateService.rememberSshSourcesKept(firewall.id, kept);
+    return this.desiredStateService.canonicalizeRules(merged);
   }
 
   /**
@@ -542,11 +706,15 @@ export class FirewallReconciliationService {
           canonicalRules,
         );
 
-        // Mark reconciliation complete
-        return await this.desiredStateService.markReconciliationComplete(
-          firewallId,
+        const reconciled =
+          await this.desiredStateService.markReconciliationComplete(
+            firewallId,
+            canonicalRules,
+            firewall.providerFirewallId,
+          );
+        return this.syncHostLayer(
+          await this.verifyAttachment(reconciled),
           canonicalRules,
-          firewall.providerFirewallId,
         );
       } else {
         // Create new provider firewall
@@ -567,11 +735,15 @@ export class FirewallReconciliationService {
           `Created provider firewall ${providerFirewall.firewallId} for cluster ${cluster.id}`,
         );
 
-        // Mark reconciliation complete
-        return await this.desiredStateService.markReconciliationComplete(
-          firewallId,
+        const reconciled =
+          await this.desiredStateService.markReconciliationComplete(
+            firewallId,
+            canonicalRules,
+            providerFirewall.firewallId,
+          );
+        return this.syncHostLayer(
+          await this.verifyAttachment(reconciled),
           canonicalRules,
-          providerFirewall.firewallId,
         );
       }
     } catch (error) {

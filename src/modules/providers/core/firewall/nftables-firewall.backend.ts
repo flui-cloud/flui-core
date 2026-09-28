@@ -1,6 +1,6 @@
 import { Injectable, Logger, BadRequestException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { In, Repository } from 'typeorm';
+import { Repository } from 'typeorm';
 import { ClusterEntity } from 'src/modules/infrastructure/clusters/entities/cluster.entity';
 import { VNetSubnetEntity } from 'src/modules/infrastructure/vnets/entities/vnet-subnet.entity';
 import {
@@ -13,6 +13,10 @@ import {
 } from '../../interfaces/firewall-provider.interface';
 import { createHash } from 'node:crypto';
 import { deriveHostTargets, HostTarget } from '../host/host-targets';
+import {
+  declaredNodeNetworks,
+  readVnetSubnetRanges,
+} from '../host/cluster-private-networks';
 import {
   HostCommandService,
   toReachabilityError,
@@ -35,14 +39,14 @@ const SSH_TIMEOUT_MS = 60_000;
 const CERT_TTL_SECONDS = 300;
 
 const IPV4_RE = /^(\d{1,3}\.){3}\d{1,3}$/;
-const CIDR_RE = /^[0-9a-fA-F:.]+\/\d{1,3}$/;
 const LOOPBACK_RE = /^(127\.|::1$|169\.254\.|fe80:)/;
 const ANYWHERE_CIDRS = new Set(['0.0.0.0/0', '::/0']);
 
-interface VNetRef {
-  vnetId?: string | null;
-  subnetId?: string | null;
-}
+/**
+ * The host firewall cannot go on yet, for a reason that is not a failure: it is
+ * recorded and retried, never worked around by opening something.
+ */
+export class HostLayerBlockedError extends Error {}
 
 @Injectable()
 export class NftablesFirewallBackend implements IFirewallProvider {
@@ -163,6 +167,96 @@ export class NftablesFirewallBackend implements IFirewallProvider {
     );
   }
 
+  /**
+   * Why the ruleset cannot go onto a cluster whose nodes were never behind a
+   * host firewall, or null when it can.
+   *
+   * Everything a node accepts from its siblings is admitted by source network,
+   * so without the private network in hand the default-drop would cut the
+   * cluster in pieces; failing safe means not applying, not applying wider.
+   */
+  async hostLayerBlocker(clusterId: string): Promise<string | null> {
+    const cluster = await this.loadClusterOrThrow(clusterId);
+    let targets: SshTarget[] = [];
+    try {
+      targets = this.deriveTargets(cluster);
+    } catch {
+      targets = [];
+    }
+    if (targets.length === 0) return 'The cluster has no reachable node yet.';
+
+    const privateRanges = [
+      ...this.declaredNodeNetworks(cluster),
+      ...(await this.resolveVnetSubnetCidrs(cluster)),
+    ].filter((cidr) => !ANYWHERE_CIDRS.has(cidr));
+    if (privateRanges.length === 0) {
+      return (
+        'Flui does not know the private network of this cluster, so the host ' +
+        'firewall would cut traffic between its nodes.'
+      );
+    }
+
+    const nodes = cluster.nodes ?? [];
+    const withoutPrivate = nodes.filter((n) => !n.privateIp?.trim());
+    if (nodes.length > 1 && withoutPrivate.length > 0) {
+      const names = withoutPrivate.map((n) => n.serverName || n.id).join(', ');
+      return (
+        `Node(s) ${names} have no private address, so their traffic to the ` +
+        'other nodes would be refused.'
+      );
+    }
+    return null;
+  }
+
+  hostLayerFingerprint(
+    clusterId: string,
+    rules: FirewallRule[],
+  ): Promise<string | undefined> {
+    return this.payloadFingerprint(this.makeFirewallId(clusterId), rules);
+  }
+
+  /**
+   * Checks every node before touching any: a cluster where some nodes filter
+   * and others do not is harder to reason about than one where none do, and
+   * installing packages from the API is not this layer's job.
+   */
+  async applyHostLayer(
+    clusterId: string,
+    rules: FirewallRule[],
+  ): Promise<number> {
+    const blocker = await this.hostLayerBlocker(clusterId);
+    if (blocker) throw new HostLayerBlockedError(blocker);
+
+    const cluster = await this.loadClusterOrThrow(clusterId);
+    const targets = this.deriveTargets(cluster);
+    const withoutNft: string[] = [];
+    for (const target of targets) {
+      const out = await this.sshExec(
+        target,
+        'if command -v nft >/dev/null 2>&1 || [ -x /usr/sbin/nft ]; then echo FLUI_NFT_PRESENT; else echo FLUI_NFT_MISSING; fi',
+      );
+      if (!out.includes('FLUI_NFT_PRESENT')) withoutNft.push(target.host);
+    }
+    if (withoutNft.length > 0) {
+      throw new HostLayerBlockedError(
+        `nftables is not installed on ${withoutNft.join(', ')}; install it on ` +
+          'the node(s) and the host firewall is applied on the next pass.',
+      );
+    }
+
+    await this.applyRuleset(
+      clusterId,
+      rules,
+      targets,
+      await this.deriveInternalCidrs(cluster),
+    );
+    return targets.length;
+  }
+
+  removeHostLayer(clusterId: string): Promise<void> {
+    return this.deleteFirewall(this.makeFirewallId(clusterId));
+  }
+
   private makeFirewallId(clusterId: string): string {
     return `${FIREWALL_ID_PREFIX}${clusterId}`;
   }
@@ -215,16 +309,7 @@ export class NftablesFirewallBackend implements IFirewallProvider {
   private async deriveInternalCidrs(cluster: ClusterEntity): Promise<string[]> {
     const cidrs = new Set<string>(DEFAULT_INTERNAL_CIDRS);
 
-    const declared = (
-      cluster.metadata as { byos?: { nodeNetwork?: string | string[] } }
-    )?.byos?.nodeNetwork;
-    const declaredList = Array.isArray(declared)
-      ? declared
-      : (declared ?? '').split(',');
-    for (const raw of declaredList) {
-      const cidr = raw.trim();
-      if (cidr && CIDR_RE.test(cidr)) cidrs.add(cidr);
-    }
+    for (const cidr of this.declaredNodeNetworks(cluster)) cidrs.add(cidr);
 
     for (const node of cluster.nodes ?? []) {
       const ip = node.privateIp?.trim();
@@ -244,59 +329,27 @@ export class NftablesFirewallBackend implements IFirewallProvider {
     return [...cidrs];
   }
 
+  private declaredNodeNetworks(cluster: ClusterEntity): string[] {
+    return declaredNodeNetworks(cluster);
+  }
+
   private async resolveVnetSubnetCidrs(
     cluster: ClusterEntity,
   ): Promise<string[]> {
-    const refs: VNetRef[] = [
-      (cluster.metadata as { vnetConfig?: VNetRef })?.vnetConfig ?? {},
-    ];
-    for (const node of cluster.nodes ?? []) {
-      refs.push(
-        (node.metadata as { vnetAttachment?: VNetRef })?.vnetAttachment ?? {},
-        { subnetId: node.subnetId },
-      );
-    }
-
-    const subnetIds = new Set(
-      refs.map((r) => r.subnetId).filter((id): id is string => !!id),
-    );
-    const vnetIds = new Set(
-      refs.map((r) => r.vnetId).filter((id): id is string => !!id),
-    );
-    if (subnetIds.size === 0 && vnetIds.size === 0) return [];
-
-    try {
-      let subnets = subnetIds.size
-        ? await this.subnetRepository.find({
-            where: { id: In([...subnetIds]) },
-          })
-        : [];
-      // Clusters attached before subnetId was recorded only know their VNet.
-      if (subnets.length === 0 && vnetIds.size > 0) {
-        subnets = await this.subnetRepository.find({
-          where: { vnetId: In([...vnetIds]) },
-        });
-      }
-      const ranges = subnets
-        .map((s) => s.ipRange?.trim())
-        .filter(
-          (r): r is string => !!r && CIDR_RE.test(r) && !ANYWHERE_CIDRS.has(r),
-        );
-      if (ranges.length === 0) {
-        this.logger.warn(
-          `Cluster ${cluster.id} references a VNet subnet with no usable IP range — ` +
-            `host firewall falls back to pod/service CIDRs plus node /32s`,
-        );
-      }
-      return ranges;
-    } catch (error) {
-      const msg = error instanceof Error ? error.message : String(error);
+    const { ranges, referencedWithoutRange, error } =
+      await readVnetSubnetRanges(cluster, this.subnetRepository);
+    if (error) {
       this.logger.warn(
-        `Could not resolve the VNet subnet of cluster ${cluster.id} (${msg}) — ` +
+        `Could not resolve the VNet subnet of cluster ${cluster.id} (${error}) — ` +
           `host firewall falls back to pod/service CIDRs plus node /32s`,
       );
-      return [];
+    } else if (referencedWithoutRange) {
+      this.logger.warn(
+        `Cluster ${cluster.id} references a VNet subnet with no usable IP range — ` +
+          `host firewall falls back to pod/service CIDRs plus node /32s`,
+      );
     }
+    return ranges;
   }
 
   /**

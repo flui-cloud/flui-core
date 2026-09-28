@@ -151,6 +151,32 @@ describe('AlertsWebhookService', () => {
       ]);
     });
 
+    it('resolves a database alert from the workload name when the app label is missing', async () => {
+      find.mockResolvedValue([
+        {
+          id: 'db-1',
+          slug: 'postgresql-c653b7-qsx6du',
+          k8sNamespace: 'user-a',
+        },
+      ]);
+
+      const res = await service.handle(
+        { header: TOKEN },
+        payload({
+          flui_kind: 'application',
+          alertname: 'FluiAppDown',
+          severity: 'critical',
+          namespace: 'user-a',
+          statefulset: 'postgresql-c653b7-qsx6du',
+        }),
+      );
+
+      expect(res.resolved).toBe(1);
+      expect(record).toHaveBeenCalledWith([
+        expect.objectContaining({ applicationId: 'db-1' }),
+      ]);
+    });
+
     // Subject resolution used to run one query per alert; a node going down fires one
     // alert per application on it, so the batch must resolve with a bounded number.
     it('resolves a whole batch without a query per alert', async () => {

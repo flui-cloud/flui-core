@@ -14,39 +14,37 @@ import { IpDetectionService } from '../../lib/utils/ip-detection';
 import { CliFirewallRepository } from '../../lib/repositories/cli-firewall.repository';
 import { CONTROL_FIREWALL_RULES } from '../../lib/templates/firewall-rules';
 import { printContextBanner } from '../../lib/context-banner';
+import { ApiClient, ApiError } from '../../lib/api-client';
+import { openControlPlane } from '../../lib/control-plane-api';
+import {
+  AllowlistChange,
+  isSshRule,
+  nextSshSources,
+  sshSourcesOf,
+  withSshSource,
+} from '../../lib/firewall/ssh-allowlist';
 
 type ProviderLabel = 'HETZNER' | 'SCALEWAY';
 
-const isSshRule = (r: FirewallRule): boolean =>
-  r.direction === 'in' && r.protocol === 'tcp' && r.port === '22';
-
-/** Replace the SSH rule's source IPs in place; add one if absent (other rules untouched). */
-function withSshSource(
-  baseRules: FirewallRule[],
-  sshCidrs: string[],
-): FirewallRule[] {
-  const rules = baseRules.length ? baseRules : CONTROL_FIREWALL_RULES(sshCidrs);
-  if (!rules.some(isSshRule)) {
-    return [
-      {
-        description: 'SSH access for server management',
-        direction: 'in',
-        protocol: 'tcp',
-        port: '22',
-        sourceIps: sshCidrs,
-      },
-      ...rules,
-    ];
-  }
-  return rules.map((r) => (isSshRule(r) ? { ...r, sourceIps: sshCidrs } : r));
+/** The rules Flui keeps for this cluster, as the API holds them. */
+interface SavedFirewall {
+  id: string;
+  desiredRules: FirewallRule[];
 }
+
+type SavedRules =
+  | { kind: 'found'; api: ApiClient; firewall: SavedFirewall }
+  | { kind: 'absent' }
+  | { kind: 'unreachable'; reason: string };
 
 export default class EnvUpdateFirewall extends Command {
   static readonly description =
     'Manage SSH access (port 22) on the control cluster firewall. ' +
     'Updates only the SSH source IPs — every other rule is left untouched. ' +
-    'Runs directly against the cloud provider, so it works even when your ' +
-    'current IP is locked out.';
+    'Writes the rules Flui keeps, so a later reconcile does not undo it; when ' +
+    'the Flui API does not answer it writes to the cloud provider directly, ' +
+    'so it works even when your current IP is locked out, and brings the ' +
+    'saved rules in line on the next run.';
 
   static readonly examples = [
     '<%= config.bin %> <%= command.id %>',
@@ -124,8 +122,15 @@ export default class EnvUpdateFirewall extends Command {
         spinner,
       );
 
+      const saved = await this.readSavedRules(app, cluster.id);
+
       if (flags.list) {
-        await this.showAllowlist(firewallService, existingFirewall, spinner);
+        await this.showAllowlist(
+          firewallService,
+          existingFirewall,
+          saved,
+          spinner,
+        );
         return;
       }
 
@@ -154,6 +159,7 @@ export default class EnvUpdateFirewall extends Command {
             providerLabel,
             sourceCidrs,
             flags,
+            saved,
           )
         : await this.createFirewall(
             firewallService,
@@ -243,6 +249,7 @@ export default class EnvUpdateFirewall extends Command {
   private async showAllowlist(
     firewallService: IFirewallProvider,
     firewall: any,
+    saved: SavedRules,
     spinner: Ora,
   ): Promise<void> {
     if (!firewall) {
@@ -260,7 +267,74 @@ export default class EnvUpdateFirewall extends Command {
     } else {
       for (const c of sshCidrs) console.log(`   ${c}`);
     }
+    if (saved.kind === 'found') {
+      const kept = sshSourcesOf(saved.firewall.desiredRules);
+      const onlyLive = sshCidrs.filter((c) => !kept.includes(c));
+      const onlyKept = kept.filter((c) => !sshCidrs.includes(c));
+      if (onlyLive.length || onlyKept.length) {
+        console.log(
+          chalk.yellow(
+            '\n   The rules Flui keeps differ from the provider:' +
+              (onlyLive.length
+                ? `\n   only on the provider: ${onlyLive.join(', ')}`
+                : '') +
+              (onlyKept.length
+                ? `\n   only in Flui:         ${onlyKept.join(', ')}`
+                : '') +
+              `\n   Run ${chalk.cyan('flui env update-firewall --add --ip <cidr>')} to keep an address in both.`,
+          ),
+        );
+      }
+    } else if (saved.kind === 'unreachable') {
+      console.log(
+        chalk.dim(
+          `\n   The rules Flui keeps could not be read (${saved.reason}).`,
+        ),
+      );
+    }
     console.log('');
+  }
+
+  /**
+   * The saved rules, when the API answers. Only a missing record or an API
+   * that cannot be reached lets the command fall back to the provider; a
+   * refusal (no permission) stops it, so the fallback is never a way around
+   * the API's own checks.
+   */
+  private async readSavedRules(
+    app: Awaited<ReturnType<typeof getNestApp>>,
+    clusterId: string,
+  ): Promise<SavedRules> {
+    let api: ApiClient;
+    try {
+      ({ api } = await openControlPlane(app));
+    } catch (error) {
+      return {
+        kind: 'unreachable',
+        reason: error instanceof Error ? error.message : String(error),
+      };
+    }
+    try {
+      const firewall = await api.get<SavedFirewall>(
+        `/firewalls/cluster/${clusterId}`,
+      );
+      return { kind: 'found', api, firewall };
+    } catch (error) {
+      if (error instanceof ApiError && error.statusCode === 404) {
+        return { kind: 'absent' };
+      }
+      if (
+        error instanceof ApiError &&
+        error.statusCode !== undefined &&
+        error.statusCode < 500
+      ) {
+        throw error;
+      }
+      return {
+        kind: 'unreachable',
+        reason: error instanceof Error ? error.message : String(error),
+      };
+    }
   }
 
   private async resolveSourceCidrs(
@@ -290,32 +364,39 @@ export default class EnvUpdateFirewall extends Command {
     providerLabel: ProviderLabel,
     sourceCidrs: string[],
     flags: { add: boolean; remove: boolean },
+    saved: SavedRules,
   ): Promise<string[] | null> {
     const spinner = ora('Reading current firewall rules...').start();
-    const { rules: baseRules, sshCidrs: currentSsh } = await this.sshSourceOf(
+    const { rules: liveRules, sshCidrs: liveSsh } = await this.sshSourceOf(
       firewallService,
       firewall,
     );
+    const savedSsh =
+      saved.kind === 'found' ? sshSourcesOf(saved.firewall.desiredRules) : [];
+    let change: AllowlistChange = 'replace';
+    if (flags.add) change = 'add';
+    else if (flags.remove) change = 'remove';
+    const { current, next: finalSshCidrs } = nextSshSources(
+      savedSsh,
+      liveSsh,
+      sourceCidrs,
+      change,
+    );
 
-    let finalSshCidrs: string[];
-    if (flags.add) {
-      finalSshCidrs = [...new Set([...currentSsh, ...sourceCidrs])];
-      if (finalSshCidrs.length === currentSsh.length) {
-        spinner.info(
-          'SSH allowlist already contains the given IP(s) — no change',
-        );
-        return null;
-      }
-    } else if (flags.remove) {
-      finalSshCidrs = currentSsh.filter((c) => !sourceCidrs.includes(c));
-      if (finalSshCidrs.length === currentSsh.length) {
-        spinner.info(
-          'None of the given IP(s) were in the allowlist — no change',
-        );
-        return null;
-      }
-    } else {
-      finalSshCidrs = sourceCidrs;
+    const inLine =
+      saved.kind !== 'found' ||
+      (savedSsh.length === liveSsh.length &&
+        savedSsh.every((c) => liveSsh.includes(c)));
+    const unchanged =
+      finalSshCidrs.length === current.length &&
+      finalSshCidrs.every((c) => current.includes(c));
+    if (unchanged && inLine && !firewall.savedRulesPending) {
+      spinner.info(
+        change === 'remove'
+          ? 'None of the given IP(s) were in the allowlist — no change'
+          : 'SSH allowlist already contains the given IP(s) — no change',
+      );
+      return null;
     }
 
     if (finalSshCidrs.length === 0) {
@@ -333,17 +414,52 @@ export default class EnvUpdateFirewall extends Command {
       return null;
     }
 
-    const newRules = withSshSource(baseRules, finalSshCidrs);
-    spinner.text = 'Updating SSH allowlist...';
-    await firewallService.updateFirewallRules(firewall.id, newRules);
+    let newRules: FirewallRule[];
+    let pending = false;
+    if (saved.kind === 'found') {
+      spinner.text = 'Updating the rules Flui keeps...';
+      newRules = withSshSource(saved.firewall.desiredRules, finalSshCidrs);
+      try {
+        await saved.api.put(`/firewalls/${saved.firewall.id}/desired-rules`, {
+          desiredRules: newRules,
+        });
+      } catch (error) {
+        if (
+          error instanceof ApiError &&
+          error.statusCode !== undefined &&
+          error.statusCode < 500
+        ) {
+          throw error;
+        }
+        spinner.text = 'Flui API did not apply it — updating the provider...';
+        await firewallService.updateFirewallRules(firewall.id, newRules);
+        pending = true;
+      }
+    } else {
+      newRules = withSshSource(liveRules, finalSshCidrs);
+      spinner.text = 'Updating SSH allowlist...';
+      await firewallService.updateFirewallRules(firewall.id, newRules);
+      pending = saved.kind === 'unreachable';
+    }
 
     firewall.clusterId = cluster.id;
     firewall.provider = providerLabel;
     firewall.sourceCidrs = finalSshCidrs;
     firewall.rules = newRules;
+    firewall.savedRulesPending = pending;
     await firewallRepo.save(firewall);
 
     spinner.succeed('SSH allowlist updated');
+    if (pending) {
+      console.log(
+        chalk.yellow(
+          '\n⚠️  Written to the provider only: the Flui API did not answer.\n' +
+            '   Its next reconcile could put the old allowlist back. Run this\n' +
+            `   command again once the API answers (e.g. ${chalk.cyan('flui env update-firewall --list')}\n` +
+            '   shows it) to bring the rules Flui keeps in line.\n',
+        ),
+      );
+    }
     return finalSshCidrs;
   }
 

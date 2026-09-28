@@ -3,11 +3,14 @@ import {
   Logger,
   NotFoundException,
   BadRequestException,
+  BadGatewayException,
   ForbiddenException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { FirewallEntity } from '../entities/firewall.entity';
+import { ClusterFirewallEntity } from '../entities/cluster-firewall.entity';
+import { ProviderFirewallDto } from '../../../providers/dto/firewall.dto';
 import {
   ClusterEntity,
   ClusterType,
@@ -18,6 +21,7 @@ import { LabelService } from '../../shared/services/label.service';
 import {
   FirewallRule,
   CreateFirewallConfig,
+  FirewallDetails,
   IFirewallProvider,
 } from '../../../providers/interfaces/firewall-provider.interface';
 import {
@@ -34,6 +38,8 @@ export class FirewallsService {
   constructor(
     @InjectRepository(FirewallEntity)
     private readonly firewallRepository: Repository<FirewallEntity>,
+    @InjectRepository(ClusterFirewallEntity)
+    private readonly clusterFirewallRepository: Repository<ClusterFirewallEntity>,
     private readonly firewallProviderFactory: FirewallProviderFactory,
     private readonly labelService: LabelService,
   ) {}
@@ -194,6 +200,65 @@ export class FirewallsService {
     return await this.firewallRepository.findOne({
       where: { clusterId, deletedAt: null },
     });
+  }
+
+  /**
+   * The cluster's firewall as the provider has it. A cluster created since
+   * firewalls moved to `cluster_firewalls` has no row in the old table, so
+   * that one is only the fallback; the servers counted are the ones the
+   * provider says the firewall is attached to, never an assumption.
+   */
+  async describeClusterFirewall(
+    clusterId: string,
+    provider: CloudProvider,
+  ): Promise<ProviderFirewallDto> {
+    const current = await this.clusterFirewallRepository.findOne({
+      where: { clusterId },
+    });
+    if (current?.providerFirewallId) {
+      const backend =
+        this.firewallProviderFactory.getFirewallProvider(provider);
+      let live: FirewallDetails | null = null;
+      if (backend) {
+        try {
+          live = await backend.getFirewall(current.providerFirewallId);
+        } catch (error) {
+          throw new BadGatewayException(
+            `The ${provider} firewall of this cluster could not be read: ${error instanceof Error ? error.message : String(error)}`,
+          );
+        }
+      }
+      if (!live) {
+        throw new NotFoundException(
+          `The firewall ${current.providerFirewallId} of cluster ${clusterId} no longer exists at ${provider}`,
+        );
+      }
+      return {
+        id: live.id,
+        name: live.name,
+        provider,
+        rules: live.rules,
+        appliedToServerCount: live.appliedTo.length,
+        labels: live.labels,
+        createdAt: current.createdAt,
+        updatedAt: current.updatedAt,
+      };
+    }
+
+    const legacy = await this.getFirewallByClusterId(clusterId);
+    if (!legacy) {
+      throw new NotFoundException(`No firewall found for cluster ${clusterId}`);
+    }
+    return {
+      id: legacy.id,
+      name: legacy.name,
+      provider: legacy.provider,
+      rules: legacy.rules,
+      appliedToServerCount: legacy.appliedToServerIds?.length || 0,
+      labels: legacy.labels,
+      createdAt: legacy.createdAt,
+      updatedAt: legacy.updatedAt,
+    };
   }
 
   /**

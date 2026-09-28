@@ -217,13 +217,45 @@ export class CrossProviderFirewallService {
     );
     const sshViaControl = await this.sshViaControlRule(cluster, control);
     if (sshViaControl) peerRules.push(sshViaControl);
-    const baseRules = baseRulesOf(fw, Boolean(sshViaControl), (r) =>
-      this.isPeerRule(r),
+    const baseRules = await this.baseRulesKeepingSsh(
+      fw,
+      Boolean(sshViaControl),
     );
     const merged = [...baseRules, ...peerRules];
     // updateAndApplyRules is a no-op when the canonical hash is unchanged, so
     // this only touches the provider when a peer IP actually moved.
     await this.reconciliation.updateAndApplyRules(fw.id, merged);
+  }
+
+  /**
+   * What the operator wrote, less what this service owns. While SSH goes
+   * through the control the public 22 is set aside, not dropped: it comes
+   * back as it was on the pass after the tunnel goes quiet.
+   */
+  private async baseRulesKeepingSsh(
+    fw: ClusterFirewallEntity,
+    sshThroughControl: boolean,
+  ): Promise<FirewallRuleDto[]> {
+    const own = (fw.desiredRules ?? []).filter((r) => !this.isPeerRule(r));
+    const suspended: FirewallRuleDto[] =
+      (fw.metadata as { suspendedPublicSsh?: FirewallRuleDto[] } | null)
+        ?.suspendedPublicSsh ?? [];
+
+    if (sshThroughControl) {
+      const publicSsh = own.filter(isPublicSsh);
+      const kept = [...suspended];
+      for (const rule of publicSsh) {
+        if (!kept.some((k) => sameRule(k, rule))) kept.push(rule);
+      }
+      if (kept.length !== suspended.length) {
+        await this.desiredState.rememberSuspendedSsh(fw.id, kept);
+      }
+      return own.filter((r) => !isPublicSsh(r));
+    }
+
+    if (suspended.length === 0) return own;
+    await this.desiredState.rememberSuspendedSsh(fw.id, []);
+    return own.some(isPublicSsh) ? own : [...suspended, ...own];
   }
 
   private computePeerRules(
@@ -476,13 +508,6 @@ function isPublicSsh(rule: FirewallRuleDto): boolean {
   );
 }
 
-/** What the operator wrote, less what this service owns and, once SSH goes through the control, the public 22. */
-function baseRulesOf(
-  fw: ClusterFirewallEntity,
-  sshThroughControl: boolean,
-  isPeerRule: (rule: FirewallRuleDto) => boolean,
-): FirewallRuleDto[] {
-  return (fw.desiredRules ?? []).filter(
-    (r) => !isPeerRule(r) && !(sshThroughControl && isPublicSsh(r)),
-  );
+function sameRule(a: FirewallRuleDto, b: FirewallRuleDto): boolean {
+  return JSON.stringify(a) === JSON.stringify(b);
 }

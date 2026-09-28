@@ -176,6 +176,32 @@ describe('TelemetryEndpointReconciler', () => {
     });
   });
 
+  it('names the node a rewrite timed out on, and still does the others', async () => {
+    const apply = jest
+      .fn()
+      .mockResolvedValueOnce('FLUI_TELEMETRY_OK')
+      .mockRejectedValueOnce(new Error('SSH exec timeout after 60000ms'));
+    const w = workload({
+      nodes: [
+        {
+          ipAddress: '5.6.7.8',
+          privateIp: '10.0.0.9',
+          serverName: 'wl-master',
+        },
+        {
+          ipAddress: '5.6.7.9',
+          privateIp: '10.0.0.10',
+          serverName: 'wl-worker-1',
+        },
+      ],
+    });
+    const { svc } = build(w, control(), apply);
+    await expect(svc.reconcile('w')).rejects.toThrow(
+      /wl-worker-1 \(5\.6\.7\.9\): SSH exec timeout after 60000ms/,
+    );
+    expect(apply).toHaveBeenCalledTimes(2);
+  });
+
   describe('the management overlay', () => {
     const overlay = (enrolled: boolean) =>
       jest.fn().mockResolvedValue({ controlAddress: '10.250.0.1', enrolled });

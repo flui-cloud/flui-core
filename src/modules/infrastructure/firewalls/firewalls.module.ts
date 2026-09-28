@@ -10,6 +10,7 @@ import { FirewallDesiredStateService } from './services/firewall-desired-state.s
 import { FirewallReconciliationService } from './services/firewall-reconciliation.service';
 import { CrossProviderFirewallService } from './services/cross-provider-firewall.service';
 import { FirewallReconciliationScheduler } from './schedulers/firewall-reconciliation.scheduler';
+import { HostFirewallLayerService } from './services/host-firewall-layer.service';
 import { FirewallsController } from './controllers/firewalls.controller';
 import { ClusterFirewallsController } from './controllers/cluster-firewalls.controller';
 import { ProvidersModule } from '../../providers/providers.module';
@@ -36,6 +37,7 @@ import { SharedInfrastructureModule } from '../shared/shared-infrastructure.modu
     FirewallReconciliationService,
     CrossProviderFirewallService,
     FirewallReconciliationScheduler,
+    HostFirewallLayerService,
   ],
   controllers: [FirewallsController, ClusterFirewallsController],
   exports: [
@@ -43,6 +45,7 @@ import { SharedInfrastructureModule } from '../shared/shared-infrastructure.modu
     FirewallDesiredStateService,
     FirewallReconciliationService,
     CrossProviderFirewallService,
+    HostFirewallLayerService,
   ],
 })
 export class FirewallsModule {}

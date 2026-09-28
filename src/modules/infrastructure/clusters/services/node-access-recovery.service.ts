@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import {
   BadRequestException,
   Injectable,
@@ -40,6 +41,26 @@ interface OvhRescue {
   ): Promise<{ region: string; image: string }>;
   unrescue(serverId: string, region: string): Promise<void>;
   rescueStatus(serverId: string, region: string): Promise<string | null>;
+  consoleUrl?(serverId: string, region: string): Promise<string | null>;
+}
+
+/** How long a rescue system may take to accept the key before giving up. */
+export const RESCUE_KEY_WAIT_MS = 8 * 60_000;
+
+function withoutPadding(base64: string): string {
+  let end = base64.length;
+  while (end > 0 && base64[end - 1] === '=') end -= 1;
+  return base64.slice(0, end);
+}
+
+/** OpenSSH-style fingerprint of a public key line, for the operation record. */
+export function keyFingerprint(publicKey: string): string {
+  const blob = publicKey.trim().split(/\s+/)[1];
+  if (!blob) return 'unknown';
+  const digest = createHash('sha256')
+    .update(Buffer.from(blob, 'base64'))
+    .digest('base64');
+  return `SHA256:${withoutPadding(digest)}`;
 }
 
 /**
@@ -269,21 +290,32 @@ export class NodeAccessRecoveryService {
     );
     const { region, image } = await ovh.rescueForRecovery(serverId);
     await this.waitForStatus(ovh, serverId, region, 'RESCUE');
+    const fingerprint = keyFingerprint(key.publicKey);
 
     try {
       await this.progress(
         operation,
         40,
-        `Repairing the node's disk from ${image}`,
+        `Repairing the node's disk from ${image} (Flui's key ${fingerprint})`,
       );
-      const out = await this.retry(() =>
-        this.nativeSsh.execCommand(
-          host,
-          RESCUE_USER,
-          key.privateKey,
-          buildRescueRepairScript(),
-          120_000,
-        ),
+      const out = await this.untilAccepted(
+        () =>
+          this.nativeSsh.execCommand(
+            host,
+            RESCUE_USER,
+            key.privateKey,
+            buildRescueRepairScript(),
+            120_000,
+          ),
+        async () => {
+          const console = await ovh
+            .consoleUrl?.(serverId, region)
+            .catch(() => null);
+          return (
+            `The rescue system (${image}) did not accept Flui's key (${fingerprint}) within ${RESCUE_KEY_WAIT_MS / 60_000} minutes.` +
+            (console ? ` The node's console: ${console}` : '')
+          );
+        },
       );
       if (out.includes(NO_DISK)) {
         throw new Error(
@@ -322,6 +354,32 @@ export class NodeAccessRecoveryService {
     }
     throw new Error(`The node did not reach ${wanted} within 10 minutes`);
   }
+
+  /**
+   * A rescue system answers on port 22 before its first boot has written the
+   * key it will accept, so refusals are expected for a while; this waits
+   * longer than the generic retry, and says what was tried when it gives up.
+   */
+  private async untilAccepted<T>(
+    call: () => Promise<T>,
+    explain: () => Promise<string>,
+  ): Promise<T> {
+    const deadline = Date.now() + this.rescueKeyWaitMs;
+    for (;;) {
+      try {
+        return await call();
+      } catch (error) {
+        if (Date.now() >= deadline) {
+          const why = error instanceof Error ? error.message : String(error);
+          throw new Error(`${await explain()} Last answer: ${why}`);
+        }
+        await sleep(10_000);
+      }
+    }
+  }
+
+  /** Overridden by tests; the real wait is {@link RESCUE_KEY_WAIT_MS}. */
+  protected rescueKeyWaitMs = RESCUE_KEY_WAIT_MS;
 
   /** The rescue boots before sshd answers; a few refusals are expected. */
   private async retry<T>(call: () => Promise<T>, attempts = 12): Promise<T> {

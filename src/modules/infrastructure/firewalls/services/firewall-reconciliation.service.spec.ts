@@ -335,3 +335,77 @@ describe('FirewallReconciliationService.ensureDualStackWildcards', () => {
     expect(run(rules)).toEqual(rules);
   });
 });
+
+describe('FirewallReconciliationService.verifyAttachment', () => {
+  const make = (appliedTo: string[], applyToServers = jest.fn()) => {
+    const firewall = {
+      id: 'fw1',
+      providerFirewallId: 'hz-1',
+      metadata: {},
+      cluster: {
+        id: 'c1',
+        provider: 'scaleway',
+        nodes: [
+          { id: 'master', providerResourceId: 'fr-par-1:aaa' },
+          { id: 'worker', providerResourceId: 'fr-par-1:bbb' },
+        ],
+      },
+    };
+    const remember = jest.fn(async (_id: string, a: unknown) => ({
+      ...firewall,
+      metadata: { attachment: a },
+    }));
+    const svc = new FirewallReconciliationService(
+      { rememberAttachment: remember } as any,
+      {
+        getFirewallProvider: () => ({
+          getFirewall: jest.fn(async () => ({
+            appliedTo: appliedTo.map((serverId) => ({ serverId })),
+          })),
+          applyToServers,
+        }),
+      } as any,
+      {
+        isProviderSupported: () => true,
+        getCapabilitiesService: () => ({
+          getStaticCapabilities: () => ({
+            firewall: { backend: 'managed-api' },
+          }),
+        }),
+      } as any,
+      {} as any,
+      {} as any,
+      {} as any,
+    );
+    return { svc, firewall, remember, applyToServers };
+  };
+
+  it('attaches a worker the provider firewall does not cover, and records it', async () => {
+    const { svc, firewall, remember, applyToServers } = make(['aaa']);
+    await svc.verifyAttachment(firewall as any);
+    expect(applyToServers).toHaveBeenCalledWith('hz-1', ['bbb']);
+    expect(remember).toHaveBeenCalledWith(
+      'fw1',
+      expect.objectContaining({
+        attachedNodeIds: ['master', 'worker'],
+        repairedNodeIds: ['worker'],
+        missingNodeIds: [],
+      }),
+    );
+  });
+
+  it('records the worker as outside when attaching fails', async () => {
+    const { svc, firewall, remember } = make(
+      ['aaa'],
+      jest.fn().mockRejectedValue(new Error('quota')),
+    );
+    await svc.verifyAttachment(firewall as any);
+    expect(remember).toHaveBeenCalledWith(
+      'fw1',
+      expect.objectContaining({
+        missingNodeIds: ['worker'],
+        error: expect.stringContaining('quota'),
+      }),
+    );
+  });
+});

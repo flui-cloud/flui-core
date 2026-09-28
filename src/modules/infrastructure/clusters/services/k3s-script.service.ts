@@ -98,6 +98,9 @@ export interface K3sMasterConfig {
     enabled: boolean;
     volumeDevicePath?: string;
     volumeSizeGb?: number;
+    /** The cluster's private subnet(s): the only networks the NFS export is
+     *  offered to, with the internal pod range. Empty means no export. */
+    privateNetworks?: string[];
   };
 
   /**
@@ -189,6 +192,23 @@ export interface K3sWorkerConfig {
  * opts out and keeps the older shape, a plain directory with no quota.
  */
 const DEFAULT_LOCAL_STORAGE_GB = 20;
+
+const POD_NETWORK = '10.42.0.0/16';
+const CIDR_RE = /^[0-9a-fA-F:.]+\/\d{1,3}$/;
+const ANYWHERE = new Set(['0.0.0.0/0', '::/0']);
+
+/**
+ * The export runs with no_root_squash, so a client list that falls back to
+ * "anyone" hands root on the shared volume to the internet. Without a private
+ * network there is nothing to share it with, and the list stays empty.
+ */
+export function nfsAllowedNetworks(privateNetworks?: string[]): string {
+  const networks = (privateNetworks ?? [])
+    .map((n) => n?.trim())
+    .filter((n): n is string => !!n && CIDR_RE.test(n) && !ANYWHERE.has(n));
+  if (!networks.length) return '';
+  return [...new Set([...networks, POD_NETWORK])].join(',');
+}
 
 @Injectable()
 export class K3sScriptService {
@@ -359,6 +379,10 @@ export class K3sScriptService {
           FLUI_SHARED_STORAGE_VOLUME_GB: String(
             config.sharedStorage?.volumeSizeGb ?? 0,
           ),
+          FLUI_NFS_ALLOWED_NETWORKS: nfsAllowedNetworks([
+            ...(config.sharedStorage?.privateNetworks ?? []),
+            config.envVnet?.subnetIpRange ?? '',
+          ]),
           FLUI_LOCAL_STORAGE_DEVICE: this.resolveLocalStorage(
             config.localStorage,
           ).device,

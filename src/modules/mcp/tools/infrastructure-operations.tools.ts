@@ -4,6 +4,7 @@ import { enc } from './application-views.util';
 import {
   McpToolContext,
   ToolDef,
+  coerceBoolean,
   coerceNumber,
   defineTool,
   resolveClusterId,
@@ -287,7 +288,7 @@ export const INFRASTRUCTURE_OPERATION_TOOLS: ToolDef[] = [
     name: 'cluster_create',
     routes: ['POST /infrastructure/clusters'],
     description:
-      'Create a new K3s cluster at a cloud provider. This spends money for as long as the cluster exists, so it stops to ask a person first and can only ever be allowed ONCE — there is no standing permission for it, because a request that names no existing resource cannot state its own boundary. `region` and `nodeSize` are provider codes (Hetzner: fsn1/cx22, Scaleway: fr-par-1/PRO2-S): take them from the person, never invent one. Returns an operation handle; provisioning takes 8-15 minutes.',
+      'Create a new K3s cluster at a cloud provider. This spends money for as long as the cluster exists, so it stops to ask a person first and can only ever be allowed ONCE — there is no standing permission for it, because a request that names no existing resource cannot state its own boundary. `region` and `nodeSize` are provider codes (Hetzner: fsn1/cx22, Scaleway: fr-par-1/PRO2-S): take them from the person, never invent one. Returns an operation handle; provisioning takes 8-15 minutes. Call cluster_provider_check for the provider first: a provider this installation cannot connect is refused, and saying so before asking the person to approve spares them an approval that cannot succeed.',
     scope: MCP_SCOPE.INFRA_WRITE,
     inputSchema: {
       name: z
@@ -319,6 +320,23 @@ export const INFRASTRUCTURE_OPERATION_TOOLS: ToolDef[] = [
       );
       return queued(ctx, operation, `Create cluster ${args.name}`);
     },
+  }),
+
+  defineTool({
+    name: 'cluster_provider_check',
+    routes: ['GET /infrastructure/clusters/workload-providers/:provider'],
+    description:
+      'Whether a workload cluster on this provider can be created on this installation, asked before anything is filled in: `allowed`, and `reason` in words to relay when it is not (a provider other than the control needs the Flui network). Call it before cluster_create.',
+    scope: MCP_SCOPE.INFRA_READ,
+    inputSchema: {
+      provider: z
+        .string()
+        .describe('Cloud provider key, e.g. `hetzner`, `scaleway`, `ovh`.'),
+    },
+    run: (args, ctx) =>
+      ctx.api.get(
+        `/infrastructure/clusters/workload-providers/${encodeURIComponent(args.provider)}`,
+      ),
   }),
 
   defineTool({
@@ -502,6 +520,26 @@ export const INFRASTRUCTURE_OPERATION_TOOLS: ToolDef[] = [
     run: async (args, ctx) => {
       const id = await resolveClusterId(ctx, args.clusterId);
       return ctx.api.post(`/firewalls/cluster/${encoded(id)}/enable`);
+    },
+  }),
+
+  defineTool({
+    name: 'cluster_host_firewall_set',
+    routes: ['POST /firewalls/cluster/:clusterId/host-layer'],
+    description:
+      "Turn the host firewall of a workload cluster on or off. It adds a filter on each node, beneath the provider's firewall and with the same rules, so a node that ends up outside the provider firewall still exposes only 22, 80, 443 and the Flui network. Offered on workload clusters on Hetzner and Scaleway; it is on for clusters created from now on, and existing clusters stay off until turned on. It changes what can reach the nodes, so it asks a person first. The answer's hostLayer says whether it was applied, and why not when it was blocked or failed; relay that reason as it is.",
+    scope: MCP_SCOPE.INFRA_WRITE,
+    inputSchema: {
+      ...clusterArg,
+      enabled: coerceBoolean().describe(
+        'true to turn it on, false to turn it off',
+      ),
+    },
+    run: async (args, ctx) => {
+      const id = await resolveClusterId(ctx, args.clusterId);
+      return ctx.api.post(`/firewalls/cluster/${encoded(id)}/host-layer`, {
+        enabled: args.enabled,
+      });
     },
   }),
 

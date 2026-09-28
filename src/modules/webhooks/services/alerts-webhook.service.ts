@@ -45,6 +45,19 @@ interface ResolutionContext {
  * subject. This is the seam where tenant-aware delivery plugs in — today it resolves
  * and records, it does not yet notify anyone.
  */
+/**
+ * The application an alert is about. Flui names an app's workload after its
+ * slug, so a series that lost the app label still names it through the
+ * deployment or statefulset it came from.
+ */
+function applicationSlugOf(labels: Record<string, string | undefined>) {
+  return (
+    labels.label_app_kubernetes_io_name ??
+    labels.deployment ??
+    labels.statefulset
+  );
+}
+
 @Injectable()
 export class AlertsWebhookService {
   private readonly logger = new Logger(AlertsWebhookService.name);
@@ -237,7 +250,7 @@ export class AlertsWebhookService {
       case 'application':
         return this.resolveBySlug(
           context,
-          labels.label_app_kubernetes_io_name,
+          applicationSlugOf(labels),
           labels.namespace,
         );
       case 'traffic':
@@ -283,11 +296,7 @@ export class AlertsWebhookService {
     alerts: AlertmanagerAlertDto[],
     context: ResolutionContext,
   ): Promise<void> {
-    const slugs = this.distinct(
-      alerts,
-      'application',
-      (labels) => labels.label_app_kubernetes_io_name,
-    );
+    const slugs = this.distinct(alerts, 'application', applicationSlugOf);
     if (slugs.length === 0) return;
 
     const apps = await this.applications.find({

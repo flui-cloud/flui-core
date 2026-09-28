@@ -93,6 +93,9 @@ describe('ClusterQueueProcessor.handleCreateCluster', () => {
       emitFailed: jest.fn(),
     };
     const vnetsService = { ensureClusterIdLabel: jest.fn() };
+    const clusterFirewallIntegrationService = {
+      syncHostLayer: jest.fn().mockResolvedValue(undefined),
+    };
 
     const processor = Object.create(
       ClusterQueueProcessor.prototype,
@@ -113,6 +116,7 @@ describe('ClusterQueueProcessor.handleCreateCluster', () => {
       grafanaDatasourceService,
       infraGateway,
       vnetsService,
+      clusterFirewallIntegrationService,
     });
 
     const run = () =>
@@ -127,6 +131,7 @@ describe('ClusterQueueProcessor.handleCreateCluster', () => {
       operation,
       orchestrationService,
       infraGateway,
+      clusterFirewallIntegrationService,
     };
   }
 
@@ -153,6 +158,15 @@ describe('ClusterQueueProcessor.handleCreateCluster', () => {
 
     expect(infraGateway.emitCompleted).toHaveBeenCalledTimes(1);
     expect(infraGateway.emitFailed).not.toHaveBeenCalled();
+  });
+
+  it('puts the host firewall on the master, then again once the workers exist', async () => {
+    const { run, clusterFirewallIntegrationService, cluster } = build(2);
+    await run();
+    expect(clusterFirewallIntegrationService.syncHostLayer.mock.calls).toEqual([
+      [cluster.id],
+      [cluster.id],
+    ]);
   });
 
   it('takes the single-node path and never calls createWorkerNodes when workerCount is 0', async () => {

@@ -225,6 +225,16 @@ export class FluiOpenStackClient extends OpenStackClient {
     }
   }
 
+  /** A browser console on the server (noVNC), valid for a short while. */
+  async consoleUrl(region: string, serverId: string): Promise<string | null> {
+    const nova = await this.endpoint('compute', region);
+    const body = await this.post<{ console?: { url?: string } }>(
+      `${nova}/servers/${serverId}/action`,
+      { 'os-getVNCConsole': { type: 'novnc' } },
+    );
+    return body?.console?.url ?? null;
+  }
+
   async serverStatus(region: string, serverId: string): Promise<string | null> {
     const nova = await this.endpoint('compute', region);
     const body = await this.get<{ server?: { status?: string } }>(

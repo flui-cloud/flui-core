@@ -4,6 +4,7 @@ import {
   BadRequestException,
   NotFoundException,
   UnauthorizedException,
+  Optional,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
@@ -24,6 +25,7 @@ import {
 import { CloudProvider } from '../../../providers/enums/cloud-provider.enum';
 import { getScriptsBaseUrl } from '../../../../config/bootstrap.config';
 import { buildSystemNipHostname } from '../../../dns/utils/nip-hostname.util';
+import { SharedStorageExportReconciler } from './shared-storage-export.reconciler';
 
 const TOKEN_TTL_MS = 30 * 60 * 1000;
 const RULESET_PATH = '/etc/flui/flui-firewall.nft';
@@ -61,6 +63,8 @@ export class ByosNodeJoinService {
     private readonly caManager: CAManagerService,
     private readonly clusterOperations: ClusterOperationsService,
     private readonly firewallReconciliation: FirewallReconciliationService,
+    @Optional()
+    private readonly sharedStorageExport?: SharedStorageExportReconciler,
   ) {}
 
   async issueToken(
@@ -107,6 +111,10 @@ export class ByosNodeJoinService {
     await this.tryReconcileFirewall(
       clusterId,
       'pre-join (master accepts node network)',
+    );
+    this.sharedStorageExport?.reconcileSoon(
+      clusterId,
+      'a node network was declared',
     );
 
     return {

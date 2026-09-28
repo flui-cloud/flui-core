@@ -50,6 +50,8 @@ import { ClusterOrchestrationService } from './services/cluster-orchestration.se
 import { NetworkingModule } from '../networking/networking.module';
 import { TelemetryEndpointReconciler } from './services/telemetry-endpoint.reconciler';
 import { TelemetryEndpointScheduler } from './schedulers/telemetry-endpoint.scheduler';
+import { SharedStorageExportReconciler } from './services/shared-storage-export.reconciler';
+import { SharedStorageExportScheduler } from './schedulers/shared-storage-export.scheduler';
 import { KubeconfigEndpointPromoter } from './services/kubeconfig-endpoint.promoter';
 import { KubeconfigEndpointScheduler } from './schedulers/kubeconfig-endpoint.scheduler';
 import { ClusterPowerManagementService } from './services/cluster-power-management.service';
@@ -171,6 +173,8 @@ import { UserEventsModule } from '../../auth/gateway/user-events.module';
     ClusterOrchestrationService,
     TelemetryEndpointReconciler,
     TelemetryEndpointScheduler,
+    SharedStorageExportReconciler,
+    SharedStorageExportScheduler,
     KubeconfigEndpointPromoter,
     KubeconfigEndpointScheduler,
     ClusterPowerManagementService,

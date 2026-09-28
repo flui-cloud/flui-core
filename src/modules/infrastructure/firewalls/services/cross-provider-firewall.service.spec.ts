@@ -76,6 +76,7 @@ const peerOf = (rules: FirewallRuleDto[]) =>
 describe('CrossProviderFirewallService', () => {
   let service: CrossProviderFirewallService;
   let wgLivePeers: jest.Mock;
+  let remember: jest.Mock;
   let memberClusters: ClusterEntity[];
   let wgNodeOverlay: jest.Mock;
   let wgControlPeer: jest.Mock;
@@ -102,6 +103,7 @@ describe('CrossProviderFirewallService', () => {
               c.clusterType === ClusterType.OBSERVABILITY),
         );
     });
+    remember = jest.fn();
     wgLivePeers = jest.fn().mockResolvedValue([]);
     wgNodeOverlay = jest.fn().mockResolvedValue(undefined);
     wgControlPeer = jest.fn().mockResolvedValue(null);
@@ -110,7 +112,7 @@ describe('CrossProviderFirewallService', () => {
         CrossProviderFirewallService,
         {
           provide: FirewallDesiredStateService,
-          useValue: { listFirewalls: list },
+          useValue: { listFirewalls: list, rememberSuspendedSsh: remember },
         },
         {
           provide: FirewallReconciliationService,
@@ -706,6 +708,34 @@ describe('CrossProviderFirewallService', () => {
         rules.some((r) => r.description === 'flui:xprovider:ssh-via-control'),
       ).toBe(false);
       expect(rules.filter((r) => r.port === '22').length).toBeGreaterThan(0);
+    });
+
+    it('gives the operator their public 22 back after a cycle through the tunnel', async () => {
+      process.env.FLUI_WG_ENABLED = 'true';
+      const fw = firewall('fw-w', workload());
+      remember.mockImplementation(async (_id: string, rules: unknown[]) => {
+        fw.metadata = rules.length ? { suspendedPublicSsh: rules } : {};
+      });
+      list.mockResolvedValue([firewall('fw-ctl', control()), fw]);
+
+      wgLivePeers.mockResolvedValue([
+        peer('n1', 'active'),
+        peer('n2', 'active'),
+      ]);
+      await service.reconcileAllPeers();
+      fw.desiredRules = rulesFor('fw-w');
+      expect(fw.desiredRules.some((r) => r.description === 'SSH')).toBe(false);
+
+      apply.mockClear();
+      wgLivePeers.mockResolvedValue([
+        peer('n1', 'active'),
+        peer('n2', 'stale'),
+      ]);
+      await service.reconcileAllPeers();
+      expect(rulesFor('fw-w').filter((r) => r.port === '22')).toEqual([
+        BASE_RULES[0],
+      ]);
+      expect(fw.metadata).toEqual({});
     });
 
     it('stays open while a node is not on the tunnel at all', async () => {

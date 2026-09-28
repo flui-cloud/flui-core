@@ -13,7 +13,10 @@ import { WireGuardPeerService } from '../../networking/services/wireguard-peer.s
 import { KubernetesService } from '../../shared/services/kubernetes.service';
 import { EncryptionService } from '../../../shared/encryption/services/encryption.service';
 import { dump as dumpYaml } from 'js-yaml';
-import { deriveHostTargets } from '../../../providers/core/host/host-targets';
+import {
+  HostTarget,
+  deriveHostTargets,
+} from '../../../providers/core/host/host-targets';
 
 const VECTOR_CONFIG = '/etc/vector/vector.toml';
 /** vmagent is a K3s auto-deploy manifest: K3s re-applies this file over any API edit. */
@@ -164,11 +167,23 @@ export class TelemetryEndpointReconciler {
       absent: 0,
     };
 
+    const failed: string[] = [];
     for (const target of deriveHostTargets(cluster)) {
-      const out = await this.hostCommand.apply(target, script, OK);
+      let out: string;
+      try {
+        out = await this.hostCommand.apply(target, script, OK);
+      } catch (error) {
+        failed.push(describeFailure(cluster, target, error));
+        continue;
+      }
       if (out.includes(ABSENT)) result.absent += 1;
       else if (out.includes(UPDATED)) result.updated += 1;
       else result.unchanged += 1;
+    }
+    if (failed.length) {
+      throw new Error(
+        `[telemetry] ${cluster.name}: the log shipper could not be pointed at ${endpoint} on ${failed.join('; ')}`,
+      );
     }
 
     this.logger.log(
@@ -238,7 +253,14 @@ export class TelemetryEndpointReconciler {
     const manifestScript = buildVmagentManifestScript(endpoint);
     const hosts = cluster.nodes?.length ? deriveHostTargets(cluster) : [];
     for (const target of hosts) {
-      const out = await this.hostCommand.apply(target, manifestScript, OK);
+      let out: string;
+      try {
+        out = await this.hostCommand.apply(target, manifestScript, OK);
+      } catch (error) {
+        throw new Error(
+          `[telemetry] ${cluster.name}: the metrics shipper could not be pointed at ${endpoint} on ${describeFailure(cluster, target, error)}`,
+        );
+      }
       if (out?.includes(UPDATED)) manifestChanged = true;
     }
 
@@ -296,4 +318,23 @@ export class TelemetryEndpointReconciler {
       ? raw
       : DEFAULT_LOKI_NODEPORT;
   }
+}
+
+/** Which node a telemetry rewrite failed on, by name where Flui knows it. */
+function describeFailure(
+  cluster: ClusterEntity,
+  target: HostTarget,
+  error: unknown,
+): string {
+  const node = (cluster.nodes ?? []).find(
+    (n) => n.ipAddress === target.host || n.privateIp === target.host,
+  );
+  const name = node?.serverName
+    ? `${node.serverName} (${target.host})`
+    : target.host;
+  const why =
+    error instanceof Error
+      ? error.message
+      : String(error as string | number | boolean | null | undefined);
+  return `${name}: ${why}`;
 }
