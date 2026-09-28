@@ -23,7 +23,12 @@ function decodeJwtExp(token: string): number | null {
   }
 }
 
-function resolveCookieDomain(): string | undefined {
+/**
+ * Where releases before the per-host sign-in put the cookie: the API's parent
+ * domain, which every app published under it received as well. Only used to
+ * delete it.
+ */
+function legacyParentDomain(): string | undefined {
   const explicit = process.env.FLUI_COOKIE_DOMAIN?.trim();
   if (explicit) return explicit;
   try {
@@ -37,7 +42,6 @@ function resolveCookieDomain(): string | undefined {
 }
 
 function buildBaseCookieOptions(): CookieOptions {
-  const domain = resolveCookieDomain();
   const secure =
     process.env.NODE_ENV === 'production' ||
     process.env.FLUI_COOKIE_SECURE === 'true';
@@ -52,16 +56,28 @@ function buildBaseCookieOptions(): CookieOptions {
     secure,
     sameSite,
     path: '/',
-    ...(domain ? { domain } : {}),
   };
 }
 
+function clearLegacyParentDomainCookie(
+  res: Response,
+  base: CookieOptions,
+): void {
+  const domain = legacyParentDomain();
+  if (!domain) return;
+  res.clearCookie(FLUI_SESSION_COOKIE, {
+    httpOnly: base.httpOnly,
+    secure: base.secure,
+    sameSite: base.sameSite,
+    path: base.path,
+    domain,
+  });
+}
+
 /**
- * Mirrors the access token into the `flui_session` cookie so the dashboard
- * can reach internal apps on a wildcard sub-domain via ForwardAuth: the
- * browser sends the cookie automatically cross-sub-domain while the
- * `Authorization` header is not available from iframes / cross-origin page
- * loads.
+ * Mirrors the access token into the `flui_session` cookie of the API's own
+ * host. It carries the person's Flui credential, so it never has a Domain:
+ * internal apps and protected routes get their own per-host cookie instead.
  */
 export function setFluiSessionCookie(
   res: Response,
@@ -80,6 +96,7 @@ export function setFluiSessionCookie(
     ? Math.floor(expiresAt.getTime() / 1000)
     : decodeJwtExp(accessToken);
   const ttlSec = expSec && expSec > nowSec ? expSec - nowSec : 3600;
+  clearLegacyParentDomainCookie(res, base);
   res.cookie(FLUI_SESSION_COOKIE, accessToken, {
     ...base,
     maxAge: ttlSec * 1000,
@@ -93,6 +110,6 @@ export function clearFluiSessionCookie(res: Response): void {
     secure: base.secure,
     sameSite: base.sameSite,
     path: base.path,
-    ...(base.domain ? { domain: base.domain } : {}),
   });
+  clearLegacyParentDomainCookie(res, base);
 }

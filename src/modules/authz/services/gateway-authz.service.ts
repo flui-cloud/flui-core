@@ -20,6 +20,8 @@ import {
 } from '../../iam/interfaces/iam.types';
 import { IAM_PERMISSION } from '../../iam/constants/iam-permissions';
 import { IAM_ROLE, IamRole } from '../../iam/constants/iam-roles';
+import { EndpointType } from '../../dns/enums/endpoint-type.enum';
+import { ApplicationExposure } from '../../applications/enums/application-exposure.enum';
 
 export interface GatewayAuthzDecision {
   endpoint: AppEndpointEntity;
@@ -99,6 +101,9 @@ export class GatewayAuthzService {
     user: AuthenticatedUser,
     endpoint: AppEndpointEntity,
   ): Promise<GatewayAuthzDecision> {
+    if (endpoint.endpointType === EndpointType.INTERNAL) {
+      return this.decideInternal(user, endpoint);
+    }
     const fqdn = endpoint.fqdn;
     const auth = endpoint.gatewayConfig?.auth;
     if (!auth?.sso) {
@@ -132,6 +137,36 @@ export class GatewayAuthzService {
       endpoint,
       appSlug: endpoint.application?.slug ?? endpoint.serviceName,
     };
+  }
+
+  /**
+   * An internal app is open to the people who may read it — asked again on
+   * every request, so a revoked grant closes it at once.
+   */
+  private async decideInternal(
+    user: AuthenticatedUser,
+    endpoint: AppEndpointEntity,
+  ): Promise<GatewayAuthzDecision> {
+    const app = endpoint.application;
+    if (app?.exposure !== ApplicationExposure.INTERNAL) {
+      throw new ForbiddenException(`"${endpoint.fqdn}" is not an internal app`);
+    }
+    const allowed =
+      user.isAdmin ||
+      (await this.policy.check(
+        this.principalFrom(user),
+        IAM_PERMISSION.APP_READ,
+        this.resourceFor(endpoint),
+      ));
+    if (!allowed) {
+      this.logger.warn(
+        `[gateway-authz] deny user=${user.userId} internal=${endpoint.fqdn}`,
+      );
+      throw new ForbiddenException(
+        `your account does not have access to "${app.slug}"`,
+      );
+    }
+    return { endpoint, appSlug: app.slug };
   }
 
   private normalizeHost(host: string | undefined): string | null {

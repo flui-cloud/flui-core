@@ -1,5 +1,6 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { CertificateProvider } from '../../providers/enums/certificate-provider.enum';
+import { Sensitivity } from '../../mask/decorators/sensitivity.decorator';
 
 export class CatalogClusterCapabilitiesDto {
   @ApiProperty()
@@ -23,6 +24,7 @@ export class CatalogClusterCapabilitiesDto {
   })
   canAutoAssignDomain: boolean;
 
+  @Sensitivity(Sensitivity.NETWORK_IDENTIFIER, { screenOnly: true })
   @ApiPropertyOptional({
     description: 'Zone name (e.g. "flui.cloud"). Present when hasDnsZone=true.',
   })

@@ -45,6 +45,7 @@ export class AppEndpointResponseDto {
   })
   certChallenge: CertChallenge;
 
+  @Sensitivity(Sensitivity.NETWORK_IDENTIFIER, { screenOnly: true })
   @ApiProperty()
   fqdn: string;
 
@@ -54,6 +55,7 @@ export class AppEndpointResponseDto {
   @ApiProperty()
   k8sServiceName: string;
 
+  @Sensitivity(Sensitivity.TENANT_IDENTITY, { screenOnly: true })
   @ApiProperty()
   k8sNamespace: string;
 

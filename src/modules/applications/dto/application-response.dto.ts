@@ -333,6 +333,7 @@ export class ApplicationResponseDto {
   })
   projectId?: string | null;
 
+  @Sensitivity(Sensitivity.TENANT_IDENTITY, { screenOnly: true })
   @ApiProperty()
   k8sNamespace: string;
 
@@ -412,6 +413,7 @@ export class ApplicationResponseDto {
   })
   exposure: ApplicationExposure;
 
+  @Sensitivity(Sensitivity.NETWORK_IDENTIFIER, { screenOnly: true })
   @ApiPropertyOptional({
     description:
       'Fully-qualified public access URL for a `public` app, composed from the app endpoint hostname as `https://<fqdn><entrypointPath>`. This is the real, authoritative link — consumers (dashboard "Open" button, the assistant) MUST use it verbatim and never reconstruct it from the slug. Undefined for internal apps (use `internalUrl`) and for public apps whose endpoint is not provisioned yet.',
@@ -443,6 +445,7 @@ export class ApplicationResponseDto {
   })
   endpointError?: string;
 
+  @Sensitivity(Sensitivity.NETWORK_IDENTIFIER, { screenOnly: true })
   @ApiPropertyOptional({
     description:
       'Fully-qualified URL the dashboard should use for the "Open" button when this is an internal app. Composed as `https://<slug>.internal.<clusterZone><entrypointPath>`. Populated only on detail responses (GET /applications/:id and after-create/after-update flows) and only when the cluster currently supports internal hosting (capabilities.hasInternalHosting === true). Undefined for public apps and for internal apps on clusters that do not yet have internal hosting configured — in the latter case the FE must keep the button disabled.',

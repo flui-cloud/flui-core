@@ -415,11 +415,9 @@ const MASK_EXEMPT: string[] = [
   'AppEndpointResponseDto.dnsRecordValue', // modules/dns/dto/app-endpoint-response.dto.ts
   'AppEndpointResponseDto.endpointType', // modules/dns/dto/app-endpoint-response.dto.ts
   'AppEndpointResponseDto.errorMessage', // modules/dns/dto/app-endpoint-response.dto.ts
-  'AppEndpointResponseDto.fqdn', // modules/dns/dto/app-endpoint-response.dto.ts
   'AppEndpointResponseDto.gatewayConfig', // modules/dns/dto/app-endpoint-response.dto.ts
   'AppEndpointResponseDto.hostnameMode', // modules/dns/dto/app-endpoint-response.dto.ts
   'AppEndpointResponseDto.id', // modules/dns/dto/app-endpoint-response.dto.ts
-  'AppEndpointResponseDto.k8sNamespace', // modules/dns/dto/app-endpoint-response.dto.ts
   'AppEndpointResponseDto.k8sServiceName', // modules/dns/dto/app-endpoint-response.dto.ts
   'AppEndpointResponseDto.k8sServicePort', // modules/dns/dto/app-endpoint-response.dto.ts
   'AppEndpointResponseDto.lastReconciliationAt', // modules/dns/dto/app-endpoint-response.dto.ts
@@ -491,9 +489,7 @@ const MASK_EXEMPT: string[] = [
   'ApplicationResponseDto.frameworkConfirmed', // modules/applications/dto/application-response.dto.ts
   'ApplicationResponseDto.id', // modules/applications/dto/application-response.dto.ts
   'ApplicationResponseDto.imageRef', // modules/applications/dto/application-response.dto.ts
-  'ApplicationResponseDto.internalUrl', // modules/applications/dto/application-response.dto.ts
   'ApplicationResponseDto.isPrimary', // modules/applications/dto/application-response.dto.ts
-  'ApplicationResponseDto.k8sNamespace', // modules/applications/dto/application-response.dto.ts
   'ApplicationResponseDto.kind', // modules/applications/dto/application-response.dto.ts
   'ApplicationResponseDto.labels', // modules/applications/dto/application-response.dto.ts
   'ApplicationResponseDto.lastBuildConclusion', // modules/applications/dto/application-response.dto.ts
@@ -518,7 +514,6 @@ const MASK_EXEMPT: string[] = [
   'ApplicationResponseDto.status', // modules/applications/dto/application-response.dto.ts
   'ApplicationResponseDto.systemProtected', // modules/applications/dto/application-response.dto.ts
   'ApplicationResponseDto.updatedAt', // modules/applications/dto/application-response.dto.ts
-  'ApplicationResponseDto.url', // modules/applications/dto/application-response.dto.ts
   'ApplicationResponseDto.userId', // modules/applications/dto/application-response.dto.ts
   'ApplicationResponseDto.workflowRunId', // modules/applications/dto/application-response.dto.ts
   'ApplicationResponseDto.workflowRunUrl', // modules/applications/dto/application-response.dto.ts
@@ -1021,7 +1016,6 @@ const MASK_EXEMPT: string[] = [
   'CatalogClusterCapabilitiesDto.hasWildcardIssuer', // modules/catalog/dto/catalog-cluster-capabilities.dto.ts
   'CatalogClusterCapabilitiesDto.internalHostingMissing', // modules/catalog/dto/catalog-cluster-capabilities.dto.ts
   'CatalogClusterCapabilitiesDto.internalHostTemplate', // modules/catalog/dto/catalog-cluster-capabilities.dto.ts
-  'CatalogClusterCapabilitiesDto.zoneName', // modules/catalog/dto/catalog-cluster-capabilities.dto.ts
   'CatalogDefaultCredentialsDto.changeNote', // modules/catalog/dto/catalog-detail-response.dto.ts
   'CatalogDefaultCredentialsDto.password', // modules/catalog/dto/catalog-detail-response.dto.ts
   'CatalogDefaultCredentialsDto.username', // modules/catalog/dto/catalog-detail-response.dto.ts
@@ -1833,7 +1827,6 @@ const MASK_EXEMPT: string[] = [
   'DnsZoneResponseDto.recordTtlSeconds', // modules/dns/dto/dns-zone-response.dto.ts
   'DnsZoneResponseDto.replicas', // modules/dns/dto/dns-zone-response.dto.ts
   'DnsZoneResponseDto.updatedAt', // modules/dns/dto/dns-zone-response.dto.ts
-  'DnsZoneResponseDto.zoneName', // modules/dns/dto/dns-zone-response.dto.ts
   'DockerfileAnalysisDto.baseRuntime', // modules/repositories/dto/analyze-repository.dto.ts
   'DockerfileAnalysisDto.hasMultiStage', // modules/repositories/dto/analyze-repository.dto.ts
   'DockerfileAnalysisDto.isFluiManaged', // modules/repositories/dto/analyze-repository.dto.ts

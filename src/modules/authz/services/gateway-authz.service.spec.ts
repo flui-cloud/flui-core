@@ -53,4 +53,53 @@ describe('GatewayAuthzService.authorizeRoute', () => {
       service.authorizeRoute(user, 'bbbbbbbb-0000-4000-8000-000000000003'),
     ).rejects.toBeInstanceOf(NotFoundException);
   });
+
+  describe('internal app', () => {
+    const internal = {
+      id: 'dddddddd-0000-4000-8000-000000000004',
+      fqdn: 'pgweb.internal.example.com',
+      serviceName: 'pgweb',
+      endpointType: 'internal',
+      clusterId: 'c1',
+      gatewayConfig: null,
+      application: { slug: 'pgweb', exposure: 'internal' },
+    };
+    const make = (allowed: boolean, app = internal.application) => {
+      const check = jest.fn().mockResolvedValue(allowed);
+      const service = new GatewayAuthzService(
+        {
+          findOne: jest.fn(async () => ({ ...internal, application: app })),
+        } as never,
+        { check } as never,
+      );
+      return { service, check };
+    };
+    const person = { userId: 'u2', isAdmin: false, roles: {} } as never;
+
+    it('lets through a person who may read the app, asked on every request', async () => {
+      const { service, check } = make(true);
+      await expect(
+        service.authorizeRoute(person, internal.id),
+      ).resolves.toMatchObject({ appSlug: 'pgweb' });
+      expect(check).toHaveBeenCalledWith(
+        expect.anything(),
+        'app:read',
+        expect.objectContaining({ slug: 'pgweb' }),
+      );
+    });
+
+    it('refuses a signed-in person without access to that app', async () => {
+      const { service } = make(false);
+      await expect(
+        service.authorizeRoute(person, internal.id),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+    });
+
+    it('refuses once the app is no longer internal', async () => {
+      const { service } = make(true, { slug: 'pgweb', exposure: 'public' });
+      await expect(
+        service.authorizeRoute(person, internal.id),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+    });
+  });
 });

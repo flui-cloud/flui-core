@@ -58,7 +58,19 @@ class TestObjectDto {
 // A real class + real @ApiOkResponse decorator, so the interceptor reads the
 // metadata @nestjs/swagger itself would put there in production.
 @Controller('test')
+class ScreenOnlyDto {
+  @Sensitivity(Sensitivity.NETWORK_IDENTIFIER, { screenOnly: true })
+  @ApiProperty()
+  url: string;
+}
+
 class TestController {
+  @Get('link')
+  @ApiOkResponse({ type: ScreenOnlyDto })
+  link() {
+    return null;
+  }
+
   @Get('one')
   @ApiOkResponse({ type: TestObjectDto })
   one() {
@@ -132,15 +144,32 @@ describe('MaskResponseInterceptor', () => {
     config,
   );
 
-  it('passes a route with no declared response DTO straight through', async () => {
-    const body = { anything: 'goes', secretLooking: 'unmasked-on-purpose' };
+  it('passes a route with no declared response DTO straight through while masking is off', async () => {
+    const body = { owner: 'someone@example.org', ip: '49.13.132.151' };
     const out = await firstValueFrom(
       interceptor.intercept(
-        context(TestController.prototype.unclassified, 'on'),
+        context(TestController.prototype.unclassified, undefined),
         next(body),
       ),
     );
     expect(out).toBe(body);
+  });
+
+  it('masks emails and addresses of a route with no declared response DTO when masking is on', async () => {
+    const body = {
+      anything: 'goes',
+      owner: 'someone@example.org',
+      nodes: [{ ip: '49.13.132.151' }],
+    };
+    const out = (await firstValueFrom(
+      interceptor.intercept(
+        context(TestController.prototype.unclassified, 'on'),
+        next(body),
+      ),
+    )) as any;
+    expect(out.anything).toBe('goes');
+    expect(out.owner).toMatch(/@example\.com$/);
+    expect(out.nodes[0].ip).toMatch(/^203\.0\.113\./);
   });
 
   it('masks credential fields unconditionally, header off', async () => {
@@ -327,5 +356,44 @@ describe('MaskResponseInterceptor', () => {
     )) as typeof body;
 
     expect(out.ip).toBe('203.0.113.9'); // forged token: read as "no declaration", per actor-surface.ts's own fail-closed rule
+  });
+
+  describe('a field hidden only on a shared screen', () => {
+    const body = { url: 'https://app.gojodigital.com/' };
+
+    it('is masked while the browser toggle is on', async () => {
+      const out = (await firstValueFrom(
+        interceptor.intercept(
+          context(TestController.prototype.link, 'on'),
+          next(body),
+        ),
+      )) as typeof body;
+      expect(out.url).not.toContain('gojodigital');
+    });
+
+    it('reaches an agent as it is, since the agent has to hand it back', async () => {
+      const out = (await firstValueFrom(
+        interceptor.intercept(
+          contextWithHeaders(TestController.prototype.link, {
+            [AGENT_SURFACE_HEADER]: agentSurfaceHeader('mcp'),
+          }),
+          next(body),
+        ),
+      )) as typeof body;
+      expect(out.url).toBe('https://app.gojodigital.com/');
+    });
+  });
+
+  it('leaves an untyped response as it is on an agent tool call', async () => {
+    const body = { owner: 'someone@example.org' };
+    const out = await firstValueFrom(
+      interceptor.intercept(
+        contextWithHeaders(TestController.prototype.unclassified, {
+          [AGENT_SURFACE_HEADER]: agentSurfaceHeader('mcp'),
+        }),
+        next(body),
+      ),
+    );
+    expect(out).toBe(body);
   });
 });

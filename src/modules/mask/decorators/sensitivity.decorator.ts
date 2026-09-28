@@ -21,8 +21,16 @@ export const SENSITIVITY_FIELDS_KEY = 'mask:sensitivityFields';
  */
 export const SENSITIVITY_CONDITIONAL_KEY = 'mask:sensitivityConditional';
 
+/**
+ * A `network-identifier`/`tenant-identity` field hidden only while a person
+ * shares their screen, never on an agent's tool result: it is what an agent
+ * has to hand back verbatim (the link to an app, the host of a route).
+ */
+export const SENSITIVITY_SCREEN_ONLY_KEY = 'mask:sensitivityScreenOnly';
+
 interface SensitivityOptions {
   conditional?: boolean;
+  screenOnly?: boolean;
 }
 
 function decorate(level: SensitivityLevel, options?: SensitivityOptions) {
@@ -45,6 +53,14 @@ function decorate(level: SensitivityLevel, options?: SensitivityOptions) {
     if (options?.conditional) {
       Reflect.defineMetadata(
         SENSITIVITY_CONDITIONAL_KEY,
+        true,
+        target,
+        propertyKey,
+      );
+    }
+    if (options?.screenOnly) {
+      Reflect.defineMetadata(
+        SENSITIVITY_SCREEN_ONLY_KEY,
         true,
         target,
         propertyKey,

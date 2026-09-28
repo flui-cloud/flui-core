@@ -364,11 +364,11 @@ export const PLATFORM_COMPONENTS_CATALOG: PlatformComponentDefinition[] = [
   {
     key: 'flui-authz',
     name: 'Flui Authz',
-    description: 'In-cluster JWT validator for Traefik ForwardAuth',
+    description:
+      'Checks the Flui sign-in for internal apps and routes that require one',
     category: 'security',
     managedBy: 'flui',
     clusterTypes: [ClusterType.CONTROL, ClusterType.WORKLOAD],
-    requiredAuthMode: 'oidc',
     requiredAuthzInstall: true,
     resources: [
       {

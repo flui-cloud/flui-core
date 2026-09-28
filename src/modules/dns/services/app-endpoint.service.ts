@@ -11,7 +11,10 @@ import { In, Not, IsNull, QueryFailedError, Repository } from 'typeorm';
 import { InjectRepository } from '@nestjs/typeorm';
 import { AppEndpointEntity } from '../entities/app-endpoint.entity';
 import { SanCertificateEntity } from '../entities/san-certificate.entity';
-import { ClusterEntity } from '../../infrastructure/clusters/entities/cluster.entity';
+import {
+  ClusterEntity,
+  isControlClusterType,
+} from '../../infrastructure/clusters/entities/cluster.entity';
 import { ClusterDnsZoneEntity } from '../entities/cluster-dns-zone.entity';
 import { ApplicationEntity } from '../../applications/entities/application.entity';
 import {
@@ -29,6 +32,10 @@ import { HostnameMode } from '../enums/hostname-mode.enum';
 import { ClusterDnsZoneService } from './cluster-dns-zone.service';
 import { EndpointModeResolverService } from './endpoint-mode-resolver.service';
 import { ClusterAuthzInstallRepository } from '../../authz/repositories/cluster-authz-install.repository';
+import {
+  forwardAuthPlacement,
+  gatewayForwardAuthAddress,
+} from '../utils/gateway-forward-auth-address.util';
 import { internalHostingNotAvailableException } from '../constants/internal-hosting-error';
 import { CertificateProvider } from '../../providers/enums/certificate-provider.enum';
 import { DnsRecordType } from '../../providers/interfaces/dns-provider.interface';
@@ -203,15 +210,22 @@ export class AppEndpointService {
       if (!status.ready) {
         throw internalHostingNotAvailableException(clusterId, status.missing);
       }
-      // Gate 2: Auth Proxy must be RUNNING — otherwise an "internal" endpoint
-      // would not actually be gated and exposes a private app to the internet.
-      const authzInstall =
-        await this.authzInstallRepo.findRunningForCluster(clusterId);
-      if (!authzInstall) {
+      // Gate 2: something on the cluster must check the sign-in, or an
+      // "internal" endpoint would expose a private app to the internet.
+      const relayRunning =
+        !!(await this.authzInstallRepo.findRunningForCluster(clusterId));
+      const signInCheck = gatewayForwardAuthAddress(
+        clusterId,
+        forwardAuthPlacement(
+          isControlClusterType(cluster.clusterType),
+          relayRunning,
+        ),
+      );
+      if (!signInCheck) {
         throw new BadRequestException({
           statusCode: 400,
           code: 'AUTH_PROXY_NOT_RUNNING',
-          message: `Cluster ${clusterId} has no running Auth Proxy install. Internal endpoints require the Flui Auth Proxy to be installed and running on the cluster. Install it from /infrastructure/auth-proxy and try again.`,
+          message: `Cluster "${cluster.name}" has no running Auth Proxy. Internal apps on a cluster other than the control need the Flui Auth Proxy installed and running there. Install it from /infrastructure/auth-proxy and try again.`,
           clusterId,
         });
       }

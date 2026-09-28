@@ -28,8 +28,6 @@ import {
   SetGatewayPolicyDto,
 } from '../dto/gateway-route.dto';
 import { ReconciliationStatus } from '../../infrastructure/shared/enums/reconciliation-status.enum';
-import { isControlClusterType } from '../../infrastructure/clusters/entities/cluster.entity';
-import { gatewayForwardAuthAddress } from '../../dns/utils/gateway-forward-auth-address.util';
 
 /**
  * App-scoped gateway control plane. Routes ARE the app's endpoints: an app
@@ -80,6 +78,17 @@ export class GatewayService {
     );
 
     const config = this.buildConfig(dto);
+    if (config?.auth?.sso) {
+      const created = await this.appEndpointService.getEndpoint(endpoint.id);
+      const problem = await this.signInCheckProblem(created);
+      if (problem) {
+        await this.appEndpointService.deleteEndpoint(endpoint.id);
+        throw new BadRequestException({
+          code: 'SIGN_IN_CHECK_UNAVAILABLE',
+          message: problem,
+        });
+      }
+    }
     const withConfig = config
       ? await this.appEndpointService.updateGatewayConfig(endpoint.id, config)
       : endpoint;
@@ -98,6 +107,15 @@ export class GatewayService {
     const current: EndpointGatewayConfig = { ...endpoint.gatewayConfig };
     if (dto.path !== undefined) current.path = dto.path ?? undefined;
     if (dto.auth !== undefined) current.auth = dto.auth ?? undefined;
+    if (current.auth?.sso && !endpoint.gatewayConfig?.auth?.sso) {
+      const problem = await this.signInCheckProblem(endpoint);
+      if (problem) {
+        throw new BadRequestException({
+          code: 'SIGN_IN_CHECK_UNAVAILABLE',
+          message: problem,
+        });
+      }
+    }
     if (dto.rateLimit !== undefined)
       current.rateLimit = dto.rateLimit ?? undefined;
     if (dto.allowIps !== undefined)
@@ -188,15 +206,16 @@ export class GatewayService {
   ): Promise<CompiledGatewayRouteDto> {
     const endpoint = await this.getOwnedEndpoint(appId, endpointId);
     // Preview must not fail closed: show a placeholder when unresolved.
+    const address = endpoint.cluster
+      ? await this.reconciliationService.resolveGatewayForwardAuthAddress(
+          endpoint,
+          endpoint.cluster,
+        )
+      : undefined;
     const compiled = this.gatewayCompiler.compile(
       endpoint,
       endpoint.gatewayConfig,
-      gatewayForwardAuthAddress(endpoint.id, {
-        apiRunsOnThisCluster:
-          !!process.env.KUBERNETES_SERVICE_HOST &&
-          isControlClusterType(endpoint.cluster?.clusterType),
-        publicApiUrl: process.env.PUBLIC_API_URL || '<flui-api-public-url>',
-      }),
+      address ?? '<no sign-in check available on this cluster>',
     );
     return {
       endpointId,
@@ -215,6 +234,24 @@ export class GatewayService {
     const app = await this.applicationsRepository.findById(appId);
     if (!app) throw new NotFoundException(`Application ${appId} not found`);
     return app;
+  }
+
+  /**
+   * Why a route on this cluster cannot ask for a Flui sign-in, or null when
+   * it can — said before the policy is saved, not discovered by a reconcile
+   * that then leaves the route closed.
+   */
+  private async signInCheckProblem(
+    endpoint: AppEndpointEntity,
+  ): Promise<string | null> {
+    if (!endpoint.cluster) return null;
+    const address =
+      await this.reconciliationService.resolveGatewayForwardAuthAddress(
+        endpoint,
+        endpoint.cluster,
+      );
+    if (address) return null;
+    return `Sign-in cannot be required on cluster "${endpoint.cluster.name}" yet: install the Flui Auth Proxy on it first.`;
   }
 
   private async getOwnedEndpoint(

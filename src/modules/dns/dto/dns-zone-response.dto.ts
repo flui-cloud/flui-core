@@ -1,6 +1,7 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { DnsProvider } from '../../providers/enums/dns-provider.enum';
 import { DnsZoneReplicaResponseDto } from './dns-zone-replica-response.dto';
+import { Sensitivity } from '../../mask/decorators/sensitivity.decorator';
 
 export class DnsZoneResponseDto {
   @ApiProperty()
@@ -9,6 +10,7 @@ export class DnsZoneResponseDto {
   @ApiProperty()
   providerZoneId: string;
 
+  @Sensitivity(Sensitivity.NETWORK_IDENTIFIER, { screenOnly: true })
   @ApiProperty()
   zoneName: string;
 

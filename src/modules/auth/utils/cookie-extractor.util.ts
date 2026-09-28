@@ -3,10 +3,9 @@ import { Request } from 'express';
 export const FLUI_SESSION_COOKIE = 'flui_session';
 
 /**
- * Reads the Flui session JWT from the `Cookie` header. Used by passport-jwt
- * strategies so the same token the dashboard places in a cookie (for
- * cross-subdomain ForwardAuth on internal apps) is also accepted on normal
- * API calls.
+ * Reads the Flui session JWT from the `Cookie` header of a request to the
+ * API's own host. Used by passport-jwt strategies so the cookie session (the
+ * sandbox, the dashboard's cookie calls) is accepted like a Bearer token.
  *
  * Manual parse keeps us off a `cookie-parser` middleware dependency —
  * single-header parse is simpler than setting up an Express middleware

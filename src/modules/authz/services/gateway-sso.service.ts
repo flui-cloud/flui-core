@@ -151,6 +151,17 @@ export class GatewaySsoService {
     };
   }
 
+  /** When the route's cookie in this header stops being valid, in ms. */
+  cookieExpiresAt(
+    endpointId: string,
+    cookieHeader: string | undefined,
+    now = Date.now(),
+  ): number | null {
+    const value = this.readCookie(endpointId, cookieHeader);
+    if (!value || !this.verify(value, endpointId, now)) return null;
+    return Number(value.split('.')[2]) * 1000;
+  }
+
   mint(userId: string, endpointId: string, now = Date.now()): string {
     const exp = Math.floor(now / 1000) + SESSION_SECONDS;
     const body = `v1.${userId}.${exp}`;

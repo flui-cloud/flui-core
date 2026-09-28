@@ -5,6 +5,7 @@ import {
   ForbiddenException,
   Headers,
   HttpCode,
+  HttpException,
   HttpStatus,
   Ip,
   Logger,
@@ -35,6 +36,10 @@ import {
 import { OptionalAuth } from '../../auth/decorators/optional-auth.decorator';
 import { GatewaySsoCodeDto } from '../dto/gateway-sso-code.dto';
 import {
+  ForwardAuthDecideDto,
+  ForwardAuthVerdictDto,
+} from '../dto/forward-auth-decide.dto';
+import {
   InternalAppAuditService,
   InternalAppAuditReason,
 } from '../services/internal-app-audit.service';
@@ -43,6 +48,22 @@ interface ForwardAuthRequest {
   user?: AuthenticatedUser;
   headers: Record<string, string | string[] | undefined>;
 }
+
+/** The request being checked, however it reached the API. */
+interface CheckedRequest {
+  uri?: string;
+  method?: string;
+  accept?: string;
+  cookie?: string;
+  hasAuthorization: boolean;
+}
+
+type Verdict =
+  | { status: 200; headers: Record<string, string>; cacheSeconds: number }
+  | { status: 302; location: string; setCookie?: string };
+
+/** A relay may reuse an allow this long, and never past the cookie. */
+const RELAY_CACHE_SECONDS = 5;
 
 function headerValue(
   req: ForwardAuthRequest,
@@ -148,37 +169,84 @@ export class AuthzController {
     @Res() res: Response,
     @Param('endpointId', ParseUUIDPipe) endpointId: string,
   ): Promise<void> {
-    const forwardedUri = headerValue(req, 'x-forwarded-uri');
-    const [path, query = ''] = (forwardedUri ?? '').split('?');
+    const verdict = await this.decide(endpointId, req.user, {
+      uri: headerValue(req, 'x-forwarded-uri'),
+      method: headerValue(req, 'x-forwarded-method'),
+      accept: headerValue(req, 'accept'),
+      cookie: headerValue(req, 'cookie'),
+      hasAuthorization: !!headerValue(req, 'authorization'),
+    });
+    if (verdict.status === 302) {
+      if (verdict.setCookie) res.setHeader('Set-Cookie', verdict.setCookie);
+      res.setHeader('Cache-Control', 'no-store');
+      res.redirect(HttpStatus.FOUND, verdict.location);
+      return;
+    }
+    for (const [name, value] of Object.entries(verdict.headers)) {
+      res.setHeader(name, value);
+    }
+    res.status(HttpStatus.OK).end();
+  }
+
+  @Post('gateway/:endpointId/decide')
+  @OptionalAuth()
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Sign-in decision asked by a cluster relay',
+    description:
+      "Called by the sign-in relay running on a cluster the API does not run on. The relay sends the page, method, Accept and Cookie of the request it holds in fields of its own, and a Flui credential, if the request had one, as its own Authorization header. The answer says what the relay must reply: let the request through with the given headers, send the browser to an address (setting the route's cookie), or refuse it.",
+  })
+  @ApiResponse({ status: 200, type: ForwardAuthVerdictDto })
+  async decideForRelay(
+    @Req() req: ForwardAuthRequest,
+    @Param('endpointId', ParseUUIDPipe) endpointId: string,
+    @Body() body: ForwardAuthDecideDto,
+  ): Promise<ForwardAuthVerdictDto> {
+    try {
+      return await this.decide(endpointId, req.user, {
+        ...body,
+        hasAuthorization: !!headerValue(req, 'authorization'),
+      });
+    } catch (err) {
+      if (!(err instanceof HttpException)) throw err;
+      return { status: err.getStatus(), message: err.message };
+    }
+  }
+
+  /**
+   * One decision for every protected host — an internal app or a route with
+   * sign-in — whether Traefik asked directly or a cluster's relay did.
+   * Refusals are thrown as the matching HTTP error.
+   */
+  private async decide(
+    endpointId: string,
+    bearerUser: AuthenticatedUser | undefined,
+    checked: CheckedRequest,
+  ): Promise<Verdict> {
+    const [path, query = ''] = (checked.uri ?? '').split('?');
 
     if (path.endsWith(GATEWAY_SSO_CALLBACK)) {
       const { cookie, returnUrl } = await this.gatewaySso.exchangeCode(
         endpointId,
         new URLSearchParams(query).get('code'),
       );
-      res.setHeader('Set-Cookie', cookie);
-      res.setHeader('Cache-Control', 'no-store');
-      res.redirect(HttpStatus.FOUND, returnUrl);
-      return;
+      return { status: 302, location: returnUrl, setCookie: cookie };
     }
 
     const user =
-      req.user ??
-      (await this.gatewaySso.userFromCookie(
-        endpointId,
-        headerValue(req, 'cookie'),
-      ));
+      bearerUser ??
+      (await this.gatewaySso.userFromCookie(endpointId, checked.cookie));
     if (!user) {
-      if (!this.isBrowserNavigation(req)) throw new UnauthorizedException();
+      if (!this.isBrowserNavigation(checked)) {
+        throw new UnauthorizedException();
+      }
       const fqdn = await this.gatewaySso.endpointFqdn(endpointId);
       const back =
-        GatewaySsoService.originalUrl(fqdn, forwardedUri) ?? `https://${fqdn}/`;
-      res.setHeader('Cache-Control', 'no-store');
-      res.redirect(
-        HttpStatus.FOUND,
-        this.gatewaySso.loginUrl(endpointId, back),
-      );
-      return;
+        GatewaySsoService.originalUrl(fqdn, checked.uri) ?? `https://${fqdn}/`;
+      return {
+        status: 302,
+        location: this.gatewaySso.loginUrl(endpointId, back),
+      };
     }
 
     const { appSlug } = await this.gatewayAuthzService.authorizeRoute(
@@ -186,10 +254,28 @@ export class AuthzController {
       endpointId,
     );
 
-    res.setHeader('X-Auth-User', user.userId);
-    if (user.email) res.setHeader('X-Auth-Email', user.email);
-    res.setHeader('X-Auth-App', appSlug);
-    res.status(HttpStatus.OK).end();
+    const headers: Record<string, string> = {
+      'X-Auth-User': user.userId,
+      'X-Auth-App': appSlug,
+    };
+    if (user.email) headers['X-Auth-Email'] = user.email;
+    return {
+      status: 200,
+      headers,
+      cacheSeconds: bearerUser
+        ? 0
+        : this.relayCacheSeconds(endpointId, checked.cookie),
+    };
+  }
+
+  private relayCacheSeconds(
+    endpointId: string,
+    cookie: string | undefined,
+  ): number {
+    const expiresAt = this.gatewaySso.cookieExpiresAt(endpointId, cookie);
+    if (!expiresAt) return 0;
+    const left = Math.floor((expiresAt - Date.now()) / 1000);
+    return Math.max(0, Math.min(RELAY_CACHE_SECONDS, left));
   }
 
   @Post('gateway/:endpointId/sso-code')
@@ -212,13 +298,11 @@ export class AuthzController {
    * A person's browser opening a page, as opposed to a script or an API
    * client: those keep getting a 401 they can act on, not a login page.
    */
-  private isBrowserNavigation(req: ForwardAuthRequest): boolean {
-    const method = (
-      headerValue(req, 'x-forwarded-method') ?? 'GET'
-    ).toUpperCase();
+  private isBrowserNavigation(checked: CheckedRequest): boolean {
+    const method = (checked.method ?? 'GET').toUpperCase();
     if (method !== 'GET' && method !== 'HEAD') return false;
-    if (headerValue(req, 'authorization')) return false;
-    return (headerValue(req, 'accept') ?? '').includes('text/html');
+    if (checked.hasAuthorization) return false;
+    return (checked.accept ?? '').includes('text/html');
   }
 
   @All('internal-app')

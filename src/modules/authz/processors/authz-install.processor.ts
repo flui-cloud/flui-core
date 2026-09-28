@@ -2,17 +2,14 @@ import { Processor, Process } from '@nestjs/bull';
 import { Logger } from '@nestjs/common';
 import { Job } from 'bull';
 import { InjectRepository } from '@nestjs/typeorm';
-import { In, Repository } from 'typeorm';
+import { Repository } from 'typeorm';
 import { SystemAppCatalogService } from '../../applications/services/system-app-catalog.service';
 import {
   InfrastructureOperationEntity,
   OperationStatus,
   OperationStep,
 } from '../../infrastructure/servers/entities/infrastructure-operations.entity';
-import {
-  ClusterEntity,
-  ClusterType,
-} from '../../infrastructure/clusters/entities/cluster.entity';
+import { ClusterEntity } from '../../infrastructure/clusters/entities/cluster.entity';
 import { KubernetesService } from '../../infrastructure/shared/services/kubernetes.service';
 import { EncryptionService } from '../../shared/encryption/services/encryption.service';
 import { ClusterAuthzInstallRepository } from '../repositories/cluster-authz-install.repository';
@@ -53,8 +50,10 @@ export class AuthzInstallProcessor {
 
   @Process(AUTHZ_INSTALL_JOB)
   async handleInstall(job: Job<AuthzInstallJobData>): Promise<void> {
-    const { installId, operationId } = job.data;
-    this.logger.log(`[authz-install] Starting install ${installId}`);
+    const { installId, operationId, refresh } = job.data;
+    this.logger.log(
+      `[authz-install] Starting ${refresh ? 'refresh' : 'install'} ${installId}`,
+    );
 
     const step = async (s: OperationStep, progress: number) => {
       await this.operationRepo.update(operationId, {
@@ -75,13 +74,13 @@ export class AuthzInstallProcessor {
         cluster.kubeconfigEncrypted,
       );
 
-      await this.installRepo.update(installId, {
-        status: AuthzInstallStatus.INSTALLING,
-      });
+      if (!refresh) {
+        await this.installRepo.update(installId, {
+          status: AuthzInstallStatus.INSTALLING,
+        });
+      }
 
-      // Read OIDC config from control cluster
-      const { jwksUri, audience, issuer, dashboardUrl } =
-        await this.readOidcConfig();
+      const apiUrl = this.relayApiUrl();
 
       await step(OperationStep.AUTHZ_ENSURE_NAMESPACE, 20);
       await this.kubernetesService.applyManifest(
@@ -98,7 +97,7 @@ export class AuthzInstallProcessor {
       await step(OperationStep.AUTHZ_DEPLOY_WORKLOAD, 45);
       await this.kubernetesService.applyManifest(
         kubeconfig,
-        this.buildDeploymentManifest(jwksUri, audience, issuer, dashboardUrl),
+        this.buildDeploymentManifest(apiUrl),
       );
 
       await step(OperationStep.AUTHZ_WAIT_READY, 70);
@@ -130,10 +129,12 @@ export class AuthzInstallProcessor {
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       this.logger.error(`[authz-install] Failed install ${installId}: ${msg}`);
-      await this.installRepo.update(installId, {
-        status: AuthzInstallStatus.FAILED,
-        errorMessage: msg,
-      });
+      if (!refresh) {
+        await this.installRepo.update(installId, {
+          status: AuthzInstallStatus.FAILED,
+          errorMessage: msg,
+        });
+      }
       await this.operationRepo.update(operationId, {
         status: OperationStatus.FAILED,
         errorMessage: msg,
@@ -214,95 +215,24 @@ export class AuthzInstallProcessor {
     }
   }
 
-  private async readOidcConfig(): Promise<{
-    jwksUri: string;
-    audience: string;
-    issuer: string;
-    dashboardUrl: string;
-  }> {
-    const obsCluster = await this.clusterRepo.findOne({
-      where: {
-        clusterType: In([ClusterType.CONTROL, ClusterType.OBSERVABILITY]),
-      },
-    });
-    if (!obsCluster?.kubeconfigEncrypted) {
-      throw new Error('Control cluster not found — cannot read OIDC config');
-    }
-    const kubeconfig = this.encryptionService.decrypt(
-      obsCluster.kubeconfigEncrypted,
-    );
-
-    let authMode = 'unknown';
-    let jwksUri = '';
-    let issuer = '';
-    try {
-      const cm = await this.kubernetesService.getResource(
-        kubeconfig,
-        'ConfigMap',
-        'flui-api-config',
-        FLUI_SYSTEM_NS,
-      );
-      const data = (cm?.body ?? cm)?.data ?? {};
-      authMode = data['AUTH_MODE'] ?? 'unknown';
-      issuer = data['OIDC_ISSUER'] ?? '';
-      jwksUri = data['OIDC_JWKS_URI'] ?? '';
-    } catch {
-      /* leave defaults */
-    }
-    if (authMode !== 'oidc') {
+  /**
+   * The address the relay asks for each decision. It is the API's public
+   * one: the relay sends what it checks in fields of its own, which cross the
+   * control's proxy untouched.
+   */
+  private relayApiUrl(): string {
+    let url =
+      process.env.PUBLIC_API_URL ||
+      process.env.FLUI_API_ENDPOINT ||
+      process.env.API_BASE_URL ||
+      '';
+    while (url.endsWith('/')) url = url.slice(0, -1);
+    if (!url) {
       throw new Error(
-        `Platform auth mode is "${authMode}", not "oidc" — cannot install flui-authz`,
+        'The Flui API address is not known yet (PUBLIC_API_URL / API_BASE_URL); the Auth Proxy would have nobody to ask.',
       );
     }
-
-    let audience = '';
-    try {
-      const secret = await this.kubernetesService.getResource(
-        kubeconfig,
-        'Secret',
-        'flui-secrets',
-        FLUI_SYSTEM_NS,
-      );
-      const secretData = (secret?.body ?? secret)?.data ?? {};
-      const raw = secretData['OIDC_AUDIENCE'];
-      if (raw) audience = Buffer.from(raw, 'base64').toString('utf-8');
-    } catch {
-      /* leave empty */
-    }
-
-    let dashboardUrl = (
-      process.env.PUBLIC_WEB_URL ||
-      process.env.DASHBOARD_URL ||
-      ''
-    ).replace(/\/+$/, '');
-
-    if (!dashboardUrl) {
-      try {
-        const ingress = await this.kubernetesService.getResource(
-          kubeconfig,
-          'Ingress',
-          'flui-web-ingress',
-          FLUI_SYSTEM_NS,
-        );
-        const host = (ingress?.body ?? ingress)?.spec?.rules?.[0]?.host;
-        if (host) dashboardUrl = `https://${host}`;
-      } catch {
-        /* leave empty — flui-authz will still work, redirect just won't point to dashboard */
-      }
-    }
-
-    // Fail fast — installing with an invalid JWKS URI produces an auth-deny loop later.
-    if (!jwksUri) {
-      if (!issuer) {
-        throw new Error(
-          'Cannot resolve OIDC JWKS URI: neither OIDC_JWKS_URI nor OIDC_ISSUER is set in flui-api-config. ' +
-            'Wait for OidcBootstrapService to populate these and retry.',
-        );
-      }
-      jwksUri = `${issuer.replace(/\/+$/, '')}/oauth/v2/keys`;
-    }
-
-    return { jwksUri, audience, issuer, dashboardUrl };
+    return url;
   }
 
   private buildNamespaceManifest(): string {
@@ -332,12 +262,7 @@ export class AuthzInstallProcessor {
     });
   }
 
-  private buildDeploymentManifest(
-    jwksUri: string,
-    audience: string,
-    issuer: string,
-    dashboardUrl: string,
-  ): string {
+  private buildDeploymentManifest(apiUrl: string): string {
     return JSON.stringify({
       apiVersion: 'apps/v1',
       kind: 'Deployment',
@@ -358,10 +283,7 @@ export class AuthzInstallProcessor {
                 image: FLUI_AUTHZ_IMAGE,
                 ports: [{ containerPort: 8080 }],
                 env: [
-                  { name: 'OIDC_JWKS_URI', value: jwksUri },
-                  { name: 'OIDC_AUDIENCE', value: audience },
-                  { name: 'OIDC_ISSUER', value: issuer },
-                  { name: 'DASHBOARD_URL', value: dashboardUrl },
+                  { name: 'FLUI_API_URL', value: apiUrl },
                   { name: 'PORT', value: '8080' },
                 ],
                 readinessProbe: {

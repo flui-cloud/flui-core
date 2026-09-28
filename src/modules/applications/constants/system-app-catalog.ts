@@ -407,7 +407,8 @@ export const SYSTEM_APP_CATALOG: SystemAppDefinition[] = [
         apiVersion: 'v1',
       },
     ],
-    description: 'In-cluster JWT validator for Traefik ForwardAuth',
+    description:
+      'Checks the Flui sign-in for internal apps and routes that require one',
     port: 8080,
     imageSource: {
       registry: 'ghcr',

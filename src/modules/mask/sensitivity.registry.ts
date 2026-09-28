@@ -3,6 +3,7 @@ import { Sensitivity } from './constants/sensitivity';
 import {
   SENSITIVITY_CONDITIONAL_KEY,
   SENSITIVITY_FIELDS_KEY,
+  SENSITIVITY_SCREEN_ONLY_KEY,
   SENSITIVITY_METADATA_KEY,
 } from './decorators/sensitivity.decorator';
 
@@ -52,6 +53,16 @@ export class SensitivityRegistry {
     return (
       Reflect.getMetadata(
         SENSITIVITY_CONDITIONAL_KEY,
+        dtoClass.prototype,
+        field,
+      ) === true
+    );
+  }
+
+  isScreenOnly(dtoClass: DtoClass, field: string): boolean {
+    return (
+      Reflect.getMetadata(
+        SENSITIVITY_SCREEN_ONLY_KEY,
         dtoClass.prototype,
         field,
       ) === true

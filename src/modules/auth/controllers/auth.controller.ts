@@ -147,7 +147,7 @@ export class AuthController {
     summary: 'Clear flui_session cookie for OIDC logout (OIDC mode only)',
     description:
       'Called by the frontend before redirecting to the Zitadel end_session endpoint. ' +
-      'Clears the httpOnly flui_session cookie so ForwardAuth stops accepting the old token.',
+      'Clears the httpOnly flui_session cookie, including the one older releases left on the parent domain.',
   })
   @ApiOkResponse({ description: '{ success: true }' })
   oidcLogout(@Res({ passthrough: true }) res: Response): { success: boolean } {
@@ -255,7 +255,7 @@ export class AuthController {
     description:
       'The frontend calls this after OIDC code exchange. ' +
       'The Bearer token is validated by the JWKS strategy and mirrored into ' +
-      'the httpOnly flui_session cookie so the browser can reach internal apps via ForwardAuth.',
+      "the httpOnly flui_session cookie of the API's own host.",
   })
   @ApiOkResponse({ description: 'Cookie set. Returns authenticated user.' })
   @ApiUnauthorizedResponse({ description: 'Invalid or expired Zitadel token' })

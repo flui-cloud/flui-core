@@ -7,7 +7,7 @@ import {
 import { InjectQueue } from '@nestjs/bull';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Queue } from 'bull';
-import { In, Repository } from 'typeorm';
+import { Repository } from 'typeorm';
 import {
   InfrastructureOperationEntity,
   OperationType,
@@ -17,7 +17,6 @@ import {
 import {
   ClusterEntity,
   ClusterStatus,
-  ClusterType,
 } from '../../infrastructure/clusters/entities/cluster.entity';
 import { KubernetesService } from '../../infrastructure/shared/services/kubernetes.service';
 import { EncryptionService } from '../../shared/encryption/services/encryption.service';
@@ -33,6 +32,8 @@ export const AUTHZ_UNINSTALL_JOB = 'uninstall-authz';
 export interface AuthzInstallJobData {
   installId: string;
   operationId: string;
+  /** Re-apply a running install (new release): it stays running meanwhile. */
+  refresh?: boolean;
 }
 
 export interface AuthzUninstallJobData {
@@ -63,8 +64,6 @@ export class AuthzInstallService {
     install: ClusterAuthzInstallEntity;
     operation: InfrastructureOperationEntity;
   }> {
-    await this.assertOidcMode();
-
     const cluster = await this.clusterRepo.findOne({
       where: { id: dto.clusterId },
     });
@@ -83,23 +82,21 @@ export class AuthzInstallService {
     }
 
     const existing = await this.installRepo.findByClusterId(dto.clusterId);
-    if (existing?.status === AuthzInstallStatus.RUNNING) {
-      throw new BadRequestException(
-        `flui-authz is already installed on cluster "${cluster.name}"`,
-      );
-    }
     if (existing?.status === AuthzInstallStatus.INSTALLING) {
       throw new BadRequestException(
         `flui-authz install is already in progress on cluster "${cluster.name}"`,
       );
     }
+    const refresh = existing?.status === AuthzInstallStatus.RUNNING;
 
-    const install = await this.installRepo.create({
-      clusterId: cluster.id,
-      clusterName: cluster.name,
-      status: AuthzInstallStatus.PENDING,
-      userId,
-    });
+    const install = refresh
+      ? existing
+      : await this.installRepo.create({
+          clusterId: cluster.id,
+          clusterName: cluster.name,
+          status: AuthzInstallStatus.PENDING,
+          userId,
+        });
 
     const operationSteps = this.buildInstallSteps();
     const operation = await this.operationRepo.save(
@@ -127,6 +124,7 @@ export class AuthzInstallService {
     const jobData: AuthzInstallJobData = {
       installId: install.id,
       operationId: operation.id,
+      ...(refresh ? { refresh } : {}),
     };
     await this.queue.add(AUTHZ_INSTALL_JOB, jobData, {
       attempts: 1,
@@ -189,39 +187,6 @@ export class AuthzInstallService {
     const install = await this.installRepo.findById(id);
     if (!install) throw new NotFoundException(`Authz install ${id} not found`);
     return install;
-  }
-
-  private async assertOidcMode(): Promise<void> {
-    const obsCluster = await this.clusterRepo.findOne({
-      where: {
-        clusterType: In([ClusterType.CONTROL, ClusterType.OBSERVABILITY]),
-      },
-    });
-    if (!obsCluster?.kubeconfigEncrypted) {
-      throw new BadRequestException(
-        'Control cluster not found — cannot verify auth mode',
-      );
-    }
-    const kubeconfig = this.encryptionService.decrypt(
-      obsCluster.kubeconfigEncrypted,
-    );
-    let authMode = 'unknown';
-    try {
-      const cm = await this.kubernetesService.getResource(
-        kubeconfig,
-        'ConfigMap',
-        'flui-api-config',
-        'flui-system',
-      );
-      authMode = (cm?.body ?? cm)?.data?.['AUTH_MODE'] ?? 'unknown';
-    } catch {
-      authMode = 'unknown';
-    }
-    if (authMode !== 'oidc') {
-      throw new BadRequestException(
-        `flui-authz requires OIDC auth mode (current: ${authMode}). Configure OIDC first.`,
-      );
-    }
   }
 
   private buildInstallSteps() {

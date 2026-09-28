@@ -39,7 +39,10 @@ import { SandboxTenantEntity } from '../../sandbox/entities/sandbox-tenant.entit
 import { sandboxNoindexMiddlewareRef } from '../../sandbox/constants/sandbox-noindex';
 import { ENDPOINT_ID_LABEL } from '../constants/endpoint-labels';
 import { invalidGatewayCidrs } from '../validators/gateway-cidr.validator';
-import { gatewayForwardAuthAddress } from '../utils/gateway-forward-auth-address.util';
+import {
+  forwardAuthPlacement,
+  gatewayForwardAuthAddress,
+} from '../utils/gateway-forward-auth-address.util';
 import { AcmeResolversService } from './acme-resolvers.service';
 import {
   AuthoritativeAnswer,
@@ -1522,15 +1525,12 @@ export class AppEndpointReconciliationService {
     const traefikMiddlewareRef = isInternal
       ? await this.applyInternalForwardAuthMiddleware(
           kubeconfig,
-          endpoint.k8sNamespace,
-          endpoint.k8sServiceName,
-          cluster.id,
+          endpoint,
+          cluster,
         )
       : null;
     if (isInternal && !traefikMiddlewareRef) {
-      throw new Error(
-        `Refusing to apply Ingress for internal endpoint ${endpoint.id} (${endpoint.fqdn}): ForwardAuth Middleware could not be applied. Ensure the backend has a discoverable public URL (PUBLIC_API_URL / FLUI_API_ENDPOINT / API_BASE_URL) — these are populated by ApiDomainSyncService after DNS config. Failing closed so the app is NOT exposed publicly without authz.`,
-      );
+      throw new Error(this.noSignInCheckMessage(endpoint, cluster));
     }
 
     const gateway = await this.reconcileGatewayMiddlewares(
@@ -1784,14 +1784,12 @@ export class AppEndpointReconciliationService {
 
     let forwardAuthAddress: string | undefined;
     if (config?.auth?.sso) {
-      forwardAuthAddress = this.resolveGatewayForwardAuthAddress(
+      forwardAuthAddress = await this.resolveGatewayForwardAuthAddress(
         endpoint,
         cluster,
       );
       if (!forwardAuthAddress) {
-        throw new Error(
-          `Refusing to apply Ingress for endpoint ${endpoint.id} (${endpoint.fqdn}): gateway SSO is enabled but no Flui API public URL is discoverable (PUBLIC_API_URL / FLUI_API_ENDPOINT / API_BASE_URL). Failing closed so the route is NOT exposed without its auth gate.`,
-        );
+        throw new Error(this.noSignInCheckMessage(endpoint, cluster));
       }
     }
 
@@ -1893,26 +1891,27 @@ export class AppEndpointReconciliationService {
     }
   }
 
-  /**
-   * Where Traefik asks whether a request may pass. The route id is in the
-   * address; on the cluster the API itself runs on, the check stays inside the
-   * cluster instead of going back out through the public entrypoint.
-   */
-  private resolveGatewayForwardAuthAddress(
+  async resolveGatewayForwardAuthAddress(
+    endpoint: Pick<AppEndpointEntity, 'id'>,
+    cluster: ClusterEntity,
+  ): Promise<string | undefined> {
+    return gatewayForwardAuthAddress(
+      endpoint.id,
+      forwardAuthPlacement(
+        isControlClusterType(cluster.clusterType),
+        !!(await this.authzInstallRepo.findRunningForCluster(cluster.id)),
+      ),
+    );
+  }
+
+  private noSignInCheckMessage(
     endpoint: AppEndpointEntity,
     cluster: ClusterEntity,
-  ): string | undefined {
-    return gatewayForwardAuthAddress(endpoint.id, {
-      apiRunsOnThisCluster:
-        !!process.env.KUBERNETES_SERVICE_HOST &&
-        isControlClusterType(cluster.clusterType),
-      publicApiUrl:
-        process.env.PUBLIC_API_URL ||
-        process.env.FLUI_API_ENDPOINT ||
-        process.env.API_BASE_URL ||
-        process.env.WEBHOOK_BASE_URL ||
-        '',
-    });
+  ): string {
+    const why = isControlClusterType(cluster.clusterType)
+      ? 'no Flui API address is known (PUBLIC_API_URL / FLUI_API_ENDPOINT / API_BASE_URL)'
+      : `the Flui Auth Proxy is not running on cluster "${cluster.name}" — install it there`;
+    return `${endpoint.fqdn} requires a Flui sign-in, but ${why}. The route stays closed until then.`;
   }
 
   /**
@@ -1953,43 +1952,28 @@ export class AppEndpointReconciliationService {
   }
 
   /**
-   * Apply a Traefik Middleware (kind: Middleware, apiVersion: traefik.io/v1alpha1)
-   * that does ForwardAuth against Flui's `/authz/internal-app` endpoint. The
-   * middleware lives in the same namespace as the app so the Ingress can
-   * reference it via `<ns>-<name>@kubernetescrd`.
+   * The forwardAuth Middleware in front of an internal app: the same
+   * per-host sign-in as a route with SSO, decided by the endpoint id in the
+   * address. It lives in the app's namespace so the Ingress can reference it
+   * as `<ns>-<name>@kubernetescrd`.
    *
-   * Returns the middleware reference string to put in the Ingress
-   * annotation, or `null` if it could not be applied — in which case the
-   * caller MUST refuse to create the Ingress (fail-closed).
+   * Returns `null` when it could not be applied — the caller then refuses to
+   * create the Ingress (fail-closed).
    */
   private async applyInternalForwardAuthMiddleware(
     kubeconfig: string,
-    namespace: string,
-    serviceName: string,
-    clusterId: string,
+    endpoint: AppEndpointEntity,
+    cluster: ClusterEntity,
   ): Promise<string | null> {
-    const inClusterInstall =
-      await this.authzInstallRepo.findRunningForCluster(clusterId);
-
-    let forwardAuthAddress: string;
-    if (inClusterInstall) {
-      forwardAuthAddress =
-        'http://flui-authz.flui-system.svc.cluster.local/authz';
-    } else {
-      const fluiApiUrl = stripTrailingSlashes(
-        process.env.PUBLIC_API_URL ||
-          process.env.FLUI_API_ENDPOINT ||
-          process.env.API_BASE_URL ||
-          process.env.WEBHOOK_BASE_URL ||
-          '',
-      );
-      if (!fluiApiUrl) {
-        this.logger.error(
-          'No Flui API public URL discoverable and flui-authz not installed on cluster — cannot apply ForwardAuth Middleware. Install flui-authz via POST /authz/install or configure PUBLIC_API_URL.',
-        );
-        return null;
-      }
-      forwardAuthAddress = `${fluiApiUrl}/api/v1/authz/internal-app`;
+    const namespace = endpoint.k8sNamespace;
+    const serviceName = endpoint.k8sServiceName;
+    const forwardAuthAddress = await this.resolveGatewayForwardAuthAddress(
+      endpoint,
+      cluster,
+    );
+    if (!forwardAuthAddress) {
+      this.logger.error(this.noSignInCheckMessage(endpoint, cluster));
+      return null;
     }
 
     const middlewareName = `${serviceName}-forwardauth`;

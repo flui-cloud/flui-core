@@ -18,6 +18,7 @@ import {
 } from '../utils/fake-value.util';
 import { resolveMaskSaltSecret } from '../utils/mask-salt.util';
 import { DtoClass, SensitivityRegistry } from '../sensitivity.registry';
+import { maskUntyped } from '../utils/untyped-mask.util';
 import {
   dtoPropertyKeys,
   dtoPropertyType,
@@ -36,6 +37,7 @@ interface FieldPlan {
   sensitivity?: Sensitivity;
   /** `CREDENTIAL` fields only. */
   conditionalCredential?: boolean;
+  screenOnly?: boolean;
 }
 type ClassPlan = ReadonlyMap<string, FieldPlan>;
 
@@ -71,6 +73,7 @@ function planFor(
               dtoClass,
               key,
             ),
+            screenOnly: registry.isScreenOnly(dtoClass, key),
           },
     );
   }
@@ -82,6 +85,8 @@ function planFor(
 
 interface MaskRuntimeContext {
   maskOn: boolean;
+  /** The browser's screen-share toggle, as opposed to an agent's tool call. */
+  screenShare: boolean;
   session: MaskSessionContext;
   saltSecret: string;
 }
@@ -124,11 +129,13 @@ function applySensitivity(
   raw: unknown,
   ctx: MaskRuntimeContext,
   conditionalCredential = false,
+  screenOnly = false,
 ): unknown {
   if (sensitivity === Sensitivity.CREDENTIAL && !conditionalCredential) {
     return substituteScalar(raw, () => CREDENTIAL_PLACEHOLDER);
   }
   if (!ctx.maskOn) return raw;
+  if (screenOnly && !ctx.screenShare) return raw;
   if (sensitivity === Sensitivity.CREDENTIAL && conditionalCredential) {
     return substituteScalar(raw, () => CREDENTIAL_PLACEHOLDER);
   }
@@ -174,6 +181,7 @@ function maskValue(
           out[key],
           ctx,
           field.conditionalCredential,
+          field.screenOnly,
         );
   }
   return out;
@@ -187,11 +195,12 @@ function headerValue(req: MaskRequest, name: string): string | undefined {
 /**
  * The global response-masking pass for mask mode.
  *
- * A route whose response type `resolveRouteResponseType` cannot resolve is a
- * no-op here: a bare object literal or plain-interface response with no
- * `@ApiResponse` type is invisible to both this interceptor and the static
- * sentinel. Wrapping such a response in a real DTO is what closes that gap,
- * one surface at a time.
+ * A route whose response type `resolveRouteResponseType` cannot resolve has
+ * no declared fields to go by: while a person shares their screen it gets the
+ * shape-and-name fallback of {@link maskUntyped}; an agent's tool result keeps
+ * it as it is, since nothing says which of those values the agent must hand
+ * back. Wrapping such a response in a real DTO is
+ * still what classifies it properly, one surface at a time.
  */
 @Injectable()
 export class MaskResponseInterceptor implements NestInterceptor {
@@ -204,8 +213,6 @@ export class MaskResponseInterceptor implements NestInterceptor {
     if (context.getType() !== 'http') return next.handle();
 
     const resolved = resolveRouteResponseType(context.getHandler());
-    if (!resolved) return next.handle();
-    const plan = planFor(resolved.type, this.registry);
 
     const request = context.switchToHttp().getRequest<MaskRequest>();
     // Two independent reasons this response should be masked, either is enough:
@@ -218,11 +225,13 @@ export class MaskResponseInterceptor implements NestInterceptor {
     // screen-share toggle on — unlike the browser's own default (off, tuned for
     // "am I about to share my screen"), there is no reason network-identifier/
     // tenant-identity data should ever reach that channel unmasked by default.
+    const screenShare = headerValue(request, 'x-mask-mode') === 'on';
     const maskOn =
-      headerValue(request, 'x-mask-mode') === 'on' ||
+      screenShare ||
       agentSurfaceOf(request.headers as Record<string, unknown>) !== undefined;
     const ctx: MaskRuntimeContext = {
       maskOn,
+      screenShare,
       // No stable session id reaches an unauthenticated route; one fixed
       // bucket keeps any masking that does apply internally consistent.
       session: {
@@ -232,6 +241,13 @@ export class MaskResponseInterceptor implements NestInterceptor {
       saltSecret: resolveMaskSaltSecret(this.config),
     };
 
+    if (!resolved) {
+      if (!screenShare) return next.handle();
+      return next
+        .handle()
+        .pipe(map((body) => maskUntyped(body, ctx.session, ctx.saltSecret)));
+    }
+    const plan = planFor(resolved.type, this.registry);
     return next
       .handle()
       .pipe(map((body) => maskValue(body, plan, resolved.isArray, ctx)));
