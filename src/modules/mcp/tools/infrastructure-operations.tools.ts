@@ -218,6 +218,25 @@ export const INFRASTRUCTURE_OPERATION_TOOLS: ToolDef[] = [
   }),
 
   defineTool({
+    name: 'node_install_log',
+    routes: ['GET /infrastructure/operations/:id/log/chunk'],
+    description:
+      "Read the install log of a node that an operation is creating — the first node of a new cluster, or a single added node — a piece at a time. Read-only. Start with `since` 0 (or omit it); pass the answer's `next` as `since` to read on. `more` true means another piece is already waiting, so read again at once; `done` true means the operation finished and the end was reached, so stop. While the node installs, wait a few seconds between reads. When `captured` is false the log is empty and `note` says why: relay it as it is instead of saying the log is empty. The operationId comes from the tool that added the node or from operation_status.",
+    scope: MCP_SCOPE.INFRA_READ,
+    inputSchema: {
+      operationId: z.string().describe('The operation that creates the node.'),
+      since: coerceNumber(z.number().int().min(0))
+        .optional()
+        .describe('The `next` of the previous read; 0 to start.'),
+    },
+    run: (args, ctx) =>
+      ctx.api.get(
+        `/infrastructure/operations/${encoded(args.operationId)}/log/chunk`,
+        { since: args.since ?? 0 },
+      ),
+  }),
+
+  defineTool({
     name: 'cluster_node_scale_preview',
     routes: ['GET /infrastructure/clusters/:id/nodes/:nodeId/scale/preview'],
     description:

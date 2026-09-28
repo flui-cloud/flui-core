@@ -5,6 +5,7 @@ import {
   NotFoundException,
   Param,
   Post,
+  Query,
   Req,
   Res,
 } from '@nestjs/common';
@@ -15,6 +16,7 @@ import {
   ApiOperation,
   ApiResponse,
   ApiParam,
+  ApiQuery,
 } from '@nestjs/swagger';
 import { InfrastructureOperationsService } from './infrastructure-operations.service';
 import { InfrastructureOperationEntity } from '../servers/entities/infrastructure-operations.entity';
@@ -28,6 +30,12 @@ import {
 } from '../../iam/interfaces/policy-engine.interface';
 import { AuthenticatedUser } from '../../auth/interfaces/authenticated-user.interface';
 import { mayReadOperation } from './helpers/operation-ownership.helper';
+import { InstallLogChunkDto } from './dto/install-log-chunk.dto';
+import {
+  INSTALL_LOG_CHUNK_CHARS,
+  installLogChunk,
+  parseLogCursor,
+} from './helpers/install-log-chunk.helper';
 
 @ApiTags('Infrastructure - Operations')
 @ApiBearerAuth()
@@ -115,6 +123,49 @@ export class InfrastructureOperationsController {
       `attachment; filename="install-${operationId}.log"`,
     );
     res.send(log.content);
+  }
+
+  @Get(':operationId/log/chunk')
+  // `cluster:read`, unlike the download: this is what an agent follows through
+  // `infrastructure:look`, whose scope carries `cluster:read` and not `app:read`.
+  @RequirePermission(IAM_PERMISSION.CLUSTER_READ)
+  @ApiOperation({
+    summary: "Read a node's install log from a cursor onwards",
+    description:
+      'The same captured log as the download, read a piece at a time so it ' +
+      'can be followed while the node installs: send `since=0` first, then ' +
+      'the `next` of each answer. `more` says another piece is already ' +
+      'waiting; `done` says the operation has finished and the end was ' +
+      'reached. An operation with nothing captured answers with an empty ' +
+      'piece and a `note` saying why, not with an error.',
+  })
+  @ApiParam({ name: 'operationId', description: 'Operation ID' })
+  @ApiQuery({
+    name: 'since',
+    required: false,
+    description: 'Cursor: the `next` of the previous read, 0 to start.',
+  })
+  @ApiResponse({ status: 200, type: InstallLogChunkDto })
+  @ApiResponse({ status: 400, description: '`since` is not a valid cursor' })
+  @ApiResponse({ status: 404, description: 'Operation not found' })
+  async readLogChunk(
+    @Param('operationId') operationId: string,
+    @Query('since') sinceRaw: string | undefined,
+    @Req() req: Request,
+  ): Promise<InstallLogChunkDto> {
+    const since = parseLogCursor(sinceRaw);
+    const operation =
+      await this.operationsService.getOperationDetails(operationId);
+    const user = req.user as AuthenticatedUser | undefined;
+    if (!(await this.mayRead(operation, user))) {
+      throw new NotFoundException(`Operation ${operationId} not found`);
+    }
+    const slice = await this.installLogService.readSlice(
+      operationId,
+      since,
+      INSTALL_LOG_CHUNK_CHARS,
+    );
+    return installLogChunk(operation, slice, since);
   }
 
   @Post(':operationId/cancel')

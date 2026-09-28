@@ -3,6 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { InfrastructureOperationLogEntity } from '../entities/infrastructure-operation-log.entity';
 import { InfrastructureOperationsGateway } from '../gateway/infrastructure-operations.gateway';
+import { InstallLogSlice } from '../helpers/install-log-chunk.helper';
 
 /** Bootstrap logs are a few hundred KB in practice; this is a safety valve, not the common path. */
 const MAX_LOG_BYTES = 2 * 1024 * 1024;
@@ -58,6 +59,41 @@ export class InstallLogService {
     operationId: string,
   ): Promise<InfrastructureOperationLogEntity | null> {
     return this.logRepository.findOne({ where: { operationId } });
+  }
+
+  /**
+   * One piece of the stored log from `since` onwards, read in a single
+   * statement so the length and the piece agree while the tail keeps appending.
+   * Null when nothing was ever captured for the operation.
+   */
+  async readSlice(
+    operationId: string,
+    since: number,
+    limit: number,
+  ): Promise<InstallLogSlice | null> {
+    const raw = await this.logRepository
+      .createQueryBuilder('log')
+      .select('length("log"."content")', 'total')
+      .addSelect('"log"."truncated"', 'truncated')
+      .addSelect(
+        'substr("log"."content", CAST(:start AS integer), CAST(:limit AS integer))',
+        'text',
+      )
+      .where('"log"."operationId" = :operationId', { operationId })
+      .setParameters({ start: since + 1, limit })
+      .getRawOne<{
+        total: number | string;
+        truncated: boolean;
+        text: string;
+      }>();
+    if (!raw) return null;
+    const total = Number(raw.total) || 0;
+    return {
+      text: raw.text ?? '',
+      from: Math.min(since, total),
+      total,
+      truncated: !!raw.truncated,
+    };
   }
 
   /**

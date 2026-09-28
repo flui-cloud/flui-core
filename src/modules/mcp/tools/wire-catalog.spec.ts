@@ -156,6 +156,7 @@ const ARGS: Record<string, Record<string, unknown>> = {
   cluster_capacity_plan: {},
   cost_overview: {},
   cluster_node_list: {},
+  node_install_log: { operationId: 'op1', since: 120 },
   cluster_node_scale_preview: { nodeId: 'n1' },
   cluster_storage_status: {},
   platform_component_list: {},
@@ -460,6 +461,7 @@ describe('strada B — the whole tool catalogue goes over the wire', () => {
     ['app_logs', 'GET /observability/clusters/c1/apps/logs'],
     ['app_list', 'GET /clusters/c1/applications'],
     ['operation_status', 'GET /infrastructure/operations/op1'],
+    ['node_install_log', 'GET /infrastructure/operations/op1/log/chunk'],
     [
       'cluster_orphaned_volumes',
       'GET /infrastructure/clusters/c1/storage/orphaned-claims',
