@@ -1,12 +1,15 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { MoreThan, Not, Repository } from 'typeorm';
+import { In, MoreThan, Not, Repository } from 'typeorm';
 import {
   SandboxTenantEntity,
   SandboxTenantState,
 } from '../entities/sandbox-tenant.entity';
 import { SANDBOX_CONFIG, SandboxConfig } from '../sandbox.config';
-import { ClusterEntity } from '../../infrastructure/clusters/entities/cluster.entity';
+import {
+  ClusterEntity,
+  ClusterStatus,
+} from '../../infrastructure/clusters/entities/cluster.entity';
 import { KubernetesService } from '../../infrastructure/shared/services/kubernetes.service';
 import { EncryptionService } from '../../shared/encryption/services/encryption.service';
 
@@ -348,11 +351,30 @@ export class SandboxCapacityService {
     return Math.max(0, target - warm);
   }
 
+  /**
+   * Whether the configured sandbox cluster is there to work on. A cluster
+   * deleted since keeps its row and its kubeconfig, and every sandbox clock
+   * used to time out against its old address every few minutes.
+   */
+  async clusterAvailable(): Promise<boolean> {
+    if (!this.config.clusterId) return false;
+    return this.clusters.exists({
+      where: {
+        id: this.config.clusterId,
+        status: Not(In(SANDBOX_CLUSTER_GONE)),
+      },
+    });
+  }
+
   private async kubeconfig(): Promise<string> {
     if (!this.config.clusterId)
       throw new Error('No sandbox cluster configured');
     const cluster = await this.clusters.findOne({
-      where: { id: this.config.clusterId, kubeconfigEncrypted: Not('') },
+      where: {
+        id: this.config.clusterId,
+        kubeconfigEncrypted: Not(''),
+        status: Not(In(SANDBOX_CLUSTER_GONE)),
+      },
     });
     if (!cluster?.kubeconfigEncrypted) {
       throw new Error(`Cluster ${this.config.clusterId} has no kubeconfig`);
@@ -360,6 +382,12 @@ export class SandboxCapacityService {
     return this.encryption.decrypt(cluster.kubeconfigEncrypted);
   }
 }
+
+export const SANDBOX_CLUSTER_GONE = [
+  ClusterStatus.DELETED,
+  ClusterStatus.DELETING,
+  ClusterStatus.LOST,
+];
 
 function median(values: number[]): number {
   const sorted = [...values].sort((a, b) => a - b);

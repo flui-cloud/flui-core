@@ -200,3 +200,43 @@ describe('replicas waiting for a node', () => {
     );
   });
 });
+
+describe('AppManagementService after a volume swap', () => {
+  it('marks the volume leaving use as the previous one and clears it on the one put in use', async () => {
+    const mergePatchObject = jest.fn().mockResolvedValue(undefined);
+    const service = new AppManagementService(
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      { mergePatchObject } as never,
+      {} as never,
+      {} as never,
+      {} as never,
+    );
+    await (service as any).markVolumesAfterSwap(
+      'kc',
+      { id: 'a1', k8sNamespace: 'ns' },
+      'data-original',
+      'data-restored-1',
+    );
+    expect(mergePatchObject).toHaveBeenCalledWith('kc', {
+      apiVersion: 'v1',
+      kind: 'PersistentVolumeClaim',
+      metadata: {
+        name: 'data-original',
+        namespace: 'ns',
+        labels: { 'flui.cloud/previous-volume': 'true', 'flui-app-id': 'a1' },
+      },
+    });
+    expect(mergePatchObject).toHaveBeenCalledWith('kc', {
+      apiVersion: 'v1',
+      kind: 'PersistentVolumeClaim',
+      metadata: {
+        name: 'data-restored-1',
+        namespace: 'ns',
+        labels: { 'flui.cloud/previous-volume': null },
+      },
+    });
+  });
+});

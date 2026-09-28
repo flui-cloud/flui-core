@@ -1,6 +1,6 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { In, Repository } from 'typeorm';
+import { In, Repository, Not } from 'typeorm';
 import { KubernetesService } from '../../infrastructure/shared/services/kubernetes.service';
 import { EncryptionService } from '../../shared/encryption/services/encryption.service';
 import { ClusterEntity } from '../../infrastructure/clusters/entities/cluster.entity';
@@ -10,6 +10,7 @@ import { buildImageRef } from '../../catalog/utils/image-ref.util';
 import { SANDBOX_FAST_CATALOG } from '../constants/sandbox-seed';
 import { buildPrepullManifest } from '../constants/sandbox-prepull.manifest';
 import { SANDBOX_CONFIG, SandboxConfig } from '../sandbox.config';
+import { SANDBOX_CLUSTER_GONE } from './sandbox-capacity.service';
 
 /** Where a demo instance keeps the things that are the instance's, not a guest's. */
 const SYSTEM_NAMESPACE = 'flui-system';
@@ -86,7 +87,10 @@ export class SandboxPrepullService {
     }
 
     const cluster = await this.clusters.findOne({
-      where: { id: this.config.clusterId },
+      where: {
+        id: this.config.clusterId,
+        status: Not(In(SANDBOX_CLUSTER_GONE)),
+      },
     });
     if (!cluster?.kubeconfigEncrypted) {
       this.logger.warn(

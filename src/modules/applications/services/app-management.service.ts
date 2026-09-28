@@ -59,7 +59,10 @@ import {
   envChanges,
   envHashOf,
 } from '../utils/env-hash.util';
-import { StatefulSetVolumeSwapService } from './statefulset-volume-swap.service';
+import {
+  PREVIOUS_VOLUME_LABEL,
+  StatefulSetVolumeSwapService,
+} from './statefulset-volume-swap.service';
 
 /** Rollout poll interval (ms) */
 const ROLLOUT_POLL_INTERVAL_MS = 3000;
@@ -338,6 +341,37 @@ export class AppManagementService {
     return this.buildRuntimeResponse(app, kubeconfig);
   }
 
+  /**
+   * The volume that leaves use is the data the application ran on until now,
+   * and says so; the one put in use stops saying it. Without this, going back
+   * to the original volume listed the restored one as "never put in use",
+   * and the original one — still paid for — was not listed at all.
+   */
+  private async markVolumesAfterSwap(
+    kubeconfig: string,
+    app: ApplicationEntity,
+    leftUse: string,
+    inUse: string,
+  ): Promise<void> {
+    const label = (name: string, labels: Record<string, string | null>) =>
+      this.kubernetesService
+        .mergePatchObject(kubeconfig, {
+          apiVersion: 'v1',
+          kind: 'PersistentVolumeClaim',
+          metadata: { name, namespace: app.k8sNamespace, labels },
+        })
+        .catch((err: Error) =>
+          this.logger.warn(
+            `Could not relabel volume ${name} after the swap: ${err.message}`,
+          ),
+        );
+    await label(leftUse, {
+      [PREVIOUS_VOLUME_LABEL]: 'true',
+      'flui-app-id': app.id,
+    });
+    await label(inUse, { [PREVIOUS_VOLUME_LABEL]: null });
+  }
+
   async swapVolumeClaim(
     appId: string,
     volumeName: string,
@@ -399,6 +433,12 @@ export class AppManagementService {
         );
         this.logger.log(
           `Swapped volume "${volumeName}" claimName ${previousClaim} → ${newClaimName} on ${kind} "${deploymentName}"`,
+        );
+        await this.markVolumesAfterSwap(
+          kubeconfig,
+          app,
+          previousClaim,
+          newClaimName,
         );
 
         const updatedVolumes = (app.volumes ?? []).map((v) =>

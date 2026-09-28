@@ -43,6 +43,23 @@ export class SandboxSchedulerService {
     @Inject(SANDBOX_CONFIG) private readonly config: SandboxConfig,
   ) {}
 
+  private warnedGone = false;
+
+  /**
+   * The sandbox clocks that work on the cluster rest while the configured one
+   * is gone, saying so once rather than timing out against it every minute.
+   */
+  private async sandboxClusterThere(): Promise<boolean> {
+    const there = await this.capacity.clusterAvailable().catch(() => true);
+    if (!there && !this.warnedGone) {
+      this.logger.warn(
+        `The sandbox is on but its cluster ${this.config.clusterId ?? '(none set)'} is not there — its clocks rest until SANDBOX_CLUSTER_ID names a live cluster or the sandbox is turned off`,
+      );
+    }
+    this.warnedGone = !there;
+    return there;
+  }
+
   /**
    * The second clock. Separate from the reaper on purpose: this one takes the
    * machines away and leaves the person their account, so a failure here must
@@ -51,6 +68,7 @@ export class SandboxSchedulerService {
   @Cron(CronExpression.EVERY_MINUTE)
   async sweepWorkloads(): Promise<void> {
     if (!this.config.enabled || this.sweeping) return;
+    if (!(await this.sandboxClusterThere())) return;
     this.sweeping = true;
     try {
       await this.tenants.sweepExpiredWorkloads();
@@ -73,6 +91,7 @@ export class SandboxSchedulerService {
   @Cron(CronExpression.EVERY_5_MINUTES)
   async applyStorageCeilings(): Promise<void> {
     if (!this.config.enabled || this.capping) return;
+    if (!(await this.sandboxClusterThere())) return;
     this.capping = true;
     try {
       await this.storageQuotas.apply();
@@ -114,6 +133,7 @@ export class SandboxSchedulerService {
   @Cron(CronExpression.EVERY_5_MINUTES)
   async refillReserve(): Promise<void> {
     if (!this.config.enabled || this.refilling) return;
+    if (!(await this.sandboxClusterThere())) return;
     if (!this.config.clusterId) {
       this.logger.warn('SANDBOX_CLUSTER_ID is not set — nothing is kept warm');
       return;
@@ -165,6 +185,7 @@ export class SandboxSchedulerService {
   @Cron(CronExpression.EVERY_HOUR)
   async warmCatalogImages(): Promise<void> {
     if (!this.config.enabled) return;
+    if (!(await this.sandboxClusterThere())) return;
     try {
       await this.prepull.warmImages();
     } catch (error) {
@@ -184,6 +205,7 @@ export class SandboxSchedulerService {
   @Cron(CronExpression.EVERY_HOUR)
   async reportFailures(): Promise<void> {
     if (!this.config.enabled) return;
+    if (!(await this.sandboxClusterThere())) return;
     const counts = await this.reserve.countByState();
     const parked = counts[SandboxTenantState.NEEDS_ATTENTION];
     if (parked > 0) {

@@ -11,12 +11,13 @@ import {
   CredentialsStatusItemDto,
   CredentialsStatusResponseDto,
 } from '../../repositories/dto/ghcr-pat.dto';
+import { credentialsVersion } from '../credentials-version';
 
 const REPOSITORIES_PATH = '/apps/repositories';
 const GITHUB_SETUP_PATH = '/apps/repositories/github-setup';
 const STATUS_PRIORITY: Record<CredentialStatus, number> = {
   [CredentialStatus.VALID]: 0,
-  [CredentialStatus.UNKNOWN_EXPIRY]: 1,
+  [CredentialStatus.UNKNOWN_EXPIRY]: 0,
   [CredentialStatus.EXPIRING_SOON]: 2,
   [CredentialStatus.MISSING]: 3,
   [CredentialStatus.INVALID]: 4,
@@ -27,11 +28,10 @@ const EXPIRING_SOON_DAYS = 14;
 @Injectable()
 export class CredentialsStatusService {
   private readonly logger = new Logger(CredentialsStatusService.name);
-  private cache: {
-    ts: number;
-    userId: string;
-    data: CredentialsStatusResponseDto;
-  } | null = null;
+  private readonly cache = new Map<
+    string,
+    { ts: number; version: number; data: CredentialsStatusResponseDto }
+  >();
   private readonly cacheTtlMs = 5 * 60 * 1000;
 
   constructor(
@@ -43,8 +43,12 @@ export class CredentialsStatusService {
   ) {}
 
   async getStatus(userId: string): Promise<CredentialsStatusResponseDto> {
-    const cached = this.cache;
-    if (cached?.userId === userId && Date.now() - cached.ts < this.cacheTtlMs) {
+    const version = credentialsVersion();
+    const cached = this.cache.get(userId);
+    if (
+      cached?.version === version &&
+      Date.now() - cached.ts < this.cacheTtlMs
+    ) {
       return cached.data;
     }
 
@@ -65,7 +69,7 @@ export class CredentialsStatusService {
     );
 
     const response: CredentialsStatusResponseDto = { overallStatus, items };
-    this.cache = { ts: Date.now(), userId, data: response };
+    this.cache.set(userId, { ts: Date.now(), version, data: response });
     return response;
   }
 
@@ -81,7 +85,7 @@ export class CredentialsStatusService {
       : GITHUB_SETUP_PATH;
     return {
       kind: CredentialKind.GITHUB_APP,
-      label: 'GitHub App',
+      label: instanceConfigured ? 'Your GitHub account' : 'GitHub App',
       status: token ? CredentialStatus.VALID : CredentialStatus.MISSING,
       expiresAt: null,
       daysUntilExpiry: null,
@@ -151,6 +155,6 @@ export class CredentialsStatusService {
   }
 
   invalidate(): void {
-    this.cache = null;
+    this.cache.clear();
   }
 }

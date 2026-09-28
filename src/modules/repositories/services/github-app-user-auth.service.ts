@@ -20,6 +20,7 @@ import { GitHubIntegrationConfigService } from './github-integration-config.serv
 import { GhcrPatAuditService } from './ghcr-pat-audit.service';
 import { GithubAppInstallStateService } from './github-app-install-state.service';
 import { CredentialStatus, GhcrPatStatusDto } from '../dto/ghcr-pat.dto';
+import { markCredentialsChanged } from '../../credentials/credentials-version';
 
 export interface ExchangedTokens {
   accessToken: string;
@@ -235,6 +236,7 @@ export class GithubAppUserAuthService {
     const saved = existing
       ? await this.tokenRepo.save({ ...existing, ...payload })
       : await this.tokenRepo.save(this.tokenRepo.create(payload));
+    markCredentialsChanged();
 
     this.logger.log(
       `Saved GitHub user token for fluiUserId=${fluiUserId} login=${ghUser.login} installation=${resolvedInstallationId ?? 'none'}`,
@@ -477,6 +479,7 @@ export class GithubAppUserAuthService {
     const saved = existing
       ? await this.credentialRepo.save({ ...existing, ...payload })
       : await this.credentialRepo.save(this.credentialRepo.create(payload));
+    markCredentialsChanged();
 
     this.logger.log(
       `Saved GHCR PAT for fluiUserId=${fluiUserId} login=${user.login} scopes=${scopes.join(',')} expiresAt=${expiresAt.toISOString()}`,
@@ -515,6 +518,7 @@ export class GithubAppUserAuthService {
       : null;
     const now = new Date();
 
+    markCredentialsChanged();
     const updated = await this.credentialRepo.save({
       ...existing,
       accessTokenEncrypted: this.encryptionService.encrypt(pat),

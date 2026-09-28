@@ -28,6 +28,7 @@ import { PricingQueryDto } from '../dto/pricing-query.dto';
 import { PricingResponseDto } from '../dto/pricing-response.dto';
 import { CacheService } from 'src/modules/common/cache/cache.service';
 import { CacheCategory } from 'src/modules/common/cache/enums/cache-category.enum';
+import { markCredentialsChanged } from '../../credentials/credentials-version';
 
 @Injectable()
 export class ManagementService {
@@ -173,6 +174,7 @@ export class ManagementService {
       const enriched = await this.enrichConfigurationsWithProviderData([
         updatedConfig,
       ]);
+      markCredentialsChanged();
       return enriched[0];
     } catch (error) {
       await this.providerConfigRepo.update(newConfig.id, {
@@ -215,6 +217,7 @@ export class ManagementService {
     const enriched = await this.enrichConfigurationsWithProviderData([
       updatedConfig,
     ]);
+    markCredentialsChanged();
     return enriched[0];
   }
 
@@ -368,6 +371,7 @@ export class ManagementService {
     });
 
     const enriched = await this.enrichConfigurationsWithProviderData([updated]);
+    markCredentialsChanged();
     return enriched[0];
   }
 
@@ -383,6 +387,7 @@ export class ManagementService {
     await this.accessService.updateActiveCredentialExpiry(provider, expiresAt);
 
     const enriched = await this.enrichConfigurationsWithProviderData([config]);
+    markCredentialsChanged();
     return enriched[0];
   }
 
@@ -596,6 +601,7 @@ export class ManagementService {
     }
 
     await this.providerConfigRepo.delete(configId);
+    markCredentialsChanged();
   }
 
   /**
