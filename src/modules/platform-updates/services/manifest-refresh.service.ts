@@ -27,6 +27,7 @@ import {
   requiredSecretsOf,
   workloadsOf,
 } from '../utils/manifest-documents.util';
+import { holdBackUnmetDependencies } from '../utils/manifest-dependencies.util';
 
 /** Byte order, not locale order: the plan digest must not depend on the machine. */
 const byName = (a: string, b: string): number => {
@@ -271,12 +272,14 @@ export class ManifestRefreshService {
       secretSources,
     };
 
+    const judged: RefreshEntry[] = [];
     for (const name of [...names].sort(byName)) {
       if (options.only?.length && !options.only.includes(name)) continue;
       const { entry, content } = await this.planEntry(name, inputs);
       if (content !== undefined) contents.set(name, content);
-      entries.push(entry);
+      judged.push(entry);
     }
+    entries.push(...this.withDependenciesMet(judged, release, contents));
 
     return {
       plan: {
@@ -295,6 +298,29 @@ export class ManifestRefreshService {
       contents,
       secretSources,
     };
+  }
+
+  private withDependenciesMet(
+    judged: RefreshEntry[],
+    release: ReleaseFiles,
+    contents: Map<string, string>,
+  ): RefreshEntry[] {
+    const files = new Map(
+      [...release.files].map(([name, file]) => [
+        name,
+        { content: contents.get(name) ?? file.template },
+      ]),
+    );
+    return holdBackUnmetDependencies(judged, files).map((entry, i) => {
+      if (entry === judged[i]) return entry;
+      contents.delete(entry.name);
+      const template = release.files.get(entry.name)?.template ?? '';
+      return {
+        ...entry,
+        createsSecrets: undefined,
+        releaseSha: sha256(template),
+      };
+    });
   }
 
   private async planEntry(

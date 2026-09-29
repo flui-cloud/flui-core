@@ -162,7 +162,11 @@ jobs:
       - run: pnpm install --frozen-lockfile
 
       - name: Generate the entry for this release
-        run: pnpm release:index --verify-tag "${{ github.ref_name }}"
+        # Formatted as the pre-commit hook would, so a file the release commit
+        # already carries compares equal instead of committing an empty change.
+        run: |
+          pnpm release:index --verify-tag "${{ github.ref_name }}"
+          pnpm exec prettier --write releases.json
 
       - name: Commit and push, if the index actually changed
         run: |
