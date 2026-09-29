@@ -2,6 +2,34 @@
   "schemaVersion": 2,
   "releases": [
     {
+      "version": "0.13.0-rc.9",
+      "publishedAt": "2026-09-29T05:06:27.941Z",
+      "bootstrapRef": "a694ad8",
+      "images": {
+        "fluiApi": "0.13.0-rc.9",
+        "fluiWeb": "0.13.0-rc.9",
+        "fluiAuthz": "0.6.0"
+      },
+      "notes": [
+        "New: one planned update for the whole installation. `flui env upgrade`, or Updates in the dashboard, shows the plan — back up the platform, bring every cluster's system manifests forward, roll out the platform components, upgrade K3s one minor version at a time with workload clusters before the control cluster, then check the result — and changes nothing until you confirm it.",
+        "Coming from 0.13.0-rc.8: that release cannot run this update itself — its updater stops at the first step, before changing anything. Move the API and the dashboard to 0.13.0-rc.9 first; from there `flui env upgrade` brings the manifests forward.",
+        "A new control cluster installs again. The installer pinned by 0.13.0-rc.8 stopped at the first system manifest that declares no values.",
+        "Access can be given for a limited time: `flui iam grant add --expires`, or Access → Temporary access in the dashboard. It lapses on its own, and administrators are told when it is given, the day before it ends and when it ends. The new platform_operator role runs clusters, nodes, updates and backups without reaching any application data.",
+        "Every change, every refused request and every read of application data is recorded: `flui audit list`, or Access → Activity in the dashboard.",
+        "Alerts reach people outside the dashboard: email and signed webhook destinations, for infrastructure alerts or for everything (`flui alerts destination add`). New alerts fire when a backup fails and when a certificate is not renewed in time."
+      ],
+      "migrations": 20,
+      "requiresBootstrap": true,
+      "k3s": {
+        "version": "v1.35.4+k3s1"
+      },
+      "systemComponents": {
+        "certManager": "v1.17.1",
+        "systemUpgradeController": "v0.20.2"
+      },
+      "manifestSets": ["control", "workload", "common"]
+    },
+    {
       "version": "0.13.0-rc.8",
       "publishedAt": "2026-09-20T11:33:03.502Z",
       "bootstrapRef": "6e4da52",
