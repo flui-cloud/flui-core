@@ -2,6 +2,31 @@
   "schemaVersion": 2,
   "releases": [
     {
+      "version": "0.13.0-rc.10",
+      "publishedAt": "2026-09-29T19:57:25.955Z",
+      "bootstrapRef": "db8c6d2",
+      "images": {
+        "fluiApi": "0.13.0-rc.10",
+        "fluiWeb": "0.13.0-rc.10",
+        "fluiAuthz": "0.6.0"
+      },
+      "notes": [
+        "An update no longer risks stopping the platform database on an installation built before 0.13.0-rc.9. The update would have replaced the database and cache manifests with ones that run at the platform priority while leaving out the file that creates that priority, so their pods could not start again. The file now comes with them, and an update holds back any manifest whose priority it does not bring.",
+        "Coming from 0.13.0-rc.8: that release cannot run this update itself — its updater stops at the first step, before changing anything. Move the API and the dashboard to 0.13.0-rc.10 first; from there `flui env upgrade` brings the manifests forward.",
+        "Includes everything in 0.13.0-rc.9: one planned update for the whole installation (`flui env upgrade`), access granted for a limited time, the activity record, and alert destinations by email and signed webhook."
+      ],
+      "migrations": 0,
+      "requiresBootstrap": true,
+      "k3s": {
+        "version": "v1.35.4+k3s1"
+      },
+      "systemComponents": {
+        "certManager": "v1.17.1",
+        "systemUpgradeController": "v0.20.2"
+      },
+      "manifestSets": ["control"]
+    },
+    {
       "version": "0.13.0-rc.9",
       "publishedAt": "2026-09-29T05:06:27.941Z",
       "bootstrapRef": "a694ad8",
