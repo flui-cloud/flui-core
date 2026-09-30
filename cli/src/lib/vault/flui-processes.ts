@@ -11,7 +11,7 @@ const LAUNCHERS = /^(node\d*|nodejs|ts-node|sh|bash|zsh|dash)$/;
 function isFluiScript(token: string): boolean {
   return (
     basename(token) === 'flui' ||
-    /(flui[^\s]*|(^|\/)cli)\/bin\/(run|dev)(\.js)?$/.test(token) ||
+    /(^|\/)(flui[^/\s]*|cli)\/bin\/(run|dev)(\.js)?$/.test(token) ||
     token.endsWith('/background/cluster-worker.js')
   );
 }

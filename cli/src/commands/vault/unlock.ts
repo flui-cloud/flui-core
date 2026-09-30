@@ -141,10 +141,10 @@ export default class VaultUnlock extends Command {
     const toMigrate: ProfileToMigrate[] = [];
     let sshSealed = 0;
     let sshFailed = false;
-    const warn = (profile: string, error: unknown): void => {
+    const warn = (profile: string, step: string, error: unknown): void => {
       this.log(
         chalk.yellow(
-          `   ⚠ Profile "${profile}" was left as it is: ${
+          `   ⚠ Profile "${profile}" was left as it is while ${step}: ${
             error instanceof Error
               ? error.message
               : String(error as string | number | boolean | null | undefined)
@@ -163,9 +163,13 @@ export default class VaultUnlock extends Command {
       });
       try {
         if (storage.hasLegacyKeyFile()) moved += storage.adoptVaultKey(key);
+      } catch (error) {
+        warn(profile, 'moving its stored secrets into the vault', error);
+      }
+      try {
         if (new SealedCa(profile).sealExisting(key)) moved += 1;
       } catch (error) {
-        warn(profile, error);
+        warn(profile, 'sealing its SSH CA', error);
       }
       try {
         if (new SealedCa(profile).realignPublicKey(key)) {
@@ -176,13 +180,13 @@ export default class VaultUnlock extends Command {
           );
         }
       } catch (error) {
-        warn(profile, error);
+        warn(profile, 'checking ca_key.pub against the sealed CA', error);
       }
       try {
         if (new SealedSshKey(profile).sealLegacy(key)) sshSealed += 1;
       } catch (error) {
         sshFailed = true;
-        warn(profile, error);
+        warn(profile, "sealing Flui's SSH key", error);
       }
     }
 

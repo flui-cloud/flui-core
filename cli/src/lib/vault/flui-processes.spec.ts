@@ -15,13 +15,24 @@ const PS = [
   '  106 vim /Users/me/Project/flui/flui.yaml',
   '  107 tail -f /Users/me/.flui/logs/op.log',
   '  108 node ./cli/bin/run app list',
+  '  109 /Users/me/.nvm/versions/node/v22.13.0/bin/node /Users/me/Project/flui/vops/bin/run ui --no-open',
+  '  110 node /Users/me/Library/pnpm/../../Project/flui/vops/bin/run mcp serve --transport stdio',
+  '  111 node /Users/me/Library/pnpm/../../Project/flui/flui-core/cli/bin/run dev tunnel --retry',
+  '  112 node /usr/local/lib/node_modules/@flui-cloud/cli/bin/run app list',
 ].join('\n');
 
 describe('otherFluiProcesses', () => {
   it('lists flui commands and workers, not the agent, this process or its launcher', () => {
     const found = otherFluiProcesses({ ps: () => PS, exclude: [104, 105] });
 
-    expect(found.map((p) => p.pid)).toEqual([100, 101, 103, 108]);
+    expect(found.map((p) => p.pid)).toEqual([100, 101, 103, 108, 111, 112]);
+  });
+
+  it('leaves out other tools kept in a folder called flui', () => {
+    const found = otherFluiProcesses({ ps: () => PS, exclude: [104, 105] });
+
+    expect(found.map((p) => p.pid)).not.toContain(109);
+    expect(found.map((p) => p.pid)).not.toContain(110);
   });
 
   it('lists nothing when ps is unavailable', () => {

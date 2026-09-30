@@ -198,6 +198,41 @@ describe('ConfigStorage under the vault', () => {
     ).toThrow();
   });
 
+  it('finishes a profile a newer CLI had half moved, keeping what is already sealed', () => {
+    seedLegacyProfile();
+    const vaultKey = deriveProfileKey(MASTER, PROFILE);
+    const file = join(profileDir, 'config.json');
+    const config = JSON.parse(readFileSync(file, 'utf-8'));
+    config.tokens.hetzner.encrypted = seal(vaultKey, 'hcloud-newer-token');
+    writeFileSync(file, JSON.stringify(config));
+
+    const moved = new ConfigStorage(PROFILE).adoptVaultKey(vaultKey);
+
+    expect(moved).toBe(2);
+    expect(existsSync(join(profileDir, '.key'))).toBe(false);
+    setProfileKey(PROFILE, vaultKey);
+    const storage = new ConfigStorage(PROFILE);
+    expect(storage.getToken('hetzner')).toBe('hcloud-newer-token');
+    expect(storage.getApiKey()).toBe('flui-api-key');
+  });
+
+  it('names the value neither key opens and changes nothing', () => {
+    seedLegacyProfile();
+    const file = join(profileDir, 'config.json');
+    const config = JSON.parse(readFileSync(file, 'utf-8'));
+    config.apiKey = seal(randomBytes(32) as never, 'from elsewhere');
+    writeFileSync(file, JSON.stringify(config));
+    const before = readFileSync(file, 'utf-8');
+
+    expect(() =>
+      new ConfigStorage(PROFILE).adoptVaultKey(
+        deriveProfileKey(MASTER, PROFILE),
+      ),
+    ).toThrow(/the API key opens with neither the vault nor/);
+    expect(readFileSync(file, 'utf-8')).toBe(before);
+    expect(existsSync(join(profileDir, '.key'))).toBe(true);
+  });
+
   it('does nothing on a profile that has already moved', () => {
     seedLegacyProfile();
     const storage = new ConfigStorage(PROFILE);

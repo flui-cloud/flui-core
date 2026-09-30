@@ -218,23 +218,33 @@ export class ConfigStorage {
     const config = this.readConfig();
     let moved = 0;
 
-    const reseal = (sealed: string): string => {
-      const plaintext = decryptWith(legacy, sealed);
+    // A newer CLI may already have written some values under the vault key
+    // while the key file was still here, so a profile can be half moved.
+    const reseal = (sealed: string, field: string): string => {
+      if (this.opens(vaultKey, sealed)) return sealed;
+      if (!this.opens(legacy, sealed)) {
+        throw new Error(
+          `${field} opens with neither the vault nor ${this.encryptionKeyFile}; nothing was changed`,
+        );
+      }
       moved += 1;
-      return encryptWith(vaultKey, plaintext);
+      return encryptWith(vaultKey, decryptWith(legacy, sealed));
     };
 
     for (const [provider, entry] of Object.entries(config.tokens ?? {})) {
       config.tokens[provider] = {
         ...entry,
-        encrypted: reseal(entry.encrypted),
+        encrypted: reseal(entry.encrypted, `the ${provider} token`),
       };
     }
     for (const [provider, sealed] of Object.entries(config.credentials ?? {})) {
       if (typeof sealed === 'string')
-        config.credentials[provider] = reseal(sealed);
+        config.credentials[provider] = reseal(
+          sealed,
+          `the ${provider} credentials`,
+        );
     }
-    if (config.apiKey) config.apiKey = reseal(config.apiKey);
+    if (config.apiKey) config.apiKey = reseal(config.apiKey, 'the API key');
 
     this.writeConfig(config);
     rmSync(this.encryptionKeyFile, { force: true });
