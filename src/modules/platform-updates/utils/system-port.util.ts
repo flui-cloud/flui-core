@@ -6,6 +6,20 @@ export interface SystemDeployment {
   available: boolean;
 }
 
+/** A Deployment, StatefulSet or DaemonSet: the platform ships all three. */
+function workload(
+  namespace: string,
+  name: string | undefined,
+  wanted: number,
+  available: number | undefined,
+): SystemDeployment {
+  return {
+    namespace,
+    name: name ?? '',
+    available: wanted === 0 || (available ?? 0) >= wanted,
+  };
+}
+
 /** What the checks read on a cluster. */
 export interface SystemPort {
   deployments(namespaces: string[]): Promise<SystemDeployment[]>;
@@ -24,15 +38,40 @@ export function kubernetesSystemPort(
       const { appsApi } = k8s.getKubeClient(kubeconfig);
       const out: SystemDeployment[] = [];
       for (const namespace of namespaces) {
-        const list = await appsApi.listNamespacedDeployment({ namespace });
-        for (const d of list.items ?? []) {
-          const wanted = d.spec?.replicas ?? 1;
-          out.push({
-            namespace,
-            name: d.metadata?.name ?? '',
-            available:
-              wanted === 0 || (d.status?.availableReplicas ?? 0) >= wanted,
-          });
+        const [deployments, statefulSets, daemonSets] = await Promise.all([
+          appsApi.listNamespacedDeployment({ namespace }),
+          appsApi.listNamespacedStatefulSet({ namespace }),
+          appsApi.listNamespacedDaemonSet({ namespace }),
+        ]);
+        for (const d of deployments.items ?? []) {
+          out.push(
+            workload(
+              namespace,
+              d.metadata?.name,
+              d.spec?.replicas ?? 1,
+              d.status?.availableReplicas,
+            ),
+          );
+        }
+        for (const s of statefulSets.items ?? []) {
+          out.push(
+            workload(
+              namespace,
+              s.metadata?.name,
+              s.spec?.replicas ?? 1,
+              s.status?.readyReplicas,
+            ),
+          );
+        }
+        for (const d of daemonSets.items ?? []) {
+          out.push(
+            workload(
+              namespace,
+              d.metadata?.name,
+              d.status?.desiredNumberScheduled ?? 0,
+              d.status?.numberAvailable,
+            ),
+          );
         }
       }
       return out;
