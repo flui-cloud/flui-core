@@ -1825,6 +1825,20 @@ export class KubernetesService {
         volumes: [
           { name: 'pvc', persistentVolumeClaim: { claimName: pvcName } },
         ],
+        // A local volume can live on the master, which master protection
+        // taints; the reader has to follow the volume there.
+        tolerations: [
+          {
+            key: 'node-role.kubernetes.io/control-plane',
+            operator: 'Exists',
+            effect: 'NoSchedule',
+          },
+          {
+            key: 'node-role.kubernetes.io/master',
+            operator: 'Exists',
+            effect: 'NoSchedule',
+          },
+        ],
         containers: [
           {
             name: 'reader',
