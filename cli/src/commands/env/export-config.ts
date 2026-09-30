@@ -5,7 +5,10 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { getNestApp, closeNestApp } from '../../lib/nest-app';
 import { CliControlClusterService } from '../../services/cli-control-cluster.service';
-import { CliEndpointResolverService } from '../../services/cli-endpoint-resolver.service';
+import {
+  CliEndpointResolverService,
+  effectiveOidcIssuer,
+} from '../../services/cli-endpoint-resolver.service';
 import { ConfigStorage } from '../../lib/config-storage';
 import { ClusterStatus } from 'src/modules/infrastructure/clusters/entities/cluster.entity';
 import { resolveClusterSshTarget } from '../../lib/cluster-ssh-target';
@@ -115,7 +118,7 @@ export default class EnvExportConfig extends Command {
 
       const authMode =
         endpoints.authMode === 'unknown' ? 'local' : endpoints.authMode;
-      const resolvedIssuer = this.resolveIssuer(endpoints);
+      const resolvedIssuer = effectiveOidcIssuer(endpoints);
       const resolvedJwks = this.resolveJwks(endpoints, resolvedIssuer);
 
       console.log(chalk.cyan('\n📋 Exporting Cluster Configuration\n'));
@@ -485,15 +488,6 @@ export default class EnvExportConfig extends Command {
       default: def.defaultValue,
       validate: (v) => PreferencesResolver.validate(key, v),
     });
-  }
-
-  private resolveIssuer(endpoints: {
-    oidcIssuer: string;
-    zitadel: { fqdn: string | null };
-  }): string {
-    if (endpoints.zitadel.fqdn) return `https://${endpoints.zitadel.fqdn}`;
-    if (endpoints.oidcIssuer) return endpoints.oidcIssuer;
-    return '';
   }
 
   private resolveJwks(

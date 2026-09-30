@@ -63,11 +63,11 @@ export class ApiDomainSyncService {
       authDomain,
     });
 
-    const configMapPatched = await this.updateApiConfigMap(
-      kubeconfig,
-      authDomain,
+    const configMapPatched = await this.updateApiConfigMap(kubeconfig, {
       apiDomain,
-    );
+      webDomain,
+      authDomain,
+    });
 
     // Restart flui-api to pick up the new environment values.
     // Uses AppManagementService to register the audit event and trigger the WebSocket rollout watcher.
@@ -167,8 +167,11 @@ export class ApiDomainSyncService {
 
   private async updateApiConfigMap(
     kubeconfig: string,
-    authDomain: string | null,
-    apiDomain: string,
+    {
+      apiDomain,
+      webDomain,
+      authDomain,
+    }: { apiDomain: string; webDomain: string; authDomain: string | null },
   ): Promise<boolean> {
     try {
       const configMap = await this.kubernetesService.getResource(
@@ -190,6 +193,7 @@ export class ApiDomainSyncService {
 
       data['API_BASE_URL'] = `https://${apiDomain}`;
       data['WEBHOOK_BASE_URL'] = `https://${apiDomain}`;
+      data['FRONTEND_URL'] = `https://${webDomain}`;
       if (authDomain) {
         data['OIDC_ISSUER'] = `https://${authDomain}`;
         if (!data['OIDC_JWKS_URI']) {
@@ -216,7 +220,7 @@ export class ApiDomainSyncService {
 
       await this.kubernetesService.replaceManifest(kubeconfig, updatedManifest);
       this.logger.log(
-        `flui-api-config ConfigMap updated: OIDC_ISSUER=https://${authDomain}, API_BASE_URL=https://${apiDomain}`,
+        `flui-api-config ConfigMap updated: OIDC_ISSUER=https://${authDomain}, API_BASE_URL=https://${apiDomain}, FRONTEND_URL=https://${webDomain}`,
       );
       return true;
     } catch (err) {

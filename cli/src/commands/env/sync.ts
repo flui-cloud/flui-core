@@ -8,6 +8,7 @@ import { CliControlClusterService } from '../../services/cli-control-cluster.ser
 import {
   CliEndpointResolverService,
   SystemEndpoints,
+  effectiveOidcIssuer,
 } from '../../services/cli-endpoint-resolver.service';
 import { CliSshService } from '../../services/cli-ssh.service';
 import { resolveClusterSshTarget } from '../../lib/cluster-ssh-target';
@@ -143,7 +144,7 @@ export default class EnvSync extends Command {
       LOKI_ENDPOINT: endpoints.loki.effectiveUrl,
     };
 
-    const issuer = this.resolveOidcIssuer(endpoints);
+    const issuer = effectiveOidcIssuer(endpoints);
     if (issuer) envVars.OIDC_ISSUER = issuer;
 
     const jwks = this.resolveOidcJwksUri(endpoints, issuer);
@@ -154,14 +155,6 @@ export default class EnvSync extends Command {
     }
 
     return envVars;
-  }
-
-  private resolveOidcIssuer(endpoints: SystemEndpoints): string {
-    // Prefer the Ingress (source of truth for the live domain) over the ConfigMap,
-    // which can lag behind when the auth-domain-sync hasn't caught up.
-    if (endpoints.zitadel.fqdn) return `https://${endpoints.zitadel.fqdn}`;
-    if (endpoints.oidcIssuer) return endpoints.oidcIssuer;
-    return '';
   }
 
   private resolveOidcJwksUri(

@@ -266,9 +266,12 @@ export default class EnvStatus extends Command {
       const url = info.synced
         ? chalk.blue(info.effectiveUrl)
         : chalk.dim(info.effectiveUrl);
-      const suffix = info.synced
-        ? chalk.dim(' (custom domain)')
-        : chalk.dim(' (in-cluster only)');
+      let suffix = chalk.dim(' (in-cluster only)');
+      if (info.synced) {
+        suffix = info.custom
+          ? chalk.dim(' (custom domain)')
+          : chalk.dim(' (default address)');
+      }
       console.log(`   ${marker} ${chalk.bold(label)} ${url}${suffix}`);
     }
   }

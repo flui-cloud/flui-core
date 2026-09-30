@@ -15,6 +15,8 @@ export interface EndpointInfo {
   defaultUrl: string;
   effectiveUrl: string;
   synced: boolean;
+  /** The address differs from the nip.io default the cluster was born with. */
+  custom: boolean;
 }
 
 export interface SystemEndpoints {
@@ -26,6 +28,8 @@ export interface SystemEndpoints {
   loki: EndpointInfo;
   authMode: string;
   oidcIssuer: string;
+  /** The issuer the running API reports; empty when the API did not answer. */
+  oidcIssuerLive: string;
   oidcJwksUri: string;
   oidcAudience: string;
   /** Public OIDC client ID consumed by the dashboard (flui-web-config ConfigMap). */
@@ -38,6 +42,22 @@ interface AppSpec {
   defaultScheme: 'http' | 'https';
   ingressNames: string[];
   ingressLabelNames: string[];
+  serviceNames: string[];
+}
+
+const ENDPOINT_INGRESS_TYPE = 'dns-ingress';
+
+/**
+ * The issuer tokens must come from: what the running API accepts first, then
+ * the address Zitadel is published at, then the configured value, which can
+ * lag behind a domain change.
+ */
+export function effectiveOidcIssuer(
+  endpoints: Pick<SystemEndpoints, 'oidcIssuer' | 'oidcIssuerLive' | 'zitadel'>,
+): string {
+  if (endpoints.oidcIssuerLive) return endpoints.oidcIssuerLive;
+  if (endpoints.zitadel.fqdn) return `https://${endpoints.zitadel.fqdn}`;
+  return endpoints.oidcIssuer || '';
 }
 
 const SYSTEM_APPS: Record<SystemAppKey, AppSpec> = {
@@ -46,36 +66,42 @@ const SYSTEM_APPS: Record<SystemAppKey, AppSpec> = {
     defaultScheme: 'http',
     ingressNames: ['flui-api', 'flui-api-ingress'],
     ingressLabelNames: ['flui-api'],
+    serviceNames: ['flui-api'],
   },
   fluiWeb: {
     defaultSubdomain: 'app',
     defaultScheme: 'http',
     ingressNames: ['flui-web', 'flui-web-ingress'],
     ingressLabelNames: ['flui-web'],
+    serviceNames: ['flui-web'],
   },
   zitadel: {
     defaultSubdomain: 'auth',
     defaultScheme: 'https',
     ingressNames: ['zitadel', 'zitadel-ingress'],
     ingressLabelNames: ['zitadel'],
+    serviceNames: ['zitadel'],
   },
   grafana: {
     defaultSubdomain: null,
     defaultScheme: 'http',
     ingressNames: ['grafana-ingress'],
     ingressLabelNames: ['grafana'],
+    serviceNames: ['grafana'],
   },
   prometheus: {
     defaultSubdomain: null,
     defaultScheme: 'http',
     ingressNames: ['prometheus-ingress'],
     ingressLabelNames: ['prometheus'],
+    serviceNames: ['prometheus'],
   },
   loki: {
     defaultSubdomain: null,
     defaultScheme: 'http',
     ingressNames: ['loki-ingress'],
     ingressLabelNames: ['loki'],
+    serviceNames: ['loki'],
   },
 };
 
@@ -86,7 +112,12 @@ interface IngressResource {
     labels?: Record<string, string>;
   };
   spec?: {
-    rules?: Array<{ host?: string }>;
+    rules?: Array<{
+      host?: string;
+      http?: {
+        paths?: Array<{ backend?: { service?: { name?: string } } }>;
+      };
+    }>;
     tls?: Array<{ hosts?: string[] }>;
   };
 }
@@ -167,6 +198,7 @@ export class CliEndpointResolverService {
     // the API was unreachable (k3s auto-deploy resets the frozen ones).
     const authMode = pick(live.authMode, configMapData['AUTH_MODE'], 'unknown');
     const oidcIssuer = pick(live.issuer, configMapData['OIDC_ISSUER']);
+    const oidcIssuerLive = pick(live.issuer);
     const oidcJwksUri = configMapData['OIDC_JWKS_URI'] ?? '';
     const oidcCliClientId = pick(
       live.cliClientId,
@@ -192,6 +224,7 @@ export class CliEndpointResolverService {
       ...endpoints,
       authMode,
       oidcIssuer,
+      oidcIssuerLive,
       oidcJwksUri,
       oidcAudience,
       oidcClientId,
@@ -240,11 +273,11 @@ export class CliEndpointResolverService {
     masterIp: string,
     nipHostnameToken?: string | null,
   ): EndpointInfo {
-    // Prefer the k8s native Ingress over Traefik IngressRoute when both exist:
-    // `configure-system-ingress` writes Ingress with the user-chosen domain
-    // (e.g. *.flui.cloud), while the legacy IngressRoute may still carry
-    // the nip.io hostname seeded at cluster bootstrap.
+    // An endpoint set from the dashboard or the API wins over everything else;
+    // then the k8s native Ingress over the Traefik IngressRoute, which may
+    // still carry the nip.io hostname seeded at cluster bootstrap.
     const match =
+      this.findEndpointIngressMatch(spec, ingresses) ??
       this.findIngressMatch(spec, ingresses) ??
       this.findIngressRouteMatch(spec, ingressRoutes);
 
@@ -262,6 +295,7 @@ export class CliEndpointResolverService {
         defaultUrl,
         effectiveUrl: `${match.scheme}://${match.host}`,
         synced: true,
+        custom: match.host !== defaultFqdn,
       };
     }
 
@@ -270,12 +304,31 @@ export class CliEndpointResolverService {
       defaultUrl,
       effectiveUrl: defaultUrl,
       synced: !!defaultFqdn,
+      custom: false,
     };
+  }
+
+  private findEndpointIngressMatch(
+    spec: AppSpec,
+    ingresses: IngressResource[],
+  ): RouteMatch | null {
+    const managed = ingresses.filter(
+      (ingress) =>
+        ingress.metadata?.labels?.['flui-resource-type'] ===
+          ENDPOINT_INGRESS_TYPE &&
+        (ingress.spec?.rules ?? []).some((rule) =>
+          (rule.http?.paths ?? []).some((path) =>
+            spec.serviceNames.includes(path.backend?.service?.name ?? ''),
+          ),
+        ),
+    );
+    return this.findIngressMatch(spec, managed, true);
   }
 
   private findIngressMatch(
     spec: AppSpec,
     ingresses: IngressResource[],
+    preselected = false,
   ): RouteMatch | null {
     for (const ingress of ingresses) {
       const name = ingress.metadata?.name ?? '';
@@ -287,7 +340,7 @@ export class CliEndpointResolverService {
       const matchesName = spec.ingressNames.includes(name);
       const matchesLabel = spec.ingressLabelNames.includes(labelName);
 
-      if (!matchesName && !matchesLabel) continue;
+      if (!preselected && !matchesName && !matchesLabel) continue;
 
       const host = ingress.spec?.rules?.find((r) => r.host)?.host;
       if (!host) continue;
