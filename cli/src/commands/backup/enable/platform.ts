@@ -3,7 +3,9 @@ import chalk from 'chalk';
 import ora from 'ora';
 import { BackupClient } from '../../../lib/backup-client';
 import { printContextBanner } from '../../../lib/context-banner';
+import { ProfileManager } from '../../../lib/profile-manager';
 import { resolveClusterRef } from '../../../lib/resolve-cluster';
+import { SealedPlatformIdentity } from '../../../lib/vault/sealed-platform-identity';
 import {
   SHARED_ENABLE_FLAGS,
   parseDestinations,
@@ -18,6 +20,7 @@ export default class BackupEnablePlatform extends Command {
     'starts from when the cluster running Flui is gone.';
 
   static readonly examples = [
+    '<%= config.bin %> <%= command.id %> --destination <destId>',
     '<%= config.bin %> <%= command.id %> --destination <destId> --recipient <age-recipient>',
   ];
 
@@ -28,10 +31,10 @@ export default class BackupEnablePlatform extends Command {
       description: 'Cluster name or ID (default: auto-detect)',
     }),
     recipient: Flags.string({
-      required: true,
       description:
         'age recipient the dump is sealed to. Without the matching identity ' +
-        'nobody — including Flui — can open the backup.',
+        'nobody — including Flui — can open the backup. Defaults to the key ' +
+        'kept in your vault by `flui backup platform init`.',
     }),
     'heartbeat-url': Flags.string({
       description: 'Pinged after each successful run, so silence is detectable',
@@ -41,6 +44,17 @@ export default class BackupEnablePlatform extends Command {
   async run(): Promise<void> {
     const { flags } = await this.parse(BackupEnablePlatform);
     printContextBanner();
+
+    const recipient =
+      flags.recipient ??
+      new SealedPlatformIdentity(ProfileManager.getActiveProfile()).recipient();
+    if (!recipient) {
+      this.error(
+        'No platform backup key yet. Create one in your vault first:\n' +
+          '  flui backup platform init',
+        { exit: 1 },
+      );
+    }
 
     const { id: clusterId } = await resolveClusterRef(flags.cluster);
     const client = BackupClient.fromConfig();
@@ -64,7 +78,7 @@ export default class BackupEnablePlatform extends Command {
       // Sealing is configured after the policy exists, so a policy that failed
       // to be created never leaves a recipient recorded against nothing.
       await client.setPlatformConfig(policy.id, {
-        recipient: flags.recipient,
+        recipient,
         heartbeatUrl: flags['heartbeat-url'],
       });
       spinner.succeed('Platform backup enabled');
@@ -75,8 +89,9 @@ export default class BackupEnablePlatform extends Command {
       );
       console.log(
         chalk.yellow(
-          '   Keep the age identity somewhere this cluster is not. Without it the\n' +
-            '   backup cannot be opened, and a rebuild has nothing to start from.',
+          '   Keep the recovery copy from `flui backup platform init` somewhere this\n' +
+            '   cluster and this machine are not. It opens with your vault passphrase;\n' +
+            '   without it a rebuild has nothing to start from.',
         ),
       );
       console.log(

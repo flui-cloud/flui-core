@@ -5,10 +5,13 @@ import { Command, Flags } from '@oclif/core';
 import chalk from 'chalk';
 import { promptMaskedInput } from '../../../lib/prompts';
 import {
+  identitiesIn,
   openPlatformDump,
   SecureKeyFile,
   writeSecureKeys,
 } from '../../../lib/platform-dump';
+import { ProfileManager } from '../../../lib/profile-manager';
+import { SealedPlatformIdentity } from '../../../lib/vault/sealed-platform-identity';
 
 // age-encryption is ESM-only; the Function indirection keeps a genuine dynamic
 // import that survives the tsc→CommonJS rewrite. Same trick as `platform init`.
@@ -43,12 +46,13 @@ interface KeyBundleManifest {
 export default class BackupPlatformRestore extends Command {
   static readonly description =
     'Open a platform backup: decrypt the sealed key bundle and the control-plane ' +
-    'dump with your offline age identity, and write out everything a fresh ' +
-    'installation needs to become this one again.';
+    'dump with the key kept in your vault — or, when this machine is gone, the ' +
+    'recovery copy — and write out everything a fresh installation needs to ' +
+    'become this one again.';
 
   static readonly examples = [
-    '<%= config.bin %> <%= command.id %> --bundle ./keybundle.age --dump ./flui-pg.dump.gz.enc --identity ./flui-master-recovery.age',
-    '<%= config.bin %> <%= command.id %> --bundle ./keybundle.age --dump ./flui-pg.dump.gz.enc --identity ./recovery.age --out ./rebuild',
+    '<%= config.bin %> <%= command.id %> --bundle ./keybundle.age --dump ./flui-pg.dump.gz.enc',
+    '<%= config.bin %> <%= command.id %> --bundle ./keybundle.age --dump ./flui-pg.dump.gz.enc --identity ./flui-staging-platform-recovery.age --out ./rebuild',
   ];
 
   static readonly flags = {
@@ -62,13 +66,12 @@ export default class BackupPlatformRestore extends Command {
         'Path to the encrypted control-plane dump (flui-pg.dump.gz.enc)',
     }),
     identity: Flags.string({
-      required: true,
       description:
-        'Path to the recovery file written by `flui backup platform init`',
+        'Recovery copy written by `flui backup platform init`. Omit it to use the keys in your vault.',
     }),
     passphrase: Flags.string({
       description:
-        'Passphrase protecting the recovery file (prompted if omitted)',
+        'Passphrase of the recovery copy — your vault passphrase (prompted if omitted)',
     }),
     out: Flags.string({
       default: './flui-rebuild',
@@ -89,40 +92,23 @@ export default class BackupPlatformRestore extends Command {
       );
     }
 
-    const passphrase =
-      flags.passphrase ??
-      (await promptMaskedInput('Passphrase for the recovery file: '));
-    if (!passphrase)
-      this.error('A passphrase is required to open the identity.');
-
     const age = await loadAge();
+    const identities = flags.identity
+      ? await this.recoveryIdentities(age, flags.identity, flags.passphrase)
+      : this.vaultIdentities();
 
-    // 1. recovery file (passphrase) → the age identity
-    let identity: string;
-    try {
-      const armored = fs.readFileSync(flags.identity, 'utf-8');
-      const decrypter = new age.Decrypter();
-      decrypter.addPassphrase(passphrase);
-      const opened = await decrypter.decrypt(age.armor.decode(armored));
-      identity = new TextDecoder().decode(opened).trim();
-    } catch (err) {
-      this.error(
-        `Could not open the recovery file — wrong passphrase, or not a recovery file: ${(err as Error).message}`,
-      );
-    }
-
-    // 2. identity → the sealed key bundle
+    // 2. identities → the sealed key bundle
     let manifest: KeyBundleManifest;
     try {
       const decrypter = new age.Decrypter();
-      decrypter.addIdentity(identity);
+      for (const identity of identities) decrypter.addIdentity(identity);
       const gz = await decrypter.decrypt(
         new Uint8Array(fs.readFileSync(flags.bundle)),
       );
       manifest = JSON.parse(gunzipSync(Buffer.from(gz)).toString('utf-8'));
     } catch (err) {
       this.error(
-        `Could not open the key bundle with this identity: ${(err as Error).message}`,
+        `Could not open the key bundle with ${identities.length === 1 ? 'this key' : `any of these ${identities.length} keys`}: ${(err as Error).message}`,
       );
     }
 
@@ -209,6 +195,45 @@ export default class BackupPlatformRestore extends Command {
     }
 
     this.report(manifest, outDir, written, secrets);
+  }
+
+  private vaultIdentities(): string[] {
+    try {
+      return new SealedPlatformIdentity(
+        ProfileManager.getActiveProfile(),
+      ).identities();
+    } catch (err) {
+      this.error(
+        `${(err as Error).message}\n  Or open the recovery copy instead: --identity <file>`,
+      );
+    }
+  }
+
+  private async recoveryIdentities(
+    age: AgeModule,
+    file: string,
+    provided?: string,
+  ): Promise<string[]> {
+    const passphrase =
+      provided ??
+      (await promptMaskedInput(
+        'Passphrase of the recovery copy (your vault passphrase): ',
+      ));
+    if (!passphrase) this.error('A passphrase is required to open the copy.');
+    try {
+      const decrypter = new age.Decrypter();
+      decrypter.addPassphrase(passphrase);
+      const opened = await decrypter.decrypt(
+        age.armor.decode(fs.readFileSync(file, 'utf-8')),
+      );
+      const identities = identitiesIn(new TextDecoder().decode(opened));
+      if (identities.length === 0) throw new Error('it holds no age key');
+      return identities;
+    } catch (err) {
+      this.error(
+        `Could not open the recovery copy — wrong passphrase, or not a recovery copy: ${(err as Error).message}`,
+      );
+    }
   }
 
   private decryptDump(framed: Buffer, dek: Buffer): Buffer {

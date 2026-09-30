@@ -2,6 +2,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import {
+  identitiesIn,
   openPlatformDump,
   PlatformDumpError,
   writeSecureKeys,
@@ -101,5 +102,17 @@ describe('openPlatformDump', () => {
     expect(() => openPlatformDump(framed, Buffer.from('short'))).toThrow(
       PlatformDumpError,
     );
+  });
+});
+
+describe('identitiesIn', () => {
+  it('reads every age key of a recovery copy and nothing else', () => {
+    const a = `AGE-SECRET-KEY-${'A'.repeat(20)}`;
+    const b = `AGE-SECRET-KEY-${'B'.repeat(20)}`;
+    expect(identitiesIn(`# created\n${a}\n\n  ${b}  \n`)).toEqual([a, b]);
+  });
+
+  it('finds none in text that holds no key', () => {
+    expect(identitiesIn('not a key\n')).toEqual([]);
   });
 });

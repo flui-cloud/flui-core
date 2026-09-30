@@ -104,3 +104,14 @@ function refuseSymlinks(root: string, target: string): void {
     }
   }
 }
+
+/**
+ * The age keys in a recovery copy: one per line, as an age identity file holds
+ * them. Blank lines and `#` comments are not keys.
+ */
+export function identitiesIn(text: string): string[] {
+  return text
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.startsWith('AGE-SECRET-KEY-'));
+}
