@@ -149,11 +149,17 @@ function credentialText(item: CredentialsStatusItemDto): {
   const label = item.label;
   switch (item.status) {
     case CredentialStatus.MISSING:
+      if (item.kind === CredentialKind.GITHUB_PAT) {
+        return {
+          title: 'Connect your GitHub account',
+          detail: 'Save a personal access token to reach your repositories',
+        };
+      }
       if (item.kind === CredentialKind.GITHUB_APP) {
         return item.actionUrl === GITHUB_SETUP_PATH
           ? {
               title: 'Set up GitHub',
-              detail: 'No GitHub App is configured for this installation yet',
+              detail: 'GitHub is not connected to this installation yet',
             }
           : {
               title: 'Connect your GitHub account',

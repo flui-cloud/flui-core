@@ -18,6 +18,8 @@ export enum CredentialStatus {
 
 export enum CredentialKind {
   GITHUB_APP = 'GITHUB_APP',
+  /** The person's own GitHub token, where the installation connects GitHub with tokens. */
+  GITHUB_PAT = 'GITHUB_PAT',
   GHCR_PAT = 'GHCR_PAT',
   PROVIDER = 'PROVIDER',
 }

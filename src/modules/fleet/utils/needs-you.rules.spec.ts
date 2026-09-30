@@ -117,6 +117,20 @@ describe('credentialItems', () => {
     expect(linked.title).toBe('Connect your GitHub account');
     expect(setup.title).toBe('Set up GitHub');
   });
+
+  it('asks for a token, never for a GitHub App, where the installation uses tokens', () => {
+    const [item] = credentialItems([
+      {
+        ...base,
+        kind: CredentialKind.GITHUB_PAT,
+        status: CredentialStatus.MISSING,
+        actionUrl: '/apps/repositories',
+      },
+    ]);
+    expect(item.title).toBe('Connect your GitHub account');
+    expect(item.detail).not.toMatch(/GitHub App/);
+    expect(item.credential).toMatchObject({ kind: 'github_pat' });
+  });
 });
 
 describe('backupItem', () => {

@@ -4,10 +4,20 @@ jest.mock('@octokit/auth-app', () => ({ createAppAuth: jest.fn() }));
 
 import { CredentialsStatusService } from './credentials-status.service';
 import { markCredentialsChanged } from '../credentials-version';
-import { CredentialStatus } from '../../repositories/dto/ghcr-pat.dto';
+import {
+  CredentialKind,
+  CredentialStatus,
+} from '../../repositories/dto/ghcr-pat.dto';
+import { GitHubAuthMethod } from '../../repositories/enums/github-auth-method.enum';
 
 describe('CredentialsStatusService', () => {
-  const make = (opts: { token?: boolean; ghcr?: CredentialStatus } = {}) => {
+  const make = (
+    opts: {
+      token?: boolean;
+      ghcr?: CredentialStatus;
+      mode?: GitHubAuthMethod | null;
+    } = {},
+  ) => {
     const tokens = {
       findOne: jest.fn(async () => (opts.token ? { id: 't' } : null)),
     };
@@ -18,7 +28,13 @@ describe('CredentialsStatusService', () => {
         })),
       } as any,
       { getUserProviderConfigurations: jest.fn(async () => []) } as any,
-      { isConfigured: jest.fn(async () => true) } as any,
+      {
+        getConfig: jest.fn(async () =>
+          opts.mode === null
+            ? null
+            : { authMethod: opts.mode ?? GitHubAuthMethod.GITHUB_APP },
+        ),
+      } as any,
       tokens as any,
     );
     return { service, tokens };
@@ -56,6 +72,45 @@ describe('CredentialsStatusService', () => {
     expect(status.items[0]).toMatchObject({
       label: 'Your GitHub account',
       status: CredentialStatus.MISSING,
+    });
+  });
+
+  it('counts a connected token as GitHub connected where the installation uses tokens', async () => {
+    const { service } = make({
+      mode: GitHubAuthMethod.PAT,
+      ghcr: CredentialStatus.UNKNOWN_EXPIRY,
+    });
+    const status = await service.getStatus('a');
+    const github = status.items.filter(
+      (i) => i.kind !== CredentialKind.PROVIDER,
+    );
+    expect(github).toEqual([
+      expect.objectContaining({
+        kind: CredentialKind.GITHUB_PAT,
+        label: 'Your GitHub token',
+      }),
+    ]);
+    expect(status.overallStatus).toBe(CredentialStatus.VALID);
+  });
+
+  it('asks for the token where the installation uses tokens and none is saved', async () => {
+    const { service } = make({
+      mode: GitHubAuthMethod.PAT,
+      ghcr: CredentialStatus.MISSING,
+    });
+    const status = await service.getStatus('a');
+    expect(status.items[0]).toMatchObject({
+      kind: CredentialKind.GITHUB_PAT,
+      status: CredentialStatus.MISSING,
+    });
+  });
+
+  it('points to the setup when GitHub is not set up at all', async () => {
+    const { service } = make({ mode: null });
+    const status = await service.getStatus('a');
+    expect(status.items[0]).toMatchObject({
+      kind: CredentialKind.GITHUB_APP,
+      actionUrl: '/apps/repositories/github-setup',
     });
   });
 });

@@ -12,6 +12,7 @@ import {
   CredentialsStatusResponseDto,
 } from '../../repositories/dto/ghcr-pat.dto';
 import { credentialsVersion } from '../credentials-version';
+import { GitHubAuthMethod } from '../../repositories/enums/github-auth-method.enum';
 
 const REPOSITORIES_PATH = '/apps/repositories';
 const GITHUB_SETUP_PATH = '/apps/repositories/github-setup';
@@ -54,11 +55,17 @@ export class CredentialsStatusService {
 
     const items: CredentialsStatusItemDto[] = [];
 
-    items.push(
-      await this.buildGithubAppItem(userId),
-      await this.buildGhcrPatItem(userId),
-      ...(await this.buildProviderItems()),
-    );
+    const config = await this.integrationConfig.getConfig();
+    // With tokens, the person's one GitHub token is both the connection and
+    // the registry token, so it is reported once, as the GitHub connection.
+    const githubItems =
+      config?.authMethod === GitHubAuthMethod.PAT
+        ? [await this.buildGithubPatItem(userId)]
+        : [
+            await this.buildGithubAppItem(userId, config !== null),
+            await this.buildGhcrPatItem(userId),
+          ];
+    items.push(...githubItems, ...(await this.buildProviderItems()));
 
     const overallStatus = items.reduce<CredentialStatus>(
       (worst, item) =>
@@ -75,11 +82,11 @@ export class CredentialsStatusService {
 
   private async buildGithubAppItem(
     userId: string,
+    instanceConfigured: boolean,
   ): Promise<CredentialsStatusItemDto> {
     const token = await this.githubTokenRepo.findOne({
       where: { fluiUserId: userId },
     });
-    const instanceConfigured = await this.integrationConfig.isConfigured();
     const actionUrl = instanceConfigured
       ? REPOSITORIES_PATH
       : GITHUB_SETUP_PATH;
@@ -90,6 +97,20 @@ export class CredentialsStatusService {
       expiresAt: null,
       daysUntilExpiry: null,
       actionUrl,
+    };
+  }
+
+  private async buildGithubPatItem(
+    userId: string,
+  ): Promise<CredentialsStatusItemDto> {
+    const status = await this.userAuth.getGhcrPatStatus(userId);
+    return {
+      kind: CredentialKind.GITHUB_PAT,
+      label: 'Your GitHub token',
+      status: status.status ?? CredentialStatus.MISSING,
+      expiresAt: status.expiresAt ?? null,
+      daysUntilExpiry: status.daysUntilExpiry ?? null,
+      actionUrl: REPOSITORIES_PATH,
     };
   }
 

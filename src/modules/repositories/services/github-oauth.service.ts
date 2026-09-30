@@ -13,6 +13,7 @@ import { GitProvider } from '../entities/repository.entity';
 import { GitHubAuthMethod } from '../enums/github-auth-method.enum';
 import { GitHubIntegrationConfigService } from './github-integration-config.service';
 import { GitHubAppService } from './github-app.service';
+import { markCredentialsChanged } from '../../credentials/credentials-version';
 import {
   GitHubOAuthStatusResponseDto,
   ConnectPatResponseDto,
@@ -64,12 +65,20 @@ export class GitHubOAuthService {
 
     let githubUserId: string;
     let githubUsername: string;
+    let grantedScopes: string;
 
     try {
       const octokit = new Octokit({ auth: pat });
-      const { data } = await octokit.users.getAuthenticated();
-      githubUserId = data.id.toString();
-      githubUsername = data.login;
+      const response = await octokit.users.getAuthenticated();
+      githubUserId = response.data.id.toString();
+      githubUsername = response.data.login;
+      grantedScopes = (
+        (response.headers as Record<string, string>)['x-oauth-scopes'] ?? ''
+      )
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean)
+        .join(' ');
     } catch {
       throw new BadRequestException(
         'Invalid Personal Access Token. Make sure it has the required scopes: repo, user:email',
@@ -86,12 +95,15 @@ export class GitHubOAuthService {
       provider: GitProvider.GITHUB,
       credentialType: GitHubAuthMethod.PAT,
       accessTokenEncrypted: this.encryptionService.encrypt(pat),
-      scope: this.oauthScopes.join(' '),
+      // A fine-grained token reports no scopes at all; only then is the
+      // required list recorded, since nothing better is known.
+      scope: grantedScopes || this.oauthScopes.join(' '),
       tokenType: 'Bearer',
       githubUserId,
       githubUsername,
       isActive: true,
     });
+    markCredentialsChanged();
 
     this.logger.log(
       `GitHub PAT connected for user ${userId} (GitHub: ${githubUsername})`,
@@ -152,6 +164,7 @@ export class GitHubOAuthService {
   async revokeAccess(userId: string): Promise<void> {
     const credential = await this.getActiveCredential(userId);
     await this.credentialsRepository.revoke(credential.id);
+    markCredentialsChanged();
     this.logger.log(`Deactivated GitHub credential for user ${userId}`);
   }
 
