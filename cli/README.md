@@ -58,8 +58,9 @@ flui deploy                                  # deploy a flui.yaml from the curre
 ```
 
 For source-built apps (`kind: Application`, built from a GitHub repo)
-you also need to install the Flui GitHub App and save a GHCR PAT first
-— see [Integrations](https://docs.flui.cloud/cli/integrations/).
+you also need to connect GitHub first — `flui integration connect github`
+with a personal access token, the recommended setup — see
+[Integrations](https://docs.flui.cloud/cli/integrations/).
 Pre-built CatalogApps (`kind: CatalogApp`) skip all of that and deploy
 straight from `flui deploy` against any public image registry. The
 manifest reference is on [Deploy](https://docs.flui.cloud/cli/deploy/).
@@ -68,20 +69,20 @@ manifest reference is on [Deploy](https://docs.flui.cloud/cli/deploy/).
 
 Commands are grouped into topics; each verb has its own `--help`.
 
-| Topic | What it does |
-| --- | --- |
-| `env` | Lifecycle of the **control cluster** — create, inspect, scale, destroy. |
-| `cluster` / `node` | Workload-cluster destroy and worker-node add/remove/list. |
-| `app` | Inspect, scale, restart, snapshot, redeploy, and delete applications; read logs, metrics, and crash reports. |
-| `deploy` / `catalog` | Deploy from a `flui.yaml` manifest; validate the manifest offline. |
-| `integration` / `repo` | Connect the Flui GitHub App, save a GHCR PAT, and import repositories — prerequisites for the first source-built deploy. |
-| `template` | Create a new repository from a Flui framework template. |
-| `backup` | Manage backup destinations, policies, jobs, and restores. |
-| `auth` | OIDC login and long-lived M2M API keys. |
-| `context` / `config` | Profiles (isolated installations) and layered configuration. |
-| `server-types` / `ssh` | List provider server sizes; SSH into a node. |
-| `dev` | Helpers for Flui contributors (export secrets, SSH tunnel). |
-| `dns` / `reconcile` / `update` | Maintenance utilities. |
+| Topic                          | What it does                                                                                                                                |
+| ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| `env`                          | Lifecycle of the **control cluster** — create, inspect, scale, destroy.                                                                     |
+| `cluster` / `node`             | Workload-cluster destroy and worker-node add/remove/list.                                                                                   |
+| `app`                          | Inspect, scale, restart, snapshot, redeploy, and delete applications; read logs, metrics, and crash reports.                                |
+| `deploy` / `catalog`           | Deploy from a `flui.yaml` manifest; validate the manifest offline.                                                                          |
+| `integration` / `repo`         | Connect GitHub (a personal access token, or the Flui GitHub App) and import repositories — prerequisites for the first source-built deploy. |
+| `template`                     | Create a new repository from a Flui framework template.                                                                                     |
+| `backup`                       | Manage backup destinations, policies, jobs, and restores.                                                                                   |
+| `auth`                         | OIDC login and long-lived M2M API keys.                                                                                                     |
+| `context` / `config`           | Profiles (isolated installations) and layered configuration.                                                                                |
+| `server-types` / `ssh`         | List provider server sizes; SSH into a node.                                                                                                |
+| `dev`                          | Helpers for Flui contributors (export secrets, SSH tunnel).                                                                                 |
+| `dns` / `reconcile` / `update` | Maintenance utilities.                                                                                                                      |
 
 Per-topic reference pages: see [docs.flui.cloud/cli](https://docs.flui.cloud/cli/).
 
@@ -96,7 +97,7 @@ A handful of flags recur across the CLI:
 - `--no-wait` / `--detach` — return as soon as the job is queued.
 - `-f, --force` / `-y, --yes` — skip confirmation on destructive
   operations.
-- `--dry-run` — print what *would* happen on a subset of mutating
+- `--dry-run` — print what _would_ happen on a subset of mutating
   commands.
 
 Commands that talk to the API print a short context banner before

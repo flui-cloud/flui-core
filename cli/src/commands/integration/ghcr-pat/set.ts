@@ -18,7 +18,7 @@ const DEFAULT_EXPIRY_DAYS = 90;
 
 export default class IntegrationGhcrPatSet extends Command {
   static readonly description =
-    'Save (or replace) the GitHub classic PAT used by Flui to pull container images from GHCR. Required for `flui deploy` to work — GitHub App and OAuth tokens cannot read container packages (see https://github.com/orgs/community/discussions/34084).';
+    'Save (or replace) the classic PAT Flui uses to pull container images from GHCR, on installations that connect GitHub with a GitHub App: App and OAuth tokens cannot read container packages (see https://github.com/orgs/community/discussions/34084). Where GitHub is connected with a personal access token, that token already does this.';
 
   static readonly examples = [
     '<%= config.bin %> <%= command.id %>',

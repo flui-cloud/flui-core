@@ -138,7 +138,7 @@ export default class IntegrationStatus extends Command {
         );
         console.log(
           chalk.dim(
-            '    Run `flui integration setup github` (PAT branch) to connect.',
+            '    Run `flui integration connect github` to connect with your token.',
           ),
         );
       }

@@ -6,7 +6,12 @@ import {
   resolveClusterId,
   ToolDef,
 } from './mcp-tool.util';
-import { UiOpenUrlAction, UiSubmitFormAction } from './handover';
+import {
+  UiOpenUrlAction,
+  UiSubmitFormAction,
+  inTheDashboard,
+  runCommand,
+} from './handover';
 import {
   MapDetail,
   projectRepositoryApply,
@@ -166,7 +171,7 @@ export const REPO_TOOLS: ToolDef[] = [
       if (s.connected) return s;
       return {
         ...s,
-        note: 'Not connected, so nothing can be deployed from a repository yet. Two different things produce this: the instance may have no Flui GitHub App configured (github_setup, which needs permission to manage integrations and is refused on an agent key), or it has one and this person has not installed it (github_connect). Try github_connect first and relay what it answers; never claim which it was without checking.',
+        note: 'Not connected, so nothing can be deployed from a repository yet. Two different things produce this: GitHub may not be set up on this instance at all, or it is and this person has not connected their account. github_connect tells them apart and hands over the right step, whether the instance uses personal access tokens (the recommended setup) or a GitHub App: call it and relay what it answers; never claim which it was without checking.',
       };
     },
   }),
@@ -174,7 +179,7 @@ export const REPO_TOOLS: ToolDef[] = [
     name: 'github_setup',
     routes: ['POST /repositories/github/setup/github-app/manifest-start'],
     description:
-      "Configure the Flui GitHub App on THIS instance (one-time, required before anyone can connect repositories); it needs the permission to manage integrations. Returns a ui_action that submits a prefilled GitHub 'create app from manifest' form — the person confirms it in the browser and the App credentials are stored automatically. You do not create anything yourself. If GitHub is already configured, use github_connect instead. Expect a refusal on an agent API key: `integration:manage` is carried by no `mcp:*` scope on purpose, so this one only works through the in-product assistant or a credential that declares no scopes — if it comes back CREDENTIAL_SCOPE_CEILING, say so and stop rather than retrying.",
+      "Configure GitHub on THIS instance with a GitHub App (one-time, required before anyone can connect repositories); it needs the permission to manage integrations. Personal access tokens are the recommended setup and need no App: a person chooses them in the dashboard under Repositories → GitHub Setup, or with `flui integration setup github`, so offer that first and use this tool only when they want a GitHub App. Returns a ui_action that submits a prefilled GitHub 'create app from manifest' form — the person confirms it in the browser and the App credentials are stored automatically. You do not create anything yourself. If GitHub is already configured, use github_connect instead. Expect a refusal on an agent API key: `integration:manage` is carried by no `mcp:*` scope on purpose, so this one only works through the in-product assistant or a credential that declares no scopes — if it comes back CREDENTIAL_SCOPE_CEILING, say so and stop rather than retrying.",
     scope: MCP_SCOPE.APP_READ,
     inputSchema: { name: z.string().optional() },
     // Decision 40: the `if (!ctx.user.isAdmin) throw` that used to stand here
@@ -206,14 +211,47 @@ export const REPO_TOOLS: ToolDef[] = [
   }),
   defineTool({
     name: 'github_connect',
-    routes: ['GET /repositories/github-app/install-url'],
+    routes: [
+      'GET /repositories/github/setup/status',
+      'GET /repositories/github/status',
+      'GET /repositories/github-app/install-url',
+    ],
     description:
-      "Begin connecting the user's GitHub account to Flui (needed to deploy from a repository). Returns either { alreadyConnected } or a ui_action with a URL the USER opens in their browser to authorize — you do NOT perform the OAuth yourself. After they authorize, repositories can be connected.",
+      "Begin connecting the user's GitHub account to Flui (needed to deploy from a repository). Returns { alreadyConnected } or the step the PERSON takes: where the instance uses personal access tokens, the command or screen where they paste their own token — you never ask for it, hold it or relay it; where it uses a GitHub App, a ui_action with a URL they open to authorize — you do NOT perform the OAuth yourself. After they connect, repositories can be connected.",
     scope: MCP_SCOPE.APP_READ,
     inputSchema: {},
     // `GET /repositories/github-app/install-url` is the same flow the dashboard
     // opens — the service method this used to call exists to mirror it.
     run: async (_args, ctx) => {
+      const setup = await ctx.api.get<{
+        configured?: boolean;
+        authMethod?: string | null;
+      }>('/repositories/github/setup/status');
+      if (setup.configured === false) {
+        return {
+          alreadyConnected: false,
+          configured: false,
+          note: 'GitHub is not set up on this installation yet, so nobody can connect an account. A person allowed to manage integrations sets it up — personal access tokens are the recommended choice (dashboard: Repositories → GitHub Setup, or `flui integration setup github`); github_setup only for a GitHub App.',
+        };
+      }
+      if (setup.authMethod === 'pat') {
+        const status = await ctx.api.get<{
+          connected?: boolean;
+          githubUsername?: string;
+        }>('/repositories/github/status');
+        if (status.connected) {
+          return { alreadyConnected: true, login: status.githubUsername };
+        }
+        return {
+          alreadyConnected: false,
+          method: 'personal_access_token',
+          ...runCommand('flui integration connect github', 'Connect GitHub'),
+          orInTheDashboard: inTheDashboard(
+            'Repositories',
+            'paste a classic personal access token to connect GitHub',
+          ),
+        };
+      }
       const flow = await ctx.api.get<{
         alreadyConnected: boolean;
         login?: string;

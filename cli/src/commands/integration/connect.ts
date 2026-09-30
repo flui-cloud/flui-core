@@ -5,6 +5,13 @@ import * as http from 'node:http';
 import { ApiClient, ApiError } from '../../lib/api-client';
 import { ConfigStorage } from '../../lib/config-storage';
 import {
+  patErrorLabel,
+  printValidation,
+  promptForValidPat,
+  validatePat,
+} from '../../lib/github-pat';
+import { stdinRequested, stdinValue } from '../../lib/stdin-value';
+import {
   findFreeCallbackPort,
   openInBrowser,
   renderPage,
@@ -17,6 +24,16 @@ interface InstallUrlResponse {
   state?: string;
 }
 
+interface SetupStatus {
+  configured: boolean;
+  authMethod: 'pat' | 'github_app' | null;
+}
+
+interface ConnectionStatus {
+  connected: boolean;
+  githubUsername?: string;
+}
+
 interface CallbackResult {
   status: 'connected' | 'error';
   login?: string;
@@ -27,11 +44,12 @@ const CONNECT_TIMEOUT_MS = 5 * 60 * 1000;
 
 export default class IntegrationConnect extends Command {
   static readonly description =
-    'Connect a third-party integration to your Flui account. Currently supports GitHub: opens a browser to install the Flui GitHub App, then waits for the local callback to confirm the connection.';
+    'Connect your GitHub account to Flui. Where the installation connects GitHub with personal access tokens (the recommended setup) it asks for your token, or reads it with --stdin; where it uses a GitHub App it opens a browser to install the App and waits for the local callback.';
 
   static readonly examples = [
     '<%= config.bin %> <%= command.id %> github',
     '<%= config.bin %> <%= command.id %> github --headless',
+    'printf %s "$GITHUB_TOKEN" | <%= config.bin %> <%= command.id %> github --stdin',
   ];
 
   static readonly args = {
@@ -48,6 +66,11 @@ export default class IntegrationConnect extends Command {
         'Print the install URL instead of opening a browser (useful over SSH)',
       default: false,
     }),
+    stdin: Flags.boolean({
+      description:
+        'Read the personal access token from standard input rather than prompting (installations that use tokens).',
+      default: false,
+    }),
   };
 
   async run(): Promise<void> {
@@ -60,6 +83,18 @@ export default class IntegrationConnect extends Command {
 
     if (args.provider !== 'github') {
       this.error(`Unknown provider "${args.provider}"`, { exit: 1 });
+    }
+
+    const setup = await api
+      .get<SetupStatus>('/repositories/github/setup/status')
+      .catch(() => null);
+    if (setup && !setup.configured) {
+      this.printNotConfigured(apiUrl);
+      this.exit(1);
+    }
+    if (setup?.authMethod === 'pat') {
+      await this.connectWithToken(api, flags.headless);
+      return;
     }
 
     const port = await findFreeCallbackPort();
@@ -148,6 +183,84 @@ export default class IntegrationConnect extends Command {
     this.exit(1);
   }
 
+  private async connectWithToken(
+    api: ApiClient,
+    headless: boolean,
+  ): Promise<void> {
+    const current = await api
+      .get<ConnectionStatus>('/repositories/github/status')
+      .catch(() => null);
+    if (current?.connected && !stdinRequested()) {
+      console.log(
+        chalk.green(
+          `\n  ✔ GitHub is already connected as ${chalk.bold(current.githubUsername ?? '?')}.`,
+        ),
+      );
+      console.log(
+        chalk.dim(
+          '  To replace the token, pipe the new one in with --stdin.\n',
+        ),
+      );
+      return;
+    }
+
+    let token: string;
+    try {
+      if (stdinRequested()) {
+        token = stdinValue();
+        if (!token) this.error('Nothing was read from standard input.');
+        const validation = await validatePat(api, token);
+        if (!validation.valid) {
+          this.error(patErrorLabel(validation.error, validation.message));
+        }
+        printValidation(validation);
+      } else {
+        const chosen = await promptForValidPat(api, headless);
+        if (!chosen) return;
+        token = chosen.token;
+      }
+      const spinner = ora('Connecting…').start();
+      const result = await api
+        .post<{ githubUsername?: string }>('/repositories/github/connect-pat', {
+          personalAccessToken: token,
+        })
+        .finally(() => spinner.stop());
+      console.log(
+        chalk.green(
+          `\n  ✔ GitHub connected as ${chalk.bold(result.githubUsername ?? '?')}.\n`,
+        ),
+      );
+      console.log(
+        chalk.dim(
+          `  Next: \`flui repo connect <owner/repo>\` to make a repository deployable.\n`,
+        ),
+      );
+    } catch (error: unknown) {
+      if (error instanceof ApiError) {
+        this.error(`${error.statusCode}: ${error.message}`);
+      }
+      throw error;
+    }
+  }
+
+  private printNotConfigured(apiUrl: string): void {
+    const dashboardHint = apiUrl.replace(/\/api(\/v1)?$/, '');
+    console.log('');
+    console.log(
+      chalk.yellow(
+        "  This Flui instance doesn't have a GitHub integration configured yet.",
+      ),
+    );
+    console.log('');
+    console.log(
+      `  An administrator runs: ${chalk.cyan('flui integration setup github')}`,
+    );
+    console.log(
+      chalk.dim(`  Or visits: ${dashboardHint}/apps/repositories/github-setup`),
+    );
+    console.log('');
+  }
+
   private handleInstallUrlError(error: unknown, apiUrl: string): void {
     const isNotConfigured =
       error instanceof ApiError &&
@@ -163,19 +276,7 @@ export default class IntegrationConnect extends Command {
       return;
     }
 
-    const dashboardHint = apiUrl.replace(/\/api(\/v1)?$/, '');
-    console.log('');
-    console.log(
-      chalk.yellow(
-        "  This Flui instance doesn't have a GitHub integration configured yet.",
-      ),
-    );
-    console.log('');
-    console.log(`  Run: ${chalk.cyan('flui integration setup github')}`);
-    console.log(
-      chalk.dim(`  Or visit: ${dashboardHint}/apps/repositories/github-setup`),
-    );
-    console.log('');
+    this.printNotConfigured(apiUrl);
   }
 
   private waitForCallback(port: number): Promise<CallbackResult> {

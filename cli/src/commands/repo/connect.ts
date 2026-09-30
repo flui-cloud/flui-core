@@ -100,8 +100,9 @@ export default class RepoConnect extends Command {
       }
       console.log(
         chalk.dim(
-          '\n  If the repository is private or was just created, the GitHub App may not yet ' +
-            'have access to it. Add it on github.com/settings/installations and retry.\n',
+          '\n  If the repository is private or was just created, your GitHub connection may not ' +
+            'reach it yet: give the token access to it or, with a GitHub App, add it on ' +
+            'github.com/settings/installations, then retry.\n',
         ),
       );
       this.exit(1);
@@ -166,7 +167,7 @@ export default class RepoConnect extends Command {
       console.log(
         chalk.dim(
           '\n  No repositories available to connect (all are already connected, ' +
-            'or the GitHub App has no repos selected on its installation).\n',
+            'or your GitHub connection reaches none of them).\n',
         ),
       );
       return undefined;

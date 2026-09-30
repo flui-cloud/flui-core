@@ -1293,8 +1293,8 @@ export class ApplicationSourceDeployService {
       if (installations.length === 0) {
         throw new BadRequestException(
           'GitHub integration is not connected. ' +
-            'Connect your GitHub account from the Flui dashboard under Settings → Integrations, ' +
-            'then re-run `flui deploy`.',
+            'Connect it with `flui integration connect github` or on the Repositories page ' +
+            'of the dashboard, then re-run `flui deploy`.',
         );
       }
       return;
@@ -1307,8 +1307,8 @@ export class ApplicationSourceDeployService {
     if (!status.connected) {
       throw new BadRequestException(
         'GitHub integration is not connected. ' +
-          'Connect your GitHub account from the Flui dashboard under Settings → Integrations, ' +
-          'then re-run `flui deploy`.',
+          'Connect it with `flui integration connect github` or on the Repositories page ' +
+          'of the dashboard, then re-run `flui deploy`.',
       );
     }
   }

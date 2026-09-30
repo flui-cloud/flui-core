@@ -381,7 +381,7 @@ export default class Deploy extends Command {
       if (/GitHub integration is not connected/i.test(msg)) {
         console.log(
           chalk.yellow(
-            '  Hint: run `flui integration connect github` to install the Flui GitHub App.\n',
+            '  Hint: run `flui integration connect github` to connect your GitHub account.\n',
           ),
         );
       } else if (/GHCR PAT/i.test(msg)) {

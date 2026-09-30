@@ -204,7 +204,7 @@ export class GhcrPackagesService {
           ? 'read:packages + delete:packages'
           : 'read:packages + write:packages';
         throw new ForbiddenException(
-          `Insufficient permissions for ${context}. The stored GHCR PAT must be a classic personal access token with the ${required} scopes. Update it via POST /github-app/oauth/ghcr-pat.`,
+          `Insufficient permissions for ${context}. The GitHub token Flui uses for packages must be a classic personal access token with the ${required} scopes. Replace it on the Repositories page of the dashboard.`,
         );
       }
       case 401:

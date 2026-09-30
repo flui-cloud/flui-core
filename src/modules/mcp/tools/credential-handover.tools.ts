@@ -14,11 +14,11 @@ import { inTheDashboard, runCommand } from './handover';
  * mail provider or a backup target had nothing to offer but a wall.
  *
  * Seven tools for eight ratified rows: two of them — "the GitHub PAT" and "the
- * packages token" — turn out to name **one** destination in the product.
- * `flui integration connect github` installs the App and stores no PAT; the
- * only personal access token Flui keeps is the GHCR one, because GitHub App
- * tokens cannot read container packages. An eighth tool would have been a tool
- * for a credential that does not exist.
+ * packages token" — name **one** stored credential. Where GitHub is connected
+ * with a personal access token, that token is also the packages token; where it
+ * is connected with a GitHub App, the packages token is the only personal token
+ * Flui keeps, because App tokens cannot read container packages. Connecting the
+ * account itself is `github_connect`'s handover, not a tool here.
  *
  * **What every one of them refuses to do**, stated once because it is the whole
  * point:
@@ -109,7 +109,7 @@ export const CREDENTIAL_HANDOVER_TOOLS: ToolDef[] = [
     name: 'ghcr_token_request',
     routes: ['GET /repositories/github-app/packages-pat/status'],
     description:
-      'Ask a PERSON to supply the GitHub token Flui uses to pull container images from GHCR (required before `flui deploy` can pull a built image; GitHub App and OAuth tokens cannot read container packages). ' +
+      'Ask a PERSON to supply the GitHub token Flui uses to pull container images from GHCR (required before `flui deploy` can pull a built image). Where GitHub is connected with a personal access token that token already does it and this reports it as configured; with a GitHub App a separate token is needed, because App and OAuth tokens cannot read container packages. ' +
       'You must never hold, generate, guess or relay this token: there is no argument for it here. ' +
       'Returns whether one is configured and, if not, the command the person runs themselves — it prompts for the value and stores it encrypted. ' +
       'Reading tells you only WHETHER a token is set and when it expires, never WHAT it is.',

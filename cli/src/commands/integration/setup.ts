@@ -12,9 +12,9 @@ import {
 import {
   selectWithArrows,
   promptInput,
-  promptMaskedInput,
   confirmPrompt,
 } from '../../lib/prompts';
+import { promptForValidPat } from '../../lib/github-pat';
 
 interface SetupStatus {
   configured: boolean;
@@ -28,37 +28,12 @@ interface ManifestStartResponse {
   state: string;
 }
 
-interface PatValidationResult {
-  valid: boolean;
-  login?: string;
-  scopes?: string[];
-  missingScopes?: string[];
-  error?:
-    | 'empty_token'
-    | 'invalid_token'
-    | 'sso_required'
-    | 'github_unreachable';
-  message?: string;
-}
-
-const PAT_SCOPES = [
-  'repo',
-  'workflow',
-  'user:email',
-  'admin:repo_hook',
-  'write:packages',
-  'read:packages',
-  'delete:packages',
-];
-
-const PAT_DEEP_LINK = `https://github.com/settings/tokens/new?scopes=${PAT_SCOPES.join(',')}&description=Flui+CLI`;
-
 const MANIFEST_POLL_INTERVAL_MS = 2_000;
 const MANIFEST_POLL_TIMEOUT_MS = 10 * 60 * 1000;
 
 export default class IntegrationSetup extends Command {
   static readonly description =
-    'Guided GitHub integration setup (admin). Pick GitHub App (recommended, creates the App on GitHub via manifest flow) or Personal Access Token (validates and saves a token).';
+    'Guided GitHub integration setup (admin). Pick Personal Access Token (recommended: each person connects with a classic token) or GitHub App (for teams: creates one App on GitHub via the manifest flow).';
 
   static readonly examples = [
     '<%= config.bin %> <%= command.id %> github',
@@ -109,8 +84,8 @@ export default class IntegrationSetup extends Command {
     }
 
     const choice = await selectWithArrows('Choose setup method', [
-      { label: 'GitHub App (recommended) — one-click create on GitHub' },
-      { label: 'Personal Access Token — paste a classic PAT' },
+      { label: 'Personal Access Token (recommended) — paste a classic PAT' },
+      { label: 'GitHub App — for teams, one-click create on GitHub' },
     ]);
     if (choice === -1) {
       console.log(chalk.dim('\n  Cancelled.\n'));
@@ -118,9 +93,9 @@ export default class IntegrationSetup extends Command {
     }
 
     if (choice === 0) {
-      await this.runManifestFlow(api, apiUrl, flags.headless);
-    } else {
       await this.runPatFlow(api, flags.headless);
+    } else {
+      await this.runManifestFlow(api, apiUrl, flags.headless);
     }
   }
 
@@ -270,71 +245,16 @@ export default class IntegrationSetup extends Command {
   }
 
   private async runPatFlow(api: ApiClient, headless: boolean): Promise<void> {
-    console.log('');
-    console.log(
-      chalk.dim(
-        '  Create a classic PAT with the required scopes. The same token covers',
-      ),
-    );
-    console.log(
-      chalk.dim('  cloning private repos, webhooks, and GHCR container pulls.'),
-    );
-    console.log(`  ${chalk.cyan(PAT_DEEP_LINK)}`);
-    if (!headless) {
-      openInBrowser(PAT_DEEP_LINK);
+    let chosen: Awaited<ReturnType<typeof promptForValidPat>>;
+    try {
+      chosen = await promptForValidPat(api, headless);
+    } catch (error: unknown) {
+      console.log(chalk.red('  Validation failed'));
+      this.printApiError(error);
+      this.exit(1);
     }
-    console.log('');
-
-    let token = '';
-    let validation: PatValidationResult | null = null;
-
-    while (true) {
-      token = await promptMaskedInput('Paste your PAT');
-      if (!token) {
-        console.log(chalk.dim('  Cancelled.'));
-        return;
-      }
-
-      const spinner = ora('Validating token with GitHub…').start();
-      try {
-        validation = await api.post<PatValidationResult>(
-          '/repositories/github/validate-pat',
-          { token },
-        );
-        spinner.stop();
-      } catch (error: unknown) {
-        spinner.fail('Validation failed');
-        this.printApiError(error);
-        this.exit(1);
-      }
-
-      if (!validation?.valid) {
-        const label = patErrorLabel(validation?.error, validation?.message);
-        console.log(chalk.red(`  ✖ ${label}`));
-        const retry = await confirmPrompt('Try another token?', true);
-        if (!retry) return;
-        continue;
-      }
-
-      console.log(
-        chalk.green(
-          `  ✔ Authenticated as @${validation.login}. Scopes: ${(validation.scopes ?? []).join(', ') || '<none>'}`,
-        ),
-      );
-      if ((validation.missingScopes?.length ?? 0) > 0) {
-        console.log(
-          chalk.yellow(
-            `  ! Missing scopes: ${validation.missingScopes!.join(', ')}`,
-          ),
-        );
-        const cont = await confirmPrompt(
-          'Save anyway? (webhooks/packages may not work)',
-          false,
-        );
-        if (!cont) continue;
-      }
-      break;
-    }
+    if (!chosen) return;
+    const { token, validation } = chosen;
 
     const spinner = ora('Saving token…').start();
     try {
@@ -350,7 +270,7 @@ export default class IntegrationSetup extends Command {
     }
 
     console.log(
-      chalk.green(`\n  ✔ Connected as @${validation!.login} via PAT.\n`),
+      chalk.green(`\n  ✔ Connected as @${validation.login} via PAT.\n`),
     );
     console.log(
       chalk.dim(
@@ -370,21 +290,6 @@ export default class IntegrationSetup extends Command {
     } else {
       console.log(chalk.red(`  ${(error as Error).message}`));
     }
-  }
-}
-
-function patErrorLabel(error?: string, message?: string): string {
-  switch (error) {
-    case 'invalid_token':
-      return 'Invalid token — GitHub rejected it (401).';
-    case 'sso_required':
-      return 'Token needs SSO authorization for one of your orgs. Authorize on GitHub and try again.';
-    case 'empty_token':
-      return 'Token is empty.';
-    case 'github_unreachable':
-      return `Could not reach GitHub: ${message ?? 'unknown error'}`;
-    default:
-      return `Token validation failed${message ? `: ${message}` : '.'}`;
   }
 }
 
