@@ -31,6 +31,7 @@ spec:
     registry: ghcr.io
     repository: flui-cloud/flui-postgres
     tag: '17-dev'
+  imagePullPolicy: Always
 
   ports:
     - name: postgres

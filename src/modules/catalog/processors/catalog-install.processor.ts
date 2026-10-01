@@ -721,7 +721,7 @@ export class CatalogInstallProcessor {
       sourceConfig: {
         type: 'docker_image',
         imageRef,
-        pullPolicy: 'IfNotPresent',
+        pullPolicy: spec.imagePullPolicy ?? 'IfNotPresent',
       },
       env: env.map((e) => ({
         name: e.name,
@@ -1153,6 +1153,7 @@ export class CatalogInstallProcessor {
         {
           name: 'flui-mariadb-restore',
           image,
+          imagePullPolicy: 'Always',
           command: ['/usr/local/bin/restore.sh'],
           inheritAppEnv: true,
           // Writable here: this one exists to put a recovered data directory
@@ -1165,6 +1166,7 @@ export class CatalogInstallProcessor {
         {
           name: 'flui-binlog-shipper',
           image,
+          imagePullPolicy: 'Always',
           inheritAppEnv: true,
           mounts: [
             ...mounts(true),
@@ -1696,7 +1698,7 @@ export class CatalogInstallProcessor {
       sourceConfig: {
         type: 'docker_image',
         imageRef,
-        pullPolicy: 'IfNotPresent',
+        pullPolicy: component.imagePullPolicy ?? 'IfNotPresent',
       },
       env: env.map((e) => ({
         name: e.name,

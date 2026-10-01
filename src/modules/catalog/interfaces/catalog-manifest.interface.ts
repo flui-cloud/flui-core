@@ -81,6 +81,11 @@ export type CatalogExposure = 'public' | 'internal';
 export interface CatalogSpecStandalone {
   type: CatalogAppType.STANDALONE;
   image: CatalogImageSource;
+  /**
+   * `Always` for a tag that moves (`17-dev`): a node that already holds an
+   * older build under that tag would otherwise keep running it.
+   */
+  imagePullPolicy?: 'Always' | 'IfNotPresent';
   ports: CatalogPort[];
   volumes?: CatalogVolume[];
   /**
@@ -184,6 +189,11 @@ export interface CatalogLinkedEnv {
 export interface CatalogSpecBuildingBlock {
   type: CatalogAppType.BUILDING_BLOCK;
   image: CatalogImageSource;
+  /**
+   * `Always` for a tag that moves (`17-dev`): a node that already holds an
+   * older build under that tag would otherwise keep running it.
+   */
+  imagePullPolicy?: 'Always' | 'IfNotPresent';
   /** Set only on blocks that ARE a datastore (dbgate/minio and friends are not). */
   engine?: CatalogDbEngine;
   ports: CatalogPort[];
@@ -311,6 +321,11 @@ export type CatalogDbEngine =
 export interface CatalogComponent {
   name: string;
   image: CatalogImageSource;
+  /**
+   * `Always` for a tag that moves (`17-dev`): a node that already holds an
+   * older build under that tag would otherwise keep running it.
+   */
+  imagePullPolicy?: 'Always' | 'IfNotPresent';
   /** Set only on components that ARE a datastore. Omit for web/app components. */
   engine?: CatalogDbEngine;
   ports?: CatalogPort[];

@@ -72,4 +72,11 @@ describe('CatalogSchemaValidatorService', () => {
       expect(() => service.validate(seed(file))).not.toThrow();
     }
   });
+
+  it('keeps the pull policy of an image whose tag moves', () => {
+    const manifest = service.validate(seed('postgresql.flui.yaml'));
+    expect(
+      (manifest.spec as { imagePullPolicy?: string }).imagePullPolicy,
+    ).toBe('Always');
+  });
 });
