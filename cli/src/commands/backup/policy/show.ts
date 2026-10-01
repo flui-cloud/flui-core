@@ -1,6 +1,6 @@
 import { Args, Command, Flags } from '@oclif/core';
 import chalk from 'chalk';
-import { BackupClient } from '../../../lib/backup-client';
+import { BackupClient, BackupPolicyActivity } from '../../../lib/backup-client';
 import {
   healthLine,
   runLines,
@@ -32,14 +32,17 @@ export default class BackupPolicyShow extends Command {
     this.log('');
     this.log(`   ${chalk.bold('ID:')}        ${p.id}`);
     this.log(`   ${chalk.bold('Name:')}      ${p.name}`);
-    this.log(`   ${chalk.bold('Cluster:')}   ${p.clusterId}`);
+    this.log(
+      `   ${chalk.bold('Cluster:')}   ${clusterLine(p.clusterId, activity)}`,
+    );
     this.log(`   ${chalk.bold('Engine:')}    ${p.engineClass ?? '—'}`);
     this.log(`   ${chalk.bold('Profile:')}   ${p.profile}`);
     this.log(`   ${chalk.bold('Scope:')}     ${p.scope}`);
-    if (p.scopeSelector?.applicationIds?.length)
+    for (const [i, app] of (activity.targets?.applications ?? []).entries()) {
       this.log(
-        `   ${chalk.bold('Apps:')}      ${p.scopeSelector.applicationIds.join(', ')}`,
+        `   ${chalk.bold(i === 0 ? 'Apps:' : '     ')}      ${appLine(app)}`,
       );
+    }
     this.log(`   ${chalk.bold('Schedule:')}  ${scheduleText(activity)}`);
     this.log(
       `   ${chalk.bold('Next run:')}  ${utcMoment(activity.schedule.nextRunAt)}`,
@@ -63,4 +66,24 @@ export default class BackupPolicyShow extends Command {
     }
     this.log('');
   }
+}
+
+type Targets = NonNullable<BackupPolicyActivity['targets']>;
+
+function clusterLine(
+  clusterId: string,
+  activity: BackupPolicyActivity,
+): string {
+  const c = activity.targets?.cluster;
+  if (!c?.name) return clusterId;
+  return c.gone ? `${c.name} ${chalk.dim('(deleted)')}` : c.name;
+}
+
+function appLine(app: Targets['applications'][number]): string {
+  if (!app.name) return `${app.id} ${chalk.dim('(deleted)')}`;
+  const slug =
+    app.slug && app.slug !== app.name ? ` ${chalk.dim(app.slug)}` : '';
+  const gone =
+    app.goneWith === 'cluster' ? ' (deleted with its cluster)' : ' (deleted)';
+  return `${app.name}${slug}${app.gone ? chalk.dim(gone) : ''}`;
 }

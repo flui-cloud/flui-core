@@ -15,6 +15,7 @@ import {
   ClusterProtection,
   ProtectClusterInput,
   BeforeDeployOption,
+  BackupDecisionView,
   VeleroFootprint,
 } from './backup-client.types';
 
@@ -78,6 +79,16 @@ export class BackupClient {
   ): Promise<BeforeDeployOption> {
     return this.api.put(
       `/applications/${applicationId}/backup-before-deploy`,
+      input,
+    );
+  }
+
+  async setBackupDecision(
+    applicationId: string,
+    input: { notBackedUp: boolean; note?: string },
+  ): Promise<BackupDecisionView> {
+    return this.api.put(
+      `/applications/${applicationId}/backup-decision`,
       input,
     );
   }

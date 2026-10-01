@@ -4,6 +4,7 @@ import {
 } from '../../repositories/dto/ghcr-pat.dto';
 import { ClusterStatus } from '../../infrastructure/clusters/entities/cluster.entity';
 import type { AppCoverageRow } from '../../backups/services/app-coverage.service';
+import { protectPath } from '../../backups/utils/app-coverage.rules';
 import {
   assembleNeedsYou,
   backupItem,
@@ -20,26 +21,36 @@ const cluster = (status: string, name = 'wc-1') => ({
   status,
 });
 
-const row = (over: Partial<AppCoverageRow>): AppCoverageRow => ({
-  applicationId: 'a',
-  name: 'app',
-  slug: 'app',
-  kind: 'APPLICATION',
-  category: 'user',
-  clusterId: 'c1',
-  clusterName: 'wc-1',
-  holdsData: true,
-  dataReasons: ['volume'],
-  coverage: 'unprotected',
-  reason: 'no_policy',
-  alarm: true,
-  policy: null,
-  coveringPolicies: 0,
-  lastSuccessAt: null,
-  protectedUntil: null,
-  protectPath: null,
-  ...over,
-});
+const row = (over: Partial<AppCoverageRow>): AppCoverageRow => {
+  const id = over.applicationId ?? 'a';
+  return {
+    applicationId: id,
+    name: 'app',
+    slug: 'app',
+    kind: 'APPLICATION',
+    category: 'user',
+    clusterId: 'c1',
+    clusterName: 'wc-1',
+    holdsData: true,
+    dataReasons: ['volume'],
+    coverage: 'unprotected',
+    reason: 'no_policy',
+    alarm: true,
+    policy: null,
+    coveringPolicies: 0,
+    lastSuccessAt: null,
+    protectedUntil: null,
+    protectPath: protectPath({
+      clusterId: 'c1',
+      applicationId: id,
+      kind: over.kind ?? 'APPLICATION',
+    }),
+    applicationPath: `/apps/applications/${id}`,
+    pending: null,
+    decision: null,
+    ...over,
+  };
+};
 
 describe('clusterItems', () => {
   it('turns broken clusters into actions and running ones into notices', () => {
@@ -155,16 +166,78 @@ describe('backupItem', () => {
       'cache',
       'web',
     ]);
-    expect(item!.applications![0].protect.path).toBe(
+    expect(item!.applications![0].protect?.path).toBe(
       '/management/backup/policies/new?clusterId=c1&applicationId=d&engineClass=database',
     );
   });
 
   it('asks for the database engine when the app is a database', () => {
     const item = backupItem([row({ name: 'pg', kind: 'DATABASE' })]);
-    expect(item!.applications![0].protect.path).toContain(
+    expect(item!.applications![0].protect?.path).toContain(
       'engineClass=database',
     );
+  });
+
+  it('names the app, links to it and says why its cluster protection has not covered it', () => {
+    const item = backupItem([
+      row({
+        applicationId: 'd',
+        name: 'Orders DB',
+        slug: 'pg-orders',
+        kind: 'DATABASE',
+        protectPath: null,
+        pending: {
+          outcome: 'waiting',
+          reason: 'the database is not running yet',
+          at: NOW.toISOString(),
+          protectHelps: false,
+        },
+      }),
+    ]);
+    expect(item!.applications![0]).toMatchObject({
+      name: 'Orders DB',
+      slug: 'pg-orders',
+      pendingReason: 'the database is not running yet',
+      protect: null,
+      open: { label: 'Open application', path: '/apps/applications/d' },
+      backups: {
+        label: 'Open backups',
+        path: '/apps/applications/d/snapshots',
+      },
+    });
+  });
+
+  it('opens the Backup tab of the one app it names, and the backups page for several', () => {
+    expect(backupItem([row({ applicationId: 'd' })])!.action).toEqual({
+      label: 'Open backups',
+      path: '/apps/applications/d/snapshots',
+    });
+    expect(
+      backupItem([row({ applicationId: 'd' }), row({ applicationId: 'e' })])!
+        .action,
+    ).toEqual({ label: 'Open backups', path: '/management/backup' });
+  });
+
+  it('leaves out an app a person decided not to back up', () => {
+    const decided = row({
+      applicationId: 'd',
+      coverage: 'not_backed_up_by_choice',
+      reason: 'not_backed_up_by_choice',
+      alarm: false,
+      protectPath: null,
+      decision: {
+        notBackedUp: true,
+        note: 'scratch data',
+        decidedBy: 'u1',
+        decidedAt: NOW.toISOString(),
+      },
+    });
+    expect(backupItem([decided])).toBeNull();
+    expect(
+      backupItem([decided, row({ applicationId: 'e' })])!.applications!.map(
+        (a) => a.applicationId,
+      ),
+    ).toEqual(['e']);
   });
 
   it('speaks in the singular for one app', () => {

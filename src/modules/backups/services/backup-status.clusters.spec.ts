@@ -17,11 +17,18 @@ function build() {
     find: jest.fn().mockResolvedValue([
       {
         id: 'auto-daily',
+        name: 'auto-daily',
         clusterId: 'old-9b32',
         enabled: true,
         status: 'active',
       },
-      { id: 'fixture', clusterId: 'old-9b32', enabled: true, status: 'active' },
+      {
+        id: 'fixture',
+        name: 'nightly-fixture',
+        clusterId: 'old-9b32',
+        enabled: true,
+        status: 'active',
+      },
     ]),
   };
   const service = new BackupStatusService(
@@ -49,6 +56,20 @@ describe('BackupStatusService — which clusters count', () => {
     expect(status.alerts.map((a) => a.code)).toEqual(
       expect.arrayContaining(['CLUSTERS_WITHOUT_BACKUPS', 'ORPHAN_POLICIES']),
     );
+    const orphans = status.alerts.find((a) => a.code === 'ORPHAN_POLICIES');
+    expect(orphans?.message).toContain('auto-daily, nightly-fixture');
+    expect(orphans?.items).toEqual([
+      {
+        id: 'auto-daily',
+        name: 'auto-daily',
+        path: '/management/backup/policies/auto-daily',
+      },
+      {
+        id: 'fixture',
+        name: 'nightly-fixture',
+        path: '/management/backup/policies/fixture',
+      },
+    ]);
   });
 });
 

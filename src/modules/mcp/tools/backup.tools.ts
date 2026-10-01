@@ -18,7 +18,7 @@ export const BACKUP_TOOLS: ToolDef[] = [
     name: 'backup_status',
     routes: ['GET /backups/status'],
     description:
-      'Backup posture for the current user: policies, destinations, the most recent jobs and any alerts, and per cluster whether every application is protected automatically (`protected`) and which volumes need a decision (`needsDecision`: databases Flui cannot back up consistently, or volumes the last copy refused). Use it to answer "are my backups healthy / when did the last one run".',
+      'Backup posture for the current user: policies, destinations, the most recent jobs and any alerts, and per cluster whether every application is protected automatically (`protected`) and which volumes need a decision (`needsDecision`: databases Flui cannot back up consistently, or volumes the last copy refused). An alert that is about named resources lists them in `items` (id, name), e.g. the policies whose cluster no longer exists. Applications a person decided not to back up raise no alert and are not counted as pending; backup_coverage lists them as not_backed_up_by_choice. Use it to answer "are my backups healthy / when did the last one run".',
     scope: MCP_SCOPE.BACKUP_READ,
     inputSchema: {},
     run: (_args, ctx) => ctx.api.get('/backups/status'),
@@ -27,7 +27,7 @@ export const BACKUP_TOOLS: ToolDef[] = [
     name: 'backup_coverage',
     routes: ['GET /fleet/backup-protection'],
     description:
-      'Which applications a recent backup would bring back, across every cluster (or one, with clusterId). Each application says whether it holds data (database, persistent volume or stateful), its coverage (protected | pending | to_verify | unprotected), the reason, the policy that covers it and the last successful backup. Protected means a covering policy succeeded within two runs of its schedule; `alarm` is true for a user application holding data that is unprotected. Use it to answer "which of my apps have no backup". Applications come first when they alarm, databases first among them.',
+      'Which applications a recent backup would bring back, across every cluster (or one, with clusterId). Each application says whether it holds data (database, persistent volume or stateful), its coverage (protected | pending | to_verify | unprotected | not_backed_up_by_choice), the reason, the policy that covers it and the last successful backup. `pending` says why protecting its cluster has not covered it yet (waiting | failed | needs_decision, with the reason, and `protectHelps`: false when a policy made by hand would not help, e.g. a database that is not running). Protected means a covering policy succeeded within two runs of its schedule; `alarm` is true for a user application holding data that is unprotected. `not_backed_up_by_choice` means a person decided it is not backed up (`decision`: note, decidedByName, decidedAt): it never alarms and is counted apart in `summary.notBackedUpByChoice`. Use it to answer "which of my apps have no backup". Applications come first when they alarm, databases first among them.',
     scope: MCP_SCOPE.BACKUP_READ,
     inputSchema: { clusterId: z.string().optional() },
     run: (args, ctx) =>
@@ -37,7 +37,7 @@ export const BACKUP_TOOLS: ToolDef[] = [
     name: 'backup_cluster_protection',
     routes: ['GET /clusters/:clusterId/backups/protection'],
     description:
-      'How one cluster is protected (clusterId from cluster_list): whether every application gets a backup policy of its own, new ones included (`protected`), the destination and schedule it uses, whether a backup is taken before each deploy (`beforeDeploy`), what the last pass decided for each application (protected | already_protected | waiting | needs_decision | failed | skipped, with the reason and the policy), and `needsDecision`: the volumes no backup can take consistently until a person chooses to stop the application during the copy or leave the volume out. Read-only.',
+      'How one cluster is protected (clusterId from cluster_list): whether every application gets a backup policy of its own, new ones included (`protected`), the destination and schedule it uses, whether a backup is taken before each deploy (`beforeDeploy`), what the last pass decided for each application (protected | already_protected | waiting | needs_decision | failed | skipped, with the reason — system, no_data or not_backed_up_by_choice — and the policy), and `needsDecision`: the volumes no backup can take consistently until a person chooses to stop the application during the copy or leave the volume out. Read-only.',
     scope: MCP_SCOPE.BACKUP_READ,
     inputSchema: { clusterId: z.string() },
     run: (args, ctx) =>
@@ -118,6 +118,23 @@ export const BACKUP_TOOLS: ToolDef[] = [
           ...(args.required === undefined ? {} : { required: args.required }),
         },
       ),
+  }),
+  defineTool({
+    name: 'app_backup_skip',
+    routes: ['PUT /applications/:id/backup-decision'],
+    description:
+      'Record that an application is not to be backed up (id from app_list), with an optional note saying why; `undo: true` takes the decision back. Flui then stops counting it as unprotected, stops listing it as needing a backup, and protecting its cluster gives it no policy. Backups already taken and the policies naming it are left as they are (pause one with backup_policy_pause). A person approves this before it takes effect. Returns the decision, or null after an undo.',
+    scope: MCP_SCOPE.APP_WRITE,
+    inputSchema: {
+      applicationId: z.string(),
+      note: z.string().max(500).optional(),
+      undo: z.boolean().optional(),
+    },
+    run: (args, ctx) =>
+      ctx.api.put(`/applications/${enc(args.applicationId)}/backup-decision`, {
+        notBackedUp: !args.undo,
+        ...(args.note && !args.undo ? { note: args.note } : {}),
+      }),
   }),
   defineTool({
     name: 'backup_destination_set_cost',

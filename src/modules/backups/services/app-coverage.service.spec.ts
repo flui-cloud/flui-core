@@ -44,6 +44,7 @@ function build(opts: {
   }>;
   liveClusters?: string[];
   apps?: unknown[];
+  protections?: unknown[];
 }) {
   const qb: Record<string, jest.Mock> = {};
   for (const m of [
@@ -81,6 +82,7 @@ function build(opts: {
       clusters as never,
       policies as never,
       jobs as never,
+      { find: jest.fn(async () => opts.protections ?? []) } as never,
     ),
   };
 }
@@ -159,6 +161,7 @@ describe('AppCoverageService', () => {
       pending: 0,
       toVerify: 0,
       unprotected: 2,
+      notBackedUpByChoice: 0,
       alarms: 1,
     });
   });
@@ -246,6 +249,90 @@ describe('AppCoverageService', () => {
       coverage: 'unprotected',
       reason: 'no_policy',
       alarm: true,
+    });
+  });
+
+  it('says why protecting the cluster has not covered a database, and offers no policy while it is not running', async () => {
+    const { service } = build({
+      policies: [],
+      jobs: [],
+      protections: [
+        {
+          clusterId: 'c1',
+          applications: {
+            pg: {
+              outcome: 'waiting',
+              reason: 'the database is not running yet',
+              at: '2026-09-27T11:00:00Z',
+            },
+          },
+        },
+      ],
+    });
+    const result = await service.forApplications(
+      [app('pg', { kind: 'DATABASE', status: 'stopped' })] as never,
+      NOW,
+    );
+    expect(result.applications[0]).toMatchObject({
+      coverage: 'unprotected',
+      alarm: true,
+      protectPath: null,
+      applicationPath: '/apps/applications/pg',
+      pending: {
+        outcome: 'waiting',
+        reason: 'the database is not running yet',
+        protectHelps: false,
+      },
+    });
+  });
+
+  it('lists an app a person decided not to back up apart, with the decision and no gap to fill', async () => {
+    const decision = {
+      notBackedUp: true,
+      note: 'scratch copy',
+      decidedBy: 'u1',
+      decidedByName: 'Dawit',
+      decidedAt: '2026-09-27T10:00:00.000Z',
+    };
+    const { service } = build({
+      policies: [policy('db', { scopeSelector: { applicationIds: ['pg'] } })],
+      jobs: [],
+      protections: [
+        {
+          clusterId: 'c1',
+          applications: {
+            pg: {
+              outcome: 'waiting',
+              reason: 'the database is not running yet',
+              at: '2026-09-27T11:00:00Z',
+            },
+          },
+        },
+      ],
+    });
+    const result = await service.forApplications(
+      [
+        app('pg', {
+          kind: 'DATABASE',
+          status: 'stopped',
+          backupDecision: decision,
+        }),
+      ] as never,
+      NOW,
+    );
+    expect(result.applications[0]).toMatchObject({
+      coverage: 'not_backed_up_by_choice',
+      reason: 'not_backed_up_by_choice',
+      alarm: false,
+      protectPath: null,
+      pending: null,
+      decision,
+      policy: { id: 'db' },
+    });
+    expect(result.summary).toMatchObject({
+      unprotected: 0,
+      notBackedUpByChoice: 1,
+      alarms: 0,
     });
   });
 });

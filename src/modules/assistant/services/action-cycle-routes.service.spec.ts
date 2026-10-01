@@ -187,6 +187,9 @@ describe('the tools whose request the chat can show', () => {
   const GOVERNED = [
     'access_grant_add',
     'access_grant_remove',
+    // Changes what Flui asks for, never what exists; an agent still needs a
+    // person's word before it decides an application goes without backups.
+    'app_backup_skip',
     'app_delete',
     'app_deploy',
     'app_deploy_from_yaml',

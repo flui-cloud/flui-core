@@ -9,6 +9,8 @@ export interface PlannableApp {
   systemProtected?: boolean | null;
   volumes?: unknown[] | null;
   labels?: Record<string, string> | null;
+  /** A person decided it is not backed up. */
+  notBackedUpByChoice?: boolean;
 }
 
 /** What already protects the application, from the policies on its cluster. */
@@ -29,7 +31,10 @@ export type AppProtectionPlan =
   | { kind: 'volume_copy'; engine?: string }
   | { kind: 'needs_decision'; reason: string; engine?: string }
   | { kind: 'already_protected' }
-  | { kind: 'skip'; reason: 'system' | 'no_data' };
+  | {
+      kind: 'skip';
+      reason: 'system' | 'no_data' | 'not_backed_up_by_choice';
+    };
 
 export function declaredEngineOf(app: PlannableApp): string | undefined {
   const engine = app.labels?.[DB_ENGINE_LABEL]?.trim();
@@ -43,7 +48,8 @@ export function declaredEngineOf(app: PlannableApp): string | undefined {
  * gets kopia copies of its volumes, which decide volume by volume on every run
  * (SQLite online backup, engine hooks, refusal of a live data directory). What
  * looks like a database Flui cannot copy consistently is not given a policy that
- * would fail every night: it is left for a person to decide.
+ * would fail every night: it is left for a person to decide. One a person
+ * decided not to back up gets nothing, and the policies already naming it stay.
  */
 export function planAppProtection(
   app: PlannableApp,
@@ -56,6 +62,9 @@ export function planAppProtection(
     app.kind === ApplicationKind.SYSTEM
   ) {
     return { kind: 'skip', reason: 'system' };
+  }
+  if (app.notBackedUpByChoice) {
+    return { kind: 'skip', reason: 'not_backed_up_by_choice' };
   }
   if (cover.database || cover.volumeCopy) return { kind: 'already_protected' };
 

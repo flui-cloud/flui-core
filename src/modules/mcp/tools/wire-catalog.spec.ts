@@ -102,6 +102,7 @@ const ARGS: Record<string, Record<string, unknown>> = {
   backup_velero_footprint: { clusterId: 'c1' },
   backup_velero_uninstall: { clusterId: 'c1' },
   app_backup_before_deploy: { applicationId: 'a1', enabled: true },
+  app_backup_skip: { applicationId: 'a1', note: 'scratch copy' },
   app_volume_backup_browse: {
     applicationId: 'a1',
     backupId: 'b1',
@@ -475,6 +476,7 @@ describe('strada B — the whole tool catalogue goes over the wire', () => {
     ['backup_velero_footprint', 'GET /clusters/c1/backups/velero'],
     ['backup_velero_uninstall', 'POST /clusters/c1/backups/velero/uninstall'],
     ['app_backup_before_deploy', 'PUT /applications/a1/backup-before-deploy'],
+    ['app_backup_skip', 'PUT /applications/a1/backup-decision'],
     [
       'app_volume_backup_browse',
       'GET /applications/a1/volume-backups/b1/files',

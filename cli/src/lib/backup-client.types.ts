@@ -218,6 +218,17 @@ export interface BackupPolicyActivity {
   };
   lastRun: BackupRun | null;
   runs: BackupRun[];
+  targets?: {
+    cluster: { id: string; name: string | null; gone: boolean } | null;
+    applications: Array<{
+      id: string;
+      name: string | null;
+      slug: string | null;
+      path: string | null;
+      gone: boolean;
+      goneWith?: 'cluster';
+    }>;
+  };
 }
 
 /** What the last pass decided for one application of a protected cluster. */
@@ -280,6 +291,20 @@ export interface BeforeDeployOption {
   required: boolean;
   takes: { restorePoint: boolean; dump: boolean; volumes: boolean };
   warning?: string;
+}
+
+/** A person's decision that an application is not backed up. */
+export interface BackupDecision {
+  notBackedUp: true;
+  note?: string;
+  decidedBy: string;
+  decidedByName?: string;
+  decidedAt: string;
+}
+
+export interface BackupDecisionView {
+  applicationId: string;
+  decision: BackupDecision | null;
 }
 
 /** What the retired Velero engine left on a cluster. */

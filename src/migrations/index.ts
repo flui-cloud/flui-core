@@ -72,6 +72,7 @@ import { CatalogDefinitionOwner1790000000015 } from './1790000000015-CatalogDefi
 import { DefaultBackupSchedules1790000000016 } from './1790000000016-DefaultBackupSchedules';
 import { BackupClusterProtections1790000000017 } from './1790000000017-BackupClusterProtections';
 import { RemoveClusterBackupEngine1790000000018 } from './1790000000018-RemoveClusterBackupEngine';
+import { ApplicationBackupDecision1790000000019 } from './1790000000019-ApplicationBackupDecision';
 import { BackfillArtifactApplicationId1787500000000 } from './1787500000000-BackfillArtifactApplicationId';
 import { WireGuardHubKeySealed1790000000000 } from './1790000000000-WireGuardHubKeySealed';
 import { RecoverNodeAccessOperation1790000000001 } from './1790000000001-RecoverNodeAccessOperation';
@@ -157,4 +158,5 @@ export const migrations = [
   DefaultBackupSchedules1790000000016,
   BackupClusterProtections1790000000017,
   RemoveClusterBackupEngine1790000000018,
+  ApplicationBackupDecision1790000000019,
 ];

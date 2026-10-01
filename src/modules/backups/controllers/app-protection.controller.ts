@@ -1,5 +1,16 @@
-import { Body, Controller, Get, Param, Put, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Param,
+  Put,
+  Req,
+  UseGuards,
+} from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { Request } from 'express';
+import { ActionCycle } from '../../action-cycle/action-cycle.decorator';
+import { AuthenticatedUser } from '../../auth/interfaces/authenticated-user.interface';
 import {
   AppAccessGuard,
   AppAction,
@@ -14,6 +25,15 @@ import {
   PreDeployBackupService,
 } from '../services/pre-deploy-backup.service';
 import { SetBeforeDeployDto } from '../dto/set-before-deploy.dto';
+import { SetBackupDecisionDto } from '../dto/set-backup-decision.dto';
+import {
+  AppBackupDecisionService,
+  BackupDecisionView,
+} from '../services/app-backup-decision.service';
+import {
+  NOT_BACKED_UP_CONSEQUENCE,
+  backupDecisionClause,
+} from '../utils/app-backup-decision.rules';
 
 @ApiTags('Backups')
 @ApiBearerAuth()
@@ -23,6 +43,7 @@ export class AppProtectionController {
   constructor(
     private readonly protection: AppProtectionService,
     private readonly beforeDeploy: PreDeployBackupService,
+    private readonly decisions: AppBackupDecisionService,
   ) {}
 
   @Get('backup-protection')
@@ -30,7 +51,7 @@ export class AppProtectionController {
   @ApiOperation({
     summary: 'What protects this application off the cluster',
     description:
-      'The backup policies covering the application, where they write and how their last run went.',
+      'The backup policies covering the application, where they write and how their last run went, and its coverage: `not_backed_up_by_choice` with `coverage.decision` (note, who, when) when a person decided it is not backed up.',
   })
   async get(
     @Param('id') id: string,
@@ -54,5 +75,29 @@ export class AppProtectionController {
     @Body() dto: SetBeforeDeployDto,
   ): Promise<BeforeDeployOption> {
     return this.beforeDeploy.setOption(id, dto);
+  }
+
+  @Put('backup-decision')
+  @AppAction(IAM_PERMISSION.APP_WRITE)
+  @ActionCycle({
+    action: 'PUT /applications/:id/backup-decision',
+    bind: ['id'],
+    sentence: 'decide that application {id} is not backed up',
+    clause: backupDecisionClause,
+    consequence: NOT_BACKED_UP_CONSEQUENCE,
+  })
+  @ApiOperation({
+    summary:
+      'Decide that this application is not backed up, or back it up again',
+    description:
+      'With `notBackedUp: true` the application is no longer counted as unprotected or listed as needing a backup, and protecting its cluster gives it no policy. Backups already taken and the policies naming it are left as they are. `notBackedUp: false` takes the decision back; on a protected cluster the application gets its policy again.',
+  })
+  setBackupDecision(
+    @Req() req: Request,
+    @Param('id') id: string,
+    @Body() dto: SetBackupDecisionDto,
+  ): Promise<BackupDecisionView> {
+    const user = req.user as AuthenticatedUser;
+    return this.decisions.set(id, dto, user);
   }
 }

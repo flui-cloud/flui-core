@@ -1,8 +1,5 @@
 import { Injectable, Logger, Optional } from '@nestjs/common';
-import {
-  GONE_CLUSTER_STATUSES,
-  retiredForGoneCluster,
-} from '../utils/policy-cluster.util';
+import { GONE_CLUSTER_STATUSES } from '../utils/policy-cluster.util';
 import { InjectRepository } from '@nestjs/typeorm';
 import { In, Not, Repository } from 'typeorm';
 import { ClusterEntity } from '../../infrastructure/clusters/entities/cluster.entity';
@@ -13,9 +10,14 @@ import { BackupArtifactEntity } from '../entities/backup-artifact.entity';
 import { BackupArtifactLocationEntity } from '../entities/backup-artifact-location.entity';
 
 import { BackupJobStatus } from '../enums/backup-job.enum';
+import { unresolvedFailures } from '../utils/unresolved-failures.util';
 import { BackupPolicyStatus } from '../enums/backup-policy-status.enum';
 import { DestinationHealthStatus } from '../enums/destination-health.enum';
 import { BackupClusterProtectionEntity } from '../entities/backup-cluster-protection.entity';
+import {
+  StatusAlertItem,
+  orphanPoliciesAlert,
+} from '../utils/orphan-policies.alert';
 import { isRetiredEngineClass } from '../enums/backup-engine-class.enum';
 import {
   InfrastructureOperationEntity,
@@ -37,6 +39,8 @@ export interface StatusAlert {
   resourceId?: string;
   ctaLabel?: string;
   ctaPath?: string;
+  /** The resources the alert is about, when it names them, each with its page. */
+  items?: StatusAlertItem[];
 }
 
 /** One live cluster, as far as backups are concerned. */
@@ -119,11 +123,11 @@ export class BackupStatusService {
         .filter((p) => isActive(p) && liveClusterIds.has(p.clusterId))
         .map((p) => p.clusterId),
     );
+    // A policy already paused for its gone cluster needs nothing from anyone;
+    // only one still trying to run is worth a word.
     const orphanPolicies = userPolicies.filter(
-      (p) =>
-        !liveClusterIds.has(p.clusterId) &&
-        (isActive(p) || retiredForGoneCluster(p)),
-    ).length;
+      (p) => !liveClusterIds.has(p.clusterId) && isActive(p),
+    );
     const clustersTotal = clusters.length;
     const clustersWithBackups = clustersWithPolicy.size;
     const clustersWithoutBackups = Math.max(
@@ -151,11 +155,7 @@ export class BackupStatusService {
       .where('j.userId = :userId', { userId })
       .andWhere('j.createdAt >= :since', { since: last24h })
       .getMany();
-    const failedJobsLast24h = recentJobs.filter(
-      (j) =>
-        j.status === BackupJobStatus.FAILED ||
-        j.status === BackupJobStatus.CANCELLED,
-    ).length;
+    const failedJobsLast24h = unresolvedFailures(recentJobs);
 
     const allUserClusterIds = clusters
       .filter((c) => clustersWithPolicy.has(c.id))
@@ -292,7 +292,7 @@ export class BackupStatusService {
     clustersWithBackups: number;
     clustersWithoutBackups: number;
     degradedPolicies: number;
-    orphanPolicies: number;
+    orphanPolicies: Array<{ id: string; name: string }>;
     failedDestinations: number;
     failedDestinationReason?: string;
     failedJobsLast24h: number;
@@ -329,15 +329,8 @@ export class BackupStatusService {
         ctaPath: '/management/backup/destinations',
       });
     }
-    if (input.orphanPolicies > 0) {
-      alerts.push({
-        severity: 'warning',
-        code: 'ORPHAN_POLICIES',
-        message: `${input.orphanPolicies} backup ${input.orphanPolicies === 1 ? 'policy points' : 'policies point'} at a cluster that no longer exists. They protect nothing; their backups stay restorable.`,
-        ctaLabel: 'Open policies',
-        ctaPath: '/management/backup/policies',
-      });
-    }
+    const orphans = orphanPoliciesAlert(input.orphanPolicies);
+    if (orphans) alerts.push(orphans);
     if (input.failedDestinations > 0) {
       const reason = input.failedDestinationReason
         ? ' ' + input.failedDestinationReason
@@ -372,7 +365,7 @@ export class BackupStatusService {
       alerts.push({
         severity: 'critical',
         code: 'FAILED_JOBS_24H',
-        message: `${input.failedJobsLast24h} backup run(s) failed in the last 24h.`,
+        message: `${input.failedJobsLast24h} backup run(s) failed in the last 24h and have not run successfully since.`,
         ctaLabel: 'Open history',
         ctaPath: '/management/backup/jobs',
       });

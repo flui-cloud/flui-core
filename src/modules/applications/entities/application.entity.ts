@@ -33,6 +33,7 @@ import {
   ApplicationVolume,
 } from '../interfaces/source-config.interface';
 import type { AppMaintenance } from '../../infrastructure/maintenance/maintenance-window.core';
+import type { AppBackupDecision } from '../../backups/utils/app-backup-decision.rules';
 
 @Entity('applications')
 export class ApplicationEntity {
@@ -313,6 +314,10 @@ export class ApplicationEntity {
 
   @Column({ type: 'json', default: '{"maxCopies":5,"days":7}' })
   preDeployRetention: { maxCopies: number; days: number };
+
+  /** Null: Flui asks for a backup whenever the application holds data. */
+  @Column({ type: 'jsonb', nullable: true })
+  backupDecision?: AppBackupDecision | null;
 
   @Column({ type: 'timestamptz', nullable: true })
   lastDeployedAt?: Date;

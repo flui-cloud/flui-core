@@ -83,6 +83,7 @@ import { BackupStatusService } from './services/backup-status.service';
 import { BACKUP_QUEUE } from './backups.constants';
 import { AppProtectionController } from './controllers/app-protection.controller';
 import { AppProtectionService } from './services/app-protection.service';
+import { AppBackupDecisionService } from './services/app-backup-decision.service';
 import { AppCoverageService } from './services/app-coverage.service';
 import { BackupClusterProtectionEntity } from './entities/backup-cluster-protection.entity';
 import { ClusterDecisionsService } from './services/cluster-decisions.service';
@@ -182,6 +183,7 @@ import { VeleroUninstallController } from './controllers/velero-uninstall.contro
     DestinationPlacementValidator,
     DbPitrService,
     AppProtectionService,
+    AppBackupDecisionService,
     AppCoverageService,
     PlatformKeyBundleService,
     PlatformBackupService,

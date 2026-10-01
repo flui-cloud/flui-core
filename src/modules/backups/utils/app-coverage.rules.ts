@@ -11,7 +11,8 @@ export type AppCoverageState =
   | 'protected'
   | 'pending'
   | 'to_verify'
-  | 'unprotected';
+  | 'unprotected'
+  | 'not_backed_up_by_choice';
 
 export type AppCoverageReason =
   | 'recent_backup'
@@ -20,7 +21,8 @@ export type AppCoverageReason =
   | 'never_succeeded'
   | 'left_out'
   | 'no_schedule'
-  | 'no_policy';
+  | 'no_policy'
+  | 'not_backed_up_by_choice';
 
 export interface CoverageApp {
   id: string;
@@ -30,6 +32,8 @@ export interface CoverageApp {
   category: ApplicationCategory | string;
   volumes?: unknown[] | null;
   workloadKind?: string | null;
+  /** A person decided it is not backed up. */
+  notBackedUpByChoice?: boolean;
 }
 
 export interface CoveragePolicy {
@@ -168,6 +172,7 @@ const REASON_RANK: Record<AppCoverageReason, number> = {
   left_out: 5,
   no_schedule: 6,
   no_policy: 7,
+  not_backed_up_by_choice: 8,
 };
 
 function better(a: PolicyVerdict, b: PolicyVerdict): PolicyVerdict {
@@ -182,7 +187,9 @@ function better(a: PolicyVerdict, b: PolicyVerdict): PolicyVerdict {
  * The one rule behind the home alarm and the backup column: an application
  * is protected when a policy covering it has succeeded recently. The alarm is
  * raised only for a user application that holds data and is not protected, and
- * not while a new policy is still inside its first two runs.
+ * not while a new policy is still inside its first two runs. A person's
+ * decision not to back it up wins over every policy: it is never an alarm, and
+ * the policies that still name it are reported as they are.
  */
 export function classifyApp(
   app: CoverageApp,
@@ -203,12 +210,17 @@ export function classifyApp(
     (acc, v) => (acc ? better(acc, v) : v),
     null,
   );
-  const state: AppCoverageState = best?.state ?? 'unprotected';
+  const byChoice = !!app.notBackedUpByChoice;
+  const state: AppCoverageState = byChoice
+    ? 'not_backed_up_by_choice'
+    : (best?.state ?? 'unprotected');
   return {
     holdsData,
     dataReasons,
     state,
-    reason: best?.reason ?? 'no_policy',
+    reason: byChoice
+      ? 'not_backed_up_by_choice'
+      : (best?.reason ?? 'no_policy'),
     policy: best?.policy ?? null,
     lastSuccessAt: best?.lastSuccessAt ?? null,
     deadline: best?.deadline ?? null,

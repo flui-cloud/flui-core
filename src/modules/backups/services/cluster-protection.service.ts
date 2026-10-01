@@ -53,6 +53,7 @@ import { BackupJobsService } from './backup-jobs.service';
 import { DestinationPlacementValidator } from './destination-placement.validator';
 import { DeclaredEngineResolver } from './declared-engine.resolver';
 import { ClusterDecisionsService, coverOf } from './cluster-decisions.service';
+import { notBackedUpByChoice } from '../utils/app-backup-decision.rules';
 
 export type {
   ClusterProtectionView,
@@ -238,7 +239,9 @@ export class ClusterProtectionService {
     for (const app of apps) {
       const previous = outcomes[app.id];
       const outcome =
-        !opts.onlyAppIds && isRecentFailure(previous, now)
+        !opts.onlyAppIds &&
+        isRecentFailure(previous, now) &&
+        !notBackedUpByChoice(app.backupDecision)
           ? previous
           : await this.protectOne(
               app,
@@ -267,8 +270,10 @@ export class ClusterProtectionService {
     app: ApplicationEntity,
     policies: BackupPolicyEntity[],
   ): Promise<AppProtectionPlan> {
+    const notBackedUp = notBackedUpByChoice(app.backupDecision);
     let labels = app.labels;
     if (
+      !notBackedUp &&
       !declaredEngineOf(app) &&
       app.kind === ApplicationKind.DATABASE &&
       app.status === ApplicationStatus.RUNNING
@@ -277,7 +282,7 @@ export class ClusterProtectionService {
       if (declared) labels = { ...labels, [DB_ENGINE_LABEL]: declared };
     }
     return planAppProtection(
-      { ...app, labels },
+      { ...app, labels, notBackedUpByChoice: notBackedUp },
       coverOf(app.id, policies),
       this.decisions.support(),
     );

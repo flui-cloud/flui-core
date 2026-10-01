@@ -98,4 +98,18 @@ describe('which backup an application gets when its cluster is protected', () =>
       ),
     ).toEqual({ kind: 'skip', reason: 'no_data' });
   });
+
+  it('gives nothing to an application a person decided not to back up, protected or not', () => {
+    const decided = app({
+      kind: 'DATABASE',
+      labels: { 'flui.cloud/db-engine': 'postgres' },
+      notBackedUpByChoice: true,
+    });
+    for (const cover of [none, { database: true, volumeCopy: false }]) {
+      expect(planAppProtection(decided, cover, support)).toEqual({
+        kind: 'skip',
+        reason: 'not_backed_up_by_choice',
+      });
+    }
+  });
 });

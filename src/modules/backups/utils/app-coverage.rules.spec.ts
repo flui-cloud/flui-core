@@ -261,6 +261,38 @@ describe('classifyApp — the alarm rule', () => {
   });
 });
 
+describe('classifyApp — a person decided it is not backed up', () => {
+  it('never alarms and says so, whatever covers it', () => {
+    const c = classifyApp(
+      app({ kind: ApplicationKind.DATABASE, notBackedUpByChoice: true }),
+      [],
+      never,
+      NOW,
+    );
+    expect(c).toMatchObject({
+      holdsData: true,
+      state: 'not_backed_up_by_choice',
+      reason: 'not_backed_up_by_choice',
+      alarm: false,
+    });
+  });
+
+  it('still reports the policy that names it, untouched', () => {
+    const c = classifyApp(
+      app({ volumes: [{}], notBackedUpByChoice: true }),
+      [policy()],
+      at('2026-09-27T03:04:00Z'),
+      NOW,
+    );
+    expect(c).toMatchObject({
+      state: 'not_backed_up_by_choice',
+      coveringPolicies: 1,
+      lastSuccessAt: new Date('2026-09-27T03:04:00Z'),
+    });
+    expect(c.policy?.id).toBe('p1');
+  });
+});
+
 describe('protectPath', () => {
   it('opens the policy form on this app, with the database engine for a database', () => {
     expect(

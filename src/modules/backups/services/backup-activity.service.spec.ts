@@ -66,6 +66,14 @@ function make(jobs: ReturnType<typeof jobOf>[], lastCompleted = jobs[0]) {
     policies as never,
     jobRepo as never,
     artifacts as never,
+    {
+      findOne: jest.fn(async () => ({
+        id: 'c1',
+        name: 'control',
+        status: 'ready',
+      })),
+    } as never,
+    { find: jest.fn(async () => []) } as never,
   );
   return { service, jobRepo, artifacts };
 }
@@ -84,6 +92,7 @@ describe('BackupActivityService', () => {
     expect(activity.runs.map((r) => r.jobId)).toEqual(['job-29', 'job-28']);
     expect(activity.lastRun?.sizeBytes).toBe(1052672);
     expect(activity.lastRun?.encrypted).toBe(true);
+    expect(activity.targets?.applications).toEqual([]);
   });
 
   it('keeps the last success in view when it is older than the window', async () => {

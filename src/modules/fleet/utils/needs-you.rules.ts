@@ -6,7 +6,7 @@ import {
 } from '../../repositories/dto/ghcr-pat.dto';
 import { ApplicationKind } from '../../applications/enums/application-kind.enum';
 import type { AppCoverageRow } from '../../backups/services/app-coverage.service';
-import { protectPath } from '../../backups/utils/app-coverage.rules';
+import { appBackupsPath } from '../../backups/utils/app-pending.rules';
 
 export type NeedsYouKind =
   | 'cluster_broken'
@@ -24,12 +24,19 @@ export interface NeedsYouAction {
 export interface NeedsYouApp {
   applicationId: string;
   name: string;
+  slug: string;
   kind: string;
   clusterId: string;
   clusterName: string | null;
   reason: string;
+  /** Why protecting its cluster has not covered it yet, in words, when it tried. */
+  pendingReason: string | null;
   lastSuccessAt: string | null;
-  protect: NeedsYouAction;
+  /** Absent when a policy made by hand would not help, e.g. a database that is not running. */
+  protect: NeedsYouAction | null;
+  open: NeedsYouAction;
+  /** Its Backup tab: protect it, or decide it is not backed up. */
+  backups: NeedsYouAction;
 }
 
 export interface NeedsYouItem {
@@ -227,6 +234,9 @@ export function credentialItems(
     });
 }
 
+const BACKUPS_PATH = '/management/backup';
+
+/** Applications holding data with no backup; one a person decided not to back up is not among them. */
 export function backupItem(rows: AppCoverageRow[]): NeedsYouItem | null {
   const alarms = rows
     .filter((r) => r.alarm)
@@ -247,16 +257,26 @@ export function backupItem(rows: AppCoverageRow[]): NeedsYouItem | null {
     title: `${n} app${n === 1 ? '' : 's'} with data and no backup`,
     detail:
       rest > 0 ? `${names.join(', ')} and ${rest} more` : names.join(', '),
-    action: { label: 'Open backups', path: '/management/backup' },
+    action: {
+      label: 'Open backups',
+      path: n === 1 ? appBackupsPath(alarms[0].applicationId) : BACKUPS_PATH,
+    },
     applications: alarms.map((r) => ({
       applicationId: r.applicationId,
       name: r.name,
+      slug: r.slug,
       kind: r.kind,
       clusterId: r.clusterId,
       clusterName: r.clusterName,
       reason: r.reason,
+      pendingReason: r.pending?.reason ?? null,
       lastSuccessAt: r.lastSuccessAt,
-      protect: { label: 'Protect', path: protectPath(r) },
+      protect: r.protectPath ? { label: 'Protect', path: r.protectPath } : null,
+      open: { label: 'Open application', path: r.applicationPath },
+      backups: {
+        label: 'Open backups',
+        path: appBackupsPath(r.applicationId),
+      },
     })),
   };
 }

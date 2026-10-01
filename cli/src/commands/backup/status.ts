@@ -12,6 +12,14 @@ import { CliAppService } from '../../lib/services/cli-app.service';
 import { resolveClusterRef } from '../../lib/resolve-cluster';
 import { formatBytes } from '../../lib/format-bytes';
 import { printNeedsDecision } from '../../lib/cluster-protection-format';
+import {
+  AlertItem,
+  DecidedApp,
+  alertItemLines,
+  coverageAppLabel,
+  coverageAppReason,
+  decisionLine,
+} from '../../lib/backup-status-format';
 
 interface DbPitrStatus {
   continuousBackupEnabled: boolean;
@@ -34,7 +42,7 @@ interface FleetStatus {
     failedJobsLast24h: number;
   };
   lastSuccessfulBackupAt?: string;
-  alerts: Array<{ severity: string; message: string }>;
+  alerts: Array<{ severity: string; message: string; items?: AlertItem[] }>;
   clusters?: Array<{
     clusterId: string;
     name: string;
@@ -50,28 +58,19 @@ interface FleetCoverage {
     holdingData: number;
     protected: number;
     toVerify: number;
+    notBackedUpByChoice?: number;
     alarms: number;
   };
-  applications: Array<{
-    name: string;
-    clusterName: string | null;
-    holdsData: boolean;
-    coverage: string;
-    reason: string;
-    alarm: boolean;
-    policy: { name: string } | null;
-    lastSuccessAt: string | null;
-  }>;
+  applications: Array<
+    DecidedApp & {
+      holdsData: boolean;
+      coverage: string;
+      alarm: boolean;
+      policy: { name: string } | null;
+      lastSuccessAt: string | null;
+    }
+  >;
 }
-
-const COVERAGE_REASON: Record<string, string> = {
-  no_policy: 'no policy covers it',
-  no_schedule: 'its policy has no schedule',
-  never_succeeded: 'no backup has succeeded yet',
-  left_out: 'the last backup left its volumes out',
-  stale: 'last backup is older than two scheduled runs',
-  awaiting_first_run: 'waiting for the first scheduled run',
-};
 
 /**
  * The interesting cases are the gaps *between* engines — an application whose
@@ -81,6 +80,7 @@ const COVERAGE_REASON: Record<string, string> = {
  */
 interface AppProtection {
   protectedOffCluster: boolean;
+  coverage?: (DecidedApp & { coverage: string }) | null;
   beforeDeploy?: {
     enabled: boolean;
     required: boolean;
@@ -164,6 +164,9 @@ export default class BackupStatus extends Command {
       this.log('');
       for (const alert of status.alerts) {
         this.log(`  ${this.severity(alert.severity)} ${alert.message}`);
+        for (const line of alertItemLines(alert.items)) {
+          this.log(chalk.dim(`      ${line}`));
+        }
       }
     }
     this.printClusters(status);
@@ -207,6 +210,15 @@ export default class BackupStatus extends Command {
       this.log(`  ${chalk.bold(app.slug)}`);
       this.log('');
 
+      if (protection?.coverage?.coverage === 'not_backed_up_by_choice') {
+        this.log(`  ${chalk.yellow(decisionLine(protection.coverage))}`);
+        this.log(
+          chalk.dim(
+            `  flui app backup skip ${app.slug} --undo   back it up again`,
+          ),
+        );
+        this.log('');
+      }
       const on = pitr?.continuousBackupEnabled;
       this.printContinuous(on, pitr);
       this.printPolicies(protection);
@@ -244,19 +256,33 @@ export default class BackupStatus extends Command {
   /** Applications holding data, the unprotected ones first. */
   private printCoverage(coverage: FleetCoverage) {
     const s = coverage.summary;
+    const byChoice = s.notBackedUpByChoice ?? 0;
     const protectedShare = chalk.dim(
-      `(${s.protected} of ${s.applications} apps protected)`,
+      `(${s.protected} protected${byChoice ? `, ${byChoice} not backed up by choice` : ''})`,
     );
     this.log('');
     this.log(`  Apps holding data       ${s.holdingData}  ${protectedShare}`);
     const shown = coverage.applications.filter(
-      (a) => a.holdsData && a.coverage !== 'protected',
+      (a) =>
+        a.holdsData &&
+        a.coverage !== 'protected' &&
+        a.coverage !== 'not_backed_up_by_choice',
     );
     for (const a of shown) {
       const mark = a.alarm ? chalk.red('✗') : chalk.yellow('?');
-      const where = a.clusterName ? chalk.dim(` on ${a.clusterName}`) : '';
       this.log(
-        `    ${mark} ${a.name}${where}  ${chalk.dim(COVERAGE_REASON[a.reason] ?? a.reason)}`,
+        `    ${mark} ${coverageAppLabel(a)}  ${chalk.dim(coverageAppReason(a))}`,
+      );
+    }
+    const decided = coverage.applications.filter(
+      (a) => a.coverage === 'not_backed_up_by_choice',
+    );
+    if (decided.length === 0) return;
+    this.log('');
+    this.log(`  Not backed up by choice ${decided.length}`);
+    for (const a of decided) {
+      this.log(
+        `    ${chalk.dim('–')} ${coverageAppLabel(a)}  ${chalk.dim(decisionLine(a))}`,
       );
     }
   }

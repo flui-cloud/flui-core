@@ -1,4 +1,9 @@
 import { Injectable } from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
+import { In, Repository } from 'typeorm';
+import { ClusterEntity } from '../../infrastructure/clusters/entities/cluster.entity';
+import { ApplicationEntity } from '../../applications/entities/application.entity';
+import { policyTargets } from '../utils/policy-targets.util';
 import { BackupPoliciesService } from './backup-policies.service';
 import { BackupJobRepository } from '../repositories/backup-job.repository';
 import { BackupArtifactRepository } from '../repositories/backup-artifact.repository';
@@ -20,6 +25,10 @@ export class BackupActivityService {
     private readonly policies: BackupPoliciesService,
     private readonly jobs: BackupJobRepository,
     private readonly artifacts: BackupArtifactRepository,
+    @InjectRepository(ClusterEntity)
+    private readonly clusters: Repository<ClusterEntity>,
+    @InjectRepository(ApplicationEntity)
+    private readonly apps: Repository<ApplicationEntity>,
   ) {}
 
   async forPolicy(
@@ -28,7 +37,22 @@ export class BackupActivityService {
     now: Date = new Date(),
   ): Promise<BackupPolicyActivity> {
     const policy = await this.policies.findById(policyId);
-    return this.build(policy, clampActivityLimit(limit), true, now);
+    const [activity, targets] = await Promise.all([
+      this.build(policy, clampActivityLimit(limit), true, now),
+      this.targetsOf(policy),
+    ]);
+    return { ...activity, targets };
+  }
+
+  private async targetsOf(policy: BackupPolicyEntity) {
+    const appIds = policy.scopeSelector?.applicationIds ?? [];
+    const [cluster, apps] = await Promise.all([
+      policy.clusterId
+        ? this.clusters.findOne({ where: { id: policy.clusterId } })
+        : null,
+      appIds.length ? this.apps.find({ where: { id: In(appIds) } }) : [],
+    ]);
+    return policyTargets(policy, cluster, apps);
   }
 
   async forUser(

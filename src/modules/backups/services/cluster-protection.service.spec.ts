@@ -216,6 +216,41 @@ describe('protecting a cluster gives every application a policy of its own', () 
     expect(policies.create).toHaveBeenCalledTimes(1);
   });
 
+  it('gives no policy to an application a person decided not to back up, even after a recent failure', async () => {
+    const decided = {
+      backupDecision: {
+        notBackedUp: true,
+        decidedBy: 'u1',
+        decidedAt: new Date().toISOString(),
+      },
+    };
+    const { service, policies, jobs } = build({
+      apps: [
+        app('pg', {
+          ...decided,
+          kind: 'DATABASE',
+          labels: { 'flui.cloud/db-engine': 'postgres' },
+        }),
+        app('web', decided),
+      ],
+      protection: {
+        applications: {
+          web: { outcome: 'failed', reason: 'x', at: new Date().toISOString() },
+        },
+      },
+    });
+    const result = await service.reconcile('c1', { runFirstBackup: true });
+    expect(policies.enableDatabase).not.toHaveBeenCalled();
+    expect(policies.create).not.toHaveBeenCalled();
+    expect(jobs.createOnDemand).not.toHaveBeenCalled();
+    expect(
+      result!.applications.map((a) => [a.applicationId, a.outcome, a.reason]),
+    ).toEqual([
+      ['pg', 'skipped', 'not_backed_up_by_choice'],
+      ['web', 'skipped', 'not_backed_up_by_choice'],
+    ]);
+  });
+
   it('does nothing while another pass holds the cluster', async () => {
     const { service, policies, runner } = build({
       apps: [app('web')],

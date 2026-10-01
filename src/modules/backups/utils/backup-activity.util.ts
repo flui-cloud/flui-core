@@ -1,3 +1,4 @@
+import type { PolicyTargets } from './policy-targets.util';
 import { CronExpressionParser } from 'cron-parser';
 import {
   Moment,
@@ -72,6 +73,8 @@ export interface BackupPolicyActivity {
   health: BackupHealth;
   lastRun: BackupRun | null;
   runs: BackupRun[];
+  /** Only on a single policy's activity. */
+  targets?: PolicyTargets;
 }
 
 type Bag = Record<string, unknown> | null;

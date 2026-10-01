@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Optional } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { In, IsNull, Not, Repository } from 'typeorm';
 import { ApplicationEntity } from '../../applications/entities/application.entity';
@@ -11,6 +11,12 @@ import {
 import { BackupPolicyEntity } from '../entities/backup-policy.entity';
 import { BackupJobEntity } from '../entities/backup-job.entity';
 import { BackupJobStatus } from '../enums/backup-job.enum';
+import { BackupClusterProtectionEntity } from '../entities/backup-cluster-protection.entity';
+import {
+  AppPending,
+  applicationPath,
+  pendingOf,
+} from '../utils/app-pending.rules';
 import {
   AppCoverage,
   AppCoverageReason,
@@ -19,6 +25,10 @@ import {
   classifyApp,
   protectPath,
 } from '../utils/app-coverage.rules';
+import {
+  AppBackupDecision,
+  notBackedUpByChoice,
+} from '../utils/app-backup-decision.rules';
 
 export interface AppCoverageRow {
   applicationId: string;
@@ -45,8 +55,13 @@ export interface AppCoverageRow {
   coveringPolicies: number;
   lastSuccessAt: string | null;
   protectedUntil: string | null;
-  /** The policy form filled in for this app, while it holds data nothing protects. */
+  /** The policy form filled in for this app, while it holds data nothing protects and a policy would help. */
   protectPath: string | null;
+  applicationPath: string;
+  /** Why protecting the whole cluster has not covered it yet, when it tried. */
+  pending: AppPending | null;
+  /** A person decided it is not backed up: who, when and why. */
+  decision: AppBackupDecision | null;
 }
 
 export interface FleetCoverage {
@@ -58,6 +73,7 @@ export interface FleetCoverage {
     pending: number;
     toVerify: number;
     unprotected: number;
+    notBackedUpByChoice: number;
     alarms: number;
   };
   applications: AppCoverageRow[];
@@ -139,6 +155,9 @@ export class AppCoverageService {
     private readonly policies: Repository<BackupPolicyEntity>,
     @InjectRepository(BackupJobEntity)
     private readonly jobs: Repository<BackupJobEntity>,
+    @Optional()
+    @InjectRepository(BackupClusterProtectionEntity)
+    private readonly protections?: Repository<BackupClusterProtectionEntity>,
   ) {}
 
   /** Applications on clusters that still exist; the caller filters them to what it may read. */
@@ -166,15 +185,19 @@ export class AppCoverageService {
     now = new Date(),
   ): Promise<FleetCoverage> {
     const clusterIds = [...new Set(apps.map((a) => a.clusterId))];
-    const [clusters, policies] = clusterIds.length
+    const [clusters, policies, protections] = clusterIds.length
       ? await Promise.all([
           this.clusters.find({
             where: { id: In(clusterIds) },
             select: { id: true, name: true },
           }),
           this.policies.find({ where: { clusterId: In(clusterIds) } }),
+          this.protectionsOf(clusterIds),
         ])
-      : [[], []];
+      : [[], [], []];
+    const outcomes = new Map(
+      protections.map((p) => [p.clusterId, p.applications ?? {}] as const),
+    );
     const clusterName = new Map(clusters.map((c) => [c.id, c.name]));
     const lastSuccess = await this.lastSuccesses(policies.map((p) => p.id));
 
@@ -191,11 +214,16 @@ export class AppCoverageService {
             category: app.category,
             volumes: app.volumes,
             workloadKind: app.workloadKind,
+            notBackedUpByChoice: notBackedUpByChoice(app.backupDecision),
           },
           policies,
           (policyId) => lastCapture(lastSuccess.get(policyId), app),
           now,
           (policyId) => newestRunLeftOut(lastSuccess.get(policyId), app),
+        ),
+        pendingOf(
+          outcomes.get(app.clusterId)?.[app.id],
+          app.status === ApplicationStatus.RUNNING,
         ),
       ),
     );
@@ -212,6 +240,7 @@ export class AppCoverageService {
         pending: count('pending'),
         toVerify: count('to_verify'),
         unprotected: count('unprotected'),
+        notBackedUpByChoice: count('not_backed_up_by_choice'),
         alarms: rows.filter((r) => r.alarm).length,
       },
       applications: rows,
@@ -223,6 +252,13 @@ export class AppCoverageService {
     if (!app) return null;
     const { applications } = await this.forApplications([app]);
     return applications[0] ?? null;
+  }
+
+  private async protectionsOf(
+    clusterIds: string[],
+  ): Promise<BackupClusterProtectionEntity[]> {
+    if (!this.protections) return [];
+    return this.protections.find({ where: { clusterId: In(clusterIds) } });
   }
 
   /**
@@ -277,7 +313,10 @@ export class AppCoverageService {
     app: ApplicationEntity,
     clusterName: string | null,
     c: AppCoverage,
+    pending: AppPending | null,
   ): AppCoverageRow {
+    const decided = c.state === 'not_backed_up_by_choice';
+    const gap = c.state !== 'protected' && !decided ? pending : null;
     return {
       applicationId: app.id,
       name: app.name,
@@ -310,13 +349,16 @@ export class AppCoverageService {
       protectedUntil:
         c.state === 'protected' ? (c.deadline?.toISOString() ?? null) : null,
       protectPath:
-        c.holdsData && c.state === 'unprotected'
+        c.holdsData && c.state === 'unprotected' && (gap?.protectHelps ?? true)
           ? protectPath({
               clusterId: app.clusterId,
               applicationId: app.id,
               kind: app.kind,
             })
           : null,
+      applicationPath: applicationPath(app.id),
+      pending: gap,
+      decision: decided ? (app.backupDecision ?? null) : null,
     };
   }
 }
