@@ -345,3 +345,109 @@ describe('ClusterQueueProcessor.handleRemoveWorker', () => {
     );
   });
 });
+
+describe('ClusterQueueProcessor.handleDeleteCluster', () => {
+  function build(force: boolean, nodes: Array<Record<string, unknown>>) {
+    const cluster = {
+      id: 'cluster-1',
+      name: 'val-hz',
+      provider: 'hetzner',
+      status: ClusterStatus.DELETING,
+      metadata: {},
+      nodes,
+    };
+    const clusterRepository = {
+      findOne: jest.fn(async () => ({ ...cluster, nodes: [...nodes] })),
+      update: jest.fn().mockResolvedValue(undefined),
+      save: jest.fn().mockResolvedValue(undefined),
+    };
+    const nodeRepository = {
+      remove: jest.fn().mockResolvedValue(undefined),
+      delete: jest.fn().mockResolvedValue(undefined),
+    };
+    const billingIntervals = {
+      closeNodeIntervals: jest.fn().mockResolvedValue(undefined),
+      closeVolumeIntervals: jest.fn().mockResolvedValue(undefined),
+      closeClusterIntervals: jest.fn().mockResolvedValue(undefined),
+    };
+    const processor = Object.create(
+      ClusterQueueProcessor.prototype,
+    ) as ClusterQueueProcessor;
+    Object.assign(processor, {
+      logger: {
+        log: jest.fn(),
+        warn: jest.fn(),
+        error: jest.fn(),
+        debug: jest.fn(),
+      },
+      clusterRepository,
+      nodeRepository,
+      billingIntervals,
+      updateOperationStatus: jest.fn().mockResolvedValue(undefined),
+      deleteClusterNodes: jest
+        .fn()
+        .mockResolvedValue([
+          { nodeId: 'n1', nodeName: 'master', operationId: 'op-n1' },
+        ]),
+      waitForAllDeletions: jest.fn().mockResolvedValue(undefined),
+      verifyServersDeleted: jest.fn().mockResolvedValue(undefined),
+      clusterSshCleanupService: {
+        cleanupClusterSSHKeys: jest.fn().mockResolvedValue(undefined),
+      },
+      clusterDeletionService: {
+        cleanupClusterFirewall: jest.fn().mockResolvedValue(undefined),
+        cleanupClusterDnsRecords: jest.fn().mockResolvedValue(undefined),
+        cleanupClusterScalingGroups: jest.fn().mockResolvedValue(undefined),
+      },
+      infraGateway: {
+        emitProgress: jest.fn(),
+        emitCompleted: jest.fn(),
+        emitFailed: jest.fn(),
+      },
+    });
+    const run = () =>
+      processor.handleDeleteCluster({
+        id: 'job-1',
+        data: { operationId: 'op-1', clusterId: 'cluster-1', force },
+      } as never);
+    return { run, clusterRepository, nodeRepository, billingIntervals };
+  }
+
+  it.each([false, true])(
+    'ends every billed lifetime and every node record at the deletion time (force=%s)',
+    async (force) => {
+      const t = build(force, [
+        { id: 'n1', serverName: 'master', providerResourceId: '123' },
+      ]);
+
+      await t.run();
+
+      const [closedCluster, closedAt] =
+        t.billingIntervals.closeClusterIntervals.mock.calls[0];
+      expect(closedCluster).toBe('cluster-1');
+      expect(t.nodeRepository.delete).toHaveBeenCalledWith({
+        clusterId: 'cluster-1',
+      });
+      expect(t.clusterRepository.update).toHaveBeenCalledWith('cluster-1', {
+        status: ClusterStatus.DELETED,
+        deletedAt: closedAt,
+      });
+      expect(t.clusterRepository.save).not.toHaveBeenCalled();
+    },
+  );
+
+  it('still marks the cluster deleted when its node records cannot be removed', async () => {
+    const t = build(false, [
+      { id: 'n1', serverName: 'master', providerResourceId: '123' },
+    ]);
+    t.nodeRepository.delete.mockRejectedValueOnce(new Error('lock timeout'));
+
+    await t.run();
+
+    expect(t.billingIntervals.closeClusterIntervals).toHaveBeenCalled();
+    expect(t.clusterRepository.update).toHaveBeenCalledWith(
+      'cluster-1',
+      expect.objectContaining({ status: ClusterStatus.DELETED }),
+    );
+  });
+});

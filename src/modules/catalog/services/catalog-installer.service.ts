@@ -84,7 +84,10 @@ export class CatalogInstallerService {
     install: CatalogInstallEntity;
     operation: InfrastructureOperationEntity;
   }> {
-    const definition = await this.definitionRepo.findPublishedBySlug(slug);
+    const definition = await this.definitionRepo.findPublishedBySlug(
+      slug,
+      userId,
+    );
     if (!definition) {
       throw new BadRequestException(
         `Catalog app "${slug}" not found or not published`,
@@ -103,7 +106,7 @@ export class CatalogInstallerService {
     // every caller (HTTP, install-from-yaml, MCP/agent) fails fast with the structured
     // reason instead of enqueuing a job that dies at create-applications.
     await this.catalogService.assertCatalogAppInstallableOnCluster(
-      slug,
+      definition,
       dto.clusterId,
     );
     // Capacity gate (parity with the dashboard deploy wizard): sum the resource

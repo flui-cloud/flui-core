@@ -47,6 +47,7 @@ export function buildUpsertPayload(
     checksum,
     isPublished,
     isActive: true,
+    ownerUserId: null,
   };
 }
 

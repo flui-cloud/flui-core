@@ -27,7 +27,7 @@
 
 import { Inject, Injectable, Logger, forwardRef } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { IsNull, Repository } from 'typeorm';
 import {
   assessCapacity,
   buildRepoMap,
@@ -366,7 +366,11 @@ export class RepoMapService {
       }
       const definition = await this.catalogDefinitions
         .findOne({
-          where: { slug: service.block, isActive: true },
+          where: {
+            slug: service.block,
+            isActive: true,
+            ownerUserId: IsNull(),
+          },
           order: { createdAt: 'DESC' },
         })
         .catch(() => null);

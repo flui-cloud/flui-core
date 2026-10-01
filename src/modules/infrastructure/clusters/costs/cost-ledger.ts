@@ -30,6 +30,7 @@ export interface LedgerCluster {
   name: string;
   region: string | null;
   removed: boolean;
+  removedAt?: Date | null;
 }
 
 export interface LedgerProvider {
@@ -212,6 +213,25 @@ function accrualOf(
 }
 
 /**
+ * A removed cluster costs nothing after its removal, even where a lifetime was
+ * left open; one whose removal time is unknown stops at `now`, so it never
+ * forecasts.
+ */
+function settled(
+  lifetime: RatedLifetime,
+  cluster: LedgerCluster | undefined,
+  now: Date,
+): RatedLifetime {
+  if (lifetime.endedAt || (cluster && !cluster.removed)) return lifetime;
+  const removedAt =
+    cluster?.removedAt && cluster.removedAt < now ? cluster.removedAt : now;
+  return {
+    ...lifetime,
+    endedAt: removedAt < lifetime.startedAt ? lifetime.startedAt : removedAt,
+  };
+}
+
+/**
  * Spent and forecast, month by month, provider by provider and cluster by
  * cluster, from the lifetimes Flui records. A lifetime with no price is
  * counted as unpriced rather than as free, and the figures it would have added
@@ -227,7 +247,8 @@ export function buildLedger(
   const byProvider = new Map<string, ProviderTally>();
   let recordedSince: Date | null = null;
 
-  for (const lifetime of lifetimes) {
+  for (const recorded of lifetimes) {
+    const lifetime = settled(recorded, clusters.get(recorded.clusterId), now);
     if (!recordedSince || lifetime.startedAt < recordedSince) {
       recordedSince = lifetime.startedAt;
     }

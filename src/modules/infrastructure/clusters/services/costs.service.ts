@@ -135,10 +135,13 @@ export class CostsService {
       : [];
     const out = new Map<string, LedgerCluster>();
     for (const row of rows) {
+      const removed =
+        row.status === ClusterStatus.DELETED || row.deletedAt != null;
       out.set(row.id, {
         name: row.name,
         region: row.region ?? null,
-        removed: row.status === ClusterStatus.DELETED || row.deletedAt != null,
+        removed,
+        removedAt: removed ? (row.deletedAt ?? row.updatedAt ?? null) : null,
       });
     }
     for (const interval of [...nodes, ...volumes]) {

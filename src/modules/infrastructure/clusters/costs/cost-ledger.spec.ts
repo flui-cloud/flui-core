@@ -147,6 +147,56 @@ describe('the cost ledger', () => {
     expect(cluster.months[1].spentNet).toBeCloseTo(48 * 0.0104, 2);
   });
 
+  it('stops a deleted cluster at its deletion even where a machine was left open', () => {
+    const ledger = buildLedger(
+      [
+        node({
+          clusterId: 'gone',
+          startedAt: new Date('2026-09-01T00:00:00Z'),
+        }),
+        node({
+          clusterId: 'gone',
+          startedAt: new Date('2026-09-01T00:00:00Z'),
+        }),
+      ],
+      new Map([
+        [
+          'gone',
+          {
+            name: 'val-hz',
+            region: 'nbg1',
+            removed: true,
+            removedAt: new Date('2026-09-03T00:00:00Z'),
+          },
+        ],
+      ]),
+      new Map([['hetzner', hetzner]]),
+      months,
+      NOW,
+    );
+    const september = ledger.providers[0].clusters[0].months[1];
+    expect(september.spentNet).toBeCloseTo(2 * 48 * 0.0104, 2);
+    expect(september.forecastNet).toBe(september.spentNet);
+  });
+
+  it('forecasts nothing for a removed cluster whose removal time is unknown', () => {
+    const ledger = buildLedger(
+      [
+        node({
+          clusterId: 'gone',
+          startedAt: new Date('2026-09-20T00:00:00Z'),
+        }),
+      ],
+      new Map([['gone', { name: 'wc-1', region: 'nbg1', removed: true }]]),
+      new Map([['hetzner', hetzner]]),
+      months,
+      NOW,
+    );
+    const september = ledger.providers[0].clusters[0].months[1];
+    expect(september.spentNet).toBeGreaterThan(0);
+    expect(september.forecastNet).toBe(september.spentNet);
+  });
+
   it('names a cluster it has no record of as removed rather than dropping it', () => {
     const ledger = buildLedger(
       [node({ clusterId: 'abcdef12-0000' })],
@@ -224,7 +274,7 @@ describe('the cost ledger', () => {
           nodeRate: { ...cx22, hourlyGross: null, monthlyGross: null },
         }),
       ],
-      new Map(),
+      new Map([['c1', { name: 'ovh-1', region: 'gra', removed: false }]]),
       new Map([['ovh', ovh]]),
       months,
       NOW,

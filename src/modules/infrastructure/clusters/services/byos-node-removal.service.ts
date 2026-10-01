@@ -13,6 +13,7 @@ import { CertificateSignerService } from '../../../access/services/certificate-s
 import { NativeSSHConnectionService } from '../../../terminal/services/native-ssh-connection.service';
 import { FirewallReconciliationService } from '../../firewalls/services/firewall-reconciliation.service';
 import { ByosVNetService } from './byos-vnet.service';
+import { BillingIntervalsService } from './billing-intervals.service';
 
 interface SshTarget {
   host: string;
@@ -46,6 +47,7 @@ export class ByosNodeRemovalService {
     private readonly nativeSsh: NativeSSHConnectionService,
     private readonly firewallReconciliation: FirewallReconciliationService,
     private readonly byosVNet: ByosVNetService,
+    private readonly billingIntervals: BillingIntervalsService,
   ) {}
 
   async removeWorker(
@@ -140,6 +142,7 @@ export class ByosNodeRemovalService {
       });
     }
 
+    await this.billingIntervals.closeNodeIntervals(node.id);
     await this.nodeRepository.delete({ id: node.id });
     const total = await this.nodeRepository.count({
       where: { clusterId: cluster.id },

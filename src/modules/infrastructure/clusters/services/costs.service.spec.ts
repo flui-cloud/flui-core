@@ -102,6 +102,36 @@ describe('the Costs section', () => {
     expect(costs.notes.length).toBeGreaterThan(0);
   });
 
+  it('forecasts nothing for a deleted cluster whose machines were left open', async () => {
+    const service = new CostsService(
+      {
+        find: jest.fn(async () => [
+          {
+            id: 'c-del',
+            name: 'val-hz',
+            region: 'fsn1',
+            status: ClusterStatus.DELETED,
+            deletedAt: new Date('2026-09-10T00:00:00Z'),
+          },
+        ]),
+      } as never,
+      queryable([
+        lifetime({ clusterId: 'c-del' }),
+        lifetime({ id: 'iv-dup', clusterId: 'c-del' }),
+      ]) as never,
+      queryable([]) as never,
+      rates(),
+    );
+
+    const costs = await service.getCosts({ months: 1 }, NOW);
+
+    const [cluster] = costs.providers[0].clusters;
+    expect(cluster).toMatchObject({ clusterName: 'val-hz', removed: true });
+    expect(cluster.months[0].spentNet).toBeCloseTo(2 * 9 * 24 * 0.014, 2);
+    expect(cluster.months[0].forecastNet).toBe(cluster.months[0].spentNet);
+    expect(costs.totals[0].forecastNet).toBe(costs.totals[0].spentNet);
+  });
+
   it('answers with an empty record rather than invented months', async () => {
     const service = new CostsService(
       { find: jest.fn(async () => []) } as never,

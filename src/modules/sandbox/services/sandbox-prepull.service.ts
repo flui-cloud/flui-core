@@ -1,6 +1,6 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { In, Repository, Not } from 'typeorm';
+import { In, IsNull, Repository, Not } from 'typeorm';
 import { KubernetesService } from '../../infrastructure/shared/services/kubernetes.service';
 import { EncryptionService } from '../../shared/encryption/services/encryption.service';
 import { ClusterEntity } from '../../infrastructure/clusters/entities/cluster.entity';
@@ -45,7 +45,11 @@ export class SandboxPrepullService {
    */
   async imagesToWarm(): Promise<string[]> {
     const rows = await this.definitions.find({
-      where: { slug: In(SANDBOX_FAST_CATALOG), isActive: true },
+      where: {
+        slug: In(SANDBOX_FAST_CATALOG),
+        isActive: true,
+        ownerUserId: IsNull(),
+      },
     });
 
     const images = new Set<string>();

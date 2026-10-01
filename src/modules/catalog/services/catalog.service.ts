@@ -1,4 +1,9 @@
-import { Injectable, NotFoundException, HttpException } from '@nestjs/common';
+import {
+  ConflictException,
+  Injectable,
+  NotFoundException,
+  HttpException,
+} from '@nestjs/common';
 import { CatalogAppDefinitionRepository } from '../repositories/catalog-app-definition.repository';
 import { CatalogAppDefinitionEntity } from '../entities/catalog-app-definition.entity';
 import { CatalogResponseDto } from '../dto/catalog-response.dto';
@@ -251,12 +256,10 @@ export class CatalogService {
    * the cluster lacks internal hosting, throws the structured 400.
    */
   async assertCatalogAppInstallableOnCluster(
-    slug: string,
+    definition: CatalogAppDefinitionEntity,
     clusterId: string,
   ): Promise<void> {
-    const entity = await this.repository.findPublishedBySlug(slug);
-    if (!entity) return; // let the installer raise its own NotFound
-    if (!this.manifestExposureIsInternal(entity.manifest)) return;
+    if (!this.manifestExposureIsInternal(definition.manifest)) return;
     const status =
       await this.clusterDnsZoneService.getInternalHostingStatus(clusterId);
     if (!status.ready) {
@@ -278,8 +281,11 @@ export class CatalogService {
     );
   }
 
-  async findPublishedBySlug(slug: string): Promise<CatalogAppDefinitionEntity> {
-    const entity = await this.repository.findPublishedBySlug(slug);
+  async findPublishedBySlug(
+    slug: string,
+    ownerUserId?: string | null,
+  ): Promise<CatalogAppDefinitionEntity> {
+    const entity = await this.repository.findPublishedBySlug(slug, ownerUserId);
     if (!entity) {
       throw new NotFoundException(`Catalog app "${slug}" not found`);
     }
@@ -683,35 +689,54 @@ export class CatalogService {
   }
 
   /**
-   * Parses rawYaml, validates it against the flui/v1 schema, upserts the
-   * app definition in the catalog DB, and returns the persisted entity.
-   * Used by `POST /catalog/install-from-yaml` so the caller can install
-   * directly from a local file without a prior boot-time seed.
+   * Parses rawYaml, validates it against the flui/v1 schema and stores it as a
+   * definition of `ownerUserId` alone, used by `POST /catalog/install-from-yaml`.
+   * The shared catalog is written only by the seed files: a manifest reusing one
+   * of its ids is refused before anything is written.
    */
-  async upsertFromYaml(rawYaml: string): Promise<CatalogAppDefinitionEntity> {
+  async upsertFromYaml(
+    rawYaml: string,
+    ownerUserId: string,
+  ): Promise<CatalogAppDefinitionEntity> {
     const { manifest, checksum } = this.manifestLoader.load(rawYaml);
+    const slug = manifest.metadata.id;
+    if (await this.repository.hasShared(slug)) {
+      throw new ConflictException(sharedSlugRefusal(slug));
+    }
     const existing = await this.repository.findBySlugAndVersion(
-      manifest.metadata.id,
+      slug,
       manifest.metadata.version,
+      ownerUserId,
     );
-    if (existing?.checksum === checksum) {
+    if (existing?.checksum === checksum && existing.isActive) {
       return existing;
     }
-    await this.repository.upsert(
-      buildUpsertPayload(manifest, rawYaml, checksum),
-    );
+    await this.repository.upsert({
+      ...buildUpsertPayload(manifest, rawYaml, checksum),
+      ownerUserId,
+    });
     await this.repository.cleanupPreviousVersions(
-      manifest.metadata.id,
+      slug,
       manifest.metadata.version,
+      ownerUserId,
     );
-    const entity = await this.repository.findPublishedBySlug(
-      manifest.metadata.id,
+    const entity = await this.repository.findBySlugAndVersion(
+      slug,
+      manifest.metadata.version,
+      ownerUserId,
     );
     if (!entity) {
       throw new NotFoundException(
-        `Upsert succeeded but slug "${manifest.metadata.id}" not found — this should not happen`,
+        `Upsert succeeded but slug "${slug}" not found — this should not happen`,
       );
     }
     return entity;
   }
+}
+
+export function sharedSlugRefusal(slug: string): string {
+  return (
+    `"${slug}" is the id of an app in the Flui catalog, which only Flui itself can change. ` +
+    `Change metadata.id in your flui.yaml to an id of your own and deploy again.`
+  );
 }

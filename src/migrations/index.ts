@@ -65,6 +65,10 @@ import { AlertDestinations1790000000008 } from './1790000000008-AlertDestination
 import { ClusterReleaseRecord1790000000009 } from './1790000000009-ClusterReleaseRecord';
 import { K3sUpgradeOperation1790000000010 } from './1790000000010-K3sUpgradeOperation';
 import { AlertDestinationScope1790000000011 } from './1790000000011-AlertDestinationScope';
+import { ProviderCredentialTokensSealed1790000000012 } from './1790000000012-ProviderCredentialTokensSealed';
+import { CloseDeletedClusterIntervals1790000000013 } from './1790000000013-CloseDeletedClusterIntervals';
+import { DropRegistryAuth1790000000014 } from './1790000000014-DropRegistryAuth';
+import { CatalogDefinitionOwner1790000000015 } from './1790000000015-CatalogDefinitionOwner';
 import { BackfillArtifactApplicationId1787500000000 } from './1787500000000-BackfillArtifactApplicationId';
 import { WireGuardHubKeySealed1790000000000 } from './1790000000000-WireGuardHubKeySealed';
 import { RecoverNodeAccessOperation1790000000001 } from './1790000000001-RecoverNodeAccessOperation';
@@ -143,4 +147,8 @@ export const migrations = [
   ClusterReleaseRecord1790000000009,
   K3sUpgradeOperation1790000000010,
   AlertDestinationScope1790000000011,
+  ProviderCredentialTokensSealed1790000000012,
+  CloseDeletedClusterIntervals1790000000013,
+  DropRegistryAuth1790000000014,
+  CatalogDefinitionOwner1790000000015,
 ];

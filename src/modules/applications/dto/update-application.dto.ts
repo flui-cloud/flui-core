@@ -97,7 +97,10 @@ export class UpdateApplicationDto {
   @IsString()
   description?: string;
 
-  @ApiPropertyOptional({ description: 'Updated source configuration' })
+  @ApiPropertyOptional({
+    description:
+      'Updated source configuration. A registryAuth credential is refused.',
+  })
   @IsOptional()
   @IsObject()
   sourceConfig?: Record<string, any>;

@@ -5,6 +5,10 @@ import { NodeType } from './cluster-node.entity';
 @Entity('infrastructure_node_billable_intervals')
 @Index(['clusterId', 'startedAt'])
 @Index(['nodeId', 'endedAt'])
+@Index('UQ_node_billable_intervals_open_node', ['nodeId'], {
+  unique: true,
+  where: '"endedAt" IS NULL',
+})
 export class NodeBillableIntervalEntity {
   @PrimaryColumn('uuid')
   id: string;

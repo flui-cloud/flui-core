@@ -893,10 +893,7 @@ export class ClusterQueueProcessor {
           clusterId,
         );
 
-        // Update cluster status to DELETED
-        clusterToDelete.status = ClusterStatus.DELETED;
-        clusterToDelete.deletedAt = new Date();
-        await this.clusterRepository.save(clusterToDelete);
+        await this.markClusterDeleted(clusterId);
       }
 
       // Mark operation as completed
@@ -953,6 +950,28 @@ export class ClusterQueueProcessor {
 
       throw error;
     }
+  }
+
+  /**
+   * The servers are gone by now, so nothing of the cluster is billed from this
+   * moment. Node rows are removed rather than left `deleting`: removal is the
+   * only end a node has. `update`, not `save`, because `nodes` cascades and a
+   * save would write back the rows just removed.
+   */
+  private async markClusterDeleted(clusterId: string): Promise<void> {
+    const deletedAt = new Date();
+    await this.billingIntervals.closeClusterIntervals(clusterId, deletedAt);
+    try {
+      await this.nodeRepository.delete({ clusterId });
+    } catch (error) {
+      this.logger.error(
+        `Failed to remove the node records of deleted cluster ${clusterId}: ${error.message}`,
+      );
+    }
+    await this.clusterRepository.update(clusterId, {
+      status: ClusterStatus.DELETED,
+      deletedAt,
+    });
   }
 
   /**

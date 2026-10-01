@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository as TypeOrmRepository, In } from 'typeorm';
+import { Repository as TypeOrmRepository, In, IsNull } from 'typeorm';
 import { CatalogAppDefinitionEntity } from '../entities/catalog-app-definition.entity';
 import { CatalogAppType } from '../enums/catalog-app-type.enum';
 import { ApplicationKind } from '../../applications/enums/application-kind.enum';
@@ -15,24 +15,45 @@ export class CatalogAppDefinitionRepository {
   async findBySlugAndVersion(
     slug: string,
     version: string,
+    ownerUserId: string | null = null,
   ): Promise<CatalogAppDefinitionEntity | null> {
-    return this.repository.findOne({ where: { slug, version } });
+    return this.repository.findOne({
+      where: { slug, version, ownerUserId: ownerUserId ?? IsNull() },
+    });
+  }
+
+  async hasShared(slug: string): Promise<boolean> {
+    return this.repository.exists({
+      where: { slug, ownerUserId: IsNull() },
+    });
   }
 
   async findActiveBySlug(
     slug: string,
   ): Promise<CatalogAppDefinitionEntity | null> {
     return this.repository.findOne({
-      where: { slug, isActive: true },
+      where: { slug, isActive: true, ownerUserId: IsNull() },
       order: { createdAt: 'DESC' },
     });
   }
 
+  /**
+   * The caller's own definition for the slug when it has one, else the shared
+   * one. Without an owner only the shared catalog answers.
+   */
   async findPublishedBySlug(
     slug: string,
+    ownerUserId?: string | null,
   ): Promise<CatalogAppDefinitionEntity | null> {
+    if (ownerUserId) {
+      const own = await this.repository.findOne({
+        where: { slug, isActive: true, isPublished: true, ownerUserId },
+        order: { createdAt: 'DESC' },
+      });
+      if (own) return own;
+    }
     return this.repository.findOne({
-      where: { slug, isActive: true, isPublished: true },
+      where: { slug, isActive: true, isPublished: true, ownerUserId: IsNull() },
       order: { createdAt: 'DESC' },
     });
   }
@@ -51,6 +72,7 @@ export class CatalogAppDefinitionRepository {
       .createQueryBuilder('def')
       .where('def.isActive = :isActive', { isActive: true })
       .andWhere('def.isPublished = :isPublished', { isPublished: true })
+      .andWhere('def.ownerUserId IS NULL')
       .andWhere('def.appType IN (:...types)', {
         types: [
           CatalogAppType.STANDALONE,
@@ -85,6 +107,7 @@ export class CatalogAppDefinitionRepository {
       .createQueryBuilder('def')
       .where('def.isActive = :isActive', { isActive: true })
       .andWhere('def.isPublished = :isPublished', { isPublished: true })
+      .andWhere('def.ownerUserId IS NULL')
       .andWhere(':bb = ANY(def.clientFor)', { bb: buildingBlockSlug })
       .orderBy('def.name', 'ASC')
       .getMany();
@@ -95,6 +118,7 @@ export class CatalogAppDefinitionRepository {
       where: {
         isActive: true,
         appType: CatalogAppType.BUILDING_BLOCK,
+        ownerUserId: IsNull(),
       },
       order: { name: 'ASC' },
     });
@@ -110,7 +134,11 @@ export class CatalogAppDefinitionRepository {
   async upsert(
     data: Partial<CatalogAppDefinitionEntity>,
   ): Promise<CatalogAppDefinitionEntity> {
-    const existing = await this.findBySlugAndVersion(data.slug, data.version);
+    const existing = await this.findBySlugAndVersion(
+      data.slug,
+      data.version,
+      data.ownerUserId ?? null,
+    );
     if (existing) {
       Object.assign(existing, data);
       return this.repository.save(existing);
@@ -131,16 +159,24 @@ export class CatalogAppDefinitionRepository {
    *      Rows still referenced are kept in DB (isActive=false) so the install
    *      row keeps a valid FK target, but they no longer appear in catalog
    *      listings.
+   *
+   * Only the rows of the same owner are touched: the shared catalog's when
+   * `ownerUserId` is null, that user's own definitions otherwise.
    */
   async cleanupPreviousVersions(
     slug: string,
     keepVersion: string,
+    ownerUserId: string | null = null,
   ): Promise<{ deactivated: number; deleted: number }> {
+    const owner = ownerUserId
+      ? { clause: '"ownerUserId" = :ownerUserId', params: { ownerUserId } }
+      : { clause: '"ownerUserId" IS NULL', params: {} };
     const deactivateResult = await this.repository
       .createQueryBuilder()
       .update()
       .set({ isActive: false })
       .where('slug = :slug', { slug })
+      .andWhere(owner.clause, owner.params)
       .andWhere('version != :keepVersion', { keepVersion })
       .andWhere('isActive = :isActive', { isActive: true })
       .execute();
@@ -154,6 +190,7 @@ export class CatalogAppDefinitionRepository {
       .createQueryBuilder()
       .delete()
       .where('slug = :slug', { slug })
+      .andWhere(owner.clause, owner.params)
       .andWhere('version != :keepVersion', { keepVersion })
       .andWhere(
         `id NOT IN (SELECT "catalogAppDefinitionId" FROM catalog_installs)`,

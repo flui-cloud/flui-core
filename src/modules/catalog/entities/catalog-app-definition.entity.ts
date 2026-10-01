@@ -4,7 +4,7 @@ import {
   Column,
   CreateDateColumn,
   UpdateDateColumn,
-  Unique,
+  Index,
   BeforeInsert,
 } from 'typeorm';
 import { v4 as uuidv4 } from 'uuid';
@@ -17,7 +17,15 @@ import {
 } from '../interfaces/catalog-manifest.interface';
 
 @Entity('catalog_app_definitions')
-@Unique(['slug', 'version'])
+@Index('UQ_catalog_app_definitions_shared_slug_version', ['slug', 'version'], {
+  unique: true,
+  where: '"ownerUserId" IS NULL',
+})
+@Index(
+  'UQ_catalog_app_definitions_owned_slug_version',
+  ['ownerUserId', 'slug', 'version'],
+  { unique: true, where: '"ownerUserId" IS NOT NULL' },
+)
 export class CatalogAppDefinitionEntity {
   @PrimaryColumn('uuid')
   id: string;
@@ -34,6 +42,14 @@ export class CatalogAppDefinitionEntity {
 
   @Column({ length: 50 })
   version: string;
+
+  /**
+   * Null for the shared catalog, which only the seed files write. Set to the
+   * user who sent the manifest through `install-from-yaml`: that definition is
+   * theirs alone and never listed to anyone else.
+   */
+  @Column({ type: 'uuid', nullable: true })
+  ownerUserId?: string | null;
 
   @Column({ length: 255 })
   name: string;

@@ -64,6 +64,9 @@ describe('ByosNodeRemovalService', () => {
     };
 
     const byosVNet = { detachNode: jest.fn().mockResolvedValue(undefined) };
+    const billingIntervals = {
+      closeNodeIntervals: jest.fn().mockResolvedValue(undefined),
+    };
 
     const svc = new ByosNodeRemovalService(
       clusterRepository as any,
@@ -73,6 +76,7 @@ describe('ByosNodeRemovalService', () => {
       nativeSsh as any,
       firewallReconciliation as any,
       byosVNet as any,
+      billingIntervals as any,
     );
 
     return {
@@ -84,6 +88,7 @@ describe('ByosNodeRemovalService', () => {
       operationRepository,
       firewallReconciliation,
       byosVNet,
+      billingIntervals,
     };
   }
 
@@ -123,6 +128,7 @@ describe('ByosNodeRemovalService', () => {
       clusterRepository,
       firewallReconciliation,
       byosVNet,
+      billingIntervals,
     } = make();
 
     const op = await svc.removeWorker(cluster() as any, worker() as any);
@@ -146,6 +152,10 @@ describe('ByosNodeRemovalService', () => {
     expect(workerCalls[0].command).toContain('delete table inet flui');
 
     expect(nodeRepository.delete).toHaveBeenCalledWith({ id: 'n-w1' });
+    expect(billingIntervals.closeNodeIntervals).toHaveBeenCalledWith('n-w1');
+    expect(
+      billingIntervals.closeNodeIntervals.mock.invocationCallOrder[0],
+    ).toBeLessThan(nodeRepository.delete.mock.invocationCallOrder[0]);
     expect(clusterRepository.update).toHaveBeenCalledWith('c-1', {
       nodeCount: 1,
     });

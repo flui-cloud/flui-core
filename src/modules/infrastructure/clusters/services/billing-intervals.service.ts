@@ -1,13 +1,13 @@
 import { Injectable, Logger, Optional } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { IsNull, Repository } from 'typeorm';
+import { In, IsNull, Repository } from 'typeorm';
 import { NodeBillableIntervalEntity } from '../entities/node-billable-interval.entity';
 import {
   VolumeBillableIntervalEntity,
   VolumeBillableKind,
 } from '../entities/volume-billable-interval.entity';
 import { ClusterEntity } from '../entities/cluster.entity';
-import { NodeType } from '../entities/cluster-node.entity';
+import { ClusterNodeEntity, NodeType } from '../entities/cluster-node.entity';
 import { CostRatesService } from './cost-rates.service';
 
 interface OpenNodeIntervalInput {
@@ -47,12 +47,27 @@ export class BillingIntervalsService {
     @Optional() private readonly rates?: CostRatesService,
   ) {}
 
+  /**
+   * At most one open lifetime per node: a repeat of the same shape keeps the
+   * one already open, a new shape (a resize) closes it and opens the next.
+   */
   async openNodeInterval(input: OpenNodeIntervalInput): Promise<void> {
+    const startedAt = input.startedAt ?? new Date();
     try {
-      await this.closeNodeIntervals(
-        input.nodeId,
-        input.startedAt ?? new Date(),
-      );
+      const open = await this.nodeIntervalRepo.find({
+        where: { nodeId: input.nodeId, endedAt: IsNull() },
+        order: { startedAt: 'ASC' },
+      });
+      const current = open.find((row) => sameShape(row, input));
+      const stale = open.filter((row) => row !== current);
+      if (stale.length > 0) {
+        await this.nodeIntervalRepo.update(
+          { id: In(stale.map((row) => row.id)), endedAt: IsNull() },
+          { endedAt: startedAt },
+        );
+      }
+      if (current) return;
+
       const entity = this.nodeIntervalRepo.create({
         clusterId: input.clusterId,
         nodeId: input.nodeId,
@@ -63,7 +78,7 @@ export class BillingIntervalsService {
         location: input.location,
         serverType: input.serverType,
         nodeType: input.nodeType,
-        startedAt: input.startedAt ?? new Date(),
+        startedAt,
         endedAt: null,
         metadata: {
           ...input.metadata,
@@ -74,6 +89,26 @@ export class BillingIntervalsService {
     } catch (err) {
       this.logger.warn(
         `openNodeInterval failed for node ${input.nodeId}: ${(err as Error).message}`,
+      );
+    }
+  }
+
+  async closeClusterIntervals(
+    clusterId: string,
+    at: Date = new Date(),
+  ): Promise<void> {
+    try {
+      await this.nodeIntervalRepo.update(
+        { clusterId, endedAt: IsNull() },
+        { endedAt: at },
+      );
+      await this.volumeIntervalRepo.update(
+        { clusterId, endedAt: IsNull() },
+        { endedAt: at },
+      );
+    } catch (err) {
+      this.logger.warn(
+        `closeClusterIntervals failed for cluster ${clusterId}: ${(err as Error).message}`,
       );
     }
   }
@@ -185,64 +220,85 @@ export class BillingIntervalsService {
     let volumesOpened = 0;
     for (const cluster of clusters) {
       for (const node of cluster.nodes ?? []) {
-        const existing = await this.nodeIntervalRepo.findOne({
-          where: { nodeId: node.id },
-        });
-        if (existing) continue;
-        try {
-          await this.nodeIntervalRepo.save(
-            this.nodeIntervalRepo.create({
-              clusterId: cluster.id,
-              nodeId: node.id,
-              serverName: node.serverName,
-              providerResourceId: node.providerResourceId,
-              provider: cluster.provider,
-              region: cluster.region,
-              serverType: cluster.nodeSize,
-              nodeType: node.nodeType,
-              startedAt: node.createdAt,
-              endedAt: null,
-              metadata: { backfilled: true },
-            }),
-          );
-          nodesOpened++;
-        } catch (err) {
-          this.logger.warn(
-            `backfill node ${node.id} failed: ${(err as Error).message}`,
-          );
-        }
+        if (await this.backfillNode(cluster, node)) nodesOpened++;
       }
-
-      if (cluster.sharedStorageVolumeId) {
-        const existingVol = await this.volumeIntervalRepo.findOne({
-          where: { volumeProviderId: cluster.sharedStorageVolumeId },
-        });
-        if (!existingVol) {
-          try {
-            await this.volumeIntervalRepo.save(
-              this.volumeIntervalRepo.create({
-                clusterId: cluster.id,
-                volumeProviderId: cluster.sharedStorageVolumeId,
-                provider: cluster.provider,
-                region: cluster.region,
-                kind: VolumeBillableKind.SHARED_STORAGE,
-                sizeGb: cluster.sharedStorageVolumeSizeGb ?? 0,
-                startedAt: cluster.createdAt,
-                endedAt: null,
-                metadata: { backfilled: true },
-              }),
-            );
-            volumesOpened++;
-          } catch (err) {
-            this.logger.warn(
-              `backfill volume ${cluster.sharedStorageVolumeId} failed: ${(err as Error).message}`,
-            );
-          }
-        }
-      }
+      if (await this.backfillSharedVolume(cluster)) volumesOpened++;
     }
     return { nodes: nodesOpened, volumes: volumesOpened };
   }
+
+  private async backfillNode(
+    cluster: ClusterEntity,
+    node: ClusterNodeEntity,
+  ): Promise<boolean> {
+    const existing = await this.nodeIntervalRepo.findOne({
+      where: { nodeId: node.id },
+    });
+    if (existing) return false;
+    try {
+      await this.nodeIntervalRepo.save(
+        this.nodeIntervalRepo.create({
+          clusterId: cluster.id,
+          nodeId: node.id,
+          serverName: node.serverName,
+          providerResourceId: node.providerResourceId,
+          provider: cluster.provider,
+          region: cluster.region,
+          serverType: cluster.nodeSize,
+          nodeType: node.nodeType,
+          startedAt: node.createdAt,
+          endedAt: null,
+          metadata: { backfilled: true },
+        }),
+      );
+      return true;
+    } catch (err) {
+      this.logger.warn(
+        `backfill node ${node.id} failed: ${(err as Error).message}`,
+      );
+      return false;
+    }
+  }
+
+  private async backfillSharedVolume(cluster: ClusterEntity): Promise<boolean> {
+    if (!cluster.sharedStorageVolumeId) return false;
+    const existingVol = await this.volumeIntervalRepo.findOne({
+      where: { volumeProviderId: cluster.sharedStorageVolumeId },
+    });
+    if (existingVol) return false;
+    try {
+      await this.volumeIntervalRepo.save(
+        this.volumeIntervalRepo.create({
+          clusterId: cluster.id,
+          volumeProviderId: cluster.sharedStorageVolumeId,
+          provider: cluster.provider,
+          region: cluster.region,
+          kind: VolumeBillableKind.SHARED_STORAGE,
+          sizeGb: cluster.sharedStorageVolumeSizeGb ?? 0,
+          startedAt: cluster.createdAt,
+          endedAt: null,
+          metadata: { backfilled: true },
+        }),
+      );
+      return true;
+    } catch (err) {
+      this.logger.warn(
+        `backfill volume ${cluster.sharedStorageVolumeId} failed: ${(err as Error).message}`,
+      );
+      return false;
+    }
+  }
 }
 
-void NodeType;
+function sameShape(
+  row: NodeBillableIntervalEntity,
+  input: OpenNodeIntervalInput,
+): boolean {
+  return (
+    row.clusterId === input.clusterId &&
+    row.provider === input.provider &&
+    row.region === input.region &&
+    row.serverType === input.serverType &&
+    row.nodeType === input.nodeType
+  );
+}

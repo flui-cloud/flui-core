@@ -237,23 +237,19 @@ export class AccessService {
     dto: CreateBearerTokenDto,
   ): Promise<BearerTokenDto> {
     const token = await this.bearerTokenService.generateToken(provider, dto);
-    const password = this.keyStorage.encryptKeyToString(dto.password);
-    const client_id = this.keyStorage.encryptKeyToString(dto.client_id);
-    const client_secret = this.keyStorage.encryptKeyToString(dto.client_secret);
-
     const decodedRefresh = this.jwtService.decode(token.refresh_token);
 
-    this.providerCredentialsRepository.saveCredentials(
+    await this.providerCredentialsRepository.saveCredentials({
       provider,
-      dto.username,
-      password,
-      client_id,
-      client_secret,
-      token.access_token,
-      token.refresh_token,
-      token.expires_in,
-      decodedRefresh?.exp,
-    );
+      username: dto.username,
+      password: dto.password,
+      client_id: dto.client_id,
+      client_secret: dto.client_secret,
+      accessToken: token.access_token,
+      refreshToken: token.refresh_token,
+      expiresIn: token.expires_in,
+      refreshTokenExp: decodedRefresh?.exp,
+    });
     return token;
   }
 
@@ -285,34 +281,21 @@ export class AccessService {
       credentials.refresh_token_expires_at &&
       credentials.refresh_token_expires_at > new Date()
     ) {
-      const client_secret = this.keyStorage.decryptKeyFromString(
-        credentials.client_secret,
-      );
-      const client_id = this.keyStorage.decryptKeyFromString(
-        credentials.client_id,
-      );
       const token = await this.refreshBearerToken(provider, {
         provider: provider,
-        client_id: client_id,
-        client_secret: client_secret,
+        client_id: credentials.client_id,
+        client_secret: credentials.client_secret,
         refresh_token: credentials.refresh_token,
       });
       return token;
     }
 
-    const password = this.keyStorage.decryptKeyFromString(credentials.password);
-    const client_id = this.keyStorage.decryptKeyFromString(
-      credentials.client_id,
-    );
-    const client_secret = this.keyStorage.decryptKeyFromString(
-      credentials.client_secret,
-    );
     return await this.generateBearerToken(provider, {
       provider: provider,
-      client_id: client_id,
-      client_secret: client_secret,
+      client_id: credentials.client_id,
+      client_secret: credentials.client_secret,
       username: credentials.username,
-      password: password,
+      password: credentials.password,
       save_credentials: true,
     });
   }

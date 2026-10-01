@@ -54,6 +54,10 @@ import {
 } from '../dto/application-response.dto';
 import { EncryptionService } from '../../shared/encryption/services/encryption.service';
 import {
+  refuseRegistryAuth,
+  withoutRegistryAuth,
+} from '../utils/registry-auth.util';
+import {
   KubernetesService,
   PodMetrics,
 } from '../../infrastructure/shared/services/kubernetes.service';
@@ -177,7 +181,9 @@ export class ApplicationService {
       // Not the principal as authenticated: a service credential's principal is
       // a declared name, not a `users` row, and the column is a foreign key.
       userId: ownerUserIdFor(userId),
-      sourceConfig: dto.sourceConfig as ApplicationSourceConfig,
+      sourceConfig: refuseRegistryAuth(
+        dto.sourceConfig as ApplicationSourceConfig,
+      ),
       env: envWithEncryptedSecrets,
       resources: resolvedResources,
       scaling: dto.scaling || ({ enabled: false } as ApplicationScaling),
@@ -416,28 +422,13 @@ export class ApplicationService {
       await this.assertInternalHostingReady(app.clusterId);
     }
 
-    const updateData: Partial<ApplicationEntity> = {};
+    const updateData = this.plainUpdateFields(dto);
 
-    if (dto.name !== undefined) updateData.name = dto.name;
-    if (dto.description !== undefined) updateData.description = dto.description;
     if (dto.sourceConfig !== undefined)
       updateData.sourceConfig = this.preserveMonorepoSubPath(
-        dto.sourceConfig as ApplicationSourceConfig,
+        refuseRegistryAuth(dto.sourceConfig as ApplicationSourceConfig),
         app.sourceConfig,
       );
-    if (dto.resources !== undefined) updateData.resources = dto.resources;
-    if (dto.scaling !== undefined)
-      updateData.scaling = dto.scaling as ApplicationScaling;
-    if (dto.replicas !== undefined) updateData.replicas = dto.replicas;
-    if (dto.port !== undefined) updateData.port = dto.port;
-    if (dto.startCommand !== undefined)
-      updateData.startCommand = dto.startCommand ?? null;
-    if (dto.labels !== undefined) updateData.labels = dto.labels;
-    if (dto.tags !== undefined) updateData.tags = dto.tags;
-    if (dto.metadata !== undefined) updateData.metadata = dto.metadata;
-    if (dto.exposure !== undefined) updateData.exposure = dto.exposure;
-    if (dto.deployOnPush !== undefined)
-      updateData.deployOnPush = dto.deployOnPush;
 
     if (dto.env !== undefined) {
       const existingByName = new Map(
@@ -454,6 +445,28 @@ export class ApplicationService {
     const saved = await this.applicationsRepository.update(id, updateData);
     await this.reconcileAutoscaler(dto, saved);
     return saved;
+  }
+
+  private plainUpdateFields(
+    dto: UpdateApplicationDto,
+  ): Partial<ApplicationEntity> {
+    const updateData: Partial<ApplicationEntity> = {};
+    if (dto.name !== undefined) updateData.name = dto.name;
+    if (dto.description !== undefined) updateData.description = dto.description;
+    if (dto.resources !== undefined) updateData.resources = dto.resources;
+    if (dto.scaling !== undefined)
+      updateData.scaling = dto.scaling as ApplicationScaling;
+    if (dto.replicas !== undefined) updateData.replicas = dto.replicas;
+    if (dto.port !== undefined) updateData.port = dto.port;
+    if (dto.startCommand !== undefined)
+      updateData.startCommand = dto.startCommand ?? null;
+    if (dto.labels !== undefined) updateData.labels = dto.labels;
+    if (dto.tags !== undefined) updateData.tags = dto.tags;
+    if (dto.metadata !== undefined) updateData.metadata = dto.metadata;
+    if (dto.exposure !== undefined) updateData.exposure = dto.exposure;
+    if (dto.deployOnPush !== undefined)
+      updateData.deployOnPush = dto.deployOnPush;
+    return updateData;
   }
 
   /** A change to `scaling` is brought to the cluster at once, whichever route wrote it. */
@@ -784,7 +797,7 @@ export class ApplicationService {
     dto.reconciliationStatus = entity.reconciliationStatus;
     dto.lastReconciliationAt = entity.lastReconciliationAt;
     dto.reconciliationError = entity.reconciliationError;
-    dto.sourceConfig = entity.sourceConfig;
+    dto.sourceConfig = withoutRegistryAuth(entity.sourceConfig);
     dto.env =
       entity.env?.map((e) => ({
         name: e.name,

@@ -4,7 +4,6 @@ import { BuildMode } from '../../frameworks/framework-core/enums/build-stage.enu
 export interface DockerImageSourceConfig {
   type: 'docker_image';
   imageRef: string;
-  registryAuth?: string;
   pullPolicy?: 'Always' | 'IfNotPresent' | 'Never';
 }
 

@@ -215,8 +215,13 @@ export class CatalogController {
   async capacityPreview(
     @Param('slug') slug: string,
     @Body() dto: CatalogCapacityPreviewDto,
+    @Req() req: Request,
   ): Promise<ResourceAvailabilityResponseDto> {
-    const definition = await this.catalogService.findPublishedBySlug(slug);
+    const user = req.user as AuthenticatedUser | undefined;
+    const definition = await this.catalogService.findPublishedBySlug(
+      slug,
+      user?.userId,
+    );
     return this.installer.previewCapacity(definition, dto);
   }
 
@@ -238,22 +243,31 @@ export class CatalogController {
 
   @ApiBearerAuth()
   @Post('install-from-yaml')
+  @RequirePermission(IAM_PERMISSION.APP_CREATE)
   @HttpCode(HttpStatus.ACCEPTED)
   @ApiOperation({
-    summary: 'Install a catalog app directly from a raw .flui.yaml',
+    summary: 'Install an app from a raw .flui.yaml of your own',
     description:
-      'Parses and validates the provided YAML, upserts the app definition in the catalog DB (same as the boot seeder), then queues an install job. Designed for CLI smoke-tests and agentic workflows where the app has not been pre-seeded. userInput fields not provided in userInputs are auto-filled with test-safe defaults.',
+      'Parses and validates the provided YAML, stores it as a definition private to the caller (never listed in the shared catalog, installable and updatable only by the caller), then queues an install job. A manifest whose metadata.id is the id of an app in the shared catalog is refused with 409 before anything is written. userInput fields not provided in userInputs are auto-filled with test-safe defaults.',
   })
   @ApiResponse({ status: 202, type: CatalogInstallResponseDto })
+  @ApiResponse({
+    status: 409,
+    description: 'metadata.id is taken by the shared catalog',
+  })
   async installFromYaml(
     @Body() dto: InstallFromYamlDto,
     @Req() req: Request,
   ): Promise<CatalogInstallResponseDto> {
     const user = req.user as AuthenticatedUser | undefined;
-    await this.applicationAccess.assertCanCreate(user, {
+    if (!user) throw new ForbiddenException('Unauthenticated');
+    const access = await this.applicationAccess.assertCanCreate(user, {
       clusterId: dto.clusterId,
     });
-    const definition = await this.catalogService.upsertFromYaml(dto.yaml);
+    const definition = await this.catalogService.upsertFromYaml(
+      dto.yaml,
+      user.userId,
+    );
     const installDto: InstallCatalogAppDto = {
       clusterId: dto.clusterId,
       displayName: dto.displayName ?? definition.name,
@@ -273,11 +287,14 @@ export class CatalogController {
       allowMasterPlacement: dto.allowMasterPlacement,
       dependencyChoices: dto.dependencyChoices,
     };
+    if (access.isSandbox) {
+      stripSandboxInstallPlacement(installDto);
+    }
     const { install } = await this.installer.install(
       definition.slug,
       installDto,
-      user?.userId,
-      user?.email,
+      user.userId,
+      user.email,
     );
     return this.toResponse(install);
   }

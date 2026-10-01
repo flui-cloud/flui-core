@@ -171,7 +171,8 @@ export class CreateApplicationDto {
   sourceType: ApplicationSourceType;
 
   @ApiProperty({
-    description: 'Polymorphic source configuration based on sourceType',
+    description:
+      'Polymorphic source configuration based on sourceType. docker_image takes public images; a registryAuth credential is refused.',
     example: {
       type: 'docker_image',
       imageRef: 'nginx:1.25',
