@@ -41,6 +41,7 @@ import { K3S_CONTROLLER_WAIT_MS } from '../utils/k3s-plans.util';
 import { failingChecksMessage } from '../utils/upgrade-checks.util';
 
 const POLL_MS = 10_000;
+const MANIFEST_ROLLOUT_WAIT = { timeoutMs: 5 * 60_000, settleMs: 30_000 };
 
 class PhaseFailure extends Error {
   constructor(
@@ -293,6 +294,7 @@ export class PlatformUpgradeExecutorService {
           ref: metadata.bootstrapRef,
           clusterId: cluster.clusterId,
           planId: fresh.planId,
+          awaitRollout: MANIFEST_ROLLOUT_WAIT,
         });
         await mark({
           status: 'done',

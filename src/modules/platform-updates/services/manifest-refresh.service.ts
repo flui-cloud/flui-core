@@ -28,6 +28,7 @@ import {
   workloadsOf,
 } from '../utils/manifest-documents.util';
 import { holdBackUnmetDependencies } from '../utils/manifest-dependencies.util';
+import { ManifestRolloutGuard, RolloutWait } from './manifest-rollout.guard';
 
 /** Byte order, not locale order: the plan digest must not depend on the machine. */
 const byName = (a: string, b: string): number => {
@@ -145,6 +146,7 @@ async function sourceFor(
 @Injectable()
 export class ManifestRefreshService {
   private readonly logger = new Logger(ManifestRefreshService.name);
+  readonly rollout: ManifestRolloutGuard;
 
   constructor(
     private readonly kubernetesService: KubernetesService,
@@ -152,7 +154,9 @@ export class ManifestRefreshService {
     private readonly releases: ReleaseManifestService,
     private readonly files: BootstrapFilesService,
     private readonly installValues: InstallValuesService,
-  ) {}
+  ) {
+    this.rollout = new ManifestRolloutGuard(kubernetesService, master);
+  }
 
   /**
    * Does this ref name a release somebody published — the one this build pins,
@@ -185,7 +189,7 @@ export class ManifestRefreshService {
    * that moved between the two also fails, with no need to resolve it first.
    */
   async apply(
-    options: RefreshOptions & { planId: string },
+    options: RefreshOptions & { planId: string; awaitRollout?: RolloutWait },
   ): Promise<RefreshResult> {
     const fresh = await this.compute(options);
     if (fresh.plan.planId !== options.planId) {
@@ -222,6 +226,18 @@ export class ManifestRefreshService {
         expectCurrentSha: e.currentSha,
       })),
     );
+    if (options.awaitRollout && wrote.length > 0) {
+      await this.rollout.await(
+        {
+          kubeconfig: fresh.kubeconfig,
+          node: fresh.node,
+          planId: fresh.plan.planId,
+          contents: fresh.contents,
+        },
+        wrote,
+        options.awaitRollout,
+      );
+    }
     return {
       ...fresh.plan,
       wrote,

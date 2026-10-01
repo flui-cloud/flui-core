@@ -171,6 +171,29 @@ export function leftAloneAdvisories(
     }));
 }
 
+/**
+ * Templated files a refresh cannot render because the installation keeps no
+ * proven record of the values it was built with. Without saying so the plan
+ * reads as if they were merely unchanged.
+ */
+export function missingValuesAdvisory(
+  cluster: ClusterRef,
+  plan: { entries: PlannedEntry[]; valuesUnavailable?: string },
+): UpgradePlanAdvisory | undefined {
+  if (!plan.valuesUnavailable) return undefined;
+  const waiting = plan.entries.filter(
+    (e) => e.action === 'skip' && e.placeholders?.length,
+  );
+  if (waiting.length === 0) return undefined;
+  const target =
+    cluster.clusterType === 'control' ? '' : ` --cluster ${cluster.name}`;
+  return {
+    level: 'warning',
+    title: `${waiting.length} file(s) on ${cluster.name} wait for the record of the values it was built with`,
+    detail: `${waiting.map((e) => e.name).join(', ')} are not brought forward: ${plan.valuesUnavailable} Rebuild the record with \`flui env install-values${target}\`, then plan again.`,
+  };
+}
+
 export function manifestClusterFor(
   cluster: ClusterRef,
   plan: { planId: string; ref: string; entries: PlannedEntry[] },

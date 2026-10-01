@@ -8,6 +8,7 @@ import {
   manifestClusterFor,
   manifestPhaseFor,
   metadataFor,
+  missingValuesAdvisory,
   releaseAssessment,
   unreadableManifestCluster,
   updateAdvisories,
@@ -95,6 +96,39 @@ describe('planning a platform update', () => {
         title: '02-postgres.yaml on control is left alone',
       }),
     ]);
+  });
+
+  it('names the command that lets a refresh render the files it had to leave out', () => {
+    const entries = [
+      {
+        name: '09-flui-api.yaml',
+        action: 'skip' as const,
+        placeholders: ['FLUI_API_IMAGE_TAG'],
+      },
+      { name: '00-secrets.yaml', action: 'skip' as const },
+      { name: '02-postgres.yaml', action: 'replace' as const },
+    ];
+    const why =
+      'This installation has no record of the values it was built with.';
+
+    expect(
+      missingValuesAdvisory(control, { entries, valuesUnavailable: why }),
+    ).toEqual({
+      level: 'warning',
+      title:
+        '1 file(s) on control wait for the record of the values it was built with',
+      detail: `09-flui-api.yaml are not brought forward: ${why} Rebuild the record with \`flui env install-values\`, then plan again.`,
+    });
+    const workload = {
+      id: 'w',
+      name: 'wc-1',
+      clusterType: 'workload' as const,
+    };
+    expect(
+      missingValuesAdvisory(workload, { entries, valuesUnavailable: why })
+        ?.detail,
+    ).toContain('`flui env install-values --cluster wc-1`');
+    expect(missingValuesAdvisory(control, { entries })).toBeUndefined();
   });
 
   it('blocks a moving component whose image cannot be resolved', () => {

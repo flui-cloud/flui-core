@@ -8,6 +8,11 @@ const MANIFEST_DIR = '/var/lib/rancher/k3s/server/manifests';
 const STAGING_DIR = '/var/lib/rancher/k3s/server/flui-refresh-staging';
 export const BACKUP_DIR = '/var/lib/rancher/k3s/server/flui-refresh-backup';
 const LOCK_DIR = '/var/lib/rancher/k3s/server/.flui-refresh.lock';
+const DEFAULT_RESTORE_DIRS = {
+  manifests: MANIFEST_DIR,
+  backups: BACKUP_DIR,
+  lock: LOCK_DIR,
+};
 const JOB_NAMESPACE = 'flui-local-storage';
 const FALLBACK_JOB_NAMESPACE = 'kube-system';
 const JOB_TIMEOUT_MS = 180_000;
@@ -123,6 +128,28 @@ export interface FileToWrite {
  * travels through pod logs. The second writes, and only after every digest
  * still matches.
  */
+/** Puts back the files a plan replaced and removes the ones it added. */
+export function restoreScript(
+  planId: string,
+  names: string[],
+  dirs = DEFAULT_RESTORE_DIRS,
+): string {
+  return [
+    'set -e',
+    `mkdir ${dirs.lock} 2>/dev/null || { echo "LOCKED"; exit 0; }`,
+    `trap 'rmdir ${dirs.lock} 2>/dev/null || true' EXIT`,
+    `BACK=${dirs.backups}/${planId}`,
+    `for name in ${names.join(' ')}; do`,
+    `  target=${dirs.manifests}/$name`,
+    '  if [ -e "$BACK/$name" ]; then',
+    '    cp "$BACK/$name" "$target"; echo "RESTORED $name"',
+    '  else',
+    '    rm -f "$target"; echo "REMOVED $name"',
+    '  fi',
+    'done',
+  ].join('\n');
+}
+
 @Injectable()
 export class ManifestMasterService {
   constructor(private readonly kubernetesService: KubernetesService) {}
@@ -219,6 +246,42 @@ export class ManifestMasterService {
       .split('\n')
       .filter((l) => l.trim().startsWith('WROTE '))
       .map((l) => l.trim().slice('WROTE '.length));
+  }
+
+  /**
+   * Undoes a write: every file the plan replaced comes back from its backup,
+   * and every file it added is removed. K3s re-applies what it finds, so the
+   * workloads return to the templates they ran before.
+   */
+  async restore(
+    kubeconfig: string,
+    node: string,
+    planId: string,
+    names: string[],
+  ): Promise<string[]> {
+    const unsafe = names.find((n) => !SAFE_NAME.test(n));
+    if (unsafe || !SAFE_NAME.test(`${planId}.yaml`)) {
+      throw new Error(
+        `Refusing to restore an unexpected name: ${unsafe ?? planId}`,
+      );
+    }
+    const script = restoreScript(planId, names);
+    const logs = await this.runJob(
+      kubeconfig,
+      node,
+      'flui-manifest-restore',
+      script,
+      true,
+    );
+    if (logs.includes('LOCKED')) {
+      throw new ConflictException(
+        `Another refresh holds the lock on the master, so the files were not put back. Remove ${LOCK_DIR} if it is stale and restore from ${BACKUP_DIR}/${planId}.`,
+      );
+    }
+    return logs
+      .split('\n')
+      .map((l) => l.trim())
+      .filter((l) => l.startsWith('RESTORED ') || l.startsWith('REMOVED '));
   }
 
   private async runJob(

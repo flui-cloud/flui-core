@@ -362,6 +362,19 @@ describe('PlatformUpgradeExecutorService', () => {
     expect(row().metadata.phases[0].backupJobId).toBe('job-1');
   });
 
+  it('waits for what the manifests run to come back before moving on', async () => {
+    const { service, manifests } = build();
+    await service.execute('op-1');
+
+    for (const [options] of manifests.apply.mock.calls) {
+      expect(options.awaitRollout).toEqual({
+        timeoutMs: 300_000,
+        settleMs: 30_000,
+      });
+    }
+    expect(manifests.apply).toHaveBeenCalledTimes(2);
+  });
+
   it('gives each phase a deadline while it runs', async () => {
     const { service, row, manifests } = build();
     let seen: string | undefined;

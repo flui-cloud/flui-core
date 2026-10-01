@@ -58,6 +58,7 @@ import {
   imagePhaseFor,
   k3sPhaseFor,
   leftAloneAdvisories,
+  missingValuesAdvisory,
   manifestClusterFor,
   manifestPhaseFor,
   metadataFor,
@@ -362,6 +363,8 @@ export class PlatformUpgradeService {
       try {
         const plan = await this.manifests.plan({ ref, clusterId: cluster.id });
         advisories.push(...leftAloneAdvisories(cluster, plan.entries));
+        const missing = missingValuesAdvisory(cluster, plan);
+        if (missing) advisories.push(missing);
         out.push(manifestClusterFor(cluster, plan));
       } catch (error) {
         out.push(unreadableManifestCluster(cluster, (error as Error).message));

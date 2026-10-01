@@ -75,4 +75,22 @@ export const PLATFORM_UPDATE_TOOLS: ToolDef[] = [
           : {}),
       }),
   }),
+
+  defineTool({
+    name: 'platform_install_values_plan',
+    routes: ['POST /platform/updates/manifests/values/plan'],
+    description:
+      'For an installation built before the installer kept a record of its values: which values a cluster was built with, proven file by file against the copies on its master. An update renders a templated manifest only with proven values, so without this record those files are left out (the plan says so in an advisory). Writes nothing. Show the person what was proven and what was not. Recording it writes on the master, so a person does that: `flui env install-values --apply --plan <planId>`.',
+    scope: MCP_SCOPE.PLATFORM_UPDATE,
+    inputSchema: {
+      clusterId: z
+        .string()
+        .optional()
+        .describe('The cluster. Omit for the control cluster.'),
+    },
+    run: (args, ctx) =>
+      ctx.api.post('/platform/updates/manifests/values/plan', {
+        ...(args.clusterId ? { clusterId: args.clusterId } : {}),
+      }),
+  }),
 ];

@@ -44,8 +44,9 @@ const tool = (name: string) =>
   PLATFORM_UPDATE_TOOLS.find((t) => t.name === name)!;
 
 describe('updating the platform from an agent', () => {
-  it('publishes the three tools', () => {
+  it('publishes the four tools', () => {
     expect(PLATFORM_UPDATE_TOOLS.map((t) => t.name).sort()).toEqual([
+      'platform_install_values_plan',
       'platform_update_apply',
       'platform_update_plan',
       'platform_update_status',
