@@ -36,6 +36,8 @@ const ARGS: Record<string, Record<string, unknown>> = {
   cluster_list: {},
   cluster_resources: {},
   cluster_orphaned_volumes: {},
+  control_restore_plan: {},
+  control_restore_apps: { includeStopped: true },
   dns_wildcard_status: {},
   dns_wildcard_publish: {},
   dns_acme_resolvers: { clusterId: 'c1' },
@@ -85,6 +87,7 @@ const ARGS: Record<string, Record<string, unknown>> = {
   backup_status: {},
   backup_coverage: {},
   backup_policy_list: {},
+  backup_policy_activity: { policyId: 'p1', limit: 5 },
   backup_run: { policyId: 'p1' },
   backup_policy_pause: { policyId: 'p1' },
   backup_policy_resume: { policyId: 'p1' },
@@ -94,6 +97,16 @@ const ARGS: Record<string, Record<string, unknown>> = {
   },
   backup_list: { clusterId: 'c1' },
   backup_restore_database: { artifactId: 'art1', name: 'pg-back' },
+  app_volume_backup_list: { applicationId: 'a1' },
+  backup_cluster_protection: { clusterId: 'c1' },
+  backup_velero_footprint: { clusterId: 'c1' },
+  backup_velero_uninstall: { clusterId: 'c1' },
+  app_backup_before_deploy: { applicationId: 'a1', enabled: true },
+  app_volume_backup_browse: {
+    applicationId: 'a1',
+    backupId: 'b1',
+    path: 'uploads',
+  },
   migrate_app: { srcAppId: 'a1', targetClusterId: 'c2' },
   migrate_db: { srcAppId: 'a1', targetClusterId: 'c2' },
   migrate_full: { appId: 'a1', dbAppId: 'd1', targetClusterId: 'c2' },
@@ -214,6 +227,7 @@ const ARGS: Record<string, Record<string, unknown>> = {
   platform_update_status: {},
   platform_update_plan: { targetVersion: '0.20.0' },
   platform_update_apply: { targetVersion: '0.20.0', planId: 'p1' },
+  platform_install_values_plan: { clusterId: 'c1' },
 };
 
 /**
@@ -453,8 +467,18 @@ describe('strada B — the whole tool catalogue goes over the wire', () => {
     ['gateway_route_sync', 'POST /applications/a1/gateway/routes/e1/reconcile'],
     ['spec_validate', 'POST /catalog/validate'],
     ['app_install', 'POST /catalog/mariadb/install'],
+    ['backup_policy_activity', 'GET /backup-policies/p1/activity'],
     ['backup_run', 'POST /backup-jobs'],
     ['backup_policy_pause', 'POST /backup-policies/p1/pause'],
+    ['app_volume_backup_list', 'GET /applications/a1/volume-backups'],
+    ['backup_cluster_protection', 'GET /clusters/c1/backups/protection'],
+    ['backup_velero_footprint', 'GET /clusters/c1/backups/velero'],
+    ['backup_velero_uninstall', 'POST /clusters/c1/backups/velero/uninstall'],
+    ['app_backup_before_deploy', 'PUT /applications/a1/backup-before-deploy'],
+    [
+      'app_volume_backup_browse',
+      'GET /applications/a1/volume-backups/b1/files',
+    ],
     ['migrate_app', 'POST /app-migrations'],
     ['migration_cutover', 'POST /app-migrations/m1/cutover'],
     ['migration_abort', 'DELETE /app-migrations/m1'],
@@ -486,6 +510,11 @@ describe('strada B — the whole tool catalogue goes over the wire', () => {
       'cluster_orphaned_volumes',
       'GET /infrastructure/clusters/c1/storage/orphaned-claims',
     ],
+    [
+      'control_restore_plan',
+      'GET /infrastructure/clusters/control-restore/plan',
+    ],
+    ['control_restore_apps', 'POST /infrastructure/clusters/control-restore'],
     ['access_revocation_preview', 'GET /iam/grants/g1/revocation-preview'],
     ['access_grant_list', 'GET /iam/grants'],
     ['access_grant_add', 'POST /iam/grants'],
@@ -520,6 +549,10 @@ describe('strada B — the whole tool catalogue goes over the wire', () => {
     ['platform_update_status', 'GET /platform/updates/current'],
     ['platform_update_plan', 'POST /platform/updates/plan'],
     ['platform_update_apply', 'POST /platform/updates'],
+    [
+      'platform_install_values_plan',
+      'POST /platform/updates/manifests/values/plan',
+    ],
   ])('%s lands on %s', async (name, expected) => {
     const calls = await pathsOf(name);
     expect(calls.map((c) => `${c.method} ${c.path}`)).toContain(expected);

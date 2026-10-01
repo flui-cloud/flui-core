@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Optional,
   Injectable,
   Logger,
@@ -49,8 +50,10 @@ export class BackupJobsService {
   async createOnDemand(
     userId: string,
     dto: CreateBackupJobDto,
+    triggerType: BackupJobTriggerType = BackupJobTriggerType.ON_DEMAND,
   ): Promise<BackupJobEntity> {
     const policy = await this.policiesService.findById(dto.policyId);
+    const jobType = this.jobTypeForClass(policy.engineClass);
     const op = await this.opRepo.save(
       this.opRepo.create({
         operationType: OperationType.RUN_BACKUP_JOB,
@@ -66,7 +69,7 @@ export class BackupJobsService {
       policyId: policy.id,
       clusterId: policy.clusterId,
       userId,
-      triggerType: BackupJobTriggerType.ON_DEMAND,
+      triggerType,
       triggerContext: dto.metadata ?? {},
       status: BackupJobStatus.PENDING,
       scopeSnapshot: {
@@ -78,7 +81,6 @@ export class BackupJobsService {
     });
     const saved = await this.jobRepo.save(entity);
 
-    const jobType = this.jobTypeForClass(policy.engineClass);
     const jobData: RunBackupJobData = {
       backupJobId: saved.id,
       operationId: op.id,
@@ -96,48 +98,11 @@ export class BackupJobsService {
       case BackupEngineClass.VOLUME_COPY:
         return BACKUP_JOB_TYPES.RUN_VOLUME_COPY;
       default:
-        return BACKUP_JOB_TYPES.RUN_BACKUP;
+        throw new BadRequestException(
+          'This policy used the cluster backup engine Flui no longer has, so nothing can run it. ' +
+            'Protect the cluster instead: every application then gets a policy of its own.',
+        );
     }
-  }
-
-  async createPreDeploy(params: {
-    userId: string;
-    clusterId: string;
-    applicationId: string;
-    deployId: string;
-    namespace: string;
-  }): Promise<{ job: BackupJobEntity; operationId: string }> {
-    const op = await this.opRepo.save(
-      this.opRepo.create({
-        operationType: OperationType.PRE_DEPLOY_SNAPSHOT,
-        status: OperationStatus.PENDING,
-        resourceType: 'backup_job',
-        userId: params.userId,
-        metadata: { ...params },
-        totalSteps: 3,
-      }),
-    );
-
-    const entity = this.jobRepo.create({
-      clusterId: params.clusterId,
-      userId: params.userId,
-      triggerType: BackupJobTriggerType.PRE_DEPLOY,
-      triggerContext: {
-        applicationId: params.applicationId,
-        deployId: params.deployId,
-        namespace: params.namespace,
-      },
-      status: BackupJobStatus.PENDING,
-      scopeSnapshot: { namespace: params.namespace },
-      infrastructureOperationId: op.id,
-    });
-    const saved = await this.jobRepo.save(entity);
-
-    await this.queue.add(BACKUP_JOB_TYPES.PRE_DEPLOY_SNAPSHOT, {
-      backupJobId: saved.id,
-      operationId: op.id,
-    });
-    return { job: saved, operationId: op.id };
   }
 
   /**

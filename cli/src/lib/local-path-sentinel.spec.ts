@@ -155,6 +155,10 @@ const LOCAL_PATH: Record<string, LocalPathEntry> = {
     viaApi: true,
     why: 'POST /platform/updates/manifests/plan|apply, which runs the job on the master. The local path supplies identity and transport only.',
   },
+  'commands/env/install-values.ts': {
+    viaApi: true,
+    why: 'POST /platform/updates/manifests/values/plan|apply, which proves and records the values on the master. The local path supplies identity and transport only.',
+  },
   'commands/env/upgrade.ts': {
     viaApi: true,
     why: 'POST /platform/updates/plan and /platform/updates, where the whole upgrade is planned and run. The local path supplies identity and transport only.',
@@ -359,13 +363,13 @@ describe('the local path is a list somebody wrote down', () => {
    * asking the closed door for that service is the net loss. Two more have no
    * route at all.
    */
-  it('has fourteen of the forty-two deciding over HTTP', () => {
+  it('has fifteen of the forty-three deciding over HTTP', () => {
     const viaApi = Object.entries(LOCAL_PATH)
       .filter(([, entry]) => entry.viaApi)
       .map(([file]) => file);
     expect({ total: measured.length, viaApi: viaApi.length }).toEqual({
-      total: 42,
-      viaApi: 14,
+      total: 43,
+      viaApi: 15,
     });
   });
 });

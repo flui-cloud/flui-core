@@ -1,3 +1,5 @@
+import { cryptSetupScript } from '../utils/rclone-crypt.util';
+
 export interface DumpFamilySpec {
   name: 'postgres' | 'mariadb';
   tool: string;
@@ -90,12 +92,15 @@ const POSTGRES_CREDENTIALS = [
   'export PGPASSWORD="${POSTGRES_PASSWORD:-}"',
 ].join('\n');
 
+const CRYPT_SETUP = cryptSetupScript({ rclone: '/flui/rclone' });
+
 const REPORT_SIZE = String.raw`echo "FLUI_DUMP_BYTES=$(/flui/rclone size --json "$FLUI_REMOTE" | sed -E 's/.*"bytes":([0-9]+).*/\1/')"`;
 
 export function dumpScript(family: DumpFamilySpec): string {
   if (family.name === 'postgres') {
     return [
       'set -euo pipefail',
+      CRYPT_SETUP,
       POSTGRES_CREDENTIALS,
       `pg_dump -h "$FLUI_DB_HOST" -p "$FLUI_DB_PORT" -U "$U" -d "$D" -Fc --no-owner --no-acl | /flui/rclone rcat "$FLUI_REMOTE" --s3-no-check-bucket`,
       REPORT_SIZE,
@@ -103,6 +108,7 @@ export function dumpScript(family: DumpFamilySpec): string {
   }
   return [
     'set -euo pipefail',
+    CRYPT_SETUP,
     MARIADB_CREDENTIALS,
     'DUMP=$(command -v mariadb-dump || command -v mysqldump)',
     `"$DUMP" -h "$FLUI_DB_HOST" -P "$FLUI_DB_PORT" -u "$U" --single-transaction --skip-lock-tables $EXTRA "$DB" | gzip | /flui/rclone rcat "$FLUI_REMOTE" --s3-no-check-bucket`,
@@ -110,17 +116,30 @@ export function dumpScript(family: DumpFamilySpec): string {
   ].join('\n');
 }
 
+/**
+ * Loads a dump into a running database, safe to run twice.
+ *
+ * Postgres: one transaction, and every object of the dump dropped first when
+ * it exists. A load that fails leaves the database as it was; a second one —
+ * a retried rebuild, or one that loaded and died before recording it — drops
+ * what the first put there instead of stopping at the first existing table,
+ * or appending the rows a second time. An object the dump does not own that
+ * depends on one it drops fails the load, loudly, rather than being cascaded
+ * away. MariaDB's dump already drops each table before creating it.
+ */
 export function loadScript(family: DumpFamilySpec): string {
   if (family.name === 'postgres') {
     return [
       'set -euo pipefail',
+      CRYPT_SETUP,
       POSTGRES_CREDENTIALS,
-      `/flui/rclone cat "$FLUI_REMOTE" | pg_restore -h "$FLUI_DB_HOST" -p "$FLUI_DB_PORT" -U "$U" -d "$D" --no-owner --no-acl --exit-on-error`,
+      `/flui/rclone cat "$FLUI_REMOTE" | pg_restore -h "$FLUI_DB_HOST" -p "$FLUI_DB_PORT" -U "$U" -d "$D" --no-owner --no-acl --clean --if-exists --single-transaction --exit-on-error`,
       'echo FLUI_LOAD_DONE',
     ].join('\n');
   }
   return [
     'set -euo pipefail',
+    CRYPT_SETUP,
     MARIADB_CREDENTIALS,
     'CLIENT=$(command -v mariadb || command -v mysql)',
     // mariadb-dump 11 opens with a "sandbox mode" command that older clients

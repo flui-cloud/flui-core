@@ -1,5 +1,6 @@
 import { ApiClient } from '../api-client';
 import { ConfigStorage } from '../config-storage';
+import { FollowedOperation, followOperation } from '../follow-operation';
 import type { EndpointSyncOutcome } from 'src/modules/dns/utils/endpoint-sync.core';
 import type { CertificatePhase } from 'src/modules/dns/utils/certificate-phase.core';
 
@@ -1054,10 +1055,22 @@ export class CliAppService {
       allowInconsistent?: boolean;
       pause?: boolean;
     },
-  ): Promise<BackupResponse> {
-    return this.apiClient.post<BackupResponse>(
+  ): Promise<StartedBackup> {
+    return this.apiClient.post<StartedBackup>(
       `/applications/${appId}/backups`,
       body,
+    );
+  }
+
+  /** The operation a queued backup reports into, followed to its end. */
+  async followBackup(
+    operationId: string,
+    onUpdate?: (op: FollowedOperation<BackupOperationMetadata>) => void,
+  ): Promise<FollowedOperation<BackupOperationMetadata> | null> {
+    return followOperation<BackupOperationMetadata>(
+      this.apiClient,
+      operationId,
+      { onUpdate },
     );
   }
 
@@ -1364,6 +1377,21 @@ export interface BackupDestinationInput {
   keyPrefix?: string;
 }
 
+/** A backup the API accepted: it runs in the background and reports into the operation. */
+export interface StartedBackup {
+  operationId: string;
+  applicationId: string;
+  volumeName: string;
+  status: 'pending';
+}
+
+export interface BackupOperationMetadata {
+  pvcName?: string;
+  result?: BackupResponse;
+  /** A structured refusal (`code`, `options`, `message`), when the copy was refused. */
+  error?: Record<string, unknown>;
+}
+
 export interface BackupResponse {
   /** Present when the copy may not be consistent (a live database). */
   warning?: string;
@@ -1383,6 +1411,10 @@ export interface BackupResponse {
   };
   provider: string;
   providerCapabilities: SnapshotResponse['providerCapabilities'];
+  engine?: 'kopia' | 'rclone';
+  snapshotId?: string;
+  artifactId?: string;
+  uploadedBytes?: number;
 }
 
 /**

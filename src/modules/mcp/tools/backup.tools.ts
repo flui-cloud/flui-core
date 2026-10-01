@@ -18,7 +18,7 @@ export const BACKUP_TOOLS: ToolDef[] = [
     name: 'backup_status',
     routes: ['GET /backups/status'],
     description:
-      'Backup posture for the current user: policies, destinations, the most recent jobs and any alerts. Use it to answer "are my backups healthy / when did the last one run".',
+      'Backup posture for the current user: policies, destinations, the most recent jobs and any alerts, and per cluster whether every application is protected automatically (`protected`) and which volumes need a decision (`needsDecision`: databases Flui cannot back up consistently, or volumes the last copy refused). Use it to answer "are my backups healthy / when did the last one run".',
     scope: MCP_SCOPE.BACKUP_READ,
     inputSchema: {},
     run: (_args, ctx) => ctx.api.get('/backups/status'),
@@ -34,6 +34,16 @@ export const BACKUP_TOOLS: ToolDef[] = [
       ctx.api.get('/fleet/backup-protection', { clusterId: args.clusterId }),
   }),
   defineTool({
+    name: 'backup_cluster_protection',
+    routes: ['GET /clusters/:clusterId/backups/protection'],
+    description:
+      'How one cluster is protected (clusterId from cluster_list): whether every application gets a backup policy of its own, new ones included (`protected`), the destination and schedule it uses, whether a backup is taken before each deploy (`beforeDeploy`), what the last pass decided for each application (protected | already_protected | waiting | needs_decision | failed | skipped, with the reason and the policy), and `needsDecision`: the volumes no backup can take consistently until a person chooses to stop the application during the copy or leave the volume out. Read-only.',
+    scope: MCP_SCOPE.BACKUP_READ,
+    inputSchema: { clusterId: z.string() },
+    run: (args, ctx) =>
+      ctx.api.get(`/clusters/${enc(args.clusterId)}/backups/protection`),
+  }),
+  defineTool({
     name: 'backup_policy_list',
     routes: ['GET /backup-policies'],
     description:
@@ -41,6 +51,21 @@ export const BACKUP_TOOLS: ToolDef[] = [
     scope: MCP_SCOPE.BACKUP_READ,
     inputSchema: {},
     run: (_args, ctx) => ctx.api.get('/backup-policies'),
+  }),
+  defineTool({
+    name: 'backup_policy_activity',
+    routes: ['GET /backup-policies/:id/activity'],
+    description:
+      "One backup policy's schedule and history: the schedule in words (UTC) with the next run and the previous due time, the health (ok | running | failed | missed | paused | never_run | on_demand) with a one-sentence detail and the last success, and the runs newest first (trigger, status, start, end, duration, size, encrypted, whether the copy is still stored, error). `missed` means a scheduled run was due and never started. Get policyId from backup_policy_list; limit defaults to 30, at most 100.",
+    scope: MCP_SCOPE.BACKUP_READ,
+    inputSchema: {
+      policyId: z.string(),
+      limit: z.number().int().min(1).max(100).optional(),
+    },
+    run: (args, ctx) =>
+      ctx.api.get(`/backup-policies/${enc(args.policyId)}/activity`, {
+        limit: args.limit,
+      }),
   }),
   defineTool({
     name: 'backup_run',
@@ -75,6 +100,26 @@ export const BACKUP_TOOLS: ToolDef[] = [
       ctx.api.post(`/backup-policies/${enc(args.policyId)}/resume`, {}),
   }),
   defineTool({
+    name: 'app_backup_before_deploy',
+    routes: ['PUT /applications/:id/backup-before-deploy'],
+    description:
+      'Turn the backup before each deploy of an application on or off (id from app_list). On, every deploy first records a restore point of a continuous database (waited for, seconds) and starts a dump or a copy of the other volumes under the policies that already protect the application (not waited for). `required: true` fails the deploy when that backup cannot be taken. Returns what will be taken, and a warning when no policy protects the application yet.',
+    scope: MCP_SCOPE.APP_WRITE,
+    inputSchema: {
+      applicationId: z.string(),
+      enabled: z.boolean(),
+      required: z.boolean().optional(),
+    },
+    run: (args, ctx) =>
+      ctx.api.put(
+        `/applications/${enc(args.applicationId)}/backup-before-deploy`,
+        {
+          enabled: args.enabled,
+          ...(args.required === undefined ? {} : { required: args.required }),
+        },
+      ),
+  }),
+  defineTool({
     name: 'backup_destination_set_cost',
     routes: ['PATCH /backup-destinations/:id/cost'],
     description:
@@ -107,6 +152,33 @@ export const BACKUP_TOOLS: ToolDef[] = [
     },
   }),
   defineTool({
+    name: 'app_volume_backup_list',
+    routes: ['GET /applications/:id/volume-backups'],
+    description:
+      "An application's volume backups, newest first (id from app_list). Each has an id, the volume, the engine (kopia | rclone | pvc-clone), when it was taken, what a restore writes back (logicalBytes) and what it added to the destination (uploadedBytes), whether it is still stored (present | expired | missing | unknown), whether it is kept by retention or until someone deletes it, and whether single files can be browsed (browsable). Read-only; restoring is left to the CLI and the dashboard.",
+    scope: MCP_SCOPE.APP_READ,
+    inputSchema: { applicationId: z.string() },
+    run: (args, ctx) =>
+      ctx.api.get(`/applications/${enc(args.applicationId)}/volume-backups`),
+  }),
+  defineTool({
+    name: 'app_volume_backup_browse',
+    routes: ['GET /applications/:id/volume-backups/:backupId/files'],
+    description:
+      'List one directory inside a kopia volume backup (backupId from app_volume_backup_list, where browsable is true). `path` is relative to the volume root; omit it for the root. Each entry has name, type (directory | file | symlink), size, modifiedAt and mode. Nothing is restored and no file content is returned.',
+    scope: MCP_SCOPE.APP_READ,
+    inputSchema: {
+      applicationId: z.string(),
+      backupId: z.string(),
+      path: z.string().optional(),
+    },
+    run: (args, ctx) =>
+      ctx.api.get(
+        `/applications/${enc(args.applicationId)}/volume-backups/${enc(args.backupId)}/files`,
+        args.path ? { path: args.path } : undefined,
+      ),
+  }),
+  defineTool({
     name: 'backup_restore_database',
     routes: ['POST /backup-artifacts/:id/restore-database'],
     description:
@@ -126,6 +198,29 @@ export const BACKUP_TOOLS: ToolDef[] = [
           ...(args.at ? { recoveryTargetTime: args.at } : {}),
           ...(args.clusterId ? { clusterId: args.clusterId } : {}),
         },
+      ),
+  }),
+  defineTool({
+    name: 'backup_velero_footprint',
+    routes: ['GET /clusters/:clusterId/backups/velero'],
+    description:
+      'What Velero, the cluster backup engine Flui no longer uses, left on one cluster (clusterId from cluster_list): whether anything is still installed (`installed`) and whether Flui installed it (`installedByFlui`), each component and whether it is present, its resource definitions and objects, the policies it ran (paused, they cannot run again), where the backups it wrote still are (`leftInDestinations`, never deleted by Flui), and a removal already running (`inFlightOperationId`). Read-only; to remove it call backup_velero_uninstall.',
+    scope: MCP_SCOPE.BACKUP_READ,
+    inputSchema: { clusterId: z.string() },
+    run: (args, ctx) =>
+      ctx.api.get(`/clusters/${enc(args.clusterId)}/backups/velero`),
+  }),
+  defineTool({
+    name: 'backup_velero_uninstall',
+    routes: ['POST /clusters/:clusterId/backups/velero/uninstall'],
+    description:
+      'Remove Velero from one cluster (call backup_velero_footprint first and show the person what it lists): its controller, node agent, bucket credentials, cluster-wide binding, resource definitions and namespace. Only what Flui installed is removed; the backups it wrote stay in their destinations and nothing can restore them from Flui afterwards. Returns an operation id for operation_status (metadata.removed lists what went); while a removal runs the same id is returned, and running it again continues an unfinished one.',
+    scope: MCP_SCOPE.BACKUP_WRITE,
+    inputSchema: { clusterId: z.string() },
+    run: (args, ctx) =>
+      ctx.api.post(
+        `/clusters/${enc(args.clusterId)}/backups/velero/uninstall`,
+        {},
       ),
   }),
 ];

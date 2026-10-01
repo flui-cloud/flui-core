@@ -43,9 +43,6 @@ export class BackupJobEntity {
   @Column({ type: 'jsonb', default: {} })
   triggerContext: Record<string, any>;
 
-  @Column({ length: 253, nullable: true })
-  veleroBackupName?: string;
-
   @Column({
     type: 'enum',
     enum: BackupJobStatus,

@@ -93,6 +93,10 @@ spec:
     - name: FLUI_PG_S3_PATH
       value: ''
       description: Internal — pgBackRest repo path (restore).
+    - name: FLUI_PG_CIPHER_PASS
+      value: ''
+      secret: true
+      description: Internal — pgBackRest repo passphrase (restore of an encrypted backup).
 
   resources:
     requests:

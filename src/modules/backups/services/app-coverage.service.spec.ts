@@ -23,10 +23,9 @@ const policy = (id: string, over: Record<string, unknown> = {}) => ({
   id,
   name: id,
   clusterId: 'c1',
-  scope: BackupScope.CLUSTER_ALL,
-  engineClass: BackupEngineClass.VOLUME,
+  scope: BackupScope.APPLICATIONS,
+  engineClass: BackupEngineClass.VOLUME_COPY,
   scopeSelector: {},
-  includePvcs: true,
   cronSchedule: '0 3 * * *',
   enabled: true,
   status: BackupPolicyStatus.ACTIVE,
@@ -40,7 +39,8 @@ function build(opts: {
     policyId: string;
     applicationId: string | null;
     at: string;
-    skipped?: string[];
+    needsDecision?: Array<{ volume: string; reason: string }>;
+    failed?: Array<{ volume: string; reason: string }>;
   }>;
   liveClusters?: string[];
   apps?: unknown[];
@@ -89,7 +89,7 @@ describe('AppCoverageService', () => {
   it('counts finished runs, and a run naming one app only for that app', async () => {
     const { service, qb } = build({
       policies: [
-        policy('cluster'),
+        policy('cluster', { scopeSelector: { applicationIds: ['web'] } }),
         policy('db', {
           engineClass: BackupEngineClass.DATABASE,
           scopeSelector: { applicationIds: ['pg'] },
@@ -147,7 +147,7 @@ describe('AppCoverageService', () => {
       lastSuccessAt: '2026-09-10T03:02:00.000Z',
       protectedUntil: null,
       protectPath:
-        '/management/backup/policies/new?clusterId=c1&applicationId=web',
+        '/management/backup/policies/new?clusterId=c1&applicationId=web&engineClass=volume_copy',
     });
     expect(byId.static.protectPath).toBeNull();
     expect(byId.static).toMatchObject({ holdsData: false, alarm: false });
@@ -181,42 +181,71 @@ describe('AppCoverageService', () => {
     expect(apps.find).not.toHaveBeenCalled();
   });
 
-  it('does not call a database protected by a run that left its volume out', async () => {
+  it('does not call an application protected by a copy that left a volume out', async () => {
     const { service } = build({
-      policies: [policy('auto-daily')],
+      policies: [
+        policy('copy-web', { scopeSelector: { applicationIds: ['web'] } }),
+        policy('copy-cms', { scopeSelector: { applicationIds: ['cms'] } }),
+      ],
       jobs: [
         {
-          policyId: 'auto-daily',
+          policyId: 'copy-web',
           applicationId: null,
-          at: '2026-09-27T03:02:00Z',
-          skipped: ['ns-pg-0/pg-x1-0/data'],
+          at: '2026-09-27T03:32:00Z',
+          needsDecision: [
+            { volume: 'data-web-0', reason: 'an unrecognised database' },
+          ],
+        },
+        {
+          policyId: 'copy-cms',
+          applicationId: null,
+          at: '2026-09-27T03:31:00Z',
+          needsDecision: [],
+          failed: [],
         },
       ],
     });
     const result = await service.forApplications(
       [
-        app('pg', {
-          slug: 'pg-x1',
-          k8sNamespace: 'ns-pg-0',
-          kind: 'DATABASE',
-          workloadKind: 'StatefulSet',
-          volumes: [{ name: 'data', mountPath: '/var/lib/postgresql/data' }],
-        }),
-        app('web', {
-          k8sNamespace: 'ns-pg-0',
-          volumes: [{ name: 'd', mountPath: '/d' }],
-        }),
+        app('web', { volumes: [{ name: 'data', mountPath: '/data' }] }),
+        app('cms', { volumes: [{ name: 'd', mountPath: '/d' }] }),
       ] as never,
       NOW,
     );
     const byId = Object.fromEntries(
       result.applications.map((r) => [r.applicationId, r]),
     );
-    expect(byId.pg).toMatchObject({
+    expect(byId.web).toMatchObject({
       coverage: 'unprotected',
       reason: 'left_out',
       alarm: true,
     });
-    expect(byId.web).toMatchObject({ coverage: 'protected', alarm: false });
+    expect(byId.cms).toMatchObject({ coverage: 'protected', alarm: false });
+  });
+
+  it('never counts a policy of the retired cluster-wide engine', async () => {
+    const { service, qb } = build({
+      policies: [
+        policy('old', {
+          engineClass: 'volume',
+          scope: BackupScope.CLUSTER_ALL,
+          enabled: false,
+          status: BackupPolicyStatus.PAUSED,
+        }),
+      ],
+      jobs: [
+        { policyId: 'old', applicationId: null, at: '2026-09-27T03:02:00Z' },
+      ],
+    });
+    const result = await service.forApplications(
+      [app('web', { volumes: [{ name: 'd', mountPath: '/d' }] })] as never,
+      NOW,
+    );
+    expect(qb.getRawMany).toHaveBeenCalled();
+    expect(result.applications[0]).toMatchObject({
+      coverage: 'unprotected',
+      reason: 'no_policy',
+      alarm: true,
+    });
   });
 });

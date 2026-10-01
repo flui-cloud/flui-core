@@ -14,43 +14,54 @@ import { BackupDestinationEntity } from '../entities/backup-destination.entity';
 import { RestoreStrategy } from '../enums/restore-job.enum';
 import {
   ArtifactEngineFacts,
+  RestorePointMark,
   ContinuousBackupEngine,
+  EngineEnableOptions,
 } from './continuous-backup-engine.interface';
-import { trimSlashes } from '../utils/destination-layout.util';
-
-const DEFAULT_PGDATA = '/var/lib/postgresql/data/pgdata';
-const PGBACKREST_STANZA = 'main';
-// WAL replay keeps running well past the pod turning Ready on big restores.
-const RESTORE_RECONCILE_POLL_INTERVAL_MS = 5_000;
-const RESTORE_RECONCILE_TIMEOUT_MS = 30 * 60 * 1000;
-
-export interface PgBackrestTarget {
-  kubeconfig: string;
-  namespace: string;
-  labelSelector: string;
-  container: string;
-  pgdata: string;
-  pgUser: string;
-  pgDb: string;
-  confPath: string;
-}
-
-export interface PgBackupInfo {
-  /** Newest backup label, or null when the repo has no backups yet. */
-  latestLabel: string | null;
-  /**
-   * Recoverable window: from the end of the oldest base to the last WAL
-   * segment that reached the repository (the last base's end when the server
-   * cannot say).
-   */
-  oldestRecoverable: string | null;
-  newestRecoverable: string | null;
-  /** Completion time of the most recent FULL backup (drives full cadence). */
-  lastFullAt: string | null;
-  backupCount: number;
-  /** What the newest backup occupies in the repository, compressed. */
-  latestSizeBytes?: number | null;
-}
+import {
+  latestPgBackup,
+  parsePgManifestCompression,
+} from './db-compression.util';
+import { BackupDestinationsService } from './backup-destinations.service';
+import { PgLegacyRepoRetirer } from './pg-legacy-repo.retirer';
+import { BackupArtifactEntity } from '../entities/backup-artifact.entity';
+import { parseRestorePoint } from '../utils/restore-point.util';
+import {
+  REPO_PATH_MARKER,
+  assertLiveRepository,
+  encryptedRepoPrefix,
+  parseRepoCipher,
+  repositoryOf,
+} from './pgbackrest-repo.util';
+import {
+  DATABASE_NOT_RUNNING,
+  NO_PGBACKREST,
+  NOT_IN_RECOVERY_SCRIPT,
+  PGBACKREST_VERSION_COMMAND,
+  PGBACKREST_PRESENT_SCRIPT,
+  PGBACKREST_STANZA,
+  PgBackrestTarget,
+  PgBackupInfo,
+  RECOVERY_ENDED_BEFORE_TARGET,
+  RESET_SUPERUSER_PASSWORD_SCRIPT,
+  RESTORE_RECONCILE_POLL_INTERVAL_MS,
+  RESTORE_RECONCILE_TIMEOUT_MS,
+  serverVersionCommand,
+  archiveTimeoutSeconds,
+  baseBackupScript,
+  buildPgbackrestConf,
+  disableScript,
+  enableScript,
+  infoJsonCommand,
+  infoScript,
+  manifestCompressionCommand,
+  markRestorePointScript,
+  parsePgbackrestInfo,
+  pgRestoreEnv,
+  pgbackrestTargetFor,
+  restoreFailureFrom,
+  withArchivedEdge,
+} from './pgbackrest-config.util';
 
 /**
  * Drives pgBackRest inside a managed Postgres pod over `kubectl exec`. Config +
@@ -77,6 +88,8 @@ export class PgBackrestService implements ContinuousBackupEngine {
     private readonly appRepo: Repository<ApplicationEntity>,
     @InjectRepository(ClusterEntity)
     private readonly clusterRepo: Repository<ClusterEntity>,
+    private readonly destinations: BackupDestinationsService,
+    private readonly retirer: PgLegacyRepoRetirer,
   ) {}
 
   async requireTooling(appId: string): Promise<void> {
@@ -95,29 +108,65 @@ export class PgBackrestService implements ContinuousBackupEngine {
    */
   async describeForArtifact(appId: string): Promise<ArtifactEngineFacts> {
     const target = await this.resolveTarget(appId);
-    const read = async (script: string): Promise<string | undefined> => {
-      try {
-        return (await this.exec(target, script)).trim().split('\n').pop();
-      } catch {
-        return undefined;
-      }
-    };
+    const read = (script: string): Promise<string | undefined> =>
+      this.exec(target, script).then(
+        (out) => out.trim().split('\n').pop(),
+        () => undefined,
+      );
     return {
       engine: this.engine,
-      engineVersion: await read(
-        `gosu postgres psql -U ${target.pgUser} -d ${target.pgDb} -tAc "SHOW server_version"`,
-      ),
+      engineVersion: await read(serverVersionCommand(target)),
       tool: 'pgbackrest',
-      toolVersion: await read(
-        String.raw`pgbackrest version | awk "{print \$2}"`,
-      ),
+      toolVersion: await read(PGBACKREST_VERSION_COMMAND),
       catalogSlug: this.catalogSlug,
       identities: { user: target.pgUser, database: target.pgDb },
+      ...(await this.observedRepository(target, appId)),
+    };
+  }
+
+  /**
+   * Cipher and compression read back from the repository rather than taken
+   * from the configuration Flui wrote, so an artifact never claims an
+   * encryption or a compression it does not have.
+   */
+  private async observedRepository(
+    target: PgBackrestTarget,
+    appId: string,
+  ): Promise<Pick<ArtifactEngineFacts, 'repository' | 'compression'>> {
+    const info = await this.exec(target, infoJsonCommand(target)).catch(
+      () => '',
+    );
+    const latest = latestPgBackup(info, PGBACKREST_STANZA);
+    const compression = latest
+      ? await this.exec(
+          target,
+          manifestCompressionCommand(target, latest.label),
+        )
+          .then((m) => parsePgManifestCompression(m, latest.blockIncremental))
+          .catch(() => null)
+      : null;
+    return {
+      repository: {
+        objectKeyPrefix: this.artifactObjectPrefix(appId),
+        cipher: parseRepoCipher(info, PGBACKREST_STANZA) ?? 'unknown',
+      },
+      ...(compression ? { compression } : {}),
     };
   }
 
   artifactObjectPrefix(appId: string): string {
-    return `pgbackrest/${appId}/`;
+    return encryptedRepoPrefix(appId);
+  }
+
+  /**
+   * Once this application has an encrypted full backup, its plaintext
+   * repository is deleted from the bucket and its artifacts are marked gone.
+   */
+  async retirePlaintext(
+    appId: string,
+    artifact: BackupArtifactEntity,
+  ): Promise<void> {
+    await this.retirer.retire(appId, artifact);
   }
 
   identityEnv(identities: {
@@ -149,26 +198,13 @@ export class PgBackrestService implements ContinuousBackupEngine {
         ['sh', '-c', cmd],
       );
 
-    const deadline = Date.now() + RESTORE_RECONCILE_TIMEOUT_MS;
-    for (;;) {
-      const out = await run(
-        `gosu postgres psql -U "$POSTGRES_USER" -d postgres -tAc 'SELECT NOT pg_is_in_recovery()' 2>/dev/null || true`,
-      ).catch(() => '');
-      if (out.trim() === 't') break;
-      if (Date.now() > deadline) {
-        throw new Error(
-          'Restored postgres did not finish recovery in time — password not reconciled',
-        );
-      }
-      await new Promise((r) =>
-        setTimeout(r, RESTORE_RECONCILE_POLL_INTERVAL_MS),
-      );
-    }
+    await this.untilPrimary(
+      run,
+      'Restored postgres did not finish recovery in time — password not reconciled',
+    );
 
     // psql interpolates :'pw' (safely quoted) only from stdin/-f, not from -c.
-    await run(
-      String.raw`printf '%s\n' "ALTER ROLE \"$POSTGRES_USER\" WITH PASSWORD :'pw';" | gosu postgres psql -U "$POSTGRES_USER" -d postgres -v ON_ERROR_STOP=1 -v pw="$POSTGRES_PASSWORD"`,
-    );
+    await run(RESET_SUPERUSER_PASSWORD_SCRIPT);
     this.logger.log(
       `[pgbackrest] reconciled superuser password for app=${newAppId}`,
     );
@@ -189,10 +225,6 @@ export class PgBackrestService implements ContinuousBackupEngine {
     return ageMs >= fullEveryDays * 86_400_000 ? 'full' : 'incr';
   }
 
-  private envValue(app: ApplicationEntity, name: string): string | undefined {
-    return app.env?.find((e) => e.name === name)?.value;
-  }
-
   async resolveTarget(appId: string): Promise<PgBackrestTarget> {
     const app = await this.appRepo.findOne({ where: { id: appId } });
     if (!app) throw new NotFoundException(`Application ${appId} not found`);
@@ -201,70 +233,10 @@ export class PgBackrestService implements ContinuousBackupEngine {
     });
     if (!cluster)
       throw new NotFoundException(`Cluster ${app.clusterId} missing`);
-    const pgdata = this.envValue(app, 'PGDATA') ?? DEFAULT_PGDATA;
-    const pgUser = this.envValue(app, 'POSTGRES_USER') ?? 'postgres';
-    const pgDb = this.envValue(app, 'POSTGRES_DB') ?? pgUser;
-    return {
-      kubeconfig: this.encryption.decrypt(cluster.kubeconfigEncrypted),
-      namespace: app.k8sNamespace,
-      labelSelector: `flui-app-id=${app.id}`,
-      container: app.slug,
-      pgdata,
-      pgUser,
-      pgDb,
-      confPath: `${this.pvcRoot(pgdata)}/pgbackrest.conf`,
-    };
-  }
-
-  private pvcRoot(pgdata: string): string {
-    const idx = pgdata.lastIndexOf('/');
-    return idx > 0 ? pgdata.slice(0, idx) : '/var/lib/postgresql/data';
-  }
-
-  private repoPath(dest: BackupDestinationEntity, appId: string): string {
-    const prefix = trimSlashes(dest.pathPrefix);
-    return `/${prefix ? prefix + '/' : ''}pgbackrest/${appId}`;
-  }
-
-  private buildConf(
-    dest: BackupDestinationEntity,
-    target: PgBackrestTarget,
-    appId: string,
-    retentionFull: number,
-  ): string {
-    const endpointHost = dest.endpoint.replace(/^https?:\/\//, '');
-    const accessKey = this.encryption.decrypt(dest.accessKeyEncrypted);
-    const secretKey = this.encryption.decrypt(dest.secretKeyEncrypted);
-    const uriStyle = dest.forcePathStyle ? 'path' : 'host';
-    return [
-      '[global]',
-      'repo1-type=s3',
-      // The flui-postgres image ships ca-certificates so the S3 endpoint cert
-      // is verified (no verify-tls=n).
-      'repo1-storage-ca-file=/etc/ssl/certs/ca-certificates.crt',
-      `repo1-s3-endpoint=${endpointHost}`,
-      `repo1-s3-bucket=${dest.bucket}`,
-      `repo1-s3-region=${dest.region}`,
-      `repo1-s3-key=${accessKey}`,
-      `repo1-s3-key-secret=${secretKey}`,
-      `repo1-s3-uri-style=${uriStyle}`,
-      `repo1-path=${this.repoPath(dest, appId)}`,
-      `repo1-retention-full=${retentionFull}`,
-      // Bundle many small relation files into few S3 objects — without this a
-      // fresh cluster's ~1000+ files upload one PUT at a time (minutes → ~1min).
-      'repo1-bundle=y',
-      'process-max=4',
-      'start-fast=y',
-      'log-level-console=info',
-      '',
-      `[${PGBACKREST_STANZA}]`,
-      `pg1-path=${target.pgdata}`,
-      // pgBackRest connects to Postgres to verify a primary; the maintenance
-      // role/db is the app's own user, not the default 'postgres'.
-      `pg1-user=${target.pgUser}`,
-      `pg1-database=${target.pgDb}`,
-      '',
-    ].join('\n');
+    return pgbackrestTargetFor(
+      app,
+      this.encryption.decrypt(cluster.kubeconfigEncrypted),
+    );
   }
 
   private async exec(
@@ -296,33 +268,17 @@ export class PgBackrestService implements ContinuousBackupEngine {
     // the two outcomes are kept apart: no pod is its own answer.
     let found: string;
     try {
-      found = await this.exec(
-        target,
-        'command -v pgbackrest >/dev/null 2>&1 && echo yes || echo no',
-      );
+      found = await this.exec(target, PGBACKREST_PRESENT_SCRIPT);
     } catch (err: any) {
       if (/No running pod/i.test(err?.message ?? '')) {
-        throw new BadRequestException(
-          'This database is not running, so continuous backup cannot be set ' +
-            'up on it. Start it and try again.',
-        );
+        throw new BadRequestException(DATABASE_NOT_RUNNING);
       }
       throw err;
     }
     if (found.trim().endsWith('yes')) return;
-    throw new BadRequestException(
-      'This database cannot do continuous backup: its image does not ship ' +
-        'pgBackRest. Continuous backup (WAL shipping and point-in-time ' +
-        'recovery) needs a database installed from the Flui catalog. For a ' +
-        'database running from another image, take backups of its volume ' +
-        'instead.',
-    );
+    throw new BadRequestException(NO_PGBACKREST);
   }
 
-  /**
-   * Idempotent: write the pgBackRest config, create the stanza, and flip
-   * archive_command to push WAL — all without a restart.
-   */
   /**
    * Readiness is `pg_isready`, which answers while the server is still
    * replaying in hot standby. `stanza-create` needs a primary, and the script
@@ -330,46 +286,57 @@ export class PgBackrestService implements ContinuousBackupEngine {
    */
   async awaitWritable(appId: string): Promise<void> {
     const target = await this.resolveTarget(appId);
+    await this.untilPrimary(
+      (cmd) => this.exec(target, cmd),
+      `${appId} was still replaying WAL after ${Math.round(RESTORE_RECONCILE_TIMEOUT_MS / 60000)} minutes, so WAL shipping could not be re-armed`,
+    );
+  }
+
+  private async untilPrimary(
+    run: (cmd: string) => Promise<string>,
+    timeoutMessage: string,
+  ): Promise<void> {
     const deadline = Date.now() + RESTORE_RECONCILE_TIMEOUT_MS;
     for (;;) {
-      const out = await this.exec(
-        target,
-        `gosu postgres psql -U "$POSTGRES_USER" -d postgres -tAc 'SELECT NOT pg_is_in_recovery()' 2>/dev/null || true`,
-      ).catch(() => '');
+      const out = await run(NOT_IN_RECOVERY_SCRIPT).catch(() => '');
       if (out.trim() === 't') return;
-      if (Date.now() > deadline) {
-        throw new Error(
-          `${appId} was still replaying WAL after ${Math.round(RESTORE_RECONCILE_TIMEOUT_MS / 60000)} minutes, so WAL shipping could not be re-armed`,
-        );
-      }
-      await new Promise((resolve) => setTimeout(resolve, 5_000));
+      if (Date.now() > deadline) throw new Error(timeoutMessage);
+      await new Promise((r) =>
+        setTimeout(r, RESTORE_RECONCILE_POLL_INTERVAL_MS),
+      );
     }
   }
 
+  /**
+   * Idempotent: write the pgBackRest config, create the stanza, and flip
+   * archive_command to push WAL — all without a restart.
+   */
   async enable(
     appId: string,
     dest: BackupDestinationEntity,
-    opts?: { retentionFull?: number; generation?: string },
+    opts?: EngineEnableOptions,
   ): Promise<void> {
     const target = await this.resolveTarget(appId);
     await this.requirePgBackrest(target);
-    const conf = this.buildConf(dest, target, appId, opts?.retentionFull ?? 2);
-    const confB64 = Buffer.from(conf, 'utf-8').toString('base64');
-    const archiveCommand = `pgbackrest --config=${target.confPath} --stanza=${PGBACKREST_STANZA} archive-push %p`;
-    const script = [
-      'set -e',
-      'umask 077',
-      `echo ${confB64} | base64 -d > ${target.confPath}`,
-      `chown postgres:postgres ${target.confPath}`,
-      `chmod 600 ${target.confPath}`,
-      `gosu postgres pgbackrest --config=${target.confPath} --stanza=${PGBACKREST_STANZA} --log-level-console=info stanza-create`,
-      `gosu postgres psql -U ${target.pgUser} -d ${target.pgDb} -v ON_ERROR_STOP=1 -c "ALTER SYSTEM SET archive_command = '${archiveCommand}';"`,
-      // Without archive_timeout WAL only ships on 16MB segment switches — on a
-      // quiet database the recoverable edge can lag hours behind "now".
-      `gosu postgres psql -U ${target.pgUser} -d ${target.pgDb} -v ON_ERROR_STOP=1 -c "ALTER SYSTEM SET archive_timeout = '60s';"`,
-      `gosu postgres psql -U ${target.pgUser} -d ${target.pgDb} -v ON_ERROR_STOP=1 -c "SELECT pg_reload_conf();"`,
-    ].join('\n');
-    await this.exec(target, script);
+    const retentionFull = opts?.retentionFull ?? 2;
+    const cipherPass = await this.destinations.passphraseFor(dest);
+    const conf = buildPgbackrestConf({
+      dest,
+      target,
+      repositoryPrefix: this.artifactObjectPrefix(appId),
+      retentionFull,
+      cipherPass,
+      accessKey: this.encryption.decrypt(dest.accessKeyEncrypted),
+      secretKey: this.encryption.decrypt(dest.secretKeyEncrypted),
+    });
+    await this.exec(
+      target,
+      enableScript(
+        target,
+        conf,
+        archiveTimeoutSeconds(opts?.archiveTimeoutSeconds),
+      ),
+    );
     this.logger.log(`[pgbackrest] enabled continuous backup for app=${appId}`);
   }
 
@@ -381,13 +348,7 @@ export class PgBackrestService implements ContinuousBackupEngine {
    */
   async disable(appId: string): Promise<void> {
     const target = await this.resolveTarget(appId);
-    const script = [
-      'set -e',
-      `gosu postgres psql -U ${target.pgUser} -d ${target.pgDb} -v ON_ERROR_STOP=1 -c "ALTER SYSTEM SET archive_command = '/bin/true';"`,
-      `gosu postgres psql -U ${target.pgUser} -d ${target.pgDb} -v ON_ERROR_STOP=1 -c "ALTER SYSTEM RESET archive_timeout;"`,
-      `gosu postgres psql -U ${target.pgUser} -d ${target.pgDb} -v ON_ERROR_STOP=1 -c "SELECT pg_reload_conf();"`,
-    ].join('\n');
-    await this.exec(target, script);
+    await this.exec(target, disableScript(target));
     this.logger.log(`[pgbackrest] disabled continuous backup for app=${appId}`);
   }
 
@@ -396,7 +357,28 @@ export class PgBackrestService implements ContinuousBackupEngine {
    * last commit in the archive — and says so in its log before exiting.
    */
   async endedBeforeTarget(restoredAppId: string): Promise<boolean> {
-    const target = await this.resolveTarget(restoredAppId);
+    const ended = await this.firstFromPodLogs(
+      restoredAppId,
+      [undefined],
+      (l) => (RECOVERY_ENDED_BEFORE_TARGET.test(l) ? true : null),
+    );
+    return ended ?? false;
+  }
+
+  async restoreFailure(restoredAppId: string): Promise<string | null> {
+    return this.firstFromPodLogs(
+      restoredAppId,
+      [false, true],
+      restoreFailureFrom,
+    );
+  }
+
+  private async firstFromPodLogs<T>(
+    appId: string,
+    previousRuns: Array<boolean | undefined>,
+    read: (logs: string) => T | null,
+  ): Promise<T | null> {
+    const target = await this.resolveTarget(appId);
     const pods = await this.k8s
       .listPodsByLabel(
         target.kubeconfig,
@@ -407,18 +389,22 @@ export class PgBackrestService implements ContinuousBackupEngine {
     for (const pod of pods) {
       const name = pod?.metadata?.name;
       if (!name) continue;
-      const logs = await this.k8s
-        .getPodLogs(
-          target.kubeconfig,
-          name,
-          target.namespace,
-          target.container,
-          200,
-        )
-        .catch(() => '');
-      if (RECOVERY_ENDED_BEFORE_TARGET.test(logs)) return true;
+      for (const previous of previousRuns) {
+        const logs = await this.k8s
+          .getPodLogs(
+            target.kubeconfig,
+            name,
+            target.namespace,
+            target.container,
+            200,
+            previous,
+          )
+          .catch(() => '');
+        const found = read(logs);
+        if (found !== null) return found;
+      }
     }
-    return false;
+    return null;
   }
 
   /** Run a base backup. `type` is full|incr|diff. Returns the new backup label. */
@@ -427,13 +413,7 @@ export class PgBackrestService implements ContinuousBackupEngine {
     type: 'full' | 'incr' | 'diff' = 'full',
   ): Promise<string> {
     const target = await this.resolveTarget(appId);
-    await this.exec(
-      target,
-      [
-        'set -e',
-        `gosu postgres pgbackrest --config=${target.confPath} --stanza=${PGBACKREST_STANZA} --type=${type} --log-level-console=info backup`,
-      ].join('\n'),
-    );
+    await this.exec(target, baseBackupScript(target, type));
     const info = await this.info(appId);
     if (!info.latestLabel) {
       throw new Error(
@@ -447,22 +427,36 @@ export class PgBackrestService implements ContinuousBackupEngine {
   }
 
   /**
+   * A named restore point, then a WAL switch: the segment holding the point is
+   * closed and handed to `archive_command` now, so the point is off the
+   * cluster within seconds instead of at the next `archive_timeout`.
+   */
+  async markRestorePoint(
+    appId: string,
+    label: string,
+  ): Promise<RestorePointMark> {
+    const target = await this.resolveTarget(appId);
+    const out = await this.exec(target, markRestorePointScript(target, label));
+    return parseRestorePoint(out);
+  }
+
+  /**
    * The repository's bases from `pgbackrest info`, and the recent edge of the
    * window from the server's archiver: the moment its last WAL segment
    * reached the repository. Every change archived by then is recoverable,
    * not only what the last base covers.
    */
-  async info(appId: string): Promise<PgBackupInfo> {
+  async info(
+    appId: string,
+    artifactSummary?: Record<string, unknown>,
+  ): Promise<PgBackupInfo> {
     const target = await this.resolveTarget(appId);
-    const out = await this.exec(
-      target,
-      [
-        `gosu postgres pgbackrest --config=${target.confPath} --stanza=${PGBACKREST_STANZA} info --output=json`,
-        `echo "${LAST_ARCHIVED_MARKER}$(gosu postgres psql -U ${target.pgUser} -d ${target.pgDb} -tAc "SELECT CASE WHEN current_setting('archive_command') LIKE '%pgbackrest%' THEN floor(extract(epoch from last_archived_time)) END FROM pg_stat_archiver" 2>/dev/null)"`,
-      ].join('\n'),
-    );
+    const out = await this.exec(target, infoScript(target));
+    if (artifactSummary) {
+      assertLiveRepository(appId, artifactSummary, out);
+    }
     return withArchivedEdge(
-      this.parseInfo(out.split(LAST_ARCHIVED_MARKER)[0]),
+      parsePgbackrestInfo(out.split(REPO_PATH_MARKER)[0]),
       out,
     );
   }
@@ -479,107 +473,25 @@ export class PgBackrestService implements ContinuousBackupEngine {
     dest: BackupDestinationEntity,
     recoveryTargetTime?: Date | null,
     restoreSet?: string | null,
+    _generation?: string,
+    artifactSummary?: Record<string, unknown>,
   ): Record<string, string> {
-    const env: Record<string, string> = {
-      FLUI_PG_RESTORE: '1',
-      FLUI_PG_S3_ENDPOINT: dest.endpoint.replace(/^https?:\/\//, ''),
-      FLUI_PG_S3_BUCKET: dest.bucket,
-      FLUI_PG_S3_REGION: dest.region,
-      FLUI_PG_S3_KEY: this.encryption.decrypt(dest.accessKeyEncrypted),
-      FLUI_PG_S3_KEY_SECRET: this.encryption.decrypt(dest.secretKeyEncrypted),
-      FLUI_PG_S3_URI_STYLE: dest.forcePathStyle ? 'path' : 'host',
-      FLUI_PG_S3_PATH: this.repoPath(dest, sourceAppId),
-    };
-    if (recoveryTargetTime) {
-      env.FLUI_PG_RESTORE_TARGET = this.toPgTimeTarget(recoveryTargetTime);
-    } else if (restoreSet) {
-      env.FLUI_PG_RESTORE_SET = restoreSet;
-    }
-    return env;
+    const repository = repositoryOf(sourceAppId, artifactSummary);
+    const accessKey = this.encryption.decrypt(dest.accessKeyEncrypted);
+    const secretKey = this.encryption.decrypt(dest.secretKeyEncrypted);
+    return pgRestoreEnv({
+      dest,
+      repository,
+      accessKey,
+      secretKey,
+      // The key that wrote it, never a new one: passphraseFor would mint a
+      // passphrase for a destination that lost its own, and nothing decrypts
+      // with that.
+      passphrase: repository.encrypted
+        ? this.destinations.decryptPassphrase(dest)
+        : null,
+      recoveryTargetTime,
+      restoreSet,
+    });
   }
-
-  /** pgBackRest --target format: 'YYYY-MM-DD HH:MM:SS+00' (UTC). */
-  private toPgTimeTarget(d: Date): string {
-    return d.toISOString().slice(0, 19).replace('T', ' ') + '+00';
-  }
-
-  private parseInfo(json: string): PgBackupInfo {
-    let stanzas: unknown;
-    try {
-      stanzas = JSON.parse(json);
-    } catch {
-      return {
-        latestLabel: null,
-        oldestRecoverable: null,
-        newestRecoverable: null,
-        lastFullAt: null,
-        backupCount: 0,
-      };
-    }
-    const stanza = Array.isArray(stanzas)
-      ? (stanzas.find(
-          (s: { name?: string }) => s?.name === PGBACKREST_STANZA,
-        ) as { backup?: PgBackrestInfoBackup[] } | undefined)
-      : undefined;
-    const backups = stanza?.backup ?? [];
-    if (backups.length === 0) {
-      return {
-        latestLabel: null,
-        oldestRecoverable: null,
-        newestRecoverable: null,
-        lastFullAt: null,
-        backupCount: 0,
-      };
-    }
-    const toIso = (epoch?: number): string | null =>
-      typeof epoch === 'number' ? new Date(epoch * 1000).toISOString() : null;
-    const first = backups[0];
-    const last = backups.at(-1);
-    let lastFull: PgBackrestInfoBackup | undefined;
-    for (let i = backups.length - 1; i >= 0; i--) {
-      if (backups[i].type === 'full') {
-        lastFull = backups[i];
-        break;
-      }
-    }
-    return {
-      latestLabel: last.label ?? null,
-      // Consistency is only reached at the END of the oldest base backup —
-      // targets inside its start..stop window are not recoverable.
-      oldestRecoverable: toIso(first.timestamp?.stop),
-      newestRecoverable: toIso(last.timestamp?.stop),
-      lastFullAt: toIso(lastFull?.timestamp?.stop),
-      backupCount: backups.length,
-      latestSizeBytes:
-        last.info?.repository?.delta ?? last.info?.repository?.size ?? null,
-    };
-  }
-}
-
-const LAST_ARCHIVED_MARKER = 'FLUI_LAST_ARCHIVED=';
-const RECOVERY_ENDED_BEFORE_TARGET =
-  /recovery ended before configured recovery target was reached/;
-
-export function withArchivedEdge(
-  info: PgBackupInfo,
-  execOutput: string,
-): PgBackupInfo {
-  const epoch = Number(
-    new RegExp(String.raw`${LAST_ARCHIVED_MARKER}(\d+)`).exec(execOutput)?.[1],
-  );
-  if (!info.backupCount || !Number.isFinite(epoch) || epoch <= 0) return info;
-  const archived = new Date(epoch * 1000);
-  const newest = info.newestRecoverable
-    ? new Date(info.newestRecoverable)
-    : null;
-  return newest && newest >= archived
-    ? info
-    : { ...info, newestRecoverable: archived.toISOString() };
-}
-
-interface PgBackrestInfoBackup {
-  label?: string;
-  type?: string;
-  timestamp?: { start?: number; stop?: number };
-  info?: { repository?: { size?: number; delta?: number } };
 }

@@ -15,7 +15,10 @@ import {
   BackupPolicyStatus,
   BackupPolicyProfile,
 } from '../enums/backup-policy-status.enum';
-import { BackupEngineClass } from '../enums/backup-engine-class.enum';
+import {
+  BackupEngineClass,
+  STORED_ENGINE_CLASSES,
+} from '../enums/backup-engine-class.enum';
 import { BackupPolicyDestinationEntity } from './backup-policy-destination.entity';
 
 export interface BackupScopeSelector {
@@ -52,8 +55,7 @@ export class BackupPolicyEntity {
 
   @Column({
     type: 'enum',
-    enum: BackupEngineClass,
-    default: BackupEngineClass.VOLUME,
+    enum: STORED_ENGINE_CLASSES,
   })
   engineClass: BackupEngineClass;
 

@@ -69,6 +69,9 @@ import { ProviderCredentialTokensSealed1790000000012 } from './1790000000012-Pro
 import { CloseDeletedClusterIntervals1790000000013 } from './1790000000013-CloseDeletedClusterIntervals';
 import { DropRegistryAuth1790000000014 } from './1790000000014-DropRegistryAuth';
 import { CatalogDefinitionOwner1790000000015 } from './1790000000015-CatalogDefinitionOwner';
+import { DefaultBackupSchedules1790000000016 } from './1790000000016-DefaultBackupSchedules';
+import { BackupClusterProtections1790000000017 } from './1790000000017-BackupClusterProtections';
+import { RemoveClusterBackupEngine1790000000018 } from './1790000000018-RemoveClusterBackupEngine';
 import { BackfillArtifactApplicationId1787500000000 } from './1787500000000-BackfillArtifactApplicationId';
 import { WireGuardHubKeySealed1790000000000 } from './1790000000000-WireGuardHubKeySealed';
 import { RecoverNodeAccessOperation1790000000001 } from './1790000000001-RecoverNodeAccessOperation';
@@ -151,4 +154,7 @@ export const migrations = [
   CloseDeletedClusterIntervals1790000000013,
   DropRegistryAuth1790000000014,
   CatalogDefinitionOwner1790000000015,
+  DefaultBackupSchedules1790000000016,
+  BackupClusterProtections1790000000017,
+  RemoveClusterBackupEngine1790000000018,
 ];

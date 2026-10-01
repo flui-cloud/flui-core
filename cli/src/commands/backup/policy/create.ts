@@ -32,8 +32,8 @@ export default class BackupPolicyCreate extends Command {
     this.log('');
     this.log(
       chalk.dim(
-        '  Scope is no longer a separate flag: `enable cluster --namespaces a,b`\n' +
-          '  narrows, and omitting it protects the whole cluster.\n',
+        '  Scope is no longer a separate flag: `enable cluster` gives every\n' +
+          '  application on the cluster a policy of its own, new ones included.\n',
       ),
     );
     this.log(

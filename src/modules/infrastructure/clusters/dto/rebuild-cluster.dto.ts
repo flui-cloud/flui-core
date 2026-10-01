@@ -64,9 +64,25 @@ export class RebuildPlanAppDto {
   @ApiProperty({ type: [String] })
   warnings: string[];
 
+  // Quote copy paths and snapshot ids back to the reader.
+  @Sensitivity(Sensitivity.ARBITRARY_TEXT)
+  @ApiProperty({
+    type: [String],
+    description: 'What comes back, and from where',
+  })
+  restores: string[];
+
   @Sensitivity(Sensitivity.PUBLIC)
   @ApiPropertyOptional({ description: 'Where a previous run got to' })
   phase?: string;
+
+  @Sensitivity(Sensitivity.ARBITRARY_TEXT)
+  @ApiPropertyOptional({
+    type: [String],
+    description:
+      'Applications rebuilt before this one because it uses them — a database before the application reading it',
+  })
+  after?: string[];
 }
 
 export class RebuildCapacityDto {
@@ -93,6 +109,14 @@ export class RebuildCapacityDto {
 
 export class RebuildPlanResponseDto {
   @Sensitivity(Sensitivity.PUBLIC)
+  @ApiProperty({
+    enum: ['workload', 'control'],
+    description:
+      '`control` when the applications come back onto this installation’s own control cluster',
+  })
+  mode: 'workload' | 'control';
+
+  @Sensitivity(Sensitivity.PUBLIC)
   @ApiProperty({ type: RebuildClusterSideDto })
   from: RebuildClusterSideDto;
 
@@ -111,6 +135,13 @@ export class RebuildPlanResponseDto {
     description: 'Empty means the rebuild can start',
   })
   refusals: string[];
+
+  @Sensitivity(Sensitivity.ARBITRARY_TEXT)
+  @ApiProperty({
+    type: [String],
+    description: 'True of the whole rebuild and not disqualifying',
+  })
+  warnings: string[];
 
   @Sensitivity(Sensitivity.PUBLIC)
   @ApiPropertyOptional({ type: RebuildCapacityDto })
@@ -131,4 +162,55 @@ export class RebuildClusterResponseDto {
     description: 'How many applications the rebuild will attempt',
   })
   applications: number;
+}
+
+export class ControlRestoreDto {
+  @Sensitivity(Sensitivity.PUBLIC)
+  @ApiPropertyOptional({
+    description:
+      'The earlier control cluster to restore from. Needed only when more than one still has applications recorded on it.',
+  })
+  @IsOptional()
+  @IsUUID()
+  from?: string;
+
+  @Sensitivity(Sensitivity.PUBLIC)
+  @ApiPropertyOptional({
+    description:
+      'Also restore applications that were not running when that control cluster was lost',
+    default: false,
+  })
+  @IsOptional()
+  @IsBoolean()
+  includeStopped?: boolean;
+}
+
+export class PreviousControlDto {
+  @Sensitivity(Sensitivity.PUBLIC)
+  @ApiProperty()
+  id: string;
+
+  @Sensitivity(Sensitivity.ARBITRARY_TEXT)
+  @ApiProperty()
+  name: string;
+
+  @Sensitivity(Sensitivity.PUBLIC)
+  @ApiProperty()
+  status: string;
+
+  @Sensitivity(Sensitivity.PUBLIC)
+  @ApiProperty({
+    description: 'Retired by the restore, deleted, or marked lost',
+  })
+  retired: boolean;
+
+  @Sensitivity(Sensitivity.PUBLIC)
+  @ApiProperty({ description: 'Applications still recorded on it' })
+  applications: number;
+}
+
+export class ControlRestorePlanResponseDto extends RebuildPlanResponseDto {
+  @Sensitivity(Sensitivity.PUBLIC)
+  @ApiProperty({ type: [PreviousControlDto] })
+  candidates: PreviousControlDto[];
 }

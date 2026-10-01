@@ -1,7 +1,7 @@
 jest.mock('@kubernetes/client-node', () => ({}));
 
 import { ConflictException, NotFoundException } from '@nestjs/common';
-import { SpareVolumesService } from './spare-volumes.service';
+import { SpareVolumesService, replacesLabel } from './spare-volumes.service';
 
 function build(mountedBy: Record<string, string[]> = {}) {
   const claims = [
@@ -13,7 +13,11 @@ function build(mountedBy: Record<string, string[]> = {}) {
       metadata: {
         name: 'data-pg-0-restored-20260926211450',
         creationTimestamp: new Date('2026-09-26T21:14:50Z'),
-        labels: { 'flui-app-id': 'a1', 'flui.cloud/restored-from': 'snap-1' },
+        labels: {
+          'flui-app-id': 'a1',
+          'flui.cloud/restored-from': 'snap-1',
+          'flui.cloud/replaces': 'data-pg-0',
+        },
       },
       spec: { resources: { requests: { storage: '5Gi' } } },
     },
@@ -62,6 +66,14 @@ describe('SpareVolumesService', () => {
       ['data-pg-0-previous-20260927100000', 'previous'],
       ['data-pg-0-restored-20260926211450', 'restored'],
     ]);
+  });
+
+  it('says which volume a restored copy replaces, when it was recorded', async () => {
+    const { service } = build();
+    const spare = await service.list('a1');
+    expect(spare.map((s) => s.replaces)).toEqual([null, 'data-pg-0']);
+    expect(replacesLabel('x'.repeat(64))).toEqual({});
+    expect(replacesLabel(undefined)).toEqual({});
   });
 
   it('deletes a spare volume nobody mounts', async () => {

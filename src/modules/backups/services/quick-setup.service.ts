@@ -114,14 +114,11 @@ export class QuickSetupService {
         estimatedDataGb: singleEst.estimatedDataGb,
         estimatedDataSource: singleEst.estimatedDataSource,
         backupScope: {
-          k8sResources: true,
-          // Not the whole truth and it must not read like it: Velero's
-          // file-system backup cannot read hostPath volumes, which is every
-          // volume on the dedicated storage class — the class databases use.
-          persistentVolumes: 'shared-storage-only',
-          method: 'velero+kopia',
+          k8sResources: false,
+          persistentVolumes: 'per-application',
+          method: 'per-application',
           notes:
-            'Velero snapshots Kubernetes resources (manifests, ConfigMaps, Secrets, Deployments) and Kopia file-system-backs up volumes on the shared storage class. Volumes on the dedicated class — which is what databases use — are NOT captured: protect those with a database-class policy (Postgres) or a volume copy. Image registries and state outside the cluster are not included.',
+            'Every application gets a backup policy of its own, and so does every application installed later: a recognised database (PostgreSQL, MariaDB) is backed up with its own engine (continuous where the image allows, dumps otherwise), every other volume with encrypted, deduplicated copies. Databases Flui does not recognise are listed as needing a decision instead of being copied inconsistently. Flui itself is covered by the platform backup; image registries and state outside the cluster are not included.',
         },
         disclaimer: singleEst.disclaimer,
       },
@@ -170,8 +167,7 @@ export class QuickSetupService {
       profile: dto.profile,
       primaryProvider: primaryStorage,
       replicaProvider: undefined,
-      cronSchedule:
-        dto.cronSchedule === null ? null : (dto.cronSchedule ?? '0 2 * * *'),
+      cronSchedule: dto.cronSchedule ?? null,
       retentionDays: dto.retentionDays ?? 30,
       runFirstBackup: dto.runFirstBackup ?? true,
     });

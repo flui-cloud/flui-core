@@ -32,6 +32,7 @@ import {
   SnapshotCapability,
   SnapshotStorageCapabilityService,
 } from './snapshot-storage-capability.service';
+import { replacesLabel } from './spare-volumes.service';
 
 export interface CreateSnapshotForAppRequest {
   applicationId: string;
@@ -340,6 +341,7 @@ export class VolumeSnapshotsService {
             'flui.cloud/managed-by': 'flui-cloud',
             'flui-app-id': app.id,
             'flui.cloud/restored-from': snapshotId,
+            ...replacesLabel(source.sourcePvcName),
           },
         });
         this.logger.log(

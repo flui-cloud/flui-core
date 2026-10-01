@@ -56,11 +56,20 @@ import { VolumePauseLeaseService } from './services/volume-pause-lease.service';
 import { VolumePauseSweeperService } from './schedulers/volume-pause-sweeper.service';
 import { BackupJobEntity } from '../backups/entities/backup-job.entity';
 import { BackupDestinationEntity } from '../backups/entities/backup-destination.entity';
+import { BackupDestinationRepository } from '../backups/repositories/backup-destination.repository';
+import { BackupDestinationsService } from '../backups/services/backup-destinations.service';
+import { PlaintextRetirementService } from '../backups/services/plaintext-retirement.service';
 import { BackupArtifactEntity } from '../backups/entities/backup-artifact.entity';
 import { BackupArtifactLocationEntity } from '../backups/entities/backup-artifact-location.entity';
 import { BackupPolicyEntity } from '../backups/entities/backup-policy.entity';
 import { SnapshotStorageCapabilityService } from './services/snapshot-storage-capability.service';
 import { VolumeBackupsService } from './services/volume-backups.service';
+import { VolumeBackupRestoreService } from './services/volume-backup-restore.service';
+import { VolumeBackupLookupService } from './services/volume-backup-lookup.service';
+import { VolumeKopiaSnapshotService } from './services/volume-kopia-snapshot.service';
+import { VolumeBackupDestinationService } from './services/volume-backup-destination.service';
+import { KopiaVolumeEngineService } from './services/kopia-volume-engine.service';
+import { KopiaCliService } from '../backups/services/kopia-cli.service';
 import { DedicatedPlacementService } from './services/dedicated-placement.service';
 import { ApplicationDeployProcessor } from './processors/application-deploy.processor';
 import { ApplicationTeardownService } from './processors/application-teardown.service';
@@ -214,6 +223,17 @@ import { SpareVolumesService } from './services/spare-volumes.service';
     SnapshotStorageCapabilityService,
     VolumeExportService,
     VolumeBackupsService,
+    VolumeBackupDestinationService,
+    VolumeKopiaSnapshotService,
+    // Registered by class, like the ledger's entities: a volume copy to a
+    // registered destination is encrypted with that destination's passphrase.
+    BackupDestinationRepository,
+    BackupDestinationsService,
+    PlaintextRetirementService,
+    KopiaVolumeEngineService,
+    KopiaCliService,
+    VolumeBackupRestoreService,
+    VolumeBackupLookupService,
     StatefulSetVolumeSwapService,
     SpareVolumesService,
     DedicatedPlacementService,

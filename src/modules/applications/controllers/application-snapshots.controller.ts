@@ -6,6 +6,7 @@ import {
   Body,
   Param,
   Req,
+  Query,
   HttpCode,
   HttpStatus,
   UseGuards,
@@ -28,6 +29,8 @@ import {
 } from '../services/volume-backups.service';
 import { ApplicationVolumeResizeService } from '../services/application-volume-resize.service';
 import { SpareVolumesService } from '../services/spare-volumes.service';
+import { VolumeBackupRestoreService } from '../services/volume-backup-restore.service';
+import { ActionCycle } from '../../action-cycle/action-cycle.decorator';
 import { DataDoor } from '../../iam/decorators/data-door.decorator';
 import { RequirePermission } from '../../iam/decorators/require-permission.decorator';
 import { IAM_PERMISSION } from '../../iam/constants/iam-permissions';
@@ -43,6 +46,7 @@ export class ApplicationSnapshotsController {
     private readonly appManagementService: AppManagementService,
     private readonly volumeResizeService: ApplicationVolumeResizeService,
     private readonly spareVolumes: SpareVolumesService,
+    private readonly volumeBackupRestore: VolumeBackupRestoreService,
   ) {}
 
   // ── Volume snapshots ──────────────────────────────────────
@@ -234,18 +238,160 @@ export class ApplicationSnapshotsController {
     return this.volumeSnapshotsService.listForCluster(clusterId);
   }
 
-  // ── Volume backups (s3-archive sink) ──────────────────────────
+  // ── Volume backups: list, look inside, restore ───────────────
+
+  @Get('applications/:id/volume-backups')
+  @ApiOperation({
+    summary: "The application's volume backups, newest first",
+    description:
+      'Every copy of its volumes in the ledger: kopia snapshots, archives written before kopia, and clones on the cluster. ' +
+      'Each says what a restore writes back (logicalBytes), what it added to the destination (uploadedBytes), whether it is still stored, ' +
+      'whether it is kept by retention or until someone deletes it, and whether single files can be listed and restored from it.',
+  })
+  @ApiParam({ name: 'id', description: 'Application ID' })
+  async listVolumeBackups(@Param('id') id: string) {
+    return this.volumeBackupRestore.list(id);
+  }
+
+  @Get('applications/:id/volume-backups/:backupId/files')
+  @DataDoor()
+  @ApiOperation({
+    summary: 'List the files of a directory inside a kopia volume backup',
+    description:
+      'Reads the snapshot read-only; nothing is restored. `path` is relative to the volume root (default: the root). ' +
+      'Files copied with SQLite online backup are marked `consistentCopy`.',
+  })
+  @ApiParam({ name: 'id', description: 'Application ID' })
+  @ApiParam({ name: 'backupId', description: 'Volume backup id' })
+  async browseVolumeBackup(
+    @Param('id') id: string,
+    @Param('backupId') backupId: string,
+    @Query('path') path?: string,
+  ) {
+    return this.volumeBackupRestore.browse(id, backupId, path);
+  }
+
+  @Post('applications/:id/volume-backups/:backupId/restore')
+  @DataDoor()
+  @ActionCycle({
+    action: 'POST /applications/:id/volume-backups/:backupId/restore',
+    bind: ['id'],
+    sentence: 'restore volume backups of application {id} into new volumes',
+    consequence:
+      'New volumes the size of the backup are created on the cluster; the running application keeps its current data until its volume is swapped.',
+  })
+  @HttpCode(HttpStatus.CREATED)
+  @ApiOperation({
+    summary: 'Restore a volume backup into a new volume',
+    description:
+      'Writes the whole backup into a new volume beside the application — this one, or `targetApplicationId`, which the caller must be allowed to change. ' +
+      'The running application is not touched: make it use the new volume with POST /applications/:id/volumes/:volumeName/swap. ' +
+      'Archives written before kopia restore the same way.',
+  })
+  @ApiParam({ name: 'id', description: 'Application ID the backup belongs to' })
+  @ApiParam({ name: 'backupId', description: 'Volume backup id' })
+  async restoreVolumeBackup(
+    @Req() req: Request,
+    @Param('id') id: string,
+    @Param('backupId') backupId: string,
+    @Body() body: { targetApplicationId?: string; volumeName?: string } = {},
+  ) {
+    return this.volumeBackupRestore.restore(
+      id,
+      backupId,
+      {
+        targetApplicationId: body?.targetApplicationId,
+        volumeName: body?.volumeName,
+      },
+      req.user as AuthenticatedUser | undefined,
+    );
+  }
+
+  @Post('applications/:id/volume-backups/:backupId/restore-files')
+  @DataDoor()
+  @ActionCycle({
+    action: 'POST /applications/:id/volume-backups/:backupId/restore-files',
+    bind: ['id'],
+    sentence: 'write files from volume backups back into application {id}',
+    consequence:
+      'The named files replace the ones the application has now, unless a separate directory is given; what they replace is not kept.',
+  })
+  @HttpCode(HttpStatus.CREATED)
+  @ApiOperation({
+    summary: 'Restore selected files of a kopia volume backup into the volume',
+    description:
+      'Writes the named paths (files or directories, relative to the volume root) into the application volume, over the current ones — ' +
+      'or under `targetDirectory` to keep both. A database file is written with its journal removed; stop the application first if it is writing to it.',
+  })
+  @ApiParam({ name: 'id', description: 'Application ID the backup belongs to' })
+  @ApiParam({ name: 'backupId', description: 'Volume backup id' })
+  async restoreVolumeBackupFiles(
+    @Req() req: Request,
+    @Param('id') id: string,
+    @Param('backupId') backupId: string,
+    @Body()
+    body: {
+      paths: string[];
+      targetDirectory?: string;
+      targetApplicationId?: string;
+      volumeName?: string;
+    },
+  ) {
+    return this.volumeBackupRestore.restoreFiles(
+      id,
+      backupId,
+      {
+        paths: body?.paths,
+        targetDirectory: body?.targetDirectory,
+        targetApplicationId: body?.targetApplicationId,
+        volumeName: body?.volumeName,
+      },
+      req.user as AuthenticatedUser | undefined,
+    );
+  }
+
+  @Delete('applications/:id/volume-backups/:backupId')
+  @ActionCycle({
+    action: 'DELETE /applications/:id/volume-backups/:backupId',
+    bind: ['id'],
+    sentence: 'delete volume backups of application {id}',
+    consequence:
+      'That point in time can no longer be restored; other backups of the application are unaffected.',
+  })
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Delete a volume backup',
+    description:
+      'Removes the kopia snapshot (its space comes back at the next maintenance) or the archive, then its record. A clone on the cluster is removed with DELETE /applications/:id/snapshots/:snapshotId.',
+  })
+  @ApiParam({ name: 'id', description: 'Application ID' })
+  @ApiParam({ name: 'backupId', description: 'Volume backup id' })
+  async deleteVolumeBackup(
+    @Req() req: Request,
+    @Param('id') id: string,
+    @Param('backupId') backupId: string,
+  ): Promise<{ operationId: string }> {
+    return this.volumeBackupRestore.remove(
+      id,
+      backupId,
+      req.user as AuthenticatedUser | undefined,
+    );
+  }
+
+  // ── Volume backups: take one ──────────────────────────────────
 
   @Post('applications/:id/backups')
   @DataDoor()
-  @HttpCode(HttpStatus.CREATED)
+  @HttpCode(HttpStatus.ACCEPTED)
   @ApiOperation({
-    summary: 'Archive an application volume to S3-compatible storage',
+    summary: 'Back up an application volume to S3-compatible storage',
     description:
-      'Spawns a copy-pod Job that streams the live PVC contents to S3 via rclone. ' +
-      'Pass `destinationId` to archive into a registered backup destination — the ' +
-      'copy is then linked to it in the ledger and can be listed and restored like ' +
-      'any other backup. Raw `destination` credentials still work. With neither, ' +
+      'Answers at once with an operation id; the copy runs in the background and its result (or the reason it was refused) ' +
+      'is recorded on the operation (GET /infrastructure/operations/:id, `metadata.result` / `metadata.error`). ' +
+      'With `destinationId` (a registered destination) the volume becomes a kopia snapshot in the ' +
+      "application's encrypted, deduplicated repository on it, kept until deleted, recorded in the ledger, " +
+      'listable and restorable whole or file by file. Raw `destination` credentials still work and ' +
+      'archive a full plaintext copy through rclone. With neither, ' +
       'the bucket is auto-provisioned via the cluster provider object storage ' +
       '(Scaleway: full-auto using the compute key; Hetzner: requires Object ' +
       'Storage credentials connected; BYOS: no provisioner, pass one of the above).',
@@ -265,7 +411,7 @@ export class ApplicationSnapshotsController {
     } = {},
   ) {
     const userId = (req.user as AuthenticatedUser | undefined)?.userId;
-    return this.volumeBackupsService.createForApp({
+    return this.volumeBackupsService.startForApp({
       applicationId: id,
       volumeName: body.volumeName,
       description: body.description,

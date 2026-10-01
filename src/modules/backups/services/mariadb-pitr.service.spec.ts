@@ -172,7 +172,11 @@ describe('MariadbPitrService', () => {
         'mariadb/app-1/g20260905T120000/',
       );
       expect(service.artifactObjectKeys('app-1', 'base-x', 'g1')).toEqual([
+        'mariadb/app-1/g1/base/base-x/binlog_info.bin',
         'mariadb/app-1/g1/base/base-x/binlog_info',
+        'mariadb/app-1/g1/base/base-x/base.mbstream.zst.bin',
+        'mariadb/app-1/g1/base/base-x/base.mbstream.zst',
+        'mariadb/app-1/g1/base/base-x/base.mbstream.bin',
         'mariadb/app-1/g1/base/base-x/base.mbstream',
       ]);
     });
@@ -184,7 +188,11 @@ describe('MariadbPitrService', () => {
 
       expect(service.artifactObjectPrefix('app-1')).toBe('mariadb/app-1/');
       expect(service.artifactObjectKeys('app-1', 'base-x')).toEqual([
+        'mariadb/app-1/base/base-x/binlog_info.bin',
         'mariadb/app-1/base/base-x/binlog_info',
+        'mariadb/app-1/base/base-x/base.mbstream.zst.bin',
+        'mariadb/app-1/base/base-x/base.mbstream.zst',
+        'mariadb/app-1/base/base-x/base.mbstream.bin',
         'mariadb/app-1/base/base-x/base.mbstream',
       ]);
     });

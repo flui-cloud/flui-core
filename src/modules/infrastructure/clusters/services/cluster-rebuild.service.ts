@@ -8,14 +8,18 @@ import {
 import { InjectQueue } from '@nestjs/bull';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Queue } from 'bull';
-import { DataSource, EntityManager, Repository } from 'typeorm';
 import {
-  ClusterEntity,
-  ClusterStatus,
-  ClusterType,
-} from '../entities/cluster.entity';
+  DataSource,
+  EntityManager,
+  In,
+  IsNull,
+  MoreThan,
+  Repository,
+} from 'typeorm';
+import { ClusterEntity, ClusterStatus } from '../entities/cluster.entity';
 import { ApplicationEntity } from '../../../applications/entities/application.entity';
 import { ApplicationStatus } from '../../../applications/enums/application-status.enum';
+import { ApplicationServiceEntity } from '../../../attached-services/entities/application-service.entity';
 import { AppEndpointEntity } from '../../../dns/entities/app-endpoint.entity';
 import { ReconciliationStatus } from '../../shared/enums/reconciliation-status.enum';
 import { AppEndpointReconciliationService } from '../../../dns/services/app-endpoint-reconciliation.service';
@@ -34,81 +38,41 @@ import {
   OperationStatus,
   OperationType,
 } from '../../servers/entities/infrastructure-operations.entity';
+import {
+  OrderableApp,
+  RebuildDependency,
+  orderForRebuild,
+  rebuildDependencies,
+  waitsFor,
+} from './rebuild-order.util';
+import { ControlRestoreSourceService } from './control-restore-source.service';
+import {
+  ControlRestorePlan,
+  EndpointMove,
+  EndpointMoves,
+  RebuildMode,
+  RebuildPhase,
+  RebuildPlan,
+  RebuildPlanApp,
+  RebuildResult,
+  RebuildResultApp,
+} from '../interfaces/cluster-rebuild.interface';
+import {
+  modeRefusals,
+  refusedControlPlan,
+} from '../utils/control-restore.util';
+import {
+  isPlatformComponent,
+  isRebuildable,
+  isRetired,
+  parseCpuMillis,
+  parseMemoryMi,
+} from '../utils/rebuild-scope.util';
 
 const REACHABILITY_PROBE_MS = 20_000;
+const REBUILD_JOB_TIMEOUT_MS = 3_600_000;
 const DEPLOY_POLL_MS = 5_000;
 const DEPLOY_WAIT_MS = 20 * 60_000;
-
-/** Where an application got to. Read on a re-run to continue, not restart. */
-export type RebuildPhase =
-  | 'repointed'
-  | 'restored'
-  | 'deployed'
-  | 'reconciled'
-  | 'failed';
-
-/** One endpoint's old and new name, decided before anything was mutated. */
-export interface EndpointMove {
-  from: string;
-  to: string;
-}
-
-/** Keyed by endpoint id, so a resumed run reads the answer instead of re-deriving it. */
-export type EndpointMoves = Record<string, EndpointMove>;
-
-export interface RebuildResultApp {
-  applicationId: string;
-  name: string;
-  phase: RebuildPhase | 'skipped';
-  error?: string;
-  /** Every name that changed, not the first: an application may publish several. */
-  endpointMoved?: EndpointMove[];
-  /** What came back thinner than the application had — per volume, in words. */
-  notes?: string[];
-}
-
-export interface RebuildResult {
-  from: string;
-  to: string;
-  apps: RebuildResultApp[];
-  /** Schedules that named the lost cluster and now name the destination. */
-  movedPolicies: string[];
-  /** True when every application it tried reached `reconciled`. */
-  complete: boolean;
-}
-
-/** One application's place in a rebuild, and everything true about it. */
-export interface RebuildPlanApp {
-  applicationId: string;
-  name: string;
-  slug: string;
-  status: string;
-  /** Set when this application cannot be rebuilt at all. */
-  blocked?: string;
-  /** True but not disqualifying — the user decides. */
-  warnings: string[];
-  /** What will come back, and from where. Empty is a fact, not an omission. */
-  restores: string[];
-  /** Where it got to on a previous run, when there was one. */
-  phase?: string;
-}
-
-export interface RebuildPlan {
-  from: { id: string; name: string; status: string };
-  to: { id: string; name: string; status: string };
-  apps: RebuildPlanApp[];
-  /** Reasons the whole rebuild cannot start. Empty means it can. */
-  refusals: string[];
-  /** True of the whole rebuild, and not disqualifying. The person decides. */
-  warnings: string[];
-  capacity?: {
-    requiredCpuMillis: number;
-    requiredMemoryMi: number;
-    availableCpuMillis: number;
-    availableMemoryMi: number;
-    fits: boolean;
-  };
-}
 
 /**
  * Re-materialises the applications of a lost cluster onto a live one: the
@@ -152,9 +116,20 @@ export class ClusterRebuildService {
     @InjectRepository(ClusterDnsZoneEntity)
     private readonly zoneAssignmentRepo: Repository<ClusterDnsZoneEntity>,
     private readonly dataSource: DataSource,
+    @InjectRepository(ApplicationServiceEntity)
+    private readonly attachmentRepo: Repository<ApplicationServiceEntity>,
+    private readonly controlSources: ControlRestoreSourceService,
   ) {}
 
   async plan(fromId: string, toId: string): Promise<RebuildPlan> {
+    return this.planBetween(fromId, toId, 'workload');
+  }
+
+  private async planBetween(
+    fromId: string,
+    toId: string,
+    mode: RebuildMode,
+  ): Promise<RebuildPlan> {
     const from = await this.mustFindCluster(fromId, 'from');
     const to = await this.mustFindCluster(toId, 'to');
     const refusals: string[] = [];
@@ -162,12 +137,7 @@ export class ClusterRebuildService {
     if (from.id === to.id) {
       refusals.push('A cluster cannot be rebuilt onto itself.');
     }
-    if (to.clusterType === ClusterType.CONTROL) {
-      refusals.push(
-        'The control cluster runs the plane doing the rebuilding, and is not a ' +
-          'destination for workloads.',
-      );
-    }
+    refusals.push(...modeRefusals(mode, from, to));
     if (to.status !== ClusterStatus.READY) {
       refusals.push(
         `The destination is ${to.status}, not ready. Applications can only be ` +
@@ -203,7 +173,7 @@ export class ClusterRebuildService {
     // could never be resumed by the same command — which is the property the
     // phase ledger exists to provide. So: still on the source, or carrying a
     // ledger that names this destination.
-    const apps = await this.appRepo
+    const listed = await this.appRepo
       .createQueryBuilder('a')
       .where('a."clusterId" = :fromId', { fromId: from.id })
       .orWhere(`a."metadata"::jsonb -> 'rebuild' ->> 'to' = :toId`, {
@@ -211,9 +181,31 @@ export class ClusterRebuildService {
       })
       .orderBy('a.name', 'ASC')
       .getMany();
+    // What the platform installs itself is the destination's own installation's
+    // to provide; rebuilding a mirror of it would deploy a second copy of the
+    // platform next to the first. A deleted row is history, not an application.
+    const platform = listed.filter(isPlatformComponent);
+    const apps = listed.filter(isRebuildable);
+    if (platform.length > 0) {
+      warnings.push(
+        `${platform.length} platform component(s) recorded on ${from.name} are ` +
+          `not rebuilt: ${to.name} runs its own.`,
+      );
+    }
+
+    const deps = await this.dependenciesOf(apps);
+    const ordered = orderForRebuild(apps, deps);
+    const after = waitsFor(apps, deps);
     const planned = await Promise.all(
-      apps.map((app) => this.planApp(app, to.id)),
+      ordered.map(async (app) => {
+        const entry = await this.planApp(app, to.id);
+        const waits = after.get(app.id);
+        return waits?.length ? { ...entry, after: waits } : entry;
+      }),
     );
+    if (mode === 'control') {
+      warnings.push(...(await this.controlSources.dnsWarnings(from, to)));
+    }
 
     const capacity = await this.planCapacity(to, apps).catch((err: Error) => {
       refusals.push(
@@ -233,6 +225,7 @@ export class ClusterRebuildService {
     }
 
     return {
+      mode,
       from: { id: from.id, name: from.name, status: from.status },
       to: { id: to.id, name: to.name, status: to.status },
       apps: planned,
@@ -243,6 +236,85 @@ export class ClusterRebuildService {
   }
 
   /**
+   * The applications of the control cluster this installation was restored
+   * from, onto this installation's own control cluster.
+   *
+   * After a platform backup is loaded into a fresh install, every application
+   * that ran on the old control still names it — a row the restore retired,
+   * on a machine that is gone. On a single-cluster install that is every
+   * application there is. This is the rebuild with the old control as the
+   * source and the live one as the destination: the same phases, the same
+   * ledger, the same re-run that continues instead of starting over.
+   *
+   * `fromId` may be omitted when exactly one earlier control cluster still has
+   * applications recorded on it.
+   */
+  async planControlRestore(fromId?: string): Promise<ControlRestorePlan> {
+    const resolved = await this.controlSources.resolve(fromId);
+    if ('refusal' in resolved) return refusedControlPlan(resolved);
+    const plan = await this.planBetween(
+      resolved.from.id,
+      resolved.to.id,
+      'control',
+    );
+    return { ...plan, candidates: resolved.candidates };
+  }
+
+  async startControlRestore(
+    userId: string,
+    opts: { fromId?: string; includeStopped?: boolean } = {},
+  ): Promise<InfrastructureOperationEntity> {
+    const resolved = await this.controlSources.resolve(opts.fromId);
+    if ('refusal' in resolved) {
+      throw new BadRequestException(resolved.refusal);
+    }
+    return this.start(userId, resolved.from.id, resolved.to.id, {
+      includeStopped: opts.includeStopped,
+      mode: 'control',
+    });
+  }
+
+  /**
+   * What the records say each application uses, so a database is back before
+   * the application that reads it. Best effort: without it the order falls
+   * back to databases first, then by name.
+   */
+  private async dependenciesOf(
+    apps: ApplicationEntity[],
+  ): Promise<RebuildDependency[]> {
+    if (apps.length < 2) return [];
+    const orderable = apps as unknown as OrderableApp[];
+    try {
+      const ids = apps.map((a) => a.id);
+      const installIds = [
+        ...new Set(
+          apps
+            .map(
+              (a) =>
+                (a.metadata as Record<string, unknown> | null)
+                  ?.catalogInstallId as string | undefined,
+            )
+            .filter((id): id is string => !!id),
+        ),
+      ];
+      const installs = installIds.length
+        ? await this.catalogInstallRepo.find({
+            where: { id: In(installIds) },
+          })
+        : [];
+      const attachments = await this.attachmentRepo.find({
+        where: { applicationId: In(ids), deletedAt: IsNull() },
+      });
+      return rebuildDependencies(orderable, installs, attachments);
+    } catch (err) {
+      this.logger.warn(
+        `[rebuild] dependencies not read, ordering by kind and name: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      return rebuildDependencies(orderable);
+    }
+  }
+
+  /**
    * The plan runs here rather than in the job so a refusal reaches the person
    * who typed the command, not a log nobody is watching.
    */
@@ -250,15 +322,17 @@ export class ClusterRebuildService {
     userId: string,
     fromId: string,
     toId: string,
-    opts: { includeStopped?: boolean } = {},
+    opts: { includeStopped?: boolean; mode?: RebuildMode } = {},
   ): Promise<InfrastructureOperationEntity> {
-    const plan = await this.plan(fromId, toId);
+    const mode = opts.mode ?? 'workload';
+    const plan = await this.planBetween(fromId, toId, mode);
     if (plan.refusals.length > 0) {
       throw new BadRequestException(plan.refusals.join(' '));
     }
 
     const from = await this.mustFindCluster(fromId, 'from');
     const to = await this.mustFindCluster(toId, 'to');
+    await this.refuseConcurrentRun(from);
     const willAttempt = plan.apps.filter(
       (a) =>
         !a.blocked &&
@@ -282,6 +356,7 @@ export class ClusterRebuildService {
           fromClusterName: from.name,
           toClusterId: to.id,
           toClusterName: to.name,
+          mode,
           includeStopped: opts.includeStopped ?? false,
           apps: [],
           estimatedDurationInSeconds: 180 * Math.max(willAttempt.length, 1),
@@ -297,14 +372,38 @@ export class ClusterRebuildService {
         fromId: from.id,
         toId: to.id,
         includeStopped: opts.includeStopped ?? false,
+        mode,
       },
-      { attempts: 1, timeout: 3_600_000 },
+      { attempts: 1, timeout: REBUILD_JOB_TIMEOUT_MS },
     );
 
     this.logger.log(
       `Queued rebuild of ${from.name} onto ${to.name} — ${willAttempt.length} application(s), operation ${operation.id}`,
     );
     return operation;
+  }
+
+  /**
+   * Two runs over the same applications would deploy each twice and load its
+   * dump twice at once. A run older than the job's own timeout is not in
+   * flight any more, whatever its row still says — an API restart leaves one
+   * behind — so it does not block the re-run that continues it.
+   */
+  private async refuseConcurrentRun(from: ClusterEntity): Promise<void> {
+    const running = await this.operationRepo.findOne({
+      where: {
+        operationType: OperationType.REBUILD_CLUSTER,
+        resourceId: from.id,
+        status: In([OperationStatus.PENDING, OperationStatus.IN_PROGRESS]),
+        createdAt: MoreThan(new Date(Date.now() - REBUILD_JOB_TIMEOUT_MS)),
+      },
+    });
+    if (running) {
+      throw new BadRequestException(
+        `A rebuild of ${from.name} is already running (operation ${running.id}). ` +
+          'Follow it, or run again once it has finished to continue what it did not.',
+      );
+    }
   }
 
   /**
@@ -317,10 +416,11 @@ export class ClusterRebuildService {
     toId: string,
     opts: {
       includeStopped?: boolean;
+      mode?: RebuildMode;
       onProgress?: (done: RebuildResultApp[]) => Promise<void>;
     } = {},
   ): Promise<RebuildResult> {
-    const plan = await this.plan(fromId, toId);
+    const plan = await this.planBetween(fromId, toId, opts.mode ?? 'workload');
     if (plan.refusals.length > 0) {
       throw new BadRequestException(plan.refusals.join(' '));
     }
@@ -328,7 +428,7 @@ export class ClusterRebuildService {
     const from = await this.mustFindCluster(fromId, 'from');
     const to = await this.mustFindCluster(toId, 'to');
     // Stops it being offered as a deploy target while its applications move.
-    await this.markLost(fromId);
+    await this.markLost(from, to);
     const results: RebuildResultApp[] = [];
 
     for (const planned of plan.apps) {
@@ -457,13 +557,22 @@ export class ClusterRebuildService {
       // on the row is a live credential for someone else's repository.
       await this.dataRestorer.forget(app.id);
 
+      // Before the name moves, so the database is not published empty. Once
+      // per rebuild; a load retried after a crash replaces the first rather
+      // than adding to it.
+      if (this.phaseRank(this.phaseOf(app, to.id)) < this.phaseRank('loaded')) {
+        const loaded = await this.dataRestorer.loadDump(app.id);
+        if (loaded) notes = [...notes, loaded];
+        await this.setPhase(app, 'loaded', to.id, undefined, notes);
+      }
+
       const endpointMoved = await this.repointEndpoints(app, from, to);
 
       // After the name, and allowed to fail the application: the image
       // neutralises `archive_command` when it restores, so a database that is
       // not re-armed comes back looking protected and shipping nothing. A note
       // on a `reconciled` application is a lie no re-run would ever revisit;
-      // failing here keeps the phase at `deployed`, and the next run retries
+      // failing here keeps the phase at `loaded`, and the next run retries
       // this and only this.
       await this.rearmBackups(app, userId, notes);
 
@@ -510,12 +619,16 @@ export class ClusterRebuildService {
     userId: string,
     notes: string[],
   ): Promise<void> {
-    const policyId = await this.dataRestorer.rearm(app.id);
-    if (!policyId) return;
-    await this.backupJobs.createOnDemand(userId, { policyId });
+    const rearmed = await this.dataRestorer.rearm(app.id);
+    if (!rearmed) return;
+    await this.backupJobs.createOnDemand(userId, {
+      policyId: rearmed.policyId,
+    });
     notes.push(
-      'database: WAL shipping re-armed and a new base taken — the logs written ' +
-        'while it was restoring were discarded and cannot be recovered from',
+      rearmed.continuous
+        ? 'database: WAL shipping re-armed and a new base taken — the logs written ' +
+            'while it was restoring were discarded and cannot be recovered from'
+        : 'database: scheduled dumps resumed and a new dump taken',
     );
   }
 
@@ -903,8 +1016,10 @@ export class ClusterRebuildService {
         return 2;
       case 'deployed':
         return 3;
-      case 'reconciled':
+      case 'loaded':
         return 4;
+      case 'reconciled':
+        return 5;
       default:
         return 0;
     }
@@ -1108,13 +1223,18 @@ export class ClusterRebuildService {
   }
 
   /** `DELETED` would claim a decision nobody made; `READY` keeps it in every
-   * deploy picker. */
-  private async markLost(clusterId: string): Promise<void> {
-    await this.clusterRepo.update(
-      { id: clusterId },
-      { status: ClusterStatus.LOST },
-    );
-    await this.retractWildcards(clusterId);
+   * deploy picker. A row somebody already retired keeps saying so. */
+  private async markLost(
+    from: ClusterEntity,
+    to: ClusterEntity,
+  ): Promise<void> {
+    if (!isRetired(from)) {
+      await this.clusterRepo.update(
+        { id: from.id },
+        { status: ClusterStatus.LOST },
+      );
+    }
+    await this.retractWildcards(from, to);
   }
 
   /**
@@ -1126,13 +1246,28 @@ export class ClusterRebuildService {
    * Best effort: the applications matter more than the record, and a rebuild
    * must not fail because a DNS provider was briefly unreachable.
    */
-  private async retractWildcards(clusterId: string): Promise<void> {
+  private async retractWildcards(
+    from: ClusterEntity,
+    to: ClusterEntity,
+  ): Promise<void> {
     const assignments = await this.zoneAssignmentRepo.find({
-      where: { clusterId },
+      where: { clusterId: from.id },
       relations: ['dnsZone', 'cluster'],
+    });
+    const kept = await this.zoneAssignmentRepo.find({
+      where: { clusterId: to.id },
     });
     for (const assignment of assignments) {
       if (!assignment.dnsZone) continue;
+      // A control rebuilt on the same machine, or under the same name, owns
+      // the very record the old one published: withdrawing it takes down the
+      // installation that is doing the restoring.
+      const sameRecord =
+        kept.some((k) => k.dnsZoneId === assignment.dnsZoneId) &&
+        (from.name === to.name ||
+          (!!from.masterIpAddress &&
+            from.masterIpAddress === to.masterIpAddress));
+      if (sameRecord) continue;
       try {
         await this.zoneReconciliation.retractClusterWildcardRecord(
           assignment,
@@ -1140,7 +1275,7 @@ export class ClusterRebuildService {
         );
       } catch (err) {
         this.logger.warn(
-          `[rebuild] could not withdraw the wildcard of ${clusterId}: ${err instanceof Error ? err.message : String(err)}`,
+          `[rebuild] could not withdraw the wildcard of ${from.name}: ${err instanceof Error ? err.message : String(err)}`,
         );
       }
     }
@@ -1155,29 +1290,5 @@ export class ClusterRebuildService {
       throw new BadRequestException(`No cluster ${id} for --${side}`);
     }
     return cluster;
-  }
-}
-
-function parseCpuMillis(value?: string): number {
-  if (!value) return 0;
-  return value.endsWith('m')
-    ? Number.parseInt(value, 10)
-    : Math.round(Number.parseFloat(value) * 1000);
-}
-
-function parseMemoryMi(value?: string): number {
-  if (!value) return 0;
-  const m = /^(\d+(?:\.\d+)?)(Ki|Mi|Gi|Ti)?$/.exec(value.trim());
-  if (!m) return 0;
-  const n = Number.parseFloat(m[1]);
-  switch (m[2]) {
-    case 'Ki':
-      return Math.round(n / 1024);
-    case 'Gi':
-      return Math.round(n * 1024);
-    case 'Ti':
-      return Math.round(n * 1024 * 1024);
-    default:
-      return Math.round(n);
   }
 }

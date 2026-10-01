@@ -15,6 +15,10 @@ import { ContinuousBackupEngineRegistry } from '../services/continuous-backup-en
 import { BackupPolicyRepository } from '../repositories/backup-policy.repository';
 import { StorageBackendProvider } from '../../storage/enums/storage-backend-provider.enum';
 import { trimSlashes } from '../utils/destination-layout.util';
+import {
+  dumpsBeyondRetention,
+  newestCompletePlatformRun,
+} from '../utils/retention.util';
 
 /**
  * How many artifacts one pass may delete.
@@ -33,8 +37,8 @@ const MAX_PRUNE_ATTEMPTS = 5;
 /**
  * Deletes what a policy's retention said would be deleted.
  *
- * Some engines prune themselves: Velero expires its own Backups by TTL, and
- * pgBackRest expires its repository by `repo1-retention-full`. The two classes
+ * Some engines prune themselves: pgBackRest expires its repository by
+ * `repo1-retention-full`, and kopia its snapshots by its policy. The two classes
  * where Flui is the only owner, platform dumps and volume copies, would
  * otherwise accumulate forever — on the dedicated storage class that is the
  * application's own disk.
@@ -77,6 +81,7 @@ export class BackupRetentionSweeper {
     const candidates = [
       ...(await this.findExpired()),
       ...(await this.findBeyondRetainedCount()),
+      ...(await this.findDumpsBeyondRetention()),
     ];
     if (candidates.length === 0) return;
 
@@ -120,6 +125,21 @@ export class BackupRetentionSweeper {
     });
     const scheduled = new Set(jobs.filter((j) => j.policyId).map((j) => j.id));
     return rows.filter((r) => scheduled.has(r.backupJobId));
+  }
+
+  private async isInNewestPlatformRun(
+    artifact: BackupArtifactEntity,
+  ): Promise<boolean> {
+    const rows = await this.artifactRepo.find({
+      where: {
+        clusterId: artifact.clusterId,
+        engineClass: BackupEngineClass.PLATFORM,
+      },
+      select: { id: true, backupJobId: true, engineRef: true, createdAt: true },
+      order: { createdAt: 'DESC' },
+    });
+    const keep = newestCompletePlatformRun(rows);
+    return !keep || keep === artifact.backupJobId;
   }
 
   private async isNewestBaseFor(
@@ -174,11 +194,52 @@ export class BackupRetentionSweeper {
       // No policy means nobody is scheduling these any more, and an unowned
       // backup is not this reaper's to delete — the same rule that keeps it
       // off ad-hoc copies.
-      if (!policy) continue;
+      if (!policy || this.isDumpEngine(policy.engine)) continue;
       const keep = Math.max(1, policy.retentionMaxCopies ?? 2);
       over.push(...list.slice(keep));
     }
     return over;
+  }
+
+  /**
+   * Scheduled dumps past their policy's window.
+   *
+   * A dump is not a chain: each one restores its own moment and nothing
+   * between, so it is kept for the policy's days rather than counted. Looked
+   * up per policy rather than from a page of recent
+   * rows, because a month of nightly dumps for a handful of databases fills
+   * any page with rows too young to go.
+   */
+  private async findDumpsBeyondRetention(): Promise<BackupArtifactEntity[]> {
+    const dumpEngines = this.engines
+      .all()
+      .filter((e) => e.pointInTime === false)
+      .map((e) => e.engine);
+    const policies = await this.policyRepo.findDbPoliciesByEngine(dumpEngines);
+    const now = new Date();
+    const over: BackupArtifactEntity[] = [];
+    for (const policy of policies) {
+      const appId = policy.scopeSelector?.applicationIds?.[0];
+      if (!appId || !policy.engine) continue;
+      const rows = await this.artifactRepo.find({
+        where: {
+          engineClass: BackupEngineClass.DATABASE,
+          applicationId: appId,
+          engine: policy.engine,
+        },
+        order: { createdAt: 'DESC' },
+      });
+      over.push(...dumpsBeyondRetention(rows, policy, now));
+    }
+    return over;
+  }
+
+  private isDumpEngine(engine: string | undefined | null): boolean {
+    try {
+      return this.engines.forEngine(engine).pointInTime === false;
+    } catch {
+      return false;
+    }
   }
 
   /**
@@ -207,6 +268,16 @@ export class BackupRetentionSweeper {
         `[retention] keeping ${artifact.id}: a restore is still running against it`,
       );
       return true;
+    }
+
+    if (artifact.engineClass === BackupEngineClass.PLATFORM) {
+      if (await this.isInNewestPlatformRun(artifact)) {
+        this.logger.log(
+          `[retention] keeping ${artifact.id}: it belongs to the newest complete platform backup`,
+        );
+        return true;
+      }
+      return false;
     }
 
     const newer = await this.artifactRepo.count({
@@ -268,6 +339,12 @@ export class BackupRetentionSweeper {
     const owned =
       artifact.engineClass === BackupEngineClass.PLATFORM ||
       artifact.engineClass === BackupEngineClass.VOLUME_COPY;
+    // A kopia location's prefix is the application's whole shared repository;
+    // kopia expires its own snapshots.
+    if (artifact.engine === 'kopia') {
+      await this.forgetRows(artifact);
+      return;
+    }
     if (!owned) {
       // A database-class artifact belongs to whichever engine took it, and
       // only some engines expire their own repository. Asking is not a
@@ -284,9 +361,9 @@ export class BackupRetentionSweeper {
           return;
         }
       }
-      // Velero expires its own Backups by TTL and pgBackRest its repository by
-      // retention. Deleting their objects behind their backs corrupts a chain
-      // Flui does not own; the row is what goes stale here, so drop the row.
+      // pgBackRest expires its repository by retention. Deleting its objects
+      // behind its back corrupts a chain Flui does not own; the row is what
+      // goes stale here, so drop the row.
       await this.forgetRows(artifact);
       return;
     }

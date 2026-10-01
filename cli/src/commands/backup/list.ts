@@ -6,7 +6,7 @@ import { printContextBanner } from '../../lib/context-banner';
 import { formatBytes } from '../../lib/format-bytes';
 
 const ENGINE_LABEL: Record<string, string> = {
-  volume: 'cluster state',
+  volume: 'retired engine',
   database: 'database',
   platform: 'control plane',
   volume_copy: 'volume copy',
@@ -120,11 +120,10 @@ export default class BackupList extends Command {
   }
 
   private takenAs(a: BackupArtifact): string {
-    // A database's own backup is consistent by construction, and a cluster
-    // backup reads running volumes: neither has a quiesce of its own, and
-    // "—" would read as "unknown".
+    // A database's own backup is consistent by construction: it has no
+    // quiesce of its own, and "—" would read as "unknown".
     if (a.engineClass === 'database') return 'engine';
-    if (a.engineClass === 'volume') return 'live';
+    if (a.engineClass === 'volume') return 'retired';
     const quiesce = a.manifestSummary?.quiesce;
     if (quiesce === 'writers-stopped') return 'at rest';
     if (quiesce === 'engine-hook' || quiesce === 'sqlite-snapshot')

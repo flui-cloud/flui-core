@@ -1,3 +1,5 @@
+import { CryptPasswords } from '../../backups/utils/rclone-crypt.util';
+
 /**
  * Provider-side volume export primitive.
  *
@@ -78,9 +80,11 @@ export interface S3ArchiveExportInput extends ExportInputBase {
   endpoint: string;
   /** Region. Empty string OK for non-AWS endpoints. */
   region: string;
-  /** Access credentials. Read by the copy-pod via env vars only. */
+  /** Access credentials. Read by the copy-pod from a Secret, never the Job spec. */
   accessKeyId: string;
   secretAccessKey: string;
+  /** Writes through rclone crypt when set; absent, the copy lands in plaintext. */
+  encryption?: CryptPasswords;
 }
 
 export type CreateExportInput = PvcCloneExportInput | S3ArchiveExportInput;
@@ -109,6 +113,8 @@ export interface ExportResult {
    * no such warning), which is not the same as `false`.
    */
   writesObservedDuringCopy?: boolean;
+  /** s3-archive: written through rclone crypt. */
+  encrypted?: boolean;
   /** ISO 8601 timestamp. */
   createdAt: string;
   /** Provider-side ready state — true once the export can be restored from. */
@@ -175,6 +181,8 @@ export interface RestorePvcFromExportInput {
   labels: Record<string, string>;
   /** Same shape as DeleteExportInput.s3, only required for sink=s3-archive. */
   s3?: DeleteExportInput['s3'];
+  /** For an s3-archive written encrypted: reads it through rclone crypt. */
+  encryption?: CryptPasswords;
 }
 
 export interface IVolumeExport {

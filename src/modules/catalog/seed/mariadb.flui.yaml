@@ -104,6 +104,14 @@ spec:
       value: ''
       secret: true
       description: Internal — repository secret key (restore).
+    - name: FLUI_MARIADB_CRYPT_PASSWORD
+      value: ''
+      secret: true
+      description: Internal — decryption key of an encrypted repository (restore).
+    - name: FLUI_MARIADB_CRYPT_PASSWORD2
+      value: ''
+      secret: true
+      description: Internal — decryption salt of an encrypted repository (restore).
 
   resources:
     requests:

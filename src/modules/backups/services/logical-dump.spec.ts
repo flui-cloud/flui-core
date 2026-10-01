@@ -80,6 +80,18 @@ describe('logical dump layout and job', () => {
     expect(dumpScript(DumpFamily.POSTGRES)).not.toContain('\\$');
   });
 
+  it('loads a Postgres dump so a second attempt replaces the first instead of failing or mixing', () => {
+    // Measured against postgres:16 with the same flags: a load retried after it
+    // succeeded ends with the rows once; a load cut off halfway leaves nothing
+    // behind; tables an application created first are replaced; an object the
+    // dump does not own that depends on one it drops fails the whole load and
+    // leaves the database as it was.
+    const script = loadScript(DumpFamily.POSTGRES);
+    expect(script).toContain('--clean --if-exists');
+    expect(script).toContain('--single-transaction');
+    expect(script).not.toContain('CASCADE');
+  });
+
   it("runs from the database's image with its env, never as one of its pods", () => {
     const job: any = renderDumpJob({
       jobName: 'flui-dump-x',

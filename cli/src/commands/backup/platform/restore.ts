@@ -97,20 +97,7 @@ export default class BackupPlatformRestore extends Command {
       ? await this.recoveryIdentities(age, flags.identity, flags.passphrase)
       : this.vaultIdentities();
 
-    // 2. identities → the sealed key bundle
-    let manifest: KeyBundleManifest;
-    try {
-      const decrypter = new age.Decrypter();
-      for (const identity of identities) decrypter.addIdentity(identity);
-      const gz = await decrypter.decrypt(
-        new Uint8Array(fs.readFileSync(flags.bundle)),
-      );
-      manifest = JSON.parse(gunzipSync(Buffer.from(gz)).toString('utf-8'));
-    } catch (err) {
-      this.error(
-        `Could not open the key bundle with ${identities.length === 1 ? 'this key' : `any of these ${identities.length} keys`}: ${(err as Error).message}`,
-      );
-    }
+    const manifest = await this.openBundle(age, identities, flags.bundle);
 
     // 3. the bundle's per-run DEK → the dump
     const sql = this.decryptDump(
@@ -122,6 +109,61 @@ export default class BackupPlatformRestore extends Command {
     const sqlPath = path.join(outDir, 'flui-control-plane.sql');
     fs.writeFileSync(sqlPath, sql, { mode: 0o600 });
 
+    const envPath = this.writeInstallKeys(outDir, manifest);
+    const retirePath = this.writeRetireSql(outDir, manifest);
+    const written = [sqlPath, envPath, retirePath];
+
+    const secrets = manifest.clusterSecrets ?? [];
+    if (secrets.length) {
+      const secretsPath = path.join(outDir, 'cluster-secrets.json');
+      fs.writeFileSync(secretsPath, JSON.stringify(secrets, null, 2), {
+        mode: 0o600,
+      });
+      written.push(secretsPath);
+    }
+
+    written.push(...this.writeSshCa(outDir, manifest));
+
+    const secureKeys = manifest.secureKeys ?? [];
+    if (secureKeys.length) {
+      try {
+        writeSecureKeys(outDir, secureKeys);
+      } catch (err) {
+        this.error((err as Error).message);
+      }
+      written.push(path.join(outDir, 'secure-keys'));
+    }
+
+    this.report(manifest, outDir, written, secrets);
+  }
+
+  private async openBundle(
+    age: AgeModule,
+    identities: string[],
+    bundlePath: string,
+  ): Promise<KeyBundleManifest> {
+    try {
+      const decrypter = new age.Decrypter();
+      for (const identity of identities) decrypter.addIdentity(identity);
+      const gz = await decrypter.decrypt(
+        new Uint8Array(fs.readFileSync(bundlePath)),
+      );
+      return JSON.parse(gunzipSync(Buffer.from(gz)).toString('utf-8'));
+    } catch (err) {
+      const keys =
+        identities.length === 1
+          ? 'this key'
+          : `any of these ${identities.length} keys`;
+      this.error(
+        `Could not open the key bundle with ${keys}: ${(err as Error).message}`,
+      );
+    }
+  }
+
+  private writeInstallKeys(
+    outDir: string,
+    manifest: KeyBundleManifest,
+  ): string {
     const envPath = path.join(outDir, 'install-keys.env');
     const envLines = [
       '# Give these to the fresh installation before it boots.',
@@ -144,7 +186,10 @@ export default class BackupPlatformRestore extends Command {
       envLines.push(`ZITADEL_SERVICE_ACCOUNT_PAT=${manifest.zitadelPat}`);
     }
     fs.writeFileSync(envPath, envLines.join('\n') + '\n', { mode: 0o600 });
+    return envPath;
+  }
 
+  private writeRetireSql(outDir: string, manifest: KeyBundleManifest): string {
     const retirePath = path.join(outDir, 'retire-old-control-row.sql');
     fs.writeFileSync(
       retirePath,
@@ -160,41 +205,21 @@ export default class BackupPlatformRestore extends Command {
       ].join('\n'),
       { mode: 0o600 },
     );
+    return retirePath;
+  }
 
-    const written = [sqlPath, envPath, retirePath];
-
-    const secrets = manifest.clusterSecrets ?? [];
-    if (secrets.length) {
-      const secretsPath = path.join(outDir, 'cluster-secrets.json');
-      fs.writeFileSync(secretsPath, JSON.stringify(secrets, null, 2), {
-        mode: 0o600,
+  private writeSshCa(outDir: string, manifest: KeyBundleManifest): string[] {
+    if (!manifest.sshCa?.privateKey) return [];
+    const caPath = path.join(outDir, 'ssh-ca');
+    fs.writeFileSync(caPath, manifest.sshCa.privateKey, { mode: 0o600 });
+    const written = [caPath];
+    if (manifest.sshCa.publicKey) {
+      fs.writeFileSync(`${caPath}.pub`, manifest.sshCa.publicKey, {
+        mode: 0o644,
       });
-      written.push(secretsPath);
+      written.push(`${caPath}.pub`);
     }
-
-    if (manifest.sshCa?.privateKey) {
-      const caPath = path.join(outDir, 'ssh-ca');
-      fs.writeFileSync(caPath, manifest.sshCa.privateKey, { mode: 0o600 });
-      written.push(caPath);
-      if (manifest.sshCa.publicKey) {
-        fs.writeFileSync(`${caPath}.pub`, manifest.sshCa.publicKey, {
-          mode: 0o644,
-        });
-        written.push(`${caPath}.pub`);
-      }
-    }
-
-    const secureKeys = manifest.secureKeys ?? [];
-    if (secureKeys.length) {
-      try {
-        writeSecureKeys(outDir, secureKeys);
-      } catch (err) {
-        this.error((err as Error).message);
-      }
-      written.push(path.join(outDir, 'secure-keys'));
-    }
-
-    this.report(manifest, outDir, written, secrets);
+    return written;
   }
 
   private vaultIdentities(): string[] {
@@ -298,6 +323,7 @@ export default class BackupPlatformRestore extends Command {
           ]
         : []),
       `run ${chalk.cyan('retire-old-control-row.sql')}`,
+      `bring back the applications that ran on the old control cluster: ${chalk.cyan('flui cluster rebuild-control --plan')}, then without ${chalk.cyan('--plan')}`,
     ];
     this.log(`   ${chalk.bold('Next')}, on the fresh installation:`);
     steps.forEach((step, i) => this.log(`     ${i + 1}. ${step}`));

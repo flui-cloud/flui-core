@@ -2,16 +2,20 @@ import { Command, Flags } from '@oclif/core';
 import chalk from 'chalk';
 import {
   BackupClient,
-  BackupJob,
   BackupPolicy,
+  BackupPolicyActivity,
 } from '../../../lib/backup-client';
 import { printContextBanner } from '../../../lib/context-banner';
-
-const FRESH_WINDOW_MS = 45 * 60 * 1000;
+import {
+  healthLine,
+  runLines,
+  scheduleText,
+  utcMoment,
+} from '../../../lib/backup-activity-format';
 
 export default class BackupPlatformStatus extends Command {
   static readonly description =
-    "Show the master-resilience (platform) backup policies: operator recipient, dead-man's switch, schedule and freshness of the last run.";
+    "Show the master-resilience (platform) backup policies: operator recipient, dead-man's switch, schedule, next run, health and the last run.";
 
   static readonly flags = {
     json: Flags.boolean({ default: false }),
@@ -22,48 +26,42 @@ export default class BackupPlatformStatus extends Command {
     if (!flags.json) printContextBanner();
 
     const client = BackupClient.fromConfig();
-    const policies = (await client.listPolicies()).filter(
-      (p) => p.engineClass === 'platform',
-    );
-
-    // Jobs are only listable per cluster; cache so multiple policies on one
-    // cluster share a single fetch.
-    const jobsByCluster = new Map<string, BackupJob[]>();
-    const lastJobFor = async (p: BackupPolicy): Promise<BackupJob | null> => {
-      if (!jobsByCluster.has(p.clusterId)) {
-        jobsByCluster.set(
-          p.clusterId,
-          await client.listJobsForCluster(p.clusterId),
-        );
-      }
-      // findByCluster returns createdAt DESC, so the first match is the latest.
-      return (
-        jobsByCluster.get(p.clusterId)?.find((j) => j.policyId === p.id) ?? null
-      );
-    };
+    const [policies, activities] = await Promise.all([
+      client.listPolicies(),
+      client.listPolicyActivity(),
+    ]);
+    const platform = policies.filter((p) => p.engineClass === 'platform');
+    const activityOf = new Map(activities.map((a) => [a.policyId, a]));
 
     if (flags.json) {
-      const data = [];
-      for (const p of policies) {
-        data.push({ policy: p, lastJob: await lastJobFor(p) });
-      }
-      this.log(JSON.stringify(data, null, 2));
+      this.log(
+        JSON.stringify(
+          platform.map((p) => ({
+            policy: p,
+            activity: activityOf.get(p.id) ?? null,
+          })),
+          null,
+          2,
+        ),
+      );
       return;
     }
 
-    if (policies.length === 0) {
+    if (platform.length === 0) {
       this.log(chalk.yellow('\n   No platform backup policies.\n'));
       return;
     }
 
     this.log('');
-    for (const p of policies) {
-      const job = await lastJobFor(p);
-      this.printPolicy(p, job);
+    for (const p of platform) {
+      this.printPolicy(p, activityOf.get(p.id) ?? null);
     }
   }
 
-  private printPolicy(p: BackupPolicy, job: BackupJob | null): void {
+  private printPolicy(
+    p: BackupPolicy,
+    activity: BackupPolicyActivity | null,
+  ): void {
     const platform = p.metadata?.platform;
     const recipient = platform?.recipient;
     const heartbeatUrl = platform?.heartbeat?.url;
@@ -73,51 +71,30 @@ export default class BackupPlatformStatus extends Command {
         (p.enabled === false ? chalk.dim(' [disabled]') : ''),
     );
 
-    this.log(
-      `      recipient: ${
-        recipient
-          ? chalk.green(`${recipient.slice(0, 16)}…`)
-          : chalk.red('not configured')
-      }`,
-    );
+    const recipientText = recipient
+      ? chalk.green(recipient.slice(0, 16) + '…')
+      : chalk.red('not configured');
+    this.log(`      recipient: ${recipientText}`);
 
-    this.log(
-      `      heartbeat: ${
-        heartbeatUrl
-          ? `${chalk.green('yes')} ${chalk.dim(`(${heartbeatUrl})`)}`
-          : chalk.yellow('no')
-      }`,
-    );
+    const heartbeatText = heartbeatUrl
+      ? chalk.green('yes') + ' ' + chalk.dim('(' + heartbeatUrl + ')')
+      : chalk.yellow('no');
+    this.log(`      heartbeat: ${heartbeatText}`);
 
-    this.log(
-      `      schedule:  ${p.cronSchedule ? chalk.white(p.cronSchedule) : chalk.dim('none')}`,
-    );
-
-    this.log(`      last run:  ${this.formatLastRun(job)}`);
+    if (!activity) {
+      this.log(`      health:    ${chalk.dim('unknown')}`);
+      this.log('');
+      return;
+    }
+    this.log(`      schedule:  ${scheduleText(activity)}`);
+    this.log(`      next run:  ${utcMoment(activity.schedule.nextRunAt)}`);
+    this.log(`      health:    ${healthLine(activity)}`);
+    this.log(`      last good: ${utcMoment(activity.health.lastSuccessAt)}`);
+    this.log('      last run:');
+    const shown = activity.lastRun ? [activity.lastRun] : [];
+    for (const line of runLines(shown)) {
+      this.log(`        ${line.replaceAll('\n', '\n        ')}`);
+    }
     this.log('');
-  }
-
-  private formatLastRun(job: BackupJob | null): string {
-    if (!job) return chalk.dim('no runs yet');
-
-    const status =
-      job.status === 'completed'
-        ? chalk.green(job.status)
-        : job.status === 'failed'
-          ? chalk.red(job.status)
-          : chalk.yellow(job.status);
-
-    const when = job.finishedAt ? chalk.dim(job.finishedAt) : '';
-
-    const fresh =
-      job.status === 'completed' &&
-      job.finishedAt &&
-      Date.now() - Date.parse(job.finishedAt) <= FRESH_WINDOW_MS;
-
-    const freshness = fresh
-      ? chalk.green('fresh')
-      : chalk.yellow("stale — dead-man's switch will alarm");
-
-    return `${status} ${when}  ${freshness}`.trim();
   }
 }

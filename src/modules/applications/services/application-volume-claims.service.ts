@@ -12,6 +12,8 @@ import { parseStorageQuantityToBytes } from '../../../common/utils/storage-quant
  * the moment somebody took a snapshot.
  */
 const PVC_CLONE_MARKER = 'flui.cloud/pvc-clone-export';
+const PREVIOUS_VOLUME_MARKER = 'flui.cloud/previous-volume';
+const RESTORED_FROM_MARKER = 'flui.cloud/restored-from';
 
 export type ClaimAttribution =
   | 'label'
@@ -28,6 +30,8 @@ export interface ApplicationVolumeClaim {
   attributedBy: ClaimAttribution;
 }
 
+type ClaimOwner = Pick<ApplicationEntity, 'id' | 'slug' | 'k8sNamespace'>;
+
 export interface ClaimLookup {
   /** Names of the StatefulSets this application owns, live or just deleted. */
   statefulSetNames: Set<string>;
@@ -41,7 +45,8 @@ export interface ClaimLookup {
    * preview warns about it — both of those must keep seeing it. Only the
    * question "which volume of this app should I copy" wants it gone, because
    * there the answer stops being unambiguous the moment somebody took a
-   * snapshot.
+   * snapshot. The data an application ran on before a swap, and a restored
+   * copy it was never switched to, are left out for the same reason.
    */
   excludeCopies?: boolean;
 }
@@ -75,7 +80,7 @@ export class ApplicationVolumeClaimsService {
 
   async listForApplication(
     kubeconfig: string,
-    app: Pick<ApplicationEntity, 'id' | 'slug' | 'k8sNamespace'>,
+    app: ClaimOwner,
     lookup: ClaimLookup,
   ): Promise<ApplicationVolumeClaim[]> {
     const namespace = app.k8sNamespace;
@@ -96,10 +101,14 @@ export class ApplicationVolumeClaimsService {
     const tracked = lookup.trackedNames ?? new Set<string>();
 
     const claims: ApplicationVolumeClaim[] = [];
+    const mounted = { names: null as Set<string> | null };
     for (const item of items) {
       const name = item?.metadata?.name as string | undefined;
       if (!name) continue;
-      if (lookup.excludeCopies && item?.metadata?.labels?.[PVC_CLONE_MARKER]) {
+      if (
+        lookup.excludeCopies &&
+        (await this.isExcludedCopy(kubeconfig, app, item, name, mounted))
+      ) {
         continue;
       }
 
@@ -109,22 +118,24 @@ export class ApplicationVolumeClaimsService {
         { appId: app.id, ours, competitors, tracked },
       );
       if (!attributedBy) continue;
-
-      const requested =
-        (item?.spec?.resources?.requests?.storage as string | undefined) ??
-        null;
-      claims.push({
-        name,
-        namespace,
-        requested,
-        requestedBytes: parseStorageQuantityToBytes(requested),
-        storageClass:
-          (item?.spec?.storageClassName as string | undefined) ?? null,
-        phase: (item?.status?.phase as string | undefined) ?? null,
-        attributedBy,
-      });
+      claims.push(toClaim(item, name, namespace, attributedBy));
     }
     return claims;
+  }
+
+  private async isExcludedCopy(
+    kubeconfig: string,
+    app: ClaimOwner,
+    item: any,
+    name: string,
+    mounted: { names: Set<string> | null },
+  ): Promise<boolean> {
+    const labels = item?.metadata?.labels ?? {};
+    if (labels[PVC_CLONE_MARKER]) return true;
+    if (labels[PREVIOUS_VOLUME_MARKER] === 'true') return true;
+    if (!labels[RESTORED_FROM_MARKER]) return false;
+    mounted.names ??= await this.claimsInWorkloadSpecs(kubeconfig, app);
+    return !mounted.names.has(name);
   }
 
   /**
@@ -136,7 +147,7 @@ export class ApplicationVolumeClaimsService {
    */
   async resolveForApplication(
     kubeconfig: string,
-    app: Pick<ApplicationEntity, 'id' | 'slug' | 'k8sNamespace'>,
+    app: ClaimOwner,
     trackedRows: ReadonlyArray<{ kind: ApplicationResourceKind; name: string }>,
     options: { excludeCopies?: boolean } = {},
   ): Promise<ApplicationVolumeClaim[]> {
@@ -183,6 +194,38 @@ export class ApplicationVolumeClaimsService {
       return 'volume-claim-template';
     }
     return null;
+  }
+
+  /**
+   * Claims a workload of this application names in its spec. A swapped-in
+   * copy stays named there while the application is stopped, which a look at
+   * running pods would miss.
+   */
+  private async claimsInWorkloadSpecs(
+    kubeconfig: string,
+    app: Pick<ApplicationEntity, 'id' | 'k8sNamespace'>,
+  ): Promise<Set<string>> {
+    const names = new Set<string>();
+    for (const kind of [
+      ApplicationResourceKind.DEPLOYMENT,
+      ApplicationResourceKind.STATEFUL_SET,
+    ]) {
+      const workloads = await this.kubernetesService
+        .listResourcesByLabel(
+          kubeconfig,
+          kind,
+          app.k8sNamespace,
+          `flui-app-id=${app.id}`,
+        )
+        .catch(() => [] as any[]);
+      for (const w of workloads) {
+        for (const v of w?.spec?.template?.spec?.volumes ?? []) {
+          const claim = v?.persistentVolumeClaim?.claimName;
+          if (claim) names.add(claim);
+        }
+      }
+    }
+    return names;
   }
 
   /** The StatefulSets that still carry this application's own label. */
@@ -252,4 +295,23 @@ export class ApplicationVolumeClaimsService {
       return [];
     }
   }
+}
+
+function toClaim(
+  item: any,
+  name: string,
+  namespace: string,
+  attributedBy: ApplicationVolumeClaim['attributedBy'],
+): ApplicationVolumeClaim {
+  const requested =
+    (item?.spec?.resources?.requests?.storage as string | undefined) ?? null;
+  return {
+    name,
+    namespace,
+    requested,
+    requestedBytes: parseStorageQuantityToBytes(requested),
+    storageClass: (item?.spec?.storageClassName as string | undefined) ?? null,
+    phase: (item?.status?.phase as string | undefined) ?? null,
+    attributedBy,
+  };
 }

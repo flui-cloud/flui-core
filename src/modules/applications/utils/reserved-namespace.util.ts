@@ -15,7 +15,8 @@ export const CLIENT_NAMESPACE_ERROR_CODE = 'CLIENT_NAMESPACE_FORBIDDEN';
  *                     flui-monitoring) and code constants (flui-build, flui-observability)
  *   - `build-agents`  bootstrap-scripts/manifests/control/01-namespace.yaml
  *   - `cert-manager`  installed by scripts/k3s-master-init.sh
- *   - `velero`        VELERO_NAMESPACE, created by the Velero installer
+ *   - `velero`        left by the retired cluster-backup engine until
+ *                     `flui backup velero uninstall`, which deletes it
  */
 export const RESERVED_NAMESPACE_PREFIXES: readonly string[] = [
   'kube-',

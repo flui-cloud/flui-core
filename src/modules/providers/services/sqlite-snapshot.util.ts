@@ -80,3 +80,17 @@ export function renderSqliteStageVolume(): string[] {
 /** Local copy: overwrite the torn files with the snapshots, drop their journals. */
 export const SQLITE_LOCAL_FINISH =
   'while IFS= read -r f; do rm -f "/dst/$f"; done < /stage/remove; cp -a /stage/data/. /dst/';
+
+/** The same init container as an object, for Jobs rendered as JSON. */
+export function sqliteSnapshotInitContainer(): Record<string, unknown> {
+  const b64 = Buffer.from(SNAPSHOT_PY, 'utf-8').toString('base64');
+  return {
+    name: 'sqlite-snapshot',
+    image: SQLITE_SNAPSHOT_IMAGE,
+    command: ['/bin/sh', '-c', `echo ${b64} | base64 -d | python3 -`],
+    volumeMounts: [
+      { name: 'src', mountPath: '/src' },
+      { name: 'stage', mountPath: '/stage' },
+    ],
+  };
+}

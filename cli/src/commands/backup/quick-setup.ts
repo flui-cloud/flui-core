@@ -1,6 +1,13 @@
 import { Command, Flags } from '@oclif/core';
 import chalk from 'chalk';
-import { BackupClient } from '../../lib/backup-client';
+import { ApiClient } from '../../lib/api-client';
+import { ConfigStorage } from '../../lib/config-storage';
+import { BackupClient, ProtectedApp } from '../../lib/backup-client';
+import { followOperation } from '../../lib/follow-operation';
+import {
+  describeProtectedApp,
+  printNeedsDecision,
+} from '../../lib/cluster-protection-format';
 import { printContextBanner } from '../../lib/context-banner';
 import { resolveClusterRef } from '../../lib/resolve-cluster';
 
@@ -13,7 +20,8 @@ import { resolveClusterRef } from '../../lib/resolve-cluster';
  */
 export default class BackupQuickSetup extends Command {
   static readonly description =
-    'Provision backup storage and protect a cluster in one step, using the provider already connected';
+    'Provision backup storage and protect every application on a cluster in one step, using the provider already connected. ' +
+    'Each application gets a policy of its own with the engine that fits it, and so does every application installed later.';
 
   static readonly examples = [
     '<%= config.bin %> <%= command.id %> --dry-run',
@@ -31,7 +39,8 @@ export default class BackupQuickSetup extends Command {
       default: false,
     }),
     schedule: Flags.string({
-      description: 'Cron schedule for the recurring backup',
+      description:
+        'One cron schedule in UTC for every policy. Omit it to use the default of each kind of backup, spread across the night.',
     }),
     'retention-days': Flags.integer({ min: 1 }),
     'no-first-backup': Flags.boolean({
@@ -82,7 +91,7 @@ export default class BackupQuickSetup extends Command {
       this.log('');
       this.log(
         chalk.dim(
-          '  Would provision a bucket, register it as a destination, and protect this cluster.',
+          '  Would provision a bucket, register it as a destination, and give every application on this cluster a backup policy.',
         ),
       );
       this.log('');
@@ -102,16 +111,50 @@ export default class BackupQuickSetup extends Command {
     }
 
     this.log('');
-    this.log(
-      chalk.green('  Backup storage provisioned and the cluster protected.'),
-    );
-    if (result.operationId) {
+    if (!result.operationId) {
       this.log(
-        chalk.dim(
-          `  Track it with: flui env logs --operation ${result.operationId}`,
-        ),
+        chalk.green('  Backup storage provisioned and the cluster protected.'),
       );
+      this.log('');
+      return;
     }
+    const cfg = new ConfigStorage();
+    const api = new ApiClient({
+      baseUrl: cfg.getApiUrlOrThrow(),
+      apiKey: cfg.getApiKeyOrThrow(),
+    });
+    const printed = new Set<string>();
+    const op = await followOperation<{ apps?: ProtectedApp[] }>(
+      api,
+      result.operationId,
+      {
+        intervalMs: 3000,
+        onUpdate: (current) => {
+          for (const app of current.metadata?.apps ?? []) {
+            if (printed.has(app.applicationId)) continue;
+            printed.add(app.applicationId);
+            this.log(describeProtectedApp(app));
+          }
+        },
+      },
+    );
+    this.log('');
+    if (op?.status !== 'COMPLETED') {
+      const stillRunning = `Still running — follow it with: flui operation ${result.operationId} --follow`;
+      this.log(chalk.red(`  ${op?.errorMessage ?? stillRunning}`));
+      this.log('');
+      if (op) this.exit(1);
+      return;
+    }
+    this.log(
+      chalk.green(
+        '  Backup storage provisioned and every application protected, including the ones installed later.',
+      ),
+    );
+    const protection = await client
+      .getClusterProtection(clusterId)
+      .catch(() => null);
+    printNeedsDecision(protection?.needsDecision ?? []);
     this.log(chalk.dim('  See what it covers: flui backup status'));
     this.log('');
   }

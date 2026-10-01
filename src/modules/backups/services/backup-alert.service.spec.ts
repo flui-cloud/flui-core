@@ -63,7 +63,7 @@ function harness(engineClass: BackupEngineClass) {
 
 describe('BackupAlertService', () => {
   it('raises the alert on the first failure only, and closes it on the next success', async () => {
-    const h = harness(BackupEngineClass.VOLUME);
+    const h = harness(BackupEngineClass.VOLUME_COPY);
     await h.svc.settled('j1', BackupJobStatus.FAILED);
     await h.svc.settled('j1', BackupJobStatus.FAILED);
     await h.svc.settled('j1', BackupJobStatus.COMPLETED);
@@ -82,7 +82,7 @@ describe('BackupAlertService', () => {
   });
 
   it('records nothing for a success with no failure open', async () => {
-    const h = harness(BackupEngineClass.VOLUME);
+    const h = harness(BackupEngineClass.VOLUME_COPY);
     await h.svc.settled('j1', BackupJobStatus.COMPLETED);
     expect(h.record).not.toHaveBeenCalled();
     expect(h.deliver).not.toHaveBeenCalled();
@@ -96,7 +96,7 @@ describe('BackupAlertService', () => {
   });
 
   it('neither opens nor closes an episode on a partial run', async () => {
-    const h = harness(BackupEngineClass.VOLUME);
+    const h = harness(BackupEngineClass.VOLUME_COPY);
     await h.svc.settled('j1', BackupJobStatus.PARTIALLY_COMPLETED);
     expect(h.record).not.toHaveBeenCalled();
 
@@ -113,7 +113,7 @@ describe('BackupAlertService', () => {
   });
 
   it('opens one episode when two runs of the same policy fail together', async () => {
-    const h = harness(BackupEngineClass.VOLUME);
+    const h = harness(BackupEngineClass.VOLUME_COPY);
     await Promise.all([
       h.svc.settled('j1', BackupJobStatus.FAILED),
       h.svc.settled('j2', BackupJobStatus.FAILED),
@@ -123,7 +123,7 @@ describe('BackupAlertService', () => {
   });
 
   it('ignores states that are not an outcome', async () => {
-    const h = harness(BackupEngineClass.VOLUME);
+    const h = harness(BackupEngineClass.VOLUME_COPY);
     await h.svc.settled('j1', BackupJobStatus.RUNNING);
     expect(h.record).not.toHaveBeenCalled();
   });

@@ -22,6 +22,13 @@ import {
   renderSqliteSnapshotInit,
   renderSqliteStageVolume,
 } from './sqlite-snapshot.util';
+import {
+  RcloneS3SecretArgs,
+  rcloneRemote,
+  renderRcloneS3EnvFrom,
+  renderRcloneScriptBlock,
+  withRcloneS3Secret,
+} from './rclone-s3-secret.util';
 const RCLONE_IMAGE = 'rclone/rclone:1.67';
 
 /**
@@ -286,24 +293,31 @@ export class VolumeExportService implements IVolumeExport {
     }
 
     const jobName = this.s3DeleteJobName(input.exportId);
+    const labels = {
+      'flui.cloud/managed-by': 'flui-cloud',
+      [SINK_LABEL]: 's3-archive',
+    };
     const jobManifest = this.renderS3DeleteJobManifest({
       jobName,
       namespace: input.namespace,
       keyPrefix: input.exportId,
       s3: input.s3,
-      labels: {
-        'flui.cloud/managed-by': 'flui-cloud',
-        [SINK_LABEL]: 's3-archive',
-      },
+      labels,
     });
-    await this.k8s.applyManifest(input.kubeconfig, jobManifest);
-    await this.waitForJobCompletion(
+    await this.withS3Secret(
       input.kubeconfig,
-      input.namespace,
-      jobName,
-      COPY_JOB_TIMEOUT_SECONDS,
+      { jobName, namespace: input.namespace, labels, s3: input.s3 },
+      async () => {
+        await this.k8s.applyManifest(input.kubeconfig, jobManifest);
+        await this.waitForJobCompletion(
+          input.kubeconfig,
+          input.namespace,
+          jobName,
+          COPY_JOB_TIMEOUT_SECONDS,
+        );
+        await this.cleanupCopyJob(input.kubeconfig, input.namespace, jobName);
+      },
     );
-    await this.cleanupCopyJob(input.kubeconfig, input.namespace, jobName);
   }
 
   async restoreFromExport(
@@ -362,15 +376,33 @@ export class VolumeExportService implements IVolumeExport {
             s3: this.requireS3(input.s3),
             nodeSelectorHostname: input.preferredNode,
             labels: newPvcLabels,
+            encrypted: !!input.encryption,
           });
-    await this.k8s.applyManifest(input.kubeconfig, jobManifest);
-    await this.waitForJobCompletion(
-      input.kubeconfig,
-      input.namespace,
-      jobName,
-      COPY_JOB_TIMEOUT_SECONDS,
-    );
-    await this.cleanupCopyJob(input.kubeconfig, input.namespace, jobName);
+    const run = async () => {
+      await this.k8s.applyManifest(input.kubeconfig, jobManifest);
+      await this.waitForJobCompletion(
+        input.kubeconfig,
+        input.namespace,
+        jobName,
+        COPY_JOB_TIMEOUT_SECONDS,
+      );
+      await this.cleanupCopyJob(input.kubeconfig, input.namespace, jobName);
+    };
+    if (input.sink === 'pvc-clone') {
+      await run();
+    } else {
+      await this.withS3Secret(
+        input.kubeconfig,
+        {
+          jobName,
+          namespace: input.namespace,
+          labels: newPvcLabels,
+          s3: this.requireS3(input.s3),
+          encryption: input.encryption,
+        },
+        run,
+      );
+    }
     return { pvcName: input.newPvcName };
   }
 
@@ -485,37 +517,51 @@ export class VolumeExportService implements IVolumeExport {
     };
 
     const jobName = `s3up-${this.shortId(input.exportName)}`;
+    const s3 = {
+      bucket: input.bucket,
+      endpoint: input.endpoint,
+      region: input.region,
+      accessKeyId: input.accessKeyId,
+      secretAccessKey: input.secretAccessKey,
+    };
     const jobManifest = this.renderS3ExportJobManifest({
       jobName,
       namespace: input.namespace,
       sourcePvcName: input.sourcePvcName,
       keyPrefix: input.keyPrefix,
-      s3: {
-        bucket: input.bucket,
-        endpoint: input.endpoint,
-        region: input.region,
-        accessKeyId: input.accessKeyId,
-        secretAccessKey: input.secretAccessKey,
-      },
+      s3,
       nodeSelectorHostname: sourceNode,
       labels: exportLabels,
       consistentSqlite: input.consistentSqlite,
+      encrypted: !!input.encryption,
     });
-    await this.k8s.applyManifest(input.kubeconfig, jobManifest);
-    await this.waitForJobCompletion(
+    const { actualBytes, writesObservedDuringCopy } = await this.withS3Secret(
       input.kubeconfig,
-      input.namespace,
-      jobName,
-      COPY_JOB_TIMEOUT_SECONDS,
-    );
-    const { actualBytes, writesObservedDuringCopy } =
-      await this.readCopyJobOutcome(
-        input.kubeconfig,
-        input.namespace,
+      {
         jobName,
-        /FLUI_ACTUAL_BYTES=(\d+)/,
-      );
-    await this.cleanupCopyJob(input.kubeconfig, input.namespace, jobName);
+        namespace: input.namespace,
+        labels: exportLabels,
+        s3,
+        encryption: input.encryption,
+      },
+      async () => {
+        await this.k8s.applyManifest(input.kubeconfig, jobManifest);
+        await this.waitForJobCompletion(
+          input.kubeconfig,
+          input.namespace,
+          jobName,
+          COPY_JOB_TIMEOUT_SECONDS,
+        );
+        const outcome = await this.readCopyJobOutcome(
+          input.kubeconfig,
+          input.namespace,
+          jobName,
+          /FLUI_ACTUAL_BYTES=(\d+)/,
+        );
+        await this.cleanupCopyJob(input.kubeconfig, input.namespace, jobName);
+        return outcome;
+      },
+    );
 
     return {
       exportId: input.keyPrefix,
@@ -524,9 +570,18 @@ export class VolumeExportService implements IVolumeExport {
       sourceSizeGb: sizeGb,
       actualBytes,
       writesObservedDuringCopy,
+      encrypted: !!input.encryption,
       createdAt: new Date().toISOString(),
       ready: true,
     };
+  }
+
+  private withS3Secret<T>(
+    kubeconfig: string,
+    args: RcloneS3SecretArgs,
+    run: () => Promise<T>,
+  ): Promise<T> {
+    return withRcloneS3Secret(this.k8s, this.logger, kubeconfig, args, run);
   }
 
   // ─── shared helpers ────────────────────────────────────────────────────────
@@ -1048,6 +1103,7 @@ export class VolumeExportService implements IVolumeExport {
     nodeSelectorHostname?: string;
     labels: Record<string, string>;
     consistentSqlite?: boolean;
+    encrypted?: boolean;
   }): string {
     const sqlite = !!args.consistentSqlite;
     const labelLinesMeta = this.renderLabelLines(args.labels, '    ');
@@ -1055,7 +1111,14 @@ export class VolumeExportService implements IVolumeExport {
     const nodeSelectorBlock = this.renderPlacementBlock(
       args.nodeSelectorHostname,
     );
-    const remote = `flui:${args.s3.bucket}/${args.keyPrefix}`;
+    const remote = rcloneRemote(
+      !!args.encrypted,
+      args.s3.bucket,
+      args.keyPrefix,
+    );
+    const copy = sqlite
+      ? `rclone -v --retries 2 --metadata --s3-no-check-bucket --filter-from /stage/excludes sync /src "${remote}" && rclone -v --retries 2 --metadata --s3-no-check-bucket copy /stage/data "${remote}"`
+      : `rclone -v --retries 2 --metadata --s3-no-check-bucket sync /src "${remote}"`;
     return [
       'apiVersion: batch/v1',
       'kind: Job',
@@ -1084,10 +1147,11 @@ export class VolumeExportService implements IVolumeExport {
       '            - -c',
       // `--metadata` carries uid, gid and mode. Without it a non-root
       // application can read its restored files but not write them.
-      sqlite
-        ? String.raw`            - 'rclone -v --retries 2 --metadata --s3-no-check-bucket --filter-from /stage/excludes sync /src "${remote}" && rclone -v --retries 2 --metadata --s3-no-check-bucket copy /stage/data "${remote}" && echo FLUI_ACTUAL_BYTES=$(du -sb /src | awk "{print \$1}")'`
-        : String.raw`            - 'rclone -v --retries 2 --metadata --s3-no-check-bucket sync /src "${remote}" && echo FLUI_ACTUAL_BYTES=$(du -sb /src | awk "{print \$1}")'`,
-      this.renderS3EnvBlock(args.s3),
+      renderRcloneScriptBlock(
+        [copy, "echo FLUI_ACTUAL_BYTES=$(du -sb /src | awk '{print $1}')"],
+        !!args.encrypted,
+      ),
+      renderRcloneS3EnvFrom(args.jobName),
       '          volumeMounts:',
       '            - name: src',
       '              mountPath: /src',
@@ -1113,13 +1177,18 @@ export class VolumeExportService implements IVolumeExport {
     s3: NonNullable<DeleteExportInput['s3']>;
     nodeSelectorHostname?: string;
     labels: Record<string, string>;
+    encrypted?: boolean;
   }): string {
     const labelLinesMeta = this.renderLabelLines(args.labels, '    ');
     const labelLinesPod = this.renderLabelLines(args.labels, '        ');
     const nodeSelectorBlock = this.renderPlacementBlock(
       args.nodeSelectorHostname,
     );
-    const remote = `flui:${args.s3.bucket}/${args.keyPrefix}`;
+    const remote = rcloneRemote(
+      !!args.encrypted,
+      args.s3.bucket,
+      args.keyPrefix,
+    );
     return [
       'apiVersion: batch/v1',
       'kind: Job',
@@ -1145,8 +1214,11 @@ export class VolumeExportService implements IVolumeExport {
       '          command:',
       '            - /bin/sh',
       '            - -c',
-      `            - 'rclone --metadata sync "${remote}" /dst'`,
-      this.renderS3EnvBlock(args.s3),
+      renderRcloneScriptBlock(
+        [`rclone --metadata sync "${remote}" /dst`],
+        !!args.encrypted,
+      ),
+      renderRcloneS3EnvFrom(args.jobName),
       '          volumeMounts:',
       '            - name: dst',
       '              mountPath: /dst',
@@ -1193,26 +1265,8 @@ export class VolumeExportService implements IVolumeExport {
       '            - /bin/sh',
       '            - -c',
       `            - 'rclone purge "${remote}" || rclone delete "${remote}"'`,
-      this.renderS3EnvBlock(args.s3),
+      renderRcloneS3EnvFrom(args.jobName),
       '',
-    ].join('\n');
-  }
-
-  private renderS3EnvBlock(s3: NonNullable<DeleteExportInput['s3']>): string {
-    return [
-      '          env:',
-      '            - name: RCLONE_CONFIG_FLUI_TYPE',
-      '              value: "s3"',
-      '            - name: RCLONE_CONFIG_FLUI_PROVIDER',
-      '              value: "Other"',
-      '            - name: RCLONE_CONFIG_FLUI_ACCESS_KEY_ID',
-      `              value: ${this.yamlString(s3.accessKeyId)}`,
-      '            - name: RCLONE_CONFIG_FLUI_SECRET_ACCESS_KEY',
-      `              value: ${this.yamlString(s3.secretAccessKey)}`,
-      '            - name: RCLONE_CONFIG_FLUI_ENDPOINT',
-      `              value: ${this.yamlString(s3.endpoint)}`,
-      '            - name: RCLONE_CONFIG_FLUI_REGION',
-      `              value: ${this.yamlString(s3.region || 'auto')}`,
     ].join('\n');
   }
 

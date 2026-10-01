@@ -1,4 +1,13 @@
 import { BackupDestinationEntity } from '../entities/backup-destination.entity';
+import { trimSlashes } from '../utils/destination-layout.util';
+import {
+  CRYPT_SUFFIX,
+  CryptPasswords,
+  RCLONE_CRYPT_CIPHER,
+  cryptEnv,
+  remoteName,
+} from '../utils/rclone-crypt.util';
+import { ZSTD_SUFFIX } from './db-compression.util';
 
 /** The companion container that owns object-storage access for this engine. */
 export const SHIPPER_CONTAINER = 'flui-binlog-shipper';
@@ -24,6 +33,11 @@ export const SHIPPER_CONFIG_KEY = 'config';
 export const SHIPPER_CONFIG_PATH = '/etc/flui/shipper/config';
 export const SHIPPER_CONFIG_POLL_MS = 5_000;
 export const SHIPPER_CONFIG_WAIT_MS = 3 * 60 * 1000;
+
+/** Written by a shipper image that can read and write through `flui_crypt`. */
+export const SHIPPER_FEATURES_PATH = '/usr/local/share/flui/shipper-features';
+export const SHIPPER_CRYPT_FEATURE = 'rclone-crypt';
+export const RESTORE_CRYPT_ENV_PREFIX = 'FLUI_MARIADB_CRYPT_';
 
 export interface MariadbTarget {
   kubeconfig: string;
@@ -82,7 +96,14 @@ export function artifactObjectKeys(
   generation?: string,
 ): string[] {
   const base = `${artifactObjectPrefix(appId, generation)}base/${engineRef}`;
-  return [`${base}/binlog_info`, `${base}/base.mbstream`];
+  return [
+    `${base}/binlog_info${CRYPT_SUFFIX}`,
+    `${base}/binlog_info`,
+    `${base}/base.mbstream${ZSTD_SUFFIX}${CRYPT_SUFFIX}`,
+    `${base}/base.mbstream${ZSTD_SUFFIX}`,
+    `${base}/base.mbstream${CRYPT_SUFFIX}`,
+    `${base}/base.mbstream`,
+  ];
 }
 
 /**
@@ -126,28 +147,34 @@ function toUtcTarget(d: Date): string {
  * Takes the destination's secrets already decrypted, so this stays a pure
  * mapping and the caller keeps sole ownership of the encryption service.
  */
+export interface RestoreEnvTarget {
+  recoveryTargetTime?: Date | null;
+  restoreSet?: string | null;
+  generation?: string | null;
+  crypt?: CryptPasswords;
+}
+
 export function buildRestoreEnv(
   sourceAppId: string,
   dest: Pick<
     BackupDestinationEntity,
     'endpoint' | 'bucket' | 'region' | 'forcePathStyle' | 'pathPrefix'
   >,
-  decryptedAccessKey: string,
-  decryptedSecretKey: string,
-  recoveryTargetTime?: Date | null,
-  restoreSet?: string | null,
-  generation?: string | null,
+  keys: { accessKey: string; secretKey: string },
+  target?: RestoreEnvTarget,
 ): Record<string, string> {
-  const prefix = (dest.pathPrefix ?? '').replace(/^\/+|\/+$/g, '');
+  const { recoveryTargetTime, restoreSet, generation, crypt } = target ?? {};
+  const prefix = trimSlashes(dest.pathPrefix);
   const env: Record<string, string> = {
     FLUI_MARIADB_RESTORE: '1',
     FLUI_MARIADB_S3_ENDPOINT: dest.endpoint,
     FLUI_MARIADB_S3_BUCKET: dest.bucket,
     FLUI_MARIADB_S3_REGION: dest.region || 'auto',
-    FLUI_MARIADB_S3_KEY: decryptedAccessKey,
-    FLUI_MARIADB_S3_KEY_SECRET: decryptedSecretKey,
+    FLUI_MARIADB_S3_KEY: keys.accessKey,
+    FLUI_MARIADB_S3_KEY_SECRET: keys.secretKey,
     FLUI_MARIADB_S3_FORCE_PATH_STYLE: dest.forcePathStyle ? 'true' : 'false',
     FLUI_MARIADB_S3_PATH: `${prefix ? prefix + '/' : ''}${artifactObjectPrefix(sourceAppId, generation ?? undefined)}`,
+    ...(crypt ? cryptEnv(crypt, RESTORE_CRYPT_ENV_PREFIX) : {}),
   };
   // A time and a label are alternatives, and the time wins: asking for an
   // instant means the logs are replayed up to it, while a label alone means
@@ -158,4 +185,52 @@ export function buildRestoreEnv(
     env.FLUI_MARIADB_BASE_LABEL = restoreSet;
   }
   return env;
+}
+
+/**
+ * The shipper's whole configuration, as the file `ship.sh` and every exec'd
+ * script source. With `crypt`, the repository remote is `flui_crypt:` and the
+ * two derived secrets travel beside the storage credentials in the same
+ * Secret; `FLUI_ENCRYPTION` is what a base backup reports back as used.
+ */
+export function renderShipperConfig(args: {
+  appId: string;
+  dest: Pick<
+    BackupDestinationEntity,
+    'bucket' | 'pathPrefix' | 'endpoint' | 'region' | 'forcePathStyle'
+  >;
+  repositoryPrefix: string;
+  accessKey: string;
+  secretKey: string;
+  crypt?: CryptPasswords;
+  compression?: 'zstd';
+}): string {
+  const prefix = trimSlashes(args.dest.pathPrefix);
+  const remote = `${remoteName(!!args.crypt)}:${args.dest.bucket}/${prefix ? prefix + '/' : ''}${args.repositoryPrefix.replace(/\/$/, '')}`;
+  const q = (v: string) => JSON.stringify(v);
+  return [
+    `export FLUI_S3_REMOTE=${q(remote)}`,
+    `export FLUI_APP_ID=${q(args.appId)}`,
+    'export RCLONE_CONFIG_FLUI_TYPE=s3',
+    'export RCLONE_CONFIG_FLUI_PROVIDER=Other',
+    `export RCLONE_CONFIG_FLUI_ACCESS_KEY_ID=${q(args.accessKey)}`,
+    `export RCLONE_CONFIG_FLUI_SECRET_ACCESS_KEY=${q(args.secretKey)}`,
+    `export RCLONE_CONFIG_FLUI_ENDPOINT=${q(args.dest.endpoint)}`,
+    `export RCLONE_CONFIG_FLUI_REGION=${q(args.dest.region || 'auto')}`,
+    `export RCLONE_CONFIG_FLUI_FORCE_PATH_STYLE=${args.dest.forcePathStyle ? 'true' : 'false'}`,
+    ...(args.crypt
+      ? [
+          `export FLUI_ENCRYPTION=${q(RCLONE_CRYPT_CIPHER)}`,
+          ...Object.entries(cryptEnv(args.crypt)).map(
+            ([k, v]) => `export ${k}=${q(v)}`,
+          ),
+        ]
+      : []),
+    ...(args.compression
+      ? [`export FLUI_COMPRESSION=${q(args.compression)}`]
+      : []),
+    `export FLUI_CONFIG_VERSION=${args.crypt ? 2 : 1}`,
+    'export FLUI_CONFIG_COMPLETE=1',
+    '',
+  ].join('\n');
 }

@@ -56,7 +56,26 @@ export RCLONE_CONFIG_FLUI_ENDPOINT="${FLUI_MARIADB_S3_ENDPOINT:-}"
 export RCLONE_CONFIG_FLUI_REGION="${FLUI_MARIADB_S3_REGION:-auto}"
 export RCLONE_CONFIG_FLUI_FORCE_PATH_STYLE="${FLUI_MARIADB_S3_FORCE_PATH_STYLE:-false}"
 
-REPO="flui:${FLUI_MARIADB_S3_BUCKET}/${FLUI_MARIADB_S3_PATH%/}"
+# An encrypted repository is read through `flui_crypt`, with passwords derived
+# by the control plane from the destination's passphrase. Without them the
+# plaintext remote finds no base under an encrypted repository's `.bin` names
+# and the restore refuses below, rather than reading anything wrong.
+REMOTE_NAME=flui
+if [ -n "${FLUI_MARIADB_CRYPT_PASSWORD:-}" ]; then
+  export RCLONE_CONFIG_FLUI_CRYPT_TYPE=crypt
+  export RCLONE_CONFIG_FLUI_CRYPT_REMOTE=flui:
+  export RCLONE_CONFIG_FLUI_CRYPT_FILENAME_ENCRYPTION=off
+  export RCLONE_CONFIG_FLUI_CRYPT_DIRECTORY_NAME_ENCRYPTION=false
+  RCLONE_CONFIG_FLUI_CRYPT_PASSWORD="$(printf '%s' "$FLUI_MARIADB_CRYPT_PASSWORD" | rclone obscure -)" \
+    || die "could not prepare the decryption key"
+  RCLONE_CONFIG_FLUI_CRYPT_PASSWORD2="$(printf '%s' "${FLUI_MARIADB_CRYPT_PASSWORD2:-}" | rclone obscure -)" \
+    || die "could not prepare the decryption key"
+  export RCLONE_CONFIG_FLUI_CRYPT_PASSWORD RCLONE_CONFIG_FLUI_CRYPT_PASSWORD2
+  REMOTE_NAME=flui_crypt
+  log "the repository is encrypted; reading it through flui_crypt"
+fi
+
+REPO="${REMOTE_NAME}:${FLUI_MARIADB_S3_BUCKET}/${FLUI_MARIADB_S3_PATH%/}"
 BASE_REMOTE="$REPO/base"
 LOG_REMOTE="$REPO/binlog"
 
@@ -114,12 +133,22 @@ fi
 [ -n "$BASE_LABEL" ] || die "no base backup exists in $BASE_REMOTE. Binary logs alone cannot be restored — they are changes to something, and that something is the base."
 log "base backup: $BASE_LABEL"
 
-rclone copyto "$BASE_REMOTE/$BASE_LABEL/base.mbstream" "$WORK/base.mbstream" \
-  || die "could not fetch the base backup"
-
 mkdir -p "$DATADIR"
-mbstream -x -C "$DATADIR" < "$WORK/base.mbstream" \
-  || die "the base backup could not be extracted"
+# A base is `base.mbstream.zst` when the shipper that took it compressed it,
+# and `base.mbstream` when it did not; each is read the way it was written.
+if rclone lsf "$BASE_REMOTE/$BASE_LABEL/" 2>/dev/null | grep -x 'base\.mbstream\.zst' >/dev/null; then
+  command -v zstd >/dev/null 2>&1 \
+    || die "the base backup is compressed with zstd, and this image has no zstd to read it"
+  log "the base backup is compressed; decompressing it as it is extracted"
+  rclone cat "$BASE_REMOTE/$BASE_LABEL/base.mbstream.zst" | zstd -q -d -c | mbstream -x -C "$DATADIR" \
+    || die "the compressed base backup could not be fetched and extracted"
+else
+  rclone copyto "$BASE_REMOTE/$BASE_LABEL/base.mbstream" "$WORK/base.mbstream" \
+    || die "could not fetch the base backup"
+  mbstream -x -C "$DATADIR" < "$WORK/base.mbstream" \
+    || die "the base backup could not be extracted"
+  rm -f "$WORK/base.mbstream"
+fi
 
 # The position the base ends at, read from inside the base itself.
 #
@@ -150,8 +179,16 @@ chown -R mysql:mysql "$DATADIR" 2>/dev/null || true
 
 REPLAY_FILES=""
 if [ -n "$TARGET_TIME" ]; then
-  AVAILABLE="$(rclone lsf "$LOG_REMOTE/" 2>/dev/null | grep -E '^binlog\.[0-9]+$' | sort)"
+  # A log is in the repository as `binlog.N`, as `binlog.N.zst`, or briefly as
+  # both while the shipper replaces a plain prefix with its compressed whole.
+  # Each is one log; the compressed copy is the whole one.
+  LISTED="$(rclone lsf "$LOG_REMOTE/" 2>/dev/null | grep -E '^binlog\.[0-9]+(\.zst)?$')"
+  AVAILABLE="$(printf '%s\n' "$LISTED" | sed 's/\.zst$//' | grep -v '^$' | sort -u)"
   [ -n "$AVAILABLE" ] || die "no binary logs are in the repository, so nothing can be replayed onto the base"
+  if printf '%s\n' "$LISTED" | grep '\.zst$' >/dev/null; then
+    command -v zstd >/dev/null 2>&1 \
+      || die "the binary logs are compressed with zstd, and this image has no zstd to read them"
+  fi
 
   mkdir -p "$WORK/logs"
   # The gap check, and the reason this script is not just a sequence of
@@ -168,7 +205,7 @@ if [ -n "$TARGET_TIME" ]; then
   # are perfectly contiguous and `--start-position` — a byte offset into the
   # missing file — would be applied to a different one. That replays garbage
   # or nothing, and exits zero either way.
-  echo "$AVAILABLE" | grep -qx "$START_FILE" \
+  echo "$AVAILABLE" | grep -x "$START_FILE" >/dev/null \
     || die "the base backup ends inside $START_FILE, which is not in the repository. Replaying from the logs that are there would apply a position from one file to another; the base can only be restored on its own, without a target."
 
   PREV=""
@@ -179,7 +216,11 @@ if [ -n "$TARGET_TIME" ]; then
       die "the binary logs jump from $PREV to $num. Restoring across that gap would produce a database missing every change in between, without any error to show for it."
     fi
     PREV="$num"
-    rclone copyto "$LOG_REMOTE/$f" "$WORK/logs/$f" || die "could not fetch $f"
+    if printf '%s\n' "$LISTED" | grep -x "$f\.zst" >/dev/null; then
+      rclone cat "$LOG_REMOTE/$f.zst" | zstd -q -d -c > "$WORK/logs/$f" || die "could not fetch $f"
+    else
+      rclone copyto "$LOG_REMOTE/$f" "$WORK/logs/$f" || die "could not fetch $f"
+    fi
   done
   [ -n "$PREV" ] || die "the repository has no binary log at or after $START_FILE, so the base cannot be brought forward"
   REPLAY_FILES="$WORK/logs"

@@ -7,10 +7,11 @@ import {
   InfrastructureOperationEntity,
   OperationStatus,
 } from '../../servers/entities/infrastructure-operations.entity';
+import { ClusterRebuildService } from '../services/cluster-rebuild.service';
 import {
-  ClusterRebuildService,
+  RebuildMode,
   RebuildResultApp,
-} from '../services/cluster-rebuild.service';
+} from '../interfaces/cluster-rebuild.interface';
 
 export interface RebuildClusterJobData {
   operationId: string;
@@ -18,6 +19,8 @@ export interface RebuildClusterJobData {
   fromId: string;
   toId: string;
   includeStopped: boolean;
+  /** Absent on jobs queued before the control restore existed. */
+  mode?: RebuildMode;
 }
 
 /**
@@ -41,7 +44,8 @@ export class ClusterRebuildProcessor {
 
   @Process('rebuild-cluster')
   async handle(job: Job<RebuildClusterJobData>): Promise<void> {
-    const { operationId, userId, fromId, toId, includeStopped } = job.data;
+    const { operationId, userId, fromId, toId, includeStopped, mode } =
+      job.data;
     await this.operationRepo.update(
       { id: operationId },
       { status: OperationStatus.IN_PROGRESS, startedAt: new Date() },
@@ -50,6 +54,7 @@ export class ClusterRebuildProcessor {
     try {
       const result = await this.rebuild.execute(userId, fromId, toId, {
         includeStopped,
+        mode,
         onProgress: (done) => this.report(operationId, done),
       });
 
@@ -108,14 +113,18 @@ export class ClusterRebuildProcessor {
       where: { id: operationId },
     });
     if (!operation) return;
-    operation.metadata = { ...(operation.metadata ?? {}), ...patch } as never;
+    operation.metadata = { ...operation.metadata, ...patch } as never;
     await this.operationRepo.save(operation);
   }
 
   private summarise(apps: RebuildResultApp[]): string {
     return apps
       .filter((a) => a.phase !== 'reconciled')
-      .map((a) => `${a.name}: ${a.phase}${a.error ? ` — ${a.error}` : ''}`)
+      .map((a) =>
+        a.error
+          ? `${a.name}: ${a.phase} — ${a.error}`
+          : `${a.name}: ${a.phase}`,
+      )
       .join('; ')
       .slice(0, 500);
   }

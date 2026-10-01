@@ -18,7 +18,6 @@ import {
   HealthResult,
   UsageResult,
   ListObjectsResult,
-  VeleroBSLConfig,
   RcloneRemoteConfig,
 } from '../interfaces/backup-storage-backend.interface';
 import { StorageBackendProvider } from '../enums/storage-backend-provider.enum';
@@ -155,23 +154,12 @@ export class GenericS3Backend implements IBackupStorageBackend {
     const client = this.buildClient(creds);
     return getSignedUrl(
       client,
-      new GetObjectCommand({ Bucket: creds.bucket, Key: key }),
+      new GetObjectCommand({
+        Bucket: creds.bucket,
+        Key: this.joinPrefix(creds.pathPrefix, key),
+      }),
       { expiresIn: ttlSeconds },
     );
-  }
-
-  toVeleroBSL(creds: StorageBackendCredentials): VeleroBSLConfig {
-    return {
-      provider: 'aws',
-      config: {
-        region: creds.region,
-        s3ForcePathStyle: String(creds.forcePathStyle ?? true),
-        s3Url: creds.endpoint,
-      },
-      credentialsKey: 'cloud',
-      bucket: creds.bucket,
-      prefix: creds.pathPrefix,
-    };
   }
 
   toRcloneRemote(creds: StorageBackendCredentials): RcloneRemoteConfig {

@@ -64,6 +64,9 @@ import {
 import { droppedAutoscaler } from '../utils/dropped-autoscaler.util';
 import { ScheduledJobsService } from '../services/scheduled-jobs.service';
 
+/** The restore point is seconds; the copies it starts are not waited for. */
+const PRE_DEPLOY_BACKUP_TIMEOUT_MS = 2 * 60 * 1000;
+
 @Processor('application-deploy')
 export class ApplicationDeployProcessor {
   private readonly logger = new Logger(ApplicationDeployProcessor.name);
@@ -194,13 +197,14 @@ export class ApplicationDeployProcessor {
   }
 
   /**
-   * Pre-deploy snapshot hook: enqueues a Velero scoped Backup for the app
-   * namespace, awaits completion (timeout 5min), and either fails-closed (REQUIRED)
-   * or fails-open with warning (BEST_EFFORT) per app.preDeploySnapshotPolicy.
+   * The backup taken before a deploy, when the application asks for one:
+   * a restore point for a continuous database, recorded before anything
+   * changes, and copies of the other volumes, started and not waited for.
+   * `required` fails the deploy when the restore point cannot be recorded;
+   * `best_effort` logs it and deploys.
    */
   private async runPreDeploySnapshotHook(
     app: ApplicationEntity,
-    deployId: string,
     operationId: string,
   ): Promise<void> {
     if (!app.preDeploySnapshotEnabled || !this.backupQueue) return;
@@ -208,35 +212,42 @@ export class ApplicationDeployProcessor {
     try {
       const job = await this.backupQueue.add(
         'pre-deploy-snapshot-trigger',
-        {
-          applicationId: app.id,
-          clusterId: app.clusterId,
-          userId: app.userId,
-          deployId,
-          namespace: app.k8sNamespace,
-          parentOperationId: operationId,
-        },
-        { attempts: 1 },
+        { applicationId: app.id, deployId: operationId },
+        { attempts: 1, removeOnComplete: true, removeOnFail: true },
       );
-      const timeoutMs = 5 * 60 * 1000;
       await Promise.race([
         job.finished(),
         new Promise((_, reject) =>
           setTimeout(
-            () => reject(new Error('pre-deploy snapshot timeout')),
-            timeoutMs,
+            () => reject(new Error('the backup before the deploy timed out')),
+            PRE_DEPLOY_BACKUP_TIMEOUT_MS,
           ),
         ),
       ]);
     } catch (err: any) {
       const msg = err?.message ?? String(err);
       if (policy === 'required') {
-        throw new Error(`Pre-deploy snapshot failed (required): ${msg}`);
+        throw new Error(`Backup before the deploy failed (required): ${msg}`);
       }
       this.logger.warn(
-        `[pre-deploy-snapshot] best-effort failure for app ${app.id}: ${msg}. Deploy continues.`,
+        `[pre-deploy-backup] best-effort failure for app ${app.id}: ${msg}. Deploy continues.`,
       );
     }
+  }
+
+  /** A protected cluster gives a newly deployed application its policy without waiting for the sweep. */
+  private async queueClusterProtection(applicationId: string): Promise<void> {
+    await this.backupQueue
+      ?.add(
+        'protect-new-application',
+        { applicationId },
+        { attempts: 1, removeOnComplete: true, removeOnFail: true },
+      )
+      .catch((err: Error) =>
+        this.logger.warn(
+          `[deploy] backup protection of ${applicationId} left to the sweep: ${err.message}`,
+        ),
+      );
   }
 
   /**
@@ -399,11 +410,7 @@ export class ApplicationDeployProcessor {
 
       // Pre-deploy snapshot hook (opt-in per app)
       if (deployType !== 'initial') {
-        await this.runPreDeploySnapshotHook(
-          app,
-          job.data.applicationId,
-          operationId,
-        );
+        await this.runPreDeploySnapshotHook(app, operationId);
       }
 
       // Generate manifests
@@ -644,6 +651,7 @@ export class ApplicationDeployProcessor {
       // For exposure=internal apps, auto-attach the InternalAppEndpoint and
       // trigger its reconciliation (Ingress with ForwardAuth + cert).
       await this.ensureInternalEndpoint(appForManifests);
+      await this.queueClusterProtection(applicationId);
 
       // Trigger immediate reconciliation to confirm actual K8s state after deploy
       try {

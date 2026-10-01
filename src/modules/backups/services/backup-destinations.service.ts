@@ -21,12 +21,7 @@ import {
 } from '../enums/destination-health.enum';
 import { StorageBackendCredentials } from '../../storage/interfaces/backup-storage-backend.interface';
 import { StorageBackendProvider } from '../../storage/enums/storage-backend-provider.enum';
-import {
-  ENGINE_PREFIXED_LAYOUT,
-  VELERO_TOP_LEVEL_DIRS,
-  trimSlashes,
-  usesEngineLayout,
-} from '../utils/destination-layout.util';
+import { ENGINE_PREFIXED_LAYOUT } from '../utils/destination-layout.util';
 
 @Injectable()
 export class BackupDestinationsService {
@@ -166,71 +161,6 @@ export class BackupDestinationsService {
     return this.findById(id);
   }
 
-  /**
-   * Give cluster backups a folder of their own in a destination created before
-   * engines had one each.
-   *
-   * Nothing is moved here: moving backups is the owner's call. Cluster backups
-   * already at the top are listed with the commands that move them, and only
-   * `force` switches without them — they stay in the bucket but are no longer
-   * listed or restorable until moved. The next backup or restore on each
-   * cluster points Velero at the new folder.
-   */
-  async upgradeLayout(
-    id: string,
-    userId: string,
-    force = false,
-  ): Promise<{ layout: string; changed: boolean; leftBehind: string[] }> {
-    const dest = await this.findById(id);
-    if (dest.userId !== userId) {
-      throw new NotFoundException(`Backup destination ${id} not found`);
-    }
-    if (usesEngineLayout(dest)) {
-      return { layout: ENGINE_PREFIXED_LAYOUT, changed: false, leftBehind: [] };
-    }
-    const backend = this.storageFactory.forProvider(dest.provider);
-    const creds = this.toCredentials(dest);
-    const present: string[] = [];
-    for (const dir of VELERO_TOP_LEVEL_DIRS) {
-      const page = await backend.listObjects(creds, `${dir}/`);
-      if (page.keys.length) present.push(dir);
-    }
-    if (present.length && !force) {
-      const root = [dest.bucket, trimSlashes(dest.pathPrefix)]
-        .filter(Boolean)
-        .join('/');
-      const presentDirs = present.map((d) => d + '/').join(', ');
-      throw new ConflictException({
-        message:
-          `Cluster backups are stored at the top of this destination (${presentDirs}). ` +
-          'Move them into velero/ first, or they will no longer be listed or restorable; then run this again. ' +
-          'With an rclone remote <remote> for this bucket: ' +
-          present
-            .map(
-              (d) =>
-                `rclone move <remote>:${root}/${d} <remote>:${root}/velero/${d}`,
-            )
-            .join(' ; '),
-        code: 'DESTINATION_LAYOUT_HAS_CLUSTER_BACKUPS',
-        leftBehind: present,
-      });
-    }
-    await this.repo.update(id, {
-      metadata: { ...dest.metadata, layout: ENGINE_PREFIXED_LAYOUT },
-    });
-    const leftBehindNote = present.length
-      ? ` leaving ${present.join(', ')} behind`
-      : '';
-    this.logger.log(
-      `Destination ${id} moved to the engine-prefixed layout${leftBehindNote}`,
-    );
-    return {
-      layout: ENGINE_PREFIXED_LAYOUT,
-      changed: true,
-      leftBehind: present,
-    };
-  }
-
   toCredentials(dest: BackupDestinationEntity): StorageBackendCredentials {
     return {
       provider: dest.provider,
@@ -247,6 +177,26 @@ export class BackupDestinationsService {
   decryptPassphrase(dest: BackupDestinationEntity): string | undefined {
     if (!dest.encryptionPassphraseEncrypted) return undefined;
     return this.encryption.decrypt(dest.encryptionPassphraseEncrypted);
+  }
+
+  /**
+   * The key every engine encrypts application backups with on this
+   * destination. A destination created without one gets one now, so nothing
+   * is ever written to it in clear; it is sealed like the destination's
+   * storage credentials and travels with them in the platform backup.
+   */
+  async passphraseFor(dest: BackupDestinationEntity): Promise<string> {
+    const existing = this.decryptPassphrase(dest);
+    if (existing) return existing;
+    const generated = crypto.randomBytes(32).toString('hex');
+    const sealed = this.encryption.encrypt(generated);
+    await this.repo.update(dest.id, {
+      encryptionMode: EncryptionMode.FLUI_MANAGED,
+      encryptionPassphraseEncrypted: sealed,
+    });
+    dest.encryptionMode = EncryptionMode.FLUI_MANAGED;
+    dest.encryptionPassphraseEncrypted = sealed;
+    return generated;
   }
 
   private defaultForcePathStyle(p: StorageBackendProvider): boolean {

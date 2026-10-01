@@ -34,15 +34,24 @@ describe('BackupRetentionSweeper', () => {
       newestDbArtifact?: any;
       engineKeys?: (appId: string, ref: string) => string[];
       pathPrefix?: string;
+      platformRows?: any[];
+      dumpPolicies?: any[];
+      dumpRows?: any[];
     } = {},
   ) {
     const deletedArtifacts: string[] = [];
     const artifactRepo = {
-      find: jest.fn(async (q: any) =>
-        q?.where?.engineClass === 'database'
-          ? (opts.dbArtifacts ?? [])
-          : (opts.expired ?? []),
-      ),
+      find: jest.fn(async (q: any) => {
+        if (q?.where?.engineClass === 'platform') {
+          return opts.platformRows ?? [];
+        }
+        if (q?.where?.engineClass === 'database') {
+          return q.where.engine
+            ? (opts.dumpRows ?? [])
+            : (opts.dbArtifacts ?? []);
+        }
+        return opts.expired ?? [];
+      }),
       // A different row by default, so a test is not accidentally exercising
       // the newest-base refusal when it means to exercise something else.
       findOne: jest.fn(async () => opts.newestDbArtifact ?? { id: 'a-newest' }),
@@ -98,8 +107,13 @@ describe('BackupRetentionSweeper', () => {
           return {
             selfPrunesRepository: known.includes(e ?? 'postgres'),
             artifactObjectKeys: opts.engineKeys,
+            ...(e?.endsWith('-dump') ? { pointInTime: false } : {}),
           };
         },
+        all: () => [
+          { engine: 'postgres' },
+          { engine: 'postgres-dump', pointInTime: false },
+        ],
       } as any,
       {
         findDbPolicyForApp: jest.fn(async () =>
@@ -107,6 +121,7 @@ describe('BackupRetentionSweeper', () => {
             ? null
             : (opts.dbPolicy ?? { id: 'p1', retentionMaxCopies: 2 }),
         ),
+        findDbPoliciesByEngine: jest.fn(async () => opts.dumpPolicies ?? []),
       } as any,
     );
     return {
@@ -195,6 +210,18 @@ describe('BackupRetentionSweeper', () => {
 
     // pgBackRest owns that repository and expires it by its own retention;
     // deleting objects underneath it breaks a chain Flui does not own.
+    expect(deleteObjects).not.toHaveBeenCalled();
+    expect(deletedArtifacts).toEqual(['a1']);
+  });
+
+  it('never deletes objects under a kopia volume snapshot, only its row', async () => {
+    const { sweeper, deletedArtifacts, deleteObjects } = make({
+      expired: [artifact({ engine: 'kopia' })],
+    });
+
+    await sweeper.sweep();
+
+    // Its location prefix is the application's whole repository.
     expect(deleteObjects).not.toHaveBeenCalled();
     expect(deletedArtifacts).toEqual(['a1']);
   });
@@ -340,6 +367,163 @@ describe('BackupRetentionSweeper', () => {
     await sweeper.sweep();
 
     expect(deletedArtifacts).toHaveLength(25);
+  });
+
+  describe('platform backups are kept by run, not by row', () => {
+    const platformRow = (id: string, jobId: string, ref: string, day: number) =>
+      artifact({
+        id,
+        backupJobId: jobId,
+        engineClass: BackupEngineClass.PLATFORM,
+        applicationId: undefined,
+        volumeName: undefined,
+        engineRef: ref,
+        createdAt: new Date(Date.UTC(2026, 8, day)),
+      });
+
+    it('never deletes either half of the newest platform backup', async () => {
+      // Each run writes two rows, so "another row exists" was met by the other
+      // half of the same run and the last platform backup could be pruned.
+      const rows = [
+        platformRow('db-2', 'run-2', 'platform:db', 2),
+        platformRow('keys-2', 'run-2', 'platform:keys', 2),
+      ];
+      const { sweeper, deletedArtifacts } = make({
+        expired: rows,
+        jobs: [{ id: 'run-2', policyId: 'p1' }],
+        platformRows: rows,
+        siblings: 2,
+      });
+
+      await sweeper.sweep();
+
+      expect(deletedArtifacts).toEqual([]);
+    });
+
+    it('prunes an older run once a newer complete one exists', async () => {
+      const rows = [
+        platformRow('db-2', 'run-2', 'platform:db', 2),
+        platformRow('keys-2', 'run-2', 'platform:keys', 2),
+        platformRow('db-1', 'run-1', 'platform:db', 1),
+        platformRow('keys-1', 'run-1', 'platform:keys', 1),
+      ];
+      const { sweeper, deletedArtifacts } = make({
+        expired: rows.slice(2),
+        jobs: [{ id: 'run-1', policyId: 'p1' }],
+        platformRows: rows,
+      });
+
+      await sweeper.sweep();
+
+      expect(deletedArtifacts).toHaveLength(2);
+      expect(deletedArtifacts).toEqual(
+        expect.arrayContaining(['db-1', 'keys-1']),
+      );
+    });
+
+    it('keeps the last whole run when the newest is missing a part', async () => {
+      const rows = [
+        platformRow('db-3', 'run-3', 'platform:db', 3),
+        platformRow('db-1', 'run-1', 'platform:db', 1),
+        platformRow('keys-1', 'run-1', 'platform:keys', 1),
+      ];
+      const { sweeper, deletedArtifacts } = make({
+        expired: rows.slice(1),
+        jobs: [{ id: 'run-1', policyId: 'p1' }],
+        platformRows: rows,
+      });
+
+      await sweeper.sweep();
+
+      expect(deletedArtifacts).toEqual([]);
+    });
+  });
+
+  describe('dumps are kept for the days their policy names', () => {
+    const daysAgo = (n: number) => new Date(Date.now() - n * 86_400_000);
+    const dump = (id: string, age: number) =>
+      artifact({
+        id,
+        backupJobId: `j-${id}`,
+        engineClass: BackupEngineClass.DATABASE,
+        engine: 'postgres-dump',
+        applicationId: 'app-1',
+        volumeName: undefined,
+        engineRef: `dump-${id}`,
+        createdAt: daysAgo(age),
+      });
+    const policy = (over: any = {}) => ({
+      id: 'p1',
+      engine: 'postgres-dump',
+      scopeSelector: { applicationIds: ['app-1'] },
+      retentionDays: 7,
+      ...over,
+    });
+
+    it('keeps every dump inside the window, well past a count of two', async () => {
+      const rows = [0, 1, 2, 3, 4, 5, 6].map((d) => dump(`d${d}`, d + 0.1));
+      const { sweeper, deletedArtifacts } = make({
+        dumpPolicies: [policy()],
+        dumpRows: rows,
+        dbArtifacts: rows,
+        dbPolicy: policy(),
+        newestDbArtifact: rows[0],
+        selfPruningEngines: [],
+        engineKeys: (_a: string, ref: string) => [ref],
+      });
+
+      await sweeper.sweep();
+
+      expect(deletedArtifacts).toEqual([]);
+    });
+
+    it('deletes the dumps older than the window, oldest first', async () => {
+      const rows = [dump('new', 1), dump('old', 9), dump('older', 12)];
+      const { sweeper, deletedArtifacts } = make({
+        dumpPolicies: [policy()],
+        dumpRows: rows,
+        dbPolicy: policy(),
+        newestDbArtifact: rows[0],
+        selfPruningEngines: [],
+        engineKeys: (_a: string, ref: string) => [ref],
+      });
+
+      await sweeper.sweep();
+
+      expect(deletedArtifacts).toEqual(['older', 'old']);
+    });
+
+    it('never deletes the last dump, however old', async () => {
+      const rows = [dump('only', 90)];
+      const { sweeper, deletedArtifacts } = make({
+        dumpPolicies: [policy()],
+        dumpRows: rows,
+        dbPolicy: policy(),
+        newestDbArtifact: rows[0],
+        selfPruningEngines: [],
+        engineKeys: (_a: string, ref: string) => [ref],
+      });
+
+      await sweeper.sweep();
+
+      expect(deletedArtifacts).toEqual([]);
+    });
+
+    it('caps the window at retentionMaxCopies when one is set', async () => {
+      const rows = [dump('a', 1), dump('b', 2), dump('c', 3)];
+      const { sweeper, deletedArtifacts } = make({
+        dumpPolicies: [policy({ retentionMaxCopies: 2 })],
+        dumpRows: rows,
+        dbPolicy: policy({ retentionMaxCopies: 2 }),
+        newestDbArtifact: rows[0],
+        selfPruningEngines: [],
+        engineKeys: (_a: string, ref: string) => [ref],
+      });
+
+      await sweeper.sweep();
+
+      expect(deletedArtifacts).toEqual(['c']);
+    });
   });
 
   it('does nothing when nothing has expired', async () => {

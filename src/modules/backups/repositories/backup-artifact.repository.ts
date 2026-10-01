@@ -1,8 +1,11 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { In, Repository } from 'typeorm';
 import { BackupArtifactEntity } from '../entities/backup-artifact.entity';
 import { BackupArtifactLocationEntity } from '../entities/backup-artifact-location.entity';
+
+/** Artifacts whose objects were deleted once an encrypted copy replaced them. */
+const NOT_RETIRED = `a.metadata->>'plaintextRetiredAt' IS NULL`;
 
 @Injectable()
 export class BackupArtifactRepository {
@@ -36,6 +39,32 @@ export class BackupArtifactRepository {
     });
   }
 
+  /** Every artifact of one job: a platform backup writes two, the dump and its key bundle. */
+  listByJob(backupJobId: string): Promise<BackupArtifactEntity[]> {
+    return this.artifactRepo.find({
+      where: { backupJobId },
+      relations: ['locations'],
+    });
+  }
+
+  /** Every artifact of several jobs at once, locations included. */
+  listByJobs(backupJobIds: string[]): Promise<BackupArtifactEntity[]> {
+    if (backupJobIds.length === 0) return Promise.resolve([]);
+    return this.artifactRepo.find({
+      where: { backupJobId: In(backupJobIds) },
+      relations: ['locations'],
+    });
+  }
+
+  /** The job of the newest platform backup that produced its key bundle. */
+  async latestPlatformJobId(): Promise<string | null> {
+    const newest = await this.artifactRepo.findOne({
+      where: { engineRef: 'platform:keys' },
+      order: { createdAt: 'DESC' },
+    });
+    return newest?.backupJobId ?? null;
+  }
+
   listForCluster(clusterId: string): Promise<BackupArtifactEntity[]> {
     return this.artifactRepo.find({
       where: { clusterId },
@@ -66,9 +95,31 @@ export class BackupArtifactRepository {
       .leftJoinAndSelect('a.locations', 'l')
       .where('a.engineClass = :engine', { engine: 'database' })
       .andWhere(`a."manifestSummary"->>'applicationId' = :appId`, { appId })
+      .andWhere(NOT_RETIRED)
       .orderBy('a.createdAt', 'DESC')
       .limit(1)
       .getOne();
+  }
+
+  /** Every database-class artifact of one application, newest first. */
+  listDbArtifactsForApp(appId: string): Promise<BackupArtifactEntity[]> {
+    return this.artifactRepo
+      .createQueryBuilder('a')
+      .leftJoinAndSelect('a.locations', 'l')
+      .where('a.engineClass = :engine', { engine: 'database' })
+      .andWhere(
+        `(a."applicationId"::text = :appId OR a."manifestSummary"->>'applicationId' = :appId)`,
+        { appId },
+      )
+      .orderBy('a.createdAt', 'DESC')
+      .getMany();
+  }
+
+  updateArtifactMetadata(
+    id: string,
+    metadata: Record<string, any>,
+  ): Promise<unknown> {
+    return this.artifactRepo.update(id, { metadata });
   }
 
   /**
@@ -100,6 +151,7 @@ export class BackupArtifactRepository {
           { appId },
         )
         .andWhere('a.createdAt <= :at', { at })
+        .andWhere(NOT_RETIRED)
         .orderBy('a.createdAt', 'DESC')
         .limit(1)
         .getOne()
@@ -107,12 +159,18 @@ export class BackupArtifactRepository {
   }
 
   /**
-   * Newest object-store copy of one volume, or null.
+   * Newest object-store copy of one volume that is still stored, or null.
    *
    * Object store only, deliberately: a `pvc-clone` is a sibling claim on the
    * cluster the volume lived on, so for a cluster that is gone it names
    * something that went with it. Restoring from one would mean reaching a
    * machine that no longer answers.
+   *
+   * A kopia snapshot and an rclone archive compete on recency alone, whatever
+   * took them — schedule, a person, a deploy. Only copies whose primary
+   * location is still there count: kopia's retention expires snapshots every
+   * night, and the newest row being one it removed must not hide the one
+   * before it.
    */
   findLatestVolumeCopyForApp(
     applicationId: string,
@@ -124,7 +182,13 @@ export class BackupArtifactRepository {
       .where('a.engineClass = :engine', { engine: 'volume_copy' })
       .andWhere('a."applicationId" = :applicationId', { applicationId })
       .andWhere('a."volumeName" = :volumeName', { volumeName })
-      .andWhere(`a."manifestSummary"->>'sink' = 's3-archive'`)
+      .andWhere(`a."manifestSummary"->>'sink' IN ('s3-archive', 'kopia')`)
+      .andWhere('(a."expiresAt" IS NULL OR a."expiresAt" > now())')
+      .andWhere(NOT_RETIRED)
+      .andWhere(
+        `EXISTS (SELECT 1 FROM backup_artifact_locations p WHERE p."artifactId" = a.id ` +
+          `AND p.role = 'primary' AND p.state IN ('available', 'verified'))`,
+      )
       .orderBy('a.createdAt', 'DESC')
       .limit(1)
       .getOne();

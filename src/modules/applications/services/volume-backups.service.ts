@@ -3,7 +3,11 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  Optional,
+  ServiceUnavailableException,
 } from '@nestjs/common';
+import { InjectQueue } from '@nestjs/bull';
+import { Queue } from 'bull';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { v4 as uuid } from 'uuid';
@@ -13,7 +17,6 @@ import { VolumeExportFactory } from '../../providers/core/factories/volume-expor
 import {
   ExportResult,
   IVolumeExport,
-  VolumeExportCapabilities,
 } from '../../providers/interfaces/volume-export.interface';
 import { EncryptionService } from '../../shared/encryption/services/encryption.service';
 import {
@@ -26,80 +29,22 @@ import { AppResourcesRepository } from '../repositories/app-resources.repository
 import { ApplicationVolumeClaimsService } from './application-volume-claims.service';
 import { VolumeCopyLedgerService } from './volume-copy-ledger.service';
 import { BackupDestinationEntity } from '../../backups/entities/backup-destination.entity';
-import { ObjectStorageProvisionerFactory } from '../../storage/factories/object-storage-provisioner.factory';
-import { StorageBackendProvider } from '../../storage/enums/storage-backend-provider.enum';
 import { AppOperationRunner } from './app-operation-runner.service';
 import { OperationType } from '../../infrastructure/servers/entities/infrastructure-operations.entity';
 import { exportsRoot } from '../../backups/utils/destination-layout.util';
+import { VolumeKopiaSnapshotService } from './volume-kopia-snapshot.service';
+import { VolumeBackupDestinationService } from './volume-backup-destination.service';
+import {
+  BackupResponse,
+  CreateBackupForAppRequest,
+  DeleteBackupForAppRequest,
+  QueuedBackup,
+  BackupDestination,
+  ResolvedDestination,
+  StartedBackup,
+} from './volume-backups.types';
 
-export interface BackupDestination {
-  bucket: string;
-  endpoint: string;
-  region: string;
-  accessKeyId: string;
-  secretAccessKey: string;
-  /** Optional override; defaults to flui/<cluster>/<app>/<timestamp>/. */
-  keyPrefix?: string;
-}
-
-export interface CreateBackupForAppRequest {
-  applicationId: string;
-  /** Optional PVC name. If omitted and the app has exactly one PVC, that one is used. */
-  volumeName?: string;
-  /** Optional human-friendly suffix appended to the generated key prefix. */
-  description?: string;
-  /**
-   * Explicit destination. When omitted the service auto-provisions a bucket
-   * via the cluster provider's object-storage provisioner (Scaleway: full
-   * auto, Hetzner: requires Object Storage credentials connected).
-   */
-  destination?: BackupDestination;
-  /**
-   * A registered backup destination to archive into. Preferred over passing
-   * raw credentials: the copy is then linked to that destination in the ledger,
-   * so it can be listed, previewed and restored like any other backup.
-   */
-  destinationId?: string;
-  /**
-   * Required when destination is auto-provisioned (the user owns the bucket
-   * naming/billing scope).
-   */
-  userId?: string;
-  /** Copy a volume that holds a live database anyway. */
-  allowInconsistent?: boolean;
-  /** Stop the writers, copy at rest, then start them again. */
-  pause?: boolean;
-  /** The policy that scheduled this copy, when one did. */
-  policyId?: string;
-  /** When retention says this copy stops being kept. */
-  expiresAt?: Date;
-}
-
-export interface BackupResponse {
-  exportId: string;
-  appId: string;
-  namespace: string;
-  sourcePvcName: string;
-  sizeGb: number;
-  actualBytes?: number;
-  createdAt: string;
-  ready: boolean;
-  destination: Omit<BackupDestination, 'accessKeyId' | 'secretAccessKey'>;
-  provider: CloudProvider;
-  providerCapabilities: VolumeExportCapabilities;
-  /** Set only when there is something true to say about this copy. */
-  warning?: string;
-  /** With a pause: seconds from stopping the application to it answering again. */
-  interruptionSeconds?: number;
-  /** With a pause: whether the application was ready again before Flui stopped waiting. */
-  applicationBack?: boolean;
-}
-
-export interface DeleteBackupForAppRequest {
-  applicationId: string;
-  exportId: string;
-  destination: BackupDestination;
-}
+export * from './volume-backups.types';
 
 @Injectable()
 export class VolumeBackupsService {
@@ -118,9 +63,97 @@ export class VolumeBackupsService {
     private readonly pauseLease: VolumePauseLeaseService,
     private readonly volumeExportFactory: VolumeExportFactory,
     private readonly encryptionService: EncryptionService,
-    private readonly objectStorageProvisionerFactory: ObjectStorageProvisionerFactory,
+    private readonly destinationResolver: VolumeBackupDestinationService,
     private readonly runner: AppOperationRunner,
+    private readonly kopiaSnapshots: VolumeKopiaSnapshotService,
+    @Optional() @InjectQueue('backup') private readonly queue?: Queue,
   ) {}
+
+  /**
+   * A backup asked for by a person, answered with an operation at once.
+   *
+   * The first snapshot of a large volume can take hours, which no HTTP request
+   * should be held open for. What can be refused cheaply is refused here — an
+   * unknown volume, several volumes and none named, a destination that does not
+   * exist — and the copy itself runs from the queue, reporting into the
+   * operation returned now.
+   */
+  async startForApp(
+    request: CreateBackupForAppRequest,
+  ): Promise<StartedBackup> {
+    if (!this.queue) {
+      throw new ServiceUnavailableException(
+        'The backup queue is not available',
+      );
+    }
+    const { app, kubeconfig } = await this.resolveAppContext(
+      request.applicationId,
+    );
+    const pvcName = await this.resolvePvcName(
+      kubeconfig,
+      app,
+      request.volumeName,
+    );
+    if (request.destinationId) {
+      const dest = await this.destinationRepository.findOne({
+        where: { id: request.destinationId },
+      });
+      if (!dest) {
+        throw new NotFoundException(
+          `Backup destination ${request.destinationId} not found`,
+        );
+      }
+    }
+    const op = await this.runner.open({
+      appId: app.id,
+      operationType: OperationType.APP_BACKUP_CREATE,
+      resourceName: app.slug,
+      userId: request.userId,
+      metadata: { pvcName, queued: true },
+    });
+    const { destination, ...rest } = request;
+    const queued: QueuedBackup = {
+      request: { ...rest, volumeName: pvcName, operationId: op.id },
+      ...(destination
+        ? {
+            destinationSealed: this.encryptionService.encrypt(
+              JSON.stringify(destination),
+            ),
+          }
+        : {}),
+    };
+    await this.queue.add('app-volume-backup', queued, {
+      attempts: 1,
+      removeOnComplete: true,
+      removeOnFail: true,
+    });
+    return {
+      operationId: op.id,
+      applicationId: app.id,
+      volumeName: pvcName,
+      status: 'pending',
+    };
+  }
+
+  /** The queued half of `startForApp`. Failures are recorded on the operation. */
+  async runQueued(queued: QueuedBackup): Promise<void> {
+    const destination = queued.destinationSealed
+      ? (JSON.parse(
+          this.encryptionService.decrypt(queued.destinationSealed),
+        ) as BackupDestination)
+      : undefined;
+    try {
+      await this.createForApp({ ...queued.request, destination });
+    } catch (err) {
+      // Refusals before the copy started never reached the operation.
+      if (queued.request.operationId) {
+        await this.runner.failIfPending(queued.request.operationId, err);
+      }
+      this.logger.warn(
+        `[backup] queued backup of ${queued.request.applicationId} failed: ${(err as Error)?.message}`,
+      );
+    }
+  }
 
   async createForApp(
     request: CreateBackupForAppRequest,
@@ -133,13 +166,28 @@ export class VolumeBackupsService {
       request.volumeName,
     );
 
-    const destination = await this.resolveDestination(
+    const destination = await this.destinationResolver.resolve(
       request.destination,
       request.destinationId,
       provider,
       cluster.id,
       request.userId,
     );
+
+    // A registered destination has a passphrase to derive the repository key
+    // from, so its copies are kopia snapshots. A bucket passed as raw
+    // credentials or provisioned on the fly has no key, and keeps the
+    // full-copy archive it always had.
+    if (destination.registered) {
+      return this.kopiaSnapshots.create(
+        request,
+        { app, cluster, kubeconfig, ops, provider },
+        pvcName,
+        destination as ResolvedDestination & {
+          registered: BackupDestinationEntity;
+        },
+      );
+    }
 
     const keyPrefix = this.buildKeyPrefix(
       exportsRoot(destination.keyPrefix, `flui/${cluster.id}`),
@@ -154,6 +202,7 @@ export class VolumeBackupsService {
         resourceName: app.slug,
         metadata: { pvcName, bucket: destination.bucket, keyPrefix },
         userId: request.userId,
+        operationId: request.operationId,
       },
       async (): Promise<BackupResponse> => {
         const pausedAt = Date.now();
@@ -201,7 +250,7 @@ export class VolumeBackupsService {
         this.logger.log(
           `[backup] Archived app=${app.slug} pvc=${pvcName} → s3://${destination.bucket}/${keyPrefix} (size=${exp.sourceSizeGb}GB)`,
         );
-        await this.copyLedger.record({
+        const recorded = await this.copyLedger.record({
           clusterId: cluster.id,
           applicationId: app.id,
           applicationSlug: app.slug,
@@ -215,6 +264,7 @@ export class VolumeBackupsService {
           destinationId: request.destinationId,
           policyId: request.policyId,
           expiresAt: request.expiresAt,
+          backupJobId: request.backupJobId,
           ...facts,
         });
         return {
@@ -234,6 +284,9 @@ export class VolumeBackupsService {
           },
           provider,
           providerCapabilities: ops.capabilities,
+          encrypted: !!exp.encrypted,
+          engine: 'rclone',
+          artifactId: recorded?.id,
           warning: describeCopyRisk(facts, exp.writesObservedDuringCopy),
           ...(interruptionSeconds !== undefined
             ? { interruptionSeconds, applicationBack: backReady }
@@ -242,100 +295,6 @@ export class VolumeBackupsService {
       },
     );
     return { ...result, operationId };
-  }
-
-  /**
-   * If the caller passed an explicit destination, use it. Otherwise auto-
-   * provision via the matching object-storage provisioner. This requires
-   * the cluster provider's compute credentials to be configured (Scaleway:
-   * the same key powers Object Storage; Hetzner: separate Object Storage
-   * key required).
-   */
-  private async resolveDestination(
-    explicit: BackupDestination | undefined,
-    destinationId: string | undefined,
-    cloudProvider: CloudProvider,
-    clusterId: string,
-    userId: string | undefined,
-  ): Promise<BackupDestination> {
-    if (explicit) return explicit;
-
-    // A registered destination is the good path: its credentials are already
-    // encrypted at rest, and the copy ends up linked to it in the ledger
-    // instead of pointing at a bucket nothing else knows about.
-    if (destinationId) {
-      const dest = await this.destinationRepository.findOne({
-        where: { id: destinationId },
-      });
-      if (!dest) {
-        throw new NotFoundException(
-          `Backup destination ${destinationId} not found`,
-        );
-      }
-      return {
-        bucket: dest.bucket,
-        endpoint: dest.endpoint,
-        region: dest.region,
-        accessKeyId: this.encryptionService.decrypt(dest.accessKeyEncrypted),
-        secretAccessKey: this.encryptionService.decrypt(
-          dest.secretKeyEncrypted,
-        ),
-        keyPrefix: dest.pathPrefix,
-      };
-    }
-
-    const storageProvider = this.cloudToStorageProvider(cloudProvider);
-    if (!storageProvider) {
-      throw new BadRequestException(
-        `No object-storage provisioner available for provider=${cloudProvider}; ` +
-          `pass an explicit destination instead`,
-      );
-    }
-    const provisioner =
-      this.objectStorageProvisionerFactory.forProvider(storageProvider);
-    if (!provisioner) {
-      throw new BadRequestException(
-        `Object-storage provisioner not registered for ${storageProvider}; ` +
-          `pass an explicit destination instead`,
-      );
-    }
-    if (!userId) {
-      throw new BadRequestException(
-        'userId is required to auto-provision a backup destination',
-      );
-    }
-    const readiness = await provisioner.isReady(userId);
-    if (!readiness.ready) {
-      throw new BadRequestException(
-        readiness.message ??
-          `Object-storage provisioner not ready (${readiness.reason ?? 'unknown'})`,
-      );
-    }
-    const result = await provisioner.provisionDestination({
-      userId,
-      clusterId,
-    });
-    return {
-      bucket: result.bucket,
-      endpoint: result.endpoint,
-      region: result.region,
-      accessKeyId: result.accessKey,
-      secretAccessKey: result.secretKey,
-      keyPrefix: result.pathPrefix,
-    };
-  }
-
-  private cloudToStorageProvider(
-    cloudProvider: CloudProvider,
-  ): StorageBackendProvider | null {
-    switch (cloudProvider) {
-      case CloudProvider.SCALEWAY:
-        return StorageBackendProvider.SCALEWAY_OBJECT_STORAGE;
-      case CloudProvider.HETZNER:
-        return StorageBackendProvider.HETZNER_OBJECT_STORAGE;
-      default:
-        return null;
-    }
   }
 
   async deleteForApp(request: DeleteBackupForAppRequest): Promise<void> {

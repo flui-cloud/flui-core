@@ -2,11 +2,16 @@ import { Command, Flags } from '@oclif/core';
 import chalk from 'chalk';
 import { ApiClient } from '../../lib/api-client';
 import { ConfigStorage } from '../../lib/config-storage';
-import { BackupClient, BackupArtifact } from '../../lib/backup-client';
+import {
+  BackupClient,
+  BackupArtifact,
+  NeedsDecisionItem,
+} from '../../lib/backup-client';
 import { printContextBanner } from '../../lib/context-banner';
 import { CliAppService } from '../../lib/services/cli-app.service';
 import { resolveClusterRef } from '../../lib/resolve-cluster';
 import { formatBytes } from '../../lib/format-bytes';
+import { printNeedsDecision } from '../../lib/cluster-protection-format';
 
 interface DbPitrStatus {
   continuousBackupEnabled: boolean;
@@ -30,6 +35,13 @@ interface FleetStatus {
   };
   lastSuccessfulBackupAt?: string;
   alerts: Array<{ severity: string; message: string }>;
+  clusters?: Array<{
+    clusterId: string;
+    name: string;
+    protected: boolean;
+    needsDecision: NeedsDecisionItem[];
+    pending?: number;
+  }>;
 }
 
 interface FleetCoverage {
@@ -58,18 +70,23 @@ const COVERAGE_REASON: Record<string, string> = {
   never_succeeded: 'no backup has succeeded yet',
   left_out: 'the last backup left its volumes out',
   stale: 'last backup is older than two scheduled runs',
-  label_selector: 'covered by a label selector, check it',
   awaiting_first_run: 'waiting for the first scheduled run',
 };
 
 /**
- * The interesting cases are the gaps *between* engines — a database inside a
- * cluster policy that Velero silently skips, an application whose only copy is
- * a clone that its own deletion would remove — so every engine is answered here
- * together rather than one command at a time.
+ * The interesting cases are the gaps *between* engines — an application whose
+ * only copy is a clone that its own deletion would remove, a volume the last
+ * copy had to leave out — so every engine is answered here together rather
+ * than one command at a time.
  */
 interface AppProtection {
   protectedOffCluster: boolean;
+  beforeDeploy?: {
+    enabled: boolean;
+    required: boolean;
+    takes: { restorePoint: boolean; dump: boolean; volumes: boolean };
+    warning?: string;
+  } | null;
   policies: Array<{
     name: string;
     enabled: boolean;
@@ -149,6 +166,7 @@ export default class BackupStatus extends Command {
         this.log(`  ${this.severity(alert.severity)} ${alert.message}`);
       }
     }
+    this.printClusters(status);
     if (coverage) this.printCoverage(coverage);
     this.log('');
     this.log(chalk.dim('   flui backup status --app <name>   one application'));
@@ -204,6 +222,25 @@ export default class BackupStatus extends Command {
     return result;
   }
 
+  /** Which clusters protect every application automatically, and what needs a decision. */
+  private printClusters(status: FleetStatus) {
+    const clusters = status.clusters ?? [];
+    if (clusters.length === 0) return;
+    this.log('');
+    this.log(`  ${chalk.bold('Clusters')}`);
+    for (const c of clusters) {
+      const mark = c.protected ? chalk.green('✓') : chalk.dim('–');
+      let how = 'not protected as a whole (`flui backup enable cluster`)';
+      if (c.protected) {
+        how = c.pending
+          ? `new applications get a policy; ${c.pending} not protected yet (waiting to run or retried)`
+          : 'every application protected, new ones included';
+      }
+      this.log(`    ${mark} ${c.name}  ${chalk.dim(how)}`);
+    }
+    printNeedsDecision(clusters.flatMap((c) => c.needsDecision));
+  }
+
   /** Applications holding data, the unprotected ones first. */
   private printCoverage(coverage: FleetCoverage) {
     const s = coverage.summary;
@@ -226,16 +263,34 @@ export default class BackupStatus extends Command {
 
   /** Every policy covering the app, with where it writes and its last run. */
   private printPolicies(protection: AppProtection | null) {
+    this.printBeforeDeploy(protection?.beforeDeploy);
     if (!protection?.policies.length) return;
     this.log(`  ${chalk.bold('Backup policies')}`);
     for (const p of protection.policies) {
-      const last = p.lastRun ? this.describeLastRun(p.lastRun) : 'no run yet';
-      this.log(
-        `    ${p.name.padEnd(28)} ${(p.enabled ? chalk.green('on') : chalk.yellow('stopped')).padEnd(8)} → ${p.destination?.name ?? '?'}  ${chalk.dim(last)}`,
-      );
+      this.log(this.policyLine(p));
       if (p.lastRun?.error) this.log(chalk.red(`      ${p.lastRun.error}`));
     }
     this.log('');
+  }
+
+  private printBeforeDeploy(before: AppProtection['beforeDeploy'] | undefined) {
+    if (!before?.enabled) return;
+    const takes = [
+      before.takes.restorePoint ? 'a database restore point' : '',
+      before.takes.dump ? 'a database dump' : '',
+      before.takes.volumes ? 'a copy of the volumes' : '',
+    ].filter(Boolean);
+    const what = takes.length ? takes.join(', ') : chalk.yellow('nothing yet');
+    const required = before.required ? chalk.dim('  (required)') : '';
+    this.log(`  ${chalk.bold('Before each deploy')}  ${what}${required}`);
+    if (before.warning) this.log(chalk.yellow(`    ${before.warning}`));
+    this.log('');
+  }
+
+  private policyLine(p: AppProtection['policies'][number]): string {
+    const last = p.lastRun ? this.describeLastRun(p.lastRun) : 'no run yet';
+    const state = p.enabled ? chalk.green('on') : chalk.yellow('stopped');
+    return `    ${p.name.padEnd(28)} ${state.padEnd(8)} → ${p.destination?.name ?? '?'}  ${chalk.dim(last)}`;
   }
 
   private describeLastRun(run: { status: string; at: string | null }): string {

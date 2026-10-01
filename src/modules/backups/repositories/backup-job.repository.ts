@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { BackupJobEntity } from '../entities/backup-job.entity';
+import { BackupJobStatus } from '../enums/backup-job.enum';
 
 @Injectable()
 export class BackupJobRepository {
@@ -22,10 +23,18 @@ export class BackupJobRepository {
     return this.repo.findOne({ where: { id } });
   }
 
-  findByPolicy(policyId: string): Promise<BackupJobEntity[]> {
+  findByPolicy(policyId: string, take?: number): Promise<BackupJobEntity[]> {
     return this.repo.find({
       where: { policyId },
       order: { createdAt: 'DESC' },
+      ...(take ? { take } : {}),
+    });
+  }
+
+  findLastCompletedByPolicy(policyId: string): Promise<BackupJobEntity | null> {
+    return this.repo.findOne({
+      where: { policyId, status: BackupJobStatus.COMPLETED },
+      order: { finishedAt: 'DESC' },
     });
   }
 

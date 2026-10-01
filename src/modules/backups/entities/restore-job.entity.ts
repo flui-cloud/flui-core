@@ -11,6 +11,7 @@ import {
   RestoreJobStatus,
   RestoreTargetKind,
   RestoreStrategy,
+  STORED_RESTORE_STRATEGIES,
 } from '../enums/restore-job.enum';
 
 export interface RestoreTargetSelector {
@@ -61,7 +62,7 @@ export class RestoreJobEntity {
 
   @Column({
     type: 'enum',
-    enum: RestoreStrategy,
+    enum: STORED_RESTORE_STRATEGIES,
     nullable: true,
   })
   strategy?: RestoreStrategy;
@@ -69,9 +70,6 @@ export class RestoreJobEntity {
   /** For PG_PITR: recover to this instant; null = latest (end of WAL). */
   @Column({ type: 'timestamptz', nullable: true })
   recoveryTargetTime?: Date;
-
-  @Column({ length: 253, nullable: true })
-  veleroRestoreName?: string;
 
   @Column({
     type: 'enum',

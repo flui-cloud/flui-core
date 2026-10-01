@@ -60,7 +60,6 @@ export enum OperationType {
   // Backup operations
   CREATE_BACKUP_DESTINATION = 'create_backup_destination',
   HEALTH_CHECK_DESTINATION = 'health_check_destination',
-  INSTALL_VELERO = 'install_velero',
   UNINSTALL_VELERO = 'uninstall_velero',
   RUN_BACKUP_JOB = 'run_backup_job',
   REPLICATE_BACKUP = 'replicate_backup',
@@ -226,21 +225,15 @@ export enum OperationStep {
   AUTHZ_UNINSTALL_DELETE_WORKLOAD = 'authz_uninstall_delete_workload',
   AUTHZ_UNINSTALL_FINALIZE = 'authz_uninstall_finalize',
 
-  // Velero install
-  VELERO_INSTALL_RENDER_MANIFESTS = 'velero_install_render_manifests',
-  VELERO_INSTALL_APPLY_NAMESPACE = 'velero_install_apply_namespace',
-  VELERO_INSTALL_APPLY_CRDS = 'velero_install_apply_crds',
-  VELERO_INSTALL_APPLY_RBAC = 'velero_install_apply_rbac',
-  VELERO_INSTALL_APPLY_CREDENTIALS_SECRET = 'velero_install_apply_credentials_secret',
-  VELERO_INSTALL_APPLY_DEPLOYMENT = 'velero_install_apply_deployment',
-  VELERO_INSTALL_APPLY_BSL = 'velero_install_apply_bsl',
-  VELERO_INSTALL_APPLY_VSL = 'velero_install_apply_vsl',
-  VELERO_INSTALL_WAIT_READY = 'velero_install_wait_ready',
-  VELERO_INSTALL_FINALIZE = 'velero_install_finalize',
+  // Removing the retired cluster-backup engine from a cluster
+  VELERO_UNINSTALL_INSPECT = 'velero_uninstall_inspect',
+  VELERO_UNINSTALL_STOP = 'velero_uninstall_stop',
+  VELERO_UNINSTALL_RELEASE = 'velero_uninstall_release',
+  VELERO_UNINSTALL_REMOVE = 'velero_uninstall_remove',
+  VELERO_UNINSTALL_VERIFY = 'velero_uninstall_verify',
 
   // Run backup job
   BACKUP_RUN_RESOLVE_SCOPE = 'backup_run_resolve_scope',
-  BACKUP_RUN_CREATE_VELERO_CR = 'backup_run_create_velero_cr',
   BACKUP_RUN_WATCH_PROGRESS = 'backup_run_watch_progress',
   BACKUP_RUN_RECORD_ARTIFACT = 'backup_run_record_artifact',
   BACKUP_RUN_ENQUEUE_REPLICATION = 'backup_run_enqueue_replication',
@@ -255,8 +248,7 @@ export enum OperationStep {
 
   // Restore
   RESTORE_SELECT_SOURCE = 'restore_select_source',
-  RESTORE_ENSURE_BSL = 'restore_ensure_bsl',
-  RESTORE_CREATE_VELERO_CR = 'restore_create_velero_cr',
+  RESTORE_INSTALL_TARGET = 'restore_install_target',
   RESTORE_WATCH_PROGRESS = 'restore_watch_progress',
   RESTORE_POSTPROCESS = 'restore_postprocess',
 
@@ -294,7 +286,6 @@ export enum OperationStep {
   QUICK_SETUP_PROVISION_PRIMARY = 'quick_setup_provision_primary',
   QUICK_SETUP_PROVISION_REPLICA = 'quick_setup_provision_replica',
   QUICK_SETUP_CREATE_POLICY = 'quick_setup_create_policy',
-  QUICK_SETUP_INSTALL_VELERO = 'quick_setup_install_velero',
   QUICK_SETUP_RUN_FIRST_BACKUP = 'quick_setup_run_first_backup',
   QUICK_SETUP_FINALIZE = 'quick_setup_finalize',
 
@@ -448,6 +439,29 @@ export interface K3sUpgradeOperationMetadata extends BaseOperationMetadata {
   k3sUpgrades?: Record<string, K3sClusterUpgradeState>;
 }
 
+/**
+ * Values older operation rows may carry that nothing writes any more. They
+ * stay in the columns' types: Postgres cannot drop an enum value rows use, and
+ * a column declared without them would have `synchronize` try to.
+ */
+export const RETIRED_OPERATION_TYPES = ['install_velero'] as const;
+export const RETIRED_OPERATION_STEPS = [
+  'velero_install_render_manifests',
+  'velero_install_apply_namespace',
+  'velero_install_apply_crds',
+  'velero_install_apply_rbac',
+  'velero_install_apply_credentials_secret',
+  'velero_install_apply_deployment',
+  'velero_install_apply_bsl',
+  'velero_install_apply_vsl',
+  'velero_install_wait_ready',
+  'velero_install_finalize',
+  'backup_run_create_velero_cr',
+  'restore_ensure_bsl',
+  'restore_create_velero_cr',
+  'quick_setup_install_velero',
+] as const;
+
 // Union type for all metadata types
 export type OperationMetadata =
   | CreateServerOperationMetadata
@@ -466,7 +480,7 @@ export class InfrastructureOperationEntity {
 
   @Column({
     type: 'enum',
-    enum: OperationType,
+    enum: [...Object.values(OperationType), ...RETIRED_OPERATION_TYPES],
     nullable: true,
   })
   operationType: OperationType;
@@ -575,7 +589,7 @@ export class InfrastructureOperationEntity {
 
   @Column({
     type: 'enum',
-    enum: OperationStep,
+    enum: [...Object.values(OperationStep), ...RETIRED_OPERATION_STEPS],
     nullable: true,
   })
   currentStep?: OperationStep;

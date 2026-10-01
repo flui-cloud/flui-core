@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { In, Repository } from 'typeorm';
 import { BackupJobEntity } from '../../backups/entities/backup-job.entity';
 import { BackupArtifactEntity } from '../../backups/entities/backup-artifact.entity';
 import { BackupArtifactLocationEntity } from '../../backups/entities/backup-artifact-location.entity';
@@ -11,6 +11,16 @@ import {
 import { BackupEngineClass } from '../../backups/enums/backup-engine-class.enum';
 import { DestinationRole } from '../../backups/enums/destination-role.enum';
 import { ArtifactLocationState } from '../../backups/enums/artifact-location-state.enum';
+import { EncryptionMode } from '../../backups/enums/destination-health.enum';
+import {
+  KOPIA_ENGINE,
+  KOPIA_SINK,
+  KopiaSnapshotRecord,
+} from '../../backups/utils/kopia-repository.util';
+import {
+  KopiaListedSnapshot,
+  snapshotsGone,
+} from '../../backups/utils/kopia-retention.util';
 
 /**
  * What Flui did to the writers before copying — never a claim about the volume.
@@ -36,7 +46,7 @@ export interface RecordedVolumeCopy {
   userId?: string;
   /** The export primitive's own id — `engineRef` on the artifact. */
   exportId: string;
-  sink: 'pvc-clone' | 's3-archive';
+  sink: 'pvc-clone' | 's3-archive' | 'kopia';
   sizeBytes?: number;
   /** pvc-clone: the sibling PVC the copy landed in. */
   clonePvcName?: string;
@@ -74,6 +84,18 @@ export interface RecordedVolumeCopy {
   policyId?: string;
   /** When retention says this copy stops being kept. */
   expiresAt?: Date;
+  /** s3-archive written through rclone crypt, keyed from its destination. */
+  encryption?: { cipher: string; mode: EncryptionMode };
+  /**
+   * The run this copy belongs to, when a policy's run already has a job: the
+   * artifact hangs off that job, so the run's history shows the copy's size,
+   * encryption and whether it is still stored, instead of a second job.
+   */
+  backupJobId?: string;
+  /** The volume's declared size, so a restore sizes its new volume from the row. */
+  sourceSizeGb?: number;
+  /** kopia: the snapshot and what it cost. */
+  kopia?: KopiaSnapshotRecord;
 }
 
 /**
@@ -214,25 +236,97 @@ export class VolumeCopyLedgerService {
     }
   }
 
+  /**
+   * Follows kopia's retention: a snapshot kopia no longer lists is marked
+   * expired on its row, which is what the activity view reads.
+   *
+   * The row stays as history and its location says `expired`; nothing is
+   * deleted here, and nothing needs to be — kopia removed the snapshot and its
+   * next maintenance frees the space. Best effort, like {@link record}.
+   */
+  async followKopiaRetention(args: {
+    applicationId: string;
+    volumeName: string;
+    destinationId: string;
+    listed: ReadonlyArray<KopiaListedSnapshot>;
+  }): Promise<string[]> {
+    try {
+      const rows = await this.kopiaRows(
+        args.applicationId,
+        args.destinationId,
+        args.volumeName,
+      );
+      const gone = snapshotsGone(
+        rows.map(({ artifact, location }) => {
+          const kopia = artifact.manifestSummary?.kopia as
+            | KopiaSnapshotRecord
+            | undefined;
+          return {
+            artifactId: artifact.id,
+            snapshotId: kopia?.snapshotId ?? '',
+            source: kopia?.source,
+            gone: location.state === ArtifactLocationState.EXPIRED,
+          };
+        }),
+        args.listed,
+      );
+      if (gone.length === 0) return [];
+      await this.locationRepo.update(
+        { artifactId: In(gone), destinationId: args.destinationId },
+        { state: ArtifactLocationState.EXPIRED },
+      );
+      return gone;
+    } catch (err: any) {
+      this.logger.warn(
+        `[volume-copy] kopia retention not mirrored for ${args.volumeName}: ${err?.message}`,
+      );
+      return [];
+    }
+  }
+
+  /** When a kopia repository was last spot-checked, from its rows. */
+  async lastKopiaVerification(
+    applicationId: string,
+    destinationId: string,
+  ): Promise<Date | null> {
+    const rows = await this.kopiaRows(applicationId, destinationId);
+    const times = rows
+      .map(({ location }) => location.verifiedAt)
+      .filter((d): d is Date => !!d)
+      .map((d) => new Date(d).getTime());
+    return times.length ? new Date(Math.max(...times)) : null;
+  }
+
+  private async kopiaRows(
+    applicationId: string,
+    destinationId: string,
+    volumeName?: string,
+  ): Promise<
+    Array<{
+      artifact: BackupArtifactEntity;
+      location: BackupArtifactLocationEntity;
+    }>
+  > {
+    const artifacts = await this.artifactRepo.find({
+      where: {
+        applicationId,
+        engineClass: BackupEngineClass.VOLUME_COPY,
+        engine: KOPIA_ENGINE,
+        ...(volumeName ? { volumeName } : {}),
+      },
+      relations: ['locations'],
+    });
+    return artifacts.flatMap((artifact) =>
+      (artifact.locations ?? [])
+        .filter((l) => l.destinationId === destinationId)
+        .map((location) => ({ artifact, location })),
+    );
+  }
+
   async record(copy: RecordedVolumeCopy): Promise<BackupArtifactEntity | null> {
     try {
-      const now = new Date();
-      const job = await this.jobRepo.save(
-        this.jobRepo.create({
-          policyId: copy.policyId,
-          clusterId: copy.clusterId,
-          applicationId: copy.applicationId,
-          volumeName: copy.volumeName,
-          userId: copy.userId,
-          triggerType: copy.policyId
-            ? BackupJobTriggerType.SCHEDULED
-            : BackupJobTriggerType.ON_DEMAND,
-          triggerContext: { sink: copy.sink, app: copy.applicationSlug },
-          status: BackupJobStatus.COMPLETED,
-          startedAt: now,
-          finishedAt: now,
-        }),
-      );
+      const job = await this.jobFor(copy);
+      const kopia = copy.sink === KOPIA_SINK ? copy.kopia : undefined;
 
       const artifact = await this.artifactRepo.save(
         this.artifactRepo.create({
@@ -241,52 +335,24 @@ export class VolumeCopyLedgerService {
           applicationId: copy.applicationId,
           volumeName: copy.volumeName,
           engineClass: BackupEngineClass.VOLUME_COPY,
+          engine: kopia ? KOPIA_ENGINE : undefined,
           engineRef: copy.exportId.slice(0, 64),
-          expiresAt: copy.expiresAt,
+          // Never on a kopia row: kopia's own retention decides, the ledger
+          // follows it, and a date here would hand the repository to a reaper
+          // that deletes by prefix.
+          expiresAt: kopia ? undefined : copy.expiresAt,
+          encryptionMode: copy.encryption?.mode ?? EncryptionMode.NONE,
           sizeBytes:
             copy.sizeBytes === undefined ? undefined : String(copy.sizeBytes),
-          manifestSummary: {
-            sink: copy.sink,
-            applicationSlug: copy.applicationSlug,
-            sourcePvcName: copy.volumeName,
-            ...(copy.clonePvcName ? { clonePvcName: copy.clonePvcName } : {}),
-            ...(copy.bucket ? { bucket: copy.bucket } : {}),
-            // What Flui did and what it saw, so a reader can draw their own
-            // conclusion about consistency instead of trusting a verdict this
-            // code is not in a position to give.
-            quiesce: copy.quiesce ?? 'none',
-            ...(copy.writersAtStart === undefined
-              ? {}
-              : { writersAtStart: copy.writersAtStart }),
-            ...(copy.dataDirectoryDetected === undefined
-              ? {}
-              : { dataDirectoryDetected: copy.dataDirectoryDetected }),
-            ...(copy.acknowledgedInconsistent
-              ? { acknowledgedInconsistent: true }
-              : {}),
-            ...(copy.hook ? { hook: copy.hook } : {}),
-            // A clone lives on the application's own disk and carries its
-            // label, so removing the application removes the clone with it.
-            survivesAppDeletion: copy.sink === 's3-archive',
-          },
+          manifestSummary: manifestSummaryFor(copy, kopia),
         }),
       );
 
       // Only an S3 copy has a location: a clone is a PVC in the cluster, not an
       // object at a prefix, and inventing a location row for it would make
       // `restore preview` count objects that were never written.
-      if (copy.sink === 's3-archive' && copy.destinationId) {
-        await this.locationRepo.save(
-          this.locationRepo.create({
-            artifactId: artifact.id,
-            destinationId: copy.destinationId,
-            role: DestinationRole.PRIMARY,
-            state: ArtifactLocationState.AVAILABLE,
-            objectKeyPrefix: copy.objectKeyPrefix ?? '',
-            bytesStored:
-              copy.sizeBytes === undefined ? undefined : String(copy.sizeBytes),
-          }),
-        );
+      if (copy.sink !== 'pvc-clone' && copy.destinationId) {
+        await this.saveLocation(copy, copy.destinationId, artifact.id, kopia);
       }
 
       return artifact;
@@ -298,4 +364,94 @@ export class VolumeCopyLedgerService {
       return null;
     }
   }
+
+  private async jobFor(copy: RecordedVolumeCopy): Promise<{ id: string }> {
+    if (copy.backupJobId) return { id: copy.backupJobId };
+    const now = new Date();
+    return this.jobRepo.save(
+      this.jobRepo.create({
+        policyId: copy.policyId,
+        clusterId: copy.clusterId,
+        applicationId: copy.applicationId,
+        volumeName: copy.volumeName,
+        userId: copy.userId,
+        triggerType: copy.policyId
+          ? BackupJobTriggerType.SCHEDULED
+          : BackupJobTriggerType.ON_DEMAND,
+        triggerContext: { sink: copy.sink, app: copy.applicationSlug },
+        status: BackupJobStatus.COMPLETED,
+        startedAt: now,
+        finishedAt: now,
+      }),
+    );
+  }
+
+  private async saveLocation(
+    copy: RecordedVolumeCopy,
+    destinationId: string,
+    artifactId: string,
+    kopia: KopiaSnapshotRecord | undefined,
+  ): Promise<void> {
+    // A kopia snapshot stores only what was new; the rest is shared with
+    // the snapshots before it.
+    const stored = kopia ? kopia.uploadedBytes : copy.sizeBytes;
+    await this.locationRepo.save(
+      this.locationRepo.create({
+        artifactId,
+        destinationId,
+        role: DestinationRole.PRIMARY,
+        state: kopia?.verifiedAt
+          ? ArtifactLocationState.VERIFIED
+          : ArtifactLocationState.AVAILABLE,
+        objectKeyPrefix: copy.objectKeyPrefix ?? '',
+        bytesStored: stored === undefined ? undefined : String(stored),
+        ...(kopia?.verifiedAt
+          ? { verifiedAt: new Date(kopia.verifiedAt) }
+          : {}),
+      }),
+    );
+  }
+}
+
+function optional<K extends string, V>(
+  key: K,
+  value: V | undefined,
+): Partial<Record<K, V>> {
+  return value === undefined ? {} : ({ [key]: value } as Record<K, V>);
+}
+
+function manifestSummaryFor(
+  copy: RecordedVolumeCopy,
+  kopia: KopiaSnapshotRecord | undefined,
+): Record<string, unknown> {
+  return {
+    sink: copy.sink,
+    applicationSlug: copy.applicationSlug,
+    sourcePvcName: copy.volumeName,
+    ...(copy.clonePvcName ? { clonePvcName: copy.clonePvcName } : {}),
+    ...(copy.bucket ? { bucket: copy.bucket } : {}),
+    // What Flui did and what it saw, so a reader can draw their own
+    // conclusion about consistency instead of trusting a verdict this
+    // code is not in a position to give.
+    quiesce: copy.quiesce ?? 'none',
+    ...optional('writersAtStart', copy.writersAtStart),
+    ...optional('dataDirectoryDetected', copy.dataDirectoryDetected),
+    ...(copy.acknowledgedInconsistent
+      ? { acknowledgedInconsistent: true }
+      : {}),
+    ...(copy.hook ? { hook: copy.hook } : {}),
+    ...(copy.encryption
+      ? {
+          repository: {
+            objectKeyPrefix: copy.objectKeyPrefix ?? '',
+            cipher: copy.encryption.cipher,
+          },
+        }
+      : {}),
+    ...optional('sourceSizeGb', copy.sourceSizeGb),
+    ...(kopia ? { kopia } : {}),
+    // A clone lives on the application's own disk and carries its
+    // label, so removing the application removes the clone with it.
+    survivesAppDeletion: copy.sink !== 'pvc-clone',
+  };
 }

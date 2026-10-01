@@ -226,10 +226,22 @@ describe('what the person is asked, and with what attached', () => {
     expect(CYCLED.get('POST /infrastructure/clusters')?.bound).toBe(false);
   });
 
+  /**
+   * Restoring the previous control cluster's applications happens once per
+   * restored installation and names no resource of its own: every time it is
+   * asked, it is asked again.
+   */
+  it('offers no standing permission for restoring onto the control cluster', () => {
+    expect(
+      CYCLED.get('POST /infrastructure/clusters/control-restore')?.bound,
+    ).toBe(false);
+  });
+
   it('binds every other one to the resource it acts on', () => {
     const unbound = writes
       .flatMap((t) => t.routes ?? [])
       .filter((a) => a !== 'POST /infrastructure/clusters')
+      .filter((a) => a !== 'POST /infrastructure/clusters/control-restore')
       // One switch for the whole installation: there is no resource to bind.
       .filter((a) => a !== 'PUT /infrastructure/management-network')
       // Adding an alert destination creates the resource it would be bound to.

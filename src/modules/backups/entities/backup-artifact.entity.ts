@@ -8,11 +8,13 @@ import {
   OneToMany,
 } from 'typeorm';
 import { EncryptionMode } from '../enums/destination-health.enum';
-import { BackupEngineClass } from '../enums/backup-engine-class.enum';
+import {
+  BackupEngineClass,
+  STORED_ENGINE_CLASSES,
+} from '../enums/backup-engine-class.enum';
 import { BackupArtifactLocationEntity } from './backup-artifact-location.entity';
 
 @Entity('backup_artifacts')
-@Index('idx_backup_artifacts_velero_name', ['veleroBackupName'])
 @Index('idx_backup_artifacts_expires', ['expiresAt'])
 @Index('idx_backup_artifacts_application', ['applicationId', 'createdAt'])
 export class BackupArtifactEntity {
@@ -27,7 +29,7 @@ export class BackupArtifactEntity {
 
   /**
    * The application this artifact protects, when it protects exactly one.
-   * Null for a cluster-wide Velero backup and for the platform dump.
+   * Null for a retired cluster-wide backup and for the platform dump.
    */
   @Column({ type: 'uuid', nullable: true })
   applicationId?: string;
@@ -36,13 +38,9 @@ export class BackupArtifactEntity {
   @Column({ length: 253, nullable: true })
   volumeName?: string;
 
-  @Column({ length: 253, nullable: true })
-  veleroBackupName?: string;
-
   @Column({
     type: 'enum',
-    enum: BackupEngineClass,
-    default: BackupEngineClass.VOLUME,
+    enum: STORED_ENGINE_CLASSES,
   })
   engineClass: BackupEngineClass;
 

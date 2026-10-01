@@ -20,7 +20,10 @@ import {
   RestoreTargetKind,
   RestorePlacement,
 } from '../enums/restore-job.enum';
-import { BackupEngineClass } from '../enums/backup-engine-class.enum';
+import {
+  BackupEngineClass,
+  isRetiredEngineClass,
+} from '../enums/backup-engine-class.enum';
 import {
   InfrastructureOperationEntity,
   OperationStatus,
@@ -67,7 +70,6 @@ export class RestoreJobsService {
     const creds = this.destinationsService.toCredentials(dest);
     const usage = await backend.getUsage(creds, loc.objectKeyPrefix);
     return {
-      veleroBackupName: artifact.veleroBackupName,
       manifestSummary: artifact.manifestSummary,
       sizeBytes: artifact.sizeBytes,
       itemCount: artifact.itemCount,
@@ -75,43 +77,6 @@ export class RestoreJobsService {
       objectsAtPrefix: usage.objectCount,
       bytesAtPrefix: usage.bytes,
     };
-  }
-
-  /**
-   * Where this restore will put things, refusing to guess when both are
-   * possible.
-   *
-   * A database PITR only ever builds a new install, so asking would be noise.
-   * A Velero restore genuinely has two meanings: with no
-   * `existingResourcePolicy` it fills gaps and leaves the rest untouched,
-   * which is not a choice anybody made. `new` cannot be the default there
-   * either — on the same cluster it *means* a namespace mapping, and picking
-   * one silently would make the decision the operator was supposed to make.
-   */
-  private resolvePlacement(dto: CreateRestoreJobDto): RestorePlacement {
-    if (dto.targetKind === RestoreTargetKind.DATABASE) {
-      return RestorePlacement.NEW;
-    }
-    if (!dto.placement) {
-      throw new BadRequestException(
-        `A ${dto.targetKind} restore has to say where it puts things: ` +
-          'placement=new restores beside the original (pass targetSelector.namespaceMapping, ' +
-          'or a different targetClusterId); placement=existing replaces the objects in place.',
-      );
-    }
-    if (
-      dto.placement === RestorePlacement.EXISTING &&
-      dto.targetKind === RestoreTargetKind.CLUSTER
-    ) {
-      // There is no safe way to empty a whole cluster first, and restoring over
-      // a live one without emptying it is the accident this flag exists to end.
-      throw new BadRequestException(
-        'A whole-cluster restore cannot be done in place. Restore into another ' +
-          'cluster with placement=new and targetClusterId, or restore one ' +
-          'namespace at a time.',
-      );
-    }
-    return dto.placement;
   }
 
   async create(
@@ -129,30 +94,36 @@ export class RestoreJobsService {
       );
     }
 
-    const placement = this.resolvePlacement(dto);
-
-    const isDb = dto.targetKind === RestoreTargetKind.DATABASE;
-    if (isDb) {
-      if (artifact.engineClass !== BackupEngineClass.DATABASE) {
-        throw new BadRequestException(
-          'Artifact is not a database-class backup',
-        );
-      }
-      const newInstall = dto.targetSelector?.newInstall;
-      if (!newInstall?.name || !newInstall?.clusterId) {
-        throw new BadRequestException(
-          'Database restore requires targetSelector.newInstall { name, clusterId }',
-        );
-      }
-      if (
-        dto.recoveryTargetTime &&
-        this.engines.forEngine(artifact.engine).pointInTime === false
-      ) {
-        throw new BadRequestException(
-          'This database is backed up by scheduled dumps, which restore the moment each was taken and ' +
-            'nothing in between. Restore without a time, choosing the backup taken before the moment you need.',
-        );
-      }
+    // Only databases are restored through here. Volume backups come back
+    // through the application (`flui app backup restore`), which picks the
+    // engine that wrote them.
+    if (
+      dto.targetKind !== RestoreTargetKind.DATABASE ||
+      artifact.engineClass !== BackupEngineClass.DATABASE
+    ) {
+      throw new BadRequestException(
+        isRetiredEngineClass(artifact.engineClass)
+          ? 'This backup was written by the cluster backup engine Flui no longer has, and cannot be restored by Flui. ' +
+            'Its data is still in the destination.'
+          : 'Only a database backup is restored here (targetKind=database). ' +
+            'Restore a volume backup from its application: `flui app backup restore`.',
+      );
+    }
+    const placement = RestorePlacement.NEW;
+    const newInstall = dto.targetSelector?.newInstall;
+    if (!newInstall?.name || !newInstall?.clusterId) {
+      throw new BadRequestException(
+        'Database restore requires targetSelector.newInstall { name, clusterId }',
+      );
+    }
+    if (
+      dto.recoveryTargetTime &&
+      this.engines.forEngine(artifact.engine).pointInTime === false
+    ) {
+      throw new BadRequestException(
+        'This database is backed up by scheduled dumps, which restore the moment each was taken and ' +
+          'nothing in between. Restore without a time, choosing the backup taken before the moment you need.',
+      );
     }
 
     const op = await this.opRepo.save(
@@ -177,9 +148,7 @@ export class RestoreJobsService {
       // What the row will say was done. Read from the artifact's own engine,
       // because that is the tool the recovery will actually run — a fixed
       // `pg_pitr` was right only while `database` had one implementation.
-      strategy: isDb
-        ? this.engines.forEngine(artifact.engine).restoreStrategy
-        : dto.strategy,
+      strategy: this.engines.forEngine(artifact.engine).restoreStrategy,
       recoveryTargetTime: dto.recoveryTargetTime
         ? new Date(dto.recoveryTargetTime)
         : undefined,
@@ -188,13 +157,10 @@ export class RestoreJobsService {
     });
     const saved = await this.repo.save(entity);
 
-    await this.queue.add(
-      isDb ? BACKUP_JOB_TYPES.RUN_DB_RESTORE : BACKUP_JOB_TYPES.RUN_RESTORE,
-      {
-        restoreJobId: saved.id,
-        operationId: op.id,
-      },
-    );
+    await this.queue.add(BACKUP_JOB_TYPES.RUN_DB_RESTORE, {
+      restoreJobId: saved.id,
+      operationId: op.id,
+    });
     return saved;
   }
 

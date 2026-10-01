@@ -4,6 +4,7 @@ jest.mock('@kubernetes/client-node', () => ({}));
 jest.mock('ip-cidr', () => ({}));
 
 import { ClusterRebuildService } from './cluster-rebuild.service';
+import { ControlRestoreSourceService } from './control-restore-source.service';
 import { ClusterStatus, ClusterType } from '../entities/cluster.entity';
 import { ApplicationStatus } from '../../../applications/enums/application-status.enum';
 
@@ -460,7 +461,8 @@ describe('ClusterRebuildService endpoint naming, through a rebuild', () => {
     r.dataRestorer = {
       restoreInto: jest.fn(async () => []),
       forget: jest.fn(async () => undefined),
-      rearm: jest.fn(async () => 'policy-1'),
+      rearm: jest.fn(async () => ({ policyId: 'policy-1', continuous: true })),
+      loadDump: jest.fn(async () => null),
     };
     r.backupJobs = { createOnDemand: jest.fn(async () => ({ id: 'job-1' })) };
     r.zoneReconciliation = {
@@ -681,7 +683,8 @@ describe('ClusterRebuildService endpoint naming, through a rebuild', () => {
 describe('ClusterRebuildService, putting a rebuilt database back under protection', () => {
   function harness(
     opts: {
-      rearm?: () => Promise<string | null>;
+      rearm?: () => Promise<{ policyId: string; continuous: boolean } | null>;
+      loadDump?: () => Promise<string | null>;
     } = {},
   ) {
     const service = Object.create(
@@ -721,7 +724,13 @@ describe('ClusterRebuildService, putting a rebuilt database back under protectio
       }),
       rearm: jest.fn(async () => {
         order.push('rearm');
-        return opts.rearm ? await opts.rearm() : 'policy-1';
+        return opts.rearm
+          ? await opts.rearm()
+          : { policyId: 'policy-1', continuous: true };
+      }),
+      loadDump: jest.fn(async () => {
+        order.push('load');
+        return opts.loadDump ? await opts.loadDump() : null;
       }),
     };
     r.backupJobs = {
@@ -761,14 +770,14 @@ describe('ClusterRebuildService, putting a rebuilt database back under protectio
 
     const result = await h.run();
 
-    expect(h.order).toEqual(['forget', 'rearm', 'base']);
+    expect(h.order).toEqual(['forget', 'load', 'rearm', 'base']);
     expect(result.phase).toBe('reconciled');
     expect((result.notes as string[]).join(' ')).toMatch(/re-armed/);
   });
 
   it('fails the application rather than calling it rebuilt unprotected', async () => {
     // A note on a reconciled application is a lie no re-run would revisit.
-    // Failing keeps the phase at `deployed`, so the next run retries this only.
+    // Failing keeps the phase at `loaded`, so the next run retries this only.
     const h = harness({
       rearm: async () => {
         throw new Error('the policy has no destination');
@@ -781,7 +790,49 @@ describe('ClusterRebuildService, putting a rebuilt database back under protectio
     expect(result.error).toMatch(/no destination/);
     expect(
       (h.application.metadata as { rebuild: { phase: string } }).rebuild.phase,
+    ).toBe('loaded');
+  });
+
+  it('loads the newest dump into a database that boots empty, before re-arming', async () => {
+    const h = harness({
+      loadDump: async () => 'database: loaded the dump 20260930T0300Z',
+      rearm: async () => ({ policyId: 'policy-1', continuous: false }),
+    });
+
+    const result = await h.run();
+
+    expect(h.order).toEqual(['forget', 'load', 'rearm', 'base']);
+    expect(result.phase).toBe('reconciled');
+    const notes = (result.notes as string[]).join(' ');
+    expect(notes).toMatch(/loaded the dump 20260930T0300Z/);
+    expect(notes).toMatch(/scheduled dumps resumed/);
+    expect(notes).not.toMatch(/WAL/);
+  });
+
+  it('fails the application when the dump cannot be loaded, and retries only that', async () => {
+    const h = harness({
+      loadDump: async () => {
+        throw new Error('the dump d1 could not be loaded');
+      },
+    });
+
+    const result = await h.run();
+
+    expect(result.phase).toBe('failed');
+    expect(result.error).toMatch(/could not be loaded/);
+    expect(h.order).toEqual(['forget', 'load']);
+    expect(
+      (h.application.metadata as { rebuild: { phase: string } }).rebuild.phase,
     ).toBe('deployed');
+  });
+
+  it('never loads a dump twice when a re-run resumes after the load', async () => {
+    const h = harness();
+    h.application.metadata = { rebuild: { phase: 'loaded', to: 'to-1' } };
+
+    await h.run();
+
+    expect(h.order).toEqual(['forget', 'rearm', 'base']);
   });
 
   it('says nothing and takes no base when the application is not a database', async () => {
@@ -789,7 +840,7 @@ describe('ClusterRebuildService, putting a rebuilt database back under protectio
 
     const result = await h.run();
 
-    expect(h.order).toEqual(['forget', 'rearm']);
+    expect(h.order).toEqual(['forget', 'load', 'rearm']);
     expect(result.notes).toBeUndefined();
   });
 });
@@ -849,5 +900,352 @@ describe('ClusterRebuildService, a cluster rebuilt for the second time', () => {
     const old = { metadata: { rebuild: { phase: 'deployed' } } };
 
     expect(r.phaseOf(old, 'to-2')).toBe('deployed');
+  });
+});
+
+/**
+ * A single-cluster install restored from a platform backup: every application
+ * still names the control cluster the backup came from, a row the restore
+ * retired. These are the ways bringing them back onto the new control could
+ * go to the wrong place, in the wrong order, or not at all.
+ */
+describe('ClusterRebuildService, restoring onto a new control cluster', () => {
+  const oldControl = {
+    id: 'ctl-old',
+    name: 'control-cluster',
+    status: ClusterStatus.DELETED,
+    deletedAt: new Date('2026-09-30T00:00:00Z'),
+    clusterType: ClusterType.CONTROL,
+    kubeconfigEncrypted: 'old-kc',
+    masterIpAddress: '10.0.0.1',
+    createdAt: new Date('2026-01-01T00:00:00Z'),
+  };
+  const newControl = {
+    id: 'ctl-new',
+    name: 'control-cluster-2',
+    status: ClusterStatus.READY,
+    clusterType: ClusterType.CONTROL,
+    kubeconfigEncrypted: 'new-kc',
+    masterIpAddress: '10.0.0.9',
+    createdAt: new Date('2026-09-30T01:00:00Z'),
+  };
+
+  const app = (over: Record<string, unknown> = {}) => ({
+    id: 'app-1',
+    name: 'App One',
+    slug: 'app-one',
+    kind: 'APPLICATION',
+    clusterId: 'ctl-old',
+    status: ApplicationStatus.RUNNING,
+    replicas: 1,
+    volumes: [],
+    env: [],
+    resources: { cpu: { request: '100m' }, memory: { limit: '128Mi' } },
+    metadata: {},
+    ...over,
+  });
+
+  function make(
+    opts: {
+      clusters?: Record<string, unknown>[];
+      apps?: Record<string, unknown>[];
+      zones?: Array<{ clusterId: string; dnsZoneId: string; zoneName: string }>;
+    } = {},
+  ) {
+    const clusters = opts.clusters ?? [newControl, oldControl];
+    const apps = opts.apps ?? [app()];
+    const zones = opts.zones ?? [];
+    const service = Object.create(
+      ClusterRebuildService.prototype,
+    ) as ClusterRebuildService;
+    const r = service as unknown as Record<string, unknown>;
+    r.logger = { log: jest.fn(), warn: jest.fn(), error: jest.fn() };
+    r.clusterRepo = {
+      find: jest.fn(async () =>
+        [...clusters].sort(
+          (a, b) =>
+            (b.createdAt as Date).getTime() - (a.createdAt as Date).getTime(),
+        ),
+      ),
+      findOne: jest.fn(
+        async (q: { where: { id: string } }) =>
+          clusters.find((c) => c.id === q.where.id) ?? null,
+      ),
+      update: jest.fn(async () => undefined),
+    };
+    r.appRepo = {
+      createQueryBuilder: jest.fn(() => {
+        let clusterId = '';
+        const qb: Record<string, unknown> = {};
+        qb.where = jest.fn(
+          (_sql: string, p: { fromId?: string; id?: string }) => {
+            clusterId = p.fromId ?? p.id ?? '';
+            return qb;
+          },
+        );
+        for (const m of ['orWhere', 'orderBy']) qb[m] = jest.fn(() => qb);
+        qb.getMany = jest.fn(async () =>
+          apps.filter((a) => a.clusterId === clusterId),
+        );
+        return qb;
+      }),
+    };
+    r.zoneAssignmentRepo = {
+      find: jest.fn(async (q: { where: { clusterId: string } }) =>
+        zones
+          .filter((z) => z.clusterId === q.where.clusterId)
+          .map((z) => ({ ...z, dnsZone: { zoneName: z.zoneName } })),
+      ),
+    };
+    r.controlSources = new ControlRestoreSourceService(
+      r.clusterRepo as never,
+      r.appRepo as never,
+      r.zoneAssignmentRepo as never,
+    );
+    r.catalogInstallRepo = { find: jest.fn(async () => []) };
+    r.attachmentRepo = { find: jest.fn(async () => []) };
+    r.dataRestorer = { preview: jest.fn(async () => []) };
+    r.encryption = { decrypt: (v: string) => v };
+    r.zoneReconciliation = {
+      retractClusterWildcardRecord: jest.fn(async () => ({ status: 'absent' })),
+    };
+    r.k8s = {
+      getNodeAllocatable: jest.fn(async (kc: string) => {
+        if (kc === 'old-kc') throw new Error('connect ECONNREFUSED');
+        return { cpu: 6000, memory: 12288 };
+      }),
+      getPodResourceRequests: jest.fn(async () => ({ cpu: 0, memory: 0 })),
+    };
+    return { service, r };
+  }
+
+  it('finds the control it was restored from, and restores onto its own', async () => {
+    const { service } = make();
+
+    const plan = await service.planControlRestore();
+
+    expect(plan.refusals).toEqual([]);
+    expect(plan.mode).toBe('control');
+    expect(plan.from.id).toBe('ctl-old');
+    expect(plan.to.id).toBe('ctl-new');
+    expect(plan.candidates).toEqual([
+      {
+        id: 'ctl-old',
+        name: 'control-cluster',
+        status: ClusterStatus.DELETED,
+        retired: true,
+        applications: 1,
+      },
+    ]);
+    expect(plan.apps.map((a) => a.applicationId)).toEqual(['app-1']);
+  });
+
+  it('leaves the platform’s own components to the new installation', async () => {
+    const { service } = make({
+      apps: [
+        app(),
+        app({ id: 'sys-1', slug: 'grafana', kind: 'SYSTEM' }),
+        app({ id: 'sys-2', slug: 'loki', ownerKind: 'platform' }),
+        app({ id: 'gone', slug: 'gone', status: ApplicationStatus.DELETED }),
+      ],
+    });
+
+    const plan = await service.planControlRestore();
+
+    expect(plan.apps.map((a) => a.applicationId)).toEqual(['app-1']);
+    expect(plan.warnings.join(' ')).toMatch(
+      /2 platform component\(s\) recorded on control-cluster are not rebuilt/,
+    );
+  });
+
+  it('brings the database back before the application that reads it', async () => {
+    const { service } = make({
+      apps: [
+        app({
+          id: 'web',
+          name: 'a-web',
+          slug: 'a-web',
+          env: [{ name: 'DB_HOST', value: 'z-postgres' }],
+        }),
+        app({ id: 'db', name: 'z-postgres', slug: 'z-postgres' }),
+      ],
+    });
+
+    const plan = await service.planControlRestore();
+
+    expect(plan.apps.map((a) => a.name)).toEqual(['z-postgres', 'a-web']);
+    expect(plan.apps[1].after).toEqual(['z-postgres']);
+  });
+
+  it('asks which one when two earlier controls still have applications', async () => {
+    const older = {
+      ...oldControl,
+      id: 'ctl-older',
+      createdAt: new Date('2025-01-01T00:00:00Z'),
+    };
+    const { service } = make({
+      clusters: [newControl, oldControl, older],
+      apps: [app(), app({ id: 'app-2', clusterId: 'ctl-older' })],
+    });
+
+    const plan = await service.planControlRestore();
+
+    expect(plan.refusals.join(' ')).toMatch(
+      /2 earlier control clusters .* Name the one/,
+    );
+    expect(plan.candidates.map((c) => c.id).sort()).toEqual([
+      'ctl-old',
+      'ctl-older',
+    ]);
+
+    const named = await service.planControlRestore('ctl-older');
+    expect(named.refusals).toEqual([]);
+    expect(named.apps.map((a) => a.applicationId)).toEqual(['app-2']);
+  });
+
+  it('says there is nothing to restore on an installation never restored', async () => {
+    const { service } = make({ clusters: [newControl], apps: [] });
+
+    const plan = await service.planControlRestore();
+
+    expect(plan.refusals.join(' ')).toMatch(/No earlier control cluster/);
+  });
+
+  it('refuses its own control as the source', async () => {
+    const { service } = make();
+
+    const plan = await service.planControlRestore('ctl-new');
+
+    expect(plan.refusals.join(' ')).toMatch(/own control cluster/);
+  });
+
+  it('refuses when the old control is still answering', async () => {
+    const { service, r } = make();
+    (r.k8s as Record<string, unknown>).getNodeAllocatable = jest.fn(
+      async () => ({ cpu: 6000, memory: 12288 }),
+    );
+
+    const plan = await service.planControlRestore();
+
+    expect(plan.refusals.join(' ')).toMatch(/still reachable/);
+  });
+
+  it('keeps the workload rebuild away from control clusters, and says where to go instead', async () => {
+    const { service } = make({
+      clusters: [
+        newControl,
+        oldControl,
+        {
+          ...newControl,
+          id: 'wl',
+          name: 'workload',
+          clusterType: ClusterType.WORKLOAD,
+          kubeconfigEncrypted: 'wl-kc',
+        },
+      ],
+    });
+
+    const onto = await service.plan('ctl-old', 'ctl-new');
+    expect(onto.refusals.join(' ')).toMatch(
+      /not a destination for workloads.*restore them onto this control cluster/,
+    );
+    const from = await service.plan('ctl-old', 'wl');
+    expect(from.refusals.join(' ')).toMatch(/is a control cluster/);
+  });
+
+  it('warns when the new control does not serve the zones the old one did', async () => {
+    const { service } = make({
+      zones: [
+        { clusterId: 'ctl-old', dnsZoneId: 'z1', zoneName: 'example.com' },
+      ],
+    });
+
+    const plan = await service.planControlRestore();
+
+    expect(plan.warnings.join(' ')).toMatch(
+      /does not serve example\.com yet.*flui dns zone assign <zone> --cluster control-cluster-2/,
+    );
+  });
+
+  it('queues one operation and refuses a second while the first is in flight', async () => {
+    const { service, r } = make();
+    const saved: Record<string, unknown>[] = [];
+    let running: Record<string, unknown> | null = null;
+    r.operationRepo = {
+      findOne: jest.fn(async () => running),
+      create: jest.fn((o: Record<string, unknown>) => o),
+      save: jest.fn(async (o: Record<string, unknown>) => {
+        const row = { ...o, id: 'op-1' };
+        saved.push(row);
+        return row;
+      }),
+    };
+    const queued: Record<string, unknown>[] = [];
+    r.infrastructureQueue = {
+      add: jest.fn(async (_n: string, data: Record<string, unknown>) => {
+        queued.push(data);
+      }),
+    };
+
+    const op = await service.startControlRestore('user-1');
+    expect(op.id).toBe('op-1');
+    expect(queued[0]).toMatchObject({
+      fromId: 'ctl-old',
+      toId: 'ctl-new',
+      mode: 'control',
+    });
+    expect((saved[0].metadata as Record<string, unknown>).mode).toBe('control');
+
+    running = { id: 'op-1' };
+    await expect(service.startControlRestore('user-1')).rejects.toThrow(
+      /already running \(operation op-1\)/,
+    );
+  });
+
+  describe('marking the old control lost', () => {
+    const markLost = (
+      service: ClusterRebuildService,
+      from: unknown,
+      to: unknown,
+    ) =>
+      (
+        service as unknown as {
+          markLost(f: unknown, t: unknown): Promise<void>;
+        }
+      ).markLost(from, to);
+
+    it('leaves a row the restore already retired as it is', async () => {
+      const { service, r } = make();
+
+      await markLost(service, oldControl, newControl);
+
+      expect(
+        (r.clusterRepo as Record<string, jest.Mock>).update,
+      ).not.toHaveBeenCalled();
+    });
+
+    it('does not withdraw the wildcard the new control publishes under the same name', async () => {
+      const { service, r } = make({
+        zones: [
+          { clusterId: 'ctl-old', dnsZoneId: 'z1', zoneName: 'example.com' },
+          { clusterId: 'ctl-new', dnsZoneId: 'z1', zoneName: 'example.com' },
+        ],
+      });
+
+      await markLost(service, oldControl, {
+        ...newControl,
+        name: oldControl.name,
+      });
+      expect(
+        (r.zoneReconciliation as Record<string, jest.Mock>)
+          .retractClusterWildcardRecord,
+      ).not.toHaveBeenCalled();
+
+      await markLost(service, oldControl, newControl);
+      expect(
+        (r.zoneReconciliation as Record<string, jest.Mock>)
+          .retractClusterWildcardRecord,
+      ).toHaveBeenCalledTimes(1);
+    });
   });
 });

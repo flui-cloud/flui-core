@@ -1,6 +1,6 @@
 import { Flags } from '@oclif/core';
 import chalk from 'chalk';
-import { BackupPolicy } from './backup-client';
+import { BackupClient, BackupPolicy } from './backup-client';
 
 /**
  * What every `flui backup enable` verb asks for, and nothing else.
@@ -25,7 +25,9 @@ export const SHARED_ENABLE_FLAGS = {
     description: 'Name for this protection. Defaults to something descriptive.',
   }),
   schedule: Flags.string({
-    description: 'Cron schedule, e.g. "0 2 * * *" for 02:00 UTC daily',
+    description:
+      'Cron schedule in UTC, e.g. "0 2 * * *" for 02:00 daily. Omit it to ' +
+      'use the default for this kind of backup.',
   }),
   'retention-days': Flags.integer({ min: 1, default: 30 }),
   'retention-max-copies': Flags.integer({ min: 1 }),
@@ -58,6 +60,25 @@ export function profileFor(
   destinations: ReadonlyArray<{ role: 'primary' | 'replica' }>,
 ): 'single' | 'mirrored' {
   return destinations.some((d) => d.role === 'replica') ? 'mirrored' : 'single';
+}
+
+/**
+ * The schedule the API recorded, in its own words. Never the flag echoed back:
+ * the policy is what runs, and a policy saved without a schedule runs once.
+ */
+export async function recordedSchedule(
+  client: BackupClient,
+  policy: BackupPolicy,
+): Promise<string> {
+  const cron = policy.cronSchedule?.trim();
+  if (!cron) return 'on demand only (no schedule; set one with --schedule)';
+  try {
+    const { schedule } = await client.getPolicyActivity(policy.id);
+    const cronNote = `(${cron})`;
+    return `${schedule.description} ${chalk.dim(cronNote)}`;
+  } catch {
+    return `cron ${cron} (UTC)`;
+  }
 }
 
 export function printEnabled(

@@ -10,7 +10,6 @@ import {
 } from '../../infrastructure/clusters/entities/cluster.entity';
 import { BackupPolicyEntity } from '../entities/backup-policy.entity';
 import { BackupJobEntity } from '../entities/backup-job.entity';
-import { BackupArtifactEntity } from '../entities/backup-artifact.entity';
 import { BackupJobStatus } from '../enums/backup-job.enum';
 import {
   AppCoverage,
@@ -70,22 +69,31 @@ const RECENT_RUNS_READ = 500;
 interface FinishedRun {
   applicationId: string | null;
   at: Date;
-  /** `<namespace>/<pod>/<volume>` of each volume the run could not capture. */
-  skipped: string[];
+  /** Volumes the run named as not copied: awaiting a decision, or failed. */
+  leftOut: string[];
 }
 
 /**
- * Whether a run left out one of this app's volumes. The run names volumes by
- * the pod that mounts them, and an app's pods are named after its slug.
+ * Whether a run meant for this app left some of its volumes out. A policy
+ * names one application, so a run that names none is that application's.
  */
 function skippedApp(
   run: FinishedRun,
-  app: Pick<ApplicationEntity, 'slug' | 'k8sNamespace'>,
+  app: Pick<ApplicationEntity, 'id'>,
 ): boolean {
-  return run.skipped.some((key) => {
-    const [namespace, pod] = key.split('/');
-    return namespace === app.k8sNamespace && !!pod?.startsWith(`${app.slug}-`);
-  });
+  return (
+    (run.applicationId === null || run.applicationId === app.id) &&
+    run.leftOut.length > 0
+  );
+}
+
+function volumeNames(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((v) =>
+      typeof v === 'string' ? v : (v as { volume?: unknown } | null)?.volume,
+    )
+    .filter((v): v is string => typeof v === 'string');
 }
 
 /**
@@ -94,7 +102,7 @@ function skippedApp(
  */
 function newestRunLeftOut(
   runs: FinishedRun[] | undefined,
-  app: Pick<ApplicationEntity, 'id' | 'slug' | 'k8sNamespace'>,
+  app: Pick<ApplicationEntity, 'id'>,
 ): boolean {
   const newest = (runs ?? []).find(
     (r) => r.applicationId === null || r.applicationId === app.id,
@@ -105,7 +113,7 @@ function newestRunLeftOut(
 /** The newest run of a policy that actually captured this app. */
 function lastCapture(
   runs: FinishedRun[] | undefined,
-  app: Pick<ApplicationEntity, 'id' | 'slug' | 'k8sNamespace'>,
+  app: Pick<ApplicationEntity, 'id'>,
 ): Date | null {
   const run = (runs ?? []).find(
     (r) =>
@@ -231,14 +239,15 @@ export class AppCoverageService {
       policyId: string;
       applicationId: string | null;
       at: Date | string;
-      skipped: unknown;
+      needsDecision: unknown;
+      failed: unknown;
     }> = await this.jobs
       .createQueryBuilder('j')
-      .leftJoin(BackupArtifactEntity, 'a', 'a."backupJobId" = j.id')
       .select('j."policyId"', 'policyId')
       .addSelect('j."applicationId"', 'applicationId')
       .addSelect('COALESCE(j."finishedAt", j."createdAt")', 'at')
-      .addSelect(`a."manifestSummary"->'volumesSkipped'`, 'skipped')
+      .addSelect(`j."metadata"->'volumesNeedingDecision'`, 'needsDecision')
+      .addSelect(`j."metadata"->'volumesFailed'`, 'failed')
       .where('j."policyId" IN (:...policyIds)', { policyIds })
       .andWhere('j.status IN (:...statuses)', {
         statuses: [
@@ -254,9 +263,10 @@ export class AppCoverageService {
       runs.push({
         applicationId: row.applicationId,
         at: new Date(row.at),
-        skipped: Array.isArray(row.skipped)
-          ? row.skipped.filter((k): k is string => typeof k === 'string')
-          : [],
+        leftOut: [
+          ...volumeNames(row.needsDecision),
+          ...volumeNames(row.failed),
+        ],
       });
       out.set(row.policyId, runs);
     }

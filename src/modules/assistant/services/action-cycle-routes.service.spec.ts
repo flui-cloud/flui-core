@@ -193,6 +193,7 @@ describe('the tools whose request the chat can show', () => {
     'app_stop',
     'app_uninstall',
     'backup_policy_pause',
+    'backup_velero_uninstall',
     'cluster_autoscale_set',
     'cluster_create',
     'cluster_firewall_enable',
@@ -202,6 +203,7 @@ describe('the tools whose request the chat can show', () => {
     'cluster_node_uncordon',
     'cluster_power',
     'cluster_storage_expand',
+    'control_restore_apps',
     'dns_issuer_configure',
     'dns_wildcard_publish',
     'gateway_route_remove',
@@ -241,6 +243,9 @@ describe('the tools whose request the chat can show', () => {
    */
   const UNGOVERNED = [
     'app_autoscale',
+    // Adds a backup to a deploy, or stops adding one; the backups already
+    // taken and the policies behind them are untouched either way.
+    'app_backup_before_deploy',
     'app_crash_apply',
     'app_deferred_cancel',
     'app_install',
@@ -262,6 +267,7 @@ describe('the tools whose request the chat can show', () => {
     'gateway_route_add',
     'gateway_route_sync',
     'migrate_app',
+    'platform_install_values_plan',
     'platform_update_plan',
     'schedule_create',
     'schedule_resume',

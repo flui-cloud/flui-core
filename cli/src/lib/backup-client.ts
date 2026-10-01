@@ -1,174 +1,24 @@
 import { ApiClient } from './api-client';
 import { ConfigStorage } from './config-storage';
+import {
+  BackupDestination,
+  CreateBackupDestinationInput,
+  BackupPolicy,
+  BackupArtifact,
+  CreatePolicyInput,
+  BackupJob,
+  RestoreJob,
+  QuickSetupOptions,
+  QuickSetupInput,
+  PlatformBackupLinks,
+  BackupPolicyActivity,
+  ClusterProtection,
+  ProtectClusterInput,
+  BeforeDeployOption,
+  VeleroFootprint,
+} from './backup-client.types';
 
-export interface BackupDestination {
-  id: string;
-  name: string;
-  provider: string;
-  endpoint: string;
-  region: string;
-  bucket: string;
-  pathPrefix?: string;
-  encryptionMode?: string;
-  forcePathStyle?: boolean;
-  useSse?: boolean;
-  usableForEtcdL1?: boolean;
-  costPerGbMonthCents?: number | null;
-  health?: string;
-  usageBytes?: number;
-  metadata?: { costSource?: string } & Record<string, unknown>;
-  createdAt?: string;
-  updatedAt?: string;
-}
-
-export interface CreateBackupDestinationInput {
-  name: string;
-  provider:
-    | 'hetzner_object_storage'
-    | 'scaleway_object_storage'
-    | 'ovh_object_storage'
-    | 'minio'
-    | 'generic_s3';
-  endpoint: string;
-  region: string;
-  bucket: string;
-  pathPrefix?: string;
-  accessKey: string;
-  secretKey: string;
-  encryptionMode?: 'flui_managed' | 'byo_passphrase' | 'none';
-  encryptionPassphrase?: string;
-  forcePathStyle?: boolean;
-  useSse?: boolean;
-  usableForEtcdL1?: boolean;
-  costPerGbMonthCents?: number;
-}
-
-export interface BackupPolicy {
-  id: string;
-  name: string;
-  clusterId: string;
-  scope: string;
-  profile: string;
-  engineClass?: string;
-  enabled?: boolean;
-  status?: string;
-  cronSchedule?: string;
-  schedule?: string;
-  retentionDays?: number;
-  scopeSelector?: {
-    applicationIds?: string[];
-    namespaces?: string[];
-    [key: string]: unknown;
-  };
-  destinations?: Array<{
-    destinationId: string;
-    role: string;
-    priority?: number;
-  }>;
-  metadata?: {
-    platform?: {
-      recipient?: string;
-      heartbeat?: { url?: string };
-    };
-    [key: string]: unknown;
-  };
-  createdAt?: string;
-  updatedAt?: string;
-}
-
-/** A backup that exists, whatever engine produced it. */
-export interface BackupArtifact {
-  id: string;
-  backupJobId: string;
-  clusterId: string;
-  applicationId?: string | null;
-  volumeName?: string | null;
-  engineClass?: string;
-  engineRef?: string | null;
-  veleroBackupName?: string | null;
-  sizeBytes?: string | null;
-  itemCount?: number | null;
-  expiresAt?: string | null;
-  manifestSummary?: Record<string, any>;
-  locations?: Array<{
-    id: string;
-    destinationId: string;
-    role: string;
-    state: string;
-    objectKeyPrefix: string;
-  }>;
-  createdAt?: string;
-}
-
-export interface CreatePolicyInput {
-  name: string;
-  clusterId: string;
-  scope: string;
-  profile?: string;
-  engineClass?: 'volume' | 'database' | 'platform' | 'volume_copy';
-  /** Copy volume contents, not only the Kubernetes objects. Velero engine. */
-  includePvcs?: boolean;
-  /** The API's field is cronSchedule — see CreateBackupPolicyDto. */
-  cronSchedule?: string;
-  retentionDays?: number;
-  retentionMaxCopies?: number;
-  enabled?: boolean;
-  destinations: Array<{
-    destinationId: string;
-    role: 'primary' | 'replica';
-    priority?: number;
-  }>;
-  scopeSelector?: Record<string, any>;
-  metadata?: Record<string, any>;
-}
-
-export interface BackupJob {
-  id: string;
-  policyId: string;
-  clusterId?: string;
-  status: string;
-  startedAt?: string;
-  completedAt?: string;
-  finishedAt?: string;
-  bytesTransferred?: number;
-  errorMessage?: string;
-  metadata?: {
-    volumesCopied?: string[];
-    /** Per volume, seconds the application was stopped for its copy. */
-    stoppedSeconds?: Record<string, number>;
-  } & Record<string, unknown>;
-}
-
-export interface RestoreJob {
-  id: string;
-  status: string;
-  artifactId: string;
-  sourceDestinationId: string;
-  targetClusterId: string;
-  targetKind: string;
-  placement?: 'new' | 'existing';
-  strategy?: string;
-  startedAt?: string;
-  completedAt?: string;
-  errorMessage?: string;
-}
-
-export interface QuickSetupOptions {
-  currentProvider: string;
-  primary: {
-    provider: string;
-    ready: boolean;
-    needsScalewayConnection?: boolean;
-    reason?: string;
-  };
-}
-
-export interface QuickSetupInput {
-  profile: 'single';
-  cronSchedule?: string | null;
-  retentionDays?: number;
-  runFirstBackup?: boolean;
-}
+export * from './backup-client.types';
 
 export class BackupClient {
   private readonly api: ApiClient;
@@ -203,6 +53,35 @@ export class BackupClient {
     return this.api.post(`/clusters/${clusterId}/backups/quick-setup`, input);
   }
 
+  // ─── Cluster protection ──────────────────────────────────────────────────
+
+  async protectCluster(
+    clusterId: string,
+    input: ProtectClusterInput,
+  ): Promise<{ operationId: string; protection: ClusterProtection }> {
+    return this.api.post(`/clusters/${clusterId}/backups/protection`, input);
+  }
+
+  async getClusterProtection(clusterId: string): Promise<ClusterProtection> {
+    return this.api.get(`/clusters/${clusterId}/backups/protection`);
+  }
+
+  async stopClusterProtection(
+    clusterId: string,
+  ): Promise<{ stopped: boolean }> {
+    return this.api.delete(`/clusters/${clusterId}/backups/protection`);
+  }
+
+  async setBeforeDeploy(
+    applicationId: string,
+    input: { enabled: boolean; required?: boolean },
+  ): Promise<BeforeDeployOption> {
+    return this.api.put(
+      `/applications/${applicationId}/backup-before-deploy`,
+      input,
+    );
+  }
+
   // ─── Destinations ────────────────────────────────────────────────────────
 
   async listDestinations(): Promise<BackupDestination[]> {
@@ -223,15 +102,6 @@ export class BackupClient {
     id: string,
   ): Promise<{ healthy: boolean; error?: string }> {
     return this.api.post(`/backup-destinations/${id}/test`);
-  }
-
-  async upgradeDestinationLayout(
-    id: string,
-    force = false,
-  ): Promise<{ layout: string; changed: boolean; leftBehind: string[] }> {
-    return this.api.post(`/backup-destinations/${id}/upgrade-layout`, {
-      force,
-    });
   }
 
   async setDestinationCost(
@@ -265,6 +135,20 @@ export class BackupClient {
     return this.api.get(`/backup-policies/${id}`);
   }
 
+  async getPolicyActivity(
+    id: string,
+    limit?: number,
+  ): Promise<BackupPolicyActivity> {
+    const query = limit ? `?limit=${limit}` : '';
+    return this.api.get(
+      `/backup-policies/${encodeURIComponent(id)}/activity${query}`,
+    );
+  }
+
+  async listPolicyActivity(): Promise<BackupPolicyActivity[]> {
+    return this.api.get('/backup-policies/activity');
+  }
+
   /** Every backup recorded for one application or one cluster. */
   async listArtifacts(filter: {
     applicationId?: string;
@@ -285,6 +169,17 @@ export class BackupClient {
    * proven before the policy row is written, so a failure is the answer to
    * this call rather than a failed job hours later.
    */
+  async updatePolicyOptions(
+    id: string,
+    options: {
+      pauseDuringCopy?: boolean;
+      excludeVolumes?: string[];
+      keepMonthly?: boolean;
+    },
+  ): Promise<BackupPolicy> {
+    return this.api.patch(`/backup-policies/${id}/options`, options);
+  }
+
   async enableDatabase(input: CreatePolicyInput): Promise<BackupPolicy> {
     return this.api.post('/backup-policies/enable-database', input);
   }
@@ -314,6 +209,11 @@ export class BackupClient {
     return this.api.post('/backup-jobs', { policyId });
   }
 
+  async platformBackupLinks(jobId?: string): Promise<PlatformBackupLinks> {
+    const query = jobId ? `?jobId=${encodeURIComponent(jobId)}` : '';
+    return this.api.get(`/backup-artifacts/platform/download${query}`);
+  }
+
   async getJob(id: string): Promise<BackupJob> {
     return this.api.get(`/backup-jobs/${id}`);
   }
@@ -331,24 +231,23 @@ export class BackupClient {
     return this.api.post('/restore-jobs/preview', input);
   }
 
-  async createRestore(input: {
-    artifactId: string;
-    sourceDestinationId: string;
-    targetClusterId: string;
-    targetKind: string;
-    /** Beside the original, or onto it. Required where both are possible. */
-    placement?: 'new' | 'existing';
-    targetSelector?: Record<string, any>;
-    strategy?: string;
-  }): Promise<RestoreJob> {
-    return this.api.post('/restore-jobs', input);
-  }
-
   async listRestores(): Promise<RestoreJob[]> {
     return this.api.get('/restore-jobs');
   }
 
   async getRestore(id: string): Promise<RestoreJob> {
     return this.api.get(`/restore-jobs/${id}`);
+  }
+
+  // ─── Retired cluster-backup engine ───────────────────────────────────────
+
+  async getVeleroFootprint(clusterId: string): Promise<VeleroFootprint> {
+    return this.api.get(`/clusters/${clusterId}/backups/velero`);
+  }
+
+  async uninstallVelero(
+    clusterId: string,
+  ): Promise<{ operationId: string; alreadyRunning: boolean }> {
+    return this.api.post(`/clusters/${clusterId}/backups/velero/uninstall`, {});
   }
 }

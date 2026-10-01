@@ -9,6 +9,10 @@ import { IAM_PERMISSION } from '../../iam/constants/iam-permissions';
 import { DbPitrService } from '../services/db-pitr.service';
 import { DbPitrRestoreDto } from '../dto/db-pitr-restore.dto';
 import { DataDoor } from '../../iam/decorators/data-door.decorator';
+import {
+  PlatformBackupDownload,
+  PlatformBackupDownloadService,
+} from '../services/platform-backup-download.service';
 
 /**
  * One read surface over the ledger, covering every engine: a cluster snapshot,
@@ -24,7 +28,21 @@ export class BackupArtifactsController {
   constructor(
     private readonly artifacts: BackupArtifactRepository,
     private readonly dbPitr: DbPitrService,
+    private readonly platformDownload: PlatformBackupDownloadService,
   ) {}
+
+  @Get('platform/download')
+  @RequirePermission(IAM_PERMISSION.CLUSTER_MANAGE)
+  @ApiOperation({
+    summary: 'Links to fetch the two objects of a platform backup',
+    description:
+      'Ten-minute download links for the key bundle and the control-plane dump of one platform backup — the newest one when jobId is omitted. The storage credentials never leave the API; what is fetched is sealed to the operator key and opened with `flui backup platform restore`.',
+  })
+  platformBackupLinks(
+    @Query('jobId') jobId?: string,
+  ): Promise<PlatformBackupDownload> {
+    return this.platformDownload.links(jobId || undefined);
+  }
 
   @Get()
   @ApiOperation({

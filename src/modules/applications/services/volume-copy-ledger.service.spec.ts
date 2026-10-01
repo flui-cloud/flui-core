@@ -53,6 +53,26 @@ describe('VolumeCopyLedgerService', () => {
     expect(saved.artifacts[0].manifestSummary.survivesAppDeletion).toBe(false);
   });
 
+  it('says on the artifact whether the copy reached the bucket encrypted', async () => {
+    const { service, saved } = make();
+
+    await service.record({
+      ...base,
+      sink: 's3-archive',
+      objectKeyPrefix: 'pre/exports/my-db/1',
+      encryption: { cipher: 'rclone-crypt-v1', mode: 'flui_managed' as any },
+    });
+    await service.record({ ...base, sink: 's3-archive' });
+
+    expect(saved.artifacts[0].encryptionMode).toBe('flui_managed');
+    expect(saved.artifacts[0].manifestSummary.repository).toEqual({
+      objectKeyPrefix: 'pre/exports/my-db/1',
+      cipher: 'rclone-crypt-v1',
+    });
+    expect(saved.artifacts[1].encryptionMode).toBe('none');
+    expect(saved.artifacts[1].manifestSummary.repository).toBeUndefined();
+  });
+
   it('defaults quiesce to none rather than leaving it unsaid', async () => {
     const { service, saved } = make();
 

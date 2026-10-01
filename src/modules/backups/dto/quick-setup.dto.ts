@@ -20,7 +20,11 @@ export class QuickSetupDto {
   @IsIn(['single'])
   profile: QuickSetupProfile;
 
-  @ApiPropertyOptional({ default: '0 2 * * *' })
+  /**
+   * One schedule for every policy. Omitted, each kind of backup keeps its own
+   * default, spread across the night.
+   */
+  @ApiPropertyOptional()
   @IsOptional()
   @IsString()
   cronSchedule?: string | null;
@@ -96,11 +100,10 @@ export class SetupOptionsResponse {
     backupScope: {
       k8sResources: boolean;
       /**
-       * Never a plain `true`: Velero's file-system backup cannot read hostPath
-       * volumes, so volumes on the dedicated storage class (what databases use)
-       * are not captured while shared-storage ones are.
+       * `per-application`: every application's own policy, with the engine that
+       * fits it. The older values described the cluster-wide engine.
        */
-      persistentVolumes: 'shared-storage-only' | false;
+      persistentVolumes: 'per-application' | 'shared-storage-only' | false;
       method: string;
       notes: string;
     };

@@ -57,6 +57,7 @@ import { BackupPolicyDestinationEntity } from '../modules/backups/entities/backu
 import { BackupJobEntity } from '../modules/backups/entities/backup-job.entity';
 import { BackupArtifactEntity } from '../modules/backups/entities/backup-artifact.entity';
 import { BackupArtifactLocationEntity } from '../modules/backups/entities/backup-artifact-location.entity';
+import { BackupClusterProtectionEntity } from '../modules/backups/entities/backup-cluster-protection.entity';
 import { RestoreJobEntity } from '../modules/backups/entities/restore-job.entity';
 import { InferenceConnectionEntity } from '../modules/inference/entities/inference-connection.entity';
 import { InferenceUsageEventEntity } from '../modules/inference/entities/inference-usage-event.entity';
@@ -136,6 +137,7 @@ export const entities = [
   BackupJobEntity,
   BackupArtifactEntity,
   BackupArtifactLocationEntity,
+  BackupClusterProtectionEntity,
   RestoreJobEntity,
   InferenceConnectionEntity,
   InferenceUsageEventEntity,

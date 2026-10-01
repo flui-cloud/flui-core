@@ -1,6 +1,9 @@
 jest.mock('@kubernetes/client-node', () => ({}));
 
-import { StatefulSetVolumeSwapService } from './statefulset-volume-swap.service';
+import {
+  StatefulSetVolumeSwapService,
+  templateNameOf,
+} from './statefulset-volume-swap.service';
 
 /**
  * A cluster that behaves like one for claims and volumes: a deleted claim
@@ -188,5 +191,13 @@ describe('StatefulSetVolumeSwapService', () => {
       cluster.get('PersistentVolumeClaim', 'data-pg-0', 'db').spec.volumeName,
     ).toBe('pv-live');
     expect(cluster.get('StatefulSet', 'pg', 'db').spec.replicas).toBe(1);
+  });
+});
+
+describe('templateNameOf', () => {
+  it('accepts the template name or the claim a listing shows', () => {
+    expect(templateNameOf('data', 'pg', ['data'])).toBe('data');
+    expect(templateNameOf('data-pg-0', 'pg', ['data'])).toBe('data');
+    expect(templateNameOf('other-pg-0', 'pg', ['data'])).toBe('other-pg-0');
   });
 });

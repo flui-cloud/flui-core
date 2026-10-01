@@ -588,6 +588,7 @@ export class KubernetesService {
     namespace: string = 'default',
     containerName?: string,
     tailLines?: number,
+    previous?: boolean,
   ): Promise<string> {
     const { coreApi } = this.getKubeClient(kubeconfigContent);
 
@@ -597,6 +598,7 @@ export class KubernetesService {
         namespace,
         container: containerName,
         tailLines,
+        ...(previous ? { previous: true } : {}),
       });
       return response as unknown as string;
     } catch (error) {

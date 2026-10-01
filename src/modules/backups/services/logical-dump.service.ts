@@ -34,6 +34,18 @@ import {
   toolingProbe,
 } from './logical-dump.util';
 import { trimSlashes } from '../utils/destination-layout.util';
+import { BackupArtifactEntity } from '../entities/backup-artifact.entity';
+import { PlaintextRetirementService } from './plaintext-retirement.service';
+import {
+  CRYPT_SUFFIX,
+  CryptPasswords,
+  RCLONE_CRYPT_CIPHER,
+  cryptEnv,
+  deriveCryptPasswords,
+  isCryptSummary,
+  remoteName,
+  restorePasswords,
+} from '../utils/rclone-crypt.util';
 
 const JOB_TIMEOUT_SECONDS = 2 * 60 * 60;
 const JOB_POLL_INTERVAL_MS = 5_000;
@@ -78,6 +90,7 @@ abstract class LogicalDumpEngine implements ContinuousBackupEngine {
 
   protected readonly logger = new Logger(this.constructor.name);
   private readonly sizes = new Map<string, number>();
+  private readonly lastBackup = new Map<string, { encrypted: boolean }>();
 
   constructor(
     protected readonly k8s: KubernetesService,
@@ -90,6 +103,7 @@ abstract class LogicalDumpEngine implements ContinuousBackupEngine {
     protected readonly destRepo: BackupDestinationRepository,
     protected readonly destinations: BackupDestinationsService,
     protected readonly storage: StorageBackendFactory,
+    protected readonly retirement: PlaintextRetirementService,
   ) {}
 
   async resolveTarget(appId: string): Promise<DumpTarget> {
@@ -167,8 +181,12 @@ abstract class LogicalDumpEngine implements ContinuousBackupEngine {
     }
   }
 
-  async enable(appId: string): Promise<void> {
+  async enable(
+    appId: string,
+    destination?: BackupDestinationEntity,
+  ): Promise<void> {
     await this.requireTooling(appId);
+    if (destination) await this.destinations.passphraseFor(destination);
   }
 
   async disable(): Promise<void> {
@@ -179,8 +197,10 @@ abstract class LogicalDumpEngine implements ContinuousBackupEngine {
     return dumpPrefix(appId);
   }
 
+  /** Both spellings: a label is either encrypted or not, and a missing key deletes as a no-op. */
   artifactObjectKeys(appId: string, engineRef: string): string[] {
-    return [dumpObjectKey(appId, engineRef, this.family)];
+    const key = dumpObjectKey(appId, engineRef, this.family);
+    return [`${key}${CRYPT_SUFFIX}`, key];
   }
 
   identityEnv(): Record<string, string> {
@@ -191,9 +211,13 @@ abstract class LogicalDumpEngine implements ContinuousBackupEngine {
     return {};
   }
 
-  private remoteFor(dest: BackupDestinationEntity, key: string): string {
+  private remoteFor(
+    dest: BackupDestinationEntity,
+    key: string,
+    encrypted: boolean,
+  ): string {
     const prefix = trimSlashes(dest.pathPrefix);
-    return `flui:${dest.bucket}/${prefix ? prefix + '/' : ''}${key}`;
+    return `${remoteName(encrypted)}:${dest.bucket}/${prefix ? prefix + '/' : ''}${key}`;
   }
 
   private async primaryDestinationFor(
@@ -219,11 +243,16 @@ abstract class LogicalDumpEngine implements ContinuousBackupEngine {
     const dest = await this.primaryDestinationFor(appId);
     const label = dumpLabel(new Date());
     const key = dumpObjectKey(appId, label, this.family);
+    const crypt = deriveCryptPasswords(
+      await this.destinations.passphraseFor(dest),
+    );
     const out = await this.runJob(target, dest, {
       kind: 'dump',
       script: dumpScript(this.family),
-      remote: this.remoteFor(dest, key),
+      remote: this.remoteFor(dest, key, true),
+      crypt,
     });
+    this.lastBackup.set(appId, { encrypted: true });
     const bytes = Number(/FLUI_DUMP_BYTES=(\d+)/.exec(out)?.[1]);
     if (Number.isFinite(bytes)) this.sizes.set(`${appId}/${label}`, bytes);
     const size = Number.isFinite(bytes) ? ` (${bytes} bytes)` : '';
@@ -253,18 +282,69 @@ abstract class LogicalDumpEngine implements ContinuousBackupEngine {
       source.engineRef,
       this.family,
     );
+    const encrypted = await this.storedEncrypted(source.destination, key);
     await this.runJob(target, source.destination, {
       kind: 'load',
       script: loadScript(this.family),
-      remote: this.remoteFor(source.destination, key),
+      remote: this.remoteFor(source.destination, key, encrypted),
+      ...(encrypted
+        ? {
+            crypt: restorePasswords(
+              this.destinations.decryptPassphrase(source.destination),
+              source.destination.name,
+            ),
+          }
+        : {}),
     });
-    this.logger.log(`[dump] loaded ${key} into app=${newAppId}`);
+    this.logger.log(
+      `[dump] loaded ${key}${encrypted ? ' (encrypted)' : ''} into app=${newAppId}`,
+    );
+  }
+
+  /**
+   * Read from the bucket rather than the ledger: the object that is there is
+   * the one that has to be read, and a dump whose plaintext was retired is
+   * refused here instead of failing inside the job.
+   */
+  private async storedEncrypted(
+    dest: BackupDestinationEntity,
+    key: string,
+  ): Promise<boolean> {
+    const backend = this.storage.forProvider(dest.provider as any);
+    const creds = this.destinations.toCredentials(dest);
+    const folder = key.slice(0, key.lastIndexOf('/') + 1);
+    const page = await backend.listObjects(creds, folder);
+    if (page.keys.some((k) => k.endsWith(`${key}${CRYPT_SUFFIX}`))) return true;
+    if (page.keys.some((k) => k.endsWith(key))) return false;
+    throw new NotFoundException(
+      `The dump ${key} is no longer in the destination bucket`,
+    );
+  }
+
+  async retirePlaintext(
+    appId: string,
+    latest: BackupArtifactEntity,
+  ): Promise<void> {
+    if (!isCryptSummary(latest.manifestSummary)) return;
+    const dest = await this.primaryDestinationFor(appId);
+    await this.retirement.afterEncryptedDatabaseBackup({
+      appId,
+      engine: this.engine,
+      enginePrefix: dumpPrefix(appId),
+      destinationId: dest.id,
+      encryptedArtifactId: latest.id,
+    });
   }
 
   private async runJob(
     target: DumpTarget,
     dest: BackupDestinationEntity,
-    run: { kind: 'dump' | 'load'; script: string; remote: string },
+    run: {
+      kind: 'dump' | 'load';
+      script: string;
+      remote: string;
+      crypt?: CryptPasswords;
+    },
   ): Promise<string> {
     const suffix = Date.now().toString(36);
     const jobName = `flui-${run.kind}-${target.appId.slice(0, 8)}-${suffix}`;
@@ -284,6 +364,7 @@ abstract class LogicalDumpEngine implements ContinuousBackupEngine {
         ? 'true'
         : 'false',
       FLUI_REMOTE: run.remote,
+      ...(run.crypt ? cryptEnv(run.crypt) : {}),
       FLUI_DB_HOST: target.host,
       FLUI_DB_PORT: String(target.port),
     };
@@ -436,6 +517,16 @@ abstract class LogicalDumpEngine implements ContinuousBackupEngine {
       catalogSlug: this.catalogSlug,
       imageTag: target.image,
       identities: { user, database },
+      ...(this.lastBackup.has(appId)
+        ? {
+            repository: {
+              objectKeyPrefix: dumpPrefix(appId),
+              cipher: this.lastBackup.get(appId)?.encrypted
+                ? RCLONE_CRYPT_CIPHER
+                : 'none',
+            },
+          }
+        : {}),
     };
   }
 }

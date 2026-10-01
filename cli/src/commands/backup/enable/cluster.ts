@@ -1,43 +1,66 @@
 import { Command, Flags } from '@oclif/core';
 import chalk from 'chalk';
 import ora from 'ora';
-import { BackupClient } from '../../../lib/backup-client';
+import { ApiClient } from '../../../lib/api-client';
+import { ConfigStorage } from '../../../lib/config-storage';
+import {
+  BackupClient,
+  NeedsDecisionItem,
+  ProtectedApp,
+} from '../../../lib/backup-client';
 import { printContextBanner } from '../../../lib/context-banner';
 import { resolveClusterRef } from '../../../lib/resolve-cluster';
+import { followOperation } from '../../../lib/follow-operation';
+import { parseDestinations } from '../../../lib/backup-enable';
 import {
-  SHARED_ENABLE_FLAGS,
-  parseDestinations,
-  printEnabled,
-  profileFor,
-} from '../../../lib/backup-enable';
+  describeProtectedApp,
+  printNeedsDecision,
+} from '../../../lib/cluster-protection-format';
 
 export default class BackupEnableCluster extends Command {
   static readonly description =
-    'Protect a cluster: its Kubernetes objects, and the volumes Velero can ' +
-    'reach. Dedicated volumes — the ones databases use — are not covered by ' +
-    'this; protect a database with `flui backup enable database`.';
+    'Protect every application on a cluster, including the ones installed ' +
+    'later: each gets a backup policy of its own with the engine that fits it ' +
+    '(continuous backup or dumps for PostgreSQL and MariaDB, encrypted ' +
+    'deduplicated copies for other volumes). Databases Flui cannot back up ' +
+    'consistently are listed for you to decide instead of being copied.';
 
   static readonly examples = [
     '<%= config.bin %> <%= command.id %> --destination <destId>',
-    '<%= config.bin %> <%= command.id %> --destination <destId> --namespaces team-a,team-b',
-    '<%= config.bin %> <%= command.id %> --destination <destId> --schedule "0 2 * * *"',
+    '<%= config.bin %> <%= command.id %> --destination <destId> --destination <replicaId>:replica',
+    '<%= config.bin %> <%= command.id %> --destination <destId> --before-deploy',
   ];
 
   static readonly flags = {
-    ...SHARED_ENABLE_FLAGS,
+    destination: Flags.string({
+      char: 'D',
+      required: true,
+      multiple: true,
+      description:
+        'Where the backups go: <destId>[:primary|replica] (repeatable). A replica receives a copy of the volume backups after each run. See `flui backup destination list`.',
+    }),
     cluster: Flags.string({
       char: 'c',
       description: 'Cluster name or ID (default: auto-detect)',
     }),
-    namespaces: Flags.string({
+    schedule: Flags.string({
       description:
-        'Comma-separated namespaces to narrow to. Omit to protect the whole cluster.',
+        'One cron schedule in UTC for every policy. Omit it to use the default of each kind of backup, spread across the night.',
     }),
-    'include-volumes': Flags.boolean({
+    'retention-days': Flags.integer({ min: 1, default: 30 }),
+    'before-deploy': Flags.boolean({
+      default: false,
+      description:
+        'Before each deploy, record a restore point for databases and start a copy of the other volumes.',
+    }),
+    'first-backup': Flags.boolean({
       default: true,
       allowNo: true,
-      description:
-        'Copy the contents of volumes Velero can reach, not just the objects.',
+      description: 'Take the first volume backup of each application now.',
+    }),
+    'no-wait': Flags.boolean({
+      default: false,
+      description: 'Return once protection is recorded, without following it.',
     }),
   };
 
@@ -45,52 +68,97 @@ export default class BackupEnableCluster extends Command {
     const { flags } = await this.parse(BackupEnableCluster);
     printContextBanner();
 
-    const { id: clusterId } = await resolveClusterRef(flags.cluster);
-    const namespaces = flags.namespaces
-      ?.split(',')
-      .map((s) => s.trim())
-      .filter(Boolean);
-
-    const client = BackupClient.fromConfig();
+    const { id: clusterId, name } = await resolveClusterRef(flags.cluster);
     const destinations = parseDestinations(flags.destination);
-    const spinner = ora('Enabling cluster backup...').start();
+    const primary = destinations.filter((d) => d.role === 'primary');
+    const replicas = destinations.filter((d) => d.role === 'replica');
+    if (primary.length !== 1 || replicas.length > 1) {
+      this.error(
+        'Give exactly one primary destination, and at most one replica.',
+        {
+          exit: 1,
+        },
+      );
+    }
+
+    const cfg = new ConfigStorage();
+    const api = new ApiClient({
+      baseUrl: cfg.getApiUrlOrThrow(),
+      apiKey: cfg.getApiKeyOrThrow(),
+    });
+    const client = new BackupClient(api);
+    const spinner = ora(`Protecting every application on ${name}...`).start();
+    let operationId: string;
     try {
-      const policy = await client.createPolicy({
-        name: flags.name ?? `cluster-${namespaces ? 'namespaces' : 'all'}`,
-        clusterId,
-        engineClass: 'volume',
-        scope: namespaces?.length ? 'namespaces' : 'cluster_all',
-        ...(namespaces?.length ? { scopeSelector: { namespaces } } : {}),
-        includePvcs: flags['include-volumes'],
+      ({ operationId } = await client.protectCluster(clusterId, {
+        destinationId: primary[0].destinationId,
+        ...(replicas[0]
+          ? { replicaDestinationId: replicas[0].destinationId }
+          : {}),
         cronSchedule: flags.schedule,
         retentionDays: flags['retention-days'],
-        retentionMaxCopies: flags['retention-max-copies'],
-        enabled: flags.enabled,
-        destinations,
-        profile: profileFor(destinations),
-      });
-      spinner.succeed('Cluster backup enabled');
-      printEnabled(
-        policy,
-        namespaces?.length
-          ? `namespaces ${namespaces.join(', ')}`
-          : 'the whole cluster',
-        flags.schedule ?? 'on the default schedule',
-      );
-      if (flags['include-volumes']) {
-        console.log(
-          chalk.dim(
-            '   Volumes on dedicated storage (databases) are skipped by this engine —\n' +
-              '   each run records which ones, and `flui backup status` shows the gap.',
-          ),
-        );
-        console.log('');
-      }
+        beforeDeploy: flags['before-deploy'],
+        runFirstBackup: flags['first-backup'],
+      }));
     } catch (error: any) {
-      spinner.fail('Could not enable cluster backup');
+      spinner.fail('Could not protect the cluster');
       const msg = error.details?.message ?? error.message ?? String(error);
       console.log(chalk.red(`\n  ${msg}\n`));
       this.exit(1);
     }
+
+    if (flags['no-wait']) {
+      spinner.succeed(
+        `Cluster protected; policies are being created (operation ${operationId})`,
+      );
+      console.log(
+        chalk.dim(`\n   flui backup status   what each application got\n`),
+      );
+      return;
+    }
+
+    const printed = new Set<string>();
+    const op = await followOperation<{ apps?: ProtectedApp[] }>(
+      api,
+      operationId,
+      {
+        intervalMs: 3000,
+        onUpdate: (current) => {
+          for (const app of current.metadata?.apps ?? []) {
+            if (printed.has(app.applicationId)) continue;
+            printed.add(app.applicationId);
+            spinner.stop();
+            console.log(describeProtectedApp(app));
+            spinner.start();
+          }
+        },
+      },
+    );
+    if (op?.status !== 'COMPLETED') {
+      spinner.fail(
+        op?.errorMessage ??
+          `Still running — follow it with: flui operation ${operationId} --follow`,
+      );
+      if (op) this.exit(1);
+      return;
+    }
+    spinner.succeed(
+      `${name} is protected: applications installed from now on get a policy too`,
+    );
+
+    const protection = await client
+      .getClusterProtection(clusterId)
+      .catch(() => null);
+    const decisions: NeedsDecisionItem[] = protection?.needsDecision ?? [];
+    printNeedsDecision(decisions);
+    console.log(
+      chalk.dim('   flui backup status              what is protected and how'),
+    );
+    console.log(
+      chalk.dim(
+        '   flui backup disable cluster     stop protecting new applications',
+      ),
+    );
+    console.log('');
   }
 }

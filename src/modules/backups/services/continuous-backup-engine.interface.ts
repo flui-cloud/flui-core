@@ -1,5 +1,7 @@
 import { BackupDestinationEntity } from '../entities/backup-destination.entity';
+import { BackupArtifactEntity } from '../entities/backup-artifact.entity';
 import { RestoreStrategy } from '../enums/restore-job.enum';
+import { ArtifactCompression } from './db-compression.util';
 
 /**
  * What a restore needs to know about an artifact when everything else is gone.
@@ -36,6 +38,37 @@ export interface ArtifactEngineFacts {
   identities: { user: string; database: string };
   /** Engine position the base backup ends at, when the engine has one. */
   position?: Record<string, string>;
+  /**
+   * The repository the backup went into and the cipher the repository itself
+   * reports, relative to the destination's `pathPrefix`.
+   */
+  repository?: { objectKeyPrefix: string; cipher: string };
+  /**
+   * What the base and the logs were compressed with, read back from what the
+   * tool wrote. Absent when the engine could not tell, which is not `none`.
+   */
+  compression?: ArtifactCompression;
+}
+
+export interface EngineEnableOptions {
+  retentionFull?: number;
+  generation?: string;
+  /** How long a quiet database may hold committed changes before shipping them. */
+  archiveTimeoutSeconds?: number;
+}
+
+/** A moment a continuous backup can be restored to, recorded before a change. */
+export interface RestorePointMark {
+  /** The server's own clock at the mark, ISO-8601. */
+  at: string;
+  /** The engine's log position at the mark, when it has one. */
+  position?: string;
+}
+
+/** A scheduled run whose base can wait: when the last one was taken, and when the next is due. */
+export interface BaseNotDue {
+  lastBaseAt: string;
+  dueAt: string;
 }
 
 /**
@@ -93,7 +126,7 @@ export interface ContinuousBackupEngine {
   enable(
     appId: string,
     destination: BackupDestinationEntity,
-    opts?: { retentionFull?: number; generation?: string },
+    opts?: EngineEnableOptions,
   ): Promise<void>;
 
   /**
@@ -121,6 +154,17 @@ export interface ContinuousBackupEngine {
     appId: string,
     fullEveryDays: number,
   ): Promise<'full' | 'incr' | 'diff'>;
+
+  /**
+   * For engines whose only base is a full one: whether a scheduled run can
+   * leave the base for later, because the last one is recent and the logs
+   * that bring it forward are reaching the repository.
+   *
+   * `null` means a base is due — including whenever the engine cannot show
+   * that the logs are reaching the repository, because a run that skipped
+   * the base then would report protection that may have stopped.
+   */
+  baseNotDue?(appId: string, everyDays: number): Promise<BaseNotDue | null>;
 
   /**
    * Where this engine's objects live, relative to the destination's own
@@ -193,8 +237,22 @@ export interface ContinuousBackupEngine {
    */
   endedBeforeTarget?(restoredAppId: string): Promise<boolean>;
 
-  /** The recoverable window, read from what actually reached the repository. */
-  info(appId: string): Promise<{
+  /**
+   * Why a restored instance never started, in words a person can act on, read
+   * from what the engine printed; null when it printed nothing recognisable.
+   */
+  restoreFailure?(restoredAppId: string): Promise<string | null>;
+
+  /**
+   * The recoverable window, read from what actually reached the repository.
+   *
+   * With an artifact's summary, it answers for the repository that artifact
+   * was written into, or throws when the live instance ships elsewhere.
+   */
+  info(
+    appId: string,
+    artifactSummary?: Record<string, unknown>,
+  ): Promise<{
     latestLabel: string | null;
     oldestRecoverable: string | null;
     newestRecoverable: string | null;
@@ -221,7 +279,15 @@ export interface ContinuousBackupEngine {
     restoreSet?: string,
     /** The repository generation the artifact was written into. */
     generation?: string,
+    /** The artifact's `manifestSummary`: which repository, and its cipher. */
+    artifactSummary?: Record<string, unknown>,
   ): Record<string, string>;
+
+  /**
+   * Delete this application's plaintext copies once `latest` shows an
+   * encrypted full backup exists. Idempotent; a no-op until then.
+   */
+  retirePlaintext?(appId: string, latest: BackupArtifactEntity): Promise<void>;
 
   /**
    * The source's own role and database, spelled the way this engine's image
@@ -253,6 +319,14 @@ export interface ContinuousBackupEngine {
    * that answers `false` restores exactly what one backup holds.
    */
   readonly pointInTime?: boolean;
+
+  /**
+   * Record the current moment as a restore target and push the log that holds
+   * it off the cluster now rather than at the next segment switch, so a
+   * restore point taken before a deploy survives losing the volume right
+   * after it. Only for engines that restore to a moment.
+   */
+  markRestorePoint?(appId: string, label: string): Promise<RestorePointMark>;
 
   /**
    * Put the backup's data into a database that was installed empty.

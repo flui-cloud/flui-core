@@ -4,7 +4,7 @@ import { printContextBanner } from '../../../lib/context-banner';
 
 export default class BackupRestorePreview extends Command {
   static readonly description =
-    'Preview what a restore would touch (resources to be created/replaced)';
+    'Show what a backup holds where it is stored (objects and bytes) before restoring it';
   static readonly flags = {
     artifact: Flags.string({
       required: true,

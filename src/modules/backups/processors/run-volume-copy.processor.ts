@@ -1,5 +1,5 @@
 import { Process, Processor } from '@nestjs/bull';
-import { Logger } from '@nestjs/common';
+import { Logger, Optional } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Job } from 'bull';
 import { Repository } from 'typeorm';
@@ -7,13 +7,19 @@ import { BACKUP_QUEUE, BACKUP_JOB_TYPES } from '../backups.constants';
 import { BackupJobsService } from '../services/backup-jobs.service';
 import { BackupPolicyRepository } from '../repositories/backup-policy.repository';
 import { BackupDestinationRepository } from '../repositories/backup-destination.repository';
-import { BackupJobStatus } from '../enums/backup-job.enum';
+import {
+  BackupJobStatus,
+  BackupJobTriggerType,
+} from '../enums/backup-job.enum';
+import { kopiaRetentionFor } from '../utils/kopia-retention.util';
+import { kopiaStartJitterMs } from '../utils/kopia-queue.util';
 import { ApplicationsRepository } from '../../applications/repositories/applications.repository';
 import { VolumeBackupsService } from '../../applications/services/volume-backups.service';
 import { ApplicationVolumeClaimsService } from '../../applications/services/application-volume-claims.service';
 import { ClusterEntity } from '../../infrastructure/clusters/entities/cluster.entity';
 import { EncryptionService } from '../../shared/encryption/services/encryption.service';
 import { VOLUME_COPY_REFUSED } from '../../applications/services/volume-copy-preflight.service';
+import { KopiaReplicationService } from '../services/kopia-replication.service';
 
 interface RunVolumeCopyData {
   backupJobId: string;
@@ -28,8 +34,10 @@ interface VolumeOutcome {
 /**
  * Scheduled copies of an application's volumes, off the cluster.
  *
- * Deliberately `s3-archive` only. A clone's one advantage over an object-store
- * copy is restore speed, and its price on the dedicated storage class is the
+ * Deliberately off the cluster only — a kopia snapshot into the application's
+ * repository on the policy's destination, following the policy's retention.
+ * A clone's one advantage over an object-store copy is restore speed, and its
+ * price on the dedicated storage class is the
  * application's own disk: a nightly clone kept for a week is seven full copies
  * of the volume sitting beside the live one. A clone remains what it always
  * was — a restore point a person takes by hand before doing something risky.
@@ -60,6 +68,7 @@ export class RunVolumeCopyProcessor {
     @InjectRepository(ClusterEntity)
     private readonly clusterRepo: Repository<ClusterEntity>,
     private readonly encryption: EncryptionService,
+    @Optional() private readonly replication?: KopiaReplicationService,
   ) {}
 
   @Process(BACKUP_JOB_TYPES.RUN_VOLUME_COPY)
@@ -96,14 +105,28 @@ export class RunVolumeCopyProcessor {
     const destination = await this.destRepo.findById(primary);
     if (!destination) throw new Error('Primary destination not found');
 
+    // Policies sharing a cron minute would otherwise start their Jobs together.
+    if (backupJob.triggerType === BackupJobTriggerType.SCHEDULED) {
+      const jitter = kopiaStartJitterMs();
+      await new Promise((r) => setTimeout(r, jitter));
+    }
+
     await this.jobsService.update(backupJobId, {
       status: BackupJobStatus.RUNNING,
       startedAt: new Date(),
     });
 
     const volumes = await this.resolveVolumes(app, policy);
+    const preDeploy = backupJob.triggerType === BackupJobTriggerType.PRE_DEPLOY;
     const { copied, needsDecision, failed, stoppedSeconds } =
-      await this.copyEach(volumes, app, policy, destination.id);
+      await this.copyEach(
+        volumes,
+        app,
+        policy,
+        destination.id,
+        backupJobId,
+        preDeploy ? 'pre-deploy' : 'scheduled',
+      );
 
     // A run that left volumes for a person to decide on is partial while it
     // copied something; when it copied nothing, nothing is protected, and
@@ -133,6 +156,21 @@ export class RunVolumeCopyProcessor {
         : {}),
     });
 
+    if (copied.length > 0) {
+      await this.replication
+        ?.afterRun({
+          policy,
+          applicationId: app.id,
+          backupJobId,
+          primaryDestinationId: destination.id,
+        })
+        .catch((err: any) =>
+          this.logger.warn(
+            `[volume-copy] replica sync of ${app.slug} not queued: ${err?.message}`,
+          ),
+        );
+    }
+
     this.logger.log(
       `[volume-copy] policy=${policy.id} app=${app.slug} copied=${copied.length} ` +
         `needs-decision=${needsDecision.length} failed=${failed.length}`,
@@ -155,6 +193,8 @@ export class RunVolumeCopyProcessor {
       metadata?: Record<string, any> | null;
     },
     destinationId: string,
+    backupJobId: string,
+    trigger: 'scheduled' | 'pre-deploy',
   ): Promise<{
     copied: string[];
     needsDecision: VolumeOutcome[];
@@ -177,8 +217,11 @@ export class RunVolumeCopyProcessor {
           volumeName,
           destinationId,
           userId: policy.userId,
-          description: 'scheduled',
+          description: trigger,
+          trigger,
           policyId: policy.id,
+          backupJobId,
+          retention: kopiaRetentionFor(policy.metadata),
           // Without this the copy is indistinguishable from one a person took,
           // and the reaper leaves those alone — so a nightly schedule would
           // accumulate forever, which is what pruning exists to prevent.

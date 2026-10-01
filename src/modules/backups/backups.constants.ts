@@ -1,54 +1,21 @@
 export const BACKUP_QUEUE = 'backup';
 
-export const VELERO_NAMESPACE = 'velero';
-export const VELERO_DEPLOYMENT_NAME = 'velero';
-export const VELERO_NODE_AGENT_DAEMONSET = 'node-agent';
-export const VELERO_IMAGE = 'velero/velero:v1.14.1';
-export const VELERO_AWS_PLUGIN_IMAGE = 'velero/velero-plugin-for-aws:v1.10.1';
-// eslint-disable-next-line sonarjs/no-hardcoded-passwords -- k8s Secret key name, not a value
-export const VELERO_KOPIA_REPO_PASSWORD_KEY = 'kopia-repo-password';
-export const VELERO_CREDENTIALS_SECRET_NAME = 'velero-cloud-credentials';
-
 export const RCLONE_IMAGE = 'rclone/rclone:1.68';
 
-/**
- * The label `ApplicationManifestGeneratorService.buildLabels` puts on every
- * workload resource, and therefore the only one that selects an application's
- * resources on a cluster. Every Velero label selector must use this.
- *
- * `FLUI_LABELS.applicationId` below is a different thing that reads the same:
- * an annotation Flui stamps on the Backup CR it creates, describing what the
- * backup was for. It matches no resource and selects nothing.
- */
-export const APP_RESOURCE_LABEL = 'flui-app-id';
-
-/** Labels Flui stamps on its OWN Velero objects. Not resource selectors. */
-export const FLUI_LABELS = {
-  managedBy: 'managed-by',
-  managedByValue: 'flui-cloud',
-  resourceType: 'flui-resource-type',
-  scope: 'flui.cloud/scope',
-  applicationId: 'flui.cloud/applicationId',
-  deployId: 'flui.cloud/deployId',
-  clusterId: 'flui.cloud/clusterId',
-};
-
 export const BACKUP_JOB_TYPES = {
-  RUN_BACKUP: 'run-backup',
   RUN_DB_BACKUP: 'run-db-backup',
   RUN_DB_RESTORE: 'run-db-restore',
   REPLICATE_BACKUP: 'replicate-backup',
-  RUN_RESTORE: 'run-restore',
-  INSTALL_VELERO: 'install-velero',
   HEALTH_CHECK_DESTINATION: 'health-check-destination',
-  PRE_DEPLOY_SNAPSHOT: 'pre-deploy-snapshot',
   ENABLE_ETCD_SNAPSHOTS: 'enable-etcd-snapshots',
   CREATE_PROVIDER_SNAPSHOT: 'create-provider-snapshot',
   RUN_PLATFORM_BACKUP: 'run-platform-backup',
   RUN_VOLUME_COPY: 'run-volume-copy',
+  PROTECT_CLUSTER: 'protect-cluster',
+  PROTECT_NEW_APPLICATION: 'protect-new-application',
+  PRE_DEPLOY_BACKUP: 'pre-deploy-snapshot-trigger',
+  APP_VOLUME_BACKUP: 'app-volume-backup',
+  UNINSTALL_VELERO: 'uninstall-velero',
 } as const;
 
-export const PRE_DEPLOY_SNAPSHOT_TIMEOUT_MS = 5 * 60 * 1000;
-export const VELERO_BACKUP_POLL_INTERVAL_MS = 5_000;
-export const VELERO_BACKUP_POLL_TIMEOUT_MS = 30 * 60 * 1000;
 export const HEALTH_CHECK_INTERVAL_MS = 5 * 60 * 1000;

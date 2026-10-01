@@ -16,7 +16,6 @@ export type AppCoverageState =
 export type AppCoverageReason =
   | 'recent_backup'
   | 'awaiting_first_run'
-  | 'label_selector'
   | 'stale'
   | 'never_succeeded'
   | 'left_out'
@@ -85,45 +84,26 @@ export function dataReasonsOf(app: CoverageApp): DataReason[] {
 }
 
 /**
- * Whether a policy reaches this application, as its engine will run it.
- *
- * `null` for a label-selector policy: the API does not see the labels on the
- * cluster, so it cannot tell.
+ * Whether a policy reaches this application, as its engine will run it: a
+ * database or volume-copy policy names the applications it protects. The
+ * platform backup covers Flui, not applications, and a policy of a retired
+ * engine covers nothing.
  */
 export function policyCovers(
   policy: CoveragePolicy,
   app: CoverageApp,
-  holdsData: boolean,
-): boolean | null {
+): boolean {
   if (policy.clusterId !== app.clusterId) return false;
   if (!policy.enabled || policy.status === BackupPolicyStatus.PAUSED) {
     return false;
   }
-  if (policy.engineClass === BackupEngineClass.PLATFORM) return false;
-
-  const selector = policy.scopeSelector ?? {};
   if (
-    policy.engineClass === BackupEngineClass.DATABASE ||
-    policy.engineClass === BackupEngineClass.VOLUME_COPY
+    policy.engineClass !== BackupEngineClass.DATABASE &&
+    policy.engineClass !== BackupEngineClass.VOLUME_COPY
   ) {
-    return (selector.applicationIds ?? []).includes(app.id);
+    return false;
   }
-
-  if (holdsData && policy.includePvcs === false) return false;
-  switch (policy.scope) {
-    case BackupScope.CLUSTER_ALL:
-      return true;
-    case BackupScope.NAMESPACES: {
-      const namespaces = selector.namespaces ?? [];
-      return namespaces.length === 0 || namespaces.includes(app.namespace);
-    }
-    case BackupScope.APPLICATIONS:
-      return (selector.applicationIds ?? []).includes(app.id);
-    case BackupScope.LABEL_SELECTOR:
-      return null;
-    default:
-      return false;
-  }
+  return (policy.scopeSelector?.applicationIds ?? []).includes(app.id);
 }
 
 /**
@@ -158,14 +138,6 @@ export function judgePolicy(
       deadline: null,
     };
   }
-  if (policy.scope === BackupScope.LABEL_SELECTOR) {
-    return {
-      ...base,
-      state: 'to_verify',
-      reason: 'label_selector',
-      deadline: null,
-    };
-  }
   const deadline = policy.cronSchedule
     ? recencyDeadline(policy.cronSchedule, lastSuccessAt ?? policy.createdAt)
     : null;
@@ -191,7 +163,6 @@ export function judgePolicy(
 const REASON_RANK: Record<AppCoverageReason, number> = {
   recent_backup: 0,
   awaiting_first_run: 1,
-  label_selector: 2,
   stale: 3,
   never_succeeded: 4,
   left_out: 5,
@@ -223,7 +194,7 @@ export function classifyApp(
   const dataReasons = dataReasonsOf(app);
   const holdsData = dataReasons.length > 0;
   const verdicts = policies
-    .filter((p) => policyCovers(p, app, holdsData) !== false)
+    .filter((p) => policyCovers(p, app))
     .map((p) =>
       judgePolicy(p, lastSuccess(p.id, app.id), now, leftOutByLastRun(p.id)),
     );
@@ -263,8 +234,10 @@ export function protectPath(row: {
     clusterId: row.clusterId,
     applicationId: row.applicationId,
   });
-  if (row.kind === ApplicationKind.DATABASE)
-    query.set('engineClass', 'database');
+  query.set(
+    'engineClass',
+    row.kind === ApplicationKind.DATABASE ? 'database' : 'volume_copy',
+  );
   return `/management/backup/policies/new?${query.toString()}`;
 }
 

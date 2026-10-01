@@ -8,6 +8,7 @@ import {
   IsOptional,
   IsString,
   IsUUID,
+  Max,
   Min,
   ValidateNested,
 } from 'class-validator';
@@ -67,6 +68,26 @@ export class BackupPolicyOptionsDto {
   @IsOptional()
   @IsBoolean()
   pauseDuringCopy?: boolean;
+
+  @Sensitivity(Sensitivity.PUBLIC)
+  @ApiPropertyOptional({
+    description:
+      'Volume copies: keep three monthly snapshots on top of seven daily and four weekly (about 30% more space for two more months of history).',
+  })
+  @IsOptional()
+  @IsBoolean()
+  keepMonthly?: boolean;
+
+  @Sensitivity(Sensitivity.PUBLIC)
+  @ApiPropertyOptional({
+    description:
+      'Continuous Postgres: the longest a quiet database waits before closing its current log segment, in seconds (60 to 3600, default 300). Lower means less data at risk if the volume is lost, higher means less storage.',
+  })
+  @IsOptional()
+  @IsInt()
+  @Min(60)
+  @Max(3600)
+  archiveTimeoutSeconds?: number;
 }
 
 export class CreateBackupPolicyDto {
@@ -84,7 +105,8 @@ export class CreateBackupPolicyDto {
 
   @ApiPropertyOptional({
     enum: BackupEngineClass,
-    default: BackupEngineClass.VOLUME,
+    description:
+      'What protects the scope. Omitted, a policy naming one application copies its volumes; any other scope must name it.',
   })
   @IsOptional()
   @IsEnum(BackupEngineClass)

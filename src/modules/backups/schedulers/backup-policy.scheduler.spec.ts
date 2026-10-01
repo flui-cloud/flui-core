@@ -67,3 +67,92 @@ describe('BackupPolicyScheduler, the first run a policy ever gets', () => {
     await expect(h.scheduler.backfillNextRun()).resolves.toBeUndefined();
   });
 });
+
+/**
+ * The scheduler launched the daily policy of a cluster deleted weeks earlier:
+ * every run failed against nothing and raised "needs attention" on the backup
+ * overview.
+ */
+describe('BackupPolicyScheduler, a policy whose cluster is gone', () => {
+  const PAST = new Date(Date.now() - 60_000);
+  function make(cluster: Record<string, unknown> | null) {
+    const scheduler = Object.create(
+      BackupPolicyScheduler.prototype,
+    ) as BackupPolicyScheduler;
+    const r = scheduler as unknown as Record<string, unknown>;
+    const policy = {
+      id: 'p-1',
+      clusterId: 'c-1',
+      cronSchedule: '0 2 * * *',
+      enabled: true,
+      status: 'active',
+      nextRunAt: PAST,
+      metadata: { keep: 'me' },
+    };
+    const saved: Record<string, unknown>[] = [];
+    const updated: { id: string; patch: Record<string, unknown> }[] = [];
+    const jobs: unknown[] = [];
+    r.logger = { log: jest.fn(), warn: jest.fn(), error: jest.fn() };
+    r.policyRepo = {
+      find: jest.fn(async () => [policy]),
+      update: jest.fn(async (id: string, patch: Record<string, unknown>) => {
+        updated.push({ id, patch });
+      }),
+      save: jest.fn(async (p: Record<string, unknown>) => {
+        saved.push({ ...p });
+      }),
+    };
+    r.clusterRepo = {
+      find: jest.fn(async () => (cluster ? [{ id: 'c-1', ...cluster }] : [])),
+    };
+    r.jobsService = {
+      createOnDemand: jest.fn(async (...args: unknown[]) => {
+        jobs.push(args);
+      }),
+    };
+    return { scheduler, saved, updated, jobs };
+  }
+
+  it('pauses it with the reason instead of launching a job, when the cluster was deleted', async () => {
+    const h = make({ status: 'deleted' });
+    await h.scheduler.tick();
+
+    expect(h.jobs).toHaveLength(0);
+    expect(h.saved).toHaveLength(1);
+    expect(h.saved[0]).toMatchObject({
+      enabled: false,
+      status: 'paused',
+      nextRunAt: null,
+      metadata: { keep: 'me', pausedReason: 'cluster_gone' },
+    });
+  });
+
+  it('pauses it when the cluster row is gone altogether', async () => {
+    const h = make(null);
+    await h.scheduler.tick();
+    expect(h.jobs).toHaveLength(0);
+    expect(h.saved[0]).toMatchObject({ status: 'paused' });
+  });
+
+  it('only skips the run for a lost cluster, which a rebuild may bring back', async () => {
+    const h = make({ status: 'lost' });
+    await h.scheduler.tick();
+
+    expect(h.jobs).toHaveLength(0);
+    expect(h.saved).toHaveLength(0);
+    expect(h.updated[0].patch.nextRunAt).toBeInstanceOf(Date);
+  });
+
+  it('runs as before for a cluster that exists', async () => {
+    const h = make({ status: 'ready' });
+    await h.scheduler.tick();
+    expect(h.jobs).toHaveLength(1);
+    expect(h.saved).toHaveLength(0);
+  });
+
+  it('retires, at boot, the active policies of clusters deleted before this code ran', async () => {
+    const h = make({ status: 'deleted', deletedAt: new Date() });
+    await expect(h.scheduler.retireGoneClusterPolicies()).resolves.toBe(1);
+    expect(h.saved[0]).toMatchObject({ status: 'paused' });
+  });
+});

@@ -14,12 +14,9 @@ import {
 import { Type } from 'class-transformer';
 
 /**
- * What a Kubernetes namespace may be called.
- *
- * Stated here because these values are written into Velero Backup and Restore
- * resources. The YAML is emitted by a writer now, so a hostile value is quoted
- * rather than obeyed — this is the second lock, and it is the one that gives the
- * caller a sentence instead of a resource that quietly does nothing.
+ * What a Kubernetes namespace may be called: a value that is not one names
+ * nothing, and saying so gives the caller a sentence instead of a request that
+ * quietly does nothing.
  */
 const DNS_LABEL = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/;
 

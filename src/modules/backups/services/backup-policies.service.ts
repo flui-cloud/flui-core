@@ -5,7 +5,10 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { BackupPolicyRepository } from '../repositories/backup-policy.repository';
-import { CreateBackupPolicyDto } from '../dto/create-backup-policy.dto';
+import {
+  BackupPolicyOptionsDto,
+  CreateBackupPolicyDto,
+} from '../dto/create-backup-policy.dto';
 import { BackupPolicyEntity } from '../entities/backup-policy.entity';
 import { BackupPolicyDestinationEntity } from '../entities/backup-policy-destination.entity';
 import { BackupDestinationEntity } from '../entities/backup-destination.entity';
@@ -13,14 +16,20 @@ import {
   BackupPolicyStatus,
   BackupPolicyProfile,
 } from '../enums/backup-policy-status.enum';
-import { BackupEngineClass } from '../enums/backup-engine-class.enum';
+import {
+  BackupEngineClass,
+  ENGINE_REMOVED_REASON,
+  isRetiredEngineClass,
+} from '../enums/backup-engine-class.enum';
 import { BackupScope } from '../enums/backup-scope.enum';
 import { DestinationRole } from '../enums/destination-role.enum';
 import { DestinationPlacementValidator } from './destination-placement.validator';
 import { PgBackrestService } from './pgbackrest.service';
 import { ContinuousBackupEngineRegistry } from './continuous-backup-engine.registry';
-
-const DEFAULT_DUMP_SCHEDULE = '0 3 * * *';
+import {
+  DEFAULT_FULL_EVERY_DAYS,
+  defaultBackupSchedule,
+} from '../utils/default-schedule.util';
 
 @Injectable()
 export class BackupPoliciesService {
@@ -94,11 +103,6 @@ export class BackupPoliciesService {
         userId,
         {
           ...dto,
-          // A dump protects only up to the moment it was taken, so one that is
-          // never scheduled protects nothing written after the first.
-          cronSchedule:
-            dto.cronSchedule ??
-            (engine.pointInTime === false ? DEFAULT_DUMP_SCHEDULE : undefined),
           engine: engine.engine,
         } as CreateBackupPolicyDto & { engine: string },
         generation ? { generation } : undefined,
@@ -111,6 +115,49 @@ export class BackupPoliciesService {
         );
       });
       throw err;
+    }
+  }
+
+  private async assertPlacement(
+    dto: CreateBackupPolicyDto,
+    engineClass: BackupEngineClass,
+    primaryDestinationId: string,
+  ): Promise<void> {
+    if (engineClass === BackupEngineClass.DATABASE) {
+      const appIds = dto.scopeSelector?.applicationIds ?? [];
+      if (appIds.length !== 1) {
+        throw new BadRequestException(
+          'A database-class policy targets exactly one application (scopeSelector.applicationIds must have one id)',
+        );
+      }
+      if (dto.destinations.length > 1) {
+        // Replicas would be silently ignored by the db engine — reject rather
+        // than let the user believe the backup is mirrored.
+        throw new BadRequestException(
+          'Database-class policies currently support only the single PRIMARY destination',
+        );
+      }
+      await this.placement.assertOffProvider(
+        dto.clusterId,
+        primaryDestinationId,
+      );
+    }
+
+    if (engineClass === BackupEngineClass.VOLUME_COPY) {
+      const appIds = dto.scopeSelector?.applicationIds ?? [];
+      if (appIds.length !== 1) {
+        throw new BadRequestException(
+          'A volume-copy policy targets exactly one application ' +
+            '(scopeSelector.applicationIds must have one id)',
+        );
+      }
+      // Off the cluster or it is not a backup: an in-cluster clone lives on the
+      // application's own disk and is deleted with the application, so a
+      // schedule of them costs storage nightly and survives nothing.
+      await this.placement.assertOffProvider(
+        dto.clusterId,
+        primaryDestinationId,
+      );
     }
   }
 
@@ -129,63 +176,14 @@ export class BackupPoliciesService {
       );
     }
 
-    const engineClass = dto.engineClass ?? BackupEngineClass.VOLUME;
-    if (engineClass === BackupEngineClass.DATABASE) {
-      const appIds = dto.scopeSelector?.applicationIds ?? [];
-      if (appIds.length !== 1) {
-        throw new BadRequestException(
-          'A database-class policy targets exactly one application (scopeSelector.applicationIds must have one id)',
-        );
-      }
-      if (dto.destinations.length > 1) {
-        // Replicas would be silently ignored by the db engine — reject rather
-        // than let the user believe the backup is mirrored.
-        throw new BadRequestException(
-          'Database-class policies currently support only the single PRIMARY destination',
-        );
-      }
-      await this.placement.assertOffProvider(
-        dto.clusterId,
-        primaries[0].destinationId,
-      );
-    }
+    const engineClass = dto.engineClass ?? this.defaultEngineClass(dto);
+    await this.assertPlacement(dto, engineClass, primaries[0].destinationId);
 
-    if (engineClass === BackupEngineClass.VOLUME_COPY) {
-      const appIds = dto.scopeSelector?.applicationIds ?? [];
-      if (appIds.length !== 1) {
-        throw new BadRequestException(
-          'A volume-copy policy targets exactly one application ' +
-            '(scopeSelector.applicationIds must have one id)',
-        );
-      }
-      // Off the cluster or it is not a backup: an in-cluster clone lives on the
-      // application's own disk and is deleted with the application, so a
-      // schedule of them costs storage nightly and survives nothing.
-      await this.placement.assertOffProvider(
-        dto.clusterId,
-        primaries[0].destinationId,
-      );
-    }
-
-    if (engineClass === BackupEngineClass.VOLUME) {
-      // The Velero engine only ever narrows by namespace: `applications` and
-      // `label_selector` are never translated into the Backup CR, so a policy
-      // asking for either quietly captured the whole cluster — more data, more
-      // cost, and a scope line that lied. Refuse them rather than keep the lie:
-      // per-application protection is what the database and volume-copy
-      // classes are for.
-      if (
-        dto.scope === BackupScope.APPLICATIONS ||
-        dto.scope === BackupScope.LABEL_SELECTOR
-      ) {
-        throw new BadRequestException(
-          `A cluster-class policy cannot narrow by ${dto.scope}: the Velero engine ` +
-            'only selects namespaces, so this would silently back up the entire ' +
-            'cluster. Use scope=namespaces, or protect a single application with a ' +
-            'database-class policy (Postgres) or a volume copy.',
-        );
-      }
-    }
+    const engine = (dto as { engine?: string }).engine;
+    const pointInTime =
+      engineClass !== BackupEngineClass.DATABASE || this.isPointInTime(engine);
+    const continuousDatabase =
+      engineClass === BackupEngineClass.DATABASE && pointInTime;
 
     const policy = this.repo.create({
       userId,
@@ -196,8 +194,9 @@ export class BackupPoliciesService {
       scopeSelector: dto.scopeSelector ?? {},
       includePvcs: dto.includePvcs ?? true,
       includeEtcdL1: dto.includeEtcdL1 ?? false,
-      engine: (dto as { engine?: string }).engine,
-      cronSchedule: dto.cronSchedule,
+      engine,
+      cronSchedule:
+        dto.cronSchedule ?? defaultBackupSchedule(engineClass, pointInTime),
       retentionDays: dto.retentionDays ?? 30,
       retentionMaxCopies: dto.retentionMaxCopies,
       // Only the options a person may set, then Flui's own: a request that
@@ -209,6 +208,13 @@ export class BackupPoliciesService {
           : {}),
         ...(dto.metadata?.pauseDuringCopy === true
           ? { pauseDuringCopy: true }
+          : {}),
+        ...(dto.metadata?.keepMonthly === true ? { keepMonthly: true } : {}),
+        ...(continuousDatabase && dto.metadata?.archiveTimeoutSeconds
+          ? { archiveTimeoutSeconds: dto.metadata.archiveTimeoutSeconds }
+          : {}),
+        ...(continuousDatabase
+          ? { fullEveryDays: DEFAULT_FULL_EVERY_DAYS }
           : {}),
         ...internal,
       },
@@ -270,12 +276,55 @@ export class BackupPoliciesService {
   }
 
   async resume(id: string): Promise<BackupPolicyEntity> {
-    await this.findById(id);
+    const policy = await this.findById(id);
+    if (
+      isRetiredEngineClass(policy.engineClass) ||
+      policy.metadata?.pausedReason === ENGINE_REMOVED_REASON
+    ) {
+      throw new BadRequestException(
+        'This policy used the cluster backup engine Flui no longer has, so it cannot run again. ' +
+          'Protect the cluster instead: every application then gets a policy of its own.',
+      );
+    }
     await this.repo.update(id, {
       enabled: true,
       status: BackupPolicyStatus.ACTIVE,
     });
     this.logger.log(`[backup-policies] resumed ${id}`);
+    return this.findById(id);
+  }
+
+  /**
+   * The decisions a person takes on a volume-copy policy after it exists:
+   * stop the application for each copy, or leave volumes out. This is how a
+   * volume the last run refused stops needing a decision.
+   */
+  async updateOptions(
+    id: string,
+    options: BackupPolicyOptionsDto,
+  ): Promise<BackupPolicyEntity> {
+    const policy = await this.findById(id);
+    if (policy.engineClass !== BackupEngineClass.VOLUME_COPY) {
+      throw new BadRequestException(
+        'Only a volume-copy policy has options to change here.',
+      );
+    }
+    const metadata: Record<string, any> = { ...policy.metadata };
+    if (options.pauseDuringCopy !== undefined) {
+      if (options.pauseDuringCopy) metadata.pauseDuringCopy = true;
+      else delete metadata.pauseDuringCopy;
+    }
+    if (options.excludeVolumes !== undefined) {
+      if (options.excludeVolumes.length) {
+        metadata.excludeVolumes = [...new Set(options.excludeVolumes)];
+      } else delete metadata.excludeVolumes;
+    }
+    if (options.keepMonthly !== undefined) {
+      if (options.keepMonthly) metadata.keepMonthly = true;
+      else delete metadata.keepMonthly;
+    }
+    await this.repo.update(id, { metadata });
+    this.logger.log(`[backup-policies] options changed on ${id}`);
     return this.findById(id);
   }
 
@@ -352,6 +401,28 @@ export class BackupPoliciesService {
     return policy.destinations
       .filter((d) => d.role === DestinationRole.REPLICA && d.enabled)
       .sort((a, b) => a.priority - b.priority);
+  }
+
+  /**
+   * A policy that names one application and no engine copies that
+   * application's volumes. Anything wider has to say what it is.
+   */
+  private defaultEngineClass(dto: CreateBackupPolicyDto): BackupEngineClass {
+    if (
+      dto.scope === BackupScope.APPLICATIONS &&
+      (dto.scopeSelector?.applicationIds?.length ?? 0) === 1
+    ) {
+      return BackupEngineClass.VOLUME_COPY;
+    }
+    throw new BadRequestException(
+      'Say what this policy protects with engineClass: database or volume_copy for one application. ' +
+        'To protect every application on a cluster, protect the cluster instead.',
+    );
+  }
+
+  private isPointInTime(engine: string | undefined): boolean {
+    if (!this.engines.supports(engine)) return true;
+    return this.engines.forEngine(engine).pointInTime !== false;
   }
 
   private inferProfile(n: number): BackupPolicyProfile {

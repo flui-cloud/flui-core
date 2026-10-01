@@ -1,7 +1,7 @@
 import { listPriceFor } from '../utils/storage-list-price.util';
-import { Processor, Process, InjectQueue } from '@nestjs/bull';
+import { Processor, Process } from '@nestjs/bull';
 import { Logger } from '@nestjs/common';
-import { Job, Queue } from 'bull';
+import { Job } from 'bull';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { ClusterEntity } from '../../infrastructure/clusters/entities/cluster.entity';
@@ -9,22 +9,19 @@ import {
   InfrastructureOperationEntity,
   OperationStatus,
   OperationStep,
-  OperationType,
 } from '../../infrastructure/servers/entities/infrastructure-operations.entity';
 import { ObjectStorageProvisionerFactory } from '../../storage/factories/object-storage-provisioner.factory';
 import { StorageBackendProvider } from '../../storage/enums/storage-backend-provider.enum';
 import { EncryptionService } from '../../shared/encryption/services/encryption.service';
 import { BackupDestinationRepository } from '../repositories/backup-destination.repository';
-import { BackupPoliciesService } from '../services/backup-policies.service';
+import { ClusterProtectionService } from '../services/cluster-protection.service';
+import { operationApp } from './cluster-protection.processor';
 import { BackupDestinationEntity } from '../entities/backup-destination.entity';
 import {
   DestinationHealthStatus,
   EncryptionMode,
 } from '../enums/destination-health.enum';
-import { DestinationRole } from '../enums/destination-role.enum';
-import { BackupScope } from '../enums/backup-scope.enum';
-import { BackupPolicyProfile } from '../enums/backup-policy-status.enum';
-import { BACKUP_QUEUE, BACKUP_JOB_TYPES } from '../backups.constants';
+import { BACKUP_QUEUE } from '../backups.constants';
 import { QUICK_SETUP_BULL_JOB_NAME } from '../services/quick-setup.service';
 import * as crypto from 'node:crypto';
 import { ENGINE_PREFIXED_LAYOUT } from '../utils/destination-layout.util';
@@ -55,8 +52,7 @@ export class QuickSetupProcessor {
     private readonly destRepo: BackupDestinationRepository,
     private readonly provisionerFactory: ObjectStorageProvisionerFactory,
     private readonly encryption: EncryptionService,
-    private readonly policiesService: BackupPoliciesService,
-    @InjectQueue(BACKUP_QUEUE) private readonly queue: Queue,
+    private readonly protection: ClusterProtectionService,
   ) {}
 
   @Process(QUICK_SETUP_BULL_JOB_NAME)
@@ -140,65 +136,32 @@ export class QuickSetupProcessor {
       }
 
       await setStep(OperationStep.QUICK_SETUP_CREATE_POLICY, 50);
-      const policy = await this.policiesService.create(data.userId, {
-        name: 'auto-daily',
-        clusterId: data.clusterId,
-        scope: BackupScope.CLUSTER_ALL,
-        scopeSelector: {},
-        includePvcs: true,
-        includeEtcdL1: false,
-        cronSchedule: data.cronSchedule ?? undefined,
+      await this.protection.upsert(data.userId, data.clusterId, {
+        destinationId: primaryDest.id,
+        replicaDestinationId: replicaDest?.id ?? null,
+        cronSchedule: data.cronSchedule,
         retentionDays: data.retentionDays,
-        profile: replicaDest
-          ? BackupPolicyProfile.MIRRORED
-          : BackupPolicyProfile.SINGLE,
-        destinations: [
-          {
-            destinationId: primaryDest.id,
-            role: DestinationRole.PRIMARY,
-            priority: 0,
-          },
-          ...(replicaDest
-            ? [
-                {
-                  destinationId: replicaDest.id,
-                  role: DestinationRole.REPLICA,
-                  priority: 1,
-                },
-              ]
-            : []),
-        ],
       });
-
-      await setStep(OperationStep.QUICK_SETUP_INSTALL_VELERO, 65);
-      // Enqueue install velero (non-blocking; sub-operation tracks itself)
-      const installOp = await this.opRepo.save(
-        this.opRepo.create({
-          operationType: OperationType.INSTALL_VELERO,
-          status: OperationStatus.PENDING,
-          resourceType: 'cluster',
-          resourceId: data.clusterId,
-          userId: data.userId,
-          metadata: { parentOperationId: operationId, policyId: policy.id },
-          totalSteps: 9,
-        }),
-      );
-      await this.queue.add(BACKUP_JOB_TYPES.INSTALL_VELERO, {
-        clusterId: data.clusterId,
-        destinationIds: [
-          primaryDest.id,
-          ...(replicaDest ? [replicaDest.id] : []),
-        ],
-        primaryDestinationId: primaryDest.id,
-        operationId: installOp.id,
-        // The install starts it, once the storage location exists.
-        ...(data.runFirstBackup
-          ? { firstBackupPolicyId: policy.id, userId: data.userId }
-          : {}),
+      const started = await this.opRepo.findOne({
+        where: { id: operationId },
       });
-
-      if (data.runFirstBackup) {
-        await setStep(OperationStep.QUICK_SETUP_RUN_FIRST_BACKUP, 85);
+      const base = { ...started?.metadata, kind: 'protect' };
+      const apps: Array<Record<string, unknown>> = [];
+      const result = await this.protection.reconcile(data.clusterId, {
+        runFirstBackup: data.runFirstBackup,
+        waitForLock: true,
+        onProgress: async (done, total, app) => {
+          apps.push(operationApp(app));
+          await this.opRepo.update(operationId, {
+            progress: Math.min(95, 50 + Math.round((done / total) * 45)),
+            metadata: { ...base, apps } as never,
+          });
+        },
+      });
+      if (!result) {
+        throw new Error(
+          'The cluster went away, or another pass over it kept it busy for too long.',
+        );
       }
 
       await setStep(OperationStep.QUICK_SETUP_FINALIZE, 100);
@@ -206,9 +169,13 @@ export class QuickSetupProcessor {
         status: OperationStatus.COMPLETED,
         completedAt: new Date(),
         progress: 100,
+        metadata: {
+          ...base,
+          apps: result.applications.map(operationApp),
+        } as never,
       });
       this.logger.log(
-        `[quick-setup] Completed cluster=${data.clusterId} policyId=${policy.id}`,
+        `[quick-setup] Completed cluster=${data.clusterId}: ${result.applications.length} application(s) considered`,
       );
     } catch (err: any) {
       this.logger.error(`[quick-setup] Failed: ${err?.message}`);

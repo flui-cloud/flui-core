@@ -12,6 +12,16 @@ import { ApplicationsRepository } from '../repositories/applications.repository'
 import { PREVIOUS_VOLUME_LABEL } from './statefulset-volume-swap.service';
 
 const RESTORED_FROM_LABEL = 'flui.cloud/restored-from';
+export const REPLACES_LABEL = 'flui.cloud/replaces';
+
+/** Which of the application's volumes a restored copy stands in for, when the name fits a label. */
+export function replacesLabel(
+  claimName: string | null | undefined,
+): Record<string, string> {
+  return claimName && claimName.length <= 63
+    ? { [REPLACES_LABEL]: claimName }
+    : {};
+}
 
 export interface SpareVolume {
   name: string;
@@ -21,6 +31,8 @@ export interface SpareVolume {
   createdAt: string | null;
   inUse: boolean;
   restoredFrom: string | null;
+  /** The volume this copy replaces when put in use, named as the swap accepts it. */
+  replaces: string | null;
 }
 
 /**
@@ -64,6 +76,7 @@ export class SpareVolumesService {
         createdAt: isoOf(claim.metadata?.creationTimestamp),
         inUse: mounting.length > 0,
         restoredFrom: claim.metadata?.labels?.[RESTORED_FROM_LABEL] ?? null,
+        replaces: claim.metadata?.labels?.[REPLACES_LABEL] ?? null,
       });
     }
     return spare.sort((a, b) =>

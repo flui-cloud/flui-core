@@ -79,6 +79,8 @@ import { byOf } from '../scaling/scaling-actor';
 import { ClusterStorageService } from './services/cluster-storage.service';
 import { ClusterStorageUsageService } from './services/cluster-storage-usage.service';
 import {
+  ControlRestoreDto,
+  ControlRestorePlanResponseDto,
   RebuildClusterDto,
   RebuildClusterResponseDto,
   RebuildPlanResponseDto,
@@ -365,6 +367,76 @@ export class ClustersController {
       status: 'pending',
       estimated_duration: '2-3 minutes',
       created_at: operation.createdAt,
+    };
+  }
+
+  @Get('control-restore/plan')
+  @DataDoor()
+  @RequireSection('infrastructure')
+  // Reading: the section already asks what managing clusters asks.
+  @RequirePermission(IAM_PERMISSION.CLUSTER_READ)
+  @ApiOperation({
+    summary:
+      'What restoring the previous control cluster’s applications onto this one would do',
+    description:
+      'For an installation rebuilt from a platform backup: the applications that ran on the ' +
+      'control cluster it was restored from still name that cluster. Says, per application, ' +
+      'whether it can come back onto this installation’s control cluster, what its data comes ' +
+      'back from, and which applications it waits for. `candidates` lists every earlier control ' +
+      'cluster with applications recorded on it; name one with `from` when there is more than one. ' +
+      '`refusals` is empty when the restore can start.',
+  })
+  @ApiQuery({
+    name: 'from',
+    required: false,
+    description: 'The earlier control cluster ID',
+  })
+  @ApiResponse({ status: 200, type: ControlRestorePlanResponseDto })
+  async controlRestorePlan(
+    @Query('from') from?: string,
+  ): Promise<ControlRestorePlanResponseDto> {
+    return this.clusterRebuildService.planControlRestore(from || undefined);
+  }
+
+  @Post('control-restore')
+  @DataDoor()
+  @RequireSection('infrastructure')
+  @RequirePermission(IAM_PERMISSION.CLUSTER_MANAGE)
+  @ActionCycle({
+    action: 'POST /infrastructure/clusters/control-restore',
+    sentence:
+      'restore the applications of the previous control cluster onto this control cluster',
+    consequence:
+      'Each application recorded on the earlier control cluster is re-created on this ' +
+      'control cluster with its database and volumes restored from the latest backups, ' +
+      'and its published names are moved here; one that fails keeps where it got to and ' +
+      'a second run continues it, nothing is rolled back',
+  })
+  @ApiOperation({
+    summary:
+      'Restore the previous control cluster’s applications onto this one',
+    description:
+      'Runs the plan first and refuses with 400 if it has any refusal. Then, per application ' +
+      'and dependencies first: re-point the records, put the data back, deploy, load a dump, ' +
+      're-point the endpoints, re-arm its backups. Never rolls back — a re-run continues each ' +
+      'application from where it stopped. Returns an operation to follow.',
+  })
+  @ApiBody({ type: ControlRestoreDto })
+  @ApiResponse({ status: 202, type: RebuildClusterResponseDto })
+  @ApiResponse({ status: 400, description: 'The plan refused' })
+  async controlRestore(
+    @Req() req: Request,
+    @Body() dto: ControlRestoreDto,
+  ): Promise<RebuildClusterResponseDto> {
+    const userId = (req.user as AuthenticatedUser | undefined)?.userId ?? '';
+    const operation = await this.clusterRebuildService.startControlRestore(
+      userId,
+      { fromId: dto.from, includeStopped: dto.includeStopped },
+    );
+    return {
+      operation_id: operation.id,
+      status: 'pending',
+      applications: operation.totalSteps,
     };
   }
 

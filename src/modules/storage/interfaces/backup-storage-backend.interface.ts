@@ -28,14 +28,6 @@ export interface ListObjectsResult {
   hasMore: boolean;
 }
 
-export interface VeleroBSLConfig {
-  provider: 'aws';
-  config: Record<string, string>;
-  credentialsKey: string;
-  bucket: string;
-  prefix?: string;
-}
-
 export interface RcloneRemoteConfig {
   type: 's3';
   provider: string;
@@ -65,6 +57,7 @@ export interface IBackupStorageBackend {
     keys: string[],
   ): Promise<void>;
 
+  /** A time-limited GET link for `key` (prefixed by pathPrefix, like uploadFile). */
   presignDownload(
     creds: StorageBackendCredentials,
     key: string,
@@ -78,8 +71,6 @@ export interface IBackupStorageBackend {
     filePath: string,
     contentType?: string,
   ): Promise<string>;
-
-  toVeleroBSL(creds: StorageBackendCredentials): VeleroBSLConfig;
 
   toRcloneRemote(creds: StorageBackendCredentials): RcloneRemoteConfig;
 }

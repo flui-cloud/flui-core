@@ -61,10 +61,15 @@ load_config() {
   # value removed from the Secret would otherwise keep its last reading
   # forever — including the destination this ships to.
   unset FLUI_S3_REMOTE FLUI_APP_ID FLUI_CONFIG_COMPLETE
+  unset FLUI_ENCRYPTION FLUI_CRYPT_PASSWORD FLUI_CRYPT_PASSWORD2 FLUI_COMPRESSION
   unset RCLONE_CONFIG_FLUI_TYPE RCLONE_CONFIG_FLUI_PROVIDER \
         RCLONE_CONFIG_FLUI_ACCESS_KEY_ID RCLONE_CONFIG_FLUI_SECRET_ACCESS_KEY \
         RCLONE_CONFIG_FLUI_ENDPOINT RCLONE_CONFIG_FLUI_REGION \
         RCLONE_CONFIG_FLUI_FORCE_PATH_STYLE
+  unset RCLONE_CONFIG_FLUI_CRYPT_TYPE RCLONE_CONFIG_FLUI_CRYPT_REMOTE \
+        RCLONE_CONFIG_FLUI_CRYPT_FILENAME_ENCRYPTION \
+        RCLONE_CONFIG_FLUI_CRYPT_DIRECTORY_NAME_ENCRYPTION \
+        RCLONE_CONFIG_FLUI_CRYPT_PASSWORD RCLONE_CONFIG_FLUI_CRYPT_PASSWORD2
   # shellcheck disable=SC1090
   . "$CONFIG" 2>/dev/null || return 1
   # The sentinel is the last line the writer emits, so a file that is present
@@ -73,8 +78,25 @@ load_config() {
   # is cheap to keep and expensive to have assumed.
   [ "${FLUI_CONFIG_COMPLETE:-}" = "1" ] || return 1
   [ -n "${FLUI_S3_REMOTE:-}" ] && [ -n "${FLUI_APP_ID:-}" ] || return 1
+  # An encrypted repository is the `flui_crypt` remote over the same bucket.
+  # rclone takes only obscured passwords from its environment, so they are
+  # obscured here, from stdin; failing to is an idle tick, never a plaintext
+  # upload, because `flui_crypt:` does not exist until this succeeds.
+  if [ -n "${FLUI_CRYPT_PASSWORD:-}" ]; then
+    export RCLONE_CONFIG_FLUI_CRYPT_TYPE=crypt
+    export RCLONE_CONFIG_FLUI_CRYPT_REMOTE=flui:
+    export RCLONE_CONFIG_FLUI_CRYPT_FILENAME_ENCRYPTION=off
+    export RCLONE_CONFIG_FLUI_CRYPT_DIRECTORY_NAME_ENCRYPTION=false
+    RCLONE_CONFIG_FLUI_CRYPT_PASSWORD="$(printf '%s' "$FLUI_CRYPT_PASSWORD" | rclone obscure -)" || return 1
+    RCLONE_CONFIG_FLUI_CRYPT_PASSWORD2="$(printf '%s' "${FLUI_CRYPT_PASSWORD2:-}" | rclone obscure -)" || return 1
+    export RCLONE_CONFIG_FLUI_CRYPT_PASSWORD RCLONE_CONFIG_FLUI_CRYPT_PASSWORD2
+  fi
   REMOTE="${FLUI_S3_REMOTE}/binlog"
   BASE_REMOTE="${FLUI_S3_REMOTE}/base"
+  COMPRESS=""
+  if [ "${FLUI_COMPRESSION:-}" = "zstd" ] && command -v zstd >/dev/null 2>&1; then
+    COMPRESS=zstd
+  fi
   return 0
 }
 
@@ -92,6 +114,19 @@ rc() {
 
 mysql_cmd() {
   mariadb -h "$HOST" -P "$PORT" -uroot -p"$DBPW" -N -B -e "$1" 2>/dev/null
+}
+
+binlog_position() {
+  mysql_cmd 'SHOW MASTER STATUS' | awk 'NR==1{print $1":"$2}'
+}
+
+flush_if_written() {
+  local now
+  now="$(binlog_position)"
+  [ -n "$now" ] || return 0
+  [ "$now" = "${FLUSHED_AT:-}" ] && return 0
+  mysql_cmd 'FLUSH BINARY LOGS' >/dev/null
+  FLUSHED_AT="$(binlog_position)"
 }
 
 # The oldest log any retained base still needs, read from the repository.
@@ -114,17 +149,61 @@ base_start_file() {
 # longer be brought forward. The restore refuses on such a hole, which is the
 # right end of the story; this keeps it from being written in the first place.
 repo_contiguous() {
-  local from to n want have
-  from="$(echo "$1" | sed 's/.*\.//' | sed 's/^0*//')"
-  to="$(echo "$2" | sed 's/.*\.//' | sed 's/^0*//')"
-  have="$(rc lsf "$REMOTE/" 2>/dev/null | grep -E '^binlog\.[0-9]+$' | sed 's/.*\.//' | sed 's/^0*//')"
-  n="$from"
-  while [ "$n" -lt "$to" ]; do
-    want="$n"
-    printf '%s\n' "$have" | grep -qx "$want" || return 1
-    n=$((n + 1))
+  [ -n "$REPO_LIST" ] || return 1
+  printf '%s\n' "$REPO_LIST" | awk -F';' -v from="$1" -v to="$2" '
+    function num(s) { sub(/\.zst$/, "", s); sub(/.*\./, "", s); return s + 0 }
+    $2 ~ /^binlog\.[0-9]+(\.zst)?$/ { have[num($2)] = 1 }
+    END { for (n = num(from); n < num(to); n++) if (!(n in have)) exit 1; exit 0 }'
+}
+
+# One listing of the repository's logs per step, as `size;name`. Through
+# `flui_crypt` the size is the plaintext one, so it compares with the server's.
+refresh_repo_list() {
+  REPO_LIST="$(rc lsf --format sp "$REMOTE/" 2>/dev/null | grep -E ';binlog\.[0-9]+(\.zst)?$')"
+}
+
+# The server's own logs as `name size`, newest last. The last one is active.
+refresh_server_logs() {
+  SERVER_LOGS="$(mysql_cmd 'SHOW BINARY LOGS' | awk '{print $1" "$2}')"
+}
+
+repo_plain_size() {
+  printf '%s\n' "$REPO_LIST" | awk -F';' -v n="$1" '$2==n{print $1}'
+}
+
+repo_has_zst() {
+  printf '%s\n' "$REPO_LIST" | grep -x "[0-9]*;$1\.zst" >/dev/null
+}
+
+server_size() {
+  printf '%s\n' "$SERVER_LOGS" | awk -v n="$1" '$1==n{print $2}'
+}
+
+server_active() {
+  printf '%s\n' "$SERVER_LOGS" | tail -1 | awk '{print $1}'
+}
+
+# A closed log the repository holds whole: compressed (written only from a
+# local copy the server's own size vouched for), or plain at the server's size.
+complete_in_repo() {
+  local f="$1" want have
+  repo_has_zst "$f" && return 0
+  want="$(server_size "$f")"
+  have="$(repo_plain_size "$f")"
+  [ -n "$want" ] && [ -n "$have" ] && [ "$want" = "$have" ]
+}
+
+# The first log the server still has to keep because the repository does not
+# hold it whole; the active log when every closed one is.
+first_incomplete_log() {
+  local active name
+  active="$(server_active)"
+  [ -n "$active" ] || return 0
+  for name in $(printf '%s\n' "$SERVER_LOGS" | awk '{print $1}'); do
+    [ "$name" = "$active" ] && break
+    complete_in_repo "$name" || { echo "$name"; return 0; }
   done
-  return 0
+  echo "$active"
 }
 
 # The oldest log the server still has to keep.
@@ -161,17 +240,26 @@ newest_base_start() {
 
 # What the SERVER still has to keep: the newest base's starting log when the
 # repository provably holds everything between the two, otherwise the oldest's.
+#
+# Above both, once the repository holds every closed log whole up to the first
+# one it does not: the server then keeps only what is not yet safe elsewhere,
+# however long ago the newest base was taken.
 purge_floor() {
-  local oldest newest
+  local oldest newest floor complete
   oldest="$(oldest_base_start)"
   [ -z "$oldest" ] && return 0
   newest="$(newest_base_start)"
+  floor="$oldest"
   if [ -n "$newest" ] && [ "$newest" != "$oldest" ] \
      && repo_contiguous "$oldest" "$newest"; then
-    echo "$newest"
-    return 0
+    floor="$newest"
   fi
-  echo "$oldest"
+  complete="$(first_incomplete_log)"
+  if [ -n "$complete" ] && [ "$floor" \< "$complete" ] \
+     && repo_contiguous "$oldest" "$complete"; then
+    floor="$complete"
+  fi
+  echo "$floor"
 }
 
 # What the REPOSITORY no longer needs: everything below the oldest surviving
@@ -188,8 +276,8 @@ purge_floor() {
 prune_repository() {
   local floor="$1" f
   [ -z "$floor" ] && return 0
-  for f in $(rc lsf "$REMOTE/" 2>/dev/null | grep -E '^binlog\.[0-9]+$' | sort); do
-    [ "$f" \< "$floor" ] || break
+  for f in $(printf '%s\n' "$REPO_LIST" | awk -F';' '{print $2}' | sort); do
+    [ "${f%.zst}" \< "$floor" ] || break
     rc deletefile "$REMOTE/$f" >/dev/null 2>&1 \
       && log "removed $f from the repository: no surviving base backup starts that early"
   done
@@ -213,6 +301,8 @@ start_reader() {
   # recorded position points into, and therefore the only one whose absence
   # makes the base unrecoverable. Beginning at the floor makes the reader and
   # the purge agree by construction instead of by timing.
+  refresh_repo_list
+  refresh_server_logs
   floor="$(purge_floor)"
   if [ -n "$floor" ]; then
     if [ "$first" \< "$floor" ]; then
@@ -246,11 +336,6 @@ start_reader() {
   log "reader started from $first (pid $READER_PID)"
 }
 
-# One listing per tick: what the repository holds, and how big.
-remote_sizes() {
-  rc lsl "$REMOTE/" 2>/dev/null | awk '{print $NF"\t"$1}'
-}
-
 # Ships anything whose local copy differs in size from the repository's.
 #
 # Size, not presence, and this is the difference between a recovery window and
@@ -260,12 +345,27 @@ remote_sizes() {
 # it already shipped and the tail never goes up. Measured: every file in the
 # repository stopped at 379 bytes while the server's held 423 and 649, and a
 # restore that replayed them lost a committed row and reported success.
+#
+# A closed log goes up compressed, once, when compression is configured — and
+# only from a local copy exactly the size the server reports for it, which is
+# what tells a whole log from one the reader is still re-fetching after a
+# restart. The active log stays a plain prefix extended each tick; once it
+# closes, its compressed copy replaces it.
 upload() {
-  local sizes f local_size remote_size
-  sizes="$(remote_sizes)"
+  local f local_size remote_size active
+  active="$(server_active)"
   for f in $(ls -1 "$SPOOL" 2>/dev/null | grep -E '^binlog\.[0-9]+$' | sort); do
     local_size="$(stat -c%s "$SPOOL/$f" 2>/dev/null || echo 0)"
-    remote_size="$(printf '%s\n' "$sizes" | awk -F'\t' -v n="$f" '$1==n{print $2}')"
+    repo_has_zst "$f" && continue
+    if [ -n "$COMPRESS" ] && [ -n "$active" ] && [ "$f" != "$active" ] \
+       && [ "$local_size" = "$(server_size "$f")" ]; then
+      if zstd -q -3 -T2 -c "$SPOOL/$f" | rc rcat "$REMOTE/$f.zst" --s3-no-check-bucket 2>&1 | sed 's/^/  rclone: /'; then
+        continue
+      fi
+      log "could not ship $f compressed; it stays on the server until a later tick does"
+      continue
+    fi
+    remote_size="$(repo_plain_size "$f")"
     # Absent, or the local copy has grown past it. NEVER when the local copy
     # is shorter: the spool is the container's writable layer and is empty
     # after a restart, so the reader re-downloads from the floor and a
@@ -288,10 +388,19 @@ upload() {
 # Confirmed means object storage listed it back, not that an upload command
 # exited zero. The difference is the whole point of the purge rule below.
 last_confirmed() {
-  rc lsf "$REMOTE/" 2>/dev/null \
-    | grep -E '^binlog\.[0-9]+$' \
+  printf '%s\n' "$REPO_LIST" | awk -F';' 'NF==2{sub(/\.zst$/, "", $2); print $2}' \
     | sort \
     | tail -1
+}
+
+# A plain copy is redundant once its compressed one is listed back.
+drop_plain_duplicates() {
+  local f
+  for f in $(printf '%s\n' "$REPO_LIST" | awk -F';' '
+      { n = $2; if (sub(/\.zst$/, "", n)) zst[n] = 1; else plain[n] = 1 }
+      END { for (n in plain) if (n in zst) print n }'); do
+    rc deletefile "$REMOTE/$f" >/dev/null 2>&1
+  done
 }
 
 # Purges only what is both confirmed in object storage and not needed by the
@@ -309,8 +418,9 @@ purge_shipped() {
     return 0
   fi
   # Never past the base's own starting log, and never the active one: purge is
-  # exclusive of its argument, so this keeps `confirmed` itself on the server.
-  if [ "$floor" \< "$confirmed" ]; then
+  # exclusive of its argument, so this keeps `floor` itself on the server.
+  if [ "$floor" \< "$confirmed" ] || [ "$floor" = "$confirmed" ]; then
+    [ "$floor" = "$(printf '%s\n' "$SERVER_LOGS" | head -1 | awk '{print $1}')" ] && return 0
     mysql_cmd "PURGE BINARY LOGS TO '$floor'" >/dev/null
     log "purged server binary logs up to $floor (confirmed in object storage: $confirmed)"
   fi
@@ -330,15 +440,18 @@ purge_shipped() {
 # rather than presence is what keeps pruning from deleting the local copy of a
 # log whose tail has not been shipped yet.
 prune_spool() {
-  local sizes newest f local_size remote_size
+  local newest f local_size remote_size
   newest="$(ls -1 "$SPOOL" 2>/dev/null | grep -E '^binlog\.[0-9]+$' | sort | tail -1)"
   [ -z "$newest" ] && return 0
-  sizes="$(remote_sizes)"
   for f in $(ls -1 "$SPOOL" 2>/dev/null | grep -E '^binlog\.[0-9]+$' | sort); do
     # The newest is still being appended to; kept until something newer exists.
     [ "$f" = "$newest" ] && continue
+    if repo_has_zst "$f"; then
+      rm -f "$SPOOL/$f"
+      continue
+    fi
     local_size="$(stat -c%s "$SPOOL/$f" 2>/dev/null || echo 0)"
-    remote_size="$(printf '%s\n' "$sizes" | awk -F'\t' -v n="$f" '$1==n{print $2}')"
+    remote_size="$(repo_plain_size "$f")"
     [ -n "$remote_size" ] && [ "$local_size" = "$remote_size" ] && rm -f "$SPOOL/$f"
   done
 }
@@ -347,14 +460,15 @@ prune_spool() {
 # would fire on: how far the shipped edge is behind the server's own.
 report_lag() {
   local server_newest shipped_newest unshipped
-  server_newest="$(mysql_cmd 'SHOW BINARY LOGS' | tail -1 | awk '{print $1}')"
+  server_newest="$(server_active)"
   shipped_newest="$(last_confirmed)"
   unshipped="$(ls -1 "$SPOOL" 2>/dev/null | grep -cE '^binlog\.[0-9]+$')"
   # The name alone says nothing about completeness: a repository object that
   # stopped at a prefix of its log carries the same name as the whole file.
+  # A compressed copy is whole by construction.
   local edge_local edge_remote
   edge_local="$(stat -c%s "$SPOOL/$shipped_newest" 2>/dev/null || echo '')"
-  edge_remote="$(rc lsl "$REMOTE/$shipped_newest" 2>/dev/null | awk '{print $1}')"
+  edge_remote="$(repo_plain_size "$shipped_newest")"
   log "server=$server_newest shipped=$shipped_newest (${edge_remote:-?} bytes) spooled=$unshipped"
   if [ -n "$server_newest" ] && [ -z "$shipped_newest" ]; then
     log "WARNING: nothing has reached object storage — every binary log since the last confirmed one exists only on this cluster, and the server is holding them all"
@@ -377,6 +491,10 @@ trap 'log "stopping"; kill "${READER_PID:-0}" 2>/dev/null; exit 0' TERM INT
 
 log "started; idle until a backup policy provides a destination"
 ANNOUNCED=""
+REPO_LIST=""
+SERVER_LOGS=""
+FLUSHED_AT=""
+COMPRESS=""
 
 while true; do
   # Idle rather than exit, for the reason above: kubelet would read an exit as
@@ -400,9 +518,19 @@ while true; do
     continue
   fi
 
+  # A new repository — encryption turned on, or another destination — holds
+  # none of the logs already shipped. Restarting the reader makes it fetch
+  # again from the new repository's floor, which the server still retains,
+  # instead of carrying on past logs the new repository never received.
+  if [ -n "$ANNOUNCED" ] && [ "$ANNOUNCED" != "$REMOTE" ]; then
+    log "repository changed to $REMOTE${FLUI_ENCRYPTION:+ ($FLUI_ENCRYPTION)} — following the server again from its floor"
+    kill "${READER_PID:-0}" 2>/dev/null
+    READER_PID=""
+    ANNOUNCED=""
+  fi
   if [ -z "$ANNOUNCED" ]; then
-    log "shipping $FLUI_APP_ID to $REMOTE every ${TICK}s"
-    ANNOUNCED=1
+    log "shipping $FLUI_APP_ID to $REMOTE${FLUI_ENCRYPTION:+ ($FLUI_ENCRYPTION)} every ${TICK}s"
+    ANNOUNCED="$REMOTE"
   fi
 
   if [ -z "${READER_PID:-}" ] || ! kill -0 "$READER_PID" 2>/dev/null; then
@@ -415,16 +543,22 @@ while true; do
     fi
   fi
 
-  # Closes the active log so it becomes immutable and uploadable. Without this
-  # a quiet database's recoverable edge would sit behind the active file until
-  # it reached its size limit — hours on a low-traffic server.
-  mysql_cmd 'FLUSH BINARY LOGS' >/dev/null
+  # Closes the active log so it becomes immutable and uploadable, which keeps
+  # each file to about one tick of writes. Only when something was written
+  # since the last rotation: a rotation of an idle server is an empty log, and
+  # a quiet database would otherwise add one object to the repository every
+  # tick, for nothing.
+  flush_if_written
 
+  refresh_server_logs
+  refresh_repo_list
   # One reading of the floor for the whole tick: the server purge and the
   # repository prune must not disagree about which bases exist.
   OLDEST_START="$(oldest_base_start)"
 
   upload
+  refresh_repo_list
+  drop_plain_duplicates
   purge_shipped
   prune_repository "$OLDEST_START"
   prune_spool

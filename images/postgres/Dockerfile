@@ -1,6 +1,8 @@
 # Flui-managed Postgres: postgres + pgBackRest, born migratable.
 # pgBackRest comes from the PGDG apt repo (already configured in the official
-# postgres images) so it is new enough to support PG17 (>= 2.53).
+# postgres images) so it is new enough to support PG17 (>= 2.53). The build
+# refuses anything older than 2.46, the first release with block incremental
+# (`repo1-block`), and a build without zstd, which Flui's config names.
 # PG_MAJOR selects the server major; 17 is the catalog's own.
 ARG PG_MAJOR=17
 FROM docker.io/library/postgres:${PG_MAJOR}
@@ -11,6 +13,8 @@ RUN set -eux; \
     update-ca-certificates; \
     rm -rf /var/lib/apt/lists/*; \
     pgbackrest version; \
+    pgbackrest version | awk '{ split($2, v, "."); exit !(v[1] > 2 || (v[1] == 2 && v[2] >= 46)) }'; \
+    ldd "$(command -v pgbackrest)" | grep -q libzstd; \
     test -f /etc/ssl/certs/ca-certificates.crt
 
 # Born-migratable defaults, included from postgresql.conf; overridable by ALTER SYSTEM.

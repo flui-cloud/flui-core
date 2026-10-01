@@ -1,3 +1,4 @@
+import { PlatformBackupDownloadService } from './services/platform-backup-download.service';
 import { Module, forwardRef } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { BullModule } from '@nestjs/bull';
@@ -32,21 +33,14 @@ import { RestoreJobRepository } from './repositories/restore-job.repository';
 import { BackupDestinationsService } from './services/backup-destinations.service';
 import { BackupPoliciesService } from './services/backup-policies.service';
 import { BackupJobsService } from './services/backup-jobs.service';
+import { BackupActivityService } from './services/backup-activity.service';
 import { RestoreJobsService } from './services/restore-jobs.service';
-import { VeleroInstallerService } from './services/velero-installer.service';
-import { VeleroClientService } from './services/velero-client.service';
 import { TemplateRendererService } from './services/template-renderer.service';
 import { EtcdSnapshotService } from './services/etcd-snapshot.service';
 import { BackupAlertService } from './services/backup-alert.service';
 import { AlertEventEntity } from '../observability/entities/alert-event.entity';
 
-import { InstallVeleroProcessor } from './processors/install-velero.processor';
-import {
-  RunBackupJobProcessor,
-  PreDeployTriggerProcessor,
-} from './processors/run-backup-job.processor';
 import { ReplicateBackupProcessor } from './processors/replicate-backup.processor';
-import { RunRestoreJobProcessor } from './processors/run-restore-job.processor';
 import { RunDbBackupProcessor } from './processors/run-db-backup.processor';
 import { RunDbRestoreProcessor } from './processors/run-db-restore.processor';
 import { HealthCheckProcessor } from './processors/health-check.processor';
@@ -60,6 +54,8 @@ import { QuickSetupController } from './controllers/quick-setup.controller';
 import { BillingEstimatorController } from './controllers/billing-estimator.controller';
 import { BackupStatusController } from './controllers/backup-status.controller';
 import { PgBackrestService } from './services/pgbackrest.service';
+import { PgLegacyRepoRetirer } from './services/pg-legacy-repo.retirer';
+import { PlaintextRetirementService } from './services/plaintext-retirement.service';
 import { DestinationPlacementValidator } from './services/destination-placement.validator';
 import { DbPitrService } from './services/db-pitr.service';
 import { PlatformKeyBundleService } from './services/platform-key-bundle.service';
@@ -79,7 +75,6 @@ import {
   MariadbDumpService,
   PostgresDumpService,
 } from './services/logical-dump.service';
-import { SqliteVolumeExclusionService } from './services/sqlite-volume-exclusion.service';
 import { ContinuousBackupEngineRegistry } from './services/continuous-backup-engine.registry';
 import { RebuildDataRestorer } from './services/rebuild-data-restorer.service';
 import { DeclaredEngineResolver } from './services/declared-engine.resolver';
@@ -89,6 +84,19 @@ import { BACKUP_QUEUE } from './backups.constants';
 import { AppProtectionController } from './controllers/app-protection.controller';
 import { AppProtectionService } from './services/app-protection.service';
 import { AppCoverageService } from './services/app-coverage.service';
+import { BackupClusterProtectionEntity } from './entities/backup-cluster-protection.entity';
+import { ClusterDecisionsService } from './services/cluster-decisions.service';
+import { ClusterProtectionService } from './services/cluster-protection.service';
+import { ClusterProtectionProcessor } from './processors/cluster-protection.processor';
+import { ClusterProtectionScheduler } from './schedulers/cluster-protection.scheduler';
+import { ClusterProtectionController } from './controllers/cluster-protection.controller';
+import { PreDeployBackupService } from './services/pre-deploy-backup.service';
+import { PreDeployBackupProcessor } from './processors/pre-deploy-backup.processor';
+import { KopiaReplicationService } from './services/kopia-replication.service';
+import { AppVolumeBackupProcessor } from './processors/app-volume-backup.processor';
+import { VeleroUninstallService } from './services/velero-uninstall.service';
+import { UninstallVeleroProcessor } from './processors/uninstall-velero.processor';
+import { VeleroUninstallController } from './controllers/velero-uninstall.controller';
 
 @Module({
   imports: [
@@ -101,6 +109,7 @@ import { AppCoverageService } from './services/app-coverage.service';
       BackupJobEntity,
       BackupArtifactEntity,
       BackupArtifactLocationEntity,
+      BackupClusterProtectionEntity,
       RestoreJobEntity,
       ClusterEntity,
       ClusterNodeEntity,
@@ -130,10 +139,13 @@ import { AppCoverageService } from './services/app-coverage.service';
     BackupArtifactsController,
     RestoreJobsController,
     QuickSetupController,
+    ClusterProtectionController,
+    VeleroUninstallController,
     BillingEstimatorController,
     BackupStatusController,
   ],
   providers: [
+    PlatformBackupDownloadService,
     BackupDestinationRepository,
     BackupPolicyRepository,
     BackupJobRepository,
@@ -142,17 +154,12 @@ import { AppCoverageService } from './services/app-coverage.service';
     BackupDestinationsService,
     BackupPoliciesService,
     BackupJobsService,
+    BackupActivityService,
     RestoreJobsService,
-    VeleroInstallerService,
-    VeleroClientService,
     TemplateRendererService,
     EtcdSnapshotService,
     BackupAlertService,
-    InstallVeleroProcessor,
-    RunBackupJobProcessor,
-    PreDeployTriggerProcessor,
     ReplicateBackupProcessor,
-    RunRestoreJobProcessor,
     RunDbBackupProcessor,
     RunDbRestoreProcessor,
     HealthCheckProcessor,
@@ -165,12 +172,13 @@ import { AppCoverageService } from './services/app-coverage.service';
     MariadbPitrService,
     PostgresDumpService,
     MariadbDumpService,
-    SqliteVolumeExclusionService,
     ContinuousBackupEngineRegistry,
     RebuildDataRestorer,
     DeclaredEngineResolver,
     BackupStatusService,
     PgBackrestService,
+    PgLegacyRepoRetirer,
+    PlaintextRetirementService,
     DestinationPlacementValidator,
     DbPitrService,
     AppProtectionService,
@@ -179,6 +187,16 @@ import { AppCoverageService } from './services/app-coverage.service';
     PlatformBackupService,
     RunPlatformBackupProcessor,
     MasterHeartbeatScheduler,
+    ClusterDecisionsService,
+    ClusterProtectionService,
+    ClusterProtectionProcessor,
+    ClusterProtectionScheduler,
+    PreDeployBackupService,
+    PreDeployBackupProcessor,
+    KopiaReplicationService,
+    AppVolumeBackupProcessor,
+    VeleroUninstallService,
+    UninstallVeleroProcessor,
   ],
   exports: [
     BackupDestinationsService,

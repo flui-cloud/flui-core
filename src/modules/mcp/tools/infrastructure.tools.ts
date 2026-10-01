@@ -149,4 +149,33 @@ export const INFRASTRUCTURE_TOOLS: ToolDef[] = [
       };
     },
   }),
+  defineTool({
+    name: 'control_restore_plan',
+    routes: ['GET /infrastructure/clusters/control-restore/plan'],
+    description:
+      "For an installation rebuilt from a platform backup: which applications of the control cluster it was restored from can come back onto this installation's own control cluster, what each one's data comes back from (`restores`), what comes back empty or thin (`warnings`), which applications each waits for (`after` — databases first), and whether the whole restore can start (`refusals` empty). `candidates` lists every earlier control cluster that still has applications; pass `from` (its id) only when there is more than one. Read-only; to start it call control_restore_apps.",
+    scope: MCP_SCOPE.INFRA_READ,
+    inputSchema: { from: z.string().optional() },
+    run: (args, ctx) =>
+      ctx.api.get(
+        '/infrastructure/clusters/control-restore/plan',
+        args.from ? { from: args.from } : undefined,
+      ),
+  }),
+  defineTool({
+    name: 'control_restore_apps',
+    routes: ['POST /infrastructure/clusters/control-restore'],
+    description:
+      "Start restoring the applications of the earlier control cluster onto this installation's control cluster, as planned by control_restore_plan (call that first and show the person its refusals and warnings). Refused when the plan has any refusal. Per application, dependencies first: records re-pointed, database and volumes restored from the latest backups, deployed, names moved. Returns an operation id for operation_status; the operation's metadata.apps lists each application's phase as it lands. Running it again continues whatever did not finish. includeStopped also restores applications that were not running.",
+    scope: MCP_SCOPE.INFRA_WRITE,
+    inputSchema: {
+      from: z.string().optional(),
+      includeStopped: z.boolean().optional(),
+    },
+    run: (args, ctx) =>
+      ctx.api.post('/infrastructure/clusters/control-restore', {
+        ...(args.from ? { from: args.from } : {}),
+        ...(args.includeStopped ? { includeStopped: true } : {}),
+      }),
+  }),
 ];

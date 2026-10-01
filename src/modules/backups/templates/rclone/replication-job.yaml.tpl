@@ -22,7 +22,7 @@ spec:
           command:
             - rclone
             - --config=/etc/rclone/rclone.conf
-            - copy
+            - {{RCLONE_VERB}}
             - --checksum
             - --transfers=8
             - --checkers=16

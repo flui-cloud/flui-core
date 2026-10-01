@@ -4,6 +4,8 @@ import ora from 'ora';
 import {
   CliAppService,
   BackupDestinationInput,
+  BackupResponse,
+  StartedBackup,
 } from '../../../lib/services/cli-app.service';
 import { resolveClusterRef } from '../../../lib/resolve-cluster';
 import { formatBytes } from '../../../lib/format-bytes';
@@ -11,15 +13,19 @@ import { renderCopyRefusal } from '../../../lib/render-copy-refusal';
 
 export default class AppBackupCreate extends Command {
   static readonly description =
-    'Archive an application volume to S3-compatible object storage. ' +
-    'When --bucket is omitted the cluster provider auto-provisions one ' +
+    'Back up an application volume to S3-compatible object storage. ' +
+    'With --destination (a registered destination) the volume becomes a kopia snapshot: encrypted, deduplicated, ' +
+    'kept until you delete it, and restorable whole or file by file with `flui app backup restore`. ' +
+    'With --bucket a full plaintext copy is archived instead; when both are omitted the cluster provider auto-provisions a bucket ' +
     '(Scaleway: full-auto using your compute key; Hetzner: requires Object ' +
     'Storage credentials connected). Otherwise pass an explicit endpoint + ' +
-    '--bucket and S3 credentials via flags or FLUI_S3_ACCESS_KEY/FLUI_S3_SECRET_KEY env.';
+    '--bucket and S3 credentials via flags or FLUI_S3_ACCESS_KEY/FLUI_S3_SECRET_KEY env. ' +
+    'The backup runs in the background: the command follows it to the end unless --no-wait is given.';
 
   static readonly examples = [
     '<%= config.bin %> <%= command.id %> my-app',
     '<%= config.bin %> <%= command.id %> my-app --description nightly',
+    '<%= config.bin %> <%= command.id %> my-app -D <destId> --no-wait',
     '<%= config.bin %> <%= command.id %> my-app -b external-bucket -e https://s3.eu-central-1.amazonaws.com -r eu-central-1',
   ];
 
@@ -87,6 +93,11 @@ export default class AppBackupCreate extends Command {
       description: 'S3 secret key. Defaults to FLUI_S3_SECRET_KEY env var.',
       env: 'FLUI_S3_SECRET_KEY',
     }),
+    'no-wait': Flags.boolean({
+      default: false,
+      description:
+        'Return once the backup is queued; follow it with `flui operation <id> --follow`.',
+    }),
     'key-prefix': Flags.string({
       description:
         'Override the destination key prefix (default: flui/<cluster>/<app>/<timestamp>/)',
@@ -120,11 +131,13 @@ export default class AppBackupCreate extends Command {
     if (destination) target = `s3://${destination.bucket}`;
     else if (flags.destination) target = `destination ${flags.destination}`;
     const spinner = ora(`Backing up "${args.name}" to ${target}...`).start();
+    let started: StartedBackup;
+    let op: Awaited<ReturnType<CliAppService['followBackup']>>;
     try {
       const { id: clusterId } = await resolveClusterRef(flags.cluster);
       const service = await CliAppService.create(clusterId);
       const app = await service.getAppByName(args.name);
-      const backup = await service.createAppBackup(app.id, {
+      started = await service.createAppBackup(app.id, {
         volumeName: flags.volume,
         description: flags.description,
         destinationId: flags.destination,
@@ -132,37 +145,19 @@ export default class AppBackupCreate extends Command {
         allowInconsistent: flags['allow-inconsistent'],
         pause: flags.pause,
       });
-
-      spinner.succeed(`Backup uploaded: ${backup.exportId}`);
-      if (backup.warning) {
-        console.log('');
-        console.log(chalk.yellow(`  ! ${backup.warning}`));
-      }
-      console.log('');
-      console.log(`  ${chalk.bold('Provider:')}  ${backup.provider}`);
-      console.log(`  ${chalk.bold('Namespace:')} ${backup.namespace}`);
-      console.log(`  ${chalk.bold('Source:')}    ${backup.sourcePvcName}`);
-      console.log(`  ${chalk.bold('Source request:')}  ${backup.sizeGb} GiB`);
-      const uploaded =
-        backup.actualBytes === undefined
-          ? 'unknown'
-          : formatBytes(backup.actualBytes);
-      console.log(`  ${chalk.bold('Uploaded:')}        ${uploaded}`);
-      console.log(`  ${chalk.bold('Bucket:')}    ${backup.destination.bucket}`);
-      console.log(
-        `  ${chalk.bold('Endpoint:')}  ${backup.destination.endpoint}`,
-      );
-      console.log(`  ${chalk.bold('Prefix:')}    ${backup.exportId}`);
-      console.log(`  ${chalk.bold('Created:')}   ${backup.createdAt}`);
-      console.log('');
-      if (!destination) {
+      if (flags['no-wait']) {
+        spinner.succeed(
+          `Backup of ${started.volumeName} queued (operation ${started.operationId})`,
+        );
         console.log(
           chalk.dim(
-            `  Bucket auto-provisioned by ${backup.provider} object storage.`,
+            `\n  Follow it with: flui operation ${started.operationId} --follow\n`,
           ),
         );
+        return;
       }
-      console.log('');
+      spinner.text = `Backing up ${started.volumeName} of "${args.name}" to ${target}...`;
+      op = await service.followBackup(started.operationId);
     } catch (error: any) {
       spinner.fail('Backup failed');
       if (renderCopyRefusal(error, `flui app backup create ${args.name}`)) {
@@ -173,5 +168,84 @@ export default class AppBackupCreate extends Command {
       console.log(chalk.red(`\n  Error: ${msg}\n`));
       this.exit(1);
     }
+
+    if (!op) {
+      spinner.warn(
+        `Still running after a day — follow it with: flui operation ${started.operationId} --follow`,
+      );
+      return;
+    }
+    if (op.status !== 'COMPLETED' || !op.metadata?.result) {
+      spinner.fail('Backup failed');
+      if (
+        renderCopyRefusal(
+          { details: op.metadata?.error },
+          `flui app backup create ${args.name}`,
+        )
+      ) {
+        this.exit(1);
+      }
+      console.log(
+        chalk.red(`\n  Error: ${op.errorMessage ?? op.status.toLowerCase()}\n`),
+      );
+      this.exit(1);
+    }
+    this.printResult(spinner, op.metadata.result, args.name, !destination);
+  }
+
+  private printResult(
+    spinner: ReturnType<typeof ora>,
+    backup: BackupResponse,
+    appName: string,
+    autoProvisioned: boolean,
+  ): void {
+    if (backup.engine === 'kopia') {
+      spinner.succeed(
+        `Snapshot taken: ${backup.artifactId ?? backup.snapshotId ?? backup.exportId}`,
+      );
+      if (backup.warning) console.log(chalk.yellow(`\n  ! ${backup.warning}`));
+      console.log('');
+      console.log(`  ${chalk.bold('Volume:')}    ${backup.sourcePvcName}`);
+      console.log(
+        `  ${chalk.bold('Size:')}      ${backup.actualBytes === undefined ? 'unknown' : formatBytes(backup.actualBytes)}`,
+      );
+      console.log(
+        `  ${chalk.bold('Added:')}     ${backup.uploadedBytes === undefined ? 'unknown' : formatBytes(backup.uploadedBytes)} (new data stored at the destination)`,
+      );
+      console.log(`  ${chalk.bold('Encrypted:')} yes`);
+      console.log(`  ${chalk.bold('Kept:')}      until deleted`);
+      console.log('');
+      console.log(chalk.dim(`  See it with: flui app backup list ${appName}`));
+      console.log('');
+      return;
+    }
+    spinner.succeed(`Backup uploaded: ${backup.exportId}`);
+    if (backup.warning) {
+      console.log('');
+      console.log(chalk.yellow(`  ! ${backup.warning}`));
+    }
+    console.log('');
+    console.log(`  ${chalk.bold('Provider:')}  ${backup.provider}`);
+    console.log(`  ${chalk.bold('Namespace:')} ${backup.namespace}`);
+    console.log(`  ${chalk.bold('Source:')}    ${backup.sourcePvcName}`);
+    console.log(`  ${chalk.bold('Source request:')}  ${backup.sizeGb} GiB`);
+    const uploaded =
+      backup.actualBytes === undefined
+        ? 'unknown'
+        : formatBytes(backup.actualBytes);
+    console.log(`  ${chalk.bold('Uploaded:')}        ${uploaded}`);
+    console.log(`  ${chalk.bold('Bucket:')}    ${backup.destination.bucket}`);
+    console.log(`  ${chalk.bold('Endpoint:')}  ${backup.destination.endpoint}`);
+    console.log(`  ${chalk.bold('Prefix:')}    ${backup.exportId}`);
+    console.log(`  ${chalk.bold('Created:')}   ${backup.createdAt}`);
+    console.log('');
+    if (autoProvisioned) {
+      console.log(
+        chalk.dim(
+          `  Bucket auto-provisioned by ${backup.provider} object storage.`,
+        ),
+      );
+    }
+    console.log('');
   }
 }

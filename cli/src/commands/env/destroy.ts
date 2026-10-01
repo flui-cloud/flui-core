@@ -254,7 +254,7 @@ export default class EnvDestroy extends Command {
     );
     console.log(
       chalk.dim(
-        '   Data survives destroy ONLY if covered by an active backup policy (S3-backed Velero / app backups).\n',
+        '   Data survives destroy ONLY if covered by an active backup policy (database and volume backups in a destination).\n',
       ),
     );
   }

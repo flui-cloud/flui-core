@@ -16,7 +16,7 @@ const ENCRYPTION_MODES = ['flui_managed', 'byo_passphrase', 'none'] as const;
 
 export default class BackupDestinationCreate extends Command {
   static readonly description =
-    'Create a backup destination (S3-compatible storage target for Velero)';
+    'Create a backup destination (S3-compatible storage for database, volume and platform backups)';
 
   static readonly examples = [
     '<%= config.bin %> <%= command.id %> --name my-s3 --provider hetzner_object_storage --endpoint https://fsn1.your-objectstorage.com --region fsn1 --bucket flui-backups',

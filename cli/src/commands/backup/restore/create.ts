@@ -1,99 +1,31 @@
-import { Command, Flags } from '@oclif/core';
+import { Command } from '@oclif/core';
 import chalk from 'chalk';
-import ora from 'ora';
-import { BackupClient } from '../../../lib/backup-client';
-import { printContextBanner } from '../../../lib/context-banner';
 
-const TARGET_KINDS = ['cluster', 'namespace', 'application'] as const;
-// `os_snapshot` is declared in the enum and implemented nowhere — offering it
-// as a choice only invites a restore that silently does the Velero one.
-const STRATEGIES = ['velero_rebuild'] as const;
-const PLACEMENTS = ['new', 'existing'] as const;
-
+/**
+ * Kept hidden so an old script gets directions instead of "command not found":
+ * each kind of restore has its own command.
+ */
 export default class BackupRestoreCreate extends Command {
-  static readonly description = 'Create a restore job';
-  static readonly flags = {
-    artifact: Flags.string({
-      required: true,
-      description: 'Backup artifact ID',
-    }),
-    'source-destination': Flags.string({ required: true }),
-    'target-cluster': Flags.string({
-      required: true,
-      description: 'Cluster to restore into',
-    }),
-    'target-kind': Flags.string({ required: true, options: [...TARGET_KINDS] }),
-    'target-namespace': Flags.string({
-      description: 'Required when --target-kind=namespace',
-    }),
-    'target-app': Flags.string({
-      description: 'Required when --target-kind=application',
-    }),
-    'map-namespace': Flags.string({
-      multiple: true,
-      description:
-        'Remap a namespace on restore: "source:target" (repeatable). Enables a same-cluster restore into a new namespace.',
-    }),
-    into: Flags.string({
-      options: [...PLACEMENTS],
-      description:
-        'Where the restore puts things. new = beside the original (needs --map-namespace or a different --target-cluster). existing = replace the objects in place, keeping volumes.',
-    }),
-    strategy: Flags.string({ options: [...STRATEGIES] }),
-  };
+  static readonly hidden = true;
+  static readonly description =
+    'Replaced by `flui db pitr-restore` and `flui app backup restore`.';
+
+  static readonly strict = false;
 
   async run(): Promise<void> {
-    const { flags } = await this.parse(BackupRestoreCreate);
-    printContextBanner();
-    const client = BackupClient.fromConfig();
-    const selector: Record<string, any> = {};
-    if (flags['target-namespace']) {
-      selector.namespaces = [flags['target-namespace']];
-    }
-    if (flags['target-app']) {
-      selector.applicationId = flags['target-app'];
-    }
-    if (flags['map-namespace']?.length) {
-      selector.namespaceMapping = Object.fromEntries(
-        flags['map-namespace'].map((m) => {
-          const [src, dst] = m.split(':');
-          if (!src || !dst) {
-            throw new Error(
-              `--map-namespace expects "source:target", got "${m}"`,
-            );
-          }
-          return [src, dst];
-        }),
-      );
-    }
-    const targetSelector = Object.keys(selector).length ? selector : undefined;
-
-    if (!flags.into) {
-      this.error(
-        '--into is required for a cluster snapshot restore:\n' +
-          '  --into new       restore beside the original ' +
-          '(needs --map-namespace src:dst, or another --target-cluster)\n' +
-          '  --into existing  replace the objects in place, keeping volumes',
-      );
-    }
-
-    const spinner = ora('Creating restore job...').start();
-    try {
-      const r = await client.createRestore({
-        artifactId: flags.artifact,
-        sourceDestinationId: flags['source-destination'],
-        targetClusterId: flags['target-cluster'],
-        targetKind: flags['target-kind'],
-        placement: flags.into as 'new' | 'existing',
-        targetSelector,
-        strategy: flags.strategy,
-      });
-      spinner.succeed(
-        `Created restore ${chalk.cyan(r.id)} (status=${r.status})`,
-      );
-    } catch (err) {
-      spinner.fail(`Create failed: ${(err as Error).message}`);
-      this.exit(1);
-    }
+    this.log('');
+    this.log(chalk.yellow('  `flui backup restore create` has been replaced.'));
+    this.log('');
+    this.log(
+      `    ${chalk.bold('flui db pitr-restore')}       ${chalk.dim('a database, into a new one (optionally as of a moment)')}`,
+    );
+    this.log(
+      `    ${chalk.bold('flui app backup restore')}    ${chalk.dim("an application's volume, whole or single files")}`,
+    );
+    this.log(
+      `    ${chalk.bold('flui cluster rebuild')}       ${chalk.dim('every application of a lost cluster onto a new one')}`,
+    );
+    this.log('');
+    this.exit(1);
   }
 }

@@ -32,13 +32,6 @@ const API_VERSION_BY_KIND: Record<string, string> = {
   Role: 'rbac.authorization.k8s.io/v1',
   RoleBinding: 'rbac.authorization.k8s.io/v1',
   APIService: 'apiregistration.k8s.io/v1',
-  Backup: 'velero.io/v1',
-  Restore: 'velero.io/v1',
-  BackupStorageLocation: 'velero.io/v1',
-  VolumeSnapshotLocation: 'velero.io/v1',
-  Schedule: 'velero.io/v1',
-  PodVolumeBackup: 'velero.io/v1',
-  PodVolumeRestore: 'velero.io/v1',
 };
 
 export function apiVersionForKind(kind: string): string {

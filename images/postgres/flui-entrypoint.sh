@@ -21,10 +21,13 @@ repo1-s3-key-secret=${FLUI_PG_S3_KEY_SECRET}
 repo1-s3-uri-style=${FLUI_PG_S3_URI_STYLE:-host}
 repo1-path=${FLUI_PG_S3_PATH}
 log-level-console=info
-
-[main]
-pg1-path=${PGDATA}
 EOF
+  # An encrypted repository needs its key; a plaintext one, written before
+  # encryption, must be read without one.
+  if [ -n "${FLUI_PG_CIPHER_PASS:-}" ]; then
+    printf 'repo1-cipher-type=aes-256-cbc\nrepo1-cipher-pass=%s\n' "$FLUI_PG_CIPHER_PASS" >> "$RESTORE_CONF"
+  fi
+  printf '\n[main]\npg1-path=%s\n' "$PGDATA" >> "$RESTORE_CONF"
   chown postgres:postgres "$RESTORE_CONF"
 }
 

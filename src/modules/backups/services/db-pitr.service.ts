@@ -1,3 +1,4 @@
+import { RESTORE_POINT_KIND } from '../utils/restore-point.util';
 import {
   BadRequestException,
   Injectable,
@@ -166,6 +167,9 @@ export class DbPitrService {
         'This backup is not a database backup; restore it from the cluster or the application instead.',
       );
     }
+    if (artifact.manifestSummary?.kind === RESTORE_POINT_KIND) {
+      return this.restoreToPoint(userId, artifact.manifestSummary, dto);
+    }
     const sourceDestinationId = this.primaryDestinationOf(artifact);
     if (!sourceDestinationId) {
       throw new NotFoundException(
@@ -189,6 +193,32 @@ export class DbPitrService {
       targetKind: RestoreTargetKind.DATABASE,
       targetSelector: { newInstall: { name: dto.name, clusterId } },
       recoveryTargetTime: dto.recoveryTargetTime,
+    });
+  }
+
+  /**
+   * A restore point is a moment inside the database's own backup, not a backup:
+   * restoring it means the newest base that finished before the moment,
+   * replayed up to it.
+   */
+  private async restoreToPoint(
+    userId: string,
+    point: Record<string, any>,
+    dto: DbPitrRestoreDto,
+  ): Promise<RestoreJobEntity> {
+    const at = new Date(dto.recoveryTargetTime ?? point.recoverTo);
+    const base = await this.artifactRepo.findDbArtifactForAppAt(
+      String(point.restorePointFor ?? ''),
+      at,
+    );
+    if (!base) {
+      throw new BadRequestException(
+        'No base backup of this database finished before that restore point, so there is nothing to replay up to it.',
+      );
+    }
+    return this.restoreArtifact(userId, base.id, {
+      ...dto,
+      recoveryTargetTime: at.toISOString(),
     });
   }
 

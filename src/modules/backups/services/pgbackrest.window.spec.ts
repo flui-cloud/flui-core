@@ -1,6 +1,6 @@
 jest.mock('@kubernetes/client-node', () => ({}));
 
-import { withArchivedEdge } from './pgbackrest.service';
+import { withArchivedEdge } from './pgbackrest-config.util';
 
 const bases = {
   latestLabel: '20260926-211800F',

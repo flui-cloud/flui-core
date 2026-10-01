@@ -11,6 +11,7 @@ import {
   parseDestinations,
   printEnabled,
   profileFor,
+  recordedSchedule,
 } from '../../../lib/backup-enable';
 
 export default class BackupEnablePlatform extends Command {
@@ -85,7 +86,7 @@ export default class BackupEnablePlatform extends Command {
       printEnabled(
         policy,
         'the Flui control-plane database',
-        flags.schedule ?? 'on the default schedule',
+        await recordedSchedule(client, policy),
       );
       console.log(
         chalk.yellow(

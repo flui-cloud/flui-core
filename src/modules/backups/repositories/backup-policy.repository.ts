@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { In, Repository } from 'typeorm';
 import { BackupPolicyEntity } from '../entities/backup-policy.entity';
 import { BackupPolicyDestinationEntity } from '../entities/backup-policy-destination.entity';
 import { BackupEngineClass } from '../enums/backup-engine-class.enum';
@@ -55,6 +55,13 @@ export class BackupPolicyRepository {
       )
       .orderBy('p.createdAt', 'DESC')
       .getOne();
+  }
+
+  findDbPoliciesByEngine(engines: string[]): Promise<BackupPolicyEntity[]> {
+    if (engines.length === 0) return Promise.resolve([]);
+    return this.policyRepo.find({
+      where: { engineClass: BackupEngineClass.DATABASE, engine: In(engines) },
+    });
   }
 
   update(id: string, patch: Partial<BackupPolicyEntity>): Promise<unknown> {

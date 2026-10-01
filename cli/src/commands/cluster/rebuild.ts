@@ -2,47 +2,15 @@ import { Command, Args, Flags } from '@oclif/core';
 import chalk from 'chalk';
 import ora from 'ora';
 import { ApiClient } from '../../lib/api-client';
+import {
+  RebuildPlan,
+  appsToAttempt,
+  followRebuild,
+  printRebuildPlan,
+} from '../../lib/cluster-rebuild-view';
 import { ConfigStorage } from '../../lib/config-storage';
 import { resolveClusterRef } from '../../lib/resolve-cluster';
 import { confirmPrompt } from '../../lib/prompts';
-
-const POLL_INTERVAL_MS = 5000;
-const MAX_WAIT_MS = 3_600_000;
-
-interface PlanApp {
-  applicationId: string;
-  name: string;
-  slug: string;
-  status: string;
-  blocked?: string;
-  warnings: string[];
-  restores: string[];
-  phase?: string;
-}
-
-interface Plan {
-  from: { id: string; name: string; status: string };
-  to: { id: string; name: string; status: string };
-  apps: PlanApp[];
-  refusals: string[];
-  warnings: string[];
-  capacity?: {
-    requiredCpuMillis: number;
-    requiredMemoryMi: number;
-    availableCpuMillis: number;
-    availableMemoryMi: number;
-    fits: boolean;
-  };
-}
-
-interface ResultApp {
-  applicationId: string;
-  name: string;
-  phase: string;
-  error?: string;
-  endpointMoved?: { from: string; to: string }[];
-  notes?: string[];
-}
 
 export default class ClusterRebuild extends Command {
   static readonly description =
@@ -103,20 +71,8 @@ export default class ClusterRebuild extends Command {
     }
 
     const apiClient = new ApiClient({ baseUrl: apiUrl, apiKey });
-
-    const spinner = ora('Reading the plan…').start();
-    let plan: Plan;
-    try {
-      plan = await apiClient.get<Plan>(
-        `/infrastructure/clusters/${from.id}/rebuild-plan?to=${to.id}`,
-      );
-      spinner.stop();
-    } catch (error: any) {
-      spinner.fail('Could not read the plan');
-      this.error(error.response?.data?.message ?? error.message, { exit: 1 });
-    }
-
-    this.printPlan(plan, flags['include-stopped']);
+    const plan = await this.readPlan(apiClient, from.id, to.id);
+    printRebuildPlan(plan, flags['include-stopped']);
 
     if (plan.refusals.length > 0) {
       console.log(chalk.red('\n  The rebuild cannot start:\n'));
@@ -125,9 +81,7 @@ export default class ClusterRebuild extends Command {
       this.exit(1);
     }
 
-    const willAttempt = plan.apps.filter(
-      (a) => !a.blocked && (a.status === 'running' || flags['include-stopped']),
-    );
+    const willAttempt = appsToAttempt(plan, flags['include-stopped']);
     if (willAttempt.length === 0) {
       console.log(
         chalk.yellow('\n  Nothing to rebuild with the current flags.\n'),
@@ -136,39 +90,17 @@ export default class ClusterRebuild extends Command {
     }
 
     if (flags.plan) return;
-
-    if (!flags.yes) {
-      console.log('');
-      const ok = await confirmPrompt(
-        chalk.yellow(
-          `  Rebuild ${willAttempt.length} application(s) onto ${to.name}?`,
-        ),
-        false,
-      );
-      if (!ok) {
-        console.log(chalk.dim('\n  Cancelled.\n'));
-        return;
-      }
+    if (!flags.yes && !(await this.confirm(willAttempt.length, to.name))) {
+      console.log(chalk.dim('\n  Cancelled.\n'));
+      return;
     }
 
-    const queueSpinner = ora('Queuing the rebuild…').start();
-    let operationId: string;
-    try {
-      const queued = await apiClient.post<{
-        operation_id: string;
-        applications: number;
-      }>(`/infrastructure/clusters/${from.id}/rebuild`, {
-        to: to.id,
-        includeStopped: flags['include-stopped'],
-      });
-      operationId = queued.operation_id;
-      queueSpinner.succeed(
-        `Queued — ${queued.applications} application(s), operation ${operationId}`,
-      );
-    } catch (error: any) {
-      queueSpinner.fail('Could not queue the rebuild');
-      this.error(error.response?.data?.message ?? error.message, { exit: 1 });
-    }
+    const operationId = await this.queue(
+      apiClient,
+      from.id,
+      to.id,
+      flags['include-stopped'],
+    );
 
     if (flags['no-wait']) {
       console.log(
@@ -179,134 +111,63 @@ export default class ClusterRebuild extends Command {
       return;
     }
 
-    await this.follow(apiClient, operationId, to.name);
-  }
-
-  private printPlan(plan: Plan, includeStopped: boolean): void {
-    console.log('');
-    console.log(
-      `  ${chalk.bold('Rebuild')} ${chalk.cyan(plan.from.name)} ${chalk.dim(`(${plan.from.status})`)} → ${chalk.cyan(plan.to.name)} ${chalk.dim(`(${plan.to.status})`)}`,
+    const ok = await followRebuild(
+      apiClient,
+      operationId,
+      to.name,
+      `flui cluster rebuild ${args.cluster} --to ${flags.to}`,
     );
-    console.log('');
-
-    if (plan.apps.length === 0) {
-      console.log(chalk.dim('  No applications are recorded on this cluster.'));
-      return;
-    }
-
-    for (const app of plan.apps) {
-      const skipped =
-        !app.blocked && app.status !== 'running' && !includeStopped;
-      const mark = app.blocked
-        ? chalk.red('✗')
-        : skipped
-          ? chalk.dim('–')
-          : chalk.green('•');
-      console.log(
-        `  ${mark} ${chalk.bold(app.name)} ${chalk.dim(`(${app.status})`)}${app.phase ? chalk.dim(` — resumes at ${app.phase}`) : ''}`,
-      );
-      if (app.blocked) console.log(chalk.red(`      ${app.blocked}`));
-      for (const r of app.restores ?? []) {
-        console.log(chalk.green(`      ✓ ${r}`));
-      }
-      for (const w of app.warnings) console.log(chalk.yellow(`      ${w}`));
-    }
-
-    for (const w of plan.warnings ?? []) {
-      console.log('');
-      console.log(chalk.yellow(`  ⚠ ${w}`));
-    }
-
-    if (plan.capacity) {
-      const c = plan.capacity;
-      const line = `  Capacity: needs ${c.requiredCpuMillis}m CPU / ${c.requiredMemoryMi}Mi — destination has ${c.availableCpuMillis}m / ${c.availableMemoryMi}Mi`;
-      console.log('');
-      console.log(c.fits ? chalk.dim(line) : chalk.red(line));
-    }
+    if (!ok) this.exit(1);
   }
 
-  private async follow(
+  private async readPlan(
     apiClient: ApiClient,
-    operationId: string,
-    toName: string,
-  ): Promise<void> {
-    console.log('');
-    const spinner = ora('Rebuilding…').start();
-    const started = Date.now();
-    const reported = new Set<string>();
-
-    while (Date.now() - started < MAX_WAIT_MS) {
-      await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
-      let op: {
-        status: string;
-        currentStepIndex: number;
-        totalSteps: number;
-        errorMessage?: string;
-        metadata?: { apps?: ResultApp[] };
-      };
-      try {
-        op = await apiClient.get(`/infrastructure/operations/${operationId}`);
-      } catch {
-        continue;
-      }
-
-      // Each application is printed once, as it lands, so a long rebuild reads
-      // as progress rather than a spinner that might be stuck.
-      for (const app of op.metadata?.apps ?? []) {
-        if (reported.has(app.applicationId)) continue;
-        reported.add(app.applicationId);
-        spinner.stop();
-        this.printApp(app);
-        spinner.start();
-      }
-      spinner.text = `Rebuilding… ${op.currentStepIndex}/${op.totalSteps}`;
-
-      if (op.status === 'COMPLETED') {
-        spinner.stop();
-        const failed = (op.metadata?.apps ?? []).filter(
-          (a) => a.phase === 'failed',
-        );
-        console.log('');
-        if (failed.length === 0) {
-          console.log(
-            chalk.green(`  Rebuilt onto ${toName}.`),
-            chalk.dim('Re-run the command to continue anything skipped.'),
-          );
-        } else {
-          console.log(
-            chalk.yellow(
-              `  ${failed.length} application(s) did not come back. Re-running continues each one from where it stopped.`,
-            ),
-          );
-        }
-        console.log('');
-        return;
-      }
-      if (op.status === 'FAILED') {
-        spinner.fail('The rebuild failed');
-        console.log(chalk.red(`\n  ${op.errorMessage ?? 'Unknown error'}\n`));
-        this.exit(1);
-      }
+    fromId: string,
+    toId: string,
+  ): Promise<RebuildPlan> {
+    const spinner = ora('Reading the plan…').start();
+    try {
+      const plan = await apiClient.get<RebuildPlan>(
+        `/infrastructure/clusters/${fromId}/rebuild-plan?to=${toId}`,
+      );
+      spinner.stop();
+      return plan;
+    } catch (error: any) {
+      spinner.fail('Could not read the plan');
+      this.error(error.response?.data?.message ?? error.message, { exit: 1 });
     }
-
-    spinner.warn('Still running — stopped waiting');
-    console.log(chalk.dim(`  Operation ${operationId}\n`));
   }
 
-  private printApp(app: ResultApp): void {
-    const mark =
-      app.phase === 'reconciled'
-        ? chalk.green('✓')
-        : app.phase === 'skipped'
-          ? chalk.dim('–')
-          : chalk.red('✗');
-    console.log(`  ${mark} ${chalk.bold(app.name)} ${chalk.dim(app.phase)}`);
-    if (app.error) console.log(chalk.dim(`      ${app.error}`));
-    for (const note of app.notes ?? []) {
-      console.log(chalk.yellow(`      ${note}`));
-    }
-    for (const moved of app.endpointMoved ?? []) {
-      console.log(chalk.dim(`      ${moved.from} → ${chalk.cyan(moved.to)}`));
+  private async confirm(count: number, toName: string): Promise<boolean> {
+    console.log('');
+    return confirmPrompt(
+      chalk.yellow(`  Rebuild ${count} application(s) onto ${toName}?`),
+      false,
+    );
+  }
+
+  private async queue(
+    apiClient: ApiClient,
+    fromId: string,
+    toId: string,
+    includeStopped: boolean,
+  ): Promise<string> {
+    const spinner = ora('Queuing the rebuild…').start();
+    try {
+      const queued = await apiClient.post<{
+        operation_id: string;
+        applications: number;
+      }>(`/infrastructure/clusters/${fromId}/rebuild`, {
+        to: toId,
+        includeStopped,
+      });
+      spinner.succeed(
+        `Queued — ${queued.applications} application(s), operation ${queued.operation_id}`,
+      );
+      return queued.operation_id;
+    } catch (error: any) {
+      spinner.fail('Could not queue the rebuild');
+      this.error(error.response?.data?.message ?? error.message, { exit: 1 });
     }
   }
 }

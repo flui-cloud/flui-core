@@ -19,6 +19,7 @@ import { ObservabilityModule } from 'src/modules/observability/observability.mod
 import { DnsModule } from 'src/modules/dns/dns.module';
 import { BackupsModule } from 'src/modules/backups/backups.module';
 import { ClusterRebuildService } from './services/cluster-rebuild.service';
+import { ControlRestoreSourceService } from './services/control-restore-source.service';
 import { ClusterRebuildProcessor } from './processors/cluster-rebuild.processor';
 import { AppEndpointEntity } from 'src/modules/dns/entities/app-endpoint.entity';
 import { CatalogInstallEntity } from 'src/modules/catalog/entities/catalog-install.entity';
@@ -76,6 +77,7 @@ import { ClusterCapacityService } from './services/cluster-capacity.service';
 import { ClusterNodeScalingService } from './services/cluster-node-scaling.service';
 import { OrphanVolumesService } from './services/orphan-volumes.service';
 import { ApplicationEntity } from '../../applications/entities/application.entity';
+import { ApplicationServiceEntity } from '../../attached-services/entities/application-service.entity';
 import { InfrastructureOperationsModule } from '../operations/infrastructure-operations.module';
 
 // Processors
@@ -151,6 +153,8 @@ import { IamModule } from '../../iam/iam.module';
       VNetSubnetEntity,
       // Read-only access for node-lock check (no module dep on ApplicationsModule)
       ApplicationEntity,
+      // Read by a rebuild to bring an attached building block back first.
+      ApplicationServiceEntity,
       // Who hears the scaling bell: the instance's administrators.
       UserEntity,
     ]),
@@ -169,6 +173,7 @@ import { IamModule } from '../../iam/iam.module';
     NodeLifeEventsService,
     ScalingBellService,
     ClusterRebuildService,
+    ControlRestoreSourceService,
     ClusterRebuildProcessor,
     // Main orchestrator service
     ClustersService,

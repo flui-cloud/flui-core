@@ -49,7 +49,12 @@ export class StatefulSetVolumeSwapService {
       throw new BadRequestException(`${statefulSet} does not exist`);
     }
     const templates: any[] = sts.spec?.volumeClaimTemplates ?? [];
-    if (!templates.some((t) => t?.metadata?.name === input.volumeName)) {
+    const volumeName = templateNameOf(
+      input.volumeName,
+      statefulSet,
+      templates.map((t) => t?.metadata?.name),
+    );
+    if (!templates.some((t) => t?.metadata?.name === volumeName)) {
       const quoted = (t: any) => `"${t?.metadata?.name}"`;
       const existing = templates.map(quoted).join(', ') || 'none';
       throw new BadRequestException(
@@ -63,7 +68,7 @@ export class StatefulSetVolumeSwapService {
       );
     }
 
-    const claim = `${input.volumeName}-${statefulSet}-0`;
+    const claim = `${volumeName}-${statefulSet}-0`;
     const current = await this.read(kubeconfig, PVC, claim, namespace);
     const restored = await this.read(
       kubeconfig,
@@ -307,4 +312,16 @@ export class StatefulSetVolumeSwapService {
       await new Promise((r) => setTimeout(r, POLL_MS));
     }
   }
+}
+
+/** A volume named as the database's claim (`data-pg-0`) or as its template (`data`). */
+export function templateNameOf(
+  name: string,
+  statefulSet: string,
+  templates: string[],
+): string {
+  if (templates.includes(name)) return name;
+  const suffix = `-${statefulSet}-0`;
+  const stripped = name.endsWith(suffix) ? name.slice(0, -suffix.length) : name;
+  return templates.includes(stripped) ? stripped : name;
 }

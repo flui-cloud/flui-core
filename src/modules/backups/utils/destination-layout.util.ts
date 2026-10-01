@@ -1,34 +1,9 @@
 /**
- * Where each backup engine writes inside a destination.
- *
- * Velero treats its prefix as its own and declares the whole location
- * unusable when it finds anything else at the top — which the database
- * repositories, volume exports and platform backups all put there. From this
- * layout on Velero gets `velero/` and every other engine its own folder beside
- * it. Destinations created before it keep Velero at the top until their
- * existing cluster backups have been moved (`VELERO_TOP_LEVEL_DIRS`), because
- * pointing Velero elsewhere without moving them would hide them.
+ * Where each backup engine writes inside a destination: every engine in its
+ * own folder under the destination's prefix. Destinations record the layout
+ * they were created with in `metadata.layout`.
  */
 export const ENGINE_PREFIXED_LAYOUT = 'engine-prefixed';
-
-/** What Velero keeps at the top of its prefix. */
-export const VELERO_TOP_LEVEL_DIRS = [
-  'backups',
-  'restores',
-  'kopia',
-  'restic',
-  'metadata',
-  'plugins',
-] as const;
-
-interface LayoutCarrier {
-  pathPrefix?: string | null;
-  metadata?: Record<string, unknown> | null;
-}
-
-export function usesEngineLayout(dest: LayoutCarrier): boolean {
-  return dest.metadata?.layout === ENGINE_PREFIXED_LAYOUT;
-}
 
 export function trimSlashes(value: string | null | undefined): string {
   if (!value) return '';
@@ -43,31 +18,34 @@ function join(...parts: string[]): string {
   return parts.filter(Boolean).join('/');
 }
 
-/** Velero's prefix inside the bucket, including the destination's own. */
-export function veleroBslPrefix(dest: LayoutCarrier): string | undefined {
-  const prefix = join(
-    trimSlashes(dest.pathPrefix),
-    usesEngineLayout(dest) ? 'velero' : '',
-  );
-  return prefix || undefined;
-}
-
-/** A Velero backup's objects, relative to the destination's own prefix. */
-export function veleroBackupKeyPrefix(
-  dest: LayoutCarrier,
-  backupName: string,
-): string {
-  return `${join(usesEngineLayout(dest) ? 'velero' : '', 'backups', backupName)}/`;
-}
-
 /**
  * Root under which volume exports are written, including the destination's
- * own prefix. Always its own folder: an export at the top is exactly what a
- * Velero prefix refuses.
+ * own prefix, in a folder of their own.
  */
 export function exportsRoot(
   pathPrefix: string | null | undefined,
   fallback: string,
 ): string {
   return join(trimSlashes(pathPrefix) || trimSlashes(fallback), 'exports');
+}
+
+/**
+ * One application's kopia repository, relative to the destination's own
+ * prefix, beside `pgbackrest/`, `mariadb/`, `dumps/` and `exports/`. One
+ * repository per application, so a key derived for that application opens
+ * that repository and nothing else.
+ */
+export function kopiaRepositoryPrefix(appId: string): string {
+  if (!/^[A-Za-z0-9-]+$/.test(appId)) {
+    throw new Error(`"${appId}" cannot name a kopia repository`);
+  }
+  return `kopia/${appId}/`;
+}
+
+/** The same repository as a full key prefix in the bucket, as kopia takes it. */
+export function kopiaBucketPrefix(
+  pathPrefix: string | null | undefined,
+  appId: string,
+): string {
+  return `${join(trimSlashes(pathPrefix), kopiaRepositoryPrefix(appId).slice(0, -1))}/`;
 }

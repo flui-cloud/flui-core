@@ -13,7 +13,6 @@ import {
   RestoreStrategy,
   RestorePlacement,
 } from '../enums/restore-job.enum';
-import { RestoreTargetSelector } from '../entities/restore-job.entity';
 
 export class CreateRestoreJobDto {
   @ApiProperty()
@@ -35,10 +34,8 @@ export class CreateRestoreJobDto {
   @ApiPropertyOptional({
     enum: RestorePlacement,
     description:
-      'Beside the original (`new`) or onto it, replacing what is there (`existing`). ' +
-      'Required for cluster, namespace and application restores, where both are ' +
-      'possible and the old default was neither. Derived for the engines that have ' +
-      'only one meaning: a database PITR always builds a new install.',
+      'Beside the original (`new`) or onto it (`existing`). A database restore ' +
+      'always builds a new install, so this is recorded as `new` whatever is sent.',
   })
   @IsOptional()
   @IsEnum(RestorePlacement)
@@ -50,7 +47,11 @@ export class CreateRestoreJobDto {
   @Type(() => RestoreTargetSelectorDto)
   targetSelector?: RestoreTargetSelectorDto;
 
-  @ApiPropertyOptional({ enum: RestoreStrategy })
+  @ApiPropertyOptional({
+    enum: RestoreStrategy,
+    description:
+      'Ignored: the strategy is the one of the engine that wrote the backup.',
+  })
   @IsOptional()
   @IsEnum(RestoreStrategy)
   strategy?: RestoreStrategy;

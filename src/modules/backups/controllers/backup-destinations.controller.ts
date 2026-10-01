@@ -17,7 +17,6 @@ import {
 import { Request } from 'express';
 import { BackupDestinationsService } from '../services/backup-destinations.service';
 import { CreateBackupDestinationDto } from '../dto/create-backup-destination.dto';
-import { UpgradeDestinationLayoutDto } from '../dto/upgrade-destination-layout.dto';
 import { SetDestinationCostDto } from '../dto/set-destination-cost.dto';
 import { ObjectStoragePresetDto } from '../dto/object-storage-preset.dto';
 import { ObjectStoragePresetsService } from '../../storage/services/object-storage-presets.service';
@@ -87,25 +86,6 @@ export class BackupDestinationsController {
   async refresh(@Param('id') id: string) {
     await this.service.refreshUsage(id);
     return { ok: true };
-  }
-
-  @Post(':id/upgrade-layout')
-  @RequirePermission(IAM_PERMISSION.CLUSTER_MANAGE)
-  @ApiOperation({
-    summary: 'Give cluster backups a folder of their own in this destination',
-    description:
-      'Destinations created before this layout keep cluster backups at the top, where database, volume and platform backups make the storage unusable for cluster backups. Refused with the commands to move them when cluster backups are already there, unless force is set (they then stay in the bucket but are no longer listed until moved).',
-  })
-  async upgradeLayout(
-    @Req() req: Request,
-    @Param('id') id: string,
-    @Body() dto: UpgradeDestinationLayoutDto,
-  ) {
-    return this.service.upgradeLayout(
-      id,
-      this.userId(req),
-      dto?.force ?? false,
-    );
   }
 
   @Patch(':id/cost')
