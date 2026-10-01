@@ -2,6 +2,34 @@
   "schemaVersion": 2,
   "releases": [
     {
+      "version": "0.13.0-rc.11",
+      "publishedAt": "2026-10-01T05:56:48.509Z",
+      "bootstrapRef": "c7183f7",
+      "images": {
+        "fluiApi": "0.13.0-rc.11",
+        "fluiWeb": "0.13.0-rc.11",
+        "fluiAuthz": "0.7.0"
+      },
+      "notes": [
+        "Every backup is encrypted at rest with keys Flui already holds, and application volumes are backed up as deduplicated snapshots per application: browse a backup, restore one file or the whole volume, from the CLI, MCP or dashboard.",
+        "Protect a whole cluster in one step: every application, new ones included, gets the backup that fits it, and databases Flui cannot copy consistently are listed for a decision.",
+        "A rebuild brings volumes back from their snapshots and applications back in dependency order; after a platform restore, `flui cluster rebuild-control` brings back the applications that ran on the control cluster.",
+        "Velero is no longer used. Run `flui backup velero uninstall <cluster>` where it is installed; its old backups stay in the bucket and the command lists the folders to remove.",
+        "Restoring an encrypted PostgreSQL backup, and compressed MariaDB backups, need the database images published with this release; new databases and restores pull them.",
+        "The sign-in relay moves to flui-authz 0.7.0, which asks the API instead of checking tokens itself."
+      ],
+      "migrations": 7,
+      "requiresBootstrap": true,
+      "k3s": {
+        "version": "v1.35.4+k3s1"
+      },
+      "systemComponents": {
+        "certManager": "v1.17.1",
+        "systemUpgradeController": "v0.20.2"
+      },
+      "manifestSets": ["control"]
+    },
+    {
       "version": "0.13.0-rc.10",
       "publishedAt": "2026-09-29T19:57:25.955Z",
       "bootstrapRef": "db8c6d2",

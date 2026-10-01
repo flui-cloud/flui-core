@@ -34,19 +34,19 @@ export interface ReleaseManifest {
 }
 
 export const RELEASE: ReleaseManifest = {
-  version: '0.13.0-rc.10',
-  // A commit ref, not a tag. It moved: the platform PriorityClass now carries
-  // Flui's owner labels, so an update brings it together with the platform
-  // workloads that run at it instead of leaving them unable to start.
-  bootstrapRef: 'db8c6d2',
+  version: '0.13.0-rc.11',
+  // A commit ref, not a tag. It moved: the platform workloads whose volume is on
+  // the master tolerate master protection, so they come back once it is on.
+  bootstrapRef: 'c7183f7',
   images: {
     // Release tags: the tag build is what makes an image exist under the
-    // release's own name. Both repositories are tagged `v0.13.0-rc.10`, so a
+    // release's own name. Both repositories are tagged `v0.13.0-rc.11`, so a
     // rollout never waits on a pull that cannot succeed.
-    fluiApi: '0.13.0-rc.10',
-    fluiWeb: '0.13.0-rc.10',
-    // Pinned by its own version, not the platform's, and it did not move.
-    fluiAuthz: '0.6.0',
+    fluiApi: '0.13.0-rc.11',
+    fluiWeb: '0.13.0-rc.11',
+    // Pinned by its own version, not the platform's: 0.7.0 is the sign-in
+    // relay that asks the API, which this API's gateway installs expect.
+    fluiAuthz: '0.7.0',
   },
   k3s: { version: 'v1.35.4+k3s1' },
   systemComponents: {
