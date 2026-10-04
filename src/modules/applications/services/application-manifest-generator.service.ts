@@ -381,6 +381,10 @@ export class ApplicationManifestGeneratorService {
         this.renderNodePlacementBlock(app),
       )
       .replaceAll(
+        '{{REPLICA_SPREAD_BLOCK}}',
+        this.renderReplicaSpreadBlock(app),
+      )
+      .replaceAll(
         '{{POD_SECURITY_CONTEXT_BLOCK}}',
         this.renderPodSecurityContextBlock(app),
       )
@@ -818,6 +822,33 @@ export class ApplicationManifestGeneratorService {
       );
     }
     return '';
+  }
+
+  /**
+   * Copies of one application go to different nodes when they can, so losing
+   * a node leaves the others answering. `ScheduleAnyway` keeps a copy running
+   * on a node that already has one rather than leaving it pending when the
+   * cluster has too few nodes. A dedicated app is bound to one node on
+   * purpose, so it gets nothing.
+   */
+  private renderReplicaSpreadBlock(app: ApplicationEntity): string {
+    if (app.persistenceScope === 'dedicated') return '';
+    const mostCopies = Math.max(
+      app.replicas ?? 1,
+      app.scaling?.enabled
+        ? (app.scaling.horizontal?.max ?? app.scaling.maxReplicas ?? 1)
+        : 1,
+    );
+    if (mostCopies < 2) return '';
+    return [
+      '      topologySpreadConstraints:',
+      '        - maxSkew: 1',
+      '          topologyKey: kubernetes.io/hostname',
+      '          whenUnsatisfiable: ScheduleAnyway',
+      '          labelSelector:',
+      '            matchLabels:',
+      `              app: ${app.slug}`,
+    ].join('\n');
   }
 
   /**

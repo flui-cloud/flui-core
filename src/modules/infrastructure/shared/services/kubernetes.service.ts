@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto';
 import { ForbiddenException, Injectable, Logger } from '@nestjs/common';
 import * as k8s from '@kubernetes/client-node';
 import { Writable, Readable } from 'node:stream';
@@ -2449,6 +2450,181 @@ export class KubernetesService {
             .map((a) => a.address),
         };
       });
+  }
+
+  /** The cluster DNS (K3s' `coredns` Deployment): its replica count and whether it spreads across nodes. */
+  async readClusterDns(
+    kubeconfigContent: string,
+  ): Promise<{ replicas: number; spreadAcrossNodes: boolean } | null> {
+    const { appsApi } = this.getKubeClient(kubeconfigContent);
+    try {
+      const deployment = await appsApi.readNamespacedDeployment({
+        name: 'coredns',
+        namespace: 'kube-system',
+      });
+      return {
+        replicas: deployment.spec?.replicas ?? 1,
+        spreadAcrossNodes: (
+          deployment.spec?.template?.spec?.topologySpreadConstraints ?? []
+        ).some((c) => c.topologyKey === 'kubernetes.io/hostname'),
+      };
+    } catch (err) {
+      if ((err as { code?: number })?.code === 404) return null;
+      throw err;
+    }
+  }
+
+  /**
+   * Runs the cluster DNS as `replicas` copies placed on different nodes when
+   * they can be, so losing one node does not take name resolution with it.
+   */
+  async spreadClusterDns(
+    kubeconfigContent: string,
+    replicas: number,
+  ): Promise<void> {
+    const kc = this.loadKubeconfig(kubeconfigContent);
+    const client = k8s.KubernetesObjectApi.makeApiClient(kc);
+    await client.patch(
+      {
+        apiVersion: 'apps/v1',
+        kind: 'Deployment',
+        metadata: { name: 'coredns', namespace: 'kube-system' },
+        spec: {
+          replicas,
+          template: {
+            spec: {
+              topologySpreadConstraints: [
+                {
+                  maxSkew: 1,
+                  topologyKey: 'kubernetes.io/hostname',
+                  whenUnsatisfiable: 'ScheduleAnyway',
+                  labelSelector: { matchLabels: { 'k8s-app': 'kube-dns' } },
+                },
+              ],
+            },
+          },
+        } as unknown as k8s.V1DeploymentSpec,
+      } as k8s.V1Deployment,
+      undefined,
+      undefined,
+      'flui-api',
+      undefined,
+      k8s.PatchStrategy.StrategicMergePatch,
+    );
+  }
+
+  /**
+   * Runs one short shell command on a given node, with the node's
+   * `hostDir` mounted at `/host`, and returns what it printed. Pinned with
+   * `nodeName`, so it runs there even on a master that refuses ordinary
+   * workloads. Uses the busybox image K3s already keeps on every node.
+   */
+  async runOnNode(
+    kubeconfigContent: string,
+    nodeName: string,
+    hostDir: string,
+    script: string,
+  ): Promise<string> {
+    const { coreApi } = this.getKubeClient(kubeconfigContent);
+    const namespace = 'kube-system';
+    const podName = `flui-node-probe-${randomBytes(4).toString('hex')}`;
+    await coreApi.createNamespacedPod({
+      namespace,
+      body: {
+        apiVersion: 'v1',
+        kind: 'Pod',
+        metadata: {
+          name: podName,
+          namespace,
+          labels: {
+            'managed-by': 'flui-cloud',
+            'flui.cloud/node-probe': 'true',
+          },
+        },
+        spec: {
+          nodeName,
+          restartPolicy: 'Never',
+          enableServiceLinks: false,
+          tolerations: [{ operator: 'Exists' }],
+          volumes: [{ name: 'host', hostPath: { path: hostDir } }],
+          containers: [
+            {
+              name: 'probe',
+              image: 'rancher/mirrored-library-busybox:1.36.1',
+              command: ['sh', '-c', script],
+              volumeMounts: [{ name: 'host', mountPath: '/host' }],
+            },
+          ],
+        },
+      },
+    });
+    try {
+      const deadline = Date.now() + 60_000;
+      for (;;) {
+        const pod = await coreApi.readNamespacedPod({
+          name: podName,
+          namespace,
+        });
+        const phase = pod.status?.phase;
+        if (phase === 'Succeeded') break;
+        if (phase === 'Failed') throw new Error(`probe on ${nodeName} failed`);
+        if (Date.now() > deadline) {
+          throw new Error(`probe on ${nodeName} did not finish in 60s`);
+        }
+        await this.sleep(2000);
+      }
+      const logs = await coreApi.readNamespacedPodLog({
+        name: podName,
+        namespace,
+        container: 'probe',
+      });
+      return typeof logs === 'string' ? logs : ((logs as any).body ?? '');
+    } finally {
+      await coreApi
+        .deleteNamespacedPod({ name: podName, namespace })
+        .catch(() => undefined);
+    }
+  }
+
+  /** One key of a ConfigMap's data, or null when the ConfigMap or the key is missing. */
+  async readConfigMapKey(
+    kubeconfigContent: string,
+    namespace: string,
+    name: string,
+    key: string,
+  ): Promise<string | null> {
+    const { coreApi } = this.getKubeClient(kubeconfigContent);
+    try {
+      const cm = await coreApi.readNamespacedConfigMap({ name, namespace });
+      return cm.data?.[key] ?? null;
+    } catch (err) {
+      if (this.httpCode(err) === 404) return null;
+      throw err;
+    }
+  }
+
+  async writeConfigMapKey(
+    kubeconfigContent: string,
+    namespace: string,
+    name: string,
+    key: string,
+    value: string,
+  ): Promise<void> {
+    const kc = this.loadKubeconfig(kubeconfigContent);
+    const client = k8s.KubernetesObjectApi.makeApiClient(kc);
+    await client.patch(
+      {
+        apiVersion: 'v1',
+        kind: 'ConfigMap',
+        metadata: { name, namespace },
+        data: { [key]: value },
+      } as k8s.V1ConfigMap,
+      undefined,
+      undefined,
+      'flui-api',
+      undefined,
+      k8s.PatchStrategy.StrategicMergePatch,
+    );
   }
 
   private isReadyWorker(node: k8s.V1Node): boolean {

@@ -53,6 +53,10 @@ import { TelemetryEndpointReconciler } from './services/telemetry-endpoint.recon
 import { TelemetryEndpointScheduler } from './schedulers/telemetry-endpoint.scheduler';
 import { SharedStorageExportReconciler } from './services/shared-storage-export.reconciler';
 import { SharedStorageExportScheduler } from './schedulers/shared-storage-export.scheduler';
+import { ClusterDnsSpreadScheduler } from './schedulers/cluster-dns-spread.scheduler';
+import { SharedVolumeModeScheduler } from './schedulers/shared-volume-mode.scheduler';
+import { SharedVolumeModeReconciler } from './services/shared-volume-mode.reconciler';
+import { ClusterDnsSpreadReconciler } from './services/cluster-dns-spread.reconciler';
 import { KubeconfigEndpointPromoter } from './services/kubeconfig-endpoint.promoter';
 import { KubeconfigEndpointScheduler } from './schedulers/kubeconfig-endpoint.scheduler';
 import { ClusterPowerManagementService } from './services/cluster-power-management.service';
@@ -190,6 +194,10 @@ import { IamModule } from '../../iam/iam.module';
     TelemetryEndpointScheduler,
     SharedStorageExportReconciler,
     SharedStorageExportScheduler,
+    ClusterDnsSpreadReconciler,
+    ClusterDnsSpreadScheduler,
+    SharedVolumeModeReconciler,
+    SharedVolumeModeScheduler,
     KubeconfigEndpointPromoter,
     KubeconfigEndpointScheduler,
     ClusterPowerManagementService,
