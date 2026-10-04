@@ -55,6 +55,8 @@ describe('AppEndpointReconciliationService.writePrimaryRecord', () => {
   const write = (
     service: AppEndpointReconciliationService,
     dnsRecordId: string | null,
+    values: string[] = [LIVE_IP],
+    ttl = 300,
   ) =>
     (
       service as unknown as {
@@ -69,87 +71,57 @@ describe('AppEndpointReconciliationService.writePrimaryRecord', () => {
       },
       { id: 'cluster-new' },
       'auth',
-      LIVE_IP,
-      300,
+      values,
+      ttl,
     );
 
   const defaults = () => ({
-    getRecord: jest.fn().mockResolvedValue(null),
     listRecords: jest.fn().mockResolvedValue([]),
-    createRecord: jest
+    setRecordValues: jest
       .fn()
-      .mockImplementation(async (c: { value: string }) => ({
-        ...c,
-        value: c.value,
-      })),
-    updateRecord: jest
-      .fn()
-      .mockImplementation(async (c: { value: string }) => ({
-        ...c,
-        value: c.value,
-      })),
+      .mockImplementation(async (c: { values: string[] }) =>
+        c.values.map((value) => ({ ...c, value })),
+      ),
   });
 
-  // The bug: dropping the cluster cascaded dnsRecordId away, so this path ran
-  // blind and the Hetzner adapter appended to the RRSet instead of replacing.
-  it('adopts an existing record for the same name+type instead of creating a second value', async () => {
+  // The bug: dropping the cluster cascaded dnsRecordId away, and the Hetzner
+  // adapter appended to the RRSet instead of replacing the dead value.
+  it('replaces a dead cluster’s value instead of answering with both', async () => {
     const provider = {
       ...defaults(),
       listRecords: jest.fn().mockResolvedValue([staleRecord]),
     };
-    const service = build(provider);
 
-    await write(service, null);
+    await write(build(provider), null);
 
-    expect(provider.createRecord).not.toHaveBeenCalled();
-    expect(provider.updateRecord).toHaveBeenCalledWith(
-      expect.objectContaining({
-        recordId: staleRecord.recordId,
-        value: LIVE_IP,
-      }),
+    expect(provider.setRecordValues).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'auth', values: [LIVE_IP] }),
     );
   });
 
-  it('re-labels the adopted record to the cluster that now owns it', async () => {
+  it('labels the record to the cluster that now owns it', async () => {
     const provider = {
       ...defaults(),
       listRecords: jest.fn().mockResolvedValue([staleRecord]),
     };
-    const service = build(provider);
 
-    await write(service, null);
+    await write(build(provider), null);
 
-    expect(provider.updateRecord).toHaveBeenCalledWith(
+    expect(provider.setRecordValues).toHaveBeenCalledWith(
       expect.objectContaining({
         labels: expect.objectContaining({ 'flui-cluster-id': 'cluster-new' }),
       }),
     );
   });
 
-  it('creates when nothing answers for that name yet', async () => {
+  it('writes the record when nothing answers for that name yet', async () => {
     const provider = defaults();
-    const service = build(provider);
 
-    await write(service, null);
+    await write(build(provider), null);
 
-    expect(provider.updateRecord).not.toHaveBeenCalled();
-    expect(provider.createRecord).toHaveBeenCalledWith(
-      expect.objectContaining({ name: 'auth', value: LIVE_IP }),
+    expect(provider.setRecordValues).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'auth', values: [LIVE_IP] }),
     );
-  });
-
-  it('prefers the known record id over a name lookup', async () => {
-    const provider = {
-      ...defaults(),
-      getRecord: jest.fn().mockResolvedValue(staleRecord),
-      listRecords: jest.fn(),
-    };
-    const service = build(provider);
-
-    await write(service, staleRecord.recordId);
-
-    expect(provider.listRecords).not.toHaveBeenCalled();
-    expect(provider.updateRecord).toHaveBeenCalled();
   });
 
   it('writes nothing when the record already points at the right IP', async () => {
@@ -159,27 +131,24 @@ describe('AppEndpointReconciliationService.writePrimaryRecord', () => {
         .fn()
         .mockResolvedValue([{ ...staleRecord, value: LIVE_IP }]),
     };
-    const service = build(provider);
 
-    await write(service, null);
+    await write(build(provider), null);
 
-    expect(provider.createRecord).not.toHaveBeenCalled();
-    expect(provider.updateRecord).not.toHaveBeenCalled();
+    expect(provider.setRecordValues).not.toHaveBeenCalled();
   });
 
-  it('falls back to creating when the zone cannot be listed', async () => {
+  it('still writes when the zone cannot be listed', async () => {
     const provider = {
       ...defaults(),
       listRecords: jest.fn().mockRejectedValue(new Error('403')),
     };
-    const service = build(provider);
 
-    await write(service, null);
+    await write(build(provider), null);
 
-    expect(provider.createRecord).toHaveBeenCalled();
+    expect(provider.setRecordValues).toHaveBeenCalled();
   });
 
-  it('adopts one value when the name is already split-brained', async () => {
+  it('drops the stale value of a name that already answers with two', async () => {
     const provider = {
       ...defaults(),
       listRecords: jest
@@ -189,13 +158,22 @@ describe('AppEndpointReconciliationService.writePrimaryRecord', () => {
           { ...staleRecord, recordId: `auth/A:${LIVE_IP}`, value: LIVE_IP },
         ]),
     };
-    const service = build(provider);
 
-    await write(service, null);
+    await write(build(provider), null);
 
-    expect(provider.createRecord).not.toHaveBeenCalled();
-    expect(provider.updateRecord).toHaveBeenCalledWith(
-      expect.objectContaining({ recordId: staleRecord.recordId }),
+    expect(provider.setRecordValues).toHaveBeenCalledWith(
+      expect.objectContaining({ values: [LIVE_IP] }),
+    );
+  });
+
+  it('points the name at every node that takes traffic', async () => {
+    const provider = defaults();
+    const other = '62.238.51.203';
+
+    await write(build(provider), null, [LIVE_IP, other], 60);
+
+    expect(provider.setRecordValues).toHaveBeenCalledWith(
+      expect.objectContaining({ values: [LIVE_IP, other], ttl: 60 }),
     );
   });
 
@@ -386,17 +364,15 @@ describe('AppEndpointReconciliationService.reconcileDnsRecord', () => {
   });
 
   function build(records: DnsRecordInfo[]) {
-    const createRecord = jest
+    const writeRecord = jest
       .fn()
-      .mockImplementation(async (c: Record<string, unknown>) => ({
-        ...c,
-        recordId: 'new-record',
-      }));
+      .mockImplementation(async (c: { values: string[] }) =>
+        c.values.map((value) => ({ ...c, value, recordId: 'new-record' })),
+      );
     const dnsProvider = {
       getRecord: jest.fn().mockResolvedValue(null),
       listRecords: jest.fn().mockResolvedValue(records),
-      createRecord,
-      updateRecord: jest.fn(),
+      setRecordValues: writeRecord,
     };
     const service = new AppEndpointReconciliationService(
       null as never,
@@ -415,7 +391,7 @@ describe('AppEndpointReconciliationService.reconcileDnsRecord', () => {
       { exists: jest.fn().mockResolvedValue(false) } as never,
       null as never,
     );
-    return { service, createRecord };
+    return { service, writeRecord };
   }
 
   const reconcile = (
@@ -440,11 +416,11 @@ describe('AppEndpointReconciliationService.reconcileDnsRecord', () => {
     );
 
   it('writes no per-app record when the zone wildcard already answers', async () => {
-    const { service, createRecord } = build([wildcard()]);
+    const { service, writeRecord } = build([wildcard()]);
 
     const result = await reconcile(service);
 
-    expect(createRecord).not.toHaveBeenCalled();
+    expect(writeRecord).not.toHaveBeenCalled();
     expect(result.value).toBe(IP);
   });
 
@@ -462,11 +438,11 @@ describe('AppEndpointReconciliationService.reconcileDnsRecord', () => {
   });
 
   it('still writes a record when the wildcard points somewhere else', async () => {
-    const { service, createRecord } = build([wildcard('203.0.113.9')]);
+    const { service, writeRecord } = build([wildcard('203.0.113.9')]);
 
     await reconcile(service);
 
-    expect(createRecord).toHaveBeenCalled();
+    expect(writeRecord).toHaveBeenCalled();
   });
 
   // `*.control-cluster` answers for `app.control-cluster`, never for
@@ -477,40 +453,38 @@ describe('AppEndpointReconciliationService.reconcileDnsRecord', () => {
    * the same search. Hundreds of guests, not one per-application record.
    */
   it('finds the sandbox subdomain wildcard for a name under it', async () => {
-    const { service, createRecord } = build([
-      { ...wildcard(), name: '*.demo' },
-    ]);
+    const { service, writeRecord } = build([{ ...wildcard(), name: '*.demo' }]);
 
     const result = await reconcile(service, 'it-tools.demo.dawit.blog');
 
-    expect(createRecord).not.toHaveBeenCalled();
+    expect(writeRecord).not.toHaveBeenCalled();
     expect(result.name).toBe('*.demo');
   });
 
   // `a.b.control-cluster` — one label, which is all a DNS wildcard matches.
   it('does not treat a wildcard as covering a name two labels deep', async () => {
-    const { service, createRecord } = build([wildcard()]);
+    const { service, writeRecord } = build([wildcard()]);
 
     await reconcile(service, 'app.team.control-cluster.dawit.blog');
 
-    expect(createRecord).toHaveBeenCalled();
+    expect(writeRecord).toHaveBeenCalled();
   });
 
   // A wildcard answers for names *under* the zone, never for the zone itself.
   it('does not treat a root wildcard as covering the zone apex', async () => {
-    const { service, createRecord } = build([{ ...wildcard(), name: '*' }]);
+    const { service, writeRecord } = build([{ ...wildcard(), name: '*' }]);
 
     await reconcile(service, 'dawit.blog');
 
-    expect(createRecord).toHaveBeenCalled();
+    expect(writeRecord).toHaveBeenCalled();
   });
 
   it('writes a record when the zone has no wildcard at all', async () => {
-    const { service, createRecord } = build([]);
+    const { service, writeRecord } = build([]);
 
     await reconcile(service);
 
-    expect(createRecord).toHaveBeenCalled();
+    expect(writeRecord).toHaveBeenCalled();
   });
 });
 

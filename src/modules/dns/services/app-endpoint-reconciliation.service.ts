@@ -31,6 +31,11 @@ import { CertChallenge } from '../enums/cert-challenge.enum';
 import { ClusterAuthzInstallRepository } from '../../authz/repositories/cluster-authz-install.repository';
 import { ClusterDnsGateway } from '../gateway/cluster-dns.gateway';
 import { DnsZoneReconciliationService } from './dns-zone-reconciliation.service';
+import {
+  clusterIngressValues,
+  ingressRecordTtl,
+  sameValues,
+} from '../utils/ingress-addresses.core';
 import { resolveRecordName } from '../utils/resolve-record-name.util';
 import { GatewayMiddlewareCompilerService } from './gateway-middleware-compiler.service';
 import { describeError } from '../../shared/utils/error.util';
@@ -810,12 +815,27 @@ export class AppEndpointReconciliationService {
         const dnsProvider = this.dnsProviderFactory.getDnsProviderOrFail(
           dnsZone.dnsProvider,
         );
-        await dnsProvider.deleteRecord(
-          dnsZone.providerZoneId,
-          endpoint.dnsRecordId,
+        const recordName = resolveRecordName(endpoint.fqdn, dnsZone.zoneName);
+        const values = await this.findRecordsByNameType(
+          dnsProvider,
+          dnsZone,
+          recordName,
+          endpoint.dnsRecordType,
         );
+        if (values.length === 0) {
+          await dnsProvider.deleteRecord(
+            dnsZone.providerZoneId,
+            endpoint.dnsRecordId,
+          );
+        }
+        for (const record of values) {
+          await dnsProvider.deleteRecord(
+            dnsZone.providerZoneId,
+            record.recordId,
+          );
+        }
         this.logger.log(
-          `Deleted DNS record ${endpoint.dnsRecordId} for ${endpoint.fqdn}`,
+          `Deleted DNS record ${recordName} (${values.length || 1} value(s)) for ${endpoint.fqdn}`,
         );
         await this.appEndpointService.clearDnsRecord(endpoint.id);
       } catch (error) {
@@ -1208,16 +1228,16 @@ export class AppEndpointReconciliationService {
     cluster: ClusterEntity,
   ): Promise<DnsRecordInfo> {
     const dnsZone = clusterDnsZone.dnsZone;
-    const recordValue = endpoint.dnsRecordValue ?? cluster.masterIpAddress;
-    if (!recordValue) {
+    const recordValues = clusterIngressValues(cluster);
+    if (recordValues.length === 0) {
       throw new Error(
         `Cannot create DNS record for endpoint ${endpoint.id}: no IP address available. ` +
-          `Make sure the cluster has a master IP address or provide dnsRecordValue explicitly.`,
+          `Make sure the cluster has a master IP address.`,
       );
     }
 
     const recordName = resolveRecordName(endpoint.fqdn, dnsZone.zoneName);
-    const ttl = dnsZone.recordTtlSeconds;
+    const ttl = ingressRecordTtl(dnsZone.recordTtlSeconds, recordValues.length);
 
     // A wildcard the zone already publishes answers for this name today, with
     // no propagation to wait for. Writing a per-app record next to it would be
@@ -1228,7 +1248,7 @@ export class AppEndpointReconciliationService {
       dnsZone,
       recordName,
       endpoint.dnsRecordType,
-      recordValue,
+      recordValues,
     );
     if (covered) {
       this.logger.log(
@@ -1244,7 +1264,7 @@ export class AppEndpointReconciliationService {
       dnsZone,
       cluster,
       recordName,
-      recordValue,
+      recordValues,
       ttl,
     );
 
@@ -1252,7 +1272,8 @@ export class AppEndpointReconciliationService {
     await this.dnsZoneReconciliationService.fanOutRecordToReplicas(dnsZone, {
       name: recordName,
       type: endpoint.dnsRecordType,
-      value: recordValue,
+      value: recordValues[0],
+      values: recordValues,
       ttl,
     });
 
@@ -1264,7 +1285,7 @@ export class AppEndpointReconciliationService {
     dnsZone: DnsZoneEntity,
     cluster: ClusterEntity,
     recordName: string,
-    recordValue: string,
+    recordValues: string[],
     ttl: number,
   ): Promise<DnsRecordInfo> {
     const dnsProvider = this.dnsProviderFactory.getDnsProviderOrFail(
@@ -1278,53 +1299,40 @@ export class AppEndpointReconciliationService {
       [ENDPOINT_ID_LABEL]: endpoint.id,
     };
 
-    // By id when we have one, else by name+type: destroying a cluster cascades
-    // dnsRecordId away, and createRecord *appends* to an existing RRSet, so a
-    // blind create would leave the dead cluster's IP answering alongside the new
-    // one. Adopting re-points it instead.
-    const existing =
-      (endpoint.dnsRecordId
-        ? await dnsProvider.getRecord(
-            dnsZone.providerZoneId,
-            endpoint.dnsRecordId,
-          )
-        : null) ??
-      (await this.findRecordByNameType(
-        dnsProvider,
-        dnsZone,
-        recordName,
-        endpoint.dnsRecordType,
-      ));
-
-    if (existing) {
-      if (existing.value === recordValue) {
-        return existing;
-      }
-      this.logger.log(
-        `Repointing DNS record ${existing.recordId} for ${endpoint.fqdn}: ${existing.value} → ${recordValue}`,
-      );
-      return await dnsProvider.updateRecord({
-        recordId: existing.recordId,
-        zoneId: dnsZone.providerZoneId,
-        type: endpoint.dnsRecordType,
-        name: recordName,
-        value: recordValue,
-        ttl,
-        labels,
-      });
+    // The whole name is replaced, never appended to: destroying a cluster
+    // cascades dnsRecordId away, and a value left behind by a dead cluster or a
+    // departed node would keep receiving a share of the visitors.
+    const current = await this.findRecordsByNameType(
+      dnsProvider,
+      dnsZone,
+      recordName,
+      endpoint.dnsRecordType,
+    );
+    if (
+      current.length > 0 &&
+      sameValues(
+        current.map((r) => r.value),
+        recordValues,
+      ) &&
+      current.every((r) => !r.ttl || r.ttl === ttl)
+    ) {
+      return current[0];
     }
 
     this.logger.log(
-      `Creating DNS record for ${endpoint.fqdn} → ${recordValue}`,
+      current.length > 0
+        ? `Repointing DNS for ${endpoint.fqdn}: ${current.map((r) => r.value).join(', ')} → ${recordValues.join(', ')}`
+        : `Creating DNS record for ${endpoint.fqdn} → ${recordValues.join(', ')}`,
     );
-    return await dnsProvider.createRecord({
+    const written = await dnsProvider.setRecordValues({
       zoneId: dnsZone.providerZoneId,
       type: endpoint.dnsRecordType,
       name: recordName,
-      value: recordValue,
+      values: recordValues,
       ttl,
       labels,
     });
+    return written[0];
   }
 
   /** Best-effort: a provider that can't list records falls back to creating. */
@@ -1348,7 +1356,7 @@ export class AppEndpointReconciliationService {
     dnsZone: DnsZoneEntity,
     recordName: string,
     recordType: DnsRecordType,
-    recordValue: string,
+    recordValues: string[],
   ): Promise<DnsRecordInfo | null> {
     // `*.example.com` answers for `www.example.com` and never for
     // `example.com` itself. The apex has no wildcard that can cover it.
@@ -1362,14 +1370,16 @@ export class AppEndpointReconciliationService {
         dnsZone.dnsProvider,
       );
       const records = await dnsProvider.listRecords(dnsZone.providerZoneId);
-      return (
-        records.find(
-          (r) =>
-            r.name === wildcardName &&
-            r.type === recordType &&
-            r.value === recordValue,
-        ) ?? null
+      const wildcard = records.filter(
+        (r) => r.name === wildcardName && r.type === recordType,
       );
+      return wildcard.length > 0 &&
+        sameValues(
+          wildcard.map((r) => r.value),
+          recordValues,
+        )
+        ? wildcard[0]
+        : null;
     } catch (error) {
       // A provider we cannot read is not a zone without a wildcard, but the
       // safe assumption is the one that still publishes a working name.
@@ -1382,34 +1392,24 @@ export class AppEndpointReconciliationService {
     }
   }
 
-  private async findRecordByNameType(
+  private async findRecordsByNameType(
     dnsProvider: IDnsProvider,
     dnsZone: DnsZoneEntity,
     recordName: string,
     recordType: DnsRecordType,
-  ): Promise<DnsRecordInfo | null> {
+  ): Promise<DnsRecordInfo[]> {
     try {
       const records = await dnsProvider.listRecords(dnsZone.providerZoneId);
-      const matches = records.filter(
+      return records.filter(
         (r) => r.name === recordName && r.type === recordType,
       );
-      if (matches.length > 1) {
-        // Warn, don't purge: a stale leftover and a deliberate round-robin look
-        // identical from here.
-        this.logger.warn(
-          `${recordName} (${recordType}) in zone ${dnsZone.zoneName} resolves to ${matches.length} values ` +
-            `(${matches.map((r) => r.value).join(', ')}) — adopting ${matches[0].value}; ` +
-            `remove any that no longer belong to a live cluster`,
-        );
-      }
-      return matches[0] ?? null;
     } catch (error) {
       this.logger.warn(
         `Could not list records in zone ${dnsZone.zoneName} to adopt ${recordName}: ${
           error instanceof Error ? error.message : String(error)
         }`,
       );
-      return null;
+      return [];
     }
   }
 

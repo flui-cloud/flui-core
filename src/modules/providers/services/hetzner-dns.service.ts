@@ -6,6 +6,9 @@ import {
   Configuration,
   ZonesApi,
   ZoneRRSetsApi,
+  ZoneRRSetActionsApi,
+  ChangeZoneRrsetTtlRrTypeEnum,
+  SetZoneRrsetRecordsRrTypeEnum,
   Record as HetznerRecord,
   RRSet,
   Zone,
@@ -22,6 +25,7 @@ import {
   DnsRecordType,
   CreateDnsRecordConfig,
   UpdateDnsRecordConfig,
+  SetDnsRecordValuesConfig,
 } from '../interfaces/dns-provider.interface';
 import { ICredentialProvider } from '../interfaces/credential-provider.interface';
 import { CloudProvider } from '../enums/cloud-provider.enum';
@@ -154,6 +158,16 @@ export class HetznerDnsService implements IDnsProvider {
     const axiosInstance = this.createAxiosInstance();
     axiosInstance.defaults.headers.common['Authorization'] = `Bearer ${token}`;
     return new ZoneRRSetsApi(configuration, this.basePath, axiosInstance);
+  }
+
+  private async createRRSetActionsApi(): Promise<ZoneRRSetActionsApi> {
+    const token = await this.credentialProvider.getActiveApiToken(
+      CloudProvider.HETZNER,
+    );
+    const configuration = await this.createConfiguration();
+    const axiosInstance = this.createAxiosInstance();
+    axiosInstance.defaults.headers.common['Authorization'] = `Bearer ${token}`;
+    return new ZoneRRSetActionsApi(configuration, this.basePath, axiosInstance);
   }
 
   // ── Zone operations ──────────────────────────────────────────────
@@ -445,6 +459,91 @@ export class HetznerDnsService implements IDnsProvider {
       value: config.value,
       ttl,
     };
+  }
+
+  /**
+   * Uses the RRSet's own set-records and change-TTL actions rather than
+   * `setRRSetRecords`: that one deletes and recreates, and a name that briefly
+   * does not exist is cached as not existing by resolvers — the opposite of
+   * what moving traffic off a failed node needs.
+   */
+  async setRecordValues(
+    config: SetDnsRecordValuesConfig,
+  ): Promise<DnsRecordInfo[]> {
+    const values = [...new Set(config.values)];
+    if (values.length === 0) {
+      throw new Error(
+        `Refusing to leave ${config.name} (${config.type}) with no value`,
+      );
+    }
+    const rrSetsApi = await this.createRRSetsApi();
+    let existing: RRSet | null = null;
+    try {
+      existing = (
+        await rrSetsApi.getZoneRrset(
+          config.zoneId,
+          config.name,
+          config.type as GetZoneRrsetRrTypeEnum,
+        )
+      ).data.rrset;
+    } catch (error) {
+      if (error.response?.status !== 404) throw error;
+    }
+
+    const records = values.map((value) => ({
+      value: txtSafe(config.type, value),
+    }));
+    if (!existing) {
+      await rrSetsApi.createZoneRrset(config.zoneId, {
+        name: config.name,
+        type: config.type as CreateZoneRequestRrsetsInnerTypeEnum,
+        ttl: config.ttl,
+        records,
+      });
+    } else {
+      const actions = await this.createRRSetActionsApi();
+      const current = existing.records
+        .map((r) => r.value)
+        .sort((a, b) => a.localeCompare(b));
+      const wanted = records
+        .map((r) => r.value)
+        .sort((a, b) => a.localeCompare(b));
+      if (current.join('\n') !== wanted.join('\n')) {
+        await actions.setZoneRrsetRecords(
+          config.zoneId,
+          config.name,
+          config.type as SetZoneRrsetRecordsRrTypeEnum,
+          { records },
+        );
+      }
+      if (existing.ttl !== config.ttl) {
+        await actions.changeZoneRrsetTtl(
+          config.zoneId,
+          config.name,
+          config.type as ChangeZoneRrsetTtlRrTypeEnum,
+          { ttl: config.ttl },
+        );
+      }
+    }
+    if (config.labels && Object.keys(config.labels).length > 0) {
+      await this.applyLabels(
+        rrSetsApi,
+        config.zoneId,
+        config.name,
+        config.type,
+        config.labels,
+      );
+    }
+
+    return values.map((value) => ({
+      recordId: this.composeRecordId(config.name, config.type, value),
+      zoneId: config.zoneId,
+      type: config.type,
+      name: config.name,
+      value,
+      ttl: config.ttl,
+      labels: config.labels,
+    }));
   }
 
   async deleteRecord(zoneId: string, recordId: string): Promise<void> {

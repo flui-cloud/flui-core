@@ -2402,6 +2402,55 @@ export class KubernetesService {
       });
   }
 
+  /**
+   * Every node with whether it is ready, whether a ready ingress proxy pod
+   * (Traefik, which listens on 80/443 of its node) runs on it, and the external
+   * addresses Kubernetes knows for it. Read live from the cluster only: the
+   * question is where traffic can enter now.
+   */
+  async listIngressNodeStates(kubeconfigContent: string): Promise<
+    Array<{
+      name: string;
+      ready: boolean;
+      servesIngress: boolean;
+      externalIps: string[];
+    }>
+  > {
+    const { coreApi } = this.getKubeClient(kubeconfigContent);
+    const [nodes, proxies] = await Promise.all([
+      coreApi.listNode(),
+      coreApi.listNamespacedPod({
+        namespace: 'kube-system',
+        labelSelector: 'app.kubernetes.io/name=traefik',
+      }),
+    ]);
+    const proxyNodes = new Set(
+      (proxies.items ?? [])
+        .filter((pod) =>
+          (pod.status?.conditions ?? []).some(
+            (c) => c.type === 'Ready' && c.status === 'True',
+          ),
+        )
+        .map((pod) => pod.spec?.nodeName)
+        .filter((name): name is string => !!name),
+    );
+    return (nodes.items ?? [])
+      .filter((node) => !!node.metadata?.name)
+      .map((node) => {
+        const name = node.metadata!.name!;
+        return {
+          name,
+          ready: (node.status?.conditions ?? []).some(
+            (c) => c.type === 'Ready' && c.status === 'True',
+          ),
+          servesIngress: proxyNodes.has(name),
+          externalIps: (node.status?.addresses ?? [])
+            .filter((a) => a.type === 'ExternalIP')
+            .map((a) => a.address),
+        };
+      });
+  }
+
   private isReadyWorker(node: k8s.V1Node): boolean {
     const labels = node.metadata?.labels ?? {};
     if (

@@ -61,7 +61,32 @@ describe('the record a cluster needs on its zone', () => {
       name: '*.control-cluster',
       type: DnsRecordType.A,
       value: '109.123.252.6',
+      values: ['109.123.252.6'],
       ttl: 300,
+    });
+  });
+
+  it('points at every node that takes traffic once they have been measured, with a short TTL', () => {
+    const record = clusterWildcardRecord(
+      {
+        id: 'assignment-1',
+        cluster: {
+          name: 'control-cluster',
+          masterIpAddress: '109.123.252.6',
+          metadata: {
+            ingressAddresses: {
+              addresses: ['109.123.252.6', '109.123.252.7'],
+              measuredAt: '2026-10-03T10:00:00Z',
+            },
+          },
+        },
+        endpoints: [],
+      } as never,
+      zone,
+    );
+    expect(record).toMatchObject({
+      values: ['109.123.252.6', '109.123.252.7'],
+      ttl: 60,
     });
   });
 
@@ -84,10 +109,12 @@ describe('DnsZoneReconciliationService.ensureClusterWildcardRecord', () => {
   const build = (records: DnsRecordInfo[]) => {
     const createRecord = jest.fn().mockResolvedValue({});
     const updateRecord = jest.fn().mockResolvedValue({});
+    const setRecordValues = jest.fn().mockResolvedValue([]);
     const provider = {
       listRecords: jest.fn().mockResolvedValue(records),
       createRecord,
       updateRecord,
+      setRecordValues,
     };
     const service = new DnsZoneReconciliationService(
       null as never,
@@ -96,7 +123,7 @@ describe('DnsZoneReconciliationService.ensureClusterWildcardRecord', () => {
       { getDnsProviderOrFail: () => provider } as never,
       sandboxOff,
     );
-    return { service, createRecord, updateRecord };
+    return { service, createRecord, updateRecord, setRecordValues };
   };
 
   const existing = (value: string): DnsRecordInfo => ({
@@ -109,7 +136,7 @@ describe('DnsZoneReconciliationService.ensureClusterWildcardRecord', () => {
   });
 
   it('publishes the wildcard when the zone does not have one', async () => {
-    const { service, createRecord } = build([]);
+    const { service, setRecordValues } = build([]);
 
     await expect(
       service.ensureClusterWildcardRecord(assignment(), zone),
@@ -118,10 +145,10 @@ describe('DnsZoneReconciliationService.ensureClusterWildcardRecord', () => {
       fqdn: '*.control-cluster.dawit.blog',
       hostnamePattern: '<application>.control-cluster.dawit.blog',
     });
-    expect(createRecord).toHaveBeenCalledWith(
+    expect(setRecordValues).toHaveBeenCalledWith(
       expect.objectContaining({
         name: '*.control-cluster',
-        value: '109.123.252.6',
+        values: ['109.123.252.6'],
       }),
     );
   });
@@ -297,6 +324,7 @@ describe('DnsZoneReconciliationService.buildExpectation', () => {
       name: '*.control-cluster',
       type: DnsRecordType.A,
       value: '109.123.252.6',
+      values: ['109.123.252.6'],
       ttl: 300,
     });
   });

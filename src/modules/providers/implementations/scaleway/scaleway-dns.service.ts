@@ -14,6 +14,7 @@ import {
   DnsRecordType,
   CreateDnsRecordConfig,
   UpdateDnsRecordConfig,
+  SetDnsRecordValuesConfig,
 } from '../../interfaces/dns-provider.interface';
 import { ICredentialProvider } from '../../interfaces/credential-provider.interface';
 import { CloudProvider } from '../../enums/cloud-provider.enum';
@@ -165,6 +166,50 @@ export class ScalewayDnsService implements IDnsProvider {
       );
     }
     return updated;
+  }
+
+  /** A `set` keyed on name and type replaces every value of that name at once. */
+  async setRecordValues(
+    config: SetDnsRecordValuesConfig,
+  ): Promise<DnsRecordInfo[]> {
+    const values = [...new Set(config.values)];
+    if (values.length === 0) {
+      throw new Error(
+        `Refusing to leave ${config.name} (${config.type}) with no value`,
+      );
+    }
+    const api = await this.createRecordsApi();
+    await api.updateDNSZoneRecords(config.zoneId, {
+      changes: [
+        {
+          set: {
+            id_fields: {
+              name: config.name,
+              type: config.type,
+            },
+            records: values.map((value) => ({
+              name: config.name,
+              type: config.type,
+              data: value,
+              ttl: config.ttl,
+            })),
+          },
+        },
+      ],
+      return_all_records: false,
+    });
+    const listResp = await api.listDNSZoneRecords(
+      config.zoneId,
+      config.name,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      config.type as unknown as ListDNSZoneRecordsTypeEnum,
+    );
+    return (listResp.data.records ?? [])
+      .filter((r) => r.data !== undefined && values.includes(r.data))
+      .map((r) => this.mapRecord(r, config.zoneId));
   }
 
   async deleteRecord(zoneId: string, recordId: string): Promise<void> {

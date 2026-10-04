@@ -46,6 +46,20 @@ export interface UpdateDnsRecordConfig {
   labels?: Record<string, string>;
 }
 
+/**
+ * Makes one name answer with exactly these values, replacing whatever it held.
+ * Used where a name must point at several hosts at once (every node of a
+ * cluster), so a change of one host never leaves the name briefly empty.
+ */
+export interface SetDnsRecordValuesConfig {
+  zoneId: string;
+  type: DnsRecordType;
+  name: string;
+  values: string[];
+  ttl: number;
+  labels?: Record<string, string>;
+}
+
 export interface IDnsProvider {
   listZones(): Promise<DnsZoneInfo[]>;
   getZone(zoneId: string): Promise<DnsZoneInfo | null>;
@@ -56,6 +70,7 @@ export interface IDnsProvider {
   createRecord(config: CreateDnsRecordConfig): Promise<DnsRecordInfo>;
   updateRecord(config: UpdateDnsRecordConfig): Promise<DnsRecordInfo>;
   deleteRecord(zoneId: string, recordId: string): Promise<void>;
+  setRecordValues(config: SetDnsRecordValuesConfig): Promise<DnsRecordInfo[]>;
 
   bulkCreateRecords(
     zoneId: string,

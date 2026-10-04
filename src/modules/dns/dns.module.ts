@@ -49,6 +49,8 @@ import { GatewayMiddlewareCompilerService } from './services/gateway-middleware-
 import { DnsZoneReconciliationService } from './services/dns-zone-reconciliation.service';
 import { DnsZoneReplicaService } from './services/dns-zone-replica.service';
 import { DnsZoneReconciliationScheduler } from './schedulers/dns-zone-reconciliation.scheduler';
+import { ClusterIngressScheduler } from './schedulers/cluster-ingress.scheduler';
+import { ClusterIngressReconciler } from './services/cluster-ingress.reconciler';
 import { CertificateStatusRefreshService } from './services/certificate-status-refresh.service';
 import { AcmeResolversService } from './services/acme-resolvers.service';
 import { CertificateStatusScheduler } from './schedulers/certificate-status.scheduler';
@@ -111,6 +113,8 @@ import { ClusterDnsGateway } from './gateway/cluster-dns.gateway';
     DnsZoneReconciliationService,
     DnsZoneReplicaService,
     DnsZoneReconciliationScheduler,
+    ClusterIngressReconciler,
+    ClusterIngressScheduler,
     CertificateStatusRefreshService,
     AcmeResolversService,
     CertificateStatusScheduler,
@@ -139,6 +143,7 @@ import { ClusterDnsGateway } from './gateway/cluster-dns.gateway';
     SandboxSubdomainService,
     GatewayMiddlewareCompilerService,
     DnsZoneReconciliationService,
+    ClusterIngressReconciler,
   ],
 })
 export class DnsModule {}

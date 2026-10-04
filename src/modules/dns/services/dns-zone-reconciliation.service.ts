@@ -16,12 +16,24 @@ import { HostnameMode } from '../enums/hostname-mode.enum';
 import { resolveRecordName } from '../utils/resolve-record-name.util';
 import { sharedWildcardRecordName } from '../utils/shared-subdomain.util';
 import { SandboxSubdomainConfigService } from './sandbox-subdomain-config.service';
+import {
+  clusterIngressValues,
+  ingressRecordTtl,
+  sameValues,
+} from '../utils/ingress-addresses.core';
 
 export interface ExpectedDnsRecord {
   name: string;
   type: DnsRecordType;
+  /** The first of `values`, kept for the readers that name one address. */
   value: string;
   ttl: number;
+  /** Every value the name must answer with, when it points at several nodes. */
+  values?: string[];
+}
+
+export function valuesOf(rec: ExpectedDnsRecord): string[] {
+  return rec.values?.length ? rec.values : [rec.value];
 }
 
 /**
@@ -58,13 +70,16 @@ export function clusterWildcardRecord(
   zone: DnsZoneEntity,
 ): ExpectedDnsRecord | null {
   const clusterName = assignment.cluster?.name;
-  const value = assignment.cluster?.masterIpAddress;
-  if (!clusterName || !value) return null;
+  const values = assignment.cluster
+    ? clusterIngressValues(assignment.cluster)
+    : [];
+  if (!clusterName || values.length === 0) return null;
   return {
     name: `*.${clusterName}`,
     type: DnsRecordType.A,
-    value,
-    ttl: zone.recordTtlSeconds,
+    value: values[0],
+    values,
+    ttl: ingressRecordTtl(zone.recordTtlSeconds, values.length),
   };
 }
 
@@ -90,6 +105,14 @@ export function sandboxWildcardRecord(
     type: DnsRecordType.A,
     value,
     ttl: zone.recordTtlSeconds,
+  };
+}
+
+export function wildcardLabels(clusterId: string): Record<string, string> {
+  return {
+    'managed-by': 'flui-cloud',
+    'flui-resource-type': 'dns-record',
+    'flui-cluster-id': clusterId,
   };
 }
 
@@ -199,9 +222,31 @@ export class DnsZoneReconciliationService {
     rec: ExpectedDnsRecord,
   ): Promise<'created' | 'updated' | 'noop'> {
     const records = await provider.listRecords(providerZoneId);
-    const match = records.find(
+    const matches = records.filter(
       (r) => r.name === rec.name && r.type === rec.type,
     );
+    const wanted = valuesOf(rec);
+    if (wanted.length > 1 || matches.length > 1) {
+      const sameTtl = matches.every((m) => !m.ttl || m.ttl === rec.ttl);
+      if (
+        sameValues(
+          matches.map((m) => m.value),
+          wanted,
+        ) &&
+        sameTtl
+      ) {
+        return 'noop';
+      }
+      await provider.setRecordValues({
+        zoneId: providerZoneId,
+        type: rec.type,
+        name: rec.name,
+        values: wanted,
+        ttl: rec.ttl,
+      });
+      return matches.length ? 'updated' : 'created';
+    }
+    const match = matches[0];
     if (!match) {
       await provider.createRecord({
         zoneId: providerZoneId,
@@ -261,24 +306,20 @@ export class DnsZoneReconciliationService {
     const provider = this.dnsProviderFactory.getDnsProviderOrFail(
       zone.dnsProvider,
     );
-    await provider.createRecord({
+    await provider.setRecordValues({
       zoneId: zone.providerZoneId,
       type: wanted.type,
       name: wanted.name,
-      value: wanted.value,
+      values: valuesOf(wanted),
       ttl: wanted.ttl,
       // Without these `cleanupClusterDnsRecords` cannot see it — it matches on
       // that pair — so the record outlives the cluster. A later cluster taking
       // the same name then finds its own wildcard already answering, from an
       // address somebody else released, and never publishes one.
-      labels: {
-        'managed-by': 'flui-cloud',
-        'flui-resource-type': 'dns-record',
-        'flui-cluster-id': assignment.clusterId,
-      },
+      labels: wildcardLabels(assignment.clusterId),
     });
     this.logger.log(
-      `[dns-wildcard] published ${state.fqdn} → ${wanted.value}; applications on this cluster resolve the moment they are created`,
+      `[dns-wildcard] published ${state.fqdn} → ${valuesOf(wanted).join(', ')}; applications on this cluster resolve the moment they are created`,
     );
     return { ...state, status: 'published' };
   }
@@ -316,12 +357,16 @@ export class DnsZoneReconciliationService {
       zone.dnsProvider,
     );
     const records = await provider.listRecords(zone.providerZoneId);
-    const existing = records.find(
+    const existing = records.filter(
       (r) => r.name === wanted.name && r.type === wanted.type,
     );
-    if (!existing) return { ...state, status: 'absent', actualValue: null };
+    if (existing.length === 0) {
+      return { ...state, status: 'absent', actualValue: null };
+    }
 
-    await provider.deleteRecord(zone.providerZoneId, existing.recordId);
+    for (const record of existing) {
+      await provider.deleteRecord(zone.providerZoneId, record.recordId);
+    }
     this.logger.log(
       `[dns-wildcard] withdrew ${state.fqdn} → ${state.actualValue}; the cluster it named is gone`,
     );
@@ -347,7 +392,7 @@ export class DnsZoneReconciliationService {
     const base = {
       fqdn,
       hostnamePattern: fqdn.replace('*.', '<application>.'),
-      expectedValue: wanted.value,
+      expectedValue: valuesOf(wanted).join(', '),
     };
 
     try {
@@ -355,13 +400,23 @@ export class DnsZoneReconciliationService {
         zone.dnsProvider,
       );
       const records = await provider.listRecords(zone.providerZoneId);
-      const existing = records.find(
-        (r) => r.name === wanted.name && r.type === wanted.type,
-      );
-      if (!existing) return { ...base, status: 'absent', actualValue: null };
-      return existing.value === wanted.value
-        ? { ...base, status: 'published', actualValue: existing.value }
-        : { ...base, status: 'foreign', actualValue: existing.value };
+      const existing = records
+        .filter((r) => r.name === wanted.name && r.type === wanted.type)
+        .map((r) => r.value);
+      if (existing.length === 0) {
+        return { ...base, status: 'absent', actualValue: null };
+      }
+      // Ours when it names only addresses of this cluster: right after a node
+      // joins or leaves it can lag the measured set by one reconcile.
+      const own = new Set([
+        ...valuesOf(wanted),
+        ...(assignment.cluster?.masterIpAddress
+          ? [assignment.cluster.masterIpAddress]
+          : []),
+      ]);
+      return existing.every((v) => own.has(v))
+        ? { ...base, status: 'published', actualValue: existing.join(', ') }
+        : { ...base, status: 'foreign', actualValue: existing.join(', ') };
     } catch (err) {
       this.logger.warn(
         `[dns-wildcard] could not read ${zone.zoneName}: ${err instanceof Error ? err.message : String(err)}`,
@@ -428,8 +483,9 @@ export class DnsZoneReconciliationService {
     type: DnsRecordType,
   ): Promise<void> {
     const records = await provider.listRecords(providerZoneId);
-    const match = records.find((r) => r.name === name && r.type === type);
-    if (match) {
+    for (const match of records.filter(
+      (r) => r.name === name && r.type === type,
+    )) {
       await provider.deleteRecord(providerZoneId, match.recordId);
     }
   }
@@ -449,6 +505,10 @@ export class DnsZoneReconciliationService {
     for (const assignment of assignments) {
       const masterIp = assignment.cluster?.masterIpAddress;
       if (masterIp) clusterMasterIps.add(masterIp);
+      const ingress = assignment.cluster
+        ? clusterIngressValues(assignment.cluster)
+        : [];
+      for (const address of ingress) clusterMasterIps.add(address);
 
       // The cluster's own wildcard, before any endpoint is considered.
       //
@@ -482,14 +542,19 @@ export class DnsZoneReconciliationService {
 
       for (const endpoint of assignment.endpoints ?? []) {
         if (endpoint.hostnameMode === HostnameMode.IP) continue;
-        const value = endpoint.dnsRecordValue ?? masterIp;
-        if (!value) continue;
+        if (ingress.length === 0) continue;
 
         const name = resolveRecordName(endpoint.fqdn, zone.zoneName);
         const type = endpoint.dnsRecordType ?? DnsRecordType.A;
         const key = `${name}|${type}`;
         if (expected.has(key)) continue;
-        expected.set(key, { name, type, value, ttl: zone.recordTtlSeconds });
+        expected.set(key, {
+          name,
+          type,
+          value: ingress[0],
+          values: ingress,
+          ttl: ingressRecordTtl(zone.recordTtlSeconds, ingress.length),
+        });
       }
     }
 
@@ -533,8 +598,11 @@ export class DnsZoneReconciliationService {
       return report;
     }
 
-    const actualByKey = new Map<string, DnsRecordInfo>();
-    for (const r of actual) actualByKey.set(`${r.name}|${r.type}`, r);
+    const actualByKey = new Map<string, DnsRecordInfo[]>();
+    for (const r of actual) {
+      const key = `${r.name}|${r.type}`;
+      actualByKey.set(key, [...(actualByKey.get(key) ?? []), r]);
+    }
     const expectedKeys = new Set<string>();
 
     for (const exp of plan.expected) {
@@ -566,12 +634,39 @@ export class DnsZoneReconciliationService {
     provider: IDnsProvider,
     target: { dnsProvider: DnsProvider; providerZoneId: string },
     exp: ExpectedDnsRecord,
-    actualByKey: Map<string, DnsRecordInfo>,
+    actualByKey: Map<string, DnsRecordInfo[]>,
     dryRun: boolean,
     report: ReplicaDiffReport,
   ): Promise<void> {
-    const match = actualByKey.get(`${exp.name}|${exp.type}`);
+    const matches = actualByKey.get(`${exp.name}|${exp.type}`) ?? [];
+    const match = matches[0];
     try {
+      const wanted = valuesOf(exp);
+      if (wanted.length > 1 || matches.length > 1) {
+        const ttlMismatch = matches.some((m) => !!m.ttl && m.ttl !== exp.ttl);
+        const actualValues = matches.map((m) => m.value);
+        if (sameValues(actualValues, wanted) && !ttlMismatch) return;
+        if (matches.length) {
+          report.mismatches.push({
+            name: exp.name,
+            type: exp.type,
+            expected: wanted.join(', '),
+            actual: actualValues.join(', '),
+          });
+        }
+        if (!dryRun) {
+          await provider.setRecordValues({
+            zoneId: target.providerZoneId,
+            type: exp.type,
+            name: exp.name,
+            values: wanted,
+            ttl: exp.ttl,
+          });
+        }
+        if (matches.length) report.updated++;
+        else report.created++;
+        return;
+      }
       if (!match) {
         if (!dryRun) {
           await provider.createRecord({
