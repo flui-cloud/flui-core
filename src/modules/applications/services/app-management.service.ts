@@ -877,7 +877,7 @@ export class AppManagementService {
     });
     const nodes = new Map((cluster?.nodes ?? []).map((n) => [n.serverName, n]));
     return pods
-      .filter((pod) => !pod.metadata?.deletionTimestamp)
+      .filter((pod) => isCurrentPod(pod))
       .map((pod) => {
         const on = pod.spec?.nodeName ?? null;
         const node = on ? nodes.get(on) : undefined;
@@ -1036,4 +1036,15 @@ function healedResources(resources: ResourcePair): ResourcePair | null {
   } catch {
     return null;
   }
+}
+
+/**
+ * A pod that counts toward the replicas: neither going away nor finished. A
+ * pod that ended (evicted, crashed out of an earlier rollout) keeps its node
+ * in the list until it is cleaned up, and would read as a replica on it.
+ */
+export function isCurrentPod(pod: k8s.V1Pod): boolean {
+  if (pod.metadata?.deletionTimestamp) return false;
+  const phase = pod.status?.phase;
+  return phase === 'Running' || phase === 'Pending';
 }
