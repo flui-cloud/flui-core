@@ -41,15 +41,18 @@ export default class AppStatus extends Command {
       const { id: clusterId } = await resolveClusterRef(flags.cluster);
       const service = await CliAppService.create(clusterId);
       const app = await service.getAppByName(args.name);
-      const [runtime, endpoints] = await Promise.all([
+      const [runtime, endpoints, availability] = await Promise.all([
         service.getRuntime(app.id),
         service.listEndpoints(app.id).catch(() => []),
+        service.getAvailability(app.id).catch(() => null),
       ]);
 
       spinner.stop();
 
       if (flags.output === 'json') {
-        console.log(JSON.stringify({ app, runtime, endpoints }, null, 2));
+        console.log(
+          JSON.stringify({ app, runtime, endpoints, availability }, null, 2),
+        );
         return;
       }
 
@@ -124,6 +127,18 @@ export default class AppStatus extends Command {
       if (endpoints.length > 0) {
         console.log(chalk.cyan('\n  Endpoints\n'));
         for (const e of endpoints) this.printEndpoint(e);
+      }
+
+      if (availability) {
+        console.log(chalk.cyan('\n  Availability\n'));
+        console.log(
+          availability.highlyAvailable
+            ? `  ${chalk.green('Survives losing a worker')}`
+            : `  ${chalk.yellow('Does not survive losing a worker')}`,
+        );
+        for (const reason of availability.reasons) {
+          console.log(`  ${chalk.dim('·')} ${reason.message}`);
+        }
       }
 
       console.log('');

@@ -2452,6 +2452,35 @@ export class KubernetesService {
       });
   }
 
+  /**
+   * For each volume claimed in `namespace`, the node its volume is bound to,
+   * or null when the volume can be used from any node.
+   */
+  async listVolumeNodeBindings(
+    kubeconfigContent: string,
+    namespace: string,
+  ): Promise<Array<{ claimName: string; node: string | null }>> {
+    const { coreApi } = this.getKubeClient(kubeconfigContent);
+    const volumes = await coreApi.listPersistentVolume();
+    return (volumes.items ?? [])
+      .filter((pv) => pv.spec?.claimRef?.namespace === namespace)
+      .map((pv) => {
+        const hostnames = (
+          pv.spec?.nodeAffinity?.required?.nodeSelectorTerms ?? []
+        )
+          .flatMap((term) => term.matchExpressions ?? [])
+          .filter(
+            (e) => e.key === 'kubernetes.io/hostname' && e.operator === 'In',
+          )
+          .flatMap((e) => e.values ?? []);
+        return {
+          claimName: pv.spec?.claimRef?.name ?? '',
+          node: hostnames[0] ?? null,
+        };
+      })
+      .filter((binding) => binding.claimName !== '');
+  }
+
   /** The cluster DNS (K3s' `coredns` Deployment): its replica count and whether it spreads across nodes. */
   async readClusterDns(
     kubeconfigContent: string,

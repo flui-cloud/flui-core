@@ -74,6 +74,8 @@ import { DedicatedPlacementService } from './services/dedicated-placement.servic
 import { ApplicationDeployProcessor } from './processors/application-deploy.processor';
 import { ApplicationTeardownService } from './processors/application-teardown.service';
 import { ApplicationVolumeClaimsService } from './services/application-volume-claims.service';
+import { AppAvailabilityService } from './services/app-availability.service';
+import { AppEndpointEntity } from '../dns/entities/app-endpoint.entity';
 import { ApplicationVolumeResizeService } from './services/application-volume-resize.service';
 import {
   ApplicationBuildWatchProcessor,
@@ -128,6 +130,7 @@ import { SpareVolumesService } from './services/spare-volumes.service';
       ScheduledJobEntity,
       InfrastructureOperationEntity,
       ClusterEntity,
+      AppEndpointEntity,
       ProjectEntity,
       RepositoryCredentialEntity,
       AppBuildEntity,
@@ -243,6 +246,7 @@ import { SpareVolumesService } from './services/spare-volumes.service';
     // Processors
     ApplicationDeployProcessor,
     ApplicationTeardownService,
+    AppAvailabilityService,
     ApplicationVolumeClaimsService,
     ApplicationVolumeResizeService,
     ApplicationBuildWatchProcessor,

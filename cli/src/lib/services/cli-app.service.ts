@@ -75,6 +75,11 @@ export interface ResourceProposalAnswer {
   usageRead: boolean;
 }
 
+export interface AppAvailability {
+  highlyAvailable: boolean;
+  reasons: Array<{ code: string; message: string }>;
+}
+
 export interface AppRuntime {
   appId: string;
   deploymentName: string;
@@ -538,6 +543,12 @@ export class CliAppService {
 
   async getRuntime(appId: string): Promise<AppRuntime> {
     return this.apiClient.get<AppRuntime>(`/applications/${appId}/runtime`);
+  }
+
+  async getAvailability(appId: string): Promise<AppAvailability> {
+    return this.apiClient.get<AppAvailability>(
+      `/applications/${appId}/availability`,
+    );
   }
 
   async listEndpoints(applicationId?: string): Promise<AppEndpoint[]> {

@@ -46,6 +46,7 @@ const ARGS: Record<string, Record<string, unknown>> = {
   app_list: {},
   app_get: { id: 'a1' },
   app_status: { id: 'a1' },
+  app_availability: { id: 'a1' },
   app_debug: { id: 'a1' },
   app_releases: { id: 'a1' },
   app_events: { id: 'a1' },
@@ -437,6 +438,7 @@ describe('strada B — the whole tool catalogue goes over the wire', () => {
   it.each([
     ['app_get', 'GET /applications/a1'],
     ['app_status', 'GET /applications/a1/runtime'],
+    ['app_availability', 'GET /applications/a1/availability'],
     ['app_restart', 'POST /applications/a1/restart'],
     ['app_scale', 'PATCH /applications/a1/replicas'],
     ['app_stop', 'POST /applications/a1/stop'],

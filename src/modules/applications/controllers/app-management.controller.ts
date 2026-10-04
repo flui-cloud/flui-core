@@ -30,6 +30,8 @@ import {
 } from '../dto/app-management.dto';
 import { AppResourcesConsequenceService } from '../services/app-resources-consequence.service';
 import { AppAutoscalingService } from '../services/app-autoscaling.service';
+import { AppAvailabilityService } from '../services/app-availability.service';
+import { AppAvailabilityResponseDto } from '../dto/app-availability.dto';
 
 @ApiTags('Application Management')
 @ApiBearerAuth()
@@ -51,7 +53,22 @@ export class AppManagementController {
     private readonly appManagementService: AppManagementService,
     private readonly consequence: AppResourcesConsequenceService,
     private readonly autoscaling: AppAutoscalingService,
+    private readonly availability: AppAvailabilityService,
   ) {}
+
+  @Get('availability')
+  @ApiOperation({
+    summary: 'Whether the application survives losing a worker',
+    description:
+      'Highly available when at least two copies run on different nodes, its volumes are not tied to one node, its addresses use a real domain and more than one node takes traffic. Otherwise every reason, each with what to change.',
+  })
+  @ApiParam({ name: 'appId', description: 'Application ID' })
+  @ApiResponse({ status: 200, type: AppAvailabilityResponseDto })
+  async getAvailability(
+    @Param('appId') appId: string,
+  ): Promise<AppAvailabilityResponseDto> {
+    return this.availability.forApplication(appId);
+  }
 
   @Get('runtime')
   @ApiOperation({

@@ -263,6 +263,16 @@ export const APPLICATION_TOOLS: ToolDef[] = [
     forModel: runtimeView,
   }),
   defineTool({
+    name: 'app_availability',
+    routes: ['GET /applications/:id/availability'],
+    description:
+      'Whether an application keeps answering, with its data, when one worker of its cluster is lost. highlyAvailable is true only with at least two copies on different nodes, no volume tied to one node, a real domain (not nip.io) and more than one node taking traffic; otherwise reasons lists each obstacle with what to change. The database and the cluster master stay single points either way — say so rather than promising more.',
+    scope: MCP_SCOPE.APP_READ,
+    inputSchema: { id: z.string() },
+    run: (args, ctx) =>
+      ctx.api.get(`/applications/${enc(args.id)}/availability`),
+  }),
+  defineTool({
     name: 'app_debug',
     routes: ['GET /applications/:id/debug/pods'],
     description:
