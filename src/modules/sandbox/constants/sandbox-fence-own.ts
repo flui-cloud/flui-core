@@ -203,19 +203,12 @@ export const SANDBOX_ALLOW_OWN: SandboxAllowRule[] = [
   {
     verbs: ['GET'],
     pattern: '/sandbox/session',
-    why: 'Read your own tenancy: how long you have left.',
+    why: 'Read your own area: how long you have left.',
   },
   {
-    verbs: ['GET'],
-    pattern: '/sandbox/resume',
-    why: 'Come back into the tenancy you already have.',
-  },
-  {
-    // The one write a guest is offered, and it changes nothing about the
-    // tenancy: it mails the caller a way back into the one they are already in.
     verbs: ['POST'],
-    pattern: '/sandbox/save',
-    why: 'Mail yourself the way back into this sandbox.',
+    pattern: '/sandbox/keep',
+    why: 'Keep the applications in your own area for longer.',
   },
   {
     // Connecting a coding agent, which is the thing the trial exists to show.

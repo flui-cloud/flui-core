@@ -39,9 +39,38 @@ export interface OidcUser {
   id: string;
   userName: string;
   email?: string;
+  /** True only when the provider says the address was proven. */
+  emailVerified?: boolean;
   firstName?: string;
   lastName?: string;
   state?: string;
+  /** A service identity, not a person: the API's own, or an agent's. */
+  isMachine?: boolean;
+}
+
+export interface LoginPolicy {
+  isDefault: boolean;
+  allowRegister: boolean;
+  allowExternalIdp: boolean;
+  idpIds: string[];
+  /** Every writable field as the provider returned it, to send back unchanged. */
+  settings: Record<string, unknown>;
+}
+
+const LOGIN_POLICY_READ_ONLY = new Set([
+  'details',
+  'isDefault',
+  'idps',
+  'secondFactors',
+  'multiFactors',
+]);
+
+export function policySettings(
+  policy: Record<string, unknown>,
+): Record<string, unknown> {
+  return Object.fromEntries(
+    Object.entries(policy).filter(([key]) => !LOGIN_POLICY_READ_ONLY.has(key)),
+  );
 }
 
 export interface OidcUserGrant {
@@ -121,6 +150,135 @@ export class OidcProviderAdminClient {
    * moment of the call (e.g. the OLD domain during a sync, or the bootstrap
    * nip.io domain right after cluster creation).
    */
+  /** Stop (or restore) a person's sign-in, keeping the account. */
+  async setUserActive(
+    pat: string,
+    hostHeader: string,
+    userId: string,
+    active: boolean,
+  ): Promise<void> {
+    await firstValueFrom(
+      this.httpService.post(
+        `${resolveProviderBaseUrl()}/management/v1/users/${userId}/${
+          active ? '_reactivate' : '_deactivate'
+        }`,
+        {},
+        { headers: this.headers(pat, hostHeader) },
+      ),
+    );
+  }
+
+  /** The organisation's sign-in settings, and the identity providers it shows. */
+  async getLoginPolicy(pat: string, hostHeader: string): Promise<LoginPolicy> {
+    const resp = await firstValueFrom(
+      this.httpService.get(
+        `${resolveProviderBaseUrl()}/management/v1/policies/login`,
+        { headers: this.headers(pat, hostHeader) },
+      ),
+    );
+    const policy = resp.data?.policy ?? {};
+    return {
+      isDefault: policy.isDefault === true,
+      allowRegister: policy.allowRegister === true,
+      allowExternalIdp: policy.allowExternalIdp === true,
+      idpIds: ((policy.idps as Array<{ idpId?: string }>) ?? [])
+        .map((i) => i.idpId)
+        .filter((id): id is string => !!id),
+      settings: policySettings(policy),
+    };
+  }
+
+  /**
+   * Let people register on their own and sign in with an external provider,
+   * keeping username and password. Creates the organisation's own policy when
+   * it still follows the instance default, updates it otherwise.
+   */
+  async openSelfRegistration(
+    pat: string,
+    hostHeader: string,
+    current: Pick<LoginPolicy, 'isDefault' | 'settings'>,
+  ): Promise<void> {
+    // The provider replaces the whole policy: anything left out goes back to
+    // zero, and a password check that lives 0s sends every sign-in back to
+    // the password page.
+    const body = {
+      ...current.settings,
+      allowUsernamePassword: true,
+      allowRegister: true,
+      allowExternalIdp: true,
+    };
+    const url = `${resolveProviderBaseUrl()}/management/v1/policies/login`;
+    const options = { headers: this.headers(pat, hostHeader) };
+    await firstValueFrom(
+      current.isDefault
+        ? this.httpService.post(url, body, options)
+        : this.httpService.put(url, body, options),
+    );
+  }
+
+  async listIdentityProviders(
+    pat: string,
+    hostHeader: string,
+  ): Promise<Array<{ id: string; name: string; type: string }>> {
+    const resp = await firstValueFrom(
+      this.httpService.post(
+        `${resolveProviderBaseUrl()}/management/v1/idps/templates/_search`,
+        { limit: 100 },
+        { headers: this.headers(pat, hostHeader) },
+      ),
+    );
+    return ((resp.data?.result as Array<Record<string, string>>) ?? []).map(
+      (p) => ({ id: p.id, name: p.name, type: p.type }),
+    );
+  }
+
+  /**
+   * A GitHub or Google sign-in. Accounts are created on first sign-in and never
+   * linked to an existing one by email: linking would let whoever controls an
+   * external account with the same address take over the existing one.
+   */
+  async addSocialIdentityProvider(
+    pat: string,
+    hostHeader: string,
+    kind: 'github' | 'google',
+    params: { name: string; clientId: string; clientSecret: string },
+  ): Promise<string> {
+    const resp = await firstValueFrom(
+      this.httpService.post(
+        `${resolveProviderBaseUrl()}/management/v1/idps/${kind}`,
+        {
+          name: params.name,
+          clientId: params.clientId,
+          clientSecret: params.clientSecret,
+          scopes: kind === 'github' ? ['read:user', 'user:email'] : [],
+          providerOptions: {
+            isLinkingAllowed: false,
+            isCreationAllowed: true,
+            isAutoCreation: true,
+            isAutoUpdate: true,
+          },
+        },
+        { headers: this.headers(pat, hostHeader) },
+      ),
+    );
+    return resp.data.id as string;
+  }
+
+  /** Show an identity provider on the organisation's sign-in page. */
+  async addIdentityProviderToLogin(
+    pat: string,
+    hostHeader: string,
+    idpId: string,
+  ): Promise<void> {
+    await firstValueFrom(
+      this.httpService.post(
+        `${resolveProviderBaseUrl()}/management/v1/policies/login/idps`,
+        { idpId, ownerType: 'IDP_OWNER_TYPE_ORG' },
+        { headers: this.headers(pat, hostHeader) },
+      ),
+    );
+  }
+
   private headers(pat: string, hostHeader: string): Record<string, string> {
     return {
       Authorization: `Bearer ${pat}`,
@@ -987,9 +1145,11 @@ export class OidcProviderAdminClient {
     id: raw.id,
     userName: raw.userName,
     email: raw.human?.email?.email,
+    emailVerified: raw.human?.email?.isEmailVerified === true,
     firstName: raw.human?.profile?.firstName,
     lastName: raw.human?.profile?.lastName,
     state: raw.state,
+    isMachine: !!raw.machine,
   });
 
   async grantUserRole(

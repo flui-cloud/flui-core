@@ -9,8 +9,14 @@ import {
   Post,
   Query,
   Req,
+  UseInterceptors,
 } from '@nestjs/common';
-import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+import {
+  ApiBearerAuth,
+  ApiOperation,
+  ApiResponse,
+  ApiTags,
+} from '@nestjs/swagger';
 import { Request } from 'express';
 import { BackupPoliciesService } from '../services/backup-policies.service';
 import { BackupJobsService } from '../services/backup-jobs.service';
@@ -20,6 +26,9 @@ import {
   CreateBackupPolicyDto,
 } from '../dto/create-backup-policy.dto';
 import { SetPlatformConfigDto } from '../dto/set-platform-config.dto';
+import { HeartbeatStatusDto } from '../dto/heartbeat-status.dto';
+import { MasterHeartbeatScheduler } from '../schedulers/master-heartbeat.scheduler';
+import { HeartbeatRedactionInterceptor } from '../interceptors/heartbeat-redaction.interceptor';
 import { DestinationRole } from '../enums/destination-role.enum';
 import { BackupEngineClass } from '../enums/backup-engine-class.enum';
 import { BackupDestinationRepository } from '../repositories/backup-destination.repository';
@@ -42,6 +51,7 @@ import { DataDoor } from '../../iam/decorators/data-door.decorator';
 @ApiBearerAuth()
 @Controller('backup-policies')
 @RequireSection('backup')
+@UseInterceptors(HeartbeatRedactionInterceptor)
 export class BackupPoliciesController {
   constructor(
     private readonly service: BackupPoliciesService,
@@ -49,6 +59,7 @@ export class BackupPoliciesController {
     private readonly destinations: BackupDestinationRepository,
     private readonly declaredEngines: DeclaredEngineResolver,
     private readonly activity: BackupActivityService,
+    private readonly heartbeats: MasterHeartbeatScheduler,
   ) {}
 
   private userId(req: Request): string {
@@ -139,6 +150,18 @@ export class BackupPoliciesController {
     return this.activity.forUser(this.userId(req));
   }
 
+  @Get('heartbeat')
+  @RequirePermission(IAM_PERMISSION.CLUSTER_READ)
+  @ApiOperation({
+    summary: 'Whether the installation is sending its heartbeat, and why not',
+    description:
+      'The heartbeat set with the platform backup goes out only while the installation is healthy (database, metrics, alert delivery) and its last platform backup is fresh. The address itself is never returned.',
+  })
+  @ApiResponse({ status: 200, type: HeartbeatStatusDto })
+  heartbeat(): HeartbeatStatusDto {
+    return this.heartbeats.status();
+  }
+
   @Get(':id/activity')
   @RequirePermission(IAM_PERMISSION.CLUSTER_READ)
   async getActivity(@Param('id') id: string, @Query('limit') limit?: string) {
@@ -190,6 +213,7 @@ export class BackupPoliciesController {
     return this.service.setPlatformConfig(id, {
       recipient: dto.recipient,
       heartbeatUrl: dto.heartbeatUrl,
+      clearHeartbeat: dto.clearHeartbeat,
     });
   }
 

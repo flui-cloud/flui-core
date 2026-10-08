@@ -1,4 +1,5 @@
 import { Injectable, UnauthorizedException } from '@nestjs/common';
+import { noteSeen, refuseIfBlocked } from '../utils/user-presence.util';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { ApiKeyService } from '../services/api-key.service';
@@ -68,6 +69,8 @@ export class ApiKeyStrategy {
         where: { id: record.userId },
       });
       if (user) {
+        refuseIfBlocked(user);
+        noteSeen(this.userRepo, user);
         return {
           user: {
             userId: user.id,

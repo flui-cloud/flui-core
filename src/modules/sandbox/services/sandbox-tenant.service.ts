@@ -1,12 +1,21 @@
 import { Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { LessThan, Repository } from 'typeorm';
+import { IsNull, Repository } from 'typeorm';
 import { SandboxTenantEntity } from '../entities/sandbox-tenant.entity';
-import { SANDBOX_CONFIG, SandboxConfig } from '../sandbox.config';
+import {
+  SANDBOX_CONFIG,
+  SandboxConfig,
+  podSecurityLabels,
+  workloadDeadline,
+} from '../sandbox.config';
+import { SandboxNoticeMailService } from './sandbox-notice-mail.service';
+import { SandboxEntryService } from './sandbox-entry.service';
+import { isPlaceholderEmail } from '../../auth/utils/placeholder-email.util';
 import { ProjectsService } from '../../projects/projects.service';
+import { projectNamespace } from '../../applications/utils/k8s-namespace.util';
 import { SandboxBuildTimeline } from './sandbox-build-timeline';
 import { SandboxCapacityService } from './sandbox-capacity.service';
-import { ClaimResult, SandboxReserveService } from './sandbox-reserve.service';
+import { SandboxReserveService } from './sandbox-reserve.service';
 import { SandboxQuotaService } from './sandbox-quota.service';
 import {
   SANDBOX_INGRESS_SOURCE_CIDRS,
@@ -27,6 +36,7 @@ import { ApplicationEntity } from '../../applications/entities/application.entit
 import { ApplicationDeployService } from '../../applications/services/application-deploy.service';
 import { ClusterEntity } from '../../infrastructure/clusters/entities/cluster.entity';
 import { KubernetesService } from '../../infrastructure/shared/services/kubernetes.service';
+import { EgressPolicyService } from '../../infrastructure/egress/egress-policy.service';
 import { EncryptionService } from '../../shared/encryption/services/encryption.service';
 import { AppEndpointService } from '../../dns/services/app-endpoint.service';
 import { AppEndpointReconciliationService } from '../../dns/services/app-endpoint-reconciliation.service';
@@ -72,110 +82,34 @@ export class SandboxTenantService {
     private readonly endpointReconciliation: AppEndpointReconciliationService,
     private readonly tenancySubdomains: TenancySubdomainService,
     private readonly sandboxSubdomains: SandboxSubdomainService,
+    private readonly notices: SandboxNoticeMailService,
+    private readonly entry: SandboxEntryService,
+    private readonly egress: EgressPolicyService,
   ) {}
 
   /**
-   * Give this visitor an area, building one if none is waiting.
-   *
-   * The reserve is a head start, not a gate. It used to be both: an area only
-   * counted as ready once an application was running inside it, so an empty
-   * reserve meant a two-minute build and the visitor was turned away rather
-   * than made to watch it. An area now installs nothing, so the build is
-   * identity, grants, a namespace under a quota, and a certificate — seconds,
-   * and worth making someone wait for rather than sending them away.
-   *
-   * A refusal here therefore no longer means "the instance is full". It means
-   * the build itself failed, which is worth counting for what it is.
+   * Build one area for the reserve: a project nobody owns yet and its namespace,
+   * fenced before anyone can reach it. No identity is made here; the guest
+   * arrives by signing in, and the area becomes theirs at their first deploy.
    */
-  async claimOrBuild(ip: string): Promise<ClaimResult> {
-    const held = await this.reserve.tryClaim(ip);
-    if (held) return held;
-
-    if (!this.config.clusterId) return this.reserve.refuseAsFull();
-
-    try {
-      await this.provision(this.config.clusterId);
-    } catch (error) {
-      this.logger.error(
-        `Building an area on demand failed: ${
-          error instanceof Error ? error.message : String(error)
-        }`,
-      );
-      return this.reserve.refuseAsFull();
-    }
-
-    // Not the row just built: another visitor may have taken it in between, and
-    // the claim is the only thing allowed to decide who holds what.
-    const claimed = await this.reserve.tryClaim(ip);
-    return claimed ?? this.reserve.refuseAsFull();
-  }
-
   async provision(clusterId: string): Promise<SandboxTenantEntity> {
     const timeline = new SandboxBuildTimeline();
     const tenant = await this.reserve.createPending(clusterId);
     try {
-      const created = await this.directory.createUser({
-        email: tenant.email,
-        firstName: 'Sandbox',
-        lastName: 'Guest',
-        sendInvite: false,
-        role: IdentityRole.USER,
+      const project = await this.projects.createArea();
+      tenant.namespace = projectNamespace(project.slug);
+      tenant.projectId = project.id;
+      await this.reserve.recordArea(tenant.id, {
+        namespace: tenant.namespace,
+        projectId: project.id,
       });
-
-      // Split from the local row on purpose: with nothing installed for a
-      // guest any more, the identity provider is the longest step in the build
-      // by a wide margin, and a single 'identity' mark hid which half it was.
-      timeline.mark('idp user');
-
-      // The local row normally appears on first login. Creating it now is what
-      // lets the owner grant exist before the guest ever signs in — the grant
-      // selects on this id.
-      const user = await this.users.save(
-        this.users.create({
-          email: tenant.email,
-          oidcSub: created.id,
-          role: IdentityRole.USER,
-          isAdmin: false,
-          firstName: 'Sandbox',
-          lastName: 'Guest',
-          passwordHash: null,
-        }),
-      );
-
-      await this.reserve.recordIdentities(tenant.id, {
-        userId: user.id,
-        idpUserId: created.id,
-      });
-      timeline.mark('local user');
-
-      // Two grants, deliberately separate. The first is the tenancy: everything
-      // this guest makes, and nothing else. The second is the showcase: read-only
-      // over what the platform's own operators run, so the guest has something
-      // real to look at that they could never afford to start themselves.
-      await this.bindings.save([
-        this.bindings.create({
-          principalType: 'user',
-          principalRef: tenant.email,
-          role: IAM_ROLE.SANDBOX,
-          scopeType: 'selector',
-          scopeRef: null,
-          selector: { owner: user.id },
-        }),
-        this.bindings.create({
-          principalType: 'user',
-          principalRef: tenant.email,
-          role: SHOWCASE_GRANT.role,
-          scopeType: 'selector',
-          scopeRef: null,
-          selector: SHOWCASE_GRANT.selector,
-        }),
-      ]);
-      timeline.mark('grants');
+      timeline.mark('project');
 
       const kubeconfig = await this.kubeconfigFor(clusterId);
       await this.k8s.ensureNamespaceExists(kubeconfig, tenant.namespace, {
         'flui.cloud/sandbox': 'true',
         'flui.cloud/sandbox-tenant': tenant.id,
+        ...podSecurityLabels(this.config.podSecurity),
       });
       await this.quota.apply(kubeconfig, tenant.namespace);
       // Both fences go up before the guest can reach the area at all, so there
@@ -195,6 +129,7 @@ export class SandboxTenantService {
           ],
         }),
       );
+      await this.egress.applyTo(kubeconfig, clusterId, tenant.namespace, true);
       await this.k8s.applyManifest(
         kubeconfig,
         buildNoindexMiddleware(tenant.namespace),
@@ -230,10 +165,7 @@ export class SandboxTenantService {
       // look alive is not theirs — the showcase application the grant above
       // opens, and the example sections — so there is nothing left to build
       // before a visitor can be let in.
-      await this.reserve.markReady(tenant.id, {
-        userId: user.id,
-        idpUserId: created.id,
-      });
+      await this.reserve.markReady(tenant.id);
       // Broken down on purpose: this is the number the buffer is sized against,
       // and a single total would hide that one step is nearly all of it.
       this.logger.log(
@@ -257,38 +189,39 @@ export class SandboxTenantService {
   }
 
   /**
-   * Delete what a guest deployed more than one workload lifetime ago, and leave
-   * the area standing.
-   *
-   * This is the half of the demo that costs: an area holds a namespace under a
-   * quota and nothing else, while a running workload holds memory and CPU that
-   * a visitor who left hours ago is not using. Two clocks, so the account can
-   * outlive the machines it started.
+   * Delete what guests deployed once its time is up, and leave the areas
+   * standing. Time is counted from the deploy and stretched by the guest's
+   * own actions (see `workloadDeadline`); traffic to their applications never
+   * counts, so a page bots keep visiting does not keep itself alive.
    *
    * Removal goes through the same path a person's own delete takes rather than
    * a shortcut written here: the shortcut would drop the rows and leave the
-   * cluster holding the pods, which is the failure mode the reaper exists to
-   * avoid. `LessThan(createdAt)` rather than anything about activity — "what
-   * you deploy lives a day" is a rule a visitor can be told in one line.
+   * cluster holding the pods.
    */
-  async sweepExpiredWorkloads(): Promise<number> {
-    const held = await this.reserve.findClaimed();
-    if (held.length === 0) return 0;
-
-    const cutoff = new Date(Date.now() - this.config.workloadTtlMs);
+  async sweepExpiredWorkloads(now = new Date()): Promise<number> {
     let removed = 0;
 
-    for (const tenant of held) {
-      const stale = await this.applications.find({
+    for await (const area of this.claimedTenancies()) {
+      const apps = await this.applications.find({
         where: {
-          clusterId: tenant.clusterId,
-          k8sNamespace: tenant.namespace,
-          createdAt: LessThan(cutoff),
+          clusterId: area.clusterId,
+          k8sNamespace: area.namespace,
+          deletedAt: IsNull(),
         },
-        select: { id: true, slug: true },
+        select: { id: true, slug: true, createdAt: true },
       });
+      const upcoming: Array<{ slug: string; at: Date }> = [];
 
-      for (const app of stale) {
+      for (const app of apps) {
+        const at = workloadDeadline(
+          app.createdAt,
+          area.lastActiveAt,
+          this.config,
+        );
+        if (at > now) {
+          upcoming.push({ slug: app.slug, at });
+          continue;
+        }
         try {
           await this.deploy.deleteApplication(app.id);
           removed += 1;
@@ -296,18 +229,128 @@ export class SandboxTenantService {
           // One application refusing to go is not a reason to leave the rest
           // of the instance paying for the others.
           this.logger.warn(
-            `Could not remove ${app.slug} from ${tenant.namespace}: ${this.msg(error)}`,
+            `Could not remove ${app.slug} from ${area.namespace}: ${this.msg(error)}`,
           );
         }
       }
+
+      await this.warnIfDue(area, upcoming, now);
     }
 
     if (removed > 0) {
-      this.logger.log(
-        `Removed ${removed} workload(s) past their ${this.config.workloadTtlHours}h in areas that stay`,
-      );
+      this.logger.log(`Removed ${removed} guest workload(s) whose time was up`);
     }
     return removed;
+  }
+
+  /** Once per stretch of inactivity: a fresh action clears the mark. */
+  private async warnIfDue(
+    area: SandboxTenantEntity,
+    upcoming: Array<{ slug: string; at: Date }>,
+    now: Date,
+  ): Promise<void> {
+    if (area.expiryWarnedAt || !area.email || isPlaceholderEmail(area.email)) {
+      return;
+    }
+    const soon = upcoming.filter(
+      (u) => u.at.getTime() - now.getTime() <= this.config.expiryWarningMs,
+    );
+    if (soon.length === 0) return;
+
+    const first = Math.min(...soon.map((u) => u.at.getTime()));
+    await this.notices.expiryWarning({
+      to: area.email,
+      apps: soon.map((u) => u.slug),
+      hoursLeft: (first - now.getTime()) / 3_600_000,
+      dashboardUrl: this.entry.origin,
+    });
+    await this.reserve.markWarned(area.id, now);
+  }
+
+  /**
+   * Demo guests nobody has seen for a while, holding no area: their account
+   * goes, at the identity provider and here, with their grants, keys and
+   * place in line. Only guests: a person the operator invited is never
+   * removed by a clock.
+   */
+  async deleteIdleGuestAccounts(now = new Date()): Promise<number> {
+    const guests = await this.bindings.find({
+      where: { principalType: 'user', role: IAM_ROLE.SANDBOX },
+      select: { principalRef: true },
+    });
+    const before = now.getTime() - this.config.accountIdleMs;
+    let deleted = 0;
+
+    for (const ref of new Set(guests.map((g) => g.principalRef))) {
+      const user = await this.users
+        .findOne({ where: { id: ref } })
+        .catch(() => null);
+      if (!user || user.isAdmin) continue;
+      const seen = (user.lastSeenAt ?? user.createdAt).getTime();
+      if (seen > before) continue;
+      const holding = await this.reserve.findActiveForUser(user.id);
+      if (holding) continue;
+
+      try {
+        await this.userManagement.detachRoleBindings({
+          id: user.id,
+          email: user.email,
+        });
+        await this.apiKeys.delete({ userId: user.id });
+        if (user.oidcSub) {
+          await this.directory
+            .deleteUser(user.oidcSub)
+            .catch((error: unknown) => {
+              if (!(error instanceof NotFoundException)) throw error;
+            });
+        }
+        await this.projects.removePersonal(user.id);
+        await this.users.delete({ id: user.id });
+        deleted += 1;
+      } catch (error) {
+        this.logger.warn(
+          `Could not delete idle guest ${user.id}: ${this.msg(error)}`,
+        );
+      }
+    }
+    if (deleted > 0) {
+      this.logger.log(
+        `Deleted ${deleted} demo guest account(s) idle for too long`,
+      );
+    }
+    return deleted;
+  }
+
+  /**
+   * Areas handed out that hold nothing any more: their guest's applications
+   * expired or were deleted. Taking them back is what frees the slot.
+   */
+  async findEmptyAreas(now = new Date()): Promise<SandboxTenantEntity[]> {
+    const before = new Date(now.getTime() - this.config.emptyAreaGraceMs);
+    const empty: SandboxTenantEntity[] = [];
+    for await (const area of this.claimedTenancies()) {
+      if (!area.projectId || !area.claimedAt || area.claimedAt > before) {
+        continue;
+      }
+      const held = await this.applications.count({
+        where: {
+          clusterId: area.clusterId,
+          k8sNamespace: area.namespace,
+          deletedAt: IsNull(),
+        },
+      });
+      if (held === 0) empty.push(area);
+    }
+    return empty;
+  }
+
+  private async *claimedTenancies(): AsyncGenerator<SandboxTenantEntity> {
+    const page = 200;
+    for (let skip = 0; ; skip += page) {
+      const batch = await this.reserve.findClaimed(page, skip);
+      yield* batch;
+      if (batch.length < page) return;
+    }
   }
 
   /**
@@ -353,7 +396,11 @@ export class SandboxTenantService {
       // projectId to NULL via the foreign key, and a project nothing points at
       // is a "Demo" row that outlives every tenancy that ever had one.
       const grouped = await this.applications.find({
-        where: { clusterId: tenant.clusterId, k8sNamespace: tenant.namespace },
+        where: {
+          clusterId: tenant.clusterId,
+          k8sNamespace: tenant.namespace,
+          deletedAt: IsNull(),
+        },
         select: { id: true, projectId: true },
       });
       const projectIds = new Set(
@@ -367,11 +414,24 @@ export class SandboxTenantService {
         k8sNamespace: tenant.namespace,
       });
 
+      if (tenant.projectId) projectIds.add(tenant.projectId);
       for (const projectId of projectIds) {
-        await this.projects.remove(projectId);
+        await this.projects.remove(projectId).catch((error: unknown) => {
+          if (!(error instanceof NotFoundException)) throw error;
+        });
       }
+      if (tenant.userId) await this.projects.removePersonal(tenant.userId);
     } catch (error) {
       failures.push(`applications: ${this.msg(error)}`);
+    }
+
+    // An area is only space: the person it was handed to signed in on their
+    // own, and their account outlives it. Only an area without a project still
+    // carries an identity made for it; looking one up by email for an area
+    // handed to a real person would find, and delete, that person.
+    if (tenant.projectId) {
+      await this.finishReap(tenant, failures, notes);
+      return;
     }
 
     // The same cleanup the administrative delete performs, not a second one
@@ -438,6 +498,14 @@ export class SandboxTenantService {
       failures.push('local user: kept, the identity it mirrors is still there');
     }
 
+    await this.finishReap(tenant, failures, notes);
+  }
+
+  private async finishReap(
+    tenant: SandboxTenantEntity,
+    failures: string[],
+    notes: string[],
+  ): Promise<void> {
     if (failures.length > 0) {
       // Deliberately not thrown: a partial reap must still be recorded, or the
       // next run starts from the beginning and the namespace outlives everything.

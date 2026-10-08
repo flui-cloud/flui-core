@@ -5,7 +5,6 @@ import {
   SandboxTenantEntity,
   SandboxTenantState,
 } from '../entities/sandbox-tenant.entity';
-import { DEFAULT_SANDBOX_QUOTA } from '../constants/sandbox-quota.manifest';
 import { SANDBOX_CONFIG, SandboxConfig } from '../sandbox.config';
 import {
   NodeStorageQuotaService,
@@ -53,7 +52,7 @@ export class SandboxStorageQuotaService {
    * for storage nobody uses.
    */
   private limitBytes(): number {
-    return parseStorageQuantityToBytes(DEFAULT_SANDBOX_QUOTA.nodeLocalCeiling);
+    return parseStorageQuantityToBytes(this.config.quota.nodeLocalCeiling);
   }
 
   async apply(): Promise<StorageQuotaReconciliation | null> {

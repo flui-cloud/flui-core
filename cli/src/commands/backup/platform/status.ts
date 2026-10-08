@@ -4,6 +4,7 @@ import {
   BackupClient,
   BackupPolicy,
   BackupPolicyActivity,
+  HeartbeatStatus,
 } from '../../../lib/backup-client';
 import { printContextBanner } from '../../../lib/context-banner';
 import {
@@ -26,9 +27,10 @@ export default class BackupPlatformStatus extends Command {
     if (!flags.json) printContextBanner();
 
     const client = BackupClient.fromConfig();
-    const [policies, activities] = await Promise.all([
+    const [policies, activities, heartbeat] = await Promise.all([
       client.listPolicies(),
       client.listPolicyActivity(),
+      client.heartbeat().catch(() => null),
     ]);
     const platform = policies.filter((p) => p.engineClass === 'platform');
     const activityOf = new Map(activities.map((a) => [a.policyId, a]));
@@ -36,10 +38,13 @@ export default class BackupPlatformStatus extends Command {
     if (flags.json) {
       this.log(
         JSON.stringify(
-          platform.map((p) => ({
-            policy: p,
-            activity: activityOf.get(p.id) ?? null,
-          })),
+          {
+            policies: platform.map((p) => ({
+              policy: p,
+              activity: activityOf.get(p.id) ?? null,
+            })),
+            heartbeat,
+          },
           null,
           2,
         ),
@@ -56,6 +61,20 @@ export default class BackupPlatformStatus extends Command {
     for (const p of platform) {
       this.printPolicy(p, activityOf.get(p.id) ?? null);
     }
+    if (heartbeat) this.printHeartbeat(heartbeat);
+  }
+
+  private printHeartbeat(h: HeartbeatStatus): void {
+    const paint = {
+      beating: chalk.green,
+      withheld: chalk.red,
+      failing: chalk.red,
+      off: chalk.dim,
+    }[h.state];
+    const last = h.lastBeatAt ? chalk.dim(` (last sent ${h.lastBeatAt})`) : '';
+    this.log(`   heartbeat now: ${paint(h.state)}${last}`);
+    for (const reason of h.reasons) this.log(chalk.yellow(`      ${reason}`));
+    this.log('');
   }
 
   private printPolicy(
@@ -64,7 +83,7 @@ export default class BackupPlatformStatus extends Command {
   ): void {
     const platform = p.metadata?.platform;
     const recipient = platform?.recipient;
-    const heartbeatUrl = platform?.heartbeat?.url;
+    const heartbeatHost = platform?.heartbeat?.host;
 
     this.log(
       `   ${chalk.cyan(p.id)}  ${chalk.bold(p.name)}  cluster=${p.clusterId}` +
@@ -76,8 +95,8 @@ export default class BackupPlatformStatus extends Command {
       : chalk.red('not configured');
     this.log(`      recipient: ${recipientText}`);
 
-    const heartbeatText = heartbeatUrl
-      ? chalk.green('yes') + ' ' + chalk.dim('(' + heartbeatUrl + ')')
+    const heartbeatText = platform?.heartbeat?.set
+      ? chalk.green('yes') + ' ' + chalk.dim(`(${heartbeatHost ?? 'set'})`)
       : chalk.yellow('no');
     this.log(`      heartbeat: ${heartbeatText}`);
 

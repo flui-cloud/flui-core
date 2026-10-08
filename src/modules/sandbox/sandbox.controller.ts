@@ -3,6 +3,7 @@ import {
   Get,
   HttpCode,
   HttpStatus,
+  Inject,
   NotFoundException,
   Param,
   Post,
@@ -14,7 +15,7 @@ import { IAM_PERMISSION } from '../iam/constants/iam-permissions';
 import { SANDBOX_ALLOWLIST, SANDBOX_AREAS } from './constants/sandbox-fence';
 import { SandboxCapacityDto } from './dto/sandbox-capacity.dto';
 import { SandboxLimitsDto } from './dto/sandbox-limits.dto';
-import { DEFAULT_SANDBOX_QUOTA } from './constants/sandbox-quota.manifest';
+import { SANDBOX_CONFIG, SandboxConfig } from './sandbox.config';
 import { SandboxTenancyDto } from './dto/sandbox-tenancy.dto';
 import { SandboxCapacityService } from './services/sandbox-capacity.service';
 import { SandboxReserveService } from './services/sandbox-reserve.service';
@@ -30,6 +31,7 @@ export class SandboxController {
     private readonly reserve: SandboxReserveService,
     private readonly tenants: SandboxTenantService,
     private readonly storageQuotas: SandboxStorageQuotaService,
+    @Inject(SANDBOX_CONFIG) private readonly config: SandboxConfig,
   ) {}
 
   /**
@@ -81,10 +83,10 @@ export class SandboxController {
       })),
       areas: SANDBOX_AREAS,
       quota: {
-        cpu: `${DEFAULT_SANDBOX_QUOTA.cpuLimit} cores`,
-        memory: DEFAULT_SANDBOX_QUOTA.memoryLimit,
-        storage: DEFAULT_SANDBOX_QUOTA.storage,
-        pods: DEFAULT_SANDBOX_QUOTA.pods,
+        cpu: `${this.config.quota.cpuLimit} cores`,
+        memory: this.config.quota.memoryLimit,
+        storage: this.config.quota.storage,
+        pods: this.config.quota.pods,
       },
     };
   }

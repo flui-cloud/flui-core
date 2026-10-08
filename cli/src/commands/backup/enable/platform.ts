@@ -38,7 +38,8 @@ export default class BackupEnablePlatform extends Command {
         'kept in your vault by `flui backup platform init`.',
     }),
     'heartbeat-url': Flags.string({
-      description: 'Pinged after each successful run, so silence is detectable',
+      description:
+        'Called every 5 minutes while the installation is healthy and its last platform backup is fresh; your watchdog raises the alarm when the calls stop. Change it later with `flui backup platform heartbeat`.',
     }),
   };
 

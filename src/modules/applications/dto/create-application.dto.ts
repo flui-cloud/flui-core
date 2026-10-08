@@ -144,6 +144,14 @@ export class CreateApplicationDto {
   @MaxLength(255)
   slug?: string;
 
+  @ApiPropertyOptional({
+    description:
+      "Project the application belongs to, and therefore the namespace it runs in. Omitted: the creator's personal project. It cannot be changed after creation.",
+  })
+  @IsOptional()
+  @IsUUID()
+  projectId?: string;
+
   @ApiPropertyOptional({ description: 'Optional description' })
   @IsOptional()
   @IsString()

@@ -52,6 +52,16 @@ export class UserEntity {
   @Column({ type: 'timestamptz', nullable: true })
   profileSyncedAt: Date | null;
 
+  @Column({ type: 'timestamptz', nullable: true })
+  lastSeenAt: Date | null;
+
+  /** Set by an administrator: every request of this person is refused. */
+  @Column({ type: 'timestamptz', nullable: true })
+  blockedAt: Date | null;
+
+  @Column({ type: 'text', nullable: true })
+  blockedReason: string | null;
+
   @CreateDateColumn({ type: 'timestamptz' })
   createdAt: Date;
 }

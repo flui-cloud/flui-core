@@ -75,7 +75,11 @@ export class CatalogDependencyResolverService {
     clusterId: string,
     userId?: string,
     userEmail?: string,
-    opts?: { waitTimeoutMs?: number; pollIntervalMs?: number },
+    opts?: {
+      waitTimeoutMs?: number;
+      pollIntervalMs?: number;
+      projectId?: string | null;
+    },
   ): Promise<ResolveAllResult> {
     const result: ResolveAllResult = {
       resolved: [],
@@ -112,6 +116,7 @@ export class CatalogDependencyResolverService {
           clusterId,
           userId,
           userEmail,
+          opts?.projectId,
         );
         result.dedicatedInstallIds.push(install.id);
         const running = await this.waitForRunning(

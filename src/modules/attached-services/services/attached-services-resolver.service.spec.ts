@@ -127,7 +127,9 @@ describe('AttachedServicesResolverService', () => {
 
     const applicationsRepo = {
       findById: jest.fn(async (id: string) =>
-        id === 'bb-app-1' ? blockApp : { id: APP, userId: 'u1' },
+        id === 'bb-app-1'
+          ? blockApp
+          : { id: APP, userId: 'u1', projectId: 'team-project' },
       ),
       update: jest.fn(async () => undefined),
     };
@@ -190,11 +192,14 @@ describe('AttachedServicesResolverService', () => {
     const result = await h.service.reconcile({ ...ctx, services: [dbService] });
 
     expect(h.installBuildingBlock).toHaveBeenCalledTimes(1);
+    // In the application's project, never the caller's: Secrets only
+    // resolve inside one namespace.
     expect(h.installBuildingBlock).toHaveBeenCalledWith(
       'postgresql',
       CLUSTER,
       'u1',
       'a@b.c',
+      'team-project',
     );
     expect(result.env).toEqual([
       {

@@ -25,6 +25,7 @@ describe('sandbox clocks when their cluster is gone', () => {
       alert as any,
       quotas as any,
       { enabled: true, clusterId: 'gone-1' } as any,
+      { offerFreedSlots: async () => 0 } as any,
     );
     return { service, tenants, capacity, prepull };
   };

@@ -1,46 +1,18 @@
-import {
-  ConflictException,
-  Inject,
-  Injectable,
-  Logger,
-  ServiceUnavailableException,
-} from '@nestjs/common';
+import { Inject, Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { LessThan, Repository } from 'typeorm';
-import { createHash, randomUUID } from 'node:crypto';
-import { buildUserNamespace } from '../../applications/utils/k8s-namespace.util';
+import { randomUUID } from 'node:crypto';
 import {
   SandboxTenantEntity,
   SandboxTenantState,
 } from '../entities/sandbox-tenant.entity';
 import { SANDBOX_CONFIG, SandboxConfig } from '../sandbox.config';
-import { SandboxCapacityService } from './sandbox-capacity.service';
 
 /**
- * How many sweeps ending in the *same* error a tenancy gets before it stops
- * being retried. The reaper runs every minute, so this is three minutes of
- * proving the failure is not transient — long enough for a provider hiccup or
- * a restarting API to pass, short enough that the log does not fill up.
- */
-export const REAP_ATTEMPTS_BEFORE_HELP = 3;
-
-export interface ClaimResult {
-  tenant: SandboxTenantEntity;
-  expiresAt: Date;
-}
-
-/**
- * The tenancy table and the operations on it: handing one out, finding the ones
- * that are past their deadline, and making sure every one of them dies on time.
- *
- * Warm tenancies exist so that a click *assigns* instead of *creating* — a
- * build takes two minutes, and the entrance promises three seconds. How many to
- * keep warm is not decided here and is not a setting; see
- * {@link SandboxCapacityService}.
- *
- * Claiming is the one operation that must never be sloppy. Two visitors landing
- * in the same millisecond must not receive the same tenancy, so the claim is a
- * single conditional UPDATE — the database picks the winner, not the process.
+ * The area table and the operations on it: finding the ones past their
+ * deadline, and making sure every one of them dies on time. Handing an area to
+ * a guest is the gate's job (`SandboxSlotGateService`), a single conditional
+ * update so two first deploys never share one.
  */
 @Injectable()
 export class SandboxReserveService {
@@ -49,135 +21,16 @@ export class SandboxReserveService {
   constructor(
     @InjectRepository(SandboxTenantEntity)
     private readonly tenants: Repository<SandboxTenantEntity>,
-    private readonly capacity: SandboxCapacityService,
     @Inject(SANDBOX_CONFIG) private readonly config: SandboxConfig,
   ) {}
 
-  /** Addresses are never stored raw: the limit needs a counter, not an identity. */
-  hashIp(ip: string): string {
-    return createHash('sha256')
-      .update(`${this.config.ipHashSalt}:${ip}`)
-      .digest('hex')
-      .slice(0, 32);
-  }
-
-  async countRecentClaimsFrom(ip: string): Promise<number> {
-    const since = new Date(Date.now() - this.config.claimWindowMs);
-    return this.tenants
-      .createQueryBuilder('t')
-      .where('t."claimIpHash" = :hash', { hash: this.hashIp(ip) })
-      .andWhere('t."claimedAt" > :since', { since })
-      .getCount();
-  }
-
-  /**
-   * Hand one warm tenancy to a visitor. Returns the row only if this call is the
-   * one that flipped it — a second caller racing for the same row updates zero
-   * rows and tries the next one.
-   *
-   * `null` means the reserve was empty, not that the visitor has to be turned
-   * away: an area holds nothing until its guest deploys something, so one can
-   * be built on the spot. Deciding that is {@link SandboxTenantService}'s job,
-   * because building is — this service only knows about rows.
-   */
-  async tryClaim(ip: string): Promise<ClaimResult | null> {
-    const recent = await this.countRecentClaimsFrom(ip);
-    if (recent >= this.config.maxClaimsPerIp) {
-      throw new ConflictException({
-        statusCode: 409,
-        code: 'SANDBOX_CLAIM_LIMIT',
-        message: `This address has already opened ${recent} sandboxes today. They last ${this.config.ttlHours} hours — carry on in the one you have.`,
-      });
-    }
-
-    const now = new Date();
-    const expiresAt = new Date(now.getTime() + this.config.ttlMs);
-
-    // Bounded retry: each miss means somebody else won that row, and there is no
-    // point looping longer than the reserve is deep.
-    for (let attempt = 0; attempt < 5; attempt++) {
-      const candidate = await this.tenants.findOne({
-        where: { state: SandboxTenantState.READY },
-        order: { createdAt: 'ASC' },
-      });
-      if (!candidate) break;
-
-      const result = await this.tenants
-        .createQueryBuilder()
-        .update(SandboxTenantEntity)
-        .set({
-          state: SandboxTenantState.CLAIMED,
-          claimedAt: now,
-          expiresAt,
-          claimIpHash: this.hashIp(ip),
-        })
-        .where('id = :id AND state = :ready', {
-          id: candidate.id,
-          ready: SandboxTenantState.READY,
-        })
-        .execute();
-
-      if (result.affected === 1) {
-        this.logger.log(
-          `Sandbox ${candidate.namespace} claimed, expires ${expiresAt.toISOString()}`,
-        );
-        return {
-          tenant: await this.tenants.findOneByOrFail({ id: candidate.id }),
-          expiresAt,
-        };
-      }
-    }
-
-    return null;
-  }
-
-  /**
-   * The refusal, for the caller that has already tried to build one and failed.
-   *
-   * Counted, not just refused. How often the door is closed is the one signal
-   * that says something is wrong, and it is invisible from the tenancy table:
-   * nobody who was turned away leaves a row behind.
-   */
-  async refuseAsFull(): Promise<never> {
-    this.capacity.recordFullRefusal();
-    throw new ServiceUnavailableException({
-      statusCode: 503,
-      code: 'SANDBOX_FULL',
-      message: await this.whenToComeBack(),
-    });
-  }
-
-  /**
-   * Two different "full", and telling them apart is the difference between a
-   * useful sentence and a brush-off.
-   *
-   * If the cluster still has room, one is already being built and the wait is a
-   * few minutes — say the number, because a visitor who knows it will wait.
-   * If the cluster is at its ceiling, nothing is being built and the wait is for
-   * somebody else to leave, which is hours; promising minutes there would be a
-   * lie that costs the visit anyway.
-   */
-  private async whenToComeBack(): Promise<string> {
-    try {
-      const { ceiling, live, warm, readySeconds } =
-        await this.capacity.snapshot();
-      if (ceiling > live + warm) {
-        const minutes = Math.max(1, Math.ceil(readySeconds / 60));
-        return `An area could not be prepared just now. Another is being built — try again in about ${minutes} minutes.`;
-      }
-      return `This instance is running as many sandboxes as it can hold. They are released as their ${this.config.ttlHours} hours run out, so a slot opens through the day — try again later.`;
-    } catch {
-      // Never let the shape of the refusal depend on a working cluster read.
-      return 'Every sandbox is taken right now. They are released continuously — try again in a few minutes.';
-    }
-  }
-
   /** Every area somebody is holding right now. */
-  async findClaimed(limit = 200): Promise<SandboxTenantEntity[]> {
+  async findClaimed(limit = 200, skip = 0): Promise<SandboxTenantEntity[]> {
     return this.tenants.find({
       where: { state: SandboxTenantState.CLAIMED },
-      order: { claimedAt: 'ASC' },
+      order: { claimedAt: 'ASC', id: 'ASC' },
       take: limit,
+      skip,
     });
   }
 
@@ -284,43 +137,35 @@ export class SandboxReserveService {
 
   async createPending(clusterId: string): Promise<SandboxTenantEntity> {
     const suffix = randomUUID().split('-')[0];
-    const email = `${this.config.emailPrefix}-${suffix}@${this.config.emailDomain}`;
     return this.tenants.save(
       this.tenants.create({
         state: SandboxTenantState.PROVISIONING,
-        // Derived, never chosen: the catalogue installer computes a namespace
-        // from the owner's email, so a name picked here would leave the seeded
-        // applications outside the quota and network policy applied to it.
-        namespace: buildUserNamespace(email),
+        // A placeholder until the area's project exists. Outside the `p-`
+        // space on purpose, so it can never name a project's namespace.
+        namespace: `sandbox-pending-${suffix}`,
         clusterId,
-        email,
+        email: null,
       }),
     );
   }
 
-  /**
-   * Write down who this tenancy belongs to the moment those identities exist,
-   * not when it goes ready. Everything between costs minutes — the seed alone
-   * can run for ten — and a failure in that window used to leave a row that no
-   * longer knew which identity-provider account to delete, so the account
-   * outlived the tenancy with nothing left pointing at it.
-   */
-  async recordIdentities(
+  /** The project the area is, written as soon as it exists so a failed build can be cleaned up. */
+  async recordArea(
     id: string,
-    fields: { userId: string; idpUserId: string },
+    fields: { namespace: string; projectId: string },
   ): Promise<void> {
     await this.tenants.update(id, fields);
   }
 
-  async markReady(
-    id: string,
-    fields: { userId: string; idpUserId: string },
-  ): Promise<void> {
+  async markReady(id: string): Promise<void> {
     await this.tenants.update(id, {
-      ...fields,
       state: SandboxTenantState.READY,
       lastError: null,
     });
+  }
+
+  async markWarned(id: string, at: Date): Promise<void> {
+    await this.tenants.update(id, { expiryWarnedAt: at });
   }
 
   async markExpired(id: string): Promise<void> {
@@ -352,7 +197,7 @@ export class SandboxReserveService {
 
     await this.tenants.update(id, {
       state:
-        attempts >= REAP_ATTEMPTS_BEFORE_HELP
+        attempts >= this.config.reapAttemptsBeforeHelp
           ? SandboxTenantState.NEEDS_ATTENTION
           : SandboxTenantState.FAILED,
       lastError: message,

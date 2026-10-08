@@ -62,6 +62,8 @@ import { PlatformKeyBundleService } from './services/platform-key-bundle.service
 import { PlatformBackupService } from './services/platform-backup.service';
 import { RunPlatformBackupProcessor } from './processors/run-platform-backup.processor';
 import { MasterHeartbeatScheduler } from './schedulers/master-heartbeat.scheduler';
+import { InstallationHealthService } from './services/installation-health.service';
+import { PrometheusQueryService } from '../observability/services/prometheus-query.service';
 
 import { ClusterNodeEntity } from '../infrastructure/clusters/entities/cluster-node.entity';
 import { QuickSetupService } from './services/quick-setup.service';
@@ -189,6 +191,8 @@ import { VeleroUninstallController } from './controllers/velero-uninstall.contro
     PlatformBackupService,
     RunPlatformBackupProcessor,
     MasterHeartbeatScheduler,
+    InstallationHealthService,
+    PrometheusQueryService,
     ClusterDecisionsService,
     ClusterProtectionService,
     ClusterProtectionProcessor,

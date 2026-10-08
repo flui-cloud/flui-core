@@ -19,6 +19,14 @@ export class InstallCatalogAppDto {
   @IsUUID()
   clusterId: string;
 
+  @ApiPropertyOptional({
+    description:
+      "Project the installed applications belong to, and therefore their namespace. Omitted: the installer's personal project.",
+  })
+  @IsOptional()
+  @IsUUID()
+  projectId?: string;
+
   @ApiProperty({
     description: 'User-chosen display name shown in the dashboard',
   })

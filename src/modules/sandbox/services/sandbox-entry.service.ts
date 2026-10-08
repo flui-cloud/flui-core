@@ -1,11 +1,6 @@
 import { Inject, Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { SANDBOX_CONFIG, SandboxConfig } from '../sandbox.config';
-import {
-  describeSandboxEntry,
-  entryUrl,
-  loginUrl,
-  resumeLink,
-} from '../sandbox-entry';
+import { describeSandboxEntry, entryUrl, loginUrl } from '../sandbox-entry';
 
 /**
  * Owns where the sandbox's front door is, so that no surface has to build it.
@@ -29,10 +24,6 @@ export class SandboxEntryService implements OnModuleInit {
   /** The single entrance a visitor is ever sent to. */
   get entryUrl(): string {
     return entryUrl(this.config.baseDomain);
-  }
-
-  resumeLink(token: string): string {
-    return resumeLink(this.config.baseDomain, token);
   }
 
   /**

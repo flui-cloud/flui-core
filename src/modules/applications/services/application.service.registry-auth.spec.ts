@@ -54,6 +54,12 @@ describe('ApplicationService — registry credential', () => {
     undefined,
     resourceProfilesService,
     ...new Array(4).fill(undefined),
+    {
+      placementFor: async () => ({
+        project: { id: 'personal-of-u1', slug: 'personal-u1' },
+        namespace: 'p-personal-u1',
+      }),
+    },
   );
 
   const image = {
@@ -71,7 +77,6 @@ describe('ApplicationService — registry credential', () => {
         sourceConfig,
       } as CreateApplicationDto,
       'u1',
-      'owner@example.com',
     );
 
   it('refuses one on create, and stores nothing', async () => {

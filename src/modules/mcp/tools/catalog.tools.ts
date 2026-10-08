@@ -158,6 +158,12 @@ export const CATALOG_TOOLS: ToolDef[] = [
       slug: z.string(),
       displayName: z.string(),
       clusterId: z.string().optional(),
+      projectId: z
+        .string()
+        .optional()
+        .describe(
+          "Project the new application belongs to, and therefore the namespace it runs in (from project_list). Omitted: the caller's personal project. It cannot be changed afterwards.",
+        ),
       domain: z.string().optional(),
       authMode: z.enum(['native', 'oidc', 'proxy', 'none']).optional(),
       exposure: z.enum(['public', 'internal']).optional(),
@@ -168,6 +174,7 @@ export const CATALOG_TOOLS: ToolDef[] = [
     run: async (args, ctx) => {
       const dto: InstallCatalogAppDto = {
         clusterId: await resolveClusterId(ctx, args.clusterId),
+        projectId: args.projectId,
         displayName: args.displayName,
         domain: args.domain,
         authMode: args.authMode,

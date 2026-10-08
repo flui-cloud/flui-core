@@ -288,8 +288,12 @@ export class PolicyEngineService implements PolicyEngine {
     principal: IamPrincipal,
     groupNames: string[],
   ): Promise<IamRoleBindingEntity[]> {
+    // A person is named by email or by local id. The id does not move when
+    // the identity provider reports a new address, so a grant that must
+    // follow the person (a demo guest's fence) is written to it.
     const refs: Array<{ type: string; ref: string }> = [
       { type: 'user', ref: principal.email },
+      ...(principal.userId ? [{ type: 'user', ref: principal.userId }] : []),
       { type: 'service_account', ref: principal.userId },
       ...groupNames.map((g) => ({ type: 'group', ref: g })),
     ];

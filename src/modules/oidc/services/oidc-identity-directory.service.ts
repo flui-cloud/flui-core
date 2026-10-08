@@ -149,8 +149,7 @@ export class OidcIdentityDirectory implements IIdentityDirectory {
         role,
         state: u.state,
         isBootstrapAdmin: this.isBootstrapAdminEmail(u.email ?? u.userName),
-        isSystemUser:
-          u.userName?.startsWith(FLUI_ADMIN_USERNAME_PREFIX) ?? false,
+        isSystemUser: isSystemAccount(u),
       });
     }
     return enriched;
@@ -172,8 +171,13 @@ export class OidcIdentityDirectory implements IIdentityDirectory {
       role: this.deriveRole(fluiGrant?.roleKeys, local?.role),
       state: u.state,
       isBootstrapAdmin: this.isBootstrapAdminEmail(u.email ?? u.userName),
-      isSystemUser: u.userName?.startsWith(FLUI_ADMIN_USERNAME_PREFIX) ?? false,
+      isSystemUser: isSystemAccount(u),
     };
+  }
+
+  async setActive(id: string, active: boolean): Promise<void> {
+    const { pat, hostHeader } = await this.connection();
+    await this.oidcProvider.setUserActive(pat, hostHeader, id, active);
   }
 
   async deleteUser(id: string): Promise<void> {
@@ -432,4 +436,19 @@ export class OidcIdentityDirectory implements IIdentityDirectory {
     this.logger.error(`OIDC ${op} failed: ${message}`);
     return new InternalServerErrorException(`OIDC ${op} failed: ${message}`);
   }
+}
+
+/**
+ * Accounts that are not people: the bootstrap admin and every machine user,
+ * among them the one whose token the API itself manages identities with.
+ * Blocking or deleting one would cut the platform off, not a person.
+ */
+export function isSystemAccount(u: {
+  userName?: string;
+  isMachine?: boolean;
+}): boolean {
+  return (
+    !!u.isMachine ||
+    (u.userName?.startsWith(FLUI_ADMIN_USERNAME_PREFIX) ?? false)
+  );
 }

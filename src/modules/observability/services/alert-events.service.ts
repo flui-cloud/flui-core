@@ -1,7 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
-import { In, IsNull, LessThan, Not, Repository } from 'typeorm';
+import { In, IsNull, LessThan, Not, Repository, Like } from 'typeorm';
 import {
   AlertEventEntity,
   AlertEventStatus,
@@ -89,6 +89,19 @@ export class AlertEventsService {
     }
 
     return transitions;
+  }
+
+  /**
+   * When each episode still open began, for alerts Flui raises itself: the
+   * start is what a later resolve is matched on, and it must survive a
+   * restart of the process that raised it.
+   */
+  async openEpisodes(fingerprintPrefix: string): Promise<Map<string, Date>> {
+    const rows = await this.events.find({
+      where: { fingerprint: Like(`${fingerprintPrefix}%`), status: 'firing' },
+      order: { startsAt: 'ASC' },
+    });
+    return new Map(rows.map((r) => [r.fingerprint, r.startsAt]));
   }
 
   private async recordOne(

@@ -147,6 +147,23 @@ export const APPLICATION_TOOLS: ToolDef[] = [
     },
   }),
   defineTool({
+    name: 'project_list',
+    routes: ['GET /projects'],
+    description:
+      "List the projects you can create applications in. A project is where an application lives and runs: applications of one project share a namespace, so they can use each other's building blocks. Pass a project's id as projectId to app_deploy_image, app_deploy_from_yaml or app_install; omitted, the application goes to your personal project. An application never changes project once created.",
+    scope: MCP_SCOPE.APP_READ,
+    inputSchema: {},
+    run: async (_args, ctx) =>
+      ctx.api.get<
+        Array<{
+          id: string;
+          name: string;
+          slug: string;
+          ownerUserId?: string | null;
+        }>
+      >('/projects'),
+  }),
+  defineTool({
     name: 'app_list',
     routes: ['GET /clusters/:clusterId/applications'],
     description:
@@ -273,6 +290,15 @@ export const APPLICATION_TOOLS: ToolDef[] = [
       ctx.api.get(`/applications/${enc(args.id)}/availability`),
   }),
   defineTool({
+    name: 'app_egress',
+    routes: ['GET /applications/:appId/egress'],
+    description:
+      'Which ports this application may reach outside its cluster. An administrator sets the rule for the whole cluster; traffic inside the cluster is never restricted. Check it before blaming a timeout to an outside host on the application, and when a port is closed tell the person to ask their administrator rather than retrying.',
+    scope: MCP_SCOPE.APP_READ,
+    inputSchema: { id: z.string() },
+    run: (args, ctx) => ctx.api.get(`/applications/${enc(args.id)}/egress`),
+  }),
+  defineTool({
     name: 'app_debug',
     routes: ['GET /applications/:id/debug/pods'],
     description:
@@ -370,6 +396,12 @@ export const APPLICATION_TOOLS: ToolDef[] = [
       yaml: z.string(),
       repoFullName: z.string().optional(),
       clusterId: z.string().optional(),
+      projectId: z
+        .string()
+        .optional()
+        .describe(
+          "Project the new application belongs to, and therefore the namespace it runs in (from project_list). Omitted: the caller's personal project. It cannot be changed afterwards.",
+        ),
       branch: z.string().optional(),
       validateOnly: z.boolean().optional(),
       envOverrides: z.record(z.string(), z.string()).optional(),
@@ -406,6 +438,7 @@ export const APPLICATION_TOOLS: ToolDef[] = [
         validateOnly: args.validateOnly,
         envOverrides: args.envOverrides,
         overrides: args.overrides,
+        projectId: args.projectId,
       };
       // The route asks `assertCanCreate` before anything is written — a scoped
       // grant only authorises the creations its selector reaches, and a sandbox
@@ -429,6 +462,12 @@ export const APPLICATION_TOOLS: ToolDef[] = [
         ),
       name: z.string(),
       clusterId: z.string().optional(),
+      projectId: z
+        .string()
+        .optional()
+        .describe(
+          "Project the new application belongs to, and therefore the namespace it runs in (from project_list). Omitted: the caller's personal project. It cannot be changed afterwards.",
+        ),
       port: coerceNumber(z.number().int().min(1).max(65535)).optional(),
       exposure: z.enum(['public', 'internal']).optional(),
       env: z
@@ -445,6 +484,7 @@ export const APPLICATION_TOOLS: ToolDef[] = [
         category: ApplicationCategory.USER,
         sourceType: ApplicationSourceType.DOCKER_IMAGE,
         sourceConfig: { type: 'docker_image', imageRef: args.image },
+        projectId: args.projectId,
         port: args.port,
         exposure: args.exposure as ApplicationExposure | undefined,
         env: args.env

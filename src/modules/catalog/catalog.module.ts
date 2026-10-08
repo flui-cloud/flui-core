@@ -1,3 +1,4 @@
+import { ProjectsModule } from '../projects/projects.module';
 import { forwardRef, Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { BullModule } from '@nestjs/bull';
@@ -48,6 +49,7 @@ import { BackupArtifactEntity } from '../backups/entities/backup-artifact.entity
     ]),
     BullModule.registerQueue({ name: CATALOG_INSTALL_QUEUE }),
     ApplicationsModule,
+    ProjectsModule,
     DnsModule,
     OidcModule,
     SharedInfrastructureModule,

@@ -64,4 +64,6 @@ export interface IIdentityDirectory {
     inviteCode?: string;
   }>;
   createInviteLink(id: string): Promise<InviteLink>;
+  /** Stop or restore sign-in for an account without deleting anything. */
+  setActive(id: string, active: boolean): Promise<void>;
 }

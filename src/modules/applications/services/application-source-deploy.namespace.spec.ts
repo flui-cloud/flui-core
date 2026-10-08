@@ -13,11 +13,10 @@ import { DeployFromYamlDto } from '../dto/deploy-from-yaml.dto';
 /**
  * Defect 156, pinned where it happened.
  *
- * `deployFromYaml` called `applicationService.create(clusterId, dto, userId)`
- * with three arguments from the first public release. `create` read the missing
- * fourth as "no owner" and placed the row in `default` — a namespace no tenancy
- * owns. The row was written, the deploy succeeded, and nothing anywhere said a
- * word.
+ * `deployFromYaml` once reached `create` without the owner it needed to place
+ * the application, and `create` read that as "no owner" and placed the row in
+ * `default` — a namespace no tenancy owns. The row was written, the deploy
+ * succeeded, and nothing anywhere said a word.
  *
  * What falls with the namespace, all at once:
  *   - the `ResourceQuota` and `LimitRange` applied to the tenancy namespace;
@@ -110,29 +109,27 @@ deploy:
       imageRef: 'ghcr.io/acme/probe:abc1234',
     }) as DeployFromYamlDto;
 
-  it("passes the caller's email down to create, so the app lands in the caller's namespace", async () => {
+  it("passes the caller down to create, so the app lands in the caller's personal project", async () => {
     const service = build();
     await service.deployFromYaml('u1', dto(), 'guest-1f23@try.flui.cloud');
 
     expect(createCalls).toHaveLength(1);
+    expect(createCalls[0]).toHaveLength(3);
     expect(createCalls[0][2]).toBe('u1');
-    expect(createCalls[0][3]).toBe('guest-1f23@try.flui.cloud');
   });
 
   /**
-   * The regression guard proper. Dropping the argument again — or reinstating a
-   * `?? undefined` in its place — leaves `create` reading "no owner", which is
-   * exactly the shape that used to resolve to `default`. Asserting "not
-   * undefined" catches the omission even if `create` were later changed to
-   * tolerate it again.
+   * The regression guard proper. Dropping the owner again leaves `create`
+   * reading "no owner", the shape that used to resolve to `default`. Asserting
+   * "not undefined" catches the omission even if `create` were later changed
+   * to tolerate it again.
    */
   it('never reaches create without an owner', async () => {
     const service = build();
     await service.deployFromYaml('u1', dto(), 'dawit@example.com');
 
-    expect(createCalls[0]).toHaveLength(4);
-    expect(createCalls[0][3]).toBeDefined();
-    expect(createCalls[0][3]).not.toBe('');
+    expect(createCalls[0][2]).toBeDefined();
+    expect(createCalls[0][2]).not.toBe('');
   });
 
   /**

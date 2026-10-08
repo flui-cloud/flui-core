@@ -44,19 +44,6 @@ export function entryUrl(baseDomain: string): string {
   return `${loginUrl(baseDomain)}/try`;
 }
 
-/**
- * The link a guest mails themselves.
- *
- * It points at the API rather than at the dashboard: the token has to be turned
- * into an httpOnly cookie, which only the server can set, and the redirect that
- * follows leaves it out of the address bar.
- */
-export function resumeLink(baseDomain: string, token: string): string {
-  const api = stripTrailingSlashes(process.env.API_BASE_URL || '');
-  const base = api || loginUrl(baseDomain);
-  return `${base}/api/v1/sandbox/resume?token=${encodeURIComponent(token)}`;
-}
-
 export type SandboxEntryVerdict = 'ok' | 'placeholder' | 'local';
 
 export interface SandboxEntryReport {

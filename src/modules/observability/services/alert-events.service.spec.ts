@@ -236,4 +236,22 @@ describe('AlertEventsService', () => {
       expect(del).toHaveBeenCalled();
     });
   });
+
+  describe('openEpisodes', () => {
+    it('reads back when each open episode began, so a later resolve finds it after a restart', async () => {
+      const startsAt = new Date('2026-10-08T13:40:00Z');
+      find.mockResolvedValueOnce([
+        { fingerprint: 'sandbox-cpu/p-a/web', startsAt },
+      ]);
+
+      const open = await service.openEpisodes('sandbox-cpu/');
+
+      expect(open.get('sandbox-cpu/p-a/web')).toEqual(startsAt);
+      expect(find).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ status: 'firing' }),
+        }),
+      );
+    });
+  });
 });

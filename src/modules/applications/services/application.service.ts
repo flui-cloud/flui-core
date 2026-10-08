@@ -62,7 +62,7 @@ import {
   PodMetrics,
 } from '../../infrastructure/shared/services/kubernetes.service';
 import { ResourceProfilesService } from '../../images/services/resource-profiles.service';
-import { ownerNamespaceFor } from '../utils/k8s-namespace.util';
+import { ProjectsService } from '../../projects/projects.service';
 import { ownerUserIdFor } from '../utils/application-owner.util';
 import {
   assertNoClientNamespace,
@@ -102,6 +102,7 @@ export class ApplicationService {
     private readonly clusterDnsZoneService: ClusterDnsZoneService,
     @Inject(forwardRef(() => AppEndpointService))
     private readonly appEndpointService: AppEndpointService,
+    private readonly projects: ProjectsService,
     @Optional() private readonly autoscaling?: AppAutoscalingService,
   ) {}
 
@@ -119,20 +120,16 @@ export class ApplicationService {
   }
 
   /**
-   * `userId` and `userEmail` are required parameters of a nullable type, not
-   * optional ones. The difference is the whole point: an optional `userEmail`
-   * let `ApplicationSourceDeployService` call this with three arguments and
-   * land every manifest deploy in `default`, silently, for the life of the
-   * product. Required means a caller that forgets it does not compile;
-   * nullable means a caller that genuinely holds nothing (an old
-   * `catalog_installs` row with no `userEmail`) still type-checks and is
-   * refused out loud by `ownerNamespaceFor` instead of being placed nowhere.
+   * `userId` is a required parameter of a nullable type, not an optional
+   * one: a caller that forgets it does not compile, and a caller
+   * that genuinely holds nothing is refused out loud by the placement instead
+   * of being placed nowhere. The project is the one asked for or the
+   * creator's personal one, and the namespace is the project's.
    */
   async create(
     clusterId: string,
     dto: CreateApplicationDto,
     userId: string | undefined,
-    userEmail: string | undefined,
   ): Promise<ApplicationEntity> {
     await this.validateSourceConfig(dto);
 
@@ -140,7 +137,11 @@ export class ApplicationService {
     // undeclared properties: the body can still carry one, and naming a
     // namespace names someone's tenancy.
     assertNoClientNamespace((dto as { k8sNamespace?: string }).k8sNamespace);
-    const k8sNamespace = ownerNamespaceFor(userEmail);
+    const placement = await this.projects.placementFor({
+      projectId: dto.projectId,
+      userId,
+    });
+    const k8sNamespace = placement.namespace;
     assertPlaceableNamespace(k8sNamespace);
 
     if (dto.exposure === ApplicationExposure.INTERNAL) {
@@ -178,6 +179,7 @@ export class ApplicationService {
       sourceType: dto.sourceType,
       clusterId,
       k8sNamespace,
+      projectId: placement.project.id,
       // Not the principal as authenticated: a service credential's principal is
       // a declared name, not a `users` row, and the column is a foreign key.
       userId: ownerUserIdFor(userId),

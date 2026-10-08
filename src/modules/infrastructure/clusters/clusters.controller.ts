@@ -306,18 +306,9 @@ export class ClustersController {
     @Param('nodeId') nodeId: string,
     @Body() body: { sourceIp?: string } | undefined,
     @Req()
-    req: Record<string, unknown> & {
-      ip?: string;
-      headers?: Record<string, string | string[] | undefined>;
-    },
+    req: Record<string, unknown> & { ip?: string },
   ) {
-    const forwarded = req.headers?.['x-forwarded-for'];
-    const caller =
-      (Array.isArray(forwarded) ? forwarded[0] : forwarded)
-        ?.split(',')[0]
-        ?.trim() ??
-      req.ip ??
-      null;
+    const caller = req.ip ?? null;
     const operation = await this.nodeAccessRecovery.start(
       clusterId,
       nodeId,

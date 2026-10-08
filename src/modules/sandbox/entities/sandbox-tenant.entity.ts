@@ -56,8 +56,21 @@ export class SandboxTenantEntity {
   @Column({ type: 'uuid', nullable: true })
   userId: string | null;
 
-  @Column({ type: 'varchar', length: 255 })
-  email: string;
+  /** The guest's address, written when the area is handed to them. */
+  @Column({ type: 'varchar', length: 255, nullable: true })
+  email: string | null;
+
+  /** The project the area is: its namespace is the project's. */
+  @Column({ type: 'uuid', nullable: true })
+  projectId: string | null;
+
+  /** The last time the guest did something here; traffic to their apps does not count. */
+  @Column({ type: 'timestamptz', nullable: true })
+  lastActiveAt: Date | null;
+
+  /** When the guest was told their applications are about to go. */
+  @Column({ type: 'timestamptz', nullable: true })
+  expiryWarnedAt: Date | null;
 
   /** Identity-provider user id, needed to delete the account at the end. */
   @Column({ type: 'varchar', length: 64, nullable: true })

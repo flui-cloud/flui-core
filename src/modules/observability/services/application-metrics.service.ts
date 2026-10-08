@@ -26,6 +26,20 @@ const WORKLOAD_LABEL_KEY: Record<string, string> = {
   DaemonSet: 'daemonset',
 };
 
+const DEFAULT_INSTANT_CACHE_SECONDS = 10;
+const INSTANT_CACHE_PRUNE_AT = 500;
+
+export function instantCacheTtlMs(
+  raw: string | undefined = process.env.METRICS_INSTANT_CACHE_SECONDS,
+): number {
+  const seconds =
+    raw === undefined || raw.trim() === '' ? Number.NaN : Number(raw);
+  if (!Number.isFinite(seconds) || seconds < 0) {
+    return DEFAULT_INSTANT_CACHE_SECONDS * 1000;
+  }
+  return seconds * 1000;
+}
+
 /**
  * Application Metrics Service
  *
@@ -40,6 +54,11 @@ const WORKLOAD_LABEL_KEY: Record<string, string> = {
 export class ApplicationMetricsService {
   private readonly logger = new Logger(ApplicationMetricsService.name);
 
+  private readonly instantCache = new Map<
+    string,
+    { expiresAt: number; value: Promise<AppMetricsDto> }
+  >();
+
   constructor(
     private readonly prometheusQuery: PrometheusQueryService,
     private readonly applicationService: ApplicationService,
@@ -47,9 +66,46 @@ export class ApplicationMetricsService {
   ) {}
 
   /**
-   * Get instant metrics for a single application
+   * Get instant metrics for a single application.
+   *
+   * The answer is the same for every viewer of an application, so viewers
+   * share it for `METRICS_INSTANT_CACHE_SECONDS`: a page polled by many tabs
+   * at once costs one round of queries, not one per tab.
    */
   async getAppMetricsInstant(
+    appId: string,
+    appName: string,
+    namespace: string,
+  ): Promise<AppMetricsDto> {
+    const ttlMs = instantCacheTtlMs();
+    if (ttlMs <= 0) {
+      return this.queryAppMetricsInstant(appId, appName, namespace);
+    }
+
+    const key = `${appId}/${namespace}/${appName}`;
+    const now = Date.now();
+    const hit = this.instantCache.get(key);
+    if (hit && hit.expiresAt > now) return hit.value;
+
+    const value = this.queryAppMetricsInstant(appId, appName, namespace);
+    this.instantCache.set(key, { expiresAt: now + ttlMs, value });
+    value.catch(() => {
+      if (this.instantCache.get(key)?.value === value) {
+        this.instantCache.delete(key);
+      }
+    });
+    this.pruneInstantCache(now);
+    return value;
+  }
+
+  private pruneInstantCache(now: number): void {
+    if (this.instantCache.size <= INSTANT_CACHE_PRUNE_AT) return;
+    for (const [key, entry] of this.instantCache) {
+      if (entry.expiresAt <= now) this.instantCache.delete(key);
+    }
+  }
+
+  private async queryAppMetricsInstant(
     appId: string,
     appName: string,
     namespace: string,

@@ -1,4 +1,6 @@
 import { PolicyEngineService } from '../../iam/services/policy-engine.service';
+import { SandboxSlotGateService } from '../../sandbox/gate/sandbox-slot-gate';
+import { loadSandboxConfig } from '../../sandbox/sandbox.config';
 import {
   ApplicationAccessService,
   SANDBOX_CLUSTER_FORBIDDEN_CODE,
@@ -52,6 +54,14 @@ const sandboxTenantsRepoFor = (
     tenants.find((t) => t.userId === where.userId) ?? null,
 });
 
+const gateFor = (tenants: Array<{ userId: string; clusterId: string }>) =>
+  new SandboxSlotGateService(
+    sandboxTenantsRepoFor(tenants) as never,
+    {} as never,
+    loadSandboxConfig({}),
+    { findOne: async () => null, count: async () => 0 } as never,
+  );
+
 const appEntity = (slug: string, projectId: string, id?: string) =>
   ({
     id,
@@ -90,7 +100,7 @@ describe('ApplicationAccessService', () => {
       policy as never,
       projectsRepo as never,
       clustersRepo as never,
-      sandboxTenantsRepoFor([]) as never,
+      gateFor([]) as never,
     );
     const apps = [
       appEntity('web', 'p1'),
@@ -106,7 +116,7 @@ describe('ApplicationAccessService', () => {
       policyWith([]) as never,
       projectsRepo as never,
       clustersRepo as never,
-      sandboxTenantsRepoFor([]) as never,
+      gateFor([]) as never,
     );
     const apps = [appEntity('web', 'p1'), appEntity('api', 'p2')];
     const visible = await svc.filterReadable(
@@ -129,7 +139,7 @@ describe('ApplicationAccessService', () => {
       policyWith([]) as never,
       projectsRepo as never,
       clustersRepo as never,
-      sandboxTenantsRepoFor([]) as never,
+      gateFor([]) as never,
     );
     const apps = [
       appEntity('web', 'p1', 'app-1'),
@@ -147,7 +157,7 @@ describe('ApplicationAccessService', () => {
       policyWith([]) as never,
       projectsRepo as never,
       clustersRepo as never,
-      sandboxTenantsRepoFor([]) as never,
+      gateFor([]) as never,
     );
     const apps = [
       appEntity('web', 'p1', 'app-1'),
@@ -165,7 +175,7 @@ describe('ApplicationAccessService', () => {
       policyWith([]) as never,
       projectsRepo as never,
       clustersRepo as never,
-      sandboxTenantsRepoFor([]) as never,
+      gateFor([]) as never,
     );
     const apps = [
       appEntity('web', 'p1', 'app-1'), // reached by applicationIds
@@ -199,7 +209,7 @@ describe('ApplicationAccessService', () => {
       policy as never,
       projectsRepo as never,
       clustersRepo as never,
-      sandboxTenantsRepoFor([]) as never,
+      gateFor([]) as never,
     );
     await expect(
       svc.assertCan(USER as never, 'app:write', appEntity('web', 'p1')),
@@ -215,7 +225,7 @@ describe('ApplicationAccessService', () => {
         policyWith(bindings) as never,
         projectsRepo as never,
         clustersRepo as never,
-        sandboxTenantsRepoFor([]) as never,
+        gateFor([]) as never,
       );
 
     it('admin may create anywhere', async () => {
@@ -251,6 +261,42 @@ describe('ApplicationAccessService', () => {
           category: 'user',
         }),
       ).rejects.toThrow(/create/i);
+    });
+
+    it('project-scoped operator may create inside that project, named by id', async () => {
+      const svc = svcWith([
+        {
+          principalType: 'user',
+          principalRef: 'bob@acme.com',
+          role: 'operator',
+          scopeType: 'selector',
+          scopeRef: null,
+          selector: { project: 'frontend' },
+        },
+      ]);
+      await expect(
+        svc.assertCanCreate(USER as never, {
+          clusterId: 'c1',
+          category: 'user',
+          projectId: 'p1',
+        }),
+      ).resolves.toBeDefined();
+      await expect(
+        svc.assertCanCreate(USER as never, {
+          clusterId: 'c1',
+          category: 'user',
+          projectId: 'p2',
+        }),
+      ).rejects.toThrow(/create/i);
+    });
+
+    it('refuses a project that does not exist', async () => {
+      await expect(
+        svcWith([]).assertCanCreate(USER as never, {
+          clusterId: 'c1',
+          projectId: 'nope',
+        }),
+      ).rejects.toThrow(/not found/i);
     });
 
     it('project-scoped operator cannot conjure a project-less app', async () => {
@@ -327,7 +373,7 @@ describe('ApplicationAccessService', () => {
         policyWith(SANDBOX_BINDING) as never,
         projectsRepo as never,
         clustersRepo as never,
-        sandboxTenantsRepoFor(tenants) as never,
+        gateFor(tenants) as never,
       );
 
     it('may create on its own tenancy cluster, and reports being a guest', async () => {
@@ -432,7 +478,7 @@ describe('ApplicationAccessService', () => {
         policyWith(TENANCY_GRANTS) as never,
         projectsRepo as never,
         clustersRepo as never,
-        sandboxTenantsRepoFor([{ userId: 'u', clusterId: 'c1' }]) as never,
+        gateFor([{ userId: 'u', clusterId: 'c1' }]) as never,
       );
 
     it('sees its own and the showcase, and nothing else on the instance', async () => {

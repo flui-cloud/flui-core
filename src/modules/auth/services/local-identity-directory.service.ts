@@ -79,4 +79,8 @@ export class LocalIdentityDirectory implements IIdentityDirectory {
       isSystemUser: false,
     };
   }
+
+  async setActive(_id: string, _active: boolean): Promise<void> {
+    // Nothing outside Flui to tell: the block on the local row is enough.
+  }
 }

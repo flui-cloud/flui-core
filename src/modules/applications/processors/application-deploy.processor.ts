@@ -383,10 +383,15 @@ export class ApplicationDeployProcessor {
       }
 
       // Ensure target namespace exists (creates it on first deploy, no-op afterwards)
-      await this.workloadNamespace.ensure(kubeconfig, app.k8sNamespace, {
-        'flui.cloud/tier': 'user',
-        ...(app.userId ? { 'flui.cloud/owner': app.userId } : {}),
-      });
+      await this.workloadNamespace.ensure(
+        kubeconfig,
+        app.k8sNamespace,
+        {
+          'flui.cloud/tier': 'user',
+          ...(app.projectId ? { 'flui.cloud/project': app.projectId } : {}),
+        },
+        app.systemProtected ? undefined : app.clusterId,
+      );
 
       // RAW_MANIFEST system apps own only their image tag — manifests live in
       // bootstrap-scripts and are not regenerated. We patch the container

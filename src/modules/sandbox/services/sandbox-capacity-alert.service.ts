@@ -1,8 +1,8 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable, Logger } from '@nestjs/common';
 import { AlertEventsService } from '../../observability/services/alert-events.service';
 import { AlertMailService } from '../../observability/services/alert-mail.service';
 import { ClustersService } from '../../infrastructure/clusters/clusters.service';
-import { DEFAULT_SANDBOX_QUOTA } from '../constants/sandbox-quota.manifest';
+import { SANDBOX_CONFIG, SandboxConfig } from '../sandbox.config';
 import {
   parseCpuMillicores,
   parseMemoryMB,
@@ -46,13 +46,11 @@ export class SandboxCapacityAlertService {
   private static readonly FINGERPRINT = 'flui-sandbox-capacity';
   private static readonly ALERTNAME = 'FluiSandboxFull';
 
-  /** When it started, kept so a continuing incident keeps its own start time. */
-  private firingSince: Date | null = null;
-
   constructor(
     private readonly clusters: ClustersService,
     private readonly alerts: AlertEventsService,
     private readonly mail: AlertMailService,
+    @Inject(SANDBOX_CONFIG) private readonly config: SandboxConfig,
   ) {}
 
   /**
@@ -67,8 +65,8 @@ export class SandboxCapacityAlertService {
       // holds — that is nothing, which is the whole point of the model and the
       // reason counting areas stopped answering this question.
       const need = {
-        cpu: parseCpuMillicores(DEFAULT_SANDBOX_QUOTA.cpuRequest),
-        memory: parseMemoryMB(DEFAULT_SANDBOX_QUOTA.memoryRequest),
+        cpu: parseCpuMillicores(this.config.quota.cpuRequest),
+        memory: parseMemoryMB(this.config.quota.memoryRequest),
       };
       const room = await this.clusters.checkResourceAvailability(
         clusterId,
@@ -76,11 +74,15 @@ export class SandboxCapacityAlertService {
         need.memory,
       );
       const full = !room.canDeploy;
-      if (!full && !this.firingSince) return;
+      // Read back rather than remembered: a continuing incident keeps its own
+      // start time across a restart, and one that ended is still closed.
+      const since = (
+        await this.alerts.openEpisodes(SandboxCapacityAlertService.FINGERPRINT)
+      ).get(SandboxCapacityAlertService.FINGERPRINT);
+      if (!full && !since) return;
 
       const now = new Date();
-      if (full && !this.firingSince) this.firingSince = now;
-      const startsAt = this.firingSince ?? now;
+      const startsAt = since ?? now;
 
       const transitions = await this.alerts.record([
         {
@@ -101,8 +103,6 @@ export class SandboxCapacityAlertService {
           },
         },
       ]);
-
-      if (!full) this.firingSince = null;
 
       for (const { kind, event } of transitions) {
         await this.mail.deliver(kind, event);

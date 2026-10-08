@@ -53,6 +53,15 @@ export const BACKUP_TOOLS: ToolDef[] = [
     run: (_args, ctx) => ctx.api.get('/backup-policies'),
   }),
   defineTool({
+    name: 'backup_heartbeat',
+    routes: ['GET /backup-policies/heartbeat'],
+    description:
+      'Whether the installation is sending its heartbeat to the outside watchdog set with the platform backup (state: off | beating | withheld | failing), when it last checked and last sent one, and why not (`reasons`). The beat goes out only while the database answers, the metrics store answers, the alert delivery pipeline runs and the last platform backup is fresh; withheld means the watchdog will raise the alarm. The address is never shown.',
+    scope: MCP_SCOPE.BACKUP_READ,
+    inputSchema: {},
+    run: (_args, ctx) => ctx.api.get('/backup-policies/heartbeat'),
+  }),
+  defineTool({
     name: 'backup_policy_activity',
     routes: ['GET /backup-policies/:id/activity'],
     description:

@@ -49,6 +49,10 @@ export class CatalogInstallEntity {
   @Column({ nullable: true })
   userEmail?: string;
 
+  /** The project the install was asked for; null means the installer's personal one. */
+  @Column({ type: 'uuid', nullable: true })
+  projectId?: string | null;
+
   @Column({
     type: 'enum',
     enum: CatalogInstallStatus,

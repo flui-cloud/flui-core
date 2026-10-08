@@ -11,6 +11,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { ClusterNodeEntity } from './cluster-node.entity';
 import { HostnameMode } from '../../../dns/enums/hostname-mode.enum';
 import type { MaintenanceWindow } from '../../maintenance/maintenance-window.core';
+import type { EgressPolicy } from '../../egress/egress-policy.core';
 
 export enum ClusterStatus {
   CREATING = 'creating',
@@ -175,6 +176,10 @@ export class ClusterEntity {
   /** When work that restarts something may run; null means no window is set. */
   @Column({ type: 'jsonb', nullable: true })
   maintenanceWindow: MaintenanceWindow | null;
+
+  /** Which ports applications may reach outside the cluster; null means open. */
+  @Column({ type: 'jsonb', nullable: true })
+  egressPolicy: EgressPolicy | null;
 
   @Column({ type: 'json', nullable: true })
   sshKeyIds?: string[];

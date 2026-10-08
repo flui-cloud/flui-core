@@ -5,7 +5,7 @@ export class RemovalPreviewVolumeDto {
   @ApiProperty({ example: 'data-immich-postgres-0' })
   name: string;
 
-  @ApiProperty({ example: 'user-a1b2c3' })
+  @ApiProperty({ example: 'p-web-team' })
   namespace: string;
 
   @ApiProperty({ example: '9c3f…' })

@@ -21,7 +21,7 @@ import { createHash } from 'node:crypto';
  * "never a credential inside a skill" rule made structural rather than
  * remembered.
  */
-export const AGENT_SKILL_VERSION = '1.3.0';
+export const AGENT_SKILL_VERSION = '1.4.0';
 
 /** What the agent stores it as. Claude Code and its kin read `SKILL.md`. */
 export const AGENT_SKILL_FILENAME = 'SKILL.md';
@@ -201,6 +201,15 @@ events, releases, traffic, alerts, removal), clusters and their resources,
 DNS and gateway routes, repositories and GitHub connection, backups, database
 and application migrations, scheduled jobs, mail delivery, and who has access
 to what.
+
+## A closed port is a rule, not a bug
+
+An administrator can limit the ports applications reach outside their cluster.
+When an application times out talking to an outside host, call \`app_egress\`
+before touching its code or configuration: if the port is not listed, nothing
+you change will open it. Say which port is closed and that the person's
+administrator decides; do not retry, and do not move the traffic to another
+port to get round it.
 
 ## Say when you are seeing less than everything
 

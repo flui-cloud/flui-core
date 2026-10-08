@@ -54,7 +54,7 @@ export interface SandboxQuota {
  */
 export const DEFAULT_SANDBOX_QUOTA: SandboxQuota = {
   cpuRequest: '1500m',
-  cpuLimit: '6',
+  cpuLimit: '2',
   memoryRequest: '2Gi',
   memoryLimit: '6Gi',
   storage: '12Gi',
@@ -71,6 +71,53 @@ export const DEFAULT_SANDBOX_QUOTA: SandboxQuota = {
   maxContainerMemory: '1Gi',
   maxContainerEphemeralStorage: '4Gi',
 };
+
+const QUANTITY = /^\d+(\.\d+)?(m|k|Ki|M|Mi|G|Gi|T|Ti)?$/;
+
+/** The environment variable that overrides each field of the guest quota. */
+export const SANDBOX_QUOTA_ENV: Record<keyof SandboxQuota, string> = {
+  cpuRequest: 'SANDBOX_QUOTA_CPU_REQUEST',
+  cpuLimit: 'SANDBOX_QUOTA_CPU_LIMIT',
+  memoryRequest: 'SANDBOX_QUOTA_MEMORY_REQUEST',
+  memoryLimit: 'SANDBOX_QUOTA_MEMORY_LIMIT',
+  storage: 'SANDBOX_QUOTA_STORAGE',
+  nodeLocalCeiling: 'SANDBOX_QUOTA_NODE_DISK',
+  ephemeralStorageRequest: 'SANDBOX_QUOTA_EPHEMERAL_REQUEST',
+  ephemeralStorageLimit: 'SANDBOX_QUOTA_EPHEMERAL_LIMIT',
+  pods: 'SANDBOX_QUOTA_PODS',
+  services: 'SANDBOX_QUOTA_SERVICES',
+  persistentVolumeClaims: 'SANDBOX_QUOTA_VOLUMES',
+  defaultContainerCpu: 'SANDBOX_QUOTA_CONTAINER_DEFAULT_CPU',
+  defaultContainerMemory: 'SANDBOX_QUOTA_CONTAINER_DEFAULT_MEMORY',
+  defaultContainerEphemeralStorage: 'SANDBOX_QUOTA_CONTAINER_DEFAULT_EPHEMERAL',
+  maxContainerCpu: 'SANDBOX_QUOTA_CONTAINER_MAX_CPU',
+  maxContainerMemory: 'SANDBOX_QUOTA_CONTAINER_MAX_MEMORY',
+  maxContainerEphemeralStorage: 'SANDBOX_QUOTA_CONTAINER_MAX_EPHEMERAL',
+};
+
+/**
+ * The guest quota, field by field from the environment. A value that is not a
+ * valid quantity keeps the default: a typo must not turn a ceiling into none.
+ */
+export function loadSandboxQuota(
+  env: NodeJS.ProcessEnv = process.env,
+): SandboxQuota {
+  const quota = { ...DEFAULT_SANDBOX_QUOTA };
+  for (const key of Object.keys(SANDBOX_QUOTA_ENV) as (keyof SandboxQuota)[]) {
+    const raw = env[SANDBOX_QUOTA_ENV[key]]?.trim();
+    if (!raw || !QUANTITY.test(raw)) continue;
+    const fallback = DEFAULT_SANDBOX_QUOTA[key];
+    if (typeof fallback === 'number') {
+      const count = Number(raw);
+      if (Number.isInteger(count) && count >= 0) {
+        (quota as Record<string, string | number>)[key] = count;
+      }
+    } else {
+      (quota as Record<string, string | number>)[key] = raw;
+    }
+  }
+  return quota;
+}
 
 /**
  * A ResourceQuota caps the tenancy; a LimitRange gives every container a ceiling

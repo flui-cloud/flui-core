@@ -20,7 +20,7 @@ import { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interfa
 import { AdminGuard } from '../auth/guards/admin.guard';
 import { IdentityRole } from '../auth/entities/user.entity';
 import { ClusterEntity } from '../infrastructure/clusters/entities/cluster.entity';
-import { SandboxTenantEntity } from '../sandbox/entities/sandbox-tenant.entity';
+import { SANDBOX_SLOT_GATE } from '../sandbox/gate/sandbox-slot-gate';
 import { IamGroupEntity } from '../iam/entities/iam-group.entity';
 import { IamRoleBindingEntity } from '../iam/entities/iam-role-binding.entity';
 import { SectionAccessGuard } from '../iam/guards/section-access.guard';
@@ -230,8 +230,8 @@ describe('observability resource authorization (direct HTTP routes)', () => {
           },
         },
         {
-          provide: getRepositoryToken(SandboxTenantEntity),
-          useValue: { findOne: async () => null },
+          provide: SANDBOX_SLOT_GATE,
+          useValue: { assertCanCreate: async () => undefined },
         },
       ],
     }).compile();

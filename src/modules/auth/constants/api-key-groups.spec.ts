@@ -88,6 +88,7 @@ describe('permission groups — the taxonomy', () => {
         'app_deploy',
         'app_deploy_from_yaml',
         'app_deploy_image',
+        'app_egress',
         'app_events',
         'app_get',
         'app_install',
@@ -137,6 +138,7 @@ describe('permission groups — the taxonomy', () => {
         'my_permissions',
         'operating_context_read',
         'operation_status',
+        'project_list',
         'repo_connect',
         'repo_list',
         // These two arrived together and widened the sentence above: the read

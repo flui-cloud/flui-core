@@ -35,7 +35,7 @@ describe('the agent skill', () => {
     expect({
       version: AGENT_SKILL_VERSION,
       digest: agentSkillDigest(),
-    }).toEqual({ version: '1.3.0', digest: 'c6480ce7a6ae' });
+    }).toEqual({ version: '1.4.0', digest: 'acee14c59fce' });
   });
 
   /**
@@ -45,7 +45,7 @@ describe('the agent skill', () => {
    */
   it('pins the tool reading separately, because it is a different text', () => {
     expect(agentSkillDigest('tool')).not.toBe(agentSkillDigest('http'));
-    expect(agentSkillDigest('tool')).toBe('cf19ca157e87');
+    expect(agentSkillDigest('tool')).toBe('bf10d6f3155a');
   });
 
   it('is stable across renders — the digest identifies the instructions, not the installation', () => {
@@ -200,7 +200,7 @@ describe('the agent skill', () => {
     it.each([
       [AGENT_SKILL_VERSION, 'current'],
       ['0.9.0', 'stale'],
-      ['1.3.1', 'ahead'],
+      ['1.4.1', 'ahead'],
       ['whatever', 'unknown'],
       ['', 'undeclared'],
       [null, 'undeclared'],

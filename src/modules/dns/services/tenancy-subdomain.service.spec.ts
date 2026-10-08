@@ -6,7 +6,7 @@ import { TenancySubdomainService } from './tenancy-subdomain.service';
 import { CertificateStatus } from '../../providers/interfaces/certificate-provider.interface';
 
 const CLUSTER = { id: 'c1', name: 'control-cluster' } as never;
-const NAMESPACE = 'user-guest-f0e5e994';
+const NAMESPACE = 'p-guest-f0e5e994';
 const SUBDOMAIN = 'guest-f0e5e994.control-cluster.dawit.blog';
 
 interface Options {
@@ -93,7 +93,7 @@ describe('TenancySubdomainService.nominalSubdomain', () => {
   it('is null for a namespace that is not a sandbox tenancy', async () => {
     const { service } = build({ isTenancy: false });
     await expect(
-      service.nominalSubdomain(CLUSTER, 'user-dawit', 'dawit.blog'),
+      service.nominalSubdomain(CLUSTER, 'p-dawit', 'dawit.blog'),
     ).resolves.toBeNull();
   });
 });

@@ -123,6 +123,21 @@ export const INFRASTRUCTURE_OPERATION_TOOLS: ToolDef[] = [
   }),
 
   defineTool({
+    name: 'cluster_egress',
+    routes: ['GET /infrastructure/clusters/:id/egress-policy'],
+    description:
+      'Which ports the applications on a cluster may reach outside it, whoever owns them; open when no rule is set. Only a person with the egress permission changes it, from the dashboard or the CLI — no tool does.',
+    scope: MCP_SCOPE.INFRA_READ,
+    inputSchema: { clusterId: z.string().optional() },
+    run: async (args, ctx) => {
+      const clusterId = await resolveClusterId(ctx, args.clusterId);
+      return ctx.api.get(
+        `/infrastructure/clusters/${enc(clusterId)}/egress-policy`,
+      );
+    },
+  }),
+
+  defineTool({
     name: 'cluster_maintenance_set',
     routes: ['PUT /infrastructure/clusters/:id/maintenance-window'],
     description:

@@ -1,5 +1,11 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsOptional, IsString, IsUrl, Matches } from 'class-validator';
+import {
+  IsBoolean,
+  IsOptional,
+  IsString,
+  IsUrl,
+  Matches,
+} from 'class-validator';
 
 export class SetPlatformConfigDto {
   @ApiProperty({
@@ -14,9 +20,17 @@ export class SetPlatformConfigDto {
 
   @ApiPropertyOptional({
     description:
-      "Dead-man's-switch URL the master POSTs to every 5 min while backups are fresh (healthchecks.io / ntfy / Uptime-Kuma push).",
+      "Dead-man's-switch URL the master POSTs to every 5 min while the installation is healthy and its backups are fresh (healthchecks.io / ntfy / Uptime-Kuma push). Left out, the current one stays.",
   })
   @IsOptional()
   @IsUrl({ require_tld: false })
   heartbeatUrl?: string;
+
+  @ApiPropertyOptional({
+    description:
+      'Stop the heartbeat: forget the URL. Ignored when heartbeatUrl is set.',
+  })
+  @IsOptional()
+  @IsBoolean()
+  clearHeartbeat?: boolean;
 }

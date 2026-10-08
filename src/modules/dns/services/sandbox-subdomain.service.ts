@@ -39,6 +39,8 @@ import {
 @Injectable()
 export class SandboxSubdomainService {
   private readonly logger = new Logger(SandboxSubdomainService.name);
+  /** Records already published by this process: one provider call each, not one per area. */
+  private readonly published = new Set<string>();
 
   constructor(
     private readonly config: SandboxSubdomainConfigService,
@@ -213,6 +215,8 @@ export class SandboxSubdomainService {
     const name = sharedWildcardRecordName(label);
     const value = cluster.masterIpAddress;
     if (!name || !value || !assignment.dnsZone) return;
+    const key = `${assignment.dnsZone.zoneName}/${name}/${value}`;
+    if (this.published.has(key)) return;
 
     try {
       await this.zoneRecords.ensureWildcardRecord(assignment.dnsZone, {
@@ -221,6 +225,7 @@ export class SandboxSubdomainService {
         value,
         ttl: assignment.dnsZone.recordTtlSeconds,
       });
+      this.published.add(key);
     } catch (err) {
       this.logger.warn(
         `[sandbox-subdomain] could not publish ${name}.${assignment.dnsZone.zoneName}: ${

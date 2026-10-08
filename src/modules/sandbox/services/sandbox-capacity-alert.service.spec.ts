@@ -9,8 +9,10 @@ jest.mock('../../mail/services/mail-send.service', () => ({
 jest.mock('@kubernetes/client-node', () => ({}));
 
 import { SandboxCapacityAlertService } from './sandbox-capacity-alert.service';
+import { loadSandboxConfig } from '../sandbox.config';
+import { FakeAlertEvents } from '../../observability/testing/fake-alert-events';
 
-const build = (rooms: boolean[]) => {
+const build = (rooms: boolean[], events = new FakeAlertEvents()) => {
   const recorded: Array<{ status: string; startsAt: Date }> = [];
   const mailed: string[] = [];
   let call = 0;
@@ -23,20 +25,15 @@ const build = (rooms: boolean[]) => {
     }),
   };
   const alerts = {
-    // Stands in for the recorder's own job: news only on a change of state.
-    record: async (incoming: Record<string, unknown>[]) => {
+    record: async (incoming: Array<Record<string, unknown>>) => {
       const alert = incoming[0];
-      const status = alert.status as string;
-      const previous = recorded.at(-1)?.status;
-      recorded.push({ status, startsAt: alert.startsAt as Date });
-      if (status === previous) return [];
-      return [
-        {
-          kind: status === 'firing' ? 'fired' : 'resolved',
-          event: { alertname: alert.alertname, severity: alert.severity },
-        },
-      ];
+      recorded.push({
+        status: alert.status as string,
+        startsAt: alert.startsAt as Date,
+      });
+      return events.record(incoming as never);
     },
+    openEpisodes: (prefix: string) => events.openEpisodes(prefix),
   };
   const mail = {
     deliver: async (kind: string) => {
@@ -48,10 +45,12 @@ const build = (rooms: boolean[]) => {
   return {
     recorded,
     mailed,
+    events,
     service: new SandboxCapacityAlertService(
       clusters as never,
       alerts as never,
       mail as never,
+      loadSandboxConfig({}),
     ),
   };
 };
@@ -76,8 +75,9 @@ describe('SandboxCapacityAlertService', () => {
           return { canDeploy: true, available: { cpu: 1, memory: 1 } };
         },
       } as never,
-      { record: async () => [] } as never,
+      { record: async () => [], openEpisodes: async () => new Map() } as never,
       { deliver: async () => true } as never,
+      loadSandboxConfig({}),
     );
 
     await service.check('c1');
@@ -132,6 +132,19 @@ describe('SandboxCapacityAlertService', () => {
     expect(recorded[0].startsAt).toEqual(recorded[1].startsAt);
   });
 
+  it('closes, after a restart, the incident a previous process opened', async () => {
+    const events = new FakeAlertEvents();
+    await build([false], events).service.check('c1');
+
+    const afterRestart = build([false, true], events);
+    await afterRestart.service.check('c1');
+    await afterRestart.service.check('c1');
+
+    expect(events.episodes).toHaveLength(1);
+    expect(events.episodes[0].status).toBe('resolved');
+    expect(afterRestart.mailed).toEqual(['resolved']);
+  });
+
   it('announces the recovery, then goes quiet again', async () => {
     const { service, mailed } = build([false, true, true]);
 
@@ -151,8 +164,9 @@ describe('SandboxCapacityAlertService', () => {
           throw new Error('api server down');
         },
       } as never,
-      { record: async () => [] } as never,
+      { record: async () => [], openEpisodes: async () => new Map() } as never,
       { deliver: async () => true } as never,
+      loadSandboxConfig({}),
     );
 
     await expect(service.check('c1')).resolves.toBeUndefined();

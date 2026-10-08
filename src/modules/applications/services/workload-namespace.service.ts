@@ -1,5 +1,14 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { ConflictException, Injectable, Logger } from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
+import { ProjectEntity } from '../../projects/entities/project.entity';
+import { PROJECT_LABEL } from '../../projects/project-spaces.service';
 import { KubernetesService } from '../../infrastructure/shared/services/kubernetes.service';
+import { EgressPolicyService } from '../../infrastructure/egress/egress-policy.service';
+import {
+  SANDBOX_LABEL,
+  isSystemNamespace,
+} from '../../infrastructure/egress/egress-policy.core';
 
 /** The ceiling a container gets when it declares none of its own. */
 export const WORKLOAD_EPHEMERAL_DEFAULT = '8Gi';
@@ -15,8 +24,8 @@ export const WORKLOAD_EPHEMERAL_DEFAULT = '8Gi';
 export const WORKLOAD_EPHEMERAL_REQUEST = '256Mi';
 
 export const WORKLOAD_LIMIT_RANGE_NAME = 'flui-workload-limits';
-
-const SANDBOX_LABEL = 'flui.cloud/sandbox';
+export const PROJECT_SPACE_CLEARING_CODE = 'PROJECT_SPACE_CLEARING';
+export const PROJECT_SPACE_TAKEN_CODE = 'PROJECT_SPACE_TAKEN';
 
 /**
  * The namespace an application is deployed into, and the one ceiling it carries.
@@ -36,21 +45,45 @@ const SANDBOX_LABEL = 'flui.cloud/sandbox';
 export class WorkloadNamespaceService {
   private readonly logger = new Logger(WorkloadNamespaceService.name);
 
-  constructor(private readonly kubernetesService: KubernetesService) {}
+  constructor(
+    private readonly kubernetesService: KubernetesService,
+    private readonly egress: EgressPolicyService,
+    @InjectRepository(ProjectEntity)
+    private readonly projects: Repository<ProjectEntity>,
+  ) {}
 
+  /**
+   * With a cluster, the cluster's egress rule is written too, except in a
+   * platform namespace.
+   */
   async ensure(
     kubeconfig: string,
     namespace: string,
     labels: Record<string, string> = {},
+    clusterId?: string,
   ): Promise<void> {
     await this.kubernetesService.ensureNamespaceExists(
       kubeconfig,
       namespace,
       labels,
     );
-    if (await this.isSandboxTenancy(kubeconfig, namespace)) {
+    const current = await this.labelsOf(kubeconfig, namespace);
+    const holder = current?.[PROJECT_LABEL];
+    const wanted = labels[PROJECT_LABEL];
+    if (holder && wanted && holder !== wanted) {
+      await this.refuseForeignSpace(kubeconfig, namespace, holder);
+    }
+    if (current && clusterId && !isSystemNamespace(current)) {
+      await this.egress.applyTo(
+        kubeconfig,
+        clusterId,
+        namespace,
+        current[SANDBOX_LABEL] === 'true',
+      );
+    }
+    if (!current || current[SANDBOX_LABEL] === 'true') {
       this.logger.debug(
-        `Namespace ${namespace} is a sandbox tenancy; its own limits govern it`,
+        `Namespace ${namespace} is a sandbox tenancy or unreadable; its own limits govern it`,
       );
       return;
     }
@@ -61,27 +94,50 @@ export class WorkloadNamespaceService {
   }
 
   /**
+   * A space left by a deleted project whose cluster did not answer when it was
+   * deleted. Never inherited: it is removed, and the deploy is asked to come
+   * back once it is gone.
+   */
+  private async refuseForeignSpace(
+    kubeconfig: string,
+    namespace: string,
+    holder: string,
+  ): Promise<never> {
+    if (await this.projects.exists({ where: { id: holder } })) {
+      throw new ConflictException({
+        code: PROJECT_SPACE_TAKEN_CODE,
+        message: `The space ${namespace} on this cluster belongs to another project.`,
+      });
+    }
+    await this.kubernetesService.deleteNamespace(kubeconfig, namespace);
+    throw new ConflictException({
+      code: PROJECT_SPACE_CLEARING_CODE,
+      message: `The space ${namespace} still held what a deleted project with the same name left on this cluster. It is being removed; deploy again in a minute.`,
+    });
+  }
+
+  /**
    * Read off the namespace, not the database: the label is written before a
    * guest can deploy, and the deploy path already has the namespace in hand.
    * A failed read means "leave it alone" — a namespace without a ceiling costs
    * one deploy; a tenancy losing its own costs the tenancy.
    */
-  private async isSandboxTenancy(
+  private async labelsOf(
     kubeconfig: string,
     namespace: string,
-  ): Promise<boolean> {
+  ): Promise<Record<string, string> | null> {
     try {
       const ns = await this.kubernetesService.getResource(
         kubeconfig,
         'Namespace',
         namespace,
       );
-      return ns?.metadata?.labels?.[SANDBOX_LABEL] === 'true';
+      return ns?.metadata?.labels ?? {};
     } catch (error) {
       this.logger.warn(
         `Could not read namespace ${namespace}, leaving its limits alone: ${(error as Error).message}`,
       );
-      return true;
+      return null;
     }
   }
 }

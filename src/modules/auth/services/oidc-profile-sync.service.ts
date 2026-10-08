@@ -3,11 +3,11 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { UserEntity } from '../entities/user.entity';
 import { OidcProviderAdminClient } from '../../oidc/services/oidc-provider-admin.service';
+import { isPlaceholderEmail } from '../utils/placeholder-email.util';
 
 const SYNC_TTL_SECONDS = 300;
 // Don't retry a failing provider on every request — back off per sub.
 const FAILURE_BACKOFF_SECONDS = 60;
-const FALLBACK_EMAIL_RE = /^oidc-.*@flui\.invalid$/;
 
 @Injectable()
 export class OidcProfileSyncService {
@@ -106,17 +106,53 @@ export class OidcProfileSyncService {
     return true;
   }
 
+  /**
+   * Whether the provider has proven this person's address. Asked of the
+   * provider rather than read from a token, and false whenever it cannot be
+   * asked: the answer decides whether a new login may take over an existing
+   * account, so a doubt must not read as a yes.
+   */
+  async isEmailVerified(sub: string): Promise<boolean> {
+    const pat = (process.env.ZITADEL_SERVICE_ACCOUNT_PAT ?? '').trim();
+    const issuer = (
+      process.env.OIDC_ISSUER ??
+      process.env.ZITADEL_ISSUER ??
+      ''
+    ).trim();
+    if (!pat || !issuer) return false;
+    try {
+      const profile = await this.oidcAdmin.getUser(
+        pat,
+        issuer.replace(/^https?:\/\//, ''),
+        sub,
+      );
+      return profile?.emailVerified === true;
+    } catch (err) {
+      this.logger.warn(
+        `Could not ask whether ${sub} has a verified email: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+      return false;
+    }
+  }
+
   private applyProfileToUser(
     user: UserEntity,
     profile: {
       email?: string | null;
+      emailVerified?: boolean;
       firstName?: string | null;
       lastName?: string | null;
       userName?: string | null;
     },
   ): void {
-    const incomingEmail = profile.email?.trim() || null;
-    const placeholder = FALLBACK_EMAIL_RE.test(user.email);
+    // Only a proven address is adopted: permissions are granted to an email,
+    // so taking an unverified one would hand its owner's access to whoever
+    // typed it.
+    const incomingEmail =
+      profile.emailVerified === true ? profile.email?.trim() || null : null;
+    const placeholder = isPlaceholderEmail(user.email);
     if (incomingEmail && (placeholder || incomingEmail !== user.email)) {
       user.email = incomingEmail;
     }

@@ -11,6 +11,7 @@ import { BackupPolicyStatus } from '../enums/backup-policy-status.enum';
 import { CronExpressionParser } from 'cron-parser';
 import { guardedRequest } from '../../../common/net/egress-guard';
 import { RELEASE } from '../../../config/release.config';
+import { InstallationHealthService } from '../services/installation-health.service';
 
 const MIN_FRESHNESS_MS = 45 * 60 * 1000;
 const FRESHNESS_SLACK_MS = 15 * 60 * 1000;
@@ -49,23 +50,46 @@ export function isPlatformBackupFresh(
   }
 }
 
+export type HeartbeatState = 'off' | 'beating' | 'withheld' | 'failing';
+
+export interface HeartbeatStatus {
+  state: HeartbeatState;
+  lastCheckAt: string | null;
+  lastBeatAt: string | null;
+  /** Why the last beat was withheld or failed; empty while beating. */
+  reasons: string[];
+}
+
 /**
- * Dead-man's switch (MVP-4, §7): the master POSTs a heartbeat to an operator-
- * configured external target every 5 min — BUT only while its last platform
- * backup is fresh. The absence evaluator (healthchecks.io / ntfy / self-hosted
+ * Dead-man's switch: the master POSTs a heartbeat to an operator-
+ * configured external target every 5 min — BUT only while the installation is
+ * healthy (database, metrics, alert pipeline) and its last platform backup is
+ * fresh. The absence evaluator (healthchecks.io / ntfy / self-hosted
  * elsewhere) lives OUTSIDE the master's failure domain and alarms on missed
  * beats. Flui only emits; it never evaluates its own liveness.
  */
 @Injectable()
 export class MasterHeartbeatScheduler {
   private readonly logger = new Logger(MasterHeartbeatScheduler.name);
+  private last: HeartbeatStatus = {
+    state: 'off',
+    lastCheckAt: null,
+    lastBeatAt: null,
+    reasons: [],
+  };
 
   constructor(
     @InjectRepository(BackupPolicyEntity)
     private readonly policyRepo: Repository<BackupPolicyEntity>,
     @InjectRepository(BackupJobEntity)
     private readonly jobRepo: Repository<BackupJobEntity>,
+    private readonly health: InstallationHealthService,
   ) {}
+
+  /** Held in memory: after a restart it reads `off` until the next tick. */
+  status(): HeartbeatStatus {
+    return { ...this.last, reasons: [...this.last.reasons] };
+  }
 
   @Cron(process.env.MASTER_HEARTBEAT_CRON || CronExpression.EVERY_5_MINUTES)
   async tick(): Promise<void> {
@@ -74,7 +98,12 @@ export class MasterHeartbeatScheduler {
         where: { engineClass: BackupEngineClass.PLATFORM },
       });
       const url = this.heartbeatUrl(policies);
-      if (!url) return; // no platform heartbeat configured — nothing to do
+      if (!url) {
+        this.last = { ...this.last, state: 'off', reasons: [] };
+        return;
+      }
+      const checkedAt = new Date().toISOString();
+      const health = await this.health.check();
 
       // A paused or degraded policy is one the scheduler no longer runs: its
       // schedule promises nothing, so it cannot vouch for the backup.
@@ -88,36 +117,68 @@ export class MasterHeartbeatScheduler {
         isPlatformBackupFresh(lastAt, p.cronSchedule, now),
       );
 
+      const reasons = [...health.problems];
       if (!fresh) {
         const lastLabel = lastAt
           ? `at ${new Date(lastAt).toISOString()}`
           : 'never';
+        reasons.push(`The last platform backup (${lastLabel}) is stale`);
+      }
+      if (reasons.length > 0) {
         this.logger.warn(
-          `[master-heartbeat] WITHHELD — last platform backup ${lastLabel} is stale; ` +
-            `letting the external watchdog alarm.`,
+          `[master-heartbeat] WITHHELD — ${reasons.join('; ')}; letting the external watchdog alarm.`,
         );
+        this.last = {
+          ...this.last,
+          state: 'withheld',
+          lastCheckAt: checkedAt,
+          reasons,
+        };
         return;
       }
 
-      // Guarded: the URL is operator-configured and this runs from inside the
-      // cluster every five minutes, which is a scheduled read primitive against
-      // the private network if nothing judges the address.
-      await guardedRequest({
-        method: 'POST',
-        url,
-        data: {
-          ts: new Date().toISOString(),
-          version: RELEASE.version,
-          lastPlatformBackupAt: lastAt,
-          lastPlatformBackupStatus: 'ok',
-        },
-        timeout: 5000,
-      });
+      try {
+        // Guarded: the URL is operator-configured and this runs from inside the
+        // cluster every five minutes, which is a scheduled read primitive
+        // against the private network if nothing judges the address.
+        await guardedRequest({
+          method: 'POST',
+          url,
+          data: {
+            ts: new Date().toISOString(),
+            version: RELEASE.version,
+            lastPlatformBackupAt: lastAt,
+            lastPlatformBackupStatus: 'ok',
+            installation: 'healthy',
+          },
+          timeout: 5000,
+        });
+        this.last = {
+          state: 'beating',
+          lastCheckAt: checkedAt,
+          lastBeatAt: new Date().toISOString(),
+          reasons: [],
+        };
+      } catch (err: any) {
+        const reason = `The heartbeat could not be sent: ${err?.message ?? String(err)}`;
+        this.logger.warn(`[master-heartbeat] emit failed: ${reason}`);
+        this.last = {
+          ...this.last,
+          state: 'failing',
+          lastCheckAt: checkedAt,
+          reasons: [reason],
+        };
+      }
     } catch (err: any) {
       // A heartbeat failure must never crash the cron; the watchdog will notice the gap.
-      this.logger.warn(
-        `[master-heartbeat] emit failed: ${err?.message ?? String(err)}`,
-      );
+      const reason = `The installation could not be checked: ${err?.message ?? String(err)}`;
+      this.logger.warn(`[master-heartbeat] ${reason}`);
+      this.last = {
+        ...this.last,
+        state: 'withheld',
+        lastCheckAt: new Date().toISOString(),
+        reasons: [reason],
+      };
     }
   }
 

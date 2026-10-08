@@ -65,7 +65,8 @@ export interface BackupPolicy {
   metadata?: {
     platform?: {
       recipient?: string;
-      heartbeat?: { url?: string };
+      /** The address never leaves the API: only that one is set, and where it goes. */
+      heartbeat?: { set?: boolean; host?: string };
     };
     [key: string]: unknown;
   };
@@ -197,6 +198,13 @@ export interface BackupRun {
   expiresAt: string | null;
   stored: 'present' | 'expired' | 'missing' | 'unknown';
   errorMessage: string | null;
+}
+
+export interface HeartbeatStatus {
+  state: 'off' | 'beating' | 'withheld' | 'failing';
+  lastCheckAt: string | null;
+  lastBeatAt: string | null;
+  reasons: string[];
 }
 
 export interface BackupPolicyActivity {

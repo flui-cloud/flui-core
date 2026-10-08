@@ -115,13 +115,21 @@ describe('MasterHeartbeatScheduler — which policies count', () => {
   const posted = guardedRequest as jest.Mock;
   beforeEach(() => posted.mockClear());
 
-  function build(policies: Array<Record<string, unknown>>) {
+  function build(
+    policies: Array<Record<string, unknown>>,
+    problems: string[] = [],
+  ) {
     const jobFindOne = jest.fn().mockResolvedValue({
       finishedAt: new Date(Date.now() - 10 * 60 * 1000),
     });
     const scheduler = new MasterHeartbeatScheduler(
       { find: jest.fn().mockResolvedValue(policies) } as never,
       { findOne: jobFindOne } as never,
+      {
+        check: jest
+          .fn()
+          .mockResolvedValue({ healthy: problems.length === 0, problems }),
+      } as never,
     );
     return { scheduler, jobFindOne };
   }
@@ -154,4 +162,81 @@ describe('MasterHeartbeatScheduler — which policies count', () => {
       expect(posted).not.toHaveBeenCalled();
     },
   );
+});
+
+describe('MasterHeartbeatScheduler — the installation must be healthy too', () => {
+  const posted = guardedRequest as jest.Mock;
+  beforeEach(() => posted.mockReset().mockResolvedValue({ status: 200 }));
+
+  const platform = {
+    id: 'p1',
+    engineClass: BackupEngineClass.PLATFORM,
+    enabled: true,
+    status: BackupPolicyStatus.ACTIVE,
+    cronSchedule: '0 * * * *',
+    metadata: { platform: { heartbeat: { url: 'https://hc.example.com/x' } } },
+  };
+  const build = (problems: string[]) =>
+    new MasterHeartbeatScheduler(
+      { find: jest.fn().mockResolvedValue([platform]) } as never,
+      {
+        findOne: jest
+          .fn()
+          .mockResolvedValue({ finishedAt: new Date(Date.now() - 600_000) }),
+      } as never,
+      {
+        check: jest
+          .fn()
+          .mockResolvedValue({ healthy: problems.length === 0, problems }),
+      } as never,
+    );
+
+  it('withholds the beat while alerts could not be delivered, and says why', async () => {
+    const scheduler = build([
+      'alertmanager has no running copy, so alerts would not be delivered',
+    ]);
+    await scheduler.tick();
+
+    expect(posted).not.toHaveBeenCalled();
+    expect(scheduler.status()).toMatchObject({
+      state: 'withheld',
+      lastBeatAt: null,
+      reasons: [
+        'alertmanager has no running copy, so alerts would not be delivered',
+      ],
+    });
+  });
+
+  it('beats and remembers when, with a fresh backup and a healthy installation', async () => {
+    const scheduler = build([]);
+    await scheduler.tick();
+
+    expect(posted).toHaveBeenCalledTimes(1);
+    expect(posted.mock.calls[0][0].data.installation).toBe('healthy');
+    expect(scheduler.status().state).toBe('beating');
+    expect(scheduler.status().lastBeatAt).not.toBeNull();
+  });
+
+  it('tells a beat that could not be delivered apart from one withheld', async () => {
+    posted.mockRejectedValueOnce(new Error('connect ETIMEDOUT'));
+    const scheduler = build([]);
+    await scheduler.tick();
+
+    expect(scheduler.status()).toMatchObject({
+      state: 'failing',
+      reasons: ['The heartbeat could not be sent: connect ETIMEDOUT'],
+    });
+  });
+
+  it('reads off when no heartbeat address is set', async () => {
+    const scheduler = new MasterHeartbeatScheduler(
+      {
+        find: jest.fn().mockResolvedValue([{ ...platform, metadata: {} }]),
+      } as never,
+      { findOne: jest.fn() } as never,
+      { check: jest.fn() } as never,
+    );
+    await scheduler.tick();
+    expect(scheduler.status().state).toBe('off');
+  });
 });

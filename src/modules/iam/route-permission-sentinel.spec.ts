@@ -248,6 +248,7 @@ describe('the ceiling and the routes say the same thing', () => {
    */
   const NO_SCOPE_CARRIES: string[] = [
     IAM_PERMISSION.CLUSTER_DESTROY,
+    IAM_PERMISSION.EGRESS_MANAGE,
     IAM_PERMISSION.IAM_MANAGE_USERS,
     IAM_PERMISSION.INTEGRATION_MANAGE,
     IAM_PERMISSION.SANDBOX_OPERATE,
@@ -264,7 +265,7 @@ describe('the ceiling and the routes say the same thing', () => {
     expect(carriers).toEqual(['mcp:platform:update']);
   });
 
-  it('asks for no permission outside the declaration except the five named here', () => {
+  it('asks for no permission outside the declaration except the six named here', () => {
     const outside = [
       ...new Set(
         ROUTES.map(ceilingPermission)

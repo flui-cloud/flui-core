@@ -4,7 +4,7 @@ export class OrphanedClaimDto {
   @ApiProperty({ example: 'data-uptime-kuma-0' })
   name: string;
 
-  @ApiProperty({ example: 'user-a1b2c3' })
+  @ApiProperty({ example: 'p-web-team' })
   namespace: string;
 
   @ApiPropertyOptional({ example: '10Gi' })

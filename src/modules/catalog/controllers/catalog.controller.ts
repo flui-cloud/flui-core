@@ -263,6 +263,7 @@ export class CatalogController {
     if (!user) throw new ForbiddenException('Unauthenticated');
     const access = await this.applicationAccess.assertCanCreate(user, {
       clusterId: dto.clusterId,
+      projectId: dto.projectId,
     });
     const definition = await this.catalogService.upsertFromYaml(
       dto.yaml,
@@ -270,6 +271,7 @@ export class CatalogController {
     );
     const installDto: InstallCatalogAppDto = {
       clusterId: dto.clusterId,
+      projectId: dto.projectId,
       displayName: dto.displayName ?? definition.name,
       domain: dto.domain,
       certChallenge: dto.certChallenge,
@@ -319,6 +321,7 @@ export class CatalogController {
     const user = req.user as AuthenticatedUser | undefined;
     const access = await this.applicationAccess.assertCanCreate(user, {
       clusterId: dto.clusterId,
+      projectId: dto.projectId,
     });
     if (access.isSandbox) {
       stripSandboxInstallPlacement(dto);

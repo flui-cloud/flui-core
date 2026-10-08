@@ -69,36 +69,6 @@ export interface SandboxCapacity {
 export class SandboxCapacityService {
   private readonly logger = new Logger(SandboxCapacityService.name);
 
-  /**
-   * Measured: 126s to build, then a further 76s
-   * before the seeded application answers on its own public address. Handing
-   * over a tenancy whose address is still dead is what the second half pays
-   * for. The build half is overridden by what builds actually take.
-   *
-   * The settle half is the cost of publishing a **per-app DNS record** and
-   * waiting for a resolver to see a name that did not exist a minute ago. It is
-   * not the certificate: that comes from the cluster wildcard and is already in
-   * place. On a zone that publishes a wildcard record covering the application
-   * hostnames, no per-app record is written at all (see
-   * `wildcardCoveringRecord` in the endpoint reconciliation) and this is
-   * **zero** — set it so, and the buffer shrinks accordingly.
-   */
-  private static readonly DECLARED_BUILD_SECONDS = 126;
-  private static readonly DECLARED_SETTLE_SECONDS = 76;
-
-  /**
-   * The seed's own requests, used only until a living tenancy can be measured.
-   * A tenancy is allowed to request far more than this — the quota caps it at
-   * 1500m — but quota is a ceiling, not a reservation, and sizing the cluster
-   * against a ceiling nobody reaches would refuse visitors it could hold.
-   */
-  private static readonly DECLARED_FOOTPRINT: TenancyFootprint = {
-    cpu: 500,
-    memory: 512,
-    source: 'declared',
-    sampledFrom: 0,
-  };
-
   private static readonly CACHE_MS = 10_000;
 
   private readonly buildSamples: number[] = [];
@@ -114,6 +84,15 @@ export class SandboxCapacityService {
     private readonly encryption: EncryptionService,
     @Inject(SANDBOX_CONFIG) private readonly config: SandboxConfig,
   ) {}
+
+  private declaredFootprint(): TenancyFootprint {
+    return {
+      cpu: this.config.declaredFootprint.cpuMillicores,
+      memory: this.config.declaredFootprint.memoryMb,
+      source: 'declared',
+      sampledFrom: 0,
+    };
+  }
 
   /** Fed by every finished build, so the rule corrects itself as the seed changes. */
   recordBuild(seconds: number): void {
@@ -140,8 +119,8 @@ export class SandboxCapacityService {
     const build =
       this.buildSamples.length > 0
         ? median(this.buildSamples)
-        : SandboxCapacityService.DECLARED_BUILD_SECONDS;
-    return Math.round(build + SandboxCapacityService.DECLARED_SETTLE_SECONDS);
+        : this.config.declaredBuildSeconds;
+    return Math.round(build + this.config.declaredSettleSeconds);
   }
 
   async claimsSince(ms: number): Promise<number> {
@@ -197,7 +176,7 @@ export class SandboxCapacityService {
       select: { namespace: true },
       take: 10,
     });
-    if (living.length === 0) return SandboxCapacityService.DECLARED_FOOTPRINT;
+    if (living.length === 0) return this.declaredFootprint();
 
     let cpu = 0;
     let memory = 0;
@@ -222,7 +201,7 @@ export class SandboxCapacityService {
         );
       }
     }
-    if (sampled === 0) return SandboxCapacityService.DECLARED_FOOTPRINT;
+    if (sampled === 0) return this.declaredFootprint();
 
     return {
       cpu: Math.round(cpu / sampled),
@@ -297,7 +276,7 @@ export class SandboxCapacityService {
     const expected = (demand.rate * readySeconds) / 3600;
     const wanted = Math.ceil(expected) + 1;
 
-    let footprint = SandboxCapacityService.DECLARED_FOOTPRINT;
+    let footprint = this.declaredFootprint();
     let ceiling = warm + live;
     let capacityRead = false;
     try {

@@ -1,35 +1,11 @@
-// The controller now reaches the mail stack, whose import graph pulls in
-// ESM-only packages ts-jest cannot transform. The suite drives stubs, so none of
-// them is ever constructed.
-jest.mock('@kubernetes/client-node', () => ({}));
-jest.mock('ip-cidr', () => ({}));
-jest.mock('jwks-rsa', () => ({ JwksClient: jest.fn() }));
-jest.mock('jose', () => ({}));
-jest.mock('@octokit/rest', () => ({ Octokit: class {} }));
-jest.mock('@octokit/auth-app', () => ({ createAppAuth: jest.fn() }));
-jest.mock('libsodium-wrappers', () => ({ ready: Promise.resolve() }));
-
-import { Request, Response } from 'express';
+import { Request } from 'express';
+import { NotFoundException } from '@nestjs/common';
 import { SandboxClaimController } from './sandbox-claim.controller';
-import { loginUrl, resumeLink } from './sandbox-entry';
-import { SandboxEntryService } from './services/sandbox-entry.service';
-import { SandboxReserveService } from './services/sandbox-reserve.service';
-import { SandboxTenantService } from './services/sandbox-tenant.service';
-import { ApiKeyService } from '../auth/services/api-key.service';
-import { ApiKeyStrategy } from '../auth/strategies/api-key.strategy';
-import { SandboxConfig } from './sandbox.config';
+import { loginUrl } from './sandbox-entry';
+import { loadSandboxConfig } from './sandbox.config';
 import { SandboxTenantEntity } from './entities/sandbox-tenant.entity';
-// Type-only: loading it would pull the mail stack in, and with it an ESM-only
-// Kubernetes client that ts-jest cannot transform.
-import type { SandboxResumeMailService } from './services/sandbox-resume-mail.service';
+import { SANDBOX_GUEST_REQUEST } from './guards/sandbox-fence.guard';
 
-/**
- * Where a claimed guest is sent.
- *
- * A wrong value here is not a cosmetic bug: it is the only link the visitor is
- * given, and it is handed to them at the exact moment the product has to look
- * like it works.
- */
 describe('the login URL a guest is handed', () => {
   it('assumes https for a bare hostname, which is what production passes', () => {
     expect(loginUrl('try.flui.cloud')).toBe('https://try.flui.cloud');
@@ -39,241 +15,82 @@ describe('the login URL a guest is handed', () => {
   });
 
   it('leaves a value that already carries a scheme alone', () => {
-    // A local validation serves the dashboard over plain HTTP; prepending
-    // https there produces a link that cannot connect.
     expect(loginUrl('http://localhost:4200')).toBe('http://localhost:4200');
     expect(loginUrl('https://try.flui.cloud')).toBe('https://try.flui.cloud');
   });
 });
 
-/**
- * Coming back must not cost a tenancy.
- *
- * The reserve is finite and the per-address limit counts claims, so a second
- * click on the entrance used to spend one of each — the brake against abuse
- * closing on the visitor who simply reopened the page.
- */
-describe('claiming with a session already in hand', () => {
-  const tenant = {
-    id: 't-1',
-    namespace: 'user-guest-abc',
-    userId: 'guest-1',
-    expiresAt: new Date(Date.now() + 3_600_000),
-  } as SandboxTenantEntity;
-
-  const config = {
-    enabled: true,
-    acceptingClaims: true,
-    ttlHours: 24,
-    baseDomain: 'try.flui.cloud',
-  } as SandboxConfig;
-
-  const req = (cookie?: string) =>
-    ({
-      headers: cookie ? { cookie: `flui_session=${cookie}` } : {},
-    }) as Request;
-  const res = () => ({ cookie: jest.fn() }) as unknown as Response;
-
-  const build = (overrides: {
-    validate?: jest.Mock;
-    findActiveForUser?: jest.Mock;
-    claim?: jest.Mock;
-  }) => {
-    const reserve = {
-      findActiveForUser: overrides.findActiveForUser ?? jest.fn(),
-    } as unknown as SandboxReserveService;
-    const tenants = {
-      claimOrBuild:
-        overrides.claim ??
-        jest.fn().mockResolvedValue({ tenant, expiresAt: tenant.expiresAt }),
-    } as unknown as SandboxTenantService;
-    const apiKeys = {
-      generateApiKey: jest.fn().mockResolvedValue({ plaintext: 'flui_new' }),
-    } as unknown as ApiKeyService;
-    const strategy = {
-      validate: overrides.validate ?? jest.fn(),
-    } as unknown as ApiKeyStrategy;
-    const resumeMail = {
-      sendResumeLink: jest.fn().mockResolvedValue({ sent: true }),
-    } as unknown as SandboxResumeMailService;
-    return {
-      controller: new SandboxClaimController(
-        reserve,
-        tenants,
-        apiKeys,
-        strategy,
-        resumeMail,
-        new SandboxEntryService(config),
-        config,
-      ),
-      resumeMail,
-      reserve,
-      tenants,
-      apiKeys,
-    };
-  };
-
-  it('gives back the tenancy the caller already holds, taking none from the reserve', async () => {
-    const { controller, tenants, apiKeys } = build({
-      validate: jest.fn().mockResolvedValue({ userId: 'guest-1' }),
-      findActiveForUser: jest.fn().mockResolvedValue(tenant),
-    });
-
-    const out = await controller.claim(req('flui_existing'), res());
-
-    expect(out.resumed).toBe(true);
-    expect(out.apiKey).toBeUndefined();
-    expect(out.loginUrl).toBe('https://try.flui.cloud');
-    expect(tenants.claimOrBuild).not.toHaveBeenCalled();
-    expect(apiKeys.generateApiKey).not.toHaveBeenCalled();
-  });
-
-  it('assigns a new tenancy when there is no cookie', async () => {
-    const { controller, tenants } = build({});
-    const out = await controller.claim(req(), res());
-
-    expect(out.resumed).toBe(false);
-    expect(out.apiKey).toBe('flui_new');
-    expect(tenants.claimOrBuild).toHaveBeenCalled();
-  });
-
-  it.each([
-    [
-      'a credential that no longer validates',
-      { validate: jest.fn().mockRejectedValue(new Error('revoked')) },
-    ],
-    [
-      'a valid credential whose tenancy is gone',
-      {
-        validate: jest.fn().mockResolvedValue({ userId: 'guest-1' }),
-        findActiveForUser: jest.fn().mockResolvedValue(null),
-      },
-    ],
-  ])('falls through to a fresh tenancy for %s', async (_label, overrides) => {
-    const { controller, tenants } = build(overrides);
-    const out = await controller.claim(req('flui_stale'), res());
-
-    expect(out.resumed).toBe(false);
-    expect(tenants.claimOrBuild).toHaveBeenCalled();
-  });
-
-  it('never puts the namespace or the synthetic address in a public response', async () => {
-    const { controller } = build({
-      validate: jest.fn().mockResolvedValue({ userId: 'guest-1' }),
-      findActiveForUser: jest.fn().mockResolvedValue(tenant),
-    });
-    const out = await controller.claim(req('flui_existing'), res());
-
-    expect(JSON.stringify(out)).not.toContain('user-guest-abc');
-    expect(out).not.toHaveProperty('namespace');
-    expect(out).not.toHaveProperty('email');
-  });
-});
-
-/**
- * The way back in.
- *
- * The link is worth exactly what the browser that asked for it already holds —
- * a credential for one throwaway tenancy — and it dies with that tenancy. What
- * matters here is that it never points anywhere else, and that a bad one says
- * nothing about why.
- */
-describe('the resume link', () => {
-  const OLD = process.env.API_BASE_URL;
-  afterEach(() => {
-    if (OLD === undefined) delete process.env.API_BASE_URL;
-    else process.env.API_BASE_URL = OLD;
-  });
-
-  it('points at the API, which is the only thing that can set the cookie', () => {
-    process.env.API_BASE_URL = 'https://api.try.flui.cloud';
-    expect(resumeLink('try.flui.cloud', 'flui_abc')).toBe(
-      'https://api.try.flui.cloud/api/v1/sandbox/resume?token=flui_abc',
-    );
-  });
-
-  it('falls back to the dashboard origin when no API base is configured', () => {
-    delete process.env.API_BASE_URL;
-    expect(resumeLink('http://localhost:4200', 'flui_abc')).toBe(
-      'http://localhost:4200/api/v1/sandbox/resume?token=flui_abc',
-    );
-  });
-
-  it('escapes the token rather than pasting it into the query', () => {
-    delete process.env.API_BASE_URL;
-    expect(resumeLink('http://localhost:4200', 'a b&c=d')).toContain(
-      'token=a%20b%26c%3Dd',
-    );
-  });
-});
-
-/**
- * A saved link that no longer works.
- *
- * Where it lands matters more than what it says. It used to land on `/login` —
- * a screen asking for a password from the one kind of visitor who has never had
- * one, and the only way out of the sandbox was a dead end.
- */
-describe('following a resume link that is gone', () => {
-  const config = {
-    enabled: true,
-    acceptingClaims: true,
-    ttlHours: 24,
-    baseDomain: 'http://localhost:4200',
-  } as SandboxConfig;
-
-  const build = (validate: jest.Mock, findActiveForUser: jest.Mock) =>
+describe('the area a guest holds', () => {
+  const touched = jest.fn(async () => undefined);
+  const build = (held: Partial<SandboxTenantEntity> | null) =>
     new SandboxClaimController(
-      { findActiveForUser } as unknown as SandboxReserveService,
-      {} as unknown as SandboxTenantService,
-      {} as unknown as ApiKeyService,
-      { validate } as unknown as ApiKeyStrategy,
-      {} as unknown as SandboxResumeMailService,
-      new SandboxEntryService(config),
-      config,
+      { findActiveForUser: async () => held } as never,
+      { origin: 'https://demo.flui.cloud' } as never,
+      loadSandboxConfig({ SANDBOX_TTL_HOURS: '72' }),
+      { touch: touched } as never,
     );
+  const req = (userId?: string, guest = true) =>
+    ({
+      user: userId ? { userId } : undefined,
+      ...(guest ? { [SANDBOX_GUEST_REQUEST]: { level: 'full' } } : {}),
+    }) as unknown as Request;
 
-  it('sends the visitor back to the door, not to a sign-in screen', async () => {
-    const redirect = jest.fn();
-    const controller = build(
-      jest.fn().mockRejectedValue(new Error('revoked')),
-      jest.fn(),
-    );
+  it('says how long is left of it', async () => {
+    const expiresAt = new Date(Date.now() + 3_600_000);
+    const session = await build({ expiresAt }).session(req('u1'));
 
-    await controller.resume('flui_dead', { redirect } as unknown as Response);
-
-    expect(redirect).toHaveBeenCalledWith(
-      'http://localhost:4200/try?expired=1',
-    );
+    expect(session.hasArea).toBe(true);
+    expect(session.expiresAt).toBe(expiresAt.toISOString());
+    expect(session.secondsRemaining).toBeGreaterThan(3500);
+    expect(session.ttlHours).toBe(72);
+    expect(session.loginUrl).toBe('https://demo.flui.cloud');
   });
 
-  it('says the same thing for a link that was never real', async () => {
-    const redirect = jest.fn();
-    const controller = build(jest.fn(), jest.fn());
+  it('tells a guest who has only looked around that they hold no area yet', async () => {
+    const session = await build(null).session(req('u1'));
 
-    await controller.resume('', { redirect } as unknown as Response);
-
-    expect(redirect).toHaveBeenCalledWith(
-      'http://localhost:4200/try?expired=1',
-    );
+    expect(session.hasArea).toBe(false);
+    expect(session.expiresAt).toBeNull();
+    expect(session.secondsRemaining).toBe(0);
   });
 
-  it('opens the tenancy itself when the link still works', async () => {
-    const redirect = jest.fn();
-    const cookie = jest.fn();
-    const controller = build(
-      jest.fn().mockResolvedValue({ userId: 'guest-1' }),
-      jest.fn().mockResolvedValue({
-        expiresAt: new Date(Date.now() + 3_600_000),
-      } as SandboxTenantEntity),
+  it('answers 404 to anyone who is not a demo guest', async () => {
+    await expect(
+      build({ expiresAt: new Date() }).session(req('u1', false)),
+    ).rejects.toBeInstanceOf(NotFoundException);
+  });
+
+  it('never exposes the namespace of the area', async () => {
+    const session = await build({
+      expiresAt: new Date(),
+      namespace: 'p-area-1234',
+    }).session(req('u1'));
+
+    expect(JSON.stringify(session)).not.toContain('p-area-1234');
+  });
+});
+
+describe("keeping a guest's applications", () => {
+  it('counts as an action of the guest and answers with the area', async () => {
+    const touch = jest.fn(async () => undefined);
+    const controller = new SandboxClaimController(
+      {
+        findActiveForUser: async () => ({
+          expiresAt: new Date(Date.now() + 1000),
+        }),
+      } as never,
+      { origin: 'https://demo.flui.cloud' } as never,
+      loadSandboxConfig({}),
+      { touch } as never,
     );
+    const req = {
+      user: { userId: 'u1' },
+      [SANDBOX_GUEST_REQUEST]: { userId: 'u1' },
+    } as unknown as Request;
 
-    await controller.resume('flui_live', {
-      redirect,
-      cookie,
-    } as unknown as Response);
+    const session = await controller.keep(req);
 
-    expect(cookie).toHaveBeenCalled();
-    expect(redirect).toHaveBeenCalledWith('http://localhost:4200');
+    expect(touch).toHaveBeenCalledWith('u1');
+    expect(session.hasArea).toBe(true);
   });
 });

@@ -8,7 +8,7 @@ import {
   INVALID_NAMESPACE_ERROR_CODE,
   CLIENT_NAMESPACE_ERROR_CODE,
 } from './reserved-namespace.util';
-import { buildUserNamespace } from './k8s-namespace.util';
+import { projectNamespace } from './k8s-namespace.util';
 
 const codeOf = (ns: string): string => {
   try {
@@ -55,13 +55,9 @@ describe('isReservedNamespace', () => {
     },
   );
 
-  it('never reserves a namespace derived from a user email', () => {
-    expect(isReservedNamespace(buildUserNamespace('flui-system@x.com'))).toBe(
-      false,
-    );
-    expect(isReservedNamespace(buildUserNamespace('kube-system@x.com'))).toBe(
-      false,
-    );
+  it('never reserves the namespace of a project, whatever its slug', () => {
+    expect(isReservedNamespace(projectNamespace('flui-system'))).toBe(false);
+    expect(isReservedNamespace(projectNamespace('kube-system'))).toBe(false);
   });
 });
 

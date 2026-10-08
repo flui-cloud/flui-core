@@ -74,7 +74,10 @@ import {
   CatalogInstallJobData,
   CatalogUninstallJobData,
 } from '../services/catalog-installer.service';
-import { buildUserNamespace } from '../../applications/utils/k8s-namespace.util';
+import {
+  ProjectPlacement,
+  ProjectsService,
+} from '../../projects/projects.service';
 import { SandboxTenantEntity } from '../../sandbox/entities/sandbox-tenant.entity';
 import { OidcProviderAdminClient } from '../../oidc/services/oidc-provider-admin.service';
 import { ClusterEntity } from '../../infrastructure/clusters/entities/cluster.entity';
@@ -86,6 +89,22 @@ import { EncryptionService } from '../../shared/encryption/services/encryption.s
 import { EndpointModeResolverService } from '../../dns/services/endpoint-mode-resolver.service';
 import { TenancySubdomainService } from '../../dns/services/tenancy-subdomain.service';
 import { SandboxSubdomainService } from '../../dns/services/sandbox-subdomain.service';
+
+const COMPONENT_ENV_REF = /\{\{\s*components\.([^.]+)\.env\.([^.}\s]+)\s*\}\}/g;
+
+/**
+ * A value built from a sibling's secret is a secret too: a password generated
+ * for the database is no less a password once the web component reads it.
+ */
+export function readsComponentSecret(
+  template: string,
+  secretEnvByComponent: ReadonlyMap<string, ReadonlySet<string>>,
+): boolean {
+  for (const [, component, name] of template.matchAll(COMPONENT_ENV_REF)) {
+    if (secretEnvByComponent.get(component)?.has(name)) return true;
+  }
+  return false;
+}
 
 interface ResolvedEnv {
   name: string;
@@ -153,7 +172,18 @@ export class CatalogInstallProcessor {
     private readonly sandboxSubdomains: SandboxSubdomainService,
     @InjectRepository(SandboxTenantEntity)
     private readonly sandboxTenants: Repository<SandboxTenantEntity>,
+    private readonly projects: ProjectsService,
   ) {}
+
+  /** The project, and so the namespace, every application of this install lands in. */
+  private placementOf(
+    install: CatalogInstallEntity,
+  ): Promise<ProjectPlacement> {
+    return this.projects.placementFor({
+      projectId: install.projectId,
+      userId: install.userId,
+    });
+  }
 
   /**
    * Whether this install's workloads may schedule on the control plane.
@@ -170,11 +200,9 @@ export class CatalogInstallProcessor {
     if (install.allowMasterPlacement) return true;
     if (process.env.FLUI_ALLOW_MASTER !== 'true') return false;
 
-    const namespace = install.userEmail
-      ? buildUserNamespace(install.userEmail)
-      : 'default';
+    if (!install.userId) return false;
     const sandbox = await this.sandboxTenants.exists({
-      where: { clusterId: install.clusterId, namespace },
+      where: { clusterId: install.clusterId, userId: install.userId },
     });
     return !sandbox;
   }
@@ -236,6 +264,7 @@ export class CatalogInstallProcessor {
       this.logger.log(
         `[deps-debug] install=${install.id} type=${spec.type} deps=${JSON.stringify(deps)} choices=${JSON.stringify(install.dependencyChoices)}`,
       );
+      const placement = await this.placementOf(install);
       const depResolution = deps.length
         ? await this.dependencyResolver.resolveAll(
             deps,
@@ -243,6 +272,7 @@ export class CatalogInstallProcessor {
             install.clusterId,
             install.userId,
             install.userEmail,
+            { projectId: placement.project.id },
           )
         : {
             resolved: [],
@@ -276,7 +306,11 @@ export class CatalogInstallProcessor {
         OperationStep.CATALOG_INSTALL_RESOLVE_TEMPLATES,
       );
 
-      const ctx = this.buildTemplateContext(install, resolvedEnv);
+      const ctx = this.buildTemplateContext(
+        install,
+        resolvedEnv,
+        placement.namespace,
+      );
       ctx.deps = Object.fromEntries(
         depResolution.resolved.map((d) => [
           d.alias,
@@ -311,6 +345,7 @@ export class CatalogInstallProcessor {
         ctx,
         await this.allowMasterPlacementFor(install),
       );
+      dto.projectId = placement.project.id;
       // Re-entrant, because this handler can be delivered twice: `attempts: 1`
       // stops a retry after an error, not a stalled job handed to the next
       // worker when this one dies — and a platform update restarts the API.
@@ -325,7 +360,6 @@ export class CatalogInstallProcessor {
           install.clusterId,
           dto,
           install.userId,
-          install.userEmail,
         ));
       if (alreadyCreated[0]) {
         this.logger.log(
@@ -613,10 +647,8 @@ export class CatalogInstallProcessor {
   private buildTemplateContext(
     install: CatalogInstallEntity,
     env: ResolvedEnv[],
+    namespace: string,
   ): TemplateContext {
-    const namespace = install.userEmail
-      ? buildUserNamespace(install.userEmail)
-      : 'default';
     return {
       app: {
         id: install.slug,
@@ -1350,9 +1382,8 @@ export class CatalogInstallProcessor {
       OperationStep.CATALOG_INSTALL_CREATE_APPLICATIONS,
     );
 
-    const namespace = install.userEmail
-      ? buildUserNamespace(install.userEmail)
-      : 'default';
+    const placement = await this.placementOf(install);
+    const namespace = placement.namespace;
     const ctx: TemplateContext = {
       app: {
         id: install.slug,
@@ -1366,6 +1397,7 @@ export class CatalogInstallProcessor {
 
     const applicationIds: string[] = [];
     const degradedComponents: string[] = [];
+    const secretEnvByComponent = new Map<string, Set<string>>();
     const primaryComponent = this.pickPrimaryComponent(includedComponents);
     const appIdByComponent = new Map<string, string>();
 
@@ -1454,9 +1486,13 @@ export class CatalogInstallProcessor {
       const substituted = resolvedEnv.map((e) => ({
         name: e.name,
         value: this.templateResolver.resolve(e.value, componentCtx),
-        secret: e.secret,
+        secret: e.secret || readsComponentSecret(e.value, secretEnvByComponent),
         externalSecretRef: e.externalSecretRef,
       }));
+      secretEnvByComponent.set(
+        component.name,
+        new Set(substituted.filter((e) => e.secret).map((e) => e.name)),
+      );
 
       const reused = existingByComponent.get(component.name);
       let application: ApplicationEntity;
@@ -1474,11 +1510,11 @@ export class CatalogInstallProcessor {
           substituted,
           await this.allowMasterPlacementFor(install),
         );
+        dto.projectId = placement.project.id;
         application = await this.applicationService.create(
           install.clusterId,
           dto,
           install.userId,
-          install.userEmail,
         );
         // Same reason as the single-application path: a component that IS a
         // datastore carries its own URL before its Secret is first written.

@@ -3,6 +3,7 @@ import {
   NotFoundException,
   UnauthorizedException,
 } from '@nestjs/common';
+import { noteSeen, refuseIfBlocked } from '../utils/user-presence.util';
 import { InjectRepository } from '@nestjs/typeorm';
 import { LessThan, Repository } from 'typeorm';
 import { JwtService } from '@nestjs/jwt';
@@ -55,6 +56,7 @@ export class LocalAuthService {
     if (!user || !valid) {
       throw new UnauthorizedException('Invalid credentials');
     }
+    refuseIfBlocked(user);
 
     const access_token = this.generateToken(user);
     const refresh_token = await this.createRefreshToken(user.id);
@@ -84,6 +86,8 @@ export class LocalAuthService {
     if (!user) {
       throw new UnauthorizedException('User not found');
     }
+    refuseIfBlocked(user);
+    noteSeen(this.userRepo, user);
 
     return { access_token: this.generateToken(user) };
   }

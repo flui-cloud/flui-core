@@ -214,6 +214,30 @@ describe('SandboxSubdomainService.ensure', () => {
     );
   });
 
+  it('asks the DNS provider once, not once per area', async () => {
+    const { service, ensureWildcardRecord } = build({
+      certificate: { status: CertificateStatus.VALID },
+    });
+
+    for (let i = 0; i < 50; i++) {
+      await service.ensure(CLUSTER, `p-area-${i}`);
+    }
+
+    expect(ensureWildcardRecord).toHaveBeenCalledTimes(1);
+  });
+
+  it('asks again after a failed publication', async () => {
+    const { service, ensureWildcardRecord } = build({
+      certificate: { status: CertificateStatus.VALID },
+    });
+    ensureWildcardRecord.mockRejectedValueOnce(new Error('rate limited'));
+
+    await service.ensure(CLUSTER, 'p-area-1');
+    await service.ensure(CLUSTER, 'p-area-2');
+
+    expect(ensureWildcardRecord).toHaveBeenCalledTimes(2);
+  });
+
   /**
    * The measurement the decision rests on: issuance is a constant of the
    * installation, not a function of how many guests pass through it. The

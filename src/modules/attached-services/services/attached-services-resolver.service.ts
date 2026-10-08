@@ -341,20 +341,21 @@ export class AttachedServicesResolverService implements AttachedServicesPort {
       );
     }
 
-    // The email is what puts the block in the OWNER's namespace, and the
-    // cross-application `secretKeyRef` only resolves inside one namespace. A
-    // background re-apply (a push, not a person) carries no email, so it is
-    // read from the application's owner rather than defaulted — a block that
-    // landed in `default` would be unreachable and the failure would show up
-    // as a pod that never starts, minutes later and somewhere else.
+    // The block lands in the application's project, because the
+    // cross-application `secretKeyRef` only resolves inside one namespace. It
+    // is read from the application, never from whoever triggered this: a
+    // background re-apply (a push, not a person) has nobody behind it, and a
+    // teammate redeploying must not pull the block into their own project.
     const userEmail =
       ctx.userEmail ?? (await this.ownerEmailOf(ctx.applicationId));
+    const app = await this.applicationsRepo.findById(ctx.applicationId);
 
     const { install } = await this.installer.installBuildingBlock(
       svc.block,
       ctx.clusterId,
       ctx.userId,
       userEmail,
+      app?.projectId,
     );
     this.logger.log(
       `application ${ctx.applicationId}: installing ${svc.block} as service "${svc.name}" (install ${install.id})`,

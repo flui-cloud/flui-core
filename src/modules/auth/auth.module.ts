@@ -1,4 +1,6 @@
 import { MailModule } from '../mail/mail.module';
+import { DemoSignInService } from './services/demo-sign-in.service';
+import { SandboxGateModule } from '../sandbox/gate/sandbox-slot-gate';
 import { Module } from '@nestjs/common';
 import { BullModule } from '@nestjs/bull';
 import { ConfigModule, ConfigService } from '@nestjs/config';
@@ -67,6 +69,7 @@ import { FirewallsModule } from '../infrastructure/firewalls/firewalls.module';
   imports: [
     ConfigModule,
     MailModule,
+    SandboxGateModule,
     ThrottlerModule.forRoot([{ ttl: 60000, limit: 100 }]),
     PassportModule.register({ defaultStrategy: 'jwt' }),
     JwtModule.registerAsync({
@@ -104,6 +107,7 @@ import { FirewallsModule } from '../infrastructure/firewalls/firewalls.module';
     IamModule,
   ],
   providers: [
+    DemoSignInService,
     JwtStrategy,
     LocalJwtStrategy,
     ApiKeyStrategy,

@@ -76,6 +76,16 @@ export const IAM_PERMISSION = {
    */
   SANDBOX_OPERATE: 'sandbox:operate',
   /**
+   * Decide which ports the applications on a cluster may reach outside it.
+   *
+   * Not `cluster:manage`: the rule is what keeps a guest, or anybody's
+   * application, from mailing spam or scanning the internet from the
+   * installation's addresses, and whoever may resize a cluster should not
+   * open that by implication. No agent scope carries it; an agent reads the
+   * rule so it stops waiting on a port that will never answer.
+   */
+  EGRESS_MANAGE: 'egress:manage',
+  /**
    * Move this installation to a newer Flui release — the API, the dashboard and
    * the authorization service, together.
    *

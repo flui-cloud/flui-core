@@ -42,6 +42,7 @@ export interface CatalogInstall {
 
 export interface InstallCatalogAppInput {
   clusterId: string;
+  projectId?: string;
   displayName: string;
   domain?: string;
   exposure?: string;

@@ -1,4 +1,9 @@
-import { ForbiddenException, Inject, Injectable } from '@nestjs/common';
+import {
+  ForbiddenException,
+  Inject,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { In, Repository } from 'typeorm';
 import {
@@ -20,11 +25,11 @@ import { ApplicationEntity } from '../entities/application.entity';
 import { ProjectEntity } from '../../projects/entities/project.entity';
 import { ClusterEntity } from '../../infrastructure/clusters/entities/cluster.entity';
 import {
-  SandboxTenantEntity,
-  SandboxTenantState,
-} from '../../sandbox/entities/sandbox-tenant.entity';
+  SANDBOX_SLOT_GATE,
+  SandboxSlotGate,
+} from '../../sandbox/gate/sandbox-slot-gate';
 
-export const SANDBOX_CLUSTER_FORBIDDEN_CODE = 'SANDBOX_CLUSTER_NOT_OWNED';
+export { SANDBOX_CLUSTER_FORBIDDEN_CODE } from '../../sandbox/gate/sandbox-slot-gate';
 
 /** What one caller may do with one application, as told to the interface. */
 export interface AppAccessSummary {
@@ -136,8 +141,8 @@ export class ApplicationAccessService {
     private readonly projects: Repository<ProjectEntity>,
     @InjectRepository(ClusterEntity)
     private readonly clusters: Repository<ClusterEntity>,
-    @InjectRepository(SandboxTenantEntity)
-    private readonly sandboxTenants: Repository<SandboxTenantEntity>,
+    @Inject(SANDBOX_SLOT_GATE)
+    private readonly slotGate: SandboxSlotGate,
   ) {}
 
   principalFrom(user: AuthenticatedUser): IamPrincipal {
@@ -275,6 +280,7 @@ export class ApplicationAccessService {
       kind?: string;
       slug?: string;
       projectSlug?: string;
+      projectId?: string;
       tags?: string[];
     },
   ): Promise<PrincipalAccess> {
@@ -286,12 +292,23 @@ export class ApplicationAccessService {
     // `:clusterId` pattern matches any id: without this pin a guest names any
     // cluster on the instance as its target.
     if (access.isSandbox) {
-      await this.assertSandboxTenancyCluster(user.userId, target.clusterId);
+      await this.slotGate.assertCanCreate(
+        user.userId,
+        target.clusterId,
+        user.email,
+      );
     }
 
     const cluster = target.clusterId
       ? await this.clusters.findOne({ where: { id: target.clusterId } })
       : undefined;
+    // A guest always lands in their own area; the project they name is
+    // stripped after this check, so it must not decide it either.
+    const projectSlug =
+      target.projectSlug ??
+      (access.isSandbox
+        ? undefined
+        : await this.projectSlugOf(target.projectId));
     const resource: ResourceAttributes = {
       slug: target.slug ?? '',
       type: (target.category as 'system' | 'user') ?? 'user',
@@ -299,7 +316,7 @@ export class ApplicationAccessService {
       clusterId: target.clusterId,
       clusterName: cluster?.name,
       provider: cluster?.provider,
-      project: target.projectSlug,
+      project: projectSlug,
       tags: target.tags ?? [],
       owner: user.userId,
     };
@@ -311,29 +328,17 @@ export class ApplicationAccessService {
     return access;
   }
 
-  /**
-   * A sandbox guest creates only on the cluster its tenancy was built on. The
-   * tenancy row is the one source that binds guest → cluster; an expired or
-   * missing tenancy refuses creation too, since the credential should not
-   * outlive what it opens.
-   */
-  private async assertSandboxTenancyCluster(
-    userId: string,
-    clusterId: string | undefined,
-  ): Promise<void> {
-    const tenant = await this.sandboxTenants.findOne({
-      where: { userId, state: SandboxTenantState.CLAIMED },
+  /** Creating into a project is judged against that project's grants. */
+  private async projectSlugOf(
+    projectId: string | undefined,
+  ): Promise<string | undefined> {
+    if (!projectId) return undefined;
+    const project = await this.projects.findOne({
+      where: { id: projectId },
+      select: { id: true, slug: true },
     });
-    const boundTo = tenant?.clusterId;
-    if (boundTo === undefined || boundTo !== clusterId) {
-      throw new ForbiddenException({
-        statusCode: 403,
-        code: SANDBOX_CLUSTER_FORBIDDEN_CODE,
-        message:
-          'A sandbox guest can only create applications on the cluster of its own tenancy.',
-        clusterId: clusterId ?? null,
-      });
-    }
+    if (!project) throw new NotFoundException(`Project ${projectId} not found`);
+    return project.slug;
   }
 
   private async resourceFor(

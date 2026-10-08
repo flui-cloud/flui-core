@@ -65,6 +65,7 @@ describe('SCOPE_AUTHORITY', () => {
       IAM_PERMISSION.INTEGRATION_MANAGE,
       IAM_PERMISSION.SHOWCASE_PUBLISH,
       IAM_PERMISSION.SANDBOX_OPERATE,
+      IAM_PERMISSION.EGRESS_MANAGE,
     ];
     for (const scope of GRANTABLE_SCOPES) {
       if (SCOPE_TIER[scope] !== 'read' && SCOPE_TIER[scope] !== 'plan')

@@ -37,7 +37,7 @@ import { ApplicationEntity } from '../applications/entities/application.entity';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { ProjectEntity } from '../projects/entities/project.entity';
 import { ClusterEntity } from '../infrastructure/clusters/entities/cluster.entity';
-import { SandboxTenantEntity } from '../sandbox/entities/sandbox-tenant.entity';
+import { SANDBOX_SLOT_GATE } from '../sandbox/gate/sandbox-slot-gate';
 import { IamRoleBindingEntity } from './entities/iam-role-binding.entity';
 import { IamGroupEntity } from './entities/iam-group.entity';
 
@@ -270,8 +270,8 @@ describe('resource fence (direct API calls)', () => {
           },
         },
         {
-          provide: getRepositoryToken(SandboxTenantEntity),
-          useValue: { findOne: async () => null },
+          provide: SANDBOX_SLOT_GATE,
+          useValue: { assertCanCreate: async () => undefined },
         },
         {
           provide: ApplicationService,

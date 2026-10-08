@@ -13,6 +13,8 @@ import { InferenceProviderService } from './services/inference-provider.service'
 import { InferenceConnectionService } from './services/inference-connection.service';
 import { InferenceUsageService } from './services/inference-usage.service';
 import { InferenceController } from './controllers/inference.controller';
+import { InferenceSpendAlertService } from './services/inference-spend-alert.service';
+import { ObservabilityModule } from '../observability/observability.module';
 
 @Module({
   imports: [
@@ -26,6 +28,7 @@ import { InferenceController } from './controllers/inference.controller';
     // For the one question the list asks and the spend path deliberately does
     // not: who, besides the owner, may *see* a personal connection.
     IamModule,
+    ObservabilityModule,
   ],
   controllers: [InferenceController],
   providers: [
@@ -35,6 +38,7 @@ import { InferenceController } from './controllers/inference.controller';
     InferenceProviderService,
     InferenceConnectionService,
     InferenceUsageService,
+    InferenceSpendAlertService,
   ],
   exports: [
     InferenceResolverService,

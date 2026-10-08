@@ -1,6 +1,8 @@
 import './load-env';
 import { NestFactory } from '@nestjs/core';
+import { NestExpressApplication } from '@nestjs/platform-express';
 import { corsOriginDelegate } from './config/cors-origin.config';
+import { trustProxySetting } from './config/trust-proxy.config';
 import { AppModule } from './app.module';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import helmet from 'helmet';
@@ -100,7 +102,7 @@ async function bootstrap() {
   await performPreBootstrapChecks();
 
   const isProduction = process.env.NODE_ENV === 'production';
-  const app = await NestFactory.create(AppModule, {
+  const app = await NestFactory.create<NestExpressApplication>(AppModule, {
     logger: isProduction ? new ConsoleLogger({ json: true }) : undefined,
     // Keep the bytes as they arrived, for the webhook handlers that verify a
     // signature over them. Without it `req.rawBody` is undefined and the only
@@ -118,6 +120,8 @@ async function bootstrap() {
   app.use((_req: unknown, _res: unknown, next: () => void) =>
     runWithActorContext(next),
   );
+
+  app.set('trust proxy', trustProxySetting());
 
   // Global prefix
   app.setGlobalPrefix('api/v1');

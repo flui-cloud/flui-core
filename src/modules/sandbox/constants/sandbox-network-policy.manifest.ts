@@ -1,11 +1,10 @@
 /**
  * The network fence around one tenancy.
  *
- * Calibrated rather than sealed: an application that cannot reach the internet
- * demonstrates less — no package installs, no webhooks, no API calls — and the
- * demo exists to show that real software runs here. So egress stays open to the
- * internet and is closed only where it would reach *us*: the cluster's own
- * private ranges, its metadata service, and the other tenancies.
+ * Egress here is DNS and the tenancy itself. The way out to the internet is
+ * the cluster's egress policy (`flui-egress`, written beside this one): kept
+ * apart because policies add up, so a port this one opened could never be
+ * closed by that one.
  *
  * Ingress is the opposite: nothing may enter a tenancy except the ingress
  * controller. One guest must not be able to reach another guest's database by
@@ -83,16 +82,5 @@ ${cidrBlocks}
     # This tenancy talking to itself.
     - to:
         - podSelector: {}
-    # The public internet, minus everything private and minus the metadata
-    # service — the address that hands out node credentials on most providers.
-    - to:
-        - ipBlock:
-            cidr: 0.0.0.0/0
-            except:
-              - 10.0.0.0/8
-              - 172.16.0.0/12
-              - 192.168.0.0/16
-              - 169.254.0.0/16
-              - 127.0.0.0/8
 `;
 }

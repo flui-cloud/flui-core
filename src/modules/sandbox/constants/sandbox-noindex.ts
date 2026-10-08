@@ -32,12 +32,3 @@ spec:
       X-Robots-Tag: "${SANDBOX_NOINDEX_HEADER['X-Robots-Tag']}"
 `;
 }
-
-/**
- * Served at the apex of the guest domain. `Disallow: /` on the wildcard host is
- * the half of the promise that covers crawlers which never fetch a page before
- * deciding to index the host.
- */
-export const SANDBOX_ROBOTS_TXT = `User-agent: *
-Disallow: /
-`;

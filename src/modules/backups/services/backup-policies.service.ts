@@ -335,7 +335,7 @@ export class BackupPoliciesService {
    */
   async setPlatformConfig(
     id: string,
-    cfg: { recipient: string; heartbeatUrl?: string },
+    cfg: { recipient: string; heartbeatUrl?: string; clearHeartbeat?: boolean },
   ): Promise<BackupPolicyEntity> {
     const policy = await this.findById(id);
     if (policy.engineClass !== BackupEngineClass.PLATFORM) {
@@ -349,18 +349,22 @@ export class BackupPoliciesService {
       );
     }
     const prevPlatform = policy.metadata?.platform ?? {};
+    let heartbeat = prevPlatform.heartbeat;
+    if (cfg.heartbeatUrl) heartbeat = { url: cfg.heartbeatUrl };
+    else if (cfg.clearHeartbeat) heartbeat = undefined;
+    let heartbeatChange = 'unchanged';
+    if (cfg.heartbeatUrl) heartbeatChange = 'set';
+    else if (cfg.clearHeartbeat) heartbeatChange = 'cleared';
     const platform = {
       ...prevPlatform,
       recipient: cfg.recipient,
-      heartbeat: cfg.heartbeatUrl
-        ? { url: cfg.heartbeatUrl }
-        : prevPlatform.heartbeat,
+      heartbeat,
     };
     await this.repo.update(id, {
       metadata: { ...policy.metadata, platform },
     });
     this.logger.log(
-      `[backup-policies] platform config set on ${id} (recipient=${cfg.recipient.slice(0, 12)}…, heartbeat=${cfg.heartbeatUrl ? 'set' : 'unchanged'})`,
+      `[backup-policies] platform config set on ${id} (recipient=${cfg.recipient.slice(0, 12)}…, heartbeat=${heartbeatChange})`,
     );
     return this.findById(id);
   }

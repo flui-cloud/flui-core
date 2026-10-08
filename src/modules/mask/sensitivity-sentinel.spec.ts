@@ -813,6 +813,7 @@ const MASK_EXEMPT: string[] = [
   'BillingPeriodDto.end', // modules/infrastructure/clusters/dto/cluster-billing.dto.ts
   'BillingPeriodDto.start', // modules/infrastructure/clusters/dto/cluster-billing.dto.ts
   'BillingPeriodDto.totalHours', // modules/infrastructure/clusters/dto/cluster-billing.dto.ts
+  'BlockUserDto.reason', // modules/auth/dto/block-user.dto.ts
   'BuildAdvisorResultDto.deployabilityScore', // modules/app-builds/dto/build-advisor-result.dto.ts
   'BuildAdvisorResultDto.deployStrategy', // modules/app-builds/dto/build-advisor-result.dto.ts
   'BuildAdvisorResultDto.projectWarnings', // modules/app-builds/dto/build-advisor-result.dto.ts
@@ -1477,6 +1478,7 @@ const MASK_EXEMPT: string[] = [
   'CreateApplicationDto.persistenceScope', // modules/applications/dto/create-application.dto.ts
   'CreateApplicationDto.port', // modules/applications/dto/create-application.dto.ts
   'CreateApplicationDto.portProtocol', // modules/applications/dto/create-application.dto.ts
+  'CreateApplicationDto.projectId', // modules/applications/dto/create-application.dto.ts
   'CreateApplicationDto.replicas', // modules/applications/dto/create-application.dto.ts
   'CreateApplicationDto.resourceProfile', // modules/applications/dto/create-application.dto.ts
   'CreateApplicationDto.resources', // modules/applications/dto/create-application.dto.ts
@@ -1491,6 +1493,7 @@ const MASK_EXEMPT: string[] = [
   'CreateApplicationResponseDto.application', // modules/applications/dto/application-response.dto.ts
   'CreateApplicationResponseDto.firstRevisionId', // modules/applications/dto/application-response.dto.ts
   'CreateApplicationResponseDto.operation', // modules/applications/dto/application-response.dto.ts
+  'CreateAppMigrationDto.backupDestinationId', // modules/app-migration/dto/create-app-migration.dto.ts
   'CreateAppMigrationDto.cutover', // modules/app-migration/dto/create-app-migration.dto.ts
   'CreateAppMigrationDto.srcAppId', // modules/app-migration/dto/create-app-migration.dto.ts
   'CreateAppMigrationDto.targetClusterId', // modules/app-migration/dto/create-app-migration.dto.ts
@@ -1717,6 +1720,7 @@ const MASK_EXEMPT: string[] = [
   'DeployFromYamlDto.envOverrides', // modules/applications/dto/deploy-from-yaml.dto.ts
   'DeployFromYamlDto.imageRef', // modules/applications/dto/deploy-from-yaml.dto.ts
   'DeployFromYamlDto.overrides', // modules/applications/dto/deploy-from-yaml.dto.ts
+  'DeployFromYamlDto.projectId', // modules/applications/dto/deploy-from-yaml.dto.ts
   'DeployFromYamlDto.repoFullName', // modules/applications/dto/deploy-from-yaml.dto.ts
   'DeployFromYamlDto.secretEnvKeys', // modules/applications/dto/deploy-from-yaml.dto.ts
   'DeployFromYamlDto.skipBuild', // modules/applications/dto/deploy-from-yaml.dto.ts
@@ -2159,6 +2163,7 @@ const MASK_EXEMPT: string[] = [
   'InstallCatalogAppDto.force', // modules/catalog/dto/install-catalog-app.dto.ts
   'InstallCatalogAppDto.hostnameMode', // modules/catalog/dto/install-catalog-app.dto.ts
   'InstallCatalogAppDto.options', // modules/catalog/dto/install-catalog-app.dto.ts
+  'InstallCatalogAppDto.projectId', // modules/catalog/dto/install-catalog-app.dto.ts
   'InstallCatalogAppDto.resourceOverrides', // modules/catalog/dto/install-catalog-app.dto.ts
   'InstallCatalogAppDto.skipEndpoint', // modules/catalog/dto/install-catalog-app.dto.ts
   'InstallCatalogAppDto.tls', // modules/catalog/dto/install-catalog-app.dto.ts
@@ -2176,6 +2181,7 @@ const MASK_EXEMPT: string[] = [
   'InstallFromYamlDto.force', // modules/catalog/dto/install-from-yaml.dto.ts
   'InstallFromYamlDto.hostnameMode', // modules/catalog/dto/install-from-yaml.dto.ts
   'InstallFromYamlDto.options', // modules/catalog/dto/install-from-yaml.dto.ts
+  'InstallFromYamlDto.projectId', // modules/catalog/dto/install-from-yaml.dto.ts
   'InstallFromYamlDto.resourceOverrides', // modules/catalog/dto/install-from-yaml.dto.ts
   'InstallFromYamlDto.skipEndpoint', // modules/catalog/dto/install-from-yaml.dto.ts
   'InstallFromYamlDto.tls', // modules/catalog/dto/install-from-yaml.dto.ts
@@ -3105,8 +3111,6 @@ const MASK_EXEMPT: string[] = [
   'SandboxCapacityDto.reason', // modules/sandbox/dto/sandbox-capacity.dto.ts
   'SandboxCapacityDto.target', // modules/sandbox/dto/sandbox-capacity.dto.ts
   'SandboxCapacityDto.warm', // modules/sandbox/dto/sandbox-capacity.dto.ts
-  'SandboxClaimResultDto.apiKey', // modules/sandbox/dto/sandbox-session.dto.ts
-  'SandboxClaimResultDto.resumed', // modules/sandbox/dto/sandbox-session.dto.ts
   'SandboxFootprintDto.cpu', // modules/sandbox/dto/sandbox-capacity.dto.ts
   'SandboxFootprintDto.memory', // modules/sandbox/dto/sandbox-capacity.dto.ts
   'SandboxFootprintDto.sampledFrom', // modules/sandbox/dto/sandbox-capacity.dto.ts
@@ -3118,10 +3122,7 @@ const MASK_EXEMPT: string[] = [
   'SandboxQuotaDto.memory', // modules/sandbox/dto/sandbox-limits.dto.ts
   'SandboxQuotaDto.pods', // modules/sandbox/dto/sandbox-limits.dto.ts
   'SandboxQuotaDto.storage', // modules/sandbox/dto/sandbox-limits.dto.ts
-  'SandboxSaveRequestDto.email', // modules/sandbox/dto/sandbox-session.dto.ts
-  'SandboxSaveResultDto.expiresAt', // modules/sandbox/dto/sandbox-session.dto.ts
-  'SandboxSaveResultDto.reason', // modules/sandbox/dto/sandbox-session.dto.ts
-  'SandboxSaveResultDto.sent', // modules/sandbox/dto/sandbox-session.dto.ts
+  'SandboxSessionDto.hasArea', // modules/sandbox/dto/sandbox-session.dto.ts
   'SandboxSessionDto.expiresAt', // modules/sandbox/dto/sandbox-session.dto.ts
   'SandboxSessionDto.loginUrl', // modules/sandbox/dto/sandbox-session.dto.ts
   'SandboxSessionDto.secondsRemaining', // modules/sandbox/dto/sandbox-session.dto.ts
@@ -3315,6 +3316,7 @@ const MASK_EXEMPT: string[] = [
   'SetGatewayPolicyDto.path', // modules/applications/dto/gateway-route.dto.ts
   'SetGatewayPolicyDto.rateLimit', // modules/applications/dto/gateway-route.dto.ts
   'SetManagementNetworkDto.enabled', // modules/infrastructure/networking/dto/management-network.dto.ts
+  'SetPlatformConfigDto.clearHeartbeat', // modules/backups/dto/set-platform-config.dto.ts
   'SetPlatformConfigDto.heartbeatUrl', // modules/backups/dto/set-platform-config.dto.ts
   'SetPlatformConfigDto.recipient', // modules/backups/dto/set-platform-config.dto.ts
   'SetupOptionsResponse.eligible', // modules/backups/dto/quick-setup.dto.ts

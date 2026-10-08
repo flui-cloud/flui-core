@@ -21,6 +21,7 @@ import { AppBuildEntity } from '../app-builds/entities/app-build.entity';
 import { CatalogInstallEntity } from '../catalog/entities/catalog-install.entity';
 import { SandboxTenantEntity } from '../sandbox/entities/sandbox-tenant.entity';
 import { SharedInfrastructureModule } from '../infrastructure/shared/shared-infrastructure.module';
+import { EgressModule } from '../infrastructure/egress/egress.module';
 import { ClustersModule } from '../infrastructure/clusters/clusters.module';
 import { EncryptionModule } from '../shared/encryption/encryption.module';
 import { BuildAgentConfigModule } from '../app-builds/build-agent-config.module';
@@ -108,6 +109,8 @@ import { AppAutoscalingService } from './services/app-autoscaling.service';
 import { DnsModule } from '../dns/dns.module';
 import { WsAuthModule } from '../auth/ws-auth.module';
 import { StorageModule } from '../storage/storage.module';
+import { ProjectsModule } from '../projects/projects.module';
+import { SandboxGateModule } from '../sandbox/gate/sandbox-slot-gate';
 import { VolumeExportService } from '../providers/services/volume-export.service';
 import { StatefulSetVolumeSwapService } from './services/statefulset-volume-swap.service';
 import { SpareVolumesService } from './services/spare-volumes.service';
@@ -150,6 +153,7 @@ import { SpareVolumesService } from './services/spare-volumes.service';
     BullModule.registerQueue({ name: GHCR_SECRET_REFRESH_QUEUE }),
     BullModule.registerQueue({ name: 'backup' }),
     SharedInfrastructureModule,
+    EgressModule,
     EncryptionModule,
     ImagesModule,
     // forwardRef since RepositoriesModule now reaches back for the archive
@@ -165,6 +169,8 @@ import { SpareVolumesService } from './services/spare-volumes.service';
     StorageModule,
     IamModule,
     AuditModule,
+    ProjectsModule,
+    SandboxGateModule,
   ],
   controllers: [
     ApplicationsController,
@@ -266,6 +272,7 @@ import { SpareVolumesService } from './services/spare-volumes.service';
     // the copy primitive beside it, so the ad-hoc and scheduled paths cannot
     // drift on the consistency gate they both go through.
     VolumeBackupsService,
+    VolumeBackupRestoreService,
     // Exported so controllers outside this module can mount it — the two
     // `applications/:applicationId/**` controllers in ScalingModule do.
     AppAccessGuard,

@@ -1,4 +1,6 @@
 import { forwardRef, Module } from '@nestjs/common';
+import { SandboxWaitlistEntity } from './entities/sandbox-waitlist.entity';
+import { SandboxGateModule } from './gate/sandbox-slot-gate';
 import { ApplicationsModule } from '../applications/applications.module';
 import { ObservabilityModule } from '../observability/observability.module';
 import { ClustersModule } from '../infrastructure/clusters/clusters.module';
@@ -7,6 +9,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { IamModule } from '../iam/iam.module';
 import { AuthModule } from '../auth/auth.module';
 import { SharedInfrastructureModule } from '../infrastructure/shared/shared-infrastructure.module';
+import { EgressModule } from '../infrastructure/egress/egress.module';
 import { EncryptionModule } from '../shared/encryption/encryption.module';
 import { CatalogModule } from '../catalog/catalog.module';
 import { SandboxController } from './sandbox.controller';
@@ -16,9 +19,12 @@ import { SandboxProjectionInterceptor } from './interceptors/sandbox-projection.
 import { SandboxCapacityService } from './services/sandbox-capacity.service';
 import { SandboxEntryService } from './services/sandbox-entry.service';
 import { SandboxQuotaService } from './services/sandbox-quota.service';
-import { SandboxResumeMailService } from './services/sandbox-resume-mail.service';
 import { SandboxScopeService } from './services/sandbox-scope.service';
 import { SandboxPrepullService } from './services/sandbox-prepull.service';
+import { SandboxCpuAlertService } from './services/sandbox-cpu-alert.service';
+import { SandboxNoticeMailService } from './services/sandbox-notice-mail.service';
+import { SandboxWaitlistService } from './services/sandbox-waitlist.service';
+import { SandboxWaitlistAlertService } from './services/sandbox-waitlist-alert.service';
 import { SandboxCapacityAlertService } from './services/sandbox-capacity-alert.service';
 import { SandboxReserveService } from './services/sandbox-reserve.service';
 import { SandboxTenantService } from './services/sandbox-tenant.service';
@@ -41,6 +47,7 @@ import { MailModule } from '../mail/mail.module';
   imports: [
     TypeOrmModule.forFeature([
       SandboxTenantEntity,
+      SandboxWaitlistEntity,
       UserEntity,
       ApiKeyEntity,
       IamRoleBindingEntity,
@@ -53,9 +60,11 @@ import { MailModule } from '../mail/mail.module';
     IamModule,
     AuthModule,
     SharedInfrastructureModule,
+    EgressModule,
     EncryptionModule,
     DnsModule,
     ProjectsModule,
+    SandboxGateModule,
     MailModule,
     DatabaseConsoleModule,
     forwardRef(() => CatalogModule),
@@ -81,9 +90,12 @@ import { MailModule } from '../mail/mail.module';
     SandboxCapacityService,
     SandboxEntryService,
     SandboxQuotaService,
-    SandboxResumeMailService,
     SandboxPrepullService,
     SandboxCapacityAlertService,
+    SandboxCpuAlertService,
+    SandboxNoticeMailService,
+    SandboxWaitlistService,
+    SandboxWaitlistAlertService,
     SandboxReserveService,
     SandboxTenantService,
     SandboxSchedulerService,

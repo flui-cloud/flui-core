@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Inject, Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Not, IsNull, Repository } from 'typeorm';
 import { ApplicationEntity } from '../../applications/entities/application.entity';
@@ -10,6 +10,7 @@ import {
   SandboxScope,
   SandboxScopeField,
 } from '../constants/sandbox-projection';
+import { SANDBOX_CONFIG, SandboxConfig } from '../sandbox.config';
 
 /**
  * Where a projection's idea of "yours" comes from.
@@ -26,6 +27,7 @@ export class SandboxScopeService {
     private readonly tenants: Repository<SandboxTenantEntity>,
     @InjectRepository(ApplicationEntity)
     private readonly applications: Repository<ApplicationEntity>,
+    @Inject(SANDBOX_CONFIG) private readonly config: SandboxConfig,
   ) {}
 
   async resolve(
@@ -49,7 +51,9 @@ export class SandboxScopeService {
       where: { userId, state: SandboxTenantState.CLAIMED },
       select: { id: true, clusterId: true },
     });
-    return tenant?.clusterId ?? null;
+    // A guest who has not deployed yet holds no area, and still needs to see
+    // the one cluster their first deploy is allowed on.
+    return tenant?.clusterId ?? this.config.clusterId ?? null;
   }
 
   private async applicationIdsFor(userId: string): Promise<Set<string>> {

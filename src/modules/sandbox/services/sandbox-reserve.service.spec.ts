@@ -1,7 +1,3 @@
-// Counting a refusal reaches the capacity service, whose import graph pulls in
-// the ESM-only Kubernetes client. Nothing from it is constructed here.
-jest.mock('@kubernetes/client-node', () => ({}));
-
 import { SandboxReserveService } from './sandbox-reserve.service';
 import {
   SandboxTenantEntity,
@@ -9,32 +5,12 @@ import {
 } from '../entities/sandbox-tenant.entity';
 import { loadSandboxConfig } from '../sandbox.config';
 
-/**
- * The claim is the one place where being sloppy costs money or, worse, hands two
- * visitors the same tenancy. These tests drive the repository through the exact
- * shapes the service uses, including a lost race.
- */
-
 const config = loadSandboxConfig({
   SANDBOX_ENABLED: 'true',
   SANDBOX_TTL_HOURS: '24',
-  SANDBOX_MAX_CLAIMS_PER_IP: '2',
 } as NodeJS.ProcessEnv);
 
 /** The arithmetic has its own tests; here it only has to answer. */
-const refusals: number[] = [];
-const capacity = {
-  recordFullRefusal: () => refusals.push(Date.now()),
-  snapshot: async () => ({ ceiling: 9, live: 4, warm: 0, readySeconds: 202 }),
-};
-
-/** A cluster with no room left: nothing is being built, and nobody should be
- *  told to come back in three minutes. */
-const capacityAtCeiling = {
-  recordFullRefusal: () => undefined,
-  snapshot: async () => ({ ceiling: 4, live: 4, warm: 0, readySeconds: 202 }),
-};
-
 const tenant = (over: Partial<SandboxTenantEntity>): SandboxTenantEntity =>
   ({
     id: 'a',
@@ -47,182 +23,7 @@ const tenant = (over: Partial<SandboxTenantEntity>): SandboxTenantEntity =>
     ...over,
   }) as SandboxTenantEntity;
 
-type RepoOverrides = {
-  ready?: SandboxTenantEntity[];
-  /** How many rows each conditional UPDATE claims to have touched. */
-  affected?: number[];
-  recentClaims?: number;
-};
-
-const repoWith = (over: RepoOverrides) => {
-  const ready = [...(over.ready ?? [])];
-  const affected = [...(over.affected ?? [])];
-  const updates: Array<Record<string, unknown>> = [];
-
-  return {
-    updates,
-    repo: {
-      findOne: async () => ready.shift() ?? null,
-      findOneByOrFail: async ({ id }: { id: string }) => tenant({ id }),
-      find: async () => [],
-      createQueryBuilder: () => {
-        const qb: Record<string, any> = {};
-        qb.where = () => qb;
-        qb.andWhere = () => qb;
-        qb.getCount = async () => over.recentClaims ?? 0;
-        qb.update = () => qb;
-        qb.set = (values: Record<string, unknown>) => {
-          updates.push(values);
-          return qb;
-        };
-        qb.execute = async () => ({ affected: affected.shift() ?? 1 });
-        qb.select = () => qb;
-        qb.addSelect = () => qb;
-        qb.groupBy = () => qb;
-        qb.getRawMany = async () => [];
-        return qb;
-      },
-    },
-  };
-};
-
-describe('SandboxReserveService.claim', () => {
-  it('hands out a tenancy and starts the clock now, not when it was built', async () => {
-    const { repo } = repoWith({ ready: [tenant({ id: 'a' })] });
-    const service = new SandboxReserveService(
-      repo as never,
-      capacity as never,
-      config,
-    );
-
-    const before = Date.now();
-    const { expiresAt } = await service.tryClaim('1.2.3.4');
-
-    const hours = (expiresAt.getTime() - before) / 3_600_000;
-    expect(hours).toBeGreaterThan(23.9);
-    expect(hours).toBeLessThan(24.1);
-  });
-
-  // Two visitors, one row: the conditional UPDATE decides, and the loser moves
-  // on to the next tenancy instead of receiving the same one.
-  it('moves to the next tenancy when it loses the race for one', async () => {
-    const { repo, updates } = repoWith({
-      ready: [tenant({ id: 'a' }), tenant({ id: 'b' })],
-      affected: [0, 1],
-    });
-    const service = new SandboxReserveService(
-      repo as never,
-      capacity as never,
-      config,
-    );
-
-    await expect(service.tryClaim('1.2.3.4')).resolves.toBeTruthy();
-    expect(updates).toHaveLength(2);
-  });
-
-  // An area costs nothing until its guest deploys something, so an empty
-  // reserve is not a refusal: this service says "none waiting" and the caller
-  // builds one.
-  it('reports an empty reserve rather than inventing a tenancy', async () => {
-    const { repo } = repoWith({ ready: [] });
-    const service = new SandboxReserveService(
-      repo as never,
-      capacity as never,
-      config,
-    );
-
-    await expect(service.tryClaim('1.2.3.4')).resolves.toBeNull();
-    expect(refusals).toHaveLength(0);
-  });
-
-  it('counts the refusal when one is finally made', async () => {
-    const { repo } = repoWith({ ready: [] });
-    const service = new SandboxReserveService(
-      repo as never,
-      capacity as never,
-      config,
-    );
-
-    await expect(service.refuseAsFull()).rejects.toMatchObject({
-      response: { code: 'SANDBOX_FULL' },
-    });
-    expect(refusals.length).toBeGreaterThan(0);
-  });
-
-  /**
-   * "Full" is two different situations and a visitor can act on the difference:
-   * a few minutes is worth waiting for, and hours is worth being told about
-   * instead of being promised minutes that never come.
-   */
-  it('says how long when the cluster still has room to build another', async () => {
-    const { repo } = repoWith({ ready: [] });
-    const service = new SandboxReserveService(
-      repo as never,
-      capacity as never,
-      config,
-    );
-
-    await expect(service.refuseAsFull()).rejects.toMatchObject({
-      response: { message: expect.stringContaining('about 4 minutes') },
-    });
-  });
-
-  it('does not promise minutes when the instance is at its ceiling', async () => {
-    const { repo } = repoWith({ ready: [] });
-    const service = new SandboxReserveService(
-      repo as never,
-      capacityAtCeiling as never,
-      config,
-    );
-
-    const failure = await service.refuseAsFull().catch((e) => e);
-    expect(failure.response.message).toContain('as it can hold');
-    expect(failure.response.message).not.toContain('minutes');
-  });
-
-  it('gives up after a bounded number of lost races', async () => {
-    const { repo, updates } = repoWith({
-      ready: Array.from({ length: 20 }, (_, i) => tenant({ id: `t${i}` })),
-      affected: Array.from({ length: 20 }, () => 0),
-    });
-    const service = new SandboxReserveService(
-      repo as never,
-      capacity as never,
-      config,
-    );
-
-    await expect(service.tryClaim('1.2.3.4')).resolves.toBeNull();
-    expect(updates.length).toBeLessThanOrEqual(5);
-  });
-
-  it('stops an address that has already had its share today', async () => {
-    const { repo } = repoWith({ ready: [tenant({})], recentClaims: 2 });
-    const service = new SandboxReserveService(
-      repo as never,
-      capacity as never,
-      config,
-    );
-
-    await expect(service.tryClaim('1.2.3.4')).rejects.toMatchObject({
-      response: { code: 'SANDBOX_CLAIM_LIMIT' },
-    });
-  });
-
-  it('records the claimant as a hash, never as an address', async () => {
-    const { repo, updates } = repoWith({ ready: [tenant({})] });
-    const service = new SandboxReserveService(
-      repo as never,
-      capacity as never,
-      config,
-    );
-
-    await service.tryClaim('203.0.113.9');
-
-    const written = JSON.stringify(updates[0]);
-    expect(written).not.toContain('203.0.113.9');
-    expect(updates[0].claimIpHash).toHaveLength(32);
-  });
-
+describe('SandboxReserveService.findAbandoned', () => {
   // Found live: a tenancy that broke while being built held a namespace and an
   // identity-provider account that neither the expiry nor the unclaimed sweep
   // would ever collect.
@@ -234,28 +35,12 @@ describe('SandboxReserveService.claim', () => {
         return [];
       },
     };
-    const service = new SandboxReserveService(
-      repo as never,
-      capacity as never,
-      config,
-    );
+    const service = new SandboxReserveService(repo as never, config);
 
     await service.findAbandoned();
 
     const where = (seen[0] as { where: Array<{ state: string }> }).where;
     expect(where.map((w) => w.state)).toEqual(['failed', 'provisioning']);
-  });
-
-  it('buckets the same address to the same hash and different ones apart', () => {
-    const { repo } = repoWith({});
-    const service = new SandboxReserveService(
-      repo as never,
-      capacity as never,
-      config,
-    );
-
-    expect(service.hashIp('1.1.1.1')).toBe(service.hashIp('1.1.1.1'));
-    expect(service.hashIp('1.1.1.1')).not.toBe(service.hashIp('1.1.1.2'));
   });
 });
 
@@ -279,11 +64,9 @@ describe('sandbox configuration', () => {
     const cfg = loadSandboxConfig({
       SANDBOX_TTL_HOURS: 'banana',
       SANDBOX_WORKLOAD_TTL_HOURS: '',
-      SANDBOX_MAX_CLAIMS_PER_IP: '-4',
     } as NodeJS.ProcessEnv);
     expect(cfg.ttlHours).toBe(24 * 7);
     expect(cfg.workloadTtlHours).toBe(24);
-    expect(cfg.maxClaimsPerIp).toBe(3);
   });
 
   // Two clocks, and the shorter one belongs to the half that costs: an account
@@ -318,7 +101,7 @@ describe('SandboxReserveService.markFailed', () => {
   };
 
   const serviceOn = (repo: unknown) =>
-    new SandboxReserveService(repo as never, capacity as never, config);
+    new SandboxReserveService(repo as never, config);
 
   it('counts repeats of the same error and eventually stops sweeping the row', async () => {
     const { repo, current } = repoRemembering({

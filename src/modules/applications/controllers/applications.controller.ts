@@ -138,6 +138,7 @@ export class ApplicationsController {
       category: dto.category,
       kind: dto.kind,
       slug: dto.slug,
+      projectId: dto.projectId,
     });
     if (access.isSandbox) {
       stripSandboxPlacementFields(dto);
@@ -171,7 +172,6 @@ export class ApplicationsController {
       clusterId,
       dto,
       user?.userId,
-      user?.email,
     );
     await this.appRevisionsRepository.createAuditEvent({
       applicationId: entity.id,
@@ -569,9 +569,11 @@ export class ApplicationsController {
     @Body() dto: DeployFromYamlDto,
   ): Promise<DeployFromYamlResponseDto> {
     const user = req.user as AuthenticatedUser;
-    await this.applicationAccess.assertCanCreate(user, {
+    const access = await this.applicationAccess.assertCanCreate(user, {
       clusterId: dto.clusterId,
+      projectId: dto.projectId,
     });
+    if (access.isSandbox) delete dto.projectId;
     return this.applicationSourceDeployService.deployFromYaml(
       user.userId,
       dto,

@@ -674,7 +674,6 @@ export class ApplicationDeployService {
       clusterId,
       dto,
       userId,
-      userEmail,
     );
 
     // 3. Race guard: atomically claim the build for this application

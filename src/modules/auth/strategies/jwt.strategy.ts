@@ -1,4 +1,5 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
+import { noteSeen, refuseIfBlocked } from '../utils/user-presence.util';
 import { ConfigService } from '@nestjs/config';
 import { PassportStrategy } from '@nestjs/passport';
 import { ExtractJwt, Strategy } from 'passport-jwt';
@@ -12,6 +13,11 @@ import { IdentityRole, UserEntity } from '../entities/user.entity';
 import { extractJwtFromFluiSessionCookie } from '../utils/cookie-extractor.util';
 import { OidcProfileSyncService } from '../services/oidc-profile-sync.service';
 import { projectRolesOf } from '../utils/credential-ceiling.util';
+import {
+  SANDBOX_GUEST_ENROLMENT,
+  SandboxGuestEnrolment,
+} from '../../sandbox/gate/sandbox-guest-enrolment';
+import { describeError } from '../../shared/utils/error.util';
 
 const ROLE_PRECEDENCE: IdentityRole[] = [
   IdentityRole.ADMIN,
@@ -28,6 +34,9 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     @InjectRepository(UserEntity)
     private readonly userRepo: Repository<UserEntity>,
     private readonly profileSync: OidcProfileSyncService,
+    @Optional()
+    @Inject(SANDBOX_GUEST_ENROLMENT)
+    private readonly guestEnrolment?: SandboxGuestEnrolment,
   ) {
     const rawIssuer =
       configService.get<string>('OIDC_ISSUER') ||
@@ -90,7 +99,13 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       payload.sub,
       payload.email,
       claimedRole,
+      typeof payload.email_verified === 'boolean'
+        ? payload.email_verified
+        : undefined,
+      Object.keys(roles).length > 0,
     );
+    refuseIfBlocked(user);
+    noteSeen(this.userRepo, user);
     // Refresh the OIDC profile out-of-band: authentication must never block on a
     // provider round-trip, otherwise a slow/stalled provider hangs every request
     // once the sync TTL lapses.
@@ -98,9 +113,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       .syncFromProvider(user)
       .catch((err: unknown) =>
         JwtStrategy.logger.warn(
-          `Background profile sync failed: ${
-            err instanceof Error ? err.message : String(err)
-          }`,
+          `Background profile sync failed: ${describeError(err)}`,
         ),
       );
 
@@ -141,6 +154,8 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     sub: string,
     email: string | undefined,
     claimedRole: IdentityRole,
+    emailVerifiedClaim?: boolean,
+    hasProviderRoles = false,
   ): Promise<UserEntity> {
     const isAdminFromClaim = claimedRole === IdentityRole.ADMIN;
 
@@ -154,7 +169,16 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       return bySub;
     }
 
-    if (email) {
+    // Permissions are granted to an email, so a login carries its address
+    // into Flui only once the provider has proven it: with open registration
+    // anyone can type the administrator's email. Unproven, it neither takes
+    // over an existing account nor names a new one; the profile sync fills it
+    // in once it is verified.
+    const verified =
+      !!email &&
+      (emailVerifiedClaim ?? (await this.profileSync.isEmailVerified(sub)));
+
+    if (email && verified) {
       const byEmail = await this.userRepo.findOne({ where: { email } });
       if (byEmail) {
         byEmail.oidcSub = sub;
@@ -168,7 +192,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     }
 
     const created = this.userRepo.create({
-      email: email ?? `oidc-${sub}@flui.invalid`,
+      email: email && verified ? email : `oidc-${sub}@flui.invalid`,
       oidcSub: sub,
       role: claimedRole,
       isAdmin: isAdminFromClaim,
@@ -178,6 +202,11 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     JwtStrategy.logger.log(
       `Provisioned new local user ${saved.email} (id=${saved.id}, role=${claimedRole}) for sub ${sub}`,
     );
+    await this.guestEnrolment?.enrol({
+      userId: saved.id,
+      email: email && verified ? email : null,
+      hasProviderRoles,
+    });
     return saved;
   }
 }

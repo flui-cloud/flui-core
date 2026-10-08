@@ -10,6 +10,7 @@ import { ApplicationSourceType } from '../enums/application-source-type.enum';
 import { ApplicationManifestGeneratorService } from './application-manifest-generator.service';
 import { WorkloadNamespaceService } from './workload-namespace.service';
 import { GhcrSecretRefreshService } from './ghcr-secret-refresh.service';
+import { describeError } from '../../shared/utils/error.util';
 
 const WAITABLE_KINDS = new Set(['Deployment', 'StatefulSet', 'DaemonSet']);
 const MATERIALIZE_READINESS_TIMEOUT_MS = 10 * 60 * 1000;
@@ -24,6 +25,8 @@ const MATERIALIZE_READINESS_TIMEOUT_MS = 10 * 60 * 1000;
 export interface MaterializeOverrides {
   replicas?: number;
   env?: ApplicationEnvVar[];
+  /** The node a dedicated app is pinned to on the destination cluster. */
+  dedicatedNodeName?: string;
 }
 
 /**
@@ -72,21 +75,17 @@ export class ApplicationMaterializerService {
     const kubeconfig = await this.kubeconfigFor(targetClusterId);
     // In-memory clone so overrides (e.g. staging at replicas 0) never touch the
     // persisted entity; the generator only reads fields.
-    const effectiveApp =
-      overrides?.replicas === undefined && overrides?.env === undefined
-        ? app
-        : ({
-            ...app,
-            ...(overrides?.replicas === undefined
-              ? {}
-              : { replicas: overrides.replicas }),
-            ...(overrides?.env === undefined ? {} : { env: overrides.env }),
-          } as ApplicationEntity);
+    const effectiveApp = this.withOverrides(app, overrides);
 
-    await this.workloadNamespace.ensure(kubeconfig, app.k8sNamespace, {
-      'flui.cloud/tier': 'user',
-      ...(app.userId ? { 'flui.cloud/owner': app.userId } : {}),
-    });
+    await this.workloadNamespace.ensure(
+      kubeconfig,
+      app.k8sNamespace,
+      {
+        'flui.cloud/tier': 'user',
+        ...(app.projectId ? { 'flui.cloud/project': app.projectId } : {}),
+      },
+      app.systemProtected ? undefined : targetClusterId,
+    );
 
     let imagePullSecretName: string | undefined;
     if (app.sourceType === ApplicationSourceType.GIT_BUILD && app.userId) {
@@ -131,6 +130,89 @@ export class ApplicationMaterializerService {
     );
   }
 
+  private withOverrides(
+    app: ApplicationEntity,
+    overrides?: MaterializeOverrides,
+  ): ApplicationEntity {
+    if (
+      overrides?.replicas === undefined &&
+      overrides?.env === undefined &&
+      overrides?.dedicatedNodeName === undefined
+    ) {
+      return app;
+    }
+    return {
+      ...app,
+      ...(overrides.replicas === undefined
+        ? {}
+        : { replicas: overrides.replicas }),
+      ...(overrides.env === undefined ? {} : { env: overrides.env }),
+      ...(overrides.dedicatedNodeName === undefined
+        ? {}
+        : { dedicatedNodeName: overrides.dedicatedNodeName }),
+    } as ApplicationEntity;
+  }
+
+  async kubeconfigOf(clusterId: string): Promise<string> {
+    return this.kubeconfigFor(clusterId);
+  }
+
+  /** Scale the app's workload on one cluster without touching the stored app. */
+  async scaleOnCluster(
+    app: ApplicationEntity,
+    clusterId: string,
+    replicas: number,
+  ): Promise<void> {
+    await this.kubernetesService.scaleWorkload(
+      await this.kubeconfigFor(clusterId),
+      app.workloadKind === 'StatefulSet' ? 'StatefulSet' : 'Deployment',
+      app.k8sNamespace,
+      app.slug,
+      replicas,
+    );
+  }
+
+  async waitReadyOnCluster(
+    app: ApplicationEntity,
+    clusterId: string,
+  ): Promise<void> {
+    await this.kubernetesService.waitForReady(
+      await this.kubeconfigFor(clusterId),
+      app.workloadKind === 'StatefulSet' ? 'StatefulSet' : 'Deployment',
+      app.slug,
+      app.k8sNamespace,
+      MATERIALIZE_READINESS_TIMEOUT_MS,
+    );
+  }
+
+  /** Wait until no pod of the app is left on a cluster. */
+  async waitStoppedOnCluster(
+    app: ApplicationEntity,
+    clusterId: string,
+    timeoutMs = 5 * 60 * 1000,
+  ): Promise<void> {
+    const kubeconfig = await this.kubeconfigFor(clusterId);
+    const started = Date.now();
+    while (Date.now() - started < timeoutMs) {
+      const pods = await this.kubernetesService.listResourcesByLabel(
+        kubeconfig,
+        'Pod',
+        app.k8sNamespace,
+        `flui-app-id=${app.id}`,
+      );
+      const live = pods.filter(
+        (p: any) =>
+          !['Succeeded', 'Failed'].includes(p?.status?.phase) &&
+          !p?.metadata?.labels?.['job-name'],
+      );
+      if (live.length === 0) return;
+      await new Promise((r) => setTimeout(r, 3000));
+    }
+    throw new Error(
+      `${app.slug} still has pods on cluster ${clusterId} after ${Math.round(timeoutMs / 1000)}s`,
+    );
+  }
+
   /**
    * Tear the app's workload down on a cluster (abort rollback of the
    * destination, or DESTROY of the drained source). Best-effort per resource;
@@ -147,9 +229,37 @@ export class ApplicationMaterializerService {
         .deleteResource(kubeconfig, m.kind, m.name, app.k8sNamespace)
         .catch((err: unknown) =>
           this.logger.warn(
-            `[teardown] ${app.slug}: delete ${m.kind}/${m.name} on ${clusterId} failed: ${
-              err instanceof Error ? err.message : String(err)
-            }`,
+            `[teardown] ${app.slug}: delete ${m.kind}/${m.name} on ${clusterId} failed: ${describeError(
+              err,
+            )}`,
+          ),
+        );
+    }
+    // Claims a workload only makes once it runs (a StatefulSet's) are not
+    // among the generated manifests, and a migration may have created them.
+    const claims = await this.kubernetesService
+      .listResourcesByLabel(
+        kubeconfig,
+        'PersistentVolumeClaim',
+        app.k8sNamespace,
+        `flui-app-id=${app.id}`,
+      )
+      .catch(() => [] as any[]);
+    for (const claim of claims) {
+      const name = claim?.metadata?.name;
+      if (!name) continue;
+      await this.kubernetesService
+        .deleteResource(
+          kubeconfig,
+          'PersistentVolumeClaim',
+          name,
+          app.k8sNamespace,
+        )
+        .catch((err: unknown) =>
+          this.logger.warn(
+            `[teardown] ${app.slug}: delete PersistentVolumeClaim/${name} on ${clusterId} failed: ${describeError(
+              err,
+            )}`,
           ),
         );
     }

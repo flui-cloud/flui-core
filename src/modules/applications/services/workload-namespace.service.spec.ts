@@ -12,14 +12,30 @@ import {
 describe('the ceiling a workload namespace carries', () => {
   const build = (labels: Record<string, string> | undefined) => {
     const applied: string[] = [];
-    const service = new WorkloadNamespaceService({
-      ensureNamespaceExists: jest.fn().mockResolvedValue(undefined),
-      getResource: jest.fn().mockResolvedValue({ metadata: { labels } }),
-      applyManifest: jest.fn(async (_kc: string, yaml: string) => {
-        applied.push(yaml);
-      }),
-    } as never);
-    return { service, applied };
+    const fenced: Array<{ namespace: string; isolated: boolean }> = [];
+    const service = new WorkloadNamespaceService(
+      {
+        ensureNamespaceExists: jest.fn().mockResolvedValue(undefined),
+        getResource: jest.fn().mockResolvedValue({ metadata: { labels } }),
+        applyManifest: jest.fn(async (_kc: string, yaml: string) => {
+          applied.push(yaml);
+        }),
+      } as never,
+      {
+        applyTo: jest.fn(
+          async (
+            _kc: string,
+            _c: string,
+            namespace: string,
+            isolated: boolean,
+          ) => {
+            fenced.push({ namespace, isolated });
+          },
+        ),
+      } as never,
+      { exists: jest.fn().mockResolvedValue(false) } as never,
+    );
+    return { service, applied, fenced };
   };
 
   it('gives an ordinary namespace the ceiling', async () => {
@@ -50,15 +66,47 @@ describe('the ceiling a workload namespace carries', () => {
    */
   it('leaves it alone when the namespace cannot be read', async () => {
     const applied: string[] = [];
-    const service = new WorkloadNamespaceService({
-      ensureNamespaceExists: jest.fn().mockResolvedValue(undefined),
-      getResource: jest.fn().mockRejectedValue(new Error('unreachable')),
-      applyManifest: jest.fn(async (_kc: string, yaml: string) => {
-        applied.push(yaml);
-      }),
-    } as never);
-    await expect(service.ensure('kc', 'user-bob')).resolves.toBeUndefined();
+    const applyTo = jest.fn();
+    const service = new WorkloadNamespaceService(
+      {
+        ensureNamespaceExists: jest.fn().mockResolvedValue(undefined),
+        getResource: jest.fn().mockRejectedValue(new Error('unreachable')),
+        applyManifest: jest.fn(async (_kc: string, yaml: string) => {
+          applied.push(yaml);
+        }),
+      } as never,
+      { applyTo } as never,
+      { exists: jest.fn() } as never,
+    );
+    await expect(
+      service.ensure('kc', 'user-bob', {}, 'c1'),
+    ).resolves.toBeUndefined();
     expect(applied).toEqual([]);
+    expect(applyTo).not.toHaveBeenCalled();
+  });
+
+  describe("the cluster's egress rule", () => {
+    it('is written into an application namespace', async () => {
+      const { service, fenced } = build({ 'flui.cloud/tier': 'user' });
+      await service.ensure('kc', 'p-team', {}, 'c1');
+      expect(fenced).toEqual([{ namespace: 'p-team', isolated: false }]);
+    });
+
+    it('takes the guest-area shape in a guest area', async () => {
+      const { service, fenced } = build({ 'flui.cloud/sandbox': 'true' });
+      await service.ensure('kc', 'p-guest', {}, 'c1');
+      expect(fenced).toEqual([{ namespace: 'p-guest', isolated: true }]);
+    });
+
+    it('never reaches a platform namespace, nor a deploy that names no cluster', async () => {
+      const platform = build({ 'flui.cloud/scope': 'system' });
+      await platform.service.ensure('kc', 'flui-system', {}, 'c1');
+      expect(platform.fenced).toEqual([]);
+
+      const unnamed = build({ 'flui.cloud/tier': 'user' });
+      await unnamed.service.ensure('kc', 'p-team');
+      expect(unnamed.fenced).toEqual([]);
+    });
   });
 
   describe('what the LimitRange says', () => {
@@ -109,6 +157,53 @@ describe('the ceiling a workload namespace carries', () => {
       expect(Object.keys(limits.defaultRequest ?? {})).toEqual([
         'ephemeral-storage',
       ]);
+    });
+  });
+
+  describe('a space another project left behind', () => {
+    const mount = (holderAlive: boolean) => {
+      const deleted: string[] = [];
+      const service = new WorkloadNamespaceService(
+        {
+          ensureNamespaceExists: jest.fn().mockResolvedValue(undefined),
+          getResource: jest.fn().mockResolvedValue({
+            metadata: { labels: { 'flui.cloud/project': 'old-project' } },
+          }),
+          applyManifest: jest.fn(),
+          deleteNamespace: jest.fn(async (_kc: string, ns: string) => {
+            deleted.push(ns);
+          }),
+        } as never,
+        { applyTo: jest.fn() } as never,
+        { exists: jest.fn().mockResolvedValue(holderAlive) } as never,
+      );
+      return { service, deleted };
+    };
+
+    it('is never inherited: it is removed and the deploy asked to come back', async () => {
+      const { service, deleted } = mount(false);
+      await expect(
+        service.ensure(
+          'kc',
+          'p-team',
+          { 'flui.cloud/project': 'new-project' },
+          'c1',
+        ),
+      ).rejects.toMatchObject({ response: { code: 'PROJECT_SPACE_CLEARING' } });
+      expect(deleted).toEqual(['p-team']);
+    });
+
+    it('is left alone when it belongs to a project that still exists', async () => {
+      const { service, deleted } = mount(true);
+      await expect(
+        service.ensure(
+          'kc',
+          'p-team',
+          { 'flui.cloud/project': 'new-project' },
+          'c1',
+        ),
+      ).rejects.toMatchObject({ response: { code: 'PROJECT_SPACE_TAKEN' } });
+      expect(deleted).toEqual([]);
     });
   });
 });

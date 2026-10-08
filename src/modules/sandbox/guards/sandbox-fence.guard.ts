@@ -4,7 +4,9 @@ import {
   ForbiddenException,
   Inject,
   Injectable,
+  Optional,
 } from '@nestjs/common';
+import { SANDBOX_ACTIVITY, SandboxActivity } from '../gate/sandbox-activity';
 import { Request } from 'express';
 import { AuthenticatedUser } from '../../auth/interfaces/authenticated-user.interface';
 import { principalFromUser } from '../../iam/interfaces/iam.types';
@@ -44,6 +46,8 @@ export const SANDBOX_GUEST_REQUEST = Symbol('sandboxGuest');
  * fence opens read-only on the strength of `section:view`, where the guest holds
  * no governing permission and never will.
  */
+const READS = new Set(['GET', 'HEAD', 'OPTIONS']);
+
 export const SANDBOX_FENCE_ADMITTED = Symbol('sandboxFenceAdmitted');
 
 export interface SandboxGuestRequest {
@@ -62,7 +66,12 @@ export interface SandboxGuestRequest {
  */
 @Injectable()
 export class SandboxFenceGuard implements CanActivate {
-  constructor(@Inject(POLICY_ENGINE) private readonly policy: PolicyEngine) {}
+  constructor(
+    @Inject(POLICY_ENGINE) private readonly policy: PolicyEngine,
+    @Optional()
+    @Inject(SANDBOX_ACTIVITY)
+    private readonly activity?: SandboxActivity,
+  ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
     if (context.getType() !== 'http') return true;
@@ -91,6 +100,10 @@ export class SandboxFenceGuard implements CanActivate {
 
     if (isSandboxAllowed(req.method, path)) {
       req[SANDBOX_FENCE_ADMITTED] = true;
+      // A read is not activity: an open tab polls, a person acts.
+      if (!READS.has(req.method)) {
+        void this.activity?.touch(user.userId).catch(() => undefined);
+      }
       return true;
     }
 

@@ -119,6 +119,7 @@ export class CatalogInstallerService {
     const install = await this.installRepo.create({
       catalogAppDefinitionId: definition.id,
       clusterId: dto.clusterId,
+      projectId: dto.projectId ?? null,
       userId,
       userEmail,
       status: CatalogInstallStatus.PENDING,
@@ -194,6 +195,7 @@ export class CatalogInstallerService {
     clusterId: string,
     userId?: string,
     userEmail?: string,
+    projectId?: string | null,
   ): Promise<{
     install: CatalogInstallEntity;
     operation: InfrastructureOperationEntity;
@@ -215,6 +217,9 @@ export class CatalogInstallerService {
     const install = await this.installRepo.create({
       catalogAppDefinitionId: definition.id,
       clusterId,
+      // A block is read through Secrets, which only resolve inside one
+      // namespace: it lands in the project of the application that needs it.
+      projectId: projectId ?? null,
       userId,
       userEmail,
       status: CatalogInstallStatus.PENDING,

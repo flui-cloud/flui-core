@@ -54,13 +54,19 @@ const build = (
 ) => {
   const calls: string[] = [];
   const marks: Array<{ kind: string; detail?: string }> = [];
+  const namespaceLabels: Array<Record<string, string>> = [];
+  const recorded: string[] = [];
 
   const reserve = {
     findClaimed: async () => (breakages.noHeld ? [] : [tenantRow]),
     createPending: async () => ({ ...tenantRow, id: 'new' }),
-    recordIdentities: async () => calls.push('record-identities'),
+    recordArea: async (_id: string, fields: { namespace: string }) => {
+      calls.push('record-area');
+      recorded.push(fields.namespace);
+    },
     markReady: async () => marks.push({ kind: 'ready' }),
     markExpired: async () => marks.push({ kind: 'expired' }),
+    markWarned: async () => marks.push({ kind: 'warned' }),
     markFailed: async (_id: string, detail: string) =>
       marks.push({ kind: 'failed', detail }),
     getById: async (id: string) => ({
@@ -73,7 +79,14 @@ const build = (
   };
   const quota = { apply: async () => calls.push('quota') };
   const k8s = {
-    ensureNamespaceExists: async () => calls.push('ensure-ns'),
+    ensureNamespaceExists: async (
+      _kc: string,
+      _ns: string,
+      labels: Record<string, string> = {},
+    ) => {
+      calls.push('ensure-ns');
+      namespaceLabels.push(labels);
+    },
     applyManifest: async (_kc: string, manifest: string) =>
       calls.push(manifest.includes('NetworkPolicy') ? 'netpol' : 'noindex'),
     deleteNamespace: async () => {
@@ -121,7 +134,22 @@ const build = (
     },
   };
   const applications = {
-    find: async () => [{ id: 'a1', projectId: 'proj-1' }],
+    find: async () => [
+      { id: 'a1', slug: 'web', projectId: 'proj-1', createdAt: new Date(0) },
+    ],
+    count: async ({
+      where,
+    }: {
+      where: { k8sNamespace: string; deletedAt?: unknown };
+    }) =>
+      [
+        { ns: 'p-area-busy', deleted: false },
+        { ns: 'p-area-busy', deleted: false },
+        { ns: 'p-area-cleared', deleted: true },
+      ].filter(
+        (r) =>
+          r.ns === where.k8sNamespace && !('deletedAt' in where && r.deleted),
+      ).length,
     delete: async () => {
       calls.push('delete-apps');
       if (breakages.apps) throw new Error('fk violation');
@@ -129,6 +157,12 @@ const build = (
   };
   const projects = {
     remove: async (id: string) => calls.push(`delete-project:${id}`),
+    removePersonal: async (userId: string) =>
+      calls.push(`delete-personal-project:${userId}`),
+    createArea: async () => {
+      calls.push('project');
+      return { id: 'area-project', slug: 'area-1a2b3c4d' };
+    },
   };
   // The reaper no longer writes its own binding cleanup: it calls the one the
   // administrative delete uses, which takes both names a binding can carry.
@@ -202,39 +236,56 @@ const build = (
     endpointReconciliation as never,
     tenancySubdomains as never,
     sandboxSubdomains as never,
+    {
+      expiryWarning: async (input: { to: string; apps: string[] }) => {
+        calls.push(`warn:${input.to}:${input.apps.join(',')}`);
+        return true;
+      },
+    } as never,
+    { origin: 'https://demo.flui.cloud' } as never,
+    {
+      applyTo: async (
+        _kc: string,
+        _c: string,
+        _ns: string,
+        isolated: boolean,
+      ) => calls.push(isolated ? 'egress-isolated' : 'egress'),
+    } as never,
   );
-  return { service, calls, marks };
+  return { service, calls, marks, namespaceLabels, recorded };
 };
 
 describe('SandboxTenantService.provision', () => {
-  it('builds identity, grant, namespace and quota before calling it ready', async () => {
+  it('builds an area with no identity: a project, then its fenced namespace', async () => {
     const { service, calls, marks } = build();
     await service.provision('c1');
 
     expect(calls).toEqual([
-      'record-identities',
-      'binding',
+      'project',
+      'record-area',
       'ensure-ns',
       'quota',
       'netpol',
+      // The way out is the cluster's rule, written as the area is built.
+      'egress-isolated',
       'noindex',
       // Before anyone is let in: the first application a guest deploys creates
       // the endpoint that carries the name, and a hostname is written once.
       'shared-subdomain',
       'tenancy-certificate',
     ]);
+    expect(calls).not.toContain('binding');
+    expect(calls.some((c) => c.startsWith('create-idp'))).toBe(false);
     expect(marks.map((m) => m.kind)).toContain('ready');
   });
 
-  // The row that names the identity-provider account is written before the
-  // first step that can fail. Written any later, a build that died in the
-  // middle would leave an account in the identity provider that nothing in the
-  // database points at, and the reaper would have no way to find it.
-  it('records the identity before the first step that can fail', async () => {
+  // Written before the first step that can fail, so a build that dies in the
+  // middle leaves a row the reaper can follow to the project and namespace.
+  it('records the area before the first step that can fail', async () => {
     const { service, calls } = build();
     await service.provision('c1');
 
-    expect(calls.indexOf('record-identities')).toBeLessThan(
+    expect(calls.indexOf('record-area')).toBeLessThan(
       calls.indexOf('ensure-ns'),
     );
   });
@@ -255,6 +306,8 @@ describe('SandboxTenantService.reap', () => {
       'release-tenancy-certificate',
       'delete-apps',
       'delete-project:proj-1',
+      // The area is the guest's personal project: it goes with them.
+      'delete-personal-project:u1',
       'delete-binding:guest-1@try.flui.cloud:u1',
       // Before the user row, and named on its own: `api_keys` has no foreign
       // key to `users`, so without this step every credential the guest minted
@@ -424,6 +477,33 @@ describe('SandboxTenantService.expireNow', () => {
   });
 });
 
+describe('SandboxTenantService area placement', () => {
+  it("builds the area in its project's namespace, the one the guest's apps will land in", async () => {
+    const { service, recorded } = build();
+
+    const tenant = await service.provision('c1');
+
+    expect(recorded).toEqual(['p-area-1a2b3c4d']);
+    expect(tenant.namespace).toBe('p-area-1a2b3c4d');
+    expect(tenant.projectId).toBe('area-project');
+  });
+});
+
+describe('SandboxTenantService pod security', () => {
+  it('enforces the configured Pod Security Standard on every new area', async () => {
+    const { service, namespaceLabels } = build();
+
+    await service.provision('c1');
+
+    expect(namespaceLabels[0]).toEqual(
+      expect.objectContaining({
+        'pod-security.kubernetes.io/enforce': 'baseline',
+        'pod-security.kubernetes.io/warn': 'baseline',
+      }),
+    );
+  });
+});
+
 describe('SandboxTenantService.sweepExpiredWorkloads', () => {
   // The whole point of two clocks: the machines go, the person keeps the area.
   it('removes what the guest deployed through the same path a person’s own delete takes', async () => {
@@ -436,10 +516,251 @@ describe('SandboxTenantService.sweepExpiredWorkloads', () => {
     expect(calls).not.toContain('delete-ns');
   });
 
+  it('reaches every held area, not only the first page of them', async () => {
+    const { service, calls } = build();
+    const held = Array.from({ length: 450 }, (_, i) => ({
+      ...tenantRow,
+      id: `t${i}`,
+      namespace: `guest-${i}`,
+    }));
+    const pages: number[] = [];
+    (
+      service as unknown as {
+        reserve: { findClaimed: (l: number, s: number) => Promise<unknown[]> };
+      }
+    ).reserve.findClaimed = async (limit: number, skip: number) => {
+      pages.push(skip);
+      return held.slice(skip, skip + limit);
+    };
+
+    const removed = await service.sweepExpiredWorkloads();
+
+    expect(pages).toEqual([0, 200, 400]);
+    expect(removed).toBe(450);
+    expect(calls.filter((c) => c.startsWith('delete-app'))).toHaveLength(450);
+  });
+
   it('does nothing when nobody is holding an area', async () => {
     const { service, calls } = build({ noHeld: true });
 
     expect(await service.sweepExpiredWorkloads()).toBe(0);
     expect(calls.filter((c) => c.startsWith('delete-app'))).toHaveLength(0);
+  });
+});
+
+describe('SandboxTenantService taking back an emptied area', () => {
+  const NOW = new Date('2026-10-07T12:00:00Z');
+  const minutesAgo = (m: number) => new Date(NOW.getTime() - m * 60_000);
+  const area = (over: Partial<SandboxTenantEntity>) =>
+    ({
+      ...tenantRow,
+      idpUserId: null,
+      projectId: 'area-project',
+      namespace: 'p-area-empty',
+      claimedAt: minutesAgo(30),
+      ...over,
+    }) as SandboxTenantEntity;
+
+  const withHeld = (held: SandboxTenantEntity[]) => {
+    const built = build();
+    (
+      built.service as unknown as {
+        reserve: { findClaimed: (l: number, s: number) => Promise<unknown[]> };
+      }
+    ).reserve.findClaimed = async (_l: number, skip: number) =>
+      skip === 0 ? held : [];
+    return built;
+  };
+
+  it('finds an area that has held nothing for longer than the grace', async () => {
+    const empty = area({});
+    const { service } = withHeld([
+      empty,
+      area({ id: 'busy', namespace: 'p-area-busy' }),
+      area({ id: 'fresh', claimedAt: minutesAgo(2) }),
+      area({ id: 'legacy', projectId: null }),
+    ]);
+
+    const found = await service.findEmptyAreas(NOW);
+
+    expect(found.map((a) => a.id)).toEqual([empty.id]);
+  });
+
+  it('counts an area whose guest deleted everything as empty, so the space is freed', async () => {
+    const cleared = area({ id: 'cleared', namespace: 'p-area-cleared' });
+    const { service } = withHeld([cleared]);
+
+    const found = await service.findEmptyAreas(NOW);
+
+    expect(found.map((a) => a.id)).toEqual(['cleared']);
+  });
+
+  it('takes back the area and its project without touching the person', async () => {
+    const { service, calls, marks } = build();
+
+    await service.reap(area({}));
+
+    expect(calls).toContain('delete-ns');
+    expect(calls).toContain('delete-project:area-project');
+    expect(calls.some((c) => c.startsWith('delete-binding'))).toBe(false);
+    expect(calls.some((c) => c.startsWith('delete-api-keys'))).toBe(false);
+    expect(calls.some((c) => c.startsWith('delete-idp'))).toBe(false);
+    expect(calls).not.toContain('delete-user');
+    expect(calls).not.toContain('list-idp');
+    expect(marks[0].kind).toBe('expired');
+  });
+});
+
+describe('SandboxTenantService and the lifetime of what a guest deploys', () => {
+  const HOUR = 3_600_000;
+  const NOW = new Date('2026-10-07T12:00:00Z');
+  const hoursAgo = (h: number) => new Date(NOW.getTime() - h * HOUR);
+
+  const run = async (
+    app: { createdAt: Date },
+    area: Partial<SandboxTenantEntity>,
+  ) => {
+    const built = build();
+    const internals = built.service as unknown as {
+      reserve: { findClaimed: (l: number, s: number) => Promise<unknown[]> };
+      applications: { find: () => Promise<unknown[]> };
+    };
+    internals.reserve.findClaimed = async (_l, skip) =>
+      skip === 0
+        ? [
+            {
+              ...tenantRow,
+              email: 'mario@example.com',
+              expiryWarnedAt: null,
+              lastActiveAt: null,
+              ...area,
+            },
+          ]
+        : [];
+    internals.applications.find = async () => [
+      { id: 'a1', slug: 'web', projectId: 'proj-1', ...app },
+    ];
+    const removed = await built.service.sweepExpiredWorkloads(NOW);
+    return { removed, calls: built.calls, marks: built.marks };
+  };
+
+  it('removes an application a day after its deploy when its guest did nothing', async () => {
+    const { removed } = await run({ createdAt: hoursAgo(25) }, {});
+    expect(removed).toBe(1);
+  });
+
+  it('keeps it while its guest keeps acting', async () => {
+    const { removed } = await run(
+      { createdAt: hoursAgo(30) },
+      { lastActiveAt: hoursAgo(2) },
+    );
+    expect(removed).toBe(0);
+  });
+
+  it('removes it after the longest lifetime whatever the guest does', async () => {
+    const { removed } = await run(
+      { createdAt: hoursAgo(73) },
+      { lastActiveAt: hoursAgo(1) },
+    );
+    expect(removed).toBe(1);
+  });
+
+  it('warns the guest once, a few hours before', async () => {
+    const { calls, marks } = await run({ createdAt: hoursAgo(20) }, {});
+    expect(calls).toContain('warn:mario@example.com:web');
+    expect(marks.map((m) => m.kind)).toContain('warned');
+  });
+
+  it('does not warn again before the guest acts', async () => {
+    const { calls } = await run(
+      { createdAt: hoursAgo(20) },
+      { expiryWarnedAt: hoursAgo(1) },
+    );
+    expect(calls.some((c) => c.startsWith('warn:'))).toBe(false);
+  });
+
+  it('never mails an address the identity provider has not proven', async () => {
+    const { calls } = await run(
+      { createdAt: hoursAgo(20) },
+      { email: 'oidc-123@flui.invalid' },
+    );
+    expect(calls.some((c) => c.startsWith('warn:'))).toBe(false);
+  });
+});
+
+describe('SandboxTenantService and idle guest accounts', () => {
+  const DAY = 86_400_000;
+  const NOW = new Date('2026-10-07T12:00:00Z');
+  const daysAgo = (d: number) => new Date(NOW.getTime() - d * DAY);
+
+  const withGuests = (
+    people: Array<{
+      id: string;
+      lastSeenAt: Date | null;
+      createdAt: Date;
+      isAdmin?: boolean;
+    }>,
+    holding: string[] = [],
+  ) => {
+    const built = build();
+    const internals = built.service as unknown as {
+      bindings: { find: () => Promise<unknown[]> };
+      users: {
+        findOne: (q: { where: { id: string } }) => Promise<unknown>;
+        delete: (w: { id: string }) => Promise<void>;
+      };
+      reserve: { findActiveForUser: (id: string) => Promise<unknown> };
+    };
+    internals.bindings.find = async () =>
+      people.map((p) => ({ principalRef: p.id }));
+    internals.users.findOne = async ({ where }) => {
+      const p = people.find((x) => x.id === where.id);
+      return p
+        ? {
+            ...p,
+            email: `${p.id}@example.com`,
+            oidcSub: `sub-${p.id}`,
+            isAdmin: !!p.isAdmin,
+          }
+        : null;
+    };
+    internals.users.delete = async ({ id }) => {
+      built.calls.push(`delete-user:${id}`);
+    };
+    internals.reserve.findActiveForUser = async (id) =>
+      holding.includes(id) ? { id } : null;
+    return built;
+  };
+
+  it('deletes a guest not seen for a month who holds no area, account and all', async () => {
+    const { service, calls } = withGuests(
+      [
+        { id: 'old', lastSeenAt: daysAgo(31), createdAt: daysAgo(60) },
+        { id: 'recent', lastSeenAt: daysAgo(2), createdAt: daysAgo(60) },
+        { id: 'busy', lastSeenAt: daysAgo(40), createdAt: daysAgo(60) },
+        {
+          id: 'boss',
+          lastSeenAt: daysAgo(90),
+          createdAt: daysAgo(99),
+          isAdmin: true,
+        },
+      ],
+      ['busy'],
+    );
+
+    expect(await service.deleteIdleGuestAccounts(NOW)).toBe(1);
+    expect(calls).toContain('delete-user:old');
+    expect(calls).toContain('delete-idp:sub-old');
+    expect(calls).toContain('delete-api-keys:old');
+    expect(calls.filter((c) => c.startsWith('delete-user:'))).toEqual([
+      'delete-user:old',
+    ]);
+  });
+
+  it('counts from sign-up for a guest never seen since', async () => {
+    const { service } = withGuests([
+      { id: 'never', lastSeenAt: null, createdAt: daysAgo(45) },
+    ]);
+    expect(await service.deleteIdleGuestAccounts(NOW)).toBe(1);
   });
 });

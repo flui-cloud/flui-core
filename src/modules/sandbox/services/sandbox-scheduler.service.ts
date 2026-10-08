@@ -8,13 +8,13 @@ import { SandboxPrepullService } from './sandbox-prepull.service';
 import { SandboxCapacityAlertService } from './sandbox-capacity-alert.service';
 import { SandboxTenantState } from '../entities/sandbox-tenant.entity';
 import { SandboxStorageQuotaService } from './sandbox-storage-quota.service';
+import { SandboxWaitlistService } from './sandbox-waitlist.service';
 
 /**
  * A pass builds sequentially, so this is also a time bound: eight builds is
  * about a quarter of an hour of one process doing nothing else. Past that the
  * next pass takes over, with a freshly-read demand rather than one from before.
  */
-const MAX_BUILDS_PER_PASS = 8;
 
 /**
  * The two loops that keep the demo honest: one deletes what is past its
@@ -41,6 +41,7 @@ export class SandboxSchedulerService {
     private readonly capacityAlert: SandboxCapacityAlertService,
     private readonly storageQuotas: SandboxStorageQuotaService,
     @Inject(SANDBOX_CONFIG) private readonly config: SandboxConfig,
+    private readonly waitlist: SandboxWaitlistService,
   ) {}
 
   private warnedGone = false;
@@ -104,6 +105,18 @@ export class SandboxSchedulerService {
     }
   }
 
+  @Cron(CronExpression.EVERY_HOUR)
+  async deleteIdleGuests(): Promise<void> {
+    if (!this.config.enabled) return;
+    try {
+      await this.tenants.deleteIdleGuestAccounts();
+    } catch (error) {
+      this.logger.error(
+        `Idle guest sweep failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+
   @Cron(CronExpression.EVERY_MINUTE)
   async reapExpired(): Promise<void> {
     if (!this.config.enabled || this.reaping) return;
@@ -112,15 +125,19 @@ export class SandboxSchedulerService {
       const expired = await this.reserve.findExpired();
       const stale = await this.reserve.findStale();
       const abandoned = await this.reserve.findAbandoned();
-      const work = [...expired, ...stale, ...abandoned];
-      if (work.length === 0) return;
-
-      this.logger.log(
-        `Reaping ${expired.length} expired, ${stale.length} unclaimed and ${abandoned.length} abandoned tenancies`,
-      );
-      for (const tenant of work) {
-        await this.tenants.reap(tenant);
+      const emptied = await this.tenants.findEmptyAreas();
+      const work = [...expired, ...stale, ...abandoned, ...emptied];
+      if (work.length > 0) {
+        this.logger.log(
+          `Reaping ${expired.length} expired, ${stale.length} unclaimed, ${abandoned.length} abandoned and ${emptied.length} emptied areas`,
+        );
+        for (const tenant of work) {
+          await this.tenants.reap(tenant);
+        }
       }
+      // Every pass, after the reaping: a space freed this minute is offered
+      // this minute, and so is one an expired offer or a raised ceiling left.
+      await this.waitlist.offerFreedSlots();
     } catch (error) {
       this.logger.error(
         `Reaper failed: ${error instanceof Error ? error.message : String(error)}`,
@@ -156,7 +173,7 @@ export class SandboxSchedulerService {
       // somebody claims one, the reaper frees room, another process builds the
       // same thing. Asking again is one query and it is what keeps two API
       // replicas from each building the whole shortfall.
-      for (let built = 0; built < MAX_BUILDS_PER_PASS; built++) {
+      for (let built = 0; built < this.config.maxBuildsPerPass; built++) {
         const missing = await this.capacity.missing();
         if (missing === 0) return;
         try {
@@ -168,7 +185,7 @@ export class SandboxSchedulerService {
         }
       }
       this.logger.warn(
-        `Stopped after ${MAX_BUILDS_PER_PASS} builds in one pass — demand is outrunning what one pass can build`,
+        `Stopped after ${this.config.maxBuildsPerPass} builds in one pass — demand is outrunning what one pass can build`,
       );
     } finally {
       this.refilling = false;

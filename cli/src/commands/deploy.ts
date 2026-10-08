@@ -7,6 +7,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execSync } from 'node:child_process';
 import { ApiClient } from '../lib/api-client';
+import { ProjectClient } from '../lib/project-client';
 
 interface LocalValidation {
   valid: boolean;
@@ -103,6 +104,11 @@ export default class Deploy extends Command {
     cluster: Flags.string({
       char: 'c',
       description: 'Target cluster name or ID (default: auto-detect)',
+    }),
+    project: Flags.string({
+      char: 'p',
+      description:
+        'Project a new application goes to (slug, name or id, see flui project list). Default: your personal project. An existing application stays where it is.',
     }),
     repo: Flags.string({
       char: 'r',
@@ -265,6 +271,15 @@ export default class Deploy extends Command {
     const apiKey = configStorage.getApiKeyOrThrow();
 
     const apiClient = new ApiClient({ baseUrl: apiUrl, apiKey: apiKey });
+    if (flags.project) {
+      try {
+        flags.projectId = await new ProjectClient(apiClient).resolveId(
+          flags.project,
+        );
+      } catch (error: unknown) {
+        this.error((error as Error).message, { exit: 1 });
+      }
+    }
 
     // Detect manifest kind
     const kind = this.detectKind(raw);
@@ -358,6 +373,7 @@ export default class Deploy extends Command {
           ...(Object.keys(envOverrides).length > 0 ? { envOverrides } : {}),
           ...(secretEnvKeys.length > 0 ? { secretEnvKeys } : {}),
           ...(overrides ? { overrides } : {}),
+          ...(flags.projectId ? { projectId: flags.projectId as string } : {}),
         },
         { timeoutMs: 0 },
       );
@@ -654,6 +670,7 @@ export default class Deploy extends Command {
         {
           yaml,
           clusterId,
+          ...(flags.projectId ? { projectId: flags.projectId as string } : {}),
           ...(flags.name ? { displayName: flags.name as string } : {}),
           ...(flags.domain ? { domain: flags.domain as string } : {}),
           ...(flags['cert-challenge']

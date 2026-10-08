@@ -1,9 +1,11 @@
 import {
+  BadRequestException,
   ConflictException,
   Inject,
   Injectable,
   Logger,
   NotFoundException,
+  Optional,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
@@ -22,6 +24,12 @@ import {
   InviteLink,
   ListIdentityUsersQuery,
 } from '../interfaces/identity-directory.interface';
+import {
+  SANDBOX_SLOT_GATE,
+  SandboxSlotGate,
+} from '../../sandbox/gate/sandbox-slot-gate';
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 @Injectable()
 export class UserManagementService {
@@ -38,7 +46,61 @@ export class UserManagementService {
     private readonly groups: Repository<IamGroupEntity>,
     private readonly apiKeys: ApiKeyService,
     private readonly inviteMail: InviteMailService,
+    @Optional()
+    @Inject(SANDBOX_SLOT_GATE)
+    private readonly sandboxGate?: SandboxSlotGate,
   ) {}
+
+  /**
+   * Stop a person: every request they make is refused from now on, their
+   * sign-in is switched off at the identity provider, and on a demo instance
+   * their area ends. Nothing is deleted, so it can be undone.
+   */
+  async block(
+    id: string,
+    reason: string | undefined,
+    callerUserId: string,
+  ): Promise<UserEntity> {
+    const local = await this.findLocal(id);
+    if (local.id === callerUserId) {
+      throw new BadRequestException('You cannot block yourself');
+    }
+    if (local.isAdmin) {
+      throw new BadRequestException('An administrator cannot be blocked');
+    }
+    if (
+      local.oidcSub &&
+      (await this.directory.getUser(local.oidcSub))?.isSystemUser
+    ) {
+      throw new BadRequestException('A system account cannot be blocked');
+    }
+    await this.userRepo.update(
+      { id: local.id },
+      { blockedAt: new Date(), blockedReason: reason?.trim() || null },
+    );
+    if (local.oidcSub) await this.directory.setActive(local.oidcSub, false);
+    await this.sandboxGate?.releaseAreaOf(local.id);
+    return this.findLocal(local.id);
+  }
+
+  async unblock(id: string): Promise<UserEntity> {
+    const local = await this.findLocal(id);
+    await this.userRepo.update(
+      { id: local.id },
+      { blockedAt: null, blockedReason: null },
+    );
+    if (local.oidcSub) await this.directory.setActive(local.oidcSub, true);
+    return this.findLocal(local.id);
+  }
+
+  /** By local id or by identity-provider id, whichever the caller holds. */
+  private async findLocal(id: string): Promise<UserEntity> {
+    const local = await this.userRepo.findOne({
+      where: [{ oidcSub: id }, ...(UUID.test(id) ? [{ id }] : [])],
+    });
+    if (!local) throw new NotFoundException(`User ${id} not found`);
+    return local;
+  }
 
   createUser(input: CreateIdentityUserInput): Promise<CreatedIdentityUser> {
     return this.directory.createUser(input);
@@ -105,7 +167,17 @@ export class UserManagementService {
           principalRef: principal.id,
         })
       : { affected: 0 };
-    return (byEmail.affected ?? 0) + (byServiceAccount.affected ?? 0);
+    const byUserId = principal.id
+      ? await this.bindings.delete({
+          principalType: 'user',
+          principalRef: principal.id,
+        })
+      : { affected: 0 };
+    return (
+      (byEmail.affected ?? 0) +
+      (byServiceAccount.affected ?? 0) +
+      (byUserId.affected ?? 0)
+    );
   }
 
   /**

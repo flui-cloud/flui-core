@@ -32,6 +32,8 @@ import { JwtAuthGuard } from './modules/auth/guards/jwt-auth.guard';
 import { IamModule } from './modules/iam/iam.module';
 import { SandboxModule } from './modules/sandbox/sandbox.module';
 import { SandboxFenceGuard } from './modules/sandbox/guards/sandbox-fence.guard';
+import { SandboxGateModule } from './modules/sandbox/gate/sandbox-slot-gate';
+import { EgressApiModule } from './modules/infrastructure/egress/egress-api.module';
 import { PermissionsGuard } from './modules/iam/guards/permissions.guard';
 import { SectionAccessGuard } from './modules/iam/guards/section-access.guard';
 import { ActionCycleGuard } from './modules/action-cycle/action-cycle.guard';
@@ -159,6 +161,9 @@ const boolOr = (raw: string | undefined, fallback: boolean): boolean =>
     IamModule,
     ProjectsModule,
     SandboxModule,
+    // The global fence records guest activity through it.
+    SandboxGateModule,
+    EgressApiModule,
     ActionCycleModule,
     OperatingContextModule,
     MaskModule,

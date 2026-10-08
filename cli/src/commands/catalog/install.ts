@@ -1,6 +1,7 @@
 import { Args, Command, Flags } from '@oclif/core';
 import chalk from 'chalk';
 import { CatalogClient, CatalogInstall } from '../../lib/catalog-client';
+import { ProjectClient } from '../../lib/project-client';
 import { resolveClusterRef } from '../../lib/resolve-cluster';
 import { printContextBanner } from '../../lib/context-banner';
 import { promptInput, promptMaskedInput } from '../../lib/prompts';
@@ -47,6 +48,10 @@ export default class CatalogInstallCmd extends Command {
   };
   static readonly flags = {
     cluster: Flags.string({ description: 'Cluster name or id' }),
+    project: Flags.string({
+      description:
+        'Project the installed applications go to (slug, name or id, see flui project list). Default: your personal project.',
+    }),
     name: Flags.string({ description: 'Display name (defaults to the slug)' }),
     domain: Flags.string({
       description:
@@ -92,8 +97,12 @@ export default class CatalogInstallCmd extends Command {
       await this.askMissingInputs(catalog, args.slug, userInputs);
     }
 
+    const projectId = flags.project
+      ? await ProjectClient.fromConfig().resolveId(flags.project)
+      : undefined;
     let install = await catalog.install(args.slug, {
       clusterId: cluster.id,
+      projectId,
       displayName: flags.name ?? args.slug,
       domain: flags.domain,
       skipEndpoint: flags['skip-endpoint'],

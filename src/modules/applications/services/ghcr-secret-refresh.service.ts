@@ -11,7 +11,15 @@ import { GithubAppUserAuthService } from '../../repositories/services/github-app
 import { ApplicationsRepository } from '../repositories/applications.repository';
 import { ApplicationEntity } from '../entities/application.entity';
 
-const GHCR_PULL_SECRET_NAME = 'ghcr-pull-secret';
+/**
+ * One pull secret per application, not per namespace: a project's namespace
+ * holds the applications of several people, and each pulls with its own
+ * owner's credentials. A shared name would let the last deploy overwrite the
+ * credentials every other application in the project pulls with.
+ */
+export function ghcrPullSecretName(appSlug: string): string {
+  return `${appSlug}-ghcr-pull`;
+}
 
 @Injectable()
 export class GhcrSecretRefreshService {
@@ -152,6 +160,7 @@ export class GhcrSecretRefreshService {
         this.applyPullSecret(
           kubeconfig,
           app.k8sNamespace,
+          ghcrPullSecretName(app.slug),
           dockerConfigJsonBase64,
         ),
       ),
@@ -205,15 +214,17 @@ export class GhcrSecretRefreshService {
         resolved.username,
         resolved.token,
       );
+      const secretName = ghcrPullSecretName(app.slug);
       await this.applyPullSecret(
         kubeconfig,
         app.k8sNamespace,
+        secretName,
         dockerConfigJsonBase64,
       );
       this.logger.log(
-        `${GHCR_PULL_SECRET_NAME} ensured in namespace ${app.k8sNamespace} via ${resolved.source}`,
+        `${secretName} ensured in namespace ${app.k8sNamespace} via ${resolved.source}`,
       );
-      return GHCR_PULL_SECRET_NAME;
+      return secretName;
     } catch (err) {
       this.logger.warn(
         `[ghcr] Failed to create ghcr pull secret for app ${app.id}: ${err.message}`,
@@ -341,13 +352,14 @@ export class GhcrSecretRefreshService {
   private async applyPullSecret(
     kubeconfig: string,
     namespace: string,
+    secretName: string,
     dockerConfigJsonBase64: string,
   ): Promise<void> {
     const manifest = [
       'apiVersion: v1',
       'kind: Secret',
       'metadata:',
-      `  name: ${GHCR_PULL_SECRET_NAME}`,
+      `  name: ${secretName}`,
       `  namespace: ${namespace}`,
       'type: kubernetes.io/dockerconfigjson',
       'data:',

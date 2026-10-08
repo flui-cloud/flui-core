@@ -40,6 +40,7 @@ import {
 import { UserManagementService } from '../services/user-management.service';
 import { RequireSection } from '../../iam/decorators/require-section.decorator';
 import { IdentityUserResponseDto } from '../dto/identity-user-response.dto';
+import { BlockUserDto, BlockedUserResponseDto } from '../dto/block-user.dto';
 
 @ApiTags('auth')
 @ApiBearerAuth()
@@ -87,6 +88,34 @@ export class UserManagementController {
       );
     }
     return new IdentityUserResponseDto(user);
+  }
+
+  @Post(':id/block')
+  @RequirePermission(IAM_PERMISSION.IAM_MANAGE_USERS)
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Block a person',
+    description:
+      'Every request they make is refused, their sign-in is switched off, and on a demo their area ends. Nothing is deleted; unblock undoes it. :id is the local or the identity-provider id.',
+  })
+  @ApiOkResponse({ type: BlockedUserResponseDto })
+  async block(
+    @Param('id') id: string,
+    @Body() dto: BlockUserDto,
+    @Request() req: { user: AuthenticatedUser },
+  ): Promise<BlockedUserResponseDto> {
+    return new BlockedUserResponseDto(
+      await this.users.block(id, dto.reason, req.user.userId),
+    );
+  }
+
+  @Post(':id/unblock')
+  @RequirePermission(IAM_PERMISSION.IAM_MANAGE_USERS)
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Let a blocked person in again' })
+  @ApiOkResponse({ type: BlockedUserResponseDto })
+  async unblock(@Param('id') id: string): Promise<BlockedUserResponseDto> {
+    return new BlockedUserResponseDto(await this.users.unblock(id));
   }
 
   @Delete(':id')

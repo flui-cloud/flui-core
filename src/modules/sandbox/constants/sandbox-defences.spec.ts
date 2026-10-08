@@ -1,6 +1,6 @@
 import * as yaml from 'js-yaml';
 import { buildSandboxNetworkPolicy } from './sandbox-network-policy.manifest';
-import { buildNoindexMiddleware, SANDBOX_ROBOTS_TXT } from './sandbox-noindex';
+import { buildNoindexMiddleware } from './sandbox-noindex';
 import { buildPrepullManifest } from './sandbox-prepull.manifest';
 import { isFastCatalogApp } from './sandbox-seed';
 
@@ -60,31 +60,15 @@ describe('network policy around a tenancy', () => {
   });
 
   /**
-   * The widening is one direction only. What keeps one tenancy out of another
-   * is the egress half, which this change does not touch — so if that ever
-   * loosens, it fails here rather than in somebody's data.
+   * The widening is one direction only, and the way out to the internet is not
+   * this policy's: it lives in the egress policy, so that a port closed there
+   * is not opened again here.
    */
-  it('does not open a tenancy towards anything by widening the way in', () => {
-    const egress = JSON.stringify(policy().spec.egress);
-    expect(egress).toContain('10.0.0.0/8');
-    expect(egress).toContain('169.254.0.0/16');
-  });
-
-  it('keeps the internet reachable, because an app that cannot call out proves less', () => {
-    const internet = policy().spec.egress.find((e: any) =>
-      e.to?.some((t: any) => t.ipBlock?.cidr === '0.0.0.0/0'),
+  it('opens no address outside the tenancy on the way out', () => {
+    const egress = policy().spec.egress;
+    expect(egress.some((e: any) => e.to?.some((t: any) => t.ipBlock))).toBe(
+      false,
     );
-    expect(internet).toBeTruthy();
-  });
-
-  it('closes the private ranges and the metadata address inside that opening', () => {
-    const except = policy()
-      .spec.egress.find((e: any) => e.to?.some((t: any) => t.ipBlock))
-      .to.find((t: any) => t.ipBlock).ipBlock.except;
-    expect(except).toContain('169.254.0.0/16');
-    expect(except).toContain('10.0.0.0/8');
-    expect(except).toContain('172.16.0.0/12');
-    expect(except).toContain('192.168.0.0/16');
   });
 
   it('still allows DNS, without which nothing works at all', () => {
@@ -111,10 +95,6 @@ describe('keeping guest applications out of search results', () => {
     expect(mw.spec.headers.customResponseHeaders['X-Robots-Tag']).toContain(
       'nofollow',
     );
-  });
-
-  it('also refuses crawlers that never fetch a page first', () => {
-    expect(SANDBOX_ROBOTS_TXT).toContain('Disallow: /');
   });
 });
 

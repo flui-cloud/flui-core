@@ -25,6 +25,14 @@ export class InstallFromYamlDto {
 
   @ApiPropertyOptional({
     description:
+      "Project the installed applications belong to, and therefore their namespace. Omitted: the installer's personal project.",
+  })
+  @IsOptional()
+  @IsUUID()
+  projectId?: string;
+
+  @ApiPropertyOptional({
+    description:
       'Display name shown in the dashboard. Defaults to manifest metadata.name.',
   })
   @IsOptional()

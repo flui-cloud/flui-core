@@ -25,14 +25,14 @@ import { CatalogInstallProcessor } from './catalog-install.processor';
  */
 describe('who may schedule on the control plane', () => {
   const CLUSTER = 'cluster-1';
-  const GUEST = 'guest-abc123@try.flui.cloud';
-  const PERSON = 'someone@example.com';
+  const GUEST = 'guest-user-id';
+  const PERSON = 'person-user-id';
 
-  /** Stands in for the repository: true when the namespace is a tenancy. */
-  const withTenancies = (namespaces: string[]) => ({
+  /** Stands in for the repository: true when the installer holds a tenancy. */
+  const withTenancies = (userIds: string[]) => ({
     sandboxTenants: {
-      exists: ({ where }: { where: { namespace: string } }) =>
-        Promise.resolve(namespaces.includes(where.namespace)),
+      exists: ({ where }: { where: { userId: string } }) =>
+        Promise.resolve(userIds.includes(where.userId)),
     },
   });
 
@@ -40,7 +40,7 @@ describe('who may schedule on the control plane', () => {
     self: unknown,
     install: {
       clusterId: string;
-      userEmail?: string;
+      userId?: string;
       allowMasterPlacement: boolean;
     },
   ): Promise<boolean> =>
@@ -60,7 +60,7 @@ describe('who may schedule on the control plane', () => {
     delete process.env.FLUI_ALLOW_MASTER;
     const allowed = await resolve(withTenancies([]), {
       clusterId: CLUSTER,
-      userEmail: PERSON,
+      userId: PERSON,
       allowMasterPlacement: false,
     });
     expect(allowed).toBe(false);
@@ -70,7 +70,7 @@ describe('who may schedule on the control plane', () => {
     process.env.FLUI_ALLOW_MASTER = 'true';
     const allowed = await resolve(withTenancies([]), {
       clusterId: CLUSTER,
-      userEmail: PERSON,
+      userId: PERSON,
       allowMasterPlacement: false,
     });
     expect(allowed).toBe(true);
@@ -78,9 +78,9 @@ describe('who may schedule on the control plane', () => {
 
   it('does not let that flag reach a sandbox guest', async () => {
     process.env.FLUI_ALLOW_MASTER = 'true';
-    const allowed = await resolve(withTenancies(['user-guest-abc123']), {
+    const allowed = await resolve(withTenancies([GUEST]), {
       clusterId: CLUSTER,
-      userEmail: GUEST,
+      userId: GUEST,
       allowMasterPlacement: false,
     });
     expect(allowed).toBe(false);
@@ -91,9 +91,9 @@ describe('who may schedule on the control plane', () => {
     // components have nowhere else to run on a single-node cluster. Refusing
     // here would leave every guest looking at a tenancy that never came up.
     delete process.env.FLUI_ALLOW_MASTER;
-    const allowed = await resolve(withTenancies(['user-guest-abc123']), {
+    const allowed = await resolve(withTenancies([GUEST]), {
       clusterId: CLUSTER,
-      userEmail: GUEST,
+      userId: GUEST,
       allowMasterPlacement: true,
     });
     expect(allowed).toBe(true);
@@ -106,7 +106,7 @@ describe('who may schedule on the control plane', () => {
       { sandboxTenants: { exists } },
       {
         clusterId: CLUSTER,
-        userEmail: GUEST,
+        userId: GUEST,
         allowMasterPlacement: false,
       },
     );

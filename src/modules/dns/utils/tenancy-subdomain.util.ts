@@ -1,3 +1,5 @@
+import { PROJECT_NAMESPACE_PREFIX } from '../../applications/utils/k8s-namespace.util';
+
 /**
  * The name a tenancy publishes under, and the certificate that has to exist
  * for it to be reachable over TLS.
@@ -27,12 +29,11 @@ export const DNS_LABEL_MAX = 63;
 export const FQDN_MAX = 253;
 
 /**
- * The prefix `buildUserNamespace` puts on every namespace it derives. Dropped
- * from the public name because it says nothing to the person reading the
- * address bar, and because every namespace carries it — so dropping it keeps
- * the mapping one-to-one.
+ * The prefix every project namespace carries. Dropped from the public name
+ * because it says nothing to the person reading the address bar, and because
+ * every namespace carries it, so dropping it keeps the mapping one-to-one.
  */
-const NAMESPACE_PREFIX = 'user-';
+const NAMESPACE_PREFIX = PROJECT_NAMESPACE_PREFIX;
 
 /** Lowercase, no trailing dot. The form every comparison here is made in. */
 export function normalizeName(name: string): string {

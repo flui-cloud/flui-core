@@ -78,6 +78,16 @@ export class InferenceUsageService {
     return Number(row?.n ?? 0);
   }
 
+  /** Everything everyone has spent since a moment. The number spend alerts read. */
+  async totalSince(since: Date): Promise<number> {
+    const row = await this.events
+      .createQueryBuilder('u')
+      .select('COALESCE(SUM(u."promptTokens" + u."completionTokens"), 0)', 'n')
+      .where('u."createdAt" >= :since', { since })
+      .getRawOne<{ n: string }>();
+    return Number(row?.n ?? 0);
+  }
+
   async byModel(since?: Date): Promise<UsageByModel[]> {
     const qb = this.events
       .createQueryBuilder('u')

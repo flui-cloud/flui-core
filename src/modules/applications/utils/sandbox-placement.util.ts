@@ -11,11 +11,14 @@ export function stripSandboxPlacementFields(dto: CreateApplicationDto): void {
   delete dto.persistenceScope;
   delete dto.dedicatedNodeName;
   delete dto.allowMasterPlacement;
+  delete dto.projectId;
 }
 
-/** Catalog installs only carry the master-placement switch; scope is the manifest's. */
+/** Catalog installs carry the master-placement switch and the project; scope is the manifest's. */
 export function stripSandboxInstallPlacement(dto: {
   allowMasterPlacement?: boolean;
+  projectId?: string;
 }): void {
   delete dto.allowMasterPlacement;
+  delete dto.projectId;
 }

@@ -409,6 +409,26 @@ describe('MCP agent-facing tool surface', () => {
   describe('app_deploy_image (bring-your-own image, first deploy)', () => {
     const deployImage = find(APPLICATION_TOOLS, 'app_deploy_image');
 
+    it('creates the application in the project the agent names', async () => {
+      const ctx = apiCtx((call) =>
+        call.path === '/clusters/c1/applications'
+          ? {
+              application: { id: 'a1', name: 'api', slug: 'api-1' },
+              operation: null,
+            }
+          : oneCluster(call),
+      );
+
+      await run(
+        deployImage,
+        { image: 'nginx:1.25', name: 'api', projectId: 'team-1' },
+        ctx,
+      );
+
+      const body = ctx.calls[1].payload as Record<string, unknown>;
+      expect(body.projectId).toBe('team-1');
+    });
+
     it('creates the application on the resolved cluster, sourced from the image, and starts a deploy', async () => {
       const ctx = apiCtx((call) =>
         call.path === '/clusters/c1/applications'

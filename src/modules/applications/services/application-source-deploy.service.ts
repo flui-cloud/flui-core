@@ -428,9 +428,9 @@ export class ApplicationSourceDeployService {
           volumes: (manifest.deploy.volumes as any) ?? [],
           autoDeploy: false,
           metadata: manifestMetadata,
+          projectId: dto.projectId,
         },
         userId,
-        userEmail,
       );
     } else {
       this.logger.log(`Updating existing application from manifest: ${app.id}`);

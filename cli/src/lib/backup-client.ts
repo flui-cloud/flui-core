@@ -17,6 +17,7 @@ import {
   BeforeDeployOption,
   BackupDecisionView,
   VeleroFootprint,
+  HeartbeatStatus,
 } from './backup-client.types';
 
 export * from './backup-client.types';
@@ -160,6 +161,10 @@ export class BackupClient {
     return this.api.get('/backup-policies/activity');
   }
 
+  async heartbeat(): Promise<HeartbeatStatus> {
+    return this.api.get('/backup-policies/heartbeat');
+  }
+
   /** Every backup recorded for one application or one cluster. */
   async listArtifacts(filter: {
     applicationId?: string;
@@ -201,7 +206,7 @@ export class BackupClient {
 
   async setPlatformConfig(
     policyId: string,
-    cfg: { recipient: string; heartbeatUrl?: string },
+    cfg: { recipient: string; heartbeatUrl?: string; clearHeartbeat?: boolean },
   ): Promise<BackupPolicy> {
     return this.api.post(`/backup-policies/${policyId}/platform-config`, cfg);
   }

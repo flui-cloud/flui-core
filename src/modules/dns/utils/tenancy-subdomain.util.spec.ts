@@ -8,7 +8,7 @@ import {
   tenancyWildcardHost,
 } from './tenancy-subdomain.util';
 
-const NAMESPACE = 'user-guest-f0e5e994';
+const NAMESPACE = 'p-guest-f0e5e994';
 const CLUSTER = 'control-cluster';
 const ZONE = 'dawit.blog';
 
@@ -31,23 +31,23 @@ describe('tenancyLabel', () => {
   });
 
   it('ignores case and a trailing dot', () => {
-    expect(tenancyLabel('USER-Guest-A.')).toBe('guest-a');
+    expect(tenancyLabel('P-Guest-A.')).toBe('guest-a');
   });
 
   it.each([
-    ['nothing left after the prefix', 'user-'],
-    ['a label that starts on a hyphen', 'user--guest'],
-    ['a label that ends on a hyphen', 'user-guest-'],
-    ['a character a hostname cannot carry', 'user-guest_1'],
-    ['a dot, which would be two labels', 'user-guest.one'],
-    ['a label past 63 octets', `user-${'a'.repeat(DNS_LABEL_MAX + 1)}`],
+    ['nothing left after the prefix', 'p-'],
+    ['a label that starts on a hyphen', 'p--guest'],
+    ['a label that ends on a hyphen', 'p-guest-'],
+    ['a character a hostname cannot carry', 'p-guest_1'],
+    ['a dot, which would be two labels', 'p-guest.one'],
+    ['a label past 63 octets', `p-${'a'.repeat(DNS_LABEL_MAX + 1)}`],
   ])('refuses %s', (_case, namespace) => {
     expect(tenancyLabel(namespace)).toBeNull();
   });
 
   it('accepts a label of exactly 63 octets', () => {
     const label = 'a'.repeat(DNS_LABEL_MAX);
-    expect(tenancyLabel(`user-${label}`)).toBe(label);
+    expect(tenancyLabel(`p-${label}`)).toBe(label);
   });
 });
 
@@ -57,7 +57,7 @@ describe('buildTenancySubdomain', () => {
   });
 
   it.each([
-    ['a namespace that is not a label', { namespace: 'user-' }],
+    ['a namespace that is not a label', { namespace: 'p-' }],
     ['an empty cluster name', { clusterName: '' }],
     ['a cluster name with an illegal label', { clusterName: 'my_cluster' }],
     ['an empty zone', { zoneName: '' }],

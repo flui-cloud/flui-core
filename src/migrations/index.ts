@@ -73,6 +73,10 @@ import { DefaultBackupSchedules1790000000016 } from './1790000000016-DefaultBack
 import { BackupClusterProtections1790000000017 } from './1790000000017-BackupClusterProtections';
 import { RemoveClusterBackupEngine1790000000018 } from './1790000000018-RemoveClusterBackupEngine';
 import { ApplicationBackupDecision1790000000019 } from './1790000000019-ApplicationBackupDecision';
+import { ProjectNamespaces1790000000020 } from './1790000000020-ProjectNamespaces';
+import { SandboxAreas1790000000021 } from './1790000000021-SandboxAreas';
+import { SandboxActivity1790000000022 } from './1790000000022-SandboxActivity';
+import { ClusterEgressPolicy1790000000023 } from './1790000000023-ClusterEgressPolicy';
 import { BackfillArtifactApplicationId1787500000000 } from './1787500000000-BackfillArtifactApplicationId';
 import { WireGuardHubKeySealed1790000000000 } from './1790000000000-WireGuardHubKeySealed';
 import { RecoverNodeAccessOperation1790000000001 } from './1790000000001-RecoverNodeAccessOperation';
@@ -159,4 +163,8 @@ export const migrations = [
   BackupClusterProtections1790000000017,
   RemoveClusterBackupEngine1790000000018,
   ApplicationBackupDecision1790000000019,
+  ProjectNamespaces1790000000020,
+  SandboxAreas1790000000021,
+  SandboxActivity1790000000022,
+  ClusterEgressPolicy1790000000023,
 ];

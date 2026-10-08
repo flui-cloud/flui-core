@@ -79,7 +79,6 @@ describe('sandbox allowlist', () => {
       ['GET', '/infrastructure/operations/op-1'],
       ['GET', '/sandbox/limits'],
       ['GET', '/sandbox/session'],
-      ['GET', '/sandbox/resume'],
       ['GET', '/showcase'],
       // The one destructive verb a guest holds. Which application is still
       // AppAccessGuard's answer; this only says the door exists.
