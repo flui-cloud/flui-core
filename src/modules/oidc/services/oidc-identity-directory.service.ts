@@ -197,7 +197,8 @@ export class OidcIdentityDirectory implements IIdentityDirectory {
     } catch (err) {
       throw this.translateProviderError(err, 'deleteUser');
     }
-    await this.userRepo.delete({ oidcSub: id });
+    // The local row is the caller's: it revokes keys, grants and groups by it
+    // and keeps it for what the person owned.
   }
 
   async setRole(id: string, role: IdentityRole): Promise<void> {

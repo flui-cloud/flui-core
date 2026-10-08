@@ -20,6 +20,8 @@ import {
 } from '../interfaces/identity-directory.interface';
 import { InviteMailService } from '../../mail/services/invite-mail.service';
 
+const CALLER = '11111111-1111-4111-8111-111111111111';
+
 /**
  * `PATCH /auth/users/:id/role` runs on `iam:assign-role`, which the built-in
  * `maintainer` role holds. So the whole safety of the route is that the value
@@ -84,10 +86,10 @@ describe('UserManagementService.setRole', () => {
 
   it('delegates an assignable role to the directory', async () => {
     const { service, directory } = build({
-      id: 'caller',
+      id: CALLER,
       oidcSub: 'caller-sub',
     });
-    await service.setRole('target-oidc-sub', IdentityRole.READONLY, 'caller');
+    await service.setRole('target-oidc-sub', IdentityRole.READONLY, CALLER);
     expect(directory.setRole).toHaveBeenCalledWith(
       'target-oidc-sub',
       IdentityRole.READONLY,
@@ -95,10 +97,10 @@ describe('UserManagementService.setRole', () => {
   });
 
   it('404s on an unknown user before touching the directory', async () => {
-    const { service, directory } = build({ id: 'caller' });
+    const { service, directory } = build({ id: CALLER });
     directory.getUser.mockResolvedValue(null);
     await expect(
-      service.setRole('ghost', IdentityRole.USER, 'caller'),
+      service.setRole('ghost', IdentityRole.USER, CALLER),
     ).rejects.toBeInstanceOf(NotFoundException);
     expect(directory.setRole).not.toHaveBeenCalled();
   });
@@ -106,18 +108,18 @@ describe('UserManagementService.setRole', () => {
   it('refuses a caller changing its own role, by local id', async () => {
     const { service, directory } = build({ id: 'target-oidc-sub' });
     await expect(
-      service.setRole('target-oidc-sub', IdentityRole.READONLY, 'caller'),
+      service.setRole('target-oidc-sub', IdentityRole.READONLY, CALLER),
     ).rejects.toBeInstanceOf(ConflictException);
     expect(directory.setRole).not.toHaveBeenCalled();
   });
 
   it('refuses a caller changing its own role, by oidc subject', async () => {
     const { service, directory } = build({
-      id: 'caller',
+      id: CALLER,
       oidcSub: 'target-oidc-sub',
     });
     await expect(
-      service.setRole('target-oidc-sub', IdentityRole.USER, 'caller'),
+      service.setRole('target-oidc-sub', IdentityRole.USER, CALLER),
     ).rejects.toBeInstanceOf(ConflictException);
     expect(directory.setRole).not.toHaveBeenCalled();
   });

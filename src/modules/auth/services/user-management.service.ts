@@ -125,9 +125,11 @@ export class UserManagementService {
     if (target.isBootstrapAdmin) {
       throw new ConflictException('Cannot delete the bootstrap admin');
     }
-    const callerLocal = await this.userRepo.findOne({
-      where: { id: callerUserId },
-    });
+    // A service credential's principal is not a person's uuid, and looking it
+    // up as one is a database error.
+    const callerLocal = UUID.test(callerUserId)
+      ? await this.userRepo.findOne({ where: { id: callerUserId } })
+      : null;
     if (callerLocal?.oidcSub === id || callerLocal?.id === id) {
       throw new ConflictException('Cannot delete your own account');
     }
@@ -207,7 +209,9 @@ export class UserManagementService {
    */
   private async detachLocalAccess(idpUserId: string): Promise<void> {
     const local = await this.userRepo.findOne({
-      where: [{ oidcSub: idpUserId }, { id: idpUserId }],
+      where: UUID.test(idpUserId)
+        ? [{ oidcSub: idpUserId }, { id: idpUserId }]
+        : { oidcSub: idpUserId },
     });
     if (!local) return;
 
@@ -243,9 +247,9 @@ export class UserManagementService {
   ): Promise<void> {
     const target = await this.directory.getUser(id);
     if (!target) throw new NotFoundException(`User ${id} not found`);
-    const callerLocal = await this.userRepo.findOne({
-      where: { id: callerUserId },
-    });
+    const callerLocal = UUID.test(callerUserId)
+      ? await this.userRepo.findOne({ where: { id: callerUserId } })
+      : null;
     if (callerLocal?.oidcSub === id || callerLocal?.id === id) {
       throw new ConflictException(
         'Cannot change your own role — ask another admin to change it',
