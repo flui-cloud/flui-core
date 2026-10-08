@@ -26,6 +26,8 @@ const build = (
     from?: string;
     admins?: { email: string }[];
     owner?: { email: string } | null;
+    dashboard?: string;
+    cluster?: { name: string } | null;
   } = {},
 ) => {
   const sent: Record<string, unknown>[] = [];
@@ -35,7 +37,9 @@ const build = (
         ? (over.from ?? 'noreply@example.test')
         : key === 'MAIL_FROM_NAME'
           ? 'Flui'
-          : undefined,
+          : key === 'FRONTEND_URL'
+            ? over.dashboard
+            : undefined,
   };
   const sender = {
     send: async (req: Record<string, unknown>) => {
@@ -47,12 +51,14 @@ const build = (
     findOne: async () => over.owner ?? null,
     find: async () => over.admins ?? [{ email: 'admin@example.test' }],
   };
+  const clusters = { findOne: async () => over.cluster ?? null };
   return {
     sent,
     service: new AlertMailService(
       config as never,
       sender as never,
       users as never,
+      clusters as never,
     ),
   };
 };
@@ -140,9 +146,10 @@ describe('AlertMailService', () => {
 
     await service.deliver('fired', event({ nodeInstance: 'node-1' }));
 
-    expect(sent[0].subject).toBe('critical: node-1');
+    expect(sent[0].subject).toBe('Critical: Node node-1 is not reporting');
     expect(sent[0].text).toContain('Node node-1 is not reporting');
-    expect(sent[0].text).toContain('2020-01-01T00:00:00.000Z');
+    expect(sent[0].text).toContain('1 Jan 2020, 00:00 UTC');
+    expect(sent[0].html).toContain('Node node-1 is not reporting');
   });
 
   it('says so when it recovers', async () => {
@@ -153,8 +160,10 @@ describe('AlertMailService', () => {
       event({ status: 'resolved', endsAt: new Date('2020-01-01T00:20:00Z') }),
     );
 
-    expect(sent[0].subject).toBe('Recovered: FluiNodeDown');
-    expect(sent[0].text).toContain('This has recovered.');
+    expect(sent[0].subject).toBe('Recovered: Node node-1 is not reporting');
+    expect(sent[0].text).toContain('Recovered: Node node-1 is not reporting');
+    expect(sent[0].text).toContain('Lasted        20m');
+    expect(sent[0].text).not.toContain('one more message');
   });
 
   /**
@@ -204,9 +213,94 @@ describe('AlertMailService', () => {
         findOne: async () => null,
         find: async () => [{ email: 'a@b.test' }],
       } as never,
+      { findOne: async () => null } as never,
     );
 
     await expect(failing.deliver('fired', event())).resolves.toBe(false);
     expect(service).toBeDefined();
+  });
+
+  /**
+   * A platform backup failing at four in the morning must say which
+   * installation, which cluster, and where to look.
+   */
+  it('says which installation and cluster it is about and links to the page that answers it', async () => {
+    const { service, sent } = build({
+      dashboard: 'https://app.cheerful-meerkat.example.test',
+      cluster: { name: 'control-cluster-staging' },
+    });
+
+    await service.deliver(
+      'fired',
+      event({
+        alertname: 'FluiBackupFailed',
+        fluiKind: 'backup',
+        clusterId: 'c1',
+        labels: { policy: 'flui-control-plane' },
+        annotations: {
+          summary:
+            'Backup "flui-control-plane" failed: We encountered an internal error. Please try again.',
+        },
+      }),
+    );
+
+    const mail = sent[0] as Record<string, string>;
+    expect(mail.subject).toMatch(
+      /^\[cheerful-meerkat\.example\.test\] Critical: Backup "flui-control-plane" failed/,
+    );
+    expect(mail.text).toContain('Cluster       control-cluster-staging');
+    expect(mail.text).toContain('Backup policy flui-control-plane');
+    expect(mail.text).toContain(
+      'https://app.cheerful-meerkat.example.test/management/backup/overview',
+    );
+    expect(mail.text).toContain(
+      'you are an administrator of this installation',
+    );
+    expect(mail.html).toContain(
+      'href="https://app.cheerful-meerkat.example.test/management/backup/overview"',
+    );
+    expect(mail.html).toContain(
+      'src="https://app.cheerful-meerkat.example.test/icons/logo.png"',
+    );
+  });
+
+  it('tells an owner why it reached them and links to their application', async () => {
+    const { service, sent } = build({
+      owner: { email: 'owner@example.test' },
+      dashboard: 'https://app.flui.example.test',
+    });
+
+    await service.deliver(
+      'fired',
+      event({ applicationId: 'a1', applicationSlug: 'shop' }),
+      { ownerUserId: 'u1' },
+    );
+
+    expect(sent[0].text).toContain('because you own shop');
+    expect(sent[0].text).toContain(
+      'https://app.flui.example.test/apps/applications/a1/monitoring',
+    );
+  });
+
+  it('escapes what an alert rule or an error message put in the summary', async () => {
+    const { service, sent } = build();
+
+    await service.deliver(
+      'fired',
+      event({ annotations: { summary: '<img src=x onerror=alert(1)>' } }),
+    );
+
+    expect(sent[0].html).not.toContain('<img');
+    expect(sent[0].html).toContain('&lt;img src=x onerror=alert(1)&gt;');
+  });
+
+  it('leaves the link out rather than inventing a dashboard address', async () => {
+    const { service, sent } = build();
+
+    await service.deliver('fired', event());
+
+    expect(sent[0].text).not.toContain('Open in the dashboard');
+    expect(sent[0].html).not.toContain('href=');
+    expect(sent[0].html).not.toContain('<img');
   });
 });

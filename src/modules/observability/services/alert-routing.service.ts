@@ -16,6 +16,7 @@ import { EncryptionService } from '../../shared/encryption/services/encryption.s
 import { AlertDestinationEntity } from '../entities/alert-destination.entity';
 import { AlertEventEntity } from '../entities/alert-event.entity';
 import { AlertMailService } from './alert-mail.service';
+import { alertDashboardLink } from './alert-mail.template';
 import { meetsFloor, signAlertWebhook } from './alert-routing.util';
 
 export type AlertDeliveryKind = 'fired' | 'resolved';
@@ -232,6 +233,10 @@ export class AlertRoutingService {
 
   private payload(kind: AlertDeliveryKind, event: AlertEventEntity) {
     const endsAt = kind === 'resolved' ? event.endsAt : null;
+    const installation =
+      this.config.get<string>('FRONTEND_URL') ??
+      this.config.get<string>('DASHBOARD_URL') ??
+      null;
     return {
       alert: event.alertname,
       severity: event.severity,
@@ -242,10 +247,8 @@ export class AlertRoutingService {
       node: event.nodeInstance ?? null,
       startsAt: event.startsAt.toISOString(),
       ...(endsAt ? { endsAt: endsAt.toISOString() } : {}),
-      installation:
-        this.config.get<string>('FRONTEND_URL') ??
-        this.config.get<string>('DASHBOARD_URL') ??
-        null,
+      installation,
+      url: alertDashboardLink(event, installation),
     };
   }
 

@@ -4,7 +4,9 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { MailSendService } from '../../mail/services/mail-send.service';
 import { UserEntity } from '../../auth/entities/user.entity';
+import { ClusterEntity } from '../../infrastructure/clusters/entities/cluster.entity';
 import { AlertEventEntity } from '../entities/alert-event.entity';
+import { AlertMailAudience, renderAlertMail } from './alert-mail.template';
 
 /**
  * Severities that are worth an email.
@@ -52,6 +54,8 @@ export class AlertMailService {
     private readonly sender: MailSendService,
     @InjectRepository(UserEntity)
     private readonly users: Repository<UserEntity>,
+    @InjectRepository(ClusterEntity)
+    private readonly clusters: Repository<ClusterEntity>,
   ) {}
 
   configured(): boolean {
@@ -71,7 +75,7 @@ export class AlertMailService {
     if (!this.configured()) return false;
     if (!this.emailed(event, subject)) return false;
 
-    const to = await this.recipients(subject.ownerUserId ?? null);
+    const { to, audience } = await this.recipients(subject.ownerUserId ?? null);
     if (to.length === 0) {
       this.logger.warn(
         `No recipient for ${event.alertname}: nobody owns it and no administrator has an address`,
@@ -79,7 +83,7 @@ export class AlertMailService {
       return false;
     }
 
-    const outcome = await this.sendTo(kind, event, to);
+    const outcome = await this.sendTo(kind, event, to, audience);
     if (outcome.error) {
       this.logger.warn(`Could not email ${event.alertname}: ${outcome.error}`);
     }
@@ -94,20 +98,30 @@ export class AlertMailService {
     kind: 'fired' | 'resolved',
     event: AlertEventEntity,
     to: string[],
+    audience: AlertMailAudience = 'destination',
   ): Promise<AlertMailOutcome> {
     const from = this.config.get<string>('MAIL_FROM');
     if (!from) {
       return { sent: false, error: 'Email is not set up on this installation' };
     }
     try {
+      const mail = renderAlertMail(kind, event, {
+        dashboardUrl:
+          this.config.get<string>('FRONTEND_URL') ??
+          this.config.get<string>('DASHBOARD_URL') ??
+          null,
+        clusterName: await this.clusterName(event.clusterId),
+        audience,
+      });
       await this.sender.send({
         from: {
           email: from,
           name: this.config.get<string>('MAIL_FROM_NAME') ?? 'Flui',
         },
         to: to.map((email) => ({ email })),
-        subject: this.subjectLine(kind, event),
-        text: this.body(kind, event),
+        subject: mail.subject,
+        text: mail.text,
+        html: mail.html,
         reference: `alert:${event.fingerprint}:${kind}`,
       });
       return { sent: true };
@@ -134,66 +148,40 @@ export class AlertMailService {
    * administrators when it does not — a node going down is nobody's application
    * and everybody's problem.
    */
-  private async recipients(ownerUserId: string | null): Promise<string[]> {
+  private async recipients(
+    ownerUserId: string | null,
+  ): Promise<{ to: string[]; audience: AlertMailAudience }> {
     if (ownerUserId) {
       const owner = await this.users.findOne({
         where: { id: ownerUserId },
         select: { email: true },
       });
-      if (owner?.email) return [owner.email];
+      if (owner?.email) return { to: [owner.email], audience: 'owner' };
     }
 
     const admins = await this.users.find({
       where: { isAdmin: true },
       select: { email: true },
     });
-    return admins.map((a) => a.email).filter((e): e is string => !!e);
+    return {
+      to: admins.map((a) => a.email).filter((e): e is string => !!e),
+      audience: 'admin',
+    };
   }
 
-  private subjectLine(
-    kind: 'fired' | 'resolved',
-    event: AlertEventEntity,
-  ): string {
-    const what = event.applicationSlug ?? event.nodeInstance ?? event.alertname;
-    return kind === 'resolved'
-      ? `Recovered: ${what}`
-      : `${event.severity ?? 'alert'}: ${what}`;
-  }
-
-  /**
-   * Plain text, and short. What happened, to what, since when, and where to
-   * look — an alert email that needs reading twice has already failed the
-   * person woken up by it.
-   */
-  private body(kind: 'fired' | 'resolved', event: AlertEventEntity): string {
-    const summary =
-      event.annotations?.summary ?? event.annotations?.description ?? '';
-    const started = event.startsAt?.toISOString() ?? 'unknown';
-    const lines = [
-      kind === 'resolved' ? 'This has recovered.' : summary || event.alertname,
-      '',
-      `alert     ${event.alertname}`,
-      `severity  ${event.severity ?? 'unknown'}`,
-      `since     ${started}`,
-    ];
-    if (event.applicationSlug)
-      lines.push(`application  ${event.applicationSlug}`);
-    if (event.namespace) lines.push(`namespace    ${event.namespace}`);
-    if (event.nodeInstance) lines.push(`node         ${event.nodeInstance}`);
-    if (kind === 'resolved' && event.endsAt) {
-      lines.push(`recovered    ${event.endsAt.toISOString()}`);
+  /** A name to read instead of an id; a lookup that fails costs only the row. */
+  private async clusterName(
+    clusterId: string | null | undefined,
+  ): Promise<string | null> {
+    if (!clusterId) return null;
+    try {
+      const cluster = await this.clusters.findOne({
+        where: { id: clusterId },
+        select: { id: true, name: true },
+      });
+      return cluster?.name ?? null;
+    } catch {
+      return null;
     }
-    // What to do about it, when the rule knows. An alert that says a volume is
-    // full and leaves the reader to go and find the command is the difference
-    // between being notified and being told — and for the alerts that exist so
-    // somebody can decide whether to spend money, the command *is* the message.
-    const action = event.annotations?.action;
-    if (kind === 'fired' && action) {
-      lines.push('', 'To fix it:', `  ${action}`);
-    }
-    if (kind === 'fired') {
-      lines.push('', 'You will get one more message when it recovers.');
-    }
-    return lines.join('\n');
   }
 }

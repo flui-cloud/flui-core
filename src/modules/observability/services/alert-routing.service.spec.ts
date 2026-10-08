@@ -203,6 +203,7 @@ describe('AlertRoutingService — webhooks', () => {
       node: 'node-1',
       startsAt: '2026-09-01T00:00:00.000Z',
       installation: 'https://flui.example.com',
+      url: 'https://flui.example.com/',
     });
     expect(destinations.update).toHaveBeenCalledWith(
       'd1',
