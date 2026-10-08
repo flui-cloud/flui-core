@@ -29,6 +29,7 @@ function setup(opts: {
   config?: string | null;
   workerSees?: boolean;
   workerReady?: boolean;
+  volumeType?: string;
 }) {
   const token = { value: '' };
   const kubernetes = {
@@ -54,6 +55,13 @@ function setup(opts: {
       ),
     writeConfigMapKey: jest.fn().mockResolvedValue(undefined),
     restartWorkload: jest.fn().mockResolvedValue(undefined),
+    getResource: jest.fn().mockResolvedValue({
+      metadata: {
+        name: 'local-path',
+        annotations: { defaultVolumeType: opts.volumeType ?? 'local' },
+      },
+    }),
+    mergePatchObject: jest.fn().mockResolvedValue(undefined),
   };
   const clusters = {
     findOne: jest.fn().mockResolvedValue({
@@ -147,9 +155,38 @@ describe('volumes usable from any node, once every node proves it sees the share
     expect(kubernetes.writeConfigMapKey).not.toHaveBeenCalled();
   });
 
+  it('makes volumes of the kind shared mode can hold, which a local volume is not', async () => {
+    const { reconciler, kubernetes } = setup({});
+
+    await reconciler.reconcile('c1');
+    expect(kubernetes.mergePatchObject).toHaveBeenCalledWith('k', {
+      apiVersion: 'storage.k8s.io/v1',
+      kind: 'StorageClass',
+      metadata: {
+        name: 'local-path',
+        annotations: { defaultVolumeType: 'hostPath' },
+      },
+    });
+  });
+
+  it('puts the kind back after K3s restored its own, even when the settings already match', async () => {
+    const { reconciler, kubernetes } = setup({
+      config: localPathConfigFor('shared'),
+      volumeType: 'local',
+    });
+
+    await expect(reconciler.reconcile('c1')).resolves.toMatchObject({
+      state: 'set',
+      mode: 'shared',
+    });
+    expect(kubernetes.mergePatchObject).toHaveBeenCalled();
+    expect(kubernetes.writeConfigMapKey).not.toHaveBeenCalled();
+  });
+
   it('changes nothing when the setting already matches', async () => {
     const { reconciler, kubernetes } = setup({
       config: localPathConfigFor('shared'),
+      volumeType: 'hostPath',
     });
 
     await expect(reconciler.reconcile('c1')).resolves.toMatchObject({

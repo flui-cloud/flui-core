@@ -14,6 +14,10 @@ import { AppEndpointEntity } from '../../dns/entities/app-endpoint.entity';
 import { AppEndpointReconciliationService } from '../../dns/services/app-endpoint-reconciliation.service';
 import { AppMigrationEntity } from '../entities/app-migration.entity';
 import {
+  AppVolumeTransferService,
+  VolumeTransferPlan,
+} from '../services/app-volume-transfer.service';
+import {
   AppCutoverMode,
   AppMigrationStatus,
 } from '../enums/app-migration.enum';
@@ -48,6 +52,7 @@ export class AppMigrationProcessor {
     private readonly endpointRepo: Repository<AppEndpointEntity>,
     private readonly materializer: ApplicationMaterializerService,
     private readonly endpointReconciliation: AppEndpointReconciliationService,
+    private readonly volumes: AppVolumeTransferService,
   ) {}
 
   @Process(APP_MIGRATION_JOB_TYPES.RUN_APP_MIGRATION)
@@ -82,11 +87,15 @@ export class AppMigrationProcessor {
         OperationStep.APP_MIGRATE_PROVISION_TARGET,
         15,
       );
+      const plan = this.volumePlan(mig);
       await this.materializer.materializeOnCluster(
         app,
         mig.targetClusterId,
-        mig.provisionOverrides,
+        plan
+          ? { ...mig.provisionOverrides, replicas: 0 }
+          : mig.provisionOverrides,
       );
+      if (plan) await this.volumes.warm(app, plan, mig.userId);
     } catch (err: any) {
       await this.teardownDestination(app, mig);
       await this.fail(mig, err);
@@ -174,6 +183,11 @@ export class AppMigrationProcessor {
     const app = await this.appRepo.findOne({ where: { id: mig.srcAppId } });
     if (!app) throw new Error(`Application ${mig.srcAppId} not found`);
 
+    const plan = this.volumePlan(mig);
+    if (plan && app.clusterId !== mig.targetClusterId) {
+      await this.moveVolumes(mig, app, plan);
+    }
+
     const endpoints = await this.endpointRepo.find({
       where: { applicationId: app.id },
     });
@@ -199,6 +213,7 @@ export class AppMigrationProcessor {
     }
 
     app.clusterId = mig.targetClusterId;
+    if (plan?.dedicatedNodeName) app.dedicatedNodeName = plan.dedicatedNodeName;
     await this.appRepo.save(app);
 
     mig.status = AppMigrationStatus.COMPLETED;
@@ -213,6 +228,72 @@ export class AppMigrationProcessor {
         warnings.length ? `, ${warnings.length} with warnings` : ''
       }; source workload left draining)`,
     );
+  }
+
+  private volumePlan(mig: AppMigrationEntity): VolumeTransferPlan | undefined {
+    const destinationId = mig.provisionOverrides?.volumeDestinationId;
+    return destinationId
+      ? {
+          destinationId,
+          dedicatedNodeName: mig.provisionOverrides?.dedicatedNodeName,
+        }
+      : undefined;
+  }
+
+  /**
+   * The interruption: the source stops so its volumes stop changing, they are
+   * copied, and the destination starts on them. Until DNS moves, every failure
+   * gives the source back its copies, so the application never stays down
+   * because a move did not finish.
+   */
+  private async moveVolumes(
+    mig: AppMigrationEntity,
+    app: ApplicationEntity,
+    plan: VolumeTransferPlan,
+  ): Promise<void> {
+    const replicas = Math.max(1, app.replicas ?? 1);
+    const stoppedAt = Date.now();
+    try {
+      await this.materializer.scaleOnCluster(app, mig.srcClusterId, 0);
+      await this.materializer.waitStoppedOnCluster(app, mig.srcClusterId);
+      await this.volumes.copy(app, plan, mig.userId, mig.targetClusterId);
+      await this.materializer.scaleOnCluster(
+        app,
+        mig.targetClusterId,
+        replicas,
+      );
+      await this.materializer.waitReadyOnCluster(app, mig.targetClusterId);
+    } catch (err) {
+      this.logger.error(
+        `[app-migration] ${mig.id}: volumes not moved (${(err as Error).message}) — restarting the source`,
+      );
+      await this.materializer
+        .scaleOnCluster(app, mig.targetClusterId, 0)
+        .catch(() => undefined);
+      await this.materializer
+        .scaleOnCluster(app, mig.srcClusterId, replicas)
+        .catch((e: unknown) =>
+          this.logger.error(
+            `[app-migration] ${mig.id}: the source could not be restarted: ${(e as Error).message}`,
+          ),
+        );
+      throw new Error(
+        `The volumes could not be moved, so ${app.slug} is running on its original cluster again: ${(err as Error).message}`,
+      );
+    }
+    const seconds = Math.round((Date.now() - stoppedAt) / 1000);
+    this.logger.log(
+      `[app-migration] ${mig.id}: ${app.slug} was stopped for ${seconds}s while its volumes moved`,
+    );
+    if (mig.infrastructureOperationId) {
+      const op = await this.opRepo.findOne({
+        where: { id: mig.infrastructureOperationId },
+      });
+      if (op) {
+        op.metadata = { ...op.metadata, interruptionSeconds: seconds };
+        await this.opRepo.save(op);
+      }
+    }
   }
 
   private async isAborted(migrationId: string): Promise<boolean> {

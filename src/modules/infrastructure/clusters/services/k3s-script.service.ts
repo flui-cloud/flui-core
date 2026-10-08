@@ -6,12 +6,25 @@ import {
 } from 'src/config/bootstrap.config';
 import { RELEASE } from 'src/config/release.config';
 import { K3S_DEFAULT_VERSION } from '../constants';
+import { FirewallRule } from 'src/modules/providers/interfaces/firewall-provider.interface';
+import { renderHostFirewallPreamble } from 'src/modules/providers/core/firewall/host-firewall-preamble';
+import { overlayRulesetOptions } from 'src/modules/providers/core/firewall/overlay-ruleset-policy';
 import {
   BootstrapPeer,
   encodeBootstrapPeers,
 } from '../../networking/wireguard-config';
 
+export interface HostFirewallBoot {
+  rules: FirewallRule[];
+  internalCidrs: string[];
+}
+
 export interface K3sMasterConfig {
+  /**
+   * Set on providers whose firewall lives on the host: the ruleset goes into
+   * the boot script so the node is closed before k3s binds a port.
+   */
+  hostFirewall?: HostFirewallBoot;
   serverId?: string; // Database node ID (ClusterNodeEntity.id) - used for observability metrics
   clusterId: string;
   clusterName: string;
@@ -127,6 +140,11 @@ export interface K3sMasterConfig {
 }
 
 export interface K3sWorkerConfig {
+  /**
+   * Set on providers whose firewall lives on the host: the ruleset goes into
+   * the boot script so the node is closed before k3s binds a port.
+   */
+  hostFirewall?: HostFirewallBoot;
   serverId?: string; // Database node ID (ClusterNodeEntity.id) - used for observability metrics
   clusterId: string;
   clusterName: string;
@@ -408,6 +426,7 @@ export class K3sScriptService {
           ),
         },
         config.bootstrapPublicKey,
+        config.hostFirewall,
       );
 
       this.logger.debug(`Bootstrap script generated: ${script.length} bytes`);
@@ -481,6 +500,7 @@ export class K3sScriptService {
           ),
         },
         config.bootstrapPublicKey,
+        config.hostFirewall,
       );
 
       this.logger.debug(`Bootstrap script generated: ${script.length} bytes`);
@@ -511,6 +531,7 @@ export class K3sScriptService {
     type: 'master' | 'worker',
     vars: Record<string, string>,
     bootstrapPublicKey?: string,
+    hostFirewall?: HostFirewallBoot,
   ): string {
     const scriptName =
       type === 'master' ? 'k3s-master-init.sh' : 'k3s-worker-init.sh';
@@ -565,6 +586,13 @@ chmod 600 /root/.ssh/authorized_keys
 `
       : '';
 
+    const hostFirewallBlock = hostFirewall
+      ? renderHostFirewallPreamble(hostFirewall.rules, {
+          internalCidrs: hostFirewall.internalCidrs,
+          ...overlayRulesetOptions(),
+        })
+      : '';
+
     return `#!/bin/bash
 # Flui.cloud Bootstrap Script (${type})
 # Downloads and executes ${scriptName} from GitHub
@@ -572,7 +600,7 @@ set -euo pipefail
 ${sshKeyBlock}
 # Configuration variables
 ${exports}
-
+${hostFirewallBlock}
 if [ -z "\${PRIVATE_IP:-}" ]; then
   PRIVATE_IP=$(ip -4 -o addr show 2>/dev/null | awk '{print $4}' | cut -d/ -f1 | grep -E '^(10\\.|172\\.(1[6-9]|2[0-9]|3[01])\\.|192\\.168\\.)' | head -1 || true)
 fi

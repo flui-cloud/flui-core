@@ -12,6 +12,7 @@ import {
   desiredVolumeMode,
   localPathConfigFor,
   observedVolumeConfig,
+  volumeTypeFor,
 } from './shared-volume-mode.core';
 
 export interface SharedVolumesRecord {
@@ -26,6 +27,8 @@ export type SharedVolumeOutcome =
   | { state: 'skipped'; reason: string };
 
 const PROBE_FILE = '/host/.flui/share-probe';
+const STORAGE_CLASS = 'local-path';
+const VOLUME_TYPE_ANNOTATION = 'defaultVolumeType';
 
 /**
  * Makes new volumes usable from any node once every node is proven to see
@@ -114,6 +117,9 @@ export class SharedVolumeModeReconciler {
 
     const mode = desiredVolumeMode(nodesWithoutShare);
     let state: 'set' | 'unchanged' = 'unchanged';
+    // Before the provisioner settings, so it never runs in shared mode while
+    // still making the kind of volume that mode cannot hold.
+    if (await this.ensureVolumeType(kubeconfig, mode)) state = 'set';
     if (observed !== mode) {
       await this.kubernetes.writeConfigMapKey(
         kubeconfig,
@@ -138,6 +144,31 @@ export class SharedVolumeModeReconciler {
     }
     await this.record(cluster, { mode, nodesWithoutShare });
     return { state, mode, nodesWithoutShare };
+  }
+
+  /** K3s puts its own annotation back when it restarts, so this is checked every round. */
+  private async ensureVolumeType(
+    kubeconfig: string,
+    mode: SharedVolumeMode,
+  ): Promise<boolean> {
+    const wanted = volumeTypeFor(mode);
+    const sc = await this.kubernetes.getResource(
+      kubeconfig,
+      'StorageClass',
+      STORAGE_CLASS,
+    );
+    if (!sc || sc.metadata?.annotations?.[VOLUME_TYPE_ANNOTATION] === wanted) {
+      return false;
+    }
+    await this.kubernetes.mergePatchObject(kubeconfig, {
+      apiVersion: 'storage.k8s.io/v1',
+      kind: 'StorageClass',
+      metadata: {
+        name: STORAGE_CLASS,
+        annotations: { [VOLUME_TYPE_ANNOTATION]: wanted },
+      },
+    });
+    return true;
   }
 
   /** Merged onto the freshest metadata so a concurrent write is not undone. */

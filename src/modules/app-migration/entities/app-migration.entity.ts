@@ -47,9 +47,12 @@ export class AppMigrationEntity {
   })
   status: AppMigrationStatus;
 
-  /** Non-persisted materialize overrides (e.g. replicas:0 staging by an orchestrator). */
+  /**
+   * Materialize overrides (e.g. replicas:0 staging by an orchestrator), and for
+   * an application with volumes the destination they move through.
+   */
   @Column({ type: 'jsonb', nullable: true })
-  provisionOverrides?: MaterializeOverrides;
+  provisionOverrides?: MaterializeOverrides & { volumeDestinationId?: string };
 
   /** Set when this migration is a child leg of a full-app orchestration. */
   @Column({ type: 'uuid', nullable: true })

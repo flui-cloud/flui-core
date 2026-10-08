@@ -15,7 +15,7 @@ import {
   NodeType,
   NodeStatus,
 } from '../entities/cluster-node.entity';
-import { K3sScriptService } from './k3s-script.service';
+import { HostFirewallBoot, K3sScriptService } from './k3s-script.service';
 import { calculateOperationProgressFromSaved } from '../../operations/helpers/operation-steps.helper';
 import { EncryptionService } from '../../../shared/encryption/services/encryption.service';
 import { CloudProvider } from 'src/modules/providers/enums/cloud-provider.enum';
@@ -35,6 +35,9 @@ import { CAManagerService } from 'src/modules/access/services/ca-manager.service
 import { SubnetsService } from '../../vnets/services/subnets.service';
 import { VNetsService } from '../../vnets/services/vnets.service';
 import { NativeSSHConnectionService } from 'src/modules/terminal/services/native-ssh-connection.service';
+import { CapabilitiesProviderFactory } from 'src/modules/providers/core/factories/capabilities-provider.factory';
+import { DEFAULT_INTERNAL_CIDRS } from 'src/modules/providers/core/firewall/nftables-ruleset';
+import { getFirewallRulesForClusterType } from '../../firewalls/templates/firewall-rules.template';
 import { InstallLogService } from '../../operations/services/install-log.service';
 import { KubernetesService } from '../../shared/services/kubernetes.service';
 import { ManagementAddressResolver } from '../../shared/services/management-address.resolver';
@@ -83,6 +86,7 @@ export class ClusterOrchestrationService {
     private readonly installLogService: InstallLogService,
     private readonly managementAddress: ManagementAddressResolver,
     private readonly wgPeers: WireGuardPeerService,
+    private readonly capabilitiesFactory: CapabilitiesProviderFactory,
   ) {}
 
   /**
@@ -137,8 +141,13 @@ export class ClusterOrchestrationService {
       .controlHandshakeDetails()
       .catch(() => undefined);
 
+    const hostFirewall = await this.hostFirewallAtBoot(cluster, [
+      controlClusterIp,
+    ]);
+
     const masterScript = await this.k3sScriptService.generateMasterScript({
       serverId: node.id, // IMPORTANT: Pass database node ID for observability metrics
+      hostFirewall,
       wgAddress: overlay.address,
       wgControl,
       wgMode: overlay.mode,
@@ -208,6 +217,7 @@ export class ClusterOrchestrationService {
     const finalMasterScript = bootstrapPublicKeyForCloudInit
       ? await this.k3sScriptService.generateMasterScript({
           serverId: node.id,
+          hostFirewall,
           clusterId: cluster.id,
           clusterName: cluster.name,
           k3sToken,
@@ -702,9 +712,15 @@ export class ClusterOrchestrationService {
       privateIp: overlay.mode === 'mesh' ? overlay.address : undefined,
     };
 
+    const hostFirewall = await this.hostFirewallAtBoot(cluster, [
+      masterIp,
+      controlClusterIp,
+    ]);
+
     // Generate worker init script WITH serverId (node.id from database)
     const workerScript = await this.k3sScriptService.generateWorkerScript({
       serverId: node.id, // IMPORTANT: Pass database node ID for observability metrics
+      hostFirewall,
       ...overlayConfig,
       clusterId: cluster.id,
       clusterName: cluster.name,
@@ -752,6 +768,7 @@ export class ClusterOrchestrationService {
     const finalWorkerScript = workerBootstrapPublicKeyForCloudInit
       ? await this.k3sScriptService.generateWorkerScript({
           serverId: node.id,
+          hostFirewall,
           ...overlayConfig,
           clusterId: cluster.id,
           clusterName: cluster.name,
@@ -1568,6 +1585,38 @@ export class ClusterOrchestrationService {
    * cluster's private network, so a failure is not something to continue past.
    */
   /** The ranges of the subnet(s) this cluster's nodes sit on, or none. */
+  /**
+   * The ruleset a node boots with when its firewall lives on the host. The
+   * reconciler replaces it once the node answers SSH; until then it has to let
+   * the cluster form: the private network, the master, and the control.
+   */
+  private async hostFirewallAtBoot(
+    cluster: ClusterEntity,
+    peers: Array<string | undefined>,
+  ): Promise<HostFirewallBoot | undefined> {
+    const backend = this.capabilitiesFactory
+      .getCapabilitiesService(cluster.provider as CloudProvider)
+      .getStaticCapabilities().firewall.backend;
+    if (backend !== 'host-nftables') return undefined;
+
+    const peerCidrs = peers
+      .filter((ip): ip is string => !!ip && /^(\d{1,3}\.){3}\d{1,3}$/.test(ip))
+      .map((ip) => `${ip}/32`);
+    return {
+      rules: getFirewallRulesForClusterType(
+        isControlClusterType(cluster.clusterType) ? 'control' : 'workload',
+        ['0.0.0.0/0', '::/0'],
+      ),
+      internalCidrs: [
+        ...new Set([
+          ...DEFAULT_INTERNAL_CIDRS,
+          ...(await this.privateNetworksOf(cluster)),
+          ...peerCidrs,
+        ]),
+      ],
+    };
+  }
+
   private async privateNetworksOf(cluster: ClusterEntity): Promise<string[]> {
     const vnetConfig = (
       cluster.metadata as {

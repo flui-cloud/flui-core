@@ -14,6 +14,7 @@ export interface AppMigration {
   cutoverMode: CutoverMode;
   status: string;
   fullMigrationId?: string;
+  provisionOverrides?: { volumeDestinationId?: string };
   errorMessage?: string;
   startedAt?: string;
   finishedAt?: string;
@@ -55,6 +56,7 @@ export interface CreateAppMigrationInput {
   srcAppId: string;
   targetClusterId: string;
   cutover?: CutoverMode;
+  backupDestinationId?: string;
 }
 
 export interface CreateDbMigrationInput {

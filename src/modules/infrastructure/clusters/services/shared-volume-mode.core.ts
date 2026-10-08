@@ -53,6 +53,15 @@ export function observedVolumeConfig(raw: string): ObservedVolumeConfig {
   return 'custom';
 }
 
+/**
+ * The kind of volume the provisioner makes. A `local` volume must name its
+ * node, so in shared mode it is refused outright; `hostPath` is the kind that
+ * may be read from any node.
+ */
+export function volumeTypeFor(mode: SharedVolumeMode): 'hostPath' | 'local' {
+  return mode === 'shared' ? 'hostPath' : 'local';
+}
+
 export function desiredVolumeMode(
   nodesWithoutShare: string[],
 ): SharedVolumeMode {

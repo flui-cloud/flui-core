@@ -867,7 +867,15 @@ export class OvhProviderService implements ICloudProvider {
     const region = config.subnets?.[0]?.networkZone;
     if (region) client.setDefaultRegion(region);
     const svc = new InfraOvhProviderService(this.configService, client);
-    const result = await svc.createVNet(config);
+    // Neutron has no subnet pool here to allocate from: a subnet without a
+    // range is refused, so it takes the network's own.
+    const result = await svc.createVNet({
+      ...config,
+      subnets: config.subnets?.map((subnet) => ({
+        ...subnet,
+        ipRange: subnet.ipRange || config.ipRange,
+      })),
+    });
     // `region` here is a macro like 'GRA', not a specific datacenter — the
     // caller (vnet-provisioning.service.ts) only ever knows the macro. Left
     // unresolved, this used to hand that literal macro straight to

@@ -24,6 +24,11 @@ interface ClusterInventory {
   }[];
 }
 
+interface AdoptionEnrolment {
+  enrolledOnNodes: boolean;
+  message: string;
+}
+
 /**
  * Takes ownership of a cluster this machine did not create.
  *
@@ -132,9 +137,9 @@ export default class EnvAdopt extends Command {
     const enrolSpinner = ora(
       'Registering the public key with the installation...',
     ).start();
+    let enrolment: AdoptionEnrolment;
     try {
-      await this.registerPublicKey(endpoint, args.token, publicKey);
-      enrolSpinner.succeed('Public key registered');
+      enrolment = await this.registerPublicKey(endpoint, args.token, publicKey);
     } catch (error) {
       enrolSpinner.fail('Registration failed');
       this.error(error instanceof Error ? error.message : String(error), {
@@ -142,15 +147,17 @@ export default class EnvAdopt extends Command {
       });
     }
 
-    this.log(
-      chalk.yellow(
-        '\n⚠  Node enrolment is not wired up yet.\n' +
-          '   The public key is registered, but writing it into /etc/ssh/trusted_user_ca_keys on each\n' +
-          '   node has to happen through Kubernetes — SSH is exactly the thing being switched on, so it\n' +
-          '   cannot be used to switch it on. Until that job ships, enrol from a machine that already\n' +
-          '   has SSH access:  flui env repair-ssh-ca\n',
-      ),
-    );
+    if (enrolment.enrolledOnNodes) {
+      enrolSpinner.succeed(enrolment.message);
+    } else {
+      enrolSpinner.warn(enrolment.message);
+      this.log(
+        chalk.yellow(
+          '\n   This token is now spent. Run flui env adopt again with a new adoption token:\n' +
+            '   the authority already registered is kept, and only the nodes are enrolled again.\n',
+        ),
+      );
+    }
     this.printNext(inventory);
   }
 
@@ -208,7 +215,7 @@ export default class EnvAdopt extends Command {
     endpoint: string,
     token: string,
     publicKey: string,
-  ): Promise<void> {
+  ): Promise<AdoptionEnrolment> {
     const res = await fetch(
       `${endpoint.replace(/\/$/, '')}/api/v1/adoption/ca/register`,
       {
@@ -226,6 +233,11 @@ export default class EnvAdopt extends Command {
         `The installation replied ${res.status} ${res.statusText}.`,
       );
     }
+    const body = (await res.json()) as Partial<AdoptionEnrolment>;
+    return {
+      enrolledOnNodes: body.enrolledOnNodes === true,
+      message: body.message ?? 'Certificate authority registered.',
+    };
   }
 
   private printNext(inventory: ClusterInventory): void {

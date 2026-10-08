@@ -34,11 +34,15 @@ export class ClusterFirewallIntegrationService {
     );
 
     try {
-      // Create firewall with desired rules
-      const firewall = await this.firewallDesiredStateService.createFirewall(
-        cluster.id,
-        desiredRules,
-      );
+      // A retried creation finds the record its first attempt made.
+      const firewall =
+        (await this.firewallDesiredStateService
+          .getFirewallByClusterId(cluster.id)
+          .catch(() => null)) ??
+        (await this.firewallDesiredStateService.createFirewall(
+          cluster.id,
+          desiredRules,
+        ));
 
       this.logger.log(
         `Firewall DB record ${firewall.id} created for cluster ${cluster.id}, triggering provider reconciliation`,

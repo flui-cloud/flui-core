@@ -30,6 +30,10 @@ export default class MigrateAppCreate extends Command {
       default: 'auto',
       description: 'Cutover mode',
     }),
+    'backup-destination': Flags.string({
+      description:
+        'Backup destination id the volumes move through (default: the one protecting the app, or your only one)',
+    }),
   };
 
   async run(): Promise<void> {
@@ -44,10 +48,20 @@ export default class MigrateAppCreate extends Command {
         srcAppId: app.id,
         targetClusterId: target.id,
         cutover: flags.cutover as 'auto' | 'manual',
+        backupDestinationId: flags['backup-destination'],
       });
       spinner.succeed(`App migration created: ${mig.id}`);
       console.log('');
       console.log(`  ${chalk.bold('Status:')} ${mig.status}`);
+      if (mig.provisionOverrides?.volumeDestinationId) {
+        console.log('');
+        console.log(
+          chalk.yellow(
+            '  This application has volumes. At cutover it stops, its volumes are copied\n' +
+              '  and it starts on the destination; if the copy fails it starts again here.',
+          ),
+        );
+      }
       if (flags.cutover === 'manual') {
         console.log('');
         console.log(chalk.dim('  Cutover is manual. When ready, run:'));

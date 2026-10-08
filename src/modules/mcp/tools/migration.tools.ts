@@ -126,18 +126,20 @@ export const MIGRATION_TOOLS: ToolDef[] = [
     name: 'migrate_app',
     routes: ['POST /app-migrations'],
     description:
-      "Move an application's workload (stateless) to another cluster. The app keeps its identity (same id / slug / URL); at cutover it is re-bound to the target cluster and its DNS is flipped. cutover='auto' flips as soon as the destination is Ready; cutover='manual' parks at READY until migration_cutover is called. Get srcAppId from app_list and targetClusterId from cluster_list. Returns an async operation — track it with operation_status or migration_get(type:'app').",
+      "Move an application to another cluster. The app keeps its identity (same id / slug / URL); at cutover it is re-bound to the target cluster and its DNS is flipped. An application with volumes is stopped at cutover while its volumes are copied through a backup destination (backupDestinationId, defaulting to the one protecting it or your only one), then starts on the destination; if the copy fails it starts again where it was. Tell the user about that interruption before starting. cutover='auto' cuts over as soon as the destination is staged; cutover='manual' parks at READY until migration_cutover is called. Get srcAppId from app_list and targetClusterId from cluster_list. Returns an async operation — track it with operation_status or migration_get(type:'app').",
     scope: MCP_SCOPE.MIGRATION_WRITE,
     inputSchema: {
       srcAppId: z.string(),
       targetClusterId: z.string(),
       cutover: z.string().optional(),
+      backupDestinationId: z.string().optional(),
     },
     run: async (args, ctx) => {
       const dto: CreateAppMigrationDto = {
         srcAppId: args.srcAppId,
         targetClusterId: args.targetClusterId,
         cutover: optEnum('cutover', args.cutover, AppCutoverMode),
+        backupDestinationId: args.backupDestinationId,
       };
       const mig = await ctx.api.post<StartedMigration>('/app-migrations', dto);
       return started(ctx, 'app', mig, `Migrate app ${args.srcAppId}`);

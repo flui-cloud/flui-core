@@ -275,6 +275,82 @@ export class VolumeBackupRestoreService {
     };
   }
 
+  /**
+   * Restore a kopia snapshot whole into a claim that already exists, on any
+   * cluster. Moving an application uses it: the destination claim is empty and
+   * nothing mounts it yet, so the data goes straight where the workload will
+   * look for it, with no swap afterwards.
+   */
+  async restoreIntoClaim(args: {
+    applicationId: string;
+    artifactId: string;
+    kubeconfig: string;
+    namespace: string;
+    claimName: string;
+    nodeName?: string;
+    /** Create the claim first when it does not exist, for a workload that only claims it once it runs. */
+    createWith?: { storageClassName: string; sizeGb: number };
+  }): Promise<{ bytes?: number }> {
+    const artifact = await this.lookup.artifactOf(
+      args.applicationId,
+      args.artifactId,
+    );
+    const route = volumeRestoreRoute(artifact);
+    if (route.kind !== 'kopia') {
+      throw new BadRequestException(
+        route.kind === 'unavailable'
+          ? route.reason
+          : 'Only a kopia snapshot can be restored into an existing volume',
+      );
+    }
+    const dest = await this.lookup.destinationOf(
+      primaryLocationOf(artifact)?.destinationId,
+    );
+    const sizeGb = Math.max(
+      Number(artifact.manifestSummary?.sourceSizeGb) || 0,
+      1,
+    );
+    const labels = {
+      'flui.cloud/managed-by': 'flui-cloud',
+      'flui-app-id': args.applicationId,
+      'flui.cloud/restored-from': artifact.id,
+    };
+    const exists = await this.kopia
+      .sourceVolume(args.kubeconfig, args.namespace, args.claimName)
+      .then(() => true)
+      .catch(() => false);
+    if (args.createWith && !exists) {
+      await this.kopia.createVolume({
+        kubeconfig: args.kubeconfig,
+        namespace: args.namespace,
+        name: args.claimName,
+        storageClassName: args.createWith.storageClassName,
+        sizeGb: Math.max(sizeGb, args.createWith.sizeGb),
+        labels: {
+          'flui.cloud/managed-by': 'flui-cloud',
+          'flui-app-id': args.applicationId,
+        },
+      });
+    }
+    return this.kopia.restore({
+      kubeconfig: args.kubeconfig,
+      repositoryKey: kopiaRepositoryLabel(dest.id, artifact.applicationId!),
+      credentials: await this.lookup.kopiaCredentials(artifact, dest),
+      job: {
+        jobName: kopiaJobName('restore', `${artifact.id}/${args.claimName}`),
+        namespace: args.namespace,
+        repositoryAppId: artifact.applicationId!,
+        location: kopiaLocation(dest, artifact.applicationId!),
+        targetPvcName: args.claimName,
+        primarySnapshotId: route.record.snapshotId,
+        sqliteSnapshotId: route.record.sqlite?.snapshotId,
+        nodeName: args.nodeName,
+        sizeGb,
+        labels,
+      },
+    });
+  }
+
   async restoreFiles(
     applicationId: string,
     artifactId: string,

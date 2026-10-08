@@ -20,4 +20,12 @@ export class CreateAppMigrationDto {
   @IsOptional()
   @IsEnum(AppCutoverMode)
   cutover?: AppCutoverMode;
+
+  @ApiPropertyOptional({
+    description:
+      'Backup destination the volumes move through. Defaults to the one protecting the application, or to your only one.',
+  })
+  @IsOptional()
+  @IsUUID()
+  backupDestinationId?: string;
 }

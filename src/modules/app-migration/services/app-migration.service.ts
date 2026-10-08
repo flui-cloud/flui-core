@@ -27,6 +27,7 @@ import {
   AppMigrationStatus,
 } from '../enums/app-migration.enum';
 import { CreateAppMigrationDto } from '../dto/create-app-migration.dto';
+import { AppVolumeTransferService } from './app-volume-transfer.service';
 import {
   APP_MIGRATION_QUEUE,
   APP_MIGRATION_JOB_TYPES,
@@ -49,6 +50,7 @@ export class AppMigrationService {
     private readonly endpointRepo: Repository<AppEndpointEntity>,
     @InjectQueue(APP_MIGRATION_QUEUE) private readonly queue: Queue,
     private readonly materializer: ApplicationMaterializerService,
+    private readonly volumes: AppVolumeTransferService,
   ) {}
 
   async create(
@@ -75,17 +77,6 @@ export class AppMigrationService {
       );
     }
 
-    // v1 scope (design D2/D3): stateless, self-contained, domain-mode only.
-    if (app.volumes?.length) {
-      throw new BadRequestException(
-        `Application ${dto.srcAppId} has persistent volumes — v1 app-migration is stateless-only (move volume data via the volume/database backup classes)`,
-      );
-    }
-    if (app.persistenceScope === 'dedicated') {
-      throw new BadRequestException(
-        `Application ${dto.srcAppId} uses dedicated node placement — not supported by v1 app-migration`,
-      );
-    }
     if (app.env?.some((e) => e.externalSecretRef)) {
       throw new BadRequestException(
         `Application ${dto.srcAppId} references external secrets (composed app) — migrate its producers first (v1 = self-contained only)`,
@@ -121,6 +112,15 @@ export class AppMigrationService {
       );
     }
 
+    const volumePlan = this.volumes.hasVolumes(app)
+      ? await this.volumes.plan(
+          app,
+          userId,
+          dto.targetClusterId,
+          dto.backupDestinationId,
+        )
+      : undefined;
+
     const op = await this.opRepo.save(
       this.opRepo.create({
         operationType: OperationType.MIGRATE_APPLICATION,
@@ -132,6 +132,12 @@ export class AppMigrationService {
         metadata: {
           srcClusterId: app.clusterId,
           targetClusterId: dto.targetClusterId,
+          ...(volumePlan
+            ? {
+                interruption:
+                  'The application stops at cutover until its volumes are copied and it is running on the destination.',
+              }
+            : {}),
         },
         totalSteps: 3,
       }),
@@ -147,7 +153,13 @@ export class AppMigrationService {
         status: AppMigrationStatus.PENDING,
         infrastructureOperationId: op.id,
         fullMigrationId: opts?.fullMigrationId,
-        provisionOverrides: opts?.provisionOverrides,
+        provisionOverrides: volumePlan
+          ? {
+              ...opts?.provisionOverrides,
+              volumeDestinationId: volumePlan.destinationId,
+              dedicatedNodeName: volumePlan.dedicatedNodeName,
+            }
+          : opts?.provisionOverrides,
       }),
     );
     await this.queue.add(APP_MIGRATION_JOB_TYPES.RUN_APP_MIGRATION, {

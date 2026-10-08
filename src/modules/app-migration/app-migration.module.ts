@@ -12,6 +12,9 @@ import { AppMigrationService } from './services/app-migration.service';
 import { AppMigrationProcessor } from './processors/app-migration.processor';
 import { AppMigrationController } from './controllers/app-migration.controller';
 import { APP_MIGRATION_QUEUE } from './app-migration.constants';
+import { AppVolumeTransferService } from './services/app-volume-transfer.service';
+import { BackupPolicyEntity } from '../backups/entities/backup-policy.entity';
+import { BackupDestinationEntity } from '../backups/entities/backup-destination.entity';
 
 @Module({
   imports: [
@@ -21,13 +24,19 @@ import { APP_MIGRATION_QUEUE } from './app-migration.constants';
       ClusterEntity,
       AppEndpointEntity,
       InfrastructureOperationEntity,
+      BackupPolicyEntity,
+      BackupDestinationEntity,
     ]),
     BullModule.registerQueue({ name: APP_MIGRATION_QUEUE }),
     ApplicationsModule,
     DnsModule,
   ],
   controllers: [AppMigrationController],
-  providers: [AppMigrationService, AppMigrationProcessor],
-  exports: [AppMigrationService],
+  providers: [
+    AppMigrationService,
+    AppMigrationProcessor,
+    AppVolumeTransferService,
+  ],
+  exports: [AppMigrationService, AppVolumeTransferService],
 })
 export class AppMigrationModule {}

@@ -1,3 +1,4 @@
+import { AppVolumeTransferService } from '../../app-migration/services/app-volume-transfer.service';
 import {
   BadRequestException,
   Injectable,
@@ -54,6 +55,7 @@ export class FullMigrationService {
     private readonly dbMig: DbMigrationService,
     private readonly repl: DbReplicationService,
     private readonly appMig: AppMigrationService,
+    private readonly volumes: AppVolumeTransferService,
     private readonly rewire: DbConnectionRewireService,
     @InjectQueue(FULL_MIGRATION_QUEUE) private readonly queue: Queue,
   ) {}
@@ -104,17 +106,10 @@ export class FullMigrationService {
         `Application ${dto.dbAppId} is not a managed Postgres (no POSTGRES_USER env)`,
       );
     }
-    // Fail early on the shapes the app leg would reject anyway (before spending
-    // a full DB replication). Stateless-only, self-contained.
-    if (app.volumes?.length) {
-      throw new BadRequestException(
-        `Application ${dto.appId} has persistent volumes — v1 full-migration is stateless-only`,
-      );
-    }
-    if (app.persistenceScope === 'dedicated') {
-      throw new BadRequestException(
-        `Application ${dto.appId} uses dedicated node placement — not supported by v1 full-migration`,
-      );
+    // Fail early on what the app leg would refuse anyway, before spending a
+    // full DB replication: volumes need a destination to move through.
+    if (this.volumes.hasVolumes(app)) {
+      await this.volumes.plan(app, userId, dto.targetClusterId);
     }
     // Attribution: the consumer must demonstrably point at the source DB.
     this.rewire.assertRewirable(app, dbApp);
