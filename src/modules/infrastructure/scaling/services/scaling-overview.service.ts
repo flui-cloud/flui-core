@@ -12,7 +12,13 @@ import {
 import { ScalingGroupEntity } from '../entities/scaling-group.entity';
 import { ScalingDecisionEntity } from '../entities/scaling-decision.entity';
 import { ProviderScalingCapability } from '../scaling-capability';
-import { fleetOf, roundEur } from '../engine/engine.core';
+import {
+  ShapeFactsReading,
+  fleetOf,
+  listMonthlyOf,
+  roundEur,
+} from '../engine/engine.core';
+import { giveBackReasons, giveBackSentence } from '../engine/give-back.core';
 import { clusterNotFound } from '../scaling-errors';
 import { noGroupLabel, scalingModeLabel } from '../scaling-consequence';
 import { ShapeFactsService } from '../engine/shape-facts.service';
@@ -100,13 +106,19 @@ export class ScalingOverviewService {
       capability.hasCatalogue && this.shapes
         ? await this.shapes.read(cluster.provider)
         : null;
+    const clusterNodes = allNodes.filter((n) => n.clusterId === cluster.id);
     const fleet = fleetOf(
-      allNodes.filter((n) => n.clusterId === cluster.id),
+      clusterNodes,
       { nodes: cluster.nodeCount ?? 0, shape: cluster.nodeSize ?? null },
       shapes,
     );
     const current = await this.currentDecisions(mine);
-    const openAlarm = openAlarmOf(current);
+    const openAlarm = openAlarmOf(current, {
+      groups: mine,
+      nodes: fleet.nodes,
+      nodeRows: clusterNodes,
+      shapes,
+    });
     const monthlyEur = monthlyEurOf(capability, fleet);
 
     return {
@@ -262,14 +274,61 @@ function lastDecisionAt(current: ScalingDecisionEntity[]): string | null {
  * single line, and the one that has gone unanswered longest is what "somebody is
  * needed here" is measuring.
  */
-function openAlarmOf(current: ScalingDecisionEntity[]): OpenAlarmDto | null {
+export interface AlarmContext {
+  groups: ScalingGroupEntity[];
+  nodes: number;
+  nodeRows: ClusterNodeEntity[];
+  shapes: ShapeFactsReading | null;
+}
+
+export function openAlarmOf(
+  current: ScalingDecisionEntity[],
+  context: AlarmContext,
+): OpenAlarmDto | null {
   const standing = current
     .filter((row) => row.outcome === 'alerted' && row.asks)
     .sort((a, b) => a.at.getTime() - b.at.getTime());
   const oldest = standing[0];
-  return oldest
-    ? { since: oldest.at.toISOString(), asks: oldest.asks ?? '' }
+  if (!oldest) return null;
+
+  // The one alarm that carries a failed drain is the fleet above its target
+  // whose spare node cannot be emptied: nothing is being bought.
+  const drain = oldest.drain && !oldest.drain.ok ? oldest.drain : null;
+  const base = {
+    since: oldest.at.toISOString(),
+    groupId: oldest.groupId,
+    asks: oldest.asks ?? '',
+  };
+  if (!drain) return { ...base, kind: 'purchase', giveBack: null };
+
+  const group = context.groups.find((g) => g.id === oldest.groupId);
+  const target = group?.desiredNodes ?? context.nodes;
+  const row = drain.node
+    ? context.nodeRows.find((n) => n.serverName === drain.node)
+    : undefined;
+  const monthly = row
+    ? listMonthlyOf(
+        context.shapes,
+        row.serverType,
+        row.region,
+        row.hourlyPriceEur ?? null,
+      )
     : null;
+
+  const reasons = giveBackReasons(drain);
+  return {
+    ...base,
+    kind: 'give-back',
+    giveBack: {
+      node: drain.node ?? null,
+      nodes: context.nodes,
+      target,
+      monthlyEur: monthly === null ? null : roundEur(monthly),
+      keepNodes: context.nodes,
+      says: giveBackSentence(reasons),
+      reasons,
+    },
+  };
 }
 
 interface RowFacts {

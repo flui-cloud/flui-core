@@ -231,9 +231,46 @@ interface RowDto {
   mode?: { label: string } | null;
   openOrders: number;
   blockedOrders: number;
-  openAlarm: { since: string; asks: string } | null;
+  openAlarm: OpenAlarm | null;
   lastDecisionAt: string | null;
   needsPerson: string | null;
+}
+
+interface OpenAlarm {
+  since: string;
+  groupId?: string;
+  asks: string;
+  kind?: 'purchase' | 'give-back';
+  giveBack?: {
+    node: string | null;
+    nodes: number;
+    target: number;
+    monthlyEur: number | null;
+    keepNodes: number;
+    says?: string;
+    reasons: {
+      kind: string;
+      title: string;
+      fix: string;
+      items: { label: string; applicationId: string | null }[];
+    }[];
+  } | null;
+}
+
+/**
+ * What a model may offer for an open alarm. A give-back alarm is about a node
+ * too many, and the purchase remedies (a higher ceiling, another shape) would
+ * make the bill it is about larger.
+ */
+function alarmNote(alarm: OpenAlarm | null): string | null {
+  if (!alarm) return null;
+  const back = alarm.kind === 'give-back' ? alarm.giveBack : null;
+  if (!back) {
+    return 'The group needs a machine it cannot get. Read scaling_preview for what blocks the purchase and the ways out it computes.';
+  }
+  const cost =
+    back.monthlyEur === null ? '' : ` (about €${back.monthlyEur} a month)`;
+  return `Nothing is being bought: the fleet has ${back.nodes} nodes against a target of ${back.target}, and ${back.node ?? 'the node that would go back'}${cost} cannot be emptied. Relay \`giveBack.reasons\` by application, with each reason's fix. Two ways out: keep the node by setting the group's \`bounds.desired\` to ${back.keepNodes} with scaling_group_set, or clear the reasons. Never propose raising the spending ceiling or adding a shape for this alarm.`;
 }
 
 /**
@@ -413,6 +450,7 @@ function rowView(row: RowDto): Record<string, unknown> {
         ? `${row.blockedOrders} standing order(s) on this cluster wait for a node that cannot be emptied. They will never proceed on their own; read the group with scaling_group_get and relay each blocker.`
         : 'No standing order here is held back by a drain that cannot happen.',
     openAlarm: row.openAlarm,
+    openAlarmMeans: alarmNote(row.openAlarm),
     lastDecisionAt: row.lastDecisionAt,
     needsPerson: row.needsPerson,
   };

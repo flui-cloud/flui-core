@@ -20,12 +20,20 @@ export type DrainBlockerKind =
   | 'not-evictable'
   | 'is-master';
 
+/** The application something on the node belongs to, when Flui deployed it. */
+export interface DrainApplication {
+  id: string;
+  slug: string;
+}
+
 export interface DrainBlocker {
   kind: DrainBlockerKind;
   /** The thing itself, by the name a person would recognise. */
   what: string;
   /** What would have to change for the drain to become possible. */
   fix: string;
+  /** Absent on checks recorded before blockers were tied to applications. */
+  application?: DrainApplication | null;
 }
 
 export interface DrainCheck {
@@ -33,6 +41,8 @@ export interface DrainCheck {
   blockers: DrainBlocker[];
   /** Checks that passed, so the answer reads as an answer rather than a green light. */
   cleared: string[];
+  /** The node asked about. Absent on checks recorded before it was kept. */
+  node?: string;
 }
 
 export interface DrainPod {
@@ -52,6 +62,7 @@ export interface DrainPod {
    */
   boundVolumes: string[];
   labels: Record<string, string>;
+  application?: DrainApplication | null;
 }
 
 export interface DrainBudget {
@@ -70,7 +81,7 @@ export interface DrainSubject {
   nodeName: string;
   isMaster: boolean;
   /** Applications pinned to this machine by `persistenceScope: dedicated`. */
-  dedicatedApps: string[];
+  dedicatedApps: DrainApplication[];
   pods: DrainPod[];
   budgets: DrainBudget[];
 }
@@ -83,6 +94,7 @@ export function checkDrain(subject: DrainSubject): DrainCheck {
   if (subject.isMaster) {
     return {
       ok: false,
+      node: subject.nodeName,
       blockers: [
         {
           kind: 'is-master',
@@ -97,25 +109,29 @@ export function checkDrain(subject: DrainSubject): DrainCheck {
   const blockers: DrainBlocker[] = [];
   const cleared: string[] = [];
 
-  for (const slug of subject.dedicatedApps) {
+  for (const app of subject.dedicatedApps) {
     blockers.push({
       kind: 'dedicated-app',
-      what: slug,
-      fix: `${slug} keeps its data on this machine. Back it up, then delete or redeploy it elsewhere.`,
+      what: app.slug,
+      fix: `${app.slug} keeps its data on this machine. Back it up, then delete or redeploy it elsewhere.`,
+      application: app,
     });
   }
+  const dedicated = new Set(subject.dedicatedApps.map((app) => app.id));
 
   const daemons = subject.pods.filter((pod) => pod.ownerKind === DAEMONSET);
   const evictable = subject.pods.filter((pod) => pod.ownerKind !== DAEMONSET);
 
   for (const pod of evictable) {
     const where = `${pod.namespace}/${pod.name}`;
+    const application = pod.application ?? null;
 
     if (pod.mirror) {
       blockers.push({
         kind: 'not-evictable',
         what: where,
         fix: 'This part is placed by the machine itself and cannot be moved. Remove it from the machine first.',
+        application,
       });
       continue;
     }
@@ -125,14 +141,21 @@ export function checkDrain(subject: DrainSubject): DrainCheck {
         kind: 'no-controller',
         what: where,
         fix: 'Nothing would start this again elsewhere. Deploy it as an app, or delete it and accept that it goes.',
+        application,
       });
     }
 
-    if (pod.boundVolumes.length) {
+    // A dedicated application's volume is the reason it is dedicated, and it
+    // is already named once for it.
+    if (
+      pod.boundVolumes.length &&
+      !(application && dedicated.has(application.id))
+    ) {
       blockers.push({
         kind: 'bound-volume',
         what: `${where} → ${pod.boundVolumes.join(', ')}`,
         fix: 'The disk lives on this machine and does not travel. Move the data, or give the app storage that any machine can reach.',
+        application,
       });
     }
 
@@ -142,6 +165,7 @@ export function checkDrain(subject: DrainSubject): DrainCheck {
         kind: 'disruption-budget',
         what: `${refusing.namespace}/${refusing.name} (covers ${where})`,
         fix: 'The budget permits no further disruption. Scale the workload up, or relax the budget, before this node can be emptied.',
+        application,
       });
     }
   }
@@ -156,7 +180,7 @@ export function checkDrain(subject: DrainSubject): DrainCheck {
       `${evictable.length} part(s) would be started again on another machine.`,
     );
   }
-  if (!blockers.some((b) => b.kind === 'bound-volume')) {
+  if (!evictable.some((pod) => pod.boundVolumes.length)) {
     cleared.push(
       'Nothing on this node holds a volume that cannot move with it.',
     );
@@ -173,7 +197,12 @@ export function checkDrain(subject: DrainSubject): DrainCheck {
     cleared.push('No application keeps its data on this machine.');
   }
 
-  return { ok: blockers.length === 0, blockers, cleared };
+  return {
+    ok: blockers.length === 0,
+    node: subject.nodeName,
+    blockers,
+    cleared,
+  };
 }
 
 function budgetRefusing(

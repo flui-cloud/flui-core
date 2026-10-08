@@ -45,6 +45,7 @@ import {
 } from './engine.core';
 import { ShapeFactsService } from './shape-facts.service';
 import { DrainCheck, drainSummary } from './drain.core';
+import { giveBackReasons, giveBackSentence } from './give-back.core';
 import { fitSummary } from './fit.core';
 import { DrainFeasibilityService } from './drain-feasibility.service';
 import { NodeReserveService } from './node-reserve.service';
@@ -652,7 +653,7 @@ export class ScalingEngineService {
         saw,
         did: 'Raised an alarm: the fleet is above its target and cannot come back on its own.',
         why: `${candidate.name} cannot be emptied. ${drainSummary(drain)}`,
-        asks: `The fleet has ${input.fleet.nodes} nodes against a target of ${group.desiredNodes}, and ${candidate.name} is the one that would go back. It cannot be emptied as things stand, so it is being paid for until somebody clears what is in the way. ${drainSummary(drain)}`,
+        asks: `${candidate.name} is above the target of ${group.desiredNodes} ${group.desiredNodes === 1 ? 'node' : 'nodes'} and cannot go back: ${giveBackSentence(giveBackReasons(drain))}. Keep it, or clear what is in the way.`,
         shape: null,
         region: null,
         hourlyEur: candidate.hourlyEur,

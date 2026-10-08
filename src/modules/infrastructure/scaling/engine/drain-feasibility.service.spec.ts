@@ -204,3 +204,56 @@ describe('whether the work on a node has somewhere else to run', () => {
     ).resolves.toBeNull();
   });
 });
+
+describe('whether a node can be emptied', () => {
+  const run = (name: string, phase: string) => ({
+    metadata: { name, namespace: 'apps', ownerReferences: [] },
+    spec: { nodeName: 'worker-2', volumes: [] },
+    status: { phase },
+  });
+
+  function checking(pods: unknown[]) {
+    const coreApi = {
+      listPodForAllNamespaces: jest.fn(async () => ({ items: pods })),
+      listPersistentVolume: jest.fn(async () => ({ items: [] })),
+      listPodDisruptionBudgetForAllNamespaces: jest.fn(async () => ({
+        items: [],
+      })),
+    };
+    const service = new DrainFeasibilityService(
+      { find: async () => [] } as never,
+      { makeKubeConfig: () => ({ makeApiClient: () => coreApi }) } as never,
+      { decrypt: () => 'kubeconfig' } as never,
+    );
+    return { service, coreApi };
+  }
+
+  /**
+   * Orphaned runs of a schedule whose job was deleted stay on the node with no
+   * owner, finished for days, and were named as reasons the
+   * node could not be given back.
+   */
+  it('is not held up by runs that already ended', async () => {
+    const { service, coreApi } = checking([
+      run('echo-29840964-4pw54', 'Succeeded'),
+      run('noshell-29840960-8fl4w', 'Failed'),
+    ]);
+
+    const check = await service.check(cluster(), leaving);
+
+    expect(check?.ok).toBe(true);
+    expect(coreApi.listPodForAllNamespaces).toHaveBeenCalledWith({
+      fieldSelector:
+        'spec.nodeName=worker-2,status.phase!=Succeeded,status.phase!=Failed',
+    });
+  });
+
+  it('still names a run with no owner that has not ended', async () => {
+    const { service } = checking([run('stray', 'Running')]);
+
+    const check = await service.check(cluster(), leaving);
+
+    expect(check?.ok).toBe(false);
+    expect(check?.blockers.map((b) => b.kind)).toEqual(['no-controller']);
+  });
+});

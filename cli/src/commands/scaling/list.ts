@@ -21,6 +21,7 @@ import {
   monthlySpendCell,
   pendingPodsCell,
   pendingPodsWarns,
+  giveBackLines,
   rowAttention,
 } from '../../lib/scaling-view';
 
@@ -254,6 +255,9 @@ export default class ScalingList extends Command {
     if (attention) {
       console.log('');
       console.log(`  ${chalk.yellow('⚠')} ${attention}`);
+    }
+    for (const line of giveBackLines(row)) {
+      console.log(`    ${chalk.dim(line)}`);
     }
     console.log('');
   }

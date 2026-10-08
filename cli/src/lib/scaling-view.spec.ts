@@ -18,6 +18,7 @@ import {
   describeChosen,
   describeClusterSilence,
   describeDecision,
+  giveBackLines,
   describeDrain,
   describeMonthlySpend,
   describePending,
@@ -744,5 +745,56 @@ describe('what the node limits cost', () => {
     expect(boundProblem('max', 25)).toContain('from 1 to 20');
     expect(boundProblem('max', 20)).toBeNull();
     expect(boundProblem('min', undefined)).toBeNull();
+  });
+});
+
+describe('a node that cannot go back', () => {
+  const row = (alarm: Record<string, unknown> | null) =>
+    ({
+      clusterName: 'staging',
+      groups: [{ id: 'g-1', name: 'general' }],
+      openAlarm: alarm,
+    }) as unknown as Parameters<typeof giveBackLines>[0];
+
+  it('names the applications by cause and the command that keeps the node', () => {
+    const lines = giveBackLines(
+      row({
+        since: '2026-10-05T00:00:00Z',
+        groupId: 'g-1',
+        asks: 'x',
+        kind: 'give-back',
+        giveBack: {
+          node: 'worker-1',
+          nodes: 2,
+          target: 1,
+          monthlyEur: 6.99,
+          keepNodes: 2,
+          says: '2 applications keep their data on it',
+          reasons: [
+            {
+              kind: 'data-on-node',
+              title: 'Keep their data on this machine',
+              fix: 'Back the data up.',
+              items: [
+                { label: 'postgresql-04f3a9', applicationId: 'a1' },
+                { label: 'linkding', applicationId: 'a2' },
+              ],
+            },
+          ],
+        },
+      }),
+    );
+
+    expect(lines).toEqual([
+      'Keep their data on this machine: postgresql-04f3a9, linkding',
+      '  Back the data up.',
+      'To keep worker-1 (about €6.99/month): flui scaling set general --cluster staging --desired 2',
+    ]);
+  });
+
+  it('adds nothing to an alarm about a purchase', () => {
+    expect(
+      giveBackLines(row({ kind: 'purchase', giveBack: null, asks: 'x' })),
+    ).toEqual([]);
   });
 });

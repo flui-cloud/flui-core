@@ -352,10 +352,74 @@ describe('an alarm nobody has acted on', () => {
 
     expect(row.openAlarm).toEqual({
       since: '2026-08-26T07:12:00.000Z',
+      groupId: 'g-1',
       asks: 'Attach a machine with 2 vCPU and 8Gi free, then run flui node connect.',
+      kind: 'purchase',
+      giveBack: null,
     });
     expect(row.needsPerson).toContain('2026-08-26');
     expect(row.lastDecisionAt).toBe('2026-08-26T07:12:00.000Z');
+  });
+
+  /**
+   * A fleet above its target whose spare node cannot be emptied is an alarm
+   * about paying for a node too many, never an offer to raise the spending
+   * ceiling.
+   */
+  it('says when it is about a node that cannot go back, and what holds it', async () => {
+    const { service } = make({
+      clusters: [cluster({})],
+      groups: [group({ desiredNodes: 1 })],
+      nodes: [
+        node(0.01, { id: 'n-m', serverName: 'master' }),
+        node(0.01, { id: 'n-w', serverName: 'worker-1' }),
+      ],
+      latest: {
+        'g-1': decision({
+          force: 'opportunity',
+          asks: 'worker-1 is above the target of 1 node and cannot go back.',
+          drain: {
+            ok: false,
+            node: 'worker-1',
+            cleared: [],
+            blockers: [
+              {
+                kind: 'dedicated-app',
+                what: 'pg-1',
+                fix: 'x',
+                application: { id: 'a1', slug: 'pg-1' },
+              },
+              {
+                kind: 'bound-volume',
+                what: 'ns/linkding-7c9 → data',
+                fix: 'x',
+                application: { id: 'a2', slug: 'linkding' },
+              },
+            ],
+          },
+        }),
+      },
+    });
+    const [row] = await service.rows();
+
+    expect(row.openAlarm?.kind).toBe('give-back');
+    expect(row.openAlarm?.giveBack).toEqual({
+      node: 'worker-1',
+      nodes: 2,
+      target: 1,
+      monthlyEur: 7.3,
+      keepNodes: 2,
+      says: '2 applications keep their data on it',
+      reasons: [
+        expect.objectContaining({
+          kind: 'data-on-node',
+          items: [
+            { label: 'pg-1', applicationId: 'a1' },
+            { label: 'linkding', applicationId: 'a2' },
+          ],
+        }),
+      ],
+    });
   });
 
   it('is gone once the group has decided anything else', async () => {

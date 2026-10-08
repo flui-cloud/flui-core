@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { In, Repository } from 'typeorm';
 import * as k8s from '@kubernetes/client-node';
 import { ApplicationEntity } from '../../../applications/entities/application.entity';
 import {
@@ -19,7 +19,13 @@ import {
   podLimit,
   podRequest,
 } from '../../clusters/services/unschedulable-pods.service';
-import { DrainBudget, DrainCheck, DrainPod, checkDrain } from './drain.core';
+import {
+  DrainApplication,
+  DrainBudget,
+  DrainCheck,
+  DrainPod,
+  checkDrain,
+} from './drain.core';
 import { NODE_RESERVE } from './engine.core';
 import { FitCheck, MovingPod, NodeRoom, checkFit } from './fit.core';
 import { FleetRoom, NodeRoomInput, fleetRoom } from './room.core';
@@ -76,19 +82,21 @@ export class DrainFeasibilityService {
 
       const [pods, volumes, budgets] = await Promise.all([
         coreApi.listPodForAllNamespaces({
-          fieldSelector: `spec.nodeName=${node.serverName}`,
+          fieldSelector: `spec.nodeName=${node.serverName},status.phase!=Succeeded,status.phase!=Failed`,
         }),
         coreApi.listPersistentVolume(),
         policyApi.listPodDisruptionBudgetForAllNamespaces(),
       ]);
 
       const pinned = pinnedClaims(volumes.items ?? [], node.serverName);
+      const running = (pods.items ?? []).filter((pod) => !finished(pod));
+      const owners = await this.applicationsOf(running);
 
       return checkDrain({
         nodeName: node.serverName,
         isMaster: false,
         dedicatedApps,
-        pods: (pods.items ?? []).map((pod) => toDrainPod(pod, pinned)),
+        pods: running.map((pod) => toDrainPod(pod, pinned, owners)),
         budgets: (budgets.items ?? []).map(toDrainBudget),
       });
     } catch (err) {
@@ -295,7 +303,7 @@ export class DrainFeasibilityService {
   private async dedicatedApps(
     clusterId: string,
     node: ClusterNodeEntity,
-  ): Promise<string[]> {
+  ): Promise<DrainApplication[]> {
     const where =
       node.nodeType === NodeType.MASTER
         ? { clusterId, persistenceScope: 'dedicated' }
@@ -305,8 +313,35 @@ export class DrainFeasibilityService {
             dedicatedNodeName: node.serverName,
           };
     const rows = await this.applications.find({ where: where as never });
-    return rows.map((row) => row.slug);
+    return rows.map((row) => ({ id: row.id, slug: row.slug }));
   }
+
+  /** The applications the pods belong to, so a blocker names what a person deployed. */
+  private async applicationsOf(
+    pods: k8s.V1Pod[],
+  ): Promise<Map<string, DrainApplication>> {
+    const ids = [
+      ...new Set(
+        pods
+          .map((pod) => pod.metadata?.labels?.[APP_ID_LABEL])
+          .filter((id): id is string => Boolean(id)),
+      ),
+    ];
+    if (!ids.length) return new Map();
+    const rows = await this.applications.find({
+      where: { id: In(ids) },
+      select: { id: true, slug: true },
+    });
+    return new Map(rows.map((row) => [row.id, { id: row.id, slug: row.slug }]));
+  }
+}
+
+const APP_ID_LABEL = 'flui-app-id';
+
+/** A run that already ended holds nothing up: emptying the node neither moves nor waits for it. */
+function finished(pod: k8s.V1Pod): boolean {
+  const phase = pod.status?.phase;
+  return phase === 'Succeeded' || phase === 'Failed';
 }
 
 /** Pods that run on every machine, or that the machine itself placed, go with it. */
@@ -368,7 +403,11 @@ function boundToNode(
   );
 }
 
-function toDrainPod(pod: k8s.V1Pod, pinned: Set<string>): DrainPod {
+function toDrainPod(
+  pod: k8s.V1Pod,
+  pinned: Set<string>,
+  owners: Map<string, DrainApplication>,
+): DrainPod {
   const namespace = pod.metadata?.namespace ?? '';
   const claims = (pod.spec?.volumes ?? [])
     .map((volume) => volume.persistentVolumeClaim?.claimName)
@@ -388,6 +427,7 @@ function toDrainPod(pod: k8s.V1Pod, pinned: Set<string>): DrainPod {
     mirror: Boolean(pod.metadata?.annotations?.['kubernetes.io/config.mirror']),
     boundVolumes: [...claims, ...hostPaths],
     labels: pod.metadata?.labels ?? {},
+    application: owners.get(pod.metadata?.labels?.[APP_ID_LABEL] ?? '') ?? null,
   };
 }
 

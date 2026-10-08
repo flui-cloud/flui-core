@@ -2,6 +2,7 @@ import { ApiProperty } from '@nestjs/swagger';
 import { Sensitivity } from '../../../mask/decorators/sensitivity.decorator';
 import { ScalingModeKind } from '../scaling-consequence';
 import { COST_SCENARIO_KINDS, CostScenarioKind } from '../cost-scenarios.core';
+import { GiveBackReasonKind } from '../engine/give-back.core';
 import {
   CandidateOutcome,
   DecisionOutcome,
@@ -612,6 +613,87 @@ export class ClusterScalingDecisionDto extends ScalingDecisionResponseDto {
   groupName: string;
 }
 
+export class GiveBackItemDto {
+  @Sensitivity(Sensitivity.ARBITRARY_TEXT)
+  @ApiProperty({
+    description: 'The application, or the workload when Flui did not deploy it',
+  })
+  label: string;
+
+  @Sensitivity(Sensitivity.PUBLIC)
+  @ApiProperty({ type: String, nullable: true })
+  applicationId: string | null;
+}
+
+export class GiveBackReasonDto {
+  @Sensitivity(Sensitivity.PUBLIC)
+  @ApiProperty({
+    enum: [
+      'data-on-node',
+      'not-restarted',
+      'no-interruption',
+      'placed-by-machine',
+      'master',
+    ],
+  })
+  kind: GiveBackReasonKind;
+
+  @Sensitivity(Sensitivity.PUBLIC)
+  @ApiProperty({ example: 'Keep their data on this machine' })
+  title: string;
+
+  @Sensitivity(Sensitivity.PUBLIC)
+  @ApiProperty({ description: 'What would let the node go back' })
+  fix: string;
+
+  @Sensitivity(Sensitivity.PUBLIC)
+  @ApiProperty({ type: [GiveBackItemDto] })
+  items: GiveBackItemDto[];
+}
+
+/** What stands between a fleet above its target and the bill going down. */
+export class GiveBackAlarmDto {
+  @Sensitivity(Sensitivity.ARBITRARY_TEXT)
+  @ApiProperty({
+    type: String,
+    nullable: true,
+    description: 'The node that would go back',
+  })
+  node: string | null;
+
+  @Sensitivity(Sensitivity.PUBLIC)
+  @ApiProperty({ description: 'Nodes the fleet has now' })
+  nodes: number;
+
+  @Sensitivity(Sensitivity.PUBLIC)
+  @ApiProperty({ description: 'The target the group rests at' })
+  target: number;
+
+  @Sensitivity(Sensitivity.PUBLIC)
+  @ApiProperty({
+    type: Number,
+    nullable: true,
+    description:
+      'What the node costs a month at list price; null when it carries no price',
+  })
+  monthlyEur: number | null;
+
+  @Sensitivity(Sensitivity.PUBLIC)
+  @ApiProperty({
+    description:
+      'The target that closes the alarm by keeping the node: the fleet as it is',
+  })
+  keepNodes: number;
+
+  @Sensitivity(Sensitivity.PUBLIC)
+  @ApiProperty({ example: '5 applications keep their data on it' })
+  says: string;
+
+  @Sensitivity(Sensitivity.PUBLIC)
+  @ApiProperty({ type: [GiveBackReasonDto] })
+  reasons: GiveBackReasonDto[];
+}
+
 /**
  * An alarm still standing, meaning the last thing the group decided was to ask
  * for a person.
@@ -626,10 +708,26 @@ export class OpenAlarmDto {
   @ApiProperty({ description: 'When the group last asked for a person' })
   since: string;
 
+  @Sensitivity(Sensitivity.PUBLIC)
+  @ApiProperty({ description: 'The group that raised it' })
+  groupId: string;
+
   @ApiProperty({
     description: 'What it asks for, in terms this cluster can be given',
   })
   asks: string;
+
+  @Sensitivity(Sensitivity.PUBLIC)
+  @ApiProperty({
+    enum: ['purchase', 'give-back'],
+    description:
+      'purchase: the group needs a machine it cannot get. give-back: the fleet is above its target and the node that would go back cannot be emptied.',
+  })
+  kind: 'purchase' | 'give-back';
+
+  @Sensitivity(Sensitivity.PUBLIC)
+  @ApiProperty({ type: GiveBackAlarmDto, nullable: true })
+  giveBack: GiveBackAlarmDto | null;
 }
 
 /** A group named in the row of its cluster, so a second one is never invisible. */

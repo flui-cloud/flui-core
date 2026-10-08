@@ -38,7 +38,9 @@ describe('whether a node can be emptied', () => {
   });
 
   it('refuses a machine an application keeps its data on, and names it', () => {
-    const check = checkDrain(subject({ dedicatedApps: ['postgres-main'] }));
+    const check = checkDrain(
+      subject({ dedicatedApps: [{ id: 'a1', slug: 'postgres-main' }] }),
+    );
     expect(check.ok).toBe(false);
     expect(check.blockers[0]).toMatchObject({
       kind: 'dedicated-app',
@@ -142,9 +144,47 @@ describe('whether a node can be emptied', () => {
   });
 
   it('summarises into what stands in the way and what would clear it', () => {
-    const check = checkDrain(subject({ dedicatedApps: ['postgres-main'] }));
+    const check = checkDrain(
+      subject({ dedicatedApps: [{ id: 'a1', slug: 'postgres-main' }] }),
+    );
     const line = drainSummary(check);
     expect(line).toContain('postgres-main');
     expect(line).toContain('redeploy');
+  });
+});
+
+describe('naming each application once', () => {
+  it('does not name the volume of an application already named for keeping its data here', () => {
+    const app = { id: 'a1', slug: 'postgres-main' };
+    const check = checkDrain(
+      subject({
+        dedicatedApps: [app],
+        pods: [
+          pod({
+            name: 'postgres-main-0',
+            ownerKind: 'StatefulSet',
+            boundVolumes: ['data-postgres-main-0'],
+            application: app,
+          }),
+        ],
+      }),
+    );
+
+    expect(check.blockers.map((b) => b.kind)).toEqual(['dedicated-app']);
+    expect(check.cleared).not.toContain(
+      'Nothing on this node holds a volume that cannot move with it.',
+    );
+  });
+
+  it('carries the node and the application each blocker belongs to', () => {
+    const app = { id: 'a2', slug: 'linkding' };
+    const check = checkDrain(
+      subject({
+        pods: [pod({ boundVolumes: ['data'], application: app })],
+      }),
+    );
+
+    expect(check.node).toBe('prod-eu-worker-2');
+    expect(check.blockers[0].application).toEqual(app);
   });
 });

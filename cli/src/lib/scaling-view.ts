@@ -561,6 +561,34 @@ export function describeClusterSilence(
   return said;
 }
 
+/**
+ * What stands between a fleet above its target and a smaller bill, one line per
+ * cause with the applications it applies to, and the command that keeps the
+ * node instead.
+ */
+export function giveBackLines(row: ClusterScalingRowDto): string[] {
+  const alarm = row.openAlarm;
+  const back = alarm?.kind === 'give-back' ? alarm.giveBack : null;
+  if (!alarm || !back) return [];
+  const lines = back.reasons.flatMap((reason) => [
+    `${reason.title}: ${reason.items.map((item) => item.label).join(', ')}`,
+    `  ${reason.fix}`,
+  ]);
+  const group = row.groups.find((g) => g.id === alarm.groupId);
+  const cost =
+    back.monthlyEur === null ? '' : ` (about €${back.monthlyEur}/month)`;
+  const command = [
+    'flui scaling set',
+    group?.name,
+    `--cluster ${row.clusterName}`,
+    `--desired ${back.keepNodes}`,
+  ]
+    .filter(Boolean)
+    .join(' ');
+  lines.push(`To keep ${back.node ?? 'the node'}${cost}: ${command}`);
+  return lines;
+}
+
 /** The one line of a cluster row that has to read from across the room. */
 export function rowAttention(row: ClusterScalingRowDto): string | null {
   if (row.needsPerson) return row.needsPerson;
