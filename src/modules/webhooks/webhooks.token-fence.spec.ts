@@ -32,6 +32,7 @@ function build(app: { id: string; webhookToken: string | null } | null) {
     {} as never,
     eventsGateway as never,
     {} as never,
+    { host: () => null } as never,
   );
 }
 

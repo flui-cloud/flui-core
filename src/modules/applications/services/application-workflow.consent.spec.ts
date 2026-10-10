@@ -11,6 +11,7 @@ import { ApplicationWorkflowService } from './application-workflow.service';
 import { WorkflowGeneratorService } from '../../repositories/services/workflow-generator.service';
 import { FLUI_WEBHOOK_SECRET } from '../../repositories/services/workflow-generator.service';
 import { ApplicationStatus } from '../enums/application-status.enum';
+import { FluiRegistryPublisherService } from '../../flui-registry/services/flui-registry-publisher.service';
 
 const REPO_ID = '11111111-1111-4111-8111-111111111111';
 
@@ -30,6 +31,8 @@ const build = (opts?: {
   backendPollingOnly?: boolean;
   /** Name of a repository secret GitHub refuses to accept. */
   refuseSecret?: string;
+  /** The instance runs its own registry on this host. */
+  registryHost?: string;
 }): Harness => {
   const updates: Record<string, unknown>[] = [];
   const commits: { delivery?: string; workflowYaml: string }[] = [];
@@ -49,7 +52,10 @@ const build = (opts?: {
   };
 
   const repositoriesRepository = {
-    findById: async () => ({ owner: 'someone', repositoryName: 'their-app' }),
+    findOwnedById: async () => ({
+      owner: 'someone',
+      repositoryName: 'their-app',
+    }),
   };
 
   const githubWorkflowService = {
@@ -133,6 +139,39 @@ const build = (opts?: {
     {} as never,
     appBuildRepository as never,
     { getDecryptedGhcrPat: async () => null } as never,
+    new FluiRegistryPublisherService(
+      {
+        mode: opts?.registryHost ? 'flui' : 'ghcr',
+        host: opts?.registryHost ?? null,
+        internalUrl: null,
+        realm: null,
+        service: 'flui-registry',
+        issuer: 'flui-api',
+        pushTokenSeconds: 900,
+        pullTokenSeconds: 300,
+        image: 'zot',
+        storage: '1Gi',
+        storageBackend: 'filesystem',
+        storageClass: null,
+        replicas: 1,
+        cacheImage: 'redis',
+        keepTags: 3,
+        appQuotaMb: 0,
+        maxRequestMb: 0,
+        rateAverage: 0,
+        rateBurst: 0,
+        ioTimeoutSeconds: 600,
+        spaceAlertPercent: 80,
+        spaceAlertGib: 50,
+      },
+      {
+        issue: async (_app: string, kind: string) => ({
+          username: `${kind}-user`,
+          password: `${kind}-secret`,
+        }),
+      } as never,
+      {} as never,
+    ),
   );
 
   return {
@@ -412,6 +451,75 @@ describe('the credential the committed file no longer carries', () => {
     expect(harness.commits[0].workflowYaml).not.toContain('X-Flui-Token');
     expect(harness.secrets.map((s) => s.name)).not.toContain(
       FLUI_WEBHOOK_SECRET,
+    );
+  }, 15_000);
+});
+
+describe('builds that push to the instance’s own registry', () => {
+  const HOST = 'api.example.test';
+
+  it('pushes to this application’s repository there, logging in with its own secrets', async () => {
+    const harness = build({ registryHost: HOST });
+    await harness.service.generateAndCommitWorkflowV3('app-1', 'u1', {
+      branch: 'main',
+    });
+
+    const committed = harness.commits[0].workflowYaml;
+    expect(committed).toContain(`IMAGE_NAME: ${HOST}/apps/app-1`);
+    expect(committed).toContain(`registry: ${HOST}`);
+    expect(committed).toContain(
+      'password: ${{ secrets.FLUI_REGISTRY_TOKEN_THEIR_APP }}',
+    );
+    expect(committed).not.toContain('ghcr.io');
+    expect(committed).not.toContain('packages: write');
+    expect(harness.secrets).toEqual(
+      expect.arrayContaining([
+        { name: 'FLUI_REGISTRY_USER_THEIR_APP', value: 'push-user' },
+        { name: 'FLUI_REGISTRY_TOKEN_THEIR_APP', value: 'push-secret' },
+      ]),
+    );
+    expect(harness.secrets.map((s) => s.name)).not.toContain('FLUI_GHCR_TOKEN');
+    expect(
+      harness.events.indexOf('secret:FLUI_REGISTRY_TOKEN_THEIR_APP'),
+    ).toBeLessThan(harness.events.indexOf('commit'));
+    expect(harness.updates).toContainEqual(
+      expect.objectContaining({ imageRegistryHost: HOST }),
+    );
+  }, 15_000);
+
+  it('tells the person which secrets are written and where the image goes', async () => {
+    const { service } = build({ registryHost: HOST });
+    const consent = await service.previewWorkflowV3('app-1', 'u1', {
+      branch: 'main',
+    });
+    const targets = consent.writes.map((w) => w.target).join('\n');
+
+    expect(targets).toContain(
+      'FLUI_REGISTRY_USER_THEIR_APP and FLUI_REGISTRY_TOKEN_THEIR_APP',
+    );
+    expect(targets).not.toContain('FLUI_GHCR_TOKEN');
+  });
+
+  it('commits nothing when the registry secret cannot be written', async () => {
+    const harness = build({
+      registryHost: HOST,
+      refuseSecret: 'FLUI_REGISTRY_USER_THEIR_APP',
+    });
+    await expect(
+      harness.service.generateAndCommitWorkflowV3('app-1', 'u1', {
+        branch: 'main',
+      }),
+    ).rejects.toThrow(/FLUI_REGISTRY_TOKEN_THEIR_APP/);
+    expect(harness.commits).toHaveLength(0);
+  });
+
+  it('records no registry for an application whose builds still go to GHCR', async () => {
+    const harness = build();
+    await harness.service.generateAndCommitWorkflowV3('app-1', 'u1', {
+      branch: 'main',
+    });
+    expect(harness.updates).toContainEqual(
+      expect.objectContaining({ imageRegistryHost: null }),
     );
   }, 15_000);
 });

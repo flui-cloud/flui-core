@@ -126,7 +126,15 @@ export const CREDENTIAL_HANDOVER_TOOLS: ToolDef[] = [
         expiresAt?: string | null;
         daysUntilExpiry?: number | null;
         githubLogin?: string;
+        needed?: boolean;
       }>('/repositories/github-app/packages-pat/status');
+      if (status.needed === false) {
+        return {
+          configured: status.configured ?? false,
+          needed: false,
+          note: 'Not needed: this instance keeps built images in its own registry, so nothing has to be pulled from GHCR. Do not ask the person for a token.',
+        };
+      }
 
       const action = runCommand(
         'flui integration ghcr-pat set',
@@ -272,6 +280,137 @@ export const CREDENTIAL_HANDOVER_TOOLS: ToolDef[] = [
   }),
 
   defineTool({
+    name: 'registry_storage_request',
+    routes: ['GET /registry/storage', 'GET /registry/storage/buckets'],
+    description:
+      "Where the instance's image registry keeps built images, the space they take (total and per application, with the space alert), and how a PERSON connects it to a bucket. " +
+      'On Scaleway Flui creates the bucket itself, in a project of its own with a key limited to Object Storage there, from the Scaleway connection the instance already has: the command needs only a region. ' +
+      'A bucket of their own needs an access key and a secret key: you must never hold or relay them, and there are no arguments for them here; the command asks for the secret at a prompt. ' +
+      'Hetzner Object Storage is not offered for the registry. ' +
+      'It needs the permission to manage integrations, which no `mcp:*` scope carries: on an agent API key expect CREDENTIAL_SCOPE_CEILING, say so and stop rather than retrying.',
+    scope: MCP_SCOPE.INFRA_READ,
+    inputSchema: {
+      kind: z
+        .enum(['scaleway', 's3'])
+        .optional()
+        .describe('scaleway: created by Flui. s3: a bucket of their own.'),
+      region: z
+        .string()
+        .optional()
+        .describe('Region of the bucket, e.g. fr-par.'),
+      provider: z
+        .enum([
+          'scaleway_object_storage',
+          'ovh_object_storage',
+          'minio',
+          'generic_s3',
+        ])
+        .optional()
+        .describe('For s3: who hosts the bucket.'),
+      endpoint: z.string().optional().describe('For s3: the S3 endpoint URL.'),
+      bucket: z.string().optional().describe('For s3: the bucket name.'),
+    },
+    run: async (args, ctx) => {
+      const status = await ctx.api.get<{
+        backend?: 'filesystem' | 's3';
+        connected?: boolean;
+        provider?: string;
+        region?: string;
+        bucket?: string;
+        usage?: {
+          measuredAt: string;
+          totalBytes: number;
+          alertBytes: number | null;
+          capacityBytes: number | null;
+          alerting: boolean;
+          applications: Array<{ name: string; bytes: number }>;
+        };
+      }>('/registry/storage');
+
+      const buckets = await ctx.api.get<
+        Array<{
+          id: string;
+          bucket: string;
+          active: boolean;
+          createdByFlui: boolean;
+        }>
+      >('/registry/storage/buckets');
+      const replaced = (Array.isArray(buckets) ? buckets : [])
+        .filter((b) => !b.active)
+        .map((b) => ({
+          bucket: b.bucket,
+          createdByFlui: b.createdByFlui,
+          removeCommand: `flui registry storage remove ${b.id}`,
+        }));
+
+      const kind = args.kind ?? 'scaleway';
+      const given: Array<[string, string | undefined]> =
+        kind === 'scaleway'
+          ? [['region', args.region]]
+          : [
+              ['provider', args.provider],
+              ['endpoint', args.endpoint],
+              ['region', args.region],
+              ['bucket', args.bucket],
+            ];
+      const command = [
+        `flui registry storage connect ${kind}`,
+        ...given
+          .filter(([, value]) => value)
+          .map(([flag, value]) => `--${flag} ${value}`),
+        ...(kind === 's3' ? ['--access-key <access key id>'] : []),
+      ].join(' ');
+      const missing = given.filter(([, value]) => !value).map(([flag]) => flag);
+
+      const usage = status.usage && {
+        measuredAt: status.usage.measuredAt,
+        totalBytes: status.usage.totalBytes,
+        alertBytes: status.usage.alertBytes,
+        capacityBytes: status.usage.capacityBytes,
+        alerting: status.usage.alerting,
+        largestApplications: status.usage.applications.slice(0, 5),
+      };
+      const keptOn =
+        status.backend === 's3'
+          ? 'a bucket'
+          : 'a volume on the control cluster';
+      return {
+        keptOn,
+        connected: status.connected ?? false,
+        provider: status.provider,
+        region: status.region,
+        bucket: status.bucket,
+        ...(usage ? { usage } : {}),
+        ...(replaced.length > 0 ? { replacedBuckets: replaced } : {}),
+        note: [
+          usage
+            ? undefined
+            : 'This instance keeps built images on GHCR, not in a registry of its own: there is no space to report and no bucket to connect.',
+          status.connected
+            ? 'A bucket is already connected. Running the command again replaces it.'
+            : undefined,
+          status.backend === 'filesystem' && status.connected
+            ? 'The bucket is connected but not used yet: the registry moves to it once the installation is set to object storage.'
+            : undefined,
+          missing.length > 0
+            ? `Fill in the remaining flags (${missing.join(', ')}) before relaying.`
+            : undefined,
+          kind === 's3'
+            ? 'The secret key is deliberately not part of the command: it asks for it at a prompt. The access key id is not secret; the person fills it in.'
+            : undefined,
+          replaced.length > 0
+            ? 'Buckets the registry no longer uses are listed with the command that removes them; one Flui created goes with its images. Only the person decides to run it.'
+            : undefined,
+          STOP_AND_CARRY_ON,
+        ]
+          .filter(Boolean)
+          .join(' '),
+        ...runCommand(command, 'Connect the registry to a bucket'),
+      };
+    },
+  }),
+
+  defineTool({
     name: 'provider_credentials_request',
     routes: ['GET /management/providers'],
     description:
@@ -370,12 +509,12 @@ export const CREDENTIAL_HANDOVER_TOOLS: ToolDef[] = [
       const users = await ctx.api.get<Array<{ email?: string; id?: string }>>(
         `/auth/users?search=${enc(args.email)}`,
       );
-      const found = (Array.isArray(users) ? users : []).find(
+      const found = (Array.isArray(users) ? users : []).some(
         (u) => u.email?.toLowerCase() === args.email.toLowerCase(),
       );
       return {
         email: args.email,
-        alreadyExists: !!found,
+        alreadyExists: found,
         note: found
           ? 'An account with this address already exists. Re-inviting would mint a fresh link, which the person does deliberately, not you.'
           : `No account with this address yet. ${STOP_AND_CARRY_ON}`,

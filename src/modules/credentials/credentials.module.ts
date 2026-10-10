@@ -6,12 +6,14 @@ import { GithubUserTokenEntity } from '../repositories/entities/github-user-toke
 import { CredentialsStatusService } from './services/credentials-status.service';
 import { CredentialsController } from './controllers/credentials.controller';
 import { GhcrPatVerificationScheduler } from './schedulers/ghcr-pat-verification.scheduler';
+import { FluiRegistryModule } from '../flui-registry/flui-registry.module';
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([GithubUserTokenEntity]),
     RepositoriesModule,
     ManagementModule,
+    FluiRegistryModule,
   ],
   controllers: [CredentialsController],
   providers: [CredentialsStatusService, GhcrPatVerificationScheduler],

@@ -8,6 +8,9 @@ import {
   GetObjectCommand,
   PutObjectCommand,
   DeleteObjectCommand,
+  DeleteBucketCommand,
+  ListMultipartUploadsCommand,
+  AbortMultipartUploadCommand,
 } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { createReadStream } from 'node:fs';
@@ -146,6 +149,44 @@ export class GenericS3Backend implements IBackupStorageBackend {
     }
   }
 
+  /**
+   * Removes the bucket with everything in it, uploads left half-way included:
+   * a bucket that still holds any of them cannot be deleted.
+   */
+  async emptyAndDeleteBucket(creds: StorageBackendCredentials): Promise<void> {
+    const client = this.buildClient(creds);
+    let uploads;
+    do {
+      uploads = await client.send(
+        new ListMultipartUploadsCommand({ Bucket: creds.bucket }),
+      );
+      for (const upload of uploads.Uploads ?? []) {
+        await client.send(
+          new AbortMultipartUploadCommand({
+            Bucket: creds.bucket,
+            Key: upload.Key,
+            UploadId: upload.UploadId,
+          }),
+        );
+      }
+    } while (uploads.IsTruncated);
+    let token: string | undefined;
+    do {
+      const page = await client.send(
+        new ListObjectsV2Command({
+          Bucket: creds.bucket,
+          ContinuationToken: token,
+        }),
+      );
+      await this.deleteObjects(
+        creds,
+        (page.Contents ?? []).map((c) => c.Key!).filter(Boolean),
+      );
+      token = page.IsTruncated ? page.NextContinuationToken : undefined;
+    } while (token);
+    await client.send(new DeleteBucketCommand({ Bucket: creds.bucket }));
+  }
+
   async presignDownload(
     creds: StorageBackendCredentials,
     key: string,
@@ -181,7 +222,7 @@ export class GenericS3Backend implements IBackupStorageBackend {
   protected joinPrefix(...parts: (string | undefined)[]): string {
     return parts
       .filter((p): p is string => !!p && p.length > 0)
-      .map((p) => p.replaceAll(/^\/+|\/+$/g, ''))
+      .map(trimSlashes)
       .filter((p) => p.length > 0)
       .join('/');
   }
@@ -233,4 +274,12 @@ export class GenericS3Backend implements IBackupStorageBackend {
     );
     return fullKey;
   }
+}
+
+function trimSlashes(value: string): string {
+  let start = 0;
+  let end = value.length;
+  while (start < end && value[start] === '/') start++;
+  while (end > start && value[end - 1] === '/') end--;
+  return value.slice(start, end);
 }

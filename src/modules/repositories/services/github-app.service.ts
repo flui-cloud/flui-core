@@ -195,6 +195,30 @@ export class GitHubAppService {
     return result.token;
   }
 
+  /**
+   * Removes the App from the account it is installed on, as the App itself:
+   * nothing is left on that GitHub account, and the row goes with it.
+   */
+  async uninstall(installationId: number): Promise<void> {
+    const config = await this.integrationConfig.getConfig();
+    if (!config?.appId || !config?.privateKeyEncrypted) {
+      throw new NotFoundException('GitHub App credentials are not configured');
+    }
+    const auth = createAppAuth({
+      appId: config.appId,
+      privateKey: this.encryptionService.decrypt(config.privateKeyEncrypted),
+    });
+    const { token } = await auth({ type: 'app' });
+    try {
+      await new Octokit({ auth: token }).apps.deleteInstallation({
+        installation_id: installationId,
+      });
+    } catch (error) {
+      if ((error as { status?: number }).status !== 404) throw error;
+    }
+    await this.deleteInstallation(installationId);
+  }
+
   /** Where a caller with no reachable installation is sent. */
   async getInstallUrl(): Promise<string> {
     return `https://github.com/apps/${await this.getAppSlug()}/installations/new`;

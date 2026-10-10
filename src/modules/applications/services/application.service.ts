@@ -131,7 +131,7 @@ export class ApplicationService {
     dto: CreateApplicationDto,
     userId: string | undefined,
   ): Promise<ApplicationEntity> {
-    await this.validateSourceConfig(dto);
+    await this.validateSourceConfig(dto.sourceConfig, userId);
 
     // The DTO no longer declares k8sNamespace, but the validation pipe keeps
     // undeclared properties: the body can still carry one, and naming a
@@ -217,14 +217,17 @@ export class ApplicationService {
   }
 
   /**
-   * Validates `dto.sourceConfig` before persisting an application.
+   * Validates a source configuration before persisting an application.
    * For `git_build`, ensures that `repositoryId` (when provided) is a real
    * Flui Repository UUID, not a GitHub `owner/repo` full_name. Without this,
    * downstream code (workflow generation, deploy) crashes with a Postgres
    * "invalid input syntax for type uuid" error.
    */
-  private async validateSourceConfig(dto: CreateApplicationDto): Promise<void> {
-    const sourceConfig = dto.sourceConfig as
+  private async validateSourceConfig(
+    source: unknown,
+    ownerId: string | null | undefined,
+  ): Promise<void> {
+    const sourceConfig = source as
       | { type?: string; repositoryId?: string }
       | undefined;
     if (sourceConfig?.type !== 'git_build') return;
@@ -240,10 +243,13 @@ export class ApplicationService {
       );
     }
 
-    const repository = await this.repositoriesRepository.findById(repositoryId);
+    const repository = await this.repositoriesRepository.findOwnedById(
+      repositoryId,
+      ownerId,
+    );
     if (!repository) {
       throw new BadRequestException(
-        `sourceConfig.repositoryId "${repositoryId}" does not match any registered Flui repository.`,
+        `sourceConfig.repositoryId "${repositoryId}" does not match a repository connected by the owner of this application.`,
       );
     }
   }
@@ -426,11 +432,13 @@ export class ApplicationService {
 
     const updateData = this.plainUpdateFields(dto);
 
-    if (dto.sourceConfig !== undefined)
+    if (dto.sourceConfig !== undefined) {
+      await this.validateSourceConfig(dto.sourceConfig, app.userId);
       updateData.sourceConfig = this.preserveMonorepoSubPath(
         refuseRegistryAuth(dto.sourceConfig as ApplicationSourceConfig),
         app.sourceConfig,
       );
+    }
 
     if (dto.env !== undefined) {
       const existingByName = new Map(

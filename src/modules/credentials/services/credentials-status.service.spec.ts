@@ -16,6 +16,7 @@ describe('CredentialsStatusService', () => {
       token?: boolean;
       ghcr?: CredentialStatus;
       mode?: GitHubAuthMethod | null;
+      registry?: boolean;
     } = {},
   ) => {
     const tokens = {
@@ -36,9 +37,22 @@ describe('CredentialsStatusService', () => {
         ),
       } as any,
       tokens as any,
+      { host: () => (opts.registry ? 'api.example.test' : null) } as any,
     );
     return { service, tokens };
   };
+
+  it('asks for no GHCR token on an instance that runs its own registry', async () => {
+    const withRegistry = await make({
+      token: true,
+      registry: true,
+    }).service.getStatus('a');
+    expect(withRegistry.items.map((i) => i.kind)).not.toContain(
+      CredentialKind.GHCR_PAT,
+    );
+    const onGhcr = await make({ token: true }).service.getStatus('a');
+    expect(onGhcr.items.map((i) => i.kind)).toContain(CredentialKind.GHCR_PAT);
+  });
 
   it('answers from a cache kept per person', async () => {
     const { service, tokens } = make();

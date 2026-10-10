@@ -294,6 +294,7 @@ export class RepoApplyService {
       userId,
       request,
       backendPollingOnly,
+      prepared,
     );
 
     const files = this.buildCommitFiles(
@@ -438,6 +439,7 @@ export class RepoApplyService {
     userId: string,
     request: RepoApplyRequest,
     backendPollingOnly: boolean,
+    prepared: PreparedEntry[],
   ): Promise<string> {
     const existingToken =
       await this.applicationsRepository.findWebhookTokenForRepository(
@@ -452,11 +454,28 @@ export class RepoApplyService {
         webhookToken,
       );
     }
-    await this.applicationWorkflow.saveFluiGhcrSecret(
-      userId,
-      request.owner,
-      request.repo,
-    );
+    const targets = prepared.flatMap((entry) => {
+      const target = this.applicationWorkflow.registryTargetFor(
+        entry.result.app,
+      );
+      return target ? [{ app: entry.result.app, target }] : [];
+    });
+    if (targets.length === 0) {
+      await this.applicationWorkflow.saveFluiGhcrSecret(
+        userId,
+        request.owner,
+        request.repo,
+      );
+    }
+    for (const { app, target } of targets) {
+      await this.applicationWorkflow.saveRegistrySecrets(
+        userId,
+        request.owner,
+        request.repo,
+        app.id,
+        target,
+      );
+    }
     return webhookToken;
   }
 
@@ -491,6 +510,9 @@ export class RepoApplyService {
             buildContext: entry.result.buildPaths.context,
             buildArgs: entry.result.manifest.build?.args,
             workflowFileName: entry.workflowFileName,
+            registry: this.applicationWorkflow.registryTargetFor(
+              entry.result.app,
+            ),
           }),
         },
       );

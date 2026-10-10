@@ -14,6 +14,7 @@ import { ImageRegistryService } from '../../image-registry/services/image-regist
 import { ApplicationEntity } from '../entities/application.entity';
 import { GitBuildSourceConfig } from '../interfaces/source-config.interface';
 import { composeGhcrImageRef } from '../utils/image-ref.util';
+import { fluiImageName } from '../../flui-registry/registry-image';
 import { ApplicationStatus } from '../enums/application-status.enum';
 import {
   InfrastructureOperationEntity,
@@ -164,7 +165,10 @@ export class ApplicationBuildWatcherService {
     const repositoryId = sourceConfig?.repositoryId;
     if (!repositoryId) return;
 
-    const repository = await this.repositoriesRepository.findById(repositoryId);
+    const repository = await this.repositoriesRepository.findOwnedById(
+      repositoryId,
+      app.userId,
+    );
     if (!repository) return;
 
     const branch = sourceConfig?.branch || repository.defaultBranch || 'main';
@@ -323,7 +327,10 @@ export class ApplicationBuildWatcherService {
       return;
     }
 
-    const repository = await this.repositoriesRepository.findById(repositoryId);
+    const repository = await this.repositoriesRepository.findOwnedById(
+      repositoryId,
+      app.userId,
+    );
     if (!repository) {
       await this.markBuildFailed(
         app,
@@ -533,7 +540,10 @@ export class ApplicationBuildWatcherService {
     const repositoryId = sourceConfig?.repositoryId;
     if (!repositoryId) return build;
 
-    const repository = await this.repositoriesRepository.findById(repositoryId);
+    const repository = await this.repositoriesRepository.findOwnedById(
+      repositoryId,
+      app.userId,
+    );
     if (!repository) return build;
 
     const branch =
@@ -609,7 +619,8 @@ export class ApplicationBuildWatcherService {
 
   /**
    * Compose the rollout imageRef for a completed build. Mirrors the build path:
-   * monorepo apps push to `ghcr.io/{owner}/{repo}/{subPath}:{sha}`, single-app
+   * on the instance's own registry every application has one repository,
+   * `{host}/apps/{appId}:{sha}`; on GHCR monorepo apps push to `ghcr.io/{owner}/{repo}/{subPath}:{sha}`, single-app
    * repos to `ghcr.io/{owner}/{repo}:{sha}`. Reading subPath from sourceConfig
    * keeps the watcher in sync with what the generated workflow actually pushed —
    * without it the watcher rolls a non-existent `{repo}:{sha}` → ImagePullBackOff.
@@ -619,6 +630,9 @@ export class ApplicationBuildWatcherService {
     repository: { owner: string; repositoryName: string },
     shortSha: string,
   ): string {
+    if (app.imageRegistryHost) {
+      return `${fluiImageName(app.imageRegistryHost, app.id)}:${shortSha}`;
+    }
     const cfg = app.sourceConfig as GitBuildSourceConfig | undefined;
     return composeGhcrImageRef({
       owner: repository.owner,

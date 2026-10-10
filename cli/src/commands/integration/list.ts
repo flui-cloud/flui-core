@@ -11,6 +11,7 @@ interface GitHubStatus {
 }
 
 interface GhcrPatStatus {
+  needed?: boolean;
   configured: boolean;
   status?: string;
   expiresAt?: string | null;
@@ -66,6 +67,11 @@ export default class IntegrationList extends Command {
   }
 
   private renderGhcrPatStatus(ghcrPat: GhcrPatStatus | null): string {
+    if (ghcrPat?.needed === false) {
+      return chalk.dim(
+        'not needed — this instance keeps images in its own registry',
+      );
+    }
     if (!ghcrPat?.configured) {
       return `${chalk.yellow('not configured')} — required for deploys, run \`flui integration ghcr-pat set\``;
     }

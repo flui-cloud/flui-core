@@ -74,7 +74,7 @@ export class GithubAppManifestStateService {
         metadata: 'read',
         actions: 'write',
         workflows: 'write',
-        packages: 'write',
+        secrets: 'write',
         pull_requests: 'write',
       },
     };

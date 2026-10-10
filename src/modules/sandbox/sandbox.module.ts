@@ -42,6 +42,8 @@ import { DatabaseConsoleModule } from '../database-console/database-console.modu
 import { DnsModule } from '../dns/dns.module';
 import { ProjectsModule } from '../projects/projects.module';
 import { MailModule } from '../mail/mail.module';
+import { RepositoriesModule } from '../repositories/repositories.module';
+import { FluiRegistryModule } from '../flui-registry/flui-registry.module';
 
 @Module({
   imports: [
@@ -71,6 +73,8 @@ import { MailModule } from '../mail/mail.module';
     // For the one path that removes a guest's workload: the same service a
     // person's own delete goes through, not a copy of it beside the reaper.
     forwardRef(() => ApplicationsModule),
+    forwardRef(() => RepositoriesModule),
+    FluiRegistryModule,
     // For the one alert nothing in the cluster can raise: the demo being full is
     // arithmetic over the tenancy table, not a metric anything scrapes.
     ObservabilityModule,

@@ -1,5 +1,10 @@
 import { timingSafeEqual } from 'node:crypto';
-import { Injectable, Logger, UnauthorizedException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  Logger,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { ApplicationEntity } from '../applications/entities/application.entity';
@@ -10,6 +15,11 @@ import { ImageRegistryService } from '../image-registry/services/image-registry.
 import { ApplicationStatus } from '../applications/enums/application-status.enum';
 import { GitHubActionsWebhookDto } from './dto/github-actions-webhook.dto';
 import { shouldAutoDeployOnBuild } from './webhooks.util';
+import { FluiRegistryPublisherService } from '../flui-registry/services/flui-registry-publisher.service';
+import {
+  isFluiImageRef,
+  isOwnFluiImageRef,
+} from '../flui-registry/registry-image';
 
 /**
  * Handles incoming GitHub Actions build completion webhooks.
@@ -38,7 +48,25 @@ export class WebhooksService {
     private readonly applicationSourceDeployService: ApplicationSourceDeployService,
     private readonly applicationEventsGateway: ApplicationEventsGateway,
     private readonly imageRegistryService: ImageRegistryService,
+    private readonly registry: FluiRegistryPublisherService,
   ) {}
+
+  /**
+   * An image on the instance's own registry may only be this application's:
+   * the webhook token is shared by every application of a repository, and the
+   * reference is whatever the caller posted.
+   */
+  private assertOwnImage(app: ApplicationEntity, imageRef?: string): void {
+    const host = app.imageRegistryHost ?? this.registry.host();
+    if (!imageRef || !host) return;
+    const onRegistry = isFluiImageRef(imageRef, host);
+    if (!onRegistry && !app.imageRegistryHost) return;
+    if (!isOwnFluiImageRef(imageRef, host, app.id)) {
+      throw new BadRequestException(
+        `Image ${imageRef} is not one of this application's images on ${host}`,
+      );
+    }
+  }
 
   async handleGitHubActionsWebhook(
     token: string,
@@ -79,6 +107,8 @@ export class WebhooksService {
       this.logger.warn(`Build failed for app ${dto.appId}`);
       return { received: true };
     }
+
+    this.assertOwnImage(app, dto.imageRef);
 
     // status === 'success' — the desired image is set exclusively through
     // setDesiredImage (via triggerDeployWithImage below); never written raw here,

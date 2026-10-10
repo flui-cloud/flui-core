@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
 import { GithubAppUserAuthService } from '../../repositories/services/github-app-user-auth.service';
 import { GitHubIntegrationConfigService } from '../../repositories/services/github-integration-config.service';
 import { ManagementService } from '../../management/services/management.service';
@@ -13,6 +13,7 @@ import {
 } from '../../repositories/dto/ghcr-pat.dto';
 import { credentialsVersion } from '../credentials-version';
 import { GitHubAuthMethod } from '../../repositories/enums/github-auth-method.enum';
+import { FluiRegistryPublisherService } from '../../flui-registry/services/flui-registry-publisher.service';
 
 const REPOSITORIES_PATH = '/apps/repositories';
 const GITHUB_SETUP_PATH = '/apps/repositories/github-setup';
@@ -33,7 +34,11 @@ export class CredentialsStatusService {
     string,
     { ts: number; version: number; data: CredentialsStatusResponseDto }
   >();
-  private readonly cacheTtlMs = 5 * 60 * 1000;
+  /**
+   * A save marks this copy's cache stale at once; another copy of the API only
+   * learns of it when its entry expires, so the entry stays short.
+   */
+  private readonly cacheTtlMs = 30 * 1000;
 
   constructor(
     private readonly userAuth: GithubAppUserAuthService,
@@ -41,6 +46,7 @@ export class CredentialsStatusService {
     private readonly integrationConfig: GitHubIntegrationConfigService,
     @InjectRepository(GithubUserTokenEntity)
     private readonly githubTokenRepo: Repository<GithubUserTokenEntity>,
+    @Optional() private readonly registry?: FluiRegistryPublisherService,
   ) {}
 
   async getStatus(userId: string): Promise<CredentialsStatusResponseDto> {
@@ -58,12 +64,15 @@ export class CredentialsStatusService {
     const config = await this.integrationConfig.getConfig();
     // With tokens, the person's one GitHub token is both the connection and
     // the registry token, so it is reported once, as the GitHub connection.
+    // On an instance that runs its own registry no GHCR token is needed at all.
     const githubItems =
       config?.authMethod === GitHubAuthMethod.PAT
         ? [await this.buildGithubPatItem(userId)]
         : [
             await this.buildGithubAppItem(userId, config !== null),
-            await this.buildGhcrPatItem(userId),
+            ...(this.registry?.host()
+              ? []
+              : [await this.buildGhcrPatItem(userId)]),
           ];
     items.push(...githubItems, ...(await this.buildProviderItems()));
 

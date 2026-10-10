@@ -35,6 +35,7 @@ import {
   RepositoryEntity,
   GitProvider,
 } from '../../repositories/entities/repository.entity';
+import { ownsRepository } from '../../repositories/repositories/repositories.repository';
 import { RepositoryCredentialEntity } from '../../repositories/entities/repository-credential.entity';
 import { GitBuildSourceConfig } from '../../applications/interfaces/source-config.interface';
 import { EncryptionService } from '../../shared/encryption/services/encryption.service';
@@ -150,11 +151,13 @@ export class AppBuildService {
           const githubToken = this.encryptionService.decrypt(
             credential.accessTokenEncrypted,
           );
-          const repository = sourceConfig?.repositoryId
+          const linked = sourceConfig?.repositoryId
             ? await this.repositoryRepository.findOne({
                 where: { id: sourceConfig.repositoryId },
               })
             : null;
+          const repository =
+            linked && ownsRepository(linked, app.userId) ? linked : null;
           const repoOwner = repository?.owner || credential.githubUsername;
           const repoName = repository?.repositoryName || app.slug;
           const octokit = new Octokit({ auth: githubToken });
@@ -274,11 +277,13 @@ export class AppBuildService {
     const clusterId = app.clusterId;
 
     // Load repository record (for framework info persisted from last build)
-    const repository = sourceConfig?.repositoryId
+    const linked = sourceConfig?.repositoryId
       ? await this.repositoryRepository.findOne({
           where: { id: sourceConfig.repositoryId },
         })
       : null;
+    const repository =
+      linked && ownsRepository(linked, app.userId) ? linked : null;
 
     const repositoryFramework = repository
       ? {

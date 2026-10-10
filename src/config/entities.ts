@@ -85,6 +85,9 @@ import { ScalingGroupEntity } from '../modules/infrastructure/scaling/entities/s
 import { ScalingDecisionEntity } from '../modules/infrastructure/scaling/entities/scaling-decision.entity';
 import { DeferredActionEntity } from '../modules/infrastructure/maintenance/deferred-action.entity';
 import { ApplicationServiceEntity } from '../modules/attached-services/entities/application-service.entity';
+import { RegistryCredentialEntity } from '../modules/flui-registry/entities/registry-credential.entity';
+import { RegistrySigningKeyEntity } from '../modules/flui-registry/entities/registry-signing-key.entity';
+import { RegistryStorageEntity } from '../modules/flui-registry/entities/registry-storage.entity';
 
 export const entities = [
   SSHKeyEntity,
@@ -168,4 +171,7 @@ export const entities = [
   InfrastructureOperationLogEntity,
   WireGuardPeerEntity,
   DeferredActionEntity,
+  RegistryCredentialEntity,
+  RegistrySigningKeyEntity,
+  RegistryStorageEntity,
 ];

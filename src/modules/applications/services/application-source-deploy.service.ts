@@ -99,6 +99,7 @@ import {
   withoutEndpointFailure,
 } from '../utils/endpoint-failure.util';
 import { EndpointDiagnosisService } from '../../scaling/services/endpoint-diagnosis.service';
+import { FluiRegistryPublisherService } from '../../flui-registry/services/flui-registry-publisher.service';
 
 const ENDPOINT_SPEC_METADATA_KEY = 'flui.endpoint.spec';
 
@@ -198,7 +199,14 @@ export class ApplicationSourceDeployService {
     @Optional()
     @Inject(ATTACHED_SERVICES_PORT)
     private readonly attachedServices?: AttachedServicesPort,
+    @Optional()
+    private readonly registry?: FluiRegistryPublisherService,
   ) {}
+
+  /** Builds push to the instance's own registry, so no GHCR token is needed. */
+  private buildsToInstanceRegistry(): boolean {
+    return !!this.registry?.host();
+  }
 
   /**
    * `userEmail` is required, not optional: it is what places the application in
@@ -297,7 +305,9 @@ export class ApplicationSourceDeployService {
     let manifest = this.parseAndValidate(dto.yaml);
 
     await this.assertGitHubConnected(userId);
-    await this.assertGhcrPatPresent(userId);
+    if (!this.buildsToInstanceRegistry()) {
+      await this.assertGhcrPatPresent(userId);
+    }
 
     const branch = dto.branch ?? 'main';
     // Overlay the environment bound to this branch (staging/prod), if any.
@@ -602,7 +612,9 @@ export class ApplicationSourceDeployService {
 
     const [githubConnected, registryCredential] = await Promise.all([
       this.canRead(() => this.assertGitHubConnected(userId)),
-      this.canRead(() => this.assertGhcrPatPresent(userId)),
+      this.buildsToInstanceRegistry()
+        ? Promise.resolve(true)
+        : this.canRead(() => this.assertGhcrPatPresent(userId)),
     ]);
 
     const existingApp =
@@ -895,8 +907,9 @@ export class ApplicationSourceDeployService {
 
     const sourceConfig = app.sourceConfig as GitBuildSourceConfig;
     if (!sourceConfig?.repositoryId) return;
-    const repository = await this.repositoriesRepository.findById(
+    const repository = await this.repositoriesRepository.findOwnedById(
       sourceConfig.repositoryId,
+      app.userId,
     );
     const [owner, repoName] = (repository?.repositoryFullName ?? '').split('/');
     if (!owner || !repoName) return;
@@ -1257,6 +1270,11 @@ export class ApplicationSourceDeployService {
     const { userId, dto, app, owner, repoName, subPath } = opts;
     if (dto.imageRef) return dto.imageRef;
     if (app?.imageRef) return app.imageRef;
+    if (this.buildsToInstanceRegistry()) {
+      throw new BadRequestException(
+        `Cannot skip build: no image available. The application does not exist on this cluster yet, and this instance's registry keeps no images of an application once it is deleted. Run \`flui deploy\` without --no-build, or pass \`--image <ref>\`.`,
+      );
+    }
 
     const packageName = subPath
       ? `${repoName}/${subPath}`.toLowerCase()

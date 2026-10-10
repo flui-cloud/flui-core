@@ -55,6 +55,7 @@ import { VolumeCopyLedgerService } from './services/volume-copy-ledger.service';
 import { VolumeCopyPreflightService } from './services/volume-copy-preflight.service';
 import { VolumePauseLeaseService } from './services/volume-pause-lease.service';
 import { VolumePauseSweeperService } from './schedulers/volume-pause-sweeper.service';
+import { PlatformApiSizingScheduler } from './schedulers/platform-api-sizing.scheduler';
 import { BackupJobEntity } from '../backups/entities/backup-job.entity';
 import { BackupDestinationEntity } from '../backups/entities/backup-destination.entity';
 import { BackupDestinationRepository } from '../backups/repositories/backup-destination.repository';
@@ -114,9 +115,11 @@ import { SandboxGateModule } from '../sandbox/gate/sandbox-slot-gate';
 import { VolumeExportService } from '../providers/services/volume-export.service';
 import { StatefulSetVolumeSwapService } from './services/statefulset-volume-swap.service';
 import { SpareVolumesService } from './services/spare-volumes.service';
+import { FluiRegistryModule } from '../flui-registry/flui-registry.module';
 
 @Module({
   imports: [
+    FluiRegistryModule,
     ConfigModule,
     TypeOrmModule.forFeature([
       // The volume-copy ledger writes backup rows from this module; registering
@@ -229,6 +232,7 @@ import { SpareVolumesService } from './services/spare-volumes.service';
     VolumeCopyPreflightService,
     VolumePauseLeaseService,
     VolumePauseSweeperService,
+    PlatformApiSizingScheduler,
     SnapshotStorageCapabilityService,
     VolumeExportService,
     VolumeBackupsService,

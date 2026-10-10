@@ -10,6 +10,8 @@ import { GitHubTokenResolverService } from '../../repositories/services/github-t
 import { GithubAppUserAuthService } from '../../repositories/services/github-app-user-auth.service';
 import { ApplicationsRepository } from '../repositories/applications.repository';
 import { ApplicationEntity } from '../entities/application.entity';
+import { FluiRegistryPublisherService } from '../../flui-registry/services/flui-registry-publisher.service';
+import { isFluiImageRef } from '../../flui-registry/registry-image';
 
 /**
  * One pull secret per application, not per namespace: a project's namespace
@@ -35,7 +37,14 @@ export class GhcrSecretRefreshService {
     private readonly kubernetesService: KubernetesService,
     private readonly tokenResolver: GitHubTokenResolverService,
     private readonly userAuth: GithubAppUserAuthService,
+    private readonly registry: FluiRegistryPublisherService,
   ) {}
+
+  /** The instance registry an application's image lives on, if it does. */
+  private registryHostOf(app: ApplicationEntity): string | null {
+    const host = app.imageRegistryHost ?? this.registry.host();
+    return isFluiImageRef(app.imageRef, host) ? host : null;
+  }
 
   /**
    * Refresh GHCR pull secrets for all active GIT_BUILD apps.
@@ -50,9 +59,14 @@ export class GhcrSecretRefreshService {
       return;
     }
 
-    // Filter to apps with valid imageRef and userId
+    // Images on the instance's own registry are pulled with a credential that
+    // does not expire, so only GHCR ones are refreshed.
     const eligible = apps.filter(
-      (a) => a.userId && a.imageRef && a.imageRef.split('/').length >= 2,
+      (a) =>
+        a.userId &&
+        a.imageRef &&
+        a.imageRef.split('/').length >= 2 &&
+        !this.registryHostOf(a),
     );
     if (eligible.length === 0) {
       this.logger.debug('No eligible apps for pull secret refresh');
@@ -107,19 +121,23 @@ export class GhcrSecretRefreshService {
       cluster.kubeconfigEncrypted,
     );
 
-    // Group by owner (extracted from imageRef: ghcr.io/<owner>/...)
-    const byOwner = new Map<string, ApplicationEntity[]>();
+    // Keyed by the Flui user as well as the image owner: two people deploying
+    // from the same GitHub account must each get their own credential.
+    const byOwner = new Map<
+      string,
+      { owner: string; apps: ApplicationEntity[] }
+    >();
     for (const app of clusterApps) {
       const owner = app.imageRef.split('/')[1];
-      const list = byOwner.get(owner) ?? [];
-      list.push(app);
-      byOwner.set(owner, list);
+      const key = `${app.userId}\u0000${owner}`;
+      const group = byOwner.get(key) ?? { owner, apps: [] };
+      group.apps.push(app);
+      byOwner.set(key, group);
     }
 
-    // Process all owners in parallel
     const results = await Promise.allSettled(
-      Array.from(byOwner.entries()).map(([owner, ownerApps]) =>
-        this.refreshOwner(kubeconfig, owner, ownerApps),
+      Array.from(byOwner.values()).map(({ owner, apps }) =>
+        this.refreshOwner(kubeconfig, owner, apps),
       ),
     );
 
@@ -150,6 +168,7 @@ export class GhcrSecretRefreshService {
     const { username, token } = resolved;
 
     const dockerConfigJsonBase64 = this.buildDockerConfigBase64(
+      'ghcr.io',
       username,
       token,
     );
@@ -190,6 +209,14 @@ export class GhcrSecretRefreshService {
     app: ApplicationEntity,
   ): Promise<string | undefined> {
     try {
+      const registryHost = this.registryHostOf(app);
+      if (registryHost) {
+        return await this.ensureRegistrySecretForApp(
+          kubeconfig,
+          app,
+          registryHost,
+        );
+      }
       const owner = app.imageRef?.split('/')[1];
       if (!owner) {
         this.logger.warn(
@@ -211,6 +238,7 @@ export class GhcrSecretRefreshService {
       }
 
       const dockerConfigJsonBase64 = this.buildDockerConfigBase64(
+        'ghcr.io',
         resolved.username,
         resolved.token,
       );
@@ -341,10 +369,42 @@ export class GhcrSecretRefreshService {
     }
   }
 
-  private buildDockerConfigBase64(username: string, token: string): string {
+  /**
+   * A pull credential of this application's own, reaching its repository on
+   * the instance registry and no other. Issued afresh each time, which
+   * replaces the one the previous secret carried.
+   */
+  private async ensureRegistrySecretForApp(
+    kubeconfig: string,
+    app: ApplicationEntity,
+    registryHost: string,
+  ): Promise<string> {
+    const credential = await this.registry.issuePullCredential(app.id);
+    const secretName = ghcrPullSecretName(app.slug);
+    await this.applyPullSecret(
+      kubeconfig,
+      app.k8sNamespace,
+      secretName,
+      this.buildDockerConfigBase64(
+        registryHost,
+        credential.username,
+        credential.password,
+      ),
+    );
+    this.logger.log(
+      `${secretName} ensured in namespace ${app.k8sNamespace} for the instance registry`,
+    );
+    return secretName;
+  }
+
+  private buildDockerConfigBase64(
+    registry: string,
+    username: string,
+    token: string,
+  ): string {
     const authBase64 = Buffer.from(`${username}:${token}`).toString('base64');
     const dockerConfigJson = JSON.stringify({
-      auths: { 'ghcr.io': { auth: authBase64 } },
+      auths: { [registry]: { auth: authBase64 } },
     });
     return Buffer.from(dockerConfigJson).toString('base64');
   }

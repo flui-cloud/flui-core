@@ -45,6 +45,7 @@ const build = (
       | 'idpMissing'
       | 'apps'
       | 'apiKeys'
+      | 'githubTokens'
       | 'endpoint'
       | 'clusterGone'
       | 'noHeld',
@@ -131,6 +132,13 @@ const build = (
       calls.push(`delete-api-keys:${where.userId}`);
       if (breakages.apiKeys) throw new Error('keys locked');
       return { affected: 2 };
+    },
+  };
+  const githubTokens = {
+    forget: async (userId: string) => {
+      calls.push(`forget-github-tokens:${userId}`);
+      if (breakages.githubTokens) throw new Error('tokens locked');
+      return 3;
     },
   };
   const applications = {
@@ -251,6 +259,12 @@ const build = (
         isolated: boolean,
       ) => calls.push(isolated ? 'egress-isolated' : 'egress'),
     } as never,
+    githubTokens as never,
+    {
+      forgetApplication: async (app: { id: string }) => {
+        calls.push(`forget-images:${app.id}`);
+      },
+    } as never,
   );
   return { service, calls, marks, namespaceLabels, recorded };
 };
@@ -305,6 +319,9 @@ describe('SandboxTenantService.reap', () => {
       // does not take the tenancy's certificate with it.
       'release-tenancy-certificate',
       'delete-apps',
+      // The rows go without the usual teardown, so their images on the
+      // instance registry are removed here.
+      'forget-images:a1',
       'delete-project:proj-1',
       // The area is the guest's personal project: it goes with them.
       'delete-personal-project:u1',
@@ -313,10 +330,21 @@ describe('SandboxTenantService.reap', () => {
       // key to `users`, so without this step every credential the guest minted
       // outlives the person it was issued to.
       'delete-api-keys:u1',
+      // The PAT a guest connected, and the copy each connected repository
+      // keeps, leave with the person rather than outliving the area.
+      'forget-github-tokens:u1',
       'delete-idp:idp-1',
       'delete-user',
     ]);
     expect(marks[0].kind).toBe('expired');
+  });
+
+  it('records a failed GitHub token sweep instead of losing it', async () => {
+    const { service, marks } = build({ githubTokens: true });
+    await service.reap(tenantRow);
+
+    expect(marks[0].kind).toBe('failed');
+    expect(marks[0].detail).toContain('github tokens');
   });
 
   it('records a failed key sweep instead of losing it', async () => {

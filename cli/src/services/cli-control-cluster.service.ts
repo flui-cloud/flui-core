@@ -150,6 +150,8 @@ export class CliControlClusterService {
       sharedStorageVolumeSizeGb?: number;
       useLatest?: boolean;
       sshMode?: SshMode;
+      imageRegistry?: string;
+      imageRegistryStorage?: string;
     },
   ): Promise<string> {
     // Pin the install to the CLI release (bootstrap ref + image tags), unless
@@ -176,6 +178,8 @@ export class CliControlClusterService {
         adminEmail,
         acmeStaging,
         useLatest,
+        imageRegistry: options?.imageRegistry,
+        imageRegistryStorage: options?.imageRegistryStorage,
         sshMode: options?.sshMode ?? 'ca',
         platformVersion: release.version,
         componentVersions: release.images,
@@ -199,6 +203,8 @@ export class CliControlClusterService {
     adminEmail?: string;
     acmeStaging?: boolean;
     useLatest?: boolean;
+    imageRegistry?: string;
+    imageRegistryStorage?: string;
   }): Promise<string> {
     const useLatest = opts.useLatest ?? false;
     const release = getEffectiveRelease(useLatest);
@@ -216,6 +222,8 @@ export class CliControlClusterService {
         adminEmail: opts.adminEmail,
         acmeStaging: opts.acmeStaging,
         useLatest,
+        imageRegistry: opts.imageRegistry,
+        imageRegistryStorage: opts.imageRegistryStorage,
         platformVersion: release.version,
         componentVersions: release.images,
         bootstrapRef: release.bootstrapRef,

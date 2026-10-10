@@ -172,6 +172,13 @@ export class GitHubSetupStatusResponseDto {
     example: 'flui-cloud',
   })
   appSlug?: string;
+
+  @ApiProperty({
+    description:
+      'Where builds push their images: "ghcr" (each owner\'s GitHub Container Registry, which needs a GitHub token to pull) or "flui" (the registry this instance runs, which needs no GitHub token for images).',
+    enum: ['ghcr', 'flui'],
+  })
+  imageRegistry: 'ghcr' | 'flui';
 }
 
 export class ConnectPatResponseDto {

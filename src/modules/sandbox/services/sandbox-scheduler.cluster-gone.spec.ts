@@ -1,3 +1,5 @@
+jest.mock('@octokit/rest', () => ({ Octokit: class {} }));
+jest.mock('@octokit/auth-app', () => ({ createAppAuth: jest.fn() }));
 jest.mock('@kubernetes/client-node', () => ({}));
 
 import { SandboxSchedulerService } from './sandbox-scheduler.service';

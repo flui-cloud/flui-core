@@ -77,6 +77,28 @@ export class GitHubInstallationAccessService {
     return reachable;
   }
 
+  /**
+   * The installations on this user's own GitHub account — GitHub's answer,
+   * asked with their token, never a lookup by name in our table.
+   */
+  async ownAccountInstallationIds(userId: string): Promise<number[]> {
+    const stored = await this.userAuth.getValidToken(userId);
+    if (!stored) return [];
+    const login = stored.githubLogin.toLowerCase();
+    const octokit = new Octokit({ auth: stored.accessToken });
+    const { data } = await octokit.apps.listInstallationsForAuthenticatedUser({
+      per_page: 100,
+    });
+    return (data.installations ?? [])
+      .filter((i) => {
+        const account = i.account as { login?: string; type?: string } | null;
+        return (
+          account?.type === 'User' && account.login?.toLowerCase() === login
+        );
+      })
+      .map((i) => Number(i.id));
+  }
+
   private async reaches(
     userId: string,
     installation: GitHubAppInstallationEntity,

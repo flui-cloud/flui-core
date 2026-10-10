@@ -100,6 +100,7 @@ describe('the volumes a StatefulSet leaves behind', () => {
       null as never,
       null as never,
       new ApplicationVolumeClaimsService(kubernetes as never),
+      null as never,
     );
     return { processor, deleted, kubernetes };
   };

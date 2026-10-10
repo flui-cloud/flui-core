@@ -77,6 +77,8 @@ import { ProjectNamespaces1790000000020 } from './1790000000020-ProjectNamespace
 import { SandboxAreas1790000000021 } from './1790000000021-SandboxAreas';
 import { SandboxActivity1790000000022 } from './1790000000022-SandboxActivity';
 import { ClusterEgressPolicy1790000000023 } from './1790000000023-ClusterEgressPolicy';
+import { FluiRegistry1790000000024 } from './1790000000024-FluiRegistry';
+import { RegistryStorage1790000000025 } from './1790000000025-RegistryStorage';
 import { BackfillArtifactApplicationId1787500000000 } from './1787500000000-BackfillArtifactApplicationId';
 import { WireGuardHubKeySealed1790000000000 } from './1790000000000-WireGuardHubKeySealed';
 import { RecoverNodeAccessOperation1790000000001 } from './1790000000001-RecoverNodeAccessOperation';
@@ -167,4 +169,6 @@ export const migrations = [
   SandboxAreas1790000000021,
   SandboxActivity1790000000022,
   ClusterEgressPolicy1790000000023,
+  FluiRegistry1790000000024,
+  RegistryStorage1790000000025,
 ];

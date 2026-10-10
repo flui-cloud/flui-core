@@ -17,6 +17,7 @@ import {
   RepositoryEntity,
   GitProvider,
 } from '../../repositories/entities/repository.entity';
+import { ownsRepository } from '../../repositories/repositories/repositories.repository';
 import { RepositoryCredentialEntity } from '../../repositories/entities/repository-credential.entity';
 import { EncryptionService } from '../../shared/encryption/services/encryption.service';
 import { KubernetesService } from '../../infrastructure/shared/services/kubernetes.service';
@@ -220,11 +221,13 @@ export class AppBuildProcessor {
         repoOwner = match[1];
         repoName = match[2];
       } else {
-        const repository = sourceConfig?.repositoryId
+        const linked = sourceConfig?.repositoryId
           ? await this.repositoryRepository.findOne({
               where: { id: sourceConfig.repositoryId },
             })
           : null;
+        const repository =
+          linked && ownsRepository(linked, app?.userId) ? linked : null;
         if (repository) {
           repoOwner = repository.owner;
           repoName = repository.repositoryName;

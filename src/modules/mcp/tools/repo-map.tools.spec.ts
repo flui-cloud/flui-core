@@ -692,13 +692,12 @@ describe('who is offered these at all', () => {
   });
 
   /**
-   * A sandbox guest is a stranger to the repository owner, and every
-   * `/repositories` route is closed to one — so neither tool is even offered.
-   * Read off the fence, not written twice.
+   * A guest maps and deploys their own repositories with their own token, so
+   * both are offered. Read off the fence, not written twice.
    */
-  it('offers neither to a sandbox guest', () => {
-    expect(isOfferedToGuest(MAP)).toBe(false);
-    expect(isOfferedToGuest(APPLY)).toBe(false);
+  it('offers both to a sandbox guest', () => {
+    expect(isOfferedToGuest(MAP)).toBe(true);
+    expect(isOfferedToGuest(APPLY)).toBe(true);
   });
 
   it('publishes the read at app:read and the write at app:write', () => {

@@ -182,14 +182,18 @@ export class GitHubOAuthService {
   }
 
   /**
-   * Returns the OAuth scopes associated with the user's current GitHub token.
-   * GitHub includes them in the `x-oauth-scopes` response header on every API call.
+   * Returns the OAuth scopes of the user's classic GitHub token, from the
+   * `x-oauth-scopes` header GitHub sends on every call, or null for a
+   * fine-grained token: GitHub omits the header and checks its per-repository
+   * permissions on every call instead.
    */
-  async getTokenScopes(userId: string): Promise<string[]> {
+  async getTokenScopes(userId: string): Promise<string[] | null> {
     const octokit = await this.getOctokit(userId);
     const response = await octokit.users.getAuthenticated();
-    const scopeHeader =
-      (response.headers as Record<string, string>)['x-oauth-scopes'] ?? '';
+    const scopeHeader = (response.headers as Record<string, string>)[
+      'x-oauth-scopes'
+    ];
+    if (scopeHeader === undefined) return null;
     return scopeHeader
       .split(',')
       .map((s) => s.trim())
@@ -205,6 +209,7 @@ export class GitHubOAuthService {
     required: string[],
   ): Promise<void> {
     const current = await this.getTokenScopes(userId);
+    if (current === null) return;
     const missing = required.filter((s) => !this.isScopeGranted(s, current));
 
     if (missing.length > 0) {
@@ -302,24 +307,28 @@ export class GitHubOAuthService {
     const systemToken = this.configService.get<string>('GITHUB_TOKEN');
     const octokit = new Octokit({ auth: systemToken || undefined });
 
+    // An authenticated search also returns what the system token can see
+    // privately, and every caller would be shown it.
     const { data } = await octokit.search.repos({
-      q: query,
+      q: `${query} is:public`,
       per_page: Math.min(limit, 100),
       sort: 'stars',
       order: 'desc',
     });
 
-    return data.items.map((item) => ({
-      name: item.name,
-      full_name: item.full_name,
-      description: item.description ?? null,
-      stars: item.stargazers_count,
-      language: item.language ?? null,
-      default_branch: item.default_branch,
-      clone_url: item.clone_url,
-      html_url: item.html_url,
-      is_private: false as const,
-    }));
+    return data.items
+      .filter((item) => !item.private)
+      .map((item) => ({
+        name: item.name,
+        full_name: item.full_name,
+        description: item.description ?? null,
+        stars: item.stargazers_count,
+        language: item.language ?? null,
+        default_branch: item.default_branch,
+        clone_url: item.clone_url,
+        html_url: item.html_url,
+        is_private: false as const,
+      }));
   }
 
   /**
@@ -340,6 +349,11 @@ export class GitHubOAuthService {
 
     const systemToken = this.configService.get<string>('GITHUB_TOKEN');
     const octokit = new Octokit({ auth: systemToken || undefined });
+
+    const { data: found } = await octokit.repos.get({ owner, repo });
+    if (found.private) {
+      throw new NotFoundException('Repository not found');
+    }
 
     const { data } = await octokit.repos.listBranches({
       owner,

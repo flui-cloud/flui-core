@@ -42,6 +42,8 @@ import { AppEndpointService } from '../../dns/services/app-endpoint.service';
 import { AppEndpointReconciliationService } from '../../dns/services/app-endpoint-reconciliation.service';
 import { TenancySubdomainService } from '../../dns/services/tenancy-subdomain.service';
 import { SandboxSubdomainService } from '../../dns/services/sandbox-subdomain.service';
+import { GitHubTokensForgetService } from '../../repositories/services/github-tokens-forget.service';
+import { FluiRegistryPublisherService } from '../../flui-registry/services/flui-registry-publisher.service';
 
 /**
  * Building a tenancy and taking it apart again.
@@ -85,6 +87,8 @@ export class SandboxTenantService {
     private readonly notices: SandboxNoticeMailService,
     private readonly entry: SandboxEntryService,
     private readonly egress: EgressPolicyService,
+    private readonly githubTokens: GitHubTokensForgetService,
+    private readonly registry: FluiRegistryPublisherService,
   ) {}
 
   /**
@@ -401,7 +405,7 @@ export class SandboxTenantService {
           k8sNamespace: tenant.namespace,
           deletedAt: IsNull(),
         },
-        select: { id: true, projectId: true },
+        select: { id: true, projectId: true, imageRegistryHost: true },
       });
       const projectIds = new Set(
         grouped
@@ -413,6 +417,7 @@ export class SandboxTenantService {
         clusterId: tenant.clusterId,
         k8sNamespace: tenant.namespace,
       });
+      for (const app of grouped) await this.registry.forgetApplication(app);
 
       if (tenant.projectId) projectIds.add(tenant.projectId);
       for (const projectId of projectIds) {
@@ -446,19 +451,8 @@ export class SandboxTenantService {
       failures.push(`binding: ${this.msg(error)}`);
     }
 
-    // Before the local user row, and explicitly: `api_keys` has no foreign key
-    // to `users`, so deleting the person leaves every credential they minted
-    // behind as a row pointing at nobody. The tenancy's own session credential
-    // is one of those, and so is every key the guest handed to an agent.
-    try {
-      if (tenant.userId) {
-        const removed = await this.apiKeys.delete({ userId: tenant.userId });
-        if (removed.affected) {
-          notes.push(`api keys: removed ${removed.affected}`);
-        }
-      }
-    } catch (error) {
-      failures.push(`api keys: ${this.msg(error)}`);
+    if (tenant.userId) {
+      await this.forgetCredentials(tenant.userId, notes, failures);
     }
 
     let identityGone = true;
@@ -589,6 +583,33 @@ export class SandboxTenantService {
   private async findIdpUserByEmail(email: string): Promise<string | null> {
     const matches = await this.directory.listUsers({ emailContains: email });
     return matches.find((u) => u.email === email)?.id ?? null;
+  }
+
+  /**
+   * Before the local user row, and explicitly: `api_keys` has no foreign key
+   * to `users`, so deleting the person leaves every credential they minted
+   * behind as a row pointing at nobody. The tenancy's own session credential
+   * is one of those, and so is every key the guest handed to an agent — and
+   * the GitHub token they connected, with each repository's copy of it.
+   */
+  private async forgetCredentials(
+    userId: string,
+    notes: string[],
+    failures: string[],
+  ): Promise<void> {
+    try {
+      const removed = await this.apiKeys.delete({ userId });
+      if (removed.affected) notes.push(`api keys: removed ${removed.affected}`);
+    } catch (error) {
+      failures.push(`api keys: ${this.msg(error)}`);
+    }
+
+    try {
+      const removed = await this.githubTokens.forget(userId);
+      if (removed) notes.push(`github tokens: removed ${removed}`);
+    } catch (error) {
+      failures.push(`github tokens: ${this.msg(error)}`);
+    }
   }
 
   private msg(error: unknown): string {

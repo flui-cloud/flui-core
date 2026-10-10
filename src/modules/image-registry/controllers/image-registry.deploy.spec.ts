@@ -45,12 +45,13 @@ const service = () => {
     images as never,
     { findById: jest.fn(async () => app) } as never,
     {
-      findById: jest.fn(async () => ({ id: 'repo-1', owner: 'acme' })),
+      findOwnedById: jest.fn(async () => ({ id: 'repo-1', owner: 'acme' })),
     } as never,
     {
       listVersions: jest.fn(async () => [{ versionId: 1, tags: ['v1'] }]),
     } as never,
     deploy as never,
+    {} as never,
     {} as never,
   );
   jest.spyOn(svc, 'setActiveImage').mockResolvedValue(undefined as never);

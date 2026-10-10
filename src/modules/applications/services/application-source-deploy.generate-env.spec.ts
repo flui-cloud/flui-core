@@ -49,7 +49,7 @@ deploy:
       },
     };
     const repositoriesRepository = {
-      findById: async () => ({ repositoryFullName: 'acme/probe' }),
+      findOwnedById: async () => ({ repositoryFullName: 'acme/probe' }),
     };
     const repositoriesService = {
       getFluiManifests: async () => ({

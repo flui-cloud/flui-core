@@ -125,9 +125,6 @@ describe('MCP scopes for a sandbox guest', () => {
     for (const closed of [
       'dns_wildcard_publish',
       'github_setup',
-      'github_connect',
-      'repo_connect',
-      'repo_list',
       'log_sources',
       'migrate_app',
       'backup_run',

@@ -126,6 +126,18 @@ export default class EnvCreate extends Command {
       description: 'Authentication mode (only oidc is supported)',
       default: 'oidc',
     }),
+    'image-registry': Flags.string({
+      description:
+        'Where builds from GitHub push their images: "ghcr" keeps them on each owner\'s GitHub Container Registry; "flui" runs a registry on this installation, so connecting GitHub needs no container token',
+      options: ['ghcr', 'flui'],
+      default: 'ghcr',
+    }),
+    'image-registry-storage': Flags.string({
+      description:
+        'With --image-registry flui, where the registry keeps images: "volume" on the control cluster, or "s3", a bucket you connect after the installation with `flui registry storage connect` (needed to run more than one copy of the registry)',
+      options: ['volume', 's3'],
+      default: 'volume',
+    }),
     'acme-staging': Flags.boolean({
       description:
         "Use Let's Encrypt staging endpoint (untrusted cert, no rate limits) — useful while iterating to avoid burning prod quota",
@@ -378,6 +390,8 @@ export default class EnvCreate extends Command {
         adminEmail,
         acmeStaging: !!flags['acme-staging'],
         useLatest: !!flags.latest,
+        imageRegistry: flags['image-registry'],
+        imageRegistryStorage: flags['image-registry-storage'],
       });
       spinner.succeed('Installation started');
 
@@ -454,6 +468,15 @@ export default class EnvCreate extends Command {
 
   async run(): Promise<void> {
     const { flags } = await this.parse(EnvCreate);
+
+    if (
+      flags['image-registry-storage'] === 's3' &&
+      flags['image-registry'] !== 'flui'
+    ) {
+      this.error(
+        "--image-registry-storage s3 applies to the installation's own registry: add --image-registry flui",
+      );
+    }
 
     // Checked before credentials and before any provider call: the default mode
     // follows the bootstrap log over SSH, and that gate waits for a certificate
@@ -1086,6 +1109,8 @@ export default class EnvCreate extends Command {
           sharedStorageVolumeSizeGb: flags['shared-storage-size'],
           useLatest,
           sshMode: flags['ssh-mode'] as SshMode,
+          imageRegistry: flags['image-registry'],
+          imageRegistryStorage: flags['image-registry-storage'],
         },
       );
 

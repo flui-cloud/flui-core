@@ -43,6 +43,10 @@ import {
   summariseBuildDurations,
 } from '../../app-builds/services/build-expectation';
 import { BuildProvider } from '../../app-builds/enums/build-provider.enum';
+import {
+  FluiPushTarget,
+  FluiRegistryPublisherService,
+} from '../../flui-registry/services/flui-registry-publisher.service';
 
 export interface GenerateWorkflowDto {
   branch: string;
@@ -113,6 +117,7 @@ export class ApplicationWorkflowService {
     @InjectRepository(AppBuildEntity)
     private readonly appBuildRepository: Repository<AppBuildEntity>,
     private readonly githubAppUserAuth: GithubAppUserAuthService,
+    private readonly registry: FluiRegistryPublisherService,
   ) {}
 
   /**
@@ -216,6 +221,65 @@ export class ApplicationWorkflowService {
       );
       return false;
     }
+  }
+
+  /**
+   * Puts this application's own registry credential into the repository's
+   * secrets, before the workflow that logs in with it. Required, like the
+   * webhook secret: a workflow that cannot push is a file that cannot work.
+   */
+  async saveRegistrySecrets(
+    userId: string,
+    owner: string,
+    repo: string,
+    applicationId: string,
+    target: FluiPushTarget,
+  ): Promise<void> {
+    const credential = await this.registry.issuePushCredential(applicationId);
+    try {
+      await this.githubWorkflowService.saveRepoSecret(
+        userId,
+        owner,
+        repo,
+        target.secrets.username,
+        credential.username,
+      );
+      await this.githubWorkflowService.saveRepoSecret(
+        userId,
+        owner,
+        repo,
+        target.secrets.password,
+        credential.password,
+      );
+    } catch (err) {
+      this.logger.error(
+        `Failed to save registry secrets on ${owner}/${repo}: ${err.message}`,
+        err.stack,
+      );
+      throw new BadRequestException(
+        `Flui could not write the ${target.secrets.password} repository secret to ${owner}/${repo}, so it did not commit the workflow. The workflow logs in to this instance's registry with it. Check that the GitHub connection is allowed to manage this repository's secrets, then try again.`,
+      );
+    }
+  }
+
+  /** The image credential the workflow needs: the instance registry's, or GHCR's. */
+  async saveImageSecrets(
+    userId: string,
+    owner: string,
+    repo: string,
+    app: { id: string; slug: string },
+  ): Promise<void> {
+    const target = this.registry.pushTarget(app);
+    if (target) {
+      await this.saveRegistrySecrets(userId, owner, repo, app.id, target);
+      return;
+    }
+    await this.saveFluiGhcrSecret(userId, owner, repo);
+  }
+
+  /** Where this application's builds push, for the generator. */
+  registryTargetFor(app: { id: string; slug: string }) {
+    return this.registry.pushTarget(app) ?? undefined;
   }
 
   /**
@@ -347,6 +411,7 @@ export class ApplicationWorkflowService {
     await this.applicationsRepository.update(appId, {
       buildPath: 'github-actions',
       webhookToken,
+      imageRegistryHost: null,
       frameworkConfirmed: dto.framework,
       status: ApplicationStatus.AWAITING_BUILD,
       buildStartedAt: new Date(),
@@ -453,6 +518,7 @@ export class ApplicationWorkflowService {
       webhookSecretName: backendPollingOnly ? null : FLUI_WEBHOOK_SECRET,
       writesGhcrSecret: true,
       ghcrSecretName: 'FLUI_GHCR_TOKEN',
+      registry: this.registry.pushTarget({ id: appId, slug: app.slug }),
     });
   }
 
@@ -481,6 +547,7 @@ export class ApplicationWorkflowService {
       buildContext: dto.buildContext,
       buildArgs: dto.buildArgs,
       workflowFileName,
+      registry: this.registryTargetFor({ id: appId, slug: app.slug }),
     };
   }
 
@@ -522,15 +589,15 @@ export class ApplicationWorkflowService {
       );
     }
 
-    // V3 originally relied on `secrets.GITHUB_TOKEN` only, which fails with
-    // "Password required" when the repository (or App installation) does not
-    // grant `packages: write`. Save FLUI_GHCR_TOKEN preferring the user's
-    // GHCR PAT so the workflow's `FLUI_GHCR_TOKEN || GITHUB_TOKEN` fallback
-    // can authenticate.
-    await this.saveFluiGhcrSecret(
+    // On GHCR the workflow logs in with `FLUI_GHCR_TOKEN || GITHUB_TOKEN`,
+    // which fails with "Password required" when the repository does not grant
+    // `packages: write`, so the user's GHCR PAT is saved first. On the
+    // instance's own registry it logs in with this application's credential.
+    await this.saveImageSecrets(
       userId,
       repository.owner,
       repository.repositoryName,
+      { id: appId, slug: app.slug },
     );
 
     const commitResult = await this.githubWorkflowService.commitWorkflowOnly(
@@ -653,6 +720,7 @@ export class ApplicationWorkflowService {
       webhookToken: params.webhookToken,
       isFluiManaged: params.isFluiManaged,
       sourceConfig: mergedSourceConfig,
+      imageRegistryHost: this.registry.host(),
       ...(params.buildStarted
         ? {
             status: ApplicationStatus.AWAITING_BUILD,
@@ -990,6 +1058,7 @@ export class ApplicationWorkflowService {
    */
   private async resolveLinkedRepository(app: {
     id: string;
+    userId?: string | null;
     sourceConfig: unknown;
   }) {
     const sourceConfig = app.sourceConfig as
@@ -1014,7 +1083,10 @@ export class ApplicationWorkflowService {
       );
     }
 
-    const repository = await this.repositoriesRepository.findById(repositoryId);
+    const repository = await this.repositoriesRepository.findOwnedById(
+      repositoryId,
+      app.userId,
+    );
     if (!repository) {
       throw new NotFoundException(
         `Linked repository ${repositoryId} not found. It may have been deleted.`,

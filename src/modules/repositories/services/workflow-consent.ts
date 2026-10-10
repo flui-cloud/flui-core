@@ -98,6 +98,11 @@ export function buildWorkflowConsent(input: {
   /** Set when a GHCR credential is written into the repository's secrets. */
   writesGhcrSecret: boolean;
   ghcrSecretName: string;
+  /** Set when the image goes to the instance's own registry instead of GHCR. */
+  registry?: {
+    host: string;
+    secrets: { username: string; password: string };
+  } | null;
   /** Named only when this app supersedes one, so the list stays truthful. */
   removesPath?: string;
 }): WorkflowConsent {
@@ -122,7 +127,12 @@ export function buildWorkflowConsent(input: {
     });
   }
 
-  if (input.writesGhcrSecret) {
+  if (input.registry) {
+    writes.push({
+      target: `Repository secrets ${input.registry.secrets.username} and ${input.registry.secrets.password}`,
+      what: `The credential the workflow uses to push this application's image to ${input.registry.host}, the registry of this Flui instance. It reaches no other application's images. Stored encrypted by GitHub; Flui keeps only a fingerprint of it.`,
+    });
+  } else if (input.writesGhcrSecret) {
     writes.push({
       target: `Repository secret ${input.ghcrSecretName}`,
       what: 'A credential the workflow uses to push the built image to your own ghcr.io. Stored encrypted by GitHub; Flui cannot read it back.',

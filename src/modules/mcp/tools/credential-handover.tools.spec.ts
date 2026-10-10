@@ -68,6 +68,8 @@ const REPLIES: Record<string, unknown> = {
   '/backup-destinations': [],
   '/management/providers': [{ name: 'hetzner', configured: false }],
   '/inference/connections': [],
+  '/registry/storage': { backend: 's3', connected: false },
+  '/registry/storage/buckets': [],
 };
 
 function ctxFor(): McpToolContext {
@@ -99,6 +101,7 @@ const ARGS: Record<string, Record<string, unknown>> = {
   ghcr_token_request: {},
   mail_provider_request: { provider: 'brevo' },
   backup_destination_request: { name: 'nightly' },
+  registry_storage_request: { kind: 's3', region: 'gra' },
   provider_credentials_request: { provider: 'hetzner' },
   inference_connection_request: {},
   user_invite_request: { email: 'bob@acme.com' },
@@ -145,6 +148,7 @@ describe('what a hand-off hands back', () => {
     'ghcr_token_request',
     'mail_provider_request',
     'backup_destination_request',
+    'registry_storage_request',
   ])('%s carries the relay-only instruction', async (name) => {
     const tool = CREDENTIAL_HANDOVER_TOOLS.find(
       (t) => t.name === name,
@@ -215,5 +219,57 @@ describe('what a hand-off hands back', () => {
       (t) => t.name === 'inference_connection_request',
     ) as ToolDef;
     expect(String((await resultOf(tool)).note)).toContain('private by design');
+  });
+});
+
+describe('the GHCR token on an instance that runs its own registry', () => {
+  it('tells the agent not to ask for one, and hands over no command', async () => {
+    REPLIES['/repositories/github-app/packages-pat/status'] = {
+      configured: false,
+      needed: false,
+    };
+    try {
+      const tool = CREDENTIAL_HANDOVER_TOOLS.find(
+        (t) => t.name === 'ghcr_token_request',
+      ) as ToolDef;
+      const out = await runTool(ctxFor(), tool, {});
+      const result = JSON.parse(
+        (out as { content: Array<{ text: string }> }).content[0].text,
+      );
+      expect(result.needed).toBe(false);
+      expect(result.cliAction).toBeUndefined();
+      expect(result.note).toContain('Do not ask the person for a token');
+    } finally {
+      REPLIES['/repositories/github-app/packages-pat/status'] = {
+        configured: false,
+      };
+    }
+  });
+});
+
+describe('registry_storage_request', () => {
+  const tool = CREDENTIAL_HANDOVER_TOOLS.find(
+    (t) => t.name === 'registry_storage_request',
+  ) as ToolDef;
+
+  it('needs only a region to have Flui create the bucket on Scaleway', async () => {
+    const out = await runTool(ctxFor(), tool, { region: 'fr-par' });
+    const result = JSON.parse(
+      (out as { content: Array<{ text: string }> }).content[0].text,
+    );
+    expect(JSON.stringify(result)).toContain(
+      'flui registry storage connect scaleway --region fr-par',
+    );
+  });
+
+  it('leaves the secret of a bucket of their own to a prompt', async () => {
+    const result = await resultOf(tool);
+    const command = JSON.stringify(result);
+    expect(command).toContain('flui registry storage connect s3');
+    expect(command).toContain('--access-key <access key id>');
+    expect(command).not.toMatch(/--secret/);
+    expect(result.note).toMatch(
+      /fill in the remaining flags \(provider, endpoint, bucket\)/i,
+    );
   });
 });

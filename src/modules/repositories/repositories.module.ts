@@ -12,6 +12,7 @@ import { GitHubAppInstallationEntity } from './entities/github-app-installation.
 import { GithubUserTokenEntity } from './entities/github-user-token.entity';
 import { GithubAppManifestStateEntity } from './entities/github-app-manifest-state.entity';
 import { RepositoriesRepository } from './repositories/repositories.repository';
+import { GitHubTokensForgetService } from './services/github-tokens-forget.service';
 import { RepositoryCredentialsRepository } from './repositories/repository-credentials.repository';
 import { RepositoriesService } from './services/repositories.service';
 import { WebhookService } from './services/webhook.service';
@@ -42,9 +43,11 @@ import { RepoTreeReaderService } from '../applications/services/repo-tree-reader
 import { RepoMapService } from './services/repo-map.service';
 import { RepoApplyService } from './services/repo-apply.service';
 import { ApplicationsModule } from '../applications/applications.module';
+import { FluiRegistryModule } from '../flui-registry/flui-registry.module';
 
 @Module({
   imports: [
+    FluiRegistryModule,
     UserEventsModule,
     ConfigModule,
     HttpModule,
@@ -85,6 +88,7 @@ import { ApplicationsModule } from '../applications/applications.module';
     RepositoriesService,
     WebhookService,
     GitHubOAuthService,
+    GitHubTokensForgetService,
     GitHubIntegrationConfigService,
     GitHubAppService,
     GitHubInstallationAccessService,
@@ -111,6 +115,7 @@ import { ApplicationsModule } from '../applications/applications.module';
     WebhookService,
     RepositoriesRepository,
     GitHubOAuthService,
+    GitHubTokensForgetService,
     GitHubIntegrationConfigService,
     GitHubAppService,
     GitHubTokenResolverService,

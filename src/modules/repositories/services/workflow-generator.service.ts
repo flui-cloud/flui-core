@@ -51,6 +51,15 @@ export interface WorkflowParamsV3 {
   fluiAppId: string;
   fluiWebhookUrl: string;
   backendPollingOnly?: boolean;
+  /**
+   * The instance's own registry, when it runs one: the image goes there, and
+   * the build logs in with this application's own repository secrets.
+   */
+  registry?: {
+    host: string;
+    imageName: string;
+    secrets: { username: string; password: string };
+  };
 }
 
 export interface DockerfileParams {
@@ -150,6 +159,25 @@ export class WorkflowGeneratorService {
         healthcheckPath: '/health',
       }
     );
+  }
+
+  private registryLoginStep(registry: WorkflowParamsV3['registry']): string {
+    if (!registry) {
+      return `
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: \${{ github.actor }}
+          password: \${{ secrets.FLUI_GHCR_TOKEN || secrets.GITHUB_TOKEN }}`;
+    }
+    return `
+      - name: Log in to the Flui registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${registry.host}
+          username: \${{ secrets.${registry.secrets.username} }}
+          password: \${{ secrets.${registry.secrets.password} }}`;
   }
 
   /**
@@ -589,7 +617,10 @@ ENTRYPOINT ["dotnet", "${p.appName}.dll"]
   generateWorkflowV3(params: WorkflowParamsV3): string {
     const repoSegment = params.repoName.toLowerCase();
     const subSegment = params.subPath ? `/${params.subPath.toLowerCase()}` : '';
-    const imageName = `ghcr.io/${params.githubOwner.toLowerCase()}/${repoSegment}${subSegment}`;
+    const imageName =
+      params.registry?.imageName ??
+      `ghcr.io/${params.githubOwner.toLowerCase()}/${repoSegment}${subSegment}`;
+    const registryHost = params.registry?.host ?? 'ghcr.io';
 
     const buildContext = params.buildContext ?? '.';
     const dockerfileLine = params.dockerfilePath
@@ -652,7 +683,7 @@ on:
   workflow_dispatch:
 
 env:
-  REGISTRY: ghcr.io
+  REGISTRY: ${registryHost}
   IMAGE_NAME: ${imageName}
   FLUI_APP_ID: ${params.fluiAppId}
 
@@ -660,8 +691,7 @@ jobs:
   build-and-push:
     runs-on: ubuntu-latest
     permissions:
-      contents: read
-      packages: write
+      contents: read${params.registry ? '' : '\n      packages: write'}
 
     steps:
       - name: Checkout
@@ -669,13 +699,7 @@ jobs:
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
-
-      - name: Log in to GitHub Container Registry
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: \${{ github.actor }}
-          password: \${{ secrets.FLUI_GHCR_TOKEN || secrets.GITHUB_TOKEN }}
+${this.registryLoginStep(params.registry)}
 
       - name: Extract metadata
         id: meta

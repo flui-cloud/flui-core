@@ -53,24 +53,10 @@ export const SANDBOX_AREAS: SandboxArea[] = [
     why: 'Install anything from it into your own space.',
   },
   {
-    // Named even though nothing under `/repositories` is open, because the
-    // list is also the answer to "what is disabled here": a limit nobody
-    // states reads as a missing feature, and a visitor who is offered "deploy
-    // your own application" and finds no way to reach a repository concludes
-    // Flui cannot build from source.
-    //
-    // Not because building is dangerous — it never happens on this instance,
-    // it happens on GitHub's runners. Because of what connecting costs on a
-    // borrowed instance: where the installation runs as a GitHub App every
-    // token is resolved by GitHub account and never by tenancy, so a guest
-    // allowed to connect would be handed the instance's own installation
-    // rather than its own. And what Flui writes back — a workflow carrying a
-    // webhook token in clear text — is a trade to make on an instance you
-    // keep.
     key: 'repositories',
     area: 'Building from your own git repository',
-    level: 'closed',
-    why: 'Connecting a repository would put a token on your GitHub account into an instance you are borrowing for a day, and write a workflow file back into your repository. Deploy from the catalogue, or from an image you have already built — both are fully yours here.',
+    level: 'full',
+    why: 'Connect GitHub and deploy from your own repositories. When your trial ends Flui deletes the token it kept and removes itself from your GitHub account. If you paste a personal access token instead, give it a one-day expiry.',
   },
   {
     key: 'cluster',

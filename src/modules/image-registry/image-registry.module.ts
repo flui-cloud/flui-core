@@ -7,9 +7,11 @@ import { ImageRegistryController } from './controllers/image-registry.controller
 import { ApplicationsModule } from '../applications/applications.module';
 import { RepositoriesModule } from '../repositories/repositories.module';
 import { InfrastructureOperationEntity } from '../infrastructure/servers/entities/infrastructure-operations.entity';
+import { FluiRegistryModule } from '../flui-registry/flui-registry.module';
 
 @Module({
   imports: [
+    FluiRegistryModule,
     TypeOrmModule.forFeature([ImageEntity, InfrastructureOperationEntity]),
     forwardRef(() => ApplicationsModule),
     RepositoriesModule,

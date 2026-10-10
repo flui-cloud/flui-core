@@ -36,6 +36,7 @@ import { BackupPolicyEntity } from '../../backups/entities/backup-policy.entity'
 import { closePoliciesOfDeletedApplication } from '../../backups/utils/deleted-application-backups.util';
 import { liveBundleSiblings } from '../utils/bundle-siblings.util';
 import { describeError } from '../../shared/utils/error.util';
+import { FluiRegistryPublisherService } from '../../flui-registry/services/flui-registry-publisher.service';
 
 /**
  * Everything the application queue does when an application goes away:
@@ -68,6 +69,7 @@ export class ApplicationTeardownService {
     private readonly appResourcesRepository: AppResourcesRepository,
     private readonly eventsGateway: ApplicationEventsGateway,
     private readonly volumeClaims: ApplicationVolumeClaimsService,
+    private readonly registry: FluiRegistryPublisherService,
     @Optional()
     @Inject(forwardRef(() => AppEndpointReconciliationService))
     private readonly appEndpointReconciliationService?: AppEndpointReconciliationService,
@@ -266,6 +268,13 @@ export class ApplicationTeardownService {
       });
 
       await this.applicationsRepository.softDelete(applicationId);
+      await this.registry
+        .forgetApplication(app)
+        .catch((err: unknown) =>
+          this.logger.warn(
+            `[DELETE] registry credentials of ${applicationId} left: ${describeError(err)}`,
+          ),
+        );
       await closePoliciesOfDeletedApplication(this.backupPolicies, app).catch(
         (err: unknown) =>
           this.logger.warn(

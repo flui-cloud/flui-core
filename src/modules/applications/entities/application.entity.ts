@@ -401,6 +401,14 @@ export class ApplicationEntity {
   @Column({ type: 'timestamptz', nullable: true })
   deletedAt?: Date;
 
+  /**
+   * The instance registry this application's builds were set up to push to,
+   * when they were; null means GHCR. Written by Flui with the workflow, never
+   * by a caller, so the image a build is rolled out from cannot be steered.
+   */
+  @Column({ type: 'varchar', length: 253, nullable: true })
+  imageRegistryHost?: string | null;
+
   @OneToMany(() => AppRevisionEntity, (revision) => revision.application, {
     cascade: true,
   })

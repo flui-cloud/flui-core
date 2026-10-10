@@ -10,9 +10,11 @@ import { WebhooksController } from './webhooks.controller';
 import { WebhooksService } from './webhooks.service';
 import { GitHubAppWebhookService } from './services/github-app-webhook.service';
 import { AlertsWebhookService } from './services/alerts-webhook.service';
+import { FluiRegistryModule } from '../flui-registry/flui-registry.module';
 
 @Module({
   imports: [
+    FluiRegistryModule,
     ConfigModule,
     TypeOrmModule.forFeature([ApplicationEntity]),
     ApplicationsModule,

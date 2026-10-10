@@ -55,7 +55,9 @@ describe('what a guest is offered', () => {
     });
 
     it('drops a route the fence refuses', () => {
-      expect(guestGetsTheRealThing('POST /repositories/import')).toBe(false);
+      expect(
+        guestGetsTheRealThing('GET /repositories/github-app/installations'),
+      ).toBe(false);
       expect(
         guestGetsTheRealThing(
           'GET /observability/clusters/c1/apps/log-sources',
@@ -111,9 +113,12 @@ describe('what a guest is offered', () => {
     it('drops what belongs to the instance, not to the tenancy', () => {
       expect(offered('dns_wildcard_publish')).toBe(false);
       expect(offered('github_setup')).toBe(false);
-      expect(offered('github_connect')).toBe(false);
-      expect(offered('repo_connect')).toBe(false);
-      expect(offered('repo_list')).toBe(false);
+    });
+
+    it('offers the guest’s own GitHub connection and repositories', () => {
+      expect(offered('github_connect')).toBe(true);
+      expect(offered('repo_connect')).toBe(true);
+      expect(offered('repo_list')).toBe(true);
     });
 
     /** Decision 50: an invented answer is worse for an agent than a refusal. */

@@ -76,6 +76,8 @@ export interface K3sMasterConfig {
   byosSshPort?: number;
   nipIoCertEnabled?: boolean;
   acmeStaging?: boolean;
+  imageRegistry?: string;
+  imageRegistryStorage?: string;
   /**
    * Install from mobile tags instead of the pinned release: bootstrap ref
    * `master` + `:latest` Docker images. Set by `flui env create --latest`.
@@ -235,6 +237,9 @@ export class CliK3sScriptService {
           SSH_CA_PRIVATE_KEY: config.caPrivateKey || '',
           FLUI_NIP_IO_CERT_ENABLED: config.nipIoCertEnabled ? 'true' : '',
           FLUI_ACME_STAGING: config.acmeStaging ? 'true' : '',
+          FLUI_IMAGE_REGISTRY: config.imageRegistry === 'flui' ? 'flui' : '',
+          FLUI_REGISTRY_STORAGE_BACKEND:
+            config.imageRegistryStorage === 's3' ? 's3' : '',
           // BootstrapSeeder vars — available at envsubst time so API reads them at first boot
           FLUI_CLI_API_KEY: config.fluiApiKey || '',
           PROVIDER_HETZNER_API_KEY:

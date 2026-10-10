@@ -168,6 +168,8 @@ function serviceUnder(
     saveWebhookSecret:
       o.saveWebhookSecret ?? jest.fn().mockResolvedValue(undefined),
     saveFluiGhcrSecret: jest.fn().mockResolvedValue(true),
+    saveRegistrySecrets: jest.fn().mockResolvedValue(undefined),
+    registryTargetFor: jest.fn().mockReturnValue(undefined),
     markAwaitingExternalBuild:
       o.markAwaitingExternalBuild ??
       jest.fn().mockResolvedValue({ runId: '42' }),
@@ -909,6 +911,32 @@ describe('RepoApplyService — the shape of the commit', () => {
     for (const order of prepare.mock.invocationCallOrder) {
       expect(order).toBeLessThan(commitOrder);
     }
+  });
+
+  it('gives each unit its own registry credential when the instance runs a registry', async () => {
+    const { service, github, workflow } = monorepoService();
+    (workflow.registryTargetFor as jest.Mock).mockImplementation(
+      (app: { id: string; slug: string }) => ({
+        host: 'api.flui.example',
+        imageName: `api.flui.example/apps/${app.id}`,
+        secrets: {
+          username: `FLUI_REGISTRY_USER_${app.slug}`,
+          password: `FLUI_REGISTRY_TOKEN_${app.slug}`,
+        },
+      }),
+    );
+    await service.apply('u', 'u@x.test', REQUEST);
+
+    expect(workflow.saveFluiGhcrSecret).not.toHaveBeenCalled();
+    expect(
+      (workflow.saveRegistrySecrets as jest.Mock).mock.calls.map((c) => c[3]),
+    ).toEqual(['app-api', 'app-web']);
+    const files = (github.commitFilesOnBranch as jest.Mock).mock.calls[0][4];
+    const workflows = files
+      .filter((f: { path: string }) => f.path.startsWith('.github/'))
+      .map((f: { content: string }) => f.content);
+    expect(workflows[0]).toContain('IMAGE_NAME: api.flui.example/apps/app-api');
+    expect(workflows[1]).toContain('IMAGE_NAME: api.flui.example/apps/app-web');
   });
 
   it('writes one shared webhook token, and marks the apps only after the commit', async () => {

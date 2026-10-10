@@ -36,6 +36,7 @@ import {
   GitHubAppManifestStartResponseDto,
   GitHubSetupHealthResponseDto,
 } from '../dto/github-oauth.dto';
+import { FluiRegistryPublisherService } from '../../flui-registry/services/flui-registry-publisher.service';
 
 const DEFAULT_DASHBOARD_URL = 'http://localhost:4200';
 const SETUP_RETURN_PATH = '/apps/repositories/github-setup';
@@ -50,6 +51,7 @@ export class GitHubSetupController {
     private readonly envConfig: ConfigService,
     private readonly httpService: HttpService,
     private readonly manifestState: GithubAppManifestStateService,
+    private readonly registry: FluiRegistryPublisherService,
   ) {}
 
   @Get('status')
@@ -65,7 +67,14 @@ export class GitHubSetupController {
     type: GitHubSetupStatusResponseDto,
   })
   async getStatus(): Promise<GitHubSetupStatusResponseDto> {
-    return this.configService.getSetupStatus();
+    return this.status();
+  }
+
+  private async status(): Promise<GitHubSetupStatusResponseDto> {
+    return {
+      ...(await this.configService.getSetupStatus()),
+      imageRegistry: this.registry.host() ? 'flui' : 'ghcr',
+    };
   }
 
   // `integration:manage`: these are the *instance's* GitHub credentials — one
@@ -107,7 +116,7 @@ export class GitHubSetupController {
   })
   async configurePat(): Promise<GitHubSetupStatusResponseDto> {
     await this.configService.configurePatMode();
-    return this.configService.getSetupStatus();
+    return this.status();
   }
 
   @Post('github-app')
@@ -132,7 +141,7 @@ export class GitHubSetupController {
     @Body() dto: GitHubSetupAppDto,
   ): Promise<GitHubSetupStatusResponseDto> {
     await this.configService.configureGitHubApp(dto);
-    return this.configService.getSetupStatus();
+    return this.status();
   }
 
   @Post('github-app/manifest-start')

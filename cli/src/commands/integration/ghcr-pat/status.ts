@@ -4,6 +4,7 @@ import { ApiClient } from '../../../lib/api-client';
 import { ConfigStorage } from '../../../lib/config-storage';
 
 interface GhcrPatStatus {
+  needed?: boolean;
   configured: boolean;
   status?: string;
   expiresAt?: string | null;
@@ -39,6 +40,13 @@ export default class IntegrationGhcrPatStatus extends Command {
     }
 
     console.log('');
+    if (status.needed === false && !status.configured) {
+      console.log(
+        `  ${chalk.bold('Status:')} ${chalk.dim('not needed')} — this instance keeps built images in its own registry.`,
+      );
+      console.log('');
+      return;
+    }
     if (!status.configured) {
       console.log(
         `  ${chalk.bold('Status:')} ${chalk.yellow('not configured')}`,

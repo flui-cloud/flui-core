@@ -12,7 +12,10 @@ import { ImageEntity } from '../entities/image.entity';
 import { GhcrTagDto } from '../dto/ghcr.dto';
 import { ApplicationsRepository } from '../../applications/repositories/applications.repository';
 import { RepositoriesRepository } from '../../repositories/repositories/repositories.repository';
-import { GhcrPackagesService } from '../../repositories/services/ghcr-packages.service';
+import {
+  GhcrPackagesService,
+  GhcrPackageVersion,
+} from '../../repositories/services/ghcr-packages.service';
 import { GitBuildSourceConfig } from '../../applications/interfaces/source-config.interface';
 import { ApplicationDeployService } from '../../applications/services/application-deploy.service';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -23,6 +26,8 @@ import {
   OperationType,
 } from '../../infrastructure/servers/entities/infrastructure-operations.entity';
 import { ApplicationEntity } from '../../applications/entities/application.entity';
+import { FluiRegistryClientService } from '../../flui-registry/services/flui-registry-client.service';
+import { fluiImageName } from '../../flui-registry/registry-image';
 
 @Injectable()
 export class ImageRegistryService {
@@ -40,6 +45,7 @@ export class ImageRegistryService {
     private readonly applicationDeployService: ApplicationDeployService,
     @InjectRepository(InfrastructureOperationEntity)
     private readonly operationRepository: Repository<InfrastructureOperationEntity>,
+    private readonly registryClient: FluiRegistryClientService,
   ) {}
 
   private async assertSafeToDeleteVersion(
@@ -196,15 +202,19 @@ export class ImageRegistryService {
     appId: string,
     userId: string,
   ): Promise<GhcrTagDto[]> {
-    const { owner, packageName, app } = await this.resolveGhcrContext(
-      appId,
-      userId,
-    );
-
-    const [ghcrTags, localImages] = await Promise.all([
-      this.listGhcrTagsForRepo(owner, packageName, app.userId),
-      this.imageRepository.findByAppId(appId),
-    ]);
+    const app = await this.ownedApplication(appId, userId);
+    const store = await this.imageStoreFor(app);
+    const ghcrTags = store.versions.map((v) => ({
+      ...v,
+      imageRef:
+        v.tags.length > 0
+          ? `${store.name}:${v.tags[0]}`
+          : `${store.name}@${v.digest}`,
+      isCurrentlyDeployed: false,
+      hasLocalRecord: false,
+      fluiTags: [],
+    }));
+    const localImages = await this.imageRepository.findByAppId(appId);
 
     const localByShortSha = new Map<string, ImageEntity>();
     const localByDigest = new Map<string, ImageEntity>();
@@ -379,19 +389,11 @@ export class ImageRegistryService {
     userId: string,
     options?: { force?: boolean },
   ): Promise<void> {
-    const { owner, packageName, app } = await this.resolveGhcrContext(
-      appId,
-      userId,
-    );
-
-    const versions = await this.ghcrPackagesService.listVersions(
-      app.userId,
-      owner,
-      packageName,
-    );
-    const target = versions.find((v) => v.versionId === versionId);
+    const app = await this.ownedApplication(appId, userId);
+    const store = await this.imageStoreFor(app);
+    const target = store.versions.find((v) => v.versionId === versionId);
     if (!target) {
-      throw new NotFoundException('Package version not found on GHCR');
+      throw new NotFoundException('Image version not found');
     }
 
     if (this.versionMatchesImageRef(target, app.imageRef)) {
@@ -410,12 +412,7 @@ export class ImageRegistryService {
       }
     }
 
-    await this.ghcrPackagesService.deleteVersion(
-      app.userId,
-      owner,
-      packageName,
-      versionId,
-    );
+    await store.remove(target);
 
     const locals = await this.imageRepository.findByAppId(appId);
     for (const tag of target.tags) {
@@ -434,7 +431,7 @@ export class ImageRegistryService {
     }
 
     this.logger.log(
-      `Deleted GHCR version ${versionId} (tags=${target.tags.join(',') || '(untagged)'}, digest=${target.digest ?? 'n/a'}) for app ${appId}${options?.force ? ' [forced]' : ''}`,
+      `Deleted image version ${versionId} (tags=${target.tags.join(',') || '(untagged)'}, digest=${target.digest ?? 'n/a'}) for app ${appId}${options?.force ? ' [forced]' : ''}`,
     );
   }
 
@@ -442,13 +439,7 @@ export class ImageRegistryService {
   async redeployGhcrTag(appId: string, tag: string) {
     const app = await this.applicationsRepository.findById(appId);
     if (!app) throw new NotFoundException('Application not found');
-    const { owner, packageName } = await this.ghcrContextFor(app);
-
-    const versions = await this.ghcrPackagesService.listVersions(
-      app.userId,
-      owner,
-      packageName,
-    );
+    const { versions, name } = await this.imageStoreFor(app);
 
     const isDigestRef = /^sha256:[0-9a-f]{64}$/.test(tag);
     const isShortDigest = !isDigestRef && /^[0-9a-f]{12,64}$/.test(tag);
@@ -462,16 +453,16 @@ export class ImageRegistryService {
       );
       if (!match) {
         throw new NotFoundException(
-          `No GHCR version matches digest "${tag}" for ${owner}/${packageName}`,
+          `No image version matches digest "${tag}" for ${name}`,
         );
       }
-      imageRef = `ghcr.io/${owner}/${packageName}@${match.digest}`;
+      imageRef = `${name}@${match.digest}`;
     } else {
       const exists = versions.some((v) => v.tags.includes(tag));
       if (!exists) {
-        throw new NotFoundException(`Tag "${tag}" not found on GHCR`);
+        throw new NotFoundException(`Tag "${tag}" not found for ${name}`);
       }
-      imageRef = `ghcr.io/${owner}/${packageName}:${tag}`;
+      imageRef = `${name}:${tag}`;
     }
 
     const op = await this.applicationDeployService.triggerDeployWithImage(
@@ -499,12 +490,57 @@ export class ImageRegistryService {
 
   // ── Private helpers ──────────────────────────────────────────────────
 
-  private async resolveGhcrContext(appId: string, userId: string) {
+  private async ownedApplication(
+    appId: string,
+    userId: string,
+  ): Promise<ApplicationEntity> {
     const app = await this.applicationsRepository.findById(appId);
     if (!app) throw new NotFoundException('Application not found');
     if (app.userId !== userId)
       throw new ForbiddenException('Not owner of this application');
-    return this.ghcrContextFor(app);
+    return app;
+  }
+
+  /**
+   * Where an application's images are kept, and how a version of them is
+   * removed: the instance's own registry for an application set up there,
+   * its owner's GHCR package otherwise.
+   */
+  private async imageStoreFor(app: ApplicationEntity): Promise<{
+    name: string;
+    versions: GhcrPackageVersion[];
+    remove: (version: GhcrPackageVersion) => Promise<void>;
+  }> {
+    if (app.imageRegistryHost) {
+      const listed = await this.registryClient.listVersions(app.id);
+      return {
+        name: fluiImageName(app.imageRegistryHost, app.id),
+        versions: listed.map((v) => ({
+          ...v,
+          createdAt: '',
+          updatedAt: '',
+          htmlUrl: '',
+        })),
+        remove: (version) =>
+          this.registryClient.deleteDigest(app.id, version.digest),
+      };
+    }
+    const { owner, packageName } = await this.ghcrContextFor(app);
+    return {
+      name: `ghcr.io/${owner}/${packageName}`,
+      versions: await this.ghcrPackagesService.listVersions(
+        app.userId,
+        owner,
+        packageName,
+      ),
+      remove: (version) =>
+        this.ghcrPackagesService.deleteVersion(
+          app.userId,
+          owner,
+          packageName,
+          version.versionId,
+        ),
+    };
   }
 
   private async ghcrContextFor(app: ApplicationEntity) {
@@ -516,7 +552,10 @@ export class ImageRegistryService {
       );
     }
 
-    const repository = await this.repositoriesRepository.findById(repositoryId);
+    const repository = await this.repositoriesRepository.findOwnedById(
+      repositoryId,
+      app.userId,
+    );
     if (!repository) throw new NotFoundException('Linked repository not found');
 
     // Prefer parsing owner/packageName from the actual deployed imageRef:

@@ -304,6 +304,8 @@ export class CliClusterCreatorService {
         nipIoCertEnabled: !clusterMeta?.zitadelDomain,
         acmeStaging: !!clusterMeta?.acmeStaging,
         useLatest: !!clusterMeta?.useLatest,
+        imageRegistry: clusterMeta?.imageRegistry,
+        imageRegistryStorage: clusterMeta?.imageRegistryStorage,
         nipHostnameToken: cluster.nipHostnameToken || null,
         envVnet: envVnet
           ? {
@@ -818,6 +820,8 @@ export class CliClusterCreatorService {
         nipIoCertEnabled: !clusterMeta?.zitadelDomain,
         acmeStaging: !!clusterMeta?.acmeStaging,
         useLatest: !!clusterMeta?.useLatest,
+        imageRegistry: clusterMeta?.imageRegistry,
+        imageRegistryStorage: clusterMeta?.imageRegistryStorage,
         nipHostnameToken: cluster.nipHostnameToken || null,
         sharedStorage: undefined,
         byosSshPort: port,
@@ -1130,6 +1134,8 @@ export class CliClusterCreatorService {
         nipIoCertEnabled: !clusterMeta?.zitadelDomain,
         acmeStaging: !!clusterMeta?.acmeStaging,
         useLatest: !!clusterMeta?.useLatest,
+        imageRegistry: clusterMeta?.imageRegistry,
+        imageRegistryStorage: clusterMeta?.imageRegistryStorage,
         nipHostnameToken: cluster.nipHostnameToken || null,
         envVnet: envVnet
           ? {

@@ -16,6 +16,9 @@ import { McpModule } from './modules/mcp/mcp.module';
 import { InfrastructureModule } from './modules/infrastructure/infrastructure.module';
 import { BullModule } from '@nestjs/bull';
 import { ScheduleModule } from '@nestjs/schedule';
+import { LeadershipModule } from './modules/common/leadership/leadership.module';
+import { API_APPLICATION_NAME } from './common/instance/api-instance';
+import { boolOr } from './config/migrations-once';
 import { TerminalModule } from './modules/terminal/terminal.module';
 import { RepositoriesModule } from './modules/repositories/repositories.module';
 import { CredentialsModule } from './modules/credentials/credentials.module';
@@ -41,6 +44,7 @@ import { ActionCycleModule } from './modules/action-cycle/action-cycle.module';
 import { OperatingContextModule } from './modules/operating-context/operating-context.module';
 import { WebhooksModule } from './modules/webhooks/webhooks.module';
 import { ImageRegistryModule } from './modules/image-registry/image-registry.module';
+import { FluiRegistryModule } from './modules/flui-registry/flui-registry.module';
 import { TemplatesModule } from './modules/templates/templates.module';
 import { ScalingModule } from './modules/scaling/scaling.module';
 import { CatalogModule } from './modules/catalog/catalog.module';
@@ -60,11 +64,6 @@ import { MaskModule } from './modules/mask/mask.module';
 import { PlatformUpdatesModule } from './modules/platform-updates/platform-updates.module';
 import { AttachedServicesModule } from './modules/attached-services/attached-services.module';
 
-const boolOr = (raw: string | undefined, fallback: boolean): boolean =>
-  raw === undefined || raw === null || raw === ''
-    ? fallback
-    : raw.toLowerCase() === 'true';
-
 @Module({
   imports: [
     ConfigModule.forRoot({
@@ -83,6 +82,7 @@ const boolOr = (raw: string | undefined, fallback: boolean): boolean =>
         database: configService.get('DB_NAME', 'myapp_dev'),
         extra: {
           options: '-c timezone=UTC',
+          application_name: API_APPLICATION_NAME,
         },
         entities,
         // Prod aligns the schema through versioned migrations run at boot;
@@ -99,10 +99,12 @@ const boolOr = (raw: string | undefined, fallback: boolean): boolean =>
           configService.get<string>('DB_SYNCHRONIZE'),
           configService.get('NODE_ENV') !== 'production',
         ),
-        migrationsRun: boolOr(
-          configService.get<string>('DB_MIGRATIONS_RUN'),
-          configService.get('NODE_ENV') === 'production',
-        ),
+        migrationsRun:
+          process.env.FLUI_MIGRATIONS_DONE_AT_BOOT !== 'true' &&
+          boolOr(
+            configService.get<string>('DB_MIGRATIONS_RUN'),
+            configService.get('NODE_ENV') === 'production',
+          ),
         migrations,
       }),
       inject: [ConfigService],
@@ -142,6 +144,7 @@ const boolOr = (raw: string | undefined, fallback: boolean): boolean =>
     AppBuildsModule,
     WebhooksModule,
     ImageRegistryModule,
+    FluiRegistryModule,
     TemplatesModule,
     HealthModule,
     AuthModule,
@@ -172,6 +175,7 @@ const boolOr = (raw: string | undefined, fallback: boolean): boolean =>
     // a building block without either importing the other.
     AttachedServicesModule,
     ScheduleModule.forRoot(),
+    LeadershipModule,
   ],
   providers: [
     {

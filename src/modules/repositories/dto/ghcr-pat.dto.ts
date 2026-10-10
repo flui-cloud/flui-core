@@ -82,6 +82,12 @@ export class GhcrPatStatusDto {
 
   @ApiPropertyOptional({ description: 'Granted scopes', type: [String] })
   scopes?: string[];
+
+  @ApiPropertyOptional({
+    description:
+      'False when this instance keeps built images in its own registry: no GHCR token is needed to pull them.',
+  })
+  needed?: boolean;
 }
 
 export class CredentialsStatusItemDto {
