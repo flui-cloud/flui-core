@@ -7,6 +7,7 @@ import {
   IsInt,
   IsISO8601,
   IsOptional,
+  IsUUID,
   Max,
   Min,
 } from 'class-validator';
@@ -33,6 +34,14 @@ export class ListAuditEventsQueryDto {
   @IsOptional()
   @IsIn(['ok', 'refused', 'failed'])
   outcome?: 'ok' | 'refused' | 'failed';
+
+  @ApiPropertyOptional({
+    description:
+      'Id of the last record already seen: returns the records older than it.',
+  })
+  @IsOptional()
+  @IsUUID()
+  before?: string;
 
   @IsOptional()
   @Transform(({ value }) => Number(value))

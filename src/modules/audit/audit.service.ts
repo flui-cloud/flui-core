@@ -23,6 +23,7 @@ export interface AuditQuery {
   until?: Date;
   dataAccess?: boolean;
   outcome?: AuditOutcome;
+  before?: string;
   limit: number;
 }
 
@@ -66,7 +67,14 @@ export class AuditService {
     const qb = this.events
       .createQueryBuilder('e')
       .orderBy('e.at', 'DESC')
+      .addOrderBy('e.id', 'DESC')
       .take(query.limit);
+    if (query.before) {
+      qb.andWhere(
+        '(e.at, e.id) < (SELECT b.at, b.id FROM audit_events b WHERE b.id = :before)',
+        { before: query.before },
+      );
+    }
     if (query.email) qb.andWhere('e.email = :email', { email: query.email });
     if (query.since) qb.andWhere('e.at >= :since', { since: query.since });
     if (query.until) qb.andWhere('e.at < :until', { until: query.until });

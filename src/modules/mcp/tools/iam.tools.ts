@@ -281,6 +281,12 @@ export const IAM_TOOLS: ToolDef[] = [
         .enum(['ok', 'refused', 'failed'])
         .optional()
         .describe('Only actions with this outcome.'),
+      before: z
+        .uuid()
+        .optional()
+        .describe(
+          'Id of the last record already read: returns the older ones, for the next page.',
+        ),
       limit: z.number().int().min(1).max(500).optional(),
     },
     scope: MCP_SCOPE.IAM_READ,

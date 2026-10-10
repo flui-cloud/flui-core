@@ -27,7 +27,7 @@ export class AuditController {
   @ApiOperation({
     summary: 'Who did what on this installation',
     description:
-      'Every change, every refusal and every read of application data, newest first. Filter by person, time, outcome, or only what reached application data.',
+      'Every change, every refusal and every read of application data, newest first. Filter by person, time, outcome, or only what reached application data. Pass the id of the last record as `before` to read the next page.',
   })
   @ApiResponse({ status: 200, type: [AuditEventResponseDto] })
   list(@Query() query: ListAuditEventsQueryDto) {
@@ -37,6 +37,7 @@ export class AuditController {
       until: query.until ? new Date(query.until) : undefined,
       dataAccess: query.dataAccess,
       outcome: query.outcome,
+      before: query.before,
       limit: query.limit ?? 100,
     });
   }

@@ -69,12 +69,27 @@ function buildQuery(flags: {
   user?: string;
   data: boolean;
   refused: boolean;
+  before?: string;
 }): URLSearchParams {
   const query = new URLSearchParams({ limit: String(flags.limit) });
   if (flags.user) query.set('email', flags.user);
+  if (flags.before) query.set('before', flags.before);
   if (flags.data) query.set('dataAccess', 'true');
   if (flags.refused) query.set('outcome', 'refused');
   return query;
+}
+
+function nextPageFlags(argv: string[]): string {
+  const kept: string[] = [];
+  for (let i = 0; i < argv.length; i++) {
+    if (argv[i] === '--before') {
+      i++;
+      continue;
+    }
+    if (argv[i].startsWith('--before=')) continue;
+    kept.push(argv[i].includes(' ') ? JSON.stringify(argv[i]) : argv[i]);
+  }
+  return kept.length ? ` ${kept.join(' ')}` : '';
 }
 
 export default class AuditList extends Command {
@@ -86,6 +101,7 @@ export default class AuditList extends Command {
     '<%= config.bin %> <%= command.id %> --user support@partner.example --since 7d',
     '<%= config.bin %> <%= command.id %> --data',
     '<%= config.bin %> <%= command.id %> --refused --since 24h',
+    '<%= config.bin %> <%= command.id %> --before <id of the last record shown>',
   ];
 
   static readonly flags = {
@@ -100,6 +116,9 @@ export default class AuditList extends Command {
     refused: Flags.boolean({
       description: 'Only what was refused',
       default: false,
+    }),
+    before: Flags.string({
+      description: 'Only records older than this one (its id): the next page',
     }),
     limit: Flags.integer({
       description: 'How many records',
@@ -156,5 +175,12 @@ export default class AuditList extends Command {
     console.log('');
     for (const e of events) console.log(formatEvent(e));
     console.log('');
+    if (events.length === flags.limit) {
+      console.log(
+        chalk.dim(
+          `  Older records: ${this.config.bin} audit list --before ${events[events.length - 1].id}${nextPageFlags(this.argv)}\n`,
+        ),
+      );
+    }
   }
 }
