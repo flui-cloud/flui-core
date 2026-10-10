@@ -5,7 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { IsNull, Repository } from 'typeorm';
 import { ApplicationEntity } from '../entities/application.entity';
 import { ApplicationStatus } from '../enums/application-status.enum';
 import {
@@ -65,6 +65,8 @@ export class ShowcaseService {
       .where('app.tags @> :tag::jsonb', {
         tag: JSON.stringify([SHOWCASE_TAG]),
       })
+      // A deleted application keeps its row and its tags.
+      .andWhere('app.deletedAt IS NULL')
       .orderBy('app.createdAt', 'ASC')
       .getMany();
     if (rows.length === 0) return [];
@@ -140,15 +142,21 @@ export class ShowcaseService {
    * application, and refuses rather than guessing when it names several.
    */
   async resolve(ref: string): Promise<ApplicationEntity> {
-    const bySlug = await this.applications.findOne({ where: { slug: ref } });
+    const bySlug = await this.applications.findOne({
+      where: { slug: ref, deletedAt: IsNull() },
+    });
     if (bySlug) return bySlug;
 
     if (/^[0-9a-f-]{36}$/i.test(ref)) {
-      const byId = await this.applications.findOne({ where: { id: ref } });
+      const byId = await this.applications.findOne({
+        where: { id: ref, deletedAt: IsNull() },
+      });
       if (byId) return byId;
     }
 
-    const byName = await this.applications.find({ where: { name: ref } });
+    const byName = await this.applications.find({
+      where: { name: ref, deletedAt: IsNull() },
+    });
     if (byName.length === 1) return byName[0];
     if (byName.length > 1) {
       throw new NotFoundException(
@@ -203,7 +211,9 @@ export class ShowcaseService {
   }
 
   private async byId(id: string): Promise<ApplicationEntity> {
-    const application = await this.applications.findOne({ where: { id } });
+    const application = await this.applications.findOne({
+      where: { id, deletedAt: IsNull() },
+    });
     if (!application) {
       throw new NotFoundException(`Application ${id} not found`);
     }

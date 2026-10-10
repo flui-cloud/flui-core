@@ -36,8 +36,9 @@ const build = (
   over: { cluster?: { id: string; name: string; status: string } | null } = {},
 ) => {
   const store = [...rows];
+  const live = (r: ApplicationEntity) => !r.deletedAt;
   const tagged = () =>
-    store.filter((r) => (r.tags ?? []).includes(SHOWCASE_TAG));
+    store.filter((r) => live(r) && (r.tags ?? []).includes(SHOWCASE_TAG));
   const wheres: Array<{ clause: string; params: Record<string, unknown> }> = [];
 
   const repo = {
@@ -52,19 +53,26 @@ const build = (
           wheres.push({ clause, params });
           return qb;
         },
+        andWhere: (clause: string) => {
+          wheres.push({ clause, params: {} });
+          return qb;
+        },
         orderBy: self,
         getMany: async () => tagged(),
       });
       return qb;
     },
     find: async (opts?: { where?: Record<string, unknown> }) =>
-      store.filter((r) => r.name === opts?.where?.name),
-    findOne: async ({ where }: { where: Record<string, string> }) =>
-      store.find((r) =>
-        Object.entries(where).every(
-          (pair) =>
-            (r as unknown as Record<string, unknown>)[pair[0]] === pair[1],
-        ),
+      store.filter((r) => live(r) && r.name === opts?.where?.name),
+    findOne: async ({ where }: { where: Record<string, unknown> }) =>
+      store.find(
+        (r) =>
+          live(r) &&
+          Object.entries(where).every(
+            ([key, value]) =>
+              key === 'deletedAt' ||
+              (r as unknown as Record<string, unknown>)[key] === value,
+          ),
       ) ?? null,
     save: async (row: ApplicationEntity) => row,
   };
@@ -106,11 +114,33 @@ describe('ShowcaseService', () => {
     const { service, wheres } = build([app({ tags: [SHOWCASE_TAG] })]);
     await service.list();
 
-    expect(wheres).toHaveLength(1);
     expect(wheres[0].clause).toContain('::jsonb');
     expect(Object.values(wheres[0].params)).toEqual([
       JSON.stringify([SHOWCASE_TAG]),
     ]);
+  });
+
+  it('leaves out an application that was deleted, though its row keeps the tag', async () => {
+    const { service, wheres } = build([
+      app({ tags: [SHOWCASE_TAG] }),
+      app({
+        id: 'a2',
+        slug: 'gone',
+        tags: [SHOWCASE_TAG],
+        deletedAt: new Date('2026-10-10T07:00:00Z'),
+      }),
+    ]);
+    const items = await service.list();
+    expect(items.map((i) => i.slug)).toEqual(['umami-29491d']);
+    expect(wheres.map((w) => w.clause)).toContain('app.deletedAt IS NULL');
+  });
+
+  it('does not find a deleted application by its slug or id', async () => {
+    const { service } = build([
+      app({ id: 'a2', slug: 'gone', deletedAt: new Date() }),
+    ]);
+    await expect(service.resolve('gone')).rejects.toThrow(/No application/);
+    await expect(service.publish('a2')).rejects.toThrow(/not found/);
   });
 
   it('is empty until an application carries the tag', async () => {
