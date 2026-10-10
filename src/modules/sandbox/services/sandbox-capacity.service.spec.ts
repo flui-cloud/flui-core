@@ -21,6 +21,8 @@ const config = loadSandboxConfig({
 
 interface World {
   warm?: number;
+  /** Ready areas left on a cluster the sandbox no longer points at. */
+  warmElsewhere?: number;
   live?: number;
   claimsLastHour?: number;
   claimsLastDay?: number;
@@ -51,7 +53,10 @@ const build = (world: World = {}) => {
           ? (world.claimsLastHour ?? 0)
           : (world.claimsLastDay ?? 0);
       }
-      return where.state === SandboxTenantState.READY ? warm : live;
+      if (where.state !== SandboxTenantState.READY) return live;
+      return where.clusterId === 'cluster-1'
+        ? warm
+        : warm + (world.warmElsewhere ?? 0);
     },
     find: async () =>
       Array.from({ length: warm + live }, (_, i) => ({
@@ -316,6 +321,10 @@ describe('what to build right now', () => {
     expect(
       await build({ warm: 3, claimsLastHour: 30, live: 1 }).missing(),
     ).toBe(0);
+  });
+
+  it('builds on the sandbox cluster though an area is still ready on another', async () => {
+    expect(await build({ warm: 0, warmElsewhere: 1 }).missing()).toBe(1);
   });
 
   it('never asks for a negative number of builds', async () => {

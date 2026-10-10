@@ -154,10 +154,20 @@ export class SandboxCapacityService {
   }
 
   /** Tenancies alive on the cluster: warm ones and held ones both cost the same. */
+  /**
+   * Only what is on the sandbox cluster. An area left on a cluster the sandbox
+   * no longer points at can never be handed out, so counting it as warm stops
+   * the refill while every first deploy waits for an area that never comes.
+   */
   private async counts(): Promise<{ warm: number; live: number }> {
+    const clusterId = this.config.clusterId ?? undefined;
     const [warm, live] = await Promise.all([
-      this.tenants.count({ where: { state: SandboxTenantState.READY } }),
-      this.tenants.count({ where: { state: SandboxTenantState.CLAIMED } }),
+      this.tenants.count({
+        where: { state: SandboxTenantState.READY, clusterId },
+      }),
+      this.tenants.count({
+        where: { state: SandboxTenantState.CLAIMED, clusterId },
+      }),
     ]);
     return { warm, live };
   }
@@ -170,10 +180,11 @@ export class SandboxCapacityService {
    * direction that oversubscribes the machine.
    */
   async footprint(kubeconfig: string): Promise<TenancyFootprint> {
+    const clusterId = this.config.clusterId ?? undefined;
     const living = await this.tenants.find({
       where: [
-        { state: SandboxTenantState.READY },
-        { state: SandboxTenantState.CLAIMED },
+        { state: SandboxTenantState.READY, clusterId },
+        { state: SandboxTenantState.CLAIMED, clusterId },
       ],
       select: { namespace: true },
       take: 10,
