@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { In, Repository } from 'typeorm';
+import { In, IsNull, Repository } from 'typeorm';
 import * as k8s from '@kubernetes/client-node';
 import { ApplicationEntity } from '../../../applications/entities/application.entity';
 import {
@@ -306,11 +306,12 @@ export class DrainFeasibilityService {
   ): Promise<DrainApplication[]> {
     const where =
       node.nodeType === NodeType.MASTER
-        ? { clusterId, persistenceScope: 'dedicated' }
+        ? { clusterId, persistenceScope: 'dedicated', deletedAt: IsNull() }
         : {
             clusterId,
             persistenceScope: 'dedicated',
             dedicatedNodeName: node.serverName,
+            deletedAt: IsNull(),
           };
     const rows = await this.applications.find({ where: where as never });
     return rows.map((row) => ({ id: row.id, slug: row.slug }));

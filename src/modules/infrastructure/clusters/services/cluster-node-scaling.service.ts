@@ -5,7 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { IsNull, Repository } from 'typeorm';
 import { ClusterEntity } from '../entities/cluster.entity';
 import { ClusterNodeEntity, NodeType } from '../entities/cluster-node.entity';
 import { NodePriceService } from './node-price.service';
@@ -523,6 +523,7 @@ export class ClusterNodeScalingService {
         where: {
           clusterId,
           persistenceScope: 'dedicated',
+          deletedAt: IsNull(),
         },
       });
     }
@@ -531,6 +532,7 @@ export class ClusterNodeScalingService {
       .where('a.clusterId = :clusterId', { clusterId })
       .andWhere('a.persistenceScope = :scope', { scope: 'dedicated' })
       .andWhere('a.dedicatedNodeName = :name', { name: node.serverName })
+      .andWhere('a.deletedAt IS NULL')
       .getMany();
   }
 

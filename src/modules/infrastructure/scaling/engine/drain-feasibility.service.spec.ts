@@ -3,6 +3,7 @@ jest.mock('@kubernetes/client-node', () => ({
   PolicyV1Api: class {},
 }));
 
+import { IsNull } from 'typeorm';
 import { DrainFeasibilityService } from './drain-feasibility.service';
 import {
   ClusterEntity,
@@ -245,6 +246,33 @@ describe('whether a node can be emptied', () => {
     expect(coreApi.listPodForAllNamespaces).toHaveBeenCalledWith({
       fieldSelector:
         'spec.nodeName=worker-2,status.phase!=Succeeded,status.phase!=Failed',
+    });
+  });
+
+  it('does not keep a node for an application that was deleted', async () => {
+    const find = jest.fn(async () => []);
+    const coreApi = {
+      listPodForAllNamespaces: jest.fn(async () => ({ items: [] })),
+      listPersistentVolume: jest.fn(async () => ({ items: [] })),
+      listPodDisruptionBudgetForAllNamespaces: jest.fn(async () => ({
+        items: [],
+      })),
+    };
+    const service = new DrainFeasibilityService(
+      { find } as never,
+      { makeKubeConfig: () => ({ makeApiClient: () => coreApi }) } as never,
+      { decrypt: () => 'kubeconfig' } as never,
+    );
+
+    const check = await service.check(cluster(), leaving);
+
+    expect(check?.ok).toBe(true);
+    const [{ where }] = find.mock.calls[0] as unknown as [
+      { where: Record<string, unknown> },
+    ];
+    expect(where).toMatchObject({
+      dedicatedNodeName: 'worker-2',
+      deletedAt: IsNull(),
     });
   });
 
