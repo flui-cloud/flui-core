@@ -40,6 +40,9 @@ import {
   ScheduledJobEntity,
   ScheduledJobOrigin,
 } from '../entities/scheduled-job.entity';
+import { applyAppManifest } from '../utils/app-manifest-scope';
+import { assertSecretReferences } from '../utils/secret-reference.policy';
+import { withGuestRuntime } from '../utils/guest-runtime';
 
 const RESOURCE_LABEL = 'flui.cloud/resource';
 
@@ -305,8 +308,15 @@ export class ScheduledJobsService {
       );
     }
 
-    const manifest = this.manifestGenerator.generateCronJob(
+    assertSecretReferences(
       app,
+      await this.applicationsRepository.findNamespaceNeighbours(
+        app.clusterId,
+        app.k8sNamespace,
+      ),
+    );
+    const manifest = this.manifestGenerator.generateCronJob(
+      withGuestRuntime(app),
       {
         name: spec.resourceName,
         displayName: spec.displayName,
@@ -321,7 +331,12 @@ export class ScheduledJobsService {
     );
 
     try {
-      await this.kubernetesService.applyManifest(kubeconfig, manifest.yaml);
+      await applyAppManifest(
+        this.kubernetesService,
+        kubeconfig,
+        manifest.yaml,
+        app.k8sNamespace,
+      );
     } catch (err) {
       // The cluster's answer carries its own request body and headers; it is
       // logged for the operator and never handed to the person.

@@ -19,6 +19,10 @@ import { AppOwnershipGuard } from '../guards/app-ownership.guard';
 import { PlatformFoundationGuard } from '../guards/platform-foundation.guard';
 import { DbBackupInfo, DbBackupService } from '../services/db-backup.service';
 import { DataDoor } from '../../iam/decorators/data-door.decorator';
+import {
+  GUEST_STORAGE_REFUSAL,
+  isSandboxGuestRequest,
+} from '../../sandbox/guards/sandbox-guest-request';
 
 /**
  * Logical DB backup/restore (pg_dump/mariadb-dump). `info` reports whether the engine is
@@ -56,6 +60,10 @@ export class DbBackupController {
     }
     // Destination → store the dump in S3 (engine-agnostic) and return the object ref as JSON.
     if (destinationId) {
+      if (isSandboxGuestRequest(req)) {
+        res.status(403).json({ message: GUEST_STORAGE_REFUSAL });
+        return;
+      }
       const result = await this.backup.dumpToDestination(input, destinationId);
       res.status(201).json(result);
       return;

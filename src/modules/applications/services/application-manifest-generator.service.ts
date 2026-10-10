@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { ApplicationEntity } from '../entities/application.entity';
@@ -14,6 +14,10 @@ import { getProjectPath } from '../../../common/utils/project-root.util';
 import { FrameworkType } from '../../frameworks/framework-core/enums/framework-type.enum';
 import { EncryptionService } from '../../shared/encryption/services/encryption.service';
 import { renderableEnv } from '../utils/env-write.util';
+import {
+  assertManifestInputs,
+  cronInputProblems,
+} from '../utils/manifest-input.guard';
 import { ENV_HASH_ANNOTATION, envHashOf } from '../utils/env-hash.util';
 
 export interface GeneratedManifest {
@@ -215,6 +219,9 @@ export class ApplicationManifestGeneratorService {
     imageRefOverride?: string,
   ): GeneratedManifest[] {
     const config = app.sourceConfig as DockerImageSourceConfig;
+    assertManifestInputs(app, {
+      imageRef: this.resolveDeployImageRef(app, config, imageRefOverride),
+    });
     const manifests: GeneratedManifest[] = [];
 
     // Apply order matters: dependencies (ConfigMap/Secret/PVC) must exist
@@ -512,6 +519,13 @@ export class ApplicationManifestGeneratorService {
   ): GeneratedManifest {
     const config = app.sourceConfig as DockerImageSourceConfig;
     const imageRef = this.resolveDeployImageRef(app, config, imageRefOverride);
+    assertManifestInputs(app, { imageRef });
+    const cronProblems = cronInputProblems(spec);
+    if (cronProblems.length) {
+      throw new BadRequestException(
+        `This schedule cannot be deployed: ${cronProblems.join('; ')}`,
+      );
+    }
 
     const labels = {
       ...this.buildLabels(app),
@@ -530,13 +544,10 @@ export class ApplicationManifestGeneratorService {
       ? `  timeZone: ${JSON.stringify(spec.timezone)}`
       : '';
 
-    const escapedCommand = spec.command
-      .replaceAll('\\', '\\\\')
-      .replaceAll('"', '\\"');
     const commandBlock = [
       '              command: ["/bin/sh", "-c"]',
       '              args:',
-      `                - "${escapedCommand}"`,
+      `                - ${JSON.stringify(spec.command)}`,
     ].join('\n');
 
     const template = this.loadTemplate('cronjob.yaml');
@@ -694,6 +705,7 @@ export class ApplicationManifestGeneratorService {
   autoscalerFor(app: ApplicationEntity): GeneratedManifest | null {
     if (!app.scaling?.enabled || app.workloadKind === 'StatefulSet')
       return null;
+    assertManifestInputs(app);
     return this.generateHpa(app);
   }
 
@@ -776,7 +788,10 @@ export class ApplicationManifestGeneratorService {
     indent = 4,
   ): string {
     return Object.entries(labels)
-      .map(([k, v]) => `${' '.repeat(indent)}${k}: "${v}"`)
+      .map(
+        ([k, v]) =>
+          `${' '.repeat(indent)}${JSON.stringify(k)}: ${JSON.stringify(String(v))}`,
+      )
       .join('\n');
   }
 
@@ -875,7 +890,12 @@ export class ApplicationManifestGeneratorService {
   private renderPodSecurityContextBlock(app: ApplicationEntity): string {
     const sc = app.securityContext;
     if (!sc) return '';
-    const lines: string[] = ['      securityContext:'];
+    const lines: string[] = [
+      ...(sc.guestBaseline
+        ? ['      automountServiceAccountToken: false']
+        : []),
+      '      securityContext:',
+    ];
     if (sc.fsGroup !== undefined) {
       lines.push(
         `        fsGroup: ${sc.fsGroup}`,
@@ -888,15 +908,24 @@ export class ApplicationManifestGeneratorService {
       lines.push(`        runAsGroup: ${sc.runAsGroup}`);
     if (sc.runAsNonRoot !== undefined)
       lines.push(`        runAsNonRoot: ${sc.runAsNonRoot}`);
-    if (sc.hardened) {
+    if (sc.hardened || sc.guestBaseline) {
       lines.push('        seccompProfile:', '          type: RuntimeDefault');
     }
-    return lines.length > 1 ? lines.join('\n') : '';
+    return lines.at(-1) !== '      securityContext:' ? lines.join('\n') : '';
   }
 
   /** Container-level securityContext, only when `hardened`: drop all caps, no privilege escalation. */
   private renderContainerSecurityContextBlock(app: ApplicationEntity): string {
-    if (!app.securityContext?.hardened) return '';
+    if (!app.securityContext?.hardened) {
+      if (!app.securityContext?.guestBaseline) return '';
+      return [
+        '          securityContext:',
+        '            allowPrivilegeEscalation: false',
+        '            capabilities:',
+        '              drop:',
+        '                - NET_RAW',
+      ].join('\n');
+    }
     return [
       '          securityContext:',
       '            allowPrivilegeEscalation: false',
@@ -917,13 +946,10 @@ export class ApplicationManifestGeneratorService {
     }
     const startCommand = this.getStartCommandOverride(app);
     if (!startCommand) return '';
-    const escaped = startCommand
-      .replaceAll('\\', String.raw`\\`)
-      .replaceAll('"', String.raw`\"`);
     return (
       '          command: ["/bin/sh", "-c"]\n' +
       '          args:\n' +
-      `            - "${escaped}"`
+      `            - ${JSON.stringify(startCommand)}`
     );
   }
 

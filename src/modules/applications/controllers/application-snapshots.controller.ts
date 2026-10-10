@@ -11,6 +11,7 @@ import {
   HttpStatus,
   UseGuards,
   BadRequestException,
+  ForbiddenException,
 } from '@nestjs/common';
 import { Request } from 'express';
 import {
@@ -34,6 +35,10 @@ import { ActionCycle } from '../../action-cycle/action-cycle.decorator';
 import { DataDoor } from '../../iam/decorators/data-door.decorator';
 import { RequirePermission } from '../../iam/decorators/require-permission.decorator';
 import { IAM_PERMISSION } from '../../iam/constants/iam-permissions';
+import {
+  GUEST_STORAGE_REFUSAL,
+  isSandboxGuestRequest,
+} from '../../sandbox/guards/sandbox-guest-request';
 
 @ApiTags('Applications')
 @ApiBearerAuth()
@@ -410,6 +415,9 @@ export class ApplicationSnapshotsController {
       pause?: boolean;
     } = {},
   ) {
+    if (isSandboxGuestRequest(req)) {
+      throw new ForbiddenException(GUEST_STORAGE_REFUSAL);
+    }
     const userId = (req.user as AuthenticatedUser | undefined)?.userId;
     return this.volumeBackupsService.startForApp({
       applicationId: id,

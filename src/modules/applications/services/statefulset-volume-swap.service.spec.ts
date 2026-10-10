@@ -80,7 +80,12 @@ class FakeCluster {
       if (v === null) delete obj.spec[k];
       else obj.spec[k] = v;
     }
-    if (patch.kind === 'PersistentVolume' && patch.spec?.claimRef === null) {
+    if (
+      patch.kind === 'PersistentVolume' &&
+      patch.spec &&
+      'claimRef' in patch.spec &&
+      !patch.spec.claimRef?.uid
+    ) {
       obj.status.phase = 'Available';
     }
   });
@@ -100,6 +105,13 @@ class FakeCluster {
     const pv = this.get('PersistentVolume', obj.spec.volumeName);
     if (pv?.status.phase !== 'Available')
       throw new Error(`${obj.spec.volumeName} is not available`);
+    const reserved = pv.spec.claimRef;
+    if (
+      reserved?.name &&
+      (reserved.name !== obj.metadata.name ||
+        reserved.namespace !== obj.metadata.namespace)
+    )
+      throw new Error(`${obj.spec.volumeName} is reserved for another claim`);
     pv.spec.claimRef = {
       name: obj.metadata.name,
       namespace: obj.metadata.namespace,
@@ -134,6 +146,24 @@ describe('StatefulSetVolumeSwapService', () => {
     appId: 'app-1',
     now: new Date('2026-09-27T10:00:00Z'),
   };
+
+  it('never opens a released volume to any claim, only to the one it is meant for (F-112)', async () => {
+    const cluster = new FakeCluster();
+    await new StatefulSetVolumeSwapService(cluster as never).swap(input);
+    const releases = cluster.mergePatchObject.mock.calls
+      .map(([, patch]) => patch)
+      .filter(
+        (patch: any) =>
+          patch.kind === 'PersistentVolume' && 'claimRef' in (patch.spec ?? {}),
+      );
+    expect(releases.length).toBeGreaterThan(0);
+    for (const patch of releases) {
+      expect(patch.spec.claimRef).toMatchObject({
+        namespace: 'db',
+        name: expect.any(String),
+      });
+    }
+  });
 
   it('puts the restored data under the claim the database uses and keeps the old data', async () => {
     const cluster = new FakeCluster();

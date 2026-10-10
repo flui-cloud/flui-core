@@ -156,3 +156,33 @@ describe('an application seen without its data', () => {
     );
   });
 });
+
+describe('a showcase application seen without its data (F-097)', () => {
+  const dto = {
+    env: [{ name: 'TOKEN', value: 's3cret' }],
+    sourceConfig: { type: 'docker_image', imageRef: 'x:1' },
+    userId: 'operator-1',
+    ownerRef: 'operator',
+    k8sNamespace: 'operator-ns',
+    clusterId: 'cluster-1',
+  };
+
+  it('tells neither who owns it nor where it runs', () => {
+    const shown = withholdDataFrom(dto, { dataAccess: false, showcase: true });
+    expect(shown).toMatchObject({
+      userId: null,
+      ownerRef: null,
+      k8sNamespace: null,
+      clusterId: null,
+    });
+    expect(shown.env![0].value).toBe('');
+  });
+
+  it('keeps placement for someone without data on an ordinary application', () => {
+    const shown = withholdDataFrom(dto, { dataAccess: false, showcase: false });
+    expect(shown).toMatchObject({
+      k8sNamespace: 'operator-ns',
+      clusterId: 'cluster-1',
+    });
+  });
+});

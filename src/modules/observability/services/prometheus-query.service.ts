@@ -1,11 +1,13 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { safeStep } from '../utils/safe-step';
 import axios, { AxiosInstance } from 'axios';
 import {
   PrometheusInstantQueryResponse,
   PrometheusRangeQueryResponse,
   PrometheusQueryResult,
 } from '../interfaces/prometheus-response.interface';
+import { promString } from '../utils/promql';
 
 /**
  * Prometheus Query Service
@@ -90,8 +92,8 @@ export class PrometheusQueryService {
     serverId?: string,
   ): Promise<number | null> {
     const labelFilter = serverId
-      ? `cluster_id="${clusterId}",server_id="${serverId}"`
-      : `cluster_id="${clusterId}"`;
+      ? `cluster_id="${promString(clusterId)}",server_id="${promString(serverId)}"`
+      : `cluster_id="${promString(clusterId)}"`;
     const query = serverId
       ? `100 - (avg by (instance) (rate(node_cpu_seconds_total{mode="idle",${labelFilter}}[5m])) * 100)`
       : `100 - (avg(rate(node_cpu_seconds_total{mode="idle",${labelFilter}}[5m])) * 100)`;
@@ -123,8 +125,8 @@ export class PrometheusQueryService {
     serverId?: string,
   ): Promise<number | null> {
     const labelFilter = serverId
-      ? `cluster_id="${clusterId}",server_id="${serverId}"`
-      : `cluster_id="${clusterId}"`;
+      ? `cluster_id="${promString(clusterId)}",server_id="${promString(serverId)}"`
+      : `cluster_id="${promString(clusterId)}"`;
     const query = serverId
       ? `100 * (1 - (node_memory_MemAvailable_bytes{${labelFilter}} / node_memory_MemTotal_bytes{${labelFilter}}))`
       : `100 * (1 - sum(node_memory_MemAvailable_bytes{${labelFilter}}) / sum(node_memory_MemTotal_bytes{${labelFilter}}))`;
@@ -154,8 +156,8 @@ export class PrometheusQueryService {
     serverId?: string,
   ): Promise<number | null> {
     const labelFilter = serverId
-      ? `cluster_id="${clusterId}",server_id="${serverId}"`
-      : `cluster_id="${clusterId}"`;
+      ? `cluster_id="${promString(clusterId)}",server_id="${promString(serverId)}"`
+      : `cluster_id="${promString(clusterId)}"`;
     const query = serverId
       ? `100 - ((node_filesystem_avail_bytes{${labelFilter},mountpoint="/"} / node_filesystem_size_bytes{${labelFilter},mountpoint="/"}) * 100)`
       : `100 - (sum(node_filesystem_avail_bytes{${labelFilter},mountpoint="/"}) / sum(node_filesystem_size_bytes{${labelFilter},mountpoint="/"}) * 100)`;
@@ -181,8 +183,8 @@ export class PrometheusQueryService {
     serverId?: string,
   ): Promise<number | null> {
     const labelFilter = serverId
-      ? `cluster_id="${clusterId}",server_id="${serverId}"`
-      : `cluster_id="${clusterId}"`;
+      ? `cluster_id="${promString(clusterId)}",server_id="${promString(serverId)}"`
+      : `cluster_id="${promString(clusterId)}"`;
     const query = `node_memory_MemTotal_bytes{${labelFilter}}`;
 
     const result = await this.queryInstant(query);
@@ -206,8 +208,8 @@ export class PrometheusQueryService {
     serverId?: string,
   ): Promise<number | null> {
     const labelFilter = serverId
-      ? `cluster_id="${clusterId}",server_id="${serverId}"`
-      : `cluster_id="${clusterId}"`;
+      ? `cluster_id="${promString(clusterId)}",server_id="${promString(serverId)}"`
+      : `cluster_id="${promString(clusterId)}"`;
     const query = `node_filesystem_size_bytes{${labelFilter},mountpoint="/"}`;
 
     const result = await this.queryInstant(query);
@@ -231,8 +233,8 @@ export class PrometheusQueryService {
     serverId?: string,
   ): Promise<number | null> {
     const labelFilter = serverId
-      ? `cluster_id="${clusterId}",server_id="${serverId}"`
-      : `cluster_id="${clusterId}"`;
+      ? `cluster_id="${promString(clusterId)}",server_id="${promString(serverId)}"`
+      : `cluster_id="${promString(clusterId)}"`;
     const query = `sum by (instance, server_id) (rate(node_network_receive_bytes_total{${labelFilter},device!~"lo|cni.*|veth.*|flannel.*|docker.*|kube-ipvs.*|tunl.*|cilium.*|nodelocaldns.*|dummy.*"}[5m]))`;
 
     const result = await this.queryInstant(query);
@@ -256,8 +258,8 @@ export class PrometheusQueryService {
     serverId?: string,
   ): Promise<number | null> {
     const labelFilter = serverId
-      ? `cluster_id="${clusterId}",server_id="${serverId}"`
-      : `cluster_id="${clusterId}"`;
+      ? `cluster_id="${promString(clusterId)}",server_id="${promString(serverId)}"`
+      : `cluster_id="${promString(clusterId)}"`;
     const query = `sum by (instance, server_id) (rate(node_network_transmit_bytes_total{${labelFilter},device!~"lo|cni.*|veth.*|flannel.*|docker.*|kube-ipvs.*|tunl.*|cilium.*|nodelocaldns.*|dummy.*"}[5m]))`;
 
     const result = await this.queryInstant(query);
@@ -281,8 +283,8 @@ export class PrometheusQueryService {
     serverId?: string,
   ): Promise<number | null> {
     const labelFilter = serverId
-      ? `cluster_id="${clusterId}",server_id="${serverId}"`
-      : `cluster_id="${clusterId}"`;
+      ? `cluster_id="${promString(clusterId)}",server_id="${promString(serverId)}"`
+      : `cluster_id="${promString(clusterId)}"`;
     const query = `count(node_cpu_seconds_total{${labelFilter},mode="idle"})`;
 
     const result = await this.queryInstant(query);
@@ -306,8 +308,8 @@ export class PrometheusQueryService {
     serverId?: string,
   ): Promise<number | null> {
     const labelFilter = serverId
-      ? `cluster_id="${clusterId}",server_id="${serverId}"`
-      : `cluster_id="${clusterId}"`;
+      ? `cluster_id="${promString(clusterId)}",server_id="${promString(serverId)}"`
+      : `cluster_id="${promString(clusterId)}"`;
     const query = `node_memory_MemTotal_bytes{${labelFilter}} - node_memory_MemAvailable_bytes{${labelFilter}}`;
 
     const result = await this.queryInstant(query);
@@ -331,8 +333,8 @@ export class PrometheusQueryService {
     serverId?: string,
   ): Promise<number | null> {
     const labelFilter = serverId
-      ? `cluster_id="${clusterId}",server_id="${serverId}"`
-      : `cluster_id="${clusterId}"`;
+      ? `cluster_id="${promString(clusterId)}",server_id="${promString(serverId)}"`
+      : `cluster_id="${promString(clusterId)}"`;
     const query = `node_memory_MemAvailable_bytes{${labelFilter}}`;
 
     const result = await this.queryInstant(query);
@@ -356,8 +358,8 @@ export class PrometheusQueryService {
     serverId?: string,
   ): Promise<number | null> {
     const labelFilter = serverId
-      ? `cluster_id="${clusterId}",server_id="${serverId}"`
-      : `cluster_id="${clusterId}"`;
+      ? `cluster_id="${promString(clusterId)}",server_id="${promString(serverId)}"`
+      : `cluster_id="${promString(clusterId)}"`;
     const query = `node_filesystem_size_bytes{${labelFilter},mountpoint="/"} - node_filesystem_avail_bytes{${labelFilter},mountpoint="/"}`;
 
     const result = await this.queryInstant(query);
@@ -381,8 +383,8 @@ export class PrometheusQueryService {
     serverId?: string,
   ): Promise<number | null> {
     const labelFilter = serverId
-      ? `cluster_id="${clusterId}",server_id="${serverId}"`
-      : `cluster_id="${clusterId}"`;
+      ? `cluster_id="${promString(clusterId)}",server_id="${promString(serverId)}"`
+      : `cluster_id="${promString(clusterId)}"`;
     const query = `node_filesystem_avail_bytes{${labelFilter},mountpoint="/"}`;
 
     const result = await this.queryInstant(query);
@@ -406,8 +408,8 @@ export class PrometheusQueryService {
     serverId?: string,
   ): Promise<{ load1: number; load5: number; load15: number } | null> {
     const labelFilter = serverId
-      ? `cluster_id="${clusterId}",server_id="${serverId}"`
-      : `cluster_id="${clusterId}"`;
+      ? `cluster_id="${promString(clusterId)}",server_id="${promString(serverId)}"`
+      : `cluster_id="${promString(clusterId)}"`;
 
     const [load1Result, load5Result, load15Result] = await Promise.all([
       this.queryInstant(`node_load1{${labelFilter}}`),
@@ -441,8 +443,8 @@ export class PrometheusQueryService {
     serverId?: string,
   ): Promise<number | null> {
     const labelFilter = serverId
-      ? `cluster_id="${clusterId}",server_id="${serverId}"`
-      : `cluster_id="${clusterId}"`;
+      ? `cluster_id="${promString(clusterId)}",server_id="${promString(serverId)}"`
+      : `cluster_id="${promString(clusterId)}"`;
     const query = `time() - node_boot_time_seconds{${labelFilter}}`;
 
     const result = await this.queryInstant(query);
@@ -519,18 +521,21 @@ export class PrometheusQueryService {
     >
   > {
     const lf = serverId
-      ? `cluster_id="${clusterId}",server_id="${serverId}"`
-      : `cluster_id="${clusterId}"`;
+      ? `cluster_id="${promString(clusterId)}",server_id="${promString(serverId)}"`
+      : `cluster_id="${promString(clusterId)}"`;
 
+    // The busiest minute of each step: one sample of a five-minute average
+    // showed a node at the limit for a minute as half-loaded.
+    const span = safeStep(step);
     const [cpuRes, memRes, diskRes, netInRes, netOutRes] = await Promise.all([
       this.queryRange(
-        `100 - (avg by (instance, server_id) (rate(node_cpu_seconds_total{mode="idle",${lf}}[5m])) * 100)`,
+        `max_over_time((100 - (avg by (instance, server_id) (rate(node_cpu_seconds_total{mode="idle",${lf}}[1m])) * 100))[${span}:30s])`,
         start,
         end,
         step,
       ),
       this.queryRange(
-        `100 * (1 - (node_memory_MemAvailable_bytes{${lf}} / node_memory_MemTotal_bytes{${lf}}))`,
+        `max_over_time((100 * (1 - (node_memory_MemAvailable_bytes{${lf}} / node_memory_MemTotal_bytes{${lf}})))[${span}:30s])`,
         start,
         end,
         step,
@@ -542,13 +547,13 @@ export class PrometheusQueryService {
         step,
       ),
       this.queryRange(
-        `sum by (instance, server_id) (rate(node_network_receive_bytes_total{${lf},device!~"lo|cni.*|veth.*|flannel.*|docker.*|kube-ipvs.*|tunl.*|cilium.*|nodelocaldns.*|dummy.*"}[5m]))`,
+        `max_over_time(sum by (instance, server_id) (rate(node_network_receive_bytes_total{${lf},device!~"lo|cni.*|veth.*|flannel.*|docker.*|kube-ipvs.*|tunl.*|cilium.*|nodelocaldns.*|dummy.*|flui.*|wg.*"}[1m]))[${span}:30s])`,
         start,
         end,
         step,
       ),
       this.queryRange(
-        `sum by (instance, server_id) (rate(node_network_transmit_bytes_total{${lf},device!~"lo|cni.*|veth.*|flannel.*|docker.*|kube-ipvs.*|tunl.*|cilium.*|nodelocaldns.*|dummy.*"}[5m]))`,
+        `max_over_time(sum by (instance, server_id) (rate(node_network_transmit_bytes_total{${lf},device!~"lo|cni.*|veth.*|flannel.*|docker.*|kube-ipvs.*|tunl.*|cilium.*|nodelocaldns.*|dummy.*|flui.*|wg.*"}[1m]))[${span}:30s])`,
         start,
         end,
         step,
@@ -673,8 +678,8 @@ export class PrometheusQueryService {
     >
   > {
     const lf = serverId
-      ? `cluster_id="${clusterId}",server_id="${serverId}"`
-      : `cluster_id="${clusterId}"`;
+      ? `cluster_id="${promString(clusterId)}",server_id="${promString(serverId)}"`
+      : `cluster_id="${promString(clusterId)}"`;
 
     const [
       cpuRes,
@@ -864,8 +869,8 @@ export class PrometheusQueryService {
     serverId?: string,
   ): Promise<PrometheusQueryResult[]> {
     const labelFilter = serverId
-      ? `cluster_id="${clusterId}",server_id="${serverId}"`
-      : `cluster_id="${clusterId}"`;
+      ? `cluster_id="${promString(clusterId)}",server_id="${promString(serverId)}"`
+      : `cluster_id="${promString(clusterId)}"`;
     const query = `up{${labelFilter}}`;
 
     const result = await this.queryInstant(query);
@@ -893,8 +898,8 @@ export class PrometheusQueryService {
     serverId?: string,
   ): Promise<PrometheusQueryResult[]> {
     const labelFilter = serverId
-      ? `cluster_id="${clusterId}",server_id="${serverId}"`
-      : `cluster_id="${clusterId}"`;
+      ? `cluster_id="${promString(clusterId)}",server_id="${promString(serverId)}"`
+      : `cluster_id="${promString(clusterId)}"`;
     const query = `up{${labelFilter}}`;
 
     const result = await this.queryRange(query, start, end, step);

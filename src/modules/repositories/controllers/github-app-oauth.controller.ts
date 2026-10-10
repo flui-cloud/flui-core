@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   Body,
+  ForbiddenException,
   Controller,
   Delete,
   Get,
@@ -32,6 +33,7 @@ import { GithubAppInstallStateService } from '../services/github-app-install-sta
 import { GithubAppUserAuthService } from '../services/github-app-user-auth.service';
 import { UserEventsGateway } from '../../auth/gateway/user-events.gateway';
 import { ConfigService } from '@nestjs/config';
+import { FluiRegistryPublisherService } from '../../flui-registry/services/flui-registry-publisher.service';
 
 const DEFAULT_DASHBOARD_URL = 'http://localhost:4200';
 const DEFAULT_POST_INSTALL_PATH = '/github/installed';
@@ -45,6 +47,7 @@ export class GithubAppOAuthController {
     private readonly userEvents: UserEventsGateway,
     private readonly configService: ConfigService,
     private readonly githubAppService: GitHubAppService,
+    private readonly registry: FluiRegistryPublisherService,
   ) {}
 
   // The instance's GitHub App installations — same credential, same right as
@@ -152,7 +155,10 @@ export class GithubAppOAuthController {
     const validatedCliCallback = cliCallback
       ? this.assertLocalLoopbackUrl(cliCallback)
       : undefined;
-    const state = this.stateStore.issue(user.userId, validatedCliCallback);
+    const state = await this.stateStore.issue(
+      user.userId,
+      validatedCliCallback,
+    );
     // Token but no installation → skip the OAuth re-prompt and send the user
     // straight to GitHub's install picker (it still fires OAuth on install).
     const installUrl = status.connected
@@ -192,8 +198,8 @@ export class GithubAppOAuthController {
     description:
       'Public endpoint: authentication is carried by the `state` query param, ' +
       'which was issued by /install-url for the authenticated Flui user. ' +
-      'On success, saves the user-to-server token, emits a WebSocket event to ' +
-      'the user, and redirects to the dashboard.',
+      'Saves nothing: what GitHub returned is held behind a one-time `claim` ' +
+      'that the dashboard or CLI posts to /claim while signed in.',
   })
   async callback(
     @Query('code') code: string,
@@ -217,7 +223,7 @@ export class GithubAppOAuthController {
       res.redirect(`${fallbackRedirect}?error=missing_state`);
       return;
     }
-    const consumed = this.stateStore.consume(state);
+    const consumed = await this.stateStore.consume(state);
     if (!consumed) {
       res.redirect(`${fallbackRedirect}?error=expired_state`);
       return;
@@ -232,26 +238,61 @@ export class GithubAppOAuthController {
       return;
     }
 
-    try {
-      const tokens = await this.userAuth.exchangeCode(code);
-      const stored = await this.userAuth.saveToken(
-        fluiUserId,
-        tokens,
-        installationId ?? null,
-      );
-      this.userEvents.emitGithubConnected(fluiUserId, {
-        githubLogin: stored.githubLogin,
-        installationId: stored.installationId,
-      });
-      res.redirect(
-        `${redirectTarget}?status=connected&login=${encodeURIComponent(stored.githubLogin)}`,
-      );
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      res.redirect(
-        `${redirectTarget}?error=exchange_failed&msg=${encodeURIComponent(msg)}`,
+    const claim = await this.stateStore.hold({
+      fluiUserId,
+      code,
+      installationId: installationId ?? null,
+    });
+    res.redirect(`${redirectTarget}?claim=${encodeURIComponent(claim)}`);
+  }
+
+  @Post('claim')
+  @ApiBearerAuth()
+  @RequirePermission(IAM_PERMISSION.APP_READ)
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Finish connecting GitHub, from the client that started it',
+    description:
+      'The callback holds what GitHub returned behind a one-time claim and hands it to the browser or CLI that ' +
+      'followed the link. The connection is saved only when the signed-in caller is the person who asked for ' +
+      'the install URL: a link sent to someone else connects nobody.',
+  })
+  async claim(
+    @Req() req: Request,
+    @Body() body: { claim?: string },
+  ): Promise<{ login: string; installationId: string | null }> {
+    const user = req.user as AuthenticatedUser | undefined;
+    if (!user?.userId) {
+      throw new BadRequestException('Authenticated user has no userId');
+    }
+    if (typeof body?.claim !== 'string' || !body.claim) {
+      throw new BadRequestException('claim is required');
+    }
+    const pending = await this.stateStore.take(body.claim);
+    if (!pending) {
+      throw new BadRequestException(
+        'This GitHub connection expired or was already finished: start it again.',
       );
     }
+    if (pending.fluiUserId !== user.userId) {
+      throw new ForbiddenException(
+        'This GitHub connection was started by someone else.',
+      );
+    }
+    const tokens = await this.userAuth.exchangeCode(pending.code);
+    const stored = await this.userAuth.saveToken(
+      user.userId,
+      tokens,
+      pending.installationId,
+    );
+    this.userEvents.emitGithubConnected(user.userId, {
+      githubLogin: stored.githubLogin,
+      installationId: stored.installationId,
+    });
+    return {
+      login: stored.githubLogin,
+      installationId: stored.installationId ?? null,
+    };
   }
 
   @Get('packages-pat/status')
@@ -264,7 +305,10 @@ export class GithubAppOAuthController {
     if (!user?.userId) {
       throw new BadRequestException('Authenticated user has no userId');
     }
-    return this.userAuth.getGhcrPatStatus(user.userId);
+    return {
+      ...(await this.userAuth.getGhcrPatStatus(user.userId)),
+      needed: !this.registry.host(),
+    };
   }
 
   @Post('packages-pat')

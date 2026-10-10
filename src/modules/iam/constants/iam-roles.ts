@@ -277,8 +277,9 @@ export const BUILTIN_ROLES: Record<IamRole, IamRoleDef> = {
     name: 'Showcase viewer',
     description:
       'Read-only over the applications the platform’s operators put on display, and nothing else.',
-    // `data:access` widens nothing: the guest also holds `sandbox`, which carries it.
-    permissions: [IAM_PERMISSION.APP_READ, IAM_PERMISSION.DATA_ACCESS],
+    // No `data:access`: the guest's own `sandbox` grant carries it only for the
+    // guest's area, so here it would open the operator's showcase data.
+    permissions: [IAM_PERMISSION.APP_READ],
     // Comes with a tenancy, like the role above it.
     assignable: false,
   },

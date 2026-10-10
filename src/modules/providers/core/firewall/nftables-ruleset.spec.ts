@@ -26,6 +26,31 @@ describe('renderFluiNftRuleset', () => {
     expect(out).toContain('hook output priority 0; policy accept;');
   });
 
+  it('keeps pods away from the shared storage export, locally and through the node (F-094)', () => {
+    const out = renderFluiNftRuleset([], HOST_OPTS);
+    const chain = (name: string) =>
+      out.slice(
+        out.indexOf(`chain ${name} {`),
+        out.indexOf('\t}', out.indexOf(`chain ${name} {`)),
+      );
+    const drop =
+      'ip saddr 10.42.0.0/16 meta l4proto { tcp, udp } th dport { 111, 2049 } drop';
+    for (const name of ['input', 'forward']) {
+      const body = chain(name);
+      expect(body).toContain(drop);
+      if (name === 'input') {
+        expect(body.indexOf(drop)).toBeLessThan(
+          body.indexOf('ip saddr 10.42.0.0/16 accept'),
+        );
+      }
+    }
+    expect(
+      renderFluiNftRuleset([], { ...HOST_OPTS, podCidr: '10.60.0.0/16' }),
+    ).toContain(
+      'ip saddr 10.60.0.0/16 meta l4proto { tcp, udp } th dport { 111, 2049 } drop',
+    );
+  });
+
   it('never opens kubelet or the VXLAN overlay to the internet', () => {
     // On a host-firewall cluster this ruleset is the only thing filtering, so an
     // unscoped accept publishes the kubelet API and the unauthenticated overlay.

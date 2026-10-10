@@ -86,7 +86,10 @@ describe('bringing the cluster to the stored range', () => {
     const manifests = {
       autoscalerFor: jest.fn((a: ApplicationEntity) =>
         a.scaling?.enabled
-          ? { name: 'whoami-hpa', yaml: 'kind: HorizontalPodAutoscaler' }
+          ? {
+              name: 'whoami-hpa',
+              yaml: 'kind: HorizontalPodAutoscaler\nmetadata:\n  namespace: user-x',
+            }
           : null,
       ),
     };
@@ -118,7 +121,7 @@ describe('bringing the cluster to the stored range', () => {
     );
     expect(kubernetes.applyManifest).toHaveBeenCalledWith(
       'kubeconfig',
-      'kind: HorizontalPodAutoscaler',
+      'kind: HorizontalPodAutoscaler\nmetadata:\n  namespace: user-x',
     );
   });
 
@@ -135,5 +138,20 @@ describe('bringing the cluster to the stored range', () => {
       'whoami-hpa',
       'user-x',
     );
+  });
+
+  it('keeps the API under its copy ceiling when the count follows the load', () => {
+    const api = {
+      ...imageApp(),
+      slug: 'flui-api',
+      k8sNamespace: 'flui-system',
+      systemProtected: true,
+    };
+    expect(() => nextScaling(api, { enabled: true, min: 2, max: 10 })).toThrow(
+      /FLUI_API_MAX_REPLICAS/,
+    );
+    expect(
+      rangeOf(nextScaling(api, { enabled: true, min: 2, max: 4 })),
+    ).toEqual(expect.objectContaining({ min: 2, max: 4 }));
   });
 });

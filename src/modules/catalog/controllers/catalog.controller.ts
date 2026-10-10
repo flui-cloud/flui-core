@@ -52,6 +52,8 @@ import { CatalogCapacityPreviewDto } from '../dto/catalog-capacity-preview.dto';
 import { ResourceAvailabilityResponseDto } from '../../infrastructure/clusters/dto/resource-availability.dto';
 import { ConnectClientDto } from '../dto/connect-client.dto';
 import { CatalogInstallEntity } from '../entities/catalog-install.entity';
+import { ApplicationEntity } from '../../applications/entities/application.entity';
+import { DependencyChoiceDto as DependencyChoice } from '../dto/dependency-choice.dto';
 
 @ApiTags('Catalog')
 @Controller('catalog')
@@ -120,8 +122,15 @@ export class CatalogController {
   async listReusableInstances(
     @Param('slug') slug: string,
     @Query('clusterId') clusterId: string,
+    @Req() req: Request,
   ): Promise<CatalogReusableInstanceDto[]> {
-    return this.dependencyResolver.findReusableInstances(slug, clusterId);
+    const user = req.user as AuthenticatedUser | undefined;
+    if (!user) throw new ForbiddenException('Unauthenticated');
+    return this.dependencyResolver.findReusableInstances(
+      slug,
+      clusterId,
+      (apps) => this.writableBy(user, apps),
+    );
   }
 
   @Public()
@@ -292,6 +301,7 @@ export class CatalogController {
     if (access.isSandbox) {
       stripSandboxInstallPlacement(installDto);
     }
+    await this.assertMayReuse(user, installDto.dependencyChoices);
     const { install } = await this.installer.install(
       definition.slug,
       installDto,
@@ -326,6 +336,7 @@ export class CatalogController {
     if (access.isSandbox) {
       stripSandboxInstallPlacement(dto);
     }
+    await this.assertMayReuse(user, dto.dependencyChoices);
     // The requirements↔cluster gate (incl. internal-hosting) now lives in
     // installer.install(), so every caller (HTTP, install-from-yaml, MCP) shares it.
     const { install } = await this.installer.install(
@@ -344,9 +355,16 @@ export class CatalogController {
   @ApiResponse({ status: 200, type: CatalogInstallResponseDto })
   async getInstall(
     @Param('id') id: string,
+    @Req() req: Request,
   ): Promise<CatalogInstallResponseDto> {
     const install = await this.installRepo.findById(id);
-    if (!install) {
+    if (
+      !install ||
+      !(await this.mayReadInstall(
+        req.user as AuthenticatedUser | undefined,
+        install,
+      ))
+    ) {
       throw new NotFoundException(`Install ${id} not found`);
     }
     return this.toResponse(install);
@@ -520,5 +538,56 @@ export class CatalogController {
       createdAt: install.createdAt,
       updatedAt: install.updatedAt,
     };
+  }
+
+  /** Applications the caller may change: only those can be wired into an install of theirs. */
+  private async writableBy(
+    user: AuthenticatedUser,
+    apps: ApplicationEntity[],
+  ): Promise<ApplicationEntity[]> {
+    if (user.isAdmin) return apps;
+    const allowed = await Promise.all(
+      apps.map((app) =>
+        this.applicationAccess.can(user, IAM_PERMISSION.APP_WRITE, app),
+      ),
+    );
+    return apps.filter((_, index) => allowed[index]);
+  }
+
+  /** Reusing an existing building block wires its credentials into a new app: it takes the right to change it. */
+  private async assertMayReuse(
+    user: AuthenticatedUser | undefined,
+    choices: DependencyChoice[] | undefined,
+  ): Promise<void> {
+    for (const choice of choices ?? []) {
+      if (!choice.existingApplicationId) continue;
+      const app = await this.applications.findById(
+        choice.existingApplicationId,
+      );
+      if (!app || !user || !(await this.writableBy(user, [app])).length) {
+        throw new ForbiddenException(
+          `Application ${choice.existingApplicationId} cannot be reused by you`,
+        );
+      }
+    }
+  }
+
+  /** An install is read by whoever started it, or by someone who may read what it created. */
+  private async mayReadInstall(
+    user: AuthenticatedUser | undefined,
+    install: { userId?: string; applicationIds?: string[] },
+  ): Promise<boolean> {
+    if (!user) return false;
+    if (user.isAdmin || (install.userId && install.userId === user.userId))
+      return true;
+    for (const id of install.applicationIds ?? []) {
+      const app = await this.applications.findById(id);
+      if (
+        app &&
+        (await this.applicationAccess.can(user, IAM_PERMISSION.APP_READ, app))
+      )
+        return true;
+    }
+    return false;
   }
 }

@@ -47,6 +47,7 @@ describe('EgressPolicyService', () => {
             deleted.push(`${kind}/${name}@${ns}`);
           },
         ),
+        listNodeAddresses: jest.fn(async () => ['203.0.113.10', '10.0.0.2']),
         listNamespaces: jest.fn(async () => [
           { metadata: { name: 'p-guest' } },
         ]),
@@ -117,5 +118,15 @@ describe('EgressPolicyService', () => {
     const { service } = build(null);
     const change = await service.change('c1', [{ port: 443, protocol: 'TCP' }]);
     expect(change).toMatchObject({ open: false, applied: 2, failed: [] });
+  });
+
+  it('keeps a guest area away from the cluster’s own nodes and carrier-grade ranges (F-101, F-113)', async () => {
+    const { service, applied } = build(null);
+    await service.setPolicy('c1', [{ port: 443, protocol: 'TCP' }]);
+    const guest = applied.find((y) => y.includes('namespace: p-guest'))!;
+    expect(guest).toContain('- 203.0.113.10/32');
+    expect(guest).toContain('- 100.64.0.0/10');
+    const team = applied.find((y) => y.includes('namespace: p-team'))!;
+    expect(team).not.toContain('203.0.113.10/32');
   });
 });

@@ -344,6 +344,7 @@ export class RabbitMqAdapter implements MessagingEngineAdapter {
 
   private client(params: MessagingConnectParams): AxiosInstance {
     return axios.create({
+      maxRedirects: 0,
       baseURL: `http://${params.host}:${params.port}`,
       timeout: 15_000,
       auth:

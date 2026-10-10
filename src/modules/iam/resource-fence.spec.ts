@@ -40,6 +40,7 @@ import { ClusterEntity } from '../infrastructure/clusters/entities/cluster.entit
 import { SANDBOX_SLOT_GATE } from '../sandbox/gate/sandbox-slot-gate';
 import { IamRoleBindingEntity } from './entities/iam-role-binding.entity';
 import { IamGroupEntity } from './entities/iam-group.entity';
+import { DataDoor } from './decorators/data-door.decorator';
 
 /**
  * The fence, exercised the way an attacker or an agent would: by calling the HTTP
@@ -153,6 +154,12 @@ const USERS: Record<string, AuthenticatedUser> = {
 class GatedAppController {
   @Get(':id')
   read(@Param('id') id: string) {
+    return { id };
+  }
+
+  @Get(':id/logs')
+  @DataDoor()
+  logs(@Param('id') id: string) {
     return { id };
   }
 
@@ -547,6 +554,13 @@ describe('resource fence (direct API calls)', () => {
       await http().get('/applications/app-showcase/db/query').expect(403);
     });
 
+    it("reads its own application's data, never the showcase's (F-097)", async () => {
+      asGuest();
+      await http().get('/applications/app-showcase').expect(200);
+      await http().get('/applications/app-showcase/logs').expect(403);
+      await http().get('/applications/app-a/logs').expect(200);
+    });
+
     it('still cannot reach a neighbour, tagged or not', async () => {
       asGuest();
       await http().get('/applications/app-b').expect(403);
@@ -568,9 +582,10 @@ describe('resource fence (direct API calls)', () => {
         showcase: true,
       });
       expect(res.body['demo-activity'].tabs).toEqual(
-        expect.arrayContaining(['overview', 'monitoring', 'logs']),
+        expect.arrayContaining(['overview', 'monitoring']),
       );
-      // The two tabs that render credentials are the ones that must not appear.
+      // Logs and the tabs that render credentials are data: never on the showcase (F-097).
+      expect(res.body['demo-activity'].tabs).not.toContain('logs');
       expect(res.body['demo-activity'].tabs).not.toContain('configuration');
       expect(res.body['demo-activity'].tabs).not.toContain('clients');
 
@@ -584,9 +599,9 @@ describe('resource fence (direct API calls)', () => {
     it('gains no permission beyond reading from being shown the showcase', async () => {
       // `viewer` would have carried cluster:read here, and a resource-less
       // permission check is satisfied by any scoped grant that holds it.
+      // Nor `data:access`: the guest's own grant carries it only for its area (F-097).
       expect(BUILTIN_ROLES[SHOWCASE_GRANT.role].permissions).toEqual([
         IAM_PERMISSION.APP_READ,
-        IAM_PERMISSION.DATA_ACCESS,
       ]);
     });
   });

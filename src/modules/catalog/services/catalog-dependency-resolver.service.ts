@@ -45,10 +45,15 @@ export class CatalogDependencyResolverService {
   async findReusableInstances(
     catalogSlug: string,
     clusterId: string,
+    visible: (
+      apps: ApplicationEntity[],
+    ) => Promise<ApplicationEntity[]> = async (apps) => apps,
   ): Promise<CatalogReusableInstanceDto[]> {
-    const apps = await this.applicationsRepo.findBuildingBlocksByCatalogSlug(
-      clusterId,
-      catalogSlug,
+    const apps = await visible(
+      await this.applicationsRepo.findBuildingBlocksByCatalogSlug(
+        clusterId,
+        catalogSlug,
+      ),
     );
     this.logger.log(
       `findReusableInstances(${catalogSlug}, ${clusterId}): ${apps.length} match(es)`,

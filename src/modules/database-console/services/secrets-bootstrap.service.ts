@@ -209,6 +209,7 @@ export class SecretsBootstrapService {
   ): AxiosInstance {
     const scheme = resolved.useTls ? 'https' : 'http';
     return axios.create({
+      maxRedirects: 0,
       baseURL: `${scheme}://127.0.0.1:${localPort}`,
       timeout: 15_000,
       validateStatus: () => true,

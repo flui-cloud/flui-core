@@ -48,15 +48,16 @@ export class SandboxProjectionInterceptor implements NestInterceptor {
 
     const pattern = (req.route as { path?: string } | undefined)?.path;
     const path = stripPrefix(pattern ?? req.path);
+    const route = pattern !== undefined;
 
     context
       .switchToHttp()
       .getResponse<Response>()
-      .setHeader(SANDBOX_LEVEL_HEADER, sandboxLevelOf(req.method, path));
+      .setHeader(SANDBOX_LEVEL_HEADER, sandboxLevelOf(req.method, path, route));
 
     // Served instead of the handler, never alongside it: the real one would
     // reach the instance's own provider, which is exactly what this replaces.
-    const standIn = findSandboxStandIn(req.method, path);
+    const standIn = findSandboxStandIn(req.method, path, route);
     if (standIn) {
       return of(
         standIn.build(
@@ -67,7 +68,7 @@ export class SandboxProjectionInterceptor implements NestInterceptor {
       );
     }
 
-    const rule = findSandboxProjection(req.method, path);
+    const rule = findSandboxProjection(req.method, path, route);
     if (!rule) return next.handle();
 
     return next

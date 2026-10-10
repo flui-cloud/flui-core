@@ -3,6 +3,7 @@ import {
   Logger,
   ServiceUnavailableException,
 } from '@nestjs/common';
+import { Cron } from '@nestjs/schedule';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { createHash } from 'node:crypto';
@@ -197,6 +198,20 @@ export class SharedStorageExportReconciler {
     private readonly subnetRepository: Repository<VNetSubnetEntity>,
     private readonly hostCommand: HostCommandService,
   ) {}
+
+  /**
+   * Every cluster with shared storage, once an hour on the copy that runs the
+   * scheduled work: the export a master was built with is brought to what this
+   * version decides, and a line already right is left untouched.
+   */
+  @Cron('23 * * * *')
+  async reconcileAll(): Promise<void> {
+    const clusters = await this.clusterRepository.find({
+      where: { sharedStorageEnabled: true, status: ClusterStatus.READY },
+      select: { id: true },
+    });
+    for (const { id } of clusters) this.reconcileSoon(id, 'the hourly check');
+  }
 
   /** Runs in the background after an event; the outcome lands on the cluster. */
   reconcileSoon(clusterId: string, why: string): void {

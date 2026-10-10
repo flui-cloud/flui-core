@@ -21,12 +21,12 @@ import { NodeType } from '../entities/cluster-node.entity';
 const OPTS = 'rw,async,no_subtree_check,no_root_squash';
 
 describe('sharedStorageExportNetworks', () => {
-  it('offers the private subnets and the pod range, nothing wider', () => {
+  it('offers the private subnets and nothing wider, never the pod range', () => {
     expect(
       sharedStorageExportNetworks({
         subnetRanges: ['10.0.1.0/24', '0.0.0.0/0', '::/0', '*', 'nope'],
       }),
-    ).toEqual(['10.0.1.0/24', '10.42.0.0/16']);
+    ).toEqual(['10.0.1.0/24']);
   });
 
   it('is empty when no private network is known, never a fallback to anyone', () => {
@@ -48,7 +48,6 @@ describe('sharedStorageExportNetworks', () => {
       '10.0.0.12/32',
       '172.20.1.5/32',
       '192.168.10.0/24',
-      '10.42.0.0/16',
     ]);
   });
 
@@ -262,11 +261,11 @@ describe('SharedStorageExportReconciler', () => {
       user: 'root',
     });
     expect(run.mock.calls[0][1]).toContain(
-      `LINE='/var/lib/flui/storage 10.0.1.0/24(${OPTS}) 10.42.0.0/16(${OPTS})'`,
+      `LINE='/var/lib/flui/storage 10.0.1.0/24(${OPTS})'`,
     );
     expect(record).toMatchObject({
       state: 'applied',
-      networks: ['10.0.1.0/24', '10.42.0.0/16'],
+      networks: ['10.0.1.0/24'],
       reason: null,
     });
     expect(current.value.metadata.sharedStorageExport.state).toBe('applied');
@@ -347,7 +346,6 @@ describe('SharedStorageExportReconciler', () => {
       '192.168.5.0/24',
       '192.168.5.10/32',
       '192.168.5.11/32',
-      '10.42.0.0/16',
     ]);
   });
 

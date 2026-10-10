@@ -234,14 +234,18 @@ export function installedReleaseEnv(
 /**
  * The export runs with no_root_squash, so a client list that falls back to
  * "anyone" hands root on the shared volume to the internet. Without a private
- * network there is nothing to share it with, and the list stays empty.
+ * network there is nothing to share it with, and the list stays empty. Nodes
+ * mount it from their own addresses; the pod range is never a client.
  */
 export function nfsAllowedNetworks(privateNetworks?: string[]): string {
   const networks = (privateNetworks ?? [])
     .map((n) => n?.trim())
-    .filter((n): n is string => !!n && CIDR_RE.test(n) && !ANYWHERE.has(n));
+    .filter(
+      (n): n is string =>
+        !!n && CIDR_RE.test(n) && !ANYWHERE.has(n) && n !== POD_NETWORK,
+    );
   if (!networks.length) return '';
-  return [...new Set([...networks, POD_NETWORK])].join(',');
+  return [...new Set(networks)].join(',');
 }
 
 @Injectable()

@@ -312,6 +312,7 @@ export class NatsAdapter implements MessagingEngineAdapter {
 
   connect(params: MessagingConnectParams): Promise<MessagingConnection> {
     const http = axios.create({
+      maxRedirects: 0,
       baseURL: `http://${params.host}:${params.port}`,
       timeout: 15_000,
     });

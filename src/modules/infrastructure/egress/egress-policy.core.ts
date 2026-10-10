@@ -33,7 +33,35 @@ const PRIVATE_RANGES = [
   '192.168.0.0/16',
   '169.254.0.0/16',
   '127.0.0.0/8',
+  '100.64.0.0/10',
+  '198.18.0.0/15',
 ];
+
+const IPV4_CIDR = /^(\d{1,3}\.){3}\d{1,3}\/\d{1,2}$/;
+
+/**
+ * What a guest area may never reach even though it is on the internet: the
+ * cluster's own nodes, whose host services (the API server, the exporters,
+ * the shared storage) answer on their public addresses too, and an overlay
+ * pool an operator placed outside the private ranges.
+ */
+export function guestExceptions(
+  nodeAddresses: string[],
+  overlayPool?: string | null,
+): string[] {
+  const hosts = nodeAddresses
+    .map((a) => a?.trim())
+    .filter((a): a is string => !!a && /^(\d{1,3}\.){3}\d{1,3}$/.test(a))
+    .map((a) => `${a}/32`);
+  const pool = overlayPool?.trim();
+  return [
+    ...new Set([
+      ...PRIVATE_RANGES,
+      ...(pool && IPV4_CIDR.test(pool) ? [pool] : []),
+      ...hosts,
+    ]),
+  ];
+}
 
 /** `80, 443, 53/udp` → ports; TCP unless a protocol is written after a slash. */
 export function parseEgressPorts(spec: string): EgressPort[] {
@@ -105,11 +133,17 @@ function portLines(ports: EgressPort[]): string {
 export function buildEgressNetworkPolicy(
   namespace: string,
   policy: EgressPolicy | null,
-  options: { isolated: boolean; internalCidrs: string[] },
+  options: {
+    isolated: boolean;
+    internalCidrs: string[];
+    exceptions?: string[];
+  },
 ): string | null {
   if (!policy && !options.isolated) return null;
 
-  const excepted = PRIVATE_RANGES.map((r) => '              - ' + r).join('\n');
+  const excepted = (options.exceptions ?? PRIVATE_RANGES)
+    .map((r) => '              - ' + r)
+    .join('\n');
   const internet = options.isolated
     ? `    - to:
         - ipBlock:

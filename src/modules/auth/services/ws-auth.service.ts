@@ -128,6 +128,23 @@ export class WsAuthService implements OnModuleInit {
   }
 
   private async verifyLocal(token: string): Promise<AuthenticatedUser> {
+    const user = await this.verifyLocalToken(token);
+    await this.refuseBlocked(user.userId);
+    return user;
+  }
+
+  /** A blocked person keeps no live socket, whatever token they still hold. */
+  private async refuseBlocked(userId: string): Promise<void> {
+    const person = await this.userRepo.findOne({
+      where: { id: userId },
+      select: { id: true, blockedAt: true },
+    });
+    if (person?.blockedAt) {
+      throw new UnauthorizedException('This account has been blocked');
+    }
+  }
+
+  private async verifyLocalToken(token: string): Promise<AuthenticatedUser> {
     try {
       const payload = await this.jwtService.verifyAsync<{
         sub: string;
@@ -194,6 +211,9 @@ export class WsAuthService implements OnModuleInit {
       throw new UnauthorizedException(
         'User not provisioned — sign in via HTTP first',
       );
+    }
+    if (user.blockedAt) {
+      throw new UnauthorizedException('This account has been blocked');
     }
     return {
       userId: user.id,

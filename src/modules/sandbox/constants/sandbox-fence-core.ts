@@ -32,15 +32,30 @@ export interface SandboxAllowRule {
 const SEGMENTS = (path: string): string[] =>
   path.split('/').filter((s) => s.length > 0);
 
-/** `:param` matches one segment, `**` matches the remainder (at least one). */
-export function routeMatches(pattern: string, path: string): boolean {
+/**
+ * `:param` matches one segment, `**` matches the remainder (at least one).
+ *
+ * With `route` set the path is the route the request reached, as Nest declares
+ * it (`/applications/:id/logs`), and `:param` in a rule then matches a
+ * parameter of the route and only that: a literal segment such as
+ * `/infrastructure/clusters/orphan-volumes` is a different route, not a value
+ * of `:id`, and must be named by a rule of its own to be admitted.
+ */
+export function routeMatches(
+  pattern: string,
+  path: string,
+  route = false,
+): boolean {
   const p = SEGMENTS(pattern);
   const t = SEGMENTS(path);
 
   for (let i = 0; i < p.length; i++) {
     if (p[i] === '**') return t.length > i;
     if (i >= t.length) return false;
-    if (p[i].startsWith(':')) continue;
+    if (p[i].startsWith(':')) {
+      if (route && !t[i].startsWith(':')) return false;
+      continue;
+    }
     if (p[i] !== t[i]) return false;
   }
   return p.length === t.length;

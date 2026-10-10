@@ -246,6 +246,7 @@ export class GarageS3Adapter implements ObjectStoreEngineAdapter {
     params: ObjectStoreAdminConnectParams,
   ): Promise<ObjectStoreAdminConnection> {
     const http = axios.create({
+      maxRedirects: 0,
       baseURL: `http://${params.host}:${params.port}`,
       timeout: 15_000,
       headers: { Authorization: `Bearer ${params.token}` },

@@ -25,6 +25,8 @@ import {
   ApplicationManifestGeneratorService,
   DEFAULT_TARGET_CPU,
 } from './application-manifest-generator.service';
+import { systemReplicasRefusal } from '../schedulers/platform-api-sizing';
+import { applyAppManifest } from '../utils/app-manifest-scope';
 
 const HPA_KIND = ApplicationResourceKind.HORIZONTAL_POD_AUTOSCALER as string;
 
@@ -61,7 +63,10 @@ export function rangeFromManifest(app: {
 
 /** The stored `scaling` once a change is applied, refused where it cannot hold. */
 export function nextScaling(
-  app: Pick<ApplicationEntity, 'scaling' | 'sourceType' | 'workloadKind'>,
+  app: Pick<ApplicationEntity, 'scaling' | 'sourceType' | 'workloadKind'> &
+    Partial<
+      Pick<ApplicationEntity, 'slug' | 'k8sNamespace' | 'systemProtected'>
+    >,
   dto: UpdateAutoscalingDto,
 ): ApplicationScaling {
   if (app.workloadKind === 'StatefulSet') {
@@ -81,6 +86,17 @@ export function nextScaling(
     throw new ConflictException(
       'This app is deployed from its flui.yaml, which holds its replica range: change `deploy.scaling` (min and max) there and deploy again. Only the CPU target can be changed here.',
     );
+  }
+  if (dto.enabled && app.slug && app.k8sNamespace) {
+    const subject = {
+      slug: app.slug,
+      k8sNamespace: app.k8sNamespace,
+      systemProtected: app.systemProtected,
+    };
+    const refused =
+      systemReplicasRefusal(subject, min) ??
+      systemReplicasRefusal(subject, max);
+    if (refused) throw new BadRequestException(refused);
   }
   if (dto.enabled && max <= min) {
     throw new BadRequestException(
@@ -159,7 +175,12 @@ export class AppAutoscalingService {
     const kubeconfig = await this.kubeconfigOf(app);
     const wanted = this.manifests.autoscalerFor(app);
     if (wanted) {
-      await this.kubernetes.applyManifest(kubeconfig, wanted.yaml);
+      await applyAppManifest(
+        this.kubernetes,
+        kubeconfig,
+        wanted.yaml,
+        app.k8sNamespace,
+      );
       this.logger.log(
         `[${app.id}] replica autoscaler applied (${wanted.name})`,
       );

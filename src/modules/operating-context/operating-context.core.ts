@@ -151,6 +151,14 @@ const PLACEMENT_AXES = ['clusterId', 'clusterName', 'provider'] as const;
  */
 const IDENTITY_AXES = ['type', 'kind', 'project', 'owner'] as const;
 
+function namesIdentity(selector: IamSelector): boolean {
+  return (
+    IDENTITY_AXES.some((a) => axis(selector, a) !== undefined) ||
+    !!selector.slugs?.length ||
+    !!selector.tags?.length
+  );
+}
+
 /** One place resources actually sit. `null` on an axis means "not recorded". */
 export interface Placement {
   clusterId?: string | null;
@@ -262,6 +270,13 @@ export function reachesReader(
     if (!g.permissions.has(q.permission)) return false;
     const scope = grantScope(g);
     if (!scope) return false;
+    // A note that names whose resources it is about (an application, a
+    // project, an owner, a tag) reaches a demo guest only when those are the
+    // guest's own: the permissive relation would let any other tenant's note
+    // through, since nothing on the guest's owner-only selector contradicts it.
+    if (access.isSandbox && namesIdentity(target) && !covers(scope, target)) {
+      return false;
+    }
     return q.nature === 'rationale'
       ? covers(scope, target)
       : reachesFrom(scope, target, placements);

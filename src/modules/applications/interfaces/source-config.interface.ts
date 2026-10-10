@@ -117,6 +117,13 @@ export interface ApplicationSecurityContext {
   runAsGroup?: number;
   runAsNonRoot?: boolean;
   hardened?: boolean;
+  /**
+   * Set by the platform, never stored, for a workload on the guests' cluster:
+   * the runtime's default syscall filter, no privilege escalation, no raw
+   * sockets and no service-account token, while still letting an ordinary
+   * image start as root.
+   */
+  guestBaseline?: boolean;
 }
 
 export interface ApplicationScaling {

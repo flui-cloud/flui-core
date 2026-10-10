@@ -39,20 +39,29 @@ export const SANDBOX_ALLOWLIST: SandboxAllowRule[] = [
   ...SANDBOX_ALLOW_EXAMPLE,
 ];
 
-const matching = (verb: string, path: string) =>
+const matching = (verb: string, path: string, route: boolean) =>
   SANDBOX_ALLOWLIST.filter(
     (rule) =>
       rule.verbs.includes(verb.toUpperCase() as HttpVerb) &&
-      routeMatches(rule.pattern, path),
+      routeMatches(rule.pattern, path, route),
   );
 
-export function isSandboxAllowed(verb: string, path: string): boolean {
-  return matching(verb, path).length > 0;
+/** `route`: the path is the matched route pattern, so `:param` matches parameters only. */
+export function isSandboxAllowed(
+  verb: string,
+  path: string,
+  route = false,
+): boolean {
+  return matching(verb, path, route).length > 0;
 }
 
 /** The level a guest gets on a route, for the declaration on the response. */
-export function sandboxLevelOf(verb: string, path: string): SandboxLevel {
-  const rule = matching(verb, path)[0];
+export function sandboxLevelOf(
+  verb: string,
+  path: string,
+  route = false,
+): SandboxLevel {
+  const rule = matching(verb, path, route)[0];
   return rule ? (rule.level ?? 'full') : 'closed';
 }
 
@@ -63,8 +72,10 @@ export function sandboxLevelOf(verb: string, path: string): SandboxLevel {
  * blanket "this is disabled in the sandbox", which contradicts the section open
  * in front of the person reading it.
  */
-export function isReadOnlyArea(path: string): boolean {
-  return SANDBOX_ALLOW_SHOWN.some((rule) => routeMatches(rule.pattern, path));
+export function isReadOnlyArea(path: string, route = false): boolean {
+  return SANDBOX_ALLOW_SHOWN.some((rule) =>
+    routeMatches(rule.pattern, path, route),
+  );
 }
 
 export const SANDBOX_READ_ONLY_WRITE_CODE = 'SANDBOX_READ_ONLY';

@@ -109,6 +109,19 @@ export class KubernetesService {
    * Use this when you need to instantiate k8s client classes directly
    * (e.g. k8s.Log for log streaming) rather than through getKubeClient().
    */
+  /** Every IPv4 address the cluster's nodes report, internal and external. */
+  async listNodeAddresses(kubeconfigContent: string): Promise<string[]> {
+    const core = this.makeKubeConfig(kubeconfigContent).makeApiClient(
+      k8s.CoreV1Api,
+    );
+    const nodes = await core.listNode();
+    return (nodes.items ?? []).flatMap((node) =>
+      (node.status?.addresses ?? [])
+        .filter((a) => a.type === 'ExternalIP' || a.type === 'InternalIP')
+        .map((a) => a.address),
+    );
+  }
+
   makeKubeConfig(kubeconfigContent: string): k8s.KubeConfig {
     return this.loadKubeconfig(kubeconfigContent);
   }
@@ -983,6 +996,16 @@ export class KubernetesService {
       namespace,
       fieldSelector: `involvedObject.name=${objectName}`,
     });
+    return response.items ?? [];
+  }
+
+  /** Every event the cluster still keeps for a namespace. */
+  async listEvents(
+    kubeconfigContent: string,
+    namespace: string,
+  ): Promise<k8s.CoreV1Event[]> {
+    const { coreApi } = this.getKubeClient(kubeconfigContent);
+    const response = await coreApi.listNamespacedEvent({ namespace });
     return response.items ?? [];
   }
 

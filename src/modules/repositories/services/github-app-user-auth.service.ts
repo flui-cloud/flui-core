@@ -75,7 +75,7 @@ export class GithubAppUserAuthService {
     if (status.connected && (status.installationsCount ?? 0) > 0) {
       return { alreadyConnected: true, login: status.login };
     }
-    const state = this.stateStore.issue(userId);
+    const state = await this.stateStore.issue(userId);
     const installUrl = status.connected
       ? await this.buildInstallOnlyUrl(state)
       : await this.buildInstallUrl(state);
@@ -197,17 +197,14 @@ export class GithubAppUserAuthService {
     const octokit = new Octokit({ auth: tokens.accessToken });
     const { data: ghUser } = await octokit.users.getAuthenticated();
 
-    let resolvedInstallationId = installationId;
-    if (!resolvedInstallationId) {
-      const discovered = await this.discoverInstallation(
-        octokit,
-        fluiUserId,
-        ghUser.login,
-      );
-      if (discovered) {
-        resolvedInstallationId = String(discovered);
-      }
-    }
+    const reachable = await this.persistAccessibleInstallations(
+      octokit,
+      fluiUserId,
+      ghUser.login,
+    );
+    const chosen =
+      reachable.find((id) => String(id) === installationId) ?? reachable[0];
+    const resolvedInstallationId = chosen === undefined ? null : String(chosen);
 
     const now = Date.now();
     const expiresAt = tokens.expiresIn
@@ -307,19 +304,6 @@ export class GithubAppUserAuthService {
     }
   }
 
-  private async discoverInstallation(
-    octokit: Octokit,
-    fluiUserId: string,
-    login: string,
-  ): Promise<number | null> {
-    const installations = await this.persistAccessibleInstallations(
-      octokit,
-      fluiUserId,
-      login,
-    );
-    return installations[0] ?? null;
-  }
-
   /**
    * Re-fetches all GitHub App installations accessible to the user's stored
    * OAuth token and upserts each into the installations table. Use this to
@@ -375,11 +359,14 @@ export class GithubAppUserAuthService {
           where: { installationId: inst.id },
         });
         if (existing) {
+          // Attributed once, to whoever connected it first: reaching an
+          // installation on GitHub is checked per caller, so being able to
+          // see it later does not make it someone else's row.
           await this.installationRepo.save({
             ...existing,
             accountLogin,
             accountType,
-            userId: fluiUserId,
+            userId: existing.userId ?? fluiUserId,
             repositorySelection: inst.repository_selection ?? 'all',
           });
         } else {

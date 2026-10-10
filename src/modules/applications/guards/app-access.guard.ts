@@ -18,6 +18,7 @@ import {
   ceilingRefusal,
   credentialCeiling,
 } from '../../auth/utils/credential-ceiling.util';
+import { DATA_DOOR_KEY } from '../../iam/decorators/data-door.decorator';
 
 export const APP_ACTION_KEY = 'app_action';
 
@@ -87,6 +88,12 @@ export class AppAccessGuard implements CanActivate {
         ? IAM_PERMISSION.APP_READ
         : IAM_PERMISSION.APP_WRITE);
 
+    const dataDoor =
+      this.reflector.getAllAndOverride<boolean>(DATA_DOOR_KEY, [
+        context.getHandler(),
+        context.getClass(),
+      ]) === true;
+
     // Asked before the application is loaded, deliberately: whether the
     // credential carries this verb at all does not depend on which application
     // was named, and answering it first means a scoped key gets a 403 that
@@ -117,6 +124,9 @@ export class AppAccessGuard implements CanActivate {
       }
       if (user.isAdmin) return true;
       await this.access.assertCan(user, action, app);
+      if (dataDoor) {
+        await this.access.assertCan(user, IAM_PERMISSION.DATA_ACCESS, app);
+      }
       return true;
     }
 
@@ -128,6 +138,11 @@ export class AppAccessGuard implements CanActivate {
 
     const app = await this.apps.findById(id); // 404 if missing
     await this.access.assertCan(user, action, app);
+    // A data door asks for `data:access` on this application: the permission
+    // guard can only ask whether the caller holds it anywhere.
+    if (dataDoor) {
+      await this.access.assertCan(user, IAM_PERMISSION.DATA_ACCESS, app);
+    }
     return true;
   }
 }

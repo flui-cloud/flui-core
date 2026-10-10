@@ -163,7 +163,7 @@ export default class IntegrationConnect extends Command {
       );
     }
 
-    const result = await this.waitForCallback(port);
+    const result = await this.waitForCallback(port, api);
 
     if (result.status === 'connected') {
       console.log(
@@ -279,7 +279,10 @@ export default class IntegrationConnect extends Command {
     this.printNotConfigured(apiUrl);
   }
 
-  private waitForCallback(port: number): Promise<CallbackResult> {
+  private waitForCallback(
+    port: number,
+    api: { post<T>(path: string, body: unknown): Promise<T> },
+  ): Promise<CallbackResult> {
     return new Promise((resolve) => {
       const timer = setTimeout(() => {
         server.close();
@@ -289,7 +292,7 @@ export default class IntegrationConnect extends Command {
         });
       }, CONNECT_TIMEOUT_MS);
 
-      const server = http.createServer((req, res) => {
+      const server = http.createServer(async (req, res) => {
         const url = new URL(req.url ?? '/', `http://127.0.0.1:${port}`);
         if (url.pathname !== '/callback') {
           res.writeHead(404);
@@ -297,16 +300,29 @@ export default class IntegrationConnect extends Command {
           return;
         }
 
-        const status = url.searchParams.get('status');
-        const login = url.searchParams.get('login');
-        const error = url.searchParams.get('error');
+        const claim = url.searchParams.get('claim');
+        let status = url.searchParams.get('status');
+        let login = url.searchParams.get('login');
+        let error = url.searchParams.get('error');
+        if (claim) {
+          try {
+            const connected = await api.post<{ login: string }>(
+              '/repositories/github-app/claim',
+              { claim },
+            );
+            status = 'connected';
+            login = connected.login;
+          } catch (claimError: unknown) {
+            error = (claimError as Error).message;
+          }
+        }
 
         if (status === 'connected' && login) {
           res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
           res.end(
             renderPage(
               'GitHub connected',
-              `<h2>GitHub connected</h2><p>Connected as <code>${login}</code>. You can close this tab and return to the terminal.</p>`,
+              `<h2>GitHub connected</h2><p>Connected as <code>${escapeHtml(login)}</code>. You can close this tab and return to the terminal.</p>`,
             ),
           );
           clearTimeout(timer);
@@ -319,7 +335,7 @@ export default class IntegrationConnect extends Command {
         res.end(
           renderPage(
             'GitHub connection failed',
-            `<h2>Connection failed</h2><p>${errMsg}</p>`,
+            `<h2>Connection failed</h2><p>${escapeHtml(errMsg)}</p>`,
           ),
         );
         clearTimeout(timer);
@@ -329,4 +345,8 @@ export default class IntegrationConnect extends Command {
       server.listen(port, '127.0.0.1');
     });
   }
+}
+
+function escapeHtml(text: string): string {
+  return text.replaceAll(/[&<>"']/g, (c) => `&#${c.codePointAt(0)};`);
 }

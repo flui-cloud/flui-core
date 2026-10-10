@@ -12,10 +12,13 @@ import {
   buildEgressNetworkPolicy,
   SANDBOX_LABEL,
   clusterInternalCidrs,
+  guestExceptions,
   describeEgress,
   isSystemNamespace,
   normalizeEgressPorts,
 } from './egress-policy.core';
+import { Cron } from '@nestjs/schedule';
+import { loadSandboxConfig } from '../../sandbox/sandbox.config';
 
 export interface EgressReconcileResult {
   applied: string[];
@@ -116,6 +119,12 @@ export class EgressPolicyService {
       {
         isolated,
         internalCidrs: clusterInternalCidrs(process.env.FLUI_SUBNET_IP_RANGE),
+        ...(isolated && {
+          exceptions: guestExceptions(
+            await this.k8s.listNodeAddresses(kubeconfig),
+            process.env.FLUI_WG_POOL,
+          ),
+        }),
       },
     );
     if (manifest) {
@@ -126,6 +135,23 @@ export class EgressPolicyService {
         'NetworkPolicy',
         EGRESS_POLICY_NAME,
         namespace,
+      );
+    }
+  }
+
+  /**
+   * The guests' fence names the cluster's nodes, and nodes come and go with
+   * scaling: the guest cluster's areas are brought up to date on a schedule.
+   */
+  @Cron('*/10 * * * *')
+  async keepGuestFenceCurrent(): Promise<void> {
+    const clusterId = loadSandboxConfig().clusterId;
+    if (!clusterId) return;
+    try {
+      await this.reconcile(clusterId);
+    } catch (error) {
+      this.logger.warn(
+        `Could not bring the guest areas' outbound rule up to date: ${error instanceof Error ? error.message : String(error)}`,
       );
     }
   }

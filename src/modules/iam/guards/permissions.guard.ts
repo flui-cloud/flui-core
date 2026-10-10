@@ -73,7 +73,7 @@ export class PermissionsGuard implements CanActivate {
       route?: { path?: string };
       path?: string;
       [SANDBOX_GUEST_REQUEST]?: unknown;
-      [SANDBOX_FENCE_ADMITTED]?: boolean;
+      [SANDBOX_FENCE_ADMITTED]?: string;
     }>();
     if (declared) noteAuditPermission(req, declared);
     if (door) noteDataAccess(req);
@@ -92,9 +92,13 @@ export class PermissionsGuard implements CanActivate {
     // permission decorator those routes need in order to be closed to everybody
     // else would close them to the demonstration as well. Safe verbs only: a
     // write behind a shown section is still the section guard's to refuse.
+    // Only where the guest is a spectator — a section shown read-only, or one
+    // filled with examples. On the guest's own things the permissions still
+    // decide, so a route admitted by a broad rule opens nothing by itself.
     if (
       req[SANDBOX_GUEST_REQUEST] &&
-      req[SANDBOX_FENCE_ADMITTED] &&
+      (req[SANDBOX_FENCE_ADMITTED] === 'read-only' ||
+        req[SANDBOX_FENCE_ADMITTED] === 'stand-in') &&
       isSafeVerb(req.method)
     ) {
       return true;

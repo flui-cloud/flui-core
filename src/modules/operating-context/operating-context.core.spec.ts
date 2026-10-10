@@ -256,6 +256,22 @@ describe('writing is covering, whatever the nature', () => {
    * on the route, because a guest reaches these notes through their own
    * credential on any surface at all.
    */
+  it('hands a guest no note about somebody else’s application or project (F-110)', () => {
+    const guest = access([grant({ selector: { owner: 'u1' } })], {
+      isSandbox: true,
+    });
+    const reads = (selector: Record<string, unknown>) =>
+      reachesReader(guest, {
+        scope: { scopeType: 'selector', selector } as never,
+        nature: 'practice',
+        permission: READ,
+      });
+    expect(reads({ slugs: ['shop'] })).toBe(false);
+    expect(reads({ project: 'p-other' })).toBe(false);
+    expect(reads({ owner: 'u2' })).toBe(false);
+    expect(reads({ owner: 'u1' })).toBe(true);
+  });
+
   it('refuses a sandbox guest everywhere, including their own things', () => {
     const guest = access([grant({ selector: { owner: 'u1' } })], {
       isSandbox: true,

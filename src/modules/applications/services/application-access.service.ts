@@ -50,7 +50,19 @@ interface EnvCarrier {
     withheld?: boolean;
   }>;
   sourceConfig?: Record<string, unknown>;
+  userId?: string | null;
+  ownerRef?: string | null;
+  k8sNamespace?: string | null;
+  clusterId?: string | null;
 }
+
+/** What a showcase card promises not to tell: who owns it and where it runs. */
+const SHOWCASE_WITHHELD = [
+  'userId',
+  'ownerRef',
+  'k8sNamespace',
+  'clusterId',
+] as const;
 
 /**
  * What a source says about itself without saying what it carries: which kind
@@ -107,12 +119,17 @@ function sourceShapeOf(
  */
 export function withholdDataFrom<T extends EnvCarrier>(
   dto: T,
-  summary: { dataAccess?: boolean } | undefined,
+  summary: { dataAccess?: boolean; showcase?: boolean } | undefined,
 ): T {
   if (summary?.dataAccess !== false) return dto;
-  if (!dto.env && !dto.sourceConfig) return dto;
+  const placement = summary.showcase
+    ? Object.fromEntries(
+        SHOWCASE_WITHHELD.filter((key) => key in dto).map((key) => [key, null]),
+      )
+    : {};
   return {
     ...dto,
+    ...placement,
     ...(dto.env && {
       env: dto.env.map(({ name, secret }) => ({
         name,

@@ -20,6 +20,7 @@ import {
   ResourceProposalDto,
   ResourceProposalResponseDto,
 } from '../dto/resource-proposal.dto';
+import { promString } from '../../observability/utils/promql';
 
 const USAGE_WINDOW = '7d';
 
@@ -143,7 +144,7 @@ export class ResourceProposalService {
   private async p95Mi(slug: string, namespace: string): Promise<number | null> {
     try {
       const res = await this.prometheus.queryInstant(
-        `max(quantile_over_time(0.95, flui:app_memory_usage_bytes_by_pod{namespace="${namespace}",label_app_kubernetes_io_name="${slug}"}[${USAGE_WINDOW}]))`,
+        `max(quantile_over_time(0.95, flui:app_memory_usage_bytes_by_pod{namespace="${promString(namespace)}",label_app_kubernetes_io_name="${promString(slug)}"}[${USAGE_WINDOW}]))`,
       );
       const value = res?.data?.result?.[0]?.value?.[1];
       return value === undefined ? null : Number(value) / (1024 * 1024);

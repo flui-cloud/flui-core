@@ -105,7 +105,10 @@ function build(jobs: any[], pods: any[] = []) {
     {
       findOne: jest.fn().mockResolvedValue({ kubeconfigEncrypted: 'x' }),
     } as never,
-    { findById: jest.fn().mockResolvedValue(APP) } as never,
+    {
+      findById: jest.fn().mockResolvedValue(APP),
+      findNamespaceNeighbours: jest.fn().mockResolvedValue([]),
+    } as never,
     k8s as never,
     { decrypt: () => 'kc' } as never,
     null as never,
@@ -168,9 +171,9 @@ describe('ScheduledJobsService — a failing schedule is visible', () => {
 
 describe('ScheduledJobsService.realignImage', () => {
   it('moves every schedule of the app onto the image just released', async () => {
-    const generateCronJob = jest
-      .fn()
-      .mockReturnValue({ yaml: 'kind: CronJob' });
+    const generateCronJob = jest.fn().mockReturnValue({
+      yaml: 'kind: CronJob\nmetadata:\n  namespace: user-a',
+    });
     const applyManifest = jest.fn().mockResolvedValue([]);
     const cron = (name: string, image: string) => ({
       metadata: {
@@ -195,6 +198,7 @@ describe('ScheduledJobsService.realignImage', () => {
         findOne: jest.fn().mockResolvedValue({ kubeconfigEncrypted: 'x' }),
       } as never,
       {
+        findNamespaceNeighbours: jest.fn().mockResolvedValue([]),
         findById: jest
           .fn()
           .mockResolvedValue({ ...APP, sourceType: 'docker_image' }),
@@ -231,9 +235,9 @@ describe('ScheduledJobsService.realignImage', () => {
 
 describe('ScheduledJobsService — schedules recorded by Flui', () => {
   const make = (onCluster: any[], records: any[] = []) => {
-    const generateCronJob = jest
-      .fn()
-      .mockReturnValue({ yaml: 'kind: CronJob' });
+    const generateCronJob = jest.fn().mockReturnValue({
+      yaml: 'kind: CronJob\nmetadata:\n  namespace: user-a',
+    });
     const applyManifest = jest.fn().mockResolvedValue([]);
     const repo = memoryRecords(records);
     const service = new ScheduledJobsService(
@@ -241,6 +245,7 @@ describe('ScheduledJobsService — schedules recorded by Flui', () => {
         findOne: jest.fn().mockResolvedValue({ kubeconfigEncrypted: 'x' }),
       } as never,
       {
+        findNamespaceNeighbours: jest.fn().mockResolvedValue([]),
         findById: jest
           .fn()
           .mockResolvedValue({ ...APP, sourceType: 'docker_image' }),

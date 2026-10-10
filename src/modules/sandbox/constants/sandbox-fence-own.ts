@@ -1,4 +1,5 @@
-import { SandboxAllowRule } from './sandbox-fence-core';
+import { HttpVerb, SandboxAllowRule } from './sandbox-fence-core';
+import { SANDBOX_ALLOW_GIT } from './sandbox-fence-git';
 
 /**
  * What is the guest's own, with no difference from a paying instance.
@@ -148,11 +149,21 @@ export const SANDBOX_ALLOW_OWN: SandboxAllowRule[] = [
     pattern: '/templates',
     why: 'Browse the starting points you can deploy from.',
   },
-  {
-    verbs: ['GET'],
-    pattern: '/catalog/**',
+  ...[
+    '/catalog/:slug',
+    '/catalog/:slug/yaml',
+    '/catalog/:slug/clients',
+    '/catalog/building-blocks',
+    '/catalog/building-blocks/:slug/reusable-instances',
+    '/catalog/clusters/:clusterId/capabilities',
+    '/catalog/installs/:id',
+  ].map((pattern) => ({
+    // Named one by one: a wildcard here admitted every read added under
+    // `/catalog` later, whoever it was meant for.
+    verbs: ['GET'] as HttpVerb[],
+    pattern,
     why: 'Browse what you can install.',
-  },
+  })),
   { verbs: ['GET'], pattern: '/catalog', why: 'Browse what you can install.' },
   {
     verbs: ['POST'],
@@ -174,11 +185,6 @@ export const SANDBOX_ALLOW_OWN: SandboxAllowRule[] = [
     verbs: ['GET'],
     pattern: '/infrastructure/clusters/:clusterId/resource-availability',
     why: 'See whether your cluster has room for what you are about to install.',
-  },
-  {
-    verbs: ['GET'],
-    pattern: '/catalog-installs/**',
-    why: 'Follow an installation you started.',
   },
   {
     // "You started" is now the route's own rule, not a hope of this list: the
@@ -383,4 +389,5 @@ export const SANDBOX_ALLOW_OWN: SandboxAllowRule[] = [
     pattern: '/agent/activity/:id',
     why: 'Read one call your agent made, and the operation it started.',
   },
+  ...SANDBOX_ALLOW_GIT,
 ];

@@ -135,8 +135,12 @@ export class StatefulSetVolumeSwapService {
       await this.waitGone(PVC, claim, namespace, kubeconfig);
       await this.waitGone(PVC, input.restoredClaim, namespace, kubeconfig);
 
-      await this.release(restoredPv, kubeconfig);
-      await this.release(currentPv, kubeconfig);
+      await this.release(restoredPv, { namespace, name: claim }, kubeconfig);
+      await this.release(
+        currentPv,
+        { namespace, name: previousClaim },
+        kubeconfig,
+      );
 
       await this.k8s.createObject(
         kubeconfig,
@@ -202,7 +206,11 @@ export class StatefulSetVolumeSwapService {
     try {
       const existing = await this.read(kubeconfig, PVC, claim, input.namespace);
       if (existing) return;
-      await this.release(currentPv, kubeconfig);
+      await this.release(
+        currentPv,
+        { namespace: input.namespace, name: claim },
+        kubeconfig,
+      );
       const pv = await this.read(kubeconfig, PV, currentPv);
       await this.k8s.createObject(kubeconfig, {
         apiVersion: 'v1',
@@ -260,12 +268,30 @@ export class StatefulSetVolumeSwapService {
     });
   }
 
-  /** A released volume keeps the claim it had; clearing it lets a new claim bind. */
-  private async release(pv: string, kubeconfig: string) {
+  /**
+   * A released volume keeps the claim it had. It is handed to the claim it is
+   * meant for by name, not opened to any: between release and binding, a
+   * pending claim of the same class and size anywhere on the cluster would
+   * otherwise be free to take it.
+   */
+  private async release(
+    pv: string,
+    to: { namespace: string; name: string },
+    kubeconfig: string,
+  ) {
     await this.k8s.mergePatchObject(kubeconfig, {
       ...PV,
       metadata: { name: pv },
-      spec: { claimRef: null },
+      spec: {
+        claimRef: {
+          apiVersion: 'v1',
+          kind: 'PersistentVolumeClaim',
+          namespace: to.namespace,
+          name: to.name,
+          uid: null,
+          resourceVersion: null,
+        },
+      },
     });
   }
 

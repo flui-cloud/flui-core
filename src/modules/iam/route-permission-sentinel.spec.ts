@@ -310,6 +310,10 @@ describe('every tool goes to a route that exists, under a scope that carries it'
     // `integration:manage` is in no scope's `allows`. The tool still works for a
     // session and for the CLI key, neither of which declares a ceiling.
     'github_setup → POST /repositories/github/setup/github-app/manifest-start',
+    // The registry's storage status names every user's applications with the
+    // space they take: instance configuration, under the same permission.
+    'registry_storage_request → GET /registry/storage',
+    'registry_storage_request → GET /registry/storage/buckets',
   ];
 
   /**

@@ -241,7 +241,9 @@ export class OperatingContextService {
         (!focus || appliesTo(scopeOf(e), focus)),
     );
     const ctx = await this.telling(principal, access, reachable);
-    return Promise.all(reachable.map((e) => this.deliver(e, ctx)));
+    return Promise.all(
+      reachable.map((e) => this.deliver(e, ctx, !access.isSandbox)),
+    );
   }
 
   /**
@@ -450,12 +452,14 @@ export class OperatingContextService {
   private async deliver(
     e: OperatingContextEntryEntity,
     told: Telling,
+    reask = true,
   ): Promise<DeliveredEntry> {
     let status = e.lastProbeStatus ?? null;
     // Never re-asked for a retired note: the archive says what was believed
     // when the note was withdrawn, and re-running the probe would rewrite that
-    // record against a world that has moved on since.
-    if (e.checkKind === 'probe' && !e.archivedAt) {
+    // record against a world that has moved on since. Nor for a demo guest,
+    // whose read must not make the platform run anything or write anything.
+    if (reask && e.checkKind === 'probe' && !e.archivedAt) {
       const outcome = await this.probes.evaluate(
         e.probeId,
         e.probeParams,

@@ -32,10 +32,8 @@ const masterScript = (
   });
 
 describe('the networks the shared volume is exported to', () => {
-  it('offers it to the private subnet and the internal pod range', () => {
-    expect(nfsAllowedNetworks(['10.0.1.0/24'])).toBe(
-      '10.0.1.0/24,10.42.0.0/16',
-    );
+  it('offers it to the private subnet, never to the pod range', () => {
+    expect(nfsAllowedNetworks(['10.0.1.0/24'])).toBe('10.0.1.0/24');
   });
 
   it('offers it to no one when the cluster has no private network', () => {
@@ -47,13 +45,20 @@ describe('the networks the shared volume is exported to', () => {
   it('never widens to anyone, whatever it is given', () => {
     expect(nfsAllowedNetworks(['0.0.0.0/0', '::/0', '*'])).toBe('');
     expect(nfsAllowedNetworks(['0.0.0.0/0', '172.16.0.0/22'])).toBe(
-      '172.16.0.0/22,10.42.0.0/16',
+      '172.16.0.0/22',
     );
+  });
+
+  it('drops the pod range even when it is passed in', () => {
+    expect(nfsAllowedNetworks(['10.0.1.0/24', '10.42.0.0/16'])).toBe(
+      '10.0.1.0/24',
+    );
+    expect(nfsAllowedNetworks(['10.42.0.0/16'])).toBe('');
   });
 
   it('lists each network once', () => {
     expect(nfsAllowedNetworks(['10.0.1.0/24', '10.0.1.0/24'])).toBe(
-      '10.0.1.0/24,10.42.0.0/16',
+      '10.0.1.0/24',
     );
   });
 
@@ -62,9 +67,7 @@ describe('the networks the shared volume is exported to', () => {
       enabled: true,
       privateNetworks: ['10.0.1.0/24'],
     });
-    expect(exported(script, 'FLUI_NFS_ALLOWED_NETWORKS')).toBe(
-      '10.0.1.0/24,10.42.0.0/16',
-    );
+    expect(exported(script, 'FLUI_NFS_ALLOWED_NETWORKS')).toBe('10.0.1.0/24');
   });
 
   it('also takes the environment subnet the control is built on', async () => {
@@ -72,9 +75,7 @@ describe('the networks the shared volume is exported to', () => {
       { enabled: true },
       { subnetIpRange: '10.1.0.0/24' },
     );
-    expect(exported(script, 'FLUI_NFS_ALLOWED_NETWORKS')).toBe(
-      '10.1.0.0/24,10.42.0.0/16',
-    );
+    expect(exported(script, 'FLUI_NFS_ALLOWED_NETWORKS')).toBe('10.1.0.0/24');
   });
 
   it('is exported empty rather than open when nothing is known', async () => {

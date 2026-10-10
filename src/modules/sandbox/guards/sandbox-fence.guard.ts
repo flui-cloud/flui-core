@@ -17,15 +17,20 @@ import {
 import {
   isReadOnlyArea,
   isSandboxAllowed,
+  sandboxLevelOf,
   SANDBOX_FORBIDDEN_MESSAGE,
   SANDBOX_READ_ONLY_WRITE_CODE,
   SANDBOX_READ_ONLY_WRITE_MESSAGE,
 } from '../constants/sandbox-fence';
+import type { SandboxLevel } from '../constants/sandbox-fence-core';
 import {
   SANDBOX_STAND_IN_WRITE_CODE,
   SANDBOX_STAND_IN_WRITE_MESSAGE,
   isStandInArea,
 } from '../stand-in/sandbox-stand-in';
+import { ModuleRef } from '@nestjs/core';
+import { SandboxScopeService } from '../services/sandbox-scope.service';
+import { loadSandboxConfig } from '../sandbox.config';
 
 export const SANDBOX_FORBIDDEN_CODE = 'SANDBOX_ROUTE_FORBIDDEN';
 
@@ -52,7 +57,7 @@ export const SANDBOX_FENCE_ADMITTED = Symbol('sandboxFenceAdmitted');
 
 export interface SandboxGuestRequest {
   [SANDBOX_GUEST_REQUEST]?: { userId: string };
-  [SANDBOX_FENCE_ADMITTED]?: boolean;
+  [SANDBOX_FENCE_ADMITTED]?: SandboxLevel;
 }
 
 /**
@@ -71,7 +76,45 @@ export class SandboxFenceGuard implements CanActivate {
     @Optional()
     @Inject(SANDBOX_ACTIVITY)
     private readonly activity?: SandboxActivity,
+    @Optional() private readonly moduleRef?: ModuleRef,
   ) {}
+
+  /**
+   * A route that names a cluster answers about that cluster, whatever the rule
+   * that admitted it says about the area: a guest names its own cluster or
+   * nothing. Pinned here, before any handler runs, so no reader, refresh or
+   * capability check has to remember it.
+   */
+  private async ownClusterOf(userId: string): Promise<string | null> {
+    let scope: SandboxScopeService | undefined;
+    try {
+      scope = this.moduleRef?.get(SandboxScopeService, { strict: false });
+    } catch {
+      scope = undefined;
+    }
+    if (!scope) return loadSandboxConfig().clusterId;
+    return (await scope.resolve(userId, ['clusterId'])).clusterId;
+  }
+
+  private async assertOwnCluster(
+    userId: string,
+    pattern: string,
+    params: Record<string, string | undefined>,
+  ): Promise<void> {
+    const named =
+      params.clusterId ??
+      (/\/clusters\/:id(\/|$)/.test(pattern) ? params.id : undefined);
+    if (!named) return;
+    const own = await this.ownClusterOf(userId);
+    if (!own || named !== own) {
+      throw new ForbiddenException({
+        statusCode: 403,
+        code: SANDBOX_FORBIDDEN_CODE,
+        message: SANDBOX_FORBIDDEN_MESSAGE,
+        route: pattern,
+      });
+    }
+  }
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
     if (context.getType() !== 'http') return true;
@@ -98,8 +141,16 @@ export class SandboxFenceGuard implements CanActivate {
     const pattern = (req.route as { path?: string } | undefined)?.path;
     const path = stripPrefix(pattern ?? req.path);
 
-    if (isSandboxAllowed(req.method, path)) {
-      req[SANDBOX_FENCE_ADMITTED] = true;
+    const route = pattern !== undefined;
+    if (isSandboxAllowed(req.method, path, route)) {
+      if (route) {
+        await this.assertOwnCluster(
+          user.userId,
+          path,
+          (req.params ?? {}) as Record<string, string | undefined>,
+        );
+      }
+      req[SANDBOX_FENCE_ADMITTED] = sandboxLevelOf(req.method, path, route);
       // A read is not activity: an open tab polls, a person acts.
       if (!READS.has(req.method)) {
         void this.activity?.touch(user.userId).catch(() => undefined);
@@ -112,7 +163,7 @@ export class SandboxFenceGuard implements CanActivate {
     // section open in front of them. The door stays shut either way; only the
     // wording changes, because a refusal a person cannot make sense of reads as
     // a bug in the product.
-    if (isStandInArea(path)) {
+    if (isStandInArea(path, route)) {
       throw new ForbiddenException({
         statusCode: 403,
         code: SANDBOX_STAND_IN_WRITE_CODE,
@@ -124,7 +175,7 @@ export class SandboxFenceGuard implements CanActivate {
     // Same reasoning for a section shown read-only with its real content: the
     // guest is looking at it, so "this is disabled in the sandbox" reads as a
     // fault rather than as the limit it is.
-    if (isReadOnlyArea(path)) {
+    if (isReadOnlyArea(path, route)) {
       throw new ForbiddenException({
         statusCode: 403,
         code: SANDBOX_READ_ONLY_WRITE_CODE,

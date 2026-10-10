@@ -140,6 +140,22 @@ export class ApplicationsRepository {
     });
   }
 
+  /** Who else lives in an application's namespace on its cluster: slug and ownership only. */
+  async findNamespaceNeighbours(
+    clusterId: string,
+    k8sNamespace: string,
+  ): Promise<
+    Array<
+      Pick<ApplicationEntity, 'slug' | 'userId' | 'projectId' | 'k8sNamespace'>
+    >
+  > {
+    return this.repository.find({
+      where: { clusterId, k8sNamespace, deletedAt: IsNull() },
+      select: { slug: true, userId: true, projectId: true, k8sNamespace: true },
+      withDeleted: false,
+    });
+  }
+
   async findActiveByCluster(clusterId: string): Promise<ApplicationEntity[]> {
     return this.repository.find({
       where: [

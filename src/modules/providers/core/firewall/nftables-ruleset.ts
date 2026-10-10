@@ -23,9 +23,20 @@ export interface NftRenderOptions {
    * is what stands in for the authentication it does not have.
    */
   wgOnlyPorts?: Array<{ port: number; protocol?: 'tcp' | 'udp' }>;
+  /** The cluster's pod range; k3s's default when not given. */
+  podCidr?: string;
 }
 
 export const DEFAULT_INTERNAL_CIDRS = ['10.42.0.0/16', '10.43.0.0/16'];
+export const DEFAULT_POD_CIDR = '10.42.0.0/16';
+
+/**
+ * The shared storage export (NFS, and rpcbind next to it) runs with
+ * no_root_squash for the nodes that mount it. A pod is never one of them: from
+ * a worker its traffic would leave masqueraded as the worker's own address,
+ * which the export trusts, so it is stopped here before that happens.
+ */
+const SHARED_STORAGE_PORTS = '{ 111, 2049 }';
 
 const PORT_RE = /^\d{1,5}(-\d{1,5})?$/;
 const IPV4_CIDR_RE = /^(\d{1,3}\.){3}\d{1,3}\/\d{1,2}$/;
@@ -171,6 +182,13 @@ export function renderFluiNftRuleset(
         : renderInboundRule(r),
     );
 
+  const podCidr = IPV4_CIDR_RE.test(options.podCidr ?? '')
+    ? (options.podCidr as string)
+    : DEFAULT_POD_CIDR;
+  const podStorageLine =
+    `\t\tip saddr ${podCidr} meta l4proto { tcp, udp } th dport ${SHARED_STORAGE_PORTS} drop` +
+    ` comment "pods never reach the shared storage export"`;
+
   const internalLines: string[] = [];
   for (const cidr of internalV4) {
     internalLines.push(`\t\tip saddr ${cidr} accept`);
@@ -228,6 +246,8 @@ export function renderFluiNftRuleset(
     '\t\tip protocol icmp accept',
     '\t\tip6 nexthdr ipv6-icmp accept',
     '',
+    podStorageLine,
+    '',
     '\t\t# Intra-cluster k3s traffic — never fence the node off from its own CNI.',
     '\t\t# Source-scoped on purpose: kubelet (10250) and the flannel VXLAN overlay',
     '\t\t# (8472/udp) are never opened to the internet. A peer reachable only over',
@@ -271,6 +291,7 @@ export function renderFluiNftRuleset(
     '\tchain forward {',
     '\t\t# k3s relies on forwarding (pod/service routing); never default-drop here.',
     '\t\ttype filter hook forward priority 0; policy accept;',
+    podStorageLine,
     ...(wgIface
       ? [
           '',

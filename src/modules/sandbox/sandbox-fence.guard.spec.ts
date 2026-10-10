@@ -24,6 +24,7 @@ import { POLICY_ENGINE } from '../iam/interfaces/policy-engine.interface';
 import { PrincipalAccess } from '../iam/interfaces/iam.types';
 import { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import { IdentityRole } from '../auth/entities/user.entity';
+import { SandboxScopeService } from './services/sandbox-scope.service';
 
 /**
  * The fence over real HTTP, with the guard mounted globally exactly as the app
@@ -108,6 +109,10 @@ describe('SandboxFenceGuard over HTTP', () => {
       providers: [
         { provide: APP_GUARD, useClass: SandboxFenceGuard },
         {
+          provide: SandboxScopeService,
+          useValue: { resolve: async () => ({ clusterId: 'c1' }) },
+        },
+        {
           provide: POLICY_ENGINE,
           useValue: { resolveAccess: async () => resolved },
         },
@@ -173,6 +178,11 @@ describe('SandboxFenceGuard over HTTP', () => {
 
     // Reachable at the route; what comes back is narrowed by
     // SandboxProjectionInterceptor, which this suite does not install.
+    it('names its own cluster and no other (F-106)', async () => {
+      await http().post('/clusters/c1/applications').expect(201);
+      await http().post('/clusters/c2/applications').expect(403);
+    });
+
     it('reaches the cluster list, which the projection then narrows', async () => {
       await http().get('/infrastructure/clusters').expect(200);
     });

@@ -120,6 +120,7 @@ export class MeilisearchAdapter implements FulltextEngineAdapter {
 
   connect(params: FulltextConnectParams): Promise<FulltextConnection> {
     const http = axios.create({
+      maxRedirects: 0,
       baseURL: `http://${params.host}:${params.port}`,
       headers: params.apiKey
         ? { Authorization: `Bearer ${params.apiKey}` }

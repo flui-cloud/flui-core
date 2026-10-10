@@ -149,6 +149,7 @@ export class OpenSearchAdapter implements SearchEngineAdapter {
   connect(params: SearchConnectParams): Promise<SearchConnection> {
     const scheme = params.useTls ? 'https' : 'http';
     const http = axios.create({
+      maxRedirects: 0,
       baseURL: `${scheme}://${params.host}:${params.port}`,
       auth: { username: params.username, password: params.password },
       timeout: 30_000,

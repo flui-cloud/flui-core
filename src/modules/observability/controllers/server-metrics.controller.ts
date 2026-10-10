@@ -6,6 +6,7 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
+import { ServerIdPipe } from '../utils/server-id.pipe';
 import {
   ApiTags,
   ApiOperation,
@@ -84,7 +85,7 @@ export class ServerMetricsController {
   })
   async getClusterMetrics(
     @Param('clusterId') clusterId: string,
-    @Query('serverId') serverId?: string,
+    @Query('serverId', ServerIdPipe) serverId?: string,
   ): Promise<ClusterMetricsResponseDto> {
     const serverPart = serverId ? `, server: ${serverId}` : '';
     this.logger.debug(
@@ -186,7 +187,7 @@ export class ServerMetricsController {
   async getClusterMetricsHistory(
     @Param('clusterId') clusterId: string,
     @Query() query: MetricsHistoryQueryDto,
-    @Query('serverId') serverId?: string,
+    @Query('serverId', ServerIdPipe) serverId?: string,
   ): Promise<ClusterMetricsHistoryResponseDto> {
     const serverPart2 = serverId ? `, server: ${serverId}` : '';
     this.logger.debug(
@@ -273,7 +274,7 @@ export class ServerMetricsController {
   async getClusterLogs(
     @Param('clusterId') clusterId: string,
     @Query() query: ServerLogsQueryDto,
-    @Query('serverId') serverId?: string,
+    @Query('serverId', ServerIdPipe) serverId?: string,
   ): Promise<ServerLogsResponseDto> {
     const serverPart4 = serverId ? `, server: ${serverId}` : '';
     this.logger.debug(
@@ -334,7 +335,7 @@ export class ServerMetricsController {
   async getClusterErrorLogs(
     @Param('clusterId') clusterId: string,
     @Query('tail') tail: number = 100,
-    @Query('serverId') serverId?: string,
+    @Query('serverId', ServerIdPipe) serverId?: string,
   ): Promise<ServerLogsResponseDto> {
     const serverPart5 = serverId ? `, server: ${serverId}` : '';
     this.logger.debug(

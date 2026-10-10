@@ -61,7 +61,7 @@ describe('SandboxProjectionInterceptor', () => {
   // should have to guess how much of an area it is looking at.
   it.each([
     ['/api/v1/catalog', 'full'],
-    ['/api/v1/infrastructure/clusters/c1/nodes', 'read-only'],
+    ['/api/v1/infrastructure/clusters/:id/nodes', 'read-only'],
   ])('declares the level of %s as %s', async (path, level) => {
     const req = {
       method: 'GET',

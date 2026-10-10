@@ -4,11 +4,15 @@ import { Public } from '../../auth/decorators/public.decorator';
 import { ObjectStoreQueryService } from '../services/object-store-query.service';
 import { ObjectStoreShareService } from '../services/object-store-share.service';
 import { ObjectStoreShareRegistryService } from '../services/object-store-share-registry.service';
+import { shareResponseHeaders } from './object-store-share.headers';
 
 /** Filename for the download dialog — the last path segment of the key. */
 function fileNameOf(key: string): string {
-  const seg = key.split('/').filter(Boolean).at(-1) ?? 'download';
-  return seg.replaceAll('"', '');
+  const parts = key.split('/');
+  for (let i = parts.length - 1; i >= 0; i--) {
+    if (parts[i]) return parts[i];
+  }
+  return 'download';
 }
 
 /**
@@ -40,19 +44,18 @@ export class ObjectStoreShareController {
       claims.bucket,
       claims.key,
     );
-    res.setHeader(
-      'Content-Type',
-      body.contentType ?? 'application/octet-stream',
-    );
+    for (const [name, value] of Object.entries(
+      shareResponseHeaders(
+        body.contentType,
+        !!download,
+        fileNameOf(claims.key),
+      ),
+    )) {
+      res.setHeader(name, value);
+    }
     if (body.contentLength !== undefined) {
       res.setHeader('Content-Length', String(body.contentLength));
     }
-    // Inline by default (preview images/PDFs in the browser); ?download=1 forces save.
-    const disposition = download ? 'attachment' : 'inline';
-    res.setHeader(
-      'Content-Disposition',
-      `${disposition}; filename="${fileNameOf(claims.key)}"`,
-    );
     res.on('close', () => {
       void dispose();
     });

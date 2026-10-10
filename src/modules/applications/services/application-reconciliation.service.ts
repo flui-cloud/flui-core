@@ -37,6 +37,7 @@ type K8sResource = {
 };
 
 import { ReconciliationStatus } from '../../infrastructure/shared/enums/reconciliation-status.enum';
+import { applyAppManifest } from '../utils/app-manifest-scope';
 
 export interface ReconciliationSummary {
   applicationId: string;
@@ -627,9 +628,11 @@ export class ApplicationReconciliationService {
       this.logger.log(
         `Auto-healing ${resource.kind}/${resource.name} for app ${app.name}`,
       );
-      await this.kubernetesService.applyManifest(
+      await applyAppManifest(
+        this.kubernetesService,
         kubeconfig,
         resource.desiredManifest,
+        resource.namespace,
       );
 
       await this.appResourcesRepository.update(resource.id, {

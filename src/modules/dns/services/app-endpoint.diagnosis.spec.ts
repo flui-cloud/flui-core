@@ -24,6 +24,7 @@ const CLUSTER = {
 
 const ASSIGNMENT = {
   id: 'assignment-1',
+  clusterId: 'c-1',
   wildcardCertificate: true,
   dnsZone: { zoneName: 'example.dev' },
 };

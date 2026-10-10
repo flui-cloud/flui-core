@@ -203,11 +203,12 @@ export const SANDBOX_STAND_INS: SandboxStandInRule[] = [
 export function findSandboxStandIn(
   verb: string,
   path: string,
+  route = false,
 ): SandboxStandInRule | undefined {
   return SANDBOX_STAND_INS.find(
     (rule) =>
       rule.verbs.includes(verb.toUpperCase() as HttpVerb) &&
-      routeMatches(rule.pattern, path),
+      routeMatches(rule.pattern, path, route),
   );
 }
 
@@ -220,14 +221,14 @@ export function findSandboxStandIn(
  * does not realise it was pretend finds out afterwards they changed nothing,
  * which is worse than being told up front.
  */
-export function isStandInArea(path: string): boolean {
+export function isStandInArea(path: string, route = false): boolean {
   return SANDBOX_STAND_INS.some(
     (rule) =>
-      routeMatches(rule.pattern, path) ||
+      routeMatches(rule.pattern, path, route) ||
       // Anything under a stand-in list belongs to the same section: creating a
       // policy, running one, editing a zone's records. They all deserve the same
       // wording, not the generic "this is disabled here".
-      routeMatches(`${rule.pattern}/**`, path),
+      routeMatches(`${rule.pattern}/**`, path, route),
   );
 }
 
@@ -251,5 +252,8 @@ export function isSandboxStandInRequest(req: {
 }): boolean {
   const raw = req.route?.path ?? req.path ?? '';
   const path = raw.replace(/^\/api\/v\d+/, '');
-  return Boolean(req.method && findSandboxStandIn(req.method, path));
+  return Boolean(
+    req.method &&
+      findSandboxStandIn(req.method, path, req.route?.path !== undefined),
+  );
 }

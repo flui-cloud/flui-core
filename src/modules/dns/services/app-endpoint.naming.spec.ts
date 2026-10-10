@@ -35,15 +35,20 @@ const APPLICATION = {
 
 const ASSIGNMENT = {
   id: 'assignment-1',
+  clusterId: 'c-sandbox',
   wildcardCertificate: true,
   dnsZone: { zoneName: 'dawit.blog' },
 };
 
-function build(subdomains: {
-  shared?: string | null;
-  tenancy?: string | null;
-}) {
+function build(
+  subdomains: {
+    shared?: string | null;
+    tenancy?: string | null;
+  },
+  zone: Record<string, unknown> = ASSIGNMENT,
+) {
   const save = jest.fn(async (entity: Record<string, unknown>) => entity);
+  const hostGuard = { assertClaimable: jest.fn() };
 
   const service = new AppEndpointService(
     {
@@ -53,7 +58,7 @@ function build(subdomains: {
       save,
     } as never,
     { findOne: jest.fn(async () => CLUSTER) } as never,
-    { findOne: jest.fn(async () => ASSIGNMENT) } as never,
+    { findOne: jest.fn(async () => zone) } as never,
     { findOne: jest.fn(async () => APPLICATION) } as never,
     {} as never,
     {} as never,
@@ -61,7 +66,7 @@ function build(subdomains: {
     {} as never,
     new EndpointModeResolverService(),
     {} as never,
-    { assertClaimable: jest.fn() } as never,
+    hostGuard as never,
     {
       activeSubdomain: jest.fn(async () => subdomains.tenancy ?? null),
     } as never,
@@ -71,13 +76,32 @@ function build(subdomains: {
     { resolve: jest.fn() } as never,
   );
 
-  return { service, save };
+  return { service, save, hostGuard };
 }
 
 const dto = {
   applicationId: 'app-1',
   clusterDnsZoneId: 'assignment-1',
 } as CreateAppEndpointDto;
+
+describe('AppEndpointService.createEndpoint — names and zones a guest cannot borrow (F-111)', () => {
+  it('refuses a DNS zone assigned to another cluster', async () => {
+    const { service } = build({}, { ...ASSIGNMENT, clusterId: 'c-elsewhere' });
+    await expect(service.createEndpoint('c-sandbox', dto)).rejects.toThrow(
+      /not found/,
+    );
+  });
+
+  it('checks a name derived from the slug for a host served elsewhere, as it does a typed one', async () => {
+    const { service, hostGuard } = build({ shared: 'demo.dawit.blog' });
+    await service.createEndpoint('c-sandbox', dto);
+    expect(hostGuard.assertClaimable).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.any(String),
+      'it-tools-125d30.demo.dawit.blog',
+    );
+  });
+});
 
 describe('AppEndpointService.createEndpoint — where an application is published', () => {
   it('names a guest application under the installation-wide subdomain', async () => {

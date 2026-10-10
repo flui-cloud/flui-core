@@ -160,6 +160,7 @@ export class OpenBaoAdapter implements SecretsEngineAdapter {
   connect(params: SecretsConnectParams): Promise<SecretsConnection> {
     const scheme = params.useTls ? 'https' : 'http';
     const http = axios.create({
+      maxRedirects: 0,
       baseURL: `${scheme}://${params.host}:${params.port}`,
       timeout: 15_000,
       headers: { 'X-Vault-Token': params.token },

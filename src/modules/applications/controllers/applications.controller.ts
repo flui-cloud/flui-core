@@ -18,7 +18,10 @@ import {
 import { Request } from 'express';
 import { DockerImageSourceConfig } from '../interfaces/source-config.interface';
 import { AuthenticatedUser } from '../../auth/interfaces/authenticated-user.interface';
-import { stripSandboxPlacementFields } from '../utils/sandbox-placement.util';
+import {
+  stripSandboxPlacementFields,
+  stripSandboxUpdateFields,
+} from '../utils/sandbox-placement.util';
 import {
   ApiTags,
   ApiOperation,
@@ -246,7 +249,7 @@ export class ApplicationsController {
     @Query('status') status?: ApplicationStatus,
     @Query('refresh') refresh?: string,
   ): Promise<ApplicationResponseDto[]> {
-    if (refresh === 'true') {
+    if (refresh === 'true' && !isSandboxGuest(req)) {
       await this.reconciliationService.reconcileByClusterId(clusterId);
     }
     const apps = await this.applicationService.findByClusterId(clusterId, {
@@ -298,7 +301,7 @@ export class ApplicationsController {
     @Param('clusterId') clusterId: string,
     @Query('refresh') refresh?: string,
   ): Promise<ApplicationGroupDto[]> {
-    if (refresh === 'true') {
+    if (refresh === 'true' && !isSandboxGuest(req)) {
       await this.reconciliationService.reconcileByClusterId(clusterId);
     }
     return this.applicationGroupingService.listGroupedByCluster(
@@ -409,6 +412,7 @@ export class ApplicationsController {
           'Tags decide who can see an application, so changing them needs showcase:publish.',
       });
     }
+    if (isSandboxGuest(req)) stripSandboxUpdateFields(dto);
     const app = await this.applicationService.update(id, dto);
 
     const deployableFieldChanged =

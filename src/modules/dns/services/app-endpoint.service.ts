@@ -243,7 +243,7 @@ export class AppEndpointService {
         where: { id: dto.clusterDnsZoneId },
         relations: ['dnsZone'],
       });
-      if (!clusterDnsZone) {
+      if (clusterDnsZone?.clusterId !== application.clusterId) {
         throw new NotFoundException(
           `Cluster DNS zone ${dto.clusterDnsZoneId} not found`,
         );
@@ -284,9 +284,9 @@ export class AppEndpointService {
     });
     const fqdn = this.normalizeFqdn(resolved.fqdn);
 
-    // Only when the caller named the host. A hostname Flui derives from a slug
-    // is already inside the cluster's own subdomain and unique there; a
-    // hostname somebody asked for is the one that can belong to somebody else.
+    // Named or derived: a derived name is built from a slug the caller chose,
+    // so it can spell a host already served from another namespace just as
+    // well as a name typed in full.
     const routePath = normalizeRoutePath(dto.routePath);
     const siblings = await this.endpointRepository.find({
       where: { fqdn },
@@ -294,7 +294,7 @@ export class AppEndpointService {
     });
     if (siblings.length > 0) {
       this.assertHostShareable(siblings, application, fqdn, routePath);
-    } else if (dto.fqdn) {
+    } else {
       await this.hostGuard.assertClaimable(
         cluster,
         application.k8sNamespace,

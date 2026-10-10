@@ -12,6 +12,7 @@ import {
   Max,
   ValidateNested,
   MaxLength,
+  Matches,
 } from 'class-validator';
 import { CompanionsSpec } from '../services/application-manifest-generator.service';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
@@ -141,7 +142,15 @@ export class CreateApplicationDto {
   })
   @IsOptional()
   @IsString()
-  @MaxLength(255)
+  @MaxLength(63)
+  @Matches(/^[a-z0-9]([-a-z0-9]*[a-z0-9])?$/, {
+    message:
+      'slug must be lowercase letters, digits and dashes, starting and ending with a letter or digit',
+  })
+  @Matches(/^(?!kopia-)/, {
+    message:
+      'slug cannot start with "kopia-": the platform names its own objects that way',
+  })
   slug?: string;
 
   @ApiPropertyOptional({

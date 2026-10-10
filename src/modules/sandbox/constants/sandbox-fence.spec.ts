@@ -108,10 +108,6 @@ describe('sandbox allowlist', () => {
       ['POST', '/auth/users'],
       ['GET', '/iam/bindings'],
       ['POST', '/iam/bindings'],
-      // Argued in full further down: the owner filter on these two is there,
-      // the tenancy on the credential behind them is not.
-      ['GET', '/repositories'],
-      ['POST', '/repositories/import'],
       ['GET', '/image-registry'],
       ['GET', '/mail/messages'],
       ['POST', '/projects'],
@@ -166,34 +162,17 @@ describe('sandbox allowlist', () => {
     });
 
     /**
-     * Two reads and no writes: validating a manifest touches nothing, and
-     * asking whether the cluster has room is the question that stops an install
-     * that was going to fail on the quota.
+     * Validating a manifest touches nothing, and asking whether the cluster has
+     * room is the question that stops an install that was going to fail on the
+     * quota.
      *
-     * Deploying from a manifest stays shut — but not for the reason this rule
-     * used to give. "It makes an application outside the route
-     * `assertCanCreate` watches" is false at HEAD: the handler calls
-     * `assertCanCreate` with the body's `clusterId`, and for a guest that call
-     * pins the tenancy's own cluster through `assertSandboxTenancyCluster`.
-     * Nor does the manifest carry placement: `DeployFromYamlDto` names none of
-     * the three fields `sandbox-placement.util.ts` strips, and the published
+     * Deploying from a manifest is open too. `assertCanCreate` pins the body's
+     * `clusterId` to the tenancy's own cluster, `DeployFromYamlDto` names none of
+     * the fields `sandbox-placement.util.ts` strips, and the published
      * Application schema is `additionalProperties: false` at every level, so a
-     * manifest cannot smuggle one past `validateApplicationManifest`.
-     *
-     * The placement nobody was looking at — the namespace — used to hold this
-     * door on its own: `deployFromYaml` called `create` with no email, the
-     * namespace is derived from the email, and a manifest deploy therefore
-     * landed in `default` rather than the tenancy's own. Everything that makes
-     * a tenancy a tenancy keys off that namespace, the sweep at expiry
-     * included. That hole is closed: the silent fallback is gone and the
-     * argument is no longer optional, so the call does not compile without it.
-     *
-     * What keeps the door shut now is the GitHub chain the route depends on,
-     * which a guest does not hold end to end: the connection, an installation
-     * it can reach, and the GHCR credential `assertGhcrPatPresent` demands.
-     * Opening this today buys a 400, not a demonstration.
+     * manifest cannot smuggle a placement past `validateApplicationManifest`.
      */
-    it('opens the two calls an agent needs before it installs, and not the third', () => {
+    it('opens the calls an agent needs before it installs', () => {
       expect(isSandboxAllowed('POST', '/catalog/validate')).toBe(true);
       expect(
         isSandboxAllowed(
@@ -202,76 +181,74 @@ describe('sandbox allowlist', () => {
         ),
       ).toBe(true);
       expect(isSandboxAllowed('POST', '/applications/deploy-from-yaml')).toBe(
-        false,
+        true,
       );
-      // The pair that does place a workload inside the tenancy stays open, so
-      // the refusal above is about where the manifest path puts things, not
-      // about a guest deploying at all.
       expect(isSandboxAllowed('POST', '/clusters/c1/applications')).toBe(true);
       expect(isSandboxAllowed('POST', '/catalog/gitea/install')).toBe(true);
     });
 
     /**
-     * The whole git entrance, not just its front door.
-     *
-     * `GET /repositories` and `POST /repositories/import` answer with the
-     * caller's own rows — `findByUserId`, `findByUserIdAndFullName` — so an
-     * owner filter is not what is missing. What is missing is a tenancy on the
-     * *credential*: on an installation running as a GitHub App,
-     * `GitHubTokenResolverService.getOctokit(userId, owner)` drops the
-     * `userId` and `GitHubAppService.resolveInstallationId` selects on
-     * `accountLogin` alone. The installations table carries a `userId` column
-     * and the resolution path never reads it, so importing `someone/repo`
-     * mints an installation token for that account and files it, encrypted, on
-     * the importing user's own row. For a guest that is somebody else's
-     * private code and somebody else's token, reached through a route that
-     * looks owner-scoped.
-     *
-     * `POST /templates/:framework/use` is the same flaw with the arrow
-     * reversed: with no `owner` in the body it defaults to
-     * `listInstallations()[0].accountLogin` and creates a private repository
-     * in the operator's account.
-     *
-     * `GET /repositories/available` answers, in App mode, with every
-     * repository of every installation on the instance.
-     *
-     * And the connect routes stay shut with them: opening `import` without
-     * `DELETE /repositories/:id` would repeat the mistake the key surface
-     * already had to fix — a gesture a guest can make and not take back.
+     * The git entrance a guest walks through with their own token, and the
+     * parts of it that belong to whoever runs the instance.
      */
-    it('keeps the whole git-build entrance shut, not only its front door', () => {
+    it('opens building from the guest’s own repositories with a personal token', () => {
       for (const [verb, path] of [
-        ['GET', '/repositories'],
-        ['POST', '/repositories/import'],
-        ['GET', '/repositories/available'],
-        ['GET', '/repositories/r1'],
-        ['DELETE', '/repositories/r1'],
+        ['GET', '/repositories/github/setup/status'],
         ['GET', '/repositories/github/status'],
+        ['POST', '/repositories/github/validate-pat'],
         ['POST', '/repositories/github/connect-pat'],
         ['POST', '/repositories/github/disconnect'],
-        ['GET', '/repositories/github-app/install-url'],
-        ['POST', '/repositories/github-app/packages-pat'],
+        ['GET', '/repositories'],
+        ['GET', '/repositories/available'],
+        ['POST', '/repositories/import'],
+        ['GET', '/repositories/r1'],
+        ['DELETE', '/repositories/r1'],
+        ['GET', '/repositories/r1/branches'],
+        ['GET', '/repositories/r1/manifests'],
+        ['POST', '/repositories/r1/map/apply'],
+        ['POST', '/applications/deploy-from-yaml'],
         ['POST', '/templates/nextjs/use'],
+        ['GET', '/repositories/github-app/install-url'],
+        ['POST', '/repositories/github-app/rescan-installations'],
+        ['GET', '/repositories/github-app/packages-pat/status'],
       ] as const) {
-        expect(isSandboxAllowed(verb, path)).toBe(false);
+        expect(isSandboxAllowed(verb, path)).toBe(true);
       }
-
-      // The catalogue of starting points is readable — it is `@Public()` and
-      // grants nothing. Reading what a template is stays apart from making a
-      // repository out of it in somebody else's account.
-      expect(isSandboxAllowed('GET', '/templates')).toBe(true);
     });
 
     /**
-     * A refusal a guest is never told about reads as a missing feature. The
-     * list of areas is the same list served to the person and to their agent,
-     * so the closed git entrance has to appear in it by name.
+     * A GET the fence admits skips the permission check, so anything opened
+     * here is answered by its handler alone. The instance's own GitHub setup
+     * and the App installations of everybody on it must never be among them.
      */
-    it('tells a guest the git entrance is shut, and why', () => {
+    it('keeps the instance’s GitHub setup and the App routes shut', () => {
+      for (const [verb, path] of [
+        ['GET', '/repositories/github/setup/health'],
+        ['POST', '/repositories/github/setup/pat'],
+        ['POST', '/repositories/github/setup/github-app'],
+        ['POST', '/repositories/github/setup/github-app/manifest-start'],
+        ['DELETE', '/repositories/github/setup'],
+        ['GET', '/repositories/github-app/installations'],
+        ['DELETE', '/repositories/github-app/installations/1'],
+        ['POST', '/repositories/github-app/packages-pat'],
+        ['PUT', '/repositories/github-app/packages-pat/rotate'],
+        ['DELETE', '/repositories/github-app/packages-pat'],
+        ['PATCH', '/repositories/r1'],
+        // Pushes reach Flui through the generated workflow; the repository
+        // webhook these manage points at a route nothing serves.
+        ['POST', '/repositories/r1/webhook'],
+        ['DELETE', '/repositories/r1/webhook'],
+        ['GET', '/repositories/r1/webhooks'],
+        ['GET', '/templates/nextjs'],
+      ] as const) {
+        expect(isSandboxAllowed(verb, path)).toBe(false);
+      }
+    });
+
+    it('tells a guest the git entrance is theirs, and what happens to the token', () => {
       const area = SANDBOX_AREAS.find((a) => a.key === 'repositories');
-      expect(area?.level).toBe('closed');
-      expect(area?.why).toContain('GitHub');
-      expect(isSandboxAllowed('GET', '/repositories')).toBe(false);
+      expect(area?.level).toBe('full');
+      expect(area?.why).toContain('token');
     });
 
     /**

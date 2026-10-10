@@ -63,6 +63,10 @@ import {
 } from '../interfaces/attached-services.port';
 import { droppedAutoscaler } from '../utils/dropped-autoscaler.util';
 import { ScheduledJobsService } from '../services/scheduled-jobs.service';
+import { applyAppManifest } from '../utils/app-manifest-scope';
+import { assertSecretReferences } from '../utils/secret-reference.policy';
+import { withGuestRuntime } from '../utils/guest-runtime';
+import { SandboxTenantEntity } from '../../sandbox/entities/sandbox-tenant.entity';
 
 /** The restore point is seconds; the copies it starts are not waited for. */
 const PRE_DEPLOY_BACKUP_TIMEOUT_MS = 2 * 60 * 1000;
@@ -72,6 +76,8 @@ export class ApplicationDeployProcessor {
   private readonly logger = new Logger(ApplicationDeployProcessor.name);
 
   constructor(
+    @InjectRepository(SandboxTenantEntity)
+    private readonly tenants: Repository<SandboxTenantEntity>,
     @InjectRepository(InfrastructureOperationEntity)
     private readonly operationRepository: Repository<InfrastructureOperationEntity>,
     @InjectRepository(ClusterEntity)
@@ -382,6 +388,17 @@ export class ApplicationDeployProcessor {
         );
       }
 
+      // A guest's applications live in the guest's area and nowhere else: the
+      // area is where its fences (pod security, quota, isolation) are.
+      const tenancy = app.userId
+        ? await this.tenants.findOne({ where: { userId: app.userId } })
+        : null;
+      if (tenancy && tenancy.namespace !== app.k8sNamespace) {
+        throw new Error(
+          `A demo guest's application runs only in its own area, not in ${app.k8sNamespace}`,
+        );
+      }
+
       // Ensure target namespace exists (creates it on first deploy, no-op afterwards)
       await this.workloadNamespace.ensure(
         kubeconfig,
@@ -449,8 +466,15 @@ export class ApplicationDeployProcessor {
         this.logger.log('Pull secret skipped: not GIT_BUILD or no userId');
       }
 
-      const manifests = this.manifestGenerator.generateForDockerImage(
+      assertSecretReferences(
         appForManifests,
+        await this.applicationsRepository.findNamespaceNeighbours(
+          appForManifests.clusterId,
+          appForManifests.k8sNamespace,
+        ),
+      );
+      const manifests = this.manifestGenerator.generateForDockerImage(
+        withGuestRuntime(appForManifests),
         imagePullSecretName,
         deployType === 'rollback' ? undefined : pinnedImageRef,
       );
@@ -958,7 +982,12 @@ export class ApplicationDeployProcessor {
         reconciliationStatus: ReconciliationStatus.PENDING,
       });
       try {
-        await this.kubernetesService.applyManifest(kubeconfig, manifest.yaml);
+        await applyAppManifest(
+          this.kubernetesService,
+          kubeconfig,
+          manifest.yaml,
+          namespace,
+        );
         await this.appResourcesRepository.update(resource.id, {
           status: ApplicationResourceStatus.APPLIED,
         });

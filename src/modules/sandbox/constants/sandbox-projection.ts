@@ -308,10 +308,11 @@ export const SANDBOX_PROJECTIONS: SandboxProjectionRule[] = [
 export function findSandboxProjection(
   verb: string,
   path: string,
+  route = false,
 ): SandboxProjectionRule | undefined {
   return SANDBOX_PROJECTIONS.find(
     (rule) =>
       rule.verbs.includes(verb.toUpperCase() as HttpVerb) &&
-      routeMatches(rule.pattern, path),
+      routeMatches(rule.pattern, path, route),
   );
 }

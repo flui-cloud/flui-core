@@ -11,6 +11,7 @@ import { ApplicationManifestGeneratorService } from './application-manifest-gene
 import { WorkloadNamespaceService } from './workload-namespace.service';
 import { GhcrSecretRefreshService } from './ghcr-secret-refresh.service';
 import { describeError } from '../../shared/utils/error.util';
+import { applyAppManifest } from '../utils/app-manifest-scope';
 
 const WAITABLE_KINDS = new Set(['Deployment', 'StatefulSet', 'DaemonSet']);
 const MATERIALIZE_READINESS_TIMEOUT_MS = 10 * 60 * 1000;
@@ -108,7 +109,12 @@ export class ApplicationMaterializerService {
       imagePullSecretName,
     );
     for (const m of manifests) {
-      await this.kubernetesService.applyManifest(kubeconfig, m.yaml);
+      await applyAppManifest(
+        this.kubernetesService,
+        kubeconfig,
+        m.yaml,
+        effectiveApp.k8sNamespace,
+      );
     }
 
     for (const m of manifests) {

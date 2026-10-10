@@ -1,4 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { safeStep } from '../utils/safe-step';
 import { PrometheusQueryService } from './prometheus-query.service';
 import { ApplicationService } from '../../applications/services/application.service';
 import { ApplicationEntity } from '../../applications/entities/application.entity';
@@ -18,6 +19,7 @@ import {
   AppHealthStatusDto,
   AppVolumeMetricsDto,
 } from '../dto/application-metrics.dto';
+import { promRegexLiteral, promString } from '../utils/promql';
 
 /** Maps ApplicationResourceKind workload values to kube-state-metrics label keys */
 const WORKLOAD_LABEL_KEY: Record<string, string> = {
@@ -110,14 +112,13 @@ export class ApplicationMetricsService {
     appName: string,
     namespace: string,
   ): Promise<AppMetricsDto> {
-    const podFilter = this.buildPodLabelFilter(appName, namespace);
     const app = await this.applicationService.findById(appId);
+    const cluster = clusterMatcher(app?.clusterId);
+    const podFilter = this.buildPodLabelFilter(appName, namespace) + cluster;
     const workloadLabelKey = await this.resolveWorkloadLabelKey(appId);
-    const deplFilter = this.buildWorkloadLabelFilter(
-      appName,
-      namespace,
-      workloadLabelKey,
-    );
+    const deplFilter =
+      this.buildWorkloadLabelFilter(appName, namespace, workloadLabelKey) +
+      cluster;
 
     const [
       cpuUsageRes,
@@ -316,7 +317,7 @@ export class ApplicationMetricsService {
     const names = pvcs.map((r) => r.name).filter((n): n is string => !!n);
     if (names.length === 0) return null;
 
-    const sel = `namespace="${namespace}",persistentvolumeclaim=~"${names.join('|')}"`;
+    const sel = `namespace="${promString(namespace)}",persistentvolumeclaim=~"${names.map(promRegexLiteral).join('|')}"`;
     const [usedRes, capRes, availRes] = await Promise.all([
       this.prometheusQuery.queryInstant(
         `sum(kubelet_volume_stats_used_bytes{${sel}})`,
@@ -381,13 +382,17 @@ export class ApplicationMetricsService {
     end: number,
     step: string = '60s',
   ): Promise<AppMetricsDataPointDto[]> {
-    const podFilter = this.buildPodLabelFilter(appName, namespace);
+    const app = await this.applicationService.findById(appId);
+    const cluster = clusterMatcher(app?.clusterId);
+    const podFilter = this.buildPodLabelFilter(appName, namespace) + cluster;
     const workloadLabelKey = await this.resolveWorkloadLabelKey(appId);
-    const deplFilter = this.buildWorkloadLabelFilter(
-      appName,
-      namespace,
-      workloadLabelKey,
-    );
+    const deplFilter =
+      this.buildWorkloadLabelFilter(appName, namespace, workloadLabelKey) +
+      cluster;
+    const span = safeStep(step);
+    const peak = (expr: string) => `max_over_time(${expr}[${span}])`;
+    const low = (expr: string) => `min_over_time(${expr}[${span}])`;
+    const raw = rawCpuExpressions(namespace, appName, cluster);
 
     const [
       cpuUsageRes,
@@ -406,51 +411,52 @@ export class ApplicationMetricsService {
       netRxByPodRes,
       netTxByPodRes,
       restartByPodRes,
+      throttledRes,
     ] = await Promise.all([
       this.prometheusQuery.queryRange(
-        `flui:app_cpu_usage_cores{${podFilter}}`,
+        `max_over_time(${raw.usage}[${span}:30s])`,
         start,
         end,
         step,
       ),
       this.prometheusQuery.queryRange(
-        `flui:app_cpu_utilization_percent{${podFilter}}`,
+        `flui:app_cpu_limits_cores{${podFilter}}`,
         start,
         end,
         step,
       ),
       this.prometheusQuery.queryRange(
-        `flui:app_memory_usage_bytes{${podFilter}}`,
+        peak(`flui:app_memory_usage_bytes{${podFilter}}`),
         start,
         end,
         step,
       ),
       this.prometheusQuery.queryRange(
-        `flui:app_memory_utilization_percent{${podFilter}}`,
+        peak(`flui:app_memory_utilization_percent{${podFilter}}`),
         start,
         end,
         step,
       ),
       this.prometheusQuery.queryRange(
-        `flui:app_network_receive_bytes_rate{${podFilter}}`,
+        peak(`flui:app_network_receive_bytes_rate{${podFilter}}`),
         start,
         end,
         step,
       ),
       this.prometheusQuery.queryRange(
-        `flui:app_network_transmit_bytes_rate{${podFilter}}`,
+        peak(`flui:app_network_transmit_bytes_rate{${podFilter}}`),
         start,
         end,
         step,
       ),
       this.prometheusQuery.queryRange(
-        `flui:app_replicas_desired{${deplFilter}}`,
+        peak(`flui:app_replicas_desired{${deplFilter}}`),
         start,
         end,
         step,
       ),
       this.prometheusQuery.queryRange(
-        `flui:app_replicas_ready{${deplFilter}}`,
+        low(`flui:app_replicas_ready{${deplFilter}}`),
         start,
         end,
         step,
@@ -462,25 +468,25 @@ export class ApplicationMetricsService {
         step,
       ),
       this.prometheusQuery.queryRange(
-        `flui:app_cpu_usage_cores_by_pod{${podFilter}}`,
+        peak(`flui:app_cpu_usage_cores_by_pod{${podFilter}}`),
         start,
         end,
         step,
       ),
       this.prometheusQuery.queryRange(
-        `flui:app_cpu_utilization_percent_by_pod{${podFilter}}`,
+        peak(`flui:app_cpu_utilization_percent_by_pod{${podFilter}}`),
         start,
         end,
         step,
       ),
       this.prometheusQuery.queryRange(
-        `flui:app_memory_usage_bytes_by_pod{${podFilter}}`,
+        peak(`flui:app_memory_usage_bytes_by_pod{${podFilter}}`),
         start,
         end,
         step,
       ),
       this.prometheusQuery.queryRange(
-        `flui:app_memory_utilization_percent_by_pod{${podFilter}}`,
+        peak(`flui:app_memory_utilization_percent_by_pod{${podFilter}}`),
         start,
         end,
         step,
@@ -503,10 +509,17 @@ export class ApplicationMetricsService {
         end,
         step,
       ),
+      this.prometheusQuery.queryRange(
+        `max_over_time(${raw.throttledPercent}[${span}:30s])`,
+        start,
+        end,
+        step,
+      ),
     ]);
 
     const cpuUsageByTs = this.rangeToMap(cpuUsageRes);
-    const cpuUtilByTs = this.rangeToMap(cpuUtilRes);
+    const cpuLimitsByTs = this.rangeToMap(cpuUtilRes);
+    const throttledByTs = this.rangeToMap(throttledRes);
     const memUsageByTs = this.rangeToMap(memUsageRes);
     const memUtilByTs = this.rangeToMap(memUtilRes);
     const netRxByTs = this.rangeToMap(netRxRes);
@@ -552,7 +565,11 @@ export class ApplicationMetricsService {
         timestamp: ts,
         datetime: new Date(ts * 1000).toISOString(),
         cpu_usage_cores: cpuUsageByTs.get(ts),
-        cpu_utilization_percent: cpuUtilByTs.get(ts),
+        cpu_utilization_percent: percentOf(
+          cpuUsageByTs.get(ts),
+          cpuLimitsByTs.get(ts),
+        ),
+        cpu_throttled_percent: throttledByTs.get(ts),
         memory_usage_bytes: memUsageByTs.get(ts),
         memory_utilization_percent: memUtilByTs.get(ts),
         network_receive_rate: netRxByTs.get(ts),
@@ -603,7 +620,7 @@ export class ApplicationMetricsService {
    * Recording rules key on: namespace, label_app_kubernetes_io_name
    */
   private buildPodLabelFilter(appName: string, namespace: string): string {
-    return `namespace="${namespace}",label_app_kubernetes_io_name="${appName}"`;
+    return `namespace="${promString(namespace)}",label_app_kubernetes_io_name="${promString(appName)}"`;
   }
 
   /**
@@ -628,7 +645,7 @@ export class ApplicationMetricsService {
     namespace: string,
     workloadLabelKey: string = 'deployment',
   ): string {
-    return `namespace="${namespace}",${workloadLabelKey}="${appName}"`;
+    return `namespace="${promString(namespace)}",${workloadLabelKey}="${promString(appName)}"`;
   }
 
   /**
@@ -893,3 +910,45 @@ export class ApplicationMetricsService {
     };
   }
 }
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * Keeps an application's series to its own cluster: one VictoriaMetrics holds
+ * every cluster's. The empty alternative still matches series recorded before
+ * the rules carried cluster_id.
+ */
+export function clusterMatcher(clusterId?: string | null): string {
+  return clusterId && UUID.test(clusterId)
+    ? `,cluster_id=~"${promRegexLiteral(clusterId)}|"`
+    : '';
+}
+
+const percentOf = (
+  value: number | undefined,
+  of: number | undefined,
+): number | undefined =>
+  value !== undefined && of !== undefined && of > 0
+    ? (value / of) * 100
+    : undefined;
+
+/**
+ * CPU read from the containers over one minute, not from the recorded
+ * five-minute averages: a burst of a minute at the limit read as half of it.
+ * Throttling is the share of scheduling periods the limit held the app back.
+ */
+export function rawCpuExpressions(
+  namespace: string,
+  appName: string,
+  cluster: string,
+): { usage: string; throttledPercent: string } {
+  const pods = `kube_pod_labels{namespace="${promString(namespace)}",label_app_kubernetes_io_name="${promString(appName)}",label_app_kubernetes_io_managed_by="flui-cloud"${cluster}}`;
+  const perApp = (metric: string) =>
+    `sum(rate(${metric}{namespace="${promString(namespace)}",container!="",container!="POD"${cluster}}[1m]) * on (cluster_id, namespace, pod) group_left() ${pods})`;
+  return {
+    usage: perApp('container_cpu_usage_seconds_total'),
+    throttledPercent: `(${perApp('container_cpu_cfs_throttled_periods_total')} / ${perApp('container_cpu_cfs_periods_total')} * 100)`,
+  };
+}
+
+export { safeStep };
