@@ -20,6 +20,7 @@ import {
   PlatformUpdateJobData,
 } from '../services/platform-update-runner.service';
 import { PlatformComponentKey } from '../constants/platform-update-components';
+import { handUpgradeOn } from '../constants/platform-update-queue';
 
 /**
  * Applies a platform release, one component at a time, through the same deploy
@@ -45,6 +46,10 @@ export class PlatformUpdateProcessor {
 
   @Process(PLATFORM_UPGRADE_JOB)
   async runUpgrade(job: Job<PlatformUpdateJobData>): Promise<void> {
+    if (await this.upgrades.waitsForNewerApi(job.data.operationId)) {
+      await handUpgradeOn(job.queue, job.data.operationId);
+      return;
+    }
     await this.upgrades.execute(job.data.operationId);
   }
 

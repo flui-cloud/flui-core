@@ -158,7 +158,7 @@ export class BackupPoliciesController {
       'The heartbeat set with the platform backup goes out only while the installation is healthy (database, metrics, alert delivery) and its last platform backup is fresh. The address itself is never returned.',
   })
   @ApiResponse({ status: 200, type: HeartbeatStatusDto })
-  heartbeat(): HeartbeatStatusDto {
+  heartbeat(): Promise<HeartbeatStatusDto> {
     return this.heartbeats.status();
   }
 

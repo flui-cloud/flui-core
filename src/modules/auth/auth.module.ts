@@ -1,3 +1,4 @@
+import { sharedThrottlerStorage } from '../../common/throttling/redis-throttler.storage';
 import { MailModule } from '../mail/mail.module';
 import { DemoSignInService } from './services/demo-sign-in.service';
 import { SandboxGateModule } from '../sandbox/gate/sandbox-slot-gate';
@@ -70,7 +71,10 @@ import { FirewallsModule } from '../infrastructure/firewalls/firewalls.module';
     ConfigModule,
     MailModule,
     SandboxGateModule,
-    ThrottlerModule.forRoot([{ ttl: 60000, limit: 100 }]),
+    ThrottlerModule.forRoot({
+      throttlers: [{ ttl: 60000, limit: 100 }],
+      storage: sharedThrottlerStorage(),
+    }),
     PassportModule.register({ defaultStrategy: 'jwt' }),
     JwtModule.registerAsync({
       imports: [ConfigModule],

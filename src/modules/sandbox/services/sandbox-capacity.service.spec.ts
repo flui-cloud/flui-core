@@ -106,7 +106,24 @@ const build = (world: World = {}) => {
     k8s as never,
     encryption as never,
     config,
+    sharedNumbers() as never,
   );
+};
+
+/** The numbers every copy of the API shares, kept in memory for the test. */
+const sharedNumbers = () => {
+  const counts = new Map<string, number>();
+  const lists = new Map<string, number[]>();
+  return {
+    increment: async (name: string) => {
+      counts.set(name, (counts.get(name) ?? 0) + 1);
+    },
+    count: async (name: string) => counts.get(name) ?? 0,
+    sample: async (name: string, value: number, keep: number) => {
+      lists.set(name, [value, ...(lists.get(name) ?? [])].slice(0, keep));
+    },
+    samples: async (name: string) => lists.get(name) ?? [],
+  };
 };
 
 describe('how many tenancies to keep warm', () => {
@@ -234,12 +251,12 @@ describe('what the rule measures rather than assumes', () => {
 
   it('starts from the measured build time and then believes what it sees', async () => {
     const service = build();
-    expect(service.readySeconds()).toBe(202);
+    expect(await service.readySeconds()).toBe(202);
 
     service.recordBuild(300);
     service.recordBuild(320);
     service.recordBuild(310);
-    expect(service.readySeconds()).toBe(386);
+    expect(await service.readySeconds()).toBe(386);
   });
 
   // One slow image pull must not double the buffer for the rest of the day.
@@ -248,14 +265,14 @@ describe('what the rule measures rather than assumes', () => {
     service.recordBuild(120);
     service.recordBuild(126);
     service.recordBuild(1200);
-    expect(service.readySeconds()).toBe(202);
+    expect(await service.readySeconds()).toBe(202);
   });
 
   it('ignores a build time that is not a number of seconds', async () => {
     const service = build();
     service.recordBuild(Number.NaN);
     service.recordBuild(-5);
-    expect(service.readySeconds()).toBe(202);
+    expect(await service.readySeconds()).toBe(202);
   });
 });
 

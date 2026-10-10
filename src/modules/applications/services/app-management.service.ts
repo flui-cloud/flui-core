@@ -63,6 +63,7 @@ import {
   PREVIOUS_VOLUME_LABEL,
   StatefulSetVolumeSwapService,
 } from './statefulset-volume-swap.service';
+import { systemReplicasRefusal } from '../schedulers/platform-api-sizing';
 
 /** Rollout poll interval (ms) */
 const ROLLOUT_POLL_INTERVAL_MS = 3000;
@@ -209,6 +210,8 @@ export class AppManagementService {
     replicas: number,
   ): Promise<{ app: ApplicationEntity; kubeconfig: string; previous: number }> {
     const { app, kubeconfig } = await this.resolveAppAndKubeconfig(appId);
+    const refused = systemReplicasRefusal(app, replicas);
+    if (refused) throw new BadRequestException(refused);
     const { kind, name: deploymentName } = await this.getWorkloadOrThrow(
       app,
       kubeconfig,

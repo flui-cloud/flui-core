@@ -85,6 +85,7 @@ const assessment = (over: Partial<ScalingAssessment> = {}): ScalingAssessment =>
 function harness(
   capability: ProviderScalingCapability = HETZNER,
   inFlight = 0,
+  lockFree = true,
 ) {
   // No node has joined in these fixtures, so the pause after an addition never
   // stands in the way of what each one is testing.
@@ -113,11 +114,26 @@ function harness(
     groupService as unknown as ScalingGroupService,
     registry,
     boundsRegistry,
+    {
+      createQueryRunner: () => ({
+        connect: async () => undefined,
+        release: async () => undefined,
+        query: async (sql: string) =>
+          sql.includes('pg_try_advisory_lock') ? [{ held: lockFree }] : [{}],
+      }),
+    } as never,
   );
   return { service, clusters, operations, groups, registry };
 }
 
 describe('the only thing with hands', () => {
+  it('buys nothing while another copy of the API is acting on the same cluster', async () => {
+    const h = harness(HETZNER, 0, false);
+    const acted = await h.service.act(group(), cluster, assessment());
+    expect(acted).toBeNull();
+    expect(h.clusters.addWorkers).not.toHaveBeenCalled();
+  });
+
   it('buys the shape the ladder chose, not the size the cluster happens to be', async () => {
     const h = harness();
 

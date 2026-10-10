@@ -27,3 +27,24 @@ export async function enqueueUpgrade(
     },
   );
 }
+
+/**
+ * Puts a continuation back for a newer copy of the API, a little later. The
+ * copy that received it runs the old version and is about to be replaced.
+ */
+export async function handUpgradeOn(
+  queue: Queue<PlatformUpdateJobData>,
+  operationId: string,
+): Promise<void> {
+  await queue.add(
+    PLATFORM_UPGRADE_JOB,
+    { operationId },
+    {
+      attempts: 1,
+      delay: 15_000,
+      jobId: `platform-upgrade:${operationId}:handover:${Date.now()}`,
+      removeOnComplete: true,
+      removeOnFail: true,
+    },
+  );
+}

@@ -13,6 +13,18 @@ import {
 const at = (iso: string) => new Date(iso);
 
 // 2026-09-28 is a Monday.
+
+/** The shared cache, in memory for the test. */
+const memoryCache = () => {
+  const entries = new Map<string, unknown>();
+  return {
+    get: async (k: string) => entries.get(k),
+    set: async (k: string, v: unknown) => {
+      entries.set(k, v);
+    },
+  };
+};
+
 describe('whether the last platform backup is fresh enough to keep the heartbeat', () => {
   it('forgives the weekend on a weekday schedule', () => {
     const cron = '0 3 * * 1-5';
@@ -130,6 +142,7 @@ describe('MasterHeartbeatScheduler — which policies count', () => {
           .fn()
           .mockResolvedValue({ healthy: problems.length === 0, problems }),
       } as never,
+      memoryCache() as never,
     );
     return { scheduler, jobFindOne };
   }
@@ -189,6 +202,7 @@ describe('MasterHeartbeatScheduler — the installation must be healthy too', ()
           .fn()
           .mockResolvedValue({ healthy: problems.length === 0, problems }),
       } as never,
+      memoryCache() as never,
     );
 
   it('withholds the beat while alerts could not be delivered, and says why', async () => {
@@ -198,7 +212,7 @@ describe('MasterHeartbeatScheduler — the installation must be healthy too', ()
     await scheduler.tick();
 
     expect(posted).not.toHaveBeenCalled();
-    expect(scheduler.status()).toMatchObject({
+    expect(await scheduler.status()).toMatchObject({
       state: 'withheld',
       lastBeatAt: null,
       reasons: [
@@ -213,8 +227,8 @@ describe('MasterHeartbeatScheduler — the installation must be healthy too', ()
 
     expect(posted).toHaveBeenCalledTimes(1);
     expect(posted.mock.calls[0][0].data.installation).toBe('healthy');
-    expect(scheduler.status().state).toBe('beating');
-    expect(scheduler.status().lastBeatAt).not.toBeNull();
+    expect((await scheduler.status()).state).toBe('beating');
+    expect((await scheduler.status()).lastBeatAt).not.toBeNull();
   });
 
   it('tells a beat that could not be delivered apart from one withheld', async () => {
@@ -222,7 +236,7 @@ describe('MasterHeartbeatScheduler — the installation must be healthy too', ()
     const scheduler = build([]);
     await scheduler.tick();
 
-    expect(scheduler.status()).toMatchObject({
+    expect(await scheduler.status()).toMatchObject({
       state: 'failing',
       reasons: ['The heartbeat could not be sent: connect ETIMEDOUT'],
     });
@@ -235,8 +249,9 @@ describe('MasterHeartbeatScheduler — the installation must be healthy too', ()
       } as never,
       { findOne: jest.fn() } as never,
       { check: jest.fn() } as never,
+      memoryCache() as never,
     );
     await scheduler.tick();
-    expect(scheduler.status().state).toBe('off');
+    expect((await scheduler.status()).state).toBe('off');
   });
 });

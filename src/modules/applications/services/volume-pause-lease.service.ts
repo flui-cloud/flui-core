@@ -1,5 +1,6 @@
 import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { KubernetesService } from '../../infrastructure/shared/services/kubernetes.service';
+import { API_INSTANCE_ID } from '../../../common/instance/api-instance';
 
 /**
  * Selectable, so a sweep can find every paused workload in a cluster with one
@@ -9,6 +10,18 @@ import { KubernetesService } from '../../infrastructure/shared/services/kubernet
 export const PAUSED_LABEL = 'flui.cloud/paused-for-copy';
 export const PAUSED_REPLICAS_ANNOTATION = 'flui.cloud/paused-replicas';
 export const PAUSED_AT_ANNOTATION = 'flui.cloud/paused-at';
+/** The copy of the API whose volume copy took the pause. */
+export const PAUSED_BY_ANNOTATION = 'flui.cloud/paused-by';
+
+/**
+ * Which pauses a sweep may undo. `expired`: past the TTL, whoever took them.
+ * `mine`: also those this copy took, at its shutdown. `orphaned`: also those
+ * whose copy no longer exists, given the copies that are alive.
+ */
+export type PauseSweep =
+  | { mode: 'expired' }
+  | { mode: 'mine' }
+  | { mode: 'orphaned'; alive: Set<string> };
 
 /**
  * How long a pause may outlive the thing that took it.
@@ -115,6 +128,7 @@ export class VolumePauseLeaseService {
         {
           [PAUSED_REPLICAS_ANNOTATION]: String(workload.replicas),
           [PAUSED_AT_ANNOTATION]: new Date().toISOString(),
+          [PAUSED_BY_ANNOTATION]: API_INSTANCE_ID,
         },
       );
       await this.k8s.scaleWorkload(
@@ -224,14 +238,8 @@ export class VolumePauseLeaseService {
     return true;
   }
 
-  /**
-   * Finds every paused workload in a cluster and releases the expired ones.
-   *
-   * `force` is for shutdown and boot, where there is no copy left that could
-   * still be using the pause — at boot because any copy this process started
-   * died with the previous one, at shutdown because it is about to.
-   */
-  async sweep(kubeconfig: string, force = false): Promise<number> {
+  /** Finds every paused workload in a cluster and releases those `which` allows. */
+  async sweep(kubeconfig: string, which: PauseSweep): Promise<number> {
     let released = 0;
     for (const kind of ['Deployment', 'StatefulSet'] as const) {
       const found = await this.k8s
@@ -242,13 +250,9 @@ export class VolumePauseLeaseService {
         )
         .catch(() => [] as any[]);
       for (const workload of found) {
-        const pausedAt = Date.parse(
-          workload?.metadata?.annotations?.[PAUSED_AT_ANNOTATION] ?? '',
-        );
-        const expired =
-          !Number.isFinite(pausedAt) ||
-          Date.now() - pausedAt > PAUSE_LEASE_TTL_MS;
-        if (!force && !expired) continue;
+        if (!pauseIsReleasable(workload?.metadata?.annotations ?? {}, which)) {
+          continue;
+        }
         await this.release(kubeconfig, [
           {
             kind,
@@ -290,4 +294,26 @@ export class VolumePauseLeaseService {
       `Timed out waiting for the pods holding ${namespace}/${pvcName} to stop`,
     );
   }
+}
+
+/**
+ * Whether a pause no longer has a copy that could still be using it. Another
+ * copy of the API may be in the middle of a volume copy: its pauses stay until
+ * it ends them, dies, or overstays the TTL.
+ */
+export function pauseIsReleasable(
+  annotations: Record<string, string>,
+  which: PauseSweep,
+): boolean {
+  const pausedAt = Date.parse(annotations[PAUSED_AT_ANNOTATION] ?? '');
+  if (
+    !Number.isFinite(pausedAt) ||
+    Date.now() - pausedAt > PAUSE_LEASE_TTL_MS
+  ) {
+    return true;
+  }
+  const owner = annotations[PAUSED_BY_ANNOTATION];
+  if (which.mode === 'mine') return owner === API_INSTANCE_ID;
+  if (which.mode === 'orphaned') return !owner || !which.alive.has(owner);
+  return false;
 }

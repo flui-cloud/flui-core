@@ -1,3 +1,4 @@
+import { LOCAL_JOB } from '../../../common/leadership/scheduler-leadership.service';
 import {
   BadRequestException,
   Injectable,
@@ -65,7 +66,7 @@ export class ManagementNetworkService implements OnModuleInit {
     );
   }
 
-  @Cron(CronExpression.EVERY_MINUTE)
+  @Cron(CronExpression.EVERY_MINUTE, { name: `${LOCAL_JOB}management-network` })
   async refresh(): Promise<void> {
     const control = await this.control();
     rememberSwitch(resolveSwitch(this.storedOf(control)));

@@ -2,7 +2,7 @@
 
 exports[`against the real templates classifies every control template exactly as recorded 1`] = `
 {
-  "00-secrets.yaml": "needs 47",
+  "00-secrets.yaml": "needs 49",
   "01-namespace.yaml": "no values needed",
   "01b-platform-priority.yaml": "no values needed",
   "02-postgres.yaml": "no values needed",

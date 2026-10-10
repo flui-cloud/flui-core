@@ -4,6 +4,7 @@ import {
   OnModuleDestroy,
   OnModuleInit,
 } from '@nestjs/common';
+import { SchedulerLeadershipService } from '../../common/leadership/scheduler-leadership.service';
 import { DemoStateService } from './demo-state.service';
 import { DemoEventsService, DemoEventType } from './demo-events.service';
 import { DemoLoopState } from '../enums/demo.enum';
@@ -48,9 +49,19 @@ export class DemoProberService implements OnModuleInit, OnModuleDestroy {
   constructor(
     private readonly state: DemoStateService,
     private readonly events: DemoEventsService,
+    private readonly leadership: SchedulerLeadershipService,
   ) {}
 
   async onModuleInit(): Promise<void> {
+    await this.loadCounters();
+    this.leadership.onChange((leader) => {
+      if (leader) void this.loadCounters();
+    });
+    this.scheduleNext(IDLE_TICK_MS);
+  }
+
+  /** The counters as the copy that led before left them. */
+  private async loadCounters(): Promise<void> {
     const cfg = await this.state.get();
     this.counters = {
       probesTotal: cfg.probesTotal ?? 0,
@@ -60,7 +71,6 @@ export class DemoProberService implements OnModuleInit, OnModuleDestroy {
       lastProbeAt: cfg.lastProbeAt ? cfg.lastProbeAt.toISOString() : null,
       lastProbeOk: cfg.lastProbeOk ?? null,
     };
-    this.scheduleNext(IDLE_TICK_MS);
   }
 
   async onModuleDestroy(): Promise<void> {
@@ -97,6 +107,7 @@ export class DemoProberService implements OnModuleInit, OnModuleDestroy {
   private async tick(): Promise<void> {
     let nextMs = IDLE_TICK_MS;
     try {
+      if (!this.leadership.isLeader()) return;
       const cfg = await this.state.get();
       // Keep narrating while a cycle is still in flight even if just disabled.
       const active =

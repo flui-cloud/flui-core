@@ -1,3 +1,4 @@
+import { SharedNumbersService } from '../../../common/shared-numbers/shared-numbers.service';
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { In, MoreThan, Not, Repository } from 'typeorm';
@@ -65,14 +66,16 @@ export interface SandboxCapacity {
  * part that earns autoscaling for free: when a node is added the ceiling rises
  * on its own, and nothing about the rule changes.
  */
+/** Shared by every copy of the API: refusals happen on whichever served the visitor. */
+const FULL_REFUSALS = 'sandbox:full-refusals';
+const BUILD_SECONDS = 'sandbox:build-seconds';
+
 @Injectable()
 export class SandboxCapacityService {
   private readonly logger = new Logger(SandboxCapacityService.name);
 
   private static readonly CACHE_MS = 10_000;
 
-  private readonly buildSamples: number[] = [];
-  private fullRefusals = 0;
   private cache: { at: number; value: SandboxCapacity } | null = null;
 
   constructor(
@@ -83,6 +86,7 @@ export class SandboxCapacityService {
     private readonly k8s: KubernetesService,
     private readonly encryption: EncryptionService,
     @Inject(SANDBOX_CONFIG) private readonly config: SandboxConfig,
+    private readonly numbers: SharedNumbersService,
   ) {}
 
   private declaredFootprint(): TenancyFootprint {
@@ -97,8 +101,7 @@ export class SandboxCapacityService {
   /** Fed by every finished build, so the rule corrects itself as the seed changes. */
   recordBuild(seconds: number): void {
     if (!Number.isFinite(seconds) || seconds <= 0) return;
-    this.buildSamples.push(seconds);
-    if (this.buildSamples.length > 20) this.buildSamples.shift();
+    void this.numbers.sample(BUILD_SECONDS, seconds, 20);
     // A finished build changes both halves of the answer — one more warm, and a
     // fresh reading of what a build costs.
     this.cache = null;
@@ -106,7 +109,7 @@ export class SandboxCapacityService {
 
   /** Fed by the claim path, so "we turned people away" is a number and not a log line. */
   recordFullRefusal(): void {
-    this.fullRefusals += 1;
+    void this.numbers.increment(FULL_REFUSALS);
   }
 
   /**
@@ -115,11 +118,10 @@ export class SandboxCapacityService {
    * The median rather than the mean: one build that hit a slow image pull must
    * not double the buffer for the rest of the day.
    */
-  readySeconds(): number {
+  async readySeconds(): Promise<number> {
+    const samples = await this.numbers.samples(BUILD_SECONDS);
     const build =
-      this.buildSamples.length > 0
-        ? median(this.buildSamples)
-        : this.config.declaredBuildSeconds;
+      samples.length > 0 ? median(samples) : this.config.declaredBuildSeconds;
     return Math.round(build + this.config.declaredSettleSeconds);
   }
 
@@ -260,7 +262,10 @@ export class SandboxCapacityService {
     // builder still re-reads between one tenancy and the next.
     const cached = this.cache;
     if (cached && Date.now() - cached.at < SandboxCapacityService.CACHE_MS) {
-      return { ...cached.value, fullRefusals: this.fullRefusals };
+      return {
+        ...cached.value,
+        fullRefusals: await this.numbers.count(FULL_REFUSALS),
+      };
     }
     const value = await this.computeSnapshot();
     this.cache = { at: Date.now(), value };
@@ -272,7 +277,7 @@ export class SandboxCapacityService {
       this.counts(),
       this.demandPerHour(),
     ]);
-    const readySeconds = this.readySeconds();
+    const readySeconds = await this.readySeconds();
     const expected = (demand.rate * readySeconds) / 3600;
     const wanted = Math.ceil(expected) + 1;
 
@@ -311,7 +316,7 @@ export class SandboxCapacityService {
       ceiling,
       readySeconds,
       footprint,
-      fullRefusals: this.fullRefusals,
+      fullRefusals: await this.numbers.count(FULL_REFUSALS),
       reason: describe({
         capacityRead,
         rate: demand.rate,

@@ -6,13 +6,17 @@ import {
 } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { InjectRepository } from '@nestjs/typeorm';
-import { In, Not, IsNull, Repository } from 'typeorm';
+import { DataSource, In, Not, IsNull, Repository } from 'typeorm';
 import {
   ClusterEntity,
   ClusterStatus,
 } from '../../infrastructure/clusters/entities/cluster.entity';
 import { EncryptionService } from '../../shared/encryption/services/encryption.service';
-import { VolumePauseLeaseService } from '../services/volume-pause-lease.service';
+import {
+  PauseSweep,
+  VolumePauseLeaseService,
+} from '../services/volume-pause-lease.service';
+import { instanceOfApplicationName } from '../../../common/instance/api-instance';
 
 /**
  * Brings back applications a volume copy stopped and never started again.
@@ -25,11 +29,10 @@ import { VolumePauseLeaseService } from '../services/volume-pause-lease.service'
  * application that stays down until somebody notices, which is worse than any
  * copy it was trying to protect.
  *
- * Three triggers, deliberately overlapping. At boot, every lease is stale by
- * definition: whatever copy held it died with the process that started it, so
- * they are all released without waiting for a TTL. On shutdown, the same, while
- * there is still a process to do it. And on a cadence, only leases past their
- * TTL, since a lease inside it may belong to a copy running right now.
+ * Three triggers, deliberately overlapping, and none of them touches a pause
+ * another copy of the API may still be using. At boot and on a cadence, the
+ * pauses whose copy no longer has a session on the database, and any past the
+ * TTL. On shutdown, this copy's own, while there is still a process to do it.
  */
 @Injectable()
 export class VolumePauseSweeperService
@@ -42,6 +45,7 @@ export class VolumePauseSweeperService
     private readonly clusterRepository: Repository<ClusterEntity>,
     private readonly encryptionService: EncryptionService,
     private readonly pauseLease: VolumePauseLeaseService,
+    private readonly dataSource: DataSource,
   ) {}
 
   /**
@@ -51,21 +55,30 @@ export class VolumePauseSweeperService
    * from ever restarting. The sweep still runs; it just no longer gates the port.
    */
   onApplicationBootstrap(): void {
-    void this.sweepEverywhere(true, 'boot').catch((err: Error) => {
+    void this.sweepEverywhere('orphaned', 'boot').catch((err: Error) => {
       this.logger.warn(`[pause-sweep] boot sweep failed: ${err.message}`);
     });
   }
 
   async onApplicationShutdown(): Promise<void> {
-    await this.sweepEverywhere(true, 'shutdown');
+    await this.sweepEverywhere('mine', 'shutdown');
   }
 
   @Cron(CronExpression.EVERY_10_MINUTES)
   async sweepExpired(): Promise<void> {
-    await this.sweepEverywhere(false, 'cadence');
+    await this.sweepEverywhere('orphaned', 'cadence');
   }
 
-  private async sweepEverywhere(force: boolean, reason: string): Promise<void> {
+  private async sweepEverywhere(
+    mode: 'orphaned' | 'mine',
+    reason: string,
+  ): Promise<void> {
+    let which: PauseSweep = { mode: 'expired' };
+    if (mode === 'mine') which = { mode: 'mine' };
+    else {
+      const alive = await this.aliveCopies();
+      if (alive) which = { mode: 'orphaned', alive };
+    }
     let clusters: ClusterEntity[];
     try {
       clusters = await this.clusterRepository.find({
@@ -91,7 +104,7 @@ export class VolumePauseSweeperService
         const kubeconfig = this.encryptionService.decrypt(
           cluster.kubeconfigEncrypted as string,
         );
-        const released = await this.pauseLease.sweep(kubeconfig, force);
+        const released = await this.pauseLease.sweep(kubeconfig, which);
         if (released > 0) {
           this.logger.warn(
             `[pause-sweep] ${reason}: restored ${released} workload(s) on cluster ${cluster.id}`,
@@ -104,6 +117,23 @@ export class VolumePauseSweeperService
           `[pause-sweep] ${reason}: cluster ${cluster.id} failed: ${err?.message}`,
         );
       }
+    }
+  }
+
+  /** The copies of the API with a session on the database; null when that cannot be read. */
+  private async aliveCopies(): Promise<Set<string> | null> {
+    try {
+      const rows: Array<{ application_name: string }> =
+        await this.dataSource.query(
+          `SELECT DISTINCT application_name FROM pg_stat_activity WHERE application_name LIKE 'flui-api:%'`,
+        );
+      return new Set(
+        rows
+          .map((r) => instanceOfApplicationName(r.application_name))
+          .filter((id): id is string => Boolean(id)),
+      );
+    } catch {
+      return null;
     }
   }
 }

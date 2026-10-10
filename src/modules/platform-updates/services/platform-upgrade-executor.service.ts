@@ -143,6 +143,22 @@ export class PlatformUpgradeExecutorService {
     await this.complete(operationId);
   }
 
+  /**
+   * Whether this operation waits for a newer API than this one: during the
+   * rollout an old copy may be the one handed the continuation.
+   */
+  async waitsForNewerApi(operationId: string): Promise<boolean> {
+    const record = await this.records.load(operationId);
+    if (!record) return false;
+    const { status } = record.operation;
+    return (
+      (status === OperationStatus.PENDING ||
+        status === OperationStatus.IN_PROGRESS) &&
+      Boolean(record.metadata.awaitingSelfRestart) &&
+      this.runningVersion !== record.metadata.targetVersion
+    );
+  }
+
   private mayWalk(
     status: OperationStatus,
     metadata: PlatformUpgradeMetadata,

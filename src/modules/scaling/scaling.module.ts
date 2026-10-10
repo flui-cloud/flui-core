@@ -1,3 +1,4 @@
+import { sharedThrottlerStorage } from '../../common/throttling/redis-throttler.storage';
 import { Module, forwardRef } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
@@ -31,7 +32,10 @@ import { DeferredProposalRunnerService } from './services/deferred-proposal-runn
       ApplicationEntity,
       ClusterEntity,
     ]),
-    ThrottlerModule.forRoot([{ ttl: 60_000, limit: 100 }]),
+    ThrottlerModule.forRoot({
+      throttlers: [{ ttl: 60_000, limit: 100 }],
+      storage: sharedThrottlerStorage(),
+    }),
     SharedInfrastructureModule,
     EncryptionModule,
     forwardRef(() => ApplicationsModule),

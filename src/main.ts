@@ -11,6 +11,8 @@ import { HttpExceptionFilter } from './filters/http-exception.filter';
 import { MalformedIdentifierFilter } from './filters/malformed-identifier.filter';
 import { runWithActorContext } from './modules/auth/utils/actor-context';
 import Redis from 'ioredis';
+import { RedisIoAdapter } from './common/websocket/redis-io.adapter';
+import { runMigrationsOnce } from './config/migrations-once';
 
 async function performPreBootstrapChecks(): Promise<void> {
   const logger = new Logger('PreBootstrap');
@@ -100,6 +102,9 @@ function addEnumVarnamesExtension<T>(document: T): T {
 
 async function bootstrap() {
   await performPreBootstrapChecks();
+  if (await runMigrationsOnce()) {
+    process.env.FLUI_MIGRATIONS_DONE_AT_BOOT = 'true';
+  }
 
   const isProduction = process.env.NODE_ENV === 'production';
   const app = await NestFactory.create<NestExpressApplication>(AppModule, {
@@ -144,6 +149,27 @@ async function bootstrap() {
 
   // CORS — the same allowlist the websocket gateways use.
   app.enableCors({ origin: corsOriginDelegate, credentials: true });
+
+  // On SIGTERM the copy lets go of what it holds — the scheduler lock, its
+  // own volume pauses, its tunnels — so another copy takes over at once rather
+  // than when the process is killed.
+  app.enableShutdownHooks();
+
+  const ioAdapter = new RedisIoAdapter(app);
+  try {
+    await ioAdapter.connect({
+      host: process.env.REDIS_HOST || 'localhost',
+      port: Number.parseInt(process.env.REDIS_PORT || '6379', 10),
+      password: process.env.REDIS_PASSWORD,
+    });
+    app.useWebSocketAdapter(ioAdapter);
+  } catch (error) {
+    new Logger('Websockets').warn(
+      `Websocket events stay within this copy of the API: Redis refused the adapter (${
+        error instanceof Error ? error.message : String(error)
+      })`,
+    );
+  }
 
   // The internal document describes every route on the installation, its DTO
   // shapes and its parameters, and it was served to anyone who asked. It is a

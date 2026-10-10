@@ -14,7 +14,9 @@ import {
   PAUSED_REPLICAS_ANNOTATION,
   PAUSE_LEASE_TTL_MS,
   VolumePauseLeaseService,
+  PAUSED_BY_ANNOTATION,
 } from './volume-pause-lease.service';
+import { API_INSTANCE_ID } from '../../../common/instance/api-instance';
 
 describe('VolumePauseLeaseService', () => {
   function make(overrides: Partial<Record<string, any>> = {}) {
@@ -213,7 +215,7 @@ describe('VolumePauseLeaseService', () => {
           kind === 'StatefulSet' ? [leased(60_000)] : [],
       });
 
-      expect(await service.sweep('kc')).toBe(0);
+      expect(await service.sweep('kc', { mode: 'expired' })).toBe(0);
       expect(k8s.scaleWorkload).not.toHaveBeenCalled();
     });
 
@@ -224,18 +226,60 @@ describe('VolumePauseLeaseService', () => {
         getResource: async () => leased(PAUSE_LEASE_TTL_MS + 1000),
       });
 
-      expect(await service.sweep('kc')).toBe(1);
+      expect(await service.sweep('kc', { mode: 'expired' })).toBe(1);
     });
 
-    it('releases every lease when forced, as at boot', async () => {
-      const { service } = make({
+    const leasedBy = (owner: string | undefined, agoMs = 1000) => {
+      const w = leased(agoMs);
+      if (owner) {
+        (w.metadata.annotations as Record<string, string>)[
+          PAUSED_BY_ANNOTATION
+        ] = owner;
+      }
+      return w;
+    };
+    const sweepOf = (workload: ReturnType<typeof leased>) =>
+      make({
         listResourcesByLabelEverywhere: async (_kc: string, kind: string) =>
-          kind === 'Deployment' ? [leased(1000)] : [],
-        getResource: async () => leased(1000),
-      });
+          kind === 'Deployment' ? [workload] : [],
+        getResource: async () => workload,
+      }).service;
 
-      // At boot any lease belongs to a copy that died with the last process.
-      expect(await service.sweep('kc', true)).toBe(1);
+    it('never releases a fresh pause another live copy of the API took', async () => {
+      const service = sweepOf(leasedBy('flui-api-b:1'));
+      expect(
+        await service.sweep('kc', {
+          mode: 'orphaned',
+          alive: new Set(['flui-api-a:1', 'flui-api-b:1']),
+        }),
+      ).toBe(0);
+    });
+
+    it('releases a fresh pause whose copy is gone, or that names no copy', async () => {
+      const alive = new Set(['flui-api-a:1']);
+      expect(
+        await sweepOf(leasedBy('flui-api-dead:1')).sweep('kc', {
+          mode: 'orphaned',
+          alive,
+        }),
+      ).toBe(1);
+      expect(
+        await sweepOf(leasedBy(undefined)).sweep('kc', {
+          mode: 'orphaned',
+          alive,
+        }),
+      ).toBe(1);
+    });
+
+    it('releases at shutdown only the pauses this copy took', async () => {
+      expect(
+        await sweepOf(leasedBy(API_INSTANCE_ID)).sweep('kc', { mode: 'mine' }),
+      ).toBe(1);
+      expect(
+        await sweepOf(leasedBy('flui-api-other:1')).sweep('kc', {
+          mode: 'mine',
+        }),
+      ).toBe(0);
     });
 
     it('treats an unparseable timestamp as expired', async () => {
@@ -258,7 +302,7 @@ describe('VolumePauseLeaseService', () => {
 
       // Erring towards releasing: the cost is an application started early,
       // against an application that stays down forever.
-      expect(await service.sweep('kc')).toBe(1);
+      expect(await service.sweep('kc', { mode: 'expired' })).toBe(1);
     });
   });
 });

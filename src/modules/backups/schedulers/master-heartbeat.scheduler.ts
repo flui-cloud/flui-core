@@ -1,3 +1,4 @@
+import { CacheService } from '../../common/cache/cache.service';
 import { Injectable, Logger } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -68,15 +69,27 @@ export interface HeartbeatStatus {
  * elsewhere) lives OUTSIDE the master's failure domain and alarms on missed
  * beats. Flui only emits; it never evaluates its own liveness.
  */
+const HEARTBEAT_STATUS_KEY = 'heartbeat:status';
+
 @Injectable()
 export class MasterHeartbeatScheduler {
   private readonly logger = new Logger(MasterHeartbeatScheduler.name);
-  private last: HeartbeatStatus = {
+  private current: HeartbeatStatus = {
     state: 'off',
     lastCheckAt: null,
     lastBeatAt: null,
     reasons: [],
   };
+
+  private get last(): HeartbeatStatus {
+    return this.current;
+  }
+
+  /** Every change is shared: only one copy of the API beats, any copy is asked. */
+  private set last(status: HeartbeatStatus) {
+    this.current = status;
+    void this.cache.set(HEARTBEAT_STATUS_KEY, status, { ttl: 3600 });
+  }
 
   constructor(
     @InjectRepository(BackupPolicyEntity)
@@ -84,11 +97,14 @@ export class MasterHeartbeatScheduler {
     @InjectRepository(BackupJobEntity)
     private readonly jobRepo: Repository<BackupJobEntity>,
     private readonly health: InstallationHealthService,
+    private readonly cache: CacheService,
   ) {}
 
-  /** Held in memory: after a restart it reads `off` until the next tick. */
-  status(): HeartbeatStatus {
-    return { ...this.last, reasons: [...this.last.reasons] };
+  async status(): Promise<HeartbeatStatus> {
+    const status =
+      (await this.cache.get<HeartbeatStatus>(HEARTBEAT_STATUS_KEY)) ??
+      this.current;
+    return { ...status, reasons: [...status.reasons] };
   }
 
   @Cron(process.env.MASTER_HEARTBEAT_CRON || CronExpression.EVERY_5_MINUTES)

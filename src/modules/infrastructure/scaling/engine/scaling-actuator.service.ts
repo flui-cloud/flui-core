@@ -1,6 +1,7 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { In, Repository } from 'typeorm';
+import { DataSource, In, Repository } from 'typeorm';
+import { withAdvisoryLock } from '../../../common/leadership/advisory-lock';
 import {
   ClusterEntity,
   ClusterStatus,
@@ -64,6 +65,7 @@ export class ScalingActuatorService implements OnModuleInit {
     private readonly groupService: ScalingGroupService,
     private readonly reconcilers: AutoscaleReconcilerRegistry,
     private readonly bounds: ClusterBoundsRegistry,
+    private readonly dataSource: DataSource,
   ) {}
 
   /**
@@ -154,11 +156,30 @@ export class ScalingActuatorService implements OnModuleInit {
    * answer wherever the provider cannot be bought from, because there the
    * engine's own words are already the complete truth.
    */
+  /**
+   * One actor per cluster at a time, across every copy of the API: the check
+   * that nothing is already being bought and the purchase itself must not
+   * interleave with another copy's, or one shortage buys two machines.
+   */
   async act(
     group: ScalingGroupEntity,
     cluster: ClusterEntity,
     assessment: ScalingAssessment,
     approvedByPerson = false,
+  ): Promise<Actuation | null> {
+    const outcome = await withAdvisoryLock(
+      this.dataSource,
+      `scaling:${cluster.id}`,
+      () => this.actAlone(group, cluster, assessment, approvedByPerson),
+    );
+    return outcome.ran ? outcome.result : null;
+  }
+
+  private async actAlone(
+    group: ScalingGroupEntity,
+    cluster: ClusterEntity,
+    assessment: ScalingAssessment,
+    approvedByPerson: boolean,
   ): Promise<Actuation | null> {
     const intent = assessment.intent;
     if (!intent) return this.onItsWay(cluster, assessment);

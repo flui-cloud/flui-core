@@ -19,6 +19,8 @@ import {
   parseKopiaSnapshotLog,
 } from '../../backups/utils/kopia-snapshot-outcome.util';
 import { KopiaJobQueue } from '../../backups/utils/kopia-queue.util';
+import { DataSource } from 'typeorm';
+import { withAdvisoryLockWaiting } from '../../common/leadership/advisory-lock';
 
 const POLL_MS = 5000;
 /** Waiting for another Job on the same repository, before giving up. */
@@ -50,7 +52,21 @@ export class KopiaVolumeEngineService {
   private readonly logger = new Logger(KopiaVolumeEngineService.name);
   private readonly queue = new KopiaJobQueue(MAX_CONCURRENT_JOBS);
 
-  constructor(private readonly k8s: KubernetesService) {}
+  constructor(
+    private readonly k8s: KubernetesService,
+    private readonly dataSource: DataSource,
+  ) {}
+
+  /**
+   * The queue keeps one copy of the API to a single Job per repository; the
+   * lock keeps every copy to one, closing the gap between checking for a
+   * running peer and starting a Job.
+   */
+  private serialized<T>(key: string, task: () => Promise<T>): Promise<T> {
+    return this.queue.run(key, () =>
+      withAdvisoryLockWaiting(this.dataSource, `kopia:${key}`, task),
+    );
+  }
 
   async sourceVolume(
     kubeconfig: string,
@@ -84,7 +100,7 @@ export class KopiaVolumeEngineService {
     };
   }): Promise<KopiaSnapshotOutcome> {
     const { job } = args;
-    return this.queue.run(args.repositoryKey, async () => {
+    return this.serialized(args.repositoryKey, async () => {
       const labels = { ...job.labels, [KOPIA_REPO_LABEL]: args.repositoryKey };
       await this.waitForPeers(
         args.kubeconfig,
@@ -117,7 +133,7 @@ export class KopiaVolumeEngineService {
     credentials: KopiaCredentials;
     job: KopiaRestoreJobInput;
   }): Promise<{ bytes?: number; restoredPaths?: number }> {
-    return this.queue.run(`restore:${args.job.targetPvcName}`, async () => {
+    return this.serialized(`restore:${args.job.targetPvcName}`, async () => {
       const labels = {
         ...args.job.labels,
         [KOPIA_REPO_LABEL]: args.repositoryKey,
