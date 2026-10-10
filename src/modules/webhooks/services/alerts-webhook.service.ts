@@ -4,7 +4,10 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { In, Repository } from 'typeorm';
 import { timingSafeEqual } from 'node:crypto';
 import { ApplicationEntity } from '../../applications/entities/application.entity';
-import { ApplicationTrafficService } from '../../observability/services/application-traffic.service';
+import {
+  ApplicationTrafficService,
+  TrafficTarget,
+} from '../../observability/services/application-traffic.service';
 import { AlertRoutingService } from '../../observability/services/alert-routing.service';
 import {
   AlertEventsService,
@@ -33,6 +36,7 @@ interface ResolutionContext {
   byNamespaceSlug: Map<string, ApplicationEntity>;
   bySlug: Map<string, ApplicationEntity>;
   byTraefikService: Map<string, ApplicationEntity>;
+  trafficTargets: Array<{ app: ApplicationEntity; target: TrafficTarget }>;
   owners: Map<string, string>;
 }
 
@@ -158,7 +162,11 @@ export class AlertsWebhookService {
       namespace: subject.namespace ?? null,
       nodeInstance: subject.node ?? null,
       labels,
-      annotations: alert.annotations ?? {},
+      annotations: namedAfterApplication(
+        alert.annotations ?? {},
+        labels.service,
+        subject.applicationSlug,
+      ),
     };
   }
 
@@ -257,6 +265,7 @@ export class AlertsWebhookService {
       byNamespaceSlug: new Map(),
       bySlug: new Map(),
       byTraefikService: new Map(),
+      trafficTargets: [],
       owners: new Map(),
     };
 
@@ -305,14 +314,16 @@ export class AlertsWebhookService {
     });
 
     for (const app of candidates) {
-      const id = this.traffic.buildTraefikServiceId({
+      const target = {
         slug: app.slug,
         namespace: app.k8sNamespace,
         port: app.port,
         portProtocol: app.portProtocol,
-      });
+      };
+      const id = this.traffic.buildTraefikServiceId(target);
       if (!id) continue;
       context.byTraefikService.set(id, app);
+      context.trafficTargets.push({ app, target });
       this.rememberOwner(context, app);
     }
   }
@@ -365,14 +376,20 @@ export class AlertsWebhookService {
   /**
    * Matched by rebuilding each candidate's service id rather than parsing the label.
    * The label is `<namespace>-<slug>-svc-<port>@kubernetes` and namespaces contain
-   * dashes, so parsing it back is ambiguous; constructing forward is exact.
+   * dashes, so parsing it back is ambiguous; constructing forward is exact. Routes
+   * Traefik names with a hash (IngressRoutes) are matched by the same pattern the
+   * traffic pages read.
    */
   private resolveByTraefikService(
     context: ResolutionContext,
     service?: string,
   ): ResolvedSubject {
     if (!service) return {};
-    const app = context.byTraefikService.get(service);
+    const app =
+      context.byTraefikService.get(service) ??
+      context.trafficTargets.find(({ target }) =>
+        this.traffic.servesTraefikService(target, service),
+      )?.app;
     if (!app) return {};
     return {
       applicationId: app.id,
@@ -390,4 +407,22 @@ export class AlertsWebhookService {
       'unresolved'
     );
   }
+}
+
+/**
+ * The rules name the edge route (`flui-system-flui-api-3000@kubernetes`); once
+ * the alert is matched to its application, people read the application's name.
+ */
+export function namedAfterApplication(
+  annotations: Record<string, string>,
+  service?: string,
+  slug?: string,
+): Record<string, string> {
+  if (!service || !slug) return annotations;
+  return Object.fromEntries(
+    Object.entries(annotations).map(([key, value]) => [
+      key,
+      typeof value === 'string' ? value.replaceAll(service, slug) : value,
+    ]),
+  );
 }

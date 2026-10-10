@@ -52,6 +52,58 @@ export const OBSERVABILITY_TOOLS: ToolDef[] = [
       }),
   }),
   defineTool({
+    name: 'registry_traffic',
+    routes: ['GET /registry/traffic'],
+    description:
+      "What the installation's own image registry carried over a window (1h, 24h, 7d, 30d): pulls and pushes, refused requests (over an application quota, an upload too large, over the rate limit), failures, bytes in and out, and the busiest five minutes in each direction. Every push from a build and every pull by a cluster goes through it, so use it to answer \"are we saturating the registry or the control cluster's bandwidth\" and, when it keeps images in a bucket, how much was read from the bucket (what the bucket's provider may bill as outgoing traffic). Totals for the whole installation, naming no application. On an installation that keeps images on GHCR every figure is zero.",
+    scope: MCP_SCOPE.INFRA_READ,
+    inputSchema: {
+      window: z.enum(['1h', '24h', '7d', '30d']).optional(),
+    },
+    run: (args, ctx) =>
+      ctx.api.get('/registry/traffic', { window: args.window }),
+  }),
+  defineTool({
+    name: 'traffic_watch',
+    routes: ['GET /observability/traffic'],
+    description:
+      'The installation-wide traffic picture, against the thresholds that raise alerts: for each node, the bandwidth on its public interface (sustained over ten minutes) and the outgoing traffic this month would reach at the last seven days pace against what its provider includes (null = not metered); for each cluster, requests per second now and over the six hours before (a surge is now at least spikeFactor times before, above spikeMinRps), requests turned away by a rate limit and requests that got a server error in the last ten minutes. Use it to answer "are we saturating the network", "is a surge of visitors arriving", "are people being refused or seeing errors". Pair with registry_traffic for image pulls and with node metrics for memory and CPU.',
+    scope: MCP_SCOPE.INFRA_READ,
+    inputSchema: {},
+    run: (_args, ctx) => ctx.api.get('/observability/traffic'),
+  }),
+  defineTool({
+    name: 'installation_now',
+    routes: ['GET /observability/now'],
+    description:
+      'One reading of everything that runs out first under a crowd: each node (CPU %, memory %, Mbit/s on its public link, the month at this week pace against what its provider includes), requests at each cluster door (now and before, rate-limited, server errors), the platform components (API, database, identity provider, registry...) against their CPU and memory limits with restarts, the image registry over the last hour, the demo spaces in use and the waiting list, and the names of the alerts firing, with the thresholds that raise them. Use it first to answer "are we holding up", then drill into traffic_watch, registry_traffic or app_traffic.',
+    scope: MCP_SCOPE.INFRA_READ,
+    inputSchema: {},
+    run: (_args, ctx) => ctx.api.get('/observability/now'),
+  }),
+  defineTool({
+    name: 'app_capacity_advice',
+    routes: ['GET /observability/applications/:id/capacity-advice'],
+    description:
+      'Whether one application needs more copies, a node to put them on, or neither, judged on the last minutes: CPU throttling, CPU and memory against their limits, failed health checks, copies waiting for a node and the autoscaler. advice is none, add_replicas (saturated, and next_copy says whether another copy fits, fits in the margin kept free on each node (nothing bought), or makes the scaling group buy a node), add_node (another copy has nowhere to run), wait_for_node, raise_autoscale_max, autoscaler_adding, one_copy_only (data on each copy: more copies do not share the load), watch_memory or unknown. reasons lists what crossed a threshold. It advises; changing the count is app_scale.',
+    scope: MCP_SCOPE.OBS_READ,
+    inputSchema: { id: z.string() },
+    run: (args, ctx) =>
+      ctx.api.get(
+        `/observability/applications/${enc(args.id)}/capacity-advice`,
+      ),
+  }),
+  defineTool({
+    name: 'app_health_checks',
+    routes: ['GET /observability/applications/:id/health-checks'],
+    description:
+      "How often one application's health checks failed in the last hour, as the cluster recorded them: readiness failures (each can take a copy out of the route; with no other copy ready, visitors get errors) with readiness_busy, the part where the copy was too slow to answer (busy) rather than not listening while it starts or stops, liveness and startup failures, and copies restarted by their liveness check. These catch gaps shorter than metrics are sampled at, so check them when app_traffic shows server errors but CPU and memory look fine. read=false means the cluster could not be asked: the counts are unknown, not zero. More replicas keep the route open when one copy is busy.",
+    scope: MCP_SCOPE.OBS_READ,
+    inputSchema: { id: z.string() },
+    run: (args, ctx) =>
+      ctx.api.get(`/observability/applications/${enc(args.id)}/health-checks`),
+  }),
+  defineTool({
     name: 'app_alerts',
     routes: ['GET /observability/applications/:id/alerts'],
     description:

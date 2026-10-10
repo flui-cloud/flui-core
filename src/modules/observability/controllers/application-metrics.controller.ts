@@ -19,9 +19,13 @@ import {
   ApiBearerAuth,
 } from '@nestjs/swagger';
 import { ApplicationMetricsService } from '../services/application-metrics.service';
+import { AppHealthChecksService } from '../services/app-health-checks.service';
+import { CapacityAdviceService } from '../services/capacity-advice.service';
 import { ApplicationService } from '../../applications/services/application.service';
 import {
   SingleAppMetricsResponseDto,
+  AppHealthChecksResponseDto,
+  AppCapacityAdviceResponseDto,
   ClusterAppsMetricsResponseDto,
   SingleAppMetricsHistoryResponseDto,
   ClusterAppsMetricsHistoryResponseDto,
@@ -44,7 +48,75 @@ export class ApplicationMetricsController {
     private readonly appMetricsService: ApplicationMetricsService,
     private readonly applicationService: ApplicationService,
     private readonly applicationAccess: ApplicationAccessService,
+    private readonly healthChecks: AppHealthChecksService,
+    private readonly capacityAdvice: CapacityAdviceService,
   ) {}
+
+  @Get('applications/:appId/capacity-advice')
+  @UseGuards(AppAccessGuard)
+  @ApiOperation({
+    summary:
+      'Whether the application needs more copies, a node to put them on, or neither',
+    description:
+      'Judged on the last minutes of CPU throttling, CPU and memory against their limits, failed health checks, copies waiting for a node and the autoscaler. When copies are saturated, the answer says whether another one has room, makes the scaling group buy a node, or has nowhere to run. Thresholds come from FLUI_ADVICE_* variables.',
+  })
+  @ApiParam({ name: 'appId', description: 'Application ID (UUID)' })
+  @ApiResponse({ status: 200, type: AppCapacityAdviceResponseDto })
+  async getCapacityAdvice(
+    @Param('appId') appId: string,
+  ): Promise<AppCapacityAdviceResponseDto> {
+    const a = await this.capacityAdvice.advise(appId);
+    return {
+      app_id: a.appId,
+      advice: a.advice,
+      sentence: a.sentence,
+      reasons: a.reasons,
+      desired: a.desired,
+      ready: a.ready,
+      measures: {
+        throttled_percent: a.measures.throttledPercent,
+        cpu_percent: a.measures.cpuPercent,
+        memory_percent: a.measures.memoryPercent,
+        readiness_failures: a.measures.readinessFailures,
+        restarts_by_liveness: a.measures.restartsByLiveness,
+      },
+      next_copy: a.nextCopy,
+      thresholds: {
+        window_minutes: a.thresholds.windowMinutes,
+        throttled_percent: a.thresholds.throttledPercent,
+        cpu_percent: a.thresholds.cpuPercent,
+        memory_percent: a.thresholds.memoryPercent,
+        readiness_failures: a.thresholds.readinessFailures,
+      },
+    };
+  }
+
+  @Get('applications/:appId/health-checks')
+  @UseGuards(AppAccessGuard)
+  @ApiOperation({
+    summary:
+      "The application's failed health checks in the last hour, as the cluster recorded them",
+    description:
+      'A copy that stops answering its readiness check is taken out of the route; with no other copy ready, visitors get errors. Such a gap can be shorter than the interval metrics are sampled at, so it is read from the events, which keep it.',
+  })
+  @ApiParam({ name: 'appId', description: 'Application ID (UUID)' })
+  @ApiResponse({ status: 200, type: AppHealthChecksResponseDto })
+  async getHealthChecks(
+    @Param('appId') appId: string,
+  ): Promise<AppHealthChecksResponseDto> {
+    const app = await this.applicationService.findById(appId);
+    const f = await this.healthChecks.failures(app);
+    return {
+      app_id: app.id,
+      readiness: f.readiness,
+      readiness_busy: f.readinessBusy,
+      liveness: f.liveness,
+      startup: f.startup,
+      restarts_by_liveness: f.restartsByLiveness,
+      last_failure_at: f.lastFailureAt,
+      read: f.read,
+    };
+  }
 
   /**
    * Get instant metrics for a single application

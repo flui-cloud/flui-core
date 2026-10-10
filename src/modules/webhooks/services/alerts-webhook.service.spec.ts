@@ -8,7 +8,10 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { ConfigService } from '@nestjs/config';
 import { UnauthorizedException } from '@nestjs/common';
 import { getRepositoryToken } from '@nestjs/typeorm';
-import { AlertsWebhookService } from './alerts-webhook.service';
+import {
+  AlertsWebhookService,
+  namedAfterApplication,
+} from './alerts-webhook.service';
 import { ApplicationEntity } from '../../applications/entities/application.entity';
 import { ApplicationTrafficService } from '../../observability/services/application-traffic.service';
 import { AlertEventsService } from '../../observability/services/alert-events.service';
@@ -407,5 +410,27 @@ describe('AlertsWebhookService', () => {
       expect(res.alerts).toBe(2);
       expect(res.resolved).toBe(0);
     });
+  });
+});
+
+describe('alert text named after the application', () => {
+  it('replaces the edge route with the application it was matched to', () => {
+    expect(
+      namedAfterApplication(
+        {
+          summary: 'flui-system-flui-api-3000@kubernetes is slow',
+          description: 'p95 above 2s',
+        },
+        'flui-system-flui-api-3000@kubernetes',
+        'flui-api',
+      ),
+    ).toEqual({ summary: 'flui-api is slow', description: 'p95 above 2s' });
+  });
+
+  it('leaves the text alone when no application was found', () => {
+    const annotations = { summary: 'x@kubernetes is slow' };
+    expect(namedAfterApplication(annotations, 'x@kubernetes', undefined)).toBe(
+      annotations,
+    );
   });
 });

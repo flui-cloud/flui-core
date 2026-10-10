@@ -163,7 +163,7 @@ export class ApplicationTrafficController {
         portProtocol: app.portProtocol,
       };
       const serviceId = this.traffic.buildTraefikServiceId(target);
-      const summary = serviceId ? byService.get(serviceId) : undefined;
+      const summary = this.traffic.summaryFor(target, byService);
 
       return {
         app_id: app.id,

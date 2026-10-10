@@ -78,6 +78,7 @@ describe('permission groups — the taxonomy', () => {
       [
         'api_key_request',
         'app_alerts',
+        'app_capacity_advice',
         'app_autoscale',
         'app_availability',
         'app_backup_before_deploy',
@@ -91,6 +92,7 @@ describe('permission groups — the taxonomy', () => {
         'app_egress',
         'app_events',
         'app_get',
+        'app_health_checks',
         'app_install',
         'app_manifest_validate',
         'app_list',

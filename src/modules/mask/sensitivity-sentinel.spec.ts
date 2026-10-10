@@ -1991,6 +1991,7 @@ const MASK_EXEMPT: string[] = [
   'GhcrPatStatusDto.githubLogin', // modules/repositories/dto/ghcr-pat.dto.ts
   'GhcrPatStatusDto.lastRotatedAt', // modules/repositories/dto/ghcr-pat.dto.ts
   'GhcrPatStatusDto.lastVerifiedAt', // modules/repositories/dto/ghcr-pat.dto.ts
+  'GhcrPatStatusDto.needed', // modules/repositories/dto/ghcr-pat.dto.ts
   'GhcrPatStatusDto.scopes', // modules/repositories/dto/ghcr-pat.dto.ts
   'GhcrPatStatusDto.status', // modules/repositories/dto/ghcr-pat.dto.ts
   'GhcrTagDto.createdAt', // modules/image-registry/dto/ghcr.dto.ts
@@ -2033,6 +2034,7 @@ const MASK_EXEMPT: string[] = [
   'GitHubSetupStatusResponseDto.appSlug', // modules/repositories/dto/github-oauth.dto.ts
   'GitHubSetupStatusResponseDto.authMethod', // modules/repositories/dto/github-oauth.dto.ts
   'GitHubSetupStatusResponseDto.configured', // modules/repositories/dto/github-oauth.dto.ts
+  'GitHubSetupStatusResponseDto.imageRegistry', // modules/repositories/dto/github-oauth.dto.ts
   'GiveBackDto.node', // modules/infrastructure/scaling/dto/scaling-preview.dto.ts
   'GiveBackDto.nodeId', // modules/infrastructure/scaling/dto/scaling-preview.dto.ts
   'GiveBackDto.onItsOwn', // modules/infrastructure/scaling/dto/scaling-preview.dto.ts

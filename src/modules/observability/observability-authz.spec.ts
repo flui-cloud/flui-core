@@ -32,6 +32,8 @@ import { ApplicationMetricsController } from './controllers/application-metrics.
 import { ApplicationTrafficController } from './controllers/application-traffic.controller';
 import { ApplicationMetricsService } from './services/application-metrics.service';
 import { ApplicationTrafficService } from './services/application-traffic.service';
+import { AppHealthChecksService } from './services/app-health-checks.service';
+import { CapacityAdviceService } from './services/capacity-advice.service';
 import { LokiQueryService } from './services/loki-query.service';
 
 const CLUSTER_ID = 'cluster-1';
@@ -170,6 +172,7 @@ describe('observability resource authorization (direct HTTP routes)', () => {
     };
     const traffic = {
       getClusterTrafficByService: jest.fn(async () => new Map()),
+      summaryFor: () => undefined,
       buildTraefikServiceId: (target: { slug: string; namespace: string }) =>
         `${target.namespace}-${target.slug}`,
       isRoutable: () => true,
@@ -195,6 +198,11 @@ describe('observability resource authorization (direct HTTP routes)', () => {
         { provide: LokiQueryService, useValue: lokiQuery },
         { provide: ApplicationMetricsService, useValue: metrics },
         { provide: ApplicationTrafficService, useValue: traffic },
+        {
+          provide: AppHealthChecksService,
+          useValue: { failures: async () => ({ read: false }) },
+        },
+        { provide: CapacityAdviceService, useValue: { advise: jest.fn() } },
         {
           provide: getRepositoryToken(IamRoleBindingEntity),
           useValue: bindingsRepo,

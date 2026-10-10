@@ -1,4 +1,9 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { Sensitivity } from '../../mask/decorators/sensitivity.decorator';
+import {
+  CAPACITY_ADVICE,
+  CapacityAdvice,
+} from '../services/capacity-advice.core';
 
 // =====================================================
 // Instant Metrics - Sub DTOs
@@ -492,6 +497,13 @@ export class AppMetricsDataPointDto {
   })
   cpu_utilization_percent?: number;
 
+  @ApiPropertyOptional({
+    description:
+      'Share of CPU scheduling periods the limit held the application back, at the worst minute of the step',
+  })
+  @Sensitivity(Sensitivity.PUBLIC)
+  cpu_throttled_percent?: number;
+
   @ApiPropertyOptional({ description: 'Memory usage in bytes' })
   memory_usage_bytes?: number;
 
@@ -605,4 +617,137 @@ export class ClusterAppsMetricsHistoryResponseDto {
     description: 'ISO 8601 timestamp when the query was executed',
   })
   queried_at: string;
+}
+
+export class AppHealthChecksResponseDto {
+  @ApiProperty()
+  @Sensitivity(Sensitivity.PUBLIC)
+  app_id: string;
+
+  @ApiProperty({
+    description:
+      'Failed readiness checks in the last hour: each one can take a copy out of the route, and with no other copy visitors get errors',
+  })
+  @Sensitivity(Sensitivity.PUBLIC)
+  readiness: number;
+
+  @ApiProperty({
+    description:
+      'The readiness failures where the copy was too slow to answer: a busy copy. The others are a copy not listening, mostly while it starts or stops.',
+  })
+  @Sensitivity(Sensitivity.PUBLIC)
+  readiness_busy: number;
+
+  @ApiProperty({ description: 'Failed liveness checks in the last hour' })
+  @Sensitivity(Sensitivity.PUBLIC)
+  liveness: number;
+
+  @ApiProperty({ description: 'Failed startup checks in the last hour' })
+  @Sensitivity(Sensitivity.PUBLIC)
+  startup: number;
+
+  @ApiProperty({
+    description: 'Copies restarted because their liveness check kept failing',
+  })
+  @Sensitivity(Sensitivity.PUBLIC)
+  restarts_by_liveness: number;
+
+  @ApiPropertyOptional({ nullable: true })
+  @Sensitivity(Sensitivity.PUBLIC)
+  last_failure_at: string | null;
+
+  @ApiProperty({
+    description:
+      'False when the cluster could not be asked: the counts are unknown, not zero',
+  })
+  @Sensitivity(Sensitivity.PUBLIC)
+  read: boolean;
+}
+
+export class CapacityMeasuresDto {
+  @ApiPropertyOptional({
+    nullable: true,
+    description:
+      'Median, over the minutes of the window, of the share of time the copies were held back by their CPU limit',
+  })
+  @Sensitivity(Sensitivity.PUBLIC)
+  throttled_percent: number | null;
+
+  @ApiPropertyOptional({
+    nullable: true,
+    description: 'Median of the per-minute CPU peaks, as a share of the limit',
+  })
+  @Sensitivity(Sensitivity.PUBLIC)
+  cpu_percent: number | null;
+
+  @ApiPropertyOptional({
+    nullable: true,
+    description: 'Highest memory use in the window, as a share of the limit',
+  })
+  @Sensitivity(Sensitivity.PUBLIC)
+  memory_percent: number | null;
+
+  @ApiPropertyOptional({
+    nullable: true,
+    description:
+      'Readiness checks the copies were too slow to answer, in the last hour',
+  })
+  @Sensitivity(Sensitivity.PUBLIC)
+  readiness_failures: number | null;
+
+  @ApiPropertyOptional({ nullable: true })
+  @Sensitivity(Sensitivity.PUBLIC)
+  restarts_by_liveness: number | null;
+}
+
+export class CapacityThresholdsDto {
+  @ApiProperty() @Sensitivity(Sensitivity.PUBLIC) window_minutes: number;
+  @ApiProperty() @Sensitivity(Sensitivity.PUBLIC) throttled_percent: number;
+  @ApiProperty() @Sensitivity(Sensitivity.PUBLIC) cpu_percent: number;
+  @ApiProperty() @Sensitivity(Sensitivity.PUBLIC) memory_percent: number;
+  @ApiProperty() @Sensitivity(Sensitivity.PUBLIC) readiness_failures: number;
+}
+
+export class CapacityNextCopyDto {
+  @ApiProperty({
+    description:
+      'fits, margin (placed now, in the margin Flui keeps free on each node; nothing is bought), buys (the scaling group buys a node), proposes (a person approves a node), nothing-hosts, unknown',
+  })
+  @Sensitivity(Sensitivity.PUBLIC)
+  verdict: string;
+
+  @ApiProperty() @Sensitivity(Sensitivity.PUBLIC) sentence: string;
+}
+
+export class AppCapacityAdviceResponseDto {
+  @ApiProperty() @Sensitivity(Sensitivity.PUBLIC) app_id: string;
+
+  @ApiProperty({
+    enum: CAPACITY_ADVICE,
+    description:
+      'none; add_replicas (copies are saturated and another one has room); add_node (another copy has nowhere to run); wait_for_node (copies already wait for a node); raise_autoscale_max; autoscaler_adding; one_copy_only (data on each copy, so more copies do not share the load); watch_memory; unknown (nothing measured)',
+  })
+  @Sensitivity(Sensitivity.PUBLIC)
+  advice: CapacityAdvice;
+
+  @ApiProperty() @Sensitivity(Sensitivity.PUBLIC) sentence: string;
+
+  @ApiProperty({ type: [String] })
+  @Sensitivity(Sensitivity.PUBLIC)
+  reasons: string[];
+
+  @ApiProperty() @Sensitivity(Sensitivity.PUBLIC) desired: number;
+  @ApiProperty() @Sensitivity(Sensitivity.PUBLIC) ready: number;
+
+  @ApiProperty({ type: CapacityMeasuresDto })
+  @Sensitivity(Sensitivity.PUBLIC)
+  measures: CapacityMeasuresDto;
+
+  @ApiPropertyOptional({ type: CapacityNextCopyDto, nullable: true })
+  @Sensitivity(Sensitivity.PUBLIC)
+  next_copy: CapacityNextCopyDto | null;
+
+  @ApiProperty({ type: CapacityThresholdsDto })
+  @Sensitivity(Sensitivity.PUBLIC)
+  thresholds: CapacityThresholdsDto;
 }

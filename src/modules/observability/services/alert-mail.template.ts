@@ -71,6 +71,7 @@ export function alertDashboardPath(event: AlertEventEntity): string {
     return `/apps/applications/${event.applicationId}/monitoring`;
   }
   if (event.fluiKind === 'backup') return '/management/backup/overview';
+  if (event.fluiKind === 'registry') return '/management/registry';
   const scalingGroup = event.labels?.scaling_group_id;
   if (event.fluiKind === 'scaling' && scalingGroup) {
     return `/scaling/${scalingGroup}/now`;

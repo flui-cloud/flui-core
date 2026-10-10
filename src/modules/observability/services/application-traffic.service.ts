@@ -32,10 +32,6 @@ export interface TrafficTarget {
 export class ApplicationTrafficService {
   private readonly logger = new Logger(ApplicationTrafficService.name);
 
-  private static readonly REQUESTS_METRIC = 'traefik_service_requests_total';
-  private static readonly DURATION_METRIC =
-    'traefik_service_request_duration_seconds';
-
   /**
    * Below this many histogram boundaries, percentile interpolation says more about
    * the bucket layout than about the application. Traefik defaults to four.
@@ -51,6 +47,26 @@ export class ApplicationTrafficService {
     return `${target.namespace}-${target.slug}-svc-${target.port}@kubernetes`;
   }
 
+  /**
+   * Every name Traefik gives the routes that reach this application: an
+   * application's own Ingress (`-svc-<port>`), a platform component's Ingress
+   * (`-<port>`) and an IngressRoute (`-<hash>@kubernetescrd`). Requests are
+   * counted across all of them; reading only the first left the API showing
+   * no traffic under load.
+   */
+  traefikServicePattern(target: TrafficTarget): string | null {
+    if (!this.isRoutable(target)) return null;
+    const ns = escapeRegex(target.namespace);
+    const slug = escapeRegex(target.slug);
+    return `${ns}-${slug}-(svc-)?${target.port}@kubernetes|${ns}-${slug}-[0-9a-f]+@kubernetescrd`;
+  }
+
+  /** Whether a Traefik service label names one of this application's routes. */
+  servesTraefikService(target: TrafficTarget, service: string): boolean {
+    const pattern = this.traefikServicePattern(target);
+    return pattern !== null && new RegExp(`^(?:${pattern})$`).test(service);
+  }
+
   isRoutable(target: TrafficTarget): boolean {
     return Boolean(target.port) && target.portProtocol !== 'tcp';
   }
@@ -64,9 +80,7 @@ export class ApplicationTrafficService {
       return this.emptyTraffic();
     }
 
-    const selector = this.selector(serviceId);
-    const requests = ApplicationTrafficService.REQUESTS_METRIC;
-    const duration = ApplicationTrafficService.DURATION_METRIC;
+    const selector = this.selector(target);
 
     const [
       byCodeResult,
@@ -78,13 +92,31 @@ export class ApplicationTrafficService {
       p95Result,
       p99Result,
     ] = await Promise.all([
-      this.instant(`sum by (code) (rate(${requests}${selector}[${window}]))`),
-      this.instant(`sum by (method) (rate(${requests}${selector}[${window}]))`),
       this.instant(
-        `sum(rate(${duration}_sum${selector}[${window}])) / ` +
-          `sum(rate(${duration}_count${selector}[${window}]))`,
+        routed(
+          (requests) =>
+            `sum by (code) (rate(${requests}${selector}[${window}]))`,
+        ),
       ),
-      this.instant(`count by (le) (${duration}_bucket${selector})`),
+      this.instant(
+        routed(
+          (requests) =>
+            `sum by (method) (rate(${requests}${selector}[${window}]))`,
+        ),
+      ),
+      this.instant(
+        routed(
+          (_, duration) =>
+            `sum(rate(${duration}_sum${timed(selector)}[${window}])) / ` +
+            `sum(rate(${duration}_count${timed(selector)}[${window}]))`,
+        ),
+      ),
+      this.instant(
+        routed(
+          (_, duration) =>
+            `count by (le) (${duration}_bucket${timed(selector)})`,
+        ),
+      ),
       this.quantile(0.5, selector, window),
       this.quantile(0.9, selector, window),
       this.quantile(0.95, selector, window),
@@ -146,32 +178,39 @@ export class ApplicationTrafficService {
       return [];
     }
 
-    const selector = this.selector(serviceId);
-    const requests = ApplicationTrafficService.REQUESTS_METRIC;
-    const duration = ApplicationTrafficService.DURATION_METRIC;
+    const selector = this.selector(target);
 
     const [totalSeries, clientErrorSeries, serverErrorSeries, p95Series] =
       await Promise.all([
         this.range(
-          `sum(rate(${requests}${selector}[${window}]))`,
+          routed((requests) => `sum(rate(${requests}${selector}[${window}]))`),
           startUnix,
           endUnix,
           step,
         ),
         this.range(
-          `sum(rate(${requests}${this.selector(serviceId, 'code=~"4.."')}[${window}]))`,
+          routed(
+            (requests) =>
+              `sum(rate(${requests}${this.selector(target, 'code=~"4.."')}[${window}]))`,
+          ),
           startUnix,
           endUnix,
           step,
         ),
         this.range(
-          `sum(rate(${requests}${this.selector(serviceId, 'code=~"5.."')}[${window}]))`,
+          routed(
+            (requests) =>
+              `sum(rate(${requests}${this.selector(target, 'code=~"5.."')}[${window}]))`,
+          ),
           startUnix,
           endUnix,
           step,
         ),
         this.range(
-          `histogram_quantile(0.95, sum by (le) (rate(${duration}_bucket${selector}[${window}])))`,
+          routed(
+            (_, duration) =>
+              `histogram_quantile(0.95, sum by (le) (rate(${duration}_bucket${timed(selector)}[${window}])))`,
+          ),
           startUnix,
           endUnix,
           step,
@@ -205,6 +244,39 @@ export class ApplicationTrafficService {
    * Cluster-wide summary. Issues three aggregate queries instead of N per application,
    * then attributes the rows back to applications by their reconstructed service id.
    */
+  /**
+   * One application's figures from the per-service summary, across every
+   * route that reaches it. Requests and errors add up; the p95 shown is the
+   * slowest route's, which is never better than the truth.
+   */
+  summaryFor(
+    target: TrafficTarget,
+    byService: Map<
+      string,
+      { rps: number; serverErrorPercent: number | null; p95: number | null }
+    >,
+  ):
+    | { rps: number; serverErrorPercent: number | null; p95: number | null }
+    | undefined {
+    const matched = [...byService].filter(([service]) =>
+      this.servesTraefikService(target, service),
+    );
+    if (matched.length === 0) return undefined;
+    let rps = 0;
+    let errors = 0;
+    let p95: number | null = null;
+    for (const [, s] of matched) {
+      rps += s.rps;
+      errors += ((s.serverErrorPercent ?? 0) / 100) * s.rps;
+      if (s.p95 !== null) p95 = p95 === null ? s.p95 : Math.max(p95, s.p95);
+    }
+    return {
+      rps,
+      serverErrorPercent: rps > 0 ? this.round((errors / rps) * 100, 2) : null,
+      p95,
+    };
+  }
+
   async getClusterTrafficByService(
     window: string,
   ): Promise<
@@ -213,16 +285,21 @@ export class ApplicationTrafficService {
       { rps: number; serverErrorPercent: number | null; p95: number | null }
     >
   > {
-    const requests = ApplicationTrafficService.REQUESTS_METRIC;
-    const duration = ApplicationTrafficService.DURATION_METRIC;
-
     const [totalResult, serverErrorResult, p95Result] = await Promise.all([
-      this.instant(`sum by (service) (rate(${requests}[${window}]))`),
       this.instant(
-        `sum by (service) (rate(${requests}{code=~"5.."}[${window}]))`,
+        routed((requests) => `sum by (service) (rate(${requests}[${window}]))`),
       ),
       this.instant(
-        `histogram_quantile(0.95, sum by (service, le) (rate(${duration}_bucket[${window}])))`,
+        routed(
+          (requests) =>
+            `sum by (service) (rate(${requests}{code=~"5.."}[${window}]))`,
+        ),
+      ),
+      this.instant(
+        routed(
+          (_, duration) =>
+            `histogram_quantile(0.95, sum by (service, le) (rate(${duration}_bucket${timed('')}[${window}])))`,
+        ),
       ),
     ]);
 
@@ -262,11 +339,11 @@ export class ApplicationTrafficService {
   // Internals
   // =====================================================
 
-  private selector(serviceId: string, extra?: string): string {
-    const escaped = serviceId
+  private selector(target: TrafficTarget, extra?: string): string {
+    const escaped = (this.traefikServicePattern(target) ?? '')
       .replaceAll('\\', String.raw`\\`)
       .replaceAll('"', String.raw`\"`);
-    const matchers = [`service="${escaped}"`];
+    const matchers = [`service=~"${escaped}"`];
     if (extra) {
       matchers.push(extra);
     }
@@ -274,9 +351,11 @@ export class ApplicationTrafficService {
   }
 
   private quantile(q: number, selector: string, window: string) {
-    const duration = ApplicationTrafficService.DURATION_METRIC;
     return this.instant(
-      `histogram_quantile(${q}, sum by (le) (rate(${duration}_bucket${selector}[${window}])))`,
+      routed(
+        (_, duration) =>
+          `histogram_quantile(${q}, sum by (le) (rate(${duration}_bucket${timed(selector)}[${window}])))`,
+      ),
     );
   }
 
@@ -462,4 +541,37 @@ export class ApplicationTrafficService {
       by_status_code: [],
     };
   }
+}
+
+const escapeRegex = (value: string): string =>
+  value.replaceAll(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`);
+
+const ROUTER = {
+  requests: 'traefik_router_requests_total',
+  duration: 'traefik_router_request_duration_seconds',
+};
+const SERVICE = {
+  requests: 'traefik_service_requests_total',
+  duration: 'traefik_service_request_duration_seconds',
+};
+
+/**
+ * A websocket or an event stream is timed for as long as it stays open, often
+ * minutes: counted as requests, but kept out of every latency figure.
+ */
+export function timed(selector: string): string {
+  const matcher = 'protocol!~"websocket|sse"';
+  return selector ? selector.replace(/}$/, `,${matcher}}`) : `{${matcher}}`;
+}
+
+/**
+ * The router's counters where Traefik keeps them, the service's otherwise.
+ * Only the router's count what Traefik answers by itself, such as the 503 an
+ * application gets while no copy of it is ready; an installation whose
+ * Traefik predates `addRoutersLabels` has the service's alone.
+ */
+export function routed(
+  build: (requests: string, duration: string) => string,
+): string {
+  return `(${build(ROUTER.requests, ROUTER.duration)}) or (${build(SERVICE.requests, SERVICE.duration)})`;
 }

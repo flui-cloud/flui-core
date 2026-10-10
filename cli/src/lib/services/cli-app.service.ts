@@ -819,6 +819,18 @@ export class CliAppService {
     );
   }
 
+  async getHealthChecks(appId: string): Promise<AppHealthChecks> {
+    return this.apiClient.get<AppHealthChecks>(
+      `/observability/applications/${appId}/health-checks`,
+    );
+  }
+
+  async getCapacityAdvice(appId: string): Promise<AppCapacityAdvice> {
+    return this.apiClient.get<AppCapacityAdvice>(
+      `/observability/applications/${appId}/capacity-advice`,
+    );
+  }
+
   async getTraffic(
     appId: string,
     window?: string,
@@ -1478,4 +1490,33 @@ export interface DeferredAction {
   status: string;
   outcome: string | null;
   says: string;
+}
+
+export interface AppCapacityAdvice {
+  app_id: string;
+  advice: string;
+  sentence: string;
+  reasons: string[];
+  desired: number;
+  ready: number;
+  measures: {
+    throttled_percent: number | null;
+    cpu_percent: number | null;
+    memory_percent: number | null;
+    readiness_failures: number | null;
+    restarts_by_liveness: number | null;
+  };
+  next_copy: { verdict: string; sentence: string } | null;
+  thresholds: { window_minutes: number };
+}
+
+export interface AppHealthChecks {
+  app_id: string;
+  readiness: number;
+  readiness_busy?: number;
+  liveness: number;
+  startup: number;
+  restarts_by_liveness: number;
+  last_failure_at: string | null;
+  read: boolean;
 }

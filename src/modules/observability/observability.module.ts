@@ -12,6 +12,13 @@ import { AlertEventsService } from './services/alert-events.service';
 
 // Schedulers
 import { AlertMaintenanceScheduler } from './schedulers/alert-maintenance.scheduler';
+import { TrafficWatchService } from './services/traffic-watch.service';
+import { TrafficWatchController } from './controllers/traffic-watch.controller';
+import { InstallationNowService } from './services/installation-now.service';
+import { CapacityAdviceService } from './services/capacity-advice.service';
+import { AppHealthChecksService } from './services/app-health-checks.service';
+import { SharedInfrastructureModule } from '../infrastructure/shared/shared-infrastructure.module';
+import { SandboxWaitlistEntity } from '../sandbox/entities/sandbox-waitlist.entity';
 
 // Controllers
 import { ObservabilityController } from './controllers/observability.controller';
@@ -68,14 +75,17 @@ import { ApplicationsModule } from '../applications/applications.module';
       ClusterEntity,
       AlertEventEntity,
       AlertDestinationEntity,
+      SandboxWaitlistEntity,
       UserEntity,
     ]),
     ApplicationsModule,
     MailModule,
     EncryptionModule,
     IamModule,
+    SharedInfrastructureModule,
   ],
   controllers: [
+    TrafficWatchController,
     ObservabilityController,
     ServerMetricsController,
     ClusterHealthController,
@@ -86,6 +96,10 @@ import { ApplicationsModule } from '../applications/applications.module';
     AlertDestinationsController,
   ],
   providers: [
+    TrafficWatchService,
+    InstallationNowService,
+    AppHealthChecksService,
+    CapacityAdviceService,
     PrometheusQueryService,
     LokiQueryService,
     ClusterHealthService,
