@@ -141,6 +141,23 @@ describe('an application seen without its data', () => {
     }
   });
 
+  it('opens the logs of a showcase application to whoever may look at it, and nothing else of its data', () => {
+    const viewer = new Set(permissionsForRole('showcase_viewer'));
+    const tabs = tabsForPermissions(viewer, { showcase: true });
+    expect(tabs).toContain('logs');
+    for (const closed of [
+      'configuration',
+      'clients',
+      'builds',
+      'schedules',
+      'gateway',
+      'snapshots',
+    ]) {
+      expect(tabs).not.toContain(closed);
+    }
+    expect(tabsForPermissions(viewer)).not.toContain('logs');
+  });
+
   it('does not offer the gateway tab without data:access, since its routes are doors', () => {
     expect(
       tabsForPermissions(new Set(['app:read', 'app:write'])),

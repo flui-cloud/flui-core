@@ -1,9 +1,11 @@
 import {
   BadRequestException,
+  ForbiddenException,
   HttpException,
   Inject,
   Injectable,
 } from '@nestjs/common';
+import { randomBytes } from 'node:crypto';
 import { ClustersService } from '../../infrastructure/clusters/clusters.service';
 import {
   DB_CONNECTION_RESOLVER,
@@ -14,6 +16,7 @@ import {
   ResolvedDbConnection,
 } from '../interfaces/db-connection';
 import {
+  ReaderRole,
   SQL_ENGINE_ADAPTERS,
   SchemaTree,
   SqlEngineAdapter,
@@ -23,6 +26,13 @@ import {
 } from '../engine/sql-engine';
 import { KubePortForwardService } from './kube-port-forward.service';
 import { DbConsoleAuditService } from './db-console-audit.service';
+
+/** The role a reader's queries run as, created on first use by the owner session. */
+export const READER_ROLE_NAME = 'flui_reader';
+export const READER_STATEMENT_TIMEOUT_MS = 5_000;
+const READER_CONNECTION_LIMIT = 5;
+/** Grants are re-applied this often, so tables created since are readable too. */
+const READER_REFRESH_MS = 10 * 60_000;
 
 export interface RunQueryParams {
   readOnly: boolean;
@@ -34,6 +44,15 @@ export interface RunQueryParams {
 export class DbQueryService {
   // engine → adapter, built once from the DI-registered set. No engine branching here.
   private readonly adapters: Map<DbEngine, SqlEngineAdapter>;
+  /**
+   * The reader password per database, held in memory only. A restart, or another
+   * copy of the API, simply sets a new one the next time it is needed — and a
+   * copy whose password was replaced under it sets its own on the refused login.
+   */
+  private readonly readers = new Map<
+    string,
+    { password: string; at: number }
+  >();
 
   constructor(
     @Inject(DB_CONNECTION_RESOLVER)
@@ -136,11 +155,18 @@ export class DbQueryService {
       resolved.target.port,
     );
     try {
-      const conn = await this.adapterFor(resolved.engine).connect({
-        host: '127.0.0.1',
-        port: tunnel.localPort,
-        credentials: resolved.credentials,
-      });
+      const conn =
+        input.access === 'reader'
+          ? await this.connectAsReader(
+              input.dbInstallId,
+              resolved,
+              tunnel.localPort,
+            )
+          : await this.adapterFor(resolved.engine).connect({
+              host: '127.0.0.1',
+              port: tunnel.localPort,
+              credentials: resolved.credentials,
+            });
       try {
         return await fn(conn, resolved);
       } finally {
@@ -151,6 +177,58 @@ export class DbQueryService {
     } finally {
       await tunnel.dispose();
     }
+  }
+
+  /**
+   * A session as the reader role, never as the owner. The owner session is
+   * opened only to create the role or reset its password, and closed before the
+   * reader's statement is sent.
+   */
+  private async connectAsReader(
+    appId: string,
+    resolved: ResolvedDbConnection,
+    port: number,
+  ): Promise<SqlEngineConnection> {
+    const adapter = this.adapterFor(resolved.engine);
+    const database = resolved.credentials.database ?? '';
+    const as = (password: string) =>
+      adapter.connect({
+        host: '127.0.0.1',
+        port,
+        credentials: { user: READER_ROLE_NAME, password, database },
+      });
+    const known = this.readers.get(appId);
+    if (known && Date.now() - known.at < READER_REFRESH_MS) {
+      try {
+        return await as(known.password);
+      } catch (err) {
+        if ((err as { code?: string }).code !== '28P01') throw err;
+      }
+    }
+    const role: ReaderRole = {
+      name: READER_ROLE_NAME,
+      password: randomBytes(24).toString('base64url'),
+      database,
+      connectionLimit: READER_CONNECTION_LIMIT,
+      statementTimeoutMs: READER_STATEMENT_TIMEOUT_MS,
+    };
+    const owner = await adapter.connect({
+      host: '127.0.0.1',
+      port,
+      credentials: resolved.credentials,
+    });
+    try {
+      if (!owner.ensureReaderRole) {
+        throw new ForbiddenException(
+          'This database can only be opened by its owner.',
+        );
+      }
+      await owner.ensureReaderRole(role);
+    } finally {
+      await owner.close();
+    }
+    this.readers.set(appId, { password: role.password, at: Date.now() });
+    return as(role.password);
   }
 
   /**

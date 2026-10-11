@@ -31,6 +31,7 @@ import { RequireSection } from '../../iam/decorators/require-section.decorator';
 import { RequirePermission } from '../../iam/decorators/require-permission.decorator';
 import { IAM_PERMISSION } from '../../iam/constants/iam-permissions';
 import { SECTION } from '../../iam/constants/iam-sections';
+import { OpenOnShowcase } from '../../iam/decorators/open-on-showcase.decorator';
 import { DataDoor } from '../../iam/decorators/data-door.decorator';
 
 /**
@@ -228,6 +229,7 @@ export class ApplicationLogsController {
 
   @Get('applications/:id/logs')
   @DataDoor()
+  @OpenOnShowcase()
   @UseGuards(AppAccessGuard)
   @ApiOperation({
     summary: 'Get logs for an application',
@@ -340,6 +342,7 @@ export class ApplicationLogsController {
 
   @Get('applications/:id/logs/volume')
   @DataDoor()
+  @OpenOnShowcase()
   @UseGuards(AppAccessGuard)
   @ApiOperation({
     summary: 'Get log volume for an application',

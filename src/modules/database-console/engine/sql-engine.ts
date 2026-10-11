@@ -56,10 +56,25 @@ export interface SchemaTree {
   serverVersion?: string;
 }
 
+/** A login role that may read the tables and nothing else. */
+export interface ReaderRole {
+  name: string;
+  password: string;
+  database: string;
+  connectionLimit: number;
+  statementTimeoutMs: number;
+}
+
 /** A live session against one database. Owns the underlying driver connection. */
 export interface SqlEngineConnection {
   query(sql: string, opts: SqlQueryOptions): Promise<SqlQueryResult>;
   introspect(): Promise<SchemaTree>;
+  /**
+   * Creates the role, or resets its password and limits, and grants it SELECT on
+   * every table that exists now. Called on an owner session; engines without
+   * one leave it undefined and a reader is refused.
+   */
+  ensureReaderRole?(role: ReaderRole): Promise<void>;
   close(): Promise<void>;
 }
 

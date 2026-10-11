@@ -94,3 +94,24 @@ describe("keeping a guest's applications", () => {
     expect(session.hasArea).toBe(true);
   });
 });
+
+describe('how long a guest’s applications stay', () => {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { appsKeptUntil } = require('./sandbox-claim.controller');
+  const day = 24 * 3_600_000;
+
+  it('counts from the guest’s last action, so pressing Keep moves it', () => {
+    const last = new Date('2026-10-11T08:00:00.000Z');
+    expect(
+      appsKeptUntil({ lastActiveAt: last, claimedAt: new Date(0) }, day),
+    ).toBe('2026-10-12T08:00:00.000Z');
+  });
+
+  it('falls back to when the area was taken, and says nothing without an area', () => {
+    const claimed = new Date('2026-10-11T00:00:00.000Z');
+    expect(appsKeptUntil({ lastActiveAt: null, claimedAt: claimed }, day)).toBe(
+      '2026-10-12T00:00:00.000Z',
+    );
+    expect(appsKeptUntil(null, day)).toBeNull();
+  });
+});

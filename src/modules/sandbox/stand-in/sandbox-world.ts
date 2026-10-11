@@ -13,7 +13,7 @@
  *    the database would be picked up by the reconcilers, which would try to talk
  *    to it, and a fake cluster would become a nameable target. This is a service
  *    that answers, not something that exists.
- * 2. **It is one world.** A single provider, three machines, one network, a
+ * 2. **It is one world.** One connected provider, three machines, one network, a
  *    firewall whose rules name those machines, a zone with its records, a couple
  *    of backups of the workload that runs on them. Sections that do not agree
  *    with each other read as broken rather than as a demonstration.
@@ -32,6 +32,7 @@
  * without adding any honesty — the label is what does that job.
  */
 
+import { createHash } from 'node:crypto';
 import {
   CLUSTER_ID,
   CLUSTER_NAME,
@@ -52,37 +53,6 @@ import {
 } from './sandbox-world-core';
 
 export { SANDBOX_EXAMPLE_FLAG } from './sandbox-world-core';
-
-export function exampleProviders(now: number) {
-  return [
-    mark({
-      id: PROVIDER,
-      name: PROVIDER,
-      displayName: 'Hetzner Cloud',
-      description:
-        'European compute, used here as an example of a connected provider.',
-      logoUrl: `/api/v1/management/providers/${PROVIDER}/logo`,
-      websiteUrl: 'https://www.hetzner.com',
-      documentationUrl: 'https://docs.hetzner.com',
-      enabled: true,
-      configured: true,
-      pricingUrl: 'https://www.hetzner.com/cloud',
-      capabilities: {
-        compute: true,
-        objectStorage: true,
-        dns: true,
-        loadBalancer: true,
-        blockStorage: true,
-        vnet: true,
-      },
-      availableRegions: [EXAMPLE_REGION],
-      // No key, no token, not even an invented one: see the header of this file.
-      configurationSchema: {},
-      createdAt: daysAgo(now, 26),
-      updatedAt: hoursAgo(now, 5),
-    }),
-  ];
-}
 
 export function exampleProviderConfigurations(now: number) {
   return [
@@ -169,6 +139,54 @@ export function exampleVNets(now: number) {
   return { vnets, total: vnets.length };
 }
 
+/**
+ * The rules of the example firewall. Applied as written: the record says what
+ * was asked for and what reached the machines, and here they are the same.
+ */
+const FIREWALL_RULES = [
+  {
+    id: 'allow-https',
+    direction: 'in' as const,
+    protocol: 'tcp' as const,
+    port: '443',
+    sourceIps: ['0.0.0.0/0', '::/0'],
+    description: 'HTTPS from anywhere',
+  },
+  {
+    id: 'allow-http',
+    direction: 'in' as const,
+    protocol: 'tcp' as const,
+    port: '80',
+    sourceIps: ['0.0.0.0/0', '::/0'],
+    description: 'HTTP, redirected to HTTPS',
+  },
+  {
+    id: 'allow-kube-api',
+    direction: 'in' as const,
+    protocol: 'tcp' as const,
+    port: '6443',
+    sourceIps: [SUBNET_RANGE],
+    description: 'Kubernetes API, inside the network only',
+  },
+  {
+    id: 'allow-ssh',
+    direction: 'in' as const,
+    protocol: 'tcp' as const,
+    port: '22',
+    sourceIps: [SUBNET_RANGE],
+    description: 'SSH, inside the network only',
+  },
+];
+
+/**
+ * Computed from the rules above the way the real record computes it, rather
+ * than typed in: a hash is not a secret, but a made-up one is a string that
+ * proves nothing.
+ */
+const FIREWALL_RULES_HASH = createHash('sha256')
+  .update(JSON.stringify(FIREWALL_RULES))
+  .digest('hex');
+
 export function exampleFirewalls(now: number) {
   return [
     mark({
@@ -195,45 +213,37 @@ export function exampleFirewalls(now: number) {
           ipAddress: m.privateIp,
         })),
       },
-      desiredRules: [
-        mark({
-          id: 'allow-https',
-          direction: 'in',
-          protocol: 'tcp',
-          port: '443',
-          sourceIps: ['0.0.0.0/0', '::/0'],
-          description: 'HTTPS from anywhere',
-        }),
-        mark({
-          id: 'allow-http',
-          direction: 'in',
-          protocol: 'tcp',
-          port: '80',
-          sourceIps: ['0.0.0.0/0', '::/0'],
-          description: 'HTTP, redirected to HTTPS',
-        }),
-        mark({
-          id: 'allow-kube-api',
-          direction: 'in',
-          protocol: 'tcp',
-          port: '6443',
-          sourceIps: [SUBNET_RANGE],
-          description: 'Kubernetes API, inside the network only',
-        }),
-        mark({
-          id: 'allow-ssh',
-          direction: 'in',
-          protocol: 'tcp',
-          port: '22',
-          sourceIps: [SUBNET_RANGE],
-          description: 'SSH, inside the network only',
-        }),
-      ],
+      desiredRules: FIREWALL_RULES.map((rule) => mark(rule)),
+      lastAppliedRules: FIREWALL_RULES.map((rule) => mark(rule)),
+      desiredHash: FIREWALL_RULES_HASH,
+      lastAppliedHash: FIREWALL_RULES_HASH,
+      hostLayer: {
+        applicable: true,
+        enabled: true,
+        state: 'applied',
+        reason: null,
+        appliedAt: daysAgo(now, 3),
+        appliedNodes: MACHINES.length,
+        lastAttemptAt: daysAgo(now, 3),
+      },
       lastReconciliationAt: minutesAgo(now, 12),
       createdAt: daysAgo(now, 26),
       updatedAt: minutesAgo(now, 12),
     }),
   ];
+}
+
+/**
+ * The cluster's firewall, asked for by the cluster page: the record carries the
+ * id it was asked for and is otherwise the example firewall, rules and all.
+ */
+export function exampleClusterFirewall(
+  now: number,
+  _query?: unknown,
+  params?: Record<string, string | undefined>,
+) {
+  const [firewall] = exampleFirewalls(now);
+  return { ...firewall, clusterId: params?.clusterId ?? CLUSTER_ID };
 }
 
 export function exampleDnsZones(now: number) {
@@ -257,13 +267,4 @@ export function exampleDnsZones(now: number) {
       updatedAt: hoursAgo(now, 9),
     }),
   ];
-}
-
-/**
- * The regions the example provider offers. One, the same one the machines and
- * the provider configuration name — a provider detail screen that lists regions
- * the rest of the world never mentions is a section arguing with itself.
- */
-export function exampleProviderRegions() {
-  return [EXAMPLE_REGION];
 }

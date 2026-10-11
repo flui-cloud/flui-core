@@ -10,12 +10,39 @@ import {
   exampleMailConnections,
   exampleMailOverview,
 } from './sandbox-world-mail';
-import { APPS, ZONE_NAME } from './sandbox-world-core';
+import { APPS, PROVIDER, ZONE_NAME } from './sandbox-world-core';
+import { exampleProviderConfigurations } from './sandbox-world';
+import {
+  exampleProviderHealth,
+  exampleProviderRegions,
+  exampleProviders,
+} from './sandbox-world-providers';
+import { CloudProvider } from '../../providers/enums/cloud-provider.enum';
+import { isProviderOffered } from '../../management/services/provider-definitions.service';
 
 const NOW = Date.parse('2026-08-18T12:00:00.000Z');
 
-/** Every object the example world hands out, flattened. */
-function everyObject(now: number): Record<string, unknown>[] {
+/** Some sections are read from a real catalogue, so their answer is a promise. */
+const everyAnswer = (now: number): Promise<unknown[]> =>
+  Promise.all(SANDBOX_STAND_INS.map((rule) => rule.build(now)));
+
+/**
+ * What a provider asks for when it is connected: the name of each field, where
+ * to find it in the provider's console, and the provider's own page about keys.
+ * They describe a form and hold no value, which is proved on its own below. The
+ * word scan leaves them out because their names are the very words it looks for.
+ */
+const CREDENTIAL_DESCRIPTORS = new Set([
+  'credentialFields',
+  'accessKeyDocumentationUrl',
+]);
+
+/**
+ * Every object the example world hands out, flattened. An activity record's
+ * `target` is the route's parameters, not an object of the world, so it is not
+ * walked into.
+ */
+async function everyObject(now: number): Promise<Record<string, unknown>[]> {
   const out: Record<string, unknown>[] = [];
   const walk = (value: unknown): void => {
     if (Array.isArray(value)) {
@@ -25,10 +52,12 @@ function everyObject(now: number): Record<string, unknown>[] {
     if (value && typeof value === 'object') {
       const record = value as Record<string, unknown>;
       if ('id' in record || 'sandboxExample' in record) out.push(record);
-      Object.values(record).forEach(walk);
+      for (const [key, inner] of Object.entries(record)) {
+        if (key !== 'target') walk(inner);
+      }
     }
   };
-  SANDBOX_STAND_INS.forEach((rule) => walk(rule.build(now)));
+  (await everyAnswer(now)).forEach(walk);
   return out;
 }
 
@@ -94,8 +123,8 @@ describe('the example world', () => {
 
   // Constraint 4: no silent stand-in. A caller reading a single element out of a
   // list must still be able to tell it is an example.
-  it('marks every object it hands out', () => {
-    for (const object of everyObject(NOW)) {
+  it('marks every object it hands out', async () => {
+    for (const object of await everyObject(NOW)) {
       expect(object.sandboxExample).toBe(true);
     }
   });
@@ -105,9 +134,9 @@ describe('the example world', () => {
    * it teaches the interface to print one, and in a screenshot it cannot be told
    * from a real leak.
    */
-  it('never invents a secret', () => {
-    const serialised = JSON.stringify(
-      SANDBOX_STAND_INS.map((r) => r.build(NOW)),
+  it('never invents a secret', async () => {
+    const serialised = JSON.stringify(await everyAnswer(NOW), (key, value) =>
+      CREDENTIAL_DESCRIPTORS.has(key) ? undefined : value,
     );
 
     for (const forbidden of [
@@ -126,12 +155,90 @@ describe('the example world', () => {
 
   // Constraint 3: a world pinned to fixed dates is the oldest thing in the demo
   // within a week.
-  it('computes its dates from now', () => {
-    const early = JSON.stringify(SANDBOX_STAND_INS.map((r) => r.build(NOW)));
-    const later = JSON.stringify(
-      SANDBOX_STAND_INS.map((r) => r.build(NOW + 86_400_000)),
-    );
+  it('computes its dates from now', async () => {
+    const early = JSON.stringify(await everyAnswer(NOW));
+    const later = JSON.stringify(await everyAnswer(NOW + 86_400_000));
     expect(later).not.toEqual(early);
+  });
+
+  describe('the providers page', () => {
+    it('lists every provider Flui offers, and connects only one', async () => {
+      const providers = await exampleProviders(NOW);
+      const offered = Object.values(CloudProvider).filter(isProviderOffered);
+
+      expect(providers.map((p) => p.id).sort()).toEqual([...offered].sort());
+      expect(offered).toEqual(
+        expect.arrayContaining(['hetzner', 'scaleway', 'ovh']),
+      );
+      expect(providers.filter((p) => p.configured).map((p) => p.id)).toEqual([
+        PROVIDER,
+      ]);
+      expect(exampleProviderConfigurations(NOW).map((c) => c.provider)).toEqual(
+        [PROVIDER],
+      );
+    });
+
+    it('describes the credentials a provider asks for without holding one', async () => {
+      const fieldShape = new Set([
+        'key',
+        'label',
+        'providerLabel',
+        'hint',
+        'secret',
+        'required',
+        'sandboxExample',
+      ]);
+      for (const provider of await exampleProviders(NOW)) {
+        const fields = provider.credentialFields?.fields ?? [];
+        expect(fields.length).toBeGreaterThan(0);
+        for (const field of fields) {
+          for (const key of Object.keys(field)) {
+            expect(fieldShape).toContain(key);
+          }
+        }
+      }
+    });
+
+    it('offers somewhere to place machines on every provider not yet connected', async () => {
+      for (const provider of await exampleProviders(NOW)) {
+        const regions = (await exampleProviderRegions(
+          NOW,
+          {},
+          {
+            provider: provider.id,
+          },
+        )) as unknown[];
+        expect(regions.length).toBeGreaterThan(0);
+        expect(provider.capabilities.supportedRegions).toEqual(regions);
+      }
+    });
+
+    it('enables on the connected provider the region its machines are in', async () => {
+      const [config] = exampleProviderConfigurations(NOW);
+      const regions = (await exampleProviderRegions(
+        NOW,
+        {},
+        {
+          provider: PROVIDER,
+        },
+      )) as Array<{ id: string }>;
+      expect(regions.map((r) => r.id)).toEqual(config.enabledRegions);
+    });
+
+    it('reports health for the connected provider only', () => {
+      expect(
+        exampleProviderHealth(NOW, {}, { provider: PROVIDER }),
+      ).toMatchObject({ status: 'healthy' });
+      expect(
+        exampleProviderHealth(NOW, {}, { provider: 'scaleway' }),
+      ).toBeNull();
+    });
+
+    it('answers nothing for a provider it does not offer', async () => {
+      expect(
+        await exampleProviderRegions(NOW, {}, { provider: 'contabo' }),
+      ).toEqual([]);
+    });
   });
 
   // Constraint 2: sections that do not agree with each other read as broken
@@ -159,6 +266,10 @@ describe('the example world', () => {
       ['GET', '/firewalls'],
       ['GET', '/dns/zones'],
       ['GET', '/backup-policies'],
+      ['GET', '/management/providers'],
+      ['GET', '/management/providers/scaleway'],
+      ['GET', '/management/providers/ovh/regions'],
+      ['GET', '/management/providers/hetzner/health'],
     ])('answers %s %s', (verb, path) => {
       expect(findSandboxStandIn(verb, path)).toBeDefined();
     });
@@ -172,6 +283,8 @@ describe('the example world', () => {
       '/backup-policies',
       '/backup-policies/example-policy-1/run',
       '/dns/zones/example-zone-1',
+      '/management/providers/scaleway/configure',
+      '/management/providers/ovh/validate',
     ])('recognises %s as part of an example section', (path) => {
       expect(isStandInArea(path)).toBe(true);
     });

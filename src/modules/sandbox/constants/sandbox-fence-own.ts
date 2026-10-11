@@ -20,6 +20,14 @@ export const SANDBOX_ALLOW_OWN: SandboxAllowRule[] = [
     why: 'Know who you are signed in as.',
   },
   {
+    // The dashboard trades the guest's own token for the session cookie that
+    // live updates, streams and downloads read; it grants nothing the token
+    // does not already carry.
+    verbs: ['POST'],
+    pattern: '/auth/oidc-session',
+    why: 'Keep your own sign-in as the cookie live updates and downloads use.',
+  },
+  {
     // `/me/...`, not `/iam/me/...`: MeController is mounted at the root even
     // though it lives in the IAM module, and the earlier pattern matched no
     // route at all — which refused a guest the two calls the sidebar and every
@@ -122,6 +130,16 @@ export const SANDBOX_ALLOW_OWN: SandboxAllowRule[] = [
     verbs: ['GET'],
     pattern: '/observability/applications/:id/alerts',
     why: 'Read alerts for an application you may access.',
+  },
+  {
+    verbs: ['GET'],
+    pattern: '/observability/applications/:appId/health-checks',
+    why: 'Read how the health checks of an application you may access are answering.',
+  },
+  {
+    verbs: ['GET'],
+    pattern: '/observability/applications/:appId/capacity-advice',
+    why: 'Read whether an application you may access needs more copies or a node.',
   },
   {
     verbs: ['GET'],

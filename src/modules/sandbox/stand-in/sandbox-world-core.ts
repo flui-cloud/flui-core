@@ -57,6 +57,7 @@ export const SUBNET_RANGE = '10.10.1.0/24';
 export const EXAMPLE_REGION = mark({
   id: REGION,
   name: REGION_NAME,
+  displayName: REGION_NAME,
   country: 'DE',
 });
 

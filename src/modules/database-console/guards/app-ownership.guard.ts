@@ -25,6 +25,12 @@ import {
   credentialCeiling,
 } from '../../auth/utils/credential-ceiling.util';
 import { holdsPlatformAuthority } from './platform-authority.util';
+import { Reflector } from '@nestjs/core';
+import { OPEN_ON_SHOWCASE_KEY } from '../../iam/decorators/open-on-showcase.decorator';
+import { isShowcase } from '../../iam/constants/iam-showcase';
+
+/** Set on a request admitted as a reader: the console must not hand it the owner's session. */
+export const CONSOLE_READER = Symbol('consoleReader');
 
 /**
  * Authorizes console access. The global JwtAuthGuard only authenticates: without
@@ -98,18 +104,25 @@ export class AppOwnershipGuard implements CanActivate {
     private readonly applicationsRepo: ApplicationsRepository,
     @Inject(POLICY_ENGINE) private readonly policy: PolicyEngine,
     private readonly appAccess: ApplicationAccessService,
+    private readonly reflector: Reflector,
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const req = context.switchToHttp().getRequest<{
       params?: Record<string, string>;
       user?: AuthenticatedUser;
+      [CONSOLE_READER]?: boolean;
     }>();
 
     const appId = req.params?.id;
     if (!appId) return true;
 
     const user = req.user;
+
+    if (await this.admitsReader(context, appId, user)) {
+      req[CONSOLE_READER] = true;
+      return true;
+    }
 
     // Asked before the row is loaded, and before isAdmin, for the same two
     // reasons AppAccessGuard asks it there: whether the credential carries this
@@ -158,5 +171,29 @@ export class AppOwnershipGuard implements CanActivate {
       );
     }
     return true;
+  }
+
+  /**
+   * A route marked open on the showcase, an application in the showcase, and a
+   * caller who may read it but not change it. Whoever may change it takes the
+   * owner's path below like anywhere else.
+   */
+  private async admitsReader(
+    context: ExecutionContext,
+    appId: string,
+    user: AuthenticatedUser | undefined,
+  ): Promise<boolean> {
+    const open = this.reflector.getAllAndOverride<boolean>(
+      OPEN_ON_SHOWCASE_KEY,
+      [context.getHandler(), context.getClass()],
+    );
+    if (!open || !user || user.isAdmin) return false;
+    const ceiling = credentialCeiling(user);
+    if (ceiling && !ceiling.has(IAM_PERMISSION.APP_READ)) return false;
+    const app = await this.applicationsRepo.findById(appId);
+    if (!app || !isShowcase(app.tags)) return false;
+    if (await this.appAccess.can(user, IAM_PERMISSION.APP_WRITE, app))
+      return false;
+    return this.appAccess.can(user, IAM_PERMISSION.APP_READ, app);
   }
 }

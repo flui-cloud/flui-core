@@ -10,6 +10,7 @@ import {
   exampleRestoreJobs,
 } from './sandbox-world-backups';
 import {
+  exampleAuditEvents,
   exampleIamGrants,
   exampleIamGroups,
   exampleIamPrincipals,
@@ -31,15 +32,20 @@ import {
   exampleInferenceConnections,
   exampleInferenceProviders,
 } from './sandbox-world-models';
+import { SANDBOX_CLUSTER_STAND_INS } from './sandbox-stand-in-cluster';
 import {
   exampleDnsZones,
   exampleFirewalls,
   exampleInstances,
   exampleProviderConfigurations,
-  exampleProviderRegions,
-  exampleProviders,
   exampleVNets,
 } from './sandbox-world';
+import {
+  exampleProvider,
+  exampleProviderHealth,
+  exampleProviderRegions,
+  exampleProviders,
+} from './sandbox-world-providers';
 
 /**
  * Which routes answer from the example world instead of from the instance.
@@ -59,6 +65,13 @@ export type SandboxStandInParams = Record<string, string | undefined>;
 export interface SandboxStandInRule {
   verbs: HttpVerb[];
   pattern: string;
+  /**
+   * Route parameters the rule answers for, and only for. A route that answers
+   * for real on the guest's own cluster can still answer from the example world
+   * when it names the example cluster — and from nothing else.
+   */
+  onlyFor?: SandboxStandInParams;
+  /** May answer with a promise: the provider catalogue is read, not retyped. */
   build: (
     now: number,
     query?: SandboxStandInQuery,
@@ -119,6 +132,7 @@ export const SANDBOX_STAND_INS: SandboxStandInRule[] = [
   { verbs: ['GET'], pattern: '/iam/groups', build: exampleIamGroups },
   { verbs: ['GET'], pattern: '/iam/resources', build: exampleIamResources },
   { verbs: ['GET'], pattern: '/iam/principals', build: exampleIamPrincipals },
+  { verbs: ['GET'], pattern: '/audit/events', build: exampleAuditEvents },
 
   // Mail. The real answer is recipient addresses — other people's data.
   { verbs: ['GET'], pattern: '/mail/overview', build: exampleMailOverview },
@@ -153,6 +167,8 @@ export const SANDBOX_STAND_INS: SandboxStandInRule[] = [
     build: exampleCredentialsStatus,
   },
 
+  ...SANDBOX_CLUSTER_STAND_INS,
+
   // The detail behind a row. Same lists, one element each.
   {
     verbs: ['GET'],
@@ -185,7 +201,7 @@ export const SANDBOX_STAND_INS: SandboxStandInRule[] = [
   {
     verbs: ['GET'],
     pattern: '/management/providers/:provider',
-    build: byId(exampleProviders, 'provider'),
+    build: exampleProvider,
   },
   { verbs: ['GET'], pattern: '/auth/users/:id', build: byId(exampleUsers) },
   {
@@ -195,20 +211,34 @@ export const SANDBOX_STAND_INS: SandboxStandInRule[] = [
   },
   {
     verbs: ['GET'],
+    pattern: '/management/providers/:provider/health',
+    build: exampleProviderHealth,
+  },
+  {
+    verbs: ['GET'],
     pattern: '/mail/connections/:id/setup',
     build: exampleMailConnectionSetup,
   },
 ];
 
+const answersFor = (
+  rule: SandboxStandInRule,
+  params?: SandboxStandInParams,
+): boolean =>
+  !rule.onlyFor ||
+  Object.entries(rule.onlyFor).every(([key, value]) => params?.[key] === value);
+
 export function findSandboxStandIn(
   verb: string,
   path: string,
   route = false,
+  params?: SandboxStandInParams,
 ): SandboxStandInRule | undefined {
   return SANDBOX_STAND_INS.find(
     (rule) =>
       rule.verbs.includes(verb.toUpperCase() as HttpVerb) &&
-      routeMatches(rule.pattern, path, route),
+      routeMatches(rule.pattern, path, route) &&
+      answersFor(rule, params),
   );
 }
 
@@ -224,11 +254,14 @@ export function findSandboxStandIn(
 export function isStandInArea(path: string, route = false): boolean {
   return SANDBOX_STAND_INS.some(
     (rule) =>
-      routeMatches(rule.pattern, path, route) ||
-      // Anything under a stand-in list belongs to the same section: creating a
-      // policy, running one, editing a zone's records. They all deserve the same
-      // wording, not the generic "this is disabled here".
-      routeMatches(`${rule.pattern}/**`, path, route),
+      // A rule that answers for one cluster only does not make the route an
+      // example section: on the guest's own cluster it is the real one.
+      !rule.onlyFor &&
+      (routeMatches(rule.pattern, path, route) ||
+        // Anything under a stand-in list belongs to the same section: creating a
+        // policy, running one, editing a zone's records. They all deserve the same
+        // wording, not the generic "this is disabled here".
+        routeMatches(`${rule.pattern}/**`, path, route)),
   );
 }
 
@@ -249,11 +282,17 @@ export function isSandboxStandInRequest(req: {
   method?: string;
   route?: { path?: string };
   path?: string;
+  params?: unknown;
 }): boolean {
   const raw = req.route?.path ?? req.path ?? '';
   const path = raw.replace(/^\/api\/v\d+/, '');
   return Boolean(
     req.method &&
-      findSandboxStandIn(req.method, path, req.route?.path !== undefined),
+      findSandboxStandIn(
+        req.method,
+        path,
+        req.route?.path !== undefined,
+        req.params as SandboxStandInParams | undefined,
+      ),
   );
 }

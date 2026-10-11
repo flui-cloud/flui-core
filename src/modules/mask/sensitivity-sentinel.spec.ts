@@ -3126,6 +3126,7 @@ const MASK_EXEMPT: string[] = [
   'SandboxQuotaDto.pods', // modules/sandbox/dto/sandbox-limits.dto.ts
   'SandboxQuotaDto.storage', // modules/sandbox/dto/sandbox-limits.dto.ts
   'SandboxSessionDto.hasArea', // modules/sandbox/dto/sandbox-session.dto.ts
+  'SandboxSessionDto.appsKeptUntil', // modules/sandbox/dto/sandbox-session.dto.ts
   'SandboxSessionDto.expiresAt', // modules/sandbox/dto/sandbox-session.dto.ts
   'SandboxSessionDto.loginUrl', // modules/sandbox/dto/sandbox-session.dto.ts
   'SandboxSessionDto.secondsRemaining', // modules/sandbox/dto/sandbox-session.dto.ts

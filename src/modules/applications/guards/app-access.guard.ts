@@ -19,6 +19,8 @@ import {
   credentialCeiling,
 } from '../../auth/utils/credential-ceiling.util';
 import { DATA_DOOR_KEY } from '../../iam/decorators/data-door.decorator';
+import { OPEN_ON_SHOWCASE_KEY } from '../../iam/decorators/open-on-showcase.decorator';
+import { isShowcase } from '../../iam/constants/iam-showcase';
 
 export const APP_ACTION_KEY = 'app_action';
 
@@ -93,6 +95,13 @@ export class AppAccessGuard implements CanActivate {
         context.getHandler(),
         context.getClass(),
       ]) === true;
+    const openOnShowcase =
+      this.reflector.getAllAndOverride<boolean>(OPEN_ON_SHOWCASE_KEY, [
+        context.getHandler(),
+        context.getClass(),
+      ]) === true;
+    const asksForData = (app: { tags?: string[] | null }): boolean =>
+      dataDoor && !(openOnShowcase && isShowcase(app.tags));
 
     // Asked before the application is loaded, deliberately: whether the
     // credential carries this verb at all does not depend on which application
@@ -124,7 +133,7 @@ export class AppAccessGuard implements CanActivate {
       }
       if (user.isAdmin) return true;
       await this.access.assertCan(user, action, app);
-      if (dataDoor) {
+      if (asksForData(app)) {
         await this.access.assertCan(user, IAM_PERMISSION.DATA_ACCESS, app);
       }
       return true;
@@ -140,7 +149,7 @@ export class AppAccessGuard implements CanActivate {
     await this.access.assertCan(user, action, app);
     // A data door asks for `data:access` on this application: the permission
     // guard can only ask whether the caller holds it anywhere.
-    if (dataDoor) {
+    if (asksForData(app)) {
       await this.access.assertCan(user, IAM_PERMISSION.DATA_ACCESS, app);
     }
     return true;

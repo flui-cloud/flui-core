@@ -80,7 +80,21 @@ export class SandboxClaimController {
         : 0,
       ttlHours: this.config.ttlHours,
       workloadTtlHours: this.config.workloadTtlHours,
+      appsKeptUntil: appsKeptUntil(tenant, this.config.workloadIdleMs),
       loginUrl: this.entry.origin,
     };
   }
+}
+
+/**
+ * How long the guest's applications stay if the guest does nothing more: the
+ * last action plus the idle allowance. Every action, "Keep my apps" included,
+ * moves it; it is what the banner states after the click.
+ */
+export function appsKeptUntil(
+  tenant: Pick<SandboxTenantEntity, 'lastActiveAt' | 'claimedAt'> | null,
+  idleMs: number,
+): string | null {
+  const since = tenant?.lastActiveAt ?? tenant?.claimedAt ?? null;
+  return since ? new Date(since.getTime() + idleMs).toISOString() : null;
 }

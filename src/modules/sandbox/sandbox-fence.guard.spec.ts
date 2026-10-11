@@ -14,6 +14,7 @@ import {
   INestApplication,
   Post,
   Put,
+  UseInterceptors,
 } from '@nestjs/common';
 import { APP_GUARD } from '@nestjs/core';
 import { Test } from '@nestjs/testing';
@@ -25,6 +26,8 @@ import { PrincipalAccess } from '../iam/interfaces/iam.types';
 import { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import { IdentityRole } from '../auth/entities/user.entity';
 import { SandboxScopeService } from './services/sandbox-scope.service';
+import { SandboxProjectionInterceptor } from './interceptors/sandbox-projection.interceptor';
+import { SANDBOX_STAND_IN_WRITE_CODE } from './stand-in/sandbox-stand-in';
 
 /**
  * The fence over real HTTP, with the guard mounted globally exactly as the app
@@ -55,7 +58,24 @@ class Routes {
   }
 
   @Get('variables/clusters/:clusterId/namespaces/:namespace')
+  @UseInterceptors(SandboxProjectionInterceptor)
   variables() {
+    return { ok: true };
+  }
+
+  @Get('infrastructure/clusters/:id/nodes')
+  @UseInterceptors(SandboxProjectionInterceptor)
+  nodes() {
+    return [{ id: 'real-node' }];
+  }
+
+  @Get('infrastructure/clusters/:id')
+  cluster() {
+    return { ok: true };
+  }
+
+  @Put('variables/clusters/:clusterId/namespaces/:namespace/:name')
+  writeVariables() {
     return { ok: true };
   }
 
@@ -187,17 +207,57 @@ describe('SandboxFenceGuard over HTTP', () => {
       await http().get('/infrastructure/clusters').expect(200);
     });
 
-    it.each([
-      ['/access/ssh-keys', 'the SSH key surface'],
-      ['/variables/clusters/c1/namespaces/flui-system', 'platform variables'],
-    ])('is refused %s (%s)', async (path) => {
-      const res = await http().get(path).expect(403);
-      expect(res.body.code).toBe('SANDBOX_ROUTE_FORBIDDEN');
-      // The constant, not a word inside it: the wording is written for a person
-      // and is expected to keep improving. What must not change is that the
-      // refusal carries the fence's own sentence rather than a bare 403.
-      expect(res.body.message).toBe(SANDBOX_FORBIDDEN_MESSAGE);
-      expect(res.body.message).not.toContain('/sandbox/limits');
+    it.each([['/access/ssh-keys', 'the SSH key surface']])(
+      'is refused %s (%s)',
+      async (path) => {
+        const res = await http().get(path).expect(403);
+        expect(res.body.code).toBe('SANDBOX_ROUTE_FORBIDDEN');
+        // The constant, not a word inside it: what must not change is that the
+        // refusal carries the fence's own sentence rather than a bare 403.
+        expect(res.body.message).toBe(SANDBOX_FORBIDDEN_MESSAGE);
+        expect(res.body.message).not.toContain('/sandbox/limits');
+      },
+    );
+
+    /**
+     * The platform's own variables, read by namespace, are answered from the
+     * example world: the handler that reads the real ones never runs, and a
+     * write is still refused.
+     */
+    it('reads platform variables from the example world, never the handler', async () => {
+      const res = await http()
+        .get('/variables/clusters/c1/namespaces/flui-system')
+        .expect(200);
+      expect(res.body).toEqual([]);
+      const own = await http()
+        .get('/variables/clusters/c1/namespaces/default')
+        .expect(200);
+      expect(Array.isArray(own.body)).toBe(true);
+      expect(own.body.length).toBeGreaterThan(0);
+      await http().get('/variables/clusters/c2/namespaces/default').expect(403);
+      const write = await http()
+        .put('/variables/clusters/c1/namespaces/flui-system/flui-secrets')
+        .expect(403);
+      expect(write.body.code).toBe(SANDBOX_STAND_IN_WRITE_CODE);
+    });
+
+    /**
+     * The example cluster is the one other id a guest may name, and only on a
+     * route the example world answers: the scaling group's page reads its
+     * machines. Anywhere else the id is refused like any cluster not its own.
+     */
+    it('names the example cluster only where the example world answers', async () => {
+      const res = await http()
+        .get('/infrastructure/clusters/example-cluster-1/nodes')
+        .expect(200);
+      expect(res.body.map((n: { id: string }) => n.id)).not.toContain(
+        'real-node',
+      );
+      expect(res.headers['x-flui-sandbox-level']).toBe('stand-in');
+      await http()
+        .get('/infrastructure/clusters/example-cluster-1')
+        .expect(403);
+      await http().get('/infrastructure/clusters/c2/nodes').expect(403);
     });
 
     /**

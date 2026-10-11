@@ -5,7 +5,7 @@ import {
   NestInterceptor,
 } from '@nestjs/common';
 import { Request, Response } from 'express';
-import { Observable, from, of, switchMap } from 'rxjs';
+import { Observable, from, switchMap } from 'rxjs';
 import {
   SANDBOX_GUEST_REQUEST,
   SandboxGuestRequest,
@@ -50,21 +50,24 @@ export class SandboxProjectionInterceptor implements NestInterceptor {
     const path = stripPrefix(pattern ?? req.path);
     const route = pattern !== undefined;
 
+    const params = req.params as Record<string, string | undefined>;
+    // Served instead of the handler, never alongside it: the real one would
+    // reach the instance's own provider, which is exactly what this replaces.
+    const standIn = findSandboxStandIn(req.method, path, route, params);
+
+    // A route shown for real on the guest's own cluster can answer from the
+    // example world when it names the example cluster; the header says which.
     context
       .switchToHttp()
       .getResponse<Response>()
-      .setHeader(SANDBOX_LEVEL_HEADER, sandboxLevelOf(req.method, path, route));
+      .setHeader(
+        SANDBOX_LEVEL_HEADER,
+        standIn ? 'stand-in' : sandboxLevelOf(req.method, path, route),
+      );
 
-    // Served instead of the handler, never alongside it: the real one would
-    // reach the instance's own provider, which is exactly what this replaces.
-    const standIn = findSandboxStandIn(req.method, path, route);
     if (standIn) {
-      return of(
-        standIn.build(
-          Date.now(),
-          req.query ?? {},
-          req.params as Record<string, string | undefined>,
-        ),
+      return from(
+        Promise.resolve(standIn.build(Date.now(), req.query ?? {}, params)),
       );
     }
 

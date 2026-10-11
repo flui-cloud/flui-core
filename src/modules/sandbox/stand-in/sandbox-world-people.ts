@@ -18,7 +18,9 @@ import {
   CLUSTER_ID,
   CLUSTER_NAME,
   daysAgo,
+  hoursAgo,
   mark,
+  minutesAgo,
   PEOPLE,
   PROVIDER,
 } from './sandbox-world-core';
@@ -239,5 +241,124 @@ export function exampleIamPrincipals() {
       ref: ON_CALL_GROUP,
       displayName: `${ON_CALL_GROUP} (group)`,
     }),
+  ];
+}
+
+/**
+ * What the example organisation did lately, the shape Access → Activity reads:
+ * changes, a refusal and reads of application data, by the same people the
+ * other tabs list and on the same applications the rest of the world runs.
+ */
+const OUTCOME_STATUS = { ok: 200, refused: 403, failed: 500 } as const;
+
+export function exampleAuditEvents(now: number) {
+  const [storefront, ordersApi, ordersDb] = APPS;
+  const event = (
+    index: number,
+    at: string,
+    who: (typeof PEOPLE)[number] | null,
+    action: string,
+    target: Record<string, string> | null,
+    outcome: 'ok' | 'refused' | 'failed',
+    extra: {
+      dataAccess?: boolean;
+      permission?: string;
+      actorKind?: string;
+    } = {},
+  ) =>
+    mark({
+      id: `example-audit-${index}`,
+      at,
+      userId: who?.id ?? null,
+      email: who?.email ?? null,
+      actorKind: extra.actorKind ?? (who ? 'user' : 'system'),
+      actorKeyId: null,
+      action,
+      target,
+      status: OUTCOME_STATUS[outcome],
+      outcome,
+      permission: extra.permission ?? null,
+      dataAccess: extra.dataAccess ?? false,
+    });
+  return [
+    event(
+      1,
+      minutesAgo(now, 12),
+      TOMAS,
+      'POST /applications/:id/deploy',
+      { id: ordersApi.id },
+      'ok',
+    ),
+    event(
+      2,
+      minutesAgo(now, 41),
+      AISHA,
+      'GET /applications/:id/logs',
+      { id: storefront.id },
+      'ok',
+      { dataAccess: true },
+    ),
+    event(
+      3,
+      hoursAgo(now, 2),
+      JONAS,
+      'POST /applications/:id/db/query',
+      { id: ordersDb.id },
+      'refused',
+      {
+        dataAccess: true,
+        permission: 'data:access',
+      },
+    ),
+    event(4, hoursAgo(now, 3), MARTA, 'POST /iam/grants', null, 'ok', {
+      permission: 'iam:assign-role',
+    }),
+    event(
+      5,
+      hoursAgo(now, 5),
+      TOMAS,
+      'POST /applications/:id/restart',
+      { id: storefront.id },
+      'ok',
+      {
+        actorKind: 'agent',
+      },
+    ),
+    event(
+      6,
+      hoursAgo(now, 9),
+      null,
+      'ssh certificate issued',
+      { cluster: CLUSTER_NAME },
+      'ok',
+      { dataAccess: true },
+    ),
+    event(
+      7,
+      daysAgo(now, 1),
+      AISHA,
+      'POST /backup-policies/:id/run',
+      { id: 'example-backup-policy-1' },
+      'ok',
+    ),
+    event(
+      8,
+      daysAgo(now, 1),
+      MARTA,
+      'PATCH /infrastructure/clusters/:id/egress-policy',
+      { id: CLUSTER_ID },
+      'ok',
+    ),
+    event(
+      9,
+      daysAgo(now, 2),
+      JONAS,
+      'DELETE /applications/:id',
+      { id: ordersApi.id },
+      'refused',
+      {
+        permission: 'app:delete',
+      },
+    ),
   ];
 }

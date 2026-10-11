@@ -3,7 +3,7 @@ import {
   ForbiddenException,
   NotFoundException,
 } from '@nestjs/common';
-import { AppOwnershipGuard } from './app-ownership.guard';
+import { AppOwnershipGuard, CONSOLE_READER } from './app-ownership.guard';
 import {
   assertNotPlatformFoundation,
   CONSOLE_TARGET_ABSENT,
@@ -13,10 +13,13 @@ import { MCP_SCOPE } from '../../mcp/constants/mcp-scopes';
 function contextFor(
   appId: string | undefined,
   user: Caller | undefined,
+  req: Record<string | symbol, unknown> = {},
 ): ExecutionContext {
-  const req = { params: appId ? { id: appId } : {}, user };
+  Object.assign(req, { params: appId ? { id: appId } : {}, user });
   return {
     switchToHttp: () => ({ getRequest: () => req }),
+    getHandler: () => undefined,
+    getClass: () => undefined,
   } as unknown as ExecutionContext;
 }
 
@@ -30,6 +33,7 @@ type Caller = {
 type Row = {
   id?: string;
   slug?: string;
+  tags?: string[];
   userId: string | null;
   ownerKind?: string | null;
   ownerRef?: string | null;
@@ -38,7 +42,8 @@ type Row = {
 function guardOver(
   apps: Record<string, Row>,
   globalPermissions: string[] = [],
-  canOverride?: (user: Caller, app: Row) => boolean,
+  canOverride?: (user: Caller, app: Row, action: string) => boolean,
+  openOnShowcase = false,
 ) {
   const repo = {
     findById: jest.fn(async (id: string) => apps[id] ?? null),
@@ -55,14 +60,16 @@ function guardOver(
   // grant, same as the real policy engine gives an owner with nothing
   // explicitly narrowing it.
   const appAccess = {
-    can: jest.fn(async (user: Caller, _action: string, app: Row) =>
-      canOverride ? canOverride(user, app) : user.userId === app.userId,
+    can: jest.fn(async (user: Caller, action: string, app: Row) =>
+      canOverride ? canOverride(user, app, action) : user.userId === app.userId,
     ),
   };
+  const reflector = { getAllAndOverride: () => openOnShowcase };
   return new AppOwnershipGuard(
     repo as never,
     policy as never,
     appAccess as never,
+    reflector as never,
   );
 }
 
@@ -329,6 +336,59 @@ describe('the key in the hand, not only the person behind it', () => {
           userId: 'u1',
           scopes: [MCP_SCOPE.APP_READ],
         }),
+      ),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+  });
+});
+
+/**
+ * The showcase's database is shown to guests, but never through the owner's
+ * session: a superuser in a read-only transaction can still run a shell with
+ * COPY TO PROGRAM. A reader is admitted and marked so the console connects as
+ * a role that can only SELECT.
+ */
+describe('a reader on the showcase', () => {
+  const showcase = { userId: 'operator', tags: ['showcase'] };
+  const readOnly = (_user: Caller, _app: Row, action: string) =>
+    action === 'app:read';
+
+  it('admits a guest who may read it, marked as a reader', async () => {
+    const guard = guardOver({ s: showcase }, [], readOnly, true);
+    const req: Record<string | symbol, unknown> = {};
+    await expect(
+      guard.canActivate(contextFor('s', { userId: 'guest' }, req)),
+    ).resolves.toBe(true);
+    expect(req[CONSOLE_READER]).toBe(true);
+  });
+
+  it('keeps the door shut on a route not marked open on the showcase', async () => {
+    const guard = guardOver({ s: showcase }, [], readOnly, false);
+    await expect(
+      guard.canActivate(contextFor('s', { userId: 'guest' })),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+  });
+
+  it('keeps the door shut on an application outside the showcase', async () => {
+    const guard = guardOver({ a: { userId: 'operator' } }, [], readOnly, true);
+    await expect(
+      guard.canActivate(contextFor('a', { userId: 'guest' })),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+  });
+
+  it('gives whoever may change it the owner path, not the reader one', async () => {
+    const guard = guardOver({ s: showcase }, [], () => true, true);
+    const req: Record<string | symbol, unknown> = {};
+    await expect(
+      guard.canActivate(contextFor('s', { userId: 'operator' }, req)),
+    ).resolves.toBe(true);
+    expect(req[CONSOLE_READER]).toBeUndefined();
+  });
+
+  it('refuses a key whose scopes do not reach reading applications', async () => {
+    const guard = guardOver({ s: showcase }, [], readOnly, true);
+    await expect(
+      guard.canActivate(
+        contextFor('s', { userId: 'guest', scopes: [MCP_SCOPE.MAIL_READ] }),
       ),
     ).rejects.toBeInstanceOf(ForbiddenException);
   });

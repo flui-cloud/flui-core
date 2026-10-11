@@ -74,13 +74,31 @@ export const SANDBOX_AREAS: SandboxArea[] = [
     key: 'providers',
     area: 'Cloud providers, servers and networks',
     level: 'stand-in',
-    why: 'The real ones belong to the instance you are borrowing, so this section is filled with an example account instead.',
+    why: 'An example account: every provider Flui supports, one connected with its servers and network. Walk through connecting any of them; nothing is sent.',
   },
   {
     key: 'firewall',
     area: 'Firewalls',
     level: 'stand-in',
     why: 'One rule on a shared machine is a rule for everybody on it, so these are example rules on example machines.',
+  },
+  {
+    key: 'storage',
+    area: 'Cluster storage',
+    level: 'stand-in',
+    why: 'The real volume holds every guest\u2019s data, so this is an example cluster\u2019s: its disk, the claims on it and one left behind by a deleted application.',
+  },
+  {
+    key: 'pricing',
+    area: 'What a cluster costs',
+    level: 'stand-in',
+    why: 'The real bill is the operator\u2019s. This is an example month for three machines and a volume, priced the way Flui prices your own.',
+  },
+  {
+    key: 'scaling',
+    area: 'Scaling',
+    level: 'stand-in',
+    why: 'Adding and giving back machines is the instance\u2019s decision, so this is an example group with its own limits, costs and history of decisions.',
   },
   {
     key: 'dns-zones',
@@ -123,8 +141,8 @@ export const SANDBOX_AREAS: SandboxArea[] = [
   {
     key: 'platform-config',
     area: 'Cluster-wide variables and secrets',
-    level: 'closed',
-    why: "Those belong to the platform, not to a tenancy. Your application's own variables are yours to edit.",
+    level: 'stand-in',
+    why: "The real ones belong to the platform, not to a tenancy, so this shows an example organisation's sets: values for ordinary settings, only the names of sensitive ones. Your application's own variables are yours to edit.",
   },
   {
     // Two different things under one word, and the copy used to name only the

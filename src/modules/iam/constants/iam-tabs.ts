@@ -68,6 +68,22 @@ export const APP_TAB_SHOWS_DATA: ReadonlySet<AppTabKey> = new Set([
   APP_TAB.GATEWAY,
 ]);
 
+/** Data tabs an application in the showcase opens without `data:access` — the reads `@OpenOnShowcase()` marks. */
+export const APP_TAB_OPEN_ON_SHOWCASE: ReadonlySet<AppTabKey> = new Set([
+  APP_TAB.LOGS,
+]);
+
+/**
+ * Tabs an application in the showcase shows to whoever may read it, although
+ * they hold none of its levers: how it is sized and where it answers is
+ * the part of the showcase worth looking at. The levers on them stay with
+ * `app:write`/`app:deploy` at the API.
+ */
+export const APP_TAB_SHOWN_ON_SHOWCASE: ReadonlySet<AppTabKey> = new Set([
+  APP_TAB.RESOURCES,
+  APP_TAB.DNS,
+]);
+
 export const ALL_APP_TAB_KEYS: AppTabKey[] = Object.keys(
   APP_TAB_PERMISSION,
 ) as AppTabKey[];
@@ -75,11 +91,16 @@ export const ALL_APP_TAB_KEYS: AppTabKey[] = Object.keys(
 /** The tabs a holder of `permissions` may open on the application they describe. */
 export function tabsForPermissions(
   permissions: ReadonlySet<string>,
+  on: { showcase?: boolean } = {},
 ): AppTabKey[] {
   return ALL_APP_TAB_KEYS.filter(
     (tab) =>
-      permissions.has(APP_TAB_PERMISSION[tab]) &&
+      (permissions.has(APP_TAB_PERMISSION[tab]) ||
+        (!!on.showcase &&
+          APP_TAB_SHOWN_ON_SHOWCASE.has(tab) &&
+          permissions.has(IAM_PERMISSION.APP_READ))) &&
       (!APP_TAB_SHOWS_DATA.has(tab) ||
-        permissions.has(IAM_PERMISSION.DATA_ACCESS)),
+        permissions.has(IAM_PERMISSION.DATA_ACCESS) ||
+        (!!on.showcase && APP_TAB_OPEN_ON_SHOWCASE.has(tab))),
   );
 }

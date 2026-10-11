@@ -32,6 +32,39 @@ export const SANDBOX_ALLOW_SHOWN: SandboxAllowRule[] = [
   },
   {
     verbs: ['GET'],
+    pattern: '/infrastructure/clusters/:id/egress-policy',
+    level: 'read-only',
+    why: 'See which ports your applications may reach outside the cluster.',
+  },
+  {
+    // The wildcard-certificate read (`/clusters/:clusterId/dns-zone/:assignmentId/wildcard`)
+    // stays closed: it is looked up by the assignment id alone, so pinning the
+    // cluster in the path would not pin the answer.
+    verbs: ['GET'],
+    pattern: '/clusters/:clusterId/dns-zone/issuers',
+    level: 'read-only',
+    why: 'See the certificate issuers that sign your applications\u2019 certificates.',
+  },
+  {
+    verbs: ['GET'],
+    pattern: '/observability/clusters/:clusterId/health',
+    level: 'read-only',
+    why: 'See whether the cluster you are on is healthy.',
+  },
+  {
+    verbs: ['GET'],
+    pattern: '/infrastructure/clusters/:id/autoscale/status',
+    level: 'read-only',
+    why: 'See how busy the cluster you are on is, and whether anything is waiting for room.',
+  },
+  {
+    verbs: ['GET'],
+    pattern: '/fleet/metrics',
+    level: 'read-only',
+    why: 'See the cluster you are on on the home, with the same charts an operator has.',
+  },
+  {
+    verbs: ['GET'],
     pattern: '/observability/clusters/:clusterId/metrics',
     level: 'read-only',
     why: 'See how the cluster you are on is doing.',

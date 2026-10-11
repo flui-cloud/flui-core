@@ -5,6 +5,7 @@ const scope = (over: Partial<SandboxScope> = {}): SandboxScope => ({
   clusterId: 'own-cluster',
   projectIds: new Set<string>(),
   applicationIds: new Set<string>(),
+  showcaseApplicationIds: new Set<string>(),
   ...over,
 });
 
@@ -135,6 +136,7 @@ describe('sandbox response projection', () => {
       expect(out.nodes).toEqual([
         {
           id: 'node-1',
+          serverType: undefined,
           nodeType: 'worker',
           status: 'ready',
           createdAt: 'then',
@@ -315,11 +317,48 @@ describe('sandbox response projection', () => {
     });
   });
 
+  describe('the outbound ports of your cluster', () => {
+    const policy = {
+      open: false,
+      ports: [{ port: 443, protocol: 'TCP' }],
+      summary: 'Applications reach only port 443 outside the cluster.',
+      namespaces: ['p-someone-else'],
+    };
+
+    it('keeps the rule and nothing about other spaces', () => {
+      const out = project(
+        'GET',
+        '/infrastructure/clusters/own-cluster/egress-policy',
+        policy,
+        scope(),
+        { id: 'own-cluster' },
+      );
+      expect(out).toEqual({
+        open: false,
+        ports: [{ port: 443, protocol: 'TCP' }],
+        summary: 'Applications reach only port 443 outside the cluster.',
+      });
+    });
+
+    it('answers nothing for another cluster', () => {
+      expect(
+        project(
+          'GET',
+          '/infrastructure/clusters/other/egress-policy',
+          policy,
+          scope(),
+          { id: 'other' },
+        ),
+      ).toBeNull();
+    });
+  });
+
   describe('the nodes under you', () => {
     const nodes = [
       {
         id: 'n1',
         serverName: 'flui-master',
+        serverType: 'cx23',
         nodeType: 'master',
         ipAddress: '10.0.0.1',
         status: 'ready',
@@ -349,6 +388,7 @@ describe('sandbox response projection', () => {
       expect(out).toHaveLength(2);
       expect(out[0]).toEqual({
         id: 'n1',
+        serverType: 'cx23',
         nodeType: 'master',
         status: 'ready',
         createdAt: 'then',
@@ -389,6 +429,243 @@ describe('sandbox response projection', () => {
           { clusterId: 'other' },
         ),
       ).toEqual({ servers: [] });
+    });
+  });
+
+  describe('an application’s metrics history', () => {
+    const history = { app_id: 'x', namespace: 'p-showcase', data_points: [] };
+
+    it('drops the namespace of an application that is not the guest’s', () => {
+      expect(
+        project(
+          'GET',
+          '/observability/applications/x/metrics/history',
+          history,
+          scope(),
+          { appId: 'x' },
+        ),
+      ).toEqual({ app_id: 'x', data_points: [] });
+    });
+
+    it('leaves the guest’s own untouched', () => {
+      expect(
+        project(
+          'GET',
+          '/observability/applications/x/metrics/history',
+          history,
+          scope({ applicationIds: new Set(['x']) }),
+          { appId: 'x' },
+        ),
+      ).toEqual(history);
+    });
+  });
+
+  describe('endpoints on the cluster', () => {
+    const endpoints = [
+      { id: 'e1', applicationId: 'mine', fqdn: 'mine.example' },
+      { id: 'e2', applicationId: 'showcase-app', fqdn: 'live.example' },
+      { id: 'e3', applicationId: 'another-guest', fqdn: 'theirs.example' },
+    ];
+
+    it('shows the guest\u2019s own and the showcase\u2019s, never another guest\u2019s', () => {
+      const out = project(
+        'GET',
+        '/clusters/own-cluster/endpoints',
+        endpoints,
+        scope({
+          applicationIds: new Set(['mine']),
+          showcaseApplicationIds: new Set(['showcase-app']),
+        }),
+        { clusterId: 'own-cluster' },
+      ) as Array<{ id: string }>;
+      expect(out.map((e) => e.id)).toEqual(['e1', 'e2']);
+    });
+  });
+
+  describe('the cluster\u2019s health', () => {
+    const health = {
+      cluster_id: 'own-cluster',
+      status: 'HEALTHY',
+      summary: { total: 3, up: 3 },
+      targets: [{ instance: '10.0.0.1:9100', up: true }],
+      checked_at: 'now',
+    };
+
+    it('keeps the verdict and drops the addresses', () => {
+      expect(
+        project(
+          'GET',
+          '/observability/clusters/own-cluster/health',
+          health,
+          scope(),
+          { clusterId: 'own-cluster' },
+        ),
+      ).toEqual({
+        cluster_id: 'own-cluster',
+        status: 'HEALTHY',
+        summary: { total: 3, up: 3 },
+        checked_at: 'now',
+        targets: [],
+      });
+    });
+
+    it('answers nothing for another cluster', () => {
+      expect(
+        project(
+          'GET',
+          '/observability/clusters/other/health',
+          health,
+          scope(),
+          { clusterId: 'other' },
+        ),
+      ).toBeNull();
+    });
+  });
+
+  describe('how busy the cluster is', () => {
+    const status = {
+      clusterId: 'own-cluster',
+      warning: 'NONE',
+      metrics: { cpuPct: 12, memoryPct: 40 },
+      unschedulable: {
+        count: 1,
+        oldestWaitingSeconds: 30,
+        largestRequest: {
+          name: 'umami-db-0',
+          namespace: 'sb-other-guest',
+          cpuMillicores: 500,
+          memoryMi: 512,
+        },
+        message: '0/2 nodes are available',
+      },
+    };
+
+    it('keeps how many wait and drops what they are', () => {
+      const out = project(
+        'GET',
+        '/infrastructure/clusters/own-cluster/autoscale/status',
+        status,
+        scope(),
+        {
+          id: 'own-cluster',
+        },
+      ) as { unschedulable: Record<string, unknown>; metrics: unknown };
+      expect(out.unschedulable).toEqual({
+        count: 1,
+        oldestWaitingSeconds: 30,
+        largestRequest: null,
+        message: null,
+      });
+      expect(out.metrics).toEqual({ cpuPct: 12, memoryPct: 40 });
+    });
+
+    it('answers nothing for another cluster', () => {
+      expect(
+        project(
+          'GET',
+          '/infrastructure/clusters/other/autoscale/status',
+          status,
+          scope(),
+          { id: 'other' },
+        ),
+      ).toBeNull();
+    });
+  });
+
+  describe('the certificate issuers', () => {
+    const issuers = [
+      {
+        name: 'letsencrypt-production',
+        ready: true,
+        email: 'ops@operator.example',
+        solverType: 'combined',
+        message: null,
+      },
+    ];
+
+    it('keeps whether they are ready and drops the operator\u2019s address', () => {
+      expect(
+        project(
+          'GET',
+          '/clusters/own-cluster/dns-zone/issuers',
+          issuers,
+          scope(),
+          { clusterId: 'own-cluster' },
+        ),
+      ).toEqual([
+        {
+          name: 'letsencrypt-production',
+          ready: true,
+          solverType: 'combined',
+          message: null,
+        },
+      ]);
+    });
+
+    it('answers nothing for another cluster', () => {
+      expect(
+        project('GET', '/clusters/other/dns-zone/issuers', issuers, scope(), {
+          clusterId: 'other',
+        }),
+      ).toEqual([]);
+    });
+  });
+
+  describe('the home tiles', () => {
+    const point = { timestamp: 't', nodes: 2, cpu: 9, memory: 40 };
+    const fleet = {
+      window: '3h',
+      fleet: {
+        clustersTotal: 2,
+        clustersReporting: 2,
+        nodesReporting: 4,
+        current: { ...point, nodes: 4 },
+        series: [{ ...point, nodes: 4 }],
+      },
+      clusters: [
+        {
+          clusterId: 'own-cluster',
+          name: 'workload',
+          metrics: 'reporting',
+          nodesReporting: 2,
+          current: point,
+          series: [point],
+        },
+        {
+          clusterId: 'control',
+          name: 'control',
+          metrics: 'reporting',
+          nodesReporting: 2,
+          current: point,
+          series: [point],
+        },
+      ],
+    };
+
+    it('reads as a fleet of the tenancy’s own cluster', () => {
+      const out = project('GET', '/fleet/metrics', fleet, scope()) as {
+        fleet: Record<string, unknown>;
+        clusters: Array<{ clusterId: string }>;
+      };
+      expect(out.clusters.map((c) => c.clusterId)).toEqual(['own-cluster']);
+      expect(out.fleet).toEqual({
+        clustersTotal: 1,
+        clustersReporting: 1,
+        nodesReporting: 2,
+        current: point,
+        series: [point],
+      });
+    });
+
+    it('reads empty when the tenancy has no cluster', () => {
+      const out = project(
+        'GET',
+        '/fleet/metrics',
+        fleet,
+        scope({ clusterId: null }),
+      ) as { fleet: Record<string, unknown>; clusters: unknown[] };
+      expect(out.clusters).toEqual([]);
+      expect(out.fleet).toMatchObject({ clustersTotal: 0, current: null });
     });
   });
 

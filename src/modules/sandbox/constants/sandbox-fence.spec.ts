@@ -112,11 +112,10 @@ describe('sandbox allowlist', () => {
       ['GET', '/mail/messages'],
       ['POST', '/projects'],
 
-      // Reading the platform's own configuration and secrets by namespace —
-      // the hole F0 left open at the permission layer.
-      ['GET', '/variables/clusters/c1/namespaces/flui-system'],
+      // Writing the platform's own configuration and secrets by namespace.
+      // Reading them is answered from the example world; see below.
       ['PUT', '/variables/clusters/c1/namespaces/flui-system/flui-secrets'],
-      ['GET', '/variables/clusters/c1/namespaces/kube-system/anything'],
+      ['PUT', '/variables/clusters/c1/namespaces/default/northwind-shared'],
 
       // Shared infrastructure a tenancy must not steer.
       ['POST', '/clusters/c1/dns-zone'],
@@ -596,6 +595,22 @@ describe('sandbox allowlist', () => {
     expect(isSandboxAllowed('POST', '/auth/users')).toBe(false);
     expect(isSandboxAllowed('GET', '/iam/bindings')).toBe(false);
     expect(isSandboxAllowed('POST', '/me/permissions')).toBe(false);
+  });
+
+  /**
+   * The platform's own configuration, read by namespace, is reachable only
+   * because the answer never comes from the handler: every namespace, the
+   * platform's included, is served from the example organisation.
+   */
+  it('reads cluster-wide variables from the example world only', () => {
+    for (const path of [
+      '/variables/clusters/c1/namespaces/flui-system',
+      '/variables/clusters/c1/namespaces/kube-system/anything',
+      '/variables/clusters/c1/namespaces/default',
+    ]) {
+      expect(sandboxLevelOf('GET', path)).toBe('stand-in');
+      expect(findSandboxStandIn('GET', path)).toBeDefined();
+    }
   });
 
   /** Same again for the two sections whose real content is other people's. */

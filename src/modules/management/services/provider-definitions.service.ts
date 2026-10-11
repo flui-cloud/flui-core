@@ -49,7 +49,7 @@ export class ProviderDefinitionsService {
         accessKeyDocumentationUrl: providerInfo.accessKeyDocumentationUrl,
         supportUrl: providerInfo.supportUrl,
         pricingUrl: providerInfo.pricingUrl,
-        enabled: this.isProviderEnabled(provider),
+        enabled: isProviderOffered(provider),
         capabilities,
         credentialFields: providerInfo.credentialFields,
         dnsZoneDelegation: providerInfo.dnsZoneDelegation,
@@ -125,28 +125,24 @@ export class ProviderDefinitionsService {
   isProviderSupported(provider: CloudProvider): boolean {
     return this.capabilitiesFactory.isProviderSupported(provider);
   }
+}
 
-  /**
-   * Check if a provider is enabled and available for use
-   * Hetzner: enabled
-   * Contabo: disabled (under development)
-   */
-  private isProviderEnabled(provider: CloudProvider): boolean {
-    switch (provider) {
-      case CloudProvider.HETZNER:
-        return true;
+/** Whether a provider is offered to connect. */
+export function isProviderOffered(provider: CloudProvider): boolean {
+  switch (provider) {
+    case CloudProvider.HETZNER:
+      return true;
 
-      case CloudProvider.CONTABO:
-        return false;
+    case CloudProvider.CONTABO:
+      return false;
 
-      case CloudProvider.SCALEWAY:
-        return true;
+    case CloudProvider.SCALEWAY:
+      return true;
 
-      case CloudProvider.OVH:
-        return true;
+    case CloudProvider.OVH:
+      return true;
 
-      default:
-        return false;
-    }
+    default:
+      return false;
   }
 }

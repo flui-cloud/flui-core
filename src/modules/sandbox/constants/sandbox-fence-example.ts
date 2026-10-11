@@ -25,7 +25,7 @@ export const SANDBOX_ALLOW_EXAMPLE: SandboxAllowRule[] = [
     verbs: ['GET'],
     pattern: '/management/providers',
     level: 'stand-in',
-    why: 'See how providers are connected, on an example account.',
+    why: 'See every provider Flui can connect, on an example account.',
   },
   {
     verbs: ['GET'],
@@ -96,6 +96,12 @@ export const SANDBOX_ALLOW_EXAMPLE: SandboxAllowRule[] = [
     pattern: '/auth/users',
     level: 'stand-in',
     why: 'See how people are held in an organisation, on an example one.',
+  },
+  {
+    verbs: ['GET'],
+    pattern: '/audit/events',
+    level: 'stand-in',
+    why: 'See what an activity record holds, on the example organisation.',
   },
   {
     verbs: ['GET'],
@@ -225,7 +231,7 @@ export const SANDBOX_ALLOW_EXAMPLE: SandboxAllowRule[] = [
     verbs: ['GET'],
     pattern: '/management/providers/:provider',
     level: 'stand-in',
-    why: 'Open the example provider.',
+    why: 'Open a provider: what it can do and what connecting it asks for.',
   },
   {
     verbs: ['GET'],
@@ -237,13 +243,116 @@ export const SANDBOX_ALLOW_EXAMPLE: SandboxAllowRule[] = [
     verbs: ['GET'],
     pattern: '/management/providers/:provider/regions',
     level: 'stand-in',
-    why: 'See where the example provider can place machines.',
+    why: 'See where a provider can place machines.',
+  },
+  {
+    verbs: ['GET'],
+    pattern: '/management/providers/:provider/health',
+    level: 'stand-in',
+    why: 'See the health check of the example connected provider.',
   },
   {
     verbs: ['GET'],
     pattern: '/mail/connections/:id/setup',
     level: 'stand-in',
     why: 'See the proofs a sending domain needs, published on the example one.',
+  },
+  {
+    // The machine-room tabs of a cluster page (see `sandbox-world-cluster.ts`).
+    verbs: ['GET'],
+    pattern: '/infrastructure/clusters/:id/storage',
+    level: 'stand-in',
+    why: 'See how shared storage is laid out, on an example cluster.',
+  },
+  {
+    verbs: ['GET'],
+    pattern: '/infrastructure/clusters/:id/storage/orphaned-claims',
+    level: 'stand-in',
+    why: 'See how storage left behind by a deleted application is found.',
+  },
+  {
+    verbs: ['GET'],
+    pattern: '/clusters/:clusterId/snapshots',
+    level: 'stand-in',
+    why: 'See the snapshots kept on a cluster, on the example one.',
+  },
+  {
+    verbs: ['GET'],
+    pattern: '/firewalls/cluster/:clusterId',
+    level: 'stand-in',
+    why: 'See the rules a cluster is protected by, on example machines.',
+  },
+  {
+    // Every namespace answers from the example organisation, the platform's
+    // own included: the handler that reads the real ConfigMaps and Secrets
+    // never runs for a guest. Sensitive sets are shown by key name only.
+    verbs: ['GET'],
+    pattern: '/variables/clusters/:clusterId/namespaces/:namespace',
+    level: 'stand-in',
+    why: 'See how variables are shared across a cluster. Sensitive ones show their names, never a value.',
+  },
+  {
+    verbs: ['GET'],
+    pattern: '/variables/clusters/:clusterId/namespaces/:namespace/:name',
+    level: 'stand-in',
+    why: 'Open one of the example variable sets.',
+  },
+  {
+    verbs: ['GET'],
+    pattern: '/infrastructure/clusters/:id/billing',
+    level: 'stand-in',
+    why: 'See what a cluster costs this month, on an example bill.',
+  },
+  {
+    // Scaling: one example group on the example cluster. The list names that
+    // cluster only, never the instance's; the guest's own cluster tab shows the
+    // same group under its own id.
+    verbs: ['GET'],
+    pattern: '/infrastructure/scaling',
+    level: 'stand-in',
+    why: 'See how a cluster grows and shrinks on its own, on an example group.',
+  },
+  {
+    verbs: ['GET'],
+    pattern: '/infrastructure/clusters/:clusterId/scaling',
+    level: 'stand-in',
+    why: 'See a cluster\u2019s scaling at a glance: its limits, its cost, its ceiling.',
+  },
+  {
+    verbs: ['GET'],
+    pattern: '/infrastructure/clusters/:clusterId/scaling-decisions',
+    level: 'stand-in',
+    why: 'See what the example group decided, and why.',
+  },
+  {
+    verbs: ['GET'],
+    pattern: '/infrastructure/scaling-groups/:id',
+    level: 'stand-in',
+    why: 'Open the example scaling group.',
+  },
+  {
+    verbs: ['GET'],
+    pattern: '/infrastructure/scaling-groups/:id/preview',
+    level: 'stand-in',
+    why: 'See what the example group would do now, and the room left on each machine.',
+  },
+  {
+    verbs: ['GET'],
+    pattern: '/infrastructure/scaling-groups/:id/decisions',
+    level: 'stand-in',
+    why: 'See the history of the example group\u2019s decisions.',
+  },
+  {
+    verbs: ['GET'],
+    pattern: '/infrastructure/scaling-groups/:id/catalogue',
+    level: 'stand-in',
+    why: 'See the machines the example group may buy, and what they cost.',
+  },
+  {
+    verbs: ['GET'],
+    pattern: '/infrastructure/clusters/:id/fleet/history',
+    level: 'stand-in',
+    why: 'See the example fleet over time, machine by machine.',
   },
   {
     // Asked on every screen, to decide whether the credentials banner appears.

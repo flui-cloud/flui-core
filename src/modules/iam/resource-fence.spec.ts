@@ -584,8 +584,9 @@ describe('resource fence (direct API calls)', () => {
       expect(res.body['demo-activity'].tabs).toEqual(
         expect.arrayContaining(['overview', 'monitoring']),
       );
-      // Logs and the tabs that render credentials are data: never on the showcase (F-097).
-      expect(res.body['demo-activity'].tabs).not.toContain('logs');
+      // The tabs that render credentials are data: never on the showcase (F-097).
+      // Its logs are on display by publishing (`@OpenOnShowcase`).
+      expect(res.body['demo-activity'].tabs).toContain('logs');
       expect(res.body['demo-activity'].tabs).not.toContain('configuration');
       expect(res.body['demo-activity'].tabs).not.toContain('clients');
 

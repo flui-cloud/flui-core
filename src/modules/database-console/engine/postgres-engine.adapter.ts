@@ -2,6 +2,7 @@ import { BadRequestException, Injectable } from '@nestjs/common';
 import { Client, type FieldDef } from 'pg';
 import { DbEngine } from '../interfaces/db-connection';
 import {
+  ReaderRole,
   SchemaTable,
   SchemaTree,
   SqlEngineAdapter,
@@ -237,6 +238,48 @@ class PostgresConnection implements SqlEngineConnection {
         tables,
       })),
     };
+  }
+
+  async ensureReaderRole(role: ReaderRole): Promise<void> {
+    const name = this.client.escapeIdentifier(role.name);
+    const exists = await this.client.query(
+      'SELECT 1 FROM pg_roles WHERE rolname = $1',
+      [role.name],
+    );
+    if (exists.rowCount === 0) await this.client.query(`CREATE ROLE ${name}`);
+    await this.client.query(
+      `ALTER ROLE ${name} WITH LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS ` +
+        `CONNECTION LIMIT ${Math.max(1, Math.floor(role.connectionLimit))} PASSWORD ${this.client.escapeLiteral(role.password)}`,
+    );
+    const settings: Array<[string, string]> = [
+      [
+        'statement_timeout',
+        `${Math.max(1, Math.floor(role.statementTimeoutMs))}ms`,
+      ],
+      ['idle_in_transaction_session_timeout', '10s'],
+      ['default_transaction_read_only', 'on'],
+      ['work_mem', '4MB'],
+      ['temp_file_limit', '64MB'],
+    ];
+    for (const [key, value] of settings) {
+      await this.client.query(
+        `ALTER ROLE ${name} SET ${key} = ${this.client.escapeLiteral(value)}`,
+      );
+    }
+    await this.client.query(
+      `GRANT CONNECT ON DATABASE ${this.client.escapeIdentifier(role.database)} TO ${name}`,
+    );
+    const schemas = await this.client.query<{ nspname: string }>(
+      String.raw`SELECT nspname FROM pg_namespace
+        WHERE nspname NOT IN ('pg_catalog', 'information_schema') AND nspname NOT LIKE 'pg\_%'`,
+    );
+    for (const { nspname } of schemas.rows) {
+      const schema = this.client.escapeIdentifier(nspname);
+      await this.client.query(`GRANT USAGE ON SCHEMA ${schema} TO ${name}`);
+      await this.client.query(
+        `GRANT SELECT ON ALL TABLES IN SCHEMA ${schema} TO ${name}`,
+      );
+    }
   }
 
   async close(): Promise<void> {

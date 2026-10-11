@@ -1,7 +1,10 @@
 import { Injectable, Logger, OnApplicationBootstrap } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
-import { ClusterEntity } from '../../infrastructure/clusters/entities/cluster.entity';
+import { Not, In, Repository } from 'typeorm';
+import {
+  ClusterEntity,
+  ClusterStatus,
+} from '../../infrastructure/clusters/entities/cluster.entity';
 import { KubernetesService } from '../../infrastructure/shared/services/kubernetes.service';
 import { EncryptionService } from '../../shared/encryption/services/encryption.service';
 import { ApplicationsRepository } from '../repositories/applications.repository';
@@ -35,7 +38,14 @@ export class ScheduledJobsImportService implements OnApplicationBootstrap {
 
   async importAll(): Promise<number> {
     let adopted = 0;
-    for (const cluster of await this.clusters.find()) {
+    // A deleted cluster keeps its kubeconfig, and asking its API server costs a
+    // connect timeout each, which at boot adds up to minutes.
+    const live = await this.clusters.find({
+      where: {
+        status: Not(In([ClusterStatus.DELETED, ClusterStatus.DELETING])),
+      },
+    });
+    for (const cluster of live) {
       if (!cluster.kubeconfigEncrypted) continue;
       const cronJobs = await this.kubernetes
         .listResourcesByLabelEverywhere(

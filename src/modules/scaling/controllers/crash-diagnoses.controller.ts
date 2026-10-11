@@ -24,6 +24,7 @@ import { AppAccessGuard } from '../../applications/guards/app-access.guard';
 import { AppManagementService } from '../../applications/services/app-management.service';
 import { UpdateResourcesDto } from '../../applications/dto/app-management.dto';
 import { SuggestedActionType } from '../enums/suggested-action-type.enum';
+import { OpenOnShowcase } from '../../iam/decorators/open-on-showcase.decorator';
 import { DataDoor } from '../../iam/decorators/data-door.decorator';
 
 /**
@@ -52,6 +53,7 @@ export class CrashDiagnosesController {
 
   @Get()
   @DataDoor()
+  @OpenOnShowcase()
   @ApiOperation({ summary: 'List crash diagnoses for an application' })
   @ApiQuery({
     name: 'status',
@@ -81,6 +83,7 @@ export class CrashDiagnosesController {
 
   @Get(':diagnosisId')
   @DataDoor()
+  @OpenOnShowcase()
   @ApiOperation({ summary: 'Get a single crash diagnosis' })
   async getOne(
     @Param('id') applicationId: string,

@@ -229,7 +229,9 @@ export class ApplicationAccessService {
       );
       const permissions = this.policy.permissionsOn(access, resource);
       summaries.set(app.id, {
-        tabs: tabsForPermissions(permissions),
+        tabs: tabsForPermissions(permissions, {
+          showcase: isShowcase(app.tags),
+        }),
         readOnly: !permissions.has(IAM_PERMISSION.APP_WRITE),
         showcase: isShowcase(app.tags),
         dataAccess: permissions.has(IAM_PERMISSION.DATA_ACCESS),

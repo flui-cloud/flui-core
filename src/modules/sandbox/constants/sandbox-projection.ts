@@ -26,10 +26,16 @@ export interface SandboxScope {
   projectIds: ReadonlySet<string>;
   /** The applications the guest owns. */
   applicationIds: ReadonlySet<string>;
+  /** The applications in the showcase, which every guest is shown on purpose. */
+  showcaseApplicationIds: ReadonlySet<string>;
 }
 
 /** Which parts of the scope a rule reads. The interceptor loads no more. */
-export type SandboxScopeField = 'clusterId' | 'projectIds' | 'applicationIds';
+export type SandboxScopeField =
+  | 'clusterId'
+  | 'projectIds'
+  | 'applicationIds'
+  | 'showcaseApplicationIds';
 
 /** The route's own parameters, so a rule can pin a request to the guest's cluster. */
 export type SandboxRouteParams = Record<string, string | undefined>;
@@ -93,12 +99,13 @@ function projectCluster(
 
 /**
  * A node without a way to reach it. What is left says how many machines there
- * are and whether they are healthy — which is the whole point of showing them —
- * and nothing that would let anyone knock on one.
+ * are, how big and whether they are healthy — which is the whole point of
+ * showing them — and nothing that would let anyone knock on one.
  */
 function projectNode(node: Record<string, unknown>): Record<string, unknown> {
   return {
     id: node.id,
+    serverType: node.serverType,
     nodeType: node.nodeType,
     status: node.status,
     createdAt: node.createdAt,
@@ -144,6 +151,32 @@ function strangersApplication(
     return app;
   const { k8sNamespace: _ns, userId: _owner, ...rest } = app;
   return rest;
+}
+
+/**
+ * The home's fleet reading, cut to the tenancy's own cluster: the fleet a guest
+ * has is the one cluster their space is on. The totals are that cluster's own
+ * row, so the tiles and the table beside them cannot disagree.
+ */
+function ownFleet(body: unknown, scope: SandboxScope): unknown {
+  const fleet = asObject(body);
+  if (!fleet) return body;
+  const own = asArray(fleet.clusters).filter(
+    (row) => row.clusterId === scope.clusterId,
+  );
+  const row = own[0];
+  const reporting = row?.metrics === 'reporting';
+  return {
+    ...fleet,
+    fleet: {
+      clustersTotal: own.length,
+      clustersReporting: reporting ? 1 : 0,
+      nodesReporting: reporting ? row.nodesReporting : 0,
+      current: reporting ? row.current : null,
+      series: row?.series ?? [],
+    },
+    clusters: own,
+  };
 }
 
 export const SANDBOX_PROJECTIONS: SandboxProjectionRule[] = [
@@ -223,6 +256,16 @@ export const SANDBOX_PROJECTIONS: SandboxProjectionRule[] = [
       params.id === scope.clusterId ? asArray(body).map(projectNode) : [],
   },
   {
+    verbs: ['GET'],
+    pattern: '/infrastructure/clusters/:id/egress-policy',
+    needs: ['clusterId'],
+    why: 'The outbound ports of the tenancy\u2019s own cluster, which bind its applications.',
+    project: (body, scope, params) =>
+      params.id === scope.clusterId
+        ? pick(asObject(body) ?? {}, ['open', 'ports', 'summary'])
+        : null,
+  },
+  {
     // The zone the guest's own applications are published under, so the first
     // screen can stop offering to "set up DNS & certificates" on an instance
     // where both are already done. `acmeEmail` is the operator's own address and
@@ -250,16 +293,19 @@ export const SANDBOX_PROJECTIONS: SandboxProjectionRule[] = [
     },
   },
   {
+    // The showcase's public name is shown on purpose — it is printed on the
+    // home and opened from it — so its endpoint is the guest's to look at too.
     verbs: ['GET'],
     pattern: '/clusters/:clusterId/endpoints',
-    needs: ['applicationIds'],
-    why: "Only the endpoints of the guest's own applications.",
+    needs: ['applicationIds', 'showcaseApplicationIds'],
+    why: "Only the endpoints of the guest's own applications and of the showcase.",
     project: (body, scope) =>
       asArray(body)
         .filter(
           (endpoint) =>
             typeof endpoint.applicationId === 'string' &&
-            scope.applicationIds.has(endpoint.applicationId),
+            (scope.applicationIds.has(endpoint.applicationId) ||
+              scope.showcaseApplicationIds.has(endpoint.applicationId)),
         )
         .map((endpoint) => pick(endpoint, ENDPOINT_FIELDS)),
   },
@@ -302,6 +348,79 @@ export const SANDBOX_PROJECTIONS: SandboxProjectionRule[] = [
         servers: servers.map(({ instance: _instance, ...rest }) => rest),
       };
     },
+  },
+  {
+    verbs: ['GET'],
+    pattern: '/observability/applications/:id/metrics/history',
+    needs: ['applicationIds'],
+    why: "Where an application runs, only for the guest's own.",
+    project: (body, scope, params) => {
+      const history = asObject(body);
+      if (!history || (params.appId && scope.applicationIds.has(params.appId)))
+        return body;
+      const { namespace: _ns, ...rest } = history;
+      return rest;
+    },
+  },
+  {
+    // `email` is the operator's ACME account address.
+    verbs: ['GET'],
+    pattern: '/clusters/:clusterId/dns-zone/issuers',
+    needs: ['clusterId'],
+    why: 'Whether the issuers are ready, without the operator\u2019s address.',
+    project: (body, scope, params) =>
+      params.clusterId === scope.clusterId
+        ? asArray(body).map((issuer) =>
+            pick(issuer, ['name', 'ready', 'solverType', 'message']),
+          )
+        : [],
+  },
+  {
+    // Each target is a scrape address on a node: the verdict and the counts
+    // are the part a guest is shown.
+    verbs: ['GET'],
+    pattern: '/observability/clusters/:clusterId/health',
+    needs: ['clusterId'],
+    why: 'Whether the cluster is healthy, without the addresses it was checked at.',
+    project: (body, scope, params) =>
+      params.clusterId === scope.clusterId
+        ? {
+            ...pick(asObject(body) ?? {}, [
+              'cluster_id',
+              'status',
+              'summary',
+              'checked_at',
+            ]),
+            targets: [],
+          }
+        : null,
+  },
+  {
+    // What is waiting is named by pod and namespace — another guest's.
+    // How many, and for how long, is the part that says how busy it is.
+    verbs: ['GET'],
+    pattern: '/infrastructure/clusters/:id/autoscale/status',
+    needs: ['clusterId'],
+    why: 'How busy the cluster is, without naming what anybody else is running.',
+    project: (body, scope, params) => {
+      if (params.id !== scope.clusterId) return null;
+      const status = asObject(body);
+      if (!status) return body;
+      const waiting = asObject(status.unschedulable);
+      return {
+        ...status,
+        unschedulable: waiting
+          ? { ...waiting, largestRequest: null, message: null }
+          : null,
+      };
+    },
+  },
+  {
+    verbs: ['GET'],
+    pattern: '/fleet/metrics',
+    needs: ['clusterId'],
+    why: 'The home tiles, for the cluster the tenancy runs on and no other.',
+    project: (body, scope) => ownFleet(body, scope),
   },
 ];
 

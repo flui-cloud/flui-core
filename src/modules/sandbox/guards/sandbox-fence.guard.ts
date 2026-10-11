@@ -26,8 +26,10 @@ import type { SandboxLevel } from '../constants/sandbox-fence-core';
 import {
   SANDBOX_STAND_IN_WRITE_CODE,
   SANDBOX_STAND_IN_WRITE_MESSAGE,
+  findSandboxStandIn,
   isStandInArea,
 } from '../stand-in/sandbox-stand-in';
+import { CLUSTER_ID as EXAMPLE_CLUSTER_ID } from '../stand-in/sandbox-world-core';
 import { ModuleRef } from '@nestjs/core';
 import { SandboxScopeService } from '../services/sandbox-scope.service';
 import { loadSandboxConfig } from '../sandbox.config';
@@ -98,6 +100,7 @@ export class SandboxFenceGuard implements CanActivate {
 
   private async assertOwnCluster(
     userId: string,
+    verb: string,
     pattern: string,
     params: Record<string, string | undefined>,
   ): Promise<void> {
@@ -105,6 +108,16 @@ export class SandboxFenceGuard implements CanActivate {
       params.clusterId ??
       (/\/clusters\/:id(\/|$)/.test(pattern) ? params.id : undefined);
     if (!named) return;
+    // The example cluster is the one other id a guest may name, on any route the
+    // example world answers (the Scaling section lives on it). It is not a
+    // cluster of the instance, and a stand-in is served instead of the handler,
+    // so no handler is ever reached with it.
+    if (
+      named === EXAMPLE_CLUSTER_ID &&
+      findSandboxStandIn(verb, pattern, true, params)
+    ) {
+      return;
+    }
     const own = await this.ownClusterOf(userId);
     if (!own || named !== own) {
       throw new ForbiddenException({
@@ -146,6 +159,7 @@ export class SandboxFenceGuard implements CanActivate {
       if (route) {
         await this.assertOwnCluster(
           user.userId,
+          req.method,
           path,
           (req.params ?? {}) as Record<string, string | undefined>,
         );

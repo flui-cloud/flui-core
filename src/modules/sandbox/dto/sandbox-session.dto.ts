@@ -42,6 +42,14 @@ export class SandboxSessionDto {
   })
   workloadTtlHours: number;
 
+  @ApiPropertyOptional({
+    nullable: true,
+    example: '2026-10-12T09:30:00.000Z',
+    description:
+      'Until when the guest\u2019s applications stay if the guest does nothing more. Every action, "Keep my apps" included, moves it.',
+  })
+  appsKeptUntil?: string | null;
+
   @ApiProperty({
     example: 'https://try.flui.cloud',
     description:

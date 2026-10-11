@@ -31,6 +31,12 @@ export interface ResolvedDbConnection {
 export interface DbConnectionResolveInput {
   dbInstallId: string;
   fluiUserId: string;
+  /**
+   * `reader`: somebody who may look at the database but is not its owner — a
+   * guest on the showcase. They never hold the owner's session: the query runs
+   * as a login role that can only SELECT.
+   */
+  access?: 'owner' | 'reader';
 }
 
 /**
