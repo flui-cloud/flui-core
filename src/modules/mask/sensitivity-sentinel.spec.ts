@@ -2243,6 +2243,7 @@ const MASK_EXEMPT: string[] = [
   'LadderRungDto.region', // modules/infrastructure/scaling/dto/scaling-preview.dto.ts
   'LadderRungDto.shape', // modules/infrastructure/scaling/dto/scaling-preview.dto.ts
   'LadderRungDto.step', // modules/infrastructure/scaling/dto/scaling-preview.dto.ts
+  'ListAuditEventsQueryDto.before', // modules/audit/dto/audit-event.dto.ts
   'ListFirewallsQueryDto.clusterId', // modules/infrastructure/firewalls/dto/cluster-firewall.dto.ts
   'ListFirewallsQueryDto.status', // modules/infrastructure/firewalls/dto/cluster-firewall.dto.ts
   'ListImagesQueryDto.appId', // modules/image-registry/dto/image-registry.dto.ts
