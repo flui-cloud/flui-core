@@ -1,6 +1,10 @@
 jest.mock('@kubernetes/client-node', () => ({}));
 
-import { ForbiddenException, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ForbiddenException,
+  NotFoundException,
+} from '@nestjs/common';
 import { CatalogController } from './catalog.controller';
 
 /** F-102: another tenant's building block is neither listed, reused nor read through its install. */
@@ -33,6 +37,7 @@ describe('catalog reuse and install reads respect ownership', () => {
     ),
   };
   const installer = {
+    preflight: jest.fn(async () => undefined),
     install: jest.fn(async () => ({ install: { id: 'new' } })),
   };
   const controller = new CatalogController(
@@ -70,6 +75,17 @@ describe('catalog reuse and install reads respect ownership', () => {
       ),
     ).rejects.toBeInstanceOf(ForbiddenException);
     expect(installer.install).not.toHaveBeenCalled();
+  });
+
+  it('turns away a request with missing inputs before a demo area is taken', async () => {
+    installer.preflight.mockRejectedValueOnce(
+      new BadRequestException('Some inputs this app needs are missing'),
+    );
+    access.assertCanCreate.mockClear();
+    await expect(
+      controller.install('linkding', { clusterId: 'c1' } as never, req),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(access.assertCanCreate).not.toHaveBeenCalled();
   });
 
   it('does not show another person’s install', async () => {

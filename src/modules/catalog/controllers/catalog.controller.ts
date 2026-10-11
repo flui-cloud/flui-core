@@ -329,6 +329,7 @@ export class CatalogController {
     @Req() req: Request,
   ): Promise<CatalogInstallResponseDto> {
     const user = req.user as AuthenticatedUser | undefined;
+    await this.installer.preflight(slug, dto, user?.userId);
     const access = await this.applicationAccess.assertCanCreate(user, {
       clusterId: dto.clusterId,
       projectId: dto.projectId,

@@ -75,6 +75,35 @@ export class CatalogInstallerService {
     private readonly clustersService: ClustersService,
   ) {}
 
+  /**
+   * The checks an install request can fail on its own, without touching
+   * anything: asked before a demo guest's area is taken, so a form with a
+   * missing password does not hold an area another guest is waiting for.
+   */
+  async preflight(
+    slug: string,
+    dto: InstallCatalogAppDto,
+    userId?: string,
+  ): Promise<void> {
+    const definition = await this.definitionRepo.findPublishedBySlug(
+      slug,
+      userId,
+    );
+    if (!definition) {
+      throw new BadRequestException(
+        `Catalog app "${slug}" not found or not published`,
+      );
+    }
+    this.validateUserInputs(definition, dto);
+    this.validateDependencyChoices(definition, dto);
+    const exposureProblem = exposureRefusal(
+      definition.manifest.spec as never,
+      definition.appType,
+      dto.exposure,
+    );
+    if (exposureProblem) throw new BadRequestException(exposureProblem);
+  }
+
   async install(
     slug: string,
     dto: InstallCatalogAppDto,
