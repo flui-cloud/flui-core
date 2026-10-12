@@ -129,6 +129,12 @@ export const CATALOG_TOOLS: ToolDef[] = [
         notInstallableDetails?: unknown;
         userInputPrompts?: Array<{ name: string; default?: string }>;
         dependencies?: Array<{ ref?: string; required?: boolean }>;
+        options?: Array<{
+          key: string;
+          default: boolean;
+          description?: string;
+          requires?: string;
+        }>;
       };
       return {
         name: d.name,
@@ -144,6 +150,12 @@ export const CATALOG_TOOLS: ToolDef[] = [
         dependencies: (d.dependencies ?? []).map((dep) => ({
           ref: dep.ref,
           required: dep.required,
+        })),
+        options: (d.options ?? []).map((o) => ({
+          key: o.key,
+          default: o.default,
+          description: o.description,
+          ...(o.requires ? { requires: o.requires } : {}),
         })),
       };
     },
@@ -167,7 +179,12 @@ export const CATALOG_TOOLS: ToolDef[] = [
       domain: z.string().optional(),
       authMode: z.enum(['native', 'oidc', 'proxy', 'none']).optional(),
       exposure: z.enum(['public', 'internal']).optional(),
-      options: z.record(z.string(), z.boolean()).optional(),
+      options: z
+        .record(z.string(), z.boolean())
+        .optional()
+        .describe(
+          'Feature switches the app declares (catalog_get_app lists them with their defaults); omitted keys take the default. PostgreSQL: `pooler` (default true: FLUI_CONNECTION_URL goes through a connection pooler, FLUI_DIRECT_URL stays direct) and `poolerSessionMode` (default false: transaction pooling; true for apps that use LISTEN/NOTIFY, session advisory locks or session SET).',
+        ),
       userInputs: z.record(z.string(), z.string()).optional(),
       envOverrides: z.record(z.string(), z.string()).optional(),
     },

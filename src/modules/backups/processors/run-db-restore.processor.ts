@@ -1,5 +1,5 @@
 import { Processor, Process } from '@nestjs/bull';
-import { Logger } from '@nestjs/common';
+import { Logger, Optional } from '@nestjs/common';
 import { Job } from 'bull';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
@@ -14,6 +14,11 @@ import { CatalogInstallerService } from '../../catalog/services/catalog-installe
 import { CatalogInstallEntity } from '../../catalog/entities/catalog-install.entity';
 import { CatalogInstallStatus } from '../../catalog/enums/catalog-install-status.enum';
 import { CatalogAppDefinitionRepository } from '../../catalog/repositories/catalog-app-definition.repository';
+import { DbPoolerService } from '../../catalog/services/db-pooler.service';
+import {
+  POOLED_CATALOG_SLUG,
+  mirrorPoolerOptions,
+} from '../../catalog/utils/catalog-options.util';
 import { RestoreJobRepository } from '../repositories/restore-job.repository';
 import { BackupArtifactRepository } from '../repositories/backup-artifact.repository';
 import { BackupDestinationRepository } from '../repositories/backup-destination.repository';
@@ -74,6 +79,7 @@ export class RunDbRestoreProcessor {
     private readonly engines: ContinuousBackupEngineRegistry,
     private readonly definitionRepo: CatalogAppDefinitionRepository,
     private readonly installer: CatalogInstallerService,
+    @Optional() private readonly poolers?: DbPoolerService,
   ) {}
 
   @Process(BACKUP_JOB_TYPES.RUN_DB_RESTORE)
@@ -155,6 +161,9 @@ export class RunDbRestoreProcessor {
 
     await this.setStep(operationId, OperationStep.RESTORE_POSTPROCESS, 85);
     await this.finishRestoredData(ctx, engine, finalInstall, newAppId);
+    // Only now is the restored database a primary: its catalog came back with
+    // the source's pooler role and password, which the role set-up replaces.
+    await this.poolers?.bringUp(newAppId);
 
     // The restore overrides carry live S3 credentials for the SOURCE's
     // repository and are only needed on first boot — drop them from the
@@ -303,6 +312,10 @@ export class RunDbRestoreProcessor {
           clusterId: newInstall.clusterId,
           displayName: newInstall.name,
           envOverrides: env,
+          options:
+            engine.catalogSlug === POOLED_CATALOG_SLUG
+              ? mirrorPoolerOptions(ctx.sourceApp)
+              : undefined,
         },
         restore.userId,
         triggeringUser?.email,

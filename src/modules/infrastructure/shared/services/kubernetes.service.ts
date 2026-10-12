@@ -216,7 +216,7 @@ export class KubernetesService {
         // If resource already exists, patch it
         // Use MergePatch because CRDs (e.g. cert-manager ClusterIssuer) do not
         // support the default StrategicMergePatch content type.
-        if (this.httpCode(error) === 409) {
+        if (await this.alreadyExists(client, spec, error)) {
           const patchResponse = await client.patch(
             spec,
             undefined,
@@ -239,6 +239,29 @@ export class KubernetesService {
     }
 
     return results;
+  }
+
+  /**
+   * A Service that pins its clusterIP is refused with 422 ("already
+   * allocated") rather than 409 when it exists: the address is checked before
+   * the name.
+   */
+  private async alreadyExists(
+    client: k8s.KubernetesObjectApi,
+    spec: { kind?: string; spec?: { clusterIP?: string } },
+    error: unknown,
+  ): Promise<boolean> {
+    const code = this.httpCode(error);
+    if (code === 409) return true;
+    if (code !== 422 || spec.kind !== 'Service' || !spec.spec?.clusterIP) {
+      return false;
+    }
+    try {
+      await client.read(spec as any);
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   /**
@@ -1318,8 +1341,21 @@ export class KubernetesService {
     name: string,
     stringData: Record<string, string>,
   ): Promise<void> {
-    // Build a Secret manifest and use server-side apply (applyManifest) to avoid
-    // content-type issues with the generated k8s client (defaults to json-patch+json).
+    // A merge patch leaves last-applied-configuration alone: stamping it with
+    // this partial Secret would read as drift against the deploy's desiredHash.
+    try {
+      await this.mergePatchObject(kubeconfigContent, {
+        apiVersion: 'v1',
+        kind: 'Secret',
+        metadata: { name, namespace },
+        stringData,
+      });
+      this.logger.log(`Secret ${name} patched in namespace ${namespace}`);
+      return;
+    } catch (error) {
+      if (this.httpCode(error) !== 404) throw error;
+    }
+
     const entries = Object.entries(stringData)
       .map(([k, v]) => `  ${k}: ${JSON.stringify(v)}`)
       .join('\n');

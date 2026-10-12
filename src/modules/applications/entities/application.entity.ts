@@ -34,6 +34,7 @@ import {
 } from '../interfaces/source-config.interface';
 import type { AppMaintenance } from '../../infrastructure/maintenance/maintenance-window.core';
 import type { AppBackupDecision } from '../../backups/utils/app-backup-decision.rules';
+import type { PoolerSpec } from '../utils/db-pooler.core';
 
 @Entity('applications')
 export class ApplicationEntity {
@@ -163,6 +164,13 @@ export class ApplicationEntity {
    */
   @Column({ type: 'jsonb', nullable: true })
   companions?: CompanionsSpec;
+
+  /**
+   * The connection pooler in front of a managed PostgreSQL. Null is no pooler,
+   * which is what every install made before it existed reads as.
+   */
+  @Column({ type: 'jsonb', nullable: true })
+  pooler?: PoolerSpec | null;
 
   @Column({ type: 'uuid', nullable: true })
   currentRevisionId?: string;

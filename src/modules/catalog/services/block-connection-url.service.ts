@@ -10,8 +10,10 @@ import { ClusterEntity } from '../../infrastructure/clusters/entities/cluster.en
 import { DB_ENGINE_LABEL } from '../../database-console/engine/engine-profile';
 import {
   CONNECTION_URL_KEY,
-  composeConnectionUrl,
+  DIRECT_URL_KEY,
+  composeConnectionUrls,
 } from '../../attached-services/connection-url.core';
+import { poolerHostOf } from '../../applications/utils/db-pooler.core';
 
 /**
  * Puts a building block's connection URL where a consumer can read it without
@@ -78,6 +80,30 @@ export class BlockConnectionUrlService {
     );
   }
 
+  /**
+   * Rewrite both addresses from the database's current pooler state and patch
+   * the live Secret. Unlike `ensure`, an existing value does not win: this is
+   * how the connection URL moves onto the pooler once the pooler is ready.
+   * Consumers read the Secret at pod start, so they follow at their next start.
+   */
+  async recompose(app: ApplicationEntity): Promise<void> {
+    const engine = BlockConnectionUrlService.engineOf(app);
+    const urls = this.compose(app, engine, app.port);
+    if (!urls) return;
+    const values = this.valuesFor(engine, urls);
+    await this.write(app, values);
+    await this.patchLiveSecret(app, values);
+    this.logger.log(
+      `block ${app.slug}: ${Object.keys(values).join(', ')} recomposed` +
+        `${BlockConnectionUrlService.pooledHost(app) ? ' through the pooler' : ''}`,
+    );
+  }
+
+  /** The pooler's host once it carries the connection URL, else null. */
+  static pooledHost(app: ApplicationEntity): string | null {
+    return app.pooler?.enabled && app.pooler.routed ? poolerHostOf(app) : null;
+  }
+
   private async ensure(
     app: ApplicationEntity,
     engine: string | null | undefined,
@@ -85,46 +111,85 @@ export class BlockConnectionUrlService {
     opts: { patchLive: boolean },
   ): Promise<string | null> {
     const env = (app.env as ApplicationEnvVar[] | undefined) ?? [];
-    const existing = env.find((e) => e.name === CONNECTION_URL_KEY);
-    if (existing && !existing.pending && existing.value) {
-      return CONNECTION_URL_KEY;
-    }
+    const present = (key: string) => {
+      const e = env.find((v) => v.name === key);
+      return !!(e && !e.pending && e.value);
+    };
+    const wanted = [
+      CONNECTION_URL_KEY,
+      ...(engine === 'postgres' ? [DIRECT_URL_KEY] : []),
+    ];
+    const missing = wanted.filter((key) => !present(key));
+    if (!missing.length) return CONNECTION_URL_KEY;
 
-    const url = composeConnectionUrl({
-      engine,
-      host: BlockConnectionUrlService.hostOf(app),
-      port: port ?? app.port,
-      env: this.plaintextEnv(env),
-    });
-    if (!url) {
+    const urls = this.compose(app, engine, port);
+    if (!urls) {
       // Not a datastore, or an engine with no profile. `fromService: url` is
       // refused by name upstream; nothing is written here.
       return null;
     }
-
-    const entry: ApplicationEnvVar = {
-      name: CONNECTION_URL_KEY,
-      value: this.encryption.encrypt(url),
-      secret: true,
-      source: 'link',
-    };
-    const next = [...env.filter((e) => e.name !== CONNECTION_URL_KEY), entry];
-    await this.applicationsRepo.update(app.id, { env: next });
-    app.env = next;
+    const all = this.valuesFor(engine, urls);
+    const values = Object.fromEntries(missing.map((key) => [key, all[key]]));
+    await this.write(app, values);
 
     if (opts.patchLive) {
-      await this.patchLiveSecret(app, url);
+      await this.patchLiveSecret(app, values);
     }
 
     this.logger.log(
-      `block ${app.slug}: ${CONNECTION_URL_KEY} composed from the ${engine} profile` +
+      `block ${app.slug}: ${missing.join(', ')} composed from the ${engine} profile` +
         `${opts.patchLive ? ' and patched into the live Secret' : ''}`,
     );
     return CONNECTION_URL_KEY;
   }
 
+  private compose(
+    app: ApplicationEntity,
+    engine: string | null | undefined,
+    port: number | null | undefined,
+  ): { connection: string; direct: string } | null {
+    const env = (app.env as ApplicationEnvVar[] | undefined) ?? [];
+    return composeConnectionUrls({
+      engine,
+      host: BlockConnectionUrlService.hostOf(app),
+      port: port ?? app.port,
+      env: this.plaintextEnv(env),
+      poolerHost: BlockConnectionUrlService.pooledHost(app),
+    });
+  }
+
+  private valuesFor(
+    engine: string | null | undefined,
+    urls: { connection: string; direct: string },
+  ): Record<string, string> {
+    return {
+      [CONNECTION_URL_KEY]: urls.connection,
+      ...(engine === 'postgres' ? { [DIRECT_URL_KEY]: urls.direct } : {}),
+    };
+  }
+
+  private async write(
+    app: ApplicationEntity,
+    values: Record<string, string>,
+  ): Promise<void> {
+    const env = (app.env as ApplicationEnvVar[] | undefined) ?? [];
+    const next = [
+      ...env.filter((e) => !(e.name in values)),
+      ...Object.entries(values).map(
+        ([name, url]): ApplicationEnvVar => ({
+          name,
+          value: this.encryption.encrypt(url),
+          secret: true,
+          source: 'link',
+        }),
+      ),
+    ];
+    await this.applicationsRepo.update(app.id, { env: next });
+    app.env = next;
+  }
+
   /**
-   * Add the key to the Secret that is already in the cluster.
+   * Add the keys to the Secret that is already in the cluster.
    *
    * A failure here is not swallowed: a consumer wired to a `secretKeyRef` whose
    * key does not exist gets a pod that never starts, so the attach must fail
@@ -132,14 +197,14 @@ export class BlockConnectionUrlService {
    */
   private async patchLiveSecret(
     app: ApplicationEntity,
-    url: string,
+    values: Record<string, string>,
   ): Promise<void> {
     const cluster = await this.clusters.findOne({
       where: { id: app.clusterId },
     });
     if (!cluster?.kubeconfigEncrypted) {
       throw new Error(
-        `cluster ${app.clusterId} has no kubeconfig, so ${CONNECTION_URL_KEY} ` +
+        `cluster ${app.clusterId} has no kubeconfig, so ${Object.keys(values).join(', ')} ` +
           `could not be added to the Secret of ${app.slug}`,
       );
     }
@@ -148,7 +213,7 @@ export class BlockConnectionUrlService {
       kubeconfig,
       app.k8sNamespace,
       `${app.slug}-secret`,
-      { [CONNECTION_URL_KEY]: url },
+      values,
     );
   }
 

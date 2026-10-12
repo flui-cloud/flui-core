@@ -65,6 +65,8 @@ import {
 import { CatalogTemplateResolverService } from '../services/catalog-template-resolver.service';
 import { CatalogSecretGeneratorService } from '../services/catalog-secret-generator.service';
 import { BlockConnectionUrlService } from '../services/block-connection-url.service';
+import { DbPoolerService } from '../services/db-pooler.service';
+import { isOptionOn, poolerChoice } from '../utils/catalog-options.util';
 import { CatalogDependencyResolverService } from '../services/catalog-dependency-resolver.service';
 import {
   CATALOG_INSTALL_QUEUE,
@@ -173,6 +175,7 @@ export class CatalogInstallProcessor {
     @InjectRepository(SandboxTenantEntity)
     private readonly sandboxTenants: Repository<SandboxTenantEntity>,
     private readonly projects: ProjectsService,
+    private readonly poolers: DbPoolerService,
   ) {}
 
   /** The project, and so the namespace, every application of this install lands in. */
@@ -377,6 +380,18 @@ export class CatalogInstallProcessor {
           name: install.displayName,
         });
         application.name = install.displayName;
+      }
+
+      // Written once, here, from the install's own choice: the row is what
+      // every later deploy renders the pooler from, never the install options.
+      const pooler = alreadyCreated[0]
+        ? null
+        : poolerChoice(spec, install.options);
+      if (pooler) {
+        application.pooler = this.poolers.newSpec(pooler.mode);
+        await this.applicationRepo.update(application.id, {
+          pooler: application.pooler,
+        });
       }
 
       // A datastore gets its connection URL now, as one more secret env, so the
@@ -1691,12 +1706,10 @@ export class CatalogInstallProcessor {
 
   private isOptionEnabled(
     install: CatalogInstallEntity,
-    spec: CatalogSpecComposed,
+    spec: CatalogSpecComposed | CatalogSpecBuildingBlock,
     key: string,
   ): boolean {
-    const chosen = install.options?.[key];
-    if (typeof chosen === 'boolean') return chosen;
-    return spec.options?.find((o) => o.key === key)?.default ?? false;
+    return isOptionOn(spec, install.options, key);
   }
 
   private componentIncluded(

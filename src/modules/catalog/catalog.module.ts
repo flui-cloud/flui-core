@@ -24,6 +24,8 @@ import { RemovalPreviewService } from './services/removal-preview.service';
 import { CatalogInstallProcessor } from './processors/catalog-install.processor';
 import { CatalogController } from './controllers/catalog.controller';
 import { AppRemovalController } from './controllers/app-removal.controller';
+import { DbPoolerController } from './controllers/db-pooler.controller';
+import { DbPoolerService } from './services/db-pooler.service';
 import { AppAccessGuard } from '../applications/guards/app-access.guard';
 import { ApplicationsModule } from '../applications/applications.module';
 import { DnsModule } from '../dns/dns.module';
@@ -56,7 +58,7 @@ import { BackupArtifactEntity } from '../backups/entities/backup-artifact.entity
     EncryptionModule,
     forwardRef(() => ClustersModule),
   ],
-  controllers: [CatalogController, AppRemovalController],
+  controllers: [CatalogController, AppRemovalController, DbPoolerController],
   providers: [
     CatalogAppDefinitionRepository,
     CatalogInstallRepository,
@@ -70,6 +72,7 @@ import { BackupArtifactEntity } from '../backups/entities/backup-artifact.entity
     CatalogDependencyResolverService,
     CatalogLinkingService,
     BlockConnectionUrlService,
+    DbPoolerService,
     RemovalPreviewService,
     CatalogInstallProcessor,
     // Instantiated in this module's injector because AppRemovalController mounts
@@ -84,6 +87,7 @@ import { BackupArtifactEntity } from '../backups/entities/backup-artifact.entity
     CatalogDependencyResolverService,
     CatalogLinkingService,
     BlockConnectionUrlService,
+    DbPoolerService,
   ],
 })
 export class CatalogModule {}

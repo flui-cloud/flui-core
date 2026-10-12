@@ -98,6 +98,24 @@ spec:
       value: ''
       secret: true
       description: Internal — pgBackRest repo passphrase (restore of an encrypted backup).
+    # Set to 1 by a live migration: the install starts as a hot standby of the
+    # source once Flui drops the connection files on its volume.
+    - name: FLUI_PG_STANDBY
+      value: ''
+      description: Internal — set to 1 by a live migration; the install starts as a standby of the source.
+
+  # Apps reach the database through PgBouncer by default (FLUI_CONNECTION_URL);
+  # FLUI_DIRECT_URL always names the database itself.
+  options:
+    - key: pooler
+      label: Connection pooler
+      description: Apps connect through PgBouncer, which shares a few database connections among many clients. FLUI_DIRECT_URL stays on the database for migrations and admin tools.
+      default: true
+    - key: poolerSessionMode
+      label: Session pooling
+      description: One database connection per client, for apps that use LISTEN/NOTIFY, session advisory locks or session SET. Only with the pooler.
+      default: false
+      requires: pooler
 
   resources:
     requests:

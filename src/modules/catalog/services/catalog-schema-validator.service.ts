@@ -19,6 +19,9 @@ export class CatalogSchemaValidatorService {
     'companions',
   ];
 
+  /** Spec-level fields forward-compatible on a building block only, where the published schema does not have them yet. */
+  private static readonly BUILDING_BLOCK_FORWARD_COMPAT_FIELDS = ['options'];
+
   getSchema(): unknown {
     return catalogAppSchema;
   }
@@ -61,6 +64,14 @@ export class CatalogSchemaValidatorService {
     const spec = (clone as { spec?: Record<string, unknown> }).spec;
     if (spec && typeof spec === 'object') {
       this.stripFrom(spec, 'spec', byPath);
+      if (spec.type === 'building-block') {
+        for (const field of CatalogSchemaValidatorService.BUILDING_BLOCK_FORWARD_COMPAT_FIELDS) {
+          if (field in spec) {
+            byPath.set(`spec::${field}`, spec[field]);
+            delete spec[field];
+          }
+        }
+      }
       this.stripOidcForwardCompat(spec, byPath);
       const components = (spec as { components?: unknown[] }).components;
       if (Array.isArray(components)) {
@@ -98,6 +109,10 @@ export class CatalogSchemaValidatorService {
     if (byPath.size === 0) return;
     const spec = manifest.spec as unknown as Record<string, unknown>;
     this.reattachTo(spec, 'spec', byPath);
+    for (const field of CatalogSchemaValidatorService.BUILDING_BLOCK_FORWARD_COMPAT_FIELDS) {
+      const v = byPath.get(`spec::${field}`);
+      if (v !== undefined) spec[field] = v;
+    }
     this.reattachOidcForwardCompat(spec, byPath);
     const components = (spec as { components?: unknown[] }).components;
     if (Array.isArray(components)) {

@@ -18,7 +18,27 @@ import {
   assertManifestInputs,
   cronInputProblems,
 } from '../utils/manifest-input.guard';
-import { ENV_HASH_ANNOTATION, envHashOf } from '../utils/env-hash.util';
+import {
+  ENV_HASH_ANNOTATION,
+  envHashOf,
+  restartEnvOf,
+} from '../utils/env-hash.util';
+import { dump } from 'js-yaml';
+import {
+  POOLER_CONFIG_HASH_ANNOTATION,
+  POOLER_GID,
+  POOLER_LISTEN_PORT,
+  POOLER_RESOURCES,
+  POOLER_SERVICE_PORT,
+  POOLER_UID,
+  poolerConfigHash,
+  poolerLabels,
+  poolerNames,
+  poolerUpstreamObjects,
+  postgresIdentity,
+  renderPgbouncerIni,
+  renderUserlist,
+} from '../utils/db-pooler.core';
 
 export interface GeneratedManifest {
   kind: ApplicationResourceKind;
@@ -284,6 +304,186 @@ export class ApplicationManifestGeneratorService {
     );
 
     return manifests;
+  }
+
+  /**
+   * The connection pooler of a managed PostgreSQL: its own Secret, Services and
+   * Deployment, rendered apart from `generateForDockerImage` on purpose. That
+   * list is the database's tracked resource set, its first workload is the
+   * database's primary and its image is the database's observed image; a pooler
+   * inside it would be counted as a second workload of the database.
+   */
+  generatePooler(app: ApplicationEntity): GeneratedManifest[] {
+    const spec = app.pooler;
+    if (!spec?.enabled) return [];
+    const names = poolerNames(app.slug);
+    const labels = poolerLabels(app);
+    const namespace = app.k8sNamespace;
+    const { database } = postgresIdentity(app.env, this.encryptionService);
+    const ini = renderPgbouncerIni({
+      database,
+      upstreamHost: `${names.upstream}.${namespace}.svc.cluster.local`,
+      mode: spec.mode,
+    });
+    const userlist = renderUserlist({
+      auth: this.decryptIfEncrypted(spec.authPasswordEnc),
+      admin: this.decryptIfEncrypted(spec.adminPasswordEnc),
+    });
+    const metadata = (name: string, extra: Record<string, string> = {}) => ({
+      name,
+      namespace,
+      labels: { ...labels, ...extra },
+    });
+    const out: GeneratedManifest[] = [];
+    const push = (
+      kind: ApplicationResourceKind,
+      apiVersion: string,
+      doc: Record<string, unknown>,
+    ) =>
+      out.push({
+        kind,
+        name: (doc.metadata as { name: string }).name,
+        apiVersion,
+        yaml: dump({ apiVersion, kind, ...doc }, { lineWidth: -1 }),
+      });
+
+    push(ApplicationResourceKind.SECRET, 'v1', {
+      metadata: metadata(names.secret),
+      type: 'Opaque',
+      data: {
+        'pgbouncer.ini': Buffer.from(ini).toString('base64'),
+        'userlist.txt': Buffer.from(userlist).toString('base64'),
+      },
+    });
+
+    const upstream = poolerUpstreamObjects(app, spec);
+    push(ApplicationResourceKind.SERVICE, 'v1', upstream.service);
+    if (upstream.slice) {
+      push(
+        ApplicationResourceKind.ENDPOINT_SLICE,
+        'discovery.k8s.io/v1',
+        upstream.slice,
+      );
+    }
+
+    push(ApplicationResourceKind.SERVICE, 'v1', {
+      metadata: metadata(names.service),
+      spec: {
+        type: 'ClusterIP',
+        selector: { app: labels.app },
+        ports: [
+          {
+            name: 'postgres',
+            port: POOLER_SERVICE_PORT,
+            targetPort: 'pgbouncer',
+            protocol: 'TCP',
+          },
+        ],
+      },
+    });
+
+    const tcpProbe = (initialDelaySeconds: number, periodSeconds: number) => ({
+      tcpSocket: { port: 'pgbouncer' },
+      initialDelaySeconds,
+      periodSeconds,
+      timeoutSeconds: 3,
+      failureThreshold: 3,
+    });
+    push(ApplicationResourceKind.DEPLOYMENT, 'apps/v1', {
+      metadata: metadata(names.deployment),
+      spec: {
+        replicas: spec.suspended ? 0 : (spec.replicas ?? 1),
+        strategy: {
+          type: 'RollingUpdate',
+          rollingUpdate: { maxSurge: 1, maxUnavailable: 0 },
+        },
+        selector: { matchLabels: { app: labels.app } },
+        template: {
+          metadata: {
+            labels,
+            annotations: {
+              [POOLER_CONFIG_HASH_ANNOTATION]: poolerConfigHash([
+                ini,
+                userlist,
+                spec.image,
+              ]),
+            },
+          },
+          spec: {
+            automountServiceAccountToken: false,
+            enableServiceLinks: false,
+            ...this.poolerPlacement(app),
+            securityContext: {
+              runAsNonRoot: true,
+              runAsUser: POOLER_UID,
+              runAsGroup: POOLER_GID,
+              fsGroup: POOLER_GID,
+              seccompProfile: { type: 'RuntimeDefault' },
+            },
+            containers: [
+              {
+                name: 'pgbouncer',
+                image: spec.image,
+                imagePullPolicy: 'IfNotPresent',
+                args: ['/etc/pgbouncer/pgbouncer.ini'],
+                ports: [
+                  {
+                    name: 'pgbouncer',
+                    containerPort: POOLER_LISTEN_PORT,
+                    protocol: 'TCP',
+                  },
+                ],
+                readinessProbe: tcpProbe(2, 5),
+                livenessProbe: tcpProbe(15, 20),
+                resources: {
+                  requests: { ...POOLER_RESOURCES.requests },
+                  limits: { ...POOLER_RESOURCES.limits },
+                },
+                securityContext: {
+                  allowPrivilegeEscalation: false,
+                  capabilities: { drop: ['ALL'] },
+                },
+                volumeMounts: [
+                  {
+                    name: 'config',
+                    mountPath: '/etc/pgbouncer',
+                    readOnly: true,
+                  },
+                ],
+              },
+            ],
+            volumes: [
+              {
+                name: 'config',
+                secret: { secretName: names.secret, defaultMode: 0o440 },
+              },
+            ],
+          },
+        },
+      },
+    });
+    return out;
+  }
+
+  /**
+   * Where a pooler pod may run: on the database pod's node and nowhere else,
+   * with the database pod's own node selector and tolerations so it can land
+   * wherever the database could.
+   */
+  private poolerPlacement(app: ApplicationEntity): Record<string, unknown> {
+    return {
+      affinity: {
+        podAffinity: {
+          requiredDuringSchedulingIgnoredDuringExecution: [
+            {
+              labelSelector: { matchLabels: { 'flui-app-id': app.id } },
+              topologyKey: 'kubernetes.io/hostname',
+            },
+          ],
+        },
+      },
+      ...this.nodePlacement(app),
+    };
   }
 
   /**
@@ -814,29 +1014,49 @@ export class ApplicationManifestGeneratorService {
     return undefined;
   }
 
-  private renderNodePlacementBlock(app: ApplicationEntity): string {
-    if (app.persistenceScope !== 'dedicated') return '';
+  private nodePlacement(app: ApplicationEntity): {
+    nodeSelector?: Record<string, string>;
+    tolerations?: Array<{ key: string; operator: string; effect: string }>;
+  } {
+    if (app.persistenceScope !== 'dedicated') return {};
     if (app.dedicatedNodeName) {
-      return (
-        '      nodeSelector:\n' +
-        `        kubernetes.io/hostname: "${app.dedicatedNodeName}"`
-      );
+      return {
+        nodeSelector: { 'kubernetes.io/hostname': app.dedicatedNodeName },
+      };
     }
     // master escape hatch — workers are assigned via dedicatedNodeName above
     if (app.allowMasterPlacement) {
-      return (
-        '      nodeSelector:\n' +
-        '        node-role.kubernetes.io/control-plane: "true"\n' +
-        '      tolerations:\n' +
-        '        - key: node-role.kubernetes.io/control-plane\n' +
-        '          operator: Exists\n' +
-        '          effect: NoSchedule\n' +
-        '        - key: node-role.kubernetes.io/master\n' +
-        '          operator: Exists\n' +
-        '          effect: NoSchedule'
-      );
+      return {
+        nodeSelector: { 'node-role.kubernetes.io/control-plane': 'true' },
+        tolerations: [
+          'node-role.kubernetes.io/control-plane',
+          'node-role.kubernetes.io/master',
+        ].map((key) => ({ key, operator: 'Exists', effect: 'NoSchedule' })),
+      };
     }
-    return '';
+    return {};
+  }
+
+  private renderNodePlacementBlock(app: ApplicationEntity): string {
+    const { nodeSelector, tolerations } = this.nodePlacement(app);
+    const lines: string[] = [];
+    if (nodeSelector) {
+      lines.push('      nodeSelector:');
+      for (const [key, value] of Object.entries(nodeSelector)) {
+        lines.push(`        ${key}: "${value}"`);
+      }
+    }
+    if (tolerations) {
+      lines.push('      tolerations:');
+      for (const t of tolerations) {
+        lines.push(
+          `        - key: ${t.key}`,
+          `          operator: ${t.operator}`,
+          `          effect: ${t.effect}`,
+        );
+      }
+    }
+    return lines.join('\n');
   }
 
   /**
@@ -1422,7 +1642,7 @@ export class ApplicationManifestGeneratorService {
     // Traefik instead; a per-app opt-in lands with the observability manifest block.
     return {
       'flui.cloud/config-hash': this.computeConfigHash(app, config),
-      [ENV_HASH_ANNOTATION]: envHashOf(app.env),
+      [ENV_HASH_ANNOTATION]: envHashOf(restartEnvOf(app)),
     };
   }
 

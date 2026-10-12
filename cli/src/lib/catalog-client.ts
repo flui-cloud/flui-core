@@ -50,6 +50,7 @@ export interface InstallCatalogAppInput {
   allowMasterPlacement?: boolean;
   userInputs?: Record<string, string>;
   envOverrides?: Record<string, string>;
+  options?: Record<string, boolean>;
 }
 
 /**

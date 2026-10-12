@@ -14,4 +14,5 @@ export enum ApplicationResourceKind {
   JOB = 'Job',
   CRON_JOB = 'CronJob',
   NAMESPACE = 'Namespace',
+  ENDPOINT_SLICE = 'EndpointSlice',
 }

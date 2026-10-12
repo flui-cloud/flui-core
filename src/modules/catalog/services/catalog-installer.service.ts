@@ -36,12 +36,20 @@ import {
   CatalogManifest,
   CatalogResources,
   CatalogScaling,
+  CatalogUserInputPrompt,
 } from '../interfaces/catalog-manifest.interface';
 import {
   parseCpuMillicores,
   parseMemoryMB,
 } from '../../topology/services/topology-k8s.helper';
 import { exposureRefusal } from '../utils/catalog-exposure.util';
+import {
+  isOptionOn,
+  poolerChoice,
+  resolveInstallOptions,
+  declaredOptions,
+} from '../utils/catalog-options.util';
+import { POOLER_RESOURCES } from '../../applications/utils/db-pooler.core';
 
 export const CATALOG_INSTALL_QUEUE = 'catalog-install';
 export const CATALOG_INSTALL_JOB = 'install-catalog-app';
@@ -96,6 +104,7 @@ export class CatalogInstallerService {
     }
     this.validateUserInputs(definition, dto);
     this.validateDependencyChoices(definition, dto);
+    this.validateOptions(definition, dto);
     const exposureProblem = exposureRefusal(
       definition.manifest.spec as never,
       definition.appType,
@@ -125,6 +134,7 @@ export class CatalogInstallerService {
 
     this.validateUserInputs(definition, dto);
     this.validateDependencyChoices(definition, dto);
+    this.validateOptions(definition, dto);
     const exposureProblem = exposureRefusal(
       definition.manifest.spec as never,
       definition.appType,
@@ -163,7 +173,7 @@ export class CatalogInstallerService {
       allowMasterPlacement: dto.allowMasterPlacement ?? false,
       requestedExposure: dto.exposure,
       authMode: dto.authMode,
-      options: dto.options ?? {},
+      options: resolveInstallOptions(definition.manifest.spec, dto.options),
       userInputs: dto.userInputs ?? {},
       envOverrides: dto.envOverrides ?? {},
       dependencyChoices: dto.dependencyChoices ?? [],
@@ -225,6 +235,7 @@ export class CatalogInstallerService {
     userId?: string,
     userEmail?: string,
     projectId?: string | null,
+    options?: Record<string, boolean>,
   ): Promise<{
     install: CatalogInstallEntity;
     operation: InfrastructureOperationEntity;
@@ -255,6 +266,7 @@ export class CatalogInstallerService {
       displayName: definition.name,
       slug: installSlug,
       skipEndpoint: true,
+      options: resolveInstallOptions(definition.manifest.spec, options),
       userInputs: {},
       envOverrides: {},
       dependencyChoices: [],
@@ -362,13 +374,13 @@ export class CatalogInstallerService {
     let totalCpu = 0;
     let totalMemory = 0;
     for (const c of this.enumerateInstallComponents(manifest, options)) {
-      const cpuRequest = overrides?.cpu?.request ?? c.resources?.requests?.cpu;
-      const memoryLimit =
-        overrides?.memory?.limit ?? c.resources?.limits?.memory;
+      const own = c.fixed ? undefined : overrides;
+      const cpuRequest = own?.cpu?.request ?? c.resources?.requests?.cpu;
+      const memoryLimit = own?.memory?.limit ?? c.resources?.limits?.memory;
       const memoryRequest =
-        overrides?.memory?.request ?? c.resources?.requests?.memory;
+        own?.memory?.request ?? c.resources?.requests?.memory;
       const memory = memoryLimit ?? memoryRequest;
-      const replicas = overrides?.replicas ?? c.replicas;
+      const replicas = own?.replicas ?? c.replicas;
       totalCpu += parseCpuMillicores(cpuRequest) * replicas;
       totalMemory += parseMemoryMB(memory) * replicas;
     }
@@ -432,11 +444,19 @@ export class CatalogInstallerService {
     }
   }
 
-  /** Components an install will create, each with its declared resources + replicas. */
+  /**
+   * Components an install will create, each with its declared resources +
+   * replicas. A `fixed` one is Flui's own (the pooler): the database's resource
+   * overrides never apply to it, exactly as the generator never applies them.
+   */
   private enumerateInstallComponents(
     manifest: CatalogManifest,
     options: Record<string, boolean>,
-  ): Array<{ resources?: CatalogResources; replicas: number }> {
+  ): Array<{
+    resources?: CatalogResources;
+    replicas: number;
+    fixed?: boolean;
+  }> {
     const replicasOf = (scaling?: CatalogScaling): number =>
       scaling?.horizontal?.enabled ? (scaling.horizontal.min ?? 1) : 1;
     if (manifest.spec.type === CatalogAppType.COMPOSED) {
@@ -444,10 +464,7 @@ export class CatalogInstallerService {
       return spec.components
         .filter((c) => {
           const opt = c.when?.option;
-          if (!opt) return true;
-          const fallback =
-            spec.options?.find((o) => o.key === opt)?.default ?? false;
-          return options[opt] ?? fallback;
+          return !opt || isOptionOn(spec, options, opt);
         })
         .map((c) => ({
           resources: c.resources,
@@ -455,7 +472,19 @@ export class CatalogInstallerService {
         }));
     }
     const spec = manifest.spec;
-    return [{ resources: spec.resources, replicas: replicasOf(spec.scaling) }];
+    const pooler = poolerChoice(spec, options)
+      ? [
+          {
+            resources: POOLER_RESOURCES,
+            replicas: 1,
+            fixed: true,
+          },
+        ]
+      : [];
+    return [
+      { resources: spec.resources, replicas: replicasOf(spec.scaling) },
+      ...pooler,
+    ];
   }
 
   async uninstallByApplicationId(
@@ -743,6 +772,34 @@ export class CatalogInstallerService {
     return install;
   }
 
+  /** An option is a switch: "false" as a string must not quietly read as the default. */
+  private validateOptions(
+    definition: CatalogAppDefinitionEntity,
+    dto: InstallCatalogAppDto,
+  ): void {
+    const declared = declaredOptions(definition.manifest.spec).map(
+      (o) => o.key,
+    );
+    const unknown = Object.keys(dto.options ?? {}).filter(
+      (key) => !declared.includes(key),
+    );
+    if (unknown.length) {
+      throw new BadRequestException(
+        declared.length
+          ? `${definition.slug} has no install option ${unknown.join(', ')}; its options are ${declared.join(', ')}`
+          : `${definition.slug} takes no install options, but ${unknown.join(', ')} was given`,
+      );
+    }
+    const wrong = Object.entries(dto.options ?? {})
+      .filter(([, value]) => typeof value !== 'boolean')
+      .map(([key]) => key);
+    if (wrong.length) {
+      throw new BadRequestException(
+        `Install options are true or false: ${wrong.join(', ')}`,
+      );
+    }
+  }
+
   private validateUserInputs(
     definition: CatalogAppDefinitionEntity,
     dto: InstallCatalogAppDto,
@@ -754,48 +811,14 @@ export class CatalogInstallerService {
     for (const envVar of spec.env) {
       const valueFrom = envVar.valueFrom;
       if (!valueFrom || !('userInput' in valueFrom)) continue;
-      const prompt = valueFrom.userInput;
-      const provided = dto.userInputs?.[envVar.name];
-      const effective = provided ?? prompt.default;
-
-      const named = prompt.label
-        ? `${prompt.label} (${envVar.name})`
-        : envVar.name;
-      if (effective === undefined || effective === '') {
-        errors.push(`${named}: required`);
-        continue;
-      }
-
-      if (
-        prompt.minLength !== undefined &&
-        effective.length < prompt.minLength
-      ) {
-        errors.push(
-          `${named}: must be at least ${prompt.minLength} characters`,
-        );
-      }
-      if (
-        prompt.maxLength !== undefined &&
-        effective.length > prompt.maxLength
-      ) {
-        errors.push(`${named}: must be at most ${prompt.maxLength} characters`);
-      }
-      if (prompt.pattern) {
-        let re: RegExp;
-        try {
-          re = new RegExp(prompt.pattern);
-        } catch {
-          this.logger.warn(
-            `Invalid regex in manifest for ${definition.slug}/${envVar.name}: "${prompt.pattern}" — skipping pattern check`,
-          );
-          continue;
-        }
-        if (!re.test(effective)) {
-          const description =
-            prompt.patternDescription ?? `does not match ${prompt.pattern}`;
-          errors.push(`${named}: ${description}`);
-        }
-      }
+      errors.push(
+        ...this.userInputErrors(
+          definition.slug,
+          envVar.name,
+          valueFrom.userInput,
+          dto.userInputs?.[envVar.name],
+        ),
+      );
     }
 
     if (errors.length) {
@@ -804,6 +827,55 @@ export class CatalogInstallerService {
         errors,
       });
     }
+  }
+
+  private userInputErrors(
+    slug: string,
+    name: string,
+    prompt: CatalogUserInputPrompt,
+    provided: string | undefined,
+  ): string[] {
+    const effective = provided ?? prompt.default;
+    const named = prompt.label ? `${prompt.label} (${name})` : name;
+    if (effective === undefined || effective === '') {
+      return [`${named}: required`];
+    }
+
+    const errors: string[] = [];
+    if (prompt.minLength !== undefined && effective.length < prompt.minLength) {
+      errors.push(`${named}: must be at least ${prompt.minLength} characters`);
+    }
+    if (prompt.maxLength !== undefined && effective.length > prompt.maxLength) {
+      errors.push(`${named}: must be at most ${prompt.maxLength} characters`);
+    }
+    if (
+      prompt.pattern &&
+      !this.matchesUserInputPattern(slug, name, prompt.pattern, effective)
+    ) {
+      const description =
+        prompt.patternDescription ?? `does not match ${prompt.pattern}`;
+      errors.push(`${named}: ${description}`);
+    }
+    return errors;
+  }
+
+  /** An invalid regex in a manifest skips the check instead of failing the install. */
+  private matchesUserInputPattern(
+    slug: string,
+    name: string,
+    pattern: string,
+    value: string,
+  ): boolean {
+    let re: RegExp;
+    try {
+      re = new RegExp(pattern);
+    } catch {
+      this.logger.warn(
+        `Invalid regex in manifest for ${slug}/${name}: "${pattern}" — skipping pattern check`,
+      );
+      return true;
+    }
+    return re.test(value);
   }
 
   private validateDependencyChoices(

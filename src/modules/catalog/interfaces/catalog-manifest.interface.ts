@@ -210,6 +210,11 @@ export interface CatalogSpecBuildingBlock {
   configFiles?: CatalogConfigFile[];
   /** Containers that ride with this block without being it. */
   companions?: CatalogCompanions;
+  /**
+   * Install-time switches. Not yet in the published spec for a building block,
+   * so they travel through the validator's forward-compatible fields.
+   */
+  options?: CatalogOption[];
   auth?: CatalogAuth;
   postInstall?: CatalogPostInstallStep[];
   smokeTest?: CatalogSmokeTest;
@@ -240,6 +245,8 @@ export interface CatalogOption {
   label: string;
   description?: string;
   default?: boolean;
+  /** Key of another option this one only means something with; off while that one is off. */
+  requires?: string;
 }
 
 export type CatalogAuthMode = 'oidc' | 'proxy' | 'native' | 'none';

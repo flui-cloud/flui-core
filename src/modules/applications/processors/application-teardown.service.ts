@@ -36,6 +36,7 @@ import { BackupPolicyEntity } from '../../backups/entities/backup-policy.entity'
 import { closePoliciesOfDeletedApplication } from '../../backups/utils/deleted-application-backups.util';
 import { liveBundleSiblings } from '../utils/bundle-siblings.util';
 import { describeError } from '../../shared/utils/error.util';
+import { sweepPoolerObjects } from '../utils/pooler-sweep';
 import { FluiRegistryPublisherService } from '../../flui-registry/services/flui-registry-publisher.service';
 
 /**
@@ -186,6 +187,7 @@ export class ApplicationTeardownService {
           failedDeletes,
           resources,
         );
+        await this.sweepPooler(kubeconfig, app);
       }
 
       await this.appResourcesRepository.deleteByApplicationId(applicationId);
@@ -379,6 +381,29 @@ export class ApplicationTeardownService {
       });
     }
   }
+  /** The pooler of a database is not among its tracked resources, so it goes by its own label. */
+  private async sweepPooler(
+    kubeconfig: string,
+    app: ApplicationEntity,
+  ): Promise<void> {
+    const swept = await sweepPoolerObjects(
+      this.kubernetesService,
+      kubeconfig,
+      app.k8sNamespace,
+      app.id,
+    );
+    for (const f of swept.failed) {
+      this.logger.error(
+        `[DELETE] pooler sweep failed to delete ${f.object} in ${app.k8sNamespace}: ${f.error}`,
+      );
+    }
+    if (swept.deleted.length) {
+      this.logger.log(
+        `[DELETE] pooler of ${app.slug}: ${swept.deleted.length} object(s) removed`,
+      );
+    }
+  }
+
   private static readonly SWEEPABLE_KINDS: ApplicationResourceKind[] = [
     ApplicationResourceKind.DEPLOYMENT,
     ApplicationResourceKind.STATEFUL_SET,
@@ -425,23 +450,13 @@ export class ApplicationTeardownService {
         .map((r) => r.name),
     );
     for (const kind of ApplicationTeardownService.SWEEPABLE_KINDS) {
-      let liveNames: string[] = [];
-      try {
-        const items = await this.kubernetesService.listResourcesByLabel(
-          kubeconfig,
-          kind,
-          namespace,
-          labelSelector,
-        );
-        liveNames = items
-          .map((i: any) => i?.metadata?.name as string)
-          .filter((n) => !!n);
-      } catch (err) {
-        this.logger.warn(
-          `[DELETE] sweep list ${kind} failed for app ${app.slug}: ${err.message}`,
-        );
-      }
-
+      const liveNames = await this.listSweepableNames(
+        kubeconfig,
+        kind,
+        namespace,
+        labelSelector,
+        app,
+      );
       const targets = new Set<string>([
         ...(failedByKind.get(kind) ?? []),
         ...liveNames,
@@ -449,24 +464,14 @@ export class ApplicationTeardownService {
       if (kind === ApplicationResourceKind.STATEFUL_SET) {
         for (const name of targets) statefulSetNames.add(name);
       }
-      if (targets.size === 0) continue;
-
-      for (const name of targets) {
-        try {
-          await this.kubernetesService.deleteResource(
-            kubeconfig,
-            kind,
-            name,
-            namespace,
-          );
-          totalDeleted++;
-        } catch (err) {
-          totalFailed++;
-          this.logger.error(
-            `[DELETE] sweep failed to delete ${kind}/${name} in ${namespace}: ${err.message}`,
-          );
-        }
-      }
+      const swept = await this.deleteSweepTargets(
+        kubeconfig,
+        kind,
+        targets,
+        namespace,
+      );
+      totalDeleted += swept.deleted;
+      totalFailed += swept.failed;
     }
 
     if (totalDeleted > 0 || totalFailed > 0) {
@@ -487,6 +492,58 @@ export class ApplicationTeardownService {
           .map((r) => r.name),
       ),
     );
+  }
+
+  private async listSweepableNames(
+    kubeconfig: string,
+    kind: ApplicationResourceKind,
+    namespace: string,
+    labelSelector: string,
+    app: ApplicationEntity,
+  ): Promise<string[]> {
+    try {
+      const items = await this.kubernetesService.listResourcesByLabel(
+        kubeconfig,
+        kind,
+        namespace,
+        labelSelector,
+      );
+      return items
+        .map((i: any) => i?.metadata?.name as string)
+        .filter((n) => !!n);
+    } catch (err) {
+      this.logger.warn(
+        `[DELETE] sweep list ${kind} failed for app ${app.slug}: ${err.message}`,
+      );
+      return [];
+    }
+  }
+
+  private async deleteSweepTargets(
+    kubeconfig: string,
+    kind: ApplicationResourceKind,
+    targets: Set<string>,
+    namespace: string,
+  ): Promise<{ deleted: number; failed: number }> {
+    let deleted = 0;
+    let failed = 0;
+    for (const name of targets) {
+      try {
+        await this.kubernetesService.deleteResource(
+          kubeconfig,
+          kind,
+          name,
+          namespace,
+        );
+        deleted++;
+      } catch (err) {
+        failed++;
+        this.logger.error(
+          `[DELETE] sweep failed to delete ${kind}/${name} in ${namespace}: ${err.message}`,
+        );
+      }
+    }
+    return { deleted, failed };
   }
 
   /**

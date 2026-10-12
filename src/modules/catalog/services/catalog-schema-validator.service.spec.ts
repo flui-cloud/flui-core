@@ -52,6 +52,25 @@ describe('CatalogSchemaValidatorService', () => {
     });
   });
 
+  describe('install options on a building block', () => {
+    it('keeps the pooler options of the PostgreSQL seed', () => {
+      const manifest = service.validate(seed('postgresql.flui.yaml'));
+      const options = (manifest.spec as CatalogSpecBuildingBlock).options;
+      expect(options?.map((o) => [o.key, o.default, o.requires])).toEqual([
+        ['pooler', true, undefined],
+        ['poolerSessionMode', false, 'pooler'],
+      ]);
+    });
+
+    it('still checks the options of a composed app against the published schema', () => {
+      const manifest = seed('umami.flui.yaml') as {
+        spec: { options?: unknown };
+      };
+      manifest.spec.options = [{ key: 'x', label: 'X', bogus: true }];
+      expect(() => service.validate(manifest)).toThrow();
+    });
+  });
+
   it('validates every seed that declares an engine', () => {
     const files = [
       'umami.flui.yaml',

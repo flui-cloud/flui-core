@@ -5,6 +5,7 @@ import { ProjectClient } from '../../lib/project-client';
 import { resolveClusterRef } from '../../lib/resolve-cluster';
 import { printContextBanner } from '../../lib/context-banner';
 import { promptInput, promptMaskedInput } from '../../lib/prompts';
+import { parseInstallOptions } from '../../lib/install-options';
 
 function colorStatus(status: string): string {
   switch (status) {
@@ -39,6 +40,8 @@ export default class CatalogInstallCmd extends Command {
     '<%= config.bin %> <%= command.id %> umami',
     '<%= config.bin %> <%= command.id %> umami --name "Umami" --wait',
     '<%= config.bin %> <%= command.id %> penpot --input ADMIN_EMAIL=me@example.com --wait',
+    '<%= config.bin %> <%= command.id %> postgresql --option pooler=false',
+    '<%= config.bin %> <%= command.id %> postgresql --option poolerSessionMode=true',
   ];
   static readonly args = {
     slug: Args.string({
@@ -64,6 +67,11 @@ export default class CatalogInstallCmd extends Command {
     env: Flags.string({
       multiple: true,
       description: 'Override a userEditable env entry, as KEY=value',
+    }),
+    option: Flags.string({
+      multiple: true,
+      description:
+        'Turn a feature the app declares on or off, as key=true|false (repeatable). PostgreSQL: pooler (default true), poolerSessionMode (default false)',
     }),
     'skip-endpoint': Flags.boolean({
       default: false,
@@ -92,6 +100,7 @@ export default class CatalogInstallCmd extends Command {
     const cluster = await resolveClusterRef(flags.cluster);
     const catalog = CatalogClient.fromConfig();
 
+    const options = parseInstallOptions(flags.option);
     const userInputs = parsePairs(flags.input) ?? {};
     if (process.stdin.isTTY && !flags.json) {
       await this.askMissingInputs(catalog, args.slug, userInputs);
@@ -109,6 +118,7 @@ export default class CatalogInstallCmd extends Command {
       allowMasterPlacement: flags['allow-master-placement'],
       userInputs: Object.keys(userInputs).length ? userInputs : undefined,
       envOverrides: parsePairs(flags.env),
+      options,
     });
 
     if (flags.wait) {

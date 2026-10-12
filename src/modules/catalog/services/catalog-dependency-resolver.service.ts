@@ -16,6 +16,7 @@ import { CatalogInstallRepository } from '../repositories/catalog-install.reposi
 import { CatalogAppDefinitionRepository } from '../repositories/catalog-app-definition.repository';
 import { CatalogInstallStatus } from '../enums/catalog-install-status.enum';
 import { CatalogInstallerService } from './catalog-installer.service';
+import { POOLER_OPTION } from '../utils/catalog-options.util';
 
 export interface ResolveAllResult {
   resolved: ResolvedDependency[];
@@ -29,6 +30,20 @@ export interface ResolveAllResult {
    * Map of alias → K8s Secret name owning the BB's secret envs.
    */
   secretNameByAlias: Record<string, string>;
+}
+
+function secretEnvKeys(bbSpec: CatalogSpecBuildingBlock): Set<string> {
+  const secretKeys = new Set<string>();
+  for (const e of bbSpec.env) {
+    const vf = e.valueFrom;
+    if (!vf) continue;
+    const isSecret =
+      'generate' in vf ||
+      ('userInput' in vf && !!vf.userInput.sensitive) ||
+      'secretRef' in vf;
+    if (isSecret) secretKeys.add(e.name);
+  }
+  return secretKeys;
 }
 
 @Injectable()
@@ -107,52 +122,21 @@ export class CatalogDependencyResolverService {
         continue;
       }
 
-      let bbApp: ApplicationEntity;
-      let bbSpec: CatalogSpecBuildingBlock;
-      if (choice.mode === DependencyMode.REUSE_EXISTING) {
-        ({ bbApp, bbSpec } = await this.resolveReuseExisting(
-          dep,
-          choice,
-          clusterId,
-        ));
-      } else {
-        const { install } = await this.installerService.installBuildingBlock(
-          dep.ref,
-          clusterId,
-          userId,
-          userEmail,
-          opts?.projectId,
-        );
-        result.dedicatedInstallIds.push(install.id);
-        const running = await this.waitForRunning(
-          install.id,
-          waitTimeoutMs,
-          pollIntervalMs,
-        );
-        if (!running.applicationIds?.length) {
-          throw new Error(
-            `Dedicated dependency install ${install.id} (${dep.ref}) finished without an application`,
-          );
-        }
-        const app = await this.applicationsRepo.findById(
-          running.applicationIds[0],
-        );
-        if (!app) {
-          throw new Error(
-            `Application ${running.applicationIds[0]} not found for dep install ${install.id}`,
-          );
-        }
-        const def = await this.definitionRepo.findById(
-          running.catalogAppDefinitionId,
-        );
-        if (!def) {
-          throw new Error(
-            `Definition ${running.catalogAppDefinitionId} not found for dep install ${install.id}`,
-          );
-        }
-        bbApp = app;
-        bbSpec = def.manifest.spec as CatalogSpecBuildingBlock;
-      }
+      const { bbApp, bbSpec } =
+        choice.mode === DependencyMode.REUSE_EXISTING
+          ? await this.resolveReuseExisting(dep, choice, clusterId)
+          : await this.resolveDedicated(
+              dep,
+              clusterId,
+              result.dedicatedInstallIds,
+              {
+                userId,
+                userEmail,
+                projectId: opts?.projectId,
+                waitTimeoutMs,
+                pollIntervalMs,
+              },
+            );
 
       const host = `${bbApp.slug}-svc.${bbApp.k8sNamespace}.svc.cluster.local`;
       const port = bbSpec.ports[0]?.internal;
@@ -161,17 +145,7 @@ export class CatalogDependencyResolverService {
         env[e.name] = e.value ?? '';
       }
 
-      const secretKeys = new Set<string>();
-      for (const e of bbSpec.env) {
-        const vf = e.valueFrom;
-        if (!vf) continue;
-        const isSecret =
-          'generate' in vf ||
-          ('userInput' in vf && !!vf.userInput.sensitive) ||
-          'secretRef' in vf;
-        if (isSecret) secretKeys.add(e.name);
-      }
-
+      const secretKeys = secretEnvKeys(bbSpec);
       const secretName = `${bbApp.slug}-secret`;
 
       result.resolved.push({
@@ -194,6 +168,60 @@ export class CatalogDependencyResolverService {
     }
 
     return result;
+  }
+
+  /** Records the install id before waiting, so a failed wait still cascades the uninstall. */
+  private async resolveDedicated(
+    dep: CatalogDependency,
+    clusterId: string,
+    dedicatedInstallIds: string[],
+    opts: {
+      userId?: string;
+      userEmail?: string;
+      projectId?: string | null;
+      waitTimeoutMs: number;
+      pollIntervalMs: number;
+    },
+  ): Promise<{ bbApp: ApplicationEntity; bbSpec: CatalogSpecBuildingBlock }> {
+    // A dependent is wired with the block's direct host, so a pooler beside
+    // it would be a pod nobody connects through.
+    const { install } = await this.installerService.installBuildingBlock(
+      dep.ref,
+      clusterId,
+      opts.userId,
+      opts.userEmail,
+      opts.projectId,
+      { [POOLER_OPTION]: false },
+    );
+    dedicatedInstallIds.push(install.id);
+    const running = await this.waitForRunning(
+      install.id,
+      opts.waitTimeoutMs,
+      opts.pollIntervalMs,
+    );
+    if (!running.applicationIds?.length) {
+      throw new Error(
+        `Dedicated dependency install ${install.id} (${dep.ref}) finished without an application`,
+      );
+    }
+    const app = await this.applicationsRepo.findById(running.applicationIds[0]);
+    if (!app) {
+      throw new Error(
+        `Application ${running.applicationIds[0]} not found for dep install ${install.id}`,
+      );
+    }
+    const def = await this.definitionRepo.findById(
+      running.catalogAppDefinitionId,
+    );
+    if (!def) {
+      throw new Error(
+        `Definition ${running.catalogAppDefinitionId} not found for dep install ${install.id}`,
+      );
+    }
+    return {
+      bbApp: app,
+      bbSpec: def.manifest.spec as CatalogSpecBuildingBlock,
+    };
   }
 
   private async resolveReuseExisting(

@@ -36,6 +36,7 @@ import { buildUpsertPayload } from './catalog-seeder.service';
 import { CatalogValidateResponseDto } from '../dto/catalog-validate.dto';
 import { CatalogInstallEntity } from '../entities/catalog-install.entity';
 import { ApplicationsRepository } from '../../applications/repositories/applications.repository';
+import { declaredOptions } from '../utils/catalog-options.util';
 
 type CatalogSpecAny =
   | CatalogSpecStandalone
@@ -362,6 +363,7 @@ export class CatalogService {
       label: string;
       description?: string;
       default: boolean;
+      requires?: string;
     }>;
     defaultCredentials?: {
       username?: string;
@@ -460,16 +462,17 @@ export class CatalogService {
         label: string;
         description?: string;
         default: boolean;
+        requires?: string;
       }>
     | undefined {
-    if (spec.type !== CatalogAppType.COMPOSED || !spec.options?.length) {
-      return undefined;
-    }
-    return spec.options.map((o) => ({
+    const options = declaredOptions(spec);
+    if (!options.length) return undefined;
+    return options.map((o) => ({
       key: o.key,
       label: o.label,
       description: o.description,
       default: o.default ?? false,
+      ...(o.requires ? { requires: o.requires } : {}),
     }));
   }
 

@@ -12,6 +12,9 @@ import { WorkloadNamespaceService } from './workload-namespace.service';
 import { GhcrSecretRefreshService } from './ghcr-secret-refresh.service';
 import { describeError } from '../../shared/utils/error.util';
 import { applyAppManifest } from '../utils/app-manifest-scope';
+import { sweepPoolerObjects } from '../utils/pooler-sweep';
+import { ENV_HASH_ANNOTATION } from '../utils/env-hash.util';
+import { load } from 'js-yaml';
 
 const WAITABLE_KINDS = new Set(['Deployment', 'StatefulSet', 'DaemonSet']);
 const MATERIALIZE_READINESS_TIMEOUT_MS = 10 * 60 * 1000;
@@ -164,6 +167,50 @@ export class ApplicationMaterializerService {
   }
 
   /** Scale the app's workload on one cluster without touching the stored app. */
+  /**
+   * Whether the workload on the cluster already runs what
+   * `materializeOnCluster` would apply and is Ready: same pod-template config
+   * and env hashes, same replica count, rollout finished. Decided on the
+   * generator's own change detector, so a caller can skip an apply-and-wait
+   * that would change nothing.
+   */
+  async isCurrentOnCluster(
+    app: ApplicationEntity,
+    clusterId: string,
+  ): Promise<boolean> {
+    const desired = this.manifestGenerator
+      .generateForDockerImage(app)
+      .find((m) => WAITABLE_KINDS.has(m.kind));
+    if (!desired) return false;
+    const wanted = load(desired.yaml) as {
+      spec?: {
+        replicas?: number;
+        template?: { metadata?: { annotations?: Record<string, string> } };
+      };
+    };
+    const live = await this.kubernetesService.getResource(
+      await this.kubeconfigFor(clusterId),
+      desired.kind,
+      desired.name,
+      app.k8sNamespace,
+    );
+    if (!live) return false;
+    const liveAnnotations = live.spec?.template?.metadata?.annotations ?? {};
+    const wantedAnnotations =
+      wanted.spec?.template?.metadata?.annotations ?? {};
+    for (const key of ['flui.cloud/config-hash', ENV_HASH_ANNOTATION]) {
+      if (liveAnnotations[key] !== wantedAnnotations[key]) return false;
+    }
+    const replicas = wanted.spec?.replicas ?? 1;
+    const status = live.status ?? {};
+    return (
+      live.spec?.replicas === replicas &&
+      (status.observedGeneration ?? 0) >= (live.metadata?.generation ?? 0) &&
+      status.updatedReplicas === replicas &&
+      status.readyReplicas === replicas
+    );
+  }
+
   async scaleOnCluster(
     app: ApplicationEntity,
     clusterId: string,
@@ -240,6 +287,17 @@ export class ApplicationMaterializerService {
             )}`,
           ),
         );
+    }
+    const pooler = await sweepPoolerObjects(
+      this.kubernetesService,
+      kubeconfig,
+      app.k8sNamespace,
+      app.id,
+    );
+    for (const f of pooler.failed) {
+      this.logger.warn(
+        `[teardown] ${app.slug}: delete ${f.object} on ${clusterId} failed: ${f.error}`,
+      );
     }
     // Claims a workload only makes once it runs (a StatefulSet's) are not
     // among the generated manifests, and a migration may have created them.

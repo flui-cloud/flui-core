@@ -58,6 +58,7 @@ import {
   ENV_HASH_ANNOTATION,
   envChanges,
   envHashOf,
+  restartEnvOf,
 } from '../utils/env-hash.util';
 import {
   PREVIOUS_VOLUME_LABEL,
@@ -282,7 +283,7 @@ export class AppManagementService {
       kind,
       app.k8sNamespace,
       deploymentName,
-      { [ENV_HASH_ANNOTATION]: envHashOf(app.env) },
+      { [ENV_HASH_ANNOTATION]: envHashOf(restartEnvOf(app)) },
     );
     this.logger.log(
       `Triggered rolling restart for ${kind} "${deploymentName}"`,
@@ -853,7 +854,7 @@ export class AppManagementService {
       .catch(() => null);
     const running =
       live?.spec?.template?.metadata?.annotations?.[ENV_HASH_ANNOTATION];
-    if (!running || running === envHashOf(app.env)) return null;
+    if (!running || running === envHashOf(restartEnvOf(app))) return null;
     const last = (
       await this.appRevisionsRepository.findAllEvents(app.id, { limit: 20 })
     ).events.find(
@@ -865,9 +866,12 @@ export class AppManagementService {
         ].includes(event.eventType as AppEventType) &&
         Array.isArray(event.envSnapshot),
     );
-    return {
-      changes: last ? envChanges(last.envSnapshot, app.env) : [],
-    };
+    if (!last) return { changes: [] };
+    const changes = envChanges(
+      restartEnvOf({ ...app, env: last.envSnapshot }),
+      restartEnvOf(app),
+    );
+    return changes.length ? { changes } : null;
   }
 
   private async placementOf(

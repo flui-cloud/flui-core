@@ -1,6 +1,8 @@
 import {
   CONNECTION_URL_KEY,
+  DIRECT_URL_KEY,
   composeConnectionUrl,
+  composeConnectionUrls,
   engineHasConnectionUrl,
 } from './connection-url.core';
 
@@ -92,5 +94,56 @@ describe('engineHasConnectionUrl', () => {
 describe('CONNECTION_URL_KEY', () => {
   it('is a valid Kubernetes Secret key and an env name', () => {
     expect(CONNECTION_URL_KEY).toMatch(/^[A-Z_][A-Z0-9_]*$/);
+  });
+});
+
+describe('composeConnectionUrls', () => {
+  const db = 'pg-a1-svc.user-x.svc.cluster.local';
+  const pooler = 'pg-a1-pooler.user-x.svc.cluster.local';
+  const env = {
+    POSTGRES_USER: 'app',
+    POSTGRES_PASSWORD: 'pw',
+    POSTGRES_DB: 'appdb',
+  };
+
+  it('sends the connection URL through the pooler on the same port and keeps the direct one on the database', () => {
+    expect(
+      composeConnectionUrls({
+        engine: 'postgres',
+        host: db,
+        port: 5432,
+        env,
+        poolerHost: pooler,
+      }),
+    ).toEqual({
+      connection: `postgresql://app:pw@${pooler}:5432/appdb`,
+      direct: `postgresql://app:pw@${db}:5432/appdb`,
+    });
+  });
+
+  it('gives the same direct address twice without a pooler', () => {
+    const urls = composeConnectionUrls({
+      engine: 'postgres',
+      host: db,
+      port: 5432,
+      env,
+    });
+    expect(urls?.connection).toBe(`postgresql://app:pw@${db}:5432/appdb`);
+    expect(urls?.direct).toBe(urls?.connection);
+  });
+
+  it('is null for a block with no engine', () => {
+    expect(
+      composeConnectionUrls({
+        engine: null,
+        host: db,
+        env: {},
+        poolerHost: pooler,
+      }),
+    ).toBeNull();
+  });
+
+  it('names the direct key as an env name', () => {
+    expect(DIRECT_URL_KEY).toBe('FLUI_DIRECT_URL');
   });
 });

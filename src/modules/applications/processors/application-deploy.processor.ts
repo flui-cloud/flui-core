@@ -7,6 +7,8 @@ import {
   BadRequestException,
 } from '@nestjs/common';
 import { Job, Queue } from 'bull';
+import { ModuleRef } from '@nestjs/core';
+import { DbPoolerService } from '../../catalog/services/db-pooler.service';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import * as crypto from 'node:crypto';
@@ -64,11 +66,16 @@ import {
 import { droppedAutoscaler } from '../utils/dropped-autoscaler.util';
 import { ScheduledJobsService } from '../services/scheduled-jobs.service';
 import { applyAppManifest } from '../utils/app-manifest-scope';
+import { poolerManifestsToApply } from '../utils/db-pooler.core';
 import { assertSecretReferences } from '../utils/secret-reference.policy';
 import { withGuestRuntime } from '../utils/guest-runtime';
 import { SandboxTenantEntity } from '../../sandbox/entities/sandbox-tenant.entity';
 import { areaRefusal, claimedAreaOf, fitToArea } from '../utils/guest-area';
 import { loadSandboxQuota } from '../../sandbox/constants/sandbox-quota.manifest';
+import {
+  CONNECTION_URL_KEY,
+  DIRECT_URL_KEY,
+} from '../../attached-services/connection-url.core';
 
 /** The restore point is seconds; the copies it starts are not waited for. */
 const PRE_DEPLOY_BACKUP_TIMEOUT_MS = 2 * 60 * 1000;
@@ -119,6 +126,8 @@ export class ApplicationDeployProcessor {
     private readonly attachedServices?: AttachedServicesPort,
     @Optional()
     private readonly scheduledJobs?: ScheduledJobsService,
+    @Optional()
+    private readonly moduleRef?: ModuleRef,
   ) {}
 
   /**
@@ -515,6 +524,7 @@ export class ApplicationDeployProcessor {
         manifests,
         kubeconfig,
       );
+      await this.applyPooler(appForManifests, kubeconfig);
       const dropped = droppedAutoscaler(app, manifests);
       if (
         dropped &&
@@ -573,6 +583,7 @@ export class ApplicationDeployProcessor {
       const settledStatus = waitingForRoom
         ? ApplicationStatus.WAITING_FOR_ROOM
         : ApplicationStatus.RUNNING;
+      if (!waitingForRoom) await this.refreshPooler(app);
 
       // An `exposure: public` application owes a public endpoint, and a deploy
       // that cannot mint one has not succeeded — so this runs before the
@@ -872,10 +883,17 @@ export class ApplicationDeployProcessor {
       throw new Error(`Revision ${revisionNumber} not found`);
     }
 
-    // Update app with revision snapshot
+    // The connection URLs follow the pooler's current state, not the
+    // revision's: a snapshot taken before the pooler took over carries the
+    // direct address.
+    const derived = (name: string) =>
+      name === CONNECTION_URL_KEY || name === DIRECT_URL_KEY;
     await this.applicationsRepository.update(app.id, {
       sourceConfig: revision.sourceConfigSnapshot,
-      env: revision.envSnapshot,
+      env: [
+        ...(revision.envSnapshot ?? []).filter((e) => !derived(e.name)),
+        ...(app.env ?? []).filter((e) => derived(e.name)),
+      ],
       resources: revision.resourcesSnapshot,
       replicas: revision.replicas || app.replicas,
       imageRef: revision.imageRef,
@@ -999,6 +1017,57 @@ export class ApplicationDeployProcessor {
         });
         throw applyErr;
       }
+    }
+  }
+
+  /**
+   * The database's pooler rides every deploy of the database, apart from its
+   * tracked resources. A pooler that cannot be applied does not fail the
+   * database: the catalog install keeps the connection URL direct and says why.
+   */
+  private async applyPooler(
+    app: ApplicationEntity,
+    kubeconfig: string,
+  ): Promise<void> {
+    if (!app.pooler?.enabled) return;
+    try {
+      for (const m of poolerManifestsToApply(
+        app,
+        this.manifestGenerator.generatePooler(app),
+      )) {
+        if (m.kind === ApplicationResourceKind.ENDPOINT_SLICE) {
+          await this.kubernetesService.applyManifest(kubeconfig, m.yaml);
+        } else {
+          await applyAppManifest(
+            this.kubernetesService,
+            kubeconfig,
+            m.yaml,
+            app.k8sNamespace,
+          );
+        }
+      }
+    } catch (err) {
+      this.logger.warn(
+        `Pooler of ${app.slug} not applied: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
+
+  /**
+   * The pooler's role and lookup function live in the database, so every deploy
+   * of the database re-applies them: a change to either reaches existing
+   * installs, not only new ones.
+   */
+  private async refreshPooler(app: ApplicationEntity): Promise<void> {
+    if (!app.pooler?.enabled || !this.moduleRef) return;
+    try {
+      await this.moduleRef
+        .get(DbPoolerService, { strict: false })
+        .bringUp(app.id);
+    } catch (err) {
+      this.logger.warn(
+        `Pooler of ${app.slug} not refreshed: ${err instanceof Error ? err.message : String(err)}`,
+      );
     }
   }
 

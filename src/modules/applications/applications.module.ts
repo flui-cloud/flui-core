@@ -284,6 +284,7 @@ import { FluiRegistryModule } from '../flui-registry/flui-registry.module';
     ApplicationService,
     ApplicationDeployService,
     ApplicationMaterializerService,
+    ApplicationManifestGeneratorService,
     ApplicationSourceDeployService,
     ApplicationReconciliationService,
     ApplicationsRepository,

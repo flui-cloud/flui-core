@@ -11,6 +11,13 @@ import { ENGINE_PROFILES } from '../database-console/engine/engine-profile';
  */
 export const CONNECTION_URL_KEY = 'FLUI_CONNECTION_URL';
 
+/**
+ * The database itself, never through a pooler: for schema migrations, LISTEN,
+ * session advisory locks and admin tools. Equal to the connection URL when the
+ * database has no pooler, so an app can name it either way.
+ */
+export const DIRECT_URL_KEY = 'FLUI_DIRECT_URL';
+
 export interface ConnectionUrlFacts {
   /** `flui.cloud/db-engine` of the block; absent on a block that is not a datastore. */
   engine?: string | null;
@@ -68,6 +75,22 @@ export function composeConnectionUrl(facts: ConnectionUrlFacts): string | null {
   const path = database ? `/${encodeURIComponent(database)}` : '';
 
   return `${profile.urlScheme}://${credentials}${facts.host}:${port}${path}`;
+}
+
+/**
+ * Both addresses of a block. With a pooler host the connection URL goes through
+ * the pooler, on the same port, so an app built from host and port changes one
+ * thing; the direct URL always names the database's own host.
+ */
+export function composeConnectionUrls(
+  facts: ConnectionUrlFacts & { poolerHost?: string | null },
+): { connection: string; direct: string } | null {
+  const direct = composeConnectionUrl(facts);
+  if (!direct) return null;
+  const connection = facts.poolerHost
+    ? composeConnectionUrl({ ...facts, host: facts.poolerHost })
+    : direct;
+  return { connection: connection ?? direct, direct };
 }
 
 function buildCredentials(

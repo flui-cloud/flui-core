@@ -1,5 +1,10 @@
 import { createHash } from 'node:crypto';
 import { ApplicationEnvVar } from '../interfaces/source-config.interface';
+import {
+  CONNECTION_URL_KEY,
+  DIRECT_URL_KEY,
+} from '../../attached-services/connection-url.core';
+import { DB_ENGINE_LABEL } from '../../database-console/engine/engine-profile';
 
 export const ENV_HASH_ANNOTATION = 'flui.cloud/env-hash';
 
@@ -51,4 +56,40 @@ export function envChanges(
     if (!after.has(name)) out.push(`${name} removed`);
   }
   return out.sort((a, b) => Number(a > b) - Number(a < b));
+}
+
+/**
+ * Variables the PostgreSQL image reads only when it first creates its data
+ * directory or bootstraps a standby; a restart of a running database ignores them.
+ */
+const POSTGRES_INIT_ONLY = new Set([
+  'POSTGRES_PASSWORD',
+  'POSTGRES_USER',
+  'POSTGRES_DB',
+  'FLUI_PG_STANDBY',
+]);
+
+/**
+ * The variables a restart of this application would change. A datastore
+ * publishes its connection URLs for its consumers and never reads them, and
+ * Flui rewrites them after a deploy (the pooler taking the URL), so they do not
+ * ask the datastore for a restart; nor do a PostgreSQL's first-start settings,
+ * which a migration rewrites on the copy it promotes.
+ */
+export function restartEnvOf(app: {
+  env?: ApplicationEnvVar[] | null;
+  labels?: Record<string, string> | null;
+}): ApplicationEnvVar[] {
+  const env = app.env ?? [];
+  const engine = app.labels?.[DB_ENGINE_LABEL];
+  if (!engine) return env;
+  return env.filter(
+    (e) =>
+      e.name !== CONNECTION_URL_KEY &&
+      e.name !== DIRECT_URL_KEY &&
+      !(
+        engine === 'postgres' &&
+        (POSTGRES_INIT_ONLY.has(e.name) || e.name.startsWith('FLUI_PG_RESTORE'))
+      ),
+  );
 }

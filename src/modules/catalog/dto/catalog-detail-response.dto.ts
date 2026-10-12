@@ -1,5 +1,6 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { CatalogResponseDto } from './catalog-response.dto';
+import { Sensitivity } from '../../mask/decorators/sensitivity.decorator';
 
 export class CatalogUserInputPromptDto {
   @ApiProperty() name: string;
@@ -146,6 +147,14 @@ export class CatalogOptionDto {
     example: false,
   })
   default: boolean;
+
+  @Sensitivity(Sensitivity.PUBLIC)
+  @ApiPropertyOptional({
+    description:
+      'Key of another option this one only means something with. While that option is off, this one is off whatever is sent, and a form shows it disabled.',
+    example: 'pooler',
+  })
+  requires?: string;
 }
 
 export class CatalogDefaultCredentialsDto {
