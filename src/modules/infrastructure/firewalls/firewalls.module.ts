@@ -3,6 +3,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { FirewallEntity } from './entities/firewall.entity';
 import { ClusterFirewallEntity } from './entities/cluster-firewall.entity';
 import { ClusterEntity } from '../clusters/entities/cluster.entity';
+import { WireGuardLinkEntity } from '../networking/entities/wireguard-link.entity';
 import { FirewallsService } from './services/firewalls.service';
 import { EncryptionModule } from 'src/modules/shared/encryption/encryption.module';
 import { NetworkingModule } from '../networking/networking.module';
@@ -22,6 +23,7 @@ import { SharedInfrastructureModule } from '../shared/shared-infrastructure.modu
       FirewallEntity,
       ClusterFirewallEntity,
       ClusterEntity,
+      WireGuardLinkEntity,
     ]),
     ProvidersModule, // For FirewallProviderFactory and provider services
     SharedInfrastructureModule, // For LabelService

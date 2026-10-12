@@ -248,6 +248,32 @@ describe('ClusterCreationService.createCluster — provider policies', () => {
     expect(ssh.sourceIps).not.toContain('0.0.0.0/0');
   });
 
+  // `flui cluster create` sends no rules, and a managed-API firewall created
+  // with none drops every inbound packet, so the node could never be reached
+  // to fetch its kubeconfig.
+  it('gives a cluster created without rules the workload defaults, SSH from the control', async () => {
+    const { service, firewallIntegration } = build({
+      capabilities: { vnetRequired: false, crossClusterAllowed: true },
+      controlEgressIps: ['49.13.132.151', '178.105.168.161'],
+    });
+
+    await service.createCluster({ ...baseDto } as never);
+
+    const [, rules] =
+      firewallIntegration.createAndReconcileFirewall.mock.calls[0];
+    const inbound = (port: string) =>
+      rules.find(
+        (r: { port: string; direction: string }) =>
+          r.port === port && r.direction === 'in',
+      );
+    expect(inbound('22').sourceIps).toEqual([
+      '49.13.132.151/32',
+      '178.105.168.161/32',
+    ]);
+    expect(inbound('80')).toBeDefined();
+    expect(inbound('443')).toBeDefined();
+  });
+
   // host-nftables (OVH, BYOS) applies the firewall over SSH to a real node —
   // there is nothing to SSH into yet at this point, so reconciling here would
   // always fail with "no reachable SSH endpoint". The rules are computed and

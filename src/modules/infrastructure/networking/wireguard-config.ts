@@ -150,6 +150,44 @@ export function memberInterface(params: {
   };
 }
 
+export interface LinkPeer {
+  publicKey: string;
+  address: string;
+  /** Set on the dialer only: the listener's public address and port. */
+  endpoint?: string;
+  keepaliveSeconds?: number;
+  label: string;
+}
+
+/**
+ * Adds the temporary direct links of one node to its config: one peer per
+ * link, the other node's `/32` and nothing else. A listener gets `listenPort`;
+ * a dialer names the endpoint and keeps the path open.
+ */
+export function withLinks(
+  spec: WireGuardInterfaceSpec,
+  links: LinkPeer[],
+  listenPort?: number,
+): WireGuardInterfaceSpec {
+  if (!links.length) return spec;
+  return {
+    ...spec,
+    listenPort: spec.listenPort ?? listenPort,
+    peers: [
+      ...spec.peers,
+      ...links.map((l) => ({
+        publicKey: l.publicKey,
+        allowedIps: [`${l.address}/32`],
+        ...(l.endpoint ? { endpoint: l.endpoint } : {}),
+        ...(l.endpoint && l.keepaliveSeconds
+          ? { persistentKeepalive: l.keepaliveSeconds }
+          : {}),
+        label: l.label,
+      })),
+    ],
+  };
+}
+
 function assertUniqueAllowedIps(peers: WireGuardPeerSpec[]): void {
   const seen = new Map<string, number>();
   peers.forEach((peer, index) => {

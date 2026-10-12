@@ -10,6 +10,7 @@ import {
   WG_DEFAULT_MTU,
   WG_DEFAULT_PORT,
   WG_INTERFACE,
+  withLinks,
 } from './wireguard-config';
 
 // Valid 32-byte base64 keys, shaped as WireGuard emits them.
@@ -314,5 +315,76 @@ describe('encodeBootstrapPeers', () => {
 
   it('is empty when there is nobody to know about yet', () => {
     expect(encodeBootstrapPeers([])).toBe('');
+  });
+});
+
+describe('withLinks', () => {
+  const KEY_C = 'hNBBm3jY4mCMeymQ4EaLuT3SEJPUrblbgnwJAJhK8Fo=';
+  const member = () =>
+    memberInterface({
+      address: '10.250.0.5',
+      control: {
+        publicKey: KEY_A,
+        address: '10.250.0.1',
+        endpoint: '5.6.7.8:51821',
+      },
+    });
+
+  it('makes the listener listen and admits the dialer as one /32 with no endpoint', () => {
+    const spec = withLinks(
+      member(),
+      [{ publicKey: KEY_B, address: '10.250.0.9', label: 'link' }],
+      WG_DEFAULT_PORT,
+    );
+    expect(spec.listenPort).toBe(WG_DEFAULT_PORT);
+    const peer = spec.peers.find((p) => p.publicKey === KEY_B);
+    expect(peer).toEqual({
+      publicKey: KEY_B,
+      allowedIps: ['10.250.0.9/32'],
+      label: 'link',
+    });
+    const text = renderWireGuardConfig(spec);
+    expect(text).toContain(`ListenPort = ${WG_DEFAULT_PORT}`);
+    expect(text).toContain('AllowedIPs = 10.250.0.9/32');
+  });
+
+  it('gives the dialer the listener endpoint and a keepalive, and no listen port', () => {
+    const spec = withLinks(member(), [
+      {
+        publicKey: KEY_B,
+        address: '10.250.0.9',
+        endpoint: '9.9.9.9:51821',
+        keepaliveSeconds: 25,
+        label: 'link',
+      },
+    ]);
+    expect(spec.listenPort).toBeUndefined();
+    const peer = spec.peers.find((p) => p.publicKey === KEY_B);
+    expect(peer?.allowedIps).toEqual(['10.250.0.9/32']);
+    expect(peer?.endpoint).toBe('9.9.9.9:51821');
+    expect(peer?.persistentKeepalive).toBe(25);
+  });
+
+  it('never widens AllowedIPs beyond the other node', () => {
+    const spec = withLinks(member(), [
+      { publicKey: KEY_B, address: '10.250.0.9', label: 'a' },
+      { publicKey: KEY_C, address: '10.250.0.10', label: 'b' },
+    ]);
+    expect(spec.peers.flatMap((p) => p.allowedIps)).toEqual([
+      '10.250.0.1/32',
+      '10.250.0.9/32',
+      '10.250.0.10/32',
+    ]);
+  });
+
+  it('refuses a /32 another peer already claims', () => {
+    const spec = withLinks(member(), [
+      { publicKey: KEY_B, address: '10.250.0.1', label: 'clash' },
+    ]);
+    expect(() => renderWireGuardConfig(spec)).toThrow(BadRequestException);
+  });
+
+  it('leaves the spec untouched when there is no link', () => {
+    expect(withLinks(member(), [])).toEqual(member());
   });
 });

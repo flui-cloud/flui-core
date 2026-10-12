@@ -295,6 +295,9 @@ export function renderFluiNftRuleset(
     ...(wgIface
       ? [
           '',
+          '\t\t# Pod traffic arrives at the VXLAN MTU and leaves the tunnel at a smaller one.',
+          `\t\toifname "${wgIface}" tcp flags syn tcp option maxseg size set rt mtu comment "clamp to the overlay MTU"`,
+          '',
           '\t\t# No transit between overlay peers. The control cluster holds a route to',
           '\t\t# every peer, so without this it would quietly become the router between',
           '\t\t# clusters that are meant to be isolated from one another. Expressed as a',

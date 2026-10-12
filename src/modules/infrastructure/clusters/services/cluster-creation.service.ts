@@ -31,7 +31,10 @@ import { CapabilitiesProviderFactory } from '../../../providers/core/factories/c
 import { CloudProvider } from '../../../providers/enums/cloud-provider.enum';
 import { ProviderFactory } from '../../../providers/core/factories/provider.factory';
 import { shapeNameOf } from '../../../providers/core/catalogue/shape-name';
-import { sanitizeApiServerFirewallRules } from '../../firewalls/templates/firewall-rules.template';
+import {
+  getFirewallRulesForClusterType,
+  sanitizeApiServerFirewallRules,
+} from '../../firewalls/templates/firewall-rules.template';
 import { FirewallReconciliationService } from '../../firewalls/services/firewall-reconciliation.service';
 import { FirewallRuleDto } from '../../../providers/dto/firewall.dto';
 import {
@@ -324,15 +327,20 @@ export class ClusterCreationService {
     providedRules: FirewallRuleDto[],
     subnetCidr: string,
   ): Promise<FirewallRuleDto[]> {
-    if (providedRules.length === 0) return providedRules;
     // Resolved here rather than left to the 5-minute peer reconciler: the master
     // is SSHed into within seconds of this firewall being applied.
     const controlIps =
       await this.firewallReconciliation.resolveControlEgressIps();
+    // A client that sends no rules (the CLI) still needs a reachable node: a
+    // provider firewall with no rules drops everything inbound.
+    const openSources = controlIps.length ? [] : ['0.0.0.0/0', '::/0'];
+    const base: FirewallRuleDto[] = providedRules.length
+      ? providedRules
+      : getFirewallRulesForClusterType('workload', openSources);
     return FirewallReconciliationService.ensureDualStackWildcards(
       FirewallReconciliationService.ensureWorkloadSshFromControl(
         FirewallReconciliationService.ensureRequiredIngress(
-          sanitizeApiServerFirewallRules(providedRules, subnetCidr),
+          sanitizeApiServerFirewallRules(base, subnetCidr),
         ),
         controlIps,
       ),

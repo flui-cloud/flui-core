@@ -292,8 +292,12 @@ export enum OperationStep {
   // Database migration machine
   DB_MIGRATE_PROVISION_TARGET = 'db_migrate_provision_target',
   DB_MIGRATE_REPLICATE = 'db_migrate_replicate',
+  DB_MIGRATE_LINK = 'db_migrate_link',
+  DB_MIGRATE_BASE_BACKUP = 'db_migrate_base_backup',
   DB_MIGRATE_SYNCED = 'db_migrate_synced',
   DB_MIGRATE_CUTOVER = 'db_migrate_cutover',
+  DB_MIGRATE_POOLER_PAUSE = 'db_migrate_pooler_pause',
+  DB_MIGRATE_POOLER_RESUME = 'db_migrate_pooler_resume',
   DB_MIGRATE_RESTORE = 'db_migrate_restore',
 
   // Application migration machine
@@ -308,6 +312,8 @@ export enum OperationStep {
   FULL_MIGRATE_DB_CUTOVER = 'full_migrate_db_cutover',
   FULL_MIGRATE_REWIRE = 'full_migrate_rewire',
   FULL_MIGRATE_APP_START = 'full_migrate_app_start',
+  FULL_MIGRATE_BRIDGE_OPEN = 'full_migrate_bridge_open',
+  FULL_MIGRATE_POOLER_FORWARD = 'full_migrate_pooler_forward',
   FULL_MIGRATE_DNS_CUTOVER = 'full_migrate_dns_cutover',
 
   // Platform update

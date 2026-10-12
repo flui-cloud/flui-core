@@ -1,7 +1,16 @@
-import { BadRequestException, Injectable, Logger } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  Logger,
+  Optional,
+} from '@nestjs/common';
 import { FLUI_NETWORK_RESOURCE_ID } from '../../vnets/services/vnets.service';
 import { InjectRepository } from '@nestjs/typeorm';
 import { IsNull, Repository } from 'typeorm';
+import {
+  WireGuardLinkEntity,
+  WireGuardLinkState,
+} from '../entities/wireguard-link.entity';
 import {
   WireGuardPeerEntity,
   WireGuardPeerRole,
@@ -17,12 +26,16 @@ import {
 } from '../wireguard-address-pool';
 import {
   BootstrapPeer,
+  DEFAULT_KEEPALIVE_SECONDS,
+  LinkPeer,
   controlInterface,
   meshInterface,
   isWireGuardPublicKey,
   memberInterface,
   renderWireGuardConfig,
   WG_DEFAULT_PORT,
+  WireGuardInterfaceSpec,
+  withLinks,
 } from '../wireguard-config';
 import { managementNetworkOn } from '../management-network.state';
 
@@ -59,6 +72,9 @@ export class WireGuardPeerService {
     private readonly peers: Repository<WireGuardPeerEntity>,
     @InjectRepository(VNetEntity)
     private readonly vnets: Repository<VNetEntity>,
+    @Optional()
+    @InjectRepository(WireGuardLinkEntity)
+    private readonly links?: Repository<WireGuardLinkEntity>,
   ) {}
 
   /**
@@ -392,15 +408,48 @@ export class WireGuardPeerService {
       );
     }
     return renderWireGuardConfig(
-      memberInterface({
-        address: peer.managementIp,
-        control: {
-          publicKey: control.publicKey,
-          address: control.managementIp,
-          endpoint: controlEndpoint(control),
-        },
-      }),
+      await this.withLinksOf(
+        peer,
+        memberInterface({
+          address: peer.managementIp,
+          control: {
+            publicKey: control.publicKey,
+            address: control.managementIp,
+            endpoint: controlEndpoint(control),
+          },
+        }),
+      ),
     );
+  }
+
+  /**
+   * The open temporary links this node is one end of, as peers.
+   *
+   * Skipped rather than refused: a link whose other end has no key or no
+   * address yet, and one between two nodes that already peer in the same
+   * subnet, where a second `/32` entry would make the render throw and take
+   * the node's whole overlay down with it. Two links joining the same pair of
+   * nodes are one peer.
+   */
+  private async withLinksOf(
+    self: WireGuardPeerEntity,
+    spec: WireGuardInterfaceSpec,
+  ): Promise<WireGuardInterfaceSpec> {
+    if (!this.links || !self.nodeId) return spec;
+    const open = await this.links.find({
+      where: [
+        { state: WireGuardLinkState.OPEN, listenerNodeId: self.nodeId },
+        { state: WireGuardLinkState.OPEN, dialerNodeId: self.nodeId },
+      ],
+    });
+    if (!open.length) return spec;
+
+    const live = await this.livePeers();
+    const byNode = new Map(
+      live.filter((p) => p.nodeId).map((p) => [p.nodeId as string, p]),
+    );
+    const { peers, listenPort } = linkPeersOf(self, open, byNode);
+    return withLinks(spec, peers, listenPort);
   }
 
   /**
@@ -476,38 +525,37 @@ export class WireGuardPeerService {
 
     const live = await this.livePeers();
     const control = await this.controlPeer();
-    return renderWireGuardConfig(
-      meshInterface({
-        self: {
-          publicKey: self.publicKey ?? '',
-          address: self.managementIp,
-          subnetId: self.subnetId,
-        },
-        members: live
-          .filter((p) => p.role === WireGuardPeerRole.MEMBER && p.publicKey)
-          .map((p) => ({
-            publicKey: p.publicKey as string,
-            address: p.managementIp,
-            endpoint: p.endpointHost
-              ? `${p.endpointHost}:${p.listenPort ?? WG_DEFAULT_PORT}`
-              : undefined,
-            subnetId: p.subnetId ?? null,
-            label: `node ${p.nodeId}`,
-          })),
-        // Omitted rather than refused when the control end is not ready: the
-        // mesh is what carries this cluster's own traffic, and it should come
-        // up even on an installation where management still runs the old way.
-        control:
-          control?.publicKey && control.endpointHost
-            ? {
-                publicKey: control.publicKey,
-                address: control.managementIp,
-                endpoint: controlEndpoint(control),
-              }
+    const mesh = meshInterface({
+      self: {
+        publicKey: self.publicKey ?? '',
+        address: self.managementIp,
+        subnetId: self.subnetId,
+      },
+      members: live
+        .filter((p) => p.role === WireGuardPeerRole.MEMBER && p.publicKey)
+        .map((p) => ({
+          publicKey: p.publicKey as string,
+          address: p.managementIp,
+          endpoint: p.endpointHost
+            ? `${p.endpointHost}:${p.listenPort ?? WG_DEFAULT_PORT}`
             : undefined,
-        listenPort: self.listenPort ?? WG_DEFAULT_PORT,
-      }),
-    );
+          subnetId: p.subnetId ?? null,
+          label: `node ${p.nodeId}`,
+        })),
+      // Omitted rather than refused when the control end is not ready: the
+      // mesh is what carries this cluster's own traffic, and it should come
+      // up even on an installation where management still runs the old way.
+      control:
+        control?.publicKey && control.endpointHost
+          ? {
+              publicKey: control.publicKey,
+              address: control.managementIp,
+              endpoint: controlEndpoint(control),
+            }
+          : undefined,
+      listenPort: self.listenPort ?? WG_DEFAULT_PORT,
+    });
+    return renderWireGuardConfig(await this.withLinksOf(self, mesh));
   }
 
   /**
@@ -635,18 +683,51 @@ export function controlEndpoint(
 }
 
 export function controlEndpointName(env = process.env): string | undefined {
-  const declared = env.FLUI_WG_ENDPOINT_NAME?.trim();
-  if (declared) return declared;
-  let host: string | undefined;
-  try {
-    host = env.API_BASE_URL ? new URL(env.API_BASE_URL).hostname : undefined;
-  } catch {
-    return undefined;
+  // Only a declared name: the API's own name is published for every node that
+  // takes traffic, and the hub listens on one of them.
+  return env.FLUI_WG_ENDPOINT_NAME?.trim() || undefined;
+}
+
+function linkPeersOf(
+  self: WireGuardPeerEntity,
+  open: WireGuardLinkEntity[],
+  byNode: Map<string, WireGuardPeerEntity>,
+): { peers: LinkPeer[]; listenPort: number | undefined } {
+  const peers: LinkPeer[] = [];
+  let listenPort: number | undefined;
+  for (const link of open) {
+    const listening = link.listenerNodeId === self.nodeId;
+    const other = byNode.get(
+      listening ? link.dialerNodeId : link.listenerNodeId,
+    );
+    if (!other?.publicKey) continue;
+    if (self.subnetId && other.subnetId === self.subnetId) continue;
+    if (listening) listenPort = listenPort ?? link.listenPort;
+    if (peers.some((p) => p.publicKey === other.publicKey)) continue;
+    const peer = linkPeerOf(link, other, listening);
+    if (peer) peers.push(peer);
   }
-  if (!host || host === 'localhost') return undefined;
-  // An address, or a name that only spells one (nip.io, sslip.io), moves with
-  // the address and brings nothing a rebuild could use.
-  if (/^[\d.]+$/.test(host) || host.includes(':')) return undefined;
-  if (/\.(nip|sslip)\.io$/i.test(host)) return undefined;
-  return host;
+  return { peers, listenPort };
+}
+
+function linkPeerOf(
+  link: WireGuardLinkEntity,
+  other: WireGuardPeerEntity,
+  listening: boolean,
+): LinkPeer | null {
+  if (listening) {
+    return {
+      publicKey: other.publicKey,
+      address: other.managementIp,
+      label: `link ${link.id} (${link.purpose}) from node ${other.nodeId}`,
+    };
+  }
+  if (!other.endpointHost) return null;
+  return {
+    publicKey: other.publicKey,
+    address: other.managementIp,
+    endpoint: `${other.endpointHost}:${link.listenPort}`,
+    keepaliveSeconds: DEFAULT_KEEPALIVE_SECONDS,
+    label: `link ${link.id} (${link.purpose}) to node ${other.nodeId}`,
+  };
 }

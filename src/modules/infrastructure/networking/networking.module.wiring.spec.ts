@@ -12,6 +12,8 @@ import { Test } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { getQueueToken } from '@nestjs/bull';
 import { WireGuardPeerEntity } from './entities/wireguard-peer.entity';
+import { WireGuardLinkEntity } from './entities/wireguard-link.entity';
+import { WireGuardLinkService } from './services/wireguard-link.service';
 import { VNetEntity } from '../vnets/entities/vnet.entity';
 import { ClusterEntity } from '../clusters/entities/cluster.entity';
 import { InfrastructureOperationEntity } from '../servers/entities/infrastructure-operations.entity';
@@ -53,6 +55,7 @@ import { UserEntity } from '../../auth/entities/user.entity';
     ApiServerSanService,
     ManagementNetworkService,
     FluiNetworkBellService,
+    WireGuardLinkService,
     // What NetworkingModule gets from the modules it imports. Listing them is
     // the point: if a class needs something no import supplies, it is missing
     // from here too and the resolution below fails.
@@ -63,6 +66,7 @@ import { UserEntity } from '../../auth/entities/user.entity';
     { provide: getRepositoryToken(ClusterNodeEntity), useValue: {} },
     { provide: getRepositoryToken(UserEntity), useValue: {} },
     { provide: getRepositoryToken(WireGuardPeerEntity), useValue: {} },
+    { provide: getRepositoryToken(WireGuardLinkEntity), useValue: {} },
     { provide: getRepositoryToken(VNetEntity), useValue: {} },
     { provide: getRepositoryToken(ClusterEntity), useValue: {} },
     {
@@ -86,6 +90,16 @@ describe('the networking module resolves its own graph', () => {
     expect(moduleRef.get(WireGuardReconciler)).toBeDefined();
     expect(moduleRef.get(ApiServerSanService)).toBeDefined();
     expect(moduleRef.get(WireGuardReconciliationScheduler)).toBeDefined();
+    expect(moduleRef.get(WireGuardLinkService)).toBeDefined();
+  });
+
+  it('hands the scheduler the link service it sweeps with', async () => {
+    const moduleRef = await build();
+    const scheduler = moduleRef.get(WireGuardReconciliationScheduler);
+
+    expect((scheduler as unknown as { links: unknown }).links).toBeInstanceOf(
+      WireGuardLinkService,
+    );
   });
 
   it('gives the hub the resolver it needs', async () => {

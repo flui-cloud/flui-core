@@ -627,14 +627,167 @@ describe('WireGuardPeerService', () => {
   });
 });
 
+describe('WireGuardPeerService temporary direct links', () => {
+  let peers: FakePeers;
+  let links: { rows: any[]; find: jest.Mock };
+  let svc: WireGuardPeerService;
+
+  const matchesLink = (row: any, where: any) =>
+    Object.entries(where).every(([k, v]) => row[k] === v);
+
+  beforeEach(async () => {
+    delete process.env.FLUI_WG_POOL;
+    peers = new FakePeers();
+    links = {
+      rows: [],
+      find: jest.fn(async ({ where }: any) =>
+        links.rows.filter((r) =>
+          (Array.isArray(where) ? where : [where]).some((w: any) =>
+            matchesLink(r, w),
+          ),
+        ),
+      ),
+    };
+    svc = new WireGuardPeerService(
+      peers as any,
+      { find: async () => [] } as any,
+      links as any,
+    );
+    await svc.ensureControlPeer({
+      clusterId: 'ctl',
+      publicKey: KEY_A,
+      endpointHost: '1.2.3.4',
+    });
+    await svc.enrolMember({
+      clusterId: 'src',
+      nodeId: 'a1',
+      publicKey: KEY_B,
+      endpointHost: '9.9.9.9',
+    });
+    await svc.enrolMember({
+      clusterId: 'dst',
+      nodeId: 'b1',
+      publicKey: KEY_C,
+      endpointHost: '8.8.8.8',
+    });
+  });
+
+  const link = (over: Record<string, unknown> = {}) => ({
+    id: 'l1',
+    ownerId: 'o1',
+    purpose: 'db-replication',
+    listenerNodeId: 'a1',
+    listenerClusterId: 'src',
+    dialerNodeId: 'b1',
+    dialerClusterId: 'dst',
+    listenPort: 51821,
+    serviceTcpPort: 15432,
+    state: 'open',
+    ...over,
+  });
+
+  it('makes the listener listen and admit the dialer as its /32 only', async () => {
+    links.rows.push(link());
+    const cfg = await svc.renderMemberConfig('a1');
+    expect(cfg).toContain('ListenPort = 51821');
+    expect(cfg).toContain(`PublicKey = ${KEY_C}`);
+    expect(cfg).toContain('AllowedIPs = 10.250.0.3/32');
+    expect(cfg).not.toContain('Endpoint = 8.8.8.8');
+  });
+
+  it('makes the dialer reach the listener at its public address and keep it alive', async () => {
+    links.rows.push(link());
+    const cfg = await svc.renderMemberConfig('b1');
+    expect(cfg).not.toContain('ListenPort');
+    expect(cfg).toContain(`PublicKey = ${KEY_B}`);
+    expect(cfg).toContain('AllowedIPs = 10.250.0.2/32');
+    expect(cfg).toContain('Endpoint = 9.9.9.9:51821');
+    expect(cfg.match(/PersistentKeepalive = 25/g)).toHaveLength(2);
+  });
+
+  it.each(['closing', 'closed'])(
+    'leaves a %s link out of both configs',
+    async (state) => {
+      links.rows.push(link({ state }));
+      const a = await svc.renderMemberConfig('a1');
+      const b = await svc.renderMemberConfig('b1');
+      expect(a).not.toContain(KEY_C);
+      expect(a).not.toContain('ListenPort');
+      expect(b).not.toContain(KEY_B);
+    },
+  );
+
+  it('skips a link whose other side has no key yet', async () => {
+    await svc.reserveAddress({ clusterId: 'dst', nodeId: 'b2' });
+    links.rows.push(link({ dialerNodeId: 'b2' }));
+    const cfg = await svc.renderMemberConfig('a1');
+    expect(cfg).not.toContain('ListenPort');
+    expect(cfg.match(/\[Peer\]/g)).toHaveLength(1);
+  });
+
+  it('renders one peer when two links join the same pair of nodes', async () => {
+    links.rows.push(link(), link({ id: 'l2', ownerId: 'o2' }));
+    const cfg = await svc.renderMemberConfig('a1');
+    expect(cfg.match(/AllowedIPs = 10\.250\.0\.3\/32/g)).toHaveLength(1);
+  });
+
+  it('skips a link between two nodes that are already mesh peers', async () => {
+    const meshSvc = new WireGuardPeerService(
+      peers as any,
+      {
+        find: async () => [
+          {
+            id: 'v1',
+            name: 'byos-net',
+            provider: 'byos',
+            ipRange: '10.200.0.0/16',
+            implementation: 'wireguard',
+            subnets: [{ id: 'sub-a', ipRange: '10.200.1.0/24' }],
+          },
+        ],
+      } as any,
+      links as any,
+    );
+    await meshSvc.enrolMember({
+      clusterId: 'm',
+      nodeId: 'm1',
+      publicKey: 'AvBhnd7fb29eBhWasocwevAQqcGRZI73vxFfmQuQQHk=',
+      subnetId: 'sub-a',
+      endpointHost: '7.7.7.1',
+    });
+    await meshSvc.enrolMember({
+      clusterId: 'm',
+      nodeId: 'm2',
+      publicKey: 'dn6AAMysAuBbdIb5K8TalVa4xswkPEgslByjFtfT0qg=',
+      subnetId: 'sub-a',
+      endpointHost: '7.7.7.2',
+    });
+    links.rows.push(link({ listenerNodeId: 'm1', dialerNodeId: 'm2' }));
+    const cfg = await meshSvc.renderMeshConfig('m1');
+    expect(cfg.match(/AllowedIPs = 10\.200\.1\.2\/32/g)).toHaveLength(1);
+  });
+
+  it('never tells the control about a link', async () => {
+    links.rows.push(link());
+    const cfg = (await svc.renderControlConfig()) as string;
+    expect(cfg.match(/\[Peer\]/g)).toHaveLength(2);
+    expect(cfg).toContain('AllowedIPs = 10.250.0.2/32');
+    expect(cfg).toContain('AllowedIPs = 10.250.0.3/32');
+    expect(cfg).not.toContain('Endpoint');
+  });
+});
+
 describe('where members dial the control', () => {
-  it('uses the installation name, so a rebuilt control is found again', () => {
+  // The API name resolves to the control's master and its worker, but the hub
+  // listens on the master only, so a member that picked the worker loses its
+  // tunnel.
+  it('dials the hub address, not the API name every traffic node answers to', () => {
     expect(
       controlEndpoint(
         { endpointHost: '5.6.7.8', listenPort: 51821 },
         { API_BASE_URL: 'https://api.example.org' },
       ),
-    ).toBe('api.example.org:51821');
+    ).toBe('5.6.7.8:51821');
   });
 
   it('keeps the address where the name only spells one', () => {

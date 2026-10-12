@@ -2,6 +2,8 @@ import { Module } from '@nestjs/common';
 import { BullModule } from '@nestjs/bull';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { WireGuardPeerEntity } from './entities/wireguard-peer.entity';
+import { WireGuardLinkEntity } from './entities/wireguard-link.entity';
+import { WireGuardLinkService } from './services/wireguard-link.service';
 import { VNetEntity } from '../vnets/entities/vnet.entity';
 import { WireGuardPeerService } from './services/wireguard-peer.service';
 import { WireGuardReconciler } from './services/wireguard-reconciler.service';
@@ -31,6 +33,7 @@ import { EncryptionModule } from '../../shared/encryption/encryption.module';
   imports: [
     TypeOrmModule.forFeature([
       WireGuardPeerEntity,
+      WireGuardLinkEntity,
       VNetEntity,
       ClusterEntity,
       ClusterNodeEntity,
@@ -60,6 +63,7 @@ import { EncryptionModule } from '../../shared/encryption/encryption.module';
     WireGuardReconciler,
     WireGuardReconciliationScheduler,
     ApiServerSanService,
+    WireGuardLinkService,
   ],
   exports: [
     ManagementNetworkService,
@@ -67,6 +71,7 @@ import { EncryptionModule } from '../../shared/encryption/encryption.module';
     WireGuardHubService,
     WireGuardReconciler,
     ApiServerSanService,
+    WireGuardLinkService,
   ],
 })
 export class NetworkingModule {}

@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { In, Repository } from 'typeorm';
@@ -10,6 +10,7 @@ import {
 import { WireGuardReconciler } from '../services/wireguard-reconciler.service';
 import { WireGuardHubService } from '../services/wireguard-hub.service';
 import { FluiNetworkBellService } from '../services/flui-network-bell.service';
+import { WireGuardLinkService } from '../services/wireguard-link.service';
 import { managementNetworkOn } from '../management-network.state';
 
 /**
@@ -37,6 +38,7 @@ export class WireGuardReconciliationScheduler {
     private readonly reconciler: WireGuardReconciler,
     private readonly hub: WireGuardHubService,
     private readonly bell: FluiNetworkBellService,
+    @Optional() private readonly links?: WireGuardLinkService,
   ) {}
 
   @Cron(process.env.FLUI_WG_RECONCILE_CRON || CronExpression.EVERY_10_MINUTES)
@@ -76,37 +78,11 @@ export class WireGuardReconciliationScheduler {
     // logged and the pass continues — the workload loop below refuses on its
     // own when the control has no key, and one unreachable control should not
     // also cost the diagnostics the rest of the pass produces.
-    let quiet = new Set<string>();
-    try {
-      const control = await this.hub.ensureControlEnd();
-      if (control) {
-        const wentQuiet = control.transitions.filter(
-          (t) => t.kind === 'went-quiet',
-        );
-        quiet = new Set(wentQuiet.map((t) => t.peer.clusterId));
-        for (const t of wentQuiet) {
-          this.logger.warn(
-            `[wg-reconcile] ${t.peer.managementIp} (cluster ${t.peer.clusterId}) went quiet — repairing it first`,
-          );
-        }
-        await this.bell.ring(control.transitions);
-      }
-      if (!control) {
-        this.logger.warn(
-          `[wg-reconcile] the control cluster has no end of the overlay — ` +
-            `members cannot enrol until it does`,
-        );
-      } else if (!control.applied) {
-        this.logger.warn(
-          `[wg-reconcile] control peer recorded at ${control.address} but its ` +
-            `config was not applied`,
-        );
-      }
-    } catch (err: any) {
-      this.logger.error(
-        `[wg-reconcile] control end failed: ${err?.message ?? err}`,
-      );
-    }
+    const quiet = await this.reconcileControlEnd();
+
+    // Before the clusters, so a link whose node left is out of the configs
+    // this same pass writes.
+    if (this.links) await this.sweepLinks(this.links);
 
     const clusters = await this.clusters.find({
       where: {
@@ -145,6 +121,57 @@ export class WireGuardReconciliationScheduler {
           `[wg-reconcile] ${cluster.name} failed: ${err?.message ?? err}`,
         );
       }
+    }
+  }
+
+  /** The clusters whose tunnel went quiet in this pass, repaired first. */
+  private async reconcileControlEnd(): Promise<Set<string>> {
+    let quiet = new Set<string>();
+    try {
+      const control = await this.hub.ensureControlEnd();
+      if (control) {
+        const wentQuiet = control.transitions.filter(
+          (t) => t.kind === 'went-quiet',
+        );
+        quiet = new Set(wentQuiet.map((t) => t.peer.clusterId));
+        for (const t of wentQuiet) {
+          this.logger.warn(
+            `[wg-reconcile] ${t.peer.managementIp} (cluster ${t.peer.clusterId}) went quiet — repairing it first`,
+          );
+        }
+        await this.bell.ring(control.transitions);
+      }
+      if (!control) {
+        this.logger.warn(
+          `[wg-reconcile] the control cluster has no end of the overlay — ` +
+            `members cannot enrol until it does`,
+        );
+      } else if (!control.applied) {
+        this.logger.warn(
+          `[wg-reconcile] control peer recorded at ${control.address} but its ` +
+            `config was not applied`,
+        );
+      }
+    } catch (err: any) {
+      this.logger.error(
+        `[wg-reconcile] control end failed: ${err?.message ?? err}`,
+      );
+    }
+    return quiet;
+  }
+
+  private async sweepLinks(links: WireGuardLinkService): Promise<void> {
+    try {
+      const swept = await links.sweep();
+      if (swept.closed || swept.pending) {
+        this.logger.log(
+          `[wg-reconcile] temporary links: ${swept.closed} closed, ${swept.pending} still closing`,
+        );
+      }
+    } catch (err: any) {
+      this.logger.error(
+        `[wg-reconcile] temporary links sweep failed: ${err?.message ?? err}`,
+      );
     }
   }
 }

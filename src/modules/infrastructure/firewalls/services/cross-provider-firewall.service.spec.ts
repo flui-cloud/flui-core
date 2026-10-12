@@ -13,6 +13,7 @@ import {
 } from '../../clusters/entities/cluster.entity';
 import { ClusterFirewallEntity } from '../entities/cluster-firewall.entity';
 import { FirewallRuleDto } from '../../../providers/dto/firewall.dto';
+import { WireGuardLinkEntity } from '../../networking/entities/wireguard-link.entity';
 
 const BASE_RULES: FirewallRuleDto[] = [
   {
@@ -83,8 +84,10 @@ describe('CrossProviderFirewallService', () => {
   let list: jest.Mock;
   let apply: jest.Mock;
   let clusterFind: jest.Mock;
+  let linkRows: any[];
 
   beforeEach(async () => {
+    linkRows = [];
     list = jest.fn();
     apply = jest.fn().mockResolvedValue({});
     // The control is resolved from the cluster repository (a BYOS control owns
@@ -138,6 +141,16 @@ describe('CrossProviderFirewallService', () => {
           provide: EncryptionService,
           useValue: { decrypt: (v: string) => v.replace(/^enc:/, '') },
         },
+        {
+          provide: getRepositoryToken(WireGuardLinkEntity),
+          useValue: {
+            find: jest.fn(async ({ where }: any) =>
+              linkRows.filter((r) =>
+                Object.entries(where).every(([k, v]) => r[k] === v),
+              ),
+            ),
+          },
+        },
       ],
     }).compile();
     service = mod.get(CrossProviderFirewallService);
@@ -157,6 +170,31 @@ describe('CrossProviderFirewallService', () => {
     list.mockResolvedValue([firewall('fw-w', w)]);
     await service.reconcileAllPeers();
     expect(apply).not.toHaveBeenCalled();
+  });
+
+  // flui-api can run on the control's worker, and a 6443 rule naming only
+  // the master leaves the API unable to reach the workload.
+  it('admits every control node on 6443, since the API can run on any of them', async () => {
+    const workload = cluster({
+      id: 'w',
+      provider: 'byos',
+      clusterType: ClusterType.WORKLOAD,
+      nodes: [{ ipAddress: '1.2.3.4' }] as any,
+    });
+    list.mockResolvedValue([
+      firewall('fw-ctl', {
+        ...control(),
+        nodes: [{ ipAddress: '5.6.7.8' }, { ipAddress: '9.9.9.9' }] as any,
+      } as ClusterEntity),
+      firewall('fw-w', workload),
+    ]);
+
+    await service.reconcileAllPeers();
+
+    const api = peerOf(rulesFor('fw-w')).find(
+      (r) => r.description === 'flui:xprovider:apiserver',
+    );
+    expect(api?.sourceIps).toEqual(['5.6.7.8/32', '9.9.9.9/32']);
   });
 
   it('adds a 6443→master public IP rule on a cross-provider workload, preserving base rules', async () => {
@@ -759,6 +797,122 @@ describe('CrossProviderFirewallService', () => {
       expect(
         rulesFor('fw-w').some(
           (r) => r.description === 'flui:xprovider:ssh-via-control',
+        ),
+      ).toBe(false);
+    });
+  });
+
+  describe('temporary direct links', () => {
+    const overlayWorkload = () => {
+      const w = cluster({
+        id: 'w',
+        provider: 'ovh',
+        clusterType: ClusterType.WORKLOAD,
+        nodes: [{ id: 'n1', nodeType: 'master', ipAddress: '1.2.3.4' }] as any,
+      });
+      (w as any).kubeconfigEncrypted = 'enc:server: https://10.250.0.2:6443';
+      return w;
+    };
+    const link = (over: Record<string, unknown> = {}) => ({
+      id: 'abcdef12-0000-0000-0000-000000000000',
+      listenerClusterId: 'w',
+      dialerClusterId: 'other',
+      listenPort: 51821,
+      dialerEgressIp: '8.8.8.8',
+      state: 'open',
+      ...over,
+    });
+
+    beforeEach(() => {
+      process.env.FLUI_WG_ENABLED = 'true';
+      wgNodeOverlay.mockResolvedValue({
+        nodeAddress: '10.250.0.2',
+        enrolled: true,
+      });
+    });
+
+    it('opens the link port on the listener to the dialer only, even when its API server is on the overlay', async () => {
+      linkRows.push(link());
+      list.mockResolvedValue([
+        firewall('fw-ctl', control()),
+        firewall('fw-w', overlayWorkload()),
+      ]);
+
+      await service.reconcileAllPeers();
+
+      expect(peerOf(rulesFor('fw-w'))).toEqual([
+        {
+          description: 'flui:xprovider:wg-link:abcdef12',
+          direction: 'in',
+          protocol: 'udp',
+          port: '51821',
+          sourceIps: ['8.8.8.8/32'],
+        },
+      ]);
+      expect(
+        peerOf(rulesFor('fw-ctl')).some((r) =>
+          r.description?.includes('wg-link'),
+        ),
+      ).toBe(false);
+    });
+
+    it('drops the rule once the link is closing', async () => {
+      linkRows.push(link({ state: 'closing' }));
+      list.mockResolvedValue([
+        firewall('fw-ctl', control()),
+        firewall('fw-w', overlayWorkload()),
+      ]);
+
+      await service.reconcileAllPeers();
+
+      expect(peerOf(rulesFor('fw-w'))).toEqual([]);
+    });
+
+    it('is not kept alive by a saved copy of the rule', async () => {
+      const fw = firewall('fw-w', overlayWorkload());
+      fw.desiredRules = [
+        ...BASE_RULES,
+        {
+          description: 'flui:xprovider:wg-link:abcdef12',
+          direction: 'in',
+          protocol: 'udp',
+          port: '51821',
+          sourceIps: ['8.8.8.8/32'],
+        },
+      ];
+      list.mockResolvedValue([firewall('fw-ctl', control()), fw]);
+
+      await service.reconcileAllPeers();
+
+      expect(peerOf(rulesFor('fw-w'))).toEqual([]);
+    });
+
+    it('admits a link on the listener cluster alone, at once', async () => {
+      linkRows.push(link());
+      list.mockResolvedValue([
+        firewall('fw-ctl', control()),
+        firewall('fw-w', overlayWorkload()),
+      ]);
+
+      await service.admitLinks('w');
+
+      expect(apply).toHaveBeenCalledTimes(1);
+      expect(peerOf(rulesFor('fw-w'))).toHaveLength(1);
+    });
+
+    it('opens nothing while the Flui network is off', async () => {
+      process.env.FLUI_WG_ENABLED = 'false';
+      linkRows.push(link());
+      list.mockResolvedValue([
+        firewall('fw-ctl', control()),
+        firewall('fw-w', overlayWorkload()),
+      ]);
+
+      await service.reconcileAllPeers();
+
+      expect(
+        peerOf(rulesFor('fw-w')).some((r) =>
+          r.description?.includes('wg-link'),
         ),
       ).toBe(false);
     });

@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { In, Repository } from 'typeorm';
 import {
@@ -13,6 +13,10 @@ import {
   WireGuardPeerRole,
   WireGuardPeerStatus,
 } from '../../networking/entities/wireguard-peer.entity';
+import {
+  WireGuardLinkEntity,
+  WireGuardLinkState,
+} from '../../networking/entities/wireguard-link.entity';
 import { SSH_VIA_CONTROL_RULE } from '../../../providers/core/firewall/nftables-ruleset';
 import { ClusterFirewallEntity } from '../entities/cluster-firewall.entity';
 import { ManagementAddressResolver } from '../../shared/services/management-address.resolver';
@@ -69,6 +73,9 @@ export class CrossProviderFirewallService {
     private readonly managementAddress: ManagementAddressResolver,
     private readonly wgPeers: WireGuardPeerService,
     private readonly encryption: EncryptionService,
+    @Optional()
+    @InjectRepository(WireGuardLinkEntity)
+    private readonly wgLinks?: Repository<WireGuardLinkEntity>,
   ) {}
 
   async reconcileAllPeers(): Promise<void> {
@@ -139,6 +146,24 @@ export class CrossProviderFirewallService {
     );
     if (!fw) return;
     const sources = await this.overlaySources(clusterId ? [clusterId] : []);
+    await this.reconcileFirewallPeers(fw, control, [], sources);
+  }
+
+  /**
+   * Re-derives the firewall of the cluster that listens for a temporary link,
+   * right away, when a link opens or closes. Throws, so the link can tell why
+   * its port is not open.
+   */
+  async admitLinks(clusterId: string): Promise<void> {
+    if (!this.overlayEnabled()) return;
+    const control = await this.resolveControlCluster();
+    if (!control) return;
+    const fw = (await this.desiredState.listFirewalls()).find(
+      (f) => f.cluster?.id === clusterId,
+    );
+    if (!fw) return;
+    const sources =
+      fw.cluster.id === control.id ? await this.overlaySources() : [];
     await this.reconcileFirewallPeers(fw, control, [], sources);
   }
 
@@ -217,6 +242,7 @@ export class CrossProviderFirewallService {
     );
     const sshViaControl = await this.sshViaControlRule(cluster, control);
     if (sshViaControl) peerRules.push(sshViaControl);
+    peerRules.push(...(await this.linkRules(cluster.id)));
     const baseRules = await this.baseRulesKeepingSsh(
       fw,
       Boolean(sshViaControl),
@@ -258,6 +284,31 @@ export class CrossProviderFirewallService {
     return own.some(isPublicSsh) ? own : [...suspended, ...own];
   }
 
+  private controlPeerRules(
+    crossWorkloadNodeIps: string[],
+    wgEgressIps: string[],
+  ): FirewallRuleDto[] {
+    const rules: FirewallRuleDto[] = [];
+    const listen = this.wgListenRule(wgEgressIps);
+    if (listen) rules.push(listen);
+    // Unauthenticated ingest stays vnet-only unless explicitly opted in.
+    if (!this.publicObsIngestEnabled()) return rules;
+    if (crossWorkloadNodeIps.length === 0) return rules;
+    const ports = this.obsIngestNodePorts();
+    if (ports.length === 0) return rules;
+    const sourceIps = crossWorkloadNodeIps.map((ip) => `${ip}/32`);
+    return [
+      ...rules,
+      ...ports.map((port) => ({
+        description: `${PEER_RULE_PREFIX}obs-ingest-${port}`,
+        direction: 'in' as const,
+        protocol: 'tcp' as const,
+        port,
+        sourceIps,
+      })),
+    ];
+  }
+
   private computePeerRules(
     cluster: ClusterEntity,
     control: ClusterEntity,
@@ -266,25 +317,7 @@ export class CrossProviderFirewallService {
     nodeOverlay?: { nodeAddress: string; enrolled: boolean },
   ): FirewallRuleDto[] {
     if (isControlClusterType(cluster.clusterType)) {
-      const rules: FirewallRuleDto[] = [];
-      const listen = this.wgListenRule(wgEgressIps);
-      if (listen) rules.push(listen);
-      // Unauthenticated ingest stays vnet-only unless explicitly opted in.
-      if (!this.publicObsIngestEnabled()) return rules;
-      if (crossWorkloadNodeIps.length === 0) return rules;
-      const ports = this.obsIngestNodePorts();
-      if (ports.length === 0) return rules;
-      const sourceIps = crossWorkloadNodeIps.map((ip) => `${ip}/32`);
-      return [
-        ...rules,
-        ...ports.map((port) => ({
-          description: `${PEER_RULE_PREFIX}obs-ingest-${port}`,
-          direction: 'in' as const,
-          protocol: 'tcp' as const,
-          port,
-          sourceIps,
-        })),
-      ];
+      return this.controlPeerRules(crossWorkloadNodeIps, wgEgressIps);
     }
 
     // Workload: the rule follows the kubeconfig, never a parallel predicate,
@@ -328,13 +361,23 @@ export class CrossProviderFirewallService {
 
     const controlIp = this.managementAddress.publicAddressOf(control);
     if (!controlIp) return [];
+    // The API can run on any control node, so any of them is where the call
+    // to this API server comes from — the same set the SSH rule admits.
+    const sources = [
+      ...new Set([
+        controlIp,
+        ...FirewallReconciliationService.controlEgressIps(control),
+      ]),
+    ];
     return [
       {
         description: `${PEER_RULE_PREFIX}apiserver`,
         direction: 'in',
         protocol: 'tcp',
         port: API_SERVER_PORT,
-        sourceIps: [`${controlIp}/32`],
+        sourceIps: sources.map((ip) =>
+          ip.includes(':') ? `${ip}/128` : `${ip}/32`,
+        ),
       },
     ];
   }
@@ -353,6 +396,32 @@ export class CrossProviderFirewallService {
       port: String(this.wgPort()),
       sourceIps: sources,
     };
+  }
+
+  /**
+   * One inbound UDP rule per open temporary link this cluster listens for,
+   * from the dialer's address only. Outside `computePeerRules` on purpose: a
+   * workload whose API server is on the overlay gets no peer rule there, and a
+   * link is needed exactly then. Re-derived every pass, so a closed link loses
+   * its rule even if a saved copy says otherwise.
+   */
+  private async linkRules(clusterId: string): Promise<FirewallRuleDto[]> {
+    if (!this.wgLinks || !this.overlayEnabled()) return [];
+    const open = await this.wgLinks.find({
+      where: { listenerClusterId: clusterId, state: WireGuardLinkState.OPEN },
+    });
+    return open
+      .filter((l) => !!l.dialerEgressIp?.trim())
+      .map((l) => {
+        const ip = (l.dialerEgressIp as string).trim();
+        return {
+          description: `${PEER_RULE_PREFIX}wg-link:${l.id.slice(0, 8)}`,
+          direction: 'in' as const,
+          protocol: 'udp' as const,
+          port: String(l.listenPort),
+          sourceIps: [ip.includes(':') ? `${ip}/128` : `${ip}/32`],
+        };
+      });
   }
 
   /**
@@ -409,7 +478,7 @@ export class CrossProviderFirewallService {
 
   private trim(value: string | null | undefined): string | undefined {
     const t = value?.trim();
-    return t ? t : undefined;
+    return t || undefined;
   }
 
   private isPeerRule(rule: FirewallRuleDto): boolean {

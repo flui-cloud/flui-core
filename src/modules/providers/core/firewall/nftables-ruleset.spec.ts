@@ -357,6 +357,22 @@ describe('the Flui WireGuard overlay', () => {
     );
   });
 
+  it('clamps the MSS of connections leaving through the overlay, in forward', () => {
+    // Pod traffic arrives at 1450 (VXLAN) and leaves through flui0 at 1420; a
+    // base backup otherwise stalls on the first full-size segment.
+    const text = render();
+    const forward = text.slice(
+      text.indexOf('chain forward'),
+      text.indexOf('chain output'),
+    );
+    const clamp =
+      'oifname "flui0" tcp flags syn tcp option maxseg size set rt mtu';
+    expect(forward).toContain(clamp);
+    expect(lineOf(forward, clamp)).toBeLessThan(
+      lineOf(forward, 'no peer-to-peer transit'),
+    );
+  });
+
   it('leaves the forward chain accepting, because k3s needs it', () => {
     expect(render()).toContain(
       'type filter hook forward priority 0; policy accept;',
@@ -378,6 +394,7 @@ describe('the Flui WireGuard overlay', () => {
     );
     expect(plain).not.toContain('flui0');
     expect(plain).not.toContain('no peer-to-peer transit');
+    expect(plain).not.toContain('maxseg');
   });
 
   it('ignores a nonsensical port rather than rendering it', () => {

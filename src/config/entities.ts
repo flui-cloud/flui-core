@@ -24,6 +24,7 @@ import { GithubUserTokenEntity } from '../modules/repositories/entities/github-u
 import { GithubAppManifestStateEntity } from '../modules/repositories/entities/github-app-manifest-state.entity';
 import { ClusterFirewallEntity } from '../modules/infrastructure/firewalls/entities/cluster-firewall.entity';
 import { WireGuardPeerEntity } from '../modules/infrastructure/networking/entities/wireguard-peer.entity';
+import { WireGuardLinkEntity } from '../modules/infrastructure/networking/entities/wireguard-link.entity';
 import { FirewallEntity } from '../modules/infrastructure/firewalls/entities/firewall.entity';
 import { VNetEntity } from '../modules/infrastructure/vnets/entities/vnet.entity';
 import { VNetSubnetEntity } from '../modules/infrastructure/vnets/entities/vnet-subnet.entity';
@@ -170,6 +171,7 @@ export const entities = [
   ApplicationServiceEntity,
   InfrastructureOperationLogEntity,
   WireGuardPeerEntity,
+  WireGuardLinkEntity,
   DeferredActionEntity,
   RegistryCredentialEntity,
   RegistrySigningKeyEntity,

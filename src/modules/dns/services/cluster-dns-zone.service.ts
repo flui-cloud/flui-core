@@ -448,7 +448,7 @@ export class ClusterDnsZoneService implements OnApplicationBootstrap {
    * first, falling back to the email an existing ClusterIssuer already
    * registered with. Returns null when the cluster has never been given one.
    */
-  private async resolveAcmeEmail(clusterId: string): Promise<string | null> {
+  async resolveAcmeEmail(clusterId: string): Promise<string | null> {
     const assignments = await this.getZonesForCluster(clusterId);
     const fromAssignment = assignments.find((a) => a.acmeEmail)?.acmeEmail;
     if (fromAssignment) return fromAssignment;

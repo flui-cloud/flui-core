@@ -23,11 +23,13 @@ describe('WireGuardReconciliationScheduler', () => {
   ) => {
     reconcileCluster.mockResolvedValue(ok);
     const revokeOrphanPeers = jest.fn().mockResolvedValue(0);
+    const sweep = jest.fn().mockResolvedValue({ closed: 0, pending: 0 });
     const scheduler = new WireGuardReconciliationScheduler(
       { find: jest.fn().mockResolvedValue(clusters) } as any,
       { reconcileCluster } as any,
       { ensureControlEnd, revokeOrphanPeers } as any,
       { ring } as any,
+      { sweep } as any,
     );
     return {
       scheduler,
@@ -35,6 +37,7 @@ describe('WireGuardReconciliationScheduler', () => {
       ensureControlEnd,
       revokeOrphanPeers,
       ring,
+      sweep,
     };
   };
 
@@ -47,6 +50,34 @@ describe('WireGuardReconciliationScheduler', () => {
     const { scheduler, reconcileCluster } = build([{ id: 'c1', name: 'a' }]);
     await scheduler.tick();
     expect(reconcileCluster).not.toHaveBeenCalled();
+  });
+
+  it('sweeps temporary links before the clusters are reconciled', async () => {
+    process.env.FLUI_WG_ENABLED = 'true';
+    const order: string[] = [];
+    const { scheduler, reconcileCluster, sweep } = build([
+      { id: 'c1', name: 'a' },
+    ]);
+    sweep.mockImplementation(async () => {
+      order.push('sweep');
+      return { closed: 0, pending: 0 };
+    });
+    reconcileCluster.mockImplementation(async () => {
+      order.push('reconcile');
+      return ok;
+    });
+    await scheduler.tick();
+    expect(order).toEqual(['sweep', 'reconcile']);
+  });
+
+  it('keeps reconciling when the link sweep fails', async () => {
+    process.env.FLUI_WG_ENABLED = 'true';
+    const { scheduler, reconcileCluster, sweep } = build([
+      { id: 'c1', name: 'a' },
+    ]);
+    sweep.mockRejectedValue(new Error('db down'));
+    await scheduler.tick();
+    expect(reconcileCluster).toHaveBeenCalledTimes(1);
   });
 
   it('reconciles every ready workload cluster once enabled', async () => {
