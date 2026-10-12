@@ -120,8 +120,13 @@ describe('every console controller carries the fence, ahead of ownership', () =>
       .map((s) => s.trim())
       .filter(Boolean);
     expect(listed).toContain('PlatformFoundationGuard');
+    // The sessions routes ask the ordinary application guard, per route verb.
+    const ownership = ['AppOwnershipGuard', 'AppAccessGuard'].find((g) =>
+      listed.includes(g),
+    );
+    expect(ownership).toBeDefined();
     expect(listed.indexOf('PlatformFoundationGuard')).toBeLessThan(
-      listed.indexOf('AppOwnershipGuard'),
+      listed.indexOf(ownership as string),
     );
   });
 

@@ -35,6 +35,7 @@ export const APP_TAB = {
   SNAPSHOTS: 'snapshots',
   SCHEDULES: 'schedules',
   GATEWAY: 'gateway',
+  SESSIONS: 'sessions',
 } as const;
 
 export type AppTabKey = (typeof APP_TAB)[keyof typeof APP_TAB];
@@ -55,6 +56,9 @@ export const APP_TAB_PERMISSION: Record<AppTabKey, IamPermission> = {
   [APP_TAB.SNAPSHOTS]: IAM_PERMISSION.APP_WRITE,
   [APP_TAB.SCHEDULES]: IAM_PERMISSION.APP_WRITE,
   [APP_TAB.GATEWAY]: IAM_PERMISSION.APP_WRITE,
+  // Who is connected and the masked shape of what they run: a read of the
+  // database's activity. Cancelling or closing a session asks app:write at the API.
+  [APP_TAB.SESSIONS]: IAM_PERMISSION.APP_READ,
 };
 
 /** Tabs that render the application's own data, and so also need `data:access`. */
@@ -66,6 +70,7 @@ export const APP_TAB_SHOWS_DATA: ReadonlySet<AppTabKey> = new Set([
   APP_TAB.SNAPSHOTS,
   APP_TAB.SCHEDULES,
   APP_TAB.GATEWAY,
+  APP_TAB.SESSIONS,
 ]);
 
 /** Data tabs an application in the showcase opens without `data:access` — the reads `@OpenOnShowcase()` marks. */

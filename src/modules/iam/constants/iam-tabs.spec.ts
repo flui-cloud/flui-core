@@ -36,4 +36,16 @@ describe('the tabs an application opens', () => {
       expect(tabs).not.toContain(tab);
     }
   });
+
+  it('opens the sessions of a database to a reader holding data:access, and only then', () => {
+    expect(tabsForPermissions(reader)).not.toContain(APP_TAB.SESSIONS);
+    expect(tabsForPermissions(reader, { showcase: true })).not.toContain(
+      APP_TAB.SESSIONS,
+    );
+    expect(
+      tabsForPermissions(
+        new Set([IAM_PERMISSION.APP_READ, IAM_PERMISSION.DATA_ACCESS]),
+      ),
+    ).toContain(APP_TAB.SESSIONS);
+  });
 });

@@ -17,6 +17,8 @@ import { DbBackupController } from '../database-console/controllers/db-backup.co
 import { DbConsoleController } from '../database-console/controllers/db-console.controller';
 import { DbDiskController } from '../database-console/controllers/db-disk.controller';
 import { DbPitrController } from '../database-console/controllers/db-pitr.controller';
+import { DbSessionsController } from '../database-console/controllers/db-sessions.controller';
+import { DbPoolerClientsController } from '../database-console/controllers/db-pooler-clients.controller';
 import { DocumentConsoleController } from '../database-console/controllers/document-console.controller';
 import { FulltextConsoleController } from '../database-console/controllers/fulltext-console.controller';
 import { KafkaConsoleController } from '../database-console/controllers/kafka-console.controller';
@@ -88,6 +90,8 @@ const WHOLE_CONTROLLERS: Controller[] = [
   DbConsoleController,
   DbDiskController,
   DbPitrController,
+  DbSessionsController,
+  DbPoolerClientsController,
   DocumentConsoleController,
   FulltextConsoleController,
   KafkaConsoleController,

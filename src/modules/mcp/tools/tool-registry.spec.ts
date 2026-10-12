@@ -27,6 +27,7 @@ describe('toOpenAiTool', () => {
     expect(params.properties.options).toEqual({
       type: 'object',
       additionalProperties: { type: 'boolean' },
+      description: expect.any(String),
     });
   });
 

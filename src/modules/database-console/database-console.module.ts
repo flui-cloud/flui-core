@@ -83,6 +83,14 @@ import { DbBackupService } from './services/db-backup.service';
 import { DbDiskController } from './controllers/db-disk.controller';
 import { DbDiskService } from './services/db-disk.service';
 import { DbPitrController } from './controllers/db-pitr.controller';
+import { DbSessionsController } from './controllers/db-sessions.controller';
+import { DbPoolerClientsController } from './controllers/db-pooler-clients.controller';
+import { DbSessionsService } from './services/db-sessions.service';
+import { EncryptionModule } from '../shared/encryption/encryption.module';
+import {
+  DB_POOLER_VIEW_SOURCE,
+  PgbouncerAdminViewSource,
+} from './services/db-pooler-view.source';
 
 @Module({
   imports: [
@@ -97,6 +105,7 @@ import { DbPitrController } from './controllers/db-pitr.controller';
     // Logical DB backup → S3 destination: reuses backup-destinations (S3 creds) + storage backend.
     BackupsModule,
     StorageModule,
+    EncryptionModule,
   ],
   controllers: [
     DbConsoleController,
@@ -113,6 +122,8 @@ import { DbPitrController } from './controllers/db-pitr.controller';
     DbBackupController,
     DbDiskController,
     DbPitrController,
+    DbSessionsController,
+    DbPoolerClientsController,
     SystemDbController,
   ],
   providers: [
@@ -123,6 +134,8 @@ import { DbPitrController } from './controllers/db-pitr.controller';
     SystemDbAuditService,
     DbBackupService,
     DbDiskService,
+    DbSessionsService,
+    { provide: DB_POOLER_VIEW_SOURCE, useClass: PgbouncerAdminViewSource },
     KubePortForwardService,
     PostgresEngineAdapter,
     MariadbEngineAdapter,
