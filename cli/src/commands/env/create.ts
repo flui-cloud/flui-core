@@ -676,7 +676,6 @@ export default class EnvCreate extends Command {
           );
         }
       }
-      spinner = ora('Resuming...').start();
 
       // 3. Validate server type with multi-region fallback
       spinner = ora(
