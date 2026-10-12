@@ -8,6 +8,8 @@ export enum FullMigrationStatus {
   READY = 'ready',
   /** Joint cutover in flight. */
   CUTOVER = 'cutover',
+  /** Served from the destination; the app leg's bridge still forwards from the source. */
+  BRIDGING = 'bridging',
   COMPLETED = 'completed',
   /** Failure BEFORE the DB promote (point of no return) — rolled back. */
   FAILED = 'failed',
@@ -15,6 +17,14 @@ export enum FullMigrationStatus {
   FAILED_FORWARD = 'failed_forward',
   ABORTED = 'aborted',
 }
+
+/** States a delivered run picks up from; later ones belong to the cutover job. */
+export const RESUMABLE_RUN_STATES: FullMigrationStatus[] = [
+  FullMigrationStatus.PENDING,
+  FullMigrationStatus.DB_REPLICATING,
+  FullMigrationStatus.APP_STAGING,
+  FullMigrationStatus.READY,
+];
 
 export enum FullCutoverMode {
   AUTO = 'auto',

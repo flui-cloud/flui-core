@@ -2,6 +2,7 @@ import { Args, Command, Flags } from '@oclif/core';
 import chalk from 'chalk';
 import { MigrationClient } from '../../../lib/migration-client';
 import { printContextBanner } from '../../../lib/context-banner';
+import { bridgeRows } from '../../../lib/migration-bridge-view';
 
 export default class MigrateAppShow extends Command {
   static readonly description = 'Show an app-workload migration by id';
@@ -26,6 +27,15 @@ export default class MigrateAppShow extends Command {
       `   ${chalk.bold('Route:')}      ${m.srcClusterId} → ${m.targetClusterId}`,
     );
     this.log(`   ${chalk.bold('Cutover:')}    ${m.cutoverMode}`);
+    if (m.canResumeCutover) {
+      this.log(
+        `   ${chalk.bold('Resume:'.padEnd(12))}flui migrate app cutover ${m.id}`,
+      );
+    }
+    for (const [label, value] of bridgeRows(m.bridge)) {
+      const cell = label ? `${label}:` : '';
+      this.log(`   ${chalk.bold(cell.padEnd(12))}${value}`);
+    }
     if (m.errorMessage)
       this.log(`   ${chalk.bold('Error:')}      ${chalk.red(m.errorMessage)}`);
     if (m.createdAt) this.log(`   ${chalk.bold('Created:')}    ${m.createdAt}`);

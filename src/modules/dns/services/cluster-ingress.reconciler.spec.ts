@@ -21,6 +21,7 @@ function setup(opts: {
   metadata?: Record<string, unknown>;
   wildcard?: string[];
   endpointRecord?: string[];
+  heldBy?: string;
 }) {
   const cluster = {
     id: 'c1',
@@ -70,6 +71,7 @@ function setup(opts: {
             hostnameMode: HostnameMode.DOMAIN,
             dnsRecordId: 'shop.wc/A:x',
             dnsRecordType: DnsRecordType.A,
+            dnsHeldBy: opts.heldBy ?? null,
           },
         ],
       },
@@ -194,5 +196,23 @@ describe('moving a cluster’s names to the nodes that take traffic', () => {
     expect(outcome.state).toBe('unchanged');
     expect(provider.setRecordValues).not.toHaveBeenCalled();
     expect(clusters.update).not.toHaveBeenCalled();
+  });
+
+  it('does not pull in a name a migration still holds on the old cluster', async () => {
+    const { reconciler, provider } = setup({
+      states: [node('wc-master'), node('wc-worker-1')],
+      wildcard: [MASTER],
+      endpointRecord: ['203.0.113.9'],
+      heldBy: 'mig-1',
+    });
+
+    await reconciler.reconcile('c1');
+
+    expect(provider.setRecordValues).not.toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'shop.wc' }),
+    );
+    expect(provider.setRecordValues).toHaveBeenCalledWith(
+      expect.objectContaining({ name: '*.wc' }),
+    );
   });
 });

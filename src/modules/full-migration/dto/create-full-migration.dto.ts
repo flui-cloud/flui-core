@@ -1,5 +1,6 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsEnum, IsOptional, IsUUID } from 'class-validator';
+import { IsEnum, IsInt, IsOptional, IsUUID, Max, Min } from 'class-validator';
+import { Sensitivity } from '../../mask/decorators/sensitivity.decorator';
 import { FullCutoverMode, FullStagingMode } from '../enums/full-migration.enum';
 
 export class CreateFullMigrationDto {
@@ -41,4 +42,41 @@ export class CreateFullMigrationDto {
   @IsOptional()
   @IsEnum(FullStagingMode)
   stagingMode?: FullStagingMode;
+
+  @ApiPropertyOptional({
+    description:
+      'Backup destination the application volumes move through. Defaults to the one protecting the application, or to your only one.',
+  })
+  @IsOptional()
+  @IsUUID()
+  backupDestinationId?: string;
+
+  @ApiPropertyOptional({
+    minimum: 1,
+    maximum: 60,
+    default: 5,
+    description:
+      'With a pooled database: how long, in seconds, the cutover lets transactions in flight finish while both poolers hold new requests. A transaction still open then is cut and its client reconnects into the queue.',
+  })
+  @Sensitivity(Sensitivity.PUBLIC)
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(60)
+  pauseDeadlineSeconds?: number;
+}
+
+export class FullMigrationCutoverDto {
+  @ApiPropertyOptional({
+    minimum: 1,
+    maximum: 60,
+    description:
+      'With a pooled database: the pause deadline in seconds for this cutover, replacing the one given at create.',
+  })
+  @Sensitivity(Sensitivity.PUBLIC)
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(60)
+  pauseDeadlineSeconds?: number;
 }

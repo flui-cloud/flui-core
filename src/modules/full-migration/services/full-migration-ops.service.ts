@@ -45,12 +45,20 @@ export class FullMigrationOpsService {
     id: string,
     target: DbMigrationStatus,
     timeoutMs: number,
+    pollMs = POLL_INTERVAL_MS,
   ): Promise<void> {
     const deadline = Date.now() + timeoutMs;
     for (;;) {
       const child = await this.dbMigRepo.findOne({ where: { id } });
       if (!child) throw new Error(`DB migration ${id} vanished`);
       if (child.status === target) return;
+      if (
+        target === DbMigrationStatus.COMPLETED &&
+        child.status === DbMigrationStatus.SYNCED &&
+        child.errorMessage?.startsWith('Cutover failed before promote')
+      ) {
+        throw new Error(child.errorMessage);
+      }
       if (
         child.status === DbMigrationStatus.FAILED ||
         child.status === DbMigrationStatus.ABORTED
@@ -64,7 +72,7 @@ export class FullMigrationOpsService {
           `DB migration ${id} did not reach ${target} in time (last ${child.status})`,
         );
       }
-      await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
+      await new Promise((r) => setTimeout(r, pollMs));
     }
   }
 
@@ -93,6 +101,80 @@ export class FullMigrationOpsService {
       }
       await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
     }
+  }
+
+  /** Until the leg's bridge forwards, or the leg fell back to DNS only. */
+  async waitAppBridge(
+    id: string,
+    timeoutMs: number,
+    pollMs = 1_000,
+  ): Promise<'active' | 'dns-only'> {
+    const deadline = Date.now() + timeoutMs;
+    for (;;) {
+      const child = await this.appMigRepo.findOne({ where: { id } });
+      if (!child) throw new Error(`App migration ${id} vanished`);
+      if (
+        child.status === AppMigrationStatus.FAILED ||
+        child.status === AppMigrationStatus.ABORTED
+      ) {
+        throw new Error(
+          `App migration ${id} could not open the bridge: ${child.errorMessage ?? child.status}`,
+        );
+      }
+      if (
+        child.bridgeState?.state === 'active' &&
+        child.bridgeState.sourceRouteRemovedAt
+      ) {
+        return 'active';
+      }
+      if (child.bridgeState?.mode === 'dns-only') return 'dns-only';
+      if (Date.now() > deadline) {
+        throw new Error(
+          `App migration ${id} did not open the bridge in time (last ${child.status})`,
+        );
+      }
+      await new Promise((r) => setTimeout(r, pollMs));
+    }
+  }
+
+  /** Like waitApp, for a leg that may end in any of several states. */
+  async waitAppAny(
+    id: string,
+    targets: AppMigrationStatus[],
+    timeoutMs: number,
+  ): Promise<AppMigrationStatus> {
+    const deadline = Date.now() + timeoutMs;
+    for (;;) {
+      const child = await this.appMigRepo.findOne({ where: { id } });
+      if (!child) throw new Error(`App migration ${id} vanished`);
+      if (targets.includes(child.status)) return child.status;
+      if (
+        child.status === AppMigrationStatus.FAILED ||
+        child.status === AppMigrationStatus.ABORTED
+      ) {
+        throw new Error(
+          `App migration ${id} ended in ${child.status}: ${child.errorMessage ?? 'unknown'}`,
+        );
+      }
+      if (Date.now() > deadline) {
+        throw new Error(
+          `App migration ${id} did not reach ${targets.join(' or ')} in time (last ${child.status})`,
+        );
+      }
+      await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
+    }
+  }
+
+  /** The pause deadline chosen at create or at cutover, kept on the operation. */
+  async pauseDeadlineMs(fm: FullMigrationEntity): Promise<number | null> {
+    if (!fm.infrastructureOperationId) return null;
+    const op = await this.opRepo.findOne({
+      where: { id: fm.infrastructureOperationId },
+    });
+    const v = Number(
+      (op?.metadata as { pauseDeadlineMs?: unknown })?.pauseDeadlineMs,
+    );
+    return Number.isFinite(v) && v > 0 ? v : null;
   }
 
   async setState(

@@ -98,7 +98,7 @@ describe('an estimate points at a price, or it is not an estimate', () => {
   });
 
   /**
-   * Silence here is allowed, and for a stated reason: these fourteen declare a
+   * Silence here is allowed, and for a stated reason: these twelve declare a
    * sentence that already carries the effect — "delete application {id} for
    * good, **and the data it holds**", "abort migration {id}, **and tear down
    * the destination**". Adding a `consequence` beside those would be a second
@@ -131,8 +131,6 @@ describe('an estimate points at a price, or it is not an estimate', () => {
       'DELETE /full-migrations/:id',
       'DELETE /operating-context/:id',
       'PATCH /operating-context/:id',
-      'POST /app-migrations/:id/destroy-source',
-      'POST /full-migrations/:id/destroy-source',
       'POST /operating-context',
       'POST /operating-context/:id/confirm',
     ]);
@@ -238,7 +236,7 @@ describe('a consequence says what the code does', () => {
     const processor = sourceOf(
       'db-lifecycle',
       'processors',
-      'db-migration.processor.ts',
+      'db-migration.logical.ts',
     );
     expect(processor).toContain('if (mig.mode === DbMigrationMode.RESTORE)');
     expect(processor).toContain('await this.runRestoreMode(mig)');

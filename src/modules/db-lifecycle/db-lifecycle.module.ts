@@ -22,6 +22,18 @@ import { DbMigrationProcessor } from './processors/db-migration.processor';
 import { DbLifecycleController } from './controllers/db-lifecycle.controller';
 import { DbMigrationController } from './controllers/db-migration.controller';
 import { DB_LIFECYCLE_QUEUE } from './db-lifecycle.constants';
+import { NetworkingModule } from '../infrastructure/networking/networking.module';
+import { DbWriteFenceService } from './services/db-write-fence.service';
+import { DbPodPlacementService } from './services/db-pod-placement.service';
+import { DbOverlayTransportService } from './services/db-overlay-transport.service';
+import { DbPhysicalReplicationService } from './services/db-physical-replication.service';
+import { DbCredentialHandoffService } from './services/db-credential-handoff.service';
+import { DbMigrationRecoveryService } from './services/db-migration-recovery.service';
+import { DbMigrationViewService } from './services/db-migration-view.service';
+import { DbPoolerCutService } from './services/db-pooler-cut.service';
+import { PoolerPauseSweeper } from './services/pooler-pause.sweeper';
+import { WireGuardLinkEntity } from '../infrastructure/networking/entities/wireguard-link.entity';
+import { FullMigrationEntity } from '../full-migration/entities/full-migration.entity';
 
 @Module({
   imports: [
@@ -34,12 +46,15 @@ import { DB_LIFECYCLE_QUEUE } from './db-lifecycle.constants';
       InfrastructureOperationEntity,
       CatalogInstallEntity,
       UserEntity,
+      WireGuardLinkEntity,
+      FullMigrationEntity,
     ]),
     BullModule.registerQueue({ name: DB_LIFECYCLE_QUEUE }),
     SharedInfrastructureModule,
     EncryptionModule,
     CatalogModule,
     BackupsModule,
+    NetworkingModule,
   ],
   controllers: [DbLifecycleController, DbMigrationController],
   providers: [
@@ -49,7 +64,21 @@ import { DB_LIFECYCLE_QUEUE } from './db-lifecycle.constants';
     DbReplicationStatusService,
     DbMigrationService,
     DbMigrationProcessor,
+    DbWriteFenceService,
+    DbPodPlacementService,
+    DbOverlayTransportService,
+    DbPhysicalReplicationService,
+    DbCredentialHandoffService,
+    DbMigrationRecoveryService,
+    DbMigrationViewService,
+    DbPoolerCutService,
+    PoolerPauseSweeper,
   ],
-  exports: [DbReplicationService, DbMigrationService],
+  exports: [
+    DbReplicationService,
+    DbMigrationService,
+    DbMigrationViewService,
+    DbPoolerCutService,
+  ],
 })
 export class DbLifecycleModule {}

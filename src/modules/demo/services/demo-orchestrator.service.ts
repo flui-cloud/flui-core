@@ -240,7 +240,10 @@ export class DemoOrchestratorService {
       );
     }
 
-    if (fm.status === FullMigrationStatus.COMPLETED) {
+    if (
+      fm.status === FullMigrationStatus.COMPLETED ||
+      fm.status === FullMigrationStatus.BRIDGING
+    ) {
       await this.state.patch({
         state: DemoLoopState.DRAINING,
         currentClusterId: fm.targetClusterId,
@@ -283,7 +286,9 @@ export class DemoOrchestratorService {
     let cleanupOwed: string | null = null;
     if (cfg.activeFullMigrationId) {
       try {
-        await this.fullMig.destroySource(cfg.activeFullMigrationId);
+        await this.fullMig.destroySource(cfg.activeFullMigrationId, {
+          closeBridge: true,
+        });
       } catch (err: any) {
         this.logger.warn(
           `[demo] destroy-source failed: ${err?.message ?? err}`,
@@ -345,7 +350,9 @@ export class DemoOrchestratorService {
     const cfg = await this.state.get();
     if (!cfg.pendingCleanupMigrationId) return;
     try {
-      await this.fullMig.destroySource(cfg.pendingCleanupMigrationId);
+      await this.fullMig.destroySource(cfg.pendingCleanupMigrationId, {
+        closeBridge: true,
+      });
       await this.state.patch({ pendingCleanupMigrationId: null });
     } catch (err: any) {
       throw new Error(

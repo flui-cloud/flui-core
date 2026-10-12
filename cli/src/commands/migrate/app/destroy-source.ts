@@ -7,12 +7,17 @@ import { printContextBanner } from '../../../lib/context-banner';
 
 export default class MigrateAppDestroySource extends Command {
   static readonly description =
-    'Destroy the drained source workload after cutover (irreversible)';
+    'Close the bridge and destroy the source workload after cutover (irreversible)';
   static readonly args = {
     id: Args.string({ required: true, description: 'Migration id' }),
   };
   static readonly flags = {
     yes: Flags.boolean({ char: 'y', default: false }),
+    'close-bridge': Flags.boolean({
+      default: false,
+      description:
+        'Close an open bridge now, even if DNS answers cached before the switch may still point at the old cluster',
+    }),
   };
 
   async run(): Promise<void> {
@@ -21,7 +26,9 @@ export default class MigrateAppDestroySource extends Command {
     if (!flags.yes) {
       const ok = await confirmPrompt(
         chalk.yellow(
-          `Destroy the drained SOURCE workload for ${args.id}? This is irreversible.`,
+          `Destroy the SOURCE workload for ${args.id}${
+            flags['close-bridge'] ? ' and close its bridge now' : ''
+          }? This is irreversible.`,
         ),
         false,
       );
@@ -34,6 +41,7 @@ export default class MigrateAppDestroySource extends Command {
     try {
       const mig = await MigrationClient.fromConfig().destroyAppMigrationSource(
         args.id,
+        { closeBridge: flags['close-bridge'] },
       );
       spinner.succeed(`Source destroyed for ${args.id}`);
       console.log(`  ${chalk.bold('Status:')} ${mig.status}`);

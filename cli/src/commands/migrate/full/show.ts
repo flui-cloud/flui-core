@@ -2,6 +2,8 @@ import { Args, Command, Flags } from '@oclif/core';
 import chalk from 'chalk';
 import { MigrationClient } from '../../../lib/migration-client';
 import { printContextBanner } from '../../../lib/context-banner';
+import { bridgeRows } from '../../../lib/migration-bridge-view';
+import { labelCell, measureRows } from '../../../lib/migration-measures-view';
 
 export default class MigrateFullShow extends Command {
   static readonly description = 'Show a full-app migration by id';
@@ -25,11 +27,23 @@ export default class MigrateFullShow extends Command {
     this.log(`   ${chalk.bold('DB app:')}     ${m.dbAppId}`);
     this.log(`   ${chalk.bold('Target:')}     ${m.targetClusterId}`);
     this.log(`   ${chalk.bold('Cutover:')}    ${m.cutoverMode}`);
+    if (m.canResumeCutover) {
+      this.log(
+        `   ${chalk.bold('Resume:'.padEnd(12))}flui migrate full cutover ${m.id}`,
+      );
+    }
     this.log(`   ${chalk.bold('Staging:')}    ${m.stagingMode}`);
     if (m.dbMigrationId)
       this.log(`   ${chalk.bold('DB leg:')}     ${m.dbMigrationId}`);
     if (m.appMigrationId)
       this.log(`   ${chalk.bold('App leg:')}    ${m.appMigrationId}`);
+    for (const [label, value] of bridgeRows(m.bridge)) {
+      const cell = label ? `${label}:` : '';
+      this.log(`   ${chalk.bold(cell.padEnd(12))}${value}`);
+    }
+    for (const [label, value] of measureRows(m)) {
+      this.log(`   ${chalk.bold(labelCell(label))}${value}`);
+    }
     if (m.errorMessage)
       this.log(`   ${chalk.bold('Error:')}      ${chalk.red(m.errorMessage)}`);
     if (m.createdAt) this.log(`   ${chalk.bold('Created:')}    ${m.createdAt}`);

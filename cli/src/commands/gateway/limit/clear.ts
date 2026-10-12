@@ -2,7 +2,7 @@ import { Args, Command, Flags } from '@oclif/core';
 import chalk from 'chalk';
 import ora from 'ora';
 import { CliAppService } from '../../../lib/services/cli-app.service';
-import { resolveCluster } from '../../../lib/resolve-cluster';
+import { resolveClusterRef } from '../../../lib/resolve-cluster';
 import {
   printRouteDetail,
   resolveGatewayRoute,
@@ -37,7 +37,7 @@ export default class GatewayLimitClear extends Command {
     const { args, flags } = await this.parse(GatewayLimitClear);
     const spinner = ora('Clearing rate limit...').start();
     try {
-      const { id: clusterId } = await resolveCluster(flags.cluster);
+      const { id: clusterId } = await resolveClusterRef(flags.cluster);
       const service = await CliAppService.create(clusterId);
       const app = await service.getAppByName(args.app);
       const route = await resolveGatewayRoute(service, app.id, args.route);

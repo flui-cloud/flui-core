@@ -39,7 +39,6 @@ import {
 import { resolveRecordName } from '../utils/resolve-record-name.util';
 import { GatewayMiddlewareCompilerService } from './gateway-middleware-compiler.service';
 import { describeError } from '../../shared/utils/error.util';
-import { stripTrailingSlashes } from '../../../common/utils/url.util';
 import { SandboxTenantEntity } from '../../sandbox/entities/sandbox-tenant.entity';
 import { sandboxNoindexMiddlewareRef } from '../../sandbox/constants/sandbox-noindex';
 import { ENDPOINT_ID_LABEL } from '../constants/endpoint-labels';
@@ -146,7 +145,7 @@ export class AppEndpointReconciliationService {
       return null;
     } catch (err) {
       this.logger.warn(
-        `[cert-gate] endpoint=${endpoint.id} could not enumerate ClusterIssuers on cluster ${endpoint.clusterId}: ${err instanceof Error ? err.message : String(err)} — skipping TLS for this endpoint`,
+        `[cert-gate] endpoint=${endpoint.id} could not enumerate ClusterIssuers on cluster ${endpoint.clusterId}: ${describeError(err)} — skipping TLS for this endpoint`,
       );
       return null;
     }
@@ -193,7 +192,7 @@ export class AppEndpointReconciliationService {
       );
     } catch (err) {
       this.logger.warn(
-        `[cert-gate] endpoint=${endpoint.id}: on-demand issuer bootstrap failed on cluster ${cluster.id}: ${err instanceof Error ? err.message : String(err)}`,
+        `[cert-gate] endpoint=${endpoint.id}: on-demand issuer bootstrap failed on cluster ${cluster.id}: ${describeError(err)}`,
       );
       return null;
     }
@@ -235,7 +234,7 @@ export class AppEndpointReconciliationService {
 
   async reconcile(
     endpointId: string,
-    options: { dnsWaitMs?: number } = {},
+    options: { dnsWaitMs?: number; nameAlreadyPublished?: boolean } = {},
   ): Promise<boolean> {
     const endpoint = await this.appEndpointService.getEndpoint(endpointId);
 
@@ -284,10 +283,9 @@ export class AppEndpointReconciliationService {
         );
       }
 
-      const { dnsRecordId, dnsRecordValue } = await this.reconcileEndpointDns(
-        endpoint,
-        cluster,
-      );
+      const { dnsRecordId, dnsRecordValue } = endpoint.dnsHeldBy
+        ? { dnsRecordId: undefined, dnsRecordValue: undefined }
+        : await this.reconcileEndpointDns(endpoint, cluster);
 
       const configuredCertProvider: CertificateProvider | undefined =
         this.resolveCertProvider(endpoint);
@@ -308,7 +306,7 @@ export class AppEndpointReconciliationService {
           endpoint,
           cluster,
           configuredCertProvider,
-          dnsRecordValue,
+          options.nameAlreadyPublished ? undefined : dnsRecordValue,
           options.dnsWaitMs,
         );
         effectiveCertProvider = gate.provider;
@@ -367,6 +365,47 @@ export class AppEndpointReconciliationService {
 
       throw error;
     }
+  }
+
+  /**
+   * Builds the endpoint's route on a cluster it is about to move to (Service,
+   * policies, and the Ingress serving the certificate the bridge prepared) and
+   * makes sure that cluster has a Ready issuer. Neither the row nor DNS is
+   * touched, so a cutover through the bridge only has to switch.
+   */
+  async prepareRouteOn(
+    endpointId: string,
+    clusterId: string,
+    tlsSecretName: string | null,
+  ): Promise<void> {
+    const stored = await this.appEndpointService.getEndpoint(endpointId);
+    const cluster = await this.getCluster(clusterId);
+    const shared =
+      !!tlsSecretName && tlsSecretName !== this.perHostSecretName(stored.fqdn);
+    const endpoint = {
+      ...stored,
+      clusterId,
+      cluster,
+      dnsHeldBy: stored.dnsHeldBy ?? stored.id,
+      sanCertificateId: null,
+      wildcardCertificateId: shared
+        ? (stored.wildcardCertificateId ?? 'prepared')
+        : null,
+      tlsSecretName: shared ? tlsSecretName : null,
+    } as AppEndpointEntity;
+
+    if (endpoint.certificateRequired && cluster.kubeconfigEncrypted) {
+      await this.acmeResolvers.ensure(
+        cluster.id,
+        await this.getKubeconfig(cluster),
+      );
+      const provider = this.resolveCertProvider(endpoint);
+      if (provider) {
+        await this.resolveReadyIssuerOrSelfHeal(endpoint, cluster, provider);
+      }
+    }
+    await this.reconcileService(endpoint, cluster);
+    await this.reconcileIngress(endpoint, endpoint.clusterDnsZone, cluster);
   }
 
   private async reconcileEndpointDns(
@@ -686,13 +725,67 @@ export class AppEndpointReconciliationService {
     await this.appEndpointService.clearDnsRecord(endpoint.id);
   }
 
-  async deleteEndpointResources(endpointId: string): Promise<void> {
+  /**
+   * What the zone answers for the endpoint's name now, next to what its
+   * cluster should answer. Null when Flui does not publish the name.
+   */
+  async publishedAnswer(endpointId: string): Promise<{
+    published: string[];
+    expected: string[];
+    ttl: number | null;
+  } | null> {
     const endpoint = await this.appEndpointService.getEndpoint(endpointId);
+    const dnsZone = endpoint.clusterDnsZone?.dnsZone;
+    if (!dnsZone || endpoint.hostnameMode === HostnameMode.IP) return null;
     const cluster = await this.getCluster(endpoint.clusterId);
+    const provider = this.dnsProviderFactory.getDnsProviderOrFail(
+      dnsZone.dnsProvider,
+    );
+    const records = await provider.listRecords(dnsZone.providerZoneId);
+    const recordName = resolveRecordName(endpoint.fqdn, dnsZone.zoneName);
+    const type = endpoint.dnsRecordType ?? DnsRecordType.A;
+    let answering = records.filter(
+      (r) => r.name === recordName && r.type === type,
+    );
+    if (answering.length === 0 && recordName !== '@') {
+      const wildcardName = ['*', ...recordName.split('.').slice(1)].join('.');
+      answering = records.filter(
+        (r) => r.name === wildcardName && r.type === type,
+      );
+    }
+    const ttls = answering.map((r) => r.ttl).filter((t) => t > 0);
+    return {
+      published: answering.map((r) => r.value),
+      expected: clusterIngressValues(cluster),
+      ttl: ttls.length ? Math.max(...ttls) : null,
+    };
+  }
+
+  /**
+   * With `clusterId`, removes only what the endpoint left on a cluster it no
+   * longer lives on: the record answers for wherever it lives now, so DNS is
+   * never touched, and the row describes the new cluster, so what to remove is
+   * decided by what that cluster holds.
+   */
+  async deleteEndpointResources(
+    endpointId: string,
+    options: { clusterId?: string; keepCertificate?: boolean } = {},
+  ): Promise<void> {
+    const endpoint = await this.appEndpointService.getEndpoint(endpointId);
+    const leftBehind = options.clusterId !== undefined;
+    if (leftBehind && options.clusterId === endpoint.clusterId) {
+      throw new Error(
+        `Cluster ${options.clusterId} still serves ${endpoint.fqdn}; only a cluster the endpoint has left can be cleaned this way`,
+      );
+    }
+    const cluster = await this.getCluster(
+      options.clusterId ?? endpoint.clusterId,
+    );
     // The host's DNS record and certificate belong to the host, not to one of
     // its routes: they go with the last route, never with the first.
-    const others = await this.appEndpointService.otherRoutesOnHost(endpoint);
-    const hostStillServed = others.length > 0;
+    const others = (
+      await this.appEndpointService.otherRoutesOnHost(endpoint)
+    ).filter((o) => !leftBehind || o.clusterId === cluster.id);
     const certificateStillUsed = others.some(
       (o) => o.k8sNamespace === endpoint.k8sNamespace,
     );
@@ -715,146 +808,218 @@ export class AppEndpointReconciliationService {
       // Delete Certificate and TLS Secret created by cert-manager for this endpoint.
       // Skip when the endpoint uses the shared wildcard Secret (reflector replica):
       // it may be referenced by other endpoints in the same namespace.
-      if (
-        endpoint.certificateRequired &&
-        !endpoint.wildcardCertificateId &&
-        !endpoint.sanCertificateId &&
-        !certificateStillUsed
-      ) {
-        const safeName = endpoint.fqdn
-          .replaceAll('.', '-')
-          .replaceAll('*', 'wildcard');
-        await this.kubernetesService.deleteResource(
-          kubeconfig,
-          'Certificate',
-          `tls-${safeName}`,
-          endpoint.k8sNamespace,
-        );
-        await this.kubernetesService.deleteResource(
-          kubeconfig,
-          'Secret',
-          `tls-${safeName}`,
-          endpoint.k8sNamespace,
-        );
-        this.logger.log(
-          `Deleted Certificate and TLS Secret for ${endpoint.fqdn}`,
-        );
+      const removeCertificate = await this.shouldRemoveCertificate(
+        kubeconfig,
+        endpoint,
+        leftBehind,
+        !!options.keepCertificate,
+        certificateStillUsed,
+      );
+      if (removeCertificate) {
+        await this.deletePerHostCertificate(kubeconfig, endpoint);
       }
 
       // Delete the gateway-policy Middlewares (allowlist/ratelimit/sso).
       await this.deleteGatewayMiddlewares(kubeconfig, endpoint);
 
-      // Delete the Traefik ForwardAuth Middleware for internal endpoints.
       if (endpoint.endpointType === EndpointType.INTERNAL) {
-        try {
-          await this.kubernetesService.deleteResource(
-            kubeconfig,
-            'Middleware',
-            `${endpoint.k8sServiceName}-forwardauth`,
-            endpoint.k8sNamespace,
-          );
-          this.logger.log(
-            `Deleted Traefik Middleware ${endpoint.k8sServiceName}-forwardauth for ${endpoint.fqdn}`,
-          );
-        } catch (err) {
-          this.logger.warn(
-            `Traefik Middleware delete skipped for ${endpoint.fqdn}: ${err instanceof Error ? err.message : String(err)}`,
-          );
-        }
+        await this.deleteForwardAuthMiddleware(kubeconfig, endpoint);
       }
 
-      // Delete the K8s Service only if THIS endpoint is the one that created it.
-      //
-      // "Created by flui" was the condition and it is far too wide: the
-      // application's own Service is created by flui too, so removing a gateway
-      // route took the application off the air — the Ingress stayed, the
-      // Service under it did not. `reconcileService` stamps the endpoint id on
-      // the Services it creates and skips creation when one is already there,
-      // so that label is exactly the register of "mine to delete". A Service
-      // without it belongs to the application's deployment and is that
-      // deployment's to remove.
-      const svc = await this.kubernetesService.getResource(
-        kubeconfig,
-        'Service',
-        endpoint.k8sServiceName,
-        endpoint.k8sNamespace,
-      );
-      const createdByThisEndpoint =
-        svc?.metadata?.labels?.[ENDPOINT_ID_LABEL] === endpoint.id;
-      if (createdByThisEndpoint) {
-        await this.kubernetesService.deleteResource(
-          kubeconfig,
-          'Service',
-          endpoint.k8sServiceName,
-          endpoint.k8sNamespace,
-        );
-        this.logger.log(
-          `Deleted Service ${endpoint.k8sServiceName}, created for endpoint ${endpoint.fqdn}`,
-        );
-      } else if (svc) {
-        this.logger.log(
-          `Kept Service ${endpoint.k8sServiceName} in ${endpoint.k8sNamespace}: ` +
-            `endpoint ${endpoint.fqdn} did not create it`,
-        );
-      }
+      await this.deleteServiceIfCreatedByEndpoint(kubeconfig, endpoint);
     } catch (error) {
       this.logger.warn(
         `Failed to delete K8s resources for endpoint ${endpointId}: ${error.message}`,
       );
     }
 
-    if (hostStillServed) {
+    if (leftBehind) return;
+
+    await this.releaseHostDns(endpoint, others.length);
+  }
+
+  private async shouldRemoveCertificate(
+    kubeconfig: string,
+    endpoint: AppEndpointEntity,
+    leftBehind: boolean,
+    keepCertificate: boolean,
+    certificateStillUsed: boolean,
+  ): Promise<boolean> {
+    if (!leftBehind) {
+      return (
+        endpoint.certificateRequired &&
+        !endpoint.wildcardCertificateId &&
+        !endpoint.sanCertificateId &&
+        !certificateStillUsed
+      );
+    }
+    if (keepCertificate || certificateStillUsed) return false;
+    return !(await this.perHostSecretServedByAnother(kubeconfig, endpoint));
+  }
+
+  private async deletePerHostCertificate(
+    kubeconfig: string,
+    endpoint: AppEndpointEntity,
+  ): Promise<void> {
+    const safeName = endpoint.fqdn
+      .replaceAll('.', '-')
+      .replaceAll('*', 'wildcard');
+    await this.kubernetesService.deleteResource(
+      kubeconfig,
+      'Certificate',
+      `tls-${safeName}`,
+      endpoint.k8sNamespace,
+    );
+    await this.kubernetesService.deleteResource(
+      kubeconfig,
+      'Secret',
+      `tls-${safeName}`,
+      endpoint.k8sNamespace,
+    );
+    this.logger.log(`Deleted Certificate and TLS Secret for ${endpoint.fqdn}`);
+  }
+
+  /** The Traefik ForwardAuth Middleware of an internal endpoint. */
+  private async deleteForwardAuthMiddleware(
+    kubeconfig: string,
+    endpoint: AppEndpointEntity,
+  ): Promise<void> {
+    try {
+      await this.kubernetesService.deleteResource(
+        kubeconfig,
+        'Middleware',
+        `${endpoint.k8sServiceName}-forwardauth`,
+        endpoint.k8sNamespace,
+      );
       this.logger.log(
-        `Kept DNS for ${endpoint.fqdn}: ${others.length} other route(s) still answer on it`,
+        `Deleted Traefik Middleware ${endpoint.k8sServiceName}-forwardauth for ${endpoint.fqdn}`,
+      );
+    } catch (err) {
+      this.logger.warn(
+        `Traefik Middleware delete skipped for ${endpoint.fqdn}: ${describeError(err)}`,
+      );
+    }
+  }
+
+  private async deleteServiceIfCreatedByEndpoint(
+    kubeconfig: string,
+    endpoint: AppEndpointEntity,
+  ): Promise<void> {
+    // Delete the K8s Service only if THIS endpoint is the one that created it.
+    //
+    // "Created by flui" was the condition and it is far too wide: the
+    // application's own Service is created by flui too, so removing a gateway
+    // route took the application off the air — the Ingress stayed, the
+    // Service under it did not. `reconcileService` stamps the endpoint id on
+    // the Services it creates and skips creation when one is already there,
+    // so that label is exactly the register of "mine to delete". A Service
+    // without it belongs to the application's deployment and is that
+    // deployment's to remove.
+    const svc = await this.kubernetesService.getResource(
+      kubeconfig,
+      'Service',
+      endpoint.k8sServiceName,
+      endpoint.k8sNamespace,
+    );
+    const createdByThisEndpoint =
+      svc?.metadata?.labels?.[ENDPOINT_ID_LABEL] === endpoint.id;
+    if (createdByThisEndpoint) {
+      await this.kubernetesService.deleteResource(
+        kubeconfig,
+        'Service',
+        endpoint.k8sServiceName,
+        endpoint.k8sNamespace,
+      );
+      this.logger.log(
+        `Deleted Service ${endpoint.k8sServiceName}, created for endpoint ${endpoint.fqdn}`,
+      );
+    } else if (svc) {
+      this.logger.log(
+        `Kept Service ${endpoint.k8sServiceName} in ${endpoint.k8sNamespace}: ` +
+          `endpoint ${endpoint.fqdn} did not create it`,
+      );
+    }
+  }
+
+  private async releaseHostDns(
+    endpoint: AppEndpointEntity,
+    otherRoutes: number,
+  ): Promise<void> {
+    if (otherRoutes > 0) {
+      this.logger.log(
+        `Kept DNS for ${endpoint.fqdn}: ${otherRoutes} other route(s) still answer on it`,
       );
       await this.appEndpointService.clearDnsRecord(endpoint.id);
     } else if (endpoint.dnsRecordId && endpoint.clusterDnsZone) {
-      const dnsZone = endpoint.clusterDnsZone.dnsZone;
-      let primaryDeleteError: unknown;
-      try {
-        const dnsProvider = this.dnsProviderFactory.getDnsProviderOrFail(
-          dnsZone.dnsProvider,
-        );
-        const recordName = resolveRecordName(endpoint.fqdn, dnsZone.zoneName);
-        const values = await this.findRecordsByNameType(
-          dnsProvider,
-          dnsZone,
-          recordName,
-          endpoint.dnsRecordType,
-        );
-        if (values.length === 0) {
-          await dnsProvider.deleteRecord(
-            dnsZone.providerZoneId,
-            endpoint.dnsRecordId,
-          );
-        }
-        for (const record of values) {
-          await dnsProvider.deleteRecord(
-            dnsZone.providerZoneId,
-            record.recordId,
-          );
-        }
-        this.logger.log(
-          `Deleted DNS record ${recordName} (${values.length || 1} value(s)) for ${endpoint.fqdn}`,
-        );
-        await this.appEndpointService.clearDnsRecord(endpoint.id);
-      } catch (error) {
-        primaryDeleteError = error;
-        this.logger.warn(
-          `Failed to delete DNS record for endpoint ${endpointId}: ${error.message}`,
-        );
-      }
+      await this.deleteOwnDnsRecord(endpoint);
+    }
+  }
 
-      // Mirror the delete to any redundancy replicas (best-effort, never throws).
-      await this.dnsZoneReconciliationService.fanOutDeleteToReplicas(
+  /** Whether another Ingress in the namespace still serves the endpoint's per-host secret. */
+  private async perHostSecretServedByAnother(
+    kubeconfig: string,
+    endpoint: AppEndpointEntity,
+  ): Promise<boolean> {
+    const secretName = this.perHostSecretName(endpoint.fqdn);
+    const own = this.ingressNameFor(endpoint);
+    const ingresses = await this.kubernetesService.listCrdResources(
+      kubeconfig,
+      'Ingress',
+      endpoint.k8sNamespace,
+    );
+    return ingresses.some(
+      (i: {
+        metadata?: { name?: string };
+        spec?: { tls?: { secretName?: string }[] };
+      }) =>
+        i?.metadata?.name !== own &&
+        (i?.spec?.tls ?? []).some((t) => t?.secretName === secretName),
+    );
+  }
+
+  private async deleteOwnDnsRecord(endpoint: AppEndpointEntity): Promise<void> {
+    const dnsZone = endpoint.clusterDnsZone.dnsZone;
+    let primaryDeleteError: unknown;
+    try {
+      const dnsProvider = this.dnsProviderFactory.getDnsProviderOrFail(
+        dnsZone.dnsProvider,
+      );
+      const recordName = resolveRecordName(endpoint.fqdn, dnsZone.zoneName);
+      const values = await this.findRecordsByNameType(
+        dnsProvider,
         dnsZone,
-        resolveRecordName(endpoint.fqdn, dnsZone.zoneName),
+        recordName,
         endpoint.dnsRecordType,
       );
-
-      if (primaryDeleteError) {
-        throw primaryDeleteError;
+      if (values.length === 0) {
+        await dnsProvider.deleteRecord(
+          dnsZone.providerZoneId,
+          endpoint.dnsRecordId,
+        );
       }
+      for (const record of values) {
+        await dnsProvider.deleteRecord(dnsZone.providerZoneId, record.recordId);
+      }
+      this.logger.log(
+        `Deleted DNS record ${recordName} (${values.length || 1} value(s)) for ${endpoint.fqdn}`,
+      );
+      await this.appEndpointService.clearDnsRecord(endpoint.id);
+    } catch (error) {
+      primaryDeleteError = error;
+      this.logger.warn(
+        `Failed to delete DNS record for endpoint ${endpoint.id}: ${error.message}`,
+      );
+    }
+
+    // Mirror the delete to any redundancy replicas (best-effort, never throws).
+    await this.dnsZoneReconciliationService.fanOutDeleteToReplicas(
+      dnsZone,
+      resolveRecordName(endpoint.fqdn, dnsZone.zoneName),
+      endpoint.dnsRecordType,
+    );
+
+    if (primaryDeleteError) {
+      throw primaryDeleteError;
     }
   }
 
@@ -1015,7 +1180,7 @@ export class AppEndpointReconciliationService {
       };
     } catch (err) {
       this.logger.warn(
-        `Failed to read SAN Certificate ${san.masterNamespace}/${san.masterCertName}: ${err instanceof Error ? err.message : String(err)}`,
+        `Failed to read SAN Certificate ${san.masterNamespace}/${san.masterCertName}: ${describeError(err)}`,
       );
       return { status: null, message: null };
     }
@@ -1065,7 +1230,7 @@ export class AppEndpointReconciliationService {
       };
     } catch (err) {
       this.logger.warn(
-        `Failed to read wildcard Certificate ${wildcard.masterNamespace}/${wildcard.masterCertName}: ${err instanceof Error ? err.message : String(err)}`,
+        `Failed to read wildcard Certificate ${wildcard.masterNamespace}/${wildcard.masterCertName}: ${describeError(err)}`,
       );
       return { status: null, message: null };
     }
@@ -1193,7 +1358,7 @@ export class AppEndpointReconciliationService {
       servers = found.filter((x): x is NonNullable<typeof x> => x !== null);
     } catch (err) {
       this.logger.warn(
-        `Cannot resolve authoritative NS for ${zoneName} (${err instanceof Error ? err.message : String(err)}) — skipping DNS propagation gate`,
+        `Cannot resolve authoritative NS for ${zoneName} (${describeError(err)}) — skipping DNS propagation gate`,
       );
       return { published: true, detail: null };
     }
@@ -1555,7 +1720,7 @@ export class AppEndpointReconciliationService {
         annotations: {
           'traefik.ingress.kubernetes.io/router.entrypoints':
             this.entrypointsFor(isInternal, hasCert || usesSharedSecret),
-          ...(hasCert && !usesSharedSecret
+          ...(hasCert && !usesSharedSecret && !endpoint.dnsHeldBy
             ? { 'cert-manager.io/cluster-issuer': issuerName }
             : {}),
           ...this.middlewaresAnnotation(middlewareRefs, existingIngress),
@@ -1734,7 +1899,10 @@ export class AppEndpointReconciliationService {
     tlsSecretName: string;
     issuerName: string;
   } {
-    const hasCert = endpoint.certificateRequired && !!effectiveCertProvider;
+    // While a migration holds the name, the bridge prepared the per-host secret on this cluster.
+    const hasCert =
+      endpoint.certificateRequired &&
+      (!!effectiveCertProvider || !!endpoint.dnsHeldBy);
     const usesWildcard =
       !!endpoint.wildcardCertificateId && !!endpoint.tlsSecretName;
     const usesSan = !!endpoint.sanCertificateId && !!endpoint.tlsSecretName;
@@ -1862,7 +2030,7 @@ export class AppEndpointReconciliationService {
         );
       } catch (err) {
         this.logger.warn(
-          `Orphan gateway middleware delete skipped for ${endpoint.k8sNamespace}/${middleware.metadata.name}: ${err instanceof Error ? err.message : String(err)}`,
+          `Orphan gateway middleware delete skipped for ${endpoint.k8sNamespace}/${middleware.metadata.name}: ${describeError(err)}`,
         );
       }
     }
@@ -1885,7 +2053,7 @@ export class AppEndpointReconciliationService {
         );
       } catch (err) {
         this.logger.warn(
-          `Gateway middleware delete skipped for ${endpoint.k8sNamespace}/${name}: ${err instanceof Error ? err.message : String(err)}`,
+          `Gateway middleware delete skipped for ${endpoint.k8sNamespace}/${name}: ${describeError(err)}`,
         );
       }
     }

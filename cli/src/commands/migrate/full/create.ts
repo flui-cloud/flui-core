@@ -2,8 +2,8 @@ import { Args, Command, Flags } from '@oclif/core';
 import chalk from 'chalk';
 import ora from 'ora';
 import { MigrationClient } from '../../../lib/migration-client';
-import { resolveCluster } from '../../../lib/resolve-cluster';
-import { resolveApp } from '../../../lib/resolve-app';
+import { resolveClusterRef } from '../../../lib/resolve-cluster';
+import { resolveAppOnAnyCluster } from '../../../lib/resolve-app';
 import { printContextBanner } from '../../../lib/context-banner';
 
 export default class MigrateFullCreate extends Command {
@@ -40,15 +40,25 @@ export default class MigrateFullCreate extends Command {
       default: 'scaled-down',
       description: 'Staging mode for the destination app before cutover',
     }),
+    'backup-destination': Flags.string({
+      description:
+        'Backup destination id the volumes move through (default: the one protecting the app, or your only one)',
+    }),
+    'pause-deadline': Flags.integer({
+      min: 1,
+      max: 60,
+      description:
+        'With a pooled database: seconds the cutover lets open transactions finish while writes wait (default 5)',
+    }),
   };
 
   async run(): Promise<void> {
     const { args, flags } = await this.parse(MigrateFullCreate);
     printContextBanner();
-    const target = await resolveCluster(flags.to);
-    const source = await resolveCluster(flags.from);
-    const app = await resolveApp(source.id, args.app);
-    const db = await resolveApp(source.id, flags.db);
+    const target = await resolveClusterRef(flags.to);
+    const source = flags.from ? await resolveClusterRef(flags.from) : undefined;
+    const app = await resolveAppOnAnyCluster(args.app, source?.id);
+    const db = await resolveAppOnAnyCluster(flags.db, source?.id);
     const spinner = ora(`Creating full migration for "${app.name}"...`).start();
     try {
       const mig = await MigrationClient.fromConfig().createFullMigration({
@@ -57,6 +67,8 @@ export default class MigrateFullCreate extends Command {
         targetClusterId: target.id,
         cutover: flags.cutover as 'auto' | 'manual',
         stagingMode: flags.staging as 'scaled-down' | 'live-fenced',
+        backupDestinationId: flags['backup-destination'],
+        pauseDeadlineSeconds: flags['pause-deadline'],
       });
       spinner.succeed(`Full migration created: ${mig.id}`);
       console.log('');

@@ -15,6 +15,7 @@ import { ActionCycle } from '../../action-cycle/action-cycle.decorator';
 import { IAM_PERMISSION } from '../../iam/constants/iam-permissions';
 import { AppMigrationService } from '../services/app-migration.service';
 import { CreateAppMigrationDto } from '../dto/create-app-migration.dto';
+import { DestroySourceDto } from '../dto/destroy-source.dto';
 import { DataDoor } from '../../iam/decorators/data-door.decorator';
 
 /**
@@ -50,20 +51,20 @@ export class AppMigrationController {
   @ApiOperation({
     summary: "Migrate an application's workload to another cluster",
   })
-  create(@Req() req: Request, @Body() dto: CreateAppMigrationDto) {
-    return this.service.create(this.userId(req), dto);
+  async create(@Req() req: Request, @Body() dto: CreateAppMigrationDto) {
+    return this.service.view(await this.service.create(this.userId(req), dto));
   }
 
   @Get()
   @RequirePermission(IAM_PERMISSION.APP_READ)
   list(@Req() req: Request) {
-    return this.service.list(this.userId(req));
+    return this.service.listViews(this.userId(req));
   }
 
   @Get(':id')
   @RequirePermission(IAM_PERMISSION.APP_READ)
   get(@Param('id') id: string) {
-    return this.service.findById(id);
+    return this.service.getView(id);
   }
 
   @Post(':id/cutover')
@@ -74,7 +75,7 @@ export class AppMigrationController {
     bind: ['id'],
     sentence: 'cut application migration {id} over to the destination cluster',
     consequence:
-      'The application is served from the destination cluster and its name is repointed there; the source workload stops taking traffic.',
+      'The application is served from the destination cluster and its name is repointed there. With the bridge, the source cluster forwards the clients that still resolve it and its workload stops; without it, the source workload stops taking traffic as DNS caches expire.',
   })
   @ApiOperation({
     summary: 'Fire the cutover of a READY manual migration (rebind + DNS flip)',
@@ -92,13 +93,19 @@ export class AppMigrationController {
     sentence:
       'destroy the source workload that application migration {id} moved ' +
       'away from — it does not come back',
+    consequence:
+      'An open bridge is closed first: clients still resolving the old cluster stop being forwarded. The source workload and its routes are removed.',
   })
   @ApiOperation({
     summary:
-      'Destroy the drained source workload after a completed migration (plan §6 DESTROY)',
+      'Close the bridge and destroy the source workload after the cutover (plan §6 DESTROY)',
   })
-  destroySource(@Param('id') id: string) {
-    return this.service.destroySource(id);
+  async destroySource(@Param('id') id: string, @Body() dto: DestroySourceDto) {
+    return this.service.view(
+      await this.service.destroySource(id, {
+        closeBridge: dto?.closeBridge === true,
+      }),
+    );
   }
 
   @Delete(':id')

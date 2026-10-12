@@ -1660,6 +1660,32 @@ export class KubernetesService {
     );
   }
 
+  /** RFC 6902 JSON patch on the status subresource of a namespaced custom object. */
+  async jsonPatchObjectStatus(
+    kubeconfigContent: string,
+    ref: {
+      apiVersion: string;
+      plural: string;
+      name: string;
+      namespace: string;
+    },
+    operations: { op: string; path: string; value?: unknown }[],
+  ): Promise<void> {
+    const kc = this.loadKubeconfig(kubeconfigContent);
+    const [group, version] = ref.apiVersion.split('/');
+    await kc
+      .makeApiClient(k8s.CustomObjectsApi)
+      .patchNamespacedCustomObjectStatus({
+        group,
+        version,
+        namespace: ref.namespace,
+        plural: ref.plural,
+        name: ref.name,
+        body: operations,
+        fieldManager: 'flui-api',
+      });
+  }
+
   /** Create an object as given, failing when it already exists. */
   async createObject(
     kubeconfigContent: string,

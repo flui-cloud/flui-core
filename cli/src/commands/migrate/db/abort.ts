@@ -7,7 +7,7 @@ import { printContextBanner } from '../../../lib/context-banner';
 
 export default class MigrateDbAbort extends Command {
   static readonly description =
-    'Abort a DB migration before cutover (replication link + destination torn down, source untouched)';
+    'Abort a DB migration before the destination is promoted (replication torn down, destination install kept for inspection). A physical migration can also be aborted in cutover until promote has been asked; Flui then removes exactly its own fence from the source. Once promote has been asked the migration only goes forward.';
   static readonly args = {
     id: Args.string({ required: true, description: 'Migration id' }),
   };
@@ -21,7 +21,7 @@ export default class MigrateDbAbort extends Command {
     if (!flags.yes) {
       const ok = await confirmPrompt(
         chalk.yellow(
-          `Abort DB migration ${args.id}? The replication link + destination install are torn down; the source is untouched.`,
+          `Abort DB migration ${args.id}? Replication is torn down and the destination install stays for inspection (remove it like any application). A physical migration in cutover is aborted only until promote has been asked: the source's fence block is removed and it takes writes again (other edits made meanwhile are kept). After that it only goes forward.`,
         ),
         false,
       );

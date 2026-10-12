@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Flui Postgres entrypoint. Adds a restore-bootstrap mode, then hands off to the
+# Flui Postgres entrypoint. Adds standby- and restore-bootstrap modes, then hands off to the
 # stock postgres docker-entrypoint. Runs as root (image default); drops to the
 # postgres user via gosu only for the restore work.
 set -Eeo pipefail
@@ -31,13 +31,60 @@ EOF
   chown postgres:postgres "$RESTORE_CONF"
 }
 
+# Standby-bootstrap: a live migration's destination. Waits for Flui to drop the
+# source's connection and slot on the volume, copies the source with
+# pg_basebackup and starts as its hot standby. The gate is the done marker, not
+# PG_VERSION: pg_basebackup writes PG_VERSION early, so an interrupted copy
+# must be wiped and retried, never started.
+STANDBY_DIR="$PVC_ROOT/flui-standby"
+if [ "${FLUI_PG_STANDBY:-}" = "1" ] && [ ! -f "$STANDBY_DIR/done" ]; then
+  # Waits run in the background so a stop request ends them at once.
+  trap 'exit 0' TERM INT
+  mkdir -p "$STANDBY_DIR" && chown postgres:postgres "$STANDBY_DIR" && chmod 700 "$STANDBY_DIR"
+  echo "[flui-entrypoint] standby-bootstrap: waiting for the primary's connection"
+  until [ -s "$STANDBY_DIR/conninfo" ] && [ -s "$STANDBY_DIR/slot" ]; do
+    if [ -f "$STANDBY_DIR/aborted" ]; then
+      echo "[flui-entrypoint] migration aborted; not starting"
+      sleep infinity & wait $!
+    fi
+    sleep 5 & wait $!
+  done
+  until [ -f "$STANDBY_DIR/aborted" ]; do
+    if [ -s "$STANDBY_DIR/conninfo" ]; then
+      mkdir -p "$PGDATA" && chown postgres:postgres "$PGDATA" && chmod 0700 "$PGDATA"
+      find "$PGDATA" -mindepth 1 -delete
+      echo "[flui-entrypoint] standby-bootstrap: copying the primary"
+      gosu postgres pg_basebackup -D "$PGDATA" -d "$(cat "$STANDBY_DIR/conninfo")" \
+        -S "$(cat "$STANDBY_DIR/slot")" -X stream -R -c fast -v &
+      if wait $!; then
+        break
+      fi
+      echo "[flui-entrypoint] base backup failed; retrying in 15s"
+    fi
+    sleep 15 & wait $!
+  done
+  if [ -f "$STANDBY_DIR/aborted" ]; then
+    echo "[flui-entrypoint] migration aborted; not starting"
+    while :; do sleep infinity & wait $!; done
+  fi
+  # The copy carries the primary's postgresql.auto.conf: its archive_command
+  # names a config file that is not on this volume, and its ssl names a
+  # certificate that is not either. Neutralised here, reset after promote.
+  printf "archive_command = '/bin/true'\nssl = off\n" >> "$PGDATA/postgresql.auto.conf"
+  chown postgres:postgres "$PGDATA/postgresql.auto.conf"
+  rm -f "$STANDBY_DIR/conninfo"
+  touch "$STANDBY_DIR/done"
+  echo "[flui-entrypoint] standby-bootstrap: copy complete; starting as a hot standby"
+  trap - TERM INT
+fi
+
 # Restore-bootstrap: populate PGDATA from a pgBackRest repo and recover to an
 # optional point in time, then promote. Only when explicitly requested and
 # PGDATA is not an initialized cluster. The marker is PG_VERSION, not
 # emptiness: pgBackRest copies pg_control last, so an interrupted restore
 # leaves a non-empty dir with no PG_VERSION — gating on emptiness would skip
 # the retry forever, while --delta makes re-restoring into a dirty dir safe.
-if [ "${FLUI_PG_RESTORE:-}" = "1" ] && [ ! -s "$PGDATA/PG_VERSION" ]; then
+if [ "${FLUI_PG_RESTORE:-}" = "1" ] && [ "${FLUI_PG_STANDBY:-}" != "1" ] && [ ! -s "$PGDATA/PG_VERSION" ]; then
   echo "[flui-entrypoint] restore-bootstrap: recovering PGDATA from pgBackRest repo"
   mkdir -p "$PGDATA"
   chown postgres:postgres "$PGDATA"

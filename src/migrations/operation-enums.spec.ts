@@ -76,4 +76,14 @@ describe('operation enums in the migrations', () => {
       expect(values.step.has(step)).toBe(true);
     }
   });
+
+  it('adds the pooler steps of a migration cutover', () => {
+    for (const step of [
+      'full_migrate_pooler_forward',
+      'db_migrate_pooler_pause',
+      'db_migrate_pooler_resume',
+    ]) {
+      expect(values.step.has(step)).toBe(true);
+    }
+  });
 });

@@ -2,8 +2,8 @@ import { Args, Command, Flags } from '@oclif/core';
 import chalk from 'chalk';
 import ora from 'ora';
 import { MigrationClient } from '../../../lib/migration-client';
-import { resolveCluster } from '../../../lib/resolve-cluster';
-import { resolveApp } from '../../../lib/resolve-app';
+import { resolveClusterRef } from '../../../lib/resolve-cluster';
+import { resolveAppOnAnyCluster } from '../../../lib/resolve-app';
 import { printContextBanner } from '../../../lib/context-banner';
 
 export default class MigrateAppCreate extends Command {
@@ -34,14 +34,20 @@ export default class MigrateAppCreate extends Command {
       description:
         'Backup destination id the volumes move through (default: the one protecting the app, or your only one)',
     }),
+    bridge: Flags.boolean({
+      default: true,
+      allowNo: true,
+      description:
+        'After the switch, keep forwarding clients that still resolve the old cluster to the new one (--no-bridge moves DNS only)',
+    }),
   };
 
   async run(): Promise<void> {
     const { args, flags } = await this.parse(MigrateAppCreate);
     printContextBanner();
-    const target = await resolveCluster(flags.to);
-    const source = await resolveCluster(flags.from);
-    const app = await resolveApp(source.id, args.app);
+    const target = await resolveClusterRef(flags.to);
+    const source = flags.from ? await resolveClusterRef(flags.from) : undefined;
+    const app = await resolveAppOnAnyCluster(args.app, source?.id);
     const spinner = ora(`Creating app migration for "${app.name}"...`).start();
     try {
       const mig = await MigrationClient.fromConfig().createAppMigration({
@@ -49,10 +55,13 @@ export default class MigrateAppCreate extends Command {
         targetClusterId: target.id,
         cutover: flags.cutover as 'auto' | 'manual',
         backupDestinationId: flags['backup-destination'],
+        bridge: flags.bridge,
       });
       spinner.succeed(`App migration created: ${mig.id}`);
       console.log('');
       console.log(`  ${chalk.bold('Status:')} ${mig.status}`);
+      if (mig.bridge)
+        console.log(`  ${chalk.bold('Bridge:')} ${mig.bridge.summary}`);
       if (mig.provisionOverrides?.volumeDestinationId) {
         console.log('');
         console.log(

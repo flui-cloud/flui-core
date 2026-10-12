@@ -116,6 +116,10 @@ export class AppEndpointEntity {
   @Column({ type: 'varchar', nullable: true })
   dnsRecordId: string;
 
+  /** Migration holding the record in place while the old cluster forwards; reconcile skips DNS until cleared. */
+  @Column({ type: 'uuid', nullable: true })
+  dnsHeldBy: string | null;
+
   @Column({ type: 'enum', enum: CertificateProvider, nullable: true })
   certificateProvider: CertificateProvider;
 

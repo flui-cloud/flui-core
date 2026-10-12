@@ -15,6 +15,7 @@ import { ActionCycle } from '../../action-cycle/action-cycle.decorator';
 import { dbMigrationClause } from '../migration-clause';
 import { IAM_PERMISSION } from '../../iam/constants/iam-permissions';
 import { DbMigrationService } from '../services/db-migration.service';
+import { DbMigrationViewService } from '../services/db-migration-view.service';
 import { CreateDbMigrationDto } from '../dto/create-db-migration.dto';
 import { DataDoor } from '../../iam/decorators/data-door.decorator';
 
@@ -37,7 +38,10 @@ import { DataDoor } from '../../iam/decorators/data-door.decorator';
 @Controller('db-migrations')
 @RequireSection('backup')
 export class DbMigrationController {
-  constructor(private readonly service: DbMigrationService) {}
+  constructor(
+    private readonly service: DbMigrationService,
+    private readonly views: DbMigrationViewService,
+  ) {}
 
   private userId(req: Request): string {
     const u = req.user as { userId?: string; id?: string } | undefined;
@@ -55,7 +59,7 @@ export class DbMigrationController {
     sentence: 'start moving a database to another cluster',
     clause: dbMigrationClause,
     consequence:
-      'A second database is built on the destination and takes storage there. Unless the request asked for a manual cutover, a live migration then finishes by itself: the application is repointed at the destination and the source stops taking writes, without asking again. A restore-mode migration replicates nothing and repoints nothing — it rebuilds the database from the backup repository beside the live one.',
+      'A second database is built on the destination and takes storage there. Unless the request asked for a manual cutover, a live migration then finishes by itself: the destination is promoted and the source stops taking writes, without asking again. Applications that use the source are not repointed by this call. A restore-mode migration replicates nothing and repoints nothing — it rebuilds the database from the backup repository beside the live one.',
   })
   @ApiOperation({
     summary:
@@ -68,13 +72,13 @@ export class DbMigrationController {
   @Get()
   @RequirePermission(IAM_PERMISSION.APP_READ)
   list(@Req() req: Request) {
-    return this.service.list(this.userId(req));
+    return this.views.listViews(this.userId(req));
   }
 
   @Get(':id')
   @RequirePermission(IAM_PERMISSION.APP_READ)
   get(@Param('id') id: string) {
-    return this.service.findById(id);
+    return this.views.getView(id);
   }
 
   @Post(':id/cutover')
@@ -85,7 +89,7 @@ export class DbMigrationController {
     bind: ['id'],
     sentence: 'cut database migration {id} over to its destination',
     consequence:
-      'The application is repointed at the destination database and the source stops taking writes.',
+      'The destination database is promoted and the source stops taking writes. Applications that use the source are not repointed by this call.',
   })
   @ApiOperation({ summary: 'Fire the cutover of a SYNCED manual migration' })
   cutover(@Param('id') id: string) {

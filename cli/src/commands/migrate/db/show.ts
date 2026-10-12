@@ -2,6 +2,7 @@ import { Args, Command, Flags } from '@oclif/core';
 import chalk from 'chalk';
 import { MigrationClient } from '../../../lib/migration-client';
 import { printContextBanner } from '../../../lib/context-banner';
+import { labelCell, measureRows } from '../../../lib/migration-measures-view';
 
 export default class MigrateDbShow extends Command {
   static readonly description = 'Show a managed-Postgres migration by id';
@@ -26,6 +27,9 @@ export default class MigrateDbShow extends Command {
     this.log(`   ${chalk.bold('Target:')}     ${m.targetClusterId}`);
     if (m.mode) this.log(`   ${chalk.bold('Mode:')}       ${m.mode}`);
     this.log(`   ${chalk.bold('Cutover:')}    ${m.cutoverMode}`);
+    for (const [label, value] of measureRows(m)) {
+      this.log(`   ${chalk.bold(labelCell(label))}${value}`);
+    }
     if (m.errorMessage)
       this.log(`   ${chalk.bold('Error:')}      ${chalk.red(m.errorMessage)}`);
     if (m.createdAt) this.log(`   ${chalk.bold('Created:')}    ${m.createdAt}`);

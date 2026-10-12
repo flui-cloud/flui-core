@@ -94,6 +94,22 @@ export class DbPodExecService {
     );
   }
 
+  /** Runs a shell command with `input` on stdin: a secret never sits in argv. */
+  async execWithInput(
+    t: ResolvedApp,
+    shellCommand: string,
+    input: string,
+  ): Promise<void> {
+    await this.k8s.execStream(
+      t.kubeconfig,
+      t.namespace,
+      t.labelSelector,
+      ['sh', '-c', shellCommand],
+      { stdin: Readable.from([input]) },
+      t.container,
+    );
+  }
+
   /** Like execSql but the payload rides stdin — no per-argv size limit. */
   async execSqlStream(t: ResolvedApp, sql: string): Promise<void> {
     await this.k8s.execStream(

@@ -6,14 +6,32 @@ import {
   UpdateDateColumn,
   Index,
 } from 'typeorm';
-import { DbReplicationStatus } from '../enums/db-replication-status.enum';
+import {
+  DbReplicationKind,
+  DbReplicationStatus,
+} from '../enums/db-replication-status.enum';
 
 export interface DbReplicationTransportInfo {
-  mode: 'internal' | 'external';
+  mode: 'internal' | 'external' | 'overlay';
   host?: string;
   port?: number;
   svcName?: string;
   caPath?: string;
+  /** Overlay: the destination's egress policy for this link. */
+  netpolName?: string;
+  /** Overlay: the destination node's overlay address `pg_hba` admits. */
+  dstHost?: string;
+  /** Overlay: whether the source had TLS on before Flui touched it. */
+  sslWasOn?: boolean;
+  /** Overlay: `pg_hba.conf` checksum before the replication block. */
+  hbaSha256Before?: string;
+  /** Overlay: `max_slot_wal_keep_size` before Flui capped it. */
+  walKeepBefore?: string;
+  /** Overlay: the cap Flui set on the source, when it set one. */
+  walKeepSet?: string;
+  /** Overlay: says the cap is cluster-wide on the source, for the views. */
+  walKeepNote?: string;
+  warnings?: string[];
 }
 
 /**
@@ -34,6 +52,26 @@ export class DbReplicationLinkEntity {
 
   @Column({ type: 'uuid' })
   dstAppId: string;
+
+  @Column({
+    type: 'varchar',
+    length: 16,
+    default: DbReplicationKind.LOGICAL,
+  })
+  kind: DbReplicationKind;
+
+  @Column({ type: 'uuid', nullable: true })
+  wgLinkId?: string | null;
+
+  /** Physical: the per-link replication role on the source. */
+  @Column({ type: 'varchar', length: 64, nullable: true })
+  replRole?: string | null;
+
+  @Column({ type: 'uuid', nullable: true })
+  srcNodeId?: string | null;
+
+  @Column({ type: 'uuid', nullable: true })
+  dstNodeId?: string | null;
 
   @Column({ length: 64 })
   pubName: string;

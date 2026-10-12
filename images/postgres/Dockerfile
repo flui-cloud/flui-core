@@ -21,7 +21,7 @@ RUN set -eux; \
 COPY postgresql.flui.conf /etc/flui/postgresql.flui.conf
 # First-init hook: make the generated postgresql.conf include the flui base config.
 COPY 00-flui-conf.sh /docker-entrypoint-initdb.d/00-flui-conf.sh
-# Wrapper entrypoint: adds a restore-bootstrap mode, then delegates to the stock entrypoint.
+# Wrapper entrypoint: adds standby- and restore-bootstrap modes, then delegates to the stock entrypoint.
 COPY flui-entrypoint.sh /usr/local/bin/flui-entrypoint.sh
 
 RUN chmod 0644 /etc/flui/postgresql.flui.conf \

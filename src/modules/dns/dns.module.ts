@@ -42,6 +42,7 @@ import { SystemIngressService } from './services/system-ingress.service';
 import { ClusterDnsCleanupService } from './services/cluster-dns-cleanup.service';
 import { EndpointModeResolverService } from './services/endpoint-mode-resolver.service';
 import { EndpointHostGuardService } from './services/endpoint-host-guard.service';
+import { EndpointBridgeService } from './services/endpoint-bridge.service';
 import { TenancySubdomainService } from './services/tenancy-subdomain.service';
 import { SandboxSubdomainService } from './services/sandbox-subdomain.service';
 import { SandboxSubdomainConfigService } from './services/sandbox-subdomain-config.service';
@@ -118,6 +119,7 @@ import { ClusterDnsGateway } from './gateway/cluster-dns.gateway';
     CertificateStatusRefreshService,
     AcmeResolversService,
     CertificateStatusScheduler,
+    EndpointBridgeService,
   ],
   controllers: [
     DnsZoneController,
@@ -144,6 +146,7 @@ import { ClusterDnsGateway } from './gateway/cluster-dns.gateway';
     GatewayMiddlewareCompilerService,
     DnsZoneReconciliationService,
     ClusterIngressReconciler,
+    EndpointBridgeService,
   ],
 })
 export class DnsModule {}

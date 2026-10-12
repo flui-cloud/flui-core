@@ -13,6 +13,8 @@ import {
 } from '../enums/full-migration.enum';
 import { RewirePlan } from '../services/db-connection-rewire.service';
 
+export type WritePauseEndedBy = 'bridge' | 'dns' | 'promote' | 'resume';
+
 /**
  * One run of the full-app migration orchestrator (plan §6 / MVP-5c): move a
  * live app AND its managed Postgres to another cluster, rewiring the app's DB
@@ -72,6 +74,16 @@ export class FullMigrationEntity {
 
   @Column({ type: 'uuid', nullable: true })
   infrastructureOperationId?: string;
+
+  @Column({ type: 'uuid', nullable: true })
+  backupDestinationId?: string;
+
+  /** From the database fence to the moment clients' writes reach the destination. */
+  @Column({ type: 'int', nullable: true })
+  writePauseMs?: number | null;
+
+  @Column({ type: 'varchar', length: 8, nullable: true })
+  writePauseEndedBy?: WritePauseEndedBy | null;
 
   @Column({ type: 'text', nullable: true })
   errorMessage?: string;

@@ -1,5 +1,7 @@
 import { ApiClient } from './api-client';
 import { ConfigStorage } from './config-storage';
+import { MigrationBridge } from './migration-bridge-view';
+import { MigrationMeasures } from './migration-measures-view';
 
 export type MigrationType = 'app' | 'db' | 'full';
 export type CutoverMode = 'auto' | 'manual';
@@ -15,13 +17,16 @@ export interface AppMigration {
   status: string;
   fullMigrationId?: string;
   provisionOverrides?: { volumeDestinationId?: string };
+  bridge?: MigrationBridge | null;
+  canResumeCutover?: boolean;
+  sourceDestroyedAt?: string;
   errorMessage?: string;
   startedAt?: string;
   finishedAt?: string;
   createdAt?: string;
 }
 
-export interface DbMigration {
+export interface DbMigration extends MigrationMeasures {
   id: string;
   srcAppId: string;
   dstAppId?: string;
@@ -36,7 +41,7 @@ export interface DbMigration {
   createdAt?: string;
 }
 
-export interface FullMigration {
+export interface FullMigration extends MigrationMeasures {
   id: string;
   appId: string;
   dbAppId: string;
@@ -46,6 +51,8 @@ export interface FullMigration {
   status: string;
   dbMigrationId?: string;
   appMigrationId?: string;
+  bridge?: MigrationBridge | null;
+  canResumeCutover?: boolean;
   errorMessage?: string;
   startedAt?: string;
   finishedAt?: string;
@@ -57,6 +64,7 @@ export interface CreateAppMigrationInput {
   targetClusterId: string;
   cutover?: CutoverMode;
   backupDestinationId?: string;
+  bridge?: boolean;
 }
 
 export interface CreateDbMigrationInput {
@@ -75,6 +83,8 @@ export interface CreateFullMigrationInput {
   targetClusterId: string;
   cutover?: CutoverMode;
   stagingMode?: StagingMode;
+  backupDestinationId?: string;
+  pauseDeadlineSeconds?: number;
 }
 
 /**
@@ -117,8 +127,14 @@ export class MigrationClient {
     return this.api.post(`/app-migrations/${id}/cutover`);
   }
 
-  async destroyAppMigrationSource(id: string): Promise<AppMigration> {
-    return this.api.post(`/app-migrations/${id}/destroy-source`);
+  async destroyAppMigrationSource(
+    id: string,
+    opts: { closeBridge?: boolean } = {},
+  ): Promise<AppMigration> {
+    return this.api.post(
+      `/app-migrations/${id}/destroy-source`,
+      opts.closeBridge ? { closeBridge: true } : {},
+    );
   }
 
   async abortAppMigration(id: string): Promise<AppMigration> {
@@ -163,12 +179,26 @@ export class MigrationClient {
     return this.api.get(`/full-migrations/${id}`);
   }
 
-  async cutoverFullMigration(id: string): Promise<FullMigration> {
-    return this.api.post(`/full-migrations/${id}/cutover`);
+  async cutoverFullMigration(
+    id: string,
+    opts: { pauseDeadlineSeconds?: number } = {},
+  ): Promise<FullMigration> {
+    return this.api.post(
+      `/full-migrations/${id}/cutover`,
+      opts.pauseDeadlineSeconds !== undefined
+        ? { pauseDeadlineSeconds: opts.pauseDeadlineSeconds }
+        : undefined,
+    );
   }
 
-  async destroyFullMigrationSource(id: string): Promise<FullMigration> {
-    return this.api.post(`/full-migrations/${id}/destroy-source`);
+  async destroyFullMigrationSource(
+    id: string,
+    opts: { closeBridge?: boolean } = {},
+  ): Promise<FullMigration> {
+    return this.api.post(
+      `/full-migrations/${id}/destroy-source`,
+      opts.closeBridge ? { closeBridge: true } : {},
+    );
   }
 
   async abortFullMigration(id: string): Promise<FullMigration> {

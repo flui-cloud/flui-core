@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsEnum, IsOptional, IsUUID } from 'class-validator';
+import { IsBoolean, IsEnum, IsOptional, IsUUID } from 'class-validator';
 import { AppCutoverMode } from '../enums/app-migration.enum';
 
 export class CreateAppMigrationDto {
@@ -28,4 +28,13 @@ export class CreateAppMigrationDto {
   @IsOptional()
   @IsUUID()
   backupDestinationId?: string;
+
+  @ApiPropertyOptional({
+    default: true,
+    description:
+      'Forward clients that still resolve the source cluster to the destination after the DNS switch. When the bridge cannot be used the migration moves DNS only and says why.',
+  })
+  @IsOptional()
+  @IsBoolean()
+  bridge?: boolean;
 }

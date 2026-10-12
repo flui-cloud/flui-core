@@ -1,42 +1,47 @@
-import { Processor, Process } from '@nestjs/bull';
+import { InjectQueue, Processor, Process } from '@nestjs/bull';
 import { Logger } from '@nestjs/common';
-import { Job } from 'bull';
+import { Job, Queue } from 'bull';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import {
   InfrastructureOperationEntity,
-  OperationStatus,
   OperationStep,
 } from '../../infrastructure/servers/entities/infrastructure-operations.entity';
 import { CatalogInstallerService } from '../../catalog/services/catalog-installer.service';
 import { CatalogInstallEntity } from '../../catalog/entities/catalog-install.entity';
 import { UserEntity } from '../../auth/entities/user.entity';
-import { CatalogInstallStatus } from '../../catalog/enums/catalog-install-status.enum';
 import { RestoreJobsService } from '../../backups/services/restore-jobs.service';
-import { RestoreJobStatus } from '../../backups/enums/restore-job.enum';
 import { DbPitrService } from '../../backups/services/db-pitr.service';
+import { ApplicationEntity } from '../../applications/entities/application.entity';
+import { ClusterNodeEntity } from '../../infrastructure/clusters/entities/cluster-node.entity';
 import { DbMigrationEntity } from '../entities/db-migration.entity';
 import {
   DbCutoverMode,
   DbMigrationMode,
   DbMigrationStatus,
 } from '../enums/db-migration.enum';
-import { DbReplicationStatus } from '../enums/db-replication-status.enum';
+import { DbReplicationKind } from '../enums/db-replication-status.enum';
 import { DbReplicationService } from '../services/db-replication.service';
+import { DbPhysicalReplicationService } from '../services/db-physical-replication.service';
+import { DbWriteFenceService } from '../services/db-write-fence.service';
+import { DbPodPlacementService } from '../services/db-pod-placement.service';
+import { DbPodExecService } from '../services/db-pod-exec.service';
+import { DbCredentialHandoffService } from '../services/db-credential-handoff.service';
 import {
   DB_LIFECYCLE_QUEUE,
   DB_LIFECYCLE_JOB_TYPES,
 } from '../db-lifecycle.constants';
-
-const POSTGRESQL_SLUG = 'postgresql';
-const INSTALL_POLL_INTERVAL_MS = 5_000;
-const INSTALL_POLL_TIMEOUT_MS = 15 * 60 * 1000;
-const STREAMING_POLL_INTERVAL_MS = 5_000;
-const STREAMING_TIMEOUT_MS = 60 * 60 * 1000;
-const DRAIN_POLL_INTERVAL_MS = 1_000;
-const DRAIN_TIMEOUT_MS = 120 * 1000;
-const RESTORE_POLL_INTERVAL_MS = 10_000;
-const RESTORE_TIMEOUT_MS = 45 * 60 * 1000;
+import { DbPoolerService } from '../../catalog/services/db-pooler.service';
+import { DbPoolerCutService } from '../services/db-pooler-cut.service';
+import {
+  DbMigrationRunContext,
+  DbMigrationState,
+  MigrationAbortedError,
+} from './db-migration.run-context';
+import { DbLogicalMigrationRun } from './db-migration.logical';
+import { DbPhysicalCopy } from './db-migration.physical-copy';
+import { DbPhysicalCompletion } from './db-migration.physical-complete';
+import { DbPhysicalCutover } from './db-migration.physical-cutover';
 
 interface DbMigrationJobData {
   migrationId: string;
@@ -51,21 +56,66 @@ interface DbMigrationJobData {
 @Processor(DB_LIFECYCLE_QUEUE)
 export class DbMigrationProcessor {
   private readonly logger = new Logger(DbMigrationProcessor.name);
+  private readonly state: DbMigrationState;
+  private readonly logical: DbLogicalMigrationRun;
+  private readonly copy: DbPhysicalCopy;
+  private readonly completion: DbPhysicalCompletion;
+  private readonly cutover: DbPhysicalCutover;
 
   constructor(
     @InjectRepository(DbMigrationEntity)
     private readonly migRepo: Repository<DbMigrationEntity>,
     @InjectRepository(InfrastructureOperationEntity)
-    private readonly opRepo: Repository<InfrastructureOperationEntity>,
+    opRepo: Repository<InfrastructureOperationEntity>,
     @InjectRepository(CatalogInstallEntity)
-    private readonly installRepo: Repository<CatalogInstallEntity>,
+    installRepo: Repository<CatalogInstallEntity>,
     @InjectRepository(UserEntity)
-    private readonly userRepo: Repository<UserEntity>,
-    private readonly installer: CatalogInstallerService,
-    private readonly repl: DbReplicationService,
-    private readonly restoreJobs: RestoreJobsService,
-    private readonly dbPitr: DbPitrService,
-  ) {}
+    userRepo: Repository<UserEntity>,
+    installer: CatalogInstallerService,
+    repl: DbReplicationService,
+    restoreJobs: RestoreJobsService,
+    dbPitr: DbPitrService,
+    physical: DbPhysicalReplicationService,
+    fence: DbWriteFenceService,
+    placement: DbPodPlacementService,
+    exec: DbPodExecService,
+    handoff: DbCredentialHandoffService,
+    @InjectRepository(ApplicationEntity)
+    appRepo: Repository<ApplicationEntity>,
+    @InjectRepository(ClusterNodeEntity)
+    nodeRepo: Repository<ClusterNodeEntity>,
+    @InjectQueue(DB_LIFECYCLE_QUEUE) queue: Queue,
+    poolerCut?: DbPoolerCutService,
+    poolers?: DbPoolerService,
+  ) {
+    const ctx: DbMigrationRunContext = {
+      migRepo,
+      opRepo,
+      installRepo,
+      userRepo,
+      appRepo,
+      nodeRepo,
+      installer,
+      repl,
+      restoreJobs,
+      dbPitr,
+      physical,
+      fence,
+      placement,
+      exec,
+      handoff,
+      queue,
+      poolerCut,
+      poolers,
+      logger: this.logger,
+      sleep: (ms) => this.sleep(ms),
+    };
+    this.state = new DbMigrationState(migRepo, opRepo, this.logger);
+    this.logical = new DbLogicalMigrationRun(ctx, this.state);
+    this.copy = new DbPhysicalCopy(ctx, this.state);
+    this.completion = new DbPhysicalCompletion(ctx, this.state);
+    this.cutover = new DbPhysicalCutover(ctx, this.state, this.completion);
+  }
 
   @Process(DB_LIFECYCLE_JOB_TYPES.RUN_DB_MIGRATION)
   async run(job: Job<DbMigrationJobData>): Promise<void> {
@@ -77,75 +127,18 @@ export class DbMigrationProcessor {
     mig.startedAt = new Date();
     await this.migRepo.save(mig);
 
+    if (
+      mig.mode === DbMigrationMode.LIVE &&
+      mig.kind === DbReplicationKind.PHYSICAL
+    ) {
+      await this.runPhysical(mig);
+      return;
+    }
+
     try {
-      if (mig.mode === DbMigrationMode.RESTORE) {
-        await this.runRestoreMode(mig);
-        return;
-      }
-
-      await this.setState(
-        mig,
-        DbMigrationStatus.PROVISIONING,
-        OperationStep.DB_MIGRATE_PROVISION_TARGET,
-        10,
-      );
-      // installer.install() persists the email onto the install row, and the
-      // owning namespace is derived from it downstream in CatalogInstallProcessor
-      // — a queue processor has no request principal to read it off, so it has
-      // to be looked up here or the install fails placement.
-      const triggeringUser = await this.userRepo.findOne({
-        where: { id: mig.userId },
-      });
-      const { install } = await this.installer.install(
-        POSTGRESQL_SLUG,
-        { clusterId: mig.targetClusterId, displayName: mig.displayName },
-        mig.userId,
-        triggeringUser?.email,
-      );
-      mig.dstInstallId = install.id;
-      await this.migRepo.save(mig);
-      const finalInstall = await this.waitForInstall(install.id);
-      if (finalInstall.status !== CatalogInstallStatus.RUNNING) {
-        throw new Error(
-          `Target install ${install.id} ended in status ${finalInstall.status}`,
-        );
-      }
-      mig.dstAppId = finalInstall.applicationIds?.[0];
-      if (!mig.dstAppId) {
-        throw new Error(`Target install ${install.id} has no application id`);
-      }
-      await this.migRepo.save(mig);
-
-      await this.setState(
-        mig,
-        DbMigrationStatus.REPLICATING,
-        OperationStep.DB_MIGRATE_REPLICATE,
-        35,
-      );
-      const link = await this.repl.replicateTo(
-        mig.srcAppId,
-        mig.dstAppId,
-        'auto',
-      );
-      mig.linkId = link.id;
-      await this.migRepo.save(mig);
-      await this.waitForStreaming(link.id);
-
-      await this.setState(
-        mig,
-        DbMigrationStatus.SYNCED,
-        OperationStep.DB_MIGRATE_SYNCED,
-        60,
-      );
-      if (mig.cutoverMode === DbCutoverMode.MANUAL) {
-        this.logger.log(
-          `[db-migration] ${mig.id} synced — parked awaiting manual cutover`,
-        );
-        return;
-      }
-      await this.performCutover(mig);
+      await this.logical.run(mig);
     } catch (err: any) {
-      await this.fail(mig, err);
+      await this.state.fail(mig, err);
       throw err;
     }
   }
@@ -156,6 +149,18 @@ export class DbMigrationProcessor {
       where: { id: job.data.migrationId },
     });
     if (!mig) throw new Error(`Migration ${job.data.migrationId} not found`);
+    if (mig.kind === DbReplicationKind.PHYSICAL) {
+      if (mig.status === DbMigrationStatus.SYNCED) {
+        await this.cutover.performPhysicalCutover(mig);
+      } else if (mig.status === DbMigrationStatus.CUTOVER) {
+        await this.cutover.resolveCutover(mig);
+      } else {
+        this.logger.warn(
+          `[db-migration] cutover job for ${mig.id} skipped (state ${mig.status})`,
+        );
+      }
+      return;
+    }
     if (mig.status !== DbMigrationStatus.SYNCED) {
       this.logger.warn(
         `[db-migration] cutover job for ${mig.id} skipped (state ${mig.status})`,
@@ -163,202 +168,82 @@ export class DbMigrationProcessor {
       return;
     }
     try {
-      await this.performCutover(mig);
+      await this.logical.performCutover(mig);
     } catch (err: any) {
-      await this.fail(mig, err);
+      await this.state.fail(mig, err);
       throw err;
     }
   }
 
   /**
-   * The write pause: fence → terminate in-flight writers → drain → verify →
-   * promote. Any failure BEFORE promote unfences the source (rollback is
-   * trivial there); promote is the point of no return.
+   * Re-entrant: Bull redelivers `run` after an API restart, and each step
+   * skips what an earlier delivery already built.
    */
-  private async performCutover(mig: DbMigrationEntity): Promise<void> {
-    if (!mig.linkId) throw new Error('Migration has no replication link');
-    await this.setState(
-      mig,
-      DbMigrationStatus.CUTOVER,
-      OperationStep.DB_MIGRATE_CUTOVER,
-      75,
-    );
+  private async runPhysical(mig: DbMigrationEntity): Promise<void> {
+    if (mig.status === DbMigrationStatus.CUTOVER) {
+      await this.cutover.resolveCutover(mig);
+      return;
+    }
+    if (mig.status === DbMigrationStatus.SYNCED) {
+      if (mig.cutoverMode === DbCutoverMode.AUTO) {
+        await this.cutover.performPhysicalCutover(mig);
+      }
+      return;
+    }
+    const terminal = [
+      DbMigrationStatus.COMPLETED,
+      DbMigrationStatus.ABORTED,
+      DbMigrationStatus.FAILED,
+    ];
+    if (terminal.includes(mig.status)) return;
 
-    let fenced = false;
     try {
-      await this.repl.fence(mig.srcAppId);
-      fenced = true;
-      await this.repl.terminateWriters(mig.srcAppId);
-      await this.waitForDrain(mig.linkId);
-
-      if (mig.verifyRowCounts) {
-        const verify = await this.repl.verifyRowCounts(mig.linkId);
-        mig.verifySummary = verify;
-        await this.migRepo.save(mig);
-        if (verify.mismatches.length > 0) {
-          throw new Error(
-            `Row-count mismatch on ${verify.mismatches.length} table(s): ${verify.mismatches.slice(0, 5).join('; ')}`,
-          );
-        }
+      await this.copy.provisionStandby(mig);
+      const link = await this.copy.buildLink(mig);
+      await this.copy.copyAndStream(mig, link);
+      if (
+        !(await this.state.moveFrom(
+          mig,
+          [DbMigrationStatus.REPLICATING],
+          DbMigrationStatus.SYNCED,
+        ))
+      ) {
+        throw new MigrationAbortedError();
       }
-
-      await this.repl.promote(mig.linkId);
-    } catch (err) {
-      if (fenced) {
-        await this.repl
-          .unfence(mig.srcAppId)
-          .catch((e) =>
-            this.logger.error(
-              `[db-migration] ${mig.id}: UNFENCE FAILED after cutover error — source is still read-only: ${e?.message}`,
-            ),
-          );
+      await this.state.setStep(mig, OperationStep.DB_MIGRATE_SYNCED, 60);
+    } catch (err: any) {
+      const fresh = await this.migRepo.findOne({ where: { id: mig.id } });
+      if (
+        err instanceof MigrationAbortedError ||
+        fresh?.status === DbMigrationStatus.ABORTED
+      ) {
+        this.logger.warn(
+          `[db-migration] ${mig.id} aborted while running — stopping`,
+        );
+        return;
       }
+      const notes = await this.copy.teardownFailedLink(mig);
+      await this.state.fail(
+        mig,
+        notes.length
+          ? new Error(
+              `${err?.message ?? err}; cleanup left: ${notes.join('; ')}`,
+            )
+          : err,
+      );
       throw err;
     }
 
-    mig.status = DbMigrationStatus.COMPLETED;
-    mig.finishedAt = new Date();
-    await this.migRepo.save(mig);
-    await this.completeOperation(mig);
-    this.logger.log(
-      `[db-migration] ${mig.id} COMPLETED: ${mig.srcAppId} → ${mig.dstAppId} (source left fenced)`,
-    );
-  }
-
-  private async runRestoreMode(mig: DbMigrationEntity): Promise<void> {
-    await this.setState(
-      mig,
-      DbMigrationStatus.RESTORING,
-      OperationStep.DB_MIGRATE_RESTORE,
-      30,
-    );
-    const restoreJob = await this.dbPitr.restore(mig.userId, mig.srcAppId, {
-      name: mig.displayName,
-      clusterId: mig.targetClusterId,
-      recoveryTargetTime: mig.recoveryTargetTime?.toISOString(),
-    });
-    mig.restoreJobId = restoreJob.id;
-    await this.migRepo.save(mig);
-
-    const deadline = Date.now() + RESTORE_TIMEOUT_MS;
-    for (;;) {
-      const rj = await this.restoreJobs.findById(restoreJob.id);
-      if (rj.status === RestoreJobStatus.COMPLETED) {
-        const preview = rj.previewResult as
-          | { createdInstallId?: string; createdApplicationIds?: string[] }
-          | undefined;
-        mig.dstInstallId = preview?.createdInstallId;
-        mig.dstAppId = preview?.createdApplicationIds?.[0];
-        break;
-      }
-      if (rj.status === RestoreJobStatus.FAILED) {
-        throw new Error(`Restore failed: ${rj.errorMessage ?? 'unknown'}`);
-      }
-      if (Date.now() > deadline) {
-        throw new Error('Restore did not finish in time');
-      }
-      await new Promise((r) => setTimeout(r, RESTORE_POLL_INTERVAL_MS));
+    if (mig.cutoverMode === DbCutoverMode.MANUAL) {
+      this.logger.log(
+        `[db-migration] ${mig.id} synced (hot standby streaming) — parked awaiting manual cutover`,
+      );
+      return;
     }
-
-    mig.status = DbMigrationStatus.COMPLETED;
-    mig.finishedAt = new Date();
-    await this.migRepo.save(mig);
-    await this.completeOperation(mig);
-    this.logger.log(
-      `[db-migration] ${mig.id} COMPLETED (restore mode): new app ${mig.dstAppId}`,
-    );
+    await this.cutover.performPhysicalCutover(mig);
   }
 
-  // --- helpers ---------------------------------------------------------------
-
-  private async setState(
-    mig: DbMigrationEntity,
-    status: DbMigrationStatus,
-    step: OperationStep,
-    progress: number,
-  ): Promise<void> {
-    mig.status = status;
-    await this.migRepo.save(mig);
-    if (mig.infrastructureOperationId) {
-      await this.opRepo.update(mig.infrastructureOperationId, {
-        status: OperationStatus.IN_PROGRESS,
-        currentStep: step,
-        progress,
-      });
-    }
-  }
-
-  private async completeOperation(mig: DbMigrationEntity): Promise<void> {
-    if (!mig.infrastructureOperationId) return;
-    await this.opRepo.update(mig.infrastructureOperationId, {
-      status: OperationStatus.COMPLETED,
-      completedAt: new Date(),
-      progress: 100,
-    });
-  }
-
-  private async fail(mig: DbMigrationEntity, err: any): Promise<void> {
-    this.logger.error(`[db-migration] ${mig.id} failed: ${err?.message}`);
-    mig.status = DbMigrationStatus.FAILED;
-    mig.errorMessage = err?.message ?? String(err);
-    mig.finishedAt = new Date();
-    await this.migRepo.save(mig);
-    if (mig.infrastructureOperationId) {
-      await this.opRepo.update(mig.infrastructureOperationId, {
-        status: OperationStatus.FAILED,
-        errorMessage: mig.errorMessage,
-        completedAt: new Date(),
-      });
-    }
-  }
-
-  private async waitForInstall(
-    installId: string,
-  ): Promise<CatalogInstallEntity> {
-    const deadline = Date.now() + INSTALL_POLL_TIMEOUT_MS;
-    for (;;) {
-      const install = await this.installRepo.findOne({
-        where: { id: installId },
-      });
-      if (!install) throw new Error(`Install ${installId} vanished`);
-      if (
-        install.status === CatalogInstallStatus.RUNNING ||
-        install.status === CatalogInstallStatus.FAILED
-      ) {
-        return install;
-      }
-      if (Date.now() > deadline) {
-        throw new Error(
-          `Target install ${installId} did not reach a terminal state in time (last=${install.status})`,
-        );
-      }
-      await new Promise((r) => setTimeout(r, INSTALL_POLL_INTERVAL_MS));
-    }
-  }
-
-  private async waitForStreaming(linkId: string): Promise<void> {
-    const deadline = Date.now() + STREAMING_TIMEOUT_MS;
-    for (;;) {
-      const st = await this.repl.replicationStatus(linkId);
-      if (st.status === DbReplicationStatus.STREAMING) return;
-      if (Date.now() > deadline) {
-        throw new Error(
-          `Replication did not reach streaming in time (state ${st.status}, sub ${st.subscriptionState})`,
-        );
-      }
-      await new Promise((r) => setTimeout(r, STREAMING_POLL_INTERVAL_MS));
-    }
-  }
-
-  private async waitForDrain(linkId: string): Promise<void> {
-    const deadline = Date.now() + DRAIN_TIMEOUT_MS;
-    for (;;) {
-      const st = await this.repl.replicationStatus(linkId);
-      if (st.lagBytes !== null && st.lagBytes <= 0) return;
-      if (Date.now() > deadline) {
-        throw new Error('Replication did not drain to zero lag during cutover');
-      }
-      await new Promise((r) => setTimeout(r, DRAIN_POLL_INTERVAL_MS));
-    }
+  private sleep(ms: number): Promise<void> {
+    return new Promise((r) => setTimeout(r, ms));
   }
 }

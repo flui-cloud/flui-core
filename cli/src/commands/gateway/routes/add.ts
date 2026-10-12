@@ -5,7 +5,7 @@ import {
   CliAppService,
   GatewayMinRole,
 } from '../../../lib/services/cli-app.service';
-import { resolveCluster } from '../../../lib/resolve-cluster';
+import { resolveClusterRef } from '../../../lib/resolve-cluster';
 import { printRouteDetail, parseCidrList } from '../../../lib/gateway-utils';
 
 export default class GatewayRoutesAdd extends Command {
@@ -74,7 +74,7 @@ export default class GatewayRoutesAdd extends Command {
     const { args, flags } = await this.parse(GatewayRoutesAdd);
     const spinner = ora(`Adding route ${args.host}...`).start();
     try {
-      const { id: clusterId } = await resolveCluster(flags.cluster);
+      const { id: clusterId } = await resolveClusterRef(flags.cluster);
       const service = await CliAppService.create(clusterId);
       const app = await service.getAppByName(args.app);
 

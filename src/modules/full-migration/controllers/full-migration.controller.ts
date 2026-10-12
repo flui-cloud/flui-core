@@ -15,7 +15,12 @@ import { ActionCycle } from '../../action-cycle/action-cycle.decorator';
 import { fullMigrationClause } from '../migration-clause';
 import { IAM_PERMISSION } from '../../iam/constants/iam-permissions';
 import { FullMigrationService } from '../services/full-migration.service';
-import { CreateFullMigrationDto } from '../dto/create-full-migration.dto';
+import { FullMigrationViewService } from '../services/full-migration-view.service';
+import {
+  CreateFullMigrationDto,
+  FullMigrationCutoverDto,
+} from '../dto/create-full-migration.dto';
+import { DestroySourceDto } from '../../app-migration/dto/destroy-source.dto';
 import { DataDoor } from '../../iam/decorators/data-door.decorator';
 
 /**
@@ -38,7 +43,10 @@ import { DataDoor } from '../../iam/decorators/data-door.decorator';
 @Controller('full-migrations')
 @RequireSection('backup')
 export class FullMigrationController {
-  constructor(private readonly service: FullMigrationService) {}
+  constructor(
+    private readonly service: FullMigrationService,
+    private readonly views: FullMigrationViewService,
+  ) {}
 
   private userId(req: Request): string {
     const u = req.user as { userId?: string; id?: string } | undefined;
@@ -69,13 +77,13 @@ export class FullMigrationController {
   @Get()
   @RequirePermission(IAM_PERMISSION.APP_READ)
   list(@Req() req: Request) {
-    return this.service.list(this.userId(req));
+    return this.views.listViews(this.userId(req));
   }
 
   @Get(':id')
   @RequirePermission(IAM_PERMISSION.APP_READ)
   get(@Param('id') id: string) {
-    return this.service.findById(id);
+    return this.views.getView(id);
   }
 
   @Post(':id/cutover')
@@ -90,8 +98,8 @@ export class FullMigrationController {
       'Both are served from the destination cluster from that moment, and the source keeps its data but stops taking traffic.',
   })
   @ApiOperation({ summary: 'Fire the joint cutover of a READY full-migration' })
-  cutover(@Param('id') id: string) {
-    return this.service.cutover(id);
+  cutover(@Param('id') id: string, @Body() dto: FullMigrationCutoverDto) {
+    return this.service.cutover(id, dto ?? {});
   }
 
   @Post(':id/destroy-source')
@@ -103,12 +111,17 @@ export class FullMigrationController {
     sentence:
       'destroy the source application and database that migration {id} ' +
       'moved away from — they do not come back',
+    consequence:
+      'An open bridge is closed first: clients still resolving the old cluster stop being forwarded. The source application workload and its routes are removed.',
   })
   @ApiOperation({
-    summary: 'Destroy the drained source app workload after completion',
+    summary:
+      'Close the bridge and destroy the source app workload after the cutover',
   })
-  destroySource(@Param('id') id: string) {
-    return this.service.destroySource(id);
+  destroySource(@Param('id') id: string, @Body() dto: DestroySourceDto) {
+    return this.service.destroySource(id, {
+      closeBridge: dto?.closeBridge === true,
+    });
   }
 
   @Delete(':id')

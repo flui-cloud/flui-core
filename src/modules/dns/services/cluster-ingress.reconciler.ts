@@ -218,7 +218,11 @@ export class ClusterIngressReconciler {
       }
     }
     for (const endpoint of assignment.endpoints ?? []) {
-      if (endpoint.hostnameMode === HostnameMode.IP || !endpoint.dnsRecordId) {
+      if (
+        endpoint.hostnameMode === HostnameMode.IP ||
+        !endpoint.dnsRecordId ||
+        endpoint.dnsHeldBy
+      ) {
         continue;
       }
       const name = resolveRecordName(endpoint.fqdn, zone.zoneName);

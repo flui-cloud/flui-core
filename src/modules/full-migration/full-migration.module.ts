@@ -13,6 +13,7 @@ import { FullMigrationEntity } from './entities/full-migration.entity';
 import { FullMigrationService } from './services/full-migration.service';
 import { DbConnectionRewireService } from './services/db-connection-rewire.service';
 import { FullMigrationOpsService } from './services/full-migration-ops.service';
+import { FullMigrationViewService } from './services/full-migration-view.service';
 import { FullMigrationProcessor } from './processors/full-migration.processor';
 import { FullMigrationController } from './controllers/full-migration.controller';
 import { FULL_MIGRATION_QUEUE } from './full-migration.constants';
@@ -38,6 +39,7 @@ import { FULL_MIGRATION_QUEUE } from './full-migration.constants';
     DbConnectionRewireService,
     FullMigrationOpsService,
     FullMigrationProcessor,
+    FullMigrationViewService,
   ],
   exports: [FullMigrationService, DbConnectionRewireService],
 })

@@ -79,6 +79,13 @@ import { SandboxActivity1790000000022 } from './1790000000022-SandboxActivity';
 import { ClusterEgressPolicy1790000000023 } from './1790000000023-ClusterEgressPolicy';
 import { FluiRegistry1790000000024 } from './1790000000024-FluiRegistry';
 import { RegistryStorage1790000000025 } from './1790000000025-RegistryStorage';
+import { FullMigrationBackupDestination1790000000026 } from './1790000000026-FullMigrationBackupDestination';
+import { MigrationBridge1790000000027 } from './1790000000027-MigrationBridge';
+import { PhysicalDbMigration1790000000028 } from './1790000000028-PhysicalDbMigration';
+import { MigrationMeasures1790000000029 } from './1790000000029-MigrationMeasures';
+import { BridgeBeforeFence1790000000030 } from './1790000000030-BridgeBeforeFence';
+import { DbPooler1790000000031 } from './1790000000031-DbPooler';
+import { DbPoolerCut1790000000032 } from './1790000000032-DbPoolerCut';
 import { BackfillArtifactApplicationId1787500000000 } from './1787500000000-BackfillArtifactApplicationId';
 import { WireGuardHubKeySealed1790000000000 } from './1790000000000-WireGuardHubKeySealed';
 import { RecoverNodeAccessOperation1790000000001 } from './1790000000001-RecoverNodeAccessOperation';
@@ -171,4 +178,11 @@ export const migrations = [
   ClusterEgressPolicy1790000000023,
   FluiRegistry1790000000024,
   RegistryStorage1790000000025,
+  FullMigrationBackupDestination1790000000026,
+  MigrationBridge1790000000027,
+  PhysicalDbMigration1790000000028,
+  MigrationMeasures1790000000029,
+  BridgeBeforeFence1790000000030,
+  DbPooler1790000000031,
+  DbPoolerCut1790000000032,
 ];

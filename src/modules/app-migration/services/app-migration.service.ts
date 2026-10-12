@@ -3,6 +3,7 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  OnModuleInit,
 } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bull';
 import { Queue } from 'bull';
@@ -32,10 +33,27 @@ import {
   APP_MIGRATION_QUEUE,
   APP_MIGRATION_JOB_TYPES,
 } from '../app-migration.constants';
+import { AppEndpointReconciliationService } from '../../dns/services/app-endpoint-reconciliation.service';
+import { EndpointBridgeService } from '../../dns/services/endpoint-bridge.service';
+import { AppMigrationProcessor } from '../processors/app-migration.processor';
+import { MigrationBridgeView, bridgeView } from '../utils/bridge-view';
+import {
+  assertNotOrchestrated,
+  canResumeCutover,
+} from '../utils/app-migration-state.core';
+import { AppMigrationJobs } from './app-migration.jobs';
+import { AppMigrationTeardown } from './app-migration.teardown';
+
+export type AppMigrationView = Omit<AppMigrationEntity, 'bridgeState'> & {
+  bridge: MigrationBridgeView | null;
+  canResumeCutover: boolean;
+};
 
 @Injectable()
-export class AppMigrationService {
+export class AppMigrationService implements OnModuleInit {
   private readonly logger = new Logger(AppMigrationService.name);
+  private readonly jobs: AppMigrationJobs;
+  private readonly teardown: AppMigrationTeardown;
 
   constructor(
     @InjectRepository(AppMigrationEntity)
@@ -49,9 +67,23 @@ export class AppMigrationService {
     @InjectRepository(AppEndpointEntity)
     private readonly endpointRepo: Repository<AppEndpointEntity>,
     @InjectQueue(APP_MIGRATION_QUEUE) private readonly queue: Queue,
-    private readonly materializer: ApplicationMaterializerService,
+    materializer: ApplicationMaterializerService,
     private readonly volumes: AppVolumeTransferService,
-  ) {}
+    reconciliation: AppEndpointReconciliationService,
+    private readonly bridge: EndpointBridgeService,
+    private readonly legs: AppMigrationProcessor,
+  ) {
+    this.jobs = new AppMigrationJobs(queue, migRepo, this.logger);
+    this.teardown = new AppMigrationTeardown(
+      migRepo,
+      opRepo,
+      endpointRepo,
+      materializer,
+      reconciliation,
+      bridge,
+      this.logger,
+    );
+  }
 
   async create(
     userId: string,
@@ -59,6 +91,8 @@ export class AppMigrationService {
     opts?: {
       fullMigrationId?: string;
       provisionOverrides?: MaterializeOverrides;
+      /** The Secret of the database moving with this app, which its env may read. */
+      allowSecretsOf?: string;
     },
   ): Promise<AppMigrationEntity> {
     const app = await this.appRepo.findOne({ where: { id: dto.srcAppId } });
@@ -77,40 +111,18 @@ export class AppMigrationService {
       );
     }
 
-    if (app.env?.some((e) => e.externalSecretRef)) {
-      throw new BadRequestException(
-        `Application ${dto.srcAppId} references external secrets (composed app) — migrate its producers first (v1 = self-contained only)`,
-      );
-    }
-
-    // One migration per app at a time.
-    const active = await this.migRepo.findOne({
-      where: {
-        srcAppId: dto.srcAppId,
-        status: In([
-          AppMigrationStatus.PENDING,
-          AppMigrationStatus.PROVISIONING,
-          AppMigrationStatus.READY,
-          AppMigrationStatus.CUTOVER,
-        ]),
-      },
+    await this.assertMovable(app, dto.targetClusterId, {
+      allowSecretsOf: opts?.allowSecretsOf,
     });
-    if (active) {
-      throw new BadRequestException(
-        `Application ${dto.srcAppId} already has an in-progress migration (${active.id})`,
-      );
-    }
 
-    // IP-mode (nip.io) endpoints embed the source IP in the fqdn and cannot be
-    // moved to a stable hostname — a domain-mode zone is required to migrate.
-    const endpoints = await this.endpointRepo.find({
-      where: { applicationId: dto.srcAppId },
+    const bridge = await this.bridge.preflight({
+      endpoints: await this.endpointRepo.find({
+        where: { applicationId: app.id },
+      }),
+      sourceClusterId: app.clusterId,
+      targetClusterId: dto.targetClusterId,
+      requested: dto.bridge !== false,
     });
-    if (endpoints.some((e) => e.hostnameMode === HostnameMode.IP)) {
-      throw new BadRequestException(
-        `Application ${dto.srcAppId} has an IP-mode (nip.io) endpoint bound to the source cluster IP — a domain-mode DNS zone is required to migrate`,
-      );
-    }
 
     const volumePlan = this.volumes.hasVolumes(app)
       ? await this.volumes.plan(
@@ -132,6 +144,7 @@ export class AppMigrationService {
         metadata: {
           srcClusterId: app.clusterId,
           targetClusterId: dto.targetClusterId,
+          bridge: bridge.mode,
           ...(volumePlan
             ? {
                 interruption:
@@ -153,6 +166,12 @@ export class AppMigrationService {
         status: AppMigrationStatus.PENDING,
         infrastructureOperationId: op.id,
         fullMigrationId: opts?.fullMigrationId,
+        bridgeState: {
+          mode: bridge.mode,
+          skipReason: bridge.skipReason,
+          state: null,
+          hosts: [],
+        },
         provisionOverrides: volumePlan
           ? {
               ...opts?.provisionOverrides,
@@ -171,31 +190,149 @@ export class AppMigrationService {
     return mig;
   }
 
+  async assertMovable(
+    app: ApplicationEntity,
+    targetClusterId?: string,
+    opts: { allowSecretsOf?: string } = {},
+  ): Promise<void> {
+    const foreign = [
+      ...new Set(
+        (app.env ?? [])
+          .map((e) => e.externalSecretRef?.secretName)
+          .filter((n): n is string => !!n && n !== opts.allowSecretsOf),
+      ),
+    ];
+    if (foreign.length) {
+      const one = foreign.length === 1;
+      throw new BadRequestException(
+        `Application ${app.id} reads variables from ${one ? 'a secret' : 'secrets'} it does not own (${foreign.join(', ')}), which would stay behind on the source cluster. Move the application that owns ${one ? 'it' : 'them'} first.`,
+      );
+    }
+
+    if (app.pooler?.enabled) {
+      throw new BadRequestException(
+        `Application ${app.id} is a database with a connection pooler, which moving it as an application would leave behind. Move a database with \`flui migrate db create\`, or together with the app that uses it with \`flui migrate full create\`.`,
+      );
+    }
+
+    const active = await this.migRepo.findOne({
+      where: {
+        srcAppId: app.id,
+        status: In([
+          AppMigrationStatus.PENDING,
+          AppMigrationStatus.PROVISIONING,
+          AppMigrationStatus.READY,
+          AppMigrationStatus.CUTOVER,
+          AppMigrationStatus.BRIDGING,
+        ]),
+      },
+    });
+    if (active) {
+      throw new BadRequestException(
+        `Application ${app.id} already has an in-progress migration (${active.id})`,
+      );
+    }
+
+    // IP-mode (nip.io) endpoints embed the source IP in the fqdn and cannot be
+    // moved to a stable hostname — a domain-mode zone is required to migrate.
+    const endpoints = await this.endpointRepo.find({
+      where: { applicationId: app.id },
+    });
+    if (endpoints.some((e) => e.hostnameMode === HostnameMode.IP)) {
+      throw new BadRequestException(
+        `Application ${app.id} has an IP-mode (nip.io) endpoint bound to the source cluster IP — a domain-mode DNS zone is required to migrate`,
+      );
+    }
+
+    if (endpoints.length) {
+      const hosts = [...new Set(endpoints.map((e) => e.fqdn))];
+      const sharing = (
+        await this.endpointRepo.find({ where: { fqdn: In(hosts) } })
+      ).filter((e) => e.applicationId !== app.id);
+      if (sharing.length) {
+        const other = sharing[0];
+        throw new BadRequestException(
+          `${other.fqdn} also routes ${other.routePath ?? '/'} to application ${other.applicationId}, which is not moving — its name would follow this one to the destination. Give one of them its own hostname before migrating.`,
+        );
+      }
+    }
+
+    if (targetClusterId) {
+      const missing = await this.bridge.zonesMissingOn(
+        endpoints,
+        targetClusterId,
+      );
+      if (missing.length) {
+        throw new BadRequestException(
+          `The destination cluster has no assignment for the DNS zone ${missing.join(', ')}; assign it there first so the name can move with the application.`,
+        );
+      }
+    }
+  }
+
   async cutover(
     id: string,
     fromOrchestrator = false,
   ): Promise<AppMigrationEntity> {
     const mig = await this.findById(id);
-    this.assertNotOrchestrated(mig, fromOrchestrator);
-    if (mig.status !== AppMigrationStatus.READY) {
-      throw new BadRequestException(
-        `Cutover is only available in state '${AppMigrationStatus.READY}' (current: '${mig.status}')`,
-      );
-    }
-    await this.queue.add(APP_MIGRATION_JOB_TYPES.RUN_APP_CUTOVER, {
-      migrationId: id,
-    });
+    assertNotOrchestrated(mig, fromOrchestrator);
+    await this.jobs.queueCutover(id, mig, fromOrchestrator);
     return mig;
   }
 
-  private assertNotOrchestrated(
-    mig: AppMigrationEntity,
-    fromOrchestrator: boolean,
-  ): void {
-    if (mig.fullMigrationId && !fromOrchestrator) {
+  /** A full migration opens the bridge before fencing the source database. */
+  async openBridge(
+    id: string,
+    fromOrchestrator = false,
+  ): Promise<AppMigrationEntity> {
+    const mig = await this.findById(id);
+    assertNotOrchestrated(mig, fromOrchestrator);
+    await this.jobs.queueBridgeOpen(id, mig);
+    return mig;
+  }
+
+  /** Undoes a bridge opened ahead of the promote; refused once the app moved. Idempotent. */
+  async rollbackBridge(
+    id: string,
+    fromOrchestrator = false,
+    loaded?: AppMigrationEntity,
+  ): Promise<AppMigrationEntity> {
+    const mig = loaded ?? (await this.findById(id));
+    assertNotOrchestrated(mig, fromOrchestrator);
+    if (mig.bridgeState?.state !== 'active') return mig;
+    const app = await this.appRepo.findOne({ where: { id: mig.srcAppId } });
+    if (app?.clusterId === mig.targetClusterId) {
       throw new BadRequestException(
-        `Migration ${mig.id} is a leg of full-migration ${mig.fullMigrationId} — drive it through the full-migration, not directly`,
+        `Application ${mig.srcAppId} is already served from the destination; the bridge of migration ${id} stays open`,
       );
+    }
+    await this.legs.rollbackBridge(mig);
+    return mig;
+  }
+
+  /**
+   * After the orchestrator gave up waiting for a bridge to open: undo it once
+   * no job holds the leg, so a still-running opening is not raced. Gives up,
+   * with a log line, if the leg stays busy.
+   */
+  async rollbackBridgeWhenIdle(
+    id: string,
+    timeoutMs = 2 * 60 * 1000,
+    pollMs = 2_000,
+  ): Promise<void> {
+    const deadline = Date.now() + timeoutMs;
+    for (;;) {
+      if (!(await this.jobs.liveJobIds()).has(id)) {
+        await this.rollbackBridge(id, true);
+        return;
+      }
+      if (Date.now() >= deadline) {
+        this.logger.warn(
+          `[app-migration] ${id}: a job still holds the leg, bridge not rolled back`,
+        );
+        return;
+      }
+      await new Promise((r) => setTimeout(r, pollMs));
     }
   }
 
@@ -211,7 +348,15 @@ export class AppMigrationService {
     fromOrchestrator = false,
   ): Promise<AppMigrationEntity> {
     const mig = await this.findById(id);
-    this.assertNotOrchestrated(mig, fromOrchestrator);
+    assertNotOrchestrated(mig, fromOrchestrator);
+    if (mig.bridgeState?.state === 'active' && fromOrchestrator) {
+      await this.rollbackBridge(id, true, mig);
+    }
+    if (mig.bridgeState?.state === 'active') {
+      throw new BadRequestException(
+        `Migration ${id} already forwards the source to the destination through the bridge — resume the cutover instead of aborting`,
+      );
+    }
     const abortable = [
       AppMigrationStatus.PENDING,
       AppMigrationStatus.PROVISIONING,
@@ -224,49 +369,31 @@ export class AppMigrationService {
       );
     }
     const app = await this.appRepo.findOne({ where: { id: mig.srcAppId } });
-    // Only tear down inline when no materialize is in flight; while PROVISIONING
-    // the processor re-applies concurrently, so it tears the destination down
-    // itself once it observes ABORTED after materialize returns (avoids a
-    // delete-vs-apply race). The `clusterId !== target` guard never tears down a
-    // destination the app has already been re-bound to (cutover done/underway).
-    if (
-      mig.status !== AppMigrationStatus.PROVISIONING &&
-      app &&
-      app.clusterId !== mig.targetClusterId
-    ) {
-      await this.materializer
-        .teardownOnCluster(app, mig.targetClusterId)
-        .catch((err: unknown) =>
-          this.logger.warn(
-            `[app-migration] abort ${id}: destination teardown failed: ${
-              err instanceof Error ? err.message : String(err)
-            }`,
-          ),
-        );
-    }
-    mig.status = AppMigrationStatus.ABORTED;
-    mig.finishedAt = new Date();
-    await this.migRepo.save(mig);
-    if (mig.infrastructureOperationId) {
-      await this.opRepo.update(mig.infrastructureOperationId, {
-        status: OperationStatus.CANCELLED,
-        completedAt: new Date(),
-      });
-    }
-    this.logger.log(`[app-migration] aborted ${id}`);
+    await this.teardown.abort(id, mig, app);
     return mig;
   }
 
   /**
-   * Tear the drained SOURCE workload down after a successful cutover (plan §6
-   * step 9 DESTROY). Only valid once the app has been re-bound to the
-   * destination — never touches a live serving cluster.
+   * Tear the SOURCE down after the cutover (DESTROY): the
+   * bridge first when one is open, then the routes the application left
+   * there, then its workload. Never touches the cluster the app is served
+   * from. An open bridge closes only once DNS answers cached before the
+   * switch have expired, unless the caller says to close it now.
    */
-  async destroySource(id: string): Promise<AppMigrationEntity> {
+  async destroySource(
+    id: string,
+    opts: { closeBridge?: boolean } = {},
+  ): Promise<AppMigrationEntity> {
     const mig = await this.findById(id);
-    if (mig.status !== AppMigrationStatus.COMPLETED) {
+    if (mig.sourceDestroyedAt) {
       throw new BadRequestException(
-        `Source can only be destroyed after a COMPLETED migration (current: '${mig.status}')`,
+        `The source of migration ${id} was already destroyed`,
+      );
+    }
+    const bridging = mig.status === AppMigrationStatus.BRIDGING;
+    if (mig.status !== AppMigrationStatus.COMPLETED && !bridging) {
+      throw new BadRequestException(
+        `Source can only be destroyed after the cutover, in state '${AppMigrationStatus.BRIDGING}' or '${AppMigrationStatus.COMPLETED}' (current: '${mig.status}')`,
       );
     }
     const app = await this.appRepo.findOne({ where: { id: mig.srcAppId } });
@@ -275,11 +402,51 @@ export class AppMigrationService {
         `Application ${mig.srcAppId} is not bound to the migration target — refusing to destroy`,
       );
     }
-    await this.materializer.teardownOnCluster(app, mig.srcClusterId);
+
+    await this.teardown.destroySource(id, mig, app, bridging, opts);
+
+    mig.sourceDestroyedAt = new Date();
+    if (bridging) {
+      mig.status = AppMigrationStatus.COMPLETED;
+      mig.finishedAt = new Date();
+    }
+    await this.migRepo.save(mig);
     this.logger.log(
-      `[app-migration] ${id}: destroyed drained source on cluster ${mig.srcClusterId}`,
+      `[app-migration] ${id}: destroyed the source on cluster ${mig.srcClusterId}`,
     );
     return mig;
+  }
+
+  /** `liveJobs` decides whether a CUTOVER row has lost its job; without it such a row is not offered for resume. */
+  view(mig: AppMigrationEntity, liveJobs?: Set<string>): AppMigrationView {
+    const { bridgeState, ...rest } = mig;
+    return {
+      ...rest,
+      bridge: bridgeView({ bridgeState }, new Date()),
+      canResumeCutover: canResumeCutover(mig, liveJobs),
+    };
+  }
+
+  async getView(id: string): Promise<AppMigrationView> {
+    const mig = await this.findById(id);
+    return this.view(mig, await this.jobs.liveJobIdsFor([mig]));
+  }
+
+  async listViews(userId: string): Promise<AppMigrationView[]> {
+    const all = await this.list(userId);
+    const live = await this.jobs.liveJobIdsFor(all);
+    return all.map((m) => this.view(m, live));
+  }
+
+  /**
+   * A migration whose job died with the process (a restart, a deploy) stays
+   * where it was with nothing driving it. Provisioning and the cutover are
+   * both idempotent, so each is queued again at startup when no job holds it:
+   * the run for PENDING and PROVISIONING, legs included (their parent only
+   * waits for them), the cutover for a standalone CUTOVER.
+   */
+  async onModuleInit(): Promise<void> {
+    await this.jobs.requeueInterrupted();
   }
 
   async findById(id: string): Promise<AppMigrationEntity> {

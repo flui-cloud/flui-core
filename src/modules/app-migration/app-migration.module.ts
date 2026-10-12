@@ -6,6 +6,7 @@ import { ApplicationsModule } from '../applications/applications.module';
 import { ClusterEntity } from '../infrastructure/clusters/entities/cluster.entity';
 import { InfrastructureOperationEntity } from '../infrastructure/servers/entities/infrastructure-operations.entity';
 import { AppEndpointEntity } from '../dns/entities/app-endpoint.entity';
+import { ClusterDnsZoneEntity } from '../dns/entities/cluster-dns-zone.entity';
 import { DnsModule } from '../dns/dns.module';
 import { AppMigrationEntity } from './entities/app-migration.entity';
 import { AppMigrationService } from './services/app-migration.service';
@@ -23,6 +24,7 @@ import { BackupDestinationEntity } from '../backups/entities/backup-destination.
       ApplicationEntity,
       ClusterEntity,
       AppEndpointEntity,
+      ClusterDnsZoneEntity,
       InfrastructureOperationEntity,
       BackupPolicyEntity,
       BackupDestinationEntity,

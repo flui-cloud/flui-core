@@ -1494,6 +1494,7 @@ const MASK_EXEMPT: string[] = [
   'CreateApplicationResponseDto.firstRevisionId', // modules/applications/dto/application-response.dto.ts
   'CreateApplicationResponseDto.operation', // modules/applications/dto/application-response.dto.ts
   'CreateAppMigrationDto.backupDestinationId', // modules/app-migration/dto/create-app-migration.dto.ts
+  'CreateAppMigrationDto.bridge', // modules/app-migration/dto/create-app-migration.dto.ts
   'CreateAppMigrationDto.cutover', // modules/app-migration/dto/create-app-migration.dto.ts
   'CreateAppMigrationDto.srcAppId', // modules/app-migration/dto/create-app-migration.dto.ts
   'CreateAppMigrationDto.targetClusterId', // modules/app-migration/dto/create-app-migration.dto.ts
@@ -1580,6 +1581,7 @@ const MASK_EXEMPT: string[] = [
   'CreateFirewallDto.name', // modules/providers/dto/firewall.dto.ts
   'CreateFirewallDto.rules', // modules/providers/dto/firewall.dto.ts
   'CreateFullMigrationDto.appId', // modules/full-migration/dto/create-full-migration.dto.ts
+  'CreateFullMigrationDto.backupDestinationId', // modules/full-migration/dto/create-full-migration.dto.ts
   'CreateFullMigrationDto.cutover', // modules/full-migration/dto/create-full-migration.dto.ts
   'CreateFullMigrationDto.dbAppId', // modules/full-migration/dto/create-full-migration.dto.ts
   'CreateFullMigrationDto.stagingMode', // modules/full-migration/dto/create-full-migration.dto.ts
@@ -1748,6 +1750,7 @@ const MASK_EXEMPT: string[] = [
   'DeployTemplateDto.name', // modules/templates/dto/template.dto.ts
   'DeprecationInfoDto.announced', // modules/management/dto/node-size-option.dto.ts
   'DeprecationInfoDto.unavailable_after', // modules/management/dto/node-size-option.dto.ts
+  'DestroySourceDto.closeBridge', // modules/app-migration/dto/destroy-source.dto.ts
   'DetachServerFromSubnetDto.serverId', // modules/infrastructure/vnets/dto/attach-server-to-subnet.dto.ts
   'DetectedEnvVarDto.defaultValue', // modules/frameworks/env-var-detection/dto/env-var-detection.dto.ts
   'DetectedEnvVarDto.description', // modules/frameworks/env-var-detection/dto/env-var-detection.dto.ts

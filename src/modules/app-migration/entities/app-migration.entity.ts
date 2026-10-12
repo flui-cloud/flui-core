@@ -11,6 +11,7 @@ import {
   AppCutoverMode,
 } from '../enums/app-migration.enum';
 import { MaterializeOverrides } from '../../applications/services/application-materializer.service';
+import { MigrationBridgeState } from '../../dns/interfaces/migration-bridge.interface';
 
 /**
  * One run of the application migration machine (plan §6 step 2): move a live
@@ -60,6 +61,19 @@ export class AppMigrationEntity {
 
   @Column({ type: 'uuid', nullable: true })
   infrastructureOperationId?: string;
+
+  @Column({ type: 'jsonb', nullable: true })
+  bridgeState?: MigrationBridgeState | null;
+
+  @Column({ type: 'timestamptz', nullable: true })
+  sourceDestroyedAt?: Date;
+
+  /** How long the application was stopped while its volumes moved. */
+  @Column({ type: 'int', nullable: true })
+  interruptionMs?: number | null;
+
+  @Column({ type: 'timestamptz', nullable: true })
+  dnsFlippedAt?: Date | null;
 
   @Column({ type: 'text', nullable: true })
   errorMessage?: string;

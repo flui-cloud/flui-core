@@ -51,6 +51,7 @@ function setup(opts: { copyFails?: boolean } = {}) {
   const endpointRepo = {
     find: jest.fn(async () => [{ id: 'ep-1' }]),
     save: jest.fn(async (e: any) => e),
+    update: jest.fn(async () => undefined),
   };
   const opRepo = { update: jest.fn(), findOne: jest.fn(), save: jest.fn() };
   const materializer = {
@@ -74,6 +75,7 @@ function setup(opts: { copyFails?: boolean } = {}) {
     reconcile: jest.fn(async () => {
       calls.push('dns');
     }),
+    publishedAnswer: jest.fn(async () => null),
   };
   const volumes = {
     warm: jest.fn(async () => {
@@ -92,6 +94,8 @@ function setup(opts: { copyFails?: boolean } = {}) {
     materializer as any,
     endpoints as any,
     volumes as any,
+    { findOne: jest.fn(async () => null) } as any,
+    {} as any,
   );
   return { processor, calls, mig, app, volumes };
 }

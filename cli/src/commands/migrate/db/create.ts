@@ -2,8 +2,8 @@ import { Args, Command, Flags } from '@oclif/core';
 import chalk from 'chalk';
 import ora from 'ora';
 import { MigrationClient } from '../../../lib/migration-client';
-import { resolveCluster } from '../../../lib/resolve-cluster';
-import { resolveApp } from '../../../lib/resolve-app';
+import { resolveClusterRef } from '../../../lib/resolve-cluster';
+import { resolveAppOnAnyCluster } from '../../../lib/resolve-app';
 import { printContextBanner } from '../../../lib/context-banner';
 
 export default class MigrateDbCreate extends Command {
@@ -51,9 +51,9 @@ export default class MigrateDbCreate extends Command {
   async run(): Promise<void> {
     const { args, flags } = await this.parse(MigrateDbCreate);
     printContextBanner();
-    const target = await resolveCluster(flags.to);
-    const source = await resolveCluster(flags.from);
-    const app = await resolveApp(source.id, args.dbapp);
+    const target = await resolveClusterRef(flags.to);
+    const source = flags.from ? await resolveClusterRef(flags.from) : undefined;
+    const app = await resolveAppOnAnyCluster(args.dbapp, source?.id);
     const spinner = ora(`Creating DB migration for "${app.name}"...`).start();
     try {
       const mig = await MigrationClient.fromConfig().createDbMigration({

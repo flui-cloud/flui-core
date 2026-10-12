@@ -2,7 +2,7 @@ import { Args, Command, Flags } from '@oclif/core';
 import chalk from 'chalk';
 import ora from 'ora';
 import { CliAppService } from '../../lib/services/cli-app.service';
-import { resolveCluster } from '../../lib/resolve-cluster';
+import { resolveClusterRef } from '../../lib/resolve-cluster';
 import { reconciliationLabel, tlsLabel } from '../../lib/gateway-utils';
 
 export default class GatewayExplain extends Command {
@@ -33,7 +33,7 @@ export default class GatewayExplain extends Command {
     const spinner = ora('Resolving route...').start();
     try {
       const { host, path } = this.parseTarget(args.url);
-      const { id: clusterId } = await resolveCluster(flags.cluster);
+      const { id: clusterId } = await resolveClusterRef(flags.cluster);
       const service = await CliAppService.create(clusterId);
       const routes = await service.listClusterGatewayRoutes(clusterId);
 
