@@ -2,6 +2,35 @@
   "schemaVersion": 2,
   "releases": [
     {
+      "version": "0.13.0-rc.12",
+      "publishedAt": "2026-10-12T18:32:20.854Z",
+      "bootstrapRef": "46d6006",
+      "images": {
+        "fluiApi": "0.13.0-rc.12",
+        "fluiWeb": "0.13.0-rc.12",
+        "fluiAuthz": "0.7.0"
+      },
+      "notes": [
+        "Move an application and its PostgreSQL to a cluster at another provider with `flui migrate full`: a physical copy over a private link, a bridge that keeps the old address answering, and writes that wait in the connection pooler at the switch instead of failing.",
+        "New PostgreSQL installs from the catalog come with a connection pooler. `FLUI_CONNECTION_URL` goes through it; `FLUI_DIRECT_URL` goes straight to the database for schema migrations, LISTEN and admin tools. Existing installs are unchanged.",
+        "See who is connected to a managed PostgreSQL, who blocks whom and what each session runs, then cancel a query or close a session, from the Sessions tab, `flui db sessions` or an agent.",
+        "The installation can run its own image registry, on a disk or on a bucket, with credentials per application and measured space and traffic.",
+        "The API can run as several copies; a cluster's public names follow the nodes that take traffic, and an application says whether it survives losing a worker.",
+        "Application and cluster pages show peaks, throttling and health checks, with alerts on bandwidth, surges and edge errors that link to the page that explains them.",
+        "This release needs the new bootstrap: install or upgrade it with the CLI."
+      ],
+      "migrations": 14,
+      "requiresBootstrap": true,
+      "k3s": {
+        "version": "v1.35.4+k3s1"
+      },
+      "systemComponents": {
+        "certManager": "v1.17.1",
+        "systemUpgradeController": "v0.20.2"
+      },
+      "manifestSets": ["control", "common"]
+    },
+    {
       "version": "0.13.0-rc.11",
       "publishedAt": "2026-10-01T05:56:48.509Z",
       "bootstrapRef": "c7183f7",
