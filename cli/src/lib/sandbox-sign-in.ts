@@ -15,7 +15,8 @@ export const SIGN_IN_PROVIDER_NAMES: Record<SignInProvider, string> = {
 /** Where the person creates the OAuth app whose credentials they are about to hand over. */
 export const OAUTH_APP_HELP: Record<SignInProvider, string[]> = {
   github: [
-    'Create an OAuth app at https://github.com/settings/developers (or under your organisation).',
+    'Create an OAuth app under your organisation at https://github.com/organizations/<org>/settings/applications',
+    '(or under your own account at https://github.com/settings/developers).',
     'Homepage URL: the demo dashboard. Authorization callback URL: the one below.',
   ],
   google: [
