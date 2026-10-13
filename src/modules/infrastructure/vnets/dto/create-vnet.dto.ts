@@ -99,6 +99,16 @@ export class CreateVNetDto {
   ipRange: string;
 
   @ApiPropertyOptional({
+    description:
+      'Network zone the VNet is created in, one of the zones the provider ' +
+      'declares (e.g. nl-ams). Servers can join only from the regions it covers.',
+    example: 'nl-ams',
+  })
+  @IsOptional()
+  @IsString()
+  networkZone?: string;
+
+  @ApiPropertyOptional({
     description: 'Subnets to create within the VNet',
     type: [CreateVNetSubnetDto],
   })

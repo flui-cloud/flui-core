@@ -20,6 +20,16 @@ export class VNetSubnetResponseDto {
   @ApiProperty({ description: 'Network zone' })
   networkZone: string;
 
+  @Sensitivity(Sensitivity.PUBLIC)
+  @ApiProperty({
+    description:
+      'Regions whose servers can join this subnet, as the provider declares ' +
+      'them. Null when the provider makes no such claim, so any region may try.',
+    type: [String],
+    nullable: true,
+  })
+  servedRegions: string[] | null;
+
   @Sensitivity(Sensitivity.NETWORK_IDENTIFIER)
   @ApiPropertyOptional({ description: 'Gateway IP address' })
   gateway?: string;

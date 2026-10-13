@@ -24,6 +24,8 @@ import { DeleteSubnetDto } from '../dto/delete-subnet.dto';
 import { SubnetCalculator } from '../utils/subnet-calculator';
 import { AddSubnetResult } from 'src/modules/providers/interfaces/network-provider.interface';
 import * as ipaddr from 'ipaddr.js';
+import { regionsServedByNetworkZone } from 'src/modules/providers/core/network-zones';
+import { VNetTopology } from 'src/modules/management/entities/provider-capabilities.entity';
 
 /** One row per installation, found by this id rather than by name. */
 export const FLUI_NETWORK_RESOURCE_ID = 'flui-managed';
@@ -82,6 +84,18 @@ export class VNetsService {
     const capabilities = this.capabilitiesFactory
       .getCapabilitiesService(createVNetDto.provider)
       .getStaticCapabilities();
+    const declaredZones = capabilities.vnetTopology?.zones ?? [];
+    if (
+      createVNetDto.networkZone &&
+      declaredZones.length > 0 &&
+      !declaredZones.some((z) => z.id === createVNetDto.networkZone)
+    ) {
+      throw new BadRequestException(
+        `Network zone '${createVNetDto.networkZone}' is not one ${createVNetDto.provider} offers. ` +
+          `Allowed: ${declaredZones.map((z) => z.id).join(', ')}.`,
+      );
+    }
+
     const ipRangeConstraints = capabilities.vnetTopology?.vnetIpRange;
     if (ipRangeConstraints) {
       const prefix = Number.parseInt(createVNetDto.ipRange.split('/')[1], 10);
@@ -118,6 +132,7 @@ export class VNetsService {
       const result = await provider.createVNet({
         name: createVNetDto.name,
         ipRange: createVNetDto.ipRange,
+        networkZone: createVNetDto.networkZone,
         labels,
         subnets: createVNetDto.subnets?.map((subnet) => ({
           ipRange: subnet.ipRange,
@@ -851,6 +866,7 @@ export class VNetsService {
    * Convert VNet entity to response DTO
    */
   private toResponseDto(vnet: VNetEntity): VNetResponseDto {
+    const topology = this.vnetTopologyOf(vnet.provider);
     return {
       id: vnet.id,
       providerResourceId: vnet.providerResourceId,
@@ -866,6 +882,7 @@ export class VNetsService {
         providerSubnetId: subnet.providerSubnetId,
         ipRange: subnet.ipRange,
         networkZone: subnet.networkZone,
+        servedRegions: regionsServedByNetworkZone(topology, subnet.networkZone),
         gateway: subnet.gateway,
         vswitchId: subnet.vswitchId,
         attachedServerIds: subnet.attachedServerIds || [],
@@ -882,5 +899,17 @@ export class VNetsService {
       createdAt: vnet.createdAt,
       updatedAt: vnet.updatedAt,
     };
+  }
+
+  private vnetTopologyOf(provider: CloudProvider): VNetTopology | null {
+    try {
+      return (
+        this.capabilitiesFactory
+          .getCapabilitiesService(provider)
+          .getStaticCapabilities().vnetTopology ?? null
+      );
+    } catch {
+      return null;
+    }
   }
 }

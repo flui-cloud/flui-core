@@ -1749,7 +1749,11 @@ export class ScalewayProviderService implements ICloudProvider {
   // ─── VNet / Private Network Management ────────────────────────────────────
 
   async createVNet(config: CreateVNetConfig): Promise<VNetCreationResult> {
-    const region = this.extractRegionFromLabels(config.labels) ?? 'fr-par';
+    const region =
+      config.networkZone ??
+      config.subnets?.[0]?.networkZone ??
+      this.extractRegionFromLabels(config.labels) ??
+      'fr-par';
     const tags = (config.labels ?? []).map((l) => `${l.key}=${l.value}`);
     const subnets =
       config.subnets?.map((s) => s.ipRange) ??

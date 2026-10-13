@@ -10,17 +10,20 @@ describe('ClusterCreationService.createCluster — provider policies', () => {
     envVnetProvider = CloudProvider.HETZNER,
     controlEgressIps = [],
     sizes = [],
+    chosenSubnets,
   }: {
     capabilities: {
       vnetRequired: boolean;
       crossClusterAllowed: boolean;
       firewall?: { backend: string };
       supportsFluiManagedVNet?: boolean;
+      vnetTopology?: unknown;
     };
     observabilityCluster?: unknown;
     envVnetProvider?: CloudProvider;
     controlEgressIps?: string[];
     sizes?: { id: string; name: string }[];
+    chosenSubnets?: { id: string; vnetId: string; networkZone: string }[];
   }) {
     const clusterRepo = {
       findOne: jest.fn().mockResolvedValue(observabilityCluster ?? null),
@@ -48,7 +51,9 @@ describe('ClusterCreationService.createCluster — provider policies', () => {
       findOne: jest.fn().mockResolvedValue(envSubnet),
       // The fallback path, for installations whose control never recorded its
       // own network.
-      find: jest.fn().mockResolvedValue([envSubnet]),
+      find: jest.fn(async (opts?: { where?: { vnetId?: string } }) =>
+        opts?.where?.vnetId && chosenSubnets ? chosenSubnets : [envSubnet],
+      ),
     };
     const queue = { add: jest.fn().mockResolvedValue(undefined) };
     const encryption = {
@@ -202,6 +207,53 @@ describe('ClusterCreationService.createCluster — provider policies', () => {
     } as never);
 
     expect(firewallIntegration.createAndReconcileFirewall).toHaveBeenCalled();
+  });
+
+  describe('a network chosen for a cross-provider workload must reach its region', () => {
+    const scalewayTopology = {
+      scope: 'regional',
+      zones: [
+        { id: 'fr-par', displayName: 'Paris', coveredRegions: ['fr-par'] },
+        { id: 'nl-ams', displayName: 'Amsterdam', coveredRegions: ['nl-ams'] },
+      ],
+    };
+    const amsterdam = {
+      ...baseDto,
+      provider: CloudProvider.SCALEWAY,
+      region: 'nl-ams',
+      vnetConfig: { vnetId: 'vnet-s', subnetId: 'subnet-s' },
+    };
+    const setup = (networkZone: string) =>
+      build({
+        capabilities: {
+          vnetRequired: true,
+          crossClusterAllowed: true,
+          vnetTopology: scalewayTopology,
+        },
+        observabilityCluster: { provider: CloudProvider.HETZNER },
+        envVnetProvider: CloudProvider.HETZNER,
+        chosenSubnets: [{ id: 'subnet-s', vnetId: 'vnet-s', networkZone }],
+      });
+
+    it('refuses a Paris network for an Amsterdam cluster before creating anything', async () => {
+      const { service, firewallIntegration, clusterRepo } = setup('fr-par');
+
+      await expect(service.createCluster(amsterdam as never)).rejects.toThrow(
+        /does not reach region 'nl-ams'/,
+      );
+      expect(clusterRepo.save).not.toHaveBeenCalled();
+      expect(
+        firewallIntegration.createAndReconcileFirewall,
+      ).not.toHaveBeenCalled();
+    });
+
+    it('accepts a network in the cluster’s own region', async () => {
+      const { service, firewallIntegration } = setup('nl-ams');
+
+      await service.createCluster(amsterdam as never);
+
+      expect(firewallIntegration.createAndReconcileFirewall).toHaveBeenCalled();
+    });
   });
 
   it('rejects with BadRequestException', async () => {

@@ -1657,6 +1657,7 @@ const MASK_EXEMPT: string[] = [
   'CreateVNetDto.labels', // modules/infrastructure/vnets/dto/create-vnet.dto.ts
   'CreateVNetDto.metadata', // modules/infrastructure/vnets/dto/create-vnet.dto.ts
   'CreateVNetDto.name', // modules/infrastructure/vnets/dto/create-vnet.dto.ts
+  'CreateVNetDto.networkZone', // modules/infrastructure/vnets/dto/create-vnet.dto.ts
   'CreateVNetDto.provider', // modules/infrastructure/vnets/dto/create-vnet.dto.ts
   'CreateVNetDto.routes', // modules/infrastructure/vnets/dto/create-vnet.dto.ts
   'CreateVNetDto.subnets', // modules/infrastructure/vnets/dto/create-vnet.dto.ts

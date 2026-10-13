@@ -15,6 +15,8 @@ export interface VNetRouteConfig {
 export interface CreateVNetConfig {
   name: string;
   ipRange: string; // CIDR notation, must be RFC1918 private range, min /24
+  /** One of the zones the provider declares in its VNet topology. */
+  networkZone?: string;
   labels?: Label[];
   subnets?: VNetSubnetConfig[]; // Initial subnets to create
   routes?: VNetRouteConfig[]; // Initial routes to add

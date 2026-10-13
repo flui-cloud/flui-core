@@ -43,6 +43,7 @@ import {
 } from '../../operations/helpers/operation-steps.helper';
 import { CreateClusterJobData } from '../clusters.service';
 import { VNetSubnetEntity } from '../../vnets/entities/vnet-subnet.entity';
+import { regionsServedByNetworkZone } from '../../../providers/core/network-zones';
 import { VNetImplementation } from '../../vnets/entities/vnet.entity';
 import { ByosVNetService } from './byos-vnet.service';
 import {
@@ -112,6 +113,7 @@ export class ClusterCreationService {
     let hasUsableSubnet: boolean;
     if (isCrossProvider) {
       if (dto.vnetConfig) {
+        await this.assertVnetServesRegion(dto);
         metadata.vnetConfig = {
           vnetId: dto.vnetConfig.vnetId,
           subnetId: dto.vnetConfig.subnetId,
@@ -412,6 +414,34 @@ export class ClusterCreationService {
         (s) => s.vnet?.implementation !== VNetImplementation.WIREGUARD,
       ) ?? null
     );
+  }
+
+  private async assertVnetServesRegion(dto: CreateClusterDto): Promise<void> {
+    const { vnetId, subnetId } = dto.vnetConfig;
+    const subnets = await this.vnetSubnetRepository.find({
+      where: subnetId ? { id: subnetId, vnetId } : { vnetId },
+    });
+    const topology = this.capabilitiesFactory
+      .getCapabilitiesService(dto.provider)
+      .getStaticCapabilities().vnetTopology;
+    const served = subnets.map((s) =>
+      regionsServedByNetworkZone(topology, s.networkZone),
+    );
+    if (
+      served.length === 0 ||
+      served.some((regions) => !regions || regions.includes(dto.region))
+    ) {
+      return;
+    }
+    const reachable = [...new Set(served.flat())];
+    throw new BadRequestException({
+      code: 'VNET_REGION_MISMATCH',
+      message:
+        `The selected network does not reach region '${dto.region}': servers ` +
+        `can join it only from ${reachable.join(', ') || 'no region'}. ` +
+        `Choose a network in ${dto.region} or create one there.`,
+      details: { vnetId, subnetId, region: dto.region, reachable },
+    });
   }
 
   private async enforceProviderPolicies(

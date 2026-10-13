@@ -97,6 +97,7 @@ export default class NetworkCreate extends Command {
         name,
         provider: flags.provider,
         ipRange: flags['ip-range'],
+        networkZone: zone,
         subnets: [
           {
             networkZone: zone,
