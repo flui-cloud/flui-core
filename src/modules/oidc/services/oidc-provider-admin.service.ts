@@ -1173,7 +1173,7 @@ export class OidcProviderAdminClient {
     try {
       const resp = await firstValueFrom(
         this.httpService.get(
-          `${resolveProviderBaseUrl()}/management/v1/orgs/me/metadata/${encodeURIComponent(key)}`,
+          `${resolveProviderBaseUrl()}/management/v1/metadata/${encodeURIComponent(key)}`,
           { headers: this.headers(pat, hostHeader) },
         ),
       );
@@ -1201,7 +1201,7 @@ export class OidcProviderAdminClient {
     try {
       const resp = await firstValueFrom(
         this.httpService.get(
-          `${resolveProviderBaseUrl()}/management/v1/orgs/me/metadata/${encodeURIComponent(key)}`,
+          `${resolveProviderBaseUrl()}/management/v1/metadata/${encodeURIComponent(key)}`,
           { headers: this.headers(pat, hostHeader) },
         ),
       );
@@ -1227,7 +1227,7 @@ export class OidcProviderAdminClient {
   ): Promise<void> {
     await firstValueFrom(
       this.httpService.post(
-        `${resolveProviderBaseUrl()}/management/v1/orgs/me/metadata/${encodeURIComponent(key)}`,
+        `${resolveProviderBaseUrl()}/management/v1/metadata/${encodeURIComponent(key)}`,
         { value: Buffer.from(value, 'utf8').toString('base64') },
         { headers: this.headers(pat, hostHeader) },
       ),
