@@ -1,7 +1,6 @@
 import {
   BadRequestException,
   ForbiddenException,
-  Inject,
   Injectable,
   NotFoundException,
   UnauthorizedException,
@@ -10,14 +9,11 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { randomUUID } from 'node:crypto';
 import { IsNull, Repository } from 'typeorm';
 import { ApplicationEntity } from '../../applications/entities/application.entity';
-import {
-  FLUI_REGISTRY_CONFIG,
-  FluiRegistryConfig,
-  registryRepositoryFor,
-} from '../flui-registry.config';
+import { registryRepositoryFor } from '../flui-registry.config';
 import { grantRegistryAccess, parseRegistryScopes } from '../registry-scope';
 import { FluiRegistryClientService } from './flui-registry-client.service';
 import { RegistryCredentialsService } from './registry-credentials.service';
+import { RegistrySettingService } from './registry-setting.service';
 import { RegistrySigningKeyService } from './registry-signing-key.service';
 
 export interface RegistryTokenRequest {
@@ -36,12 +32,12 @@ export interface RegistryToken {
 @Injectable()
 export class RegistryTokenService {
   constructor(
-    @Inject(FLUI_REGISTRY_CONFIG) private readonly config: FluiRegistryConfig,
     private readonly credentials: RegistryCredentialsService,
     private readonly keys: RegistrySigningKeyService,
     @InjectRepository(ApplicationEntity)
     private readonly applications: Repository<ApplicationEntity>,
     private readonly registry: FluiRegistryClientService,
+    private readonly setting: RegistrySettingService,
   ) {}
 
   private readonly sizes = new Map<string, { bytes: number; at: number }>();
@@ -51,8 +47,10 @@ export class RegistryTokenService {
    * Checked when the token is asked for, so one push can still land past the
    * line; the per-request ceiling on the route bounds how far.
    */
-  private async assertRoomToPush(applicationId: string): Promise<void> {
-    const quota = this.config.appQuotaMb;
+  private async assertRoomToPush(
+    applicationId: string,
+    quota: number,
+  ): Promise<void> {
     if (!quota) return;
     const cached = this.sizes.get(applicationId);
     const bytes =
@@ -69,10 +67,11 @@ export class RegistryTokenService {
   }
 
   async issue(request: RegistryTokenRequest): Promise<RegistryToken> {
-    if (this.config.mode !== 'flui') {
+    const config = await this.setting.current();
+    if (config.mode !== 'flui') {
       throw new NotFoundException('This instance does not run a registry');
     }
-    if (request.service && request.service !== this.config.service) {
+    if (request.service && request.service !== config.service) {
       throw new BadRequestException(`Unknown service "${request.service}"`);
     }
     const credential = await this.credentials.verify(
@@ -93,18 +92,18 @@ export class RegistryTokenService {
       actions: credential.kind === 'push' ? ['pull', 'push'] : ['pull'],
     });
     if (access.some((a) => a.actions.includes('push'))) {
-      await this.assertRoomToPush(application.id);
+      await this.assertRoomToPush(application.id, config.appQuotaMb);
     }
     const expiresIn =
       credential.kind === 'push'
-        ? this.config.pushTokenSeconds
-        : this.config.pullTokenSeconds;
+        ? config.pushTokenSeconds
+        : config.pullTokenSeconds;
     const issuedAt = new Date();
     const now = Math.floor(issuedAt.getTime() / 1000);
     const token = await this.keys.sign({
-      iss: this.config.issuer,
+      iss: config.issuer,
       sub: `${credential.kind}:${application.id}`,
-      aud: this.config.service,
+      aud: config.service,
       iat: now,
       nbf: now,
       exp: now + expiresIn,

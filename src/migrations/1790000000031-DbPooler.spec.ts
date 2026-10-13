@@ -16,6 +16,7 @@ describe('DbPooler1790000000031', () => {
   });
 
   it('runs right before the pooler cut', () => {
-    expect(migrations[migrations.length - 2]).toBe(DbPooler1790000000031);
+    const at = migrations.indexOf(DbPooler1790000000031);
+    expect(migrations[at + 1].name).toBe('DbPoolerCut1790000000032');
   });
 });

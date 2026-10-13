@@ -11,6 +11,10 @@ import { RegistryTokenController } from './controllers/registry-token.controller
 import { RegistryCredentialEntity } from './entities/registry-credential.entity';
 import { RegistrySigningKeyEntity } from './entities/registry-signing-key.entity';
 import { RegistryStorageEntity } from './entities/registry-storage.entity';
+import { RegistrySettingEntity } from './entities/registry-setting.entity';
+import { RegistryModeService } from './services/registry-mode.service';
+import { RegistrySettingService } from './services/registry-setting.service';
+import { RegistryModeController } from './controllers/registry-mode.controller';
 import { StorageModule } from '../storage/storage.module';
 import { RegistryStorageService } from './services/registry-storage.service';
 import { RegistryStorageController } from './controllers/registry-storage.controller';
@@ -41,6 +45,7 @@ import { PrometheusQueryService } from '../observability/services/prometheus-que
       ApplicationEntity,
       ClusterEntity,
       RegistryStorageEntity,
+      RegistrySettingEntity,
       ApiTokenEntity,
     ]),
     StorageModule,
@@ -55,6 +60,7 @@ import { PrometheusQueryService } from '../observability/services/prometheus-que
     RegistryTokenController,
     RegistryStorageController,
     RegistryTrafficController,
+    RegistryModeController,
   ],
   providers: [
     {
@@ -70,6 +76,8 @@ import { PrometheusQueryService } from '../observability/services/prometheus-que
     FluiRegistryClientService,
     FluiRegistryDeploymentService,
     RegistryStorageService,
+    RegistrySettingService,
+    RegistryModeService,
     ScalewayRegistryStorageProvisioner,
     RegistryUsageService,
     RegistryTrafficService,

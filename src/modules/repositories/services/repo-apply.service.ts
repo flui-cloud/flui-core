@@ -290,11 +290,13 @@ export class RepoApplyService {
 
     await this.prepareUnits(ctx);
 
+    const registryHost = await this.applicationWorkflow.currentRegistryHost();
     const webhookToken = await this.ensureRepositorySecrets(
       userId,
       request,
       backendPollingOnly,
       prepared,
+      registryHost,
     );
 
     const files = this.buildCommitFiles(
@@ -302,6 +304,7 @@ export class RepoApplyService {
       head,
       request,
       backendPollingOnly,
+      registryHost,
     );
 
     const commit = await this.githubWorkflowService.commitFilesOnBranch(
@@ -334,6 +337,7 @@ export class RepoApplyService {
       prepared,
       commit,
       webhookToken,
+      registryHost,
     );
 
     const unarmed = applied.filter((u) => !u.armed);
@@ -440,6 +444,7 @@ export class RepoApplyService {
     request: RepoApplyRequest,
     backendPollingOnly: boolean,
     prepared: PreparedEntry[],
+    registryHost: string | null,
   ): Promise<string> {
     const existingToken =
       await this.applicationsRepository.findWebhookTokenForRepository(
@@ -457,6 +462,7 @@ export class RepoApplyService {
     const targets = prepared.flatMap((entry) => {
       const target = this.applicationWorkflow.registryTargetFor(
         entry.result.app,
+        registryHost,
       );
       return target ? [{ app: entry.result.app, target }] : [];
     });
@@ -484,6 +490,7 @@ export class RepoApplyService {
     head: string,
     request: RepoApplyRequest,
     backendPollingOnly: boolean,
+    registryHost: string | null,
   ): CommitFile[] {
     const baseUrl = this.configService.get<string>('WEBHOOK_BASE_URL') ?? '';
     const files: CommitFile[] = [];
@@ -512,6 +519,7 @@ export class RepoApplyService {
             workflowFileName: entry.workflowFileName,
             registry: this.applicationWorkflow.registryTargetFor(
               entry.result.app,
+              registryHost,
             ),
           }),
         },
@@ -530,6 +538,7 @@ export class RepoApplyService {
     prepared: PreparedEntry[],
     commit: { sha: string },
     webhookToken: string,
+    registryHost: string | null,
   ): Promise<AppliedUnitDto[]> {
     const applied: AppliedUnitDto[] = [];
     for (const entry of prepared) {
@@ -568,6 +577,7 @@ export class RepoApplyService {
             // affordable once and not N times. The build watcher resolves the
             // run on its next tick.
             resolveRun: false,
+            imageRegistryHost: registryHost,
           },
         );
         await this.clearStrandedMark(entry);

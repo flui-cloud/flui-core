@@ -86,6 +86,7 @@ import { MigrationMeasures1790000000029 } from './1790000000029-MigrationMeasure
 import { BridgeBeforeFence1790000000030 } from './1790000000030-BridgeBeforeFence';
 import { DbPooler1790000000031 } from './1790000000031-DbPooler';
 import { DbPoolerCut1790000000032 } from './1790000000032-DbPoolerCut';
+import { RegistrySettings1790000000033 } from './1790000000033-RegistrySettings';
 import { BackfillArtifactApplicationId1787500000000 } from './1787500000000-BackfillArtifactApplicationId';
 import { WireGuardHubKeySealed1790000000000 } from './1790000000000-WireGuardHubKeySealed';
 import { RecoverNodeAccessOperation1790000000001 } from './1790000000001-RecoverNodeAccessOperation';
@@ -185,4 +186,5 @@ export const migrations = [
   BridgeBeforeFence1790000000030,
   DbPooler1790000000031,
   DbPoolerCut1790000000032,
+  RegistrySettings1790000000033,
 ];

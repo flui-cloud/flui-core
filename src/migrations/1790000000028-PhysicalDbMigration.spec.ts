@@ -49,6 +49,7 @@ describe('PhysicalDbMigration1790000000028', () => {
       'BridgeBeforeFence1790000000030',
       'DbPooler1790000000031',
       'DbPoolerCut1790000000032',
+      'RegistrySettings1790000000033',
     ]);
     expect(migrations[at - 1].name).toMatch(/179000000002[67]$/);
   });

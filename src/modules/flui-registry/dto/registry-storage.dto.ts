@@ -175,6 +175,14 @@ export class RegistryStorageStatusDto {
   @Sensitivity(Sensitivity.PUBLIC)
   backend: 'filesystem' | 's3';
 
+  @ApiProperty({
+    enum: ['ghcr', 'flui'],
+    description:
+      'Where new builds push: GitHub Container Registry, or the registry Flui runs (switch with POST /registry/enable)',
+  })
+  @Sensitivity(Sensitivity.PUBLIC)
+  mode: 'ghcr' | 'flui';
+
   @ApiPropertyOptional({
     type: RegistryUsageDto,
     description:

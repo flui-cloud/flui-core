@@ -31,6 +31,7 @@ describe('the instance registry, seen from the rest of Flui', () => {
       config('ghcr'),
       {} as never,
       {} as never,
+      {} as never,
     );
     expect(publisher.host()).toBeNull();
     expect(publisher.pushTarget({ id: 'a1', slug: 'shop' })).toBeNull();
@@ -39,6 +40,7 @@ describe('the instance registry, seen from the rest of Flui', () => {
   it('names where an application pushes and the secrets its build reads', () => {
     const publisher = new FluiRegistryPublisherService(
       config('flui'),
+      {} as never,
       {} as never,
       {} as never,
     );
@@ -50,6 +52,22 @@ describe('the instance registry, seen from the rest of Flui', () => {
         password: 'FLUI_REGISTRY_TOKEN_MY_SHOP',
       },
     });
+  });
+
+  it('sets a workflow up on the stored choice, not on what this copy last held', async () => {
+    const stored = config('flui');
+    const publisher = new FluiRegistryPublisherService(
+      config('ghcr'),
+      {} as never,
+      {} as never,
+      { current: async () => stored } as never,
+    );
+    expect(publisher.host()).toBeNull();
+    expect(await publisher.currentHost()).toBe('api.example.test');
+    expect(
+      (await publisher.currentPushTarget({ id: 'A1', slug: 'shop' }))
+        ?.imageName,
+    ).toBe('api.example.test/apps/a1');
   });
 
   it('revokes a deleted application’s credentials even when its images cannot be removed', async () => {
@@ -66,6 +84,7 @@ describe('the instance registry, seen from the rest of Flui', () => {
           throw new Error('registry unreachable');
         },
       } as never,
+      {} as never,
     );
     await expect(
       publisher.forgetApplication({ id: 'a1', imageRegistryHost: 'h' }),
@@ -84,6 +103,7 @@ describe('the instance registry, seen from the rest of Flui', () => {
           return 0;
         },
       } as never,
+      {} as never,
     );
     await publisher.forgetApplication({ id: 'a1', imageRegistryHost: null });
     expect(deleted).toEqual([]);

@@ -28,8 +28,9 @@ import { RegistryStorageService } from './registry-storage.service';
 
 /**
  * Puts the registry on the control cluster when the instance asks for one,
- * and keeps it trusting the API's current key. Nothing is created while
- * `FLUI_IMAGE_REGISTRY` is not `flui`.
+ * and keeps it trusting the API's current key. Nothing is created while the
+ * effective mode (the installation's setting, else `FLUI_IMAGE_REGISTRY`) is
+ * not `flui`.
  */
 @Injectable()
 export class FluiRegistryDeploymentService implements OnApplicationBootstrap {
@@ -54,21 +55,21 @@ export class FluiRegistryDeploymentService implements OnApplicationBootstrap {
     );
   }
 
-  async reconcile(): Promise<boolean> {
-    if (this.config.mode !== 'flui') return false;
-    if (!this.config.host) {
+  async reconcile(config: FluiRegistryConfig = this.config): Promise<boolean> {
+    if (config.mode !== 'flui') return false;
+    if (!config.host) {
       throw new Error(
-        'FLUI_IMAGE_REGISTRY=flui needs PUBLIC_API_URL or FLUI_REGISTRY_HOST to know where the registry answers',
+        'The registry needs PUBLIC_API_URL or FLUI_REGISTRY_HOST to know where it answers',
       );
     }
     const control = await this.controlCluster();
     const objectStorage =
-      this.config.storageBackend === 's3'
+      config.storageBackend === 's3'
         ? await this.storage.connected()
         : undefined;
-    if (this.config.storageBackend === 's3' && !objectStorage) {
+    if (config.storageBackend === 's3' && !objectStorage) {
       throw new Error(
-        'FLUI_REGISTRY_STORAGE_BACKEND=s3 needs a bucket: connect one first',
+        'The registry is set to keep images in a bucket, and none is connected: connect one first',
       );
     }
     const kubeconfig = this.encryption.decrypt(control.kubeconfigEncrypted);
@@ -83,28 +84,52 @@ export class FluiRegistryDeploymentService implements OnApplicationBootstrap {
     await this.kubernetes.applyManifest(
       kubeconfig,
       renderRegistryManifests({
-        config: this.config,
-        host: this.config.host,
+        config,
+        host: config.host,
         publicKeyPem: await this.keys.publicKeyPem(),
         tls: (apiRoute?.spec?.tls as Record<string, unknown>) ?? {},
         objectStorage: objectStorage ?? undefined,
       }),
     );
     this.logger.log(
-      `Instance registry in place on ${control.name}, answering on ${this.config.host}/v2`,
+      `Instance registry in place on ${control.name}, answering on ${config.host}/v2`,
     );
     return true;
+  }
+
+  /**
+   * Stops the copies that serve, maintain and cache. The volume, the bucket
+   * and the configuration stay, so turning the registry on again finds its
+   * images where they were.
+   */
+  async stop(): Promise<void> {
+    const control = await this.controlCluster();
+    const kubeconfig = this.encryption.decrypt(control.kubeconfigEncrypted);
+    for (const name of [
+      FLUI_REGISTRY_NAME,
+      `${FLUI_REGISTRY_NAME}-maintenance`,
+      `${FLUI_REGISTRY_NAME}-cache`,
+    ]) {
+      await this.kubernetes.deleteObject(
+        kubeconfig,
+        'apps/v1',
+        'Deployment',
+        name,
+        FLUI_REGISTRY_NAMESPACE,
+      );
+    }
+    this.logger.log(`Instance registry stopped on ${control.name}`);
   }
 
   /**
    * Whether every copy of the registry runs its current configuration. Until
    * then some still read the bucket it was on before.
    */
-  async settled(): Promise<boolean> {
+  async settled(config: FluiRegistryConfig = this.config): Promise<boolean> {
     const control = await this.controlCluster();
     const kubeconfig = this.encryption.decrypt(control.kubeconfigEncrypted);
     const names =
-      this.config.storageBackend === 's3'
+      config.storageBackend === 's3'
         ? [FLUI_REGISTRY_NAME, `${FLUI_REGISTRY_NAME}-maintenance`]
         : [FLUI_REGISTRY_NAME];
     for (const name of names) {

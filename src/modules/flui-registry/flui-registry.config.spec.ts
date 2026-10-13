@@ -76,3 +76,35 @@ describe('the instance registry configuration', () => {
     expect(from({}).replicas).toBe(1);
   });
 });
+
+describe('the installation’s own registry setting', () => {
+  it('wins over the install-time environment, in both directions', () => {
+    const env: Record<string, string> = { FLUI_IMAGE_REGISTRY: 'ghcr' };
+    const on = fluiRegistryConfigFrom((key) => env[key], {
+      mode: 'flui',
+      storageBackend: 's3',
+    });
+    expect(on.mode).toBe('flui');
+    expect(on.storageBackend).toBe('s3');
+    expect(on.replicas).toBe(2);
+
+    const off = fluiRegistryConfigFrom(
+      (key) => ({ FLUI_IMAGE_REGISTRY: 'flui' })[key],
+      { mode: 'ghcr', storageBackend: 'filesystem' },
+    );
+    expect(off.mode).toBe('ghcr');
+  });
+
+  it('leaves the environment in charge when there is none', () => {
+    expect(
+      fluiRegistryConfigFrom((key) => ({ FLUI_IMAGE_REGISTRY: 'flui' })[key])
+        .mode,
+    ).toBe('flui');
+    expect(
+      fluiRegistryConfigFrom(
+        (key) => ({ FLUI_IMAGE_REGISTRY: 'flui' })[key],
+        null,
+      ).mode,
+    ).toBe('flui');
+  });
+});

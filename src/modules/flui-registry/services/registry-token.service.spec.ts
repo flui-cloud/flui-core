@@ -88,8 +88,8 @@ function harness(overrides: Partial<FluiRegistryConfig> = {}) {
   const credentials = new RegistryCredentialsService(credentialRows as never);
   const keys = new RegistrySigningKeyService(keyRows as never, encryption);
   const sizes = { bytes: 0 };
+  const stored = { config };
   const tokens = new RegistryTokenService(
-    config,
     credentials,
     keys,
     {
@@ -97,8 +97,9 @@ function harness(overrides: Partial<FluiRegistryConfig> = {}) {
         applications.find((a) => a.id === where.id && !a.deletedAt) ?? null,
     } as never,
     { repositorySizeBytes: async () => sizes.bytes } as never,
+    { current: async () => stored.config } as never,
   );
-  return { tokens, credentials, keys, keyRows, applications, sizes };
+  return { tokens, credentials, keys, keyRows, applications, sizes, stored };
 }
 
 const claimsOf = (token: string) =>
@@ -210,6 +211,17 @@ describe('registry tokens', () => {
   it('does not exist on an instance that runs no registry', async () => {
     const { tokens } = harness({ mode: 'ghcr' });
     await expect(tokens.issue({})).rejects.toBeInstanceOf(NotFoundException);
+  });
+
+  it('reads the stored choice when it issues, not what this copy last held', async () => {
+    const { tokens, credentials, stored } = harness();
+    const pull = await credentials.issue(APP_A, 'pull');
+    await expect(tokens.issue({ ...pull })).resolves.toBeDefined();
+
+    stored.config = { ...stored.config, mode: 'ghcr' };
+    await expect(tokens.issue({ ...pull })).rejects.toBeInstanceOf(
+      NotFoundException,
+    );
   });
 
   it('refuses a token for another service', async () => {

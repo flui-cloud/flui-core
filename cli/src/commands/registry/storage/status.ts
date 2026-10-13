@@ -5,6 +5,7 @@ import { ConfigStorage } from '../../../lib/config-storage';
 
 export interface RegistryStorageStatus {
   backend: 'filesystem' | 's3';
+  mode?: 'ghcr' | 'flui';
   connected: boolean;
   provider?: string;
   endpoint?: string;
@@ -77,6 +78,24 @@ function printUsage(usage: RegistryUsage): void {
 }
 
 export function printRegistryStorage(status: RegistryStorageStatus): void {
+  if (status.mode === 'ghcr') {
+    console.log('');
+    console.log(
+      `  ${chalk.bold('New builds push to:')} GitHub Container Registry`,
+    );
+    if (status.connected) {
+      console.log(
+        `  ${chalk.bold('Bucket ready for the Flui registry:')} ${status.bucket}`,
+      );
+    }
+    console.log(
+      chalk.dim(
+        `\n  Switch new builds to the Flui registry with \`flui registry enable --storage ${status.connected ? 's3' : 'volume'}\`.`,
+      ),
+    );
+    console.log('');
+    return;
+  }
   const where =
     status.backend === 's3'
       ? 'object storage'

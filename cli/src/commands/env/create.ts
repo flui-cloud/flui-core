@@ -128,7 +128,7 @@ export default class EnvCreate extends Command {
     }),
     'image-registry': Flags.string({
       description:
-        'Where builds from GitHub push their images: "ghcr" keeps them on each owner\'s GitHub Container Registry; "flui" runs a registry on this installation, so connecting GitHub needs no container token',
+        'Where builds from GitHub push their images: "ghcr" keeps them on each owner\'s GitHub Container Registry; "flui" runs a registry on this installation, so connecting GitHub needs no container token. An installation on ghcr can switch later with `flui registry enable`',
       options: ['ghcr', 'flui'],
       default: 'ghcr',
     }),

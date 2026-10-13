@@ -68,6 +68,7 @@ export class RegistryStorageController {
     const status: RegistryStorageStatusDto = {
       ...(await this.storage.status()),
       backend: this.config.storageBackend,
+      mode: this.config.mode,
     };
     if (this.config.mode !== 'flui') return status;
     status.usage =
@@ -137,6 +138,7 @@ export class RegistryStorageController {
     return {
       ...(await this.storage.status()),
       backend: this.config.storageBackend,
+      mode: this.config.mode,
     };
   }
 }

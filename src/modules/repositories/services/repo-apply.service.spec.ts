@@ -169,6 +169,7 @@ function serviceUnder(
       o.saveWebhookSecret ?? jest.fn().mockResolvedValue(undefined),
     saveFluiGhcrSecret: jest.fn().mockResolvedValue(true),
     saveRegistrySecrets: jest.fn().mockResolvedValue(undefined),
+    currentRegistryHost: jest.fn().mockResolvedValue(null),
     registryTargetFor: jest.fn().mockReturnValue(undefined),
     markAwaitingExternalBuild:
       o.markAwaitingExternalBuild ??

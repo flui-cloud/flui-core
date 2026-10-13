@@ -43,6 +43,12 @@ export const FLUI_REGISTRY_NAME = 'flui-registry';
 
 export const FLUI_REGISTRY_CONFIG = Symbol('FLUI_REGISTRY_CONFIG');
 
+/** What the installation chose after install; it wins over the install-time environment. */
+export interface RegistrySetting {
+  mode: ImageRegistryMode;
+  storageBackend: RegistryStorageBackend;
+}
+
 const REPOSITORY_PREFIX = 'apps';
 
 /** The one repository an application's images live in. */
@@ -77,8 +83,16 @@ const hostOf = (url: string | undefined): string | null => {
 };
 
 export function fluiRegistryConfigFrom(
-  get: (key: string) => string | undefined,
+  env: (key: string) => string | undefined,
+  setting?: RegistrySetting | null,
 ): FluiRegistryConfig {
+  const get = (key: string): string | undefined => {
+    if (setting && key === 'FLUI_IMAGE_REGISTRY') return setting.mode;
+    if (setting && key === 'FLUI_REGISTRY_STORAGE_BACKEND') {
+      return setting.storageBackend;
+    }
+    return env(key);
+  };
   const mode = get('FLUI_IMAGE_REGISTRY')?.trim().toLowerCase();
   if (mode && mode !== 'ghcr' && mode !== 'flui') {
     throw new Error(

@@ -12,6 +12,15 @@ import { WorkflowGeneratorService } from '../../repositories/services/workflow-g
 import { FLUI_WEBHOOK_SECRET } from '../../repositories/services/workflow-generator.service';
 import { ApplicationStatus } from '../enums/application-status.enum';
 import { FluiRegistryPublisherService } from '../../flui-registry/services/flui-registry-publisher.service';
+import { FluiRegistryConfig } from '../../flui-registry/flui-registry.config';
+
+const publisherOn = (config: FluiRegistryConfig, credentials: unknown) =>
+  new FluiRegistryPublisherService(
+    config,
+    credentials as never,
+    {} as never,
+    { current: async () => config } as never,
+  );
 
 const REPO_ID = '11111111-1111-4111-8111-111111111111';
 
@@ -139,7 +148,7 @@ const build = (opts?: {
     {} as never,
     appBuildRepository as never,
     { getDecryptedGhcrPat: async () => null } as never,
-    new FluiRegistryPublisherService(
+    publisherOn(
       {
         mode: opts?.registryHost ? 'flui' : 'ghcr',
         host: opts?.registryHost ?? null,
@@ -170,7 +179,6 @@ const build = (opts?: {
           password: `${kind}-secret`,
         }),
       } as never,
-      {} as never,
     ),
   );
 

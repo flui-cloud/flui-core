@@ -75,7 +75,11 @@ const build = () => {
     {} as never,
     appBuildRepository as never,
     { getDecryptedGhcrPat: async () => null } as never,
-    { host: () => null, pushTarget: () => null } as never,
+    {
+      host: () => null,
+      pushTarget: () => null,
+      currentHost: async () => null,
+    } as never,
   );
 
   return {

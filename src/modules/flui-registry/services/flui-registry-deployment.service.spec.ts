@@ -92,7 +92,7 @@ describe('putting the registry in place', () => {
     const { service, applied } = harness('flui', {
       FLUI_REGISTRY_STORAGE_BACKEND: 's3',
     });
-    await expect(service.reconcile()).rejects.toThrow(/needs a bucket/);
+    await expect(service.reconcile()).rejects.toThrow(/none is connected/);
     expect(applied).toEqual([]);
   });
 

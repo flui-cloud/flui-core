@@ -6,12 +6,29 @@ import {
 import { fluiImageName, registrySecretNames } from '../registry-image';
 import { FluiRegistryClientService } from './flui-registry-client.service';
 import { RegistryCredentialsService } from './registry-credentials.service';
+import { RegistrySettingService } from './registry-setting.service';
 
 export interface FluiPushTarget {
   host: string;
   imageName: string;
   secrets: { username: string; password: string };
 }
+
+const hostOf = (config: FluiRegistryConfig): string | null =>
+  config.mode === 'flui' ? config.host : null;
+
+/** Where an application pushes on the registry at `host`; null on GitHub Container Registry. */
+export const fluiPushTargetOn = (
+  host: string | null,
+  app: { id: string; slug: string },
+): FluiPushTarget | null =>
+  host
+    ? {
+        host,
+        imageName: fluiImageName(host, app.id),
+        secrets: registrySecretNames(app.slug),
+      }
+    : null;
 
 /**
  * What the build and the cluster need to use the instance's own registry,
@@ -25,21 +42,31 @@ export class FluiRegistryPublisherService {
     @Inject(FLUI_REGISTRY_CONFIG) private readonly config: FluiRegistryConfig,
     private readonly credentials: RegistryCredentialsService,
     private readonly client: FluiRegistryClientService,
+    private readonly setting: RegistrySettingService,
   ) {}
 
-  /** The registry host when new builds go to the instance's own registry. */
+  /**
+   * The registry host when new builds go to the instance's own registry, as
+   * this copy last read it. Setting up a workflow reads `currentPushTarget`.
+   */
   host(): string | null {
-    return this.config.mode === 'flui' ? this.config.host : null;
+    return hostOf(this.config);
   }
 
   pushTarget(app: { id: string; slug: string }): FluiPushTarget | null {
-    const host = this.host();
-    if (!host) return null;
-    return {
-      host,
-      imageName: fluiImageName(host, app.id),
-      secrets: registrySecretNames(app.slug),
-    };
+    return fluiPushTargetOn(this.host(), app);
+  }
+
+  /** The registry host, read from the stored setting at this moment. */
+  async currentHost(): Promise<string | null> {
+    return hostOf(await this.setting.current());
+  }
+
+  async currentPushTarget(app: {
+    id: string;
+    slug: string;
+  }): Promise<FluiPushTarget | null> {
+    return fluiPushTargetOn(await this.currentHost(), app);
   }
 
   issuePushCredential(applicationId: string) {

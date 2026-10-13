@@ -89,6 +89,7 @@ import { ApplicationServiceEntity } from '../modules/attached-services/entities/
 import { RegistryCredentialEntity } from '../modules/flui-registry/entities/registry-credential.entity';
 import { RegistrySigningKeyEntity } from '../modules/flui-registry/entities/registry-signing-key.entity';
 import { RegistryStorageEntity } from '../modules/flui-registry/entities/registry-storage.entity';
+import { RegistrySettingEntity } from '../modules/flui-registry/entities/registry-setting.entity';
 
 export const entities = [
   SSHKeyEntity,
@@ -176,4 +177,5 @@ export const entities = [
   RegistryCredentialEntity,
   RegistrySigningKeyEntity,
   RegistryStorageEntity,
+  RegistrySettingEntity,
 ];

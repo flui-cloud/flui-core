@@ -46,6 +46,7 @@ import { BuildProvider } from '../../app-builds/enums/build-provider.enum';
 import {
   FluiPushTarget,
   FluiRegistryPublisherService,
+  fluiPushTargetOn,
 } from '../../flui-registry/services/flui-registry-publisher.service';
 
 export interface GenerateWorkflowDto {
@@ -267,19 +268,30 @@ export class ApplicationWorkflowService {
     userId: string,
     owner: string,
     repo: string,
-    app: { id: string; slug: string },
+    applicationId: string,
+    target: FluiPushTarget | null,
   ): Promise<void> {
-    const target = this.registry.pushTarget(app);
     if (target) {
-      await this.saveRegistrySecrets(userId, owner, repo, app.id, target);
+      await this.saveRegistrySecrets(
+        userId,
+        owner,
+        repo,
+        applicationId,
+        target,
+      );
       return;
     }
     await this.saveFluiGhcrSecret(userId, owner, repo);
   }
 
-  /** Where this application's builds push, for the generator. */
-  registryTargetFor(app: { id: string; slug: string }) {
-    return this.registry.pushTarget(app) ?? undefined;
+  /** The registry host new builds push to, read from the stored setting now; null on GHCR. */
+  currentRegistryHost(): Promise<string | null> {
+    return this.registry.currentHost();
+  }
+
+  /** Where this application's builds push on `host`, for the generator. */
+  registryTargetFor(app: { id: string; slug: string }, host: string | null) {
+    return fluiPushTargetOn(host, app) ?? undefined;
   }
 
   /**
@@ -497,9 +509,20 @@ export class ApplicationWorkflowService {
     const repository = await this.resolveLinkedRepository(app);
     const workflowFileName = fluiWorkflowFileName(app.slug);
     const backendPollingOnly = this.isBackendPollingOnly();
+    const registry = await this.registry.currentPushTarget({
+      id: appId,
+      slug: app.slug,
+    });
 
     const workflowYaml = this.workflowGeneratorService.generateWorkflowV3(
-      this.workflowParamsV3(app, appId, repository, dto, workflowFileName),
+      this.workflowParamsV3(
+        app,
+        appId,
+        repository,
+        dto,
+        workflowFileName,
+        registry,
+      ),
     );
 
     return buildWorkflowConsent({
@@ -518,7 +541,7 @@ export class ApplicationWorkflowService {
       webhookSecretName: backendPollingOnly ? null : FLUI_WEBHOOK_SECRET,
       writesGhcrSecret: true,
       ghcrSecretName: 'FLUI_GHCR_TOKEN',
-      registry: this.registry.pushTarget({ id: appId, slug: app.slug }),
+      registry,
     });
   }
 
@@ -532,6 +555,7 @@ export class ApplicationWorkflowService {
     repository: { owner: string; repositoryName: string },
     dto: GenerateWorkflowV3Dto,
     workflowFileName: string,
+    registry: FluiPushTarget | null,
   ) {
     const baseUrl = this.configService.get<string>('WEBHOOK_BASE_URL') ?? '';
     return {
@@ -547,7 +571,7 @@ export class ApplicationWorkflowService {
       buildContext: dto.buildContext,
       buildArgs: dto.buildArgs,
       workflowFileName,
-      registry: this.registryTargetFor({ id: appId, slug: app.slug }),
+      registry: registry ?? undefined,
     };
   }
 
@@ -574,8 +598,19 @@ export class ApplicationWorkflowService {
       requested: dto.delivery,
       isSandboxGuest,
     });
+    const registry = await this.registry.currentPushTarget({
+      id: appId,
+      slug: app.slug,
+    });
     const workflowYaml = this.workflowGeneratorService.generateWorkflowV3(
-      this.workflowParamsV3(app, appId, repository, dto, workflowFileName),
+      this.workflowParamsV3(
+        app,
+        appId,
+        repository,
+        dto,
+        workflowFileName,
+        registry,
+      ),
     );
 
     // Same ordering as V1: the credential the workflow reads lands before the
@@ -597,7 +632,8 @@ export class ApplicationWorkflowService {
       userId,
       repository.owner,
       repository.repositoryName,
-      { id: appId, slug: app.slug },
+      appId,
+      registry,
     );
 
     const commitResult = await this.githubWorkflowService.commitWorkflowOnly(
@@ -629,6 +665,7 @@ export class ApplicationWorkflowService {
       isFluiManaged: dto.isFluiManaged ?? false,
       buildStarted: !proposed,
       force: dto.force,
+      imageRegistryHost: registry?.host ?? null,
     });
 
     if (proposed) {
@@ -702,6 +739,8 @@ export class ApplicationWorkflowService {
       force?: boolean;
       /** Default true. False = do not wait on GitHub for the run id. */
       resolveRun?: boolean;
+      /** The registry the committed workflow pushes to; read from the stored setting when absent. */
+      imageRegistryHost?: string | null;
     },
   ): Promise<{ runId?: string }> {
     // Persist the monorepo subPath into sourceConfig so the build watcher can
@@ -720,7 +759,10 @@ export class ApplicationWorkflowService {
       webhookToken: params.webhookToken,
       isFluiManaged: params.isFluiManaged,
       sourceConfig: mergedSourceConfig,
-      imageRegistryHost: this.registry.host(),
+      imageRegistryHost:
+        params.imageRegistryHost === undefined
+          ? await this.registry.currentHost()
+          : params.imageRegistryHost,
       ...(params.buildStarted
         ? {
             status: ApplicationStatus.AWAITING_BUILD,
