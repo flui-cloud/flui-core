@@ -165,6 +165,12 @@ export const SANDBOX_ALLOW_EXAMPLE: SandboxAllowRule[] = [
   },
   {
     verbs: ['GET'],
+    pattern: '/mail/identity',
+    level: 'stand-in',
+    why: 'See that sign-in mail goes through the same provider.',
+  },
+  {
+    verbs: ['GET'],
     pattern: '/mail/suppressions',
     level: 'stand-in',
     why: 'See how an address that bounced is held back.',

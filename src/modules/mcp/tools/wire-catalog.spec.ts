@@ -160,6 +160,7 @@ const ARGS: Record<string, Record<string, unknown>> = {
   },
   mail_readiness: {},
   mail_events: {},
+  mail_identity: {},
   mail_suppressions: {},
   app_variable_request: { applicationId: 'a1', key: 'STRIPE_SECRET_KEY' },
   // The delivery hand-offs. Not one of them accepts a value, so there is

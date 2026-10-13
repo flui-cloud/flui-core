@@ -624,3 +624,38 @@ describe('the ground the annotation pass stood on', () => {
     expect(holds(IAM_ROLE.SANDBOX, IAM_PERMISSION.APP_WRITE)).toBe(true);
   });
 });
+
+/**
+ * The identity provider posts its sign-in mail here and cannot sign in as a
+ * Flui user, so the route is public and proves itself with the signing key it
+ * was issued. It must never drift behind a section, and its management
+ * siblings must never drift out of one.
+ */
+describe('the identity provider mail route', () => {
+  const find = (method: string, path: string) =>
+    ROUTES.filter((r) => r.method === method && r.path === path);
+
+  it('is public, outside every section, and asks for no permission', () => {
+    const [route] = find('POST', '/identity/email');
+    expect(route).toBeDefined();
+    expect(route.isPublic).toBe(true);
+    expect(route.section).toBeUndefined();
+    expect(route.permission).toBeUndefined();
+    expect(route.file).toBe(
+      'modules/mail/controllers/identity-email.controller.ts',
+    );
+  });
+
+  it('keeps reading and re-syncing it inside the mail section, with a permission', () => {
+    const [status] = find('GET', '/mail/identity');
+    const [sync] = find('POST', '/mail/identity/sync');
+    expect(status).toMatchObject({ isPublic: false, section: 'mail' });
+    expect(sync).toMatchObject({ isPublic: false, section: 'mail' });
+    expect(permissionValue(status.permission)).toBe(
+      IAM_PERMISSION.CLUSTER_READ,
+    );
+    expect(permissionValue(sync.permission)).toBe(
+      IAM_PERMISSION.CLUSTER_MANAGE,
+    );
+  });
+});

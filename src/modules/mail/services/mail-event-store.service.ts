@@ -16,6 +16,8 @@ export interface MailEventQuery {
   fromAddress?: string;
   /** Matches either side of the address, case-insensitively. */
   search?: string;
+  /** Which Flui flow sent it, e.g. `identity`. */
+  category?: string;
   limit?: number;
   offset?: number;
   /** Costs a second query. Off unless a caller actually shows the number. */
@@ -60,9 +62,12 @@ export class MailEventStoreService {
    * that arrives out of order would overwrite a newer verdict with an older one,
    * and the message would sit there reported as delivered after it bounced.
    */
-  async record(events: readonly DeliveryEvent[]): Promise<number> {
+  async record(
+    events: readonly DeliveryEvent[],
+    category?: string,
+  ): Promise<number> {
     const rows = events
-      .map(toRow)
+      .map((event) => toRow(event, category))
       .filter((r): r is NonNullable<typeof r> => r !== null);
     if (rows.length === 0) return 0;
 
@@ -85,6 +90,7 @@ export class MailEventStoreService {
       'reason',
       'code',
       'permanent',
+      'category',
     ];
     const params: unknown[] = [];
     const tuples = rows.map((row) => {
@@ -107,6 +113,7 @@ export class MailEventStoreService {
          "code" = excluded."code",
          "permanent" = excluded."permanent",
          "fromAddress" = excluded."fromAddress",
+         "category" = COALESCE("mail_events"."category", excluded."category"),
          "updatedAt" = now()
        WHERE excluded."at" >= "mail_events"."at"
        RETURNING "id"`,
@@ -137,6 +144,9 @@ export class MailEventStoreService {
       qb.andWhere('LOWER(e.fromAddress) = :sender', {
         sender: query.fromAddress.trim().toLowerCase(),
       });
+    }
+    if (query.category) {
+      qb.andWhere('e.category = :category', { category: query.category });
     }
     if (query.search?.trim()) {
       qb.andWhere('(e.recipient ILIKE :q OR e.fromAddress ILIKE :q)', {
@@ -202,7 +212,7 @@ export class MailEventStoreService {
   }
 }
 
-function toRow(event: DeliveryEvent) {
+function toRow(event: DeliveryEvent, category?: string) {
   const recipient = event.recipient?.trim().toLowerCase();
   const at = new Date(event.at);
   // A row without a recipient or a usable timestamp cannot be deduplicated or
@@ -220,10 +230,11 @@ function toRow(event: DeliveryEvent) {
     reason: event.reason ?? null,
     code: event.code ?? null,
     permanent: event.permanent ?? null,
+    category: category ?? null,
   };
 }
 
-function toEvent(row: MailEventEntity): DeliveryEvent {
+function toEvent(row: MailEventEntity): DeliveryEvent & { category?: string } {
   return {
     kind: row.kind as DeliveryEventKind,
     provider: row.provider as DeliveryEvent['provider'],
@@ -235,5 +246,6 @@ function toEvent(row: MailEventEntity): DeliveryEvent {
     ...(row.reason ? { reason: row.reason } : {}),
     ...(row.code !== null ? { code: row.code } : {}),
     ...(row.permanent !== null ? { permanent: row.permanent } : {}),
+    ...(row.category ? { category: row.category } : {}),
   };
 }

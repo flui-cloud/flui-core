@@ -20,6 +20,7 @@ import { MailTestService } from '../services/mail-test.service';
 import { MailOnboardingService } from '../services/mail-onboarding.service';
 import { MailSetupService } from '../services/mail-setup.service';
 import { MailWebhookRegistrarService } from '../services/mail-webhook-registrar.service';
+import { IdentityEmailSetupService } from '../services/identity-email-setup.service';
 import { MailConnectionEntity } from '../entities/mail-connection.entity';
 import {
   MailRegisterDomainDto,
@@ -53,6 +54,7 @@ export class MailConnectionsController {
     private readonly onboarding: MailOnboardingService,
     private readonly setup: MailSetupService,
     private readonly webhooks: MailWebhookRegistrarService,
+    private readonly identityEmail: IdentityEmailSetupService,
   ) {}
 
   @Get()
@@ -90,7 +92,7 @@ export class MailConnectionsController {
   async connect(
     @Body() dto: ConnectMailProviderDto,
   ): Promise<MailConnectResultDto> {
-    return this.onboarding.connect({
+    const result = await this.onboarding.connect({
       provider: dto.provider,
       scope: dto.scope,
       ...(dto.label ? { label: dto.label } : {}),
@@ -98,7 +100,11 @@ export class MailConnectionsController {
       ...(dto.secret ? { secret: dto.secret } : {}),
       ...(dto.config ? { config: dto.config } : {}),
       ...(dto.activate === undefined ? {} : { activate: dto.activate }),
-    }) as Promise<MailConnectResultDto>;
+    });
+    if (result.activated && dto.scope === 'transactional') {
+      void this.identityEmail.ensureQuietly();
+    }
+    return result as unknown as MailConnectResultDto;
   }
 
   @Post(':id/activate')
@@ -117,7 +123,11 @@ export class MailConnectionsController {
     description: 'The scope separation would be violated',
   })
   async activate(@Param('id') id: string): Promise<MailConnectionDto> {
-    return toConnectionDto(await this.onboarding.activate(id));
+    const connection = await this.onboarding.activate(id);
+    if (connection.scope === 'transactional') {
+      void this.identityEmail.ensureQuietly();
+    }
+    return toConnectionDto(connection);
   }
 
   @Get(':id/setup')
@@ -245,6 +255,7 @@ export class MailConnectionsController {
   @ApiResponse({ status: 204, description: 'Disconnected' })
   async disconnect(@Param('id') id: string): Promise<void> {
     await this.onboarding.disconnect(id);
+    void this.identityEmail.ensureQuietly();
   }
 }
 

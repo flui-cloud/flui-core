@@ -61,6 +61,7 @@ function silentDriver(result: Partial<SendResult> = {}): MailDriver {
 async function build(driver: MailDriver) {
   const recorded: DeliveryEvent[][] = [];
   const suppressed: DeliveryEvent[][] = [];
+  const categories: (string | undefined)[] = [];
 
   const moduleRef = await Test.createTestingModule({
     providers: [
@@ -83,8 +84,9 @@ async function build(driver: MailDriver) {
       {
         provide: MailEventStoreService,
         useValue: {
-          record: async (events: DeliveryEvent[]) => {
+          record: async (events: DeliveryEvent[], category?: string) => {
             recorded.push(events);
+            categories.push(category);
             return events.length;
           },
         },
@@ -92,7 +94,12 @@ async function build(driver: MailDriver) {
     ],
   }).compile();
 
-  return { service: moduleRef.get(MailSendService), recorded, suppressed };
+  return {
+    service: moduleRef.get(MailSendService),
+    recorded,
+    suppressed,
+    categories,
+  };
 }
 
 describe('recording a send the provider has not reported on yet', () => {
@@ -161,5 +168,16 @@ describe('recording a send the provider has not reported on yet', () => {
     // `queued` would lose the refusal and the suppression that follows from it.
     expect(recorded).toEqual([[settled]]);
     expect(suppressed).toEqual([[settled]]);
+  });
+});
+
+describe('telling Flui flows apart in the activity', () => {
+  it('records the category the caller names, and none otherwise', async () => {
+    const { service, categories } = await build(silentDriver());
+
+    await service.send(MESSAGE, undefined, { category: 'identity' });
+    await service.send(MESSAGE);
+
+    expect(categories).toEqual(['identity', undefined]);
   });
 });

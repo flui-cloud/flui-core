@@ -128,6 +128,7 @@ describe('what a guest is offered', () => {
         'backup_policy_list',
         'mail_readiness',
         'mail_events',
+        'mail_identity',
         'mail_suppressions',
       ]) {
         expect(offered(name)).toBe(false);

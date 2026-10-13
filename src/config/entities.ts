@@ -77,11 +77,19 @@ import { AlertDestinationEntity } from '../modules/observability/entities/alert-
 import { MailSuppressionEntity } from '../modules/mail/entities/mail-suppression.entity';
 import { MailEventEntity } from '../modules/mail/entities/mail-event.entity';
 import { MailConnectionEntity } from '../modules/mail/entities/mail-connection.entity';
+import { IdentityEmailProviderEntity } from '../modules/mail/entities/identity-email-provider.entity';
+import { IdentityEmailDeliveryEntity } from '../modules/mail/entities/identity-email-delivery.entity';
 import { ActionProposalEntity } from '../modules/action-cycle/entities/action-proposal.entity';
 import { AgentConcessionEntity } from '../modules/action-cycle/entities/agent-concession.entity';
 import { OperatingContextEntryEntity } from '../modules/operating-context/entities/operating-context-entry.entity';
 import { SandboxTenantEntity } from '../modules/sandbox/entities/sandbox-tenant.entity';
 import { SandboxWaitlistEntity } from '../modules/sandbox/entities/sandbox-waitlist.entity';
+import { SandboxVisitorEntity } from '../modules/sandbox/entities/sandbox-visitor.entity';
+import { SandboxVisitorPoolEntity } from '../modules/sandbox/entities/sandbox-visitor-pool.entity';
+import { SandboxVisitorAdmissionEntity } from '../modules/sandbox/entities/sandbox-visitor-admission.entity';
+import { SandboxVisitorLoginClientEntity } from '../modules/sandbox/entities/sandbox-visitor-login-client.entity';
+import { SandboxVisitorUpgradeEntity } from '../modules/sandbox/entities/sandbox-visitor-upgrade.entity';
+import { SandboxVisitorRefusalEntity } from '../modules/sandbox/entities/sandbox-visitor-refusal.entity';
 import { ScalingGroupEntity } from '../modules/infrastructure/scaling/entities/scaling-group.entity';
 import { ScalingDecisionEntity } from '../modules/infrastructure/scaling/entities/scaling-decision.entity';
 import { DeferredActionEntity } from '../modules/infrastructure/maintenance/deferred-action.entity';
@@ -162,8 +170,16 @@ export const entities = [
   MailSuppressionEntity,
   MailEventEntity,
   MailConnectionEntity,
+  IdentityEmailProviderEntity,
+  IdentityEmailDeliveryEntity,
   SandboxTenantEntity,
   SandboxWaitlistEntity,
+  SandboxVisitorEntity,
+  SandboxVisitorPoolEntity,
+  SandboxVisitorAdmissionEntity,
+  SandboxVisitorLoginClientEntity,
+  SandboxVisitorUpgradeEntity,
+  SandboxVisitorRefusalEntity,
   ActionProposalEntity,
   AgentConcessionEntity,
   OperatingContextEntryEntity,

@@ -74,6 +74,16 @@ export const MAIL_TOOLS: ToolDef[] = [
   }),
 
   defineTool({
+    name: 'mail_identity',
+    routes: ['GET /mail/identity'],
+    description:
+      'Whether sign-in mail (email verification, password reset, sign-in codes) goes through Flui. The identity provider posts each message to Flui, which sends it through the transactional provider. `state` is active, attention (pointed at Flui but something is missing, see `reason`), not_configured (the identity provider is left as it is) or error (the last sync failed, see `lastSyncError`). `lastDeliveryAt` and `lastError` describe the last message. Check this first when someone says a verification or reset code never arrived. Re-syncing is a write and is not available here; use `flui mail identity sync`.',
+    scope: MCP_SCOPE.MAIL_READ,
+    inputSchema: {},
+    run: (_args, ctx) => ctx.api.get('/mail/identity'),
+  }),
+
+  defineTool({
     name: 'mail_suppressions',
     routes: ['GET /mail/suppressions'],
     description:

@@ -226,6 +226,22 @@ export function exampleMailReadiness() {
   });
 }
 
+export function exampleMailIdentity(now: number) {
+  return mark({
+    state: 'active',
+    reason: null,
+    mailProvider: PROVIDER_ID,
+    providerId: 'example-identity-email-provider',
+    active: true,
+    endpoint: 'http://flui-api.example.internal/api/v1/identity/email',
+    lastSyncAt: new Date(now - 50 * 60_000).toISOString(),
+    lastSyncError: null,
+    lastDeliveryAt: new Date(now - 12 * 60_000).toISOString(),
+    lastErrorAt: null,
+    lastError: null,
+  });
+}
+
 /**
  * A recent slice of delivery, including the failures — a mail section where
  * nothing ever bounces teaches nothing about what the section is for.

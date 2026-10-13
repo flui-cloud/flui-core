@@ -123,6 +123,10 @@ export class MailEventEntity {
   @Column({ type: 'boolean', nullable: true })
   permanent: boolean | null;
 
+  /** Which Flui flow sent it, e.g. `identity` for sign-in mail. Null for everything else. */
+  @Column({ type: 'varchar', length: 32, nullable: true })
+  category: string | null;
+
   @CreateDateColumn({ type: 'timestamptz' })
   createdAt: Date;
 

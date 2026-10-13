@@ -37,6 +37,12 @@ describe('MigrationMeasures1790000000029', () => {
       'DbPooler1790000000031',
       'DbPoolerCut1790000000032',
       'RegistrySettings1790000000033',
+      'SandboxVisitors1790000000034',
+      'SandboxVisitorEntrance1790000000035',
+      'SandboxVisitorUpgrades1790000000036',
+      'SandboxVisitorRecords1790000000037',
+      'SandboxVisitorTryClients1790000000038',
+      'IdentityEmail1790000000039',
     ]);
   });
 });

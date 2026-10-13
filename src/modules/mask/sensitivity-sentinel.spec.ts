@@ -2014,7 +2014,14 @@ const MASK_EXEMPT: string[] = [
   'GitHubActionsWebhookDto.commitSha', // modules/webhooks/dto/github-actions-webhook.dto.ts
   'GitHubActionsWebhookDto.imageRef', // modules/webhooks/dto/github-actions-webhook.dto.ts
   'GitHubActionsWebhookDto.status', // modules/webhooks/dto/github-actions-webhook.dto.ts
+  'GitHubAppInstallationSummaryDto.accountLogin', // modules/repositories/dto/github-oauth.dto.ts
+  'GitHubAppInstallationSummaryDto.accountType', // modules/repositories/dto/github-oauth.dto.ts
+  'GitHubAppInstallationSummaryDto.createdAt', // modules/repositories/dto/github-oauth.dto.ts
+  'GitHubAppInstallationSummaryDto.installationId', // modules/repositories/dto/github-oauth.dto.ts
+  'GitHubAppInstallationSummaryDto.repositorySelection', // modules/repositories/dto/github-oauth.dto.ts
+  'GitHubAppInstallationSummaryDto.suspended', // modules/repositories/dto/github-oauth.dto.ts
   'GitHubAppManifestStartDto.name', // modules/repositories/dto/github-oauth.dto.ts
+  'GitHubAppManifestStartDto.organization', // modules/repositories/dto/github-oauth.dto.ts
   'GitHubAppManifestStartDto.publicApiUrl', // modules/repositories/dto/github-oauth.dto.ts
   'GitHubAppManifestStartDto.publicApp', // modules/repositories/dto/github-oauth.dto.ts
   'GitHubAppManifestStartDto.webhooksEnabled', // modules/repositories/dto/github-oauth.dto.ts
@@ -3102,6 +3109,7 @@ const MASK_EXEMPT: string[] = [
   'SanCertificateResponseDto.updatedAt', // modules/dns/dto/san-certificate-response.dto.ts
   'SandboxAllowedDto.level', // modules/sandbox/dto/sandbox-limits.dto.ts
   'SandboxAllowedDto.routes', // modules/sandbox/dto/sandbox-limits.dto.ts
+  'SandboxAllowedDto.visitor', // modules/sandbox/dto/sandbox-limits.dto.ts
   'SandboxAllowedDto.why', // modules/sandbox/dto/sandbox-limits.dto.ts
   'SandboxAreaDto.area', // modules/sandbox/dto/sandbox-limits.dto.ts
   'SandboxAreaDto.key', // modules/sandbox/dto/sandbox-limits.dto.ts
@@ -3135,6 +3143,7 @@ const MASK_EXEMPT: string[] = [
   'SandboxSessionDto.loginUrl', // modules/sandbox/dto/sandbox-session.dto.ts
   'SandboxSessionDto.secondsRemaining', // modules/sandbox/dto/sandbox-session.dto.ts
   'SandboxSessionDto.ttlHours', // modules/sandbox/dto/sandbox-session.dto.ts
+  'SandboxSessionDto.visitor', // modules/sandbox/dto/sandbox-session.dto.ts
   'SandboxSessionDto.workloadTtlHours', // modules/sandbox/dto/sandbox-session.dto.ts
   'SandboxTenancyDto.claimedAt', // modules/sandbox/dto/sandbox-tenancy.dto.ts
   'SandboxTenancyDto.clusterId', // modules/sandbox/dto/sandbox-tenancy.dto.ts
@@ -3146,6 +3155,13 @@ const MASK_EXEMPT: string[] = [
   'SandboxTenancyDto.reapAttempts', // modules/sandbox/dto/sandbox-tenancy.dto.ts
   'SandboxTenancyDto.reapedAt', // modules/sandbox/dto/sandbox-tenancy.dto.ts
   'SandboxTenancyDto.state', // modules/sandbox/dto/sandbox-tenancy.dto.ts
+  'SandboxTestVisitorDto.groups', // modules/sandbox/dto/sandbox-visitor-test.dto.ts
+  'SandboxTestVisitorDto.idpUserId', // modules/sandbox/dto/sandbox-visitor-test.dto.ts
+  'SandboxTestVisitorDto.userId', // modules/sandbox/dto/sandbox-visitor-test.dto.ts
+  'SandboxTestVisitorDto.username', // modules/sandbox/dto/sandbox-visitor-test.dto.ts
+  'SandboxVisitorAdmissionDto.expiresInSeconds', // modules/sandbox/dto/sandbox-visitor-admission.dto.ts
+  'SandboxVisitorAdmissionRequestDto.cli', // modules/sandbox/dto/sandbox-visitor-admission.dto.ts
+  'SandboxVisitorAdmissionRequestDto.turnstileToken', // modules/sandbox/dto/sandbox-visitor-admission.dto.ts
   'SaveGhcrPatDto.expiresAt', // modules/repositories/dto/ghcr-pat.dto.ts
   'SaveGhcrPatDto.token', // modules/repositories/dto/ghcr-pat.dto.ts
   'ScaleNodeDto.targetServerType', // modules/infrastructure/clusters/dto/scale-node.dto.ts
@@ -3676,6 +3692,11 @@ const MASK_EXEMPT: string[] = [
   'VersionResponseDto.components', // modules/common/health/dto/version-response.dto.ts
   'VersionResponseDto.manifestSpec', // modules/common/health/dto/version-response.dto.ts
   'VersionResponseDto.version', // modules/common/health/dto/version-response.dto.ts
+  'VisitorLinkIntentRequestDto.returnTo', // modules/sandbox/dto/sandbox-visitor-upgrade.dto.ts
+  'VisitorLinkRequestDto.nonce', // modules/sandbox/dto/sandbox-visitor-upgrade.dto.ts
+  'VisitorUpgradeFinishRequestDto.flow', // modules/sandbox/dto/sandbox-visitor-upgrade.dto.ts
+  'VisitorUpgradeIdpRequestDto.provider', // modules/sandbox/dto/sandbox-visitor-upgrade.dto.ts
+  'VisitorUpgradeIdpRequestDto.returnTo', // modules/sandbox/dto/sandbox-visitor-upgrade.dto.ts
   'VNetAttachmentDto.aliasIps', // modules/infrastructure/servers/dto/server-response.dto.ts
   'VNetAttachmentDto.ip', // modules/infrastructure/servers/dto/server-response.dto.ts
   'VNetAttachmentDto.providerVnetId', // modules/infrastructure/servers/dto/server-response.dto.ts
@@ -3801,6 +3822,23 @@ describe('every response-DTO field carries a Sensitivity, or is named on MASK_EX
       identityEmail: 'Sensitivity.TENANT_IDENTITY',
       secretData: 'Sensitivity.CREDENTIAL',
       dbNamespace: 'Sensitivity.NETWORK_IDENTIFIER',
+    });
+  });
+
+  it('keeps the sign-in mail status from leaking its address or provider errors', () => {
+    const file = 'modules/mail/dto/identity-email.dto.ts';
+    expect({
+      endpoint: sensitivityOf(file, 'IdentityEmailStatusDto', 'endpoint'),
+      lastError: sensitivityOf(file, 'IdentityEmailStatusDto', 'lastError'),
+      lastSyncError: sensitivityOf(
+        file,
+        'IdentityEmailStatusDto',
+        'lastSyncError',
+      ),
+    }).toEqual({
+      endpoint: 'Sensitivity.NETWORK_IDENTIFIER',
+      lastError: 'Sensitivity.ARBITRARY_TEXT',
+      lastSyncError: 'Sensitivity.ARBITRARY_TEXT',
     });
   });
 

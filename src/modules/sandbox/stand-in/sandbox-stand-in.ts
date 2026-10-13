@@ -23,6 +23,7 @@ import {
   exampleMailConnectionSetup,
   exampleMailDomains,
   exampleMailEvents,
+  exampleMailIdentity,
   exampleMailOverview,
   exampleMailReadiness,
   exampleMailSuppressions,
@@ -144,6 +145,7 @@ export const SANDBOX_STAND_INS: SandboxStandInRule[] = [
   { verbs: ['GET'], pattern: '/mail/events', build: exampleMailEvents },
   { verbs: ['GET'], pattern: '/mail/domains', build: exampleMailDomains },
   { verbs: ['GET'], pattern: '/mail/readiness', build: exampleMailReadiness },
+  { verbs: ['GET'], pattern: '/mail/identity', build: exampleMailIdentity },
   {
     verbs: ['GET'],
     pattern: '/mail/suppressions',

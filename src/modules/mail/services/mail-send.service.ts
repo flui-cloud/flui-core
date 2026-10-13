@@ -185,7 +185,11 @@ export class MailSendService {
    * the scope. Only the test probes pass it: a connection configured and not
    * yet sending is exactly the one worth proving before it takes over.
    */
-  async send(req: SendRequest, using?: MailDriver): Promise<SendResult> {
+  async send(
+    req: SendRequest,
+    using?: MailDriver,
+    options: { category?: string } = {},
+  ): Promise<SendResult> {
     try {
       const deliverable = await this.screen(req);
       const driver =
@@ -201,10 +205,10 @@ export class MailSendService {
       // message, and dropping them leaves the activity list and the do-not-send
       // list permanently empty for SMTP.
       if (result.events?.length) {
-        await this.store.record(result.events);
+        await this.store.record(result.events, options.category);
         await this.suppressions.recordEvents(result.events);
       } else {
-        await this.recordAcceptance(req, deliverable, result);
+        await this.recordAcceptance(req, deliverable, result, options.category);
       }
 
       return result;
@@ -238,6 +242,7 @@ export class MailSendService {
     req: SendRequest,
     recipients: SendRequest['to'],
     result: SendResult,
+    category?: string,
   ): Promise<void> {
     // No id means no key, and a row that cannot be keyed can never be updated
     // by the verdict that follows — it would sit as `queued` for ever.
@@ -260,7 +265,7 @@ export class MailSendService {
     }));
 
     try {
-      await this.store.record(events);
+      await this.store.record(events, category);
     } catch (error) {
       this.logger.warn(
         `[mail] could not record the send: ${(error as Error).message}`,

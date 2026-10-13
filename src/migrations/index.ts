@@ -87,6 +87,12 @@ import { BridgeBeforeFence1790000000030 } from './1790000000030-BridgeBeforeFenc
 import { DbPooler1790000000031 } from './1790000000031-DbPooler';
 import { DbPoolerCut1790000000032 } from './1790000000032-DbPoolerCut';
 import { RegistrySettings1790000000033 } from './1790000000033-RegistrySettings';
+import { SandboxVisitors1790000000034 } from './1790000000034-SandboxVisitors';
+import { SandboxVisitorEntrance1790000000035 } from './1790000000035-SandboxVisitorEntrance';
+import { SandboxVisitorUpgrades1790000000036 } from './1790000000036-SandboxVisitorUpgrades';
+import { SandboxVisitorRecords1790000000037 } from './1790000000037-SandboxVisitorRecords';
+import { SandboxVisitorTryClients1790000000038 } from './1790000000038-SandboxVisitorTryClients';
+import { IdentityEmail1790000000039 } from './1790000000039-IdentityEmail';
 import { BackfillArtifactApplicationId1787500000000 } from './1787500000000-BackfillArtifactApplicationId';
 import { WireGuardHubKeySealed1790000000000 } from './1790000000000-WireGuardHubKeySealed';
 import { RecoverNodeAccessOperation1790000000001 } from './1790000000001-RecoverNodeAccessOperation';
@@ -187,4 +193,10 @@ export const migrations = [
   DbPooler1790000000031,
   DbPoolerCut1790000000032,
   RegistrySettings1790000000033,
+  SandboxVisitors1790000000034,
+  SandboxVisitorEntrance1790000000035,
+  SandboxVisitorUpgrades1790000000036,
+  SandboxVisitorRecords1790000000037,
+  SandboxVisitorTryClients1790000000038,
+  IdentityEmail1790000000039,
 ];

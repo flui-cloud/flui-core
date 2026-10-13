@@ -39,6 +39,8 @@ import {
 } from '../dto/mail-overview.dto';
 import { MailTestService } from '../services/mail-test.service';
 import { MailSetupService } from '../services/mail-setup.service';
+import { IdentityEmailSetupService } from '../services/identity-email-setup.service';
+import { IdentityEmailStatusDto } from '../dto/identity-email.dto';
 import { toMailHttpError } from '../utils/mail-error.util';
 import type { AuthenticatedUser } from '../../auth/interfaces/authenticated-user.interface';
 import type { MailEventKind } from '../entities/mail-event.entity';
@@ -77,7 +79,37 @@ export class MailController {
     private readonly store: MailEventStoreService,
     private readonly testService: MailTestService,
     private readonly setup: MailSetupService,
+    private readonly identityEmail: IdentityEmailSetupService,
   ) {}
+
+  @Get('identity')
+  @RequirePermission(IAM_PERMISSION.CLUSTER_READ)
+  @ApiOperation({
+    summary: 'Whether sign-in mail goes through Flui',
+    description:
+      'The identity provider sends its verification and password-reset mail to Flui, which ' +
+      'sends it through the transactional provider. Reports the email provider kept at the ' +
+      'identity provider, the last delivery and the last error.',
+  })
+  @ApiResponse({ status: 200, type: IdentityEmailStatusDto })
+  identityStatus(): Promise<IdentityEmailStatusDto> {
+    return this.identityEmail.status();
+  }
+
+  @Post('identity/sync')
+  @HttpCode(HttpStatus.OK)
+  @RequirePermission(IAM_PERMISSION.CLUSTER_MANAGE)
+  @ApiOperation({
+    summary: 'Point the identity provider at Flui for its mail now',
+    description:
+      'Idempotent. With a transactional sender ready, makes sure the identity provider has an ' +
+      'active HTTP email provider pointing at Flui and that Flui holds its signing key. ' +
+      'Without one, leaves the identity provider as it is and reports why.',
+  })
+  @ApiResponse({ status: 200, type: IdentityEmailStatusDto })
+  identitySync(): Promise<IdentityEmailStatusDto> {
+    return this.identityEmail.sync();
+  }
 
   @Get('readiness')
   @RequirePermission(IAM_PERMISSION.CLUSTER_READ)
@@ -204,6 +236,12 @@ export class MailController {
     description: 'Up to 200. Defaults to 50.',
   })
   @ApiQuery({ name: 'offset', required: false })
+  @ApiQuery({
+    name: 'category',
+    required: false,
+    description:
+      'Only mail sent by one Flui flow, e.g. `identity` for sign-in mail.',
+  })
   @ApiResponse({ status: 200, type: [DeliveryEventDto] })
   async events(
     @Query('since') since?: string,
@@ -213,6 +251,7 @@ export class MailController {
     @Query('q') q?: string,
     @Query('limit') limit?: string,
     @Query('offset') offset?: string,
+    @Query('category') category?: string,
   ): Promise<DeliveryEventDto[]> {
     const from = since ? new Date(since) : undefined;
     // Backfills on a host whose scheduler has never run, then reads the table.
@@ -228,6 +267,7 @@ export class MailController {
       ...(q ? { search: q } : {}),
       ...(limit ? { limit: Number(limit) } : {}),
       ...(offset ? { offset: Number(offset) } : {}),
+      ...(category ? { category } : {}),
     });
     return page.events;
   }

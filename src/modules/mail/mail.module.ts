@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
+import { HttpModule } from '@nestjs/axios';
 import { AccessModule } from '../access/access.module';
 import { ScalewayProviderModule } from '../providers/implementations/scaleway/scaleway-provider.module';
 import { MailController } from './controllers/mail.controller';
@@ -27,6 +28,13 @@ import { MailDnsWriterService } from './services/mail-dns-writer.service';
 import { InviteMailService } from './services/invite-mail.service';
 import { DnsZoneEntity } from '../dns/entities/dns-zone.entity';
 import { ProvidersModule } from '../providers/providers.module';
+import { IdentityEmailProviderEntity } from './entities/identity-email-provider.entity';
+import { IdentityEmailDeliveryEntity } from './entities/identity-email-delivery.entity';
+import { IdentityEmailDedupeService } from './services/identity-email-dedupe.service';
+import { IdentityEmailController } from './controllers/identity-email.controller';
+import { IdentityEmailService } from './services/identity-email.service';
+import { IdentityEmailSetupService } from './services/identity-email-setup.service';
+import { IdentityProviderEmailClient } from './services/identity-provider-email.client';
 
 /**
  * The email capability.
@@ -44,7 +52,10 @@ import { ProvidersModule } from '../providers/providers.module';
       MailEventEntity,
       MailConnectionEntity,
       DnsZoneEntity,
+      IdentityEmailProviderEntity,
+      IdentityEmailDeliveryEntity,
     ]),
+    HttpModule.register({ timeout: 10000 }),
     AccessModule,
     ScalewayProviderModule,
     ProvidersModule,
@@ -53,6 +64,7 @@ import { ProvidersModule } from '../providers/providers.module';
     MailController,
     MailConnectionsController,
     MailWebhookController,
+    IdentityEmailController,
   ],
   providers: [
     MailCredentialsService,
@@ -72,6 +84,10 @@ import { ProvidersModule } from '../providers/providers.module';
     MailTestService,
     MailPollScheduler,
     InviteMailService,
+    IdentityProviderEmailClient,
+    IdentityEmailSetupService,
+    IdentityEmailService,
+    IdentityEmailDedupeService,
   ],
   exports: [
     MailCredentialsService,
@@ -89,6 +105,7 @@ import { ProvidersModule } from '../providers/providers.module';
     MailOverviewService,
     MailTestService,
     InviteMailService,
+    IdentityEmailSetupService,
   ],
 })
 export class MailModule {}

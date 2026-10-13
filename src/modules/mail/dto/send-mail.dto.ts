@@ -1,4 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { Sensitivity } from '../../mask/decorators/sensitivity.decorator';
 import {
   ArrayNotEmpty,
   IsArray,
@@ -131,4 +132,11 @@ export class DeliveryEventDto {
 
   @ApiPropertyOptional()
   subject?: string;
+
+  @Sensitivity(Sensitivity.PUBLIC)
+  @ApiPropertyOptional({
+    example: 'identity',
+    description: 'Which Flui flow sent it. `identity` is sign-in mail.',
+  })
+  category?: string;
 }
