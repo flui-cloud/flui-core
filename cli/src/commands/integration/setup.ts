@@ -15,6 +15,10 @@ import {
   confirmPrompt,
 } from '../../lib/prompts';
 import { promptForValidPat } from '../../lib/github-pat';
+import {
+  manifestStartBody,
+  organizationError,
+} from '../../lib/github-app-manifest';
 
 interface SetupStatus {
   configured: boolean;
@@ -38,6 +42,7 @@ export default class IntegrationSetup extends Command {
   static readonly examples = [
     '<%= config.bin %> <%= command.id %> github',
     '<%= config.bin %> <%= command.id %> github --headless',
+    '<%= config.bin %> <%= command.id %> github --organization acme',
   ];
 
   static readonly args = {
@@ -53,12 +58,20 @@ export default class IntegrationSetup extends Command {
       description: 'Print URLs instead of opening a browser',
       default: false,
     }),
+    organization: Flags.string({
+      description:
+        'Create the GitHub App under this GitHub organisation (its login) instead of your own account. You must be an owner of the organisation or an App manager there.',
+    }),
   };
 
   async run(): Promise<void> {
     const { args, flags } = await this.parse(IntegrationSetup);
     if (args.provider !== 'github') {
       this.error(`Unknown provider "${args.provider}"`, { exit: 1 });
+    }
+    const badOrganization = organizationError(flags.organization);
+    if (badOrganization) {
+      this.error(badOrganization, { exit: 1 });
     }
 
     const configStorage = new ConfigStorage();
@@ -93,9 +106,21 @@ export default class IntegrationSetup extends Command {
     }
 
     if (choice === 0) {
+      if (flags.organization) {
+        console.log(
+          chalk.dim(
+            '  --organization applies to a GitHub App only; personal access tokens ignore it.',
+          ),
+        );
+      }
       await this.runPatFlow(api, flags.headless);
     } else {
-      await this.runManifestFlow(api, apiUrl, flags.headless);
+      await this.runManifestFlow(
+        api,
+        apiUrl,
+        flags.headless,
+        flags.organization,
+      );
     }
   }
 
@@ -111,6 +136,7 @@ export default class IntegrationSetup extends Command {
     api: ApiClient,
     apiUrl: string,
     headless: boolean,
+    organization?: string,
   ): Promise<void> {
     console.log('');
     const defaultName = `flui-${os.hostname().split('.')[0]}`;
@@ -136,8 +162,11 @@ export default class IntegrationSetup extends Command {
       'Enable webhooks for deploy-on-push?',
       false,
     );
+    const owner = organization
+      ? `the ${organization} organisation`
+      : 'the owner account';
     const publicApp = await confirmPrompt(
-      'Allow installation on other accounts / organizations? (off = only the owner account can install)',
+      `Allow installation on other accounts / organizations? (off = only ${owner} can install)`,
       false,
     );
 
@@ -146,7 +175,13 @@ export default class IntegrationSetup extends Command {
     try {
       manifest = await api.post<ManifestStartResponse>(
         '/repositories/github/setup/github-app/manifest-start',
-        { name, webhooksEnabled, publicApp, publicApiUrl },
+        manifestStartBody({
+          name,
+          webhooksEnabled,
+          publicApp,
+          publicApiUrl,
+          organization,
+        }),
       );
       spinner.succeed('Manifest ready');
     } catch (error: unknown) {

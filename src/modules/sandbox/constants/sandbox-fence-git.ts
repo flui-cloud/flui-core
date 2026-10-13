@@ -1,24 +1,34 @@
 import { SandboxAllowRule } from './sandbox-fence-core';
 
 /**
- * Building from the guest's own GitHub repositories, with their own token.
+ * Building from the guest's own GitHub repositories.
+ *
+ * The demo connects GitHub through the instance's App: the guest installs it on
+ * their own account or organisation, picks the repositories it may see, and
+ * Flui writes the build workflow and its secrets into those repositories. The
+ * images go to the instance's own registry, so no token is pasted anywhere.
+ * The token routes stay open for an instance that connects GitHub with tokens.
+ * The workflow of an application already deployed is rewritten through that
+ * application's own routes (`/applications/:id/**`, in the guest's own rules).
  *
  * Named route by route, never `/repositories/**`: a GET the fence admits skips
  * the permission check (`PermissionsGuard`), so a wildcard would also open the
  * instance's GitHub setup and every App installation on it. Each route here
- * answers from the caller's own rows, or with the caller's own token.
+ * answers from the caller's own rows, or with a credential GitHub itself places
+ * the caller on: an installation token is minted only for an account GitHub
+ * lists among the caller's installations (`GitHubInstallationAccessService`).
  *
- * Of the GitHub App routes only the guest's own connection is open: the link
- * that installs the App on their account (its `state` names them) and the
- * rescan of what their own GitHub token reaches, and whether a GHCR token is
- * needed. The instance's installations and the routes that store a GHCR token
- * stay shut.
+ * Shut: creating, importing or resetting the App, its webhook, the list of
+ * every installation on the instance and removing one, and storing a GHCR
+ * token. GitHub's own calls (the install callback, the App webhook, the build
+ * report) carry no guest session and are authenticated by their own state,
+ * signature or per-application token, so the fence never sees them.
  */
 export const SANDBOX_ALLOW_GIT: SandboxAllowRule[] = [
   {
     verbs: ['GET'],
     pattern: '/repositories/github/setup/status',
-    why: 'See whether this instance connects GitHub with a token or an App.',
+    why: 'See how this instance connects GitHub.',
   },
   {
     verbs: ['GET'],
@@ -28,17 +38,17 @@ export const SANDBOX_ALLOW_GIT: SandboxAllowRule[] = [
   {
     verbs: ['POST'],
     pattern: '/repositories/github/validate-pat',
-    why: 'Check a GitHub token before you connect it.',
+    why: 'Check a GitHub token before you connect it, where this instance uses tokens.',
   },
   {
     verbs: ['POST'],
     pattern: '/repositories/github/connect-pat',
-    why: 'Connect your GitHub account with your own token.',
+    why: 'Connect your GitHub account with your own token, where this instance uses tokens.',
   },
   {
     verbs: ['POST'],
     pattern: '/repositories/github/disconnect',
-    why: 'Disconnect your GitHub account.',
+    why: 'Disconnect the GitHub token you connected.',
   },
   {
     verbs: ['POST'],
@@ -48,20 +58,24 @@ export const SANDBOX_ALLOW_GIT: SandboxAllowRule[] = [
   {
     verbs: ['GET'],
     pattern: '/repositories/github-app/install-url',
-    why: 'Install Flui on your GitHub account, in one click.',
+    why: 'Install Flui on your GitHub account or organisation and choose the repositories it sees.',
   },
   {
     verbs: ['POST'],
     pattern: '/repositories/github-app/claim',
-    why: 'Finish connecting your GitHub account.',
+    why: 'Finish connecting GitHub, from the browser that started it.',
   },
   {
-    // The caller's own token status, and whether one is needed at all: on an
-    // instance with its own registry the answer is no, and the screen after
-    // the install reads it to skip the step.
+    // On an instance with its own registry the answer is "not needed", and the
+    // screen after the install reads it to skip the step.
     verbs: ['GET'],
     pattern: '/repositories/github-app/packages-pat/status',
-    why: 'See whether a container-registry token is needed here.',
+    why: 'See whether a container-registry token is needed; none is where images stay in this instance’s registry.',
+  },
+  {
+    verbs: ['GET'],
+    pattern: '/repositories/github-app/installations/mine',
+    why: 'See the GitHub accounts and organisations you installed Flui on.',
   },
   {
     verbs: ['POST'],
@@ -91,7 +105,7 @@ export const SANDBOX_ALLOW_GIT: SandboxAllowRule[] = [
   {
     verbs: ['GET'],
     pattern: '/repositories/available',
-    why: 'List the repositories your token can reach.',
+    why: 'List the repositories you let Flui see on GitHub.',
   },
   {
     verbs: ['POST'],
@@ -114,7 +128,7 @@ export const SANDBOX_ALLOW_GIT: SandboxAllowRule[] = [
     (leaf): SandboxAllowRule => ({
       verbs: ['POST'],
       pattern: `/repositories/:id/${leaf}`,
-      why: 'Prepare a repository you connected for deployment.',
+      why: 'Prepare a repository you connected for deployment, and write its build workflow.',
     }),
   ),
   {

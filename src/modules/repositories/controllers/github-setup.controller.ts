@@ -157,7 +157,9 @@ export class GitHubSetupController {
       'pre-fills its New-App form with all permissions, events, webhook and ' +
       'callback URLs. After the admin confirms, GitHub redirects back to our ' +
       'manifest-callback endpoint with a temporary code; we exchange it server-' +
-      'side for App credentials and persist them automatically.',
+      'side for App credentials and persist them automatically. With ' +
+      '`organization` the App is created under that GitHub organisation ' +
+      'instead of the confirming account; the callback is the same.',
   })
   @ApiResponse({
     status: 200,
@@ -182,9 +184,13 @@ export class GitHubSetupController {
       publicApiUrl,
       webhooksEnabled: dto.webhooksEnabled,
       publicApp: dto.publicApp,
+      organization: dto.organization,
     });
 
-    this.logger.log(`manifest-start: publicApiUrl=${publicApiUrl}`);
+    const owner = dto.organization ?? 'confirming account';
+    this.logger.log(
+      `manifest-start: publicApiUrl=${publicApiUrl} owner=${owner}`,
+    );
 
     return result;
   }

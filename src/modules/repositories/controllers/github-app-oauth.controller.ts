@@ -25,7 +25,13 @@ import {
   SaveGhcrPatDto,
   UpdateGhcrPatExpiryDto,
 } from '../dto/ghcr-pat.dto';
-import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { GitHubAppInstallationSummaryDto } from '../dto/github-oauth.dto';
+import {
+  ApiBearerAuth,
+  ApiOperation,
+  ApiResponse,
+  ApiTags,
+} from '@nestjs/swagger';
 import { Request, Response } from 'express';
 import { Public } from '../../auth/decorators/public.decorator';
 import { AuthenticatedUser } from '../../auth/interfaces/authenticated-user.interface';
@@ -64,6 +70,37 @@ export class GithubAppOAuthController {
   })
   async listInstallations() {
     return this.githubAppService.listInstallations();
+  }
+
+  @Get('installations/mine')
+  @ApiBearerAuth()
+  @RequirePermission(IAM_PERMISSION.APP_READ)
+  @ApiOperation({
+    summary: 'List the GitHub App installations the current user reaches',
+    description:
+      'The installations GitHub itself places the caller on: their own ' +
+      'account, and organisations whose installation they can see. Never ' +
+      'another user’s, and never who else uses them.',
+  })
+  @ApiResponse({ status: 200, type: [GitHubAppInstallationSummaryDto] })
+  async listMyInstallations(
+    @Req() req: Request,
+  ): Promise<GitHubAppInstallationSummaryDto[]> {
+    const user = req.user as AuthenticatedUser | undefined;
+    if (!user?.userId) {
+      throw new BadRequestException('Authenticated user has no userId');
+    }
+    const reachable = await this.githubAppService.listReachableInstallations(
+      user.userId,
+    );
+    return reachable.map((installation) => ({
+      installationId: Number(installation.installationId),
+      accountLogin: installation.accountLogin,
+      accountType: installation.accountType,
+      repositorySelection: installation.repositorySelection,
+      suspended: !!installation.suspendedAt,
+      createdAt: installation.createdAt,
+    }));
   }
 
   @Delete('installations/:installationId')

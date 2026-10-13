@@ -187,16 +187,18 @@ describe('sandbox allowlist', () => {
     });
 
     /**
-     * The git entrance a guest walks through with their own token, and the
-     * parts of it that belong to whoever runs the instance.
+     * The git entrance a guest walks through: the instance's GitHub App on
+     * their own account, or their own token where the instance uses tokens.
      */
-    it('opens building from the guest’s own repositories with a personal token', () => {
+    it('opens building from the guest’s own repositories through the GitHub App', () => {
       for (const [verb, path] of [
         ['GET', '/repositories/github/setup/status'],
         ['GET', '/repositories/github/status'],
-        ['POST', '/repositories/github/validate-pat'],
-        ['POST', '/repositories/github/connect-pat'],
-        ['POST', '/repositories/github/disconnect'],
+        ['GET', '/repositories/github-app/install-url'],
+        ['POST', '/repositories/github-app/claim'],
+        ['GET', '/repositories/github-app/installations/mine'],
+        ['POST', '/repositories/github-app/rescan-installations'],
+        ['GET', '/repositories/github-app/packages-pat/status'],
         ['GET', '/repositories'],
         ['GET', '/repositories/available'],
         ['POST', '/repositories/import'],
@@ -204,15 +206,51 @@ describe('sandbox allowlist', () => {
         ['DELETE', '/repositories/r1'],
         ['GET', '/repositories/r1/branches'],
         ['GET', '/repositories/r1/manifests'],
+        ['POST', '/repositories/r1/map'],
         ['POST', '/repositories/r1/map/apply'],
         ['POST', '/applications/deploy-from-yaml'],
+        ['POST', '/applications/a1/generate-workflow-v3'],
+        ['POST', '/applications/a1/workflow-preview'],
+        ['GET', '/applications/a1/workflow-status'],
         ['POST', '/templates/nextjs/use'],
-        ['GET', '/repositories/github-app/install-url'],
-        ['POST', '/repositories/github-app/rescan-installations'],
-        ['GET', '/repositories/github-app/packages-pat/status'],
       ] as const) {
         expect(isSandboxAllowed(verb, path)).toBe(true);
       }
+    });
+
+    it('keeps the token entrance open for an instance that connects GitHub with tokens', () => {
+      for (const [verb, path] of [
+        ['POST', '/repositories/github/validate-pat'],
+        ['POST', '/repositories/github/connect-pat'],
+        ['POST', '/repositories/github/disconnect'],
+      ] as const) {
+        expect(isSandboxAllowed(verb, path)).toBe(true);
+      }
+    });
+
+    /**
+     * Matched as the router hands it over, so a literal sibling cannot pass for
+     * a parameter: `installations/mine` is a route of its own, and the admin
+     * list next to it is not a value of anything.
+     */
+    it('admits the guest’s own installations by route, and not the instance’s list', () => {
+      expect(
+        isSandboxAllowed(
+          'GET',
+          '/repositories/github-app/installations/mine',
+          true,
+        ),
+      ).toBe(true);
+      expect(
+        isSandboxAllowed('GET', '/repositories/github-app/installations', true),
+      ).toBe(false);
+      expect(
+        isSandboxAllowed(
+          'DELETE',
+          '/repositories/github-app/installations/:installationId',
+          true,
+        ),
+      ).toBe(false);
     });
 
     /**
@@ -220,7 +258,7 @@ describe('sandbox allowlist', () => {
      * here is answered by its handler alone. The instance's own GitHub setup
      * and the App installations of everybody on it must never be among them.
      */
-    it('keeps the instance’s GitHub setup and the App routes shut', () => {
+    it('keeps the instance’s GitHub App and setup shut', () => {
       for (const [verb, path] of [
         ['GET', '/repositories/github/setup/health'],
         ['POST', '/repositories/github/setup/pat'],
@@ -229,8 +267,10 @@ describe('sandbox allowlist', () => {
         ['DELETE', '/repositories/github/setup'],
         ['GET', '/repositories/github-app/installations'],
         ['DELETE', '/repositories/github-app/installations/1'],
+        ['GET', '/repositories/github-app/installations/1'],
         ['POST', '/repositories/github-app/packages-pat'],
         ['PUT', '/repositories/github-app/packages-pat/rotate'],
+        ['PATCH', '/repositories/github-app/packages-pat/expiry'],
         ['DELETE', '/repositories/github-app/packages-pat'],
         ['PATCH', '/repositories/r1'],
         // Pushes reach Flui through the generated workflow; the repository
@@ -244,10 +284,12 @@ describe('sandbox allowlist', () => {
       }
     });
 
-    it('tells a guest the git entrance is theirs, and what happens to the token', () => {
+    it('tells a guest the git entrance is theirs, with no token to paste, and what is left behind', () => {
       const area = SANDBOX_AREAS.find((a) => a.key === 'repositories');
       expect(area?.level).toBe('full');
-      expect(area?.why).toContain('token');
+      expect(area?.why).toContain('GitHub App');
+      expect(area?.why).toContain('no token to paste');
+      expect(area?.why).toContain('workflow file stays');
     });
 
     /**

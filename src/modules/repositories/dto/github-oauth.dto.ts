@@ -5,8 +5,10 @@ import {
   IsBoolean,
   MinLength,
   IsNotEmpty,
+  Matches,
 } from 'class-validator';
 import { GitHubAuthMethod } from '../enums/github-auth-method.enum';
+import { GITHUB_LOGIN_PATTERN } from '../services/github-app-manifest-state.service';
 import { ApiProperty } from '@nestjs/swagger';
 
 export class GitHubOAuthStatusResponseDto {
@@ -321,6 +323,20 @@ export class GitHubAppManifestStartDto {
     example: 'https://flui.acme.com',
   })
   publicApiUrl?: string;
+
+  @IsString()
+  @IsOptional()
+  @Matches(GITHUB_LOGIN_PATTERN, {
+    message:
+      'organization must be a GitHub organisation login: letters, digits and single inner hyphens, at most 39 characters',
+  })
+  @ApiProperty({
+    required: false,
+    description:
+      'GitHub organisation login to create the App under, instead of the account of the person confirming it. They must be an owner of that organisation (or an App manager there). Leave it out to create the App on their own account.',
+    example: 'acme',
+  })
+  organization?: string;
 }
 
 export class GitHubAppManifestStartResponseDto {
@@ -333,8 +349,8 @@ export class GitHubAppManifestStartResponseDto {
 
   @ApiProperty({
     description:
-      'URL to POST the manifest to. Construct an HTML <form method="POST" action="<this>"> with a hidden <input name="manifest" value="<JSON.stringify(manifestJson)>"> and submit it from the browser.',
-    example: 'https://github.com/settings/apps/new',
+      'URL to POST the manifest to: https://github.com/settings/apps/new, or https://github.com/organizations/<organization>/settings/apps/new when an organisation was named. Construct an HTML <form method="POST" action="<this>"> with a hidden <input name="manifest" value="<JSON.stringify(manifestJson)>"> and submit it from the browser.',
+    example: 'https://github.com/organizations/acme/settings/apps/new',
   })
   githubUrl: string;
 
@@ -426,4 +442,31 @@ export class GitHubSetupHealthResponseDto {
     type: Object,
   })
   details: Record<string, unknown>;
+}
+
+export class GitHubAppInstallationSummaryDto {
+  @ApiProperty({ description: 'GitHub installation id', example: 12345678 })
+  installationId: number;
+
+  @ApiProperty({
+    description: 'The GitHub account the App is installed on',
+    example: 'acme',
+  })
+  accountLogin: string;
+
+  @ApiProperty({ enum: ['User', 'Organization'] })
+  accountType: 'User' | 'Organization';
+
+  @ApiProperty({
+    description:
+      '`all` when the App sees every repository of the account, `selected` when it sees only the ones picked on GitHub',
+    example: 'selected',
+  })
+  repositorySelection: string;
+
+  @ApiProperty({ description: 'Suspended on GitHub' })
+  suspended: boolean;
+
+  @ApiProperty({ description: 'When Flui first saw the installation' })
+  createdAt: Date;
 }

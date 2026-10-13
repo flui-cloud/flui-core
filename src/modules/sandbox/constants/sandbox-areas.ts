@@ -56,7 +56,7 @@ export const SANDBOX_AREAS: SandboxArea[] = [
     key: 'repositories',
     area: 'Building from your own git repository',
     level: 'full',
-    why: 'Connect GitHub and deploy from your own repositories. When your trial ends Flui deletes the token it kept and removes itself from your GitHub account. If you paste a personal access token instead, give it a one-day expiry.',
+    why: 'Install Flui\u2019s GitHub App on your account or an organisation, choose the repositories it may see, and deploy from them: Flui writes the build workflow into the repository and keeps the images on this instance, so there is no token to paste. When your trial ends Flui forgets its GitHub sign-in and removes itself from your own account; an organisation keeps it until you remove it there, and the workflow file stays in your repository.',
   },
   {
     key: 'cluster',

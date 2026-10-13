@@ -179,9 +179,12 @@ export const REPO_TOOLS: ToolDef[] = [
     name: 'github_setup',
     routes: ['POST /repositories/github/setup/github-app/manifest-start'],
     description:
-      "Configure GitHub on THIS instance with a GitHub App (one-time, required before anyone can connect repositories); it needs the permission to manage integrations. Personal access tokens are the recommended setup and need no App: a person chooses them in the dashboard under Repositories → GitHub Setup, or with `flui integration setup github`, so offer that first and use this tool only when they want a GitHub App. Returns a ui_action that submits a prefilled GitHub 'create app from manifest' form — the person confirms it in the browser and the App credentials are stored automatically. You do not create anything yourself. If GitHub is already configured, use github_connect instead. Expect a refusal on an agent API key: `integration:manage` is carried by no `mcp:*` scope on purpose, so this one only works through the in-product assistant or a credential that declares no scopes — if it comes back CREDENTIAL_SCOPE_CEILING, say so and stop rather than retrying.",
+      "Configure GitHub on THIS instance with a GitHub App (one-time, required before anyone can connect repositories); it needs the permission to manage integrations. Personal access tokens are the recommended setup and need no App: a person chooses them in the dashboard under Repositories → GitHub Setup, or with `flui integration setup github`, so offer that first and use this tool only when they want a GitHub App. Returns a ui_action that submits a prefilled GitHub 'create app from manifest' form — the person confirms it in the browser and the App credentials are stored automatically. You do not create anything yourself. Pass `organization` (the organisation's GitHub login) when the person wants the App to belong to an organisation they own rather than to their own account; GitHub then opens that organisation's New-App form. If GitHub is already configured, use github_connect instead. Expect a refusal on an agent API key: `integration:manage` is carried by no `mcp:*` scope on purpose, so this one only works through the in-product assistant or a credential that declares no scopes — if it comes back CREDENTIAL_SCOPE_CEILING, say so and stop rather than retrying.",
     scope: MCP_SCOPE.APP_READ,
-    inputSchema: { name: z.string().optional() },
+    inputSchema: {
+      name: z.string().optional(),
+      organization: z.string().optional(),
+    },
     // Decision 40: the `if (!ctx.user.isAdmin) throw` that used to stand here
     // is deleted rather than converted. The route carries
     // `@RequirePermission(INTEGRATION_MANAGE)`, and keeping a second, cruder
@@ -195,6 +198,8 @@ export const REPO_TOOLS: ToolDef[] = [
         state: string;
       }>('/repositories/github/setup/github-app/manifest-start', {
         name: args.name,
+        organization: args.organization,
+        webhooksEnabled: false,
       });
       const action: UiSubmitFormAction = {
         uiAction: {

@@ -5,6 +5,21 @@ import { LessThan, Repository } from 'typeorm';
 import { randomUUID } from 'node:crypto';
 import { GithubAppManifestStateEntity } from '../entities/github-app-manifest-state.entity';
 
+/** A GitHub user or organisation login: letters, digits and single inner hyphens, at most 39. */
+export const GITHUB_LOGIN_PATTERN =
+  /^[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}$/;
+
+export function githubAppCreationUrl(organization?: string): string {
+  const org = organization?.trim();
+  if (!org) return 'https://github.com/settings/apps/new';
+  if (!GITHUB_LOGIN_PATTERN.test(org)) {
+    throw new BadRequestException(
+      `"${org}" is not a GitHub organisation name: use its login as it appears in github.com/<organisation>.`,
+    );
+  }
+  return `https://github.com/organizations/${org}/settings/apps/new`;
+}
+
 export interface ConsumedManifestState {
   fluiUserId: string;
   callbackUrl: string;
@@ -37,6 +52,8 @@ export class GithubAppManifestStateService {
    * an agent tool) submits it as a form POST to GitHub; on confirm GitHub redirects to
    * our manifest-callback and we persist the App credentials. `publicApiUrl` falls back
    * to the PUBLIC_API_URL env when not passed (the agent path has no request to derive it).
+   * With `organization` the App is created as that organisation's, which GitHub answers on
+   * the same redirect with the same conversion.
    */
   async buildManifestStart(
     fluiUserId: string,
@@ -45,6 +62,7 @@ export class GithubAppManifestStateService {
       publicApiUrl?: string;
       webhooksEnabled?: boolean;
       publicApp?: boolean;
+      organization?: string;
     } = {},
   ): Promise<{
     manifestJson: Record<string, unknown>;
@@ -57,6 +75,7 @@ export class GithubAppManifestStateService {
         'PUBLIC_API_URL is not configured on this instance — set it before generating the GitHub App setup link.',
       );
     }
+    const githubUrl = githubAppCreationUrl(opts.organization);
     const base = raw.trim().replace(/\/$/, '');
     const webhooksEnabled = opts.webhooksEnabled ?? false;
     const callbackUrl = `${base}/api/v1/repositories/github-app/user-callback`;
@@ -89,7 +108,7 @@ export class GithubAppManifestStateService {
     }
     return {
       manifestJson,
-      githubUrl: 'https://github.com/settings/apps/new',
+      githubUrl,
       state,
     };
   }

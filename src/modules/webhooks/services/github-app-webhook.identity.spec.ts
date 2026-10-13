@@ -69,3 +69,66 @@ describe('installation.created records no invented identity', () => {
     expect(source).not.toContain("'unknown'");
   });
 });
+
+/**
+ * The App's webhook is one per instance, signed with the App's own secret, and
+ * every guest's repository sends to it. What it may do is therefore bounded by
+ * what an event names: an installation, never a Flui user or an application. A
+ * push or a finished run in guest A's repository must start nothing anywhere —
+ * builds are reported by the workflow itself, on the per-application token.
+ */
+describe('a signed App event deploys nothing', () => {
+  const recordingApp = () => {
+    const touched: string[] = [];
+    const githubAppService = new Proxy(
+      {},
+      {
+        get: (_t, name: string) => async () => {
+          touched.push(name);
+          return {};
+        },
+      },
+    );
+    return {
+      service: new GitHubAppWebhookService(
+        {} as never,
+        githubAppService as never,
+      ),
+      touched,
+    };
+  };
+
+  it.each([
+    ['push', undefined],
+    ['pull_request', 'opened'],
+    ['workflow_run', 'requested'],
+    ['workflow_run', 'completed'],
+  ])('acknowledges %s/%s and acts on nothing', async (event, action) => {
+    const { service, touched } = recordingApp();
+    const result = await service.handleEvent(event, action, {
+      repository: { full_name: 'guest-a/api' },
+      workflow_run: {
+        path: '.github/workflows/flui-api.yml',
+        name: 'Flui Deploy api',
+        conclusion: 'success',
+        head_sha: 'abcdef1',
+        repository: { full_name: 'guest-a/api' },
+      },
+      installation: { id: 99 },
+    });
+
+    expect(result).toEqual({ received: true });
+    expect(touched).toEqual([]);
+  });
+
+  it('imports no application, build or deploy code', () => {
+    const source = readFileSync(
+      join(__dirname, 'github-app-webhook.service.ts'),
+      'utf8',
+    );
+    const imports = source
+      .split('\n')
+      .filter((line) => line.startsWith('import '));
+    expect(imports.join('\n')).not.toMatch(/applications|app-builds|deploy/i);
+  });
+});

@@ -10,6 +10,9 @@ import { NotFoundException, ForbiddenException } from '@nestjs/common';
 import { GitHubAppService } from './github-app.service';
 import { GitHubTokenResolverService } from './github-token-resolver.service';
 import { RepositoriesService } from './repositories.service';
+import { GitHubOAuthService } from './github-oauth.service';
+import { GitHubWorkflowService } from './github-workflow.service';
+import { GithubAppOAuthController } from '../controllers/github-app-oauth.controller';
 
 const MODULE_ROOT = join(__dirname, '..');
 
@@ -223,6 +226,155 @@ describe('GitHub App installations are resolved per caller', () => {
       );
       expect(names).toEqual(['beta/mine']);
       expect(asked).toEqual(['teammate']);
+    });
+  });
+
+  /**
+   * The chain a guest walks on the demo, built from the real services down to
+   * the one stub that stands for GitHub's answer: which installations this
+   * caller reaches. `acme` is somebody else's; the caller reaches nothing.
+   */
+  describe('every route a guest is opened, against an installation that is not theirs', () => {
+    const installations = [
+      {
+        installationId: 42,
+        accountLogin: 'acme',
+        accountType: 'User',
+        userId: 'owner',
+        repositorySelection: 'all',
+        suspendedAt: null,
+        createdAt: new Date('2026-10-01T00:00:00Z'),
+      },
+    ];
+    const access = (reachable: string[]) => ({
+      findReachableByOwner: async (userId: string, owner: string) =>
+        reachable.includes(userId)
+          ? (installations.find((i) => i.accountLogin === owner) ?? null)
+          : null,
+      listReachable: async (userId: string) =>
+        reachable.includes(userId) ? installations : [],
+    });
+    const appService = (reachable: string[]) =>
+      new GitHubAppService(
+        {
+          getConfig: async () => ({
+            authMethod: 'github_app',
+            isConfigured: true,
+            appSlug: 'flui-cloud',
+          }),
+        } as never,
+        {} as never,
+        {} as never,
+        access(reachable) as never,
+      );
+
+    it('reports the stranger as not connected, rather than as the owner’s account', async () => {
+      const oauth = new GitHubOAuthService(
+        {} as never,
+        appService(['owner']),
+        {} as never,
+        {} as never,
+        {} as never,
+      );
+
+      await expect(oauth.getStatus('stranger')).resolves.toEqual({
+        connected: false,
+      });
+      await expect(oauth.getStatus('owner')).resolves.toMatchObject({
+        connected: true,
+        githubUsername: 'acme',
+      });
+    });
+
+    it('lists to each caller only the installations they reach, and never who else uses them', async () => {
+      const controller = new GithubAppOAuthController(
+        {} as never,
+        {} as never,
+        {} as never,
+        {} as never,
+        appService(['owner']),
+        {} as never,
+      );
+      const as = (userId: string) => ({ user: { userId } }) as never;
+
+      await expect(
+        controller.listMyInstallations(as('stranger')),
+      ).resolves.toEqual([]);
+      const mine = await controller.listMyInstallations(as('owner'));
+      expect(mine).toEqual([
+        {
+          installationId: 42,
+          accountLogin: 'acme',
+          accountType: 'User',
+          repositorySelection: 'all',
+          suspended: false,
+          createdAt: installations[0].createdAt,
+        },
+      ]);
+      expect(JSON.stringify(mine)).not.toContain('owner');
+    });
+
+    it('connects none of the owner’s repositories for the stranger, and stores nothing', async () => {
+      const created: unknown[] = [];
+      const app = appService(['owner']);
+      const service = new RepositoriesService(
+        {
+          findByUserIdAndFullName: async () => null,
+          create: async (row: unknown) => {
+            created.push(row);
+            return row;
+          },
+        } as never,
+        {} as never,
+        { encrypt: (v: string) => v } as never,
+        {} as never,
+        {} as never,
+        {} as never,
+        new GitHubTokenResolverService({} as never, app),
+        app,
+        {} as never,
+        {} as never,
+        {} as never,
+        {} as never,
+        {} as never,
+      );
+
+      const result = await service.importRepositories('stranger', {
+        repositoryIds: ['acme/private'],
+      } as never);
+
+      expect(result.imported).toBe(0);
+      expect(result.failed).toBe(1);
+      expect(result.errors?.[0]).toContain('not installed for account "acme"');
+      expect(created).toEqual([]);
+    });
+
+    it('writes no workflow and no secret into the owner’s repository for the stranger', async () => {
+      const app = appService(['owner']);
+      const workflow = new GitHubWorkflowService(
+        {} as never,
+        new GitHubTokenResolverService({} as never, app),
+      );
+      const notInstalled = 'not installed for account "acme"';
+
+      await expect(
+        workflow.commitWorkflowFiles(
+          'stranger',
+          'acme',
+          'api',
+          'main',
+          'on: push',
+        ),
+      ).rejects.toThrow(notInstalled);
+      await expect(
+        workflow.saveRepoSecret(
+          'stranger',
+          'acme',
+          'api',
+          'FLUI_WEBHOOK_SECRET',
+          'value',
+        ),
+      ).rejects.toThrow(notInstalled);
     });
   });
 });
