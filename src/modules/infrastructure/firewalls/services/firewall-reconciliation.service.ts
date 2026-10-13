@@ -504,6 +504,7 @@ export class FirewallReconciliationService {
           rules: canonicalRules,
           labels,
           applyToLabelSelector: labelSelector,
+          location: cluster.region,
         });
 
         firewall.providerFirewallId = providerFirewall.firewallId;
@@ -729,6 +730,7 @@ export class FirewallReconciliationService {
           rules: canonicalRules,
           labels,
           applyToLabelSelector: labelSelector,
+          location: cluster.region,
         });
 
         this.logger.log(

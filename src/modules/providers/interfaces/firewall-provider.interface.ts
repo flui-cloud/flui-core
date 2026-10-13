@@ -42,6 +42,8 @@ export interface CreateFirewallConfig {
   rules: FirewallRule[];
   applyToServerIds?: string[];
   applyToLabelSelector?: string;
+  /** Where the protected servers live, for providers whose firewalls are bound to one zone. */
+  location?: string;
 }
 
 export interface FirewallCreationResult {

@@ -33,6 +33,7 @@ type ScalewayFirewallId = { zone: string; sgId: string };
 // Resource ID format: "instance:<zone>:<server-id>"
 type ScalewayResourceId = { zone: string; serverId: string };
 
+import { toScalewayZone } from './scaleway-zone.util';
 @Injectable()
 export class ScalewayFirewallService implements IFirewallProvider {
   private readonly logger = new Logger(ScalewayFirewallService.name);
@@ -268,8 +269,7 @@ export class ScalewayFirewallService implements IFirewallProvider {
       CloudProvider.SCALEWAY,
     );
 
-    // Determine zone from applyToServerIds or default to fr-par-1
-    let zone = 'fr-par-1';
+    let zone = toScalewayZone(config.location);
     if (config.applyToServerIds && config.applyToServerIds.length > 0) {
       const parsed = this.parseResourceId(config.applyToServerIds[0]);
       if (parsed) zone = parsed.zone;

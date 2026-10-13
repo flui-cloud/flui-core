@@ -72,6 +72,7 @@ type ScalewayResourceId = {
   id: string;
 };
 
+import { toScalewayZone } from './scaleway-zone.util';
 @Injectable()
 export class ScalewayProviderService implements ICloudProvider {
   private readonly logger = new Logger(ScalewayProviderService.name);
@@ -749,12 +750,7 @@ export class ScalewayProviderService implements ICloudProvider {
       serverType.toUpperCase().startsWith('EM-') ||
       serverType.toUpperCase().startsWith('BM-');
 
-    // Scaleway Instances require a zone (e.g. 'fr-par-1'), not a region (e.g. 'fr-par').
-    // If the caller passes a region, append '-1' to use the first/default zone.
-    const rawLocation = config.location || 'fr-par-1';
-    const zone = (
-      /^[a-z]{2}-[a-z]{3}$/.test(rawLocation) ? `${rawLocation}-1` : rawLocation
-    ) as BaremetalCreateZone;
+    const zone = toScalewayZone(config.location) as BaremetalCreateZone;
 
     if (isBaremetal) {
       return this.createBaremetalServer(token, config, zone, tags);
@@ -1537,8 +1533,13 @@ export class ScalewayProviderService implements ICloudProvider {
         );
 
         for (const [i, result] of instanceZoneResults.entries()) {
-          if (result.status !== 'fulfilled') continue;
           const zone = INSTANCE_ZONES[i];
+          if (result.status !== 'fulfilled') {
+            this.logger.warn(
+              `Failed to list Scaleway instance types in ${zone}: ${result.reason?.message ?? result.reason}`,
+            );
+            continue;
+          }
           const region = (zone as string).replace(/-\d+$/, '');
           for (const t of result.value) {
             if (!t.name) continue;

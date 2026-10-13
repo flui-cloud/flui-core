@@ -119,6 +119,7 @@ export class FirewallsService {
       labels: this.labelService.fromRecord(labels),
       rules,
       applyToLabelSelector: `flui-cluster-id=${cluster.id}`, // Auto-apply to all cluster nodes
+      location: cluster.region,
     };
 
     try {
