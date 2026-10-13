@@ -99,13 +99,21 @@ describe('keeping guest applications out of search results', () => {
 });
 
 describe('image pre-pull', () => {
-  const ds = () =>
-    yaml.load(
-      buildPrepullManifest('flui-system', [
+  const docs = () =>
+    yaml.loadAll(
+      buildPrepullManifest('flui-sandbox-prepull', [
         'gitea:1.22',
         'codercom/code-server:4',
       ]),
-    ) as Record<string, any>;
+    ) as Array<Record<string, any>>;
+  const ds = () => docs().find((d) => d.kind === 'DaemonSet')!;
+
+  it('creates its own namespace first, since a workload cluster has no Flui system namespace', () => {
+    const [ns, daemonSet] = docs();
+    expect(ns.kind).toBe('Namespace');
+    expect(ns.metadata.name).toBe('flui-sandbox-prepull');
+    expect(daemonSet.metadata.namespace).toBe('flui-sandbox-prepull');
+  });
 
   it('reaches every node a guest could land on', () => {
     expect(ds().kind).toBe('DaemonSet');

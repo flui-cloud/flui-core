@@ -6,6 +6,8 @@
  * containers do nothing and exit; the kubelet keeps the layers. It is written as
  * initContainers precisely so the pod finishes and stops costing anything while
  * the images stay on disk.
+ *
+ * It brings its own namespace: a workload cluster has no Flui system namespace.
  */
 export function buildPrepullManifest(
   namespace: string,
@@ -26,7 +28,15 @@ export function buildPrepullManifest(
     )
     .join('\n');
 
-  return `apiVersion: apps/v1
+  return `apiVersion: v1
+kind: Namespace
+metadata:
+  name: ${namespace}
+  labels:
+    app.kubernetes.io/managed-by: flui
+    flui.cloud/sandbox: "true"
+---
+apiVersion: apps/v1
 kind: DaemonSet
 metadata:
   name: sandbox-image-prepull

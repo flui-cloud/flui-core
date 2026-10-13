@@ -13,7 +13,7 @@ import { SANDBOX_CONFIG, SandboxConfig } from '../sandbox.config';
 import { SANDBOX_CLUSTER_GONE } from './sandbox-capacity.service';
 
 /** Where a demo instance keeps the things that are the instance's, not a guest's. */
-const SYSTEM_NAMESPACE = 'flui-system';
+const PREPULL_NAMESPACE = 'flui-sandbox-prepull';
 
 /**
  * Keeps the images the guided path offers already on the nodes.
@@ -105,7 +105,7 @@ export class SandboxPrepullService {
 
     await this.k8s.applyManifest(
       this.encryption.decrypt(cluster.kubeconfigEncrypted),
-      buildPrepullManifest(SYSTEM_NAMESPACE, images),
+      buildPrepullManifest(PREPULL_NAMESPACE, images),
     );
     this.logger.log(
       `Pre-pulling ${images.length} catalog images on every sandbox node`,
