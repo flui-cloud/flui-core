@@ -76,3 +76,31 @@ describe('ScalewayDnsService — pagination', () => {
     expect(listDNSZoneRecords).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('ScalewayDnsService — private network zones', () => {
+  it('leaves out the zones Scaleway keeps for private networks', async () => {
+    const { service, internals } = build();
+    const listDNSZones = jest.fn(async () => ({
+      data: {
+        dns_zones: [
+          { domain: 'fluicloud.eu', subdomain: '' },
+          {
+            domain: 'a1937079-a302-4684-8647-3260963d98b9.privatedns',
+            subdomain: '127cfffe-93f2-4069-8857-5cd4c2195924',
+          },
+          {
+            domain: 'internal.example',
+            subdomain: '',
+            linked_products: ['vpc'],
+          },
+        ],
+        total_count: 3,
+      },
+    }));
+    internals.createZonesApi = async () => ({ listDNSZones });
+
+    const zones = await service.listZones();
+
+    expect(zones.map((z) => z.name)).toEqual(['fluicloud.eu']);
+  });
+});

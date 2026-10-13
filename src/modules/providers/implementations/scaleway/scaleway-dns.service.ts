@@ -86,7 +86,9 @@ export class ScalewayDnsService implements IDnsProvider {
       );
       return { items: resp.data.dns_zones, total: resp.data.total_count };
     });
-    return zones.map((z) => this.mapZone(z));
+    return zones
+      .filter((z) => !isPrivateNetworkZone(z))
+      .map((z) => this.mapZone(z));
   }
 
   async getZone(zoneId: string): Promise<DnsZoneInfo | null> {
@@ -332,4 +334,14 @@ export class ScalewayDnsService implements IDnsProvider {
       ttl: r.ttl ?? 300,
     };
   }
+}
+
+/** The zones Scaleway keeps for its private networks: not public, never registrable. */
+export function isPrivateNetworkZone(
+  zone: ScalewayDomainV2beta1DNSZone,
+): boolean {
+  return (
+    (zone.linked_products ?? []).includes('vpc') ||
+    (zone.domain ?? '').endsWith('.privatedns')
+  );
 }
