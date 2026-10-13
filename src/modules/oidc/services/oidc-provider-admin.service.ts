@@ -5,6 +5,8 @@ import { firstValueFrom } from 'rxjs';
 const DEFAULT_INTERNAL_URL =
   'http://zitadel.flui-system.svc.cluster.local:8080';
 
+const IDP_OWNER_TYPE_ORG = 'IDP_OWNER_TYPE_ORG';
+
 export function resolveProviderBaseUrl(): string {
   return (
     process.env.OIDC_PROVIDER_ADMIN_URL ||
@@ -71,6 +73,32 @@ export function policySettings(
   return Object.fromEntries(
     Object.entries(policy).filter(([key]) => !LOGIN_POLICY_READ_ONLY.has(key)),
   );
+}
+
+export type SocialIdentityProviderKind = 'github' | 'google';
+
+export interface SocialIdentityProviderParams {
+  name: string;
+  clientId: string;
+  clientSecret: string;
+}
+
+function socialProviderBody(
+  kind: SocialIdentityProviderKind,
+  params: SocialIdentityProviderParams,
+): Record<string, unknown> {
+  return {
+    name: params.name,
+    clientId: params.clientId,
+    clientSecret: params.clientSecret,
+    scopes: kind === 'github' ? ['read:user', 'user:email'] : [],
+    providerOptions: {
+      isLinkingAllowed: false,
+      isCreationAllowed: true,
+      isAutoCreation: true,
+      isAutoUpdate: true,
+    },
+  };
 }
 
 export interface OidcUserGrant {
@@ -216,6 +244,7 @@ export class OidcProviderAdminClient {
     );
   }
 
+  /** The organisation's own identity providers, never the instance-wide ones. */
   async listIdentityProviders(
     pat: string,
     hostHeader: string,
@@ -223,13 +252,16 @@ export class OidcProviderAdminClient {
     const resp = await firstValueFrom(
       this.httpService.post(
         `${resolveProviderBaseUrl()}/management/v1/idps/templates/_search`,
-        { limit: 100 },
+        {
+          query: { limit: 100 },
+          queries: [{ ownerTypeQuery: { ownerType: IDP_OWNER_TYPE_ORG } }],
+        },
         { headers: this.headers(pat, hostHeader) },
       ),
     );
-    return ((resp.data?.result as Array<Record<string, string>>) ?? []).map(
-      (p) => ({ id: p.id, name: p.name, type: p.type }),
-    );
+    return ((resp.data?.result as Array<Record<string, string>>) ?? [])
+      .filter((p) => !p.owner || p.owner === IDP_OWNER_TYPE_ORG)
+      .map((p) => ({ id: p.id, name: p.name, type: p.type }));
   }
 
   /**
@@ -240,28 +272,62 @@ export class OidcProviderAdminClient {
   async addSocialIdentityProvider(
     pat: string,
     hostHeader: string,
-    kind: 'github' | 'google',
-    params: { name: string; clientId: string; clientSecret: string },
+    kind: SocialIdentityProviderKind,
+    params: SocialIdentityProviderParams,
   ): Promise<string> {
     const resp = await firstValueFrom(
       this.httpService.post(
         `${resolveProviderBaseUrl()}/management/v1/idps/${kind}`,
-        {
-          name: params.name,
-          clientId: params.clientId,
-          clientSecret: params.clientSecret,
-          scopes: kind === 'github' ? ['read:user', 'user:email'] : [],
-          providerOptions: {
-            isLinkingAllowed: false,
-            isCreationAllowed: true,
-            isAutoCreation: true,
-            isAutoUpdate: true,
-          },
-        },
+        socialProviderBody(kind, params),
         { headers: this.headers(pat, hostHeader) },
       ),
     );
     return resp.data.id as string;
+  }
+
+  /** New credentials for a sign-in that already exists, keeping its accounts. */
+  async updateSocialIdentityProvider(
+    pat: string,
+    hostHeader: string,
+    kind: SocialIdentityProviderKind,
+    idpId: string,
+    params: SocialIdentityProviderParams,
+  ): Promise<void> {
+    await firstValueFrom(
+      this.httpService.put(
+        `${resolveProviderBaseUrl()}/management/v1/idps/${kind}/${encodeURIComponent(idpId)}`,
+        socialProviderBody(kind, params),
+        { headers: this.headers(pat, hostHeader) },
+      ),
+    );
+  }
+
+  /** Take an identity provider off the organisation's sign-in page. */
+  async removeIdentityProviderFromLogin(
+    pat: string,
+    hostHeader: string,
+    idpId: string,
+  ): Promise<void> {
+    await firstValueFrom(
+      this.httpService.delete(
+        `${resolveProviderBaseUrl()}/management/v1/policies/login/idps/${encodeURIComponent(idpId)}`,
+        { headers: this.headers(pat, hostHeader) },
+      ),
+    );
+  }
+
+  /** Delete an identity provider together with the credentials it holds. */
+  async deleteIdentityProvider(
+    pat: string,
+    hostHeader: string,
+    idpId: string,
+  ): Promise<void> {
+    await firstValueFrom(
+      this.httpService.delete(
+        `${resolveProviderBaseUrl()}/management/v1/idps/${encodeURIComponent(idpId)}`,
+        { headers: this.headers(pat, hostHeader) },
+      ),
+    );
   }
 
   /** Show an identity provider on the organisation's sign-in page. */
@@ -273,7 +339,7 @@ export class OidcProviderAdminClient {
     await firstValueFrom(
       this.httpService.post(
         `${resolveProviderBaseUrl()}/management/v1/policies/login/idps`,
-        { idpId, ownerType: 'IDP_OWNER_TYPE_ORG' },
+        { idpId, ownerType: IDP_OWNER_TYPE_ORG },
         { headers: this.headers(pat, hostHeader) },
       ),
     );
@@ -1123,6 +1189,33 @@ export class OidcProviderAdminClient {
         ?.status;
       if (status === 404 || status === 5) return null;
       return null;
+    }
+  }
+
+  /** Like {@link getOrgMetadata}, but only an absent key reads as `null`: an unreachable provider throws. */
+  async findOrgMetadata(
+    pat: string,
+    hostHeader: string,
+    key: string,
+  ): Promise<string | null> {
+    try {
+      const resp = await firstValueFrom(
+        this.httpService.get(
+          `${resolveProviderBaseUrl()}/management/v1/orgs/me/metadata/${encodeURIComponent(key)}`,
+          { headers: this.headers(pat, hostHeader) },
+        ),
+      );
+      const value = resp.data?.metadata?.value;
+      return value
+        ? Buffer.from(String(value), 'base64').toString('utf8')
+        : null;
+    } catch (err) {
+      if (
+        (err as { response?: { status?: number } }).response?.status === 404
+      ) {
+        return null;
+      }
+      throw err;
     }
   }
 

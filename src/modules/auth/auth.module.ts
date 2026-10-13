@@ -1,6 +1,7 @@
 import { sharedThrottlerStorage } from '../../common/throttling/redis-throttler.storage';
 import { MailModule } from '../mail/mail.module';
 import { DemoSignInService } from './services/demo-sign-in.service';
+import { SandboxSignInController } from './controllers/sandbox-sign-in.controller';
 import { SandboxGateModule } from '../sandbox/gate/sandbox-slot-gate';
 import { Module } from '@nestjs/common';
 import { BullModule } from '@nestjs/bull';
@@ -156,6 +157,7 @@ import { FirewallsModule } from '../infrastructure/firewalls/firewalls.module';
     AgentIdentitiesController,
     UserManagementController,
     BrandingController,
+    SandboxSignInController,
   ],
   exports: [
     PassportModule,

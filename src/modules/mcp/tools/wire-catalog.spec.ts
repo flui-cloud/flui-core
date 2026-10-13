@@ -178,6 +178,7 @@ const ARGS: Record<string, Record<string, unknown>> = {
   provider_credentials_request: { provider: 'hetzner' },
   inference_connection_request: {},
   user_invite_request: { email: 'bob@acme.com' },
+  sign_in_provider_request: { provider: 'github' },
   operating_context_read: {},
   get_started: {},
   my_permissions: {},

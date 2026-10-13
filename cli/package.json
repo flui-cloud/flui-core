@@ -162,6 +162,9 @@
       "sandbox": {
         "description": "Guest areas of a demo instance"
       },
+      "sandbox:sign-in": {
+        "description": "GitHub and Google sign-in for the guests of a demo"
+      },
       "scaling": {
         "description": "Scaling groups: what a cluster may buy for itself, where it must stop, and why it last decided as it did"
       },

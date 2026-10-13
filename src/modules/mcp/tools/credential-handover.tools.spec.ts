@@ -70,6 +70,12 @@ const REPLIES: Record<string, unknown> = {
   '/inference/connections': [],
   '/registry/storage': { backend: 's3', connected: false },
   '/registry/storage/buckets': [],
+  '/sandbox/sign-in/providers': {
+    demo: true,
+    callbackUrl:
+      'https://auth.demo.example.com/ui/login/login/externalidp/callback',
+    providers: [{ provider: 'github', connected: false, source: null }],
+  },
 };
 
 function ctxFor(): McpToolContext {
@@ -105,6 +111,7 @@ const ARGS: Record<string, Record<string, unknown>> = {
   provider_credentials_request: { provider: 'hetzner' },
   inference_connection_request: {},
   user_invite_request: { email: 'bob@acme.com' },
+  sign_in_provider_request: { provider: 'github' },
 };
 
 async function resultOf(tool: ToolDef): Promise<Record<string, unknown>> {
@@ -149,6 +156,7 @@ describe('what a hand-off hands back', () => {
     'mail_provider_request',
     'backup_destination_request',
     'registry_storage_request',
+    'sign_in_provider_request',
   ])('%s carries the relay-only instruction', async (name) => {
     const tool = CREDENTIAL_HANDOVER_TOOLS.find(
       (t) => t.name === name,
@@ -262,6 +270,12 @@ describe('registry_storage_request', () => {
     );
   });
 
+  it('says builds go to GHCR and relays the command that switches them', async () => {
+    const result = await resultOf(tool);
+    expect(result.mode).toBe('ghcr');
+    expect(result.note).toContain('flui registry enable --storage volume');
+  });
+
   it('leaves the secret of a bucket of their own to a prompt', async () => {
     const result = await resultOf(tool);
     const command = JSON.stringify(result);
@@ -271,5 +285,61 @@ describe('registry_storage_request', () => {
     expect(result.note).toMatch(
       /fill in the remaining flags \(provider, endpoint, bucket\)/i,
     );
+  });
+});
+
+describe('sign_in_provider_request', () => {
+  const tool = CREDENTIAL_HANDOVER_TOOLS.find(
+    (t) => t.name === 'sign_in_provider_request',
+  ) as ToolDef;
+
+  const run = async (
+    reply: unknown,
+    args: Record<string, unknown> = { provider: 'github' },
+  ) => {
+    const ctx = ctxFor();
+    ctx.api.get = (() => Promise.resolve(reply)) as never;
+    const out = await runTool(ctx, tool, args);
+    return JSON.parse(
+      (out as { content: Array<{ text: string }> }).content[0].text,
+    ) as Record<string, unknown>;
+  };
+
+  it('hands over a command that asks for the secret rather than carrying it', async () => {
+    const result = await resultOf(tool);
+    const command = (result.cliAction as { command: string }).command;
+    expect(command).toBe('flui sandbox sign-in connect github');
+    expect(command).not.toMatch(/secret/i);
+    expect(result.callbackUrl).toBe(
+      'https://auth.demo.example.com/ui/login/login/externalidp/callback',
+    );
+  });
+
+  it('tells the agent not to ask on an installation that is not a demo', async () => {
+    const result = await run({ demo: false, providers: [] });
+    expect(result.cliAction).toBeUndefined();
+    expect(result.note).toMatch(/not a demo/);
+  });
+
+  it('says when the secret still sits in the old configuration variables', async () => {
+    const result = await run({
+      demo: true,
+      providers: [
+        { provider: 'github', connected: true, source: 'environment' },
+      ],
+    });
+    expect(result.alreadyConnected).toBe(false);
+    expect(result.note).toMatch(/deprecated configuration variables/);
+  });
+
+  it('says a provider the old variables left behind is taken over by connecting it again', async () => {
+    const result = await run({
+      demo: true,
+      providers: [
+        { provider: 'github', connected: true, source: 'identity-provider' },
+      ],
+    });
+    expect(result.alreadyConnected).toBe(false);
+    expect(result.note).toMatch(/takes it over/);
   });
 });

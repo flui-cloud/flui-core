@@ -21,7 +21,7 @@ import { createHash } from 'node:crypto';
  * "never a credential inside a skill" rule made structural rather than
  * remembered.
  */
-export const AGENT_SKILL_VERSION = '1.5.0';
+export const AGENT_SKILL_VERSION = '1.5.1';
 
 /** What the agent stores it as. Claude Code and its kin read `SKILL.md`. */
 export const AGENT_SKILL_FILENAME = 'SKILL.md';
@@ -178,7 +178,8 @@ has a tool that asks for it without ever carrying it:
 \`ghcr_token_request\` (the GitHub token that pulls container images),
 \`mail_provider_request\`, \`backup_destination_request\`,
 \`registry_storage_request\` (the bucket the instance registry keeps images in),
-\`provider_credentials_request\`, \`inference_connection_request\` and
+\`provider_credentials_request\`, \`inference_connection_request\`,
+\`sign_in_provider_request\` (GitHub or Google sign-in for a demo's guests) and
 \`user_invite_request\`. None of them has an argument that could hold a value.
 Each answers whether the thing is configured and hands back either a command to
 relay or the screen the person opens — three of them have no command yet and

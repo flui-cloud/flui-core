@@ -14,6 +14,26 @@ export interface SandboxTenancy {
   createdAt: string;
 }
 
+export type SignInProvider = 'github' | 'google';
+
+export interface SignInProviderStatus {
+  provider: SignInProvider;
+  name: string;
+  connected: boolean;
+  source: 'flui' | 'environment' | 'identity-provider' | null;
+  clientId: string | null;
+  connectedAt: string | null;
+  connectedBy: string | null;
+  disconnectedAt: string | null;
+  onSignInPage: boolean;
+}
+
+export interface SignInProviders {
+  demo: boolean;
+  callbackUrl: string | null;
+  providers: SignInProviderStatus[];
+}
+
 /**
  * The guest areas of a demo instance, from the operator's side.
  *
@@ -43,6 +63,29 @@ export class SandboxClient {
   async expire(ref: string): Promise<SandboxTenancy> {
     return this.api.post<SandboxTenancy>(
       `/sandbox/tenancies/${encodeURIComponent(ref)}/expire`,
+    );
+  }
+
+  async listSignInProviders(): Promise<SignInProviders> {
+    return this.api.get<SignInProviders>('/sandbox/sign-in/providers');
+  }
+
+  /** The secret travels in this one request body, to the identity provider, and nowhere else. */
+  async connectSignInProvider(
+    provider: SignInProvider,
+    credentials: { clientId: string; clientSecret: string },
+  ): Promise<SignInProviderStatus> {
+    return this.api.put<SignInProviderStatus>(
+      `/sandbox/sign-in/providers/${encodeURIComponent(provider)}`,
+      credentials,
+    );
+  }
+
+  async disconnectSignInProvider(
+    provider: SignInProvider,
+  ): Promise<SignInProviderStatus> {
+    return this.api.delete<SignInProviderStatus>(
+      `/sandbox/sign-in/providers/${encodeURIComponent(provider)}`,
     );
   }
 }

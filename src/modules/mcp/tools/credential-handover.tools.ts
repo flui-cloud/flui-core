@@ -283,7 +283,8 @@ export const CREDENTIAL_HANDOVER_TOOLS: ToolDef[] = [
     name: 'registry_storage_request',
     routes: ['GET /registry/storage', 'GET /registry/storage/buckets'],
     description:
-      "Where the instance's image registry keeps built images, the space they take (total and per application, with the space alert), and how a PERSON connects it to a bucket. " +
+      'Where new builds push (mode: ghcr = GitHub Container Registry, flui = the registry Flui runs), where that registry keeps built images, the space they take (total and per application, with the space alert), and how a PERSON connects it to a bucket. ' +
+      'An installation on GHCR can be switched by a PERSON with `flui registry enable --storage volume|s3` (s3 needs a bucket connected first); you only relay the command. ' +
       'On Scaleway Flui creates the bucket itself, in a project of its own with a key limited to Object Storage there, from the Scaleway connection the instance already has: the command needs only a region. ' +
       'A bucket of their own needs an access key and a secret key: you must never hold or relay them, and there are no arguments for them here; the command asks for the secret at a prompt. ' +
       'Hetzner Object Storage is not offered for the registry. ' +
@@ -313,6 +314,7 @@ export const CREDENTIAL_HANDOVER_TOOLS: ToolDef[] = [
     run: async (args, ctx) => {
       const status = await ctx.api.get<{
         backend?: 'filesystem' | 's3';
+        mode?: 'ghcr' | 'flui';
         connected?: boolean;
         provider?: string;
         region?: string;
@@ -375,6 +377,7 @@ export const CREDENTIAL_HANDOVER_TOOLS: ToolDef[] = [
           ? 'a bucket'
           : 'a volume on the control cluster';
       return {
+        mode: status.mode ?? (usage ? 'flui' : 'ghcr'),
         keptOn,
         connected: status.connected ?? false,
         provider: status.provider,
@@ -385,7 +388,7 @@ export const CREDENTIAL_HANDOVER_TOOLS: ToolDef[] = [
         note: [
           usage
             ? undefined
-            : 'This instance keeps built images on GHCR, not in a registry of its own: there is no space to report and no bucket to connect.',
+            : 'This instance keeps built images on GHCR, not in a registry of its own: there is no space to report yet. The person can switch new builds to the Flui registry with `flui registry enable --storage volume`, or connect a bucket first and run `flui registry enable --storage s3`.',
           status.connected
             ? 'A bucket is already connected. Running the command again replaces it.'
             : undefined,
@@ -483,6 +486,82 @@ export const CREDENTIAL_HANDOVER_TOOLS: ToolDef[] = [
           'Settings → Model providers',
           'they pick a provider and paste its API key there',
         ),
+      };
+    },
+  }),
+
+  defineTool({
+    name: 'sign_in_provider_request',
+    routes: ['GET /sandbox/sign-in/providers'],
+    description:
+      'Ask a PERSON to connect GitHub or Google sign-in for the guests of this demo installation. ' +
+      'The OAuth client secret is a credential: you must never hold or relay it, and there is no argument for it here. It goes from the person to the identity provider, which keeps it encrypted; Flui does not store it. ' +
+      'Returns whether each provider is connected, where it came from, and the callback URL the person registers at GitHub or Google; for the provider asked about, the command the person runs — it asks for the secret at a hidden prompt.',
+    // Instance scope: this is the installation's own sign-in, not an
+    // application's, and the route reads at `cluster:read`.
+    scope: MCP_SCOPE.INFRA_READ,
+    inputSchema: {
+      provider: z
+        .enum(['github', 'google'])
+        .optional()
+        .describe('Which sign-in to connect. Never a credential.'),
+    },
+    run: async (args, ctx) => {
+      const view = await ctx.api.get<{
+        demo?: boolean;
+        callbackUrl?: string | null;
+        providers?: Array<{
+          provider?: string;
+          connected?: boolean;
+          source?: string | null;
+          onSignInPage?: boolean;
+        }>;
+      }>('/sandbox/sign-in/providers');
+      const providers = (view.providers ?? []).map((p) => ({
+        provider: p.provider,
+        connected: p.connected ?? false,
+        source: p.source ?? null,
+        onSignInPage: p.onSignInPage ?? false,
+      }));
+      if (view.demo === false) {
+        return {
+          demo: false,
+          providers,
+          note: 'This installation is not a demo: GitHub and Google sign-in is only offered on one. Do not ask the person for OAuth credentials.',
+        };
+      }
+      if (!args.provider) {
+        return {
+          providers,
+          callbackUrl: view.callbackUrl ?? null,
+          note: 'Name a provider to be handed the command that connects it.',
+        };
+      }
+
+      const asked = providers.find((p) => p.provider === args.provider);
+      const managed = asked?.source === 'flui';
+      const action = runCommand(
+        `flui sandbox sign-in connect ${args.provider}`,
+        `Connect ${args.provider} sign-in`,
+      );
+      let note = `Not connected yet. The person creates an OAuth app at the provider with the callback URL above, then runs the command: it asks for the client ID and, at a hidden prompt, the secret. ${STOP_AND_CARRY_ON}`;
+      if (managed) {
+        note =
+          'Already connected. Its secret is not readable from here; running the command again replaces the credentials.';
+      } else if (asked?.source === 'environment') {
+        note =
+          'Connected through the deprecated configuration variables, which keep the secret in plain configuration. Running the command moves it to the identity provider; the person then removes both variables.';
+      } else if (asked?.source === 'identity-provider') {
+        note =
+          'Connected on the identity provider by the old configuration variables, which are gone. Running the command takes it over with new credentials.';
+      }
+      return {
+        provider: args.provider,
+        providers,
+        callbackUrl: view.callbackUrl ?? null,
+        alreadyConnected: managed,
+        note,
+        ...action,
       };
     },
   }),
