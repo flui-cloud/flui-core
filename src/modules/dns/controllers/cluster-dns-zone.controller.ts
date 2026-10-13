@@ -38,6 +38,11 @@ import { ConfigureIssuerDto } from '../dto/configure-issuer.dto';
 import { ConfigureSystemIngressDto } from '../dto/configure-system-ingress.dto';
 import { SystemDnsStatusResponseDto } from '../dto/system-dns-status-response.dto';
 import {
+  CheckSystemHostnamesDto,
+  SystemHostnamesResponseDto,
+} from '../dto/system-hostnames.dto';
+import { SystemHostnamesService } from '../services/system-hostnames.service';
+import {
   AcmeResolversDto,
   CertDiagnosticsResponseDto,
 } from '../dto/cert-diagnostics-response.dto';
@@ -58,6 +63,7 @@ export class ClusterDnsZoneController {
     private readonly apiDomainSyncService: ApiDomainSyncService,
     private readonly webDomainSyncService: WebDomainSyncService,
     private readonly systemIngressService: SystemIngressService,
+    private readonly systemHostnamesService: SystemHostnamesService,
   ) {}
 
   private parseIssuerType(type: string): 'http' | 'dns' {
@@ -563,6 +569,51 @@ export class ClusterDnsZoneController {
     @Param('clusterId') clusterId: string,
   ): Promise<SystemDnsStatusResponseDto> {
     return this.clusterDnsZoneService.getSystemDnsStatus(clusterId);
+  }
+
+  @Get('system-hostnames')
+  @RequirePermission(IAM_PERMISSION.CLUSTER_READ)
+  @ApiOperation({
+    summary: 'Default public addresses of the platform applications',
+    description:
+      'For the dashboard, the API and sign-in (when present): the name each one gets under the domain by default, ' +
+      'the name already in use there, and the full address. Without dnsZoneId the primary zone of the cluster is used.',
+  })
+  @ApiParam({ name: 'clusterId', description: 'Cluster ID' })
+  @ApiQuery({ name: 'dnsZoneId', required: false })
+  @ApiResponse({ status: 200, type: SystemHostnamesResponseDto })
+  @ApiResponse({ status: 404, description: 'Cluster or DNS zone not found' })
+  async getSystemHostnames(
+    @Param('clusterId') clusterId: string,
+    @Query('dnsZoneId') dnsZoneId?: string,
+  ): Promise<SystemHostnamesResponseDto> {
+    return this.systemHostnamesService.describe(clusterId, dnsZoneId);
+  }
+
+  @Post('system-hostnames/check')
+  @HttpCode(HttpStatus.OK)
+  @RequireSection(SECTION.INFRASTRUCTURE)
+  @RequirePermission(IAM_PERMISSION.CLUSTER_MANAGE)
+  @ApiOperation({
+    summary: 'Check the public addresses chosen for the platform applications',
+    description:
+      'Validates each name (one label under the domain, or a full address), and refuses a name another ' +
+      'application uses, another namespace serves, or a DNS record of the zone already points elsewhere. ' +
+      'Returns the full addresses to create the endpoints with. Changes nothing.',
+  })
+  @ApiParam({ name: 'clusterId', description: 'Cluster ID' })
+  @ApiResponse({ status: 200, type: SystemHostnamesResponseDto })
+  @ApiResponse({ status: 400, description: 'A name is not valid' })
+  @ApiResponse({ status: 409, description: 'A name is already in use' })
+  @ApiResponse({
+    status: 503,
+    description: 'The DNS zone could not be read to check a name',
+  })
+  async checkSystemHostnames(
+    @Param('clusterId') clusterId: string,
+    @Body() dto: CheckSystemHostnamesDto,
+  ): Promise<SystemHostnamesResponseDto> {
+    return this.systemHostnamesService.check(clusterId, dto);
   }
 
   @Post('configure-system-ingress')

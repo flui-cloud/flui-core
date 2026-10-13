@@ -78,6 +78,9 @@ export class HttpExceptionFilter implements ExceptionFilter {
       'committed',
       'markedForReuse',
       'strandedApplications',
+      // Which input of a multi-field request was refused, and the address it named.
+      'field',
+      'fqdn',
     ] as const;
     const carried: Record<string, unknown> = {};
     for (const field of CARRIED) {
