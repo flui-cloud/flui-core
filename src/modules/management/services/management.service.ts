@@ -175,6 +175,7 @@ export class ManagementService {
         updatedConfig,
       ]);
       markCredentialsChanged();
+      await this.clearNodeSizesCache(configDto.provider);
       return enriched[0];
     } catch (error) {
       await this.providerConfigRepo.update(newConfig.id, {
@@ -372,6 +373,7 @@ export class ManagementService {
 
     const enriched = await this.enrichConfigurationsWithProviderData([updated]);
     markCredentialsChanged();
+    await this.clearNodeSizesCache(provider);
     return enriched[0];
   }
 
@@ -645,7 +647,8 @@ export class ManagementService {
       {
         category: CacheCategory.CONFIGURATION,
         skipCache,
-        shouldCache: CacheService.shouldCacheResponse,
+        shouldCache: (nodeSizes) =>
+          nodeSizes.length > 0 && CacheService.shouldCacheResponse(nodeSizes),
       },
     );
 
