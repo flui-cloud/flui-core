@@ -19,6 +19,24 @@ import {
 import { ICredentialProvider } from '../../interfaces/credential-provider.interface';
 import { CloudProvider } from '../../enums/cloud-provider.enum';
 
+const SCALEWAY_PAGE_SIZE = 100;
+
+async function collectScalewayPages<T>(
+  fetchPage: (page: number) => Promise<{ items?: T[]; total?: number }>,
+): Promise<T[]> {
+  const all: T[] = [];
+  for (let page = 1; ; page++) {
+    const { items = [], total } = await fetchPage(page);
+    all.push(...items);
+    const exhausted =
+      items.length === 0 ||
+      (total === undefined
+        ? items.length < SCALEWAY_PAGE_SIZE
+        : all.length >= total);
+    if (exhausted) return all;
+  }
+}
+
 @Injectable()
 export class ScalewayDnsService implements IDnsProvider {
   private readonly logger = new Logger(ScalewayDnsService.name);
@@ -56,8 +74,19 @@ export class ScalewayDnsService implements IDnsProvider {
 
   async listZones(): Promise<DnsZoneInfo[]> {
     const api = await this.createZonesApi();
-    const resp = await api.listDNSZones('', '');
-    return (resp.data.dns_zones ?? []).map((z) => this.mapZone(z));
+    const zones = await collectScalewayPages(async (page) => {
+      const resp = await api.listDNSZones(
+        '',
+        '',
+        undefined,
+        undefined,
+        undefined,
+        page,
+        SCALEWAY_PAGE_SIZE,
+      );
+      return { items: resp.data.dns_zones, total: resp.data.total_count };
+    });
+    return zones.map((z) => this.mapZone(z));
   }
 
   async getZone(zoneId: string): Promise<DnsZoneInfo | null> {
@@ -73,8 +102,18 @@ export class ScalewayDnsService implements IDnsProvider {
 
   async listRecords(zoneId: string): Promise<DnsRecordInfo[]> {
     const api = await this.createRecordsApi();
-    const resp = await api.listDNSZoneRecords(zoneId, '');
-    return (resp.data.records ?? []).map((r) => this.mapRecord(r, zoneId));
+    const records = await collectScalewayPages(async (page) => {
+      const resp = await api.listDNSZoneRecords(
+        zoneId,
+        '',
+        undefined,
+        undefined,
+        page,
+        SCALEWAY_PAGE_SIZE,
+      );
+      return { items: resp.data.records, total: resp.data.total_count };
+    });
+    return records.map((r) => this.mapRecord(r, zoneId));
   }
 
   async getRecord(

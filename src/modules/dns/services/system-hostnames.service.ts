@@ -8,6 +8,8 @@ import {
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
+import { isIP } from 'node:net';
+import * as ipaddr from 'ipaddr.js';
 import { Repository } from 'typeorm';
 import { ClusterEntity } from '../../infrastructure/clusters/entities/cluster.entity';
 import { ApplicationEntity } from '../../applications/entities/application.entity';
@@ -17,6 +19,7 @@ import { AppEndpointEntity } from '../entities/app-endpoint.entity';
 import { DnsZoneEntity } from '../entities/dns-zone.entity';
 import {
   CheckSystemHostnamesDto,
+  SystemHostnameChoiceDto,
   SystemHostnameDto,
   SystemHostnamesResponseDto,
 } from '../dto/system-hostnames.dto';
@@ -32,6 +35,7 @@ import { resolveRecordName } from '../utils/resolve-record-name.util';
 import { clusterIngressValues } from '../utils/ingress-addresses.core';
 import { ClusterDnsZoneService } from './cluster-dns-zone.service';
 import { EndpointHostGuardService } from './endpoint-host-guard.service';
+import { findPlatformEndpoint } from '../utils/platform-endpoint.util';
 
 export const SYSTEM_HOSTNAME_INVALID = 'system_hostname_invalid';
 export const SYSTEM_HOSTNAME_TAKEN = 'system_hostname_taken';
@@ -54,6 +58,22 @@ interface ResolvedChoice {
   app: SystemHostnameApp;
   label: string | null;
   fqdn: string;
+  zone: DnsZoneEntity | null;
+}
+
+function normalizeRecordValue(type: DnsRecordType, value: string): string {
+  const trimmed = value.trim();
+  if (type === DnsRecordType.CNAME) {
+    return trimmed.toLowerCase().replace(/\.$/, '');
+  }
+  return isIP(trimmed)
+    ? ipaddr.parse(trimmed).toString()
+    : trimmed.toLowerCase();
+}
+
+function zoneCovers(zoneName: string, fqdn: string): boolean {
+  const zone = zoneName.toLowerCase();
+  return fqdn === zone || fqdn.endsWith(`.${zone}`);
 }
 
 /**
@@ -127,7 +147,7 @@ export class SystemHostnamesService {
       });
     }
 
-    const choices = this.resolveChoices(dto, zone);
+    const choices = await this.resolveChoices(clusterId, dto, zone);
 
     const hostnames: SystemHostnameDto[] = [];
     for (const choice of choices) {
@@ -145,12 +165,13 @@ export class SystemHostnamesService {
         application,
       );
       await this.assertNotServedElsewhere(cluster, application, choice);
-      if (zone && !ownsName) {
-        await this.assertDnsNameFree(cluster, zone, choice);
+      if (choice.zone && !ownsName) {
+        await this.assertDnsNameFree(cluster, choice.zone, choice);
       }
-      const current = await this.endpoints.findOne({
-        where: { applicationId: application.id },
-      });
+      const current = await findPlatformEndpoint(
+        this.endpoints,
+        application.id,
+      );
       hostnames.push({
         app: choice.app,
         applicationId: application.id,
@@ -164,42 +185,21 @@ export class SystemHostnamesService {
     return { zoneName: zone?.zoneName ?? null, hostnames };
   }
 
-  private resolveChoices(
+  private async resolveChoices(
+    clusterId: string,
     dto: CheckSystemHostnamesDto,
     zone: DnsZoneEntity | null,
-  ): ResolvedChoice[] {
+  ): Promise<ResolvedChoice[]> {
     const seenApps = new Set<SystemHostnameApp>();
     const byFqdn = new Map<string, SystemHostnameApp>();
-    return dto.hostnames.map((choice) => {
+    const resolvedChoices: ResolvedChoice[] = [];
+    for (const choice of dto.hostnames) {
       if (seenApps.has(choice.app)) {
         throw this.invalid(choice.app, `${choice.app} is listed twice.`);
       }
       seenApps.add(choice.app);
 
-      const hasLabel = choice.label !== undefined;
-      if (hasLabel === (choice.fqdn !== undefined)) {
-        throw this.invalid(
-          choice.app,
-          'Give either a name under the domain or a full address.',
-        );
-      }
-
-      let resolved: ResolvedChoice;
-      if (hasLabel && zone) {
-        const label = normalizeHostnameInput(choice.label);
-        const problem = wildcardLabelProblem(label, zone.zoneName);
-        if (problem) throw this.invalid(choice.app, problem);
-        resolved = {
-          app: choice.app,
-          label,
-          fqdn: `${label}.${zone.zoneName}`,
-        };
-      } else {
-        const fqdn = normalizeHostnameInput(choice.fqdn);
-        const problem = hostnameProblem(fqdn);
-        if (problem) throw this.invalid(choice.app, problem);
-        resolved = { app: choice.app, label: null, fqdn };
-      }
+      const resolved = await this.resolveChoice(clusterId, choice, zone);
 
       const twin = byFqdn.get(resolved.fqdn);
       if (twin) {
@@ -209,8 +209,90 @@ export class SystemHostnamesService {
         );
       }
       byFqdn.set(resolved.fqdn, resolved.app);
-      return resolved;
-    });
+      resolvedChoices.push(resolved);
+    }
+    return resolvedChoices;
+  }
+
+  private async resolveChoice(
+    clusterId: string,
+    choice: SystemHostnameChoiceDto,
+    zone: DnsZoneEntity | null,
+  ): Promise<ResolvedChoice> {
+    const hasLabel = choice.label !== undefined;
+    if (hasLabel === (choice.fqdn !== undefined)) {
+      throw this.invalid(
+        choice.app,
+        'Give either a name under the domain or a full address.',
+      );
+    }
+    if (hasLabel && zone) return this.resolveLabelChoice(choice, zone);
+    return this.resolveFqdnChoice(clusterId, choice);
+  }
+
+  private resolveLabelChoice(
+    choice: SystemHostnameChoiceDto,
+    zone: DnsZoneEntity,
+  ): ResolvedChoice {
+    const label = normalizeHostnameInput(choice.label);
+    const problem = wildcardLabelProblem(label, zone.zoneName);
+    if (problem) throw this.invalid(choice.app, problem);
+    return {
+      app: choice.app,
+      label,
+      fqdn: `${label}.${zone.zoneName}`,
+      zone,
+    };
+  }
+
+  private async resolveFqdnChoice(
+    clusterId: string,
+    choice: SystemHostnameChoiceDto,
+  ): Promise<ResolvedChoice> {
+    const fqdn = normalizeHostnameInput(choice.fqdn);
+    const problem = hostnameProblem(fqdn);
+    if (problem) throw this.invalid(choice.app, problem);
+    const owner = await this.zoneForFqdn(clusterId, fqdn);
+    const wildcardProblem =
+      owner.zone && owner.wildcard
+        ? this.wildcardFqdnProblem(fqdn, owner.zone.zoneName)
+        : null;
+    if (wildcardProblem) throw this.invalid(choice.app, wildcardProblem);
+    return { app: choice.app, label: null, fqdn, zone: owner.zone };
+  }
+
+  /**
+   * The zone whose records decide whether a full address is free: the
+   * cluster's own zone covering it, or else any registered zone covering it.
+   */
+  private async zoneForFqdn(
+    clusterId: string,
+    fqdn: string,
+  ): Promise<{ zone: DnsZoneEntity | null; wildcard: boolean }> {
+    const assignment = await this.clusterDnsZoneService.getZoneForFqdn(
+      clusterId,
+      fqdn,
+    );
+    if (assignment?.dnsZone) {
+      return {
+        zone: assignment.dnsZone,
+        wildcard: !!assignment.wildcardCertificate,
+      };
+    }
+    const registered = await this.dnsZones.find();
+    const zone =
+      registered
+        .filter((z) => zoneCovers(z.zoneName, fqdn))
+        .sort((a, b) => b.zoneName.length - a.zoneName.length)[0] ?? null;
+    return { zone, wildcard: false };
+  }
+
+  private wildcardFqdnProblem(fqdn: string, zoneName: string): string | null {
+    const zone = zoneName.toLowerCase();
+    if (fqdn === zone) {
+      return `The certificate for *.${zone} covers the names under ${zone}, not ${zone} itself. Use a name such as dashboard.${zone}.`;
+    }
+    return wildcardLabelProblem(fqdn.slice(0, -(zone.length + 1)), zone);
   }
 
   /** Returns whether the application already owns an endpoint on this name. */
@@ -280,12 +362,28 @@ export class SystemHostnamesService {
     }
 
     const name = resolveRecordName(choice.fqdn, zone.zoneName);
-    const ours = new Set(clusterIngressValues(cluster));
-    const clash = records.find(
+    const claiming = records.filter(
       (r) =>
         CLAIMING_RECORD_TYPES.has(r.type) &&
-        this.sameRecordName(r.name, name, choice.fqdn) &&
-        !ours.has(r.value),
+        this.sameRecordName(r.name, name, choice.fqdn),
+    );
+    if (claiming.length === 0) return;
+
+    const ours = new Set(
+      clusterIngressValues(cluster).map((v) =>
+        normalizeRecordValue(DnsRecordType.A, v),
+      ),
+    );
+    if (ours.size === 0) {
+      throw new ServiceUnavailableException({
+        statusCode: 503,
+        code: SYSTEM_HOSTNAME_UNVERIFIED,
+        field: choice.app,
+        message: `Cannot tell whether ${choice.fqdn} is free: it already has a record, and this cluster's public address is not known yet to compare it with. Try again once the cluster reports its address.`,
+      });
+    }
+    const clash = claiming.find(
+      (r) => !ours.has(normalizeRecordValue(r.type, r.value)),
     );
     if (clash) {
       throw this.taken(

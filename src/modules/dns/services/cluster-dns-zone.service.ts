@@ -53,6 +53,7 @@ import {
 } from '../dto/cert-diagnostics-response.dto';
 import { AcmeResolversService } from './acme-resolvers.service';
 import { acmeResolverSentence } from '../utils/acme-resolvers.core';
+import { findPlatformEndpoint } from '../utils/platform-endpoint.util';
 
 type SolverType = 'http01' | 'dns01' | 'combined' | null;
 
@@ -1707,19 +1708,13 @@ export class ClusterDnsZoneService implements OnApplicationBootstrap {
 
     const [apiEndpoint, webEndpoint, zitadelEndpoint] = await Promise.all([
       apiApp
-        ? this.appEndpointRepository.findOne({
-            where: { applicationId: apiApp.id },
-          })
+        ? findPlatformEndpoint(this.appEndpointRepository, apiApp.id)
         : null,
       webApp
-        ? this.appEndpointRepository.findOne({
-            where: { applicationId: webApp.id },
-          })
+        ? findPlatformEndpoint(this.appEndpointRepository, webApp.id)
         : null,
       zitadelApp
-        ? this.appEndpointRepository.findOne({
-            where: { applicationId: zitadelApp.id },
-          })
+        ? findPlatformEndpoint(this.appEndpointRepository, zitadelApp.id)
         : null,
     ]);
 

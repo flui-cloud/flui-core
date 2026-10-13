@@ -13,6 +13,7 @@ import { EncryptionService } from '../../shared/encryption/services/encryption.s
 import { AppManagementService } from '../../applications/services/app-management.service';
 import { SyncWebDomainDto } from '../dto/sync-web-domain.dto';
 import { WebDomainSyncResultDto } from '../dto/web-domain-sync-result.dto';
+import { findPlatformEndpoint } from '../utils/platform-endpoint.util';
 
 @Injectable()
 export class WebDomainSyncService {
@@ -93,9 +94,10 @@ export class WebDomainSyncService {
     applicationId: string,
     label: string,
   ): Promise<AppEndpointEntity> {
-    const endpoint = await this.appEndpointRepository.findOne({
-      where: { applicationId },
-    });
+    const endpoint = await findPlatformEndpoint(
+      this.appEndpointRepository,
+      applicationId,
+    );
     if (!endpoint?.fqdn) {
       throw new BadRequestException(
         `No FQDN configured for ${label} application (id: ${applicationId}). Configure the DNS endpoint first.`,
@@ -108,9 +110,10 @@ export class WebDomainSyncService {
     applicationId: string,
     label: string,
   ): Promise<string> {
-    const endpoint = await this.appEndpointRepository.findOne({
-      where: { applicationId },
-    });
+    const endpoint = await findPlatformEndpoint(
+      this.appEndpointRepository,
+      applicationId,
+    );
     if (!endpoint?.fqdn) {
       throw new BadRequestException(
         `No FQDN configured for ${label} application (id: ${applicationId}). Configure the DNS endpoint first.`,

@@ -27,6 +27,8 @@ import { AppEndpointResponseDto } from '../dto/app-endpoint-response.dto';
 import { ReconciliationStatus } from '../../infrastructure/shared/enums/reconciliation-status.enum';
 import { ApplicationSourceType } from '../../applications/enums/application-source-type.enum';
 import { ApplicationExposure } from '../../applications/enums/application-exposure.enum';
+import { ApplicationCategory } from '../../applications/enums/application-category.enum';
+import { SYSTEM_HOSTNAME_APPS } from '../utils/system-hostnames.util';
 import { EndpointType } from '../enums/endpoint-type.enum';
 import { HostnameMode } from '../enums/hostname-mode.enum';
 import { ClusterDnsZoneService } from './cluster-dns-zone.service';
@@ -176,59 +178,16 @@ export class AppEndpointService {
       `Creating endpoint for application ${dto.applicationId} on cluster ${clusterId}`,
     );
 
-    const cluster = await this.clusterRepository.findOne({
-      where: { id: clusterId },
-    });
-    if (!cluster) {
-      throw new NotFoundException(`Cluster ${clusterId} not found`);
-    }
+    const { cluster, application } = await this.loadClusterApplication(
+      clusterId,
+      dto.applicationId,
+    );
+    await this.assertNoSecondPlatformEndpoint(application);
 
-    const application = await this.applicationRepository.findOne({
-      where: { id: dto.applicationId },
-    });
-    if (!application) {
-      throw new NotFoundException(`Application ${dto.applicationId} not found`);
-    }
-    if (application.clusterId !== clusterId) {
-      throw new BadRequestException(
-        `Application ${dto.applicationId} does not belong to cluster ${clusterId}`,
-      );
-    }
-
-    // Endpoint type resolution: explicit dto.endpointType wins; otherwise
-    // fall back to the application's exposure (back-compat).
-    const requestedType =
-      dto.endpointType ??
-      (application.exposure === ApplicationExposure.INTERNAL
-        ? EndpointType.INTERNAL
-        : EndpointType.PUBLIC);
-
-    if (requestedType === EndpointType.INTERNAL) {
-      // Gate 1: cluster must support internal hosting (DNS zone + wildcard issuer).
-      const status =
-        await this.clusterDnsZoneService.getInternalHostingStatus(clusterId);
-      if (!status.ready) {
-        throw internalHostingNotAvailableException(clusterId, status.missing);
-      }
-      // Gate 2: something on the cluster must check the sign-in, or an
-      // "internal" endpoint would expose a private app to the internet.
-      const relayRunning =
-        !!(await this.authzInstallRepo.findRunningForCluster(clusterId));
-      const signInCheck = gatewayForwardAuthAddress(
-        clusterId,
-        forwardAuthPlacement(
-          isControlClusterType(cluster.clusterType),
-          relayRunning,
-        ),
-      );
-      if (!signInCheck) {
-        throw new BadRequestException({
-          statusCode: 400,
-          code: 'AUTH_PROXY_NOT_RUNNING',
-          message: `Cluster "${cluster.name}" has no running Auth Proxy. Internal apps on a cluster other than the control need the Flui Auth Proxy installed and running there. Install it from /infrastructure/auth-proxy and try again.`,
-          clusterId,
-        });
-      }
+    if (
+      this.requestedEndpointType(dto, application) === EndpointType.INTERNAL
+    ) {
+      await this.assertInternalHostingReady(clusterId, cluster);
       // Reuse the canonical internal-endpoint creator (same logic as the
       // initial app-creation path), so the DTO route and the implicit route
       // produce identical rows.
@@ -237,40 +196,15 @@ export class AppEndpointService {
 
     const endpointType = EndpointType.PUBLIC;
 
-    let clusterDnsZone: ClusterDnsZoneEntity | null = null;
-    if (dto.clusterDnsZoneId) {
-      clusterDnsZone = await this.clusterDnsZoneRepository.findOne({
-        where: { id: dto.clusterDnsZoneId },
-        relations: ['dnsZone'],
-      });
-      if (clusterDnsZone?.clusterId !== application.clusterId) {
-        throw new NotFoundException(
-          `Cluster DNS zone ${dto.clusterDnsZoneId} not found`,
-        );
-      }
-    }
-
-    // Only when there is already a valid certificate for that name — otherwise
-    // the shared `<cluster>.<zone>`, which is covered and works. A hostname is
-    // written once and lived with, so a name whose certificate is still being
-    // ordered is a link that shows a warning for as long as the order takes and
-    // a name nobody can move afterwards.
-    //
-    // The installation-wide `<label>.<zone>` comes first because it is the
-    // decided shape; the per-tenancy name below it is excluded by decision and
-    // off — see `SandboxSubdomainService`.
-    const tenancySubdomain = clusterDnsZone?.dnsZone?.zoneName
-      ? ((await this.sandboxSubdomains.activeSubdomain(
-          cluster,
-          application.k8sNamespace,
-          clusterDnsZone.dnsZone.zoneName,
-        )) ??
-        (await this.tenancySubdomains.activeSubdomain(
-          cluster,
-          application.k8sNamespace,
-          clusterDnsZone.dnsZone.zoneName,
-        )))
-      : null;
+    const clusterDnsZone = await this.loadRequestedClusterDnsZone(
+      dto.clusterDnsZoneId,
+      application,
+    );
+    const tenancySubdomain = await this.activeTenancySubdomain(
+      cluster,
+      application,
+      clusterDnsZone,
+    );
 
     const resolved = this.endpointModeResolver.resolve({
       cluster,
@@ -288,19 +222,7 @@ export class AppEndpointService {
     // so it can spell a host already served from another namespace just as
     // well as a name typed in full.
     const routePath = normalizeRoutePath(dto.routePath);
-    const siblings = await this.endpointRepository.find({
-      where: { fqdn },
-      relations: ['application'],
-    });
-    if (siblings.length > 0) {
-      this.assertHostShareable(siblings, application, fqdn, routePath);
-    } else {
-      await this.hostGuard.assertClaimable(
-        cluster,
-        application.k8sNamespace,
-        fqdn,
-      );
-    }
+    await this.assertHostAvailable(cluster, application, fqdn, routePath);
 
     const sanCertificateId = dto.sanCertificateId
       ? await this.resolveSanCertificateId(
@@ -335,9 +257,160 @@ export class AppEndpointService {
       reconciliationStatus: ReconciliationStatus.PENDING,
     });
 
-    let saved: AppEndpointEntity;
+    const saved = await this.saveNewEndpoint(endpoint, fqdn, routePath);
+    await this.retractEndpointFailure(application, saved);
+    return saved;
+  }
+
+  private async loadClusterApplication(
+    clusterId: string,
+    applicationId: string,
+  ): Promise<{ cluster: ClusterEntity; application: ApplicationEntity }> {
+    const cluster = await this.clusterRepository.findOne({
+      where: { id: clusterId },
+    });
+    if (!cluster) {
+      throw new NotFoundException(`Cluster ${clusterId} not found`);
+    }
+
+    const application = await this.applicationRepository.findOne({
+      where: { id: applicationId },
+    });
+    if (!application) {
+      throw new NotFoundException(`Application ${applicationId} not found`);
+    }
+    if (application.clusterId !== clusterId) {
+      throw new BadRequestException(
+        `Application ${applicationId} does not belong to cluster ${clusterId}`,
+      );
+    }
+    return { cluster, application };
+  }
+
+  /**
+   * Explicit dto.endpointType wins; otherwise fall back to the application's
+   * exposure (back-compat).
+   */
+  private requestedEndpointType(
+    dto: CreateAppEndpointDto,
+    application: ApplicationEntity,
+  ): EndpointType {
+    return (
+      dto.endpointType ??
+      (application.exposure === ApplicationExposure.INTERNAL
+        ? EndpointType.INTERNAL
+        : EndpointType.PUBLIC)
+    );
+  }
+
+  private async assertInternalHostingReady(
+    clusterId: string,
+    cluster: ClusterEntity,
+  ): Promise<void> {
+    // Gate 1: cluster must support internal hosting (DNS zone + wildcard issuer).
+    const status =
+      await this.clusterDnsZoneService.getInternalHostingStatus(clusterId);
+    if (!status.ready) {
+      throw internalHostingNotAvailableException(clusterId, status.missing);
+    }
+    // Gate 2: something on the cluster must check the sign-in, or an
+    // "internal" endpoint would expose a private app to the internet.
+    const relayRunning =
+      !!(await this.authzInstallRepo.findRunningForCluster(clusterId));
+    const signInCheck = gatewayForwardAuthAddress(
+      clusterId,
+      forwardAuthPlacement(
+        isControlClusterType(cluster.clusterType),
+        relayRunning,
+      ),
+    );
+    if (!signInCheck) {
+      throw new BadRequestException({
+        statusCode: 400,
+        code: 'AUTH_PROXY_NOT_RUNNING',
+        message: `Cluster "${cluster.name}" has no running Auth Proxy. Internal apps on a cluster other than the control need the Flui Auth Proxy installed and running there. Install it from /infrastructure/auth-proxy and try again.`,
+        clusterId,
+      });
+    }
+  }
+
+  private async loadRequestedClusterDnsZone(
+    clusterDnsZoneId: string | undefined,
+    application: ApplicationEntity,
+  ): Promise<ClusterDnsZoneEntity | null> {
+    if (!clusterDnsZoneId) return null;
+    const clusterDnsZone = await this.clusterDnsZoneRepository.findOne({
+      where: { id: clusterDnsZoneId },
+      relations: ['dnsZone'],
+    });
+    if (clusterDnsZone?.clusterId !== application.clusterId) {
+      throw new NotFoundException(
+        `Cluster DNS zone ${clusterDnsZoneId} not found`,
+      );
+    }
+    return clusterDnsZone;
+  }
+
+  /**
+   * Only when there is already a valid certificate for that name — otherwise
+   * the shared `<cluster>.<zone>`, which is covered and works. A hostname is
+   * written once and lived with, so a name whose certificate is still being
+   * ordered is a link that shows a warning for as long as the order takes and
+   * a name nobody can move afterwards.
+   *
+   * The installation-wide `<label>.<zone>` comes first because it is the
+   * decided shape; the per-tenancy name below it is excluded by decision and
+   * off — see `SandboxSubdomainService`.
+   */
+  private async activeTenancySubdomain(
+    cluster: ClusterEntity,
+    application: ApplicationEntity,
+    clusterDnsZone: ClusterDnsZoneEntity | null,
+  ): Promise<string | null> {
+    const zoneName = clusterDnsZone?.dnsZone?.zoneName;
+    if (!zoneName) return null;
+    return (
+      (await this.sandboxSubdomains.activeSubdomain(
+        cluster,
+        application.k8sNamespace,
+        zoneName,
+      )) ??
+      (await this.tenancySubdomains.activeSubdomain(
+        cluster,
+        application.k8sNamespace,
+        zoneName,
+      ))
+    );
+  }
+
+  private async assertHostAvailable(
+    cluster: ClusterEntity,
+    application: ApplicationEntity,
+    fqdn: string,
+    routePath: string,
+  ): Promise<void> {
+    const siblings = await this.endpointRepository.find({
+      where: { fqdn },
+      relations: ['application'],
+    });
+    if (siblings.length > 0) {
+      this.assertHostShareable(siblings, application, fqdn, routePath);
+    } else {
+      await this.hostGuard.assertClaimable(
+        cluster,
+        application.k8sNamespace,
+        fqdn,
+      );
+    }
+  }
+
+  private async saveNewEndpoint(
+    endpoint: AppEndpointEntity,
+    fqdn: string,
+    routePath: string,
+  ): Promise<AppEndpointEntity> {
     try {
-      saved = await this.endpointRepository.save(endpoint);
+      return await this.endpointRepository.save(endpoint);
     } catch (err) {
       if (this.isUniqueFqdnViolation(err)) {
         throw new ConflictException({
@@ -349,13 +422,20 @@ export class AppEndpointService {
       }
       throw err;
     }
+  }
 
-    // The application now has the endpoint whose absence failed its deploy, so
-    // the recorded reason is no longer true — and a reason left behind would
-    // keep the app reading as failed for good. The diagnosis is retracted
-    // unconditionally: it is what a person reads on the dashboard, and
-    // clearing only the marker left it claiming "nobody can reach it" about an
-    // application this very call just made reachable.
+  /**
+   * The application now has the endpoint whose absence failed its deploy, so
+   * the recorded reason is no longer true — and a reason left behind would
+   * keep the app reading as failed for good. The diagnosis is retracted
+   * unconditionally: it is what a person reads on the dashboard, and
+   * clearing only the marker left it claiming "nobody can reach it" about an
+   * application this very call just made reachable.
+   */
+  private async retractEndpointFailure(
+    application: ApplicationEntity,
+    saved: AppEndpointEntity,
+  ): Promise<void> {
     if (readEndpointFailure(application.metadata)) {
       await this.applicationRepository.update(application.id, {
         metadata: withoutEndpointFailure(application.metadata),
@@ -368,8 +448,36 @@ export class AppEndpointService {
         `Endpoint ${saved.fqdn} created, but the "no endpoint" diagnosis for application ${application.id} could not be resolved: ${err instanceof Error ? err.message : String(err)}`,
       );
     }
+  }
 
-    return saved;
+  /**
+   * The dashboard, API and sign-in configuration follow the one domain
+   * endpoint of each platform application; a second one would leave them
+   * reading either. The install address (IP mode) stays beside it as the way
+   * back in, so it does not count.
+   */
+  private async assertNoSecondPlatformEndpoint(
+    application: ApplicationEntity,
+  ): Promise<void> {
+    const isPlatformApp =
+      application.category === ApplicationCategory.SYSTEM &&
+      (SYSTEM_HOSTNAME_APPS as readonly string[]).includes(application.slug);
+    if (!isPlatformApp) return;
+    const existing = await this.endpointRepository.findOne({
+      where: {
+        applicationId: application.id,
+        hostnameMode: HostnameMode.DOMAIN,
+      },
+      order: { createdAt: 'DESC' },
+    });
+    if (!existing) return;
+    throw new ConflictException({
+      statusCode: 409,
+      error: 'platform_endpoint_exists',
+      message: `${application.slug} already has the address ${existing.fqdn}. Change that address instead of adding a second one (PUT /endpoints/${existing.id} with the new fqdn).`,
+      endpointId: existing.id,
+      fqdn: existing.fqdn,
+    });
   }
 
   private async resolveSanCertificateId(

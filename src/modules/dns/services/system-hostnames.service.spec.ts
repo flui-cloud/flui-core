@@ -14,7 +14,12 @@ import {
 } from './system-hostnames.service';
 import { DnsRecordType } from '../../providers/interfaces/dns-provider.interface';
 
-const CLUSTER = {
+const CLUSTER: {
+  id: string;
+  name: string;
+  masterIpAddress: string | null;
+  metadata: Record<string, unknown>;
+} = {
   id: 'cluster-1',
   name: 'control',
   masterIpAddress: '203.0.113.10',
@@ -43,6 +48,9 @@ interface Opts {
   served?: Error;
   zitadel?: boolean;
   assignedZone?: typeof ZONE | null;
+  wildcard?: boolean;
+  registeredZones?: (typeof ZONE)[];
+  cluster?: typeof CLUSTER;
 }
 
 function build(opts: Opts = {}) {
@@ -59,10 +67,12 @@ function build(opts: Opts = {}) {
   const assertClaimable = jest.fn(async () => {
     if (opts.served) throw opts.served;
   });
+  const cluster = opts.cluster ?? CLUSTER;
+  const assigned = opts.assignedZone === undefined ? ZONE : opts.assignedZone;
   const service = new SystemHostnamesService(
     {
       findOne: jest.fn(async ({ where }) =>
-        where.id === CLUSTER.id ? CLUSTER : null,
+        where.id === cluster.id ? cluster : null,
       ),
     } as never,
     {
@@ -75,7 +85,11 @@ function build(opts: Opts = {}) {
     } as never,
     {
       find: jest.fn(async ({ where }) =>
-        endpoints.filter((e) => e.fqdn === where.fqdn),
+        endpoints.filter((e) =>
+          where.fqdn !== undefined
+            ? e.fqdn === where.fqdn
+            : e.applicationId === where.applicationId,
+        ),
       ),
       findOne: jest.fn(
         async ({ where }) =>
@@ -87,8 +101,15 @@ function build(opts: Opts = {}) {
       findOne: jest.fn(async ({ where }) =>
         where.id === ZONE.id ? ZONE : null,
       ),
+      find: jest.fn(async () => opts.registeredZones ?? [ZONE]),
     } as never,
     {
+      getZoneForFqdn: jest.fn(async (_clusterId: string, fqdn: string) =>
+        assigned &&
+        (fqdn === assigned.zoneName || fqdn.endsWith(`.${assigned.zoneName}`))
+          ? { dnsZone: assigned, wildcardCertificate: opts.wildcard ?? true }
+          : null,
+      ),
       getZoneAssignment: jest.fn(async () =>
         opts.assignedZone === undefined
           ? { dnsZone: ZONE }
@@ -370,6 +391,139 @@ describe('SystemHostnamesService', () => {
         [null, 'api.1-2-3-4.nip.io'],
       ]);
       expect(listRecords).not.toHaveBeenCalled();
+    });
+
+    it('reads the zone covering a full address and refuses a name taken there', async () => {
+      const { service, listRecords } = build({
+        records: [
+          { name: 'console', type: DnsRecordType.A, value: '198.51.100.7' },
+        ],
+      });
+      const err = await refusal(
+        service.check(CLUSTER.id, {
+          hostnames: [{ app: 'flui-web', fqdn: 'Console.flui.cloud' }],
+        }),
+      );
+      expect(listRecords).toHaveBeenCalledWith('pz-1');
+      expect(err).toBeInstanceOf(ConflictException);
+      expect(err.getResponse()).toMatchObject({
+        code: SYSTEM_HOSTNAME_TAKEN,
+        field: 'flui-web',
+        fqdn: 'console.flui.cloud',
+      });
+    });
+
+    it('checks a full address against a registered zone the cluster does not use', async () => {
+      const other = {
+        ...ZONE,
+        id: 'zone-2',
+        zoneName: 'example.org',
+        providerZoneId: 'pz-2',
+      };
+      const { service, listRecords } = build({
+        assignedZone: null,
+        registeredZones: [ZONE, other],
+        records: [
+          {
+            name: 'deep.api',
+            type: DnsRecordType.CNAME,
+            value: 'elsewhere.net.',
+          },
+        ],
+      });
+      await expect(
+        service.check(CLUSTER.id, {
+          hostnames: [{ app: 'flui-api', fqdn: 'deep.api.example.org' }],
+        }),
+      ).rejects.toThrow(ConflictException);
+      expect(listRecords).toHaveBeenCalledWith('pz-2');
+    });
+
+    it('refuses a full address deeper than the wildcard certificate of its zone', async () => {
+      const { service } = build();
+      const err = await refusal(
+        service.check(CLUSTER.id, {
+          hostnames: [{ app: 'flui-web', fqdn: 'dashboard.demo.flui.cloud' }],
+        }),
+      );
+      expect(err).toBeInstanceOf(BadRequestException);
+      expect(err.getResponse()).toMatchObject({
+        code: SYSTEM_HOSTNAME_INVALID,
+        field: 'flui-web',
+      });
+      expect(err.getResponse().message).toContain('single level');
+    });
+
+    it('refuses the bare domain under a wildcard certificate', async () => {
+      const { service } = build();
+      const err = await refusal(
+        service.check(CLUSTER.id, {
+          hostnames: [{ app: 'flui-web', fqdn: 'flui.cloud' }],
+        }),
+      );
+      expect(err).toBeInstanceOf(BadRequestException);
+      expect(err.getResponse().message).toContain('not flui.cloud itself');
+    });
+
+    it('accepts a deep full address when the zone has no wildcard certificate', async () => {
+      const { service } = build({ wildcard: false });
+      const result = await service.check(CLUSTER.id, {
+        hostnames: [{ app: 'flui-web', fqdn: 'dashboard.demo.flui.cloud' }],
+      });
+      expect(result.hostnames[0].fqdn).toBe('dashboard.demo.flui.cloud');
+    });
+
+    it('recognises its own address written differently', async () => {
+      const cluster = {
+        ...CLUSTER,
+        masterIpAddress: null,
+        metadata: { ingressAddresses: { addresses: ['2001:db8::10'] } },
+      };
+      const { service } = build({
+        cluster,
+        records: [
+          {
+            name: 'dashboard',
+            type: DnsRecordType.AAAA,
+            value: '2001:DB8:0:0:0:0:0:10',
+          },
+        ],
+      });
+      await expect(
+        service.check(CLUSTER.id, {
+          hostnames: [{ app: 'flui-web', label: 'dashboard' }],
+        }),
+      ).resolves.toBeDefined();
+    });
+
+    it('answers 503 when the name has a record and the cluster address is unknown', async () => {
+      const { service } = build({
+        cluster: { ...CLUSTER, masterIpAddress: null },
+        records: [
+          { name: 'dashboard', type: DnsRecordType.A, value: '198.51.100.7' },
+        ],
+      });
+      const err = await refusal(
+        service.check(CLUSTER.id, {
+          hostnames: [{ app: 'flui-web', label: 'dashboard' }],
+        }),
+      );
+      expect(err).toBeInstanceOf(ServiceUnavailableException);
+      expect(err.getResponse()).toMatchObject({
+        code: 'system_hostname_unverified',
+        field: 'flui-web',
+      });
+    });
+
+    it('still calls a free name free when the cluster address is unknown', async () => {
+      const { service } = build({
+        cluster: { ...CLUSTER, masterIpAddress: null },
+      });
+      await expect(
+        service.check(CLUSTER.id, {
+          hostnames: [{ app: 'flui-web', label: 'dashboard' }],
+        }),
+      ).resolves.toBeDefined();
     });
 
     it('refuses an invalid full address', async () => {

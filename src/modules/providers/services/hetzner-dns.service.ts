@@ -17,6 +17,7 @@ import {
   DeleteZoneRrsetRrTypeEnum,
   GetZoneRrsetRrTypeEnum,
   UpdateZoneRrsetRrTypeEnum,
+  ListMeta,
 } from 'src/modules/providers/implementations/hetzner/generated';
 import {
   IDnsProvider,
@@ -29,6 +30,19 @@ import {
 } from '../interfaces/dns-provider.interface';
 import { ICredentialProvider } from '../interfaces/credential-provider.interface';
 import { CloudProvider } from '../enums/cloud-provider.enum';
+
+const HETZNER_PAGE_SIZE = 50;
+
+function nextHetznerPage(
+  page: number,
+  received: number,
+  meta: ListMeta | undefined,
+): number | null {
+  const pagination = meta?.pagination;
+  if (!pagination) return received < HETZNER_PAGE_SIZE ? null : page + 1;
+  const next = pagination.next_page;
+  return next && next > page ? next : null;
+}
 
 /**
  * Hetzner DNS Service - Cloud API implementation
@@ -174,8 +188,18 @@ export class HetznerDnsService implements IDnsProvider {
 
   async listZones(): Promise<DnsZoneInfo[]> {
     const zonesApi = await this.createZonesApi();
-    const response = await zonesApi.listZones();
-    return response.data.zones.map((zone) => this.mapZone(zone));
+    const zones = await this.collectPages(async (page) => {
+      const response = await zonesApi.listZones(
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        page,
+        HETZNER_PAGE_SIZE,
+      );
+      return { items: response.data.zones, meta: response.data.meta };
+    });
+    return zones.map((zone) => this.mapZone(zone));
   }
 
   async getZone(zoneId: string): Promise<DnsZoneInfo | null> {
@@ -202,36 +226,32 @@ export class HetznerDnsService implements IDnsProvider {
 
   async listRecords(zoneId: string): Promise<DnsRecordInfo[]> {
     const rrSetsApi = await this.createRRSetsApi();
-
-    const allRecords: DnsRecordInfo[] = [];
-    let page = 1;
-    const perPage = 100;
-
-    // Paginate through all RRSets
-    while (true) {
+    const rrsets = await this.collectPages(async (page) => {
       const response = await rrSetsApi.listZoneRrsets(
         zoneId,
-        undefined, // name filter
-        undefined, // type filter
-        undefined, // label selector
-        undefined, // sort
+        undefined,
+        undefined,
+        undefined,
+        undefined,
         page,
-        perPage,
+        HETZNER_PAGE_SIZE,
       );
+      return { items: response.data.rrsets, meta: response.data.meta };
+    });
+    return rrsets.flatMap((rrset) => this.flattenRRSet(rrset, zoneId));
+  }
 
-      for (const rrset of response.data.rrsets) {
-        const mappedRecords = this.flattenRRSet(rrset, zoneId);
-        allRecords.push(...mappedRecords);
-      }
-
-      // Check if we got fewer results than page size (last page)
-      if (response.data.rrsets.length < perPage) {
-        break;
-      }
-      page++;
+  private async collectPages<T>(
+    fetchPage: (page: number) => Promise<{ items: T[]; meta?: ListMeta }>,
+  ): Promise<T[]> {
+    const all: T[] = [];
+    let page: number | null = 1;
+    while (page !== null) {
+      const { items, meta } = await fetchPage(page);
+      all.push(...items);
+      page = nextHetznerPage(page, items.length, meta);
     }
-
-    return allRecords;
+    return all;
   }
 
   async getRecord(

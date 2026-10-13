@@ -16,6 +16,7 @@ import { AppManagementService } from '../../applications/services/app-management
 import { OidcProviderAdminClient } from '../../oidc/services/oidc-provider-admin.service';
 import { AuthDomainSyncResultDto } from '../dto/auth-domain-sync-result.dto';
 import { SyncAuthDomainDto } from '../dto/sync-auth-domain.dto';
+import { findPlatformEndpoint } from '../utils/platform-endpoint.util';
 
 export { AuthDomainSyncResultDto } from '../dto/auth-domain-sync-result.dto';
 
@@ -60,9 +61,10 @@ export class AuthDomainSyncService {
       );
     }
 
-    const authEndpoint = await this.appEndpointRepository.findOne({
-      where: { applicationId: authApp.id },
-    });
+    const authEndpoint = await findPlatformEndpoint(
+      this.appEndpointRepository,
+      authApp.id,
+    );
     if (!authEndpoint?.fqdn) {
       throw new BadRequestException(
         `Auth endpoint has no FQDN configured yet. Configure the DNS endpoint first.`,
@@ -256,9 +258,10 @@ export class AuthDomainSyncService {
   }
 
   private async resolveWebFqdn(applicationId: string): Promise<string> {
-    const endpoint = await this.appEndpointRepository.findOne({
-      where: { applicationId },
-    });
+    const endpoint = await findPlatformEndpoint(
+      this.appEndpointRepository,
+      applicationId,
+    );
     if (!endpoint?.fqdn) {
       throw new BadRequestException(
         `flui-web endpoint not found for application ${applicationId}. Configure the DNS endpoint first.`,
