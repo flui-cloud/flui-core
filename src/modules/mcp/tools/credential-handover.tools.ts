@@ -586,7 +586,7 @@ export const CREDENTIAL_HANDOVER_TOOLS: ToolDef[] = [
     },
     run: async (args, ctx) => {
       const users = await ctx.api.get<Array<{ email?: string; id?: string }>>(
-        `/auth/users?search=${enc(args.email)}`,
+        `/auth/users?emailContains=${enc(args.email)}`,
       );
       const found = (Array.isArray(users) ? users : []).some(
         (u) => u.email?.toLowerCase() === args.email.toLowerCase(),

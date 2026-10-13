@@ -13,6 +13,7 @@ import {
   readProposalRefusal,
   standingRefusalMessage,
 } from '../../action-cycle/action-cycle.core';
+import { SANDBOX_SIGN_IN_REQUIRED_CODE } from '../../sandbox/constants/sandbox-visitor';
 import {
   AGENT_SURFACE_HEADER,
   AgentSurface,
@@ -137,6 +138,9 @@ export class McpApiError extends Error {
     // arguing with a decision.
     if (this.code === ACTION_PROPOSAL_DENIED_CODE) {
       return standingRefusalMessage(`(HTTP 403) on ${where}: ${this.detail}`);
+    }
+    if (this.code === SANDBOX_SIGN_IN_REQUIRED_CODE) {
+      return `Sign-in needed (HTTP 401) on ${where}: ${this.detail} NOTHING was changed and your credential is fine: the person you act for is looking around the demo without an account, and this needs them to sign in first. Tell them so; reading keeps working. Do NOT retry until they have signed in.`;
     }
     switch (true) {
       case this.status === 401:

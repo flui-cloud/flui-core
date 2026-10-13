@@ -16,6 +16,13 @@ export class SandboxSessionDto {
   hasArea: boolean;
 
   @ApiProperty({
+    example: false,
+    description:
+      'A visitor who has not signed in: looks around and connects a read-only agent, and signs in to deploy.',
+  })
+  visitor: boolean;
+
+  @ApiProperty({
     example: '2026-08-16T09:30:00.000Z',
     nullable: true,
     type: String,

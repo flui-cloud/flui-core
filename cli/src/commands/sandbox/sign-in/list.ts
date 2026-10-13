@@ -5,6 +5,7 @@ import {
   SignInProviderStatus,
 } from '../../../lib/sandbox-client';
 import { printContextBanner } from '../../../lib/context-banner';
+import { callbackLines } from '../../../lib/sandbox-sign-in';
 
 function stateOf(p: SignInProviderStatus): string {
   if (!p.connected) return chalk.dim('not connected');
@@ -64,11 +65,15 @@ export default class SandboxSignInList extends Command {
         );
       }
     }
-    if (view.callbackUrl) {
-      this.log(`\n   Callback URL  ${view.callbackUrl}`);
+    const lines = callbackLines(null, view);
+    if (lines.length) {
+      this.log('');
+      for (const [label, url] of lines) {
+        this.log(`   ${label.padEnd(16)} ${url}`);
+      }
       this.log(
         chalk.dim(
-          '                 If you change the sign-in address, update the callback at GitHub and Google.',
+          '   If you change the sign-in address, update these at GitHub and Google.',
         ),
       );
     }

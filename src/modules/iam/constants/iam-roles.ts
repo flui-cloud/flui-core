@@ -31,6 +31,7 @@ export const IAM_ROLE = {
   OWNER: 'owner',
   PLATFORM_OPERATOR: 'platform_operator',
   SANDBOX: 'sandbox',
+  SANDBOX_VISITOR: 'sandbox_visitor',
   SHOWCASE_VIEWER: 'showcase_viewer',
 } as const;
 
@@ -260,6 +261,19 @@ export const BUILTIN_ROLES: Record<IamRole, IamRoleDef> = {
       IAM_PERMISSION.SECTION_VIEW,
     ],
     // Written by the tenancy service when a guest arrives, never by a person.
+    assignable: false,
+  },
+  /**
+   * A visitor of the demo who has not signed in yet: the read half of `sandbox`
+   * and nothing else. The fence treats the holder as a guest and refuses every
+   * write it does not mark for visitors, asking them to sign in instead.
+   */
+  [IAM_ROLE.SANDBOX_VISITOR]: {
+    key: 'sandbox_visitor',
+    name: 'Demo visitor',
+    description:
+      'A visitor of the public demo who has not signed in. Looks around and connects a read-only agent; signs in to deploy.',
+    permissions: [IAM_PERMISSION.APP_READ, IAM_PERMISSION.SECTION_VIEW],
     assignable: false,
   },
   /**

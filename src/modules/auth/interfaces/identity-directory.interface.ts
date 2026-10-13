@@ -1,4 +1,4 @@
-import { IdentityRole } from '../entities/user.entity';
+import { IdentityRole, UserKind } from '../entities/user.entity';
 
 export const IDENTITY_DIRECTORY = 'IDENTITY_DIRECTORY';
 
@@ -41,12 +41,15 @@ export interface IdentityUser {
   state?: string;
   isBootstrapAdmin: boolean;
   isSystemUser: boolean;
+  /** A visitor of the demo, or anybody else. */
+  kind?: UserKind;
 }
 
 export interface ListIdentityUsersQuery {
   limit?: number;
   offset?: number;
   emailContains?: string;
+  kind?: UserKind;
 }
 
 export interface IIdentityDirectory {

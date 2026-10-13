@@ -26,12 +26,9 @@ describe('RegistrySettings1790000000033', () => {
     expect(sql).toEqual(['DROP TABLE IF EXISTS "registry_settings"']);
   });
 
-  it('runs last, after the pooler cut', () => {
-    expect(migrations[migrations.length - 1]).toBe(
-      RegistrySettings1790000000033,
-    );
-    expect(migrations[migrations.length - 2].name).toBe(
-      'DbPoolerCut1790000000032',
-    );
+  it('runs right after the pooler cut', () => {
+    const at = migrations.indexOf(RegistrySettings1790000000033);
+    expect(at).toBeGreaterThan(0);
+    expect(migrations[at - 1].name).toBe('DbPoolerCut1790000000032');
   });
 });

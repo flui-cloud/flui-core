@@ -204,6 +204,18 @@ describe('McpApiClient — the caller carries the caller credential', () => {
       expect(err(401).isAccessRefusal).toBe(false);
     });
 
+    it('tells a visitor’s agent to ask for a sign-in, not a new credential', () => {
+      const message = err(
+        401,
+        'Sign in with GitHub, Google or email to do this; you can keep looking around.',
+        'SANDBOX_SIGN_IN_REQUIRED',
+      ).agentMessage;
+
+      expect(message).toContain('Sign-in needed (HTTP 401)');
+      expect(message).toContain('NOTHING was changed');
+      expect(message).not.toMatch(/fresh credential/);
+    });
+
     it('tells a 404 apart from a refusal: look it up, do not retry the id', () => {
       const message = err(404, 'Application not found').agentMessage;
       expect(message).toContain('Not found (HTTP 404)');

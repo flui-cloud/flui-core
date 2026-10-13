@@ -51,9 +51,9 @@ export class InferenceController {
   @Get('usage')
   @RequirePermission(IAM_PERMISSION.INTEGRATION_MANAGE)
   @ApiOperation({
-    summary: 'Token usage by model and by person',
+    summary: 'Token usage by model, by person and by kind of person',
     description:
-      'Rows are written by the one point every surface reaches a provider through — the assistant and the console copilots alike — so this is the whole bill, not one screen of it. `estimated` counts the calls whose provider reported nothing and whose size was worked out from the text.',
+      "Rows are written by the one point every surface reaches a provider through — the assistant and the console copilots alike — so this is the whole bill, not one screen of it. `estimated` counts the calls whose provider reported nothing and whose size was worked out from the text. `byKind` adds it up for the demo's visitors, its guests, everybody else, and the platform itself.",
   })
   @ApiQuery({
     name: 'days',
@@ -64,17 +64,19 @@ export class InferenceController {
     since: string | null;
     byModel: Awaited<ReturnType<InferenceUsageService['byModel']>>;
     byPerson: Awaited<ReturnType<InferenceUsageService['byPerson']>>;
+    byKind: Awaited<ReturnType<InferenceUsageService['byKind']>>;
   }> {
     const window = Number(days ?? 7);
     const since =
       Number.isFinite(window) && window > 0
         ? new Date(Date.now() - window * 86_400_000)
         : undefined;
-    const [byModel, byPerson] = await Promise.all([
+    const [byModel, byPerson, byKind] = await Promise.all([
       this.usage.byModel(since),
       this.usage.byPerson(since),
+      this.usage.byKind(since),
     ]);
-    return { since: since?.toISOString() ?? null, byModel, byPerson };
+    return { since: since?.toISOString() ?? null, byModel, byPerson, byKind };
   }
 
   @Get('providers')

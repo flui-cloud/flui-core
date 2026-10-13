@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { InferenceUsageEventEntity } from '../entities/inference-usage-event.entity';
+import { SandboxVisitorEntity } from '../../sandbox/entities/sandbox-visitor.entity';
 
 export interface UsageRecord {
   userId: string | null;
@@ -22,13 +23,27 @@ export interface UsageByModel {
   estimated: number;
 }
 
+export type UsageKind = 'visitor' | 'guest' | 'person' | 'platform';
+
 export interface UsageByPerson {
   userId: string | null;
   guest: boolean;
+  kind: UsageKind;
   calls: number;
   tokens: number;
   lastAt: Date;
 }
+
+export interface UsageByKind {
+  kind: UsageKind;
+  people: number;
+  calls: number;
+  tokens: number;
+}
+
+/** Still a visitor, or one removed before it became an account: its spend stays a visitor's. */
+const VISITOR_SQL = 'sv."userId" IS NOT NULL AND sv."upgradedAt" IS NULL';
+const KIND_SQL = `CASE WHEN u."userId" IS NULL THEN 'platform' WHEN ${VISITOR_SQL} THEN 'visitor' WHEN u.guest THEN 'guest' ELSE 'person' END`;
 
 /**
  * What inference has cost, and who spent it.
@@ -115,12 +130,43 @@ export class InferenceUsageService {
     }));
   }
 
-  /** Who is spending, heaviest first. Guests and members in one list. */
+  /** The spend of visitors, guests, people and the platform itself, each in one line. */
+  async byKind(since?: Date): Promise<UsageByKind[]> {
+    const qb = this.events
+      .createQueryBuilder('u')
+      .leftJoin(SandboxVisitorEntity, 'sv', 'sv."userId" = u."userId"')
+      .select(KIND_SQL, 'kind')
+      .addSelect('COUNT(DISTINCT u."userId")', 'people')
+      .addSelect('COUNT(*)', 'calls')
+      .addSelect(
+        'COALESCE(SUM(u."promptTokens" + u."completionTokens"), 0)',
+        'tokens',
+      )
+      .groupBy('1')
+      .orderBy('tokens', 'DESC');
+    if (since) qb.where('u."createdAt" >= :since', { since });
+    const rows = await qb.getRawMany<{
+      kind: UsageKind;
+      people: string;
+      calls: string;
+      tokens: string;
+    }>();
+    return rows.map((r) => ({
+      kind: r.kind,
+      people: Number(r.people),
+      calls: Number(r.calls),
+      tokens: Number(r.tokens),
+    }));
+  }
+
+  /** Who is spending, heaviest first. Visitors, guests and members in one list. */
   async byPerson(since?: Date, limit = 20): Promise<UsageByPerson[]> {
     const qb = this.events
       .createQueryBuilder('u')
       .select('u."userId"', 'userId')
+      .leftJoin(SandboxVisitorEntity, 'sv', 'sv."userId" = u."userId"')
       .addSelect('BOOL_OR(u.guest)', 'guest')
+      .addSelect(`BOOL_OR(${VISITOR_SQL})`, 'visitor')
       .addSelect('COUNT(*)', 'calls')
       .addSelect(
         'COALESCE(SUM(u."promptTokens" + u."completionTokens"), 0)',
@@ -134,6 +180,7 @@ export class InferenceUsageService {
     const rows = await qb.getRawMany<{
       userId: string | null;
       guest: boolean;
+      visitor: boolean;
       calls: string;
       tokens: string;
       lastAt: Date;
@@ -141,11 +188,22 @@ export class InferenceUsageService {
     return rows.map((r) => ({
       userId: r.userId,
       guest: !!r.guest,
+      kind: kindOf(r),
       calls: Number(r.calls),
       tokens: Number(r.tokens),
       lastAt: r.lastAt,
     }));
   }
+}
+
+function kindOf(r: {
+  userId: string | null;
+  guest: boolean;
+  visitor: boolean;
+}): UsageKind {
+  if (!r.userId) return 'platform';
+  if (r.visitor) return 'visitor';
+  return r.guest ? 'guest' : 'person';
 }
 
 /** The host alone: two connections to the same provider read as one source. */

@@ -8,8 +8,8 @@ import {
   Optional,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
-import { UserEntity } from '../entities/user.entity';
+import { ILike, Repository } from 'typeorm';
+import { USER_KIND, UserEntity } from '../entities/user.entity';
 import { IamRoleBindingEntity } from '../../iam/entities/iam-role-binding.entity';
 import { IamGroupEntity } from '../../iam/entities/iam-group.entity';
 import { ApiKeyService } from './api-key.service';
@@ -106,8 +106,44 @@ export class UserManagementService {
     return this.directory.createUser(input);
   }
 
-  listUsers(query?: ListIdentityUsersQuery): Promise<IdentityUser[]> {
-    return this.directory.listUsers(query);
+  /**
+   * Visitors come from Flui's own rows, never one provider call each; asking
+   * for everybody else leaves visitors out of the provider's page, which can
+   * then be shorter than `limit`.
+   */
+  async listUsers(query: ListIdentityUsersQuery = {}): Promise<IdentityUser[]> {
+    const { kind, ...rest } = query;
+    if (kind === USER_KIND.VISITOR) return this.listVisitors(rest);
+    const users = await this.directory.listUsers(rest);
+    return kind === USER_KIND.PERSON
+      ? users.filter((u) => u.kind !== USER_KIND.VISITOR)
+      : users;
+  }
+
+  private async listVisitors(
+    query: ListIdentityUsersQuery,
+  ): Promise<IdentityUser[]> {
+    const rows = await this.userRepo.find({
+      where: {
+        kind: USER_KIND.VISITOR,
+        ...(query.emailContains
+          ? { email: ILike(`%${query.emailContains}%`) }
+          : {}),
+      },
+      order: { createdAt: 'DESC' },
+      skip: query.offset ?? 0,
+      take: query.limit ?? 100,
+    });
+    return rows.map((u) => ({
+      id: u.oidcSub ?? u.id,
+      email: u.email,
+      firstName: u.displayName ?? undefined,
+      role: u.role,
+      state: u.blockedAt ? 'USER_STATE_INACTIVE' : 'USER_STATE_ACTIVE',
+      isBootstrapAdmin: false,
+      isSystemUser: false,
+      kind: USER_KIND.VISITOR,
+    }));
   }
 
   getUser(id: string): Promise<IdentityUser | null> {

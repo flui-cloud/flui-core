@@ -17,7 +17,14 @@ import {
   SANDBOX_GUEST_ENROLMENT,
   SandboxGuestEnrolment,
 } from '../../sandbox/gate/sandbox-guest-enrolment';
+import { isTryClient } from '../../sandbox/visitors/visitor.config';
+import { visitorGone, visitorMerged } from '../utils/visitor-gone.util';
 import { describeError } from '../../shared/utils/error.util';
+
+export {
+  VISITOR_GONE_CODE,
+  VISITOR_MERGED_CODE,
+} from '../utils/visitor-gone.util';
 
 const ROLE_PRECEDENCE: IdentityRole[] = [
   IdentityRole.ADMIN,
@@ -103,6 +110,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
         ? payload.email_verified
         : undefined,
       Object.keys(roles).length > 0,
+      tokenClientOf(payload),
     );
     refuseIfBlocked(user);
     noteSeen(this.userRepo, user);
@@ -134,6 +142,13 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     };
   }
 
+  private async isTryToken(clientId: string | null): Promise<boolean> {
+    if (this.guestEnrolment?.isTryClient) {
+      return this.guestEnrolment.isTryClient(clientId);
+    }
+    return isTryClient(clientId);
+  }
+
   private pickHighestRole(
     roles: Record<string, Record<string, string>>,
   ): IdentityRole {
@@ -156,6 +171,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     claimedRole: IdentityRole,
     emailVerifiedClaim?: boolean,
     hasProviderRoles = false,
+    clientId: string | null = null,
   ): Promise<UserEntity> {
     const isAdminFromClaim = claimedRole === IdentityRole.ADMIN;
 
@@ -167,6 +183,15 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
         return this.userRepo.save(bySub);
       }
       return bySub;
+    }
+
+    const retired = await this.guestEnrolment?.isRetiredVisitor?.(sub);
+    if (retired === 'merged') throw visitorMerged();
+    // A token of a "try" application only ever belongs to a visitor Flui
+    // made itself; with no row for it, the visitor is gone and never comes
+    // back as a new person with a guest's roles.
+    if (retired === 'removed' || (await this.isTryToken(clientId))) {
+      throw visitorGone();
     }
 
     // Permissions are granted to an email, so a login carries its address
@@ -206,7 +231,16 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       userId: saved.id,
       email: email && verified ? email : null,
       hasProviderRoles,
+      kind: saved.kind,
     });
     return saved;
   }
+}
+
+function tokenClientOf(payload: JwtPayload): string | null {
+  for (const claim of ['azp', 'client_id']) {
+    const value = payload[claim];
+    if (typeof value === 'string' && value) return value;
+  }
+  return null;
 }

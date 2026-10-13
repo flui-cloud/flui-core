@@ -6,6 +6,13 @@ import {
   PrimaryGeneratedColumn,
 } from 'typeorm';
 
+export const USER_KIND = {
+  PERSON: 'person',
+  VISITOR: 'visitor',
+} as const;
+
+export type UserKind = (typeof USER_KIND)[keyof typeof USER_KIND];
+
 export enum IdentityRole {
   ADMIN = 'admin',
   USER = 'user',
@@ -13,6 +20,7 @@ export enum IdentityRole {
 }
 
 @Entity('users')
+@Index('IDX_users_kind_last_seen', ['kind', 'lastSeenAt'])
 export class UserEntity {
   @PrimaryGeneratedColumn('uuid')
   id: string;
@@ -61,6 +69,9 @@ export class UserEntity {
 
   @Column({ type: 'text', nullable: true })
   blockedReason: string | null;
+
+  @Column({ type: 'varchar', length: 16, default: USER_KIND.PERSON })
+  kind: UserKind;
 
   @CreateDateColumn({ type: 'timestamptz' })
   createdAt: Date;

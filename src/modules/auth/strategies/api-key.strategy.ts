@@ -1,11 +1,13 @@
 import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { noteSeen, refuseIfBlocked } from '../utils/user-presence.util';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { IsNull, Not, Repository } from 'typeorm';
 import { ApiKeyService } from '../services/api-key.service';
 import { IdentityRole, UserEntity } from '../entities/user.entity';
 import { AuthenticatedUser } from '../interfaces/authenticated-user.interface';
 import { serviceIdentityFor } from '../constants/service-identities';
+import { SandboxVisitorEntity } from '../../sandbox/entities/sandbox-visitor.entity';
+import { visitorGone } from '../utils/visitor-gone.util';
 
 // `api_keys.userId` is a varchar, `users.id` a uuid: handing Postgres anything
 // else answers 500 instead of 401. The sentinel written by configure-auth-mode
@@ -35,6 +37,8 @@ export class ApiKeyStrategy {
     private readonly apiKeyService: ApiKeyService,
     @InjectRepository(UserEntity)
     private readonly userRepo: Repository<UserEntity>,
+    @InjectRepository(SandboxVisitorEntity)
+    private readonly visitors: Repository<SandboxVisitorEntity>,
   ) {}
 
   async validate(key: string): Promise<AuthenticatedUser> {
@@ -55,6 +59,7 @@ export class ApiKeyStrategy {
   ): Promise<{ user: AuthenticatedUser; keyId: string }> {
     const record = await this.apiKeyService.findValid(key);
     if (!record) {
+      if (await this.wasRemovedVisitorKey(key)) throw visitorGone();
       throw new UnauthorizedException('Invalid or revoked API key');
     }
     // Behind a one-write-per-minute threshold and never awaited: see
@@ -92,6 +97,7 @@ export class ApiKeyStrategy {
     // owner is gone must stop working, not inherit the platform.
     const identity = serviceIdentityFor(record);
     if (!identity) {
+      if (await this.wasVisitor(record.userId)) throw visitorGone();
       throw new UnauthorizedException(
         'API key is not bound to an existing user',
       );
@@ -110,6 +116,21 @@ export class ApiKeyStrategy {
       },
       keyId: record.id,
     };
+  }
+
+  /** A key of a visitor that was removed: revoked with it, and kept so it can say so. */
+  private async wasRemovedVisitorKey(key: string): Promise<boolean> {
+    const record = await this.apiKeyService.findAny(key);
+    if (!record?.userId || !USER_ID.test(record.userId)) return false;
+    return this.visitors.exists({
+      where: { userId: record.userId, removedAt: Not(IsNull()) },
+    });
+  }
+
+  /** The person behind the key is gone, and it was a visitor Flui made. */
+  private async wasVisitor(userId: string | null): Promise<boolean> {
+    if (!userId || !USER_ID.test(userId)) return false;
+    return this.visitors.exists({ where: { userId } });
   }
 }
 

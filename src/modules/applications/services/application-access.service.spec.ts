@@ -401,6 +401,26 @@ describe('ApplicationAccessService', () => {
       });
     });
 
+    it('asks a visitor to sign in, even beside a tenancy it could have used', async () => {
+      const svc = new ApplicationAccessService(
+        policyWith([
+          { ...SANDBOX_BINDING[0], role: 'sandbox_visitor' },
+        ]) as never,
+        projectsRepo as never,
+        clustersRepo as never,
+        gateFor([{ userId: 'u', clusterId: 'c1' }]) as never,
+      );
+      await expect(
+        svc.assertCanCreate(USER as never, {
+          clusterId: 'c1',
+          category: 'user',
+        }),
+      ).rejects.toMatchObject({
+        status: 401,
+        response: { code: 'SANDBOX_SIGN_IN_REQUIRED' },
+      });
+    });
+
     it('is refused when no claimed tenancy backs the credential', async () => {
       const svc = guestSvc([]);
       await expect(

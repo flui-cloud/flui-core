@@ -665,6 +665,9 @@ describe('DemoSignInService', () => {
       expect(view.callbackUrl).toBe(
         'https://auth.demo.flui.cloud/ui/login/login/externalidp/callback',
       );
+      expect(view.intentCallbackUrl).toBe(
+        'https://auth.demo.flui.cloud/idps/callback',
+      );
       expect(view.providers).toEqual([
         expect.objectContaining({
           provider: 'github',
@@ -731,6 +734,56 @@ describe('DemoSignInService', () => {
 
       expect(view.callbackUrl).toBeNull();
       expect(view.providers.map((p) => p.connected)).toEqual([false, false]);
+    });
+  });
+
+  describe('upgradeProviders', () => {
+    it('offers only the sign-ins connected and on the sign-in page, with their ids', async () => {
+      const zitadel = fakeProvider({
+        isDefault: false,
+        allowRegister: true,
+        allowExternalIdp: true,
+        idpIds: ['legacy-gh'],
+      });
+      zitadel.idps.push(
+        { id: 'legacy-gh', name: 'GitHub', type: 'github' },
+        { id: 'legacy-g', name: 'Google', type: 'google' },
+      );
+      const service = new DemoSignInService(
+        zitadel.client as never,
+        lockSource() as never,
+      );
+
+      expect(await service.upgradeProviders(DEMO)).toEqual([
+        { provider: 'github', name: 'GitHub', idpId: 'legacy-gh' },
+      ]);
+    });
+
+    it('offers nothing outside a demo or without the identity provider', async () => {
+      const service = new DemoSignInService(
+        fresh().client as never,
+        lockSource() as never,
+      );
+
+      expect(await service.upgradeProviders({})).toEqual([]);
+      expect(
+        await service.upgradeProviders({ SANDBOX_ENABLED: 'true' }),
+      ).toEqual([]);
+    });
+
+    it('asks the identity provider once a minute at most', async () => {
+      const zitadel = fresh();
+      const list = jest.spyOn(zitadel.client, 'listIdentityProviders');
+      const service = new DemoSignInService(
+        zitadel.client as never,
+        lockSource() as never,
+      );
+
+      await service.upgradeProviders(DEMO, 1_000);
+      await service.upgradeProviders(DEMO, 30_000);
+      expect(list).toHaveBeenCalledTimes(1);
+      await service.upgradeProviders(DEMO, 62_000);
+      expect(list).toHaveBeenCalledTimes(2);
     });
   });
 });

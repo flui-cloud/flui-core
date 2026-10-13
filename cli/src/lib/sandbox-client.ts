@@ -31,7 +31,22 @@ export interface SignInProviderStatus {
 export interface SignInProviders {
   demo: boolean;
   callbackUrl: string | null;
+  intentCallbackUrl?: string | null;
   providers: SignInProviderStatus[];
+}
+
+export interface VisitorStats {
+  entranceOpen: boolean;
+  visitorsNow: number;
+  poolReady: number;
+  poolMin: number;
+  upgraded: number;
+  merged: number;
+  last24h: {
+    created: number;
+    refused: number;
+    refusedByReason: Array<{ reason: string; count: number }>;
+  };
 }
 
 /**
@@ -87,5 +102,9 @@ export class SandboxClient {
     return this.api.delete<SignInProviderStatus>(
       `/sandbox/sign-in/providers/${encodeURIComponent(provider)}`,
     );
+  }
+
+  async visitorStats(): Promise<VisitorStats> {
+    return this.api.get<VisitorStats>('/sandbox/visitors/stats');
   }
 }

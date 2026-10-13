@@ -5,6 +5,15 @@ import { execFile } from 'node:child_process';
 import chalk from 'chalk';
 import { ConfigStorage } from '../../lib/config-storage';
 import { ProfileManager } from '../../lib/profile-manager';
+import {
+  NO_VISITOR_ENTRANCE,
+  admitCliVisitor,
+  mintVisitorKey,
+} from '../../lib/visitor-login';
+import {
+  clearVisitorSession,
+  markVisitorSession,
+} from '../../lib/visitor-session';
 
 // Must match FLUI_CLI_CALLBACK_PORTS in oidc-bootstrap.service.ts
 const CALLBACK_PORTS = [8899, 8900, 8901, 8902, 8910];
@@ -19,6 +28,7 @@ interface AuthConfig {
   authMode: string;
   issuer?: string;
   cliClientId?: string;
+  visitorCliClientId?: string;
 }
 
 interface TokenResponse {
@@ -184,18 +194,52 @@ async function exchangeCode(
   return data as unknown as TokenResponse;
 }
 
+interface AuthorizeUrlInput {
+  issuer: string;
+  clientId: string;
+  redirectUri: string;
+  loginHint: string | null;
+  prompt: string | undefined;
+  challenge: string;
+  state: string;
+}
+
+function buildAuthorizeUrl(input: AuthorizeUrlInput): string {
+  const { issuer, clientId, redirectUri, loginHint, prompt } = input;
+  return (
+    `${issuer}/oauth/v2/authorize` +
+    `?client_id=${encodeURIComponent(clientId)}` +
+    `&redirect_uri=${encodeURIComponent(redirectUri)}` +
+    `&response_type=code` +
+    `&scope=${encodeURIComponent('openid profile email')}` +
+    (loginHint ? `&login_hint=${encodeURIComponent(loginHint)}` : '') +
+    (prompt && !loginHint ? `&prompt=${encodeURIComponent(prompt)}` : '') +
+    `&code_challenge=${input.challenge}` +
+    `&code_challenge_method=S256` +
+    `&state=${input.state}`
+  );
+}
+
 export default class AuthLogin extends Command {
   static readonly description =
     'Log in to Flui via OIDC (browser-based). Opens a browser for authentication, ' +
     'exchanges the code for tokens, generates a long-lived API key, and saves it to the active profile.';
 
+  static readonly aliases = ['login'];
+
   static readonly examples = [
     '<%= config.bin %> <%= command.id %>',
+    '<%= config.bin %> <%= command.id %> --try',
     '<%= config.bin %> <%= command.id %> --headless',
     '<%= config.bin %> <%= command.id %> --profile staging',
   ];
 
   static readonly flags = {
+    try: Flags.boolean({
+      description:
+        'Look around the demo as a visitor, with no account: read-only, and the key ends when the visit does',
+      default: false,
+    }),
     headless: Flags.boolean({
       description:
         'Print the authorization URL instead of opening a browser (useful in SSH sessions)',
@@ -225,40 +269,12 @@ export default class AuthLogin extends Command {
     this.log(chalk.dim(`Profile: ${profile}  API: ${apiUrl}`));
 
     // 1. Fetch auth config from API
-    let config: AuthConfig;
-    try {
-      const res = await fetch(`${apiUrl}/auth/config`);
-      if (!res.ok) {
-        this.error(
-          `GET ${apiUrl}/auth/config returned ${res.status}.\n` +
-            `Make sure the Flui API is up to date and the endpoint is available.`,
-          { exit: 1 },
-        );
-      }
-      config = (await res.json()) as AuthConfig;
-    } catch (e) {
-      this.error(`Cannot reach API at ${apiUrl}: ${(e as Error).message}`, {
-        exit: 1,
-      });
-    }
-
-    if (config.authMode !== 'oidc') {
-      this.error(
-        `Auth mode is "${config.authMode ?? 'unknown'}". Browser login is only available in OIDC mode.\n` +
-          `In local mode use your API key or JWT directly.`,
-        { exit: 1 },
-      );
-    }
-
-    if (!config.issuer || !config.cliClientId) {
-      this.error(
-        'OIDC CLI app not provisioned yet.\n' +
-          'Ask your admin to call: POST /api/v1/auth/provision-cli-app',
-        { exit: 1 },
-      );
-    }
-
-    const { issuer, cliClientId } = config;
+    const config = await this.fetchAuthConfig(apiUrl);
+    const { issuer, clientId: cliClientId } = this.oidcClient(
+      config,
+      flags.try,
+    );
+    const loginHint = flags.try ? await this.admitVisitor(apiUrl) : null;
 
     // 2. PKCE + state
     const { verifier, challenge } = generatePkce();
@@ -268,16 +284,15 @@ export default class AuthLogin extends Command {
     );
     const redirectUri = `http://localhost:${port}/callback`;
 
-    const authUrl =
-      `${issuer}/oauth/v2/authorize` +
-      `?client_id=${encodeURIComponent(cliClientId)}` +
-      `&redirect_uri=${encodeURIComponent(redirectUri)}` +
-      `&response_type=code` +
-      `&scope=${encodeURIComponent('openid profile email')}` +
-      (flags.prompt ? `&prompt=${encodeURIComponent(flags.prompt)}` : '') +
-      `&code_challenge=${challenge}` +
-      `&code_challenge_method=S256` +
-      `&state=${state}`;
+    const authUrl = buildAuthorizeUrl({
+      issuer,
+      clientId: cliClientId,
+      redirectUri,
+      loginHint,
+      prompt: flags.prompt,
+      challenge,
+      state,
+    });
 
     // 3. Open browser or print URL
     this.log('');
@@ -324,6 +339,17 @@ export default class AuthLogin extends Command {
 
     this.log(chalk.dim('Token obtained. Generating API key…'));
 
+    if (flags.try) {
+      await this.finishVisit(
+        storage,
+        profile,
+        apiUrl,
+        tokens.access_token,
+        flags['key-name'],
+      );
+      return;
+    }
+
     // 6. Generate long-lived Flui API key
     let apiKey: { id: string; name: string; key: string };
     try {
@@ -352,6 +378,7 @@ export default class AuthLogin extends Command {
 
     // 7. Save to profile
     storage.setApiKey(apiKey.key);
+    clearVisitorSession(storage);
 
     this.log('');
     this.log(chalk.green('✔ Login successful'));
@@ -367,6 +394,104 @@ export default class AuthLogin extends Command {
     this.log(
       chalk.dim(
         `To rotate: run 'flui login' again or 'flui auth generate-api-key'.`,
+      ),
+    );
+  }
+
+  private async fetchAuthConfig(apiUrl: string): Promise<AuthConfig> {
+    let config: AuthConfig;
+    try {
+      const res = await fetch(`${apiUrl}/auth/config`);
+      if (!res.ok) {
+        this.error(
+          `GET ${apiUrl}/auth/config returned ${res.status}.\n` +
+            `Make sure the Flui API is up to date and the endpoint is available.`,
+          { exit: 1 },
+        );
+      }
+      config = (await res.json()) as AuthConfig;
+    } catch (e) {
+      this.error(`Cannot reach API at ${apiUrl}: ${(e as Error).message}`, {
+        exit: 1,
+      });
+    }
+
+    if (config.authMode !== 'oidc') {
+      this.error(
+        `Auth mode is "${config.authMode ?? 'unknown'}". Browser login is only available in OIDC mode.\n` +
+          `In local mode use your API key or JWT directly.`,
+        { exit: 1 },
+      );
+    }
+    return config;
+  }
+
+  private oidcClient(
+    config: AuthConfig,
+    visitor: boolean,
+  ): { issuer: string; clientId: string } {
+    if (visitor && (!config.issuer || !config.visitorCliClientId)) {
+      this.error(NO_VISITOR_ENTRANCE, { exit: 1 });
+    }
+
+    if (!visitor && (!config.issuer || !config.cliClientId)) {
+      this.error(
+        'OIDC CLI app not provisioned yet.\n' +
+          'Ask your admin to call: POST /api/v1/auth/provision-cli-app',
+        { exit: 1 },
+      );
+    }
+
+    return {
+      issuer: config.issuer as string,
+      clientId: (visitor
+        ? config.visitorCliClientId
+        : config.cliClientId) as string,
+    };
+  }
+
+  private async admitVisitor(apiUrl: string): Promise<string> {
+    try {
+      return await admitCliVisitor(apiUrl);
+    } catch (e) {
+      this.error(`Cannot start a visit: ${(e as Error).message}`, {
+        exit: 1,
+      });
+    }
+  }
+
+  private async finishVisit(
+    storage: ConfigStorage,
+    profile: string,
+    apiUrl: string,
+    accessToken: string,
+    keyName: string,
+  ): Promise<void> {
+    let key: Awaited<ReturnType<typeof mintVisitorKey>>;
+    try {
+      key = await mintVisitorKey(apiUrl, accessToken, keyName);
+    } catch (e) {
+      this.error(`Failed to generate API key: ${(e as Error).message}`, {
+        exit: 1,
+      });
+    }
+    storage.setApiKey(key.key);
+    markVisitorSession(storage, key.expiresAt);
+
+    this.log('');
+    this.log(chalk.green('✔ You are in as a visitor'));
+    this.log(`  ${chalk.bold('Profile:')}  ${profile}`);
+    this.log(`  ${chalk.bold('Key ID:')}   ${key.id}`);
+    this.log(`  ${chalk.bold('Access:')}   ${key.groups.join(', ')}`);
+    if (key.expiresAt) {
+      this.log(
+        `  ${chalk.bold('Ends:')}     ${new Date(key.expiresAt).toLocaleString()}`,
+      );
+    }
+    this.log('');
+    this.log(
+      chalk.dim(
+        'Look around with any read command. To deploy, sign in with flui login.',
       ),
     );
   }

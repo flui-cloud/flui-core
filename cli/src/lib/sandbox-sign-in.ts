@@ -1,6 +1,6 @@
 import { MaskedReader, readSecret } from './secret-input';
 import { stdinRequested } from './stdin-value';
-import type { SignInProvider } from './sandbox-client';
+import type { SignInProvider, SignInProviders } from './sandbox-client';
 
 export const SIGN_IN_PROVIDERS: readonly SignInProvider[] = [
   'github',
@@ -17,13 +17,49 @@ export const OAUTH_APP_HELP: Record<SignInProvider, string[]> = {
   github: [
     'Create an OAuth app under your organisation at https://github.com/organizations/<org>/settings/applications',
     '(or under your own account at https://github.com/settings/developers).',
-    'Homepage URL: the demo dashboard. Authorization callback URL: the one below.',
+    'Homepage URL: the demo dashboard. Authorization callback URL: the sign-in address below.',
   ],
   google: [
     'Create an OAuth client ID of type "Web application" at https://console.cloud.google.com/apis/credentials.',
-    'Authorized redirect URI: the one below.',
+    'Authorized redirect URIs: both addresses below.',
   ],
 };
+
+const SIGN_IN_CALLBACK_PATH = '/ui/login/login/externalidp/callback';
+
+/** The sign-in address itself, which GitHub accepts for every callback under it. */
+export function signInRoot(callbackUrl: string): string {
+  const base = callbackUrl.endsWith(SIGN_IN_CALLBACK_PATH)
+    ? callbackUrl.slice(0, -SIGN_IN_CALLBACK_PATH.length)
+    : new URL(callbackUrl).origin;
+  return `${base}/`;
+}
+
+/**
+ * What to register at GitHub or Google. Signing in and a visitor turning its
+ * visit into an account come back to two different addresses: GitHub takes
+ * any address under its callback, so the sign-in root covers both; Google
+ * wants each one listed.
+ */
+export function callbackLines(
+  provider: SignInProvider | null,
+  view: Pick<SignInProviders, 'callbackUrl' | 'intentCallbackUrl'>,
+): Array<[label: string, value: string]> {
+  if (!view.callbackUrl) return [];
+  const google: Array<[string, string]> = [['Redirect URI', view.callbackUrl]];
+  if (view.intentCallbackUrl) {
+    google.push(['Redirect URI', view.intentCallbackUrl]);
+  }
+  const github: Array<[string, string]> = [
+    ['Callback URL', signInRoot(view.callbackUrl)],
+  ];
+  if (provider === 'github') return github;
+  if (provider === 'google') return google;
+  return [
+    ['GitHub callback', github[0][1]],
+    ...google.map(([, url]): [string, string] => ['Google redirect', url]),
+  ];
+}
 
 export class SignInCredentialsError extends Error {}
 

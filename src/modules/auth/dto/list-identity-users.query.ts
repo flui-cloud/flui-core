@@ -1,6 +1,7 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
-import { IsInt, IsOptional, IsString, Max, Min } from 'class-validator';
+import { IsIn, IsInt, IsOptional, IsString, Max, Min } from 'class-validator';
+import { USER_KIND, UserKind } from '../entities/user.entity';
 
 export class ListIdentityUsersQueryDto {
   @ApiPropertyOptional({ minimum: 1, maximum: 500, default: 100 })
@@ -22,4 +23,12 @@ export class ListIdentityUsersQueryDto {
   @IsOptional()
   @IsString()
   emailContains?: string;
+
+  @ApiPropertyOptional({
+    enum: Object.values(USER_KIND),
+    description: 'Only visitors of the demo, or only everybody else',
+  })
+  @IsOptional()
+  @IsIn(Object.values(USER_KIND))
+  kind?: UserKind;
 }

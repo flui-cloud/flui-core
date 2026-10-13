@@ -1,6 +1,10 @@
 import { Command, Flags } from '@oclif/core';
 import chalk from 'chalk';
-import { InferenceUsageClient } from '../../lib/inference-usage-client';
+import {
+  InferenceUsageClient,
+  UsageByPerson,
+  UsageKind,
+} from '../../lib/inference-usage-client';
 import { printContextBanner } from '../../lib/context-banner';
 
 /**
@@ -24,9 +28,22 @@ function thousands(n: number): string {
   return n.toLocaleString('en-US');
 }
 
+const KIND_LABEL: Record<UsageKind, string> = {
+  visitor: 'Visitors',
+  guest: 'Guests',
+  person: 'People',
+  platform: 'Platform',
+};
+
+function kindTag(p: UsageByPerson): string {
+  if (p.kind === 'visitor') return chalk.magenta('visitor');
+  if (p.kind === 'guest' || (!p.kind && p.guest)) return chalk.cyan('guest');
+  return chalk.dim('member');
+}
+
 export default class InferenceUsage extends Command {
   static readonly description =
-    'What the assistant and the console copilots have spent, by model and by person';
+    'What the assistant and the console copilots have spent, by model, by kind of person (the demo’s visitors, guests, people) and by person';
   static readonly examples = [
     '<%= config.bin %> <%= command.id %>',
     '<%= config.bin %> <%= command.id %> --days 1',
@@ -87,11 +104,23 @@ export default class InferenceUsage extends Command {
       );
     }
 
+    if (report.byKind?.length) {
+      this.log('');
+      this.log(`   ${chalk.bold('By kind')}`);
+      for (const k of report.byKind) {
+        this.log(
+          `     ${KIND_LABEL[k.kind].padEnd(14)} ${String(k.people).padStart(5)} ${k.kind === 'platform' ? '      ' : 'people'}  ${String(k.calls).padStart(5)} calls  ${thousands(
+            k.tokens,
+          ).padStart(11)} tokens${money(k.tokens, perMillion)}`,
+        );
+      }
+    }
+
     this.log('');
     this.log(`   ${chalk.bold('Who spent it')}`);
     for (const p of report.byPerson) {
       const who = p.userId ? p.userId.slice(0, 8) : 'the platform';
-      const kind = p.guest ? chalk.cyan('guest') : chalk.dim('member');
+      const kind = kindTag(p);
       this.log(
         `     ${who.padEnd(14)} ${kind.padEnd(16)} ${String(p.calls).padStart(
           5,

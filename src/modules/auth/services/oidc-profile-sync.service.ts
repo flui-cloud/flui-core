@@ -150,8 +150,14 @@ export class OidcProfileSyncService {
     // Only a proven address is adopted: permissions are granted to an email,
     // so taking an unverified one would hand its owner's access to whoever
     // typed it.
-    const incomingEmail =
+    const proven =
       profile.emailVerified === true ? profile.email?.trim() || null : null;
+    // A visitor's placeholder never replaces a real address: the provider may
+    // still hold it for a moment after the visitor became an account.
+    const incomingEmail =
+      proven && isPlaceholderEmail(proven) && !isPlaceholderEmail(user.email)
+        ? null
+        : proven;
     const placeholder = isPlaceholderEmail(user.email);
     if (incomingEmail && (placeholder || incomingEmail !== user.email)) {
       user.email = incomingEmail;

@@ -26,7 +26,7 @@ import {
   IDENTITY_DIRECTORY,
   IIdentityDirectory,
 } from '../../auth/interfaces/identity-directory.interface';
-import { IdentityRole, UserEntity } from '../../auth/entities/user.entity';
+import { USER_KIND, UserEntity } from '../../auth/entities/user.entity';
 import { UserManagementService } from '../../auth/services/user-management.service';
 import { ApiKeyEntity } from '../../auth/entities/api-key.entity';
 import { IamRoleBindingEntity } from '../../iam/entities/iam-role-binding.entity';
@@ -289,7 +289,7 @@ export class SandboxTenantService {
       const user = await this.users
         .findOne({ where: { id: ref } })
         .catch(() => null);
-      if (!user || user.isAdmin) continue;
+      if (!user || user.isAdmin || user.kind === USER_KIND.VISITOR) continue;
       const seen = (user.lastSeenAt ?? user.createdAt).getTime();
       if (seen > before) continue;
       const holding = await this.reserve.findActiveForUser(user.id);

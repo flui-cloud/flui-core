@@ -6,6 +6,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { UserEntity } from './entities/user.entity';
 import { ApiKeyEntity } from './entities/api-key.entity';
 import { ApiKeyService } from './services/api-key.service';
+import { SandboxVisitorEntity } from '../sandbox/entities/sandbox-visitor.entity';
 import { ApiKeyStrategy } from './strategies/api-key.strategy';
 import { WsAuthService } from './services/ws-auth.service';
 
@@ -17,7 +18,7 @@ import { WsAuthService } from './services/ws-auth.service';
 @Module({
   imports: [
     ConfigModule,
-    TypeOrmModule.forFeature([UserEntity, ApiKeyEntity]),
+    TypeOrmModule.forFeature([UserEntity, ApiKeyEntity, SandboxVisitorEntity]),
     JwtModule.registerAsync({
       imports: [ConfigModule],
       useFactory: (config: ConfigService) => ({

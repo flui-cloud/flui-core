@@ -39,6 +39,10 @@ import {
 import { ConfigureAuthModeService } from '../../dns/services/configure-auth-mode.service';
 import { ConfigureAuthModeDto } from '../../dns/dto/configure-auth-mode.dto';
 import { ConfigureAuthModeResultDto } from '../../dns/dto/configure-auth-mode-result.dto';
+import {
+  VisitorAuthConfig,
+  visitorAuthConfig,
+} from '../../sandbox/visitors/visitor.config';
 import { OidcBootstrapService } from '../services/oidc-bootstrap.service';
 import { OidcProfileSyncService } from '../services/oidc-profile-sync.service';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -278,15 +282,21 @@ export class AuthController {
       'Get public auth configuration (auth mode, OIDC issuer, web + CLI client IDs)',
   })
   @ApiOkResponse({
-    description: '{ authMode, issuer?, clientId?, cliClientId? }',
+    description:
+      '{ authMode, issuer?, clientId?, cliClientId?, visitorClientId?, visitorCliClientId?, turnstileSiteKey? } — the visitor fields only while the demo takes visitors',
   })
-  getConfig(): Promise<{
-    authMode: string;
-    issuer?: string;
-    clientId?: string;
-    cliClientId?: string;
-  }> {
-    return this.oidcBootstrapService.getPublicOidcConfig();
+  async getConfig(): Promise<
+    {
+      authMode: string;
+      issuer?: string;
+      clientId?: string;
+      cliClientId?: string;
+    } & VisitorAuthConfig
+  > {
+    return {
+      ...(await this.oidcBootstrapService.getPublicOidcConfig()),
+      ...visitorAuthConfig(),
+    };
   }
 
   // An installation-bootstrap route, still gated on the boolean: the same

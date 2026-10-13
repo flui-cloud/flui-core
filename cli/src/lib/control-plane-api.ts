@@ -5,6 +5,7 @@ import { CliControlClusterService } from '../services/cli-control-cluster.servic
 import { CliClusterCreatorService } from '../services/cli-cluster-creator.service';
 import { ApiClient, ApiError } from './api-client';
 import { ConfigStorage } from './config-storage';
+import { errorCodeOf, visitorErrorMessage } from './visitor-session';
 
 /**
  * The one way a command asks the control plane about its own cluster.
@@ -89,6 +90,8 @@ export function controlPlaneHint(error: unknown): string | null {
       `   • ${chalk.cyan('flui env restart')} powers stopped servers back on through the provider.`
     );
   }
+  const forVisitor = visitorErrorMessage(errorCodeOf(error.details));
+  if (forVisitor) return error.message === forVisitor ? null : forVisitor;
   if (error.statusCode === 401) {
     return `Not authenticated. Run ${chalk.cyan('flui auth login')}.`;
   }

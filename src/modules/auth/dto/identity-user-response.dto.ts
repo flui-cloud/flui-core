@@ -1,6 +1,6 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Sensitivity } from '../../mask/decorators/sensitivity.decorator';
-import { IdentityRole } from '../entities/user.entity';
+import { IdentityRole, USER_KIND, UserKind } from '../entities/user.entity';
 import { IdentityUser } from '../interfaces/identity-directory.interface';
 
 /**
@@ -51,6 +51,13 @@ export class IdentityUserResponseDto {
   })
   isSystemUser: boolean;
 
+  @Sensitivity(Sensitivity.PUBLIC)
+  @ApiProperty({
+    enum: Object.values(USER_KIND),
+    description: '`visitor` for a visitor of the demo who has no account yet.',
+  })
+  kind: UserKind;
+
   constructor(user: IdentityUser) {
     this.id = user.id;
     this.email = user.email;
@@ -60,5 +67,6 @@ export class IdentityUserResponseDto {
     this.state = user.state;
     this.isBootstrapAdmin = user.isBootstrapAdmin;
     this.isSystemUser = user.isSystemUser;
+    this.kind = user.kind ?? USER_KIND.PERSON;
   }
 }

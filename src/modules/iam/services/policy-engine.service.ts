@@ -104,13 +104,19 @@ export class PolicyEngineService implements PolicyEngine {
         globalPermissions: new Set(ALL_PERMISSIONS),
         scopedGrants: [],
         isSandbox: false,
+        isVisitor: false,
       };
     }
     const globalPermissions = new Set<string>();
     const scopedGrants: ScopedGrant[] = [];
     let isSandbox = false;
+    let isVisitor = false;
     for (const b of bindings) {
       if (b.role === IAM_ROLE.SANDBOX) isSandbox = true;
+      if (b.role === IAM_ROLE.SANDBOX_VISITOR) {
+        isSandbox = true;
+        isVisitor = true;
+      }
       const permissions = new Set<string>(permissionsForRole(b.role));
       if (b.scopeType === 'global') {
         for (const p of permissions) globalPermissions.add(p);
@@ -123,7 +129,13 @@ export class PolicyEngineService implements PolicyEngine {
         });
       }
     }
-    return { isAdmin: false, globalPermissions, scopedGrants, isSandbox };
+    return {
+      isAdmin: false,
+      globalPermissions,
+      scopedGrants,
+      isSandbox,
+      isVisitor,
+    };
   }
 
   can(

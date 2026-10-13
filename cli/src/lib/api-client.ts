@@ -3,6 +3,7 @@ import * as https from 'node:https';
 import { Readable } from 'node:stream';
 import { Injectable } from '@nestjs/common';
 import { NodeSizeDto } from '../../../src/modules/providers/dto/node-size.dto';
+import { errorCodeOf, visitorErrorMessage } from './visitor-session';
 
 /**
  * HTTP client for Flui API communication
@@ -60,7 +61,8 @@ export class ApiClient {
     if (error.response) {
       const data = error.response.data as any;
       return new ApiError(
-        data?.message || error.message,
+        visitorErrorMessage(errorCodeOf(data)) ??
+          (data?.message || error.message),
         error.response.status,
         data,
       );

@@ -14,6 +14,40 @@ import { EncryptionModule } from '../shared/encryption/encryption.module';
 import { CatalogModule } from '../catalog/catalog.module';
 import { SandboxController } from './sandbox.controller';
 import { SandboxClaimController } from './sandbox-claim.controller';
+import { SandboxVisitorTestController } from './sandbox-visitor-test.controller';
+import {
+  SandboxVisitorTestService,
+  visitorTestRouteEnabled,
+} from './services/sandbox-visitor-test.service';
+import { SandboxVisitorEntity } from './entities/sandbox-visitor.entity';
+import { SandboxVisitorPoolEntity } from './entities/sandbox-visitor-pool.entity';
+import { SandboxVisitorAdmissionEntity } from './entities/sandbox-visitor-admission.entity';
+import { SandboxVisitorLoginClientEntity } from './entities/sandbox-visitor-login-client.entity';
+import { SandboxVisitorController } from './sandbox-visitor.controller';
+import { SandboxVisitorUpgradeController } from './sandbox-visitor-upgrade.controller';
+import { SandboxVisitorUpgradeEntity } from './entities/sandbox-visitor-upgrade.entity';
+import { SandboxVisitorRefusalEntity } from './entities/sandbox-visitor-refusal.entity';
+import { SandboxVisitorStatsController } from './sandbox-visitor-stats.controller';
+import { VisitorRefusalsService } from './visitors/visitor-refusals.service';
+import { VisitorStatsService } from './visitors/visitor-stats.service';
+import { VisitorUpgradeService } from './visitors/visitor-upgrade.service';
+import { VisitorLinkService } from './visitors/visitor-link.service';
+import { VisitorMergeService } from './visitors/visitor-merge.service';
+import { AuditModule } from '../audit/audit.module';
+import { VISITOR_CONFIG, loadVisitorConfig } from './visitors/visitor.config';
+import {
+  VISITOR_FETCH,
+  VISITOR_THROTTLER,
+  VisitorAdmissionService,
+} from './visitors/visitor-admission.service';
+import { VisitorLoginClientService } from './visitors/visitor-login-client.service';
+import { VisitorEntranceSetupService } from './visitors/visitor-entrance-setup.service';
+import { VisitorPoolService } from './visitors/visitor-pool.service';
+import { VisitorLoginService } from './visitors/visitor-login.service';
+import { VisitorSweepService } from './visitors/visitor-sweep.service';
+import { VisitorSchedulerService } from './visitors/visitor-scheduler.service';
+import { sharedThrottlerStorage } from '../../common/throttling/redis-throttler.storage';
+import { OidcModule } from '../oidc/oidc.module';
 import { SandboxFenceGuard } from './guards/sandbox-fence.guard';
 import { SandboxProjectionInterceptor } from './interceptors/sandbox-projection.interceptor';
 import { SandboxCapacityService } from './services/sandbox-capacity.service';
@@ -50,6 +84,12 @@ import { FluiRegistryModule } from '../flui-registry/flui-registry.module';
     TypeOrmModule.forFeature([
       SandboxTenantEntity,
       SandboxWaitlistEntity,
+      SandboxVisitorEntity,
+      SandboxVisitorPoolEntity,
+      SandboxVisitorAdmissionEntity,
+      SandboxVisitorLoginClientEntity,
+      SandboxVisitorUpgradeEntity,
+      SandboxVisitorRefusalEntity,
       UserEntity,
       ApiKeyEntity,
       IamRoleBindingEntity,
@@ -61,6 +101,8 @@ import { FluiRegistryModule } from '../flui-registry/flui-registry.module';
     ]),
     IamModule,
     AuthModule,
+    AuditModule,
+    OidcModule,
     SharedInfrastructureModule,
     EgressModule,
     EncryptionModule,
@@ -82,7 +124,14 @@ import { FluiRegistryModule } from '../flui-registry/flui-registry.module';
     // one that refuses a guest's install, so the warning cannot disagree with it.
     forwardRef(() => ClustersModule),
   ],
-  controllers: [SandboxController, SandboxClaimController],
+  controllers: [
+    SandboxController,
+    SandboxClaimController,
+    SandboxVisitorController,
+    SandboxVisitorUpgradeController,
+    SandboxVisitorStatsController,
+    ...(visitorTestRouteEnabled() ? [SandboxVisitorTestController] : []),
+  ],
   providers: [
     { provide: SANDBOX_CONFIG, useFactory: () => loadSandboxConfig() },
     SandboxFenceGuard,
@@ -104,6 +153,22 @@ import { FluiRegistryModule } from '../flui-registry/flui-registry.module';
     SandboxTenantService,
     SandboxSchedulerService,
     SandboxStorageQuotaService,
+    SandboxVisitorTestService,
+    { provide: VISITOR_CONFIG, useFactory: () => loadVisitorConfig() },
+    { provide: VISITOR_THROTTLER, useFactory: () => sharedThrottlerStorage() },
+    { provide: VISITOR_FETCH, useValue: fetch },
+    VisitorAdmissionService,
+    VisitorLoginClientService,
+    VisitorEntranceSetupService,
+    VisitorPoolService,
+    VisitorLoginService,
+    VisitorSweepService,
+    VisitorSchedulerService,
+    VisitorMergeService,
+    VisitorLinkService,
+    VisitorUpgradeService,
+    VisitorRefusalsService,
+    VisitorStatsService,
   ],
   exports: [
     SandboxFenceGuard,

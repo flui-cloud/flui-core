@@ -95,6 +95,15 @@ export class SignInProvidersDto {
   @Sensitivity(Sensitivity.NETWORK_IDENTIFIER, { screenOnly: true })
   callbackUrl: string | null;
 
+  @ApiPropertyOptional({
+    nullable: true,
+    description:
+      'The second callback URL to allow on the GitHub OAuth app or the Google OAuth client: where a demo visitor comes back when it turns its visit into an account.',
+    example: 'https://auth.demo.example.com/idps/callback',
+  })
+  @Sensitivity(Sensitivity.NETWORK_IDENTIFIER, { screenOnly: true })
+  intentCallbackUrl: string | null;
+
   @ApiProperty({ type: [SignInProviderStatusDto] })
   @Sensitivity(Sensitivity.PUBLIC)
   providers: SignInProviderStatusDto[];

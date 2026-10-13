@@ -9,18 +9,29 @@ export interface UsageByModel {
   estimated: number;
 }
 
+export type UsageKind = 'visitor' | 'guest' | 'person' | 'platform';
+
 export interface UsageByPerson {
   userId: string | null;
   guest: boolean;
+  kind?: UsageKind;
   calls: number;
   tokens: number;
   lastAt: string;
+}
+
+export interface UsageByKind {
+  kind: UsageKind;
+  people: number;
+  calls: number;
+  tokens: number;
 }
 
 export interface UsageReport {
   since: string | null;
   byModel: UsageByModel[];
   byPerson: UsageByPerson[];
+  byKind?: UsageByKind[];
 }
 
 /**

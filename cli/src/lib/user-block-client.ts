@@ -14,7 +14,7 @@ export async function resolveUserId(
 ): Promise<string> {
   if (!ref.includes('@')) return ref;
   const found = await api.get<Array<{ id: string; email: string }>>(
-    `/auth/users?search=${encodeURIComponent(ref)}`,
+    `/auth/users?emailContains=${encodeURIComponent(ref)}`,
   );
   const exact = found.filter(
     (u) => u.email?.toLowerCase() === ref.toLowerCase(),

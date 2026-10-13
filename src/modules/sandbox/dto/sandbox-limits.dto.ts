@@ -12,6 +12,13 @@ export class SandboxAllowedDto {
     enum: ['full', 'read-only', 'stand-in', 'closed'],
   })
   level: string;
+
+  @ApiProperty({
+    example: false,
+    description:
+      'Whether a visitor who has not signed in may make these writes too. Reads are always open to visitors; any other write asks them to sign in.',
+  })
+  visitor: boolean;
 }
 
 /**

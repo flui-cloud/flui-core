@@ -2,7 +2,9 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   SignInCredentialsError,
+  callbackLines,
   collectSignInCredentials,
+  signInRoot,
 } from './sandbox-sign-in';
 
 jest.mock('./stdin-value', () => ({
@@ -94,5 +96,46 @@ describe('collecting sign-in credentials', () => {
     expect(flags).not.toMatch(/secret['"]?\s*:\s*Flags/i);
     expect(flags).toContain("'client-id': Flags.string");
     expect(flags).toContain('stdin: Flags.boolean');
+  });
+});
+
+describe('the addresses to register at GitHub and Google', () => {
+  const view = {
+    callbackUrl:
+      'https://auth.demo.example.com/ui/login/login/externalidp/callback',
+    intentCallbackUrl: 'https://auth.demo.example.com/idps/callback',
+  };
+
+  it('gives GitHub the sign-in root, which covers both callbacks', () => {
+    expect(callbackLines('github', view)).toEqual([
+      ['Callback URL', 'https://auth.demo.example.com/'],
+    ]);
+  });
+
+  it('gives Google both redirect URIs', () => {
+    expect(callbackLines('google', view)).toEqual([
+      ['Redirect URI', view.callbackUrl],
+      ['Redirect URI', view.intentCallbackUrl],
+    ]);
+  });
+
+  it('lists both providers when none is named', () => {
+    expect(callbackLines(null, view).map(([label]) => label)).toEqual([
+      'GitHub callback',
+      'Google redirect',
+      'Google redirect',
+    ]);
+  });
+
+  it('says nothing without a sign-in address', () => {
+    expect(
+      callbackLines('github', { callbackUrl: null, intentCallbackUrl: null }),
+    ).toEqual([]);
+  });
+
+  it('falls back to the origin for an unexpected callback', () => {
+    expect(signInRoot('https://auth.example.com/other/path')).toBe(
+      'https://auth.example.com/',
+    );
   });
 });

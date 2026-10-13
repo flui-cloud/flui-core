@@ -133,6 +133,8 @@ export interface PrincipalAccess {
   isAdmin: boolean;
   globalPermissions: ReadonlySet<string>;
   scopedGrants: ScopedGrant[];
-  /** True when any binding carries the sandbox role — see SandboxFenceGuard. */
+  /** True when any binding carries a demo role (`sandbox` or `sandbox_visitor`) — see SandboxFenceGuard. */
   isSandbox: boolean;
+  /** True when a binding carries `sandbox_visitor`: a demo visitor who has not signed in. */
+  isVisitor?: boolean;
 }

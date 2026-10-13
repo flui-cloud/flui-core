@@ -315,6 +315,7 @@ export class ApplicationAccessService {
         user.userId,
         target.clusterId,
         user.email,
+        access.isVisitor === true,
       );
     }
 

@@ -77,6 +77,7 @@ export class LocalIdentityDirectory implements IIdentityDirectory {
       role: u.role ?? (u.isAdmin ? IdentityRole.ADMIN : IdentityRole.USER),
       isBootstrapAdmin: u.email.toLowerCase() === expectedAdmin,
       isSystemUser: false,
+      kind: u.kind,
     };
   }
 

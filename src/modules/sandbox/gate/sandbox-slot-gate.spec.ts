@@ -136,6 +136,19 @@ const area = (over: Partial<Area>): Area => ({
 });
 
 describe('SandboxSlotGateService', () => {
+  it('asks a visitor to sign in before it looks at any area', async () => {
+    const { gate, areas } = build([area({ id: 'a1' })]);
+
+    await expect(
+      gate.assertCanCreate('v1', 'c1', null, true),
+    ).rejects.toMatchObject({
+      status: 401,
+      response: { code: 'SANDBOX_SIGN_IN_REQUIRED' },
+    });
+    expect(areas[0].state).toBe(SandboxTenantState.READY);
+    expect(areas[0].userId).toBeNull();
+  });
+
   it('lets a guest who holds an area create on its cluster, and nowhere else', async () => {
     const { gate } = build([
       area({ state: SandboxTenantState.CLAIMED, userId: 'u1' }),

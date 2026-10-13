@@ -105,7 +105,11 @@ describe('the ladder', () => {
    * respect the ordering would be asking the wrong question of them.
    */
   it('leaves the platform-written tenancies out of it', () => {
-    const outside: IamRole[] = [IAM_ROLE.SANDBOX, IAM_ROLE.SHOWCASE_VIEWER];
+    const outside: IamRole[] = [
+      IAM_ROLE.SANDBOX,
+      IAM_ROLE.SANDBOX_VISITOR,
+      IAM_ROLE.SHOWCASE_VIEWER,
+    ];
     for (const role of outside) {
       expect(ROLE_LADDER).not.toContain(role);
       expect(BUILTIN_ROLES[role].assignable).toBe(false);
@@ -228,7 +232,11 @@ describe('who may confer which role', () => {
   });
 
   it('nobody hands out the roles the platform assigns itself', () => {
-    for (const role of [IAM_ROLE.SANDBOX, IAM_ROLE.SHOWCASE_VIEWER]) {
+    for (const role of [
+      IAM_ROLE.SANDBOX,
+      IAM_ROLE.SANDBOX_VISITOR,
+      IAM_ROLE.SHOWCASE_VIEWER,
+    ]) {
       expect(mayConferRole(OWNER_ACCESS, role)).toBe(false);
       expect(mayConferRole(LEGACY_ADMIN, role)).toBe(false);
     }

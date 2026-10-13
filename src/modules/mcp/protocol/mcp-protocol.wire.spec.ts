@@ -16,6 +16,8 @@ import { McpServer } from '@modelcontextprotocol/server';
 import * as request from 'supertest';
 import { z } from 'zod';
 import { McpController } from '../mcp.controller';
+import { MCP_THROTTLER } from '../mcp-rate-limit';
+import { ThrottlerStorageService } from '@nestjs/throttler';
 import { McpServerFactory } from '../services/mcp-server.factory';
 import { POLICY_ENGINE } from '../../iam/interfaces/policy-engine.interface';
 import { AuthenticatedUser } from '../../auth/interfaces/authenticated-user.interface';
@@ -186,6 +188,7 @@ describe('MCP endpoint on the wire', () => {
           provide: POLICY_ENGINE,
           useValue: { resolveAccess: async () => ({ isSandbox: false }) },
         },
+        { provide: MCP_THROTTLER, useValue: new ThrottlerStorageService() },
       ],
     }).compile();
 

@@ -17,12 +17,14 @@ import {
 import {
   isReadOnlyArea,
   isSandboxAllowed,
+  isVisitorWritable,
   sandboxLevelOf,
   SANDBOX_FORBIDDEN_MESSAGE,
   SANDBOX_READ_ONLY_WRITE_CODE,
   SANDBOX_READ_ONLY_WRITE_MESSAGE,
 } from '../constants/sandbox-fence';
 import type { SandboxLevel } from '../constants/sandbox-fence-core';
+import { signInRequired } from '../constants/sandbox-visitor';
 import {
   SANDBOX_STAND_IN_WRITE_CODE,
   SANDBOX_STAND_IN_WRITE_MESSAGE,
@@ -58,7 +60,7 @@ const READS = new Set(['GET', 'HEAD', 'OPTIONS']);
 export const SANDBOX_FENCE_ADMITTED = Symbol('sandboxFenceAdmitted');
 
 export interface SandboxGuestRequest {
-  [SANDBOX_GUEST_REQUEST]?: { userId: string };
+  [SANDBOX_GUEST_REQUEST]?: { userId: string; visitor?: boolean };
   [SANDBOX_FENCE_ADMITTED]?: SandboxLevel;
 }
 
@@ -147,7 +149,8 @@ export class SandboxFenceGuard implements CanActivate {
       isAdmin: false,
     });
     if (!access.isSandbox) return true;
-    req[SANDBOX_GUEST_REQUEST] = { userId: user.userId };
+    const visitor = access.isVisitor === true;
+    req[SANDBOX_GUEST_REQUEST] = { userId: user.userId, visitor };
 
     // Match on the matched route pattern, not the raw URL: an id that happens to
     // contain a slash or an encoded segment must never change the verdict.
@@ -156,6 +159,13 @@ export class SandboxFenceGuard implements CanActivate {
 
     const route = pattern !== undefined;
     if (isSandboxAllowed(req.method, path, route)) {
+      if (
+        visitor &&
+        !READS.has(req.method) &&
+        !isVisitorWritable(req.method, path, route)
+      ) {
+        throw signInRequired(`${req.method} ${path}`);
+      }
       if (route) {
         await this.assertOwnCluster(
           user.userId,

@@ -7,6 +7,8 @@ import {
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { InjectRepository, TypeOrmModule } from '@nestjs/typeorm';
+import { SandboxVisitorLoginClientEntity } from '../entities/sandbox-visitor-login-client.entity';
+import { SandboxVisitorEntity } from '../entities/sandbox-visitor.entity';
 import { IsNull, LessThan, MoreThan, Not, Repository } from 'typeorm';
 import { SandboxWaitlistEntity } from '../entities/sandbox-waitlist.entity';
 import { isPlaceholderEmail } from '../../auth/utils/placeholder-email.util';
@@ -27,6 +29,7 @@ import {
   SandboxGuestEnrolmentService,
 } from './sandbox-guest-enrolment';
 import { SANDBOX_ACTIVITY, SandboxActivityService } from './sandbox-activity';
+import { signInRequired } from '../constants/sandbox-visitor';
 
 export const SANDBOX_SLOT_GATE = 'SANDBOX_SLOT_GATE';
 
@@ -36,6 +39,7 @@ export interface SandboxSlotGate {
     userId: string,
     clusterId: string | undefined,
     email?: string | null,
+    visitor?: boolean,
   ): Promise<void>;
   /** End the person's area now; the reaper takes it apart on its next pass. */
   releaseAreaOf(userId: string): Promise<void>;
@@ -74,7 +78,10 @@ export class SandboxSlotGateService implements SandboxSlotGate {
     userId: string,
     clusterId: string | undefined,
     email?: string | null,
+    visitor = false,
   ): Promise<void> {
+    if (visitor) throw signInRequired();
+
     const held = await this.tenants.findOne({
       where: { userId, state: SandboxTenantState.CLAIMED },
     });
@@ -256,6 +263,8 @@ export class SandboxSlotGateService implements SandboxSlotGate {
       SandboxWaitlistEntity,
       IamRoleBindingEntity,
       ProjectEntity,
+      SandboxVisitorEntity,
+      SandboxVisitorLoginClientEntity,
     ]),
   ],
   providers: [

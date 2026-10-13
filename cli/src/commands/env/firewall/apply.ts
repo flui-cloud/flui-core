@@ -8,6 +8,7 @@ import {
   openControlPlane,
 } from '../../../lib/control-plane-api';
 import { ApiError } from '../../../lib/api-client';
+import { errorCodeOf, visitorErrorMessage } from '../../../lib/visitor-session';
 import { ClusterStatus } from 'src/modules/infrastructure/clusters/entities/cluster.entity';
 
 interface FirewallRule {
@@ -92,7 +93,10 @@ export default class EnvFirewallApply extends Command {
       console.log(chalk.red(`\n❌ ${(error as Error).message}\n`));
       if (error instanceof ControlPlaneError) {
         if (error.hint) console.log(chalk.dim(`   ${error.hint}\n`));
-      } else if (status === 401 || status === 403) {
+      } else if (
+        (status === 401 || status === 403) &&
+        !visitorErrorMessage(errorCodeOf((error as ApiError).details))
+      ) {
         console.log(
           chalk.dim(
             `   Re-authenticate with ${chalk.cyan('flui auth login')}.\n`,

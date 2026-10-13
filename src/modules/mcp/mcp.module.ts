@@ -18,6 +18,8 @@ import { DbLifecycleModule } from '../db-lifecycle/db-lifecycle.module';
 import { AppMigrationModule } from '../app-migration/app-migration.module';
 import { FullMigrationModule } from '../full-migration/full-migration.module';
 import { McpController } from './mcp.controller';
+import { MCP_THROTTLER } from './mcp-rate-limit';
+import { sharedThrottlerStorage } from '../../common/throttling/redis-throttler.storage';
 import { McpServerFactory } from './services/mcp-server.factory';
 import { McpScopeResolver } from './services/mcp-scope.resolver';
 import { McpApiClient } from './services/mcp-api.client';
@@ -68,6 +70,7 @@ import { AgentConcessionEntity } from '../action-cycle/entities/agent-concession
   ],
   controllers: [McpController, AgentActivityController],
   providers: [
+    { provide: MCP_THROTTLER, useFactory: () => sharedThrottlerStorage() },
     McpServerFactory,
     McpScopeResolver,
     McpAuditRepository,

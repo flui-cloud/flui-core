@@ -202,3 +202,54 @@ describe('PolicyEngineService (P3 resource-aware)', () => {
     expect(perms).toContain('app:delete');
   });
 });
+
+describe('PolicyEngineService — the demo visitor', () => {
+  const visitorBinding = (role: string): Binding => ({
+    principalType: 'user',
+    principalRef: 'v-1',
+    role,
+    scopeType: 'selector',
+    scopeRef: null,
+    selector: { owner: 'v-1' },
+  });
+
+  it('treats a visitor as a guest of the demo, and says it is a visitor', async () => {
+    const access = await makeEngine([
+      visitorBinding('sandbox_visitor'),
+    ]).resolveAccess(principal({ userId: 'v-1' }));
+    expect(access.isSandbox).toBe(true);
+    expect(access.isVisitor).toBe(true);
+  });
+
+  it('gives a visitor reads and no write, even on what it would own', async () => {
+    const engine = makeEngine([visitorBinding('sandbox_visitor')]);
+    const access = await engine.resolveAccess(principal({ userId: 'v-1' }));
+    const own: ResourceAttributes = { owner: 'v-1', type: 'user' };
+    expect(engine.can(access, 'app:read', own)).toBe(true);
+    for (const write of [
+      'app:write',
+      'app:create',
+      'app:deploy',
+      'app:delete',
+    ]) {
+      expect(engine.can(access, write, own)).toBe(false);
+    }
+  });
+
+  it('does not call a signed-in guest a visitor', async () => {
+    const access = await makeEngine([visitorBinding('sandbox')]).resolveAccess(
+      principal({ userId: 'v-1' }),
+    );
+    expect(access.isSandbox).toBe(true);
+    expect(access.isVisitor).toBe(false);
+  });
+
+  it('never calls an administrator a visitor, whatever bindings it carries', async () => {
+    const access = await makeEngine([
+      visitorBinding('sandbox_visitor'),
+    ]).resolveAccess(principal({ userId: 'v-1', isAdmin: true }));
+    expect(access.isAdmin).toBe(true);
+    expect(access.isVisitor).toBe(false);
+    expect(access.isSandbox).toBe(false);
+  });
+});

@@ -26,6 +26,7 @@ export const SANDBOX_ALLOW_OWN: SandboxAllowRule[] = [
     verbs: ['POST'],
     pattern: '/auth/oidc-session',
     why: 'Keep your own sign-in as the cookie live updates and downloads use.',
+    visitor: true,
   },
   {
     // `/me/...`, not `/iam/me/...`: MeController is mounted at the root even
@@ -196,6 +197,7 @@ export const SANDBOX_ALLOW_OWN: SandboxAllowRule[] = [
     verbs: ['POST'],
     pattern: '/catalog/validate',
     why: 'Check a manifest before you deploy it.',
+    visitor: true,
   },
   {
     // "Is there room?", asked before installing rather than discovered by the
@@ -235,6 +237,17 @@ export const SANDBOX_ALLOW_OWN: SandboxAllowRule[] = [
     why: 'Keep the applications in your own area for longer.',
   },
   {
+    verbs: ['POST'],
+    pattern: '/sandbox/visitor/**',
+    why: 'Turn your visit into an account of your own.',
+    visitor: true,
+  },
+  {
+    verbs: ['GET'],
+    pattern: '/sandbox/visitor/upgrade/providers',
+    why: 'See which sign-ins your visit can become an account with.',
+  },
+  {
     // Connecting a coding agent, which is the thing the trial exists to show.
     // The key it mints is worth strictly less than the person minting it —
     // `api-key-scopes.ts` refuses any scope whose permission the issuer does
@@ -248,6 +261,7 @@ export const SANDBOX_ALLOW_OWN: SandboxAllowRule[] = [
     verbs: ['POST'],
     pattern: '/auth/api-keys',
     why: 'Give a coding agent a credential of your own to deploy with.',
+    visitor: true,
   },
   {
     // The other half of the consent. Minting was open and revoking was not, so
@@ -262,6 +276,7 @@ export const SANDBOX_ALLOW_OWN: SandboxAllowRule[] = [
     verbs: ['DELETE'],
     pattern: '/auth/api-keys/:id',
     why: 'Switch off an agent you connected.',
+    visitor: true,
   },
   {
     /**
@@ -282,11 +297,13 @@ export const SANDBOX_ALLOW_OWN: SandboxAllowRule[] = [
     verbs: ['POST'],
     pattern: '/assistant/v1/agent',
     why: 'Ask the assistant, and let it act inside these same limits.',
+    visitor: true,
   },
   {
     verbs: ['POST'],
     pattern: '/assistant/v1/agent/stream',
     why: 'The same, answered as it is written.',
+    visitor: true,
   },
   {
     // What is left of the share this area came with. Its own, and read-only:
@@ -325,6 +342,7 @@ export const SANDBOX_ALLOW_OWN: SandboxAllowRule[] = [
     verbs: ['POST'],
     pattern: '/auth/agent-skill/check-in',
     why: 'Let your agent report that it has read them.',
+    visitor: true,
   },
   {
     // Where the agent then speaks. Without it the credential above executes
@@ -335,6 +353,7 @@ export const SANDBOX_ALLOW_OWN: SandboxAllowRule[] = [
     verbs: ['POST'],
     pattern: '/mcp',
     why: 'Let the agent you connected act for you, inside these same limits.',
+    visitor: true,
   },
   {
     // Answering your own agent's request. Without these lines the guest sees

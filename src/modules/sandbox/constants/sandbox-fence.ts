@@ -65,6 +65,15 @@ export function sandboxLevelOf(
   return rule ? (rule.level ?? 'full') : 'closed';
 }
 
+/** Whether a visitor who has not signed in may make this write: a rule admitting it says so. */
+export function isVisitorWritable(
+  verb: string,
+  path: string,
+  route = false,
+): boolean {
+  return matching(verb, path, route).some((rule) => rule.visitor === true);
+}
+
 /**
  * Whether this path belongs to an area a guest is shown read-only.
  *

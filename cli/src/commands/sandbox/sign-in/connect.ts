@@ -10,6 +10,7 @@ import { promptInput } from '../../../lib/prompts';
 import { refuseToAsk } from '../../../lib/non-interactive';
 import {
   OAUTH_APP_HELP,
+  callbackLines,
   SIGN_IN_PROVIDERS,
   SignInCredentialsError,
   collectSignInCredentials,
@@ -122,8 +123,10 @@ export default class SandboxSignInConnect extends Command {
   private printHelp(provider: SignInProvider, view: SignInProviders): void {
     this.log('');
     for (const line of OAUTH_APP_HELP[provider]) this.log(`   ${line}`);
-    if (view.callbackUrl) {
-      this.log(`\n   Callback URL  ${chalk.bold(view.callbackUrl)}`);
+    const lines = callbackLines(provider, view);
+    if (lines.length) this.log('');
+    for (const [label, url] of lines) {
+      this.log(`   ${label.padEnd(13)} ${chalk.bold(url)}`);
     }
     const current = view.providers.find((p) => p.provider === provider);
     if (current?.connected) {

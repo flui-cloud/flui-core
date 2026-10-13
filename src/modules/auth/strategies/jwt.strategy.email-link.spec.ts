@@ -2,6 +2,8 @@ jest.mock('jwks-rsa', () => ({ passportJwtSecret: jest.fn(() => jest.fn()) }));
 
 import { JwtStrategy } from './jwt.strategy';
 import { IdentityRole } from '../entities/user.entity';
+import { SandboxGuestEnrolmentService } from '../../sandbox/gate/sandbox-guest-enrolment';
+import { loadSandboxConfig } from '../../sandbox/sandbox.config';
 
 type Row = {
   id: string;
@@ -29,8 +31,15 @@ const harness = (rows: Row[], providerSaysVerified: boolean) => {
     },
     profileSync: { isEmailVerified: jest.fn(async () => providerSaysVerified) },
     guestEnrolment: { enrol: jest.fn(async () => true) },
+    isTryToken: (JwtStrategy.prototype as unknown as { isTryToken: unknown })
+      .isTryToken,
   };
-  const resolve = (email: string | undefined, claim?: boolean) =>
+  const resolve = (
+    email: string | undefined,
+    claim?: boolean,
+    clientId: string | null = null,
+    sub = 'sub-new',
+  ) =>
     (
       JwtStrategy.prototype as unknown as {
         resolveLocalUser: (
@@ -38,9 +47,19 @@ const harness = (rows: Row[], providerSaysVerified: boolean) => {
           email: string | undefined,
           role: IdentityRole,
           claim?: boolean,
+          hasProviderRoles?: boolean,
+          clientId?: string | null,
         ) => Promise<Row>;
       }
-    ).resolveLocalUser.call(self, 'sub-new', email, IdentityRole.USER, claim);
+    ).resolveLocalUser.call(
+      self,
+      sub,
+      email,
+      IdentityRole.USER,
+      claim,
+      false,
+      clientId,
+    );
   return { resolve, saved, self };
 };
 
@@ -131,5 +150,150 @@ describe('enrolling a demo guest on first sign-in', () => {
     await resolve('admin@example.com', true);
 
     expect(self.guestEnrolment.enrol).not.toHaveBeenCalled();
+  });
+});
+
+describe('a token of a visitor merged into another account', () => {
+  it('is refused instead of making the visitor again as a new person', async () => {
+    const { resolve, self, saved } = harness([], true);
+    (self.guestEnrolment as Record<string, unknown>).isRetiredVisitor = jest.fn(
+      async () => 'merged',
+    );
+
+    await expect(resolve('visitor-1@visitors.invalid', true)).rejects.toThrow(
+      'This visit is now part of an account',
+    );
+    expect(saved).toHaveLength(0);
+    expect(self.guestEnrolment.enrol).not.toHaveBeenCalled();
+  });
+});
+
+describe('a token of a "try" application', () => {
+  const env = process.env;
+  beforeEach(() => {
+    process.env = {
+      ...env,
+      OIDC_VISITOR_CLIENT_ID: 'try-web',
+      OIDC_VISITOR_CLI_CLIENT_ID: 'try-cli',
+    };
+  });
+  afterEach(() => {
+    process.env = env;
+  });
+
+  it.each(['try-web', 'try-cli'])(
+    'never makes a person when its visitor was swept (%s)',
+    async (client) => {
+      const { resolve, self, saved } = harness([], true);
+
+      await expect(
+        resolve('visitor-1@visitors.invalid', true, client),
+      ).rejects.toMatchObject({
+        response: expect.objectContaining({ code: 'VISITOR_GONE' }),
+      });
+      expect(saved).toHaveLength(0);
+      expect(self.guestEnrolment.enrol).not.toHaveBeenCalled();
+    },
+  );
+
+  it('is refused when the visitor row says it was removed, whatever client', async () => {
+    const { resolve, self, saved } = harness([], true);
+    (self.guestEnrolment as Record<string, unknown>).isRetiredVisitor = jest.fn(
+      async () => 'removed',
+    );
+
+    await expect(
+      resolve('visitor-1@visitors.invalid', true, 'flui-web'),
+    ).rejects.toMatchObject({
+      response: expect.objectContaining({ code: 'VISITOR_GONE' }),
+    });
+    expect(saved).toHaveLength(0);
+  });
+
+  it('keeps working for a visitor that became an account on the same user', async () => {
+    const { resolve, saved } = harness(
+      [
+        {
+          id: 'u-1',
+          email: 'me@example.com',
+          oidcSub: 'idp-v1',
+          role: 'user',
+          isAdmin: false,
+        },
+      ],
+      true,
+    );
+
+    const user = await resolve('me@example.com', true, 'try-web', 'idp-v1');
+
+    expect(user.id).toBe('u-1');
+    expect(saved).toHaveLength(0);
+  });
+
+  it('does not touch a token of the normal application', async () => {
+    const { resolve } = harness([], true);
+    expect((await resolve('new@example.com', true, 'flui-web')).id).toBe('new');
+  });
+});
+
+describe('a token whose identity Flui made for a visitor', () => {
+  const env = process.env;
+  beforeEach(() => {
+    process.env = { ...env };
+    delete process.env.OIDC_VISITOR_CLIENT_ID;
+    delete process.env.OIDC_VISITOR_CLI_CLIENT_ID;
+  });
+  afterEach(() => {
+    process.env = env;
+  });
+
+  const useRealEnrolment = (
+    target: object,
+    visitorRow: Record<string, unknown> | null,
+    loginClientRow: Record<string, unknown> | null = null,
+  ) => {
+    const real = new SandboxGuestEnrolmentService(
+      {} as never,
+      loadSandboxConfig({ SANDBOX_ENABLED: 'true' }),
+      { findOne: jest.fn(async () => visitorRow) } as never,
+      { findOne: jest.fn(async () => loginClientRow) } as never,
+    );
+    Object.assign(target, {
+      isRetiredVisitor: real.isRetiredVisitor.bind(real),
+      isTryClient: real.isTryClient.bind(real),
+    });
+  };
+
+  it('is VISITOR_GONE when its row exists and its person is gone, even before the row was marked removed', async () => {
+    const { resolve, self, saved } = harness([], true);
+    useRealEnrolment(self.guestEnrolment, {
+      idpUserId: 'idp-v9',
+      linkedUserId: null,
+      removedAt: null,
+      upgradedAt: null,
+    });
+
+    await expect(
+      resolve('visitor-9@visitors.invalid', true, 'flui-web', 'idp-v9'),
+    ).rejects.toMatchObject({
+      response: expect.objectContaining({ code: 'VISITOR_GONE' }),
+    });
+    expect(saved).toHaveLength(0);
+    expect(self.guestEnrolment.enrol).not.toHaveBeenCalled();
+  });
+
+  it('is VISITOR_GONE for a try application known only from the stored row, after the entrance was shut', async () => {
+    const { resolve, self, saved } = harness([], true);
+    useRealEnrolment(self.guestEnrolment, null, {
+      webClientId: 'try-web',
+      cliClientId: 'try-cli',
+    });
+
+    await expect(
+      resolve('visitor-9@visitors.invalid', true, 'try-cli'),
+    ).rejects.toMatchObject({
+      response: expect.objectContaining({ code: 'VISITOR_GONE' }),
+    });
+    expect(saved).toHaveLength(0);
   });
 });

@@ -27,6 +27,11 @@ export interface SandboxAllowRule {
   why: string;
   /** Defaults to `full` — the guest's own things, with no difference. */
   level?: SandboxLevel;
+  /**
+   * A write a visitor who has not signed in may make too. Reads are always
+   * theirs; every other write answers that signing in is needed.
+   */
+  visitor?: boolean;
 }
 
 const SEGMENTS = (path: string): string[] =>

@@ -80,6 +80,7 @@ export class SandboxController {
         routes: r.verbs.map((v) => `${v} ${r.pattern}`),
         why: r.why,
         level: r.level ?? 'full',
+        visitor: r.visitor === true,
       })),
       areas: SANDBOX_AREAS,
       quota: {

@@ -10,6 +10,7 @@ import {
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Request, Response } from 'express';
+import { ThrottlerStorage } from '@nestjs/throttler';
 import { createMcpHandler } from '@modelcontextprotocol/server';
 // The one symbol we take from the node adapter, and the reason `hono` appears
 // in the tree at all. `hono` is an *optional* peer of
@@ -32,6 +33,12 @@ import { McpServerFactory } from './services/mcp-server.factory';
 import { credentialFromRequest } from './services/mcp-api.client';
 import { principalFromUser } from '../iam/interfaces/iam.types';
 import { actorFromRequest } from '../auth/utils/actor.util';
+import { countOrRefuse } from '../../common/throttling/per-key-limit';
+import {
+  countsTowardMcpLimit,
+  MCP_THROTTLER,
+  mcpRequestLimit,
+} from './mcp-rate-limit';
 
 /**
  * Streamable-HTTP MCP endpoint, in-process in flui-api.
@@ -58,13 +65,20 @@ export class McpController {
   constructor(
     private readonly factory: McpServerFactory,
     @Inject(POLICY_ENGINE) private readonly policy: PolicyEngine,
+    @Inject(MCP_THROTTLER) private readonly throttler: ThrottlerStorage,
   ) {}
+
+  private readonly limit = mcpRequestLimit();
 
   @Post()
   @ApiOperation({
     summary: 'MCP Streamable HTTP endpoint (JSON-RPC over POST)',
   })
   async handlePost(@Req() req: Request, @Res() res: Response): Promise<void> {
+    const user = req.user as AuthenticatedUser | undefined;
+    if (user?.userId && countsTowardMcpLimit(req.body)) {
+      await countOrRefuse(this.throttler, `user:${user.userId}`, this.limit);
+    }
     await this.dispatch(req, res);
   }
 

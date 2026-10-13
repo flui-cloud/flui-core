@@ -24,6 +24,7 @@ import { ApiKeyEntity } from './entities/api-key.entity';
 import { LocalAuthService } from './services/local-auth.service';
 import { OidcProfileSyncService } from './services/oidc-profile-sync.service';
 import { ApiKeyService } from './services/api-key.service';
+import { SandboxVisitorEntity } from '../sandbox/entities/sandbox-visitor.entity';
 import { ApiKeyStrategy } from './strategies/api-key.strategy';
 import { OidcModule } from '../oidc/oidc.module';
 import { OidcIdentityBranding } from '../oidc/services/oidc-identity-branding.service';
@@ -101,6 +102,7 @@ import { FirewallsModule } from '../infrastructure/firewalls/firewalls.module';
       VNetSubnetEntity,
       IamRoleBindingEntity,
       IamGroupEntity,
+      SandboxVisitorEntity,
     ]),
     SharedInfrastructureModule,
     EncryptionModule,
@@ -171,6 +173,7 @@ import { FirewallsModule } from '../infrastructure/firewalls/firewalls.module';
     // Exported for the sandbox reaper, which takes a person apart too and now
     // shares this service's binding cleanup instead of writing its own.
     UserManagementService,
+    DemoSignInService,
   ],
 })
 export class AuthModule {}

@@ -53,6 +53,13 @@ import {
   PrincipalAccess,
   principalFromUser,
 } from '../../iam/interfaces/iam.types';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
+import { UserEntity } from '../entities/user.entity';
+import {
+  loadVisitorConfig,
+  visitorExpiry,
+} from '../../sandbox/visitors/visitor.config';
 import { CreateApiKeyDto } from '../dto/create-api-key.dto';
 import { UpdateApiKeyApplicationsDto } from '../dto/update-api-key-applications.dto';
 import { UpdateApiKeyProjectsDto } from '../dto/update-api-key-projects.dto';
@@ -68,6 +75,8 @@ export class ApiKeysController {
   constructor(
     private readonly apiKeyService: ApiKeyService,
     @Inject(POLICY_ENGINE) private readonly policy: PolicyEngine,
+    @InjectRepository(UserEntity)
+    private readonly users: Repository<UserEntity>,
   ) {}
 
   @Post('api-keys')
@@ -88,13 +97,23 @@ export class ApiKeysController {
         HttpStatus.NOT_IMPLEMENTED,
       );
     }
+    const access = await this.policy.resolveAccess(this.principalOf(req.user));
+    if (access.isVisitor && dto.unscoped) {
+      throw new ForbiddenException(
+        'A visitor cannot issue an `unscoped` key: name the groups it may use instead.',
+      );
+    }
     const scopes = await this.grantableOrThrow(
       req.user,
       dto.scopes,
       dto.groups,
       dto.unscoped,
     );
-    const expiresAt = dto.expiresAt ? new Date(dto.expiresAt) : undefined;
+    let expiresAt = dto.expiresAt ? new Date(dto.expiresAt) : undefined;
+    if (access.isVisitor) {
+      const until = await this.visitorUntil(req.user.userId);
+      if (!expiresAt || expiresAt > until) expiresAt = until;
+    }
     const { entity, plaintext } = await this.apiKeyService.generateApiKey(
       dto.name,
       req.user.userId,
@@ -104,6 +123,16 @@ export class ApiKeysController {
       dto.projectIds,
     );
     return { ...this.describeKey(entity), key: plaintext };
+  }
+
+  /** A visitor's key ends with the visitor: no later than its own last day. */
+  private async visitorUntil(userId: string): Promise<Date> {
+    const config = loadVisitorConfig();
+    const user = await this.users.findOne({
+      where: { id: userId },
+      select: { id: true, createdAt: true },
+    });
+    return visitorExpiry(user?.createdAt ?? new Date(), config);
   }
 
   /**

@@ -5,95 +5,43 @@ import {
   Injectable,
   Logger,
   OnApplicationBootstrap,
-  ServiceUnavailableException,
 } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 import { withAdvisoryLockWaiting } from '../../common/leadership/advisory-lock';
-import {
-  LoginPolicy,
-  OidcProviderAdminClient,
-  SocialIdentityProviderKind,
-} from '../../oidc/services/oidc-provider-admin.service';
+import { OidcProviderAdminClient } from '../../oidc/services/oidc-provider-admin.service';
 import { describeError } from '../../shared/utils/error.util';
-
-export type SignInProviderKind = SocialIdentityProviderKind;
-
-export type SignInProviderSource = 'flui' | 'environment' | 'identity-provider';
-
-export const SIGN_IN_PROVIDER_KINDS: readonly SignInProviderKind[] = [
-  'github',
-  'google',
-];
-
-const PROVIDERS: Record<
+import {
+  INTENT_CALLBACK_PATH,
+  PROVIDERS,
+  ProviderConnection,
+  ProviderState,
+  SIGN_IN_PROVIDER_KINDS,
   SignInProviderKind,
-  { name: string; envClientId: string; envClientSecret: string }
-> = {
-  github: {
-    name: 'GitHub',
-    envClientId: 'SANDBOX_GITHUB_CLIENT_ID',
-    envClientSecret: 'SANDBOX_GITHUB_CLIENT_SECRET',
-  },
-  google: {
-    name: 'Google',
-    envClientId: 'SANDBOX_GOOGLE_CLIENT_ID',
-    envClientSecret: 'SANDBOX_GOOGLE_CLIENT_SECRET',
-  },
-};
+  SignInProviderRecord,
+  SignInProvidersView,
+  SignInProviderStatus,
+  UpgradeProvider,
+  blankStatus,
+  callbackUrlOf,
+  connectionFrom,
+  currentIdpId,
+  envCredentials,
+  requireConnection,
+  statusOf,
+} from './demo-sign-in.core';
 
-/** The identity provider's own address for the answer GitHub or Google sends back. */
-const CALLBACK_PATH = '/ui/login/login/externalidp/callback';
+export { SIGN_IN_PROVIDER_KINDS } from './demo-sign-in.core';
+export type {
+  SignInProviderKind,
+  SignInProviderSource,
+  SignInProviderStatus,
+  SignInProvidersView,
+  UpgradeProvider,
+} from './demo-sign-in.core';
 
+const UPGRADE_PROVIDERS_TTL_MS = 60_000;
 const RECORD_KEY_PREFIX = 'flui.sandbox.sign-in.';
-
 const LOCK_NAME = 'demo-sign-in';
-
-/**
- * What Flui remembers about a sign-in it connected. Never the secret: that is
- * handed to the identity provider once, which keeps it encrypted, and nothing
- * here can read it back.
- */
-interface SignInProviderRecord {
-  clientId: string | null;
-  idpId: string | null;
-  connectedAt: string | null;
-  connectedBy: string | null;
-  disconnectedAt: string | null;
-}
-
-export interface SignInProviderStatus {
-  provider: SignInProviderKind;
-  name: string;
-  connected: boolean;
-  /**
-   * `flui` once connected through Flui; `environment` while it still runs on
-   * the deprecated variables; `identity-provider` when only the identity
-   * provider still holds one those variables created before they were removed.
-   */
-  source: SignInProviderSource | null;
-  clientId: string | null;
-  connectedAt: string | null;
-  connectedBy: string | null;
-  disconnectedAt: string | null;
-  onSignInPage: boolean;
-}
-
-export interface SignInProvidersView {
-  demo: boolean;
-  callbackUrl: string | null;
-  providers: SignInProviderStatus[];
-}
-
-interface ProviderConnection {
-  pat: string;
-  host: string;
-  issuer: string;
-}
-
-interface ProviderState {
-  policy: LoginPolicy;
-  existing: Array<{ id: string; name: string; type: string }>;
-}
 
 /**
  * On a demo instance anyone may sign in: with an email they register
@@ -112,6 +60,7 @@ interface ProviderState {
 @Injectable()
 export class DemoSignInService implements OnApplicationBootstrap {
   private readonly logger = new Logger(DemoSignInService.name);
+  private upgradeCache: { at: number; value: UpgradeProvider[] } | null = null;
 
   constructor(
     private readonly oidc: OidcProviderAdminClient,
@@ -228,6 +177,7 @@ export class DemoSignInService implements OnApplicationBootstrap {
       return {
         demo,
         callbackUrl: null,
+        intentCallbackUrl: null,
         providers: SIGN_IN_PROVIDER_KINDS.map((kind) => blankStatus(kind)),
       };
     }
@@ -240,7 +190,45 @@ export class DemoSignInService implements OnApplicationBootstrap {
     const providers = SIGN_IN_PROVIDER_KINDS.map((kind, i) =>
       statusOf(kind, records[i], state, env),
     );
-    return { demo, callbackUrl: callbackUrlOf(conn), providers };
+    return {
+      demo,
+      callbackUrl: callbackUrlOf(conn),
+      intentCallbackUrl: callbackUrlOf(conn, INTENT_CALLBACK_PATH),
+      providers,
+    };
+  }
+
+  /**
+   * The GitHub and Google sign-ins a visitor may become an account with: those
+   * connected and offered on the sign-in page. Remembered for a minute, since
+   * every visitor's dialog asks.
+   */
+  async upgradeProviders(
+    env: NodeJS.ProcessEnv = process.env,
+    now = Date.now(),
+  ): Promise<UpgradeProvider[]> {
+    if (env.SANDBOX_ENABLED !== 'true') return [];
+    const conn = connectionFrom(env);
+    if (!conn) return [];
+    const cached = this.upgradeCache;
+    if (cached && now - cached.at < UPGRADE_PROVIDERS_TTL_MS) {
+      return cached.value;
+    }
+    const state = await this.read(conn, 'read the sign-in providers');
+    const records = await this.guard('read the sign-in providers', () =>
+      Promise.all(
+        SIGN_IN_PROVIDER_KINDS.map((kind) => this.readRecord(conn, kind)),
+      ),
+    );
+    const value = SIGN_IN_PROVIDER_KINDS.flatMap((kind, i) => {
+      const status = statusOf(kind, records[i], state, env);
+      const idpId = currentIdpId(kind, records[i], state);
+      return status.connected && status.onSignInPage && idpId
+        ? [{ provider: kind, name: PROVIDERS[kind].name, idpId }]
+        : [];
+    });
+    this.upgradeCache = { at: now, value };
+    return value;
   }
 
   /**
@@ -407,6 +395,7 @@ export class DemoSignInService implements OnApplicationBootstrap {
    * API: two copies starting together would otherwise each add GitHub.
    */
   private serialised<T>(work: () => Promise<T>): Promise<T> {
+    this.upgradeCache = null;
     return withAdvisoryLockWaiting(this.dataSource, LOCK_NAME, work);
   }
 
@@ -468,99 +457,4 @@ export class DemoSignInService implements OnApplicationBootstrap {
       );
     }
   }
-}
-
-function connectionFrom(env: NodeJS.ProcessEnv): ProviderConnection | null {
-  const pat = (env.ZITADEL_SERVICE_ACCOUNT_PAT ?? '').trim();
-  const issuer = (env.OIDC_ISSUER ?? env.ZITADEL_ISSUER ?? '').trim();
-  if (!pat || !issuer) return null;
-  return { pat, host: issuer.replace(/^https?:\/\//, ''), issuer };
-}
-
-function requireConnection(env: NodeJS.ProcessEnv): ProviderConnection {
-  const conn = connectionFrom(env);
-  if (!conn) {
-    throw new ServiceUnavailableException(
-      'The identity provider is not reachable from this API: there is no service account for it.',
-    );
-  }
-  return conn;
-}
-
-function callbackUrlOf(conn: ProviderConnection): string {
-  const base = conn.issuer.endsWith('/')
-    ? conn.issuer.slice(0, -1)
-    : conn.issuer;
-  return `${base}${CALLBACK_PATH}`;
-}
-
-function envCredentials(
-  env: NodeJS.ProcessEnv,
-  kind: SignInProviderKind,
-): { clientId: string; clientSecret: string } | null {
-  const spec = PROVIDERS[kind];
-  const clientId = (env[spec.envClientId] ?? '').trim();
-  const clientSecret = env[spec.envClientSecret] ?? '';
-  return clientId && clientSecret ? { clientId, clientSecret } : null;
-}
-
-function currentIdpId(
-  kind: SignInProviderKind,
-  record: SignInProviderRecord | null,
-  state: ProviderState,
-): string | null {
-  const recorded = record?.idpId;
-  if (recorded && state.existing.some((p) => p.id === recorded)) {
-    return recorded;
-  }
-  return (
-    state.existing.find((p) => p.name === PROVIDERS[kind].name)?.id ?? null
-  );
-}
-
-function blankStatus(kind: SignInProviderKind): SignInProviderStatus {
-  return {
-    provider: kind,
-    name: PROVIDERS[kind].name,
-    connected: false,
-    source: null,
-    clientId: null,
-    connectedAt: null,
-    connectedBy: null,
-    disconnectedAt: null,
-    onSignInPage: false,
-  };
-}
-
-function statusOf(
-  kind: SignInProviderKind,
-  record: SignInProviderRecord | null,
-  state: ProviderState,
-  env: NodeJS.ProcessEnv,
-): SignInProviderStatus {
-  const status = blankStatus(kind);
-  if (record) {
-    const id = record.idpId;
-    const present = !!id && state.existing.some((p) => p.id === id);
-    return {
-      ...status,
-      connected: present,
-      source: present ? 'flui' : null,
-      clientId: record.clientId,
-      connectedAt: record.connectedAt,
-      connectedBy: record.connectedBy,
-      disconnectedAt: record.disconnectedAt,
-      onSignInPage: present && state.policy.idpIds.includes(id),
-    };
-  }
-  const id = state.existing.find((p) => p.name === PROVIDERS[kind].name)?.id;
-  if (!id) return status;
-  const fromEnv = envCredentials(env, kind);
-  return {
-    ...status,
-    connected: true,
-    source: fromEnv ? 'environment' : 'identity-provider',
-    clientId: fromEnv?.clientId ?? null,
-    onSignInPage: state.policy.idpIds.includes(id),
-  };
 }

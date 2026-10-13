@@ -5,15 +5,23 @@ import { ApiKeyService } from '../services/api-key.service';
 import { ApiKeyEntity } from '../entities/api-key.entity';
 import { IdentityRole, UserEntity } from '../entities/user.entity';
 import { SERVICE_IDENTITY } from '../constants/service-identities';
+import { SandboxVisitorEntity } from '../../sandbox/entities/sandbox-visitor.entity';
 
 const USER_ID = '11111111-1111-4111-8111-111111111111';
 const GONE_ID = '22222222-2222-4222-8222-222222222222';
 
 type KeyRow = Partial<ApiKeyEntity> & { name: string; userId: string | null };
 
-function build(record: KeyRow | null, users: Partial<UserEntity>[] = []) {
+type VisitorRow = { userId: string; removedAt: Date | null };
+
+function build(
+  record: KeyRow | null,
+  users: Partial<UserEntity>[] = [],
+  opts: { anyRecord?: KeyRow | null; visitors?: VisitorRow[] } = {},
+) {
   const apiKeys = {
     findValid: jest.fn().mockResolvedValue(record),
+    findAny: jest.fn().mockResolvedValue(opts.anyRecord ?? record),
     touch: jest.fn(),
   } as unknown as ApiKeyService;
   const userRepo = {
@@ -21,10 +29,63 @@ function build(record: KeyRow | null, users: Partial<UserEntity>[] = []) {
       Promise.resolve(users.find((u) => u.id === where.id) ?? null),
     ),
   } as unknown as Repository<UserEntity>;
-  return new ApiKeyStrategy(apiKeys, userRepo);
+  const visitors = {
+    exists: jest.fn(
+      ({ where }: { where: { userId: string; removedAt?: unknown } }) =>
+        Promise.resolve(
+          (opts.visitors ?? []).some(
+            (v) =>
+              v.userId === where.userId &&
+              (where.removedAt === undefined || v.removedAt !== null),
+          ),
+        ),
+    ),
+  } as unknown as Repository<SandboxVisitorEntity>;
+  return new ApiKeyStrategy(apiKeys, userRepo, visitors);
 }
 
 describe('ApiKeyStrategy', () => {
+  describe('a key of a visitor whose visit ended', () => {
+    const goneCode = expect.objectContaining({ code: 'VISITOR_GONE' });
+
+    it('says the visit ended for a key revoked when the visitor was removed', async () => {
+      const strategy = build(null, [], {
+        anyRecord: { name: 'cli', userId: GONE_ID, revoked: true },
+        visitors: [{ userId: GONE_ID, removedAt: new Date() }],
+      });
+      await expect(strategy.validate('flui_x')).rejects.toMatchObject({
+        response: goneCode,
+      });
+    });
+
+    it('says the visit ended when the visitor is gone and its key was never revoked', async () => {
+      const strategy = build(
+        { name: 'cli', userId: GONE_ID, scopes: null },
+        [],
+        {
+          visitors: [{ userId: GONE_ID, removedAt: null }],
+        },
+      );
+      await expect(strategy.validate('flui_x')).rejects.toMatchObject({
+        response: goneCode,
+      });
+    });
+
+    it('stays a plain refusal for a revoked key of a visitor not removed, or of anybody else', async () => {
+      const ofVisitor = build(null, [], {
+        anyRecord: { name: 'cli', userId: GONE_ID, revoked: true },
+        visitors: [{ userId: GONE_ID, removedAt: null }],
+      });
+      await expect(ofVisitor.validate('flui_x')).rejects.toThrow(
+        'Invalid or revoked API key',
+      );
+      const unknown = build(null, [], { anyRecord: null });
+      await expect(unknown.validate('flui_x')).rejects.toThrow(
+        'Invalid or revoked API key',
+      );
+    });
+  });
+
   it('gives the key exactly the identity of the user it belongs to', async () => {
     const strategy = build({ name: 'laptop', userId: USER_ID, scopes: null }, [
       {

@@ -727,6 +727,7 @@ describe('SandboxTenantService and idle guest accounts', () => {
       lastSeenAt: Date | null;
       createdAt: Date;
       isAdmin?: boolean;
+      kind?: string;
     }>,
     holding: string[] = [],
   ) => {
@@ -749,6 +750,7 @@ describe('SandboxTenantService and idle guest accounts', () => {
             email: `${p.id}@example.com`,
             oidcSub: `sub-${p.id}`,
             isAdmin: !!p.isAdmin,
+            kind: p.kind ?? 'person',
           }
         : null;
     };
@@ -790,5 +792,18 @@ describe('SandboxTenantService and idle guest accounts', () => {
       { id: 'never', lastSeenAt: null, createdAt: daysAgo(45) },
     ]);
     expect(await service.deleteIdleGuestAccounts(NOW)).toBe(1);
+  });
+
+  it('leaves a visitor to the visitors’ own sweep', async () => {
+    const { service, calls } = withGuests([
+      {
+        id: 'visitor',
+        lastSeenAt: daysAgo(90),
+        createdAt: daysAgo(99),
+        kind: 'visitor',
+      },
+    ]);
+    expect(await service.deleteIdleGuestAccounts(NOW)).toBe(0);
+    expect(calls.some((c) => c.startsWith('delete-'))).toBe(false);
   });
 });

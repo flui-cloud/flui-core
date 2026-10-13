@@ -50,6 +50,17 @@ describe('OidcProfileSyncService and unverified addresses', () => {
     expect(synced.email).toBe('mario@example.com');
   });
 
+  it('never puts a visitor placeholder back over a real address', async () => {
+    const { service } = build({
+      email: 'visitor-1a2b3c4d@visitors.invalid',
+      emailVerified: true,
+    });
+
+    const synced = await service.syncFromProvider(user('mario@example.com'));
+
+    expect(synced.email).toBe('mario@example.com');
+  });
+
   it('ignores an unverified one, so permissions granted to it do not move', async () => {
     const { service } = build({
       email: 'admin@example.com',

@@ -2,6 +2,7 @@ import { Command, Flags } from '@oclif/core';
 import chalk from 'chalk';
 import { ApiClient } from '../../lib/api-client';
 import { ConfigStorage } from '../../lib/config-storage';
+import { visitorSessionOf } from '../../lib/visitor-session';
 
 interface MePermissions {
   permissions: string[];
@@ -43,12 +44,28 @@ export default class IamWhoami extends Command {
       });
     }
 
+    const visit = visitorSessionOf(configStorage);
+
     if (flags.output === 'json') {
-      console.log(JSON.stringify(me, null, 2));
+      console.log(
+        JSON.stringify(
+          { ...me, visitor: !!visit, visitEnds: visit?.until ?? null },
+          null,
+          2,
+        ),
+      );
       return;
     }
 
     console.log('');
+    if (visit) {
+      const ends = visit.until
+        ? `, until ${new Date(visit.until).toLocaleString()}`
+        : '';
+      console.log(
+        `  ${chalk.yellow('●')} Visitor: looking around read-only${ends}. Sign in to deploy: ${chalk.cyan('flui login')}`,
+      );
+    }
     if (me.isAdmin) {
       console.log(`  ${chalk.green('●')} Admin — all permissions granted.`);
     }

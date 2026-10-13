@@ -128,6 +128,11 @@ export class ApiKeyService {
     return this.apiKeyRepo.save(key);
   }
 
+  /** The row of a key whatever its state, revoked or expired included. */
+  findAny(key: string): Promise<ApiKeyEntity | null> {
+    return this.apiKeyRepo.findOne({ where: { keyHash: hashApiKey(key) } });
+  }
+
   async findValid(key: string): Promise<ApiKeyEntity | null> {
     const record = await this.apiKeyRepo.findOne({
       where: { keyHash: hashApiKey(key) },

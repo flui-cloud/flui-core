@@ -54,6 +54,16 @@ describe('the area a guest holds', () => {
     expect(session.secondsRemaining).toBe(0);
   });
 
+  it('says whether the guest is a visitor who has not signed in', async () => {
+    const visitorReq = {
+      user: { userId: 'v1' },
+      [SANDBOX_GUEST_REQUEST]: { userId: 'v1', visitor: true },
+    } as unknown as Request;
+
+    expect((await build(null).session(visitorReq)).visitor).toBe(true);
+    expect((await build(null).session(req('u1'))).visitor).toBe(false);
+  });
+
   it('answers 404 to anyone who is not a demo guest', async () => {
     await expect(
       build({ expiresAt: new Date() }).session(req('u1', false)),

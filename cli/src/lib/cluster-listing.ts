@@ -1,6 +1,7 @@
 import { CliClusterRepository } from './repositories/cli-cluster.repository';
 import { ConfigStorage } from './config-storage';
-import { ApiClient } from './api-client';
+import { ApiClient, ApiError } from './api-client';
+import { errorCodeOf, visitorErrorMessage } from './visitor-session';
 
 export interface ClusterNodeSummary {
   serverName?: string;
@@ -61,9 +62,18 @@ export async function listClusters(): Promise<ClusterListing> {
     }
     return { clusters: [...byName.values()] };
   } catch (error) {
+    if (isVisitorRefusal(error)) throw error;
     return {
       clusters: local,
       apiError: error instanceof Error ? error.message : String(error),
     };
   }
+}
+
+/** A visit that ended is not a missing cluster: it must reach the person as it is. */
+function isVisitorRefusal(error: unknown): boolean {
+  return (
+    error instanceof ApiError &&
+    visitorErrorMessage(errorCodeOf(error.details)) !== null
+  );
 }

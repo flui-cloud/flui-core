@@ -16,7 +16,10 @@ import { SandboxReserveService } from './services/sandbox-reserve.service';
 import { SandboxSessionDto } from './dto/sandbox-session.dto';
 import { SandboxEntryService } from './services/sandbox-entry.service';
 import { SandboxTenantEntity } from './entities/sandbox-tenant.entity';
-import { SANDBOX_GUEST_REQUEST } from './guards/sandbox-fence.guard';
+import {
+  SANDBOX_GUEST_REQUEST,
+  SandboxGuestRequest,
+} from './guards/sandbox-fence.guard';
 import { SANDBOX_ACTIVITY, SandboxActivity } from './gate/sandbox-activity';
 
 /**
@@ -59,21 +62,25 @@ export class SandboxClaimController {
   })
   @ApiResponse({ status: 200, type: SandboxSessionDto })
   async session(@Req() req: Request): Promise<SandboxSessionDto> {
-    const marked = req as Request & { [SANDBOX_GUEST_REQUEST]?: unknown };
-    if (marked[SANDBOX_GUEST_REQUEST] === undefined) {
+    const guest = (req as Request & SandboxGuestRequest)[SANDBOX_GUEST_REQUEST];
+    if (guest === undefined) {
       throw new NotFoundException('You are not a demo guest');
     }
     const user = req.user as AuthenticatedUser | undefined;
     const tenant = user?.userId
       ? await this.reserve.findActiveForUser(user.userId)
       : null;
-    return this.toSession(tenant);
+    return this.toSession(tenant, guest.visitor === true);
   }
 
-  private toSession(tenant: SandboxTenantEntity | null): SandboxSessionDto {
+  private toSession(
+    tenant: SandboxTenantEntity | null,
+    visitor: boolean,
+  ): SandboxSessionDto {
     const expiresAt = tenant?.expiresAt ?? null;
     return {
       hasArea: tenant !== null,
+      visitor,
       expiresAt: expiresAt ? expiresAt.toISOString() : null,
       secondsRemaining: expiresAt
         ? Math.max(0, Math.floor((expiresAt.getTime() - Date.now()) / 1000))

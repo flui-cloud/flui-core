@@ -10,7 +10,13 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { In, Repository } from 'typeorm';
 import * as crypto from 'node:crypto';
-import { IdentityRole, UserEntity } from '../../auth/entities/user.entity';
+import {
+  IdentityRole,
+  USER_KIND,
+  UserEntity,
+  UserKind,
+} from '../../auth/entities/user.entity';
+import { VISITOR_EMAIL_DOMAIN } from '../../auth/utils/placeholder-email.util';
 import {
   CreateIdentityUserInput,
   CreatedIdentityUser,
@@ -131,11 +137,11 @@ export class OidcIdentityDirectory implements IIdentityDirectory {
 
     const enriched: IdentityUser[] = [];
     for (const u of users) {
-      const grants = await this.oidcProvider.listUserGrants(
-        pat,
-        hostHeader,
-        u.id,
-      );
+      const kind = kindOf(u, localBySub.get(u.id));
+      const grants =
+        kind === USER_KIND.VISITOR
+          ? []
+          : await this.oidcProvider.listUserGrants(pat, hostHeader, u.id);
       const fluiGrant = grants.find((g) => g.projectId === projectId);
       const role = this.deriveRole(
         fluiGrant?.roleKeys,
@@ -150,6 +156,7 @@ export class OidcIdentityDirectory implements IIdentityDirectory {
         state: u.state,
         isBootstrapAdmin: this.isBootstrapAdminEmail(u.email ?? u.userName),
         isSystemUser: isSystemAccount(u),
+        kind,
       });
     }
     return enriched;
@@ -172,6 +179,7 @@ export class OidcIdentityDirectory implements IIdentityDirectory {
       state: u.state,
       isBootstrapAdmin: this.isBootstrapAdminEmail(u.email ?? u.userName),
       isSystemUser: isSystemAccount(u),
+      kind: kindOf(u, local),
     };
   }
 
@@ -452,4 +460,16 @@ export function isSystemAccount(u: {
     !!u.isMachine ||
     (u.userName?.startsWith(FLUI_ADMIN_USERNAME_PREFIX) ?? false)
   );
+}
+
+/** A visitor made ahead of time has no local row yet; its address says what it is. */
+function kindOf(
+  u: { email?: string; userName?: string },
+  local: UserEntity | null | undefined,
+): UserKind {
+  if (local) return local.kind;
+  const address = (u.email ?? u.userName ?? '').toLowerCase();
+  return address.endsWith(`@${VISITOR_EMAIL_DOMAIN}`)
+    ? USER_KIND.VISITOR
+    : USER_KIND.PERSON;
 }
