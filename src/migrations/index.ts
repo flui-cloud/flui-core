@@ -93,6 +93,7 @@ import { SandboxVisitorUpgrades1790000000036 } from './1790000000036-SandboxVisi
 import { SandboxVisitorRecords1790000000037 } from './1790000000037-SandboxVisitorRecords';
 import { SandboxVisitorTryClients1790000000038 } from './1790000000038-SandboxVisitorTryClients';
 import { IdentityEmail1790000000039 } from './1790000000039-IdentityEmail';
+import { IdentityConsoleState1790000000040 } from './1790000000040-IdentityConsoleState';
 import { BackfillArtifactApplicationId1787500000000 } from './1787500000000-BackfillArtifactApplicationId';
 import { WireGuardHubKeySealed1790000000000 } from './1790000000000-WireGuardHubKeySealed';
 import { RecoverNodeAccessOperation1790000000001 } from './1790000000001-RecoverNodeAccessOperation';
@@ -199,4 +200,5 @@ export const migrations = [
   SandboxVisitorRecords1790000000037,
   SandboxVisitorTryClients1790000000038,
   IdentityEmail1790000000039,
+  IdentityConsoleState1790000000040,
 ];

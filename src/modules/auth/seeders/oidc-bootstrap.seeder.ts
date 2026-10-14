@@ -39,6 +39,7 @@ export class OidcBootstrapSeeder implements OnApplicationBootstrap {
       this.logger.debug(`OIDC_AUDIENCE already set — skipping OIDC bootstrap`);
       await this.ensureCliApp();
       await this.reconcileProjectRoles();
+      await this.reconcileBranding();
       return;
     }
 
@@ -93,6 +94,15 @@ export class OidcBootstrapSeeder implements OnApplicationBootstrap {
       this.logger.warn(
         `Could not reconcile provider project roles: ${message}`,
       );
+    }
+  }
+
+  private async reconcileBranding(): Promise<void> {
+    try {
+      await this.oidcBootstrapService.reconcileBranding();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      this.logger.warn(`Could not reconcile identity branding: ${message}`);
     }
   }
 

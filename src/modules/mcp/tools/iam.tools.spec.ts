@@ -249,7 +249,21 @@ describe('the access tools', () => {
         access_grant_add: MCP_SCOPE.IAM_WRITE,
         access_grant_remove: MCP_SCOPE.IAM_WRITE,
         audit_event_list: MCP_SCOPE.IAM_READ,
+        identity_console_status: MCP_SCOPE.IAM_READ,
       });
     });
+  });
+
+  it('reads the identity console state and offers no way to open or close it', async () => {
+    const get = jest.fn(async () => ({ state: 'closed' }));
+    const tool = IAM_TOOLS.find((t) => t.name === 'identity_console_status');
+    expect(tool?.routes).toEqual(['GET /identity/console']);
+    await tool?.run({}, { api: { get } } as never);
+    expect(get).toHaveBeenCalledWith('/identity/console');
+    expect(
+      IAM_TOOLS.flatMap((t) => t.routes ?? []).filter((r) =>
+        r.includes('/identity/console/'),
+      ),
+    ).toEqual([]);
   });
 });

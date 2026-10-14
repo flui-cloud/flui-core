@@ -37,9 +37,10 @@ describe('IdentityEmail1790000000039', () => {
     ]);
   });
 
-  it('runs last, after the visitor try clients', () => {
-    expect(migrations[migrations.length - 1]).toBe(IdentityEmail1790000000039);
-    expect(migrations[migrations.length - 2].name).toBe(
+  it('runs after the visitor try clients', () => {
+    const at = migrations.indexOf(IdentityEmail1790000000039);
+    expect(at).toBeGreaterThan(0);
+    expect(migrations[at - 1].name).toBe(
       'SandboxVisitorTryClients1790000000038',
     );
   });

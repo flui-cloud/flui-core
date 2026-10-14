@@ -8,6 +8,10 @@ import { CliControlClusterService } from '../../services/cli-control-cluster.ser
 import { EncryptionService } from 'src/modules/shared/encryption/services/encryption.service';
 import { EncryptionKeyUnavailableError } from 'src/modules/shared/encryption/platform-cipher';
 import { ClusterStatus } from 'src/modules/infrastructure/clusters/entities/cluster.entity';
+import {
+  identityConsoleHint,
+  identityConsoleHintLine,
+} from '../../lib/identity-console';
 
 export default class EnvCredentials extends Command {
   static readonly description =
@@ -167,7 +171,7 @@ export default class EnvCredentials extends Command {
             },
             ...(zitadel && {
               zitadel: {
-                console: `https://${zitadel.domain}/ui/console`,
+                console: identityConsoleHint(zitadel.domain),
                 issuer: `https://${zitadel.domain}`,
                 audience: zitadel.audience || '(configure after first setup)',
                 adminUsername: zitadel.adminUsername,
@@ -232,7 +236,7 @@ export default class EnvCredentials extends Command {
     if (zitadel) {
       console.log(`\n   ${chalk.bold('Zitadel (Identity Provider):')}`);
       console.log(
-        `     ${chalk.dim('Console:')}        https://${zitadel.domain}/ui/console`,
+        `     ${chalk.dim('Console:')}        ${identityConsoleHintLine()}`,
       );
       console.log(
         `     ${chalk.dim('Admin Username:')} ${zitadel.adminUsername}`,
@@ -244,7 +248,7 @@ export default class EnvCredentials extends Command {
         `     ${chalk.dim('Masterkey:')}      ${chalk.yellow(zitadel.masterkey || 'N/A')}`,
       );
       console.log(
-        `     ${chalk.dim('Audience (API):')} ${chalk.dim(zitadel.audience || '(set after first Zitadel console setup)')}`,
+        `     ${chalk.dim('Audience (API):')} ${chalk.dim(zitadel.audience || '(set after the identity provider bootstrap)')}`,
       );
       console.log(`     ${chalk.red('⚠️  Sensitive — IdP root admin')}`);
     }

@@ -261,7 +261,14 @@ const DATA_PATH =
   /[/-](logs?|console|connection-info|secrets\/read|dump|download|restore|shell|db\/query|query)\b/;
 
 /** `VERB /path` → why a route matching the pattern is not a data door. */
-const EXEMPT: Record<string, string> = {};
+const EXEMPT: Record<string, string> = {
+  'GET /identity/console':
+    "The identity provider's administration console, not an application's data: reads whether its path is refused.",
+  'POST /identity/console/open':
+    "Opens the identity provider's console for a while; gated on iam:manage-users and audited.",
+  'POST /identity/console/close':
+    "Closes the identity provider's console; gated on iam:manage-users and audited.",
+};
 
 const EXEMPT_DIRS = [
   // Covered by access.controller.authz.spec.ts and terminal-target.resolver.spec.ts.

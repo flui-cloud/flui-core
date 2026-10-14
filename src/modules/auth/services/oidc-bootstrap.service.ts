@@ -525,6 +525,17 @@ export class OidcBootstrapService {
     return { created };
   }
 
+  /** Re-applies the identity provider branding when its version hash no longer matches the one recorded there. */
+  async reconcileBranding(): Promise<boolean> {
+    if ((process.env.AUTH_MODE ?? '').toLowerCase() !== 'oidc') return false;
+    const ctx = await this.resolveProviderContext();
+    if (!ctx) return false;
+    return this.oidcBranding.ensureBranding(false, {
+      pat: ctx.pat,
+      hostHeader: ctx.providerDomain,
+    });
+  }
+
   private async ensureOidcApp(
     pat: string,
     hostHeader: string,

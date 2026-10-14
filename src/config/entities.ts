@@ -79,6 +79,7 @@ import { MailEventEntity } from '../modules/mail/entities/mail-event.entity';
 import { MailConnectionEntity } from '../modules/mail/entities/mail-connection.entity';
 import { IdentityEmailProviderEntity } from '../modules/mail/entities/identity-email-provider.entity';
 import { IdentityEmailDeliveryEntity } from '../modules/mail/entities/identity-email-delivery.entity';
+import { IdentityConsoleStateEntity } from '../modules/identity-console/entities/identity-console-state.entity';
 import { ActionProposalEntity } from '../modules/action-cycle/entities/action-proposal.entity';
 import { AgentConcessionEntity } from '../modules/action-cycle/entities/agent-concession.entity';
 import { OperatingContextEntryEntity } from '../modules/operating-context/entities/operating-context-entry.entity';
@@ -172,6 +173,7 @@ export const entities = [
   MailConnectionEntity,
   IdentityEmailProviderEntity,
   IdentityEmailDeliveryEntity,
+  IdentityConsoleStateEntity,
   SandboxTenantEntity,
   SandboxWaitlistEntity,
   SandboxVisitorEntity,

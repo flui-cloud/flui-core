@@ -56,6 +56,7 @@ describe('PhysicalDbMigration1790000000028', () => {
       'SandboxVisitorRecords1790000000037',
       'SandboxVisitorTryClients1790000000038',
       'IdentityEmail1790000000039',
+      'IdentityConsoleState1790000000040',
     ]);
     expect(migrations[at - 1].name).toMatch(/179000000002[67]$/);
   });

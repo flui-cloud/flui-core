@@ -114,7 +114,9 @@ export interface OidcLabelPolicy {
   backgroundColor?: string;
   backgroundColorDark?: string;
   warnColor?: string;
+  warnColorDark?: string;
   fontColor?: string;
+  fontColorDark?: string;
   logoUrl?: string;
   logoUrlDark?: string;
   iconUrl?: string;
@@ -129,12 +131,19 @@ export type BrandingAssetKind =
   | 'icon-light'
   | 'icon-dark';
 
-const BRANDING_ASSET_PATHS: Record<BrandingAssetKind, string> = {
+// Zitadel v4.15.0 internal/api/assets/generator/asset.yaml: Org label policy, `/dark` for HasDarkMode.
+export const BRANDING_ASSET_PATHS: Record<BrandingAssetKind, string> = {
   'logo-light': '/assets/v1/org/policy/label/logo',
   'logo-dark': '/assets/v1/org/policy/label/logo/dark',
   'icon-light': '/assets/v1/org/policy/label/icon',
   'icon-dark': '/assets/v1/org/policy/label/icon/dark',
 };
+
+function isUnchangedPolicyError(err: unknown): boolean {
+  const data = (err as { response?: { data?: { message?: string } } }).response
+    ?.data;
+  return /NotChanged|not (been )?changed|Org-8nfSr/i.test(data?.message ?? '');
+}
 
 /** A non-human identity on the provider — one agent, one login of its own. */
 export interface OidcMachineUser {
@@ -1086,7 +1095,9 @@ export class OidcProviderAdminClient {
         backgroundColor: p.backgroundColor,
         backgroundColorDark: p.backgroundColorDark,
         warnColor: p.warnColor,
+        warnColorDark: p.warnColorDark,
         fontColor: p.fontColor,
+        fontColorDark: p.fontColorDark,
         logoUrl: p.logoUrl,
         logoUrlDark: p.logoUrlDark,
         iconUrl: p.iconUrl,
@@ -1111,16 +1122,22 @@ export class OidcProviderAdminClient {
       backgroundColor: policy.backgroundColor,
       backgroundColorDark: policy.backgroundColorDark,
       warnColor: policy.warnColor,
+      warnColorDark: policy.warnColorDark,
       fontColor: policy.fontColor,
+      fontColorDark: policy.fontColorDark,
       hideLoginNameSuffix: policy.hideLoginNameSuffix ?? false,
       disableWatermark: policy.disableWatermark ?? true,
     };
     const headers = this.headers(pat, hostHeader);
     const url = `${resolveProviderBaseUrl()}/management/v1/policies/label`;
-    if (!current || current.isDefault) {
-      await firstValueFrom(this.httpService.post(url, body, { headers }));
-    } else {
-      await firstValueFrom(this.httpService.put(url, body, { headers }));
+    try {
+      if (!current || current.isDefault) {
+        await firstValueFrom(this.httpService.post(url, body, { headers }));
+      } else {
+        await firstValueFrom(this.httpService.put(url, body, { headers }));
+      }
+    } catch (err) {
+      if (!isUnchangedPolicyError(err)) throw err;
     }
   }
 

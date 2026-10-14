@@ -29,6 +29,13 @@ const ASSET_FILES: Array<{ kind: BrandingAssetKind; fileName: string }> = [
   { kind: 'icon-dark', fileName: 'icon-dark.png' },
 ];
 
+interface BrandingAsset {
+  kind: BrandingAssetKind;
+  fileName: string;
+  bytes: Buffer;
+  contentType: string;
+}
+
 @Injectable()
 export class OidcIdentityBranding implements IIdentityBranding {
   private readonly logger = new Logger(OidcIdentityBranding.name);
@@ -48,28 +55,8 @@ export class OidcIdentityBranding implements IIdentityBranding {
       overrides?.pat && overrides?.hostHeader
         ? { pat: overrides.pat, hostHeader: overrides.hostHeader }
         : await this.connection();
-    const dir = this.assetDir();
     const colors = this.colors();
-
-    const present: Array<{
-      kind: BrandingAssetKind;
-      fileName: string;
-      bytes: Buffer;
-      contentType: string;
-    }> = [];
-    for (const a of ASSET_FILES) {
-      const full = path.join(dir, a.fileName);
-      if (!fs.existsSync(full)) {
-        this.logger.warn(`Branding asset missing: ${full} — skipping`);
-        continue;
-      }
-      present.push({
-        kind: a.kind,
-        fileName: a.fileName,
-        bytes: fs.readFileSync(full),
-        contentType: 'image/png',
-      });
-    }
+    const present = this.readAssets();
 
     const version = this.computeVersion(present, colors);
 
@@ -87,29 +74,37 @@ export class OidcIdentityBranding implements IIdentityBranding {
       }
     }
 
-    for (const asset of present) {
-      try {
-        await this.oidcProvider.uploadBrandingAsset(
-          pat,
-          hostHeader,
-          asset.kind,
-          asset.bytes,
-          asset.fileName,
-          asset.contentType,
-        );
-        this.logger.log(`Uploaded branding asset: ${asset.kind}`);
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        this.logger.error(`Failed to upload ${asset.kind}: ${message}`);
-      }
-    }
+    // The provider refuses an asset (404 Org.LabelPolicy.NotFound) until the organisation has a custom label policy.
+    const steps: Array<[string, () => Promise<void>]> = [
+      [
+        'label policy',
+        () =>
+          this.oidcProvider.upsertCustomLabelPolicy(pat, hostHeader, colors),
+      ],
+      ...present.map((asset): [string, () => Promise<void>] => [
+        asset.kind,
+        () =>
+          this.oidcProvider.uploadBrandingAsset(
+            pat,
+            hostHeader,
+            asset.kind,
+            asset.bytes,
+            asset.fileName,
+            asset.contentType,
+          ),
+      ]),
+      [
+        'policy activation',
+        () => this.oidcProvider.activateLabelPolicy(pat, hostHeader),
+      ],
+    ];
+    const failed = await this.runSteps(steps);
 
-    try {
-      await this.oidcProvider.upsertCustomLabelPolicy(pat, hostHeader, colors);
-      await this.oidcProvider.activateLabelPolicy(pat, hostHeader);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      this.logger.error(`Failed to apply/activate label policy: ${message}`);
+    if (failed.length) {
+      this.logger.warn(
+        `Branding incomplete (${failed.join(', ')}); version not recorded, the next pass retries`,
+      );
+      return false;
     }
 
     try {
@@ -130,6 +125,42 @@ export class OidcIdentityBranding implements IIdentityBranding {
     return true;
   }
 
+  private readAssets(): BrandingAsset[] {
+    const dir = this.assetDir();
+    const present: BrandingAsset[] = [];
+    for (const a of ASSET_FILES) {
+      const full = path.join(dir, a.fileName);
+      if (!fs.existsSync(full)) {
+        this.logger.warn(`Branding asset missing: ${full} — skipping`);
+        continue;
+      }
+      present.push({
+        kind: a.kind,
+        fileName: a.fileName,
+        bytes: fs.readFileSync(full),
+        contentType: 'image/png',
+      });
+    }
+    return present;
+  }
+
+  private async runSteps(
+    steps: Array<[string, () => Promise<void>]>,
+  ): Promise<string[]> {
+    const failed: string[] = [];
+    for (const [name, run] of steps) {
+      try {
+        await run();
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        this.logger.error(`Branding step "${name}" failed: ${message}`);
+        failed.push(name);
+        if (name === 'label policy') break;
+      }
+    }
+    return failed;
+  }
+
   private assetDir(): string {
     return (
       this.config.get<string>('FLUI_BRANDING_ASSET_DIR') ||
@@ -138,21 +169,18 @@ export class OidcIdentityBranding implements IIdentityBranding {
   }
 
   private colors() {
+    const color = (key: string, fallback: string) =>
+      this.config.get<string>(key) || fallback;
     return {
-      primaryColor:
-        this.config.get<string>('FLUI_BRANDING_PRIMARY_COLOR') || '#5B6CFF',
-      primaryColorDark:
-        this.config.get<string>('FLUI_BRANDING_PRIMARY_COLOR_DARK') ||
-        '#7C8BFF',
-      backgroundColor:
-        this.config.get<string>('FLUI_BRANDING_BG_COLOR') || '#FAFAFA',
-      backgroundColorDark:
-        this.config.get<string>('FLUI_BRANDING_BG_COLOR_DARK') || '#1F1F22',
-      warnColor:
-        this.config.get<string>('FLUI_BRANDING_WARN_COLOR') || '#CD3D56',
-      fontColor:
-        this.config.get<string>('FLUI_BRANDING_FONT_COLOR') || '#1D1D1F',
-      hideLoginNameSuffix: false,
+      primaryColor: color('FLUI_BRANDING_PRIMARY_COLOR', '#225AF1'),
+      primaryColorDark: color('FLUI_BRANDING_PRIMARY_COLOR_DARK', '#3369FF'),
+      backgroundColor: color('FLUI_BRANDING_BG_COLOR', '#F6F7F9'),
+      backgroundColorDark: color('FLUI_BRANDING_BG_COLOR_DARK', '#080B11'),
+      warnColor: color('FLUI_BRANDING_WARN_COLOR', '#DC2828'),
+      warnColorDark: color('FLUI_BRANDING_WARN_COLOR_DARK', '#F04242'),
+      fontColor: color('FLUI_BRANDING_FONT_COLOR', '#191B1F'),
+      fontColorDark: color('FLUI_BRANDING_FONT_COLOR_DARK', '#E5E9F0'),
+      hideLoginNameSuffix: true,
       disableWatermark: true,
     };
   }
@@ -177,6 +205,14 @@ export class OidcIdentityBranding implements IIdentityBranding {
         'OIDC provider PAT not available — bootstrap may not have completed',
       );
     }
+    const issuerHost = (
+      process.env.OIDC_ISSUER ||
+      process.env.ZITADEL_ISSUER ||
+      ''
+    )
+      .replace(/^https?:\/\//, '')
+      .split('/')[0];
+    if (issuerHost) return { pat, hostHeader: issuerHost };
     const cluster = await this.clusterRepo.findOne({
       where: {
         clusterType: In([ClusterType.CONTROL, ClusterType.OBSERVABILITY]),

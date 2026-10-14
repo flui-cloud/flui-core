@@ -43,6 +43,7 @@ describe('MigrationMeasures1790000000029', () => {
       'SandboxVisitorRecords1790000000037',
       'SandboxVisitorTryClients1790000000038',
       'IdentityEmail1790000000039',
+      'IdentityConsoleState1790000000040',
     ]);
   });
 });

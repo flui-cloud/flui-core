@@ -300,4 +300,13 @@ export const IAM_TOOLS: ToolDef[] = [
       return ctx.api.get(`/audit/events${suffix}`);
     },
   }),
+  defineTool({
+    name: 'identity_console_status',
+    routes: ['GET /identity/console'],
+    description:
+      "Whether the identity provider's own administration console is reachable from outside. `closed` (the default) means its path redirects to the dashboard (`redirectTo`), or answers 403 when no dashboard address is known, while sign-in keeps working; `open` carries `openUntil`, `openedBy` and `reason`, and it closes by itself at `openUntil`. `enforced: false` means the cluster does not match yet (see `lastError`; retried every minute). Changes nothing. Opening it is a person's decision and is not available to agents: point them to `flui identity console open` or the dashboard.",
+    inputSchema: {},
+    scope: MCP_SCOPE.IAM_READ,
+    run: (_args, ctx) => ctx.api.get('/identity/console'),
+  }),
 ];
