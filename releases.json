@@ -2,6 +2,36 @@
   "schemaVersion": 2,
   "releases": [
     {
+      "version": "0.13.0-rc.13",
+      "publishedAt": "2026-10-14T21:05:30.085Z",
+      "bootstrapRef": "46d6006",
+      "images": {
+        "fluiApi": "0.13.0-rc.13",
+        "fluiWeb": "0.13.0-rc.13",
+        "fluiAuthz": "0.7.0"
+      },
+      "notes": [
+        "Demo visitors look around without signing up, connect their agent read-only, and keep their visit when they sign in to deploy.",
+        "Sign-in emails from the identity provider (verification, password reset) are sent through Flui's transactional mail.",
+        "The identity provider console is closed by default; an owner opens it for a limited time with flui identity console open.",
+        "Account page in Flui: profile, password, second factor and linked sign-ins, without the identity provider console.",
+        "Demo sign-in with GitHub and Google, and the guided GitHub App under an organisation.",
+        "The Flui registry can be switched on after install.",
+        "Platform addresses can be chosen, renamed and checked before they are created.",
+        "Networks are created in the requested zone, and clusters refuse a network that cannot reach their region."
+      ],
+      "migrations": 8,
+      "requiresBootstrap": false,
+      "k3s": {
+        "version": "v1.35.4+k3s1"
+      },
+      "systemComponents": {
+        "certManager": "v1.17.1",
+        "systemUpgradeController": "v0.20.2"
+      },
+      "manifestSets": []
+    },
+    {
       "version": "0.13.0-rc.12",
       "publishedAt": "2026-10-12T18:32:20.854Z",
       "bootstrapRef": "46d6006",
