@@ -450,9 +450,19 @@ describe('destructive routes the ceiling cannot see', () => {
     // answering 404 for anybody else's row. The sandbox fence opens it to a
     // guest for the same reason it opens `DELETE /auth/api-keys/:id`.
     'DELETE /agent/concessions/:id',
+    // The sixth to ninth, and the same rule again: the caller's own account at
+    // the identity provider. None of these takes a user id; the account is read
+    // from the credential, so there is nobody else's row for a permission to
+    // narrow away from. Only a person signed in interactively may make them:
+    // the controller refuses agent and API-key credentials, and each one also
+    // asks for the current password.
+    'DELETE /account/totp',
+    'DELETE /account/passkeys/:id',
+    'DELETE /account/security-keys/:id',
+    'DELETE /account/links/:idpId/:externalUserId',
   ];
 
-  it('leaves only the five named here with no permission at all', () => {
+  it('leaves only the nine named here with no permission at all', () => {
     const ungated = invisible
       .filter((r) => !r.section)
       .map((r) => `${r.method} ${r.path}`)
@@ -463,6 +473,7 @@ describe('destructive routes the ceiling cannot see', () => {
   it('names the files they live in, so a new one shows up as a new file', () => {
     const files = [...new Set(invisible.map((r) => r.file))].sort();
     expect(files).toEqual([
+      'modules/account/account.controller.ts',
       'modules/action-cycle/action-cycle.controller.ts',
       'modules/auth/controllers/api-keys.controller.ts',
       'modules/inference/controllers/inference.controller.ts',

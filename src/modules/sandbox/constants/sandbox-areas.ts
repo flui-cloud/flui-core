@@ -139,6 +139,12 @@ export const SANDBOX_AREAS: SandboxArea[] = [
     why: 'Hand an agent a key of your own and let it deploy and operate your applications, with the same limits you have here. Point it at POST /api/v1/mcp on this instance with an `Authorization: Bearer <your key>` header, and switch it off again by revoking the key.',
   },
   {
+    key: 'account',
+    area: 'Your own account',
+    level: 'full',
+    why: 'Change your name and password, set up an authenticator app and sign out of other sessions. The GitHub or Google sign-in you entered with stays linked for the whole trial.',
+  },
+  {
     key: 'platform-config',
     area: 'Cluster-wide variables and secrets',
     level: 'stand-in',

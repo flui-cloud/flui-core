@@ -3,6 +3,7 @@ import { APP_GUARD } from '@nestjs/core';
 import { migrations } from './migrations';
 import { AccessModule } from './modules/access/access.module';
 import { AuditModule } from './modules/audit/audit.module';
+import { IdentityConsoleModule } from './modules/identity-console/identity-console.module';
 import { AdoptionModule } from './modules/adoption/adoption.module';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { entities } from './config/entities';
@@ -33,6 +34,7 @@ import { AppBuildsModule } from './modules/app-builds/app-builds.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { JwtAuthGuard } from './modules/auth/guards/jwt-auth.guard';
 import { IamModule } from './modules/iam/iam.module';
+import { AccountModule } from './modules/account/account.module';
 import { SandboxModule } from './modules/sandbox/sandbox.module';
 import { SandboxFenceGuard } from './modules/sandbox/guards/sandbox-fence.guard';
 import { SandboxGateModule } from './modules/sandbox/gate/sandbox-slot-gate';
@@ -131,6 +133,7 @@ import { AttachedServicesModule } from './modules/attached-services/attached-ser
     ManagementModule,
     InferenceModule,
     MailModule,
+    IdentityConsoleModule,
     AssistantModule,
     McpModule,
     InfrastructureModule,
@@ -162,6 +165,7 @@ import { AttachedServicesModule } from './modules/attached-services/attached-ser
     TopologyModule,
     DatabaseConsoleModule,
     IamModule,
+    AccountModule,
     ProjectsModule,
     SandboxModule,
     // The global fence records guest activity through it.

@@ -177,6 +177,12 @@
       "dns": {
         "description": "DNS zones and dual-provider redundancy"
       },
+      "identity": {
+        "description": "The identity provider behind sign-in"
+      },
+      "identity:console": {
+        "description": "The identity provider's own console: closed by default, opened for a limited, audited time"
+      },
       "dns:zone": {
         "description": "DNS zones: inspect them, and bind one to a cluster"
       },

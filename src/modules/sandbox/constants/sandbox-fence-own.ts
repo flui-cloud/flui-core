@@ -2,6 +2,57 @@ import { HttpVerb, SandboxAllowRule } from './sandbox-fence-core';
 import { SANDBOX_ALLOW_GIT } from './sandbox-fence-git';
 
 /**
+ * The guest's own account at the identity provider: its name, password and
+ * second factors, which nobody but the guest can reach because no route
+ * takes a user id. None of it is open to a visitor, who has no account yet; the
+ * handler refuses a visitor's reads as well. Removing a linked GitHub or Google
+ * sign-in is left out on purpose: a guest keeps the sign-in it entered with,
+ * which the visitor upgrade and merge are built on.
+ */
+const SANDBOX_ALLOW_ACCOUNT: SandboxAllowRule[] = [
+  {
+    verbs: ['GET'],
+    pattern: '/account',
+    why: 'See your own profile and how your account signs in.',
+  },
+  {
+    verbs: ['PUT'],
+    pattern: '/account/profile',
+    why: 'Change your own name.',
+  },
+  {
+    verbs: ['GET'],
+    pattern: '/account/password-policy',
+    why: 'Read what a new password must contain.',
+  },
+  {
+    verbs: ['POST'],
+    pattern: '/account/password',
+    why: 'Change your own password.',
+  },
+  {
+    verbs: ['POST', 'DELETE'],
+    pattern: '/account/totp',
+    why: 'Set up or remove your own authenticator app.',
+  },
+  {
+    verbs: ['POST'],
+    pattern: '/account/totp/verify',
+    why: 'Confirm your own authenticator app.',
+  },
+  {
+    verbs: ['DELETE'],
+    pattern: '/account/passkeys/:id',
+    why: 'Remove one of your own passkeys.',
+  },
+  {
+    verbs: ['DELETE'],
+    pattern: '/account/security-keys/:id',
+    why: 'Remove one of your own security keys.',
+  },
+];
+
+/**
  * What is the guest's own, with no difference from a paying instance.
  *
  * Their applications and databases, the catalogue they install from, the logs
@@ -426,5 +477,6 @@ export const SANDBOX_ALLOW_OWN: SandboxAllowRule[] = [
     pattern: '/agent/activity/:id',
     why: 'Read one call your agent made, and the operation it started.',
   },
+  ...SANDBOX_ALLOW_ACCOUNT,
   ...SANDBOX_ALLOW_GIT,
 ];
