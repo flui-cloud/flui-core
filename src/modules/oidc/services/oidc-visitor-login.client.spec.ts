@@ -143,6 +143,62 @@ describe('OidcVisitorLoginClient', () => {
     });
   });
 
+  describe('a user the provider has not finished writing', () => {
+    const notFound = Object.assign(new Error('not found'), {
+      response: { status: 404 },
+    });
+    const withPosts = (answers: unknown[]) => {
+      const post = jest.fn(() => {
+        const next = answers.shift();
+        return next instanceof Error
+          ? throwError(() => next)
+          : of({ data: next });
+      });
+      return {
+        client: new OidcVisitorLoginClient({ post } as never),
+        post,
+      };
+    };
+
+    beforeEach(() => jest.useFakeTimers());
+    afterEach(() => jest.useRealTimers());
+
+    it('waits and opens the session once the user is readable', async () => {
+      const { client, post } = withPosts([
+        notFound,
+        notFound,
+        { sessionId: 's', sessionToken: 't' },
+      ]);
+      const opened = client.createSession('lpat', 'auth.test', 'u1', 'pw');
+      await jest.advanceTimersByTimeAsync(1000);
+      await expect(opened).resolves.toEqual({
+        sessionId: 's',
+        sessionToken: 't',
+      });
+      expect(post).toHaveBeenCalledTimes(3);
+    });
+
+    it('gives up after the last wait', async () => {
+      const { client, post } = withPosts(Array(6).fill(notFound));
+      const opened = client.createSession('lpat', 'auth.test', 'u1', 'pw');
+      const settled = expect(opened).rejects.toBe(notFound);
+      await jest.advanceTimersByTimeAsync(8000);
+      await settled;
+      expect(post).toHaveBeenCalledTimes(6);
+    });
+
+    it('does not wait on any other refusal', async () => {
+      const refused = Object.assign(new Error('no'), {
+        response: { status: 400 },
+      });
+      const { client, post } = withPosts([refused]);
+      await expect(
+        client.createSession('lpat', 'auth.test', 'u1', 'pw'),
+      ).rejects.toBe(refused);
+      expect(post).toHaveBeenCalledTimes(1);
+    });
+  });
+
   it('opens a session with the user and password checks', async () => {
     const { client, calls } = build({
       'post /v2/sessions': { sessionId: 's', sessionToken: 't' },

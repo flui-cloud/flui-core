@@ -105,17 +105,31 @@ export class OidcVisitorLoginClient {
     userId: string,
     password: string,
   ): Promise<VisitorSession> {
-    const resp = await firstValueFrom(
-      this.http.post(
-        this.url('/v2/sessions'),
-        { checks: { user: { userId }, password: { password } } },
-        { headers: this.headers(pat, host) },
-      ),
-    );
-    return {
-      sessionId: resp.data.sessionId,
-      sessionToken: resp.data.sessionToken,
-    };
+    for (let attempt = 0; ; attempt++) {
+      try {
+        const resp = await firstValueFrom(
+          this.http.post(
+            this.url('/v2/sessions'),
+            { checks: { user: { userId }, password: { password } } },
+            { headers: this.headers(pat, host) },
+          ),
+        );
+        return {
+          sessionId: resp.data.sessionId,
+          sessionToken: resp.data.sessionToken,
+        };
+      } catch (error) {
+        // A user created a moment ago can still be missing from the
+        // provider's read side: the session check answers 404 until it lands.
+        if (
+          statusOf(error) !== 404 ||
+          attempt >= SESSION_RETRY_DELAYS_MS.length
+        ) {
+          throw error;
+        }
+        await sleep(SESSION_RETRY_DELAYS_MS[attempt]);
+      }
+    }
   }
 
   async getAuthRequest(
@@ -326,6 +340,11 @@ function differs(current: ExistingOidcConfig, wanted: TryAppSpec): boolean {
     current.loginVersion?.loginV2?.baseUri !== wanted.loginBaseUri
   );
 }
+
+const SESSION_RETRY_DELAYS_MS = [250, 500, 1000, 2000, 4000];
+
+const sleep = (ms: number) =>
+  new Promise<void>((resolve) => setTimeout(resolve, ms));
 
 export function statusOf(error: unknown): number | undefined {
   return (error as { response?: { status?: number } })?.response?.status;
