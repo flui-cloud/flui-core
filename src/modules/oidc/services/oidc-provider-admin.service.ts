@@ -235,15 +235,29 @@ export class OidcProviderAdminClient {
     hostHeader: string,
     current: Pick<LoginPolicy, 'isDefault' | 'settings'>,
   ): Promise<void> {
-    // The provider replaces the whole policy: anything left out goes back to
-    // zero, and a password check that lives 0s sends every sign-in back to
-    // the password page.
-    const body = {
-      ...current.settings,
+    await this.writeLoginPolicy(pat, hostHeader, current, {
       allowUsernamePassword: true,
       allowRegister: true,
       allowExternalIdp: true,
-    };
+    });
+  }
+
+  /** Change some sign-in settings and keep every other one as it is. */
+  async writeLoginPolicy(
+    pat: string,
+    hostHeader: string,
+    current: Pick<LoginPolicy, 'isDefault' | 'settings'>,
+    changes: Partial<
+      Record<
+        'allowUsernamePassword' | 'allowRegister' | 'allowExternalIdp',
+        boolean
+      >
+    >,
+  ): Promise<void> {
+    // The provider replaces the whole policy: anything left out goes back to
+    // zero, and a password check that lives 0s sends every sign-in back to
+    // the password page.
+    const body = { ...current.settings, ...changes };
     const url = `${resolveProviderBaseUrl()}/management/v1/policies/login`;
     const options = { headers: this.headers(pat, hostHeader) };
     await firstValueFrom(

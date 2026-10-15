@@ -29,6 +29,7 @@ import {
   requireConnection,
   statusOf,
 } from './demo-sign-in.core';
+import { DemoSelfRegistration } from './demo-sign-in.registration';
 
 export { SIGN_IN_PROVIDER_KINDS } from './demo-sign-in.core';
 export type {
@@ -48,7 +49,7 @@ const LOCK_NAME = 'demo-sign-in';
  * themselves, or with GitHub or Google. Self-registration is applied on every
  * start, because the identity provider is configured once at install and a
  * demo is switched on later; idempotent, and never allowed to stop the API from
- * starting.
+ * starting. Once the demo is off, the self-registration Flui opened is closed.
  *
  * GitHub and Google are connected by an administrator through
  * `PUT /sandbox/sign-in/providers/:provider`: the client secret goes to the
@@ -61,6 +62,7 @@ const LOCK_NAME = 'demo-sign-in';
 export class DemoSignInService implements OnApplicationBootstrap {
   private readonly logger = new Logger(DemoSignInService.name);
   private upgradeCache: { at: number; value: UpgradeProvider[] } | null = null;
+  private readonly registration = new DemoSelfRegistration(this.oidc);
 
   constructor(
     private readonly oidc: OidcProviderAdminClient,
@@ -68,7 +70,14 @@ export class DemoSignInService implements OnApplicationBootstrap {
   ) {}
 
   onApplicationBootstrap(): void {
-    if (process.env.SANDBOX_ENABLED !== 'true') return;
+    if (process.env.SANDBOX_ENABLED !== 'true') {
+      void this.close().catch((error: unknown) =>
+        this.logger.warn(
+          `Could not close demo sign-in: ${describeError(error)}`,
+        ),
+      );
+      return;
+    }
     void this.apply().catch((error: unknown) =>
       this.logger.warn(`Could not open demo sign-in: ${describeError(error)}`),
     );
@@ -89,14 +98,23 @@ export class DemoSignInService implements OnApplicationBootstrap {
     return this.serialised(() => this.applyWith(conn, env));
   }
 
+  /** Once the demo is off, closes the self-registration Flui opened for it. */
+  async close(env: NodeJS.ProcessEnv = process.env): Promise<string[]> {
+    const conn = connectionFrom(env);
+    if (!conn) return [];
+    const closed = await this.serialised(() => this.registration.close(conn));
+    if (closed.length) {
+      this.logger.log(`Demo is off: turned off ${closed.join(' and ')}`);
+    }
+    return closed;
+  }
+
   private async applyWith(
     conn: ProviderConnection,
     env: NodeJS.ProcessEnv,
   ): Promise<string[]> {
     const policy = await this.oidc.getLoginPolicy(conn.pat, conn.host);
-    if (policy.isDefault || !policy.allowRegister || !policy.allowExternalIdp) {
-      await this.oidc.openSelfRegistration(conn.pat, conn.host, policy);
-    }
+    await this.registration.open(conn, policy);
 
     const existing = await this.oidc.listIdentityProviders(conn.pat, conn.host);
     const state = { policy, existing };
@@ -268,15 +286,9 @@ export class DemoSignInService implements OnApplicationBootstrap {
     };
 
     const state = await this.read(conn, `connect ${spec.name}`);
-    if (
-      state.policy.isDefault ||
-      !state.policy.allowRegister ||
-      !state.policy.allowExternalIdp
-    ) {
-      await this.guard('open self-registration', () =>
-        this.oidc.openSelfRegistration(conn.pat, conn.host, state.policy),
-      );
-    }
+    await this.guard('open self-registration', () =>
+      this.registration.open(conn, state.policy),
+    );
     const record = await this.guard(`connect ${spec.name}`, () =>
       this.readRecord(conn, kind),
     );

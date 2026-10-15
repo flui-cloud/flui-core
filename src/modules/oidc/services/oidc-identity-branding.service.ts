@@ -19,6 +19,8 @@ import {
   BrandingAssetKind,
   OidcProviderAdminClient,
 } from './oidc-provider-admin.service';
+import { OidcLoginTextsClient } from './oidc-login-texts.client';
+import { LOGIN_TEXTS_REVISION } from './oidc-login-texts';
 import { buildSystemNipHostname } from '../../dns/utils/nip-hostname.util';
 
 const VERSION_KEY = 'flui-branding-version';
@@ -42,6 +44,7 @@ export class OidcIdentityBranding implements IIdentityBranding {
 
   constructor(
     private readonly oidcProvider: OidcProviderAdminClient,
+    private readonly loginTexts: OidcLoginTextsClient,
     private readonly config: ConfigService,
     @InjectRepository(ClusterEntity)
     private readonly clusterRepo: Repository<ClusterEntity>,
@@ -96,6 +99,15 @@ export class OidcIdentityBranding implements IIdentityBranding {
       [
         'policy activation',
         () => this.oidcProvider.activateLabelPolicy(pat, hostHeader),
+      ],
+      [
+        'texts',
+        async () => {
+          const r = await this.loginTexts.apply(pat, hostHeader);
+          this.logger.log(
+            `Sign-in texts: ${r.updated.length} group(s) updated across ${r.languages} language(s)`,
+          );
+        },
       ],
     ];
     const failed = await this.runSteps(steps);
@@ -195,6 +207,7 @@ export class OidcIdentityBranding implements IIdentityBranding {
       hash.update(a.bytes);
     }
     hash.update(JSON.stringify(colors));
+    hash.update(LOGIN_TEXTS_REVISION);
     return hash.digest('hex').slice(0, 16);
   }
 

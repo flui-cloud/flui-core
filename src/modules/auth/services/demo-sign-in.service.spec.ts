@@ -562,7 +562,7 @@ describe('DemoSignInService', () => {
       expect(failure).toBeInstanceOf(BadGatewayException);
       expect((failure as Error).message).toContain('Errors.IDP.Invalid');
       expect(JSON.stringify(failure)).not.toContain(SECRET);
-      expect(zitadel.metadata.size).toBe(0);
+      expect(zitadel.metadata.has('flui.sandbox.sign-in.github')).toBe(false);
     });
   });
 

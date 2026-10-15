@@ -6,7 +6,10 @@ import { OidcIdentityBranding } from './oidc-identity-branding.service';
 
 const ASSETS = path.resolve(__dirname, '../../../assets/branding');
 
-function build(overrides: Record<string, jest.Mock> = {}) {
+function build(
+  overrides: Record<string, jest.Mock> = {},
+  textsApply?: jest.Mock,
+) {
   const calls: string[] = [];
   const provider = {
     getOrgMetadata: jest.fn(async () => null),
@@ -19,12 +22,21 @@ function build(overrides: Record<string, jest.Mock> = {}) {
     ...overrides,
   };
   const config = { get: jest.fn(() => undefined) };
+  const loginTexts = {
+    apply:
+      textsApply ??
+      jest.fn(async () => {
+        calls.push('texts');
+        return { languages: 2, updated: [], failed: [] };
+      }),
+  };
   const branding = new OidcIdentityBranding(
     provider as never,
+    loginTexts as never,
     config as never,
     { findOne: jest.fn(async () => null) } as never,
   );
-  return { branding, provider, calls };
+  return { branding, provider, loginTexts, calls };
 }
 
 const conn = { pat: 'pat', hostHeader: 'auth.example.com' };
@@ -53,6 +65,7 @@ describe('identity provider branding', () => {
       'icon-light',
       'icon-dark',
       'activate',
+      'texts',
       'version',
     ]);
   });
@@ -81,7 +94,18 @@ describe('identity provider branding', () => {
     });
     await expect(branding.ensureBranding(false, conn)).resolves.toBe(false);
     expect(provider.setOrgMetadata).not.toHaveBeenCalled();
-    expect(calls).toEqual(['policy', 'activate']);
+    expect(calls).toEqual(['policy', 'activate', 'texts']);
+  });
+
+  it('does not record the version when the sign-in texts could not be set', async () => {
+    const { branding, provider } = build(
+      {},
+      jest.fn(async () => {
+        throw new Error('2 text group(s) not set');
+      }),
+    );
+    await expect(branding.ensureBranding(false, conn)).resolves.toBe(false);
+    expect(provider.setOrgMetadata).not.toHaveBeenCalled();
   });
 
   it('uploads nothing when the policy itself could not be written', async () => {

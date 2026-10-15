@@ -4,6 +4,7 @@ import { HttpModule } from '@nestjs/axios';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { OidcProviderAdminClient } from './services/oidc-provider-admin.service';
 import { OidcIdentityBranding } from './services/oidc-identity-branding.service';
+import { OidcLoginTextsClient } from './services/oidc-login-texts.client';
 import { OidcIdentityDirectory } from './services/oidc-identity-directory.service';
 import { OidcVisitorLoginClient } from './services/oidc-visitor-login.client';
 import { OidcVisitorUpgradeClient } from './services/oidc-visitor-upgrade.client';
@@ -18,6 +19,7 @@ import { UserEntity } from '../auth/entities/user.entity';
   ],
   providers: [
     OidcProviderAdminClient,
+    OidcLoginTextsClient,
     OidcIdentityBranding,
     OidcIdentityDirectory,
     OidcVisitorLoginClient,
