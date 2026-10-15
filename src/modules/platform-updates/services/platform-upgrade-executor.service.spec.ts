@@ -128,7 +128,10 @@ function build(setup: Setup = {}) {
   let row: any = {
     id: 'op-1',
     status: setup.status ?? OperationStatus.PENDING,
-    userId: setup.userId === undefined ? 'u1' : setup.userId,
+    userId:
+      setup.userId === undefined
+        ? '11111111-1111-4111-8111-111111111111'
+        : setup.userId,
     metadata: setup.meta ?? metadata(),
   };
   const clone = (v: unknown) => JSON.parse(JSON.stringify(v));
@@ -211,7 +214,11 @@ function build(setup: Setup = {}) {
       Promise.resolve(
         setup.policyOwner === null
           ? null
-          : { id: 'pol-1', userId: setup.policyOwner ?? 'owner-1' },
+          : {
+              id: 'pol-1',
+              userId:
+                setup.policyOwner ?? '22222222-2222-4222-8222-222222222222',
+            },
       ),
     ),
   };
@@ -343,7 +350,7 @@ describe('PlatformUpgradeExecutorService', () => {
     await service.execute('op-1');
 
     expect(calls).toEqual([
-      'backup:u1',
+      'backup:11111111-1111-4111-8111-111111111111',
       'manifests:ctl',
       'manifests:w1',
       'image:fluiWeb',
@@ -395,10 +402,16 @@ describe('PlatformUpgradeExecutorService', () => {
       backupStatus: BackupJobStatus.FAILED,
     });
     await service.execute('op-1');
-    expect(calls).toEqual(['backup:u1']);
+    expect(calls).toEqual(['backup:11111111-1111-4111-8111-111111111111']);
     expect(row().status).toBe(OperationStatus.FAILED);
     expect(row().metadata.failedPhase).toBe('backup');
     expect(row().metadata.guidance).toMatch(/Nothing was changed/);
+  });
+
+  it('runs the platform backup as its owner when the update was started with the bootstrap key', async () => {
+    const { service, calls } = build({ userId: 'cli-bootstrap' });
+    await service.execute('op-1');
+    expect(calls[0]).toBe('backup:22222222-2222-4222-8222-222222222222');
   });
 
   it('goes on without a backup only when that was acknowledged', async () => {
@@ -612,7 +625,7 @@ describe('PlatformUpgradeExecutorService', () => {
   it('runs the backup as the owner of the policy when nobody is recorded on the update', async () => {
     const owned = build({ userId: null });
     await owned.service.execute('op-1');
-    expect(owned.calls[0]).toBe('backup:owner-1');
+    expect(owned.calls[0]).toBe('backup:22222222-2222-4222-8222-222222222222');
 
     const orphan = build({ userId: null, policyOwner: null });
     await orphan.service.execute('op-1');

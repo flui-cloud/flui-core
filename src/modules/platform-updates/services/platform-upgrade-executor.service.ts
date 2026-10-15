@@ -1,3 +1,4 @@
+import { isUUID } from 'class-validator';
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
@@ -253,7 +254,10 @@ export class PlatformUpgradeExecutorService {
     const policy = await this.policyRepository.findOne({
       where: { id: phase.policyId },
     });
-    const userId = operation.userId ?? policy?.userId;
+    // The bootstrap key acts as "cli-bootstrap", which no job can be owned by.
+    const userId = [operation.userId, policy?.userId].find(
+      (id): id is string => !!id && isUUID(id),
+    );
     if (!userId) {
       throw new PhaseFailure(
         'backup',
