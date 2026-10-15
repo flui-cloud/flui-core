@@ -2,6 +2,33 @@
   "schemaVersion": 2,
   "releases": [
     {
+      "version": "0.13.0-rc.14",
+      "publishedAt": "2026-10-15T09:09:38.117Z",
+      "bootstrapRef": "46d6006",
+      "images": {
+        "fluiApi": "0.13.0-rc.14",
+        "fluiWeb": "0.13.0-rc.14",
+        "fluiAuthz": "0.7.0"
+      },
+      "notes": [
+        "Sign-in pages and emails show Flui instead of Zitadel, with corrected Italian labels.",
+        "Self-registration closes again when the demo is switched off.",
+        "A platform update started with the bootstrap key backs up as the backup's owner instead of failing.",
+        "Account page: a QR code to add the authenticator app, drawn in the browser.",
+        "After signing out, the sign-in page offers a button instead of hanging on the redirect."
+      ],
+      "migrations": 0,
+      "requiresBootstrap": false,
+      "k3s": {
+        "version": "v1.35.4+k3s1"
+      },
+      "systemComponents": {
+        "certManager": "v1.17.1",
+        "systemUpgradeController": "v0.20.2"
+      },
+      "manifestSets": []
+    },
+    {
       "version": "0.13.0-rc.13",
       "publishedAt": "2026-10-14T21:05:30.085Z",
       "bootstrapRef": "46d6006",
