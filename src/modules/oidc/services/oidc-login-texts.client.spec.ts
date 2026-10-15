@@ -66,6 +66,34 @@ describe('sign-in texts client', () => {
     );
   });
 
+  it('tries a group again when the provider answers 500, and writes groups one at a time', async () => {
+    jest.useFakeTimers();
+    let failures = 1;
+    let inFlight = 0;
+    let maxInFlight = 0;
+    const { client, http, puts } = build();
+    const original = http.put.getMockImplementation()!;
+    http.put.mockImplementation((url: string, body: unknown) => {
+      if (url.includes('/text/login/it') && failures > 0) {
+        failures -= 1;
+        return throwError(() =>
+          Object.assign(new Error('busy'), { response: { status: 500 } }),
+        );
+      }
+      inFlight += 1;
+      maxInFlight = Math.max(maxInFlight, inFlight);
+      const answer = original(url, body);
+      inFlight -= 1;
+      return answer;
+    });
+    const applied = client.apply('pat', 'auth.example.com');
+    await jest.advanceTimersByTimeAsync(3000);
+    await expect(applied).resolves.toMatchObject({ failed: [] });
+    expect(puts.some((p) => p.url.includes('/text/login/it'))).toBe(true);
+    expect(maxInFlight).toBe(1);
+    jest.useRealTimers();
+  });
+
   it('falls back to the management list of languages', async () => {
     const { client, http } = build();
     http.get.mockImplementationOnce(() =>

@@ -39,17 +39,17 @@ export class OidcLoginTextsClient {
           () => this.applyMessage(pat, hostHeader, type, language),
         ]),
       ];
-      await Promise.all(
-        groups.map(async ([name, run]) => {
-          try {
-            if (await run()) result.updated.push(name);
-          } catch (err) {
-            const message = err instanceof Error ? err.message : String(err);
-            this.logger.warn(`Texts ${name} not set: ${message}`);
-            result.failed.push(name);
-          }
-        }),
-      );
+      // One at a time: parallel writes to the same organisation make the
+      // provider answer 500 now and then.
+      for (const [name, run] of groups) {
+        try {
+          if (await withRetry(run)) result.updated.push(name);
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          this.logger.warn(`Texts ${name} not set: ${message}`);
+          result.failed.push(name);
+        }
+      }
     }
     if (result.failed.length) {
       throw new Error(
@@ -149,5 +149,24 @@ export class OidcLoginTextsClient {
       'Content-Type': 'application/json',
       Host: hostHeader,
     };
+  }
+}
+
+const RETRY_DELAYS_MS = [500, 2000];
+
+async function withRetry<T>(run: () => Promise<T>): Promise<T> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await run();
+    } catch (error) {
+      const status = (error as { response?: { status?: number } })?.response
+        ?.status;
+      if (!status || status < 500 || attempt >= RETRY_DELAYS_MS.length) {
+        throw error;
+      }
+      await new Promise((resolve) =>
+        setTimeout(resolve, RETRY_DELAYS_MS[attempt]),
+      );
+    }
   }
 }
