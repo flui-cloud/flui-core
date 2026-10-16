@@ -4,7 +4,6 @@ import {
   SignInCredentialsError,
   callbackLines,
   collectSignInCredentials,
-  signInRoot,
 } from './sandbox-sign-in';
 
 jest.mock('./stdin-value', () => ({
@@ -106,22 +105,20 @@ describe('the addresses to register at GitHub and Google', () => {
     intentCallbackUrl: 'https://auth.demo.example.com/idps/callback',
   };
 
-  it('gives GitHub the sign-in root, which covers both callbacks', () => {
-    expect(callbackLines('github', view)).toEqual([
-      ['Callback URL', 'https://auth.demo.example.com/'],
-    ]);
-  });
-
-  it('gives Google both redirect URIs', () => {
-    expect(callbackLines('google', view)).toEqual([
-      ['Redirect URI', view.callbackUrl],
-      ['Redirect URI', view.intentCallbackUrl],
-    ]);
-  });
+  it.each(['github', 'google'] as const)(
+    'gives %s both redirect URIs',
+    (provider) => {
+      expect(callbackLines(provider, view)).toEqual([
+        ['Redirect URI', view.callbackUrl],
+        ['Redirect URI', view.intentCallbackUrl],
+      ]);
+    },
+  );
 
   it('lists both providers when none is named', () => {
     expect(callbackLines(null, view).map(([label]) => label)).toEqual([
-      'GitHub callback',
+      'GitHub redirect',
+      'GitHub redirect',
       'Google redirect',
       'Google redirect',
     ]);
@@ -131,11 +128,5 @@ describe('the addresses to register at GitHub and Google', () => {
     expect(
       callbackLines('github', { callbackUrl: null, intentCallbackUrl: null }),
     ).toEqual([]);
-  });
-
-  it('falls back to the origin for an unexpected callback', () => {
-    expect(signInRoot('https://auth.example.com/other/path')).toBe(
-      'https://auth.example.com/',
-    );
   });
 });
