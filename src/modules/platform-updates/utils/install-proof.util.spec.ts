@@ -6,6 +6,7 @@ import {
   provableNames,
   provenTransforms,
   reconstructionReason,
+  valuesToAdd,
   restoreProven,
   vouchedFiles,
 } from './install-proof.util';
@@ -187,5 +188,25 @@ describe('proving what a master holds', () => {
     );
     expect(reconstructionReason(null, 0)).toMatch(/nothing is proven/);
     expect(reconstructionReason(null, 2)).toBeUndefined();
+  });
+
+  it('adds only the values a record lacks, never one it holds', () => {
+    const record = { source: 'installer', values: { A: 'old' } } as never;
+    expect(valuesToAdd(record, { A: 'new', B: 'b' })).toEqual({ B: 'b' });
+    expect(valuesToAdd({ source: 'installer' } as never, { B: 'b' })).toEqual(
+      {},
+    );
+    expect(valuesToAdd(null, { B: 'b' })).toEqual({});
+    const withheld = {
+      source: 'installer',
+      values: {},
+      secretRefs: { TOKEN: ['flui-secrets'] },
+    } as never;
+    expect(valuesToAdd(withheld, { TOKEN: 't', FLAG: 'true', B: 'b' })).toEqual(
+      { B: 'b' },
+    );
+    expect(reconstructionReason(record, 3, ['B'])).toMatch(
+      /only the values it lacks are added \(B\)/,
+    );
   });
 });

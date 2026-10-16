@@ -30,6 +30,7 @@ import {
   provableNames,
   provenTransforms,
   reconstructionReason,
+  valuesToAdd,
   narrowCandidates,
   restoreProven,
   templateSlots,
@@ -276,6 +277,7 @@ export class InstallValuesService {
       rendered,
       rawFiles,
       secretRefs,
+      additions,
     } = await this.reconstruct(clusterId);
     if (fresh.planId !== planId) {
       throw new ConflictException(
@@ -283,6 +285,12 @@ export class InstallValuesService {
       );
     }
     if (!fresh.willWrite) return { ...fresh, written: false };
+
+    if (fresh.recorded) {
+      await this.state.extendRecord(kubeconfig, additions);
+      this.logger.log(`Added ${fresh.adds.join(', ')} to the install record`);
+      return { ...fresh, written: true };
+    }
 
     await this.state.writeRecord(kubeconfig, kind, {
       bootstrapRef: fresh.bootstrapRef ?? '',
@@ -314,6 +322,7 @@ export class InstallValuesService {
     rendered: Record<string, string>;
     rawFiles: string[];
     secretRefs: Record<string, string[]>;
+    additions: Record<string, string>;
   }> {
     const access = await this.masters.masterAccess(clusterId);
     const { kubeconfig, node, cluster, kind } = access;
@@ -348,6 +357,8 @@ export class InstallValuesService {
         files.flatMap((f) => placeholdersIn(f.template)),
       ),
     );
+    const additions = valuesToAdd(record, proof.values);
+    const adds = Object.keys(additions);
     const flags: Record<string, string> =
       kind === 'workload'
         ? {
@@ -366,6 +377,8 @@ export class InstallValuesService {
           [
             ...[...onMaster].map(([n, h]): [string, string] => [n, h.sha]),
             ['#cluster', cluster.id],
+            ['#record', record?.source ?? '-'],
+            ['#adds', adds.join(',')],
           ],
           proof,
         ),
@@ -375,8 +388,9 @@ export class InstallValuesService {
         values: { ...proof.values, ...flags },
         unproven: proof.unproven,
         ingressTlsFiles: proof.ingressTlsFiles,
-        willWrite: !record && proven.length > 0,
-        reason: reconstructionReason(record, proven.length),
+        willWrite: record ? adds.length > 0 : proven.length > 0,
+        adds,
+        reason: reconstructionReason(record, proven.length, adds),
       },
       kubeconfig,
       kind,
@@ -389,6 +403,7 @@ export class InstallValuesService {
       secretRefs: Object.fromEntries(
         [...secretIndex].filter(([k]) => declaredSecrets.has(k)),
       ),
+      additions,
     };
   }
 }

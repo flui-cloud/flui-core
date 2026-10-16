@@ -53,6 +53,8 @@ export interface InstallValuesPlan {
   unproven: Record<string, string>;
   ingressTlsFiles: string[];
   willWrite: boolean;
+  /** Values an existing record lacks and this reconstruction proved. */
+  adds: string[];
   reason?: string;
 }
 

@@ -26,6 +26,7 @@ interface ValuesPlan {
   values: Record<string, string>;
   unproven: Record<string, string>;
   willWrite: boolean;
+  adds?: string[];
   reason?: string;
   written?: boolean;
 }
@@ -127,6 +128,7 @@ export default class EnvInstallValues extends Command {
       return;
     }
     const target = cluster ? ` --cluster ${cluster}` : '';
+    if (plan.reason) this.log(chalk.dim(`   ${plan.reason}`));
     this.log(`   ${chalk.dim('plan')} ${chalk.bold(plan.planId)}`);
     this.log(
       chalk.dim(
@@ -142,7 +144,9 @@ export default class EnvInstallValues extends Command {
         plan.recorded === 'installer'
           ? 'the installer'
           : 'an earlier reconstruction';
-      const note = `by ${by}; nothing is rewritten.`;
+      const note = plan.adds?.length
+        ? `by ${by}; only the values it lacks are added: ${plan.adds.join(', ')}.`
+        : `by ${by}; nothing is rewritten.`;
       this.log(`   ${chalk.green('Already recorded')} ${chalk.dim(note)}`);
     }
     if (plan.bootstrapRef) {

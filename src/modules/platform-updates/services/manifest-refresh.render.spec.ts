@@ -438,6 +438,121 @@ ifTemplates('a refresh that renders templated files', () => {
     }
   });
 
+  it('adds the values an existing record lacks and keeps every recorded one', async () => {
+    const { kube } = setup({ record: false });
+    const { master } = setup({ record: false });
+    const env = process.env;
+    process.env = {
+      ...env,
+      API_BASE_URL: `https://api.${TRUTH.FLUI_BASE_DOMAIN}`,
+      AUTH_MODE: 'local',
+      CLUSTER_NAME: TRUTH.CLUSTER_NAME,
+    };
+    const { FLUI_BASE_DOMAIN: _missing, ...rest } = TRUTH;
+    const recorded = { ...rest, CLUSTER_NAME: 'recorded-name' };
+    try {
+      const flui = { ...kube };
+      (flui.readObject as jest.Mock).mockImplementation(
+        async (_kc: string, apiVersion: string, kind: string, name: string) => {
+          if (kind === 'Deployment' && name === 'flui-api') {
+            return {
+              spec: {
+                template: {
+                  spec: {
+                    containers: [
+                      {
+                        name: 'flui-api',
+                        image: 'ghcr.io/flui-cloud/core:0.13.0',
+                      },
+                    ],
+                  },
+                },
+              },
+            };
+          }
+          if (kind === 'Deployment' && name === 'flui-web') {
+            return {
+              spec: {
+                template: {
+                  spec: {
+                    containers: [
+                      {
+                        name: 'flui-web',
+                        image: 'ghcr.io/flui-cloud/dashboard:0.13.0',
+                      },
+                    ],
+                  },
+                },
+              },
+            };
+          }
+          if (kind === 'ConfigMap' && name === 'flui-install-values') {
+            return {
+              metadata: { resourceVersion: '7' },
+              data: {
+                schema: '1',
+                bootstrapRef: 'installed-ref',
+                'values.json': JSON.stringify(recorded),
+                'transforms.json': JSON.stringify({ raw: [], ingressTls: TLS }),
+                'rendered.json': JSON.stringify({ 'kept.yaml': 'abc' }),
+              },
+            };
+          }
+          return null;
+        },
+      );
+      (flui as any).mergePatchObject = jest.fn(async () => undefined);
+      (flui as any).listCrdResources = jest.fn(async () => []);
+      const clusters = {
+        findOne: async () => ({
+          id: 'c-1',
+          name: 'control-cluster',
+          kubeconfigEncrypted: 'enc',
+          nodes: [{ nodeType: 'master', serverName: 'master-0' }],
+        }),
+      } as never;
+      const values = new InstallValuesService(
+        new MasterAccessService(clusters, {
+          decrypt: () => 'kubeconfig',
+        } as never),
+        new InstallStateService(flui as never, clusters),
+        new InstallSourcesService(fakeFiles(), {
+          getManifest: async () => ({ manifest: { releases: [] } }),
+        } as never),
+        master as never,
+      );
+      const plan = await values.plan();
+      expect(plan.recorded).toBe('installer');
+      expect(plan.adds).toContain('FLUI_BASE_DOMAIN');
+      expect(plan.adds).not.toContain('CLUSTER_NAME');
+      expect(plan.willWrite).toBe(true);
+
+      const result = await values.apply(plan.planId);
+      expect(result.written).toBe(true);
+      expect(flui.createObject).not.toHaveBeenCalled();
+      const patch = ((flui as any).mergePatchObject as jest.Mock).mock
+        .calls[0][1];
+      expect(patch.metadata.resourceVersion).toBe('7');
+      const written = JSON.parse(patch.data['values.json']);
+      expect(written.FLUI_BASE_DOMAIN).toBe(TRUTH.FLUI_BASE_DOMAIN);
+      expect(written.CLUSTER_NAME).toBe('recorded-name');
+      expect(patch.data['rendered.json']).toBeUndefined();
+      expect(
+        patch.metadata.annotations['flui.cloud/install-values-added'],
+      ).toContain('FLUI_BASE_DOMAIN');
+
+      ((flui as any).mergePatchObject as jest.Mock).mockRejectedValueOnce(
+        Object.assign(new Error('conflict'), { code: 409 }),
+      );
+      await expect(values.apply(plan.planId)).rejects.toThrow(
+        /changed while adding/,
+      );
+      expect(patch.data['values.json']).not.toContain(TOKEN);
+    } finally {
+      process.env = env;
+    }
+  });
+
   it('leaves a file changed by hand on the master alone unless told to overwrite it', async () => {
     const web = renderManifestFile(
       '10-flui-web.yaml',

@@ -228,12 +228,38 @@ export function vouchedFiles(
   return out;
 }
 
+/**
+ * Proven values a record lacks. A recorded value is never replaced, and a
+ * record without values (the installer could not tell secrets apart) gains
+ * none. A variable the installer withheld as a secret stays out even if a
+ * later release stopped calling it one, and `true` is refused because the
+ * record reads that as a component the installer chose to install.
+ */
+export function valuesToAdd(
+  record: InstallRecord | null,
+  proven: Record<string, string>,
+): Record<string, string> {
+  if (!record?.values) return {};
+  const recorded = record.values;
+  const withheld = record.secretRefs ?? {};
+  return Object.fromEntries(
+    Object.entries(proven).filter(
+      ([k, v]) => !(k in recorded) && !(k in withheld) && v !== 'true',
+    ),
+  );
+}
+
 export function reconstructionReason(
   record: InstallRecord | null,
   provenCount: number,
+  adds: string[] = [],
 ): string | undefined {
   if (record) {
-    return `This installation already has a record, written by the ${record.source === 'installer' ? 'installer' : 'reconstruction'}; nothing is written over it.`;
+    const by = record.source === 'installer' ? 'installer' : 'reconstruction';
+    if (adds.length > 0) {
+      return `This installation already has a record, written by the ${by}; only the values it lacks are added (${adds.join(', ')}), and every recorded value is kept.`;
+    }
+    return `This installation already has a record, written by the ${by}; nothing is written over it.`;
   }
   if (provenCount === 0) {
     return 'No file on the master could be reproduced from any published release, so nothing is proven and nothing would be written.';

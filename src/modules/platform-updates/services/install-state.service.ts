@@ -27,6 +27,8 @@ import {
   routeHostsOf,
 } from '../utils/install-candidates.util';
 
+const ADDED_ANNOTATION = 'flui.cloud/install-values-added';
+
 const PROVENANCE_LABELS = {
   'app.kubernetes.io/managed-by': 'flui-cloud',
   'flui.cloud/managed': 'true',
@@ -238,6 +240,64 @@ export class InstallStateService {
       },
       data,
     });
+  }
+
+  /**
+   * Adds values an existing record lacks, never replacing one it holds, and
+   * names them in an annotation so what the installer vouched for stays
+   * distinguishable. The patch carries the version that was read, so a record
+   * changed in between is refused instead of overwritten.
+   */
+  async extendRecord(
+    kubeconfig: string,
+    additions: Record<string, string>,
+  ): Promise<void> {
+    const existing = await this.kubernetesService.readObject(
+      kubeconfig,
+      'v1',
+      'ConfigMap',
+      INSTALL_VALUES_NAME,
+      INSTALL_VALUES_NAMESPACE,
+    );
+    const record = parseInstallRecord(
+      existing?.data,
+      existing?.metadata?.labels,
+    );
+    const resourceVersion = existing?.metadata?.resourceVersion;
+    if (!record?.values || !resourceVersion) {
+      throw new ConflictException(
+        'The record this plan would add to is gone, carries no values or has no version to guard the write; nothing was written.',
+      );
+    }
+    const added = new Set(
+      (existing.metadata?.annotations?.[ADDED_ANNOTATION] ?? '')
+        .split(',')
+        .filter(Boolean),
+    );
+    for (const key of Object.keys(additions)) added.add(key);
+    try {
+      await this.kubernetesService.mergePatchObject(kubeconfig, {
+        apiVersion: 'v1',
+        kind: 'ConfigMap',
+        metadata: {
+          name: INSTALL_VALUES_NAME,
+          namespace: INSTALL_VALUES_NAMESPACE,
+          resourceVersion,
+          annotations: { [ADDED_ANNOTATION]: [...added].sort().join(',') },
+        },
+        data: {
+          'values.json': JSON.stringify({ ...additions, ...record.values }),
+        },
+      });
+    } catch (error) {
+      const failed = error as { code?: number; statusCode?: number };
+      if ((failed?.code ?? failed?.statusCode) === 409) {
+        throw new ConflictException(
+          'The record changed while adding to it; run the plan again.',
+        );
+      }
+      throw error;
+    }
   }
 
   /**
