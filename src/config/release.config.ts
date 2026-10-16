@@ -34,17 +34,16 @@ export interface ReleaseManifest {
 }
 
 export const RELEASE: ReleaseManifest = {
-  version: '0.13.0-rc.15',
-  // A commit ref, not a tag. It moved: the control cluster now receives the
-  // instance registry settings and runs the API as several copies behind a
-  // sticky websocket route.
-  bootstrapRef: '46d6006',
+  version: '0.13.0-rc.16',
+  // A commit ref, not a tag. It moved: the API now also loads the sensitive
+  // variables set on the flui-api application.
+  bootstrapRef: '484b507',
   images: {
     // Release tags: the tag build is what makes an image exist under the
-    // release's own name. Both repositories are tagged `v0.13.0-rc.15`, so a
+    // release's own name. Both repositories are tagged `v0.13.0-rc.16`, so a
     // rollout never waits on a pull that cannot succeed.
-    fluiApi: '0.13.0-rc.15',
-    fluiWeb: '0.13.0-rc.15',
+    fluiApi: '0.13.0-rc.16',
+    fluiWeb: '0.13.0-rc.16',
     // Pinned by its own version, not the platform's: 0.7.0 is the sign-in
     // relay that asks the API, which this API's gateway installs expect.
     fluiAuthz: '0.7.0',

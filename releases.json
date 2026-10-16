@@ -2,6 +2,31 @@
   "schemaVersion": 2,
   "releases": [
     {
+      "version": "0.13.0-rc.16",
+      "publishedAt": "2026-10-16T19:34:13.071Z",
+      "bootstrapRef": "484b507",
+      "images": {
+        "fluiApi": "0.13.0-rc.16",
+        "fluiWeb": "0.13.0-rc.16",
+        "fluiAuthz": "0.7.0"
+      },
+      "notes": [
+        "The API also reads the sensitive variables set on the flui-api application, so secrets such as the Turnstile key set from the dashboard reach it.",
+        "The live activity demo fits a demo guest's area: it now asks for 225m of CPU and at most 1 CPU per component.",
+        "Demo sign-in lists both exact redirect URIs for GitHub as well as Google."
+      ],
+      "migrations": 0,
+      "requiresBootstrap": true,
+      "k3s": {
+        "version": "v1.35.4+k3s1"
+      },
+      "systemComponents": {
+        "certManager": "v1.17.1",
+        "systemUpgradeController": "v0.20.2"
+      },
+      "manifestSets": ["control"]
+    },
+    {
       "version": "0.13.0-rc.15",
       "publishedAt": "2026-10-16T14:48:17.691Z",
       "bootstrapRef": "46d6006",
