@@ -206,6 +206,31 @@ describe('WireGuardReconciler', () => {
       expect(renderConfigFor).toHaveBeenCalledWith('n1');
       expect(renderConfigFor).toHaveBeenCalledWith('n2');
     });
+
+    it('can rewrite only the nodes that already have a key, for a control change between sweeps', async () => {
+      const apply = jest.fn().mockResolvedValue('FLUI_WG_APPLIED');
+      const renderConfigFor = jest.fn().mockResolvedValue('[Interface]\n');
+      const svc = build(
+        cluster([
+          { id: 'n1', ipAddress: '1.1.1.1', metadata: {} },
+          { id: 'n2', ipAddress: '2.2.2.2', metadata: {} },
+        ]),
+        { apply },
+        {
+          renderConfigFor,
+          livePeers: jest.fn().mockResolvedValue([
+            { clusterId: 'c1', nodeId: 'n1', publicKey: KEY_A },
+            { clusterId: 'c1', nodeId: 'n2', publicKey: null },
+          ]),
+        },
+      );
+
+      const outcomes = await svc.applyCluster('c1', { enrolledOnly: true });
+
+      expect(renderConfigFor).toHaveBeenCalledTimes(1);
+      expect(renderConfigFor).toHaveBeenCalledWith('n1');
+      expect(outcomes).toHaveLength(1);
+    });
   });
 
   describe('node/endpoint pairing', () => {

@@ -46,11 +46,13 @@ describe('renderWireGuardConfig', () => {
     const cfg = renderWireGuardConfig(
       memberInterface({
         address: '10.250.0.5',
-        control: {
-          publicKey: KEY_A,
-          address: '10.250.0.1',
-          endpoint: '1.2.3.4:51821',
-        },
+        controls: [
+          {
+            publicKey: KEY_A,
+            address: '10.250.0.1',
+            endpoint: '1.2.3.4:51821',
+          },
+        ],
       }),
     );
     expect(cfg).toContain(`PrivateKey = ${PRIVATE_KEY_PLACEHOLDER}`);
@@ -124,11 +126,13 @@ describe('memberInterface', () => {
   const spec = () =>
     memberInterface({
       address: '10.250.0.7',
-      control: {
-        publicKey: KEY_A,
-        address: '10.250.0.1',
-        endpoint: '1.2.3.4:51821',
-      },
+      controls: [
+        {
+          publicKey: KEY_A,
+          address: '10.250.0.1',
+          endpoint: '1.2.3.4:51821',
+        },
+      ],
     });
 
   it('dials the control cluster and holds the tunnel open', () => {
@@ -211,11 +215,13 @@ describe('meshInterface — a Flui-managed subnet', () => {
     const spec = meshInterface({
       self,
       members: [self, member({ address: '10.200.1.11', publicKey: KEY_B })],
-      control: {
-        publicKey: KEY_C,
-        address: '10.250.0.1',
-        endpoint: '9.9.9.9:51821',
-      },
+      controls: [
+        {
+          publicKey: KEY_C,
+          address: '10.250.0.1',
+          endpoint: '9.9.9.9:51821',
+        },
+      ],
     });
     expect(spec.peers.map((p) => p.allowedIps[0])).toEqual([
       '10.200.1.11/32',
@@ -227,11 +233,13 @@ describe('meshInterface — a Flui-managed subnet', () => {
     const spec = meshInterface({
       self,
       members: [self],
-      control: {
-        publicKey: KEY_C,
-        address: self.address,
-        endpoint: '9.9.9.9:51821',
-      },
+      controls: [
+        {
+          publicKey: KEY_C,
+          address: self.address,
+          endpoint: '9.9.9.9:51821',
+        },
+      ],
     });
     expect(spec.peers).toEqual([]);
   });
@@ -323,11 +331,13 @@ describe('withLinks', () => {
   const member = () =>
     memberInterface({
       address: '10.250.0.5',
-      control: {
-        publicKey: KEY_A,
-        address: '10.250.0.1',
-        endpoint: '5.6.7.8:51821',
-      },
+      controls: [
+        {
+          publicKey: KEY_A,
+          address: '10.250.0.1',
+          endpoint: '5.6.7.8:51821',
+        },
+      ],
     });
 
   it('makes the listener listen and admits the dialer as one /32 with no endpoint', () => {

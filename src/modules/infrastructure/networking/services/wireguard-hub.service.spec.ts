@@ -9,6 +9,14 @@ import {
 const KEY_A = 'h0FoHrdl/fI6kj27RRzbjxQQEqb1Iibt/b3oYbknZtE=';
 const KEY_B = 'cGVlcmtleUJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmI=';
 
+const noLocks = {
+  createQueryRunner: () => ({
+    connect: async () => undefined,
+    query: async () => [],
+    release: async () => undefined,
+  }),
+} as any;
+
 const cluster = (nodes: any[]) => ({
   id: 'c1',
   provider: 'hetzner',
@@ -45,6 +53,9 @@ describe('WireGuardHubService', () => {
           markHandshake: jest.fn(),
           sealedControlKey: jest.fn().mockResolvedValue(null),
           sealControlKey: jest.fn(),
+          revokeDepartedControlPeers: jest.fn().mockResolvedValue([]),
+          recordControlReadings: jest.fn(),
+          markControlEnd: jest.fn(),
         } as any,
         {
           apply: jest
@@ -58,6 +69,7 @@ describe('WireGuardHubService', () => {
           encrypt: (v: string) => `sealed:${v}`,
           decrypt: (v: string) => v.replace(/^sealed:/, ''),
         } as any,
+        noLocks,
       );
 
       await svc.ensureControlEnd();
@@ -80,6 +92,9 @@ describe('WireGuardHubService', () => {
         markHandshake: jest.fn(),
         sealedControlKey: jest.fn().mockResolvedValue(sealed),
         sealControlKey: jest.fn(),
+        revokeDepartedControlPeers: jest.fn().mockResolvedValue([]),
+        recordControlReadings: jest.fn(),
+        markControlEnd: jest.fn(),
       };
       const svc = new WireGuardHubService(
         { findOne: jest.fn().mockResolvedValue(master) } as any,
@@ -91,6 +106,7 @@ describe('WireGuardHubService', () => {
           encrypt: (v: string) => `sealed:${v}`,
           decrypt: (v: string) => v.replace(/^sealed:/, ''),
         } as any,
+        noLocks,
       );
       return { svc, apply, peers };
     };
@@ -127,6 +143,7 @@ describe('WireGuardHubService', () => {
         new ManagementAddressResolver(),
         { ensureFluiNetwork: jest.fn() } as any,
         {} as any,
+        noLocks,
       );
 
     it('withdraws the members of a cluster that no longer exists', async () => {

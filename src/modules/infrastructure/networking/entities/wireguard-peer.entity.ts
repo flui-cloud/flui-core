@@ -8,7 +8,7 @@ import {
 } from 'typeorm';
 
 export enum WireGuardPeerRole {
-  /** The control cluster's own endpoint: the one peer that listens. */
+  /** A node of the control cluster: it listens, and every member dials it. */
   CONTROL = 'control',
   /** A workload node, which dials out and holds the tunnel open. */
   MEMBER = 'member',
@@ -23,6 +23,14 @@ export enum WireGuardPeerStatus {
   /** Withdrawn. Kept as a row so the address is not reused immediately and the
    *  history of a node's keys stays readable. */
   REVOKED = 'revoked',
+}
+
+export interface ControlHandshakeReading {
+  fresh: boolean;
+  /** The latest handshake that control node reported, ISO. */
+  at: string | null;
+  /** When it was read, ISO: an old reading proves nothing about now. */
+  readAt: string;
 }
 
 /**
@@ -52,12 +60,16 @@ export enum WireGuardPeerStatus {
   unique: true,
   where: '"revokedAt" IS NULL AND "nodeId" IS NOT NULL',
 })
+@Index('UQ_wg_peers_live_primary', ['isPrimary'], {
+  unique: true,
+  where: '"revokedAt" IS NULL AND "isPrimary" = true',
+})
 export class WireGuardPeerEntity {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
-  /** Null for the control peer, which belongs to the cluster rather than to
-   *  any one node. */
+  /** Null only on a control row written before every control node became a
+   *  peer of its own. */
   @Column({ type: 'uuid', nullable: true })
   nodeId?: string | null;
 
@@ -78,6 +90,23 @@ export class WireGuardPeerEntity {
 
   @Column({ type: 'enum', enum: WireGuardPeerRole })
   role: WireGuardPeerRole;
+
+  /**
+   * The control row on the master: the one whose key is kept sealed so a
+   * rebuilt master returns with the same identity, and whose address telemetry
+   * is sent to. A flag rather than a lookup of the node's type, because on a
+   * rebuild the row has to be found before the new master is known.
+   */
+  @Column({ type: 'boolean', default: false })
+  isPrimary: boolean;
+
+  /**
+   * On a member: what each control node's kernel last said about it, keyed by
+   * that control row's id. The member's `status` follows the primary alone;
+   * this is what proves every other control node reaches it too.
+   */
+  @Column({ type: 'jsonb', nullable: true })
+  controlHandshakes?: Record<string, ControlHandshakeReading> | null;
 
   /**
    * base64 x25519 public key, 44 characters. Never a private key.
@@ -111,9 +140,10 @@ export class WireGuardPeerEntity {
   lastHandshakeAt?: Date | null;
 
   /**
-   * The control's private key, encrypted. Only the control peer has one: kept
-   * so a rebuilt control comes back with the same identity and no member has
-   * to be re-keyed.
+   * The master's private key, encrypted. Only the primary control row has one:
+   * kept so a rebuilt master comes back with the same identity and no member
+   * has to be re-keyed. Other control nodes are re-keyed on a rebuild, which
+   * the next sweep carries to every member.
    */
   @Column({ type: 'text', nullable: true, select: false })
   privateKeySealed?: string | null;

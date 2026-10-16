@@ -95,7 +95,7 @@ export function renderWireGuardConfig(spec: WireGuardInterfaceSpec): string {
 }
 
 /**
- * The control cluster's side: it listens, and knows one `/32` per member.
+ * One control node's side: it listens, and knows one `/32` per member.
  *
  * No `Endpoint` on the member peers — members dial out and hold the tunnel
  * open with a keepalive, so their transport address can change without the
@@ -120,33 +120,49 @@ export function controlInterface(params: {
   };
 }
 
+export interface ControlEnd {
+  publicKey: string;
+  address: string;
+  endpoint: string;
+  label?: string;
+}
+
 /**
- * A member node's side: one peer, the control cluster, reached at its public
- * transport address and kept alive from this end.
+ * A member node's side: one peer per control node, each reached at its own
+ * public transport address and kept alive from this end.
  *
- * `AllowedIPs` is the control's single `/32` and nothing else. Widening it to
- * the pool would make this node route every other member's traffic through the
+ * Every control node, not only the master: the API runs on any of them, and a
+ * copy on a node the member does not peer with cannot reach it. `AllowedIPs`
+ * is each control node's single `/32` and nothing else. Widening it to the
+ * pool would make this node route every other member's traffic through the
  * control cluster — the transit the design forbids.
  */
 export function memberInterface(params: {
   address: string;
   mtu?: number;
-  control: { publicKey: string; address: string; endpoint: string };
+  controls: ControlEnd[];
   keepaliveSeconds?: number;
 }): WireGuardInterfaceSpec {
+  const keepalive = params.keepaliveSeconds ?? DEFAULT_KEEPALIVE_SECONDS;
   return {
     address: params.address,
     mtu: params.mtu,
-    peers: [
-      {
-        publicKey: params.control.publicKey,
-        allowedIps: [`${params.control.address}/32`],
-        endpoint: params.control.endpoint,
-        persistentKeepalive:
-          params.keepaliveSeconds ?? DEFAULT_KEEPALIVE_SECONDS,
-        label: 'Flui control cluster',
-      },
-    ],
+    peers: params.controls.map((control) =>
+      controlPeerSpec(control, keepalive),
+    ),
+  };
+}
+
+function controlPeerSpec(
+  control: ControlEnd,
+  keepalive: number,
+): WireGuardPeerSpec {
+  return {
+    publicKey: control.publicKey,
+    allowedIps: [`${control.address}/32`],
+    endpoint: control.endpoint,
+    persistentKeepalive: keepalive,
+    label: control.label ?? 'Flui control cluster',
   };
 }
 
@@ -234,9 +250,9 @@ export interface MeshMember {
 export function meshInterface(params: {
   self: MeshMember;
   members: MeshMember[];
-  /** The control cluster, which is a peer of every subnet and belongs to none.
+  /** The control cluster's nodes, peers of every subnet and members of none.
    *  One interface per node carries both jobs — see the note below. */
-  control?: { publicKey: string; address: string; endpoint: string };
+  controls?: ControlEnd[];
   listenPort?: number;
   mtu?: number;
   keepaliveSeconds?: number;
@@ -268,14 +284,9 @@ export function meshInterface(params: {
   // off onto `flui1` would double the tunnels, the firewall rules and the
   // ways a node can be half-connected, to separate two things that never
   // conflict — the peers are distinct keys with distinct `/32`s either way.
-  if (params.control && params.control.address !== params.self.address) {
-    peers.push({
-      publicKey: params.control.publicKey,
-      allowedIps: [`${params.control.address}/32`],
-      endpoint: params.control.endpoint,
-      persistentKeepalive: keepalive,
-      label: 'Flui control cluster',
-    });
+  for (const control of params.controls ?? []) {
+    if (control.address === params.self.address) continue;
+    peers.push(controlPeerSpec(control, keepalive));
   }
 
   return {

@@ -2414,6 +2414,7 @@ const MASK_EXEMPT: string[] = [
   'MailWindowDto.name', // modules/mail/dto/mail-overview.dto.ts
   'MailWindowDto.to', // modules/mail/dto/mail-overview.dto.ts
   'ManagementNetworkDto.hub', // modules/infrastructure/networking/dto/management-network.dto.ts
+  'ManagementNetworkDto.hubs', // modules/infrastructure/networking/dto/management-network.dto.ts
   'ManagementNetworkDto.members', // modules/infrastructure/networking/dto/management-network.dto.ts
   'ManifestCheckDto.detail', // modules/applications/dto/deploy-from-yaml.dto.ts
   'ManifestCheckDto.id', // modules/applications/dto/deploy-from-yaml.dto.ts

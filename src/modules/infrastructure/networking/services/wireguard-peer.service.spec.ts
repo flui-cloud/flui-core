@@ -29,6 +29,11 @@ class FakePeers {
     this.rows.filter((r) => this.matches(r, where));
   findOne = async ({ where }: any) =>
     this.rows.find((r) => this.matches(r, where)) ?? null;
+  update = async (where: any, patch: any) => {
+    for (const row of this.rows.filter((r) => this.matches(r, where))) {
+      Object.assign(row, patch);
+    }
+  };
 
   private matches(row: any, where: any): boolean {
     if (!where) return true;
@@ -360,6 +365,7 @@ describe('WireGuardPeerService', () => {
         publicKey: KEY_A,
         address: '10.250.0.1',
         endpoint: '1.2.3.4:51821',
+        others: [],
       });
     });
 

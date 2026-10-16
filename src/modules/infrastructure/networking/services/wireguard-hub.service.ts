@@ -1,16 +1,8 @@
 import { Injectable, Logger } from '@nestjs/common';
+export type { ControlEndState, ControlNodeState } from './control-host-steps';
 import { InjectRepository } from '@nestjs/typeorm';
-import { In, Repository } from 'typeorm';
-import {
-  ClusterEntity,
-  ClusterStatus,
-  ClusterType,
-  isControlClusterType,
-} from '../../clusters/entities/cluster.entity';
-import {
-  ClusterNodeEntity,
-  NodeType,
-} from '../../clusters/entities/cluster-node.entity';
+import { DataSource, Repository } from 'typeorm';
+import { ClusterEntity } from '../../clusters/entities/cluster.entity';
 import { ManagementAddressResolver } from '../../shared/services/management-address.resolver';
 import { HostCommandService } from '../../../providers/core/host/host-command.service';
 import { HostTarget } from '../../../providers/core/host/host-targets';
@@ -19,52 +11,52 @@ import {
   WireGuardPeerService,
 } from './wireguard-peer.service';
 import { VNetsService } from '../../vnets/services/vnets.service';
-import { pairNodesWithTargets } from './wireguard-node-targets';
 import {
   APPLIED_MARKER,
-  READY_MARKER,
-  UNSUPPORTED_MARKER,
   WireGuardInterfaceState,
   buildApplyScript,
-  buildKeyEnrolmentScript,
-  extractPrivateKey,
-  extractPublicKey,
   isHandshakeFresh,
   parseWireGuardDump,
 } from '../wireguard-host';
 import { WG_INTERFACE } from '../wireguard-config';
 import {
-  JUMP_APPLIED_MARKER,
-  JUMP_REFUSED_MARKER,
-  JUMP_UNCHANGED_MARKER,
-  buildJumpHostScript,
-} from '../jump-host';
+  ControlEnd,
+  ControlEndState,
+  ControlHub,
+  ControlNodeState,
+  PairedNode,
+  applyJumpHost,
+  findControlHub,
+  isLiveNode,
+  jumpMemberAddresses,
+  nodeEndpointHost,
+  readNodeKey,
+} from './control-host-steps';
 import { WireGuardPeerRole } from '../entities/wireguard-peer.entity';
+import { ControlReading } from './wireguard-control-peers';
 import { EncryptionService } from '../../../shared/encryption/services/encryption.service';
-import { controlEndFailed, controlEndHealthy } from '../control-end-health';
+import {
+  controlEndFailed,
+  controlEndWarned,
+  recordControlEndHealth,
+} from '../control-end-health';
+import { endpointNameProblem } from '../control-endpoint-name';
+import { withAdvisoryLockWaiting } from '../../../common/leadership/advisory-lock';
 
-export interface ControlEndState {
-  address: string;
-  publicKey: string;
-  host: string;
-  applied: boolean;
-  /** Members the control has seen a recent handshake from. */
-  fresh: number;
-  stale: number;
-  /** Members that went quiet or came back in this reading. */
-  transitions: HandshakeTransition[];
-  /** The control as the way in to workload nodes: `applied`, `unchanged`, or why not. */
-  jumpHost: string;
-}
+const CONTROL_END_LOCK = 'wg-control-end';
 
 /**
- * The hub end of the overlay: the control cluster's own interface, and the
+ * The hub end of the overlay: every control node's own interface, and the
  * membership of every other node on it.
  *
+ * Every control node is an end of its own, because the API runs as several
+ * copies on any of them and a copy can only reach the members its own node
+ * peers with. The master stays primary: its key is kept sealed, telemetry goes
+ * to its address, and the jump user lives there.
+ *
  * Separate from the per-cluster reconcile because the two answer different
- * questions. This one is about the single point every member dials; that one is
- * about a cluster's nodes. They run in the same sweep and in this order —
- * nothing can join a hub that is not up.
+ * questions. They run in the same sweep and in this order — nothing can join
+ * a hub that is not up.
  */
 @Injectable()
 export class WireGuardHubService {
@@ -78,32 +70,110 @@ export class WireGuardHubService {
     private readonly managementAddress: ManagementAddressResolver,
     private readonly vnets: VNetsService,
     private readonly encryption: EncryptionService,
+    private readonly dataSource: DataSource,
   ) {}
 
   /**
-   * The control cluster's own end of the overlay.
-   *
-   * Nothing else creates it, and without it there is no overlay at all: members
-   * dial the control, so until the control has a key, an address and a
-   * listening interface, every member config would name a peer that does not
-   * exist and every enrolment would refuse.
+   * The control cluster's ends of the overlay, on every node of it.
    *
    * On the reconcile loop rather than at install time, deliberately: an
    * installation that switches the overlay on today has a control cluster built
-   * without one, and a step that only ran at install would leave it permanently
-   * without.
+   * without one, and a control node added later needs the same. Idempotent and
+   * applied with `wg syncconf`: no K3s restart, no certificate change.
+   *
+   * One copy at a time: the leader's sweep and a control node's operation
+   * both get here, and each would otherwise find no row and create one.
    */
   async ensureControlEnd(): Promise<ControlEndState | undefined> {
+    return withAdvisoryLockWaiting(this.dataSource, CONTROL_END_LOCK, () =>
+      this.convergeControlEnd(),
+    );
+  }
+
+  private async convergeControlEnd(): Promise<ControlEndState | undefined> {
     const hub = await this.controlHub();
     if (!hub) return undefined;
-    const { control, endpointHost, paired } = hub;
+    await this.recordFluiNetwork();
+    const nameProblem = await endpointNameProblem(hub.endpointHost);
+    controlEndWarned(nameProblem);
+    if (nameProblem) this.logger.warn(`[wg] ${nameProblem}`);
 
+    const key = await this.enrolPrimaryKey(hub.primary.target);
+    if (!key) return undefined;
+    const peer = await this.peerService.ensureControlPeer({
+      clusterId: hub.control.id,
+      nodeId: hub.primary.node.id,
+      primary: true,
+      publicKey: key.publicKey,
+      endpointHost: hub.endpointHost,
+    });
+    if (key.captured) {
+      await this.peerService.sealControlKey(
+        this.encryption.encrypt(key.captured),
+      );
+      this.logger.log('[wg] the control key is now kept, sealed');
+    }
+
+    const ends: ControlEnd[] = [
+      { paired: hub.primary, primary: true, row: peer },
+    ];
+    for (const other of hub.others) {
+      ends.push(await this.enrolControlNode(hub.control, other));
+    }
+    await this.peerService.revokeDepartedControlPeers(
+      hub.control.id,
+      (hub.control.nodes ?? []).filter(isLiveNode).map((n) => n.id),
+    );
+
+    const nodes: ControlNodeState[] = [];
+    let transitions: HandshakeTransition[] = [];
+    for (const end of ends) {
+      const state = await this.convergeEnd(end);
+      nodes.push(state.node);
+      if (end.primary) transitions = state.transitions;
+    }
+    recordControlEndHealth(nodes);
+    const jumpHost = await this.ensureJumpHost(hub.primary.target);
+    const primary = nodes[0];
+
+    return {
+      address: peer.managementIp,
+      publicKey: key.publicKey,
+      host: hub.primary.target.host,
+      applied: nodes.every((n) => n.applied),
+      fresh: primary.fresh,
+      stale: primary.stale,
+      transitions,
+      jumpHost,
+      nodes,
+    };
+  }
+
+  /**
+   * Takes a control node off the overlay before it is deleted, so no config
+   * written afterwards still names it. The primary is never withdrawn: it
+   * moves to the next master instead.
+   */
+  async withdrawControlNode(nodeId: string): Promise<boolean> {
+    return withAdvisoryLockWaiting(
+      this.dataSource,
+      CONTROL_END_LOCK,
+      async () => {
+        const row = (await this.peerService.controlPeers()).find(
+          (p) => p.nodeId === nodeId,
+        );
+        if (!row || row.isPrimary) return false;
+        await this.peerService.revokeMember(nodeId);
+        return true;
+      },
+    );
+  }
+
+  private async recordFluiNetwork(): Promise<void> {
     // The row that models the overlay, created here rather than at install:
-    // an installation that predates the overlay has no such row, and one that
-    // only ran at install would leave it permanently without — invisible in
-    // the one place an operator would look for it. Seeded with the range the
-    // flat pool has been using, so addresses already handed out fall inside
-    // the management block rather than beside it.
+    // an installation that predates the overlay has no such row. Seeded with
+    // the range the flat pool has been using, so addresses already handed out
+    // fall inside the management block rather than beside it.
     try {
       await this.vnets.ensureFluiNetwork(process.env.FLUI_WG_POOL);
     } catch (error) {
@@ -111,9 +181,15 @@ export class WireGuardHubService {
         `[wg] could not record the Flui network: ${(error as Error).message}`,
       );
     }
+  }
 
-    // The key is the control's identity on the network: kept sealed so a
-    // rebuilt master is handed the same one and no member needs re-keying.
+  /**
+   * The master's key is the primary's identity on the network: kept sealed so
+   * a rebuilt master is handed the same one and no member needs re-keying.
+   */
+  private async enrolPrimaryKey(
+    target: HostTarget,
+  ): Promise<{ publicKey: string; captured?: string } | undefined> {
     const sealed = await this.peerService.sealedControlKey();
     let restore: string | undefined;
     if (sealed) {
@@ -125,113 +201,112 @@ export class WireGuardHubService {
         );
       }
     }
-
-    let publicKey: string;
-    let captured: string | undefined;
-    try {
-      const out = await this.hostCommand.apply(
-        paired.target,
-        buildKeyEnrolmentScript(WG_INTERFACE, {
-          restore,
-          capture: !sealed,
-        }),
-        READY_MARKER,
-        { timeoutMs: 180_000 },
+    const key = await readNodeKey(this.hostCommand, target, {
+      restore,
+      capture: !sealed,
+    });
+    if (key.unsupported) {
+      this.logger.warn(
+        `[wg] the control cluster cannot run WireGuard — overlay unavailable`,
       );
-      if (out.includes(UNSUPPORTED_MARKER)) {
-        this.logger.warn(
-          `[wg] the control cluster cannot run WireGuard — overlay unavailable`,
-        );
-        return undefined;
-      }
-      const key = extractPublicKey(out);
-      if (!key) return undefined;
-      publicKey = key;
-      captured = extractPrivateKey(out);
-    } catch (error) {
-      const message = `could not read the control cluster's key: ${(error as Error).message}`;
+      return undefined;
+    }
+    if (key.error) {
+      const message = `could not read the control cluster's key: ${key.error}`;
       this.logger.error(`[wg] ${message}`);
       controlEndFailed(message);
       return undefined;
     }
-
-    const peer = await this.peerService.ensureControlPeer({
-      clusterId: control.id,
-      publicKey,
-      endpointHost,
-    });
-    if (captured) {
-      await this.peerService.sealControlKey(this.encryption.encrypt(captured));
-      this.logger.log('[wg] the control key is now kept, sealed');
-    }
-
-    const applied = await this.applyControlConfig(paired.target);
-    const jumpHost = await this.ensureJumpHost(paired.target);
-
-    // Read here because this is the one place already holding the control's
-    // endpoint, and nothing downstream may act on a peer until it has
-    // handshaken.
-    const health = await this.refreshFromControl(paired.target);
-
-    return {
-      address: peer.managementIp,
-      publicKey,
-      host: paired.target.host,
-      applied,
-      jumpHost,
-      ...health,
-    };
+    return key.publicKey
+      ? { publicKey: key.publicKey, captured: key.captured }
+      : undefined;
   }
 
-  /**
-   * The control master lets a person through to a workload node on its Flui
-   * network address, and nowhere else. Refused changes are reported, never
-   * forced: the script keeps nothing that would alter how root logs in.
-   */
+  /** Any other control node: its own key, made on the node, never kept. */
+  private async enrolControlNode(
+    control: ClusterEntity,
+    paired: PairedNode,
+  ): Promise<ControlEnd> {
+    const end: ControlEnd = { paired, primary: false };
+    const endpointHost = nodeEndpointHost(paired.node);
+    if (!endpointHost) {
+      end.error = 'no public address members could dial';
+      return end;
+    }
+    const key = await readNodeKey(this.hostCommand, paired.target);
+    if (key.unsupported) end.error = 'cannot run WireGuard';
+    else if (key.error) end.error = key.error;
+    else if (!key.publicKey) end.error = 'did not return a usable public key';
+    else {
+      end.row = await this.peerService
+        .ensureControlPeer({
+          clusterId: control.id,
+          nodeId: paired.node.id,
+          publicKey: key.publicKey,
+          endpointHost,
+        })
+        .catch((error: Error) => {
+          end.error = error.message;
+          return undefined;
+        });
+    }
+    if (end.error) {
+      this.logger.warn(`[wg] control node ${paired.target.host}: ${end.error}`);
+    }
+    return end;
+  }
+
+  private async convergeEnd(end: ControlEnd): Promise<{
+    node: ControlNodeState;
+    transitions: HandshakeTransition[];
+  }> {
+    const node: ControlNodeState = {
+      nodeId: end.paired.node.id,
+      host: end.paired.target.host,
+      primary: end.primary,
+      address: end.row?.managementIp,
+      applied: false,
+      fresh: 0,
+      stale: 0,
+      error: end.error,
+    };
+    if (!end.row) return { node, transitions: [] };
+    node.applied = await this.applyOn(
+      end.paired.target,
+      end.paired.node.id,
+      end.primary,
+    );
+    const health = await this.refreshFromControl(
+      end.paired.target,
+      end.row.id,
+      end.primary,
+    );
+    node.fresh = health.fresh;
+    node.stale = health.stale;
+    if (!node.applied) node.error = node.error ?? 'its config was not applied';
+    await this.peerService.markControlEnd(
+      end.row.id,
+      node.applied && health.read,
+    );
+    return { node, transitions: health.transitions };
+  }
+
   private async ensureJumpHost(target: HostTarget): Promise<string> {
+    let members: string[];
     try {
-      const members = await this.memberAddresses();
-      const out = await this.hostCommand.run(
-        target,
-        buildJumpHostScript(members),
-        {
-          timeoutMs: 60_000,
-        },
+      const clusters = await this.clusters.find({
+        select: { id: true, clusterType: true },
+      });
+      members = jumpMemberAddresses(
+        clusters,
+        await this.peerService.livePeers(),
       );
-      if (out.includes(JUMP_APPLIED_MARKER)) return 'applied';
-      if (out.includes(JUMP_UNCHANGED_MARKER)) return 'unchanged';
-      const refused = out
-        .split('\n')
-        .find((l) => l.startsWith(JUMP_REFUSED_MARKER))
-        ?.slice(JUMP_REFUSED_MARKER.length)
-        .trim();
-      const reason = refused || 'the script did not finish';
-      this.logger.warn(
-        `[wg] the control did not take the jump user: ${reason}`,
-      );
-      return `refused: ${reason}`;
     } catch (error) {
       const message = (error as Error).message;
       this.logger.warn(`[wg] the jump user could not be set up: ${message}`);
       return `failed: ${message}`;
     }
-  }
-
-  private async memberAddresses(): Promise<string[]> {
-    const clusters = await this.clusters.find({
-      select: { id: true, clusterType: true },
-    });
-    const onControl = new Set(
-      clusters
-        .filter((c) => isControlClusterType(c.clusterType))
-        .map((c) => c.id),
-    );
-    return (await this.peerService.livePeers())
-      .filter(
-        (p) =>
-          p.role === WireGuardPeerRole.MEMBER && !onControl.has(p.clusterId),
-      )
-      .map((p) => p.managementIp);
+    return applyJumpHost(this.hostCommand, this.logger, target, members);
   }
 
   /**
@@ -256,6 +331,10 @@ export class WireGuardHubService {
     let revoked = 0;
     for (const peer of await this.peerService.livePeers()) {
       if (!peer.nodeId || !peer.clusterId) continue;
+      // The hub's own rows follow the control cluster's nodes in
+      // ensureControlEnd: the primary moves to a rebuilt master rather than
+      // leaving with the cluster it was first recorded on.
+      if (peer.role === WireGuardPeerRole.CONTROL) continue;
       if (live.has(peer.clusterId)) continue;
       await this.peerService.revokeMember(peer.nodeId);
       revoked += 1;
@@ -266,113 +345,112 @@ export class WireGuardHubService {
     return revoked;
   }
 
-  /**
-   * The control cluster's master and the address members dial it on.
-   *
-   * For BYOS the address is the operator-declared host: `masterIpAddress` there
-   * can be something nothing outside can route to.
-   */
-  private async controlHub(): Promise<
-    | {
-        control: ClusterEntity;
-        endpointHost: string;
-        paired: { node: ClusterNodeEntity; target: HostTarget };
-      }
-    | undefined
-  > {
-    const control = await this.clusters.findOne({
-      where: {
-        clusterType: In([ClusterType.CONTROL, ClusterType.OBSERVABILITY]),
-        status: ClusterStatus.READY,
-      },
-      relations: ['nodes'],
-      order: { createdAt: 'ASC' },
-    });
-    if (!control) return undefined;
-
-    const endpointHost = this.managementAddress.publicAddressOf(control);
-    if (!endpointHost) {
-      this.logger.warn(
-        `[wg] the control cluster has no address members could dial — ` +
-          `skipping its end of the overlay`,
-      );
-      return undefined;
-    }
-
-    const master = (control.nodes ?? []).find(
-      (n) => n.nodeType === NodeType.MASTER,
-    );
-    const paired = pairNodesWithTargets(control, this.logger).find(
-      (p) => p.node.id === master?.id,
-    );
-    return paired ? { control, endpointHost, paired } : undefined;
+  private controlHub(): Promise<ControlHub | undefined> {
+    return findControlHub(this.clusters, this.managementAddress, this.logger);
   }
 
   /**
-   * Writes the hub's own config: every live member, one /32 each.
+   * Writes the hub's config, every live member one /32 each, on every control
+   * node that has a row.
    *
    * Callable on its own because a member enrolled mid-sweep is otherwise only
    * routable from the control at the *next* sweep — the hub's config having
-   * been written before that member had a key. Convergence in ten minutes where
-   * it could be immediate.
+   * been written before that member had a key.
    */
-  async applyControlConfig(target?: HostTarget): Promise<boolean> {
-    const host = target ?? (await this.controlHub())?.paired.target;
-    if (!host) return false;
+  async applyControlConfig(): Promise<boolean> {
+    const hub = await this.controlHub();
+    if (!hub) return false;
+    const rows = new Set(
+      (await this.peerService.controlPeers()).map((r) => r.nodeId),
+    );
+    let all = true;
+    for (const paired of [hub.primary, ...hub.others]) {
+      const primary = paired === hub.primary;
+      if (!primary && !rows.has(paired.node.id)) continue;
+      if (!(await this.applyOn(paired.target, paired.node.id, primary))) {
+        all = false;
+      }
+    }
+    return all;
+  }
 
-    const config = await this.peerService.renderControlConfig();
+  /**
+   * One control node's config. `wg syncconf` and per-peer host routes: a pod
+   * on this node reaches a member by the node's own overlay address, which is
+   * what flannel's masquerade gives it.
+   */
+  private async applyOn(
+    target: HostTarget,
+    nodeId: string,
+    primary: boolean,
+  ): Promise<boolean> {
+    const config = await this.peerService.renderControlConfig(nodeId);
     if (!config) return false;
     try {
       await this.hostCommand.apply(
-        host,
+        target,
         buildApplyScript(config),
         APPLIED_MARKER,
       );
-      controlEndHealthy();
       return true;
     } catch (error) {
-      const message = `could not apply the control cluster's config: ${(error as Error).message}`;
+      const message = `could not apply the control config on ${target.host}: ${(error as Error).message}`;
       this.logger.error(`[wg] ${message}`);
-      controlEndFailed(message);
+      if (primary) controlEndFailed(message);
       return false;
     }
   }
 
   /**
-   * Writes back what the control cluster's kernel says about each member.
+   * Writes back what one control node's kernel says about each member.
    *
-   * Read here and not on the members: a member's `wg show` lists exactly one
-   * peer — the control — so reading there records the control's freshness and
-   * never a member's. Every consumer that asks "is this node reachable over the
-   * tunnel" is asking about a member, and the only host that can answer for all
-   * of them is the one they all dial.
+   * Read on the control nodes and not on the members: they are the hosts
+   * every member dials. The primary's reading decides a member's status and
+   * the transitions the bell rings for; every node's reading is kept per node,
+   * which is what proves a member is reachable from wherever the API runs.
    */
-  async refreshFromControl(target: HostTarget): Promise<{
+  async refreshFromControl(
+    target: HostTarget,
+    controlRowId?: string,
+    primary = true,
+  ): Promise<{
     fresh: number;
     stale: number;
     transitions: HandshakeTransition[];
+    read: boolean;
   }> {
     let fresh = 0;
     let stale = 0;
     const transitions: HandshakeTransition[] = [];
     try {
       const state = await this.readState(target);
+      const readings: ControlReading[] = [];
       for (const peer of state.peers) {
         const ok = isHandshakeFresh(peer);
         if (ok) fresh += 1;
         else stale += 1;
+        readings.push({
+          publicKey: peer.publicKey,
+          fresh: ok,
+          at: peer.latestHandshakeAt,
+        });
+        if (!primary) continue;
         const transition = await this.peerService.markHandshake(
           peer.publicKey,
           ok ? peer.latestHandshakeAt : undefined,
         );
         if (transition) transitions.push(transition);
       }
+      if (controlRowId) {
+        await this.peerService.recordControlReadings(controlRowId, readings);
+      }
+      return { fresh, stale, transitions, read: true };
     } catch (error) {
       this.logger.warn(
-        `[wg] could not read the control's state: ${(error as Error).message}`,
+        `[wg] could not read the control's state on ${target.host}: ${(error as Error).message}`,
       );
+      return { fresh, stale, transitions, read: false };
     }
-    return { fresh, stale, transitions };
   }
 
   /**

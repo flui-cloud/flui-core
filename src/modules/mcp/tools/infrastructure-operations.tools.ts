@@ -394,7 +394,7 @@ export const INFRASTRUCTURE_OPERATION_TOOLS: ToolDef[] = [
     name: 'management_network_status',
     routes: ['GET /infrastructure/management-network'],
     description:
-      'The Flui network (the tunnel that lets clusters on another provider than the control be reached and managed): whether it is on and why (`source`), `unavailable` — what makes it impossible here, in words to relay — the control end, and every member with its status and last handshake. `stale` means that tunnel has gone quiet. Read this before creating a cluster on another provider than the control: without the network that is refused.',
+      'The Flui network (the tunnel that lets clusters on another provider than the control be reached and managed): whether it is on and why (`source`), `unavailable` — what makes it impossible here, in words to relay — the control ends (`hubs`: one per control node, the primary first, each with its status and how many members it reaches; `hubWarning` when one is set up wrong), and every member with its status, last handshake, the control nodes whose end is up and that do not reach it (`unreachedFrom`, what moving the cluster onto the network waits on) and whether a person holds it on its public address (`heldOffOverlay`). `stale` means that tunnel has gone quiet. Read this before creating a cluster on another provider than the control: without the network that is refused.',
     scope: MCP_SCOPE.INFRA_READ,
     inputSchema: {},
     run: (_args, ctx) => ctx.api.get('/infrastructure/management-network'),

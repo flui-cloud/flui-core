@@ -73,8 +73,11 @@ export class WireGuardReconciliationScheduler {
       );
     }
 
-    // Then the control, and not conditionally: members dial it, so until its
-    // end is up there is no overlay for any of them to join. A failure here is
+    // Then the control, every node of it, and not conditionally: members dial
+    // each control node, so until their ends are up there is no overlay for
+    // any member to join. The workload pass below writes every member a peer
+    // per control node, which is what carries a control node added or removed
+    // since the last pass to the members. A failure here is
     // logged and the pass continues — the workload loop below refuses on its
     // own when the control has no key, and one unreachable control should not
     // also cost the diagnostics the rest of the pass produces.
@@ -146,11 +149,13 @@ export class WireGuardReconciliationScheduler {
           `[wg-reconcile] the control cluster has no end of the overlay — ` +
             `members cannot enrol until it does`,
         );
-      } else if (!control.applied) {
-        this.logger.warn(
-          `[wg-reconcile] control peer recorded at ${control.address} but its ` +
-            `config was not applied`,
-        );
+      } else {
+        for (const node of (control.nodes ?? []).filter((n) => !n.applied)) {
+          this.logger.warn(
+            `[wg-reconcile] control node ${node.host}${node.primary ? ' (master)' : ''} ` +
+              `${node.address ? `at ${node.address} ` : ''}not converged: ${node.error ?? 'its config was not applied'}`,
+          );
+        }
       }
     } catch (err: any) {
       this.logger.error(

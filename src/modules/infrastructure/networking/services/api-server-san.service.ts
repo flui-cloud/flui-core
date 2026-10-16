@@ -11,6 +11,7 @@ import { Repository } from 'typeorm';
 import {
   ClusterEntity,
   ClusterStatus,
+  isControlClusterType,
 } from '../../clusters/entities/cluster.entity';
 import {
   ClusterNodeEntity,
@@ -177,6 +178,13 @@ export class ApiServerSanService {
       relations: ['nodes'],
     });
     if (!cluster) throw new NotFoundException(`Cluster ${clusterId} not found`);
+    if (isControlClusterType(cluster.clusterType)) {
+      throw new BadRequestException(
+        `${cluster.name} is the control cluster: its nodes are the ends every ` +
+          `other cluster dials, and its own API server is never reached over ` +
+          `the Flui network. There is nothing to enrol.`,
+      );
+    }
     if (cluster.status !== ClusterStatus.READY) {
       throw new BadRequestException(
         `Cluster ${cluster.name} is ${cluster.status}. This restarts K3s on its ` +

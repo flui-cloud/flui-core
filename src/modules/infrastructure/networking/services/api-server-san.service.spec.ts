@@ -88,6 +88,17 @@ describe('ApiServerSanService', () => {
     );
   });
 
+  it('refuses the control cluster: its nodes are hub ends, and K3s there is never restarted for the network', async () => {
+    const { service, run } = build({
+      row: cluster({ clusterType: 'control', name: 'control' }),
+    });
+
+    await expect(service.enrolOverlayAddress('c1')).rejects.toThrow(
+      /is the control cluster/,
+    );
+    expect(run).not.toHaveBeenCalled();
+  });
+
   it('refuses a peer that has never handshaken', async () => {
     // A row is not a tunnel. Restarting K3s on a live master to reach an
     // address that has never carried a packet risks the cluster for nothing.

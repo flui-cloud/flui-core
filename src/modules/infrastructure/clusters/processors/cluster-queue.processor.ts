@@ -67,6 +67,11 @@ import { ReconciliationStatus } from '../../shared/enums/reconciliation-status.e
 import { ApiServerSanService } from '../../networking/services/api-server-san.service';
 import { NodeLifeEventsService } from '../services/node-life-events.service';
 import { managementNetworkOn } from '../../networking/management-network.state';
+import {
+  joinControlHub,
+  leaveControlHub,
+  operationWarnings,
+} from './control-hub-hooks';
 
 /** cert-manager's webhooks register after the cluster reports ready. */
 const ZONE_RECONCILE_ATTEMPTS = 5;
@@ -1971,6 +1976,10 @@ export class ClusterQueueProcessor {
 
       const admission = await this.admitOnControlTunnel(clusterId);
       await this.clusterFirewallIntegrationService.syncHostLayer(clusterId);
+      const completionWarnings = operationWarnings(
+        admission,
+        await joinControlHub(cluster, this.moduleRef, this.logger),
+      );
 
       // Master-protection: a control cluster crossing single-node → multi-node
       // gets its master tainted so new pods land on the fresh worker(s).
@@ -1996,7 +2005,7 @@ export class ClusterQueueProcessor {
         status: OperationStatus.COMPLETED,
         message: `Added ${created.length} worker${created.length > 1 ? 's' : ''}`,
         addedNodeIds: created.map((n) => n.id),
-        ...(admission ? { warnings: [admission] } : {}),
+        ...(completionWarnings.length ? { warnings: completionWarnings } : {}),
         completedAt: new Date().toISOString(),
       });
       this.infraGateway.emitCompleted(operationId, clusterId, {
@@ -2212,6 +2221,17 @@ export class ClusterQueueProcessor {
           : null,
       });
 
+      node.status = NodeStatus.DELETING;
+      await this.nodeRepository.save(node);
+      warnings.push(
+        ...(await leaveControlHub(
+          cluster,
+          nodeId,
+          this.moduleRef,
+          this.logger,
+        )),
+      );
+
       // STEP 2 - DELETE SERVER
       await this.updateOperationStep(operationId, 2, 0, {
         message: 'Deleting worker server from provider',
@@ -2229,9 +2249,6 @@ export class ClusterQueueProcessor {
       } as InfrastructureOperationProgressDto);
 
       if (node.providerResourceId) {
-        node.status = NodeStatus.DELETING;
-        await this.nodeRepository.save(node);
-
         const probeStatus = async (label: string) => {
           try {
             const s = await this.serversService.checkServerStatus(

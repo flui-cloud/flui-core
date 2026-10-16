@@ -27,6 +27,77 @@ export class ManagementNetworkHubDto {
   keyed: boolean;
 }
 
+export class ManagementNetworkHubNodeDto extends ManagementNetworkHubDto {
+  @ApiProperty({
+    nullable: true,
+    description: 'The control node this end runs on',
+  })
+  @Sensitivity(Sensitivity.PUBLIC)
+  nodeId: string | null;
+
+  @ApiProperty({ nullable: true })
+  @Sensitivity(Sensitivity.ARBITRARY_TEXT)
+  nodeName: string | null;
+
+  @ApiProperty({
+    description:
+      'The master: its key is kept for a rebuild, and telemetry is sent to its address',
+  })
+  @Sensitivity(Sensitivity.PUBLIC)
+  primary: boolean;
+
+  @ApiProperty({
+    enum: ['pending', 'active', 'stale'],
+    description:
+      '`active`: its config applied and its tunnel state was read on the last pass',
+  })
+  @Sensitivity(Sensitivity.PUBLIC)
+  status: 'pending' | 'active' | 'stale';
+
+  @ApiProperty({
+    description: 'Members this control node saw a recent handshake from',
+  })
+  @Sensitivity(Sensitivity.PUBLIC)
+  membersReached: number;
+
+  @ApiProperty({
+    description: 'Members it has not seen recently, or never',
+  })
+  @Sensitivity(Sensitivity.PUBLIC)
+  membersNotReached: number;
+}
+
+export class OverlayDemotionDto {
+  @ApiProperty()
+  @Sensitivity(Sensitivity.PUBLIC)
+  clusterId: string;
+
+  @ApiProperty()
+  @Sensitivity(Sensitivity.ARBITRARY_TEXT)
+  clusterName: string;
+
+  @ApiProperty({ nullable: true, description: 'The API address it had' })
+  @Sensitivity(Sensitivity.NETWORK_IDENTIFIER)
+  from: string | null;
+
+  @ApiProperty({
+    nullable: true,
+    description: 'The public API address now stored',
+  })
+  @Sensitivity(Sensitivity.NETWORK_IDENTIFIER)
+  to: string | null;
+
+  @ApiProperty({ description: 'Whether the stored address changed' })
+  @Sensitivity(Sensitivity.PUBLIC)
+  changed: boolean;
+
+  @ApiProperty({
+    description: 'Whether the cluster is held off the Flui network',
+  })
+  @Sensitivity(Sensitivity.PUBLIC)
+  held: boolean;
+}
+
 export class ManagementNetworkMemberDto {
   @ApiProperty()
   @Sensitivity(Sensitivity.PUBLIC)
@@ -51,6 +122,22 @@ export class ManagementNetworkMemberDto {
   @ApiProperty({ nullable: true })
   @Sensitivity(Sensitivity.PUBLIC)
   lastHandshakeAt: string | null;
+
+  @ApiProperty({
+    nullable: true,
+    description:
+      'Control nodes whose end is up and that have not seen this member recently: what moving the cluster onto the Flui network waits on. Empty when every one reaches it, null when unknown',
+    type: [String],
+  })
+  @Sensitivity(Sensitivity.ARBITRARY_TEXT)
+  unreachedFrom: string[] | null;
+
+  @ApiProperty({
+    description:
+      'The cluster is held on its public address by a person, off the Flui network',
+  })
+  @Sensitivity(Sensitivity.PUBLIC)
+  heldOffOverlay: boolean;
 }
 
 export class ManagementNetworkDto {
@@ -74,8 +161,19 @@ export class ManagementNetworkDto {
   @Sensitivity(Sensitivity.ARBITRARY_TEXT)
   unavailable: string | null;
 
-  @ApiProperty({ type: ManagementNetworkHubDto, nullable: true })
+  @ApiProperty({
+    type: ManagementNetworkHubDto,
+    nullable: true,
+    deprecated: true,
+    description: 'The primary control end; read `hubs` for every control node',
+  })
   hub: ManagementNetworkHubDto | null;
+
+  @ApiProperty({
+    type: [ManagementNetworkHubNodeDto],
+    description: 'One end per control node, the primary first',
+  })
+  hubs: ManagementNetworkHubNodeDto[];
 
   @ApiProperty({
     nullable: true,
@@ -84,6 +182,14 @@ export class ManagementNetworkDto {
   })
   @Sensitivity(Sensitivity.ARBITRARY_TEXT)
   hubProblem: string | null;
+
+  @ApiProperty({
+    nullable: true,
+    description:
+      'Something about the control end that works but is set up wrong, such as a declared endpoint name that does not lead to the control master alone; null when nothing is',
+  })
+  @Sensitivity(Sensitivity.ARBITRARY_TEXT)
+  hubWarning: string | null;
 
   @ApiProperty({ type: [ManagementNetworkMemberDto] })
   members: ManagementNetworkMemberDto[];

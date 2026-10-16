@@ -15,6 +15,7 @@ describe('KubeconfigEndpointPromoter', () => {
     cluster: any,
     overlay: any,
     answers = true,
+    notReaching: any[] = [],
   ): {
     promoter: KubeconfigEndpointPromoter;
     save: jest.Mock;
@@ -30,7 +31,10 @@ describe('KubeconfigEndpointPromoter', () => {
         decrypt: (v: string) => v.replace(/^enc:/, ''),
         encrypt: (v: string) => `enc:${v}`,
       } as any,
-      { nodeOverlayFor: jest.fn().mockResolvedValue(overlay) } as any,
+      {
+        nodeOverlayFor: jest.fn().mockResolvedValue(overlay),
+        controlsNotReaching: jest.fn().mockResolvedValue(notReaching),
+      } as any,
       { enrolOverlayAddress: enrolSan } as any,
     );
     (promoter as unknown as { answers: () => Promise<boolean> }).answers =
@@ -177,5 +181,60 @@ describe('KubeconfigEndpointPromoter', () => {
     expect(save.mock.calls[0][0].kubeconfigEncrypted).toContain(
       'server: https://10.250.0.4:16443',
     );
+  });
+
+  describe('with the API running on every control node', () => {
+    it('waits while any control node has not reached the tunnel, even if this copy can', async () => {
+      // A copy of the API on a control worker cannot reach an address only the
+      // master peers with; moving the address then would lose the cluster from
+      // there.
+      const { promoter, save } = build(
+        workload('91.99.53.190'),
+        { nodeAddress: '10.250.0.4', enrolled: true },
+        true,
+        [{ id: 'ctl-2', nodeId: 'worker-1' }],
+      );
+      const warn = jest.spyOn((promoter as any).logger, 'warn');
+
+      expect(await promoter.promoteAll()).toBe(0);
+      expect(save).not.toHaveBeenCalled();
+      expect(warn).toHaveBeenCalledWith(
+        expect.stringContaining(
+          'promotion waiting on control node(s) worker-1',
+        ),
+      );
+    });
+
+    it('moves once every control node reaches it', async () => {
+      const { promoter, save } = build(
+        workload('91.99.53.190'),
+        { nodeAddress: '10.250.0.4', enrolled: true },
+        true,
+        [],
+      );
+
+      expect(await promoter.promoteAll()).toBe(1);
+      expect(save).toHaveBeenCalled();
+    });
+  });
+
+  it('leaves alone a cluster a person moved back to its public address', async () => {
+    const cluster: any = workload('91.99.53.190');
+    cluster.metadata = {
+      overlayDemotion: {
+        at: '2026-10-16T10:00:00.000Z',
+        by: 'ops@example.org',
+        from: '10.250.0.4',
+        to: '91.99.53.190',
+      },
+    };
+    const { promoter, save, enrolSan } = build(cluster, {
+      nodeAddress: '10.250.0.4',
+      enrolled: true,
+    });
+
+    expect(await promoter.promoteAll()).toBe(0);
+    expect(save).not.toHaveBeenCalled();
+    expect(enrolSan).not.toHaveBeenCalled();
   });
 });

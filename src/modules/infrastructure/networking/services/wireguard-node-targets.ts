@@ -17,11 +17,12 @@ import {
 export function pairNodesWithTargets(
   cluster: ClusterEntity,
   logger: Logger,
+  nodes: ClusterNodeEntity[] = cluster.nodes ?? [],
 ): Array<{ node: ClusterNodeEntity; target: HostTarget }> {
   const targets = deriveHostTargets(cluster);
   const byHost = new Map(targets.map((t) => [t.host, t]));
   const paired: Array<{ node: ClusterNodeEntity; target: HostTarget }> = [];
-  for (const node of cluster.nodes ?? []) {
+  for (const node of nodes) {
     const byosHost = (node.metadata as { byos?: { host?: string } } | undefined)
       ?.byos?.host;
     const target =

@@ -7,10 +7,7 @@ import {
 import { FLUI_NETWORK_RESOURCE_ID } from '../../vnets/services/vnets.service';
 import { InjectRepository } from '@nestjs/typeorm';
 import { IsNull, Repository } from 'typeorm';
-import {
-  WireGuardLinkEntity,
-  WireGuardLinkState,
-} from '../entities/wireguard-link.entity';
+import { WireGuardLinkEntity } from '../entities/wireguard-link.entity';
 import {
   WireGuardPeerEntity,
   WireGuardPeerRole,
@@ -26,18 +23,16 @@ import {
 } from '../wireguard-address-pool';
 import {
   BootstrapPeer,
-  DEFAULT_KEEPALIVE_SECONDS,
-  LinkPeer,
-  controlInterface,
-  meshInterface,
   isWireGuardPublicKey,
-  memberInterface,
-  renderWireGuardConfig,
   WG_DEFAULT_PORT,
-  WireGuardInterfaceSpec,
-  withLinks,
 } from '../wireguard-config';
 import { managementNetworkOn } from '../management-network.state';
+import {
+  ControlPeerStore,
+  ControlReading,
+  EnsureControlPeerInput,
+} from './wireguard-control-peers';
+import { WireGuardPeerRenderer } from './wireguard-peer-render';
 
 export interface EnrolMemberInput {
   clusterId: string;
@@ -66,6 +61,8 @@ export interface HandshakeTransition {
 @Injectable()
 export class WireGuardPeerService {
   private readonly logger = new Logger(WireGuardPeerService.name);
+  private readonly controls: ControlPeerStore;
+  private readonly renderer: WireGuardPeerRenderer;
 
   constructor(
     @InjectRepository(WireGuardPeerEntity)
@@ -74,8 +71,13 @@ export class WireGuardPeerService {
     private readonly vnets: Repository<VNetEntity>,
     @Optional()
     @InjectRepository(WireGuardLinkEntity)
-    private readonly links?: Repository<WireGuardLinkEntity>,
-  ) {}
+    links?: Repository<WireGuardLinkEntity>,
+  ) {
+    this.controls = new ControlPeerStore(peers, async () =>
+      (await this.pool()).allocate(await this.allocatedAddresses()),
+    );
+    this.renderer = new WireGuardPeerRenderer(peers, this.controls, links);
+  }
 
   /**
    * The pool, checked against every private network Flui knows about.
@@ -192,68 +194,72 @@ export class WireGuardPeerService {
     return all.map((p) => p.managementIp).filter(Boolean);
   }
 
+  /** The master's control row: the sealed key, and where telemetry goes. */
   async controlPeer(): Promise<WireGuardPeerEntity | null> {
-    return this.peers.findOne({
-      where: { role: WireGuardPeerRole.CONTROL, revokedAt: IsNull() },
-    });
+    return this.controls.primary();
+  }
+
+  /** Every control node's row, the primary first. */
+  async controlPeers(): Promise<WireGuardPeerEntity[]> {
+    return this.controls.all();
   }
 
   /** The control's sealed private key, when one has been kept. */
   async sealedControlKey(): Promise<string | null> {
-    const row = await this.peers
-      .createQueryBuilder('p')
-      .addSelect('p.privateKeySealed')
-      .where('p.role = :role', { role: WireGuardPeerRole.CONTROL })
-      .andWhere('p.revokedAt IS NULL')
-      .getOne();
-    return row?.privateKeySealed ?? null;
+    return this.controls.sealedKey();
   }
 
   async sealControlKey(sealed: string): Promise<void> {
-    const control = await this.controlPeer();
-    if (!control) return;
-    await this.peers.update({ id: control.id }, { privateKeySealed: sealed });
+    return this.controls.seal(sealed);
   }
 
   /**
-   * Records the control cluster's own end of the overlay.
-   *
-   * Takes the first address in the pool, which is convention rather than
-   * necessity: every member's config names it explicitly, so nothing breaks if
-   * it is something else — it just stops being guessable while reading a
-   * config over someone's shoulder.
+   * Records one control node's end of the overlay. The first one takes the
+   * first address in the pool, which is convention rather than necessity:
+   * every member's config names each control node explicitly.
    */
-  async ensureControlPeer(params: {
-    clusterId: string;
-    publicKey: string;
-    endpointHost: string;
-    listenPort?: number;
-  }): Promise<WireGuardPeerEntity> {
+  async ensureControlPeer(
+    params: EnsureControlPeerInput,
+  ): Promise<WireGuardPeerEntity> {
     this.assertPublicKey(params.publicKey);
-    const existing = await this.controlPeer();
-    if (existing) {
-      // A rebuilt control is a new cluster row carrying the same identity:
-      // the address stays, the row follows the cluster.
-      existing.clusterId = params.clusterId;
-      existing.publicKey = params.publicKey;
-      existing.endpointHost = params.endpointHost;
-      existing.listenPort = params.listenPort ?? WG_DEFAULT_PORT;
-      return this.peers.save(existing);
+    return this.controls.ensure(params);
+  }
+
+  async revokeDepartedControlPeers(
+    clusterId: string,
+    nodeIds: string[],
+  ): Promise<WireGuardPeerEntity[]> {
+    const gone = await this.controls.revokeDeparted(clusterId, nodeIds);
+    for (const row of gone) {
+      this.logger.log(
+        `[wg] control node ${row.nodeId} left — withdrew ${row.managementIp}`,
+      );
     }
-    const pool = await this.pool();
-    const taken = await this.allocatedAddresses();
-    return this.peers.save(
-      this.peers.create({
-        clusterId: params.clusterId,
-        nodeId: null,
-        role: WireGuardPeerRole.CONTROL,
-        publicKey: params.publicKey,
-        managementIp: pool.allocate(taken),
-        endpointHost: params.endpointHost,
-        listenPort: params.listenPort ?? WG_DEFAULT_PORT,
-        status: WireGuardPeerStatus.PENDING,
-      }),
-    );
+    return gone;
+  }
+
+  async markControlEnd(rowId: string, up: boolean): Promise<void> {
+    return this.controls.markEnd(rowId, up);
+  }
+
+  async recordControlReadings(
+    controlRowId: string,
+    readings: ControlReading[],
+  ): Promise<void> {
+    return this.controls.recordReadings(controlRowId, readings);
+  }
+
+  /**
+   * The control nodes that have not seen this node's tunnel recently. Empty
+   * when every control node reaches it — the only state in which a copy of the
+   * API, wherever it runs, can be pointed at the node's overlay address.
+   */
+  async controlsNotReaching(nodeId: string): Promise<WireGuardPeerEntity[]> {
+    const member = await this.peers.findOne({
+      where: { nodeId, revokedAt: IsNull() },
+    });
+    if (!member) return this.controls.all();
+    return this.controls.notReaching(member);
   }
 
   /**
@@ -353,103 +359,12 @@ export class WireGuardPeerService {
     this.logger.log(`[wg] node ${nodeId} revoked (was ${peer.managementIp})`);
   }
 
-  /**
-   * The control cluster's config: every live member, one `/32` each.
-   */
-  async renderControlConfig(): Promise<string | undefined> {
-    const control = await this.controlPeer();
-    if (!control) return undefined;
-    const members = (await this.livePeers()).filter(
-      // A reservation without a key cannot be rendered as a peer: WireGuard
-      // identifies peers by key, so a block without one is meaningless.
-      (p) => p.role === WireGuardPeerRole.MEMBER && p.publicKey,
-    );
-    return renderWireGuardConfig(
-      controlInterface({
-        address: control.managementIp,
-        listenPort: control.listenPort ?? WG_DEFAULT_PORT,
-        members: members.map((m) => ({
-          publicKey: m.publicKey as string,
-          address: m.managementIp,
-          label: `node ${m.nodeId}`,
-        })),
-      }),
-    );
+  async renderControlConfig(nodeId?: string): Promise<string | undefined> {
+    return this.renderer.renderControlConfig(nodeId);
   }
 
-  /**
-   * A member's config: one peer, the control cluster.
-   *
-   * Refuses rather than guesses when the control end is not recorded or has no
-   * reachable address — a config naming a peer that cannot be dialled is worse
-   * than no config, because the interface comes up and looks healthy.
-   */
   async renderMemberConfig(nodeId: string): Promise<string> {
-    const peer = await this.peers.findOne({
-      where: { nodeId, revokedAt: IsNull() },
-    });
-    if (!peer) {
-      throw new BadRequestException(`Node ${nodeId} is not enrolled`);
-    }
-    const control = await this.controlPeer();
-    if (!control) {
-      throw new BadRequestException(
-        'The control cluster has no WireGuard peer yet — enrol it first',
-      );
-    }
-    if (!control.endpointHost) {
-      throw new BadRequestException(
-        'The control peer has no reachable endpoint recorded',
-      );
-    }
-    if (!control.publicKey) {
-      throw new BadRequestException(
-        'The control peer has no key yet — its address is only reserved',
-      );
-    }
-    return renderWireGuardConfig(
-      await this.withLinksOf(
-        peer,
-        memberInterface({
-          address: peer.managementIp,
-          control: {
-            publicKey: control.publicKey,
-            address: control.managementIp,
-            endpoint: controlEndpoint(control),
-          },
-        }),
-      ),
-    );
-  }
-
-  /**
-   * The open temporary links this node is one end of, as peers.
-   *
-   * Skipped rather than refused: a link whose other end has no key or no
-   * address yet, and one between two nodes that already peer in the same
-   * subnet, where a second `/32` entry would make the render throw and take
-   * the node's whole overlay down with it. Two links joining the same pair of
-   * nodes are one peer.
-   */
-  private async withLinksOf(
-    self: WireGuardPeerEntity,
-    spec: WireGuardInterfaceSpec,
-  ): Promise<WireGuardInterfaceSpec> {
-    if (!this.links || !self.nodeId) return spec;
-    const open = await this.links.find({
-      where: [
-        { state: WireGuardLinkState.OPEN, listenerNodeId: self.nodeId },
-        { state: WireGuardLinkState.OPEN, dialerNodeId: self.nodeId },
-      ],
-    });
-    if (!open.length) return spec;
-
-    const live = await this.livePeers();
-    const byNode = new Map(
-      live.filter((p) => p.nodeId).map((p) => [p.nodeId as string, p]),
-    );
-    const { peers, listenPort } = linkPeersOf(self, open, byNode);
-    return withLinks(spec, peers, listenPort);
+    return this.renderer.renderMemberConfig(nodeId);
   }
 
   /**
@@ -500,62 +415,8 @@ export class WireGuardPeerService {
     };
   }
 
-  /**
-   * A node's config inside a Flui-managed subnet: a direct peer for each other
-   * node of that subnet, and for nobody else.
-   *
-   * Unlike the management overlay, there is no hub here. Node-to-node traffic
-   * in a BYOS estate is pod traffic — today it crosses the internet as
-   * unencrypted VXLAN — and routing it through the control cluster would make
-   * that cluster a bandwidth bottleneck and a single point of failure for
-   * traffic that has nothing to do with management.
-   */
   async renderMeshConfig(nodeId: string): Promise<string> {
-    const self = await this.peers.findOne({
-      where: { nodeId, revokedAt: IsNull() },
-    });
-    if (!self) {
-      throw new BadRequestException(`Node ${nodeId} is not enrolled`);
-    }
-    if (!self.subnetId) {
-      throw new BadRequestException(
-        `Node ${nodeId} is not in a Flui-managed subnet — there is no mesh to render`,
-      );
-    }
-
-    const live = await this.livePeers();
-    const control = await this.controlPeer();
-    const mesh = meshInterface({
-      self: {
-        publicKey: self.publicKey ?? '',
-        address: self.managementIp,
-        subnetId: self.subnetId,
-      },
-      members: live
-        .filter((p) => p.role === WireGuardPeerRole.MEMBER && p.publicKey)
-        .map((p) => ({
-          publicKey: p.publicKey as string,
-          address: p.managementIp,
-          endpoint: p.endpointHost
-            ? `${p.endpointHost}:${p.listenPort ?? WG_DEFAULT_PORT}`
-            : undefined,
-          subnetId: p.subnetId ?? null,
-          label: `node ${p.nodeId}`,
-        })),
-      // Omitted rather than refused when the control end is not ready: the
-      // mesh is what carries this cluster's own traffic, and it should come
-      // up even on an installation where management still runs the old way.
-      control:
-        control?.publicKey && control.endpointHost
-          ? {
-              publicKey: control.publicKey,
-              address: control.managementIp,
-              endpoint: controlEndpoint(control),
-            }
-          : undefined,
-      listenPort: self.listenPort ?? WG_DEFAULT_PORT,
-    });
-    return renderWireGuardConfig(await this.withLinksOf(self, mesh));
+    return this.renderer.renderMeshConfig(nodeId);
   }
 
   /**
@@ -578,56 +439,17 @@ export class WireGuardPeerService {
       : this.renderMemberConfig(nodeId);
   }
 
-  /**
-   * What a node needs baked into its cloud-init to raise the tunnel by itself.
-   *
-   * Undefined until the control peer has a key and an endpoint: handing a node
-   * a half-filled config would leave it with an interface that comes up and
-   * carries nothing, which reads as healthy and is worse than no tunnel.
-   */
-  async controlHandshakeDetails(): Promise<
-    { publicKey: string; address: string; endpoint: string } | undefined
+  controlHandshakeDetails(): ReturnType<
+    WireGuardPeerRenderer['controlHandshakeDetails']
   > {
-    if (!managementNetworkOn()) return undefined;
-    const control = await this.controlPeer();
-    if (!control?.publicKey || !control.endpointHost) return undefined;
-    return {
-      publicKey: control.publicKey,
-      address: control.managementIp,
-      endpoint: controlEndpoint(control),
-    };
+    if (!managementNetworkOn()) return Promise.resolve(undefined);
+    return this.renderer.controlHandshakeDetails();
   }
 
-  /**
-   * The siblings a node should already know about when it first boots.
-   *
-   * Only same-subnet peers that can actually be dialled: a node in another
-   * subnet must not appear at all — that is where the isolation comes from —
-   * and one with no key or no transport address would produce a config block
-   * that looks complete and connects to nothing.
-   */
   async bootstrapPeersFor(nodeId: string): Promise<BootstrapPeer[]> {
-    const self = await this.peers.findOne({
-      where: { nodeId, revokedAt: IsNull() },
-    });
-    if (!self?.subnetId) return [];
-    return (await this.livePeers())
-      .filter(
-        (p) =>
-          p.role === WireGuardPeerRole.MEMBER &&
-          p.nodeId !== nodeId &&
-          p.subnetId === self.subnetId &&
-          !!p.publicKey &&
-          !!p.endpointHost,
-      )
-      .map((p) => ({
-        publicKey: p.publicKey as string,
-        address: p.managementIp,
-        endpoint: `${p.endpointHost}:${p.listenPort ?? WG_DEFAULT_PORT}`,
-      }));
+    return this.renderer.bootstrapPeersFor(nodeId);
   }
 
-  /** Source addresses the control's firewall must admit on the WireGuard port. */
   /** Records a handshake reading and says whether the peer just went quiet or came back. */
   async markHandshake(
     publicKey: string,
@@ -636,7 +458,7 @@ export class WireGuardPeerService {
     const peer = await this.peers.findOne({
       where: { publicKey, revokedAt: IsNull() },
     });
-    if (!peer) return null;
+    if (peer?.role !== WireGuardPeerRole.MEMBER) return null;
     const before = peer.status;
     peer.lastHandshakeAt = at ?? peer.lastHandshakeAt ?? null;
     if (at) {
@@ -644,8 +466,10 @@ export class WireGuardPeerService {
     } else if (peer.status === WireGuardPeerStatus.ACTIVE) {
       peer.status = WireGuardPeerStatus.STALE;
     }
-    await this.peers.save(peer);
-    if (peer.role !== WireGuardPeerRole.MEMBER) return null;
+    await this.peers.update(
+      { id: peer.id },
+      { status: peer.status, lastHandshakeAt: peer.lastHandshakeAt },
+    );
     if (
       before === WireGuardPeerStatus.ACTIVE &&
       peer.status === WireGuardPeerStatus.STALE
@@ -669,65 +493,4 @@ export class WireGuardPeerService {
   }
 }
 
-/**
- * Where members dial the control: its name when the installation has one, so a
- * control rebuilt on another address is found again once DNS follows; its
- * address otherwise.
- */
-export function controlEndpoint(
-  control: { endpointHost?: string | null; listenPort?: number | null },
-  env = process.env,
-): string {
-  const host = controlEndpointName(env) ?? control.endpointHost;
-  return `${host}:${control.listenPort ?? WG_DEFAULT_PORT}`;
-}
-
-export function controlEndpointName(env = process.env): string | undefined {
-  // Only a declared name: the API's own name is published for every node that
-  // takes traffic, and the hub listens on one of them.
-  return env.FLUI_WG_ENDPOINT_NAME?.trim() || undefined;
-}
-
-function linkPeersOf(
-  self: WireGuardPeerEntity,
-  open: WireGuardLinkEntity[],
-  byNode: Map<string, WireGuardPeerEntity>,
-): { peers: LinkPeer[]; listenPort: number | undefined } {
-  const peers: LinkPeer[] = [];
-  let listenPort: number | undefined;
-  for (const link of open) {
-    const listening = link.listenerNodeId === self.nodeId;
-    const other = byNode.get(
-      listening ? link.dialerNodeId : link.listenerNodeId,
-    );
-    if (!other?.publicKey) continue;
-    if (self.subnetId && other.subnetId === self.subnetId) continue;
-    if (listening) listenPort = listenPort ?? link.listenPort;
-    if (peers.some((p) => p.publicKey === other.publicKey)) continue;
-    const peer = linkPeerOf(link, other, listening);
-    if (peer) peers.push(peer);
-  }
-  return { peers, listenPort };
-}
-
-function linkPeerOf(
-  link: WireGuardLinkEntity,
-  other: WireGuardPeerEntity,
-  listening: boolean,
-): LinkPeer | null {
-  if (listening) {
-    return {
-      publicKey: other.publicKey,
-      address: other.managementIp,
-      label: `link ${link.id} (${link.purpose}) from node ${other.nodeId}`,
-    };
-  }
-  if (!other.endpointHost) return null;
-  return {
-    publicKey: other.publicKey,
-    address: other.managementIp,
-    endpoint: `${other.endpointHost}:${link.listenPort}`,
-    keepaliveSeconds: DEFAULT_KEEPALIVE_SECONDS,
-    label: `link ${link.id} (${link.purpose}) to node ${other.nodeId}`,
-  };
-}
+export { controlEndpoint, controlEndpointName } from './wireguard-peer-render';

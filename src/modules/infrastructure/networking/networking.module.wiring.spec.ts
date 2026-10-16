@@ -8,6 +8,7 @@ jest.mock('jose', () => ({}));
 jest.mock('ip-cidr', () => ({}));
 
 import { Module } from '@nestjs/common';
+import { DataSource } from 'typeorm';
 import { Test } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { getQueueToken } from '@nestjs/bull';
@@ -63,6 +64,7 @@ import { UserEntity } from '../../auth/entities/user.entity';
     { provide: HostCommandService, useValue: {} },
     { provide: VNetsService, useValue: {} },
     { provide: EncryptionService, useValue: {} },
+    { provide: DataSource, useValue: {} },
     { provide: getRepositoryToken(ClusterNodeEntity), useValue: {} },
     { provide: getRepositoryToken(UserEntity), useValue: {} },
     { provide: getRepositoryToken(WireGuardPeerEntity), useValue: {} },

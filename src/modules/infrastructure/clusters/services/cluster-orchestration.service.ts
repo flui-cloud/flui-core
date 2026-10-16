@@ -136,10 +136,7 @@ export class ClusterOrchestrationService {
     // certificate regeneration later, which is worse than a missing tunnel but
     // far better than no cluster.
     const overlay = await this.overlayPlanFor(cluster, node.id);
-
-    const wgControl = await this.wgPeers
-      .controlHandshakeDetails()
-      .catch(() => undefined);
+    const wgControl = overlay.control;
 
     const hostFirewall = await this.hostFirewallAtBoot(cluster, [
       controlClusterIp,
@@ -701,12 +698,9 @@ export class ClusterOrchestrationService {
         : undefined;
 
     const overlay = await this.overlayPlanFor(cluster, node.id);
-    const wgControl = await this.wgPeers
-      .controlHandshakeDetails()
-      .catch(() => undefined);
     const overlayConfig = {
       wgAddress: overlay.address,
-      wgControl,
+      wgControl: overlay.control,
       wgMode: overlay.mode,
       wgPeers: overlay.peers,
       privateIp: overlay.mode === 'mesh' ? overlay.address : undefined,
@@ -1644,6 +1638,12 @@ export class ClusterOrchestrationService {
     }
   }
 
+  /**
+   * A control node is not a member: it is one of the ends members dial, set up
+   * by the hub once it has joined. Only a workload node is reserved an address
+   * and told who to dial — the primary as the control, every other control
+   * node as a peer the bootstrap already knows how to append.
+   */
   private async overlayPlanFor(
     cluster: ClusterEntity,
     nodeId: string,
@@ -1651,10 +1651,22 @@ export class ClusterOrchestrationService {
     address?: string;
     mode: 'overlay' | 'mesh';
     peers: BootstrapPeer[];
+    control?: { publicKey: string; address: string; endpoint: string };
   }> {
-    if (!managementNetworkOn()) {
+    if (!managementNetworkOn() || isControlClusterType(cluster.clusterType)) {
       return { mode: 'overlay', peers: [] };
     }
+    const handshake = await this.wgPeers
+      .controlHandshakeDetails()
+      .catch(() => undefined);
+    const control = handshake
+      ? {
+          publicKey: handshake.publicKey,
+          address: handshake.address,
+          endpoint: handshake.endpoint,
+        }
+      : undefined;
+    const controlPeers = handshake?.others ?? [];
     const subnetId = await this.wgPeers.managedSubnetId(
       (cluster.metadata as { vnetConfig?: { subnetId?: string } } | null)
         ?.vnetConfig?.subnetId,
@@ -1668,7 +1680,11 @@ export class ClusterOrchestrationService {
       return {
         address: peer.managementIp,
         mode: subnetId ? 'mesh' : 'overlay',
-        peers: subnetId ? await this.wgPeers.bootstrapPeersFor(nodeId) : [],
+        peers: [
+          ...(subnetId ? await this.wgPeers.bootstrapPeersFor(nodeId) : []),
+          ...controlPeers,
+        ],
+        control,
       };
     } catch (err) {
       if (subnetId) throw err;
@@ -1676,7 +1692,7 @@ export class ClusterOrchestrationService {
         `[wg] could not reserve an overlay address for ${nodeId}: ` +
           `${(err as Error).message} — continuing without the SAN`,
       );
-      return { mode: 'overlay', peers: [] };
+      return { mode: 'overlay', peers: [], control };
     }
   }
 

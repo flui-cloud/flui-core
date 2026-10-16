@@ -277,4 +277,38 @@ describe('WireGuardReconciliationScheduler', () => {
     expect(order).toEqual(['c2', 'c1']);
     expect(ring).toHaveBeenCalledWith(transitions);
   });
+
+  it('reports every control node that did not converge, not only the master', async () => {
+    process.env.FLUI_WG_ENABLED = 'true';
+    const { scheduler, reconcileCluster } = build(
+      [{ id: 'c1', name: 'a' }],
+      jest.fn(),
+      jest.fn().mockResolvedValue({
+        address: '10.250.0.1',
+        applied: false,
+        transitions: [],
+        nodes: [
+          { host: '1.1.1.1', primary: true, applied: true },
+          {
+            host: '2.2.2.2',
+            primary: false,
+            applied: false,
+            address: '10.250.0.2',
+            error: 'cannot run WireGuard',
+          },
+        ],
+      }),
+    );
+    const warn = jest.spyOn((scheduler as any).logger, 'warn');
+
+    await scheduler.tick();
+
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining('control node 2.2.2.2 at 10.250.0.2'),
+    );
+    expect(warn).not.toHaveBeenCalledWith(
+      expect.stringContaining('control node 1.1.1.1'),
+    );
+    expect(reconcileCluster).toHaveBeenCalledWith('c1');
+  });
 });

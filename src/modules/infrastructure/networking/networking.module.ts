@@ -8,6 +8,8 @@ import { VNetEntity } from '../vnets/entities/vnet.entity';
 import { WireGuardPeerService } from './services/wireguard-peer.service';
 import { WireGuardReconciler } from './services/wireguard-reconciler.service';
 import { WireGuardHubService } from './services/wireguard-hub.service';
+import { ControlMembershipService } from './services/control-membership.service';
+import { KubeconfigDemotionService } from './services/kubeconfig-demotion.service';
 import { ApiServerSanService } from './services/api-server-san.service';
 import { WireGuardReconciliationScheduler } from './schedulers/wireguard-reconciliation.scheduler';
 import { ClusterEntity } from '../clusters/entities/cluster.entity';
@@ -64,6 +66,8 @@ import { EncryptionModule } from '../../shared/encryption/encryption.module';
     WireGuardReconciliationScheduler,
     ApiServerSanService,
     WireGuardLinkService,
+    ControlMembershipService,
+    KubeconfigDemotionService,
   ],
   exports: [
     ManagementNetworkService,
@@ -72,6 +76,8 @@ import { EncryptionModule } from '../../shared/encryption/encryption.module';
     WireGuardReconciler,
     ApiServerSanService,
     WireGuardLinkService,
+    ControlMembershipService,
+    KubeconfigDemotionService,
   ],
 })
 export class NetworkingModule {}

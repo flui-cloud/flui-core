@@ -17,20 +17,27 @@ import {
 import { ClusterNodeEntity } from '../../clusters/entities/cluster-node.entity';
 import { ManagementAddressResolver } from '../../shared/services/management-address.resolver';
 import {
+  WireGuardPeerEntity,
   WireGuardPeerRole,
   WireGuardPeerStatus,
 } from '../entities/wireguard-peer.entity';
 import {
   ManagementNetworkDto,
+  ManagementNetworkHubNodeDto,
   ManagementNetworkMemberDto,
 } from '../dto/management-network.dto';
+import {
+  countsForReach,
+  controlReaches as reaches,
+} from './wireguard-control-peers';
+import { overlayDemotionOf } from '../kubeconfig-demotion';
 import {
   managementNetworkSwitch,
   rememberSwitch,
   resolveSwitch,
 } from '../management-network.state';
 import { WireGuardPeerService } from './wireguard-peer.service';
-import { controlEndProblem } from '../control-end-health';
+import { controlEndProblem, controlEndWarning } from '../control-end-health';
 
 const WG_DEFAULT_PORT = 51821;
 
@@ -76,24 +83,26 @@ export class ManagementNetworkService implements OnModuleInit {
     await this.refresh();
     const control = await this.control();
     const current = managementNetworkSwitch();
-    const hub = await this.peers.controlPeer();
+    const controls = await this.peers.controlPeers();
+    const live = await this.peers.livePeers();
+    const hubs = await this.hubs(controls, live);
     return {
       enabled: current.enabled,
       source: current.source,
       unavailable: this.unavailableOn(control),
-      hub: hub
+      hub: hubs[0]
         ? {
-            address: hub.managementIp,
-            endpoint: hub.endpointHost
-              ? `${hub.endpointHost}:${hub.listenPort ?? WG_DEFAULT_PORT}`
-              : null,
-            keyed: Boolean(hub.publicKey),
+            address: hubs[0].address,
+            endpoint: hubs[0].endpoint,
+            keyed: hubs[0].keyed,
           }
         : null,
+      hubs,
       hubProblem: current.enabled
         ? (controlEndProblem()?.message ?? null)
         : null,
-      members: await this.members(),
+      hubWarning: current.enabled ? controlEndWarning() : null,
+      members: await this.members(live, controls),
     };
   }
 
@@ -134,13 +143,49 @@ export class ManagementNetworkService implements OnModuleInit {
     return null;
   }
 
-  private async members(): Promise<ManagementNetworkMemberDto[]> {
-    const live = (await this.peers.livePeers()).filter(
-      (p) => p.role === WireGuardPeerRole.MEMBER,
+  /** Every control node's end, the primary first, with what it reaches. */
+  private async hubs(
+    controls: WireGuardPeerEntity[],
+    live: WireGuardPeerEntity[],
+  ): Promise<ManagementNetworkHubNodeDto[]> {
+    const nodeIds = controls
+      .map((c) => c.nodeId)
+      .filter((id): id is string => !!id);
+    const names = new Map(
+      (nodeIds.length
+        ? await this.nodes.find({ where: { id: In(nodeIds) } })
+        : []
+      ).map((n) => [n.id, n.serverName]),
     );
+    const members = live.filter(
+      (p) => p.role === WireGuardPeerRole.MEMBER && p.publicKey,
+    );
+    return controls.map((c, index) => {
+      const reached = members.filter((m) => reaches(c, m)).length;
+      return {
+        address: c.managementIp,
+        endpoint: c.endpointHost
+          ? `${c.endpointHost}:${c.listenPort ?? WG_DEFAULT_PORT}`
+          : null,
+        keyed: Boolean(c.publicKey),
+        nodeId: c.nodeId ?? null,
+        nodeName: c.nodeId ? (names.get(c.nodeId) ?? null) : null,
+        primary: index === 0,
+        status: statusOf(c.status),
+        membersReached: reached,
+        membersNotReached: members.length - reached,
+      };
+    });
+  }
+
+  private async members(
+    all: WireGuardPeerEntity[],
+    controls: WireGuardPeerEntity[],
+  ): Promise<ManagementNetworkMemberDto[]> {
+    const live = all.filter((p) => p.role === WireGuardPeerRole.MEMBER);
     if (!live.length) return [];
     const clusterIds = [...new Set(live.map((p) => p.clusterId))];
-    const nodeIds = live
+    const nodeIds = [...live, ...controls]
       .map((p) => p.nodeId)
       .filter((id): id is string => !!id);
     const [clusters, nodes] = await Promise.all([
@@ -155,6 +200,9 @@ export class ManagementNetworkService implements OnModuleInit {
         .map((c) => c.id),
     );
     const clusterName = new Map(clusters.map((c) => [c.id, c.name]));
+    const held = new Set(
+      clusters.filter((c) => overlayDemotionOf(c)).map((c) => c.id),
+    );
     const nodeName = new Map<string, string>(
       nodes.map((n) => [n.id, n.serverName]),
     );
@@ -169,6 +217,16 @@ export class ManagementNetworkService implements OnModuleInit {
         lastHandshakeAt: p.lastHandshakeAt
           ? new Date(p.lastHandshakeAt).toISOString()
           : null,
+        unreachedFrom: p.publicKey
+          ? controls
+              .filter((c) => countsForReach(c) && !reaches(c, p))
+              .map((c) =>
+                c.nodeId
+                  ? (nodeName.get(c.nodeId) ?? c.managementIp)
+                  : c.managementIp,
+              )
+          : null,
+        heldOffOverlay: held.has(p.clusterId),
       }))
       .sort((a, b) =>
         `${a.clusterName}/${a.nodeName}`.localeCompare(

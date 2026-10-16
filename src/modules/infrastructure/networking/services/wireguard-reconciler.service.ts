@@ -200,11 +200,22 @@ export class WireGuardReconciler {
    * names its own address, and a shared one would hand several nodes the same
    * identity.
    */
-  async applyCluster(clusterId: string): Promise<NodeEnrolmentOutcome[]> {
+  async applyCluster(
+    clusterId: string,
+    options: { enrolledOnly?: boolean } = {},
+  ): Promise<NodeEnrolmentOutcome[]> {
     const cluster = await this.loadCluster(clusterId);
     const outcomes: NodeEnrolmentOutcome[] = [];
+    const keyed = options.enrolledOnly
+      ? new Set(
+          (await this.peerService.livePeers())
+            .filter((p) => p.clusterId === clusterId && p.publicKey)
+            .map((p) => p.nodeId),
+        )
+      : undefined;
 
     for (const { node, target } of pairNodesWithTargets(cluster, this.logger)) {
+      if (keyed && !keyed.has(node.id)) continue;
       const outcome: NodeEnrolmentOutcome = {
         nodeId: node.id,
         host: target.host,

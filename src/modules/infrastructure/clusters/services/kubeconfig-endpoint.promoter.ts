@@ -8,8 +8,11 @@ import { EncryptionService } from '../../../shared/encryption/services/encryptio
 import { WireGuardPeerService } from '../../networking/services/wireguard-peer.service';
 import { ApiServerSanService } from '../../networking/services/api-server-san.service';
 import { managementNetworkOn } from '../../networking/management-network.state';
+import {
+  SERVER_LINE,
+  overlayDemotionOf,
+} from '../../networking/kubeconfig-demotion';
 
-const SERVER_LINE = /(\bserver:\s*https:\/\/)([^\s:/]+|\[[^\]]+\])(:\d+)?/;
 const CA_DATA = /certificate-authority-data:\s*(\S+)/;
 
 /**
@@ -25,7 +28,12 @@ const CA_DATA = /certificate-authority-data:\s*(\S+)/;
  * peer health, and health flaps: the handshake goes stale three minutes after
  * the last one while the sweep samples every ten, so a single missed rekey at
  * the wrong moment would rewrite the cluster's address. Health decides when the
- * tunnel has earned the traffic, never when to take it back.
+ * tunnel has earned the traffic, never when to take it back; taking it back is
+ * a person's call (`KubeconfigDemotionService`), and holds until released.
+ *
+ * The API runs as several copies on any control node, so the address has to
+ * answer from every control node, not only from the one running this sweep:
+ * each control node must have seen a fresh handshake from the master's tunnel.
  */
 @Injectable()
 export class KubeconfigEndpointPromoter {
@@ -60,6 +68,7 @@ export class KubeconfigEndpointPromoter {
 
   async promote(cluster: ClusterEntity): Promise<boolean> {
     if (!cluster.kubeconfigEncrypted) return false;
+    if (overlayDemotionOf(cluster)) return false;
 
     const master =
       (cluster.nodes ?? []).find((n) => n.nodeType === NodeType.MASTER) ??
@@ -99,6 +108,17 @@ export class KubeconfigEndpointPromoter {
       this.logger.warn(
         `[kubeconfig] ${cluster.name}: could not put ${overlay.nodeAddress} in the certificate (${err?.message ?? err})`,
       );
+    }
+
+    const missing = await this.wgPeers.controlsNotReaching(master.id);
+    if (missing.length) {
+      const waitingOn = missing
+        .map((c) => c.nodeId ?? c.managementIp)
+        .join(', ');
+      this.logger.warn(
+        `[kubeconfig] ${cluster.name}: promotion waiting on control node(s) ${waitingOn}, which have not reached ${overlay.nodeAddress} — leaving ${current[2]} in place`,
+      );
+      return false;
     }
 
     const port = current[3] ?? ':6443';

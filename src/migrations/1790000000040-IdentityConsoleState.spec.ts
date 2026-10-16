@@ -27,12 +27,9 @@ describe('IdentityConsoleState1790000000040', () => {
     expect(sql).toEqual(['DROP TABLE IF EXISTS "identity_console_state"']);
   });
 
-  it('runs last, after the identity email', () => {
-    expect(migrations[migrations.length - 1]).toBe(
-      IdentityConsoleState1790000000040,
-    );
-    expect(migrations[migrations.length - 2].name).toBe(
-      'IdentityEmail1790000000039',
-    );
+  it('runs after the identity email', () => {
+    const at = migrations.indexOf(IdentityConsoleState1790000000040);
+    expect(at).toBeGreaterThan(0);
+    expect(migrations[at - 1].name).toBe('IdentityEmail1790000000039');
   });
 });

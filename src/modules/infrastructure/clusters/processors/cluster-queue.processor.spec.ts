@@ -190,7 +190,7 @@ describe('ClusterQueueProcessor.handleCreateCluster', () => {
 });
 
 describe('ClusterQueueProcessor.handleRemoveWorker', () => {
-  function build(runImpl: jest.Mock) {
+  function build(runImpl: jest.Mock, extra: Record<string, any> = {}) {
     const node = {
       id: 'node-w1',
       serverName: 'workload-1-worker-1',
@@ -200,7 +200,7 @@ describe('ClusterQueueProcessor.handleRemoveWorker', () => {
       id: 'cluster-1',
       name: 'workload-1',
       provider: 'hetzner',
-      clusterType: ClusterType.WORKLOAD,
+      clusterType: extra.clusterType ?? ClusterType.WORKLOAD,
       masterIpAddress: '49.13.132.151',
       nodeCount: 2,
       nodes: [{ id: 'node-master' }, node],
@@ -246,6 +246,7 @@ describe('ClusterQueueProcessor.handleRemoveWorker', () => {
       },
       hostCommand: { run: runImpl },
       nodeEvents,
+      moduleRef: extra.moduleRef,
     });
 
     const run = () =>
@@ -258,7 +259,7 @@ describe('ClusterQueueProcessor.handleRemoveWorker', () => {
         },
       } as never);
 
-    return { run, operation, nodeRepository, nodeEvents };
+    return { run, operation, nodeRepository, nodeEvents, node };
   }
 
   /** Answers the drain with a failure and the readiness probe with `ready`. */
@@ -294,6 +295,28 @@ describe('ClusterQueueProcessor.handleRemoveWorker', () => {
       });
     }
     expect(t.operation.metadata.warnings).toEqual([]);
+  });
+
+  it('marks a control worker as going before the Flui network withdraws it, so no sweep brings it back', async () => {
+    const seen: string[] = [];
+    const membership = {
+      beforeControlNodeRemoved: jest.fn(async () => {
+        seen.push(t.node['status']);
+        return [];
+      }),
+    };
+    const t = build(jest.fn().mockResolvedValue(''), {
+      clusterType: ClusterType.CONTROL,
+      moduleRef: { get: () => membership },
+    });
+
+    await t.run();
+
+    expect(membership.beforeControlNodeRemoved).toHaveBeenCalledWith('node-w1');
+    expect(seen).toEqual(['deleting']);
+    expect(t.nodeRepository.save).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'node-w1', status: 'deleting' }),
+    );
   });
 
   it('writes that the node was emptied and then deleted at the provider', async () => {

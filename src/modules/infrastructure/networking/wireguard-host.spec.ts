@@ -36,11 +36,13 @@ const config = () =>
   renderWireGuardConfig(
     memberInterface({
       address: '10.250.0.5',
-      control: {
-        publicKey: KEY_A,
-        address: '10.250.0.1',
-        endpoint: '1.2.3.4:51821',
-      },
+      controls: [
+        {
+          publicKey: KEY_A,
+          address: '10.250.0.1',
+          endpoint: '1.2.3.4:51821',
+        },
+      ],
     }),
   );
 
