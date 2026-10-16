@@ -2,6 +2,31 @@
   "schemaVersion": 2,
   "releases": [
     {
+      "version": "0.13.0-rc.15",
+      "publishedAt": "2026-10-16T14:48:17.691Z",
+      "bootstrapRef": "46d6006",
+      "images": {
+        "fluiApi": "0.13.0-rc.15",
+        "fluiWeb": "0.13.0-rc.15",
+        "fluiAuthz": "0.7.0"
+      },
+      "notes": [
+        "Every control node is an end of the Flui network: the API reaches clusters on other providers from any node, with promotion to the private address checked from every node.",
+        "Emergency switch back to the public address for a cluster on the Flui network: flui env overlay demote, and on the dashboard.",
+        "A master manifest pinned to a development build is read correctly again and moves to the release, so updates verify."
+      ],
+      "migrations": 1,
+      "requiresBootstrap": false,
+      "k3s": {
+        "version": "v1.35.4+k3s1"
+      },
+      "systemComponents": {
+        "certManager": "v1.17.1",
+        "systemUpgradeController": "v0.20.2"
+      },
+      "manifestSets": []
+    },
+    {
       "version": "0.13.0-rc.14",
       "publishedAt": "2026-10-15T09:09:38.117Z",
       "bootstrapRef": "46d6006",
