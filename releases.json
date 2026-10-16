@@ -2,6 +2,29 @@
   "schemaVersion": 2,
   "releases": [
     {
+      "version": "0.13.0-rc.17",
+      "publishedAt": "2026-10-16T20:52:44.095Z",
+      "bootstrapRef": "484b507",
+      "images": {
+        "fluiApi": "0.13.0-rc.17",
+        "fluiWeb": "0.13.0-rc.17",
+        "fluiAuthz": "0.7.0"
+      },
+      "notes": [
+        "flui env install-values adds the values an existing install record lacks, never changing a recorded one, so an update can bring the API manifest forward on installations whose record was incomplete."
+      ],
+      "migrations": 0,
+      "requiresBootstrap": false,
+      "k3s": {
+        "version": "v1.35.4+k3s1"
+      },
+      "systemComponents": {
+        "certManager": "v1.17.1",
+        "systemUpgradeController": "v0.20.2"
+      },
+      "manifestSets": []
+    },
+    {
       "version": "0.13.0-rc.16",
       "publishedAt": "2026-10-16T19:34:13.071Z",
       "bootstrapRef": "484b507",
