@@ -2,6 +2,29 @@
   "schemaVersion": 2,
   "releases": [
     {
+      "version": "0.13.0-rc.18",
+      "publishedAt": "2026-10-16T21:16:47.068Z",
+      "bootstrapRef": "484b507",
+      "images": {
+        "fluiApi": "0.13.0-rc.18",
+        "fluiWeb": "0.13.0-rc.18",
+        "fluiAuthz": "0.7.0"
+      },
+      "notes": [
+        "An update brings a master's templated manifests forward even when earlier updates left them from different releases: recorded values are proven against every release the files may come from."
+      ],
+      "migrations": 0,
+      "requiresBootstrap": false,
+      "k3s": {
+        "version": "v1.35.4+k3s1"
+      },
+      "systemComponents": {
+        "certManager": "v1.17.1",
+        "systemUpgradeController": "v0.20.2"
+      },
+      "manifestSets": []
+    },
+    {
       "version": "0.13.0-rc.17",
       "publishedAt": "2026-10-16T20:52:44.095Z",
       "bootstrapRef": "484b507",
