@@ -94,6 +94,57 @@ ifTools('what the read job lets out of the master', () => {
     );
   });
 
+  it('names the images a withheld file declares, and nothing else from it', () => {
+    const api = `${owned(
+      'Deployment',
+      `spec:
+  template:
+    spec:
+      containers:
+      - name: flui-api
+        image: ghcr.io/flui-cloud/core:25eeb87
+        env:
+        - name: TOKEN
+          value: "${SECRET}"
+      - name: sidecar
+        image: "ghcr.io/x/y:1 ${SECRET}"
+      - name: other
+        image: ghcr.io/x/y:1 # ${SECRET}
+      - name: odd
+        image: ghcr.io/x/y:$(${SECRET})
+      - name: double
+        image: "ghcr.io/x/double:2"
+      - name: single
+        image: 'ghcr.io/x/single:3'
+      - name: open
+        image: "ghcr.io/x/open:4 ${SECRET}"
+      - name: mixed
+        image: "ghcr.io/x/mixed:5'`,
+    )}`;
+    const out = runRead(
+      {
+        '09-flui-api.yaml': api,
+        '00-secrets.yaml': `${owned('Secret', `stringData:\n  A: "${SECRET}"`)}spec:\n  image: ghcr.io/x/secret:1\n`,
+      },
+      'all',
+    );
+    expect(out).not.toContain(SECRET);
+    expect(out).not.toContain('BODY ');
+    expect(out).not.toContain('ghcr.io/x/secret');
+
+    const held = parseReadLogs(out);
+    expect(held.get('09-flui-api.yaml')).toMatchObject({
+      withheld: true,
+      images: [
+        'ghcr.io/flui-cloud/core:25eeb87',
+        'ghcr.io/x/double:2',
+        'ghcr.io/x/single:3',
+      ],
+    });
+    expect(held.get('09-flui-api.yaml')?.content).toBeUndefined();
+    expect(held.get('00-secrets.yaml')?.images).toBeUndefined();
+  });
+
   it('counts a withheld file without an owner label as unclaimed', () => {
     const out = runRead(
       { '06-custom.yaml': 'kind: ConfigMap\nmetadata:\n  name: x\n' },
@@ -120,6 +171,51 @@ describe('the read job script', () => {
   it('always withholds the files that carried a secret in earlier releases', () => {
     const script = readScript([]);
     for (const name of WITHHELD_BY_HISTORY) expect(script).toContain(name);
+  });
+
+  it('parses an image line only for a file it saw, and never for a Secret', () => {
+    const held = parseReadLogs(
+      [
+        'FILE 00-s.yaml a secret',
+        'IMAGE 00-s.yaml ghcr.io/x/y:1',
+        'FILE 09-flui-api.yaml b withheld 1 1',
+        'IMAGE 09-flui-api.yaml ghcr.io/flui-cloud/core:25eeb87',
+        'IMAGE 09-flui-api.yaml ghcr.io/x/y:1 extra',
+        'IMAGE 09-flui-api.yaml "quoted:1"',
+        "IMAGE 09-flui-api.yaml 'single:2'",
+        `IMAGE 09-flui-api.yaml "mixed:3'`,
+        'IMAGE 09-flui-api.yaml "inner"quote:4"',
+        'IMAGE 09-flui-api.yaml "$(leak):5"',
+        'IMAGE 09-flui-api.yaml ""',
+        'IMAGE 10-unknown.yaml ghcr.io/x/y:1',
+      ].join('\n'),
+    );
+    expect(held.get('00-s.yaml')?.images).toBeUndefined();
+    expect(held.get('09-flui-api.yaml')?.images).toEqual([
+      'ghcr.io/flui-cloud/core:25eeb87',
+      'quoted:1',
+      'single:2',
+    ]);
+    expect(held.has('10-unknown.yaml')).toBe(false);
+  });
+
+  it('keeps a withheld file’s images on that file when its name comes back again as a plain one', () => {
+    const body = Buffer.from('kind: ConfigMap\n').toString('base64');
+    const held = parseReadLogs(
+      [
+        'FILE 06-custom.yaml a withheld 1 1',
+        'IMAGE 06-custom.yaml ghcr.io/x/withheld:1',
+        'FILE 06-custom.yaml b plain',
+        `BODY ${body}`,
+        'IMAGE 06-custom.yaml ghcr.io/x/plain:2',
+      ].join('\n'),
+    );
+    expect(held.get('06-custom.yaml')).toEqual({
+      sha: 'b',
+      carriesSecret: false,
+      content: 'kind: ConfigMap\n',
+      images: ['ghcr.io/x/plain:2'],
+    });
   });
 
   it('drops a name that could break out of the shell', () => {

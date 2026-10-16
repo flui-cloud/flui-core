@@ -216,6 +216,7 @@ export class InstallValuesService {
     const running = await this.state.runningTags(kubeconfig, slots);
     const images = [
       ...(options.images ?? []),
+      ...[...held.values()].flatMap((h) => h.images ?? []),
       ...(await this.sources.publishedImages(slots)),
     ];
     const narrow = narrowCandidates({

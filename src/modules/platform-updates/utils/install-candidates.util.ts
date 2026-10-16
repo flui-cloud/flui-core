@@ -6,14 +6,18 @@ import { InstallRecord } from './install-values.util';
 export const CONTROL_REMOTE_WRITE_URL =
   'http://vmsingle.flui-control.svc.cluster.local:8428/api/v1/write';
 export const WORKLOAD_INGEST_PORT = 30428;
-const MAX_CANDIDATE_REFS = 8;
+const MAX_CANDIDATE_REFS = 64;
 
 export const nonEmpty = (values: Array<string | null | undefined>): string[] =>
   values.filter((v): v is string => typeof v === 'string' && v.length > 0);
 
 const dashed = (ip: string): string => ip.replaceAll('.', '-');
 
-/** Releases a master may have been built from, most likely first. */
+/**
+ * Releases a master may have been built from, most likely first. The ceiling
+ * only guards against a malformed release list: every published release must
+ * stay a candidate, or a master built by an older one can no longer be read.
+ */
 export function candidateRefList(
   record: InstallRecord | null,
   cluster: Pick<ClusterEntity, 'bootstrapRef'>,

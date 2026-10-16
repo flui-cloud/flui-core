@@ -35,6 +35,17 @@ describe('where install values may come from', () => {
     ]);
   });
 
+  it('keeps every published release, the oldest included', () => {
+    const published = Array.from({ length: 13 }, (_, i) => `ref-${i}`);
+    const refs = candidateRefList(
+      { bootstrapRef: 'ref-record' } as never,
+      { bootstrapRef: 'ref-cluster' } as never,
+      published,
+    );
+    expect(refs).toEqual(expect.arrayContaining(published));
+    expect(refs).toContain('ref-12');
+  });
+
   it('reads the hosts of IngressRoutes and the agent push target', () => {
     expect(
       routeHostsOf([
