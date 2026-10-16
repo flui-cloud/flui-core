@@ -2,6 +2,29 @@
   "schemaVersion": 2,
   "releases": [
     {
+      "version": "0.13.0-rc.19",
+      "publishedAt": "2026-10-16T21:33:13.965Z",
+      "bootstrapRef": "484b507",
+      "images": {
+        "fluiApi": "0.13.0-rc.19",
+        "fluiWeb": "0.13.0-rc.19",
+        "fluiAuthz": "0.7.0"
+      },
+      "notes": [
+        "An update also brings forward a master manifest whose ingress TLS binding the install record never noted, when the binding is proven on the master."
+      ],
+      "migrations": 0,
+      "requiresBootstrap": false,
+      "k3s": {
+        "version": "v1.35.4+k3s1"
+      },
+      "systemComponents": {
+        "certManager": "v1.17.1",
+        "systemUpgradeController": "v0.20.2"
+      },
+      "manifestSets": []
+    },
+    {
       "version": "0.13.0-rc.18",
       "publishedAt": "2026-10-16T21:16:47.068Z",
       "bootstrapRef": "484b507",
