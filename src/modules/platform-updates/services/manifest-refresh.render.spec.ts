@@ -134,6 +134,7 @@ function setup(options: {
   installed?: Record<string, string>;
   secretData?: Record<string, string>;
   recordValues?: Record<string, string>;
+  recordTransforms?: Record<string, unknown>;
 }) {
   const onDisk = masterFiles();
   for (const [name, content] of Object.entries(options.onDisk ?? {})) {
@@ -221,7 +222,9 @@ function setup(options: {
         schema: '1',
         bootstrapRef: 'installed-ref',
         'values.json': JSON.stringify(options.recordValues ?? TRUTH),
-        'transforms.json': JSON.stringify({ raw: [], ingressTls: TLS }),
+        'transforms.json': JSON.stringify(
+          options.recordTransforms ?? { raw: [], ingressTls: TLS },
+        ),
         'rendered.json': '{}',
       },
     };
@@ -317,6 +320,26 @@ ifTemplates('a refresh that renders templated files', () => {
     const api = plan.entries.find((e) => e.name === '09-flui-api.yaml');
     expect(api?.action).not.toBe('skip');
     expect(api?.renderedWith).toContain('FLUI_BASE_DOMAIN');
+  });
+
+  it('proves the system TLS binding on the master when the record never noted it', async () => {
+    const { service, master } = setup({
+      record: true,
+      recordTransforms: { raw: [] },
+    });
+    const plan = await service.plan({});
+    const api = plan.entries.find((e) => e.name === '09-flui-api.yaml');
+    expect(api?.action).not.toBe('skip');
+    expect(api?.renderedWith).toContain('FLUI_BASE_DOMAIN');
+
+    await service.apply({ planId: plan.planId });
+    const files = master.write.mock.calls[0][3] as Array<{
+      name: string;
+      content: string;
+    }>;
+    expect(files.find((f) => f.name === '09-flui-api.yaml')?.content).toContain(
+      'secretName: flui-system-tls',
+    );
   });
 
   it('still refuses a recorded value the master does not hold, whatever release is tried', async () => {

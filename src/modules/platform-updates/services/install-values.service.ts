@@ -172,13 +172,20 @@ export class InstallValuesService {
     const proof = proveInstallValues({
       files: proofFilesFor(onMaster, perRef, record),
       candidates,
-      ingressTls: record.transforms.ingressTls,
+      ingressTls: record.transforms.ingressTls ?? {
+        secretName: SYSTEM_TLS_SECRET,
+      },
       secretVariables,
     });
 
     const { values, unproven } = pinRunningTags(proof, slots, running);
     const transforms = provenTransforms(
-      record.transforms,
+      record.transforms.ingressTls || proof.ingressTlsFiles.length === 0
+        ? record.transforms
+        : {
+            ...record.transforms,
+            ingressTls: { secretName: SYSTEM_TLS_SECRET, files: [] },
+          },
       proof.ingressTlsFiles,
       onMaster,
     );
