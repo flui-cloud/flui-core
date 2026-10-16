@@ -266,6 +266,7 @@ export class ManifestRefreshService {
       [...release.files.values()].map((f) => f.template),
       secretVariables,
       kind,
+      cluster,
     );
 
     const names = new Set<string>([

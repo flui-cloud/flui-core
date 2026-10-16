@@ -35,8 +35,10 @@ import {
   restoreProven,
   templateSlots,
   templatesByName,
+  TemplatesByRef,
   vouchedFiles,
 } from '../utils/install-proof.util';
+import { ClusterEntity } from '../../infrastructure/clusters/entities/cluster.entity';
 
 const SYSTEM_TLS_SECRET = 'flui-system-tls';
 const MONITORING_AGENT_FLAG = 'DEPLOY_MONITORING_AGENT';
@@ -88,13 +90,19 @@ export class InstallValuesService {
   /**
    * What a refresh renders templated files with: the record, proven against
    * the master's current files, with every image tag taken from what runs.
+   *
+   * Only recorded values are ever candidates, but a file may be proven by the
+   * template of any release this installation may come from: an update that
+   * rewrote one file at a newer release leaves it unprovable at the release
+   * the record names. The record's own release must still be readable.
    */
   async valuesFor(
     kubeconfig: string,
     onMaster: Map<string, HeldFile>,
     targetTemplates: string[],
     secretVariables: ReadonlySet<string>,
-    kind: MasterKind = 'control',
+    kind: MasterKind,
+    cluster: ClusterEntity,
   ): Promise<ValuesContext> {
     const record = await this.state.recorded(kubeconfig);
     const flags = new Set(
@@ -121,18 +129,26 @@ export class InstallValuesService {
       );
     }
 
-    const installed = await this.sources.templatesFor(
+    const refs = [
       record.bootstrapRef,
-      provableNames(onMaster),
+      ...(await this.sources.candidateRefs(cluster, record)).filter(
+        (r) => r !== record.bootstrapRef,
+      ),
+    ];
+    const perRef: TemplatesByRef = await this.sources.templatesByRef(
+      refs,
+      onMaster,
       kind,
     );
-    if (installed.length === 0) {
+    if (perRef[0][1].length === 0) {
       return none(
         `The release this installation was built from (${record.bootstrapRef}) could not be read.`,
       );
     }
     const slots = [
-      ...installed.flatMap((f) => imageTagSlots(f.template)),
+      ...perRef.flatMap(([, files]) =>
+        files.flatMap((f) => imageTagSlots(f.template)),
+      ),
       ...targetTemplates.flatMap((t) => imageTagSlots(t)),
     ];
     const running = await this.state.runningTags(kubeconfig, slots);
@@ -154,11 +170,7 @@ export class InstallValuesService {
       }
     }
     const proof = proveInstallValues({
-      files: proofFilesFor(
-        onMaster,
-        [[record.bootstrapRef, installed]],
-        record,
-      ),
+      files: proofFilesFor(onMaster, perRef, record),
       candidates,
       ingressTls: record.transforms.ingressTls,
       secretVariables,

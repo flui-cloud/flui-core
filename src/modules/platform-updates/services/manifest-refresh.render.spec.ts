@@ -133,6 +133,7 @@ function setup(options: {
   onDisk?: Record<string, string>;
   installed?: Record<string, string>;
   secretData?: Record<string, string>;
+  recordValues?: Record<string, string>;
 }) {
   const onDisk = masterFiles();
   for (const [name, content] of Object.entries(options.onDisk ?? {})) {
@@ -219,7 +220,7 @@ function setup(options: {
       data: {
         schema: '1',
         bootstrapRef: 'installed-ref',
-        'values.json': JSON.stringify(TRUTH),
+        'values.json': JSON.stringify(options.recordValues ?? TRUTH),
         'transforms.json': JSON.stringify({ raw: [], ingressTls: TLS }),
         'rendered.json': '{}',
       },
@@ -299,6 +300,34 @@ ifTemplates('a refresh that renders templated files', () => {
     expect(withheldAsked.every((w) => w === 'all')).toBe(true);
     const returned = await master.read.mock.results[0].value;
     expect(returned.get('04d-alertmanager.yaml').content).toBeUndefined();
+  });
+
+  it('proves the record against a later release when an update rewrote a file there', async () => {
+    const older = (name: string) =>
+      `${read(`control/${name}`) as string}# as the record's release shipped it\n`;
+    const { service } = setup({
+      record: true,
+      installed: Object.fromEntries(
+        ['09-flui-api.yaml', '10-flui-web.yaml', '12-flui-web-config.yaml'].map(
+          (n) => [n, older(n)],
+        ),
+      ),
+    });
+    const plan = await service.plan({});
+    const api = plan.entries.find((e) => e.name === '09-flui-api.yaml');
+    expect(api?.action).not.toBe('skip');
+    expect(api?.renderedWith).toContain('FLUI_BASE_DOMAIN');
+  });
+
+  it('still refuses a recorded value the master does not hold, whatever release is tried', async () => {
+    const { service } = setup({
+      record: true,
+      recordValues: { ...TRUTH, FLUI_BASE_DOMAIN: 'wrong.example.com' },
+    });
+    const plan = await service.plan({});
+    const api = plan.entries.find((e) => e.name === '09-flui-api.yaml');
+    expect(api?.action).toBe('skip');
+    expect(api?.reason).toMatch(/FLUI_BASE_DOMAIN/);
   });
 
   it('writes the rendered file and creates the Secrets from where the values already live', async () => {
