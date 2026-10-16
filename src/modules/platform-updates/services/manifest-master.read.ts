@@ -20,9 +20,10 @@ export interface HeldFile {
 
 const IMAGE_REF = /^[A-Za-z0-9._/:@-]+$/;
 const QUOTED_REF = /^(["']?)([^"']*)\1$/;
-const IMAGE_LINE = String.raw`^[[:space:]]+image:[[:space:]]*["']?[A-Za-z0-9._/:@-]+["']?[[:space:]]*$`;
+const IMAGE_LINE = `^[[:space:]]+image:[[:space:]]*["']?[A-Za-z0-9._/:@-]+["']?[[:space:]]*$`;
+const ESCAPED_QUOTE = String.raw`'\''`;
 const shellQuoted = (text: string) =>
-  `'${text.replaceAll("'", String.raw`'\''`)}'`;
+  `'${text.replaceAll("'", ESCAPED_QUOTE)}'`;
 
 /**
  * Files that rendered a secret value into their body in releases published
@@ -82,36 +83,53 @@ export function readScript(
   ].join('\n');
 }
 
+function fileEntry(
+  sha: string,
+  kind: string,
+  kinds: string,
+  owners: string,
+): HeldFile {
+  const entry: HeldFile = { sha, carriesSecret: kind === 'secret' };
+  if (kind === 'withheld') {
+    const resources = Number(kinds);
+    entry.withheld = true;
+    entry.declaresProvenance = resources > 0 && Number(owners) >= resources;
+  }
+  return entry;
+}
+
+function imageRef(entry: HeldFile | undefined, quoted: string, extra?: string) {
+  if (!entry || entry.carriesSecret || extra !== undefined) return undefined;
+  const ref = QUOTED_REF.exec(quoted ?? '')?.[2];
+  return ref && IMAGE_REF.test(ref) ? ref : undefined;
+}
+
+function addImage(held: Map<string, HeldFile>, line: string): void {
+  const [, name, quoted, extra] = line.trim().split(/\s+/);
+  const entry = held.get(name);
+  const ref = imageRef(entry, quoted, extra);
+  if (entry && ref) entry.images = [...(entry.images ?? []), ref];
+}
+
 export function parseReadLogs(logs: string): Map<string, HeldFile> {
   const held = new Map<string, HeldFile>();
   let last: string | null = null;
   for (const line of logs.split('\n')) {
     if (line.startsWith('FILE ')) {
       const [, name, sha, kind, kinds, owners] = line.trim().split(/\s+/);
-      const entry: HeldFile = { sha, carriesSecret: kind === 'secret' };
-      if (kind === 'withheld') {
-        const resources = Number(kinds);
-        entry.withheld = true;
-        entry.declaresProvenance = resources > 0 && Number(owners) >= resources;
-      }
-      held.set(name, entry);
+      held.set(name, fileEntry(sha, kind, kinds, owners));
       last = kind === 'plain' ? name : null;
     } else if (line.startsWith('IMAGE ')) {
-      const [, name, quoted, extra] = line.trim().split(/\s+/);
-      const entry = held.get(name);
-      if (!entry || entry.carriesSecret || extra !== undefined) continue;
-      const ref = QUOTED_REF.exec(quoted ?? '')?.[2];
-      if (!ref || !IMAGE_REF.test(ref)) continue;
-      entry.images = [...(entry.images ?? []), ref];
+      addImage(held, line);
     } else if (line.startsWith('BODY ') && last) {
       const entry = held.get(last);
-      if (entry) {
-        entry.content = Buffer.from(line.slice(5).trim(), 'base64').toString(
-          'utf8',
-        );
-      }
+      if (entry) entry.content = decodeBody(line);
       last = null;
     }
   }
   return held;
+}
+
+function decodeBody(line: string): string {
+  return Buffer.from(line.slice(5).trim(), 'base64').toString('utf8');
 }
