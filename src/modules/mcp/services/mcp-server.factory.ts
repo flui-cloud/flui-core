@@ -12,6 +12,7 @@ import { McpAuditRepository } from '../repositories/mcp-audit.repository';
 import { McpScopeResolver } from './mcp-scope.resolver';
 import { ForwardedCredential, McpApiClient } from './mcp-api.client';
 import {
+  APPROVAL_REQUIRED_STATUS,
   McpToolContext,
   isExecutable,
   runTool,
@@ -20,11 +21,21 @@ import {
 import { ALL_TOOLS } from '../tools/tool-registry';
 import { isOfferedToGuest } from './sandbox-tool-visibility';
 import { dashboardBaseUrl } from '../../action-cycle/action-cycle.core';
+import { publicApiBaseUrl } from '../../../config/public-urls';
 
 export const MCP_SERVER_NAME = 'flui';
 export const MCP_SERVER_VERSION = '0.1.0';
-export const MCP_SERVER_INSTRUCTIONS =
-  'Flui: deploy and operate applications on your own clusters. Tools are gated by the scopes of the principal whose token you are using.';
+export function mcpServerInstructions(instance: {
+  dashboardUrl: string;
+  apiUrl: string;
+}): string {
+  return [
+    `Flui instance at ${instance.dashboardUrl} (API ${instance.apiUrl}): deploy and operate applications on your own clusters.`,
+    'Call `get_started` before anything else.',
+    `Some calls need a person's approval: they return status \`${APPROVAL_REQUIRED_STATUS}\` with a link; give that link to the person exactly as written.`,
+    'What your key can do is answered by `my_permissions`.',
+  ].join('\n');
+}
 
 /**
  * Builds a stateless MCP server scoped to one authenticated principal.
@@ -83,6 +94,9 @@ export class McpServerFactory {
     actor?: Actor,
   ): McpServer {
     const requestStateCodec = this.codecFor(user);
+    const read = (key: string) => this.config.get<string>(key);
+    const dashboardUrl = dashboardBaseUrl(read);
+    const apiUrl = publicApiBaseUrl(read);
     const server = new McpServer(
       { name: MCP_SERVER_NAME, version: MCP_SERVER_VERSION },
       {
@@ -91,7 +105,7 @@ export class McpServerFactory {
         // fields plus the revisions it actually serves. Nothing here names a
         // revision: the day the package moves, the discovery document moves
         // with it instead of repeating a date somebody typed.
-        instructions: MCP_SERVER_INSTRUCTIONS,
+        instructions: mcpServerInstructions({ dashboardUrl, apiUrl }),
         // An assertion, not a default: only tools are registered and nothing on
         // this server ever publishes a change event, so the list never changes
         // under a client that cached it.
@@ -130,7 +144,8 @@ export class McpServerFactory {
       // the request is on the request and deliberately not on the principal.
       actor,
       requestStateCodec,
-      dashboardUrl: dashboardBaseUrl((key) => this.config.get<string>(key)),
+      dashboardUrl,
+      apiUrl,
     };
 
     for (const def of ALL_TOOLS) {

@@ -101,6 +101,8 @@ export interface McpToolContext {
   clientElicitsUrl?: boolean;
   /** The dashboard's public base URL, for links a person has to open. */
   dashboardUrl?: string;
+  /** The API's public base URL, the one this instance is reached at. */
+  apiUrl?: string;
   /**
    * Seals a correlation payload into the opaque `requestState` a handler hands
    * back with `inputRequired`. Bound per call by `runTool` to the SDK context,

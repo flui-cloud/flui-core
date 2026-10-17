@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { RELEASE } from '../../../config/release.config';
 import { MCP_SCOPE } from '../constants/mcp-scopes';
 import { enc } from './application-views.util';
 import {
@@ -62,7 +63,7 @@ export const SELF_SERVICE_TOOLS: ToolDef[] = [
       'GET /sandbox/limits',
     ],
     description:
-      'Who you are acting as, what this installation lets that principal do, and what is out of reach because of a trial rather than because Flui cannot do it. Read this BEFORE telling somebody a capability is missing, and before attempting a whole plan that one refusal will stop halfway. It distinguishes the three refusals you can meet, which look alike and mean opposite things: a tool you were never handed (a scope on your credential), a resource you are not allowed on (a permission), and an area this trial does not include. Changes nothing.',
+      'Which Flui instance you are connected to (its dashboard and API addresses and version), who you are acting as, what this installation lets that principal do, and what is out of reach because of a trial rather than because Flui cannot do it. Read this BEFORE telling somebody a capability is missing, and before attempting a whole plan that one refusal will stop halfway. It distinguishes the three refusals you can meet, which look alike and mean opposite things: a tool you were never handed (a scope on your credential), a resource you are not allowed on (a permission), and an area this trial does not include. Changes nothing.',
     // The read scope, and no scope of its own. A credential that may do nothing
     // at all should still be able to find out that it may do nothing at all —
     // a tool that reports the ceiling and is itself behind a ceiling would be
@@ -80,6 +81,11 @@ export const SELF_SERVICE_TOOLS: ToolDef[] = [
         : undefined;
 
       return {
+        instance: {
+          dashboardUrl: ctx.dashboardUrl ?? null,
+          apiUrl: ctx.apiUrl ?? null,
+          version: RELEASE.version,
+        },
         you: { email: ctx.user.email, isAdmin: me.isAdmin ?? false },
         permissions: me.permissions ?? [],
         sections: {

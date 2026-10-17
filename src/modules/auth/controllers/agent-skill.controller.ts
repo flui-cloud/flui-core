@@ -38,6 +38,7 @@ import {
   AgentCheckInResultDto,
   AgentSkillDto,
 } from '../dto/agent-skill.dto';
+import { publicApiBaseUrl } from '../../../config/public-urls';
 
 /**
  * The two halves of a connection, one route each.
@@ -153,25 +154,8 @@ export class AgentSkillController {
     };
   }
 
-  /**
-   * Where this instance answers, as an agent outside it must address it.
-   *
-   * The public address is the one fact the process cannot derive: it knows the
-   * port it listens on and nothing about the name it is reached by. The same
-   * three variables the mail webhook registrar reads, in the same order, so an
-   * install that configured its address once does not have to do it again;
-   * localhost last, which keeps a development instance's document usable
-   * instead of emitting a URL that is confidently wrong.
-   */
   private endpoints(): { mcpEndpoint: string; apiBaseUrl: string } {
-    const configured = ['PUBLIC_API_URL', 'FLUI_API_ENDPOINT', 'API_BASE_URL']
-      .map((key) => this.config.get<string>(key)?.trim())
-      .find((value) => !!value);
-    let base =
-      configured ||
-      `http://localhost:${this.config.get<string>('PORT') ?? '3000'}`;
-    while (base.endsWith('/')) base = base.slice(0, -1);
-    const apiBaseUrl = `${base}/api/v1`;
+    const apiBaseUrl = publicApiBaseUrl((key) => this.config.get<string>(key));
     return { apiBaseUrl, mcpEndpoint: `${apiBaseUrl}/mcp` };
   }
 }

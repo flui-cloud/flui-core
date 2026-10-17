@@ -3,6 +3,7 @@ import { McpToolContext, ToolDef, runTool } from './mcp-tool.util';
 import { McpApiCaller, McpApiError } from '../services/mcp-api.client';
 import { MCP_SCOPE } from '../constants/mcp-scopes';
 import { isOfferedToGuest } from '../services/sandbox-tool-visibility';
+import { RELEASE } from '../../../config/release.config';
 
 interface Call {
   method: string;
@@ -634,6 +635,18 @@ describe('knowing your own edge', () => {
     expect(credential.destructiveToolsEnabled).toBe(false);
     expect(String(credential.note)).toContain('grant problem');
     expect(calls.map((c) => c.path)).not.toContain('/auth/api-keys');
+  });
+
+  it('names the instance this key is connected to', async () => {
+    const { data } = await call('my_permissions', {}, paid, [], {
+      dashboardUrl: 'https://app.acme.dev',
+      apiUrl: 'https://api.acme.dev/api/v1',
+    });
+    expect(data.instance).toEqual({
+      dashboardUrl: 'https://app.acme.dev',
+      apiUrl: 'https://api.acme.dev/api/v1',
+      version: RELEASE.version,
+    });
   });
 
   it('turns a trial area into a sentence a person can be told', async () => {
