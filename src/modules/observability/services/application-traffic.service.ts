@@ -9,6 +9,10 @@ import {
   TrafficStatusCodeBreakdownDto,
   TrafficStatusDto,
 } from '../dto/application-traffic.dto';
+import { PromiseCache, alignRange } from '../utils/promise-cache';
+
+const HISTORY_CACHE_TTL_MS = 30_000;
+const HISTORY_ALIGN_SECONDS = 30;
 
 export interface TrafficTarget {
   slug: string;
@@ -37,6 +41,10 @@ export class ApplicationTrafficService {
    * the bucket layout than about the application. Traefik defaults to four.
    */
   private static readonly COARSE_BUCKET_THRESHOLD = 6;
+
+  private readonly historyCache = new PromiseCache<TrafficHistoryPointDto[]>(
+    () => HISTORY_CACHE_TTL_MS,
+  );
 
   constructor(private readonly prometheus: PrometheusQueryService) {}
 
@@ -166,6 +174,11 @@ export class ApplicationTrafficService {
     };
   }
 
+  /**
+   * The range is rounded down to 30 s and the answer shared for 30 s, so
+   * viewers opening the same chart a few seconds apart cost one round of
+   * queries. Callers only read the returned points.
+   */
   async getTrafficHistory(
     target: TrafficTarget,
     startUnix: number,
@@ -173,11 +186,26 @@ export class ApplicationTrafficService {
     step: string,
     window: string,
   ): Promise<TrafficHistoryPointDto[]> {
-    const serviceId = this.buildTraefikServiceId(target);
-    if (!serviceId) {
+    const pattern = this.traefikServicePattern(target);
+    if (!pattern) {
       return [];
     }
 
+    const range = alignRange(startUnix, endUnix, HISTORY_ALIGN_SECONDS);
+    return this.historyCache.get(
+      `${pattern}/${range.start}/${range.end}/${step}/${window}`,
+      () =>
+        this.queryTrafficHistory(target, range.start, range.end, step, window),
+    );
+  }
+
+  private async queryTrafficHistory(
+    target: TrafficTarget,
+    startUnix: number,
+    endUnix: number,
+    step: string,
+    window: string,
+  ): Promise<TrafficHistoryPointDto[]> {
     const selector = this.selector(target);
 
     const [totalSeries, clientErrorSeries, serverErrorSeries, p95Series] =

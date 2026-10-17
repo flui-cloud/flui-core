@@ -1,5 +1,6 @@
 import {
   Entity,
+  Index,
   PrimaryColumn,
   Column,
   CreateDateColumn,
@@ -15,6 +16,7 @@ import { ApplicationResourceStatus } from '../enums/application-resource-status.
 import { ReconciliationStatus } from '../../infrastructure/shared/enums/reconciliation-status.enum';
 
 @Entity('app_resources')
+@Index('IDX_app_resources_application', ['applicationId'])
 export class AppResourceEntity {
   @PrimaryColumn('uuid')
   id: string;

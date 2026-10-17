@@ -36,7 +36,7 @@ export class AppAvailabilityService {
   ) {}
 
   async forApplication(appId: string): Promise<AppAvailability> {
-    const app = await this.applications.findById(appId);
+    const app = await this.applications.findByIdLite(appId);
     if (!app) throw new NotFoundException(`Application ${appId} not found`);
     const cluster = await this.clusters.findOne({
       where: { id: app.clusterId },

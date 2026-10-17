@@ -215,6 +215,7 @@ describe('resource fence (direct API calls)', () => {
   let app: INestApplication;
   let bindings: Binding[] = [];
   let principal: AuthenticatedUser = USERS.nobody;
+  let engines: PolicyEngineService[] = [];
 
   beforeAll(async () => {
     const bindingsRepo = {
@@ -287,15 +288,26 @@ describe('resource fence (direct API calls)', () => {
               if (!apps[id]) throw new Error(`Application ${id} not found`);
               return apps[id];
             },
+            findByIdLite: async (id: string) => {
+              if (!apps[id]) throw new Error(`Application ${id} not found`);
+              return apps[id];
+            },
           },
         },
         {
           provide: ApplicationsRepository,
-          useValue: { findById: async (id: string) => apps[id] ?? null },
+          useValue: {
+            findById: async (id: string) => apps[id] ?? null,
+            findByIdLite: async (id: string) => apps[id] ?? null,
+          },
         },
       ],
     }).compile();
 
+    engines = [
+      moduleRef.get<PolicyEngineService>(POLICY_ENGINE),
+      moduleRef.get(PolicyEngineService),
+    ];
     app = moduleRef.createNestApplication();
     app.use(
       (req: { user: AuthenticatedUser }, _res: unknown, next: () => void) => {
@@ -313,6 +325,7 @@ describe('resource fence (direct API calls)', () => {
   const as = (who: keyof typeof USERS, grants: Binding[] = []) => {
     principal = USERS[who];
     bindings = grants;
+    engines.forEach((e) => e.invalidateAccessCache());
   };
 
   const grant = (

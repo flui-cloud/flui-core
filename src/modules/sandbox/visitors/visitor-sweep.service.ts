@@ -16,6 +16,7 @@ import { SandboxVisitorEntity } from '../entities/sandbox-visitor.entity';
 import { VisitorAdmissionService } from './visitor-admission.service';
 import { lockVisitor } from './visitor-fold';
 import { VISITOR_CONFIG, VisitorConfig } from './visitor.config';
+import { accessGrantsChanged } from '../../iam/services/access-grants-changed';
 
 export const VISITOR_SWEEP_PAGE = 50;
 
@@ -119,6 +120,7 @@ export class VisitorSweepService {
     await m
       .getRepository(IamRoleBindingEntity)
       .delete({ principalType: 'user', principalRef: userId });
+    accessGrantsChanged();
     await m.getRepository(ActionProposalEntity).delete({ ownerUserId: userId });
     await m
       .getRepository(AgentConcessionEntity)

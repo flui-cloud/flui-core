@@ -58,6 +58,7 @@ describe('PhysicalDbMigration1790000000028', () => {
       'IdentityEmail1790000000039',
       'IdentityConsoleState1790000000040',
       'ControlPeerPerNode1790000000041',
+      'AppHistoryIndexes1790000000042',
     ]);
     expect(migrations[at - 1].name).toMatch(/179000000002[67]$/);
   });

@@ -10,6 +10,7 @@ import { IAM_ROLE } from '../../iam/constants/iam-roles';
 import { SHOWCASE_GRANT } from '../../iam/constants/iam-showcase';
 import { VISITOR_EMAIL_DOMAIN } from '../../auth/utils/placeholder-email.util';
 import { SandboxVisitorEntity } from '../entities/sandbox-visitor.entity';
+import { accessGrantsChanged } from '../../iam/services/access-grants-changed';
 
 /** The identity-provider name of a visitor, derived from an id chosen before it exists. */
 export function visitorIdentity(seed: string): {
@@ -68,6 +69,7 @@ export async function writeVisitorRows(
       selector: SHOWCASE_GRANT.selector,
     }),
   ]);
+  accessGrantsChanged();
   await m.getRepository(SandboxVisitorEntity).save({
     userId: user.id,
     idpUserId: params.idpUserId,

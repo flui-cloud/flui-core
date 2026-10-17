@@ -35,6 +35,7 @@ import { ApplicationTrafficService } from './services/application-traffic.servic
 import { AppHealthChecksService } from './services/app-health-checks.service';
 import { CapacityAdviceService } from './services/capacity-advice.service';
 import { LokiQueryService } from './services/loki-query.service';
+import { accessGrantsChanged } from '../iam/services/access-grants-changed';
 
 const CLUSTER_ID = 'cluster-1';
 
@@ -154,6 +155,8 @@ describe('observability resource authorization (direct HTTP routes)', () => {
     const applicationService = {
       findById: async (id: string) =>
         applications.find((item) => item.id === id),
+      findByIdLite: async (id: string) =>
+        applications.find((item) => item.id === id),
       findByClusterId: async (clusterId: string) =>
         applications.filter((item) => item.clusterId === clusterId),
     };
@@ -260,6 +263,7 @@ describe('observability resource authorization (direct HTTP routes)', () => {
   });
 
   beforeEach(() => {
+    accessGrantsChanged();
     principal = users.tenant;
     bindings = [
       {
@@ -314,6 +318,7 @@ describe('observability resource authorization (direct HTTP routes)', () => {
         selector: null,
       },
     ];
+    accessGrantsChanged();
     await http().get('/observability/loki/debug').expect(200);
   });
 
@@ -337,6 +342,7 @@ describe('observability resource authorization (direct HTTP routes)', () => {
         selector: null,
       },
     ];
+    accessGrantsChanged();
     await http()
       .get(`/observability/clusters/${CLUSTER_ID}/apps/logs`)
       .query({ namespace: 'tenant-b' })

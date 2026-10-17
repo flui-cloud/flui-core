@@ -17,10 +17,14 @@ import { ClusterDnsGateway } from '../gateway/cluster-dns.gateway';
  * that drains itself.
  */
 const DEFERRED_RETRY_WAIT_MS = 5_000;
+export const LIVE_CHECK_MIN_INTERVAL_MS = 30_000;
+const LIVE_CHECK_MEMO_MAX_ENTRIES = 5_000;
 
 @Injectable()
 export class CertificateStatusRefreshService {
   private readonly logger = new Logger(CertificateStatusRefreshService.name);
+  private readonly lastLiveCheck = new Map<string, number>();
+  private readonly inFlight = new Map<string, Promise<void>>();
 
   constructor(
     private readonly appEndpointService: AppEndpointService,
@@ -34,7 +38,37 @@ export class CertificateStatusRefreshService {
    * and a null was never established at all. `valid` and `expired` are left
    * alone — neither changes without something else writing them.
    */
-  async refreshIfNeeded(endpointId: string): Promise<void> {
+  refreshIfNeeded(
+    endpointId: string,
+    opts: { force?: boolean } = {},
+  ): Promise<void> {
+    const running = this.inFlight.get(endpointId);
+    if (running) return running;
+    const last = this.lastLiveCheck.get(endpointId);
+    if (
+      !opts.force &&
+      last !== undefined &&
+      Date.now() - last < LIVE_CHECK_MIN_INTERVAL_MS
+    ) {
+      return Promise.resolve();
+    }
+    const refresh = this.refresh(endpointId).finally(() => {
+      this.inFlight.delete(endpointId);
+    });
+    this.inFlight.set(endpointId, refresh);
+    return refresh;
+  }
+
+  private noteLiveCheck(endpointId: string): void {
+    this.lastLiveCheck.delete(endpointId);
+    if (this.lastLiveCheck.size >= LIVE_CHECK_MEMO_MAX_ENTRIES) {
+      const oldest = this.lastLiveCheck.keys().next().value as string;
+      this.lastLiveCheck.delete(oldest);
+    }
+    this.lastLiveCheck.set(endpointId, Date.now());
+  }
+
+  private async refresh(endpointId: string): Promise<void> {
     const endpoint = await this.appEndpointService.getEndpoint(endpointId);
     const worthDoubting =
       endpoint.certificateRequired &&
@@ -44,6 +78,7 @@ export class CertificateStatusRefreshService {
         endpoint.certificateStatus === null);
     if (!worthDoubting) return;
 
+    this.noteLiveCheck(endpointId);
     try {
       const { status, message } =
         await this.reconciliation.getCertificateStatus(endpointId);
@@ -88,7 +123,7 @@ export class CertificateStatusRefreshService {
       CertificateStatus.ISSUING,
     );
     for (const endpoint of pending) {
-      await this.refreshIfNeeded(endpoint.id);
+      await this.refreshIfNeeded(endpoint.id, { force: true });
     }
     const deferred = await this.appEndpointService.listCertificateDeferred();
     for (const endpoint of deferred) {

@@ -6,6 +6,7 @@ import {
   ClusterStatus,
 } from '../../infrastructure/clusters/entities/cluster.entity';
 import { PrometheusQueryService } from '../../observability/services/prometheus-query.service';
+import { PromiseCache } from '../../observability/utils/promise-cache';
 import {
   ClusterMetricsState,
   FLEET_WINDOWS,
@@ -15,6 +16,12 @@ import {
   aggregateNodes,
   stateOf,
 } from '../utils/fleet-metrics.aggregate';
+
+const HISTORY_CACHE_TTL_MS = 30_000;
+
+type ClusterHistory = Awaited<
+  ReturnType<PrometheusQueryService['getMetricsHistory']>
+>;
 
 export interface ClusterMetricsRow {
   clusterId: string;
@@ -55,6 +62,10 @@ export interface FleetMetrics {
 export class FleetMetricsService {
   private readonly logger = new Logger(FleetMetricsService.name);
 
+  private readonly historyCache = new PromiseCache<ClusterHistory>(
+    () => HISTORY_CACHE_TTL_MS,
+  );
+
   constructor(
     private readonly prometheus: PrometheusQueryService,
     @InjectRepository(ClusterEntity)
@@ -78,11 +89,15 @@ export class FleetMetricsService {
     const read = await Promise.all(
       clusters.map(async (cluster) => {
         try {
-          const history = await this.prometheus.getMetricsHistory(
-            cluster.id,
-            startUnix,
-            endUnix,
-            step,
+          const history = await this.historyCache.get(
+            `${cluster.id}/${startUnix}/${endUnix}/${step}`,
+            () =>
+              this.prometheus.getMetricsHistory(
+                cluster.id,
+                startUnix,
+                endUnix,
+                step,
+              ),
           );
           const nodes: NodeHistory[] = [...history.entries()].map(
             ([instance, node]) => ({

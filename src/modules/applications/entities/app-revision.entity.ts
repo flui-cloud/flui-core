@@ -1,5 +1,6 @@
 import {
   Entity,
+  Index,
   PrimaryColumn,
   Column,
   CreateDateColumn,
@@ -18,6 +19,7 @@ import {
 import { AppEventType, AppEventActor } from '../enums/app-event-type.enum';
 
 @Entity('app_revisions')
+@Index('IDX_app_revisions_application_created', ['applicationId', 'createdAt'])
 export class AppRevisionEntity {
   @PrimaryColumn('uuid')
   id: string;

@@ -2,7 +2,10 @@
 jest.mock('@kubernetes/client-node', () => ({}));
 jest.mock('jose', () => ({}));
 
-import { CertificateStatusRefreshService } from './certificate-status-refresh.service';
+import {
+  CertificateStatusRefreshService,
+  LIVE_CHECK_MIN_INTERVAL_MS,
+} from './certificate-status-refresh.service';
 import { CertificateStatus } from '../../providers/interfaces/certificate-provider.interface';
 
 type Endpoint = {
@@ -158,5 +161,54 @@ describe('keeping a certificate status current', () => {
       { emitEndpointCertStatus: jest.fn() } as never,
     );
     await expect(service.sweep()).resolves.toBe(1);
+  });
+});
+
+describe('throttling the live certificate check', () => {
+  const live = { status: CertificateStatus.ISSUING, message: null };
+
+  afterEach(() => jest.useRealTimers());
+
+  const withCounter = () => {
+    const getCertificateStatus = jest.fn(async () => live);
+    const service = new CertificateStatusRefreshService(
+      {
+        getEndpoint: jest.fn(async () => anEndpoint()),
+        listByCertificateStatus: jest.fn(async () => [anEndpoint()]),
+        listCertificateDeferred: jest.fn(async () => []),
+        updateCertificateStatus: jest.fn(),
+      } as never,
+      { getCertificateStatus } as never,
+      { emitEndpointCertStatus: jest.fn() } as never,
+    );
+    return { service, getCertificateStatus };
+  };
+
+  it('asks the cluster at most once every 30 seconds per endpoint', async () => {
+    jest.useFakeTimers({ now: 1_000_000 });
+    const { service, getCertificateStatus } = withCounter();
+    await service.refreshIfNeeded('ep1');
+    jest.setSystemTime(1_000_000 + LIVE_CHECK_MIN_INTERVAL_MS - 1);
+    await service.refreshIfNeeded('ep1');
+    expect(getCertificateStatus).toHaveBeenCalledTimes(1);
+    jest.setSystemTime(1_000_000 + LIVE_CHECK_MIN_INTERVAL_MS);
+    await service.refreshIfNeeded('ep1');
+    expect(getCertificateStatus).toHaveBeenCalledTimes(2);
+  });
+
+  it('shares one check between concurrent reads of the same endpoint', async () => {
+    const { service, getCertificateStatus } = withCounter();
+    const first = service.refreshIfNeeded('ep1');
+    const second = service.refreshIfNeeded('ep1');
+    expect(second).toBe(first);
+    await Promise.all([first, second]);
+    expect(getCertificateStatus).toHaveBeenCalledTimes(1);
+  });
+
+  it('lets the background sweep look even right after a read did', async () => {
+    const { service, getCertificateStatus } = withCounter();
+    await service.refreshIfNeeded('ep1');
+    await service.sweep();
+    expect(getCertificateStatus).toHaveBeenCalledTimes(2);
   });
 });

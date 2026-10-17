@@ -30,6 +30,7 @@ import {
   POLICY_ENGINE,
   PolicyEngine,
 } from '../interfaces/policy-engine.interface';
+import { accessGrantsChanged } from './access-grants-changed';
 
 /** A selectable app, projected to the IAM selector axes (+ id/name for the UI). */
 export interface IamResourceDto {
@@ -205,6 +206,7 @@ export class IamService {
       grantedBy: caller.email || null,
     });
     const saved = await this.bindings.save(entity);
+    accessGrantsChanged();
     await this.notices?.granted(saved);
     return saved;
   }
@@ -220,6 +222,7 @@ export class IamService {
     const existing = await this.getGrant(id);
     await this.assertMayAdminister(caller, existing.role);
     await this.bindings.delete(id);
+    accessGrantsChanged();
   }
 
   /** Throws unless the caller may hand this role out. */
@@ -264,17 +267,20 @@ export class IamService {
     return this.groups.find({ order: { name: 'ASC' } });
   }
 
-  createGroup(dto: CreateGroupDto): Promise<IamGroupEntity> {
+  async createGroup(dto: CreateGroupDto): Promise<IamGroupEntity> {
     const entity = this.groups.create({
       name: dto.name,
       description: dto.description ?? null,
       members: [],
     });
-    return this.groups.save(entity);
+    const saved = await this.groups.save(entity);
+    accessGrantsChanged();
+    return saved;
   }
 
   async deleteGroup(name: string): Promise<void> {
     const res = await this.groups.delete({ name });
+    accessGrantsChanged();
     if (!res.affected) throw new NotFoundException(`Group ${name} not found`);
   }
 
@@ -283,7 +289,9 @@ export class IamService {
     if (!group.members.includes(email)) {
       group.members = [...group.members, email];
     }
-    return this.groups.save(group);
+    const saved = await this.groups.save(group);
+    accessGrantsChanged();
+    return saved;
   }
 
   async removeGroupMember(
@@ -292,7 +300,9 @@ export class IamService {
   ): Promise<IamGroupEntity> {
     const group = await this.requireGroup(name);
     group.members = group.members.filter((m) => m !== email);
-    return this.groups.save(group);
+    const saved = await this.groups.save(group);
+    accessGrantsChanged();
+    return saved;
   }
 
   private async requireGroup(name: string): Promise<IamGroupEntity> {

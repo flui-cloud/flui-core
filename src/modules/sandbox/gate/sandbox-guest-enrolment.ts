@@ -12,6 +12,7 @@ import {
   VISITOR_LOGIN_CLIENT_ROW,
 } from '../entities/sandbox-visitor-login-client.entity';
 import { isTryClient } from '../visitors/visitor.config';
+import { accessGrantsChanged } from '../../iam/services/access-grants-changed';
 
 export const SANDBOX_GUEST_ENROLMENT = 'SANDBOX_GUEST_ENROLMENT';
 
@@ -100,6 +101,7 @@ export class SandboxGuestEnrolmentService implements SandboxGuestEnrolment {
         selector: SHOWCASE_GRANT.selector,
       }),
     ]);
+    accessGrantsChanged();
     this.logger.log(`New person ${person.userId} enrolled as a demo guest`);
     return true;
   }

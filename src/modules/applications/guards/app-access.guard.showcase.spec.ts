@@ -36,7 +36,9 @@ describe('AppAccessGuard on the showcase', () => {
             [OPEN_ON_SHOWCASE_KEY]: opts.openOnShowcase,
           })[key],
       } as never,
-      { findById: async (id: string) => ({ id, tags: opts.tags }) } as never,
+      {
+        findByIdLite: async (id: string) => ({ id, tags: opts.tags }),
+      } as never,
       {
         assertCan: async (_user: unknown, permission: string) => {
           asked.push(permission);

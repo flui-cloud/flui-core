@@ -4,6 +4,12 @@ import * as k8s from '@kubernetes/client-node';
 import { Writable, Readable } from 'node:stream';
 import { describeQuotaRefusal } from '../../../shared/utils/quota-refusal.util';
 import { withRequestTimeout } from '../utils/kube-request-timeout.util';
+import {
+  releaseKubeConfig,
+  TtlLruCache,
+  kubeconfigCacheKey,
+  newPooledKubeConfig,
+} from './kube-client-cache';
 import { apiVersionForKind } from '../utils/kube-api-version.util';
 import {
   WaitingForRoomError,
@@ -103,6 +109,19 @@ const ROOM_SETTLE_SECONDS = 45;
 @Injectable()
 export class KubernetesService {
   private readonly logger = new Logger(KubernetesService.name);
+  private readonly kubeConfigs = new TtlLruCache<k8s.KubeConfig>(
+    undefined,
+    undefined,
+    undefined,
+    releaseKubeConfig,
+  );
+  private readonly objectApis = new TtlLruCache<k8s.KubernetesObjectApi>();
+  private readonly typedClients = new TtlLruCache<{
+    coreApi: k8s.CoreV1Api;
+    appsApi: k8s.AppsV1Api;
+    batchApi: k8s.BatchV1Api;
+    networkingApi: k8s.NetworkingV1Api;
+  }>();
 
   /**
    * Public wrapper to expose a patched KubeConfig instance.
@@ -111,10 +130,8 @@ export class KubernetesService {
    */
   /** Every IPv4 address the cluster's nodes report, internal and external. */
   async listNodeAddresses(kubeconfigContent: string): Promise<string[]> {
-    const core = this.makeKubeConfig(kubeconfigContent).makeApiClient(
-      k8s.CoreV1Api,
-    );
-    const nodes = await core.listNode();
+    const { coreApi } = this.getKubeClient(kubeconfigContent);
+    const nodes = await coreApi.listNode();
     return (nodes.items ?? []).flatMap((node) =>
       (node.status?.addresses ?? [])
         .filter((a) => a.type === 'ExternalIP' || a.type === 'InternalIP')
@@ -122,8 +139,39 @@ export class KubernetesService {
     );
   }
 
+  /**
+   * The distinct CPU architectures of the nodes a pod can be scheduled on.
+   * Cordoned nodes are left out; tainted ones stay, since a workload may
+   * tolerate the taint. With every node cordoned, all nodes count.
+   */
+  async listSchedulableNodeArchitectures(
+    kubeconfigContent: string,
+  ): Promise<string[]> {
+    const { coreApi } = this.getKubeClient(kubeconfigContent);
+    const nodes = (await coreApi.listNode()).items ?? [];
+    const schedulable = nodes.filter((node) => !node.spec?.unschedulable);
+    const reserved = (node: k8s.V1Node) =>
+      (node.spec?.taints ?? []).some(
+        (t) =>
+          t.effect === 'NoSchedule' &&
+          /node-role\.kubernetes\.io\/(control-plane|master)/.test(t.key),
+      );
+    const workers = schedulable.filter((node) => !reserved(node));
+    const pool = workers.length
+      ? workers
+      : schedulable.length
+        ? schedulable
+        : nodes;
+    const architectures = pool
+      .map((node) => node.status?.nodeInfo?.architecture)
+      .filter((arch): arch is string => !!arch);
+    return [...new Set(architectures)];
+  }
+
   makeKubeConfig(kubeconfigContent: string): k8s.KubeConfig {
-    return this.loadKubeconfig(kubeconfigContent);
+    const kc = new k8s.KubeConfig();
+    kc.loadFromString(this.patchKubeconfigServer(kubeconfigContent));
+    return withRequestTimeout(kc);
   }
 
   /**
@@ -133,9 +181,22 @@ export class KubernetesService {
    * so the patch is applied exactly once regardless of which service calls us.
    */
   private loadKubeconfig(kubeconfigContent: string): k8s.KubeConfig {
-    const kc = new k8s.KubeConfig();
-    kc.loadFromString(this.patchKubeconfigServer(kubeconfigContent));
-    return withRequestTimeout(kc);
+    const patched = this.patchKubeconfigServer(kubeconfigContent);
+    return this.kubeConfigs.getOrCreate(kubeconfigCacheKey(patched), () => {
+      const kc = newPooledKubeConfig();
+      kc.loadFromString(patched);
+      return withRequestTimeout(kc);
+    });
+  }
+
+  private objectApi(kubeconfigContent: string): k8s.KubernetesObjectApi {
+    return this.objectApis.getOrCreate(
+      kubeconfigCacheKey(this.patchKubeconfigServer(kubeconfigContent)),
+      () =>
+        k8s.KubernetesObjectApi.makeApiClient(
+          this.loadKubeconfig(kubeconfigContent),
+        ),
+    );
   }
 
   /**
@@ -147,14 +208,19 @@ export class KubernetesService {
     batchApi: k8s.BatchV1Api;
     networkingApi: k8s.NetworkingV1Api;
   } {
-    const kc = this.loadKubeconfig(kubeconfigContent);
-
-    return {
-      coreApi: kc.makeApiClient(k8s.CoreV1Api),
-      appsApi: kc.makeApiClient(k8s.AppsV1Api),
-      batchApi: kc.makeApiClient(k8s.BatchV1Api),
-      networkingApi: kc.makeApiClient(k8s.NetworkingV1Api),
-    };
+    const clients = this.typedClients.getOrCreate(
+      kubeconfigCacheKey(this.patchKubeconfigServer(kubeconfigContent)),
+      () => {
+        const kc = this.loadKubeconfig(kubeconfigContent);
+        return {
+          coreApi: kc.makeApiClient(k8s.CoreV1Api),
+          appsApi: kc.makeApiClient(k8s.AppsV1Api),
+          batchApi: kc.makeApiClient(k8s.BatchV1Api),
+          networkingApi: kc.makeApiClient(k8s.NetworkingV1Api),
+        };
+      },
+    );
+    return { ...clients };
   }
 
   /**
@@ -185,9 +251,7 @@ export class KubernetesService {
     kubeconfigContent: string,
     manifestYaml: string,
   ): Promise<any[]> {
-    const kc = this.loadKubeconfig(kubeconfigContent);
-
-    const client = k8s.KubernetesObjectApi.makeApiClient(kc);
+    const client = this.objectApi(kubeconfigContent);
     const specs = k8s.loadAllYaml(manifestYaml);
     const results = [];
 
@@ -295,9 +359,7 @@ export class KubernetesService {
     kubeconfigContent: string,
     manifestYaml: string,
   ): Promise<any[]> {
-    const kc = this.loadKubeconfig(kubeconfigContent);
-
-    const client = k8s.KubernetesObjectApi.makeApiClient(kc);
+    const client = this.objectApi(kubeconfigContent);
     const specs = k8s.loadAllYaml(manifestYaml);
     const results = [];
 
@@ -358,9 +420,7 @@ export class KubernetesService {
     name: string,
     namespace: string = 'default',
   ): Promise<void> {
-    const kc = this.loadKubeconfig(kubeconfigContent);
-
-    const client = k8s.KubernetesObjectApi.makeApiClient(kc);
+    const client = this.objectApi(kubeconfigContent);
 
     try {
       // Background, not the API's default: for a Job or CronJob the default
@@ -397,9 +457,7 @@ export class KubernetesService {
     name: string,
     namespace: string = 'default',
   ): Promise<any> {
-    const kc = this.loadKubeconfig(kubeconfigContent);
-
-    const client = k8s.KubernetesObjectApi.makeApiClient(kc);
+    const client = this.objectApi(kubeconfigContent);
 
     try {
       const response = await client.read({
@@ -578,8 +636,7 @@ export class KubernetesService {
     cronJobName: string,
     namespace: string,
   ): Promise<string> {
-    const kc = this.loadKubeconfig(kubeconfigContent);
-    const client = k8s.KubernetesObjectApi.makeApiClient(kc);
+    const client = this.objectApi(kubeconfigContent);
 
     const read: any = await client.read({
       apiVersion: 'batch/v1',
@@ -763,8 +820,7 @@ export class KubernetesService {
     // actually serves says so instead of being told.
     apiVersionOverride?: string,
   ): Promise<any[]> {
-    const kc = this.loadKubeconfig(kubeconfigContent);
-    const client = k8s.KubernetesObjectApi.makeApiClient(kc);
+    const client = this.objectApi(kubeconfigContent);
 
     try {
       const apiVersion = apiVersionOverride ?? this.getApiVersionForKind(kind);
@@ -792,8 +848,7 @@ export class KubernetesService {
     kind: string,
     labelSelector: string,
   ): Promise<any[]> {
-    const kc = this.loadKubeconfig(kubeconfigContent);
-    const client = k8s.KubernetesObjectApi.makeApiClient(kc);
+    const client = this.objectApi(kubeconfigContent);
     try {
       const response = await client.list(
         this.getApiVersionForKind(kind),
@@ -822,8 +877,7 @@ export class KubernetesService {
     namespace: string,
     labelSelector: string,
   ): Promise<any[]> {
-    const kc = this.loadKubeconfig(kubeconfigContent);
-    const client = k8s.KubernetesObjectApi.makeApiClient(kc);
+    const client = this.objectApi(kubeconfigContent);
     const apiVersion = this.getApiVersionForKind(kind);
 
     try {
@@ -1607,8 +1661,7 @@ export class KubernetesService {
     name: string,
     namespace?: string,
   ): Promise<any> {
-    const kc = this.loadKubeconfig(kubeconfigContent);
-    const client = k8s.KubernetesObjectApi.makeApiClient(kc);
+    const client = this.objectApi(kubeconfigContent);
     try {
       const res: any = await client.read({
         apiVersion,
@@ -1630,8 +1683,7 @@ export class KubernetesService {
     name: string,
     namespace?: string,
   ): Promise<void> {
-    const kc = this.loadKubeconfig(kubeconfigContent);
-    const client = k8s.KubernetesObjectApi.makeApiClient(kc);
+    const client = this.objectApi(kubeconfigContent);
     try {
       await client.delete({
         apiVersion,
@@ -1648,8 +1700,7 @@ export class KubernetesService {
     kubeconfigContent: string,
     patch: Record<string, unknown>,
   ): Promise<void> {
-    const kc = this.loadKubeconfig(kubeconfigContent);
-    const client = k8s.KubernetesObjectApi.makeApiClient(kc);
+    const client = this.objectApi(kubeconfigContent);
     await client.patch(
       patch as unknown as k8s.KubernetesObject,
       undefined,
@@ -1691,8 +1742,7 @@ export class KubernetesService {
     kubeconfigContent: string,
     object: Record<string, unknown>,
   ): Promise<void> {
-    const kc = this.loadKubeconfig(kubeconfigContent);
-    const client = k8s.KubernetesObjectApi.makeApiClient(kc);
+    const client = this.objectApi(kubeconfigContent);
     await client.create(object as unknown as k8s.KubernetesObject);
   }
 
@@ -1778,8 +1828,7 @@ export class KubernetesService {
     kubeconfigContent: string,
     patch: Record<string, unknown>,
   ): Promise<void> {
-    const kc = this.loadKubeconfig(kubeconfigContent);
-    const client = k8s.KubernetesObjectApi.makeApiClient(kc);
+    const client = this.objectApi(kubeconfigContent);
     await client.patch(
       patch as unknown as k8s.KubernetesObject,
       undefined,
@@ -1803,8 +1852,7 @@ export class KubernetesService {
     containerName: string,
     args: string[],
   ): Promise<void> {
-    const kc = this.loadKubeconfig(kubeconfigContent);
-    const client = k8s.KubernetesObjectApi.makeApiClient(kc);
+    const client = this.objectApi(kubeconfigContent);
     await client.patch(
       {
         apiVersion: 'apps/v1',
@@ -1832,8 +1880,7 @@ export class KubernetesService {
     containerName: string,
     newImage: string,
   ): Promise<void> {
-    const kc = this.loadKubeconfig(kubeconfigContent);
-    const client = k8s.KubernetesObjectApi.makeApiClient(kc);
+    const client = this.objectApi(kubeconfigContent);
 
     const patch: k8s.V1Deployment = {
       apiVersion: 'apps/v1',
@@ -2287,8 +2334,7 @@ export class KubernetesService {
     nodeName: string,
     unschedulable: boolean,
   ): Promise<void> {
-    const kc = this.loadKubeconfig(kubeconfigContent);
-    const client = k8s.KubernetesObjectApi.makeApiClient(kc);
+    const client = this.objectApi(kubeconfigContent);
     const patch = {
       apiVersion: 'v1',
       kind: 'Node',
@@ -2325,8 +2371,7 @@ export class KubernetesService {
     });
     if (masters.length === 0) return false;
 
-    const kc = this.loadKubeconfig(kubeconfigContent);
-    const client = k8s.KubernetesObjectApi.makeApiClient(kc);
+    const client = this.objectApi(kubeconfigContent);
     for (const node of masters) {
       const name = node.metadata?.name;
       if (!name) continue;
@@ -2596,8 +2641,7 @@ export class KubernetesService {
     kubeconfigContent: string,
     replicas: number,
   ): Promise<void> {
-    const kc = this.loadKubeconfig(kubeconfigContent);
-    const client = k8s.KubernetesObjectApi.makeApiClient(kc);
+    const client = this.objectApi(kubeconfigContent);
     await client.patch(
       {
         apiVersion: 'apps/v1',
@@ -2724,8 +2768,7 @@ export class KubernetesService {
     key: string,
     value: string,
   ): Promise<void> {
-    const kc = this.loadKubeconfig(kubeconfigContent);
-    const client = k8s.KubernetesObjectApi.makeApiClient(kc);
+    const client = this.objectApi(kubeconfigContent);
     await client.patch(
       {
         apiVersion: 'v1',

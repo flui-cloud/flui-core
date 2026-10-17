@@ -7,6 +7,7 @@ import { ActionProposalEntity } from '../../action-cycle/entities/action-proposa
 import { AgentConcessionEntity } from '../../action-cycle/entities/agent-concession.entity';
 import { SandboxGuestEnrolment } from '../gate/sandbox-guest-enrolment';
 import { SandboxVisitorEntity } from '../entities/sandbox-visitor.entity';
+import { accessGrantsChanged } from '../../iam/services/access-grants-changed';
 
 export interface VisitorProfileChange {
   /** A proven address only; null keeps the placeholder. */
@@ -93,6 +94,7 @@ export async function foldVisitorInto(
   await m
     .getRepository(IamRoleBindingEntity)
     .delete({ principalType: 'user', principalRef: from });
+  accessGrantsChanged();
   await m
     .getRepository(SandboxVisitorEntity)
     .update({ userId: from }, { upgradedAt: now, linkedUserId: targetUserId });

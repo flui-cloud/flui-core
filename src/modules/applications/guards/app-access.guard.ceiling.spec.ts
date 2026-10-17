@@ -42,7 +42,7 @@ const build = () => {
   const loaded: string[] = [];
   const asked: string[] = [];
   const apps = {
-    findById: async (id: string) => {
+    findByIdLite: async (id: string) => {
       loaded.push(id);
       return { id, slug: 'app', userId: 'user-a' };
     },
@@ -68,7 +68,7 @@ const buildInProject = (projectId: string | null) => {
   const loaded: string[] = [];
   const asked: string[] = [];
   const apps = {
-    findById: async (id: string) => {
+    findByIdLite: async (id: string) => {
       loaded.push(id);
       return { id, slug: 'app', userId: 'user-a', projectId };
     },
@@ -97,7 +97,11 @@ const buildWithAction = (action: string) => {
     guard: new AppAccessGuard(
       { getAllAndOverride: () => action } as never,
       {
-        findById: async (id: string) => ({ id, slug: 'app', userId: 'user-a' }),
+        findByIdLite: async (id: string) => ({
+          id,
+          slug: 'app',
+          userId: 'user-a',
+        }),
       } as never,
       {
         assertCan: async (_u: unknown, a: string) => base.asked.push(a),

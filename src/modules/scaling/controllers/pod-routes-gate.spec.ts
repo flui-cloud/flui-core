@@ -92,7 +92,7 @@ describe('the pod-level routes of one application', () => {
 
 describe('AppAccessGuard and the three spellings of an application id', () => {
   const build = () => {
-    const apps = { findById: jest.fn(async (id: string) => ({ id })) };
+    const apps = { findByIdLite: jest.fn(async (id: string) => ({ id })) };
     const access = { assertCan: jest.fn().mockResolvedValue(undefined) };
     const reflector = {
       getAllAndOverride: jest.fn().mockReturnValue(undefined),
@@ -108,15 +108,15 @@ describe('AppAccessGuard and the three spellings of an application id', () => {
   it('reads :applicationId', async () => {
     const { guard, apps } = build();
     await guard.canActivate(context({ applicationId: 'app-1' }));
-    expect(apps.findById).toHaveBeenCalledWith('app-1');
+    expect(apps.findByIdLite).toHaveBeenCalledWith('app-1');
   });
 
   it('still reads :appId and :id', async () => {
     const { guard, apps } = build();
     await guard.canActivate(context({ appId: 'app-2' }));
     await guard.canActivate(context({ id: 'app-3' }));
-    expect(apps.findById).toHaveBeenNthCalledWith(1, 'app-2');
-    expect(apps.findById).toHaveBeenNthCalledWith(2, 'app-3');
+    expect(apps.findByIdLite).toHaveBeenNthCalledWith(1, 'app-2');
+    expect(apps.findByIdLite).toHaveBeenNthCalledWith(2, 'app-3');
   });
 
   /**
@@ -129,8 +129,8 @@ describe('AppAccessGuard and the three spellings of an application id', () => {
     await guard.canActivate(
       context({ applicationId: 'app-1', id: 'diagnosis-9' }),
     );
-    expect(apps.findById).toHaveBeenCalledWith('app-1');
-    expect(apps.findById).not.toHaveBeenCalledWith('diagnosis-9');
+    expect(apps.findByIdLite).toHaveBeenCalledWith('app-1');
+    expect(apps.findByIdLite).not.toHaveBeenCalledWith('diagnosis-9');
     expect(access.assertCan).toHaveBeenCalledWith(
       caller,
       IAM_PERMISSION.APP_READ,

@@ -21,10 +21,26 @@ import {
   SectionDef,
 } from '../constants/iam-sections';
 import { idpRoleBindings } from '../utils/idp-role-source';
+import { onAccessGrantsChanged } from './access-grants-changed';
 
 /** A grant with an expiry stops counting the moment it passes, on every request. */
 export function isInForce(b: { expiresAt?: Date | null }): boolean {
   return !b.expiresAt || new Date(b.expiresAt).getTime() > Date.now();
+}
+
+/**
+ * How long a resolved access is reused. The guards of one request each resolve
+ * the same principal; this is also the longest a revoked grant keeps counting
+ * on another API copy, or after a write whose transaction commits late.
+ */
+export const ACCESS_MEMO_TTL_MS = 2_000;
+const ACCESS_MEMO_MAX_ENTRIES = 1_000;
+
+function accessMemoKey(principal: IamPrincipal): string {
+  const roles = Object.entries(principal.roles ?? {}).sort(([a], [b]) =>
+    a.localeCompare(b),
+  );
+  return JSON.stringify([principal.userId, principal.email, roles]);
 }
 
 /**
@@ -52,16 +68,57 @@ export function isInForce(b: { expiresAt?: Date | null }): boolean {
  */
 @Injectable()
 export class PolicyEngineService implements PolicyEngine {
+  private readonly accessMemo = new Map<
+    string,
+    { expiresAt: number; access: Promise<PrincipalAccess> }
+  >();
+
   constructor(
     @InjectRepository(IamRoleBindingEntity)
     private readonly bindings: Repository<IamRoleBindingEntity>,
     @InjectRepository(IamGroupEntity)
     private readonly groups: Repository<IamGroupEntity>,
-  ) {}
+  ) {
+    onAccessGrantsChanged(() => this.invalidateAccessCache());
+  }
 
   async resolveAccess(principal: IamPrincipal): Promise<PrincipalAccess> {
     if (principal.isAdmin) return this.accessFrom([], true);
-    return this.accessFrom(await this.bindingsFor(principal));
+    const key = accessMemoKey(principal);
+    const now = Date.now();
+    const hit = this.accessMemo.get(key);
+    if (hit && hit.expiresAt > now) return hit.access;
+    if (hit) this.accessMemo.delete(key);
+
+    const access = this.bindingsFor(principal).then((b) => this.accessFrom(b));
+    const entry = { expiresAt: now + ACCESS_MEMO_TTL_MS, access };
+    this.rememberAccess(key, entry);
+    access.catch(() => {
+      if (this.accessMemo.get(key) === entry) this.accessMemo.delete(key);
+    });
+    return access;
+  }
+
+  /** Forget every resolved access, so a grant written now counts on the next request. */
+  invalidateAccessCache(): void {
+    this.accessMemo.clear();
+  }
+
+  private rememberAccess(
+    key: string,
+    entry: { expiresAt: number; access: Promise<PrincipalAccess> },
+  ): void {
+    if (this.accessMemo.size >= ACCESS_MEMO_MAX_ENTRIES) {
+      const now = Date.now();
+      for (const [k, e] of this.accessMemo) {
+        if (e.expiresAt <= now) this.accessMemo.delete(k);
+      }
+      while (this.accessMemo.size >= ACCESS_MEMO_MAX_ENTRIES) {
+        const oldest = this.accessMemo.keys().next().value as string;
+        this.accessMemo.delete(oldest);
+      }
+    }
+    this.accessMemo.set(key, entry);
   }
 
   /**

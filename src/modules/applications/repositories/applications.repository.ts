@@ -1,6 +1,6 @@
 import { ForbiddenException, Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository as TypeOrmRepository, IsNull } from 'typeorm';
+import { Repository as TypeOrmRepository, In, IsNull } from 'typeorm';
 import { ApplicationEntity } from '../entities/application.entity';
 import { isPlatformOwned } from '../constants/app-provenance';
 import { ApplicationStatus } from '../enums/application-status.enum';
@@ -38,6 +38,15 @@ export class ApplicationsRepository {
       where: { id, deletedAt: IsNull() },
       relations: ['revisions', 'appResources'],
     });
+  }
+
+  async findByIdLite(id: string): Promise<ApplicationEntity | null> {
+    return this.repository.findOne({ where: { id, deletedAt: IsNull() } });
+  }
+
+  async findByIdsLite(ids: string[]): Promise<ApplicationEntity[]> {
+    if (ids.length === 0) return [];
+    return this.repository.findBy({ id: In(ids), deletedAt: IsNull() });
   }
 
   async findBySlug(slug: string): Promise<ApplicationEntity | null> {

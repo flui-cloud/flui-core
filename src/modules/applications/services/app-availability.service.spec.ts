@@ -20,7 +20,7 @@ function serviceWith(opts: {
 }) {
   return new AppAvailabilityService(
     {
-      findById: jest.fn().mockResolvedValue({
+      findByIdLite: jest.fn().mockResolvedValue({
         id: 'a1',
         clusterId: 'c1',
         k8sNamespace: 'user-x',

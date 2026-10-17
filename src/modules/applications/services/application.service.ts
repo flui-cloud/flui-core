@@ -334,6 +334,14 @@ export class ApplicationService {
     return app;
   }
 
+  async findByIdLite(id: string): Promise<ApplicationEntity> {
+    const app = await this.applicationsRepository.findByIdLite(id);
+    if (!app) {
+      throw new NotFoundException(`Application ${id} not found`);
+    }
+    return app;
+  }
+
   async findBySlug(slug: string): Promise<ApplicationEntity> {
     const app = await this.applicationsRepository.findBySlug(slug);
     if (!app) {
@@ -539,7 +547,7 @@ export class ApplicationService {
     applicationId: string,
     options?: { eventType?: AppEventType; limit?: number; offset?: number },
   ): Promise<{ events: AppRevisionEntity[]; total: number }> {
-    await this.findById(applicationId);
+    await this.findByIdLite(applicationId);
     return this.appRevisionsRepository.findAllEvents(applicationId, options);
   }
 

@@ -20,6 +20,7 @@ import {
   AppVolumeMetricsDto,
 } from '../dto/application-metrics.dto';
 import { promRegexLiteral, promString } from '../utils/promql';
+import { PromiseCache, alignRange } from '../utils/promise-cache';
 
 /** Maps ApplicationResourceKind workload values to kube-state-metrics label keys */
 const WORKLOAD_LABEL_KEY: Record<string, string> = {
@@ -28,8 +29,9 @@ const WORKLOAD_LABEL_KEY: Record<string, string> = {
   DaemonSet: 'daemonset',
 };
 
-const DEFAULT_INSTANT_CACHE_SECONDS = 10;
-const INSTANT_CACHE_PRUNE_AT = 500;
+const DEFAULT_INSTANT_CACHE_SECONDS = 30;
+const HISTORY_CACHE_TTL_MS = 30_000;
+const HISTORY_ALIGN_SECONDS = 30;
 
 export function instantCacheTtlMs(
   raw: string | undefined = process.env.METRICS_INSTANT_CACHE_SECONDS,
@@ -56,10 +58,13 @@ export function instantCacheTtlMs(
 export class ApplicationMetricsService {
   private readonly logger = new Logger(ApplicationMetricsService.name);
 
-  private readonly instantCache = new Map<
-    string,
-    { expiresAt: number; value: Promise<AppMetricsDto> }
-  >();
+  private readonly instantCache = new PromiseCache<AppMetricsDto>(() =>
+    instantCacheTtlMs(),
+  );
+
+  private readonly historyCache = new PromiseCache<AppMetricsDataPointDto[]>(
+    () => HISTORY_CACHE_TTL_MS,
+  );
 
   constructor(
     private readonly prometheusQuery: PrometheusQueryService,
@@ -71,40 +76,18 @@ export class ApplicationMetricsService {
    * Get instant metrics for a single application.
    *
    * The answer is the same for every viewer of an application, so viewers
-   * share it for `METRICS_INSTANT_CACHE_SECONDS`: a page polled by many tabs
-   * at once costs one round of queries, not one per tab.
+   * share it, disk usage included, for `METRICS_INSTANT_CACHE_SECONDS` (30 by
+   * default): a page polled by many tabs at once costs one round of queries,
+   * not one per tab.
    */
   async getAppMetricsInstant(
     appId: string,
     appName: string,
     namespace: string,
   ): Promise<AppMetricsDto> {
-    const ttlMs = instantCacheTtlMs();
-    if (ttlMs <= 0) {
-      return this.queryAppMetricsInstant(appId, appName, namespace);
-    }
-
-    const key = `${appId}/${namespace}/${appName}`;
-    const now = Date.now();
-    const hit = this.instantCache.get(key);
-    if (hit && hit.expiresAt > now) return hit.value;
-
-    const value = this.queryAppMetricsInstant(appId, appName, namespace);
-    this.instantCache.set(key, { expiresAt: now + ttlMs, value });
-    value.catch(() => {
-      if (this.instantCache.get(key)?.value === value) {
-        this.instantCache.delete(key);
-      }
-    });
-    this.pruneInstantCache(now);
-    return value;
-  }
-
-  private pruneInstantCache(now: number): void {
-    if (this.instantCache.size <= INSTANT_CACHE_PRUNE_AT) return;
-    for (const [key, entry] of this.instantCache) {
-      if (entry.expiresAt <= now) this.instantCache.delete(key);
-    }
+    return this.instantCache.get(`${appId}/${namespace}/${appName}`, () =>
+      this.queryAppMetricsInstant(appId, appName, namespace),
+    );
   }
 
   private async queryAppMetricsInstant(
@@ -372,7 +355,11 @@ export class ApplicationMetricsService {
   }
 
   /**
-   * Get metrics history for a single application over a time range
+   * Get metrics history for a single application over a time range.
+   *
+   * The range is rounded down to 30 s and the answer shared for 30 s, so
+   * viewers opening the same chart a few seconds apart cost one round of
+   * queries. Callers only read the returned points.
    */
   async getAppMetricsHistory(
     appId: string,
@@ -381,6 +368,29 @@ export class ApplicationMetricsService {
     start: number,
     end: number,
     step: string = '60s',
+  ): Promise<AppMetricsDataPointDto[]> {
+    const range = alignRange(start, end, HISTORY_ALIGN_SECONDS);
+    return this.historyCache.get(
+      `${appId}/${namespace}/${appName}/${range.start}/${range.end}/${step}`,
+      () =>
+        this.queryAppMetricsHistory(
+          appId,
+          appName,
+          namespace,
+          range.start,
+          range.end,
+          step,
+        ),
+    );
+  }
+
+  private async queryAppMetricsHistory(
+    appId: string,
+    appName: string,
+    namespace: string,
+    start: number,
+    end: number,
+    step: string,
   ): Promise<AppMetricsDataPointDto[]> {
     const app = await this.applicationService.findById(appId);
     const cluster = clusterMatcher(app?.clusterId);

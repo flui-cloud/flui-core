@@ -262,10 +262,7 @@ export class AppEndpointController {
     ids: string[],
   ): Promise<Set<string> | null> {
     if (!user) throw new ForbiddenException('Unauthenticated');
-    const apps = await Promise.all(
-      [...new Set(ids)].map((id) => this.applications.findById(id)),
-    );
-    const found = apps.filter((a): a is NonNullable<typeof a> => !!a);
+    const found = await this.applications.findByIdsLite([...new Set(ids)]);
     const readable = await this.appAccess.filterReadable(user, found);
     const allowed = new Set(readable.map((a) => a.id));
     // An endpoint whose application is gone belongs to nobody and stays listed,

@@ -127,7 +127,7 @@ export class AppAccessGuard implements CanActivate {
     // it was: refused without ever touching the database, so the answer
     // cannot depend on whether the row exists.
     if (user.projectIds?.length) {
-      const app = await this.apps.findById(id); // 404 if missing
+      const app = await this.apps.findByIdLite(id); // 404 if missing
       if (applicationAccessWithheld(user, id, app.projectId ?? null)) {
         throw new ForbiddenException(applicationCeilingRefusal(id));
       }
@@ -145,7 +145,7 @@ export class AppAccessGuard implements CanActivate {
 
     if (user.isAdmin) return true;
 
-    const app = await this.apps.findById(id); // 404 if missing
+    const app = await this.apps.findByIdLite(id); // 404 if missing
     await this.access.assertCan(user, action, app);
     // A data door asks for `data:access` on this application: the permission
     // guard can only ask whether the caller holds it anywhere.

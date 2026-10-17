@@ -74,12 +74,8 @@ describe('ControlPeerPerNode1790000000041', () => {
     );
   });
 
-  it('runs last, after the identity console state', () => {
-    expect(migrations[migrations.length - 1]).toBe(
-      ControlPeerPerNode1790000000041,
-    );
-    expect(migrations[migrations.length - 2].name).toBe(
-      'IdentityConsoleState1790000000040',
-    );
+  it('runs right after the identity console state', () => {
+    const at = migrations.indexOf(ControlPeerPerNode1790000000041);
+    expect(migrations[at - 1].name).toBe('IdentityConsoleState1790000000040');
   });
 });

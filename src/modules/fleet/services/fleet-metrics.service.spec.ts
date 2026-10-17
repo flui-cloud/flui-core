@@ -131,4 +131,61 @@ describe('FleetMetricsService', () => {
     expect(result.fleet.series).toHaveLength(1);
     expect(result.fleet.current).toBeNull();
   });
+
+  describe('cache', () => {
+    afterEach(() => jest.useRealTimers());
+
+    it('reads each cluster once for viewers within the same 30 s', async () => {
+      jest.useFakeTimers({ now: NOW.getTime() });
+      const { service, prometheus } = build({
+        a: history({ n1: [10] }),
+        b: new Map(),
+        c: new Map(),
+      });
+
+      await Promise.all([
+        service.getMetrics('3h', NOW),
+        service.getMetrics('3h', NOW),
+      ]);
+      jest.setSystemTime(NOW.getTime() + 29_000);
+      const later = await service.getMetrics(
+        '3h',
+        new Date(NOW.getTime() + 29_000),
+      );
+
+      expect(prometheus.getMetricsHistory).toHaveBeenCalledTimes(3);
+      expect(later.fleet.current?.cpuPercent).toBe(10);
+    });
+
+    it('reads again after 30 s, or for another window', async () => {
+      jest.useFakeTimers({ now: NOW.getTime() });
+      const { service, prometheus } = build({
+        a: new Map(),
+        b: new Map(),
+        c: new Map(),
+      });
+
+      await service.getMetrics('3h', NOW);
+      await service.getMetrics('24h', NOW);
+      expect(prometheus.getMetricsHistory).toHaveBeenCalledTimes(6);
+
+      jest.setSystemTime(NOW.getTime() + 30_000);
+      await service.getMetrics('3h', NOW);
+      expect(prometheus.getMetricsHistory).toHaveBeenCalledTimes(9);
+    });
+
+    it('does not remember a cluster that could not be read', async () => {
+      const { service, prometheus } = build({
+        a: new Error('Prometheus range query failed'),
+        b: new Map(),
+        c: new Map(),
+      });
+
+      await service.getMetrics('1h', NOW);
+      const again = await service.getMetrics('1h', NOW);
+
+      expect(prometheus.getMetricsHistory).toHaveBeenCalledTimes(4);
+      expect(again.clusters[0].metrics).toBe('unavailable');
+    });
+  });
 });

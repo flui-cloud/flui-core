@@ -28,6 +28,7 @@ import {
   SANDBOX_SLOT_GATE,
   SandboxSlotGate,
 } from '../../sandbox/gate/sandbox-slot-gate';
+import { accessGrantsChanged } from '../../iam/services/access-grants-changed';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -211,6 +212,7 @@ export class UserManagementService {
           principalRef: principal.id,
         })
       : { affected: 0 };
+    accessGrantsChanged();
     return (
       (byEmail.affected ?? 0) +
       (byServiceAccount.affected ?? 0) +
@@ -259,6 +261,7 @@ export class UserManagementService {
       if (!group.members?.includes(local.email)) continue;
       group.members = group.members.filter((m) => m !== local.email);
       await this.groups.save(group);
+      accessGrantsChanged();
       removedFrom += 1;
     }
     if (local.oidcSub) {

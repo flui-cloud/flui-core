@@ -26,7 +26,7 @@ describe('AppAccessGuard parameter resolution', () => {
   const build = () => {
     const asked: string[] = [];
     const apps = {
-      findById: async (id: string) => {
+      findByIdLite: async (id: string) => {
         asked.push(id);
         return { id, userId: 'someone-else' };
       },
