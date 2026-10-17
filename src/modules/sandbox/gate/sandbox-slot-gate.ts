@@ -29,7 +29,7 @@ import {
   SandboxGuestEnrolmentService,
 } from './sandbox-guest-enrolment';
 import { SANDBOX_ACTIVITY, SandboxActivityService } from './sandbox-activity';
-import { signInRequired } from '../constants/sandbox-visitor';
+import { INSTALL_FLUI_URL, signInRequired } from '../constants/sandbox-visitor';
 
 export const SANDBOX_SLOT_GATE = 'SANDBOX_SLOT_GATE';
 
@@ -94,8 +94,7 @@ export class SandboxSlotGateService implements SandboxSlotGate {
       throw new ForbiddenException({
         statusCode: 403,
         code: SANDBOX_CLOSED_CODE,
-        message:
-          'The demo is not handing out new spaces at the moment. You can keep looking around.',
+        message: `This demo is read-only. Install Flui on your own server: ${INSTALL_FLUI_URL}`,
       });
     }
     if (!clusterId || clusterId !== this.config.clusterId) {
@@ -106,7 +105,7 @@ export class SandboxSlotGateService implements SandboxSlotGate {
         statusCode: 403,
         code: SANDBOX_EMAIL_REFUSED_CODE,
         message:
-          'Deploying in the demo needs a permanent email address. Sign in with GitHub, Google or another address to get a space; you can keep looking around.',
+          'Deploying in the demo needs a permanent email address. You can keep looking around.',
       });
     }
 

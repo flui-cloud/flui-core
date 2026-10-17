@@ -83,8 +83,7 @@ export class VisitorAdmissionService {
       throw new ServiceUnavailableException({
         statusCode: 503,
         code: VISITORS_CLOSED_CODE,
-        message:
-          'The demo is not taking visitors right now. You can sign in instead.',
+        message: 'The demo is not taking visitors right now.',
       });
     }
     const ipHash = this.hashIp(request.ip);
@@ -175,8 +174,7 @@ export class VisitorAdmissionService {
       {
         statusCode: 429,
         code: VISITORS_LIMIT_CODE,
-        message:
-          'Too many visitors right now. Try again in a little while, or sign in.',
+        message: 'Too many visitors right now. Try again in a little while.',
       },
       HttpStatus.TOO_MANY_REQUESTS,
     );

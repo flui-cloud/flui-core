@@ -1,14 +1,15 @@
 import { ConfigStorage } from './config-storage';
 
+export const INSTALL_FLUI_URL = 'https://flui.cloud/#install';
+
 export const SIGN_IN_REQUIRED_CODE = 'SANDBOX_SIGN_IN_REQUIRED';
 export const VISITOR_GONE_CODE = 'VISITOR_GONE';
 export const VISITOR_MERGED_CODE = 'VISITOR_MERGED';
 
 const VISITOR_MESSAGES: Record<string, string> = {
-  [SIGN_IN_REQUIRED_CODE]:
-    'You are looking around as a visitor. Sign in to do this: flui login',
+  [SIGN_IN_REQUIRED_CODE]: `You are looking around a read-only demo. Install Flui on your own server to do this: ${INSTALL_FLUI_URL}`,
   [VISITOR_GONE_CODE]:
-    'Your visit has ended. Start a new one with flui login --try, or sign in with flui login',
+    'Your visit has ended. Start a new one with flui login --try',
   [VISITOR_MERGED_CODE]:
     'This visit now belongs to your account. Sign in with flui login',
 };

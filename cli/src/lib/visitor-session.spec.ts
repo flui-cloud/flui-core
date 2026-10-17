@@ -40,11 +40,11 @@ describe('what the CLI says to a visitor', () => {
   it.each([
     [
       'SANDBOX_SIGN_IN_REQUIRED',
-      'You are looking around as a visitor. Sign in to do this: flui login',
+      'You are looking around a read-only demo. Install Flui on your own server to do this: https://flui.cloud/#install',
     ],
     [
       'VISITOR_GONE',
-      'Your visit has ended. Start a new one with flui login --try, or sign in with flui login',
+      'Your visit has ended. Start a new one with flui login --try',
     ],
     [
       'VISITOR_MERGED',

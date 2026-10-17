@@ -264,15 +264,15 @@ export const BUILTIN_ROLES: Record<IamRole, IamRoleDef> = {
     assignable: false,
   },
   /**
-   * A visitor of the demo who has not signed in yet: the read half of `sandbox`
-   * and nothing else. The fence treats the holder as a guest and refuses every
-   * write it does not mark for visitors, asking them to sign in instead.
+   * A visitor of the demo: the read half of `sandbox` and nothing else. The
+   * fence treats the holder as a guest and refuses every write it does not mark
+   * for visitors, as the demo is read-only.
    */
   [IAM_ROLE.SANDBOX_VISITOR]: {
     key: 'sandbox_visitor',
     name: 'Demo visitor',
     description:
-      'A visitor of the public demo who has not signed in. Looks around and connects a read-only agent; signs in to deploy.',
+      'A visitor of the read-only public demo. Looks around and connects a read-only agent.',
     permissions: [IAM_PERMISSION.APP_READ, IAM_PERMISSION.SECTION_VIEW],
     assignable: false,
   },

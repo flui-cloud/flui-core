@@ -16,7 +16,7 @@ export class SandboxAllowedDto {
   @ApiProperty({
     example: false,
     description:
-      'Whether a visitor who has not signed in may make these writes too. Reads are always open to visitors; any other write asks them to sign in.',
+      'Whether a visitor may make these writes too. Reads are always open to visitors; the demo refuses any other write as read-only.',
   })
   visitor: boolean;
 }

@@ -18,7 +18,7 @@ export class SandboxSessionDto {
   @ApiProperty({
     example: false,
     description:
-      'A visitor who has not signed in: looks around and connects a read-only agent, and signs in to deploy.',
+      'A visitor without an account: looks around the read-only demo and connects a read-only agent.',
   })
   visitor: boolean;
 

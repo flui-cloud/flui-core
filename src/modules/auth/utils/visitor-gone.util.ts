@@ -15,6 +15,6 @@ export function visitorGone(): UnauthorizedException {
   return new UnauthorizedException({
     statusCode: 401,
     code: VISITOR_GONE_CODE,
-    message: 'This visit has ended. Open the demo again, or sign in.',
+    message: 'This visit has ended. Open the demo again.',
   });
 }

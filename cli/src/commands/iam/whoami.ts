@@ -2,7 +2,7 @@ import { Command, Flags } from '@oclif/core';
 import chalk from 'chalk';
 import { ApiClient } from '../../lib/api-client';
 import { ConfigStorage } from '../../lib/config-storage';
-import { visitorSessionOf } from '../../lib/visitor-session';
+import { INSTALL_FLUI_URL, visitorSessionOf } from '../../lib/visitor-session';
 
 interface MePermissions {
   permissions: string[];
@@ -63,7 +63,7 @@ export default class IamWhoami extends Command {
         ? `, until ${new Date(visit.until).toLocaleString()}`
         : '';
       console.log(
-        `  ${chalk.yellow('●')} Visitor: looking around read-only${ends}. Sign in to deploy: ${chalk.cyan('flui login')}`,
+        `  ${chalk.yellow('●')} Visitor: looking around read-only${ends}. Install Flui on your own server: ${chalk.cyan(INSTALL_FLUI_URL)}`,
       );
     }
     if (me.isAdmin) {

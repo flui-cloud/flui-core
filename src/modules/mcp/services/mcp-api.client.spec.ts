@@ -1,5 +1,9 @@
 import type { Request } from 'express';
 import {
+  INSTALL_FLUI_URL,
+  SANDBOX_SIGN_IN_REQUIRED_MESSAGE,
+} from '../../sandbox/constants/sandbox-visitor';
+import {
   AGENT_STANDING_REFUSAL_PREFIX,
   standingRefusalMessage,
 } from '../../action-cycle/action-cycle.core';
@@ -204,15 +208,18 @@ describe('McpApiClient — the caller carries the caller credential', () => {
       expect(err(401).isAccessRefusal).toBe(false);
     });
 
-    it('tells a visitor’s agent to ask for a sign-in, not a new credential', () => {
+    it('tells a visitor’s agent the demo is read-only, not to get a new credential', () => {
       const message = err(
         401,
-        'Sign in with GitHub, Google or email to do this; you can keep looking around.',
+        SANDBOX_SIGN_IN_REQUIRED_MESSAGE,
         'SANDBOX_SIGN_IN_REQUIRED',
       ).agentMessage;
 
-      expect(message).toContain('Sign-in needed (HTTP 401)');
+      expect(message).toContain('Read-only demo (HTTP 401)');
       expect(message).toContain('NOTHING was changed');
+      expect(message).toContain(INSTALL_FLUI_URL);
+      expect(message).toContain('Do NOT retry');
+      expect(message).not.toMatch(/sign in/i);
       expect(message).not.toMatch(/fresh credential/);
     });
 

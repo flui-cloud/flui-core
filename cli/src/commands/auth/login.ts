@@ -11,6 +11,7 @@ import {
   mintVisitorKey,
 } from '../../lib/visitor-login';
 import {
+  INSTALL_FLUI_URL,
   clearVisitorSession,
   markVisitorSession,
 } from '../../lib/visitor-session';
@@ -491,7 +492,7 @@ export default class AuthLogin extends Command {
     this.log('');
     this.log(
       chalk.dim(
-        'Look around with any read command. To deploy, sign in with flui login.',
+        `Look around with any read command. This demo is read-only: install Flui on your own server for the full experience: ${INSTALL_FLUI_URL}`,
       ),
     );
   }
