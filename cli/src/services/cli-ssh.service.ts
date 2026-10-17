@@ -222,6 +222,7 @@ export class CliSshService {
     username: string = 'root',
     port = 22,
     jump?: { host: string; user: string; port: number },
+    input?: string,
   ): Promise<string> {
     const { privateKeyPath, certificatePath, cleanup } =
       await this.generateEphemeralKeypair();
@@ -260,7 +261,7 @@ export class CliSshService {
           `${username}@${host}`,
           command,
         ],
-        { encoding: 'utf-8', timeout: 30_000 },
+        { encoding: 'utf-8', timeout: 30_000, input },
       );
 
       if (
@@ -427,6 +428,7 @@ export class CliSshService {
     keyPath: string;
     port?: number;
     timeoutMs?: number;
+    input?: string;
   }): Promise<string> {
     return this.withKeyFile(opts.keyPath, (keyFile) =>
       this.sshExecWithKeyFile({ ...opts, keyPath: keyFile }),
@@ -440,6 +442,7 @@ export class CliSshService {
     keyPath: string;
     port?: number;
     timeoutMs?: number;
+    input?: string;
   }): string {
     const result = spawnSync(
       'ssh',
@@ -461,7 +464,11 @@ export class CliSshService {
         `${opts.user ?? 'root'}@${opts.host}`,
         opts.command,
       ],
-      { encoding: 'utf-8', timeout: opts.timeoutMs ?? 30_000 },
+      {
+        encoding: 'utf-8',
+        timeout: opts.timeoutMs ?? 30_000,
+        input: opts.input,
+      },
     );
 
     if (

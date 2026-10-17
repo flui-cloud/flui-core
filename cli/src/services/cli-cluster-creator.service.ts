@@ -2233,15 +2233,14 @@ export class CliClusterCreatorService {
         );
       }
 
+      // The patch carries the provider credentials, so it travels on standard
+      // input: a command line is readable by every process on both machines.
       const patchJson = JSON.stringify({ data });
-      const patchBase64 = Buffer.from(patchJson).toString('base64');
       const writeAndPatchCmd =
-        `echo ${patchBase64} | base64 -d > /tmp/flui-ssh-ca-patch.json` +
-        ` && (kubectl patch secret flui-secrets -n flui-system --type merge` +
-        `      --patch-file /tmp/flui-ssh-ca-patch.json` +
-        `   || kubectl patch secret flui-secrets -n default --type merge` +
-        `      --patch-file /tmp/flui-ssh-ca-patch.json)` +
-        ` && rm -f /tmp/flui-ssh-ca-patch.json` +
+        `f=$(mktemp) && cat > "$f"` +
+        ` && { kubectl patch secret flui-secrets -n flui-system --type merge --patch-file "$f"` +
+        `   || kubectl patch secret flui-secrets -n default --type merge --patch-file "$f"; };` +
+        ` s=$?; rm -f "$f"; [ "$s" -eq 0 ]` +
         ` && (kubectl rollout restart deployment/flui-api -n flui-system 2>/dev/null` +
         ` || kubectl rollout restart deployment/flui-api -n default 2>/dev/null` +
         ` || true)`;
@@ -2252,6 +2251,7 @@ export class CliClusterCreatorService {
           user: ssh.user ?? 'root',
           port: ssh.port ?? 22,
           keyPath: ssh.keyPath,
+          input: patchJson,
         });
       } else {
         await this.sshService.sshExec(
@@ -2259,6 +2259,8 @@ export class CliClusterCreatorService {
           writeAndPatchCmd,
           ssh?.user ?? 'root',
           ssh?.port ?? 22,
+          undefined,
+          patchJson,
         );
       }
 
