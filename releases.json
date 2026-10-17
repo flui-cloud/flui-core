@@ -2,6 +2,30 @@
   "schemaVersion": 2,
   "releases": [
     {
+      "version": "0.13.0-rc.21",
+      "publishedAt": "2026-10-17T11:47:54.342Z",
+      "bootstrapRef": "1525ed8",
+      "images": {
+        "fluiApi": "0.13.0-rc.21",
+        "fluiWeb": "0.13.0-rc.21",
+        "fluiAuthz": "0.7.0"
+      },
+      "notes": [
+        "The public demo is read-only: visitors look around a real Flui and every invitation to sign in now points to installing Flui on your own server.",
+        "flui env create runs on a caller-supplied profile key (FLUI_PROFILE_KEY) without a vault, and creates no SSH certificate authority in ephemeral-key mode: the guided installer at app.flui.cloud can build installations again."
+      ],
+      "migrations": 0,
+      "requiresBootstrap": false,
+      "k3s": {
+        "version": "v1.35.4+k3s1"
+      },
+      "systemComponents": {
+        "certManager": "v1.17.1",
+        "systemUpgradeController": "v0.20.2"
+      },
+      "manifestSets": []
+    },
+    {
       "version": "0.13.0-rc.20",
       "publishedAt": "2026-10-17T07:01:19.412Z",
       "bootstrapRef": "1525ed8",
