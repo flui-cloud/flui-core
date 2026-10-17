@@ -1,11 +1,14 @@
 import {
   ACTION_PROPOSAL_CODE,
   PROPOSAL_STATUS,
+  absoluteDecisionUrl,
   argsDigest,
   bindingOf,
   composeSentence,
   concessionCovers,
+  dashboardBaseUrl,
   isProposalLive,
+  proposalDecisionUrl,
   readProposalRefusal,
   renderRoute,
   renderSentence,
@@ -299,5 +302,67 @@ describe('action cycle — the vocabulary a concession is written in', () => {
       expect(readProposalRefusal('nope')).toBeUndefined();
       expect(readProposalRefusal(undefined)).toBeUndefined();
     });
+  });
+});
+
+/**
+ * The link a person is handed. A relative path relayed by an agent is a link
+ * nobody can open, so every form of it ends absolute.
+ */
+describe('the decision page link', () => {
+  it('reads the dashboard URL the way every other link does', () => {
+    const env = (values: Record<string, string>) => (key: string) =>
+      values[key];
+    expect(
+      dashboardBaseUrl(
+        env({ FRONTEND_URL: 'https://a', DASHBOARD_URL: 'https://b' }),
+      ),
+    ).toBe('https://a');
+    expect(dashboardBaseUrl(env({ DASHBOARD_URL: 'https://b' }))).toBe(
+      'https://b',
+    );
+    expect(dashboardBaseUrl(env({}))).toBe('http://localhost:4200');
+  });
+
+  it('joins base, decision path and id', () => {
+    expect(proposalDecisionUrl('https://app.flui.cloud//', 'p-1')).toBe(
+      'https://app.flui.cloud/agents/requests/p-1',
+    );
+    expect(proposalDecisionUrl('https://x.test/console', 'p-1')).toBe(
+      'https://x.test/console/agents/requests/p-1',
+    );
+  });
+
+  it('keeps an absolute decideUrl as the API stated it', () => {
+    expect(
+      absoluteDecisionUrl(
+        {
+          proposalId: 'p-1',
+          decideUrl: 'https://app.flui.cloud/agents/requests/p-1',
+        },
+        'https://elsewhere.test',
+      ),
+    ).toBe('https://app.flui.cloud/agents/requests/p-1');
+  });
+
+  it('makes a relative decideUrl absolute against the dashboard', () => {
+    expect(
+      absoluteDecisionUrl(
+        { proposalId: 'p-1', decideUrl: '/agents/requests/p-1' },
+        'https://app.flui.cloud/',
+      ),
+    ).toBe('https://app.flui.cloud/agents/requests/p-1');
+  });
+
+  it('builds one when none was stated, and never trusts a scheme-relative one', () => {
+    expect(
+      absoluteDecisionUrl({ proposalId: 'p-1' }, 'https://app.flui.cloud'),
+    ).toBe('https://app.flui.cloud/agents/requests/p-1');
+    expect(
+      absoluteDecisionUrl(
+        { proposalId: 'p-1', decideUrl: '//evil.test/x' },
+        'https://app.flui.cloud',
+      ),
+    ).toBe('https://app.flui.cloud/agents/requests/p-1');
   });
 });

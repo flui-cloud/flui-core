@@ -19,6 +19,7 @@ import {
 } from '../tools/mcp-tool.util';
 import { ALL_TOOLS } from '../tools/tool-registry';
 import { isOfferedToGuest } from './sandbox-tool-visibility';
+import { dashboardBaseUrl } from '../../action-cycle/action-cycle.core';
 
 export const MCP_SERVER_NAME = 'flui';
 export const MCP_SERVER_VERSION = '0.1.0';
@@ -129,6 +130,7 @@ export class McpServerFactory {
       // the request is on the request and deliberately not on the principal.
       actor,
       requestStateCodec,
+      dashboardUrl: dashboardBaseUrl((key) => this.config.get<string>(key)),
     };
 
     for (const def of ALL_TOOLS) {

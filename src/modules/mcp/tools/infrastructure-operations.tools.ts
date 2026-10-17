@@ -26,7 +26,8 @@ import {
  * credential — not the client — is what says an agent is acting.
  *
  * What the agent sees when the pause fires is not a failure. `runGated` turns
- * the guard's typed refusal into `input_required` with the page a person
+ * the guard's typed refusal into an `approval_required` result (or a URL
+ * elicitation, for a client that declared one) with the page a person
  * decides on, and the agent's job is to stop, say what was asked for, and
  * **retry the identical call** once somebody has answered. The retry is what
  * executes; the click does not. See `action-cycle-wait.spec.ts`.

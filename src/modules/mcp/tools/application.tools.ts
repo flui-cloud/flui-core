@@ -499,7 +499,7 @@ export const APPLICATION_TOOLS: ToolDef[] = [
       // creation to its own tenancy cluster) — none of which an in-process call
       // would ever meet. The route also carries `@ActionCycle`: a credential
       // with no standing approval gets back a proposal, which `runGated`
-      // already turns into an `input_required` wait — nothing extra to do here.
+      // already turns into an `approval_required` wait — nothing extra to do here.
       const result = await ctx.api.post<{
         application?: {
           id?: string;

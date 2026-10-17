@@ -21,7 +21,7 @@ import { createHash } from 'node:crypto';
  * "never a credential inside a skill" rule made structural rather than
  * remembered.
  */
-export const AGENT_SKILL_VERSION = '1.5.1';
+export const AGENT_SKILL_VERSION = '1.6.0';
 
 /** What the agent stores it as. Claude Code and its kin read `SKILL.md`. */
 export const AGENT_SKILL_FILENAME = 'SKILL.md';
@@ -158,6 +158,24 @@ operation belongs to an application, because that is the reading route a
 non-administrator is allowed on — until \`done\` is true, then report the real
 outcome. Never claim something finished before \`done\`, and on \`FAILED\` relay
 the exact \`error\` rather than retrying.
+
+## Some calls wait for a person to approve them
+
+A call that changes something may come back with \`status\` set to
+\`approval_required\` instead of doing it. **Nothing was done and nothing
+failed**: the person you act for has been asked to allow this exact call. The
+result carries the request in words and an \`approveUrl\`.
+
+Stop and tell the person, with the link copied verbatim:
+
+    This needs your approval: open <approveUrl> and approve it, then tell me and I will retry.
+
+Do not retry until they say they have answered. Then repeat the **identical**
+call, same tool and same arguments: the retry is what executes it. Changing the
+arguments raises a second request instead of getting past this one. If your
+client shows the request as a link to open, it is the same request and the same
+rule applies. If the retry says the request was refused, the answer stands: say
+so and ask for a different course of action.
 
 ## Secrets are not yours to hold
 

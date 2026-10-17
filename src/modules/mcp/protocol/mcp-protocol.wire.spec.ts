@@ -29,6 +29,8 @@ import {
   toolInputSchema,
 } from '../tools/mcp-tool.util';
 import { acceptedContent, inputRequired } from './mrtr';
+import { McpApiError } from '../services/mcp-api.client';
+import { ACTION_PROPOSAL_CODE } from '../../action-cycle/action-cycle.core';
 
 /**
  * What the MCP endpoint actually puts on the wire, driven through the real
@@ -105,7 +107,34 @@ const deliver: ToolDef = {
   },
 };
 
-const TOOLS = [alpha, beta, deliver];
+/** A call the action cycle stops to ask a person about. */
+const askPerson: ToolDef = {
+  name: 'ask_person',
+  description: 'raises a request a person has to approve',
+  inputSchema: {},
+  scope: MCP_SCOPE.APP_WRITE,
+  run: () =>
+    Promise.reject(
+      new McpApiError(
+        403,
+        'This call needs a person to allow it first.',
+        'POST',
+        '/repositories',
+        ACTION_PROPOSAL_CODE,
+        undefined,
+        {
+          proposalId: 'p-9',
+          action: 'POST /repositories',
+          sentence: 'connect repository acme/shop',
+          offersAlways: true,
+          decideUrl: 'https://console.test/agents/requests/p-9',
+          estimateWithheld: false,
+        },
+      ),
+    ),
+};
+
+const TOOLS = [alpha, beta, deliver, askPerson];
 
 const SERVER_INFO = { name: 'flui-test', version: '0.0.0' };
 
@@ -215,7 +244,12 @@ describe('MCP endpoint on the wire', () => {
 
     // Registration order, not alphabetical: `zz_last` is declared first on
     // purpose, so this test can tell "stable" from "sorted".
-    expect(names(first)).toEqual(['zz_last', 'aa_first', 'deliver_secret']);
+    expect(names(first)).toEqual([
+      'zz_last',
+      'aa_first',
+      'deliver_secret',
+      'ask_person',
+    ]);
     expect(names(second)).toEqual(names(first));
   });
 
@@ -351,7 +385,7 @@ describe('MCP endpoint on the wire', () => {
     }).expect(200);
     expect(
       sse(listed.text).result.tools.map((t: { name: string }) => t.name),
-    ).toEqual(['zz_last', 'aa_first', 'deliver_secret']);
+    ).toEqual(['zz_last', 'aa_first', 'deliver_secret', 'ask_person']);
 
     const called = await legacy({
       jsonrpc: '2.0',
@@ -379,6 +413,89 @@ describe('MCP endpoint on the wire', () => {
     const result = sse(res.text).result;
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toContain('elicitation/create');
+  });
+
+  /**
+   * Seen live: a pending approval sent as a URL elicitation to a client that
+   * answered it unseen, until the round cap ended the call in an error that
+   * never named the page. Now the elicitation goes only where the request
+   * declares URL support, once, and everything else gets words to relay.
+   */
+  describe('a call waiting on a person', () => {
+    const call = (id: number, extra: Record<string, unknown> = {}) => ({
+      id,
+      method: 'tools/call',
+      params: { name: 'ask_person', arguments: {}, ...extra },
+    });
+    const urlEnvelope = {
+      ...ENVELOPE,
+      'io.modelcontextprotocol/clientCapabilities': {
+        elicitation: { url: {} },
+      },
+    };
+    const relayed = (result: {
+      isError?: boolean;
+      content: { text: string }[];
+    }) => {
+      expect(result.isError).toBeUndefined();
+      expect(result.content[0].text).toContain(
+        'This needs your approval: open https://console.test/agents/requests/p-9 and approve it',
+      );
+      expect(JSON.parse(result.content[1].text)).toEqual(
+        expect.objectContaining({
+          status: 'approval_required',
+          proposalId: 'p-9',
+        }),
+      );
+    };
+
+    it('is told in words to a client that declared no URL elicitation', async () => {
+      const res = await modern(call(13)).expect(200);
+      expect(res.body.result.resultType).toBe('complete');
+      relayed(res.body.result);
+    });
+
+    it('is a URL elicitation to a client that declared one', async () => {
+      const res = await request(app.getHttpServer())
+        .post('/mcp')
+        .set('Accept', 'application/json, text/event-stream')
+        .set('Mcp-Method', 'tools/call')
+        .set('Mcp-Name', 'ask_person')
+        .send({
+          jsonrpc: '2.0',
+          ...call(14, { _meta: urlEnvelope }),
+        })
+        .expect(200);
+      const result = res.body.result;
+      expect(result.resultType).toBe('input_required');
+      expect(result.inputRequests.approved.params.mode).toBe('url');
+      expect(result.inputRequests.approved.params.url).toBe(
+        'https://console.test/agents/requests/p-9',
+      );
+    });
+
+    it('is told in words once that client has answered and it is still pending', async () => {
+      const res = await request(app.getHttpServer())
+        .post('/mcp')
+        .set('Accept', 'application/json, text/event-stream')
+        .set('Mcp-Method', 'tools/call')
+        .set('Mcp-Name', 'ask_person')
+        .send({
+          jsonrpc: '2.0',
+          ...call(15, {
+            _meta: urlEnvelope,
+            inputResponses: { approved: { action: 'accept' } },
+          }),
+        })
+        .expect(200);
+      expect(res.body.result.resultType).toBe('complete');
+      relayed(res.body.result);
+    });
+
+    it('is told in words to a stateless 2025 client, never as an error', async () => {
+      const res = await legacy({ jsonrpc: '2.0', ...call(16) }).expect(200);
+      relayed(sse(res.text).result);
+    });
   });
 
   it('refuses the notification stream instead of holding it open', async () => {

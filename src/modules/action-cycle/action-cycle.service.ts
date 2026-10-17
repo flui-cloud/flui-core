@@ -14,7 +14,6 @@ import {
   ACTION_PROPOSAL_DENIED_CODE,
   ActionBinding,
   PROPOSAL_DECISION,
-  PROPOSAL_DECISION_PATH,
   PROPOSAL_STATUS,
   PROPOSAL_TTL_MS,
   ProposalDecision,
@@ -23,7 +22,9 @@ import {
   bindingOf,
   composeSentence,
   concessionCovers,
+  dashboardBaseUrl,
   isProposalLive,
+  proposalDecisionUrl,
   renderRoute,
 } from './action-cycle.core';
 import { ActionCycleDecl } from './action-cycle.decorator';
@@ -162,13 +163,10 @@ export class ActionCycleService {
   }
 
   private decideUrl(proposalId: string): string {
-    const configured =
-      this.config.get<string>('FRONTEND_URL') ??
-      this.config.get<string>('DASHBOARD_URL') ??
-      'http://localhost:4200';
-    let base = configured;
-    while (base.endsWith('/')) base = base.slice(0, -1);
-    return `${base}${PROPOSAL_DECISION_PATH}/${proposalId}`;
+    return proposalDecisionUrl(
+      dashboardBaseUrl((key) => this.config.get<string>(key)),
+      proposalId,
+    );
   }
 
   private async matchingConcession(

@@ -641,7 +641,7 @@ describe('repo_map_apply — the write', () => {
    * The action cycle asking a person is a WAIT. Rendered as an error an agent
    * retries blindly or gives up, and here neither is right.
    */
-  it('turns the cycle’s question into input_required, never into a failure', async () => {
+  it('turns the cycle’s question into a wait to relay, never into a failure', async () => {
     const result = await runTool(
       ctxFor({
         fail: new McpApiError(
@@ -666,9 +666,9 @@ describe('repo_map_apply — the write', () => {
       { repository: 'acme/shop' },
     );
     expect((result as ToolResult).isError).toBeUndefined();
-    const asked = (result as InputRequiredResult).inputRequests
-      ?.approved as unknown as { params: { message: string } };
-    expect(asked.params.message).toContain('commit Flui-rendered manifests');
+    expect((result as ToolResult).content[0].text).toContain(
+      'commit Flui-rendered manifests',
+    );
   });
 });
 

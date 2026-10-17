@@ -402,16 +402,14 @@ describe('a pending request on a machine-room call', () => {
     const calls: string[] = [];
     const result = await runTool(ctx(calls), tool, { targetSizeGb: 50 });
 
-    expect(isInputRequired(result)).toBe(true);
+    expect(isInputRequired(result)).toBe(false);
     expect((result as { isError?: boolean }).isError).toBeUndefined();
-    const requests = (
-      result as unknown as {
-        inputRequests: Record<string, { params: { url: string } }>;
-      }
-    ).inputRequests;
-    expect(requests.approved.params.url).toBe(
-      'https://console.test/agents/requests/p-9',
+    const relayed = (result as { content: { text: string }[] }).content;
+    expect(relayed[0].text).toContain(
+      'open https://console.test/agents/requests/p-9 and approve it',
     );
+    expect(relayed[0].text).toContain('cost estimate attached');
+    expect(JSON.parse(relayed[1].text).status).toBe('approval_required');
   });
 
   it('changed nothing on the way — the wait is the whole outcome', async () => {

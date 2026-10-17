@@ -1,6 +1,8 @@
 import {
   InputResponses,
   acceptedContent,
+  answeredInRound,
+  declaresUrlElicitation,
   inputRequired,
   inputResponse,
   isInputRequired,
@@ -146,6 +148,61 @@ describe('MRTR retry leg', () => {
     // `unknown`. Recorded because it is a real difference, not an oversight.
     expect(inputResponse({ secret: 42 }, 'secret')).toEqual({
       kind: 'missing',
+    });
+  });
+});
+
+/**
+ * What decides between asking through the client and saying it in words. Read
+ * off the request's own envelope, because no request on this server ever sees
+ * the `initialize` its client sent.
+ */
+describe('declaresUrlElicitation', () => {
+  const envelope = (capabilities: unknown) => ({
+    'io.modelcontextprotocol/clientCapabilities': capabilities,
+  });
+
+  it('is true only for an explicit url member', () => {
+    expect(declaresUrlElicitation(envelope({ elicitation: { url: {} } }))).toBe(
+      true,
+    );
+    expect(
+      declaresUrlElicitation(envelope({ elicitation: { form: {}, url: {} } })),
+    ).toBe(true);
+  });
+
+  it.each([
+    ['no envelope (a 2025-era request)', undefined],
+    ['no capabilities', {}],
+    ['no elicitation', envelope({ sampling: {} })],
+    ['form only', envelope({ elicitation: { form: {} } })],
+    ['a bare elicitation', envelope({ elicitation: {} })],
+    ['a non-object url', envelope({ elicitation: { url: true } })],
+  ])('is false for %s', (_label, value) => {
+    expect(declaresUrlElicitation(value)).toBe(false);
+  });
+});
+
+describe('answeredInRound', () => {
+  it('sees an answer kept or dropped by the SDK, and nothing else', () => {
+    expect(
+      answeredInRound(
+        { inputResponses: { approved: { action: 'cancel' } } },
+        'approved',
+      ),
+    ).toBe(true);
+    expect(
+      answeredInRound({ droppedInputResponseKeys: ['approved'] }, 'approved'),
+    ).toBe(true);
+    expect(answeredInRound({ inputResponses: { other: {} } }, 'approved')).toBe(
+      false,
+    );
+    expect(answeredInRound(undefined, 'approved')).toBe(false);
+  });
+
+  it('is carried by readRound', () => {
+    expect(readRound({ droppedInputResponseKeys: ['approved'] })).toEqual({
+      droppedInputResponseKeys: ['approved'],
     });
   });
 });

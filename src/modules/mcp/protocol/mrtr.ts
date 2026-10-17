@@ -35,6 +35,7 @@
  */
 
 import {
+  CLIENT_CAPABILITIES_META_KEY,
   inputRequired as sdkInputRequired,
   type ElicitInputParams,
   type ElicitRequestURLParams,
@@ -103,13 +104,50 @@ export interface McpRequestRound {
    * one safely.
    */
   inputResponses?: Record<string, unknown>;
+  /** Keys the client answered in a shape the SDK dropped: still an answer. */
+  droppedInputResponseKeys?: string[];
   requestState?: string;
 }
 
 /** The subset of the SDK's request context a round is read from. */
 export interface McpRequestRoundSource {
   inputResponses?: Record<string, unknown>;
+  droppedInputResponseKeys?: string[];
   requestState?: <T = unknown>() => T | undefined;
+}
+
+/** Whether this round already carries the client's answer to `key`. */
+export function answeredInRound(
+  round: McpRequestRound | undefined,
+  key: string,
+): boolean {
+  const responses = round?.inputResponses;
+  if (responses && Object.prototype.hasOwnProperty.call(responses, key)) {
+    return true;
+  }
+  return round?.droppedInputResponseKeys?.includes(key) ?? false;
+}
+
+/**
+ * Whether the client said, on this very request, that it renders URL
+ * elicitations inside a multi-round-trip call.
+ *
+ * Only a 2026-07-28 request can say so: its capabilities ride the `_meta`
+ * envelope of every request. A 2025-era request served per request carries
+ * none (its `initialize` went to another, discarded instance), so it reads as
+ * "no" — and "no" is the safe answer, because the fallback is plain text.
+ * A bare `elicitation: {}` is not taken as URL support either.
+ */
+export function declaresUrlElicitation(envelope: unknown): boolean {
+  if (!envelope || typeof envelope !== 'object') return false;
+  const capabilities = (envelope as Record<string, unknown>)[
+    CLIENT_CAPABILITIES_META_KEY
+  ];
+  if (!capabilities || typeof capabilities !== 'object') return false;
+  const elicitation = (capabilities as Record<string, unknown>).elicitation;
+  if (!elicitation || typeof elicitation !== 'object') return false;
+  const url = (elicitation as Record<string, unknown>).url;
+  return !!url && typeof url === 'object';
 }
 
 /**
@@ -126,6 +164,10 @@ export function readRound(source?: McpRequestRoundSource): McpRequestRound {
   const responses = source?.inputResponses;
   if (responses && typeof responses === 'object') {
     round.inputResponses = responses;
+  }
+  const dropped = source?.droppedInputResponseKeys;
+  if (Array.isArray(dropped) && dropped.length) {
+    round.droppedInputResponseKeys = dropped;
   }
   const state = source?.requestState?.();
   if (typeof state === 'string' && state) round.requestState = state;

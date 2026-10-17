@@ -9,6 +9,8 @@ import type {
 import {
   InputRequiredResult,
   McpRequestRound,
+  answeredInRound,
+  declaresUrlElicitation,
   inputRequired,
   isInputRequired,
   readRound,
@@ -22,8 +24,9 @@ import {
   startedOperationId,
 } from '../audit/tool-arg-redaction';
 import {
-  PROPOSAL_DECISION_PATH,
+  ESTIMATE_WITHHELD_NOTE,
   ProposalRefusal,
+  absoluteDecisionUrl,
 } from '../../action-cycle/action-cycle.core';
 
 /** A tool result in MCP's content shape. */
@@ -90,6 +93,14 @@ export interface McpToolContext {
    * MCP request at all.
    */
   mcpReq?: McpRequestRound;
+  /**
+   * The client declared, on this request, that it renders a URL elicitation
+   * inside a multi-round-trip call. Read per call by `runTool`; absent means
+   * "no", and a pending approval is then told in words instead.
+   */
+  clientElicitsUrl?: boolean;
+  /** The dashboard's public base URL, for links a person has to open. */
+  dashboardUrl?: string;
   /**
    * Seals a correlation payload into the opaque `requestState` a handler hands
    * back with `inputRequired`. Bound per call by `runTool` to the SDK context,
@@ -370,6 +381,7 @@ export function runTool(
   const scoped: McpToolContext = {
     ...ctx,
     mcpReq: readRound(sdkCtx?.mcpReq),
+    clientElicitsUrl: declaresUrlElicitation(sdkCtx?.mcpReq.envelope),
     mintRequestState:
       ctx.requestStateCodec && sdkCtx
         ? (payload) => ctx.requestStateCodec.mint(payload, sdkCtx)
@@ -510,36 +522,80 @@ export async function runGated(
       proposalId: waiting?.proposalId ?? null,
       error: message,
     });
-    if (waiting) return proposalElicitation(waiting, message);
+    if (waiting) return awaitingApproval(ctx, waiting, message);
     return errorResult(message);
   }
 }
 
+export const APPROVAL_REQUIRED_STATUS = 'approval_required';
+
+const APPROVAL_INPUT_KEY = 'approved';
+
 /**
- * A pending request, rendered as the protocol's URL elicitation.
+ * A pending request, told so that a person always hears about it.
  *
- * `elicitUrl` and not a form: what has to happen is a decision on a page that
- * shows the sentence, the estimate and the two-or-three answers — not a field
- * the agent fills in. The URL is the one the API stated in its refusal, so
- * "which page decides a request" is said in one place rather than assembled
- * again here.
- *
- * A client that ignores it loses nothing that matters: the message says the same
- * thing in words, and the wait is a row either way. That is the property that
- * makes this work with `curl`.
+ * The URL elicitation is used only when the client declared, on this request,
+ * that it renders one, and only on the first round: a client that answers it
+ * without showing anybody would otherwise spin through its round cap and end
+ * in an error that never names the page. Every other case gets an ordinary
+ * result whose text is written to be relayed as is.
  */
-function proposalElicitation(
+function awaitingApproval(
+  ctx: McpToolContext,
   proposal: ProposalRefusal,
   message: string,
-): InputRequiredResult {
-  const url =
-    proposal.decideUrl ?? `${PROPOSAL_DECISION_PATH}/${proposal.proposalId}`;
-  return inputRequired({
-    inputRequests: {
-      approved: inputRequired.elicitUrl({
-        message: `${message}\n\nRequest: ${proposal.sentence}`,
-        url,
-      }),
-    },
-  });
+): ToolResult | InputRequiredResult {
+  const approveUrl = absoluteDecisionUrl(proposal, ctx.dashboardUrl);
+  if (
+    ctx.clientElicitsUrl &&
+    !answeredInRound(ctx.mcpReq, APPROVAL_INPUT_KEY)
+  ) {
+    return inputRequired({
+      inputRequests: {
+        [APPROVAL_INPUT_KEY]: inputRequired.elicitUrl({
+          message: `${message}\n\nRequest: ${proposal.sentence}`,
+          url: approveUrl,
+        }),
+      },
+    });
+  }
+  return approvalRequiredResult(proposal, approveUrl);
+}
+
+/** The relayable form of a pending request: a state, never an error. */
+export function approvalRequiredResult(
+  proposal: ProposalRefusal,
+  approveUrl: string,
+): ToolResult {
+  const lines = [
+    'APPROVAL REQUIRED. Nothing has been done yet.',
+    `Requested: ${proposal.sentence}.`,
+  ];
+  if (proposal.consequence) lines.push(`If allowed: ${proposal.consequence}`);
+  if (proposal.estimateWithheld) lines.push(ESTIMATE_WITHHELD_NOTE);
+  if (proposal.expiresAt)
+    lines.push(`The request expires at ${proposal.expiresAt}.`);
+  lines.push(
+    '',
+    'Tell the person exactly this:',
+    `"This needs your approval: open ${approveUrl} and approve it, then tell me and I will retry."`,
+    '',
+    'Do NOT retry until they confirm they have answered. Then repeat the IDENTICAL call, same tool and same arguments: the retry is what executes it. Changing the arguments raises a second request instead.',
+  );
+  const fields = {
+    status: APPROVAL_REQUIRED_STATUS,
+    proposalId: proposal.proposalId,
+    action: proposal.action,
+    request: proposal.sentence,
+    approveUrl,
+    expiresAt: proposal.expiresAt ?? null,
+    estimateWithheld: proposal.estimateWithheld,
+    retry: 'identical call, after the person confirms',
+  };
+  return {
+    content: [
+      { type: 'text', text: lines.join('\n') },
+      { type: 'text', text: JSON.stringify(fields, null, 2) },
+    ],
+  };
 }

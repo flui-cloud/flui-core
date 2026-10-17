@@ -524,10 +524,10 @@ describe('MCP agent-facing tool surface', () => {
 
     // The route carries `@ActionCycle`: a credential with no standing approval
     // gets a proposal instead of an effect. Nothing in the tool body handles
-    // this — `runGated` already turns it into an `input_required` wait — so
+    // this — `runGated` already turns it into an `approval_required` wait — so
     // what this pins is that the wiring actually reaches that branch for
     // THIS route, not merely that the generic mechanism exists somewhere.
-    it('comes back as input_required, not a failure, when the action cycle asks a person first', async () => {
+    it('comes back as a relayable approval_required, not a failure, when the action cycle asks a person first', async () => {
       const ctx = {
         user: { userId: 'u1', email: 'e@x' },
         scopes: new Set([MCP_SCOPE.APP_WRITE]),
@@ -562,7 +562,11 @@ describe('MCP agent-facing tool surface', () => {
         image: 'nginx:1.25',
         name: 'x',
       });
-      expect(isInputRequired(result)).toBe(true);
+      expect(isInputRequired(result)).toBe(false);
+      expect((result as { isError?: boolean }).isError).toBeUndefined();
+      expect(
+        (result as { content: { text: string }[] }).content[0].text,
+      ).toContain('This needs your approval: open http');
     });
 
     // Verified, not assumed: `/clusters/:clusterId/applications` is already

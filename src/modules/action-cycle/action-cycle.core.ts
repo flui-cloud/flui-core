@@ -324,6 +324,48 @@ export function renderRoute(
  */
 export const PROPOSAL_DECISION_PATH = '/agents/requests';
 
+const DEFAULT_DASHBOARD_URL = 'http://localhost:4200';
+
+/** The dashboard's public base URL, read the way every other link is. */
+export function dashboardBaseUrl(
+  read: (key: string) => string | undefined,
+): string {
+  return read('FRONTEND_URL') ?? read('DASHBOARD_URL') ?? DEFAULT_DASHBOARD_URL;
+}
+
+function withoutTrailingSlash(url: string): string {
+  let base = url;
+  while (base.endsWith('/')) base = base.slice(0, -1);
+  return base;
+}
+
+/** The absolute address of the page where a person answers one request. */
+export function proposalDecisionUrl(
+  dashboardUrl: string | undefined,
+  proposalId: string,
+): string {
+  const base = withoutTrailingSlash(dashboardUrl || DEFAULT_DASHBOARD_URL);
+  return `${base}${PROPOSAL_DECISION_PATH}/${encodeURIComponent(proposalId)}`;
+}
+
+/**
+ * The page a refusal points at, always absolute: the API's own `decideUrl`
+ * when it already is, joined to the dashboard otherwise. A relative path
+ * relayed by an agent is a link nobody can open.
+ */
+export function absoluteDecisionUrl(
+  proposal: Pick<ProposalRefusal, 'proposalId' | 'decideUrl'>,
+  dashboardUrl: string | undefined,
+): string {
+  const stated = proposal.decideUrl?.trim();
+  if (stated && /^https?:\/\//i.test(stated)) return stated;
+  if (stated?.startsWith('/') && !stated.startsWith('//')) {
+    const base = withoutTrailingSlash(dashboardUrl || DEFAULT_DASHBOARD_URL);
+    return `${base}${stated}`;
+  }
+  return proposalDecisionUrl(dashboardUrl, proposal.proposalId);
+}
+
 /**
  * What an agent is told when a request carries a price it is not shown.
  *
