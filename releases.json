@@ -2,6 +2,31 @@
   "schemaVersion": 2,
   "releases": [
     {
+      "version": "0.13.0-rc.20",
+      "publishedAt": "2026-10-17T07:01:19.412Z",
+      "bootstrapRef": "1525ed8",
+      "images": {
+        "fluiApi": "0.13.0-rc.20",
+        "fluiWeb": "0.13.0-rc.20",
+        "fluiAuthz": "0.7.0"
+      },
+      "notes": [
+        "The dashboard holds far more visitors: metrics are cached briefly, Kubernetes connections are reused, application reads skip their history, access is remembered for two seconds and certificate checks are throttled.",
+        "The API can run as several autoscaled copies: background work runs once, long jobs finish before a copy stops, and the API and Postgres get more CPU.",
+        "Every server and server type shows its CPU architecture; arm servers come with a warning that apps deployed from a repository are built for x86."
+      ],
+      "migrations": 1,
+      "requiresBootstrap": true,
+      "k3s": {
+        "version": "v1.35.4+k3s1"
+      },
+      "systemComponents": {
+        "certManager": "v1.17.1",
+        "systemUpgradeController": "v0.20.2"
+      },
+      "manifestSets": ["control"]
+    },
+    {
       "version": "0.13.0-rc.19",
       "publishedAt": "2026-10-16T21:33:13.965Z",
       "bootstrapRef": "484b507",
