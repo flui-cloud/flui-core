@@ -2168,18 +2168,21 @@ export class CliClusterCreatorService {
     );
 
     try {
-      const caPrivateKey = await this.caService.getCaPrivateKey();
-      const caPublicKey = await this.caService.getCaPublicKey();
-
       // Base64-encode for Kubernetes Opaque secret data field
       const b64 = (s: string) => Buffer.from(s).toString('base64');
+
+      const ca = ssh?.keyPath
+        ? {}
+        : {
+            SSH_CA_PRIVATE_KEY: b64(await this.caService.getCaPrivateKey()),
+            SSH_CA_PUBLIC_KEY: b64(await this.caService.getCaPublicKey()),
+          };
 
       // Encode the entire patch JSON as base64, decode on the server, then apply.
       // This avoids all shell escaping issues since sshExec wraps commands
       // in double quotes and JSON contains double quotes that would conflict.
       const data: Record<string, string> = {
-        SSH_CA_PRIVATE_KEY: b64(caPrivateKey),
-        SSH_CA_PUBLIC_KEY: b64(caPublicKey),
+        ...ca,
         FLUI_CLI_API_KEY: b64(bootstrap.fluiApiKey),
         PROVIDER_HETZNER_API_KEY:
           bootstrap.provider === 'hetzner'

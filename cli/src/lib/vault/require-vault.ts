@@ -11,6 +11,7 @@ export function requireOpenVault(
   profile: string = ProfileManager.getActiveProfile(),
   baseDir: string = ProfileManager.BASE_DIR,
 ): void {
+  if (getProfileKey(profile)) return;
   if (!new VaultFile(baseDir).exists()) throw new VaultNotInitialisedError();
-  if (!getProfileKey(profile)) throw new VaultLockedError(profile);
+  throw new VaultLockedError(profile);
 }

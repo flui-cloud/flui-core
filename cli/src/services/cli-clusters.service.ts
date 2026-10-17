@@ -36,6 +36,7 @@ import { CloudProvider } from 'src/modules/providers/enums/cloud-provider.enum';
 import { parsePlatformKeyHex } from 'src/modules/shared/encryption/platform-cipher';
 import { PLATFORM_KEY_FIELD } from '../lib/vault/encryption-key-migration';
 import { requireOpenVault } from '../lib/vault/require-vault';
+import { resolveSshMode } from '../lib/ssh-mode';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
@@ -80,9 +81,10 @@ export class CliClustersService {
       await this.sshService.getOrCreateSshKey();
     this.logger.log('SSH key ready for cluster provisioning');
 
-    // Get or create CA certificate
-    const caPublicKey = await this.caService.getCaPublicKey();
-    this.logger.log('CA certificate ready for cluster provisioning');
+    const caPublicKey =
+      resolveSshMode(createClusterDto.metadata) === 'ephemeral-key'
+        ? ''
+        : await this.caService.getCaPublicKey();
 
     // Generate and encrypt K3s token
     const k3sToken = this.generateK3sToken();
