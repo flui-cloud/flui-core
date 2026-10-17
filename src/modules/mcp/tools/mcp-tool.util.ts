@@ -1,7 +1,11 @@
 import { z, ZodRawShape } from 'zod';
 import { AuthenticatedUser } from '../../auth/interfaces/authenticated-user.interface';
 import { McpAuditRepository } from '../repositories/mcp-audit.repository';
-import { McpScope, SCOPE_TIER } from '../constants/mcp-scopes';
+import {
+  DESTRUCTIVE_DISABLED_MESSAGE,
+  McpScope,
+  SCOPE_TIER,
+} from '../constants/mcp-scopes';
 import type {
   RequestStateCodec,
   ServerContext,
@@ -316,7 +320,12 @@ export function startedOutcome(
 export async function removeApplication(
   ctx: McpToolContext,
   applicationId: string,
-): Promise<OperationOutcome & { removed: 'catalog-install' | 'application' }> {
+): Promise<
+  OperationOutcome & {
+    removed: 'catalog-install' | 'application';
+    dataWarning?: string;
+  }
+> {
   // One call, because the decision has to be atomic. Composed of the routes
   // that already exist it would be four — read the app, read its install, read
   // that install's status, then delete — with the model's own retries and its
@@ -329,6 +338,7 @@ export async function removeApplication(
     done: boolean;
     alreadyUnderway?: boolean;
     label?: string;
+    dataWarning?: string;
   }>(`/applications/${encodeURIComponent(applicationId)}/install`);
 
   if (outcome.alreadyUnderway) {
@@ -345,6 +355,7 @@ export async function removeApplication(
   return {
     removed: outcome.removed,
     ...startedOutcome(ctx, outcome.operationId, outcome.status, outcome.label),
+    ...(outcome.dataWarning ? { dataWarning: outcome.dataWarning } : {}),
   };
 }
 
@@ -445,7 +456,7 @@ export async function runGated(
     // wrong thing. This one means "the tool was never handed to you"; the other
     // means "you hold the tool but not this resource".
     return errorResult(
-      `Refused: missing required scope '${scope}'. This is a GRANT problem, not an access-control one: the agent credential in use does not carry that scope, so no resource will make this call work. Ask for the scope to be granted; do not retry meanwhile.`,
+      `Refused: missing required scope '${scope}'. This is a GRANT problem, not an access-control one: the agent credential in use does not carry that scope, so no resource will make this call work. Ask for it with \`credential_scope_request\` (a person approves it at a link), then reconnect; do not retry meanwhile.`,
     );
   }
 
@@ -460,9 +471,7 @@ export async function runGated(
       allowed: false,
       error: 'destructive disabled',
     });
-    return errorResult(
-      'Refused: destructive operations are disabled on this server (set MCP_ALLOW_DESTRUCTIVE=true to enable).',
-    );
+    return errorResult(DESTRUCTIVE_DISABLED_MESSAGE);
   }
 
   try {

@@ -116,6 +116,28 @@ export class ApiKeyService {
     return this.apiKeyRepo.save(key);
   }
 
+  /** The live, owned key, or null. */
+  async findOwned(id: string, userId: string): Promise<ApiKeyEntity | null> {
+    const key = await this.apiKeyRepo.findOne({ where: { id, userId } });
+    return key && !key.revoked ? key : null;
+  }
+
+  /**
+   * What a key may do, changed in place. Never to nothing: an empty list is
+   * stored as the unscoped key, so the onboarding scope every key gets at birth
+   * stays on it.
+   */
+  async updateScopes(
+    id: string,
+    userId: string,
+    scopes: string[],
+  ): Promise<ApiKeyEntity | null> {
+    const key = await this.findOwned(id, userId);
+    if (!key) return null;
+    key.scopes = [...new Set([...scopes, MCP_SCOPE.ONBOARDING_READ])];
+    return this.apiKeyRepo.save(key);
+  }
+
   /** Same as {@link updateApplicationIds}, for the project ceiling instead. */
   async updateProjectIds(
     id: string,

@@ -181,6 +181,22 @@ async function harness(initial: Principal): Promise<Harness> {
             (update as (...a: unknown[]) => unknown)(...args),
           updateProjectIds: (...args: unknown[]) =>
             (updateProjects as (...a: unknown[]) => unknown)(...args),
+          findOwned: async (id: string, userId: string) =>
+            keys.find(
+              (k) => k.id === id && k.userId === userId && !k.revoked,
+            ) ?? null,
+          updateScopes: async (
+            id: string,
+            userId: string,
+            scopes: string[],
+          ) => {
+            const entity = keys.find((k) => k.id === id && k.userId === userId);
+            if (!entity || entity.revoked) return null;
+            entity.scopes = [
+              ...new Set([...scopes, MCP_SCOPE.ONBOARDING_READ]),
+            ];
+            return entity;
+          },
         },
       },
       { provide: LocalAuthService, useValue: {} },
@@ -888,6 +904,104 @@ describe('api keys — which projects a key may act on', () => {
       .http()
       .patch('/auth/api-keys/key-does-not-exist/projects')
       .send({ projectIds: ['proj-1'] })
+      .expect(404);
+  });
+});
+
+describe('api keys — what a key may do, changed in place', () => {
+  inOidcMode();
+  let h: Harness;
+
+  beforeAll(async () => {
+    h = await harness(MAINTAINER);
+  }, BOOT_MS);
+  afterAll(async () => {
+    await h.app.close();
+  });
+  beforeEach(() => {
+    h.keys.length = 0;
+    h.as(MAINTAINER);
+  });
+
+  const mint = async () =>
+    (
+      await h
+        .http()
+        .post('/auth/api-keys')
+        .send({ name: 'agent', scopes: [MCP_SCOPE.APP_READ] })
+        .expect(201)
+    ).body as { id: string; scopes: string[] };
+
+  it('adds a scope to the same key, without a new one', async () => {
+    const key = await mint();
+    const res = await h
+      .http()
+      .patch(`/auth/api-keys/${key.id}/scopes`)
+      .send({ add: [MCP_SCOPE.APP_WRITE] })
+      .expect(200);
+    expect(res.body.id).toBe(key.id);
+    expect(res.body.scopes).toEqual(
+      expect.arrayContaining([MCP_SCOPE.APP_READ, MCP_SCOPE.APP_WRITE]),
+    );
+  });
+
+  it('replaces the list, and never down to nothing', async () => {
+    const key = await mint();
+    const res = await h
+      .http()
+      .patch(`/auth/api-keys/${key.id}/scopes`)
+      .send({ scopes: [MCP_SCOPE.APP_WRITE] })
+      .expect(200);
+    expect(res.body.scopes).not.toContain(MCP_SCOPE.APP_READ);
+    expect(res.body.scopes).toContain(MCP_SCOPE.ONBOARDING_READ);
+  });
+
+  it('wants exactly one of `scopes` and `add`', async () => {
+    const key = await mint();
+    await h
+      .http()
+      .patch(`/auth/api-keys/${key.id}/scopes`)
+      .send({})
+      .expect(400);
+    await h
+      .http()
+      .patch(`/auth/api-keys/${key.id}/scopes`)
+      .send({ scopes: [MCP_SCOPE.APP_READ], add: [MCP_SCOPE.APP_WRITE] })
+      .expect(400);
+  });
+
+  it('refuses a scope that does not exist', async () => {
+    const key = await mint();
+    await h
+      .http()
+      .patch(`/auth/api-keys/${key.id}/scopes`)
+      .send({ add: ['mcp:not:a:scope'] })
+      .expect(400);
+  });
+
+  it('does not grant what the owner does not hold', async () => {
+    h.as(GUEST);
+    const key = (
+      await h
+        .http()
+        .post('/auth/api-keys')
+        .send({ name: 'agent', scopes: [MCP_SCOPE.APP_READ] })
+        .expect(201)
+    ).body as { id: string };
+    await h
+      .http()
+      .patch(`/auth/api-keys/${key.id}/scopes`)
+      .send({ add: [MCP_SCOPE.INFRA_DESTRUCTIVE] })
+      .expect(403);
+  });
+
+  it('answers 404 for a key that is not yours', async () => {
+    const key = await mint();
+    h.as(OPERATOR);
+    await h
+      .http()
+      .patch(`/auth/api-keys/${key.id}/scopes`)
+      .send({ add: [MCP_SCOPE.APP_WRITE] })
       .expect(404);
   });
 });

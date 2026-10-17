@@ -56,6 +56,35 @@ export type ProposalDecision =
  */
 export const PROPOSAL_TTL_MS = 60 * 60 * 1000;
 
+/**
+ * Actions a person answers every time, never "always".
+ *
+ * Each one removes something that cannot be brought back, or widens what a
+ * credential may do. A standing permission would turn the next one into a call
+ * nobody looked at, so none is offered, and one granted before an action
+ * joined this list no longer applies.
+ */
+export const ALWAYS_ASK_ACTIONS: ReadonlySet<string> = new Set([
+  'DELETE /applications/:id/install',
+  'DELETE /applications/:id/schedules/:name',
+  'DELETE /applications/:id/gateway/routes/:endpointId',
+  'POST /infrastructure/clusters/:id/nodes/:nodeId/recover-access',
+  'DELETE /infrastructure/clusters/:id/workers/:nodeId',
+  'DELETE /app-migrations/:id',
+  'DELETE /db-migrations/:id',
+  'DELETE /full-migrations/:id',
+  'POST /app-migrations/:id/destroy-source',
+  'POST /full-migrations/:id/destroy-source',
+  'POST /infrastructure/scaling-groups/:id/approve-removal',
+  'PATCH /auth/api-keys/:id/scopes',
+  'PATCH /auth/api-keys/:id/applications',
+  'PATCH /auth/api-keys/:id/projects',
+]);
+
+export function asksEveryTime(action: string): boolean {
+  return ALWAYS_ASK_ACTIONS.has(action);
+}
+
 /** Raised when an agent's call has no standing permission to proceed. */
 export const ACTION_PROPOSAL_CODE = 'ACTION_PROPOSAL_PENDING';
 

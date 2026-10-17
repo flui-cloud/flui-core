@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { RELEASE } from '../../../config/release.config';
-import { MCP_SCOPE } from '../constants/mcp-scopes';
+import { MCP_SCOPE, McpScope } from '../constants/mcp-scopes';
+import { ASSISTANT_AGENT_KEY_ID } from '../../auth/utils/actor-surface';
 import { enc } from './application-views.util';
 import {
   coerceNumber,
@@ -97,8 +98,13 @@ export const SELF_SERVICE_TOOLS: ToolDef[] = [
         // them better than the context does.
         yourAgentCredential: {
           toolScopes: [...ctx.scopes].sort((a, b) => a.localeCompare(b)),
-          destructiveToolsEnabled: ctx.allowDestructive,
-          note: 'These scopes decide which tools you are OFFERED, never what you may touch. A tool missing from your list will never work for any resource — that is a grant problem, fixed by re-issuing the credential. A tool you hold refusing one resource is a permission problem, fixed in `permissions` above.',
+          missingScopes: Object.values(MCP_SCOPE)
+            .filter((scope) => !ctx.scopes.has(scope))
+            .sort((a, b) => a.localeCompare(b)),
+          destructiveTools: ctx.allowDestructive
+            ? 'offered with their scope; every call waits for a person to allow it, every time'
+            : 'turned off on this instance by whoever runs it',
+          note: 'These scopes decide which tools you are OFFERED, never what you may touch. A tool missing from your list will never work for any resource — that is a grant problem: ask for the scope with `credential_scope_request`, the person approves it at a link, then you reconnect. A tool you hold refusing one resource is a permission problem, fixed in `permissions` above.',
         },
         trial: trialView(session, limits),
       };
@@ -462,5 +468,59 @@ export const SELF_SERVICE_TOOLS: ToolDef[] = [
       });
     },
     forModel: variablesView,
+  }),
+  defineTool({
+    name: 'credential_scope_request',
+    routes: ['PATCH /auth/api-keys/:id/scopes'],
+    description:
+      'Ask the PERSON you act for to add scopes to the API key you are connected with, when a tool you need is missing from your list. ' +
+      'Your tool list is fixed by the scopes on your key: a tool you do not see will never work until the key carries its scope, and this is how you ask for it. ' +
+      'It always waits for that person: you get `approval_required` with a link to hand them, and you repeat the identical call after they answer. ' +
+      'Once granted, reconnect to this server to see the new tools. Ask for the least that does the job, and say why.',
+    scope: MCP_SCOPE.ONBOARDING_READ,
+    inputSchema: {
+      scopes: z
+        .array(z.string())
+        .min(1)
+        .describe(
+          'The mcp:* scopes to add, e.g. ["mcp:app:destructive"]. `my_permissions` lists the ones you lack.',
+        ),
+      reason: z
+        .string()
+        .max(200)
+        .describe(
+          'Why, in one line. The person reads it on the approval page before deciding.',
+        ),
+    },
+    run: async (args, ctx) => {
+      const keyId = ctx.actor?.keyId;
+      if (!keyId || keyId === ASSISTANT_AGENT_KEY_ID) {
+        return {
+          state: 'no_key',
+          note:
+            'You are not connected with an API key of your own, so there is nothing to widen. ' +
+            'Use `api_key_request` to ask the person for a key with the scopes you need.',
+        };
+      }
+      const missing = args.scopes.filter((s) => !ctx.scopes.has(s as McpScope));
+      if (!missing.length) {
+        return {
+          state: 'already_held',
+          note: 'Your key already carries every scope you named. If a tool is still missing, reconnect to this server.',
+        };
+      }
+      const updated = await ctx.api.patch<{ scopes?: string[] | null }>(
+        `/auth/api-keys/${enc(keyId)}/scopes`,
+        { add: missing, reason: args.reason },
+      );
+      return {
+        state: 'granted',
+        added: missing,
+        scopes: updated?.scopes ?? null,
+        note:
+          'Granted. Your tool list was fixed when you connected: reconnect to this server ' +
+          '(in Claude Code run `/mcp`, elsewhere restart the session) to see the new tools, then carry on.',
+      };
+    },
   }),
 ];

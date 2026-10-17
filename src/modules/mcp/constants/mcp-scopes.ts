@@ -213,3 +213,20 @@ export function expandTier(tier: McpTier): McpScope[] {
 
 /** Safe default for an authenticated principal with no explicit grant: read + plan. */
 export const DEFAULT_SCOPES: McpScope[] = expandTier('plan');
+
+/**
+ * Whether destructive tools are offered at all on this instance.
+ *
+ * On unless the operator turns them off: every destructive call already stops
+ * for a person's yes, one call at a time, so the switch is a hard stop for an
+ * operator who wants none of them, not the only thing between an agent and a
+ * deletion.
+ */
+export function destructiveToolsAllowed(
+  read: (key: string) => string | undefined,
+): boolean {
+  return read('MCP_ALLOW_DESTRUCTIVE')?.trim().toLowerCase() !== 'false';
+}
+
+export const DESTRUCTIVE_DISABLED_MESSAGE =
+  'Refused: the person who runs this instance has turned destructive operations off (MCP_ALLOW_DESTRUCTIVE=false). Say so; there is nothing to request.';

@@ -19,6 +19,7 @@ import {
   ProposalDecision,
   ProposalStatus,
   argsDigest,
+  asksEveryTime,
   bindingOf,
   composeSentence,
   concessionCovers,
@@ -173,7 +174,7 @@ export class ActionCycleService {
     attempt: ActionAttempt,
     binding: ActionBinding | undefined,
   ): Promise<AgentConcessionEntity | null> {
-    if (!attempt.keyId) return null;
+    if (!attempt.keyId || asksEveryTime(attempt.decl.action)) return null;
     const candidates = await this.concessions.find({
       where: {
         ownerUserId: attempt.ownerUserId,
@@ -235,7 +236,8 @@ export class ActionCycleService {
         // The mockup's rule, mechanically: a request that cannot state its own
         // edge is not allowed to offer a standing permission. Both halves have
         // to hold — a declared edge, and a credential to attach it to.
-        offersAlways: !!binding && !!attempt.keyId,
+        offersAlways:
+          !!binding && !!attempt.keyId && !asksEveryTime(attempt.decl.action),
         estimateRef: attempt.decl.estimate
           ? (renderRoute(attempt.decl.estimate, attempt.params) ?? null)
           : null,
@@ -294,7 +296,10 @@ export class ActionCycleService {
         'This request — and the estimate on it — has expired. The agent will raise a fresh one on its next attempt.',
       );
     }
-    if (decision === PROPOSAL_DECISION.ALWAYS && !proposal.offersAlways) {
+    if (
+      decision === PROPOSAL_DECISION.ALWAYS &&
+      (!proposal.offersAlways || asksEveryTime(proposal.action))
+    ) {
       throw new ForbiddenException(
         'This request could not state its own boundary, so it can only be allowed once.',
       );

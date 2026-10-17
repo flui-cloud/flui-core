@@ -52,6 +52,7 @@ export const CREDENTIAL_HANDOVER_TOOLS: ToolDef[] = [
     routes: ['GET /auth/api-keys'],
     description:
       'Ask a PERSON to mint you an API key — the credential you would present on a later call, or hand to another agent. ' +
+      'To add a scope to the key you are already connected with, use `credential_scope_request` instead. ' +
       'You must never mint one yourself and there is no argument here that could carry one back: a key is issued once, shown once, and the person keeps it. ' +
       'Say which scopes you need and why; the person decides whether to grant them. ' +
       'Returns the keys that already exist on this account — their names, scopes and whether they are revoked, never their values.',

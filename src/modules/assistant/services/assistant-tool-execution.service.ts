@@ -7,7 +7,11 @@ import {
   proposalRefusalOf,
   waitMessage,
 } from './agent-pause.util';
-import { MCP_SCOPE, SCOPE_TIER } from '../../mcp/constants/mcp-scopes';
+import {
+  DESTRUCTIVE_DISABLED_MESSAGE,
+  MCP_SCOPE,
+  SCOPE_TIER,
+} from '../../mcp/constants/mcp-scopes';
 import { ToolDef, toolInputSchema } from '../../mcp/tools/mcp-tool.util';
 import { findTool } from '../../mcp/tools/tool-registry';
 import { describeError } from '../../shared/utils/error.util';
@@ -17,11 +21,6 @@ import { cacheKey, modelView, parseArgs, recordTool } from './tool-call.util';
 import { READ_SURFACE_TOOL } from './surface-block.util';
 import { AssistantPendingActionsService } from './assistant-pending-actions.service';
 
-// Server-wide enablement for destructive (delete/uninstall) tools — same flag as the
-// headless MCP server. Default off: the assistant refuses them and tells the user how
-// to enable, instead of offering a confirmation it cannot honour.
-const DESTRUCTIVE_DISABLED_MESSAGE =
-  'Refused: destructive operations (delete/uninstall) are disabled on this server. An administrator must enable them by setting MCP_ALLOW_DESTRUCTIVE=true in the server configuration.';
 const DESTRUCTIVE_DISABLED_REASON = 'destructive disabled';
 
 /**

@@ -679,7 +679,7 @@ describe('runGated (scope + destructive security gate)', () => {
     const ctx = gateCtx([MCP_SCOPE.APP_DESTRUCTIVE], false);
     const res = await runGated(ctx, 't', MCP_SCOPE.APP_DESTRUCTIVE, jest.fn());
     expect(res.isError).toBe(true);
-    expect(res.content[0].text).toMatch(/destructive operations are disabled/);
+    expect(res.content[0].text).toMatch(/turned destructive operations off/);
   });
 
   it('runs and audits success when the scope is granted', async () => {

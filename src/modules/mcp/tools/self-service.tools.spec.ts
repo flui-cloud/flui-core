@@ -86,7 +86,16 @@ const notFound = (path: string) =>
  * says so out loud.
  */
 describe('the guest is offered every one of these', () => {
-  it.each(SELF_SERVICE_TOOLS.map((t) => t.name))(
+  // Widening a key is not something a guest does: its route stays fenced.
+  const forGuests = SELF_SERVICE_TOOLS.filter(
+    (t) => t.name !== 'credential_scope_request',
+  );
+
+  it('keeps a guest from widening its own key', () => {
+    expect(isOfferedToGuest(find('credential_scope_request'))).toBe(false);
+  });
+
+  it.each(forGuests.map((t) => t.name))(
     '%s reaches a route the fence already opens, with no rule of its own',
     (name) => {
       expect(isOfferedToGuest(find(name))).toBe(true);
@@ -632,8 +641,11 @@ describe('knowing your own edge', () => {
     });
     const credential = data.yourAgentCredential as Record<string, unknown>;
     expect(credential.toolScopes).toEqual([MCP_SCOPE.APP_READ]);
-    expect(credential.destructiveToolsEnabled).toBe(false);
+    expect(credential.missingScopes).toContain(MCP_SCOPE.APP_DESTRUCTIVE);
+    expect(credential.missingScopes).not.toContain(MCP_SCOPE.APP_READ);
+    expect(String(credential.destructiveTools)).toContain('turned off');
     expect(String(credential.note)).toContain('grant problem');
+    expect(String(credential.note)).toContain('credential_scope_request');
     expect(calls.map((c) => c.path)).not.toContain('/auth/api-keys');
   });
 
@@ -715,5 +727,57 @@ describe('knowing your own edge', () => {
       },
     );
     expect(ok).toBe(false);
+  });
+});
+
+describe('asking for a scope the key lacks', () => {
+  const ask = (scopes: string[], held: string[], actor?: unknown) => {
+    const calls: Call[] = [];
+    const run = call(
+      'credential_scope_request',
+      { scopes, reason: 'delete a finished app' },
+      {},
+      calls,
+      {
+        scopes: new Set([MCP_SCOPE.ONBOARDING_READ, ...held]),
+        ...(actor ? { actor: actor as never } : {}),
+      },
+    );
+    return { calls, run };
+  };
+
+  it('asks the API to add only what is missing, on the key in use', async () => {
+    const { calls, run } = ask(
+      [MCP_SCOPE.APP_READ, MCP_SCOPE.APP_DESTRUCTIVE],
+      [MCP_SCOPE.APP_READ],
+      { kind: 'agent', keyId: 'k1' },
+    );
+    const { data } = await run;
+    expect(calls.map((c) => `${c.method} ${c.path}`)).toContain(
+      'PATCH /auth/api-keys/k1/scopes',
+    );
+    expect(data.added).toEqual([MCP_SCOPE.APP_DESTRUCTIVE]);
+    expect(String(data.note)).toContain('reconnect');
+  });
+
+  it('calls nothing when the key already carries the scopes', async () => {
+    const { calls, run } = ask([MCP_SCOPE.APP_READ], [MCP_SCOPE.APP_READ], {
+      kind: 'agent',
+      keyId: 'k1',
+    });
+    const { data } = await run;
+    expect(data.state).toBe('already_held');
+    expect(calls.some((c) => c.method === 'PATCH')).toBe(false);
+  });
+
+  it('points to a new key when there is no key of its own to widen', async () => {
+    const { calls, run } = ask(
+      [MCP_SCOPE.APP_DESTRUCTIVE],
+      [MCP_SCOPE.APP_READ],
+    );
+    const { data } = await run;
+    expect(data.state).toBe('no_key');
+    expect(String(data.note)).toContain('api_key_request');
+    expect(calls.some((c) => c.method === 'PATCH')).toBe(false);
   });
 });

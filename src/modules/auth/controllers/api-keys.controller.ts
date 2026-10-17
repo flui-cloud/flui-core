@@ -63,6 +63,8 @@ import {
 import { CreateApiKeyDto } from '../dto/create-api-key.dto';
 import { UpdateApiKeyApplicationsDto } from '../dto/update-api-key-applications.dto';
 import { UpdateApiKeyProjectsDto } from '../dto/update-api-key-projects.dto';
+import { UpdateApiKeyScopesDto } from '../dto/update-api-key-scopes.dto';
+import { ActionCycle } from '../../action-cycle/action-cycle.decorator';
 import {
   ApiKeyResponseDto,
   CreateApiKeyResultDto,
@@ -381,6 +383,18 @@ export class ApiKeysController {
 
   @Patch('api-keys/:id/applications')
   @UseGuards(JwtAuthGuard)
+  @ActionCycle({
+    action: 'PATCH /auth/api-keys/:id/applications',
+    bind: ['id'],
+    sentence: 'change which applications API key {id} may act on',
+    consequence:
+      'Whatever holds the key keeps working, now against the new list, until you change it again in Settings.',
+    clause: (body) =>
+      listClause(
+        (body as UpdateApiKeyApplicationsDto)?.applicationIds,
+        'application',
+      ),
+  })
   @ApiBearerAuth()
   @ApiOperation({
     summary: 'Change which applications a key may act on, without reissuing it',
@@ -412,6 +426,15 @@ export class ApiKeysController {
 
   @Patch('api-keys/:id/projects')
   @UseGuards(JwtAuthGuard)
+  @ActionCycle({
+    action: 'PATCH /auth/api-keys/:id/projects',
+    bind: ['id'],
+    sentence: 'change which projects API key {id} may act on',
+    consequence:
+      'Whatever holds the key keeps working, now against the new list, until you change it again in Settings.',
+    clause: (body) =>
+      listClause((body as UpdateApiKeyProjectsDto)?.projectIds, 'project'),
+  })
   @ApiBearerAuth()
   @ApiOperation({
     summary: 'Change which projects a key may act on, without reissuing it',
@@ -441,4 +464,91 @@ export class ApiKeysController {
     }
     return this.describeKey(entity);
   }
+
+  @Patch('api-keys/:id/scopes')
+  @UseGuards(JwtAuthGuard)
+  @ActionCycle({
+    action: 'PATCH /auth/api-keys/:id/scopes',
+    bind: ['id'],
+    sentence: 'change what API key {id} may do',
+    consequence:
+      'Whatever holds the key can then use the tools those scopes open, on everything the key reaches, until you take them back in Settings. An agent reconnects to see them.',
+    clause: (body) => {
+      const dto = body as UpdateApiKeyScopesDto;
+      const why = dto?.reason?.trim()
+        ? ` (asked because: ${dto.reason.trim()})`
+        : '';
+      if (dto?.add?.length) return `add ${dto.add.join(', ')}${why}`;
+      if (dto?.scopes?.length)
+        return `set it to ${dto.scopes.join(', ')}${why}`;
+      return undefined;
+    },
+  })
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: 'Change what a key may do, without reissuing it',
+    description:
+      'Send `scopes` (the complete new list) or `add` (scopes to add). The key ' +
+      'itself does not change; an agent holding it reconnects to see the tools ' +
+      'it now has. A scope is granted only if you hold the permission it needs. ' +
+      'An agent asking this for its own key waits for a person to allow it, ' +
+      'every time.',
+  })
+  @ApiParam({ name: 'id' })
+  @ApiBody({ type: UpdateApiKeyScopesDto })
+  @ApiResponse({ status: 200, type: ApiKeyResponseDto })
+  async updateApiKeyScopes(
+    @Param('id') id: string,
+    @Body() dto: UpdateApiKeyScopesDto,
+    @Request() req: { user: AuthenticatedUser },
+  ): Promise<ApiKeyResponseDto> {
+    const replace = dto.scopes?.length ? dto.scopes : undefined;
+    const add = dto.add?.length ? dto.add : undefined;
+    if (!replace === !add) {
+      throw new BadRequestException(
+        'Send either `scopes` (the complete new list) or `add`, not both and not neither.',
+      );
+    }
+    const key = await this.apiKeyService.findOwned(id, req.user.userId);
+    if (!key) {
+      throw new NotFoundException(`API key ${id} not found`);
+    }
+    if (add && !key.scopes?.length) {
+      throw new BadRequestException(
+        'This key is unscoped: it already carries everything you can do.',
+      );
+    }
+    const asked = replace ?? add ?? [];
+    const unknown = asked.filter((s) => !isGrantableScope(s));
+    if (unknown.length) {
+      throw new BadRequestException(`Unknown scope(s): ${unknown.join(', ')}`);
+    }
+    const next = orderScopes([
+      ...new Set(replace ?? [...(key.scopes ?? []), ...(add ?? [])]),
+    ]);
+    // The ceiling is the owner's permissions, not the calling credential: an
+    // agent reaching this has waited for its owner to allow this exact change.
+    const access = await this.policy.resolveAccess(this.principalOf(req.user));
+    const refused = this.beyondPermissions(access, next);
+    if (refused.length) {
+      throw new ForbiddenException(
+        `You cannot grant what you do not hold: ${refused.join(', ')}`,
+      );
+    }
+    const entity = await this.apiKeyService.updateScopes(
+      id,
+      req.user.userId,
+      next,
+    );
+    if (!entity) {
+      throw new NotFoundException(`API key ${id} not found`);
+    }
+    return this.describeKey(entity);
+  }
+}
+
+/** "3 applications", or the restriction being lifted. */
+function listClause(ids: string[] | undefined, noun: string): string {
+  if (!ids?.length) return `lift the ${noun} restriction`;
+  return `${ids.length} ${noun}${ids.length === 1 ? '' : 's'}`;
 }

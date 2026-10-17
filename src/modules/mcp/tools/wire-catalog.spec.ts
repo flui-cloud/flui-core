@@ -184,6 +184,7 @@ const ARGS: Record<string, Record<string, unknown>> = {
   operating_context_read: {},
   get_started: {},
   my_permissions: {},
+  credential_scope_request: { scopes: ['mcp:not:yet'], reason: 'test' },
   // An explicit revision on purpose: without one the tool reads the revision
   // history first, and the stand-in API answers every unlisted path with one
   // object rather than a list. Choosing the target from that history is pinned
@@ -415,6 +416,7 @@ function ctxFor(calls: Recorded[]): McpToolContext {
     scopes: new Set<string>(Object.values(MCP_SCOPE)),
     allowDestructive: true,
     surface: 'mcp',
+    actor: { kind: 'agent', keyId: 'k1' },
     audit: { record: jest.fn().mockResolvedValue(undefined) },
     api,
   } as unknown as McpToolContext;
@@ -485,6 +487,7 @@ describe('strada B — the whole tool catalogue goes over the wire', () => {
     ['app_manifest_validate', 'POST /applications/manifest/validate'],
     ['app_delete', 'DELETE /applications/a1/install'],
     ['app_removal_preview', 'GET /applications/a1/removal-preview'],
+    ['credential_scope_request', 'PATCH /auth/api-keys/k1/scopes'],
     ['app_uninstall', 'DELETE /applications/a1/install'],
     ['app_traffic', 'GET /observability/applications/a1/traffic'],
     ['app_alerts', 'GET /observability/applications/a1/alerts'],

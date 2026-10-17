@@ -1,3 +1,4 @@
+import { destructiveToolsAllowed } from '../../mcp/constants/mcp-scopes';
 import {
   Body,
   Controller,
@@ -57,8 +58,9 @@ export class AssistantController {
     return {
       ...this.knowledge.getInfo(),
       capabilities: {
-        destructiveEnabled:
-          this.config.get<string>('MCP_ALLOW_DESTRUCTIVE') === 'true',
+        destructiveEnabled: destructiveToolsAllowed((key) =>
+          this.config.get<string>(key),
+        ),
       },
     };
   }

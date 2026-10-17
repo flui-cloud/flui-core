@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { destructiveToolsAllowed } from '../constants/mcp-scopes';
 import { ConfigService } from '@nestjs/config';
 import {
   McpServer,
@@ -33,7 +34,7 @@ export function mcpServerInstructions(instance: {
     `Flui instance at ${instance.dashboardUrl} (API ${instance.apiUrl}): deploy and operate applications on your own clusters.`,
     'Call `get_started` before anything else.',
     `Some calls need a person's approval: they return status \`${APPROVAL_REQUIRED_STATUS}\` with a link; give that link to the person exactly as written.`,
-    'What your key can do is answered by `my_permissions`.',
+    'What your key can do is answered by `my_permissions`; a tool you lack is asked for with `credential_scope_request`.',
   ].join('\n');
 }
 
@@ -132,8 +133,9 @@ export class McpServerFactory {
     const ctx: McpToolContext = {
       user,
       scopes: this.resolver.resolve(user, isSandbox),
-      allowDestructive:
-        this.config.get<string>('MCP_ALLOW_DESTRUCTIVE') === 'true',
+      allowDestructive: destructiveToolsAllowed((key) =>
+        this.config.get<string>(key),
+      ),
       surface: 'mcp',
       // Bound once per request to the credential that arrived with it. The
       // token never reaches a tool body: what tools get is a caller that

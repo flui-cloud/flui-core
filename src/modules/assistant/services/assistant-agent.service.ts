@@ -1,4 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
+import { destructiveToolsAllowed } from '../../mcp/constants/mcp-scopes';
 import { ConfigService } from '@nestjs/config';
 import { AuthenticatedUser } from '../../auth/interfaces/authenticated-user.interface';
 import { CatalogService } from '../../catalog/services/catalog.service';
@@ -76,7 +77,6 @@ const MAX_ITERATIONS = 8;
 // Server-wide enablement for destructive (delete/uninstall) tools — same flag as the
 // headless MCP server. Default off: the assistant refuses them and tells the user how
 // to enable, instead of offering a confirmation it cannot honour.
-const DESTRUCTIVE_ENV_FLAG = 'MCP_ALLOW_DESTRUCTIVE';
 /**
  * Flui Assistant as a layered agent: scope gate → KB context → tool-use loop over
  * the shared tool registry. Read/plan tools run transparently; write/destructive
@@ -158,7 +158,7 @@ export class AssistantAgentService {
   ) {}
 
   private destructiveEnabled(): boolean {
-    return this.config.get<string>(DESTRUCTIVE_ENV_FLAG) === 'true';
+    return destructiveToolsAllowed((key) => this.config.get<string>(key));
   }
 
   async run(
@@ -409,9 +409,8 @@ export class AssistantAgentService {
       asPerson: this.api.for(credential),
       scopes: this.scopes.resolve(user, isSandbox),
       isSandbox,
-      // Destructive ops require BOTH server-wide enablement (MCP_ALLOW_DESTRUCTIVE) and,
-      // when enabled, the per-action pending_action confirmation. Disabled by default:
-      // the assistant refuses rather than offering a confirmation it cannot honour.
+      // Every destructive op still waits for the per-action confirmation;
+      // MCP_ALLOW_DESTRUCTIVE=false withholds them altogether.
       allowDestructive: this.destructiveEnabled(),
       surface: 'assistant',
       audit: this.audit,
