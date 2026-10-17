@@ -1,6 +1,6 @@
 import chalk from 'chalk';
 import {
-  isSupportedArchitecture,
+  ARM_SERVER_WARNING,
   normaliseArchitecture,
 } from 'src/modules/providers/core/catalogue/server-architecture';
 
@@ -16,28 +16,44 @@ export function archCell(
 ): string {
   const label = archLabel(raw).padEnd(width);
   if (label.trim() === '-') return chalk.dim(label);
-  return isSupportedArchitecture(raw) ? label : chalk.yellow(label);
+  return normaliseArchitecture(raw) === 'arm' ? chalk.yellow(label) : label;
+}
+
+/** The yellow line printed wherever an arm server is chosen. */
+export function armWarningLine(): string {
+  return chalk.yellow(`⚠  ${ARM_SERVER_WARNING}`);
 }
 
 /**
- * Why a host must not be installed on, from what `uname -m` printed there;
- * null when it is an x86 host.
+ * What to say about a host before installing on it, from what `uname -m`
+ * printed there; null for an x86 host. Never a refusal.
  */
-export function hostArchitectureRefusal(machine: string): string | null {
+export function hostArchitectureWarning(machine: string): string | null {
   const reported = machine.trim();
-  if (isSupportedArchitecture(reported)) return null;
-  const what = reported
-    ? `This host is ${reported}`
-    : 'The architecture of this host could not be read';
-  return `${what}. Flui runs on x86 servers only for now, so nothing was installed.`;
+  const architecture = normaliseArchitecture(reported);
+  if (architecture === 'x86') return null;
+  if (architecture === 'arm') return ARM_SERVER_WARNING;
+  return reported
+    ? `This host reports ${reported}, an architecture Flui does not know; continuing.`
+    : 'The architecture of this host could not be read; continuing.';
 }
 
-/** Reads `uname -m` over SSH and refuses anything but an x86 host. */
-export async function assertX86Host(
+/** Reads `uname -m` over SSH and prints a warning for anything but x86. */
+export async function warnAboutHostArchitecture(
   run: (command: string) => Promise<string>,
-): Promise<string> {
-  const machine = (await run('uname -m')).trim();
-  const refusal = hostArchitectureRefusal(machine);
-  if (refusal) throw new Error(refusal);
-  return machine;
+  print: (line: string) => void = console.log,
+): Promise<void> {
+  let machine = '';
+  try {
+    machine = (await run('uname -m')).trim();
+  } catch {
+    machine = '';
+  }
+  const warning = hostArchitectureWarning(machine);
+  if (warning) print(chalk.yellow(`\n⚠  ${warning}\n`));
+}
+
+/** What a deploy said that never blocked it, one yellow line each. */
+export function deployWarningLines(warnings: string[] | undefined): string[] {
+  return (warnings ?? []).map((warning) => chalk.yellow(`  ⚠  ${warning}`));
 }

@@ -75,7 +75,7 @@ export class CapacityCandidateDto {
   @ApiProperty({
     enum: ['x86', 'arm'],
     description:
-      'CPU architecture. Only x86 types are offered as resize targets; an arm type appears only as the current one.',
+      'CPU architecture. An arm type can be chosen; apps deployed from a repository are built for x86 and will not run on it.',
   })
   @Sensitivity(Sensitivity.PUBLIC)
   architecture: ServerArchitecture;

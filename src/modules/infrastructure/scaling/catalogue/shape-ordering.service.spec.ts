@@ -342,7 +342,7 @@ describe("the market page shows the provider's own stock", () => {
   });
 });
 
-describe('the market page offers x86 machines only', () => {
+describe('the market page lists every architecture', () => {
   const fact = (shape: string, architecture: 'x86' | 'arm') => ({
     shape,
     cores: 2,
@@ -378,19 +378,22 @@ describe('the market page offers x86 machines only', () => {
     ).order(group({ shapes, regions: ['fsn1'] }));
   }
 
-  it('leaves out an arm machine the group does not name', async () => {
+  it('lists an arm machine the group does not name, with its architecture', async () => {
     const result = await market(['cx23']);
-    expect(result.shapes.map((s) => s.shape)).toEqual(['cx23', 'cx33']);
-    expect(result.shapes.map((s) => s.architecture)).toEqual(['x86', 'x86']);
+    expect(
+      result.shapes.map((s) => [s.shape, s.architecture, s.allowed]).sort(),
+    ).toEqual([
+      ['cax11', 'arm', false],
+      ['cax21', 'arm', false],
+      ['cx23', 'x86', true],
+      ['cx33', 'x86', false],
+    ]);
   });
 
-  it('marks an arm machine the group names as one Flui never buys', async () => {
+  it('allows an arm machine the group names', async () => {
     const result = await market(['cax11', 'cx23']);
     const arm = result.shapes.find((s) => s.shape === 'cax11');
-    expect(arm).toMatchObject({ allowed: false, architecture: 'arm' });
-    expect(arm?.why).toContain(
-      'Flui runs on x86 servers only for now; cax11 is arm',
-    );
-    expect(result.shapes.map((s) => s.shape)).not.toContain('cax21');
+    expect(arm).toMatchObject({ allowed: true, architecture: 'arm' });
+    expect(arm?.why).not.toContain('x86');
   });
 });

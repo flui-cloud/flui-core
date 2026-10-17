@@ -1736,6 +1736,7 @@ const MASK_EXEMPT: string[] = [
   'DeployFromYamlResponseDto.operationId', // modules/applications/dto/deploy-from-yaml.dto.ts
   'DeployFromYamlResponseDto.slug', // modules/applications/dto/deploy-from-yaml.dto.ts
   'DeployFromYamlResponseDto.status', // modules/applications/dto/deploy-from-yaml.dto.ts
+  'DeployFromYamlResponseDto.warnings', // modules/applications/dto/deploy-from-yaml.dto.ts
   'DeployFromYamlResponseDto.workflowRunUrl', // modules/applications/dto/deploy-from-yaml.dto.ts
   'DeployFromYamlResponseDto.workflowUrl', // modules/applications/dto/deploy-from-yaml.dto.ts
   'DeployFromYamlResponseDto.wouldDeploy', // modules/applications/dto/deploy-from-yaml.dto.ts

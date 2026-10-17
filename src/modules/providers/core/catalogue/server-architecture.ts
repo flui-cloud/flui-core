@@ -1,9 +1,7 @@
-import { BadRequestException, Logger } from '@nestjs/common';
+import { Logger } from '@nestjs/common';
 import { NodeSizeDto } from '../../dto/node-size.dto';
 
 export type ServerArchitecture = 'x86' | 'arm';
-
-export const SUPPORTED_ARCHITECTURE: ServerArchitecture = 'x86';
 
 const ARCHITECTURE_ALIASES: Record<string, ServerArchitecture> = {
   x86: 'x86',
@@ -13,6 +11,11 @@ const ARCHITECTURE_ALIASES: Record<string, ServerArchitecture> = {
   arm64: 'arm',
   aarch64: 'arm',
 };
+
+export const ARM_SERVER_WARNING_CODE = 'ARM_SERVER';
+
+export const ARM_SERVER_WARNING =
+  'Arm server: apps deployed from a repository are built for x86 and will not run on it. Catalog apps run normally.';
 
 /**
  * One vocabulary for a CPU architecture, whoever reported it: a provider's
@@ -26,24 +29,13 @@ export function normaliseArchitecture(
   return ARCHITECTURE_ALIASES[raw.trim().toLowerCase()] ?? null;
 }
 
-export function isSupportedArchitecture(
+/** The warning an architecture carries; null for x86 or one nothing names. */
+export function architectureWarning(
   architecture: string | null | undefined,
-): boolean {
-  return normaliseArchitecture(architecture) === SUPPORTED_ARCHITECTURE;
-}
-
-/** The server types Flui offers for a new or resized node. */
-export function offerableSizes<T extends Pick<NodeSizeDto, 'architecture'>>(
-  sizes: T[],
-): T[] {
-  return sizes.filter((size) => isSupportedArchitecture(size.architecture));
-}
-
-export function unsupportedArchitectureMessage(
-  serverType: string,
-  architecture: string,
-): string {
-  return `Flui runs on x86 servers only for now; ${serverType} is ${architecture}`;
+): string | null {
+  return normaliseArchitecture(architecture) === 'arm'
+    ? ARM_SERVER_WARNING
+    : null;
 }
 
 export function architectureOfType(
@@ -54,50 +46,42 @@ export function architectureOfType(
   return normaliseArchitecture(size?.architecture);
 }
 
-/**
- * Refuses a server type the catalogue says is not x86. A type the catalogue
- * does not name passes: whether it exists is a different question, answered
- * where it is asked.
- */
-export function assertSupportedServerType(
+export function serverTypeWarning(
   serverType: string,
   sizes: Pick<NodeSizeDto, 'id' | 'name' | 'architecture'>[],
-): void {
-  const architecture = architectureOfType(serverType, sizes);
-  if (architecture && architecture !== SUPPORTED_ARCHITECTURE) {
-    throw new BadRequestException(
-      unsupportedArchitectureMessage(serverType, architecture),
-    );
-  }
+): string | null {
+  return architectureWarning(architectureOfType(serverType, sizes));
 }
 
 const logger = new Logger('ServerArchitecture');
 
-/** Hetzner CAX and Scaleway COPARM, refused by name when no catalogue answers. */
+/** Hetzner CAX and Scaleway COPARM/BASIC2-A, known by name when no catalogue answers. */
 const KNOWN_ARM_FAMILIES = [/^cax\d/i, /^coparm\d/i, /^basic2-a\d/i];
 
-/** The same check, reading the catalogue from the provider that would sell it. */
-export async function assertProviderSellsSupportedType(
+/**
+ * The warning a server type carries, reading the catalogue from the provider
+ * that would sell it. Never refuses: an arm type is bought like any other.
+ */
+export async function providerServerTypeWarning(
   provider:
     | { getNodeSizes?(includeAvailability?: boolean): Promise<NodeSizeDto[]> }
     | null
     | undefined,
-  serverType: string,
-): Promise<void> {
-  if (!provider?.getNodeSizes || !serverType) return;
-  let sizes: NodeSizeDto[];
+  serverType: string | null | undefined,
+): Promise<string | null> {
+  if (!serverType) return null;
+  const byName = KNOWN_ARM_FAMILIES.some((family) => family.test(serverType))
+    ? ARM_SERVER_WARNING
+    : null;
+  if (!provider?.getNodeSizes) return byName;
   try {
-    sizes = await provider.getNodeSizes(false);
+    const sizes = await provider.getNodeSizes(false);
+    const architecture = architectureOfType(serverType, sizes);
+    return architecture ? architectureWarning(architecture) : byName;
   } catch (err) {
-    if (KNOWN_ARM_FAMILIES.some((family) => family.test(serverType))) {
-      throw new BadRequestException(
-        unsupportedArchitectureMessage(serverType, 'arm'),
-      );
-    }
-    logger.warn(
-      `Could not read the provider catalogue (${err instanceof Error ? err.message : String(err)}); ${serverType} passes without an architecture check`,
+    logger.log(
+      `Could not read the provider catalogue (${err instanceof Error ? err.message : String(err)}); the architecture of ${serverType} is read from its name`,
     );
-    return;
+    return byName;
   }
-  assertSupportedServerType(serverType, sizes);
 }

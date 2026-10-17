@@ -1,10 +1,11 @@
-import { BadRequestException, Logger } from '@nestjs/common';
+import { Logger } from '@nestjs/common';
 import {
+  ARM_SERVER_WARNING,
   architectureOfType,
-  assertProviderSellsSupportedType,
-  assertSupportedServerType,
+  architectureWarning,
   normaliseArchitecture,
-  offerableSizes,
+  providerServerTypeWarning,
+  serverTypeWarning,
 } from './server-architecture';
 import { NodeSizeMapper } from '../../mappers/node-size.mapper';
 
@@ -32,10 +33,14 @@ describe('normaliseArchitecture', () => {
   );
 });
 
-describe('offering server types', () => {
-  it('keeps x86 types only', () => {
-    const sizes = [size('cx23', 'x86'), size('cax11', 'arm')];
-    expect(offerableSizes(sizes)).toEqual([sizes[0]]);
+describe('architecture warning', () => {
+  it('warns about arm and says nothing about x86 or an unknown one', () => {
+    expect(architectureWarning('arm64')).toBe(ARM_SERVER_WARNING);
+    expect(architectureWarning('x86')).toBeNull();
+    expect(architectureWarning(null)).toBeNull();
+    expect(ARM_SERVER_WARNING).toBe(
+      'Arm server: apps deployed from a repository are built for x86 and will not run on it. Catalog apps run normally.',
+    );
   });
 
   it('finds a type by name or by id', () => {
@@ -46,65 +51,48 @@ describe('offering server types', () => {
   });
 });
 
-describe('refusing an arm server type', () => {
+describe('an arm server type is allowed, with a warning', () => {
   const sizes = [size('cx23', 'x86'), size('COPARM1-2C-8G', 'arm')];
 
-  it('refuses it with a 400 that names the type', () => {
-    expect(() => assertSupportedServerType('COPARM1-2C-8G', sizes)).toThrow(
-      new BadRequestException(
-        'Flui runs on x86 servers only for now; COPARM1-2C-8G is arm',
-      ),
-    );
-  });
-
-  it('lets an x86 type through, and one the catalogue does not name', () => {
-    expect(() => assertSupportedServerType('cx23', sizes)).not.toThrow();
-    expect(() => assertSupportedServerType('nope', sizes)).not.toThrow();
+  it('warns about an arm type and says nothing about the others', () => {
+    expect(serverTypeWarning('COPARM1-2C-8G', sizes)).toBe(ARM_SERVER_WARNING);
+    expect(serverTypeWarning('cx23', sizes)).toBeNull();
+    expect(serverTypeWarning('nope', sizes)).toBeNull();
   });
 
   it('reads the catalogue from the provider that would sell it', async () => {
     const provider = { getNodeSizes: jest.fn().mockResolvedValue(sizes) };
     await expect(
-      assertProviderSellsSupportedType(provider, 'COPARM1-2C-8G'),
-    ).rejects.toBeInstanceOf(BadRequestException);
+      providerServerTypeWarning(provider, 'COPARM1-2C-8G'),
+    ).resolves.toBe(ARM_SERVER_WARNING);
     await expect(
-      assertProviderSellsSupportedType(provider, 'cx23'),
-    ).resolves.toBeUndefined();
+      providerServerTypeWarning(provider, 'cx23'),
+    ).resolves.toBeNull();
     expect(provider.getNodeSizes).toHaveBeenCalledWith(false);
   });
 
-  it('refuses a known arm family by name when the catalogue cannot be read', async () => {
-    const provider = {
-      getNodeSizes: jest.fn().mockRejectedValue(new Error('down')),
-    };
-    await expect(
-      assertProviderSellsSupportedType(provider, 'cax11'),
-    ).rejects.toThrow('Flui runs on x86 servers only for now; cax11 is arm');
-    await expect(
-      assertProviderSellsSupportedType(provider, 'COPARM1-2C-8G'),
-    ).rejects.toBeInstanceOf(BadRequestException);
-    await expect(
-      assertProviderSellsSupportedType(provider, 'BASIC2-A2C-8G'),
-    ).rejects.toBeInstanceOf(BadRequestException);
-  });
-
-  it('lets any other type through an unreadable catalogue, with a warning', async () => {
-    const warn = jest
-      .spyOn(Logger.prototype, 'warn')
+  it('knows an arm family by name when the catalogue cannot be read', async () => {
+    const log = jest
+      .spyOn(Logger.prototype, 'log')
       .mockImplementation(() => undefined);
     const provider = {
       getNodeSizes: jest.fn().mockRejectedValue(new Error('down')),
     };
+    for (const type of ['cax11', 'COPARM1-2C-8G', 'BASIC2-A2C-8G']) {
+      await expect(providerServerTypeWarning(provider, type)).resolves.toBe(
+        ARM_SERVER_WARNING,
+      );
+    }
     await expect(
-      assertProviderSellsSupportedType(provider, 'cx23'),
-    ).resolves.toBeUndefined();
-    expect(warn).toHaveBeenCalledWith(
-      expect.stringContaining('cx23 passes without an architecture check'),
+      providerServerTypeWarning(provider, 'cx23'),
+    ).resolves.toBeNull();
+    await expect(providerServerTypeWarning(null, 'cax11')).resolves.toBe(
+      ARM_SERVER_WARNING,
     );
     await expect(
-      assertProviderSellsSupportedType(null, 'cax11'),
-    ).resolves.toBeUndefined();
-    warn.mockRestore();
+      providerServerTypeWarning(provider, undefined),
+    ).resolves.toBeNull();
+    log.mockRestore();
   });
 });
 

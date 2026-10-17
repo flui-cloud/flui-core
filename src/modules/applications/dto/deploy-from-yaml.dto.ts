@@ -247,4 +247,13 @@ export class DeployFromYamlResponseDto {
       'never blocks: not being able to look is not a refusal.',
   })
   wouldDeploy?: boolean;
+
+  @ApiPropertyOptional({
+    type: [String],
+    description:
+      'Things worth saying that never block the deploy. Set when the target ' +
+      'cluster has an arm server, where an app built from a repository will ' +
+      'not run.',
+  })
+  warnings?: string[];
 }

@@ -80,19 +80,11 @@ describe('ManagementService node sizes cache', () => {
   describe('architecture', () => {
     const arm = { id: 'COPARM1-2C-8G', architecture: 'arm', availability: [] };
 
-    it('offers x86 types only', async () => {
+    it('lists every architecture, each named', async () => {
       const { service } = build(jest.fn().mockResolvedValue([nodeSize, arm]));
 
       await expect(
         service.getNodeSizes(CloudProvider.SCALEWAY),
-      ).resolves.toEqual([nodeSize]);
-    });
-
-    it('returns the whole catalogue, arm included, when asked', async () => {
-      const { service } = build(jest.fn().mockResolvedValue([nodeSize, arm]));
-
-      await expect(
-        service.getNodeSizes(CloudProvider.SCALEWAY, undefined, false, true),
       ).resolves.toEqual([nodeSize, arm]);
     });
   });

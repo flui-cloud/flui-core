@@ -1,4 +1,9 @@
-import { BadRequestException, Injectable, Optional } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  Logger,
+  Optional,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { In, IsNull, Not, Repository } from 'typeorm';
 import {
@@ -66,7 +71,10 @@ import {
   NodeStatus,
   NodeType,
 } from '../../clusters/entities/cluster-node.entity';
-import { assertSupportedServerType } from '../../../providers/core/catalogue/server-architecture';
+import {
+  ARM_SERVER_WARNING,
+  serverTypeWarning,
+} from '../../../providers/core/catalogue/server-architecture';
 
 const DEFAULT_DECISION_LIMIT = 50;
 const DEFAULT_GROUP_NAME = 'default';
@@ -83,6 +91,8 @@ const MAX_DECISION_LIMIT = 200;
  */
 @Injectable()
 export class ScalingGroupService {
+  private readonly logger = new Logger(ScalingGroupService.name);
+
   constructor(
     @InjectRepository(ScalingGroupEntity)
     private readonly groups: Repository<ScalingGroupEntity>,
@@ -182,14 +192,18 @@ export class ScalingGroupService {
     ];
   }
 
-  /** A group may name only machines Flui would buy: x86 ones, for now. */
-  private async assertShapesSupported(
-    provider: string,
+  private async noteArmShapes(
+    cluster: ClusterEntity,
     shapes: string[],
   ): Promise<void> {
     if (!shapes.length) return;
-    const sizes = await this.sizesOf(provider);
-    for (const shape of shapes) assertSupportedServerType(shape, sizes);
+    const sizes = await this.sizesOf(cluster.provider);
+    const arm = shapes.filter((shape) => serverTypeWarning(shape, sizes));
+    if (arm.length) {
+      this.logger.log(
+        `Scaling group on ${cluster.name} names ${arm.join(', ')}: ${ARM_SERVER_WARNING}`,
+      );
+    }
   }
 
   private async sizesOf(provider: string): Promise<NodeSizeDto[]> {
@@ -478,9 +492,7 @@ export class ScalingGroupService {
   ): Promise<ScalingGroupResponseDto> {
     const cluster = await this.clusterOrFail(clusterId);
     const capability = this.capabilityOf(cluster.provider);
-    if (dto.shapes?.length) {
-      await this.assertShapesSupported(cluster.provider, dto.shapes);
-    }
+    if (dto.shapes?.length) await this.noteArmShapes(cluster, dto.shapes);
 
     const draft = this.groups.create({
       clusterId,
@@ -535,8 +547,8 @@ export class ScalingGroupService {
     }
     if (dto.regions !== undefined) group.regions = dto.regions;
     if (dto.shapes?.length) {
-      await this.assertShapesSupported(
-        cluster.provider,
+      await this.noteArmShapes(
+        cluster,
         dto.shapes.filter((shape) => !group.shapes?.includes(shape)),
       );
     }

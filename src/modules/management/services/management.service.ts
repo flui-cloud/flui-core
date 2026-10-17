@@ -29,7 +29,6 @@ import { PricingResponseDto } from '../dto/pricing-response.dto';
 import { CacheService } from 'src/modules/common/cache/cache.service';
 import { CacheCategory } from 'src/modules/common/cache/enums/cache-category.enum';
 import { markCredentialsChanged } from '../../credentials/credentials-version';
-import { offerableSizes } from '../../providers/core/catalogue/server-architecture';
 
 @Injectable()
 export class ManagementService {
@@ -613,13 +612,11 @@ export class ManagementService {
    * - Server type metadata (CPU, RAM, prices, etc.) is cached for 24 hours
    * - Real-time availability is ALWAYS fetched fresh (not cached)
    * Optionally filtered by region to show only available server types in that location
-   * Only x86 types are offered unless `includeArm` asks for the whole catalogue
    */
   async getNodeSizes(
     provider: CloudProvider,
     region?: string,
     skipCache?: boolean,
-    includeArm = false,
   ): Promise<NodeSizeOptionDto[]> {
     const regionSuffix = region ? ` in region: ${region}` : '';
     this.logger.log(
@@ -663,10 +660,9 @@ export class ManagementService {
     const hasLiveAvailability =
       capabilities.getStaticCapabilities().hasLiveAvailability;
 
-    const catalogue = hasLiveAvailability
+    const allNodeSizes = hasLiveAvailability
       ? await this.mergeWithLiveAvailability(cloudProvider, metadataNodeSizes)
       : metadataNodeSizes;
-    const allNodeSizes = includeArm ? catalogue : offerableSizes(catalogue);
 
     if (!region) {
       return allNodeSizes;

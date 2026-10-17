@@ -111,6 +111,16 @@ const MARKET_EXTRAS = [
     downIn: [REGION],
   },
   {
+    shape: 'cax21',
+    cores: 4,
+    memoryMi: 8192,
+    hourlyEur: 0.0104,
+    monthlyEur: 6.49,
+    state: 'available',
+    upIn: [REGION, 'nbg1', 'hel1'],
+    downIn: [],
+  },
+  {
     shape: 'ccx23',
     cores: 4,
     memoryMi: 16_384,
@@ -125,7 +135,7 @@ const MARKET_EXTRAS = [
 interface MarketShape {
   shape: string;
   allowed: boolean;
-  architecture: 'x86';
+  architecture: 'x86' | 'arm';
   outlook: {
     state: string;
     upIn: string[];
@@ -377,7 +387,7 @@ export function exampleScalingCatalogue(
         (x): MarketShape => ({
           shape: x.shape,
           allowed: false,
-          architecture: 'x86',
+          architecture: x.shape.startsWith('cax') ? 'arm' : 'x86',
           outlook: {
             state: x.state,
             upIn: [...x.upIn],

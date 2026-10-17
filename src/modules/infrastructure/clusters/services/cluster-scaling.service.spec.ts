@@ -34,6 +34,7 @@ describe('ClusterScalingService', () => {
       saveOp?: jest.Mock;
       byosRemove?: jest.Mock;
       managedFirewall?: { providerFirewallId?: string | null } | null;
+      providers?: unknown;
     } = {},
   ) {
     const queueAdd = overrides.queueAdd ?? jest.fn().mockResolvedValue({});
@@ -98,6 +99,7 @@ describe('ClusterScalingService', () => {
       new ClusterBoundsRegistry(),
       nodeEvents as any,
       firewallState as any,
+      overrides.providers as any,
     );
     return {
       svc,
@@ -139,6 +141,45 @@ describe('ClusterScalingService', () => {
         expect.objectContaining({ count: 1, providerFirewallIds: ['fw-1'] }),
         expect.any(Object),
       );
+    });
+
+    it('adds an arm worker and carries the warning on the operation', async () => {
+      const providers = {
+        getProvider: () => ({
+          getNodeSizes: async () => [
+            { id: '45', name: 'cax11', architecture: 'arm' },
+          ],
+        }),
+      };
+      const { svc, queueAdd } = makeService({
+        cluster: baseCluster({ nodeSize: 'cax11' }),
+        providers,
+      });
+      const op = await svc.addWorkers('c-1');
+      expect(queueAdd).toHaveBeenCalled();
+      expect(op.metadata.warnings).toEqual([
+        {
+          code: 'ARM_SERVER',
+          message:
+            'Arm server: apps deployed from a repository are built for x86 and will not run on it. Catalog apps run normally.',
+        },
+      ]);
+    });
+
+    it('carries no warning for an x86 worker', async () => {
+      const providers = {
+        getProvider: () => ({
+          getNodeSizes: async () => [
+            { id: '1', name: 'cx23', architecture: 'x86' },
+          ],
+        }),
+      };
+      const { svc } = makeService({
+        cluster: baseCluster({ nodeSize: 'cx23' }),
+        providers,
+      });
+      const op = await svc.addWorkers('c-1');
+      expect(op.metadata.warnings).toBeUndefined();
     });
 
     it('rejects count > 5', async () => {

@@ -22,7 +22,10 @@ import { KubernetesService } from '../../shared/services/kubernetes.service';
 import { EncryptionService } from '../../../shared/encryption/services/encryption.service';
 import { BillingIntervalsService } from './billing-intervals.service';
 import { VolumeBillableKind } from '../entities/volume-billable-interval.entity';
-import { assertProviderSellsSupportedType } from '../../../providers/core/catalogue/server-architecture';
+import {
+  ARM_SERVER_WARNING_CODE,
+  providerServerTypeWarning,
+} from '../../../providers/core/catalogue/server-architecture';
 
 export interface ScaleNodeImpactDto {
   clusterId: string;
@@ -134,7 +137,15 @@ export class ClusterNodeScalingService {
       );
     }
 
-    await assertProviderSellsSupportedType(provider, request.targetServerType);
+    const warning = await providerServerTypeWarning(
+      provider,
+      request.targetServerType,
+    );
+    if (warning) {
+      this.logger.log(
+        `Node ${node.serverName} to ${request.targetServerType}: ${warning}`,
+      );
+    }
 
     const currentDetails = await provider.getServerDetailsAsDto?.(
       node.providerResourceId,
@@ -165,6 +176,11 @@ export class ClusterNodeScalingService {
         targetServerType: request.targetServerType,
         upgradeDisk: request.upgradeDisk ?? false,
         operationSteps: steps,
+        ...(warning
+          ? {
+              warnings: [{ code: ARM_SERVER_WARNING_CODE, message: warning }],
+            }
+          : {}),
       },
     });
     const saved = await this.operationRepository.save(operation);

@@ -11,7 +11,7 @@ import { CliSshService } from '../../services/cli-ssh.service';
 import { CloudProvider } from 'src/modules/providers/enums/cloud-provider.enum';
 import { ClusterStatus } from 'src/modules/infrastructure/clusters/entities/cluster.entity';
 import { printContextBanner } from '../../lib/context-banner';
-import { assertX86Host } from '../../lib/server-architecture-view';
+import { warnAboutHostArchitecture } from '../../lib/server-architecture-view';
 
 export default class NodeConnect extends Command {
   static readonly description =
@@ -186,14 +186,9 @@ export default class NodeConnect extends Command {
         );
       }
 
-      try {
-        await assertX86Host((command) =>
-          sshService.sshExecWithKey({ host, port, user, keyPath, command }),
-        );
-      } catch (e: any) {
-        console.log(chalk.red(`\n❌ ${e.message}\n`));
-        this.exit(1);
-      }
+      await warnAboutHostArchitecture((command) =>
+        sshService.sshExecWithKey({ host, port, user, keyPath, command }),
+      );
 
       if (!flags['skip-precheck']) {
         spinner = ora(`Prechecking ${user}@${host}:${port}...`).start();

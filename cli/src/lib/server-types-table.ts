@@ -1,5 +1,9 @@
 import chalk from 'chalk';
-import { archCell, archLabel } from './server-architecture-view';
+import {
+  archCell,
+  archLabel,
+  armWarningLine,
+} from './server-architecture-view';
 
 export interface ServerTypeRow {
   id: string;
@@ -16,7 +20,10 @@ export interface ServerTypeRow {
 const widthOf = (header: string, values: string[], min: number): number =>
   Math.max(min, header.length, ...values.map((v) => v.length));
 
-/** The `flui server-types list` table: header, rule, one line per type. */
+/**
+ * The `flui server-types list` table: header, rule, one line per type, and
+ * one warning line under it when any type is arm.
+ */
 export function serverTypeTable(rows: ServerTypeRow[]): string[] {
   const col = {
     id: widthOf(
@@ -90,5 +97,8 @@ export function serverTypeTable(rows: ServerTypeRow[]): string[] {
         `${row.availability.color(row.availability.label.padEnd(col.available))} ` +
         `${row.price.padStart(col.price)} ${chalk.dim(row.regions)}`,
     ),
+    ...(rows.some((row) => archLabel(row.architecture) === 'arm')
+      ? ['', `  ${armWarningLine()}`]
+      : []),
   ];
 }

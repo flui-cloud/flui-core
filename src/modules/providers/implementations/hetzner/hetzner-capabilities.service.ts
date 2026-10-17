@@ -24,7 +24,6 @@ import {
 import { getRegionCoordinates } from '../../data/region-coordinates';
 import { allServerTypes } from './all-server-types';
 import { macroRegionOf } from '@flui-cloud/infra';
-import { isSupportedArchitecture } from '../../core/catalogue/server-architecture';
 
 @Injectable()
 export class HetznerCapabilitiesService
@@ -291,7 +290,6 @@ export class HetznerCapabilitiesService
   ): InstanceTypeInfo[] {
     return serverTypes
       .filter((type) => !type.deprecated)
-      .filter((type) => isSupportedArchitecture(type.architecture))
       .map((type) => {
         const defaultPrice =
           type.prices && type.prices.length > 0 ? type.prices[0] : null;
@@ -404,6 +402,28 @@ export class HetznerCapabilitiesService
         disk: 163840,
         bandwidth: 20000,
         pricing: { hourly: 0.0193, monthly: 11.99, currency: 'EUR' },
+        available: true,
+      },
+      {
+        id: 'cax11',
+        name: 'CAX11',
+        description: '2 vCPU (ARM Ampere), 4 GB RAM, 40 GB NVMe',
+        cpu: 2,
+        memory: 4096,
+        disk: 40960,
+        bandwidth: 20000,
+        pricing: { hourly: 0.0061, monthly: 3.29, currency: 'EUR' },
+        available: true,
+      },
+      {
+        id: 'cax21',
+        name: 'CAX21',
+        description: '4 vCPU (ARM Ampere), 8 GB RAM, 80 GB NVMe',
+        cpu: 4,
+        memory: 8192,
+        disk: 81920,
+        bandwidth: 20000,
+        pricing: { hourly: 0.0112, monthly: 6.49, currency: 'EUR' },
         available: true,
       },
     ];

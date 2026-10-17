@@ -15,7 +15,7 @@ import { CloudProvider } from '../../../providers/enums/cloud-provider.enum';
 import { CacheService } from '../../../common/cache/cache.service';
 import { CacheCategory } from '../../../common/cache/enums/cache-category.enum';
 import { ServerResponseDto } from '../../servers/dto/server-response.dto';
-import { assertSupportedServerType } from '../../../providers/core/catalogue/server-architecture';
+import { serverTypeWarning } from '../../../providers/core/catalogue/server-architecture';
 
 /**
  * Service responsible for cluster validation logic
@@ -113,9 +113,12 @@ export class ClusterValidationService {
   }
 
   /**
-   * Validate cluster creation request
+   * Validate cluster creation request. Resolves to the warning the chosen
+   * node size carries (an arm server), null when it carries none.
    */
-  async validateCreateClusterRequest(dto: CreateClusterDto): Promise<void> {
+  async validateCreateClusterRequest(
+    dto: CreateClusterDto,
+  ): Promise<string | null> {
     const availability = await this.checkNameAvailability(
       dto.name,
       dto.provider,
@@ -125,7 +128,11 @@ export class ClusterValidationService {
     }
 
     // Validate node size
-    await this.validateNodeSize(dto.provider, dto.region, dto.nodeSize);
+    const warning = await this.validateNodeSize(
+      dto.provider,
+      dto.region,
+      dto.nodeSize,
+    );
 
     // Node bounds, whenever either is given. They are not behind a flag: the
     // flag never decided whether they were enforced, only whether they were
@@ -138,6 +145,8 @@ export class ClusterValidationService {
     if (dto.vnetConfig) {
       this.validateVNetConfig(dto);
     }
+
+    return warning;
   }
 
   /**
@@ -148,14 +157,11 @@ export class ClusterValidationService {
     provider: string,
     region: string,
     nodeSize: string,
-  ): Promise<void> {
+  ): Promise<string | null> {
     const nodeSizes = await this.managementService.getNodeSizes(
       provider as any,
       region,
-      undefined,
-      true,
     );
-    assertSupportedServerType(nodeSize, nodeSizes);
 
     // Accept both name and ID for flexibility
     const hasValidSize = nodeSizes.some(
@@ -167,6 +173,8 @@ export class ClusterValidationService {
         `Node size '${nodeSize}' is not available for provider '${provider}' in region '${region}'`,
       );
     }
+
+    return serverTypeWarning(nodeSize, nodeSizes);
   }
 
   /**

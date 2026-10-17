@@ -31,7 +31,10 @@ import { InfrastructureOperationsGateway } from '../../operations/gateway/infras
 import { CacheService } from 'src/modules/common/cache/cache.service';
 import { FirewallProviderFactory } from '../../../providers/core/factories/firewall-provider.factory';
 import { ServerRef } from '../utils/provider-server-ref';
-import { assertProviderSellsSupportedType } from 'src/modules/providers/core/catalogue/server-architecture';
+import {
+  ARM_SERVER_WARNING_CODE,
+  providerServerTypeWarning,
+} from 'src/modules/providers/core/catalogue/server-architecture';
 
 export interface CreateServerJobData {
   operationId: string;
@@ -250,10 +253,13 @@ export class ServersService {
     this.logger.log(`Creating server: ${dto.name} on ${dto.provider}`);
 
     await this.validateCreateServerRequest(dto);
-    await assertProviderSellsSupportedType(
+    const warning = await providerServerTypeWarning(
       this.providerFactory.getProvider(dto.provider),
       dto.server_type,
     );
+    if (warning) {
+      this.logger.log(`Server ${dto.name} on ${dto.server_type}: ${warning}`);
+    }
     dto.uuid = crypto.randomUUID();
 
     // user_data must be provided by the caller (typically from bootstrap-scripts repository)
@@ -282,6 +288,11 @@ export class ServersService {
         serverConfig: dto,
         estimatedDurationInSeconds: 80, // 1 minute 20 seconds
         operationSteps, // Save steps for consistent progress tracking
+        ...(warning
+          ? {
+              warnings: [{ code: ARM_SERVER_WARNING_CODE, message: warning }],
+            }
+          : {}),
       } as CreateServerOperationMetadata,
     });
 

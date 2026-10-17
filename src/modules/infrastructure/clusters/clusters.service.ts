@@ -39,6 +39,7 @@ import {
 } from './services/autoscale-actuation';
 import { EncryptionService } from '../../shared/encryption/services/encryption.service';
 import {
+  ARM_SERVER_WARNING_CODE,
   ServerArchitecture,
   normaliseArchitecture,
 } from '../../providers/core/catalogue/server-architecture';
@@ -102,11 +103,16 @@ export class ClustersService {
   async createCluster(
     dto: CreateClusterDto,
   ): Promise<InfrastructureOperationEntity> {
-    // Validate request
-    await this.clusterValidationService.validateCreateClusterRequest(dto);
+    const warning =
+      await this.clusterValidationService.validateCreateClusterRequest(dto);
+    if (warning) {
+      this.logger.log(`Cluster ${dto.name} on ${dto.nodeSize}: ${warning}`);
+    }
 
-    // Delegate to creation service
-    return await this.clusterCreationService.createCluster(dto);
+    return await this.clusterCreationService.createCluster(
+      dto,
+      warning ? [{ code: ARM_SERVER_WARNING_CODE, message: warning }] : [],
+    );
   }
 
   /**

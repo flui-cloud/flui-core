@@ -39,6 +39,16 @@ describe('the server-types table', () => {
     expect(lines[2].slice(archAt, archAt + 4).trim()).toBe('x86');
     expect(lines[3].slice(archAt, archAt + 4).trim()).toBe('arm');
     expect(lines[4].slice(archAt, archAt + 4).trim()).toBe('-');
-    expect(lines).toHaveLength(5);
+    expect(lines).toHaveLength(7);
+  });
+
+  it('closes with one warning line when any type is arm, and none otherwise', () => {
+    const lines = serverTypeTable([row('cx23', 'x86'), row('cax11', 'arm')]);
+    expect(lines.slice(-2)).toEqual([
+      '',
+      '  ⚠  Arm server: apps deployed from a repository are built for x86 and will not run on it. Catalog apps run normally.',
+    ]);
+    expect(lines.filter((line) => line.includes('Arm server'))).toHaveLength(1);
+    expect(serverTypeTable([row('cx23', 'x86')])).toHaveLength(3);
   });
 });

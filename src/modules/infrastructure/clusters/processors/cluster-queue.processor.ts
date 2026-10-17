@@ -2005,7 +2005,18 @@ export class ClusterQueueProcessor {
         status: OperationStatus.COMPLETED,
         message: `Added ${created.length} worker${created.length > 1 ? 's' : ''}`,
         addedNodeIds: created.map((n) => n.id),
-        ...(completionWarnings.length ? { warnings: completionWarnings } : {}),
+        ...(completionWarnings.length
+          ? {
+              warnings: [
+                ...((
+                  await this.operationRepository.findOne({
+                    where: { id: operationId },
+                  })
+                )?.metadata?.warnings ?? []),
+                ...completionWarnings,
+              ],
+            }
+          : {}),
         completedAt: new Date().toISOString(),
       });
       this.infraGateway.emitCompleted(operationId, clusterId, {

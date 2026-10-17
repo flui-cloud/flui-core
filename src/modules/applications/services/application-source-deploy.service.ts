@@ -75,6 +75,7 @@ import { AppEndpointEntity } from '../../dns/entities/app-endpoint.entity';
 import { AppEndpointReconciliationService } from '../../dns/services/app-endpoint-reconciliation.service';
 import { ClusterDnsZoneService } from '../../dns/services/cluster-dns-zone.service';
 import { ClustersService } from '../../infrastructure/clusters/clusters.service';
+import { ARM_SERVER_WARNING } from '../../providers/core/catalogue/server-architecture';
 import {
   ClusterStatus,
   ClusterType,
@@ -235,6 +236,7 @@ export class ApplicationSourceDeployService {
     );
     const { app, manifest, branch, buildPaths, skipBuild, resolvedImageRef } =
       prepared;
+    const warnings = await this.architectureWarnings(dto.clusterId);
 
     if (skipBuild && resolvedImageRef) {
       const reason = dto.imageRef
@@ -253,6 +255,7 @@ export class ApplicationSourceDeployService {
         name: app.name,
         status: 'PROVISIONING',
         operationId: operation.id,
+        ...(warnings.length ? { warnings } : {}),
       };
     }
 
@@ -279,7 +282,26 @@ export class ApplicationSourceDeployService {
       workflowRunUrl: workflowResult.runId
         ? `https://github.com/${dto.repoFullName}/actions/runs/${workflowResult.runId}`
         : undefined,
+      ...(warnings.length ? { warnings } : {}),
     };
+  }
+
+  /**
+   * An app built from a repository is built for x86 only, so a cluster with an
+   * arm node is said out loud; it never blocks the deploy. Nothing is said
+   * when the cluster could not be asked.
+   */
+  private async architectureWarnings(clusterId: string): Promise<string[]> {
+    let nodes: Awaited<ReturnType<ClustersService['liveNodeFacts']>>;
+    try {
+      nodes = await this.clustersService.liveNodeFacts(clusterId);
+    } catch {
+      return [];
+    }
+    const onArm = [...(nodes?.values() ?? [])].some(
+      (node) => node.architecture === 'arm',
+    );
+    return onArm ? [ARM_SERVER_WARNING] : [];
   }
 
   /**
@@ -579,7 +601,10 @@ export class ApplicationSourceDeployService {
       dto.overrides,
     );
     await this.validateAttachedServices(preview);
-    const checks = await this.installationChecks(userId, preview, dto);
+    const [checks, warnings] = await Promise.all([
+      this.installationChecks(userId, preview, dto),
+      this.architectureWarnings(dto.clusterId),
+    ]);
     return {
       applicationId: '',
       slug: '',
@@ -588,6 +613,7 @@ export class ApplicationSourceDeployService {
       effectiveYaml: serializeApplicationManifest(preview),
       checks,
       wouldDeploy: wouldDeploy(checks),
+      ...(warnings.length ? { warnings } : {}),
     };
   }
 

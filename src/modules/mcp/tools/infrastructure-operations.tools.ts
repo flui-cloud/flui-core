@@ -191,7 +191,7 @@ export const INFRASTRUCTURE_OPERATION_TOOLS: ToolDef[] = [
     name: 'cluster_capacity_plan',
     routes: ['GET /infrastructure/clusters/:id/capacity-plan'],
     description:
-      "The master node's current capacity and the resize candidates for it, each with a monthly cost delta and its CPU `architecture`; only x86 types are offered, because Flui runs on x86 servers only for now. This is the price tag on raising a scaling group's minimum, cluster_node_remove and cluster_autoscale_set — read it and tell the person the number BEFORE asking them to approve one of those, not after. Reports free/used/allocatable capacity and the current server type.",
+      'The master node\'s current capacity and the resize candidates for it, each with a monthly cost delta and its CPU `architecture`; an arm one can be chosen, but say this to the person first: "Arm server: apps deployed from a repository are built for x86 and will not run on it. Catalog apps run normally." This is the price tag on raising a scaling group\'s minimum, cluster_node_remove and cluster_autoscale_set — read it and tell the person the number BEFORE asking them to approve one of those, not after. Reports free/used/allocatable capacity and the current server type.',
     scope: MCP_SCOPE.INFRA_READ,
     inputSchema: clusterArg,
     run: async (args, ctx) => {
@@ -223,7 +223,7 @@ export const INFRASTRUCTURE_OPERATION_TOOLS: ToolDef[] = [
     name: 'server_type_list',
     routes: ['GET /management/providers/:provider/node-sizes'],
     description:
-      'The server types a provider sells that Flui can create a cluster with or resize a node to, each with cores, memory (GB), disk, prices per location, availability and CPU `architecture`. Only x86 types are listed: Flui runs on x86 servers only for now, and an arm type is refused wherever one is asked for. Pass `region` to keep only the types on sale there. Read-only. Take `nodeSize` for cluster_create and `targetServerType` for cluster_node_resize from here, never from memory.',
+      'The server types a provider sells that Flui can create a cluster with or resize a node to, each with cores, memory (GB), disk, prices per location, availability and CPU `architecture`, arm ones included. An arm type is accepted; when one is chosen, tell the person: "Arm server: apps deployed from a repository are built for x86 and will not run on it. Catalog apps run normally." Pass `region` to keep only the types on sale there. Read-only. Take `nodeSize` for cluster_create and `targetServerType` for cluster_node_resize from here, never from memory.',
     scope: MCP_SCOPE.INFRA_READ,
     inputSchema: {
       provider: z
@@ -361,7 +361,7 @@ export const INFRASTRUCTURE_OPERATION_TOOLS: ToolDef[] = [
     name: 'cluster_create',
     routes: ['POST /infrastructure/clusters'],
     description:
-      'Create a new K3s cluster at a cloud provider. Flui runs on x86 servers only for now: an arm `nodeSize` is refused, so pick one from server_type_list. This spends money for as long as the cluster exists, so it stops to ask a person first and can only ever be allowed ONCE — there is no standing permission for it, because a request that names no existing resource cannot state its own boundary. `region` and `nodeSize` are provider codes (Hetzner: fsn1/cx22, Scaleway: fr-par-1/PRO2-S): take them from the person, never invent one. Returns an operation handle; provisioning takes 8-15 minutes. Call cluster_provider_check for the provider first: a provider this installation cannot connect is refused, and saying so before asking the person to approve spares them an approval that cannot succeed.',
+      'Create a new K3s cluster at a cloud provider. Pick `nodeSize` from server_type_list; an arm one is accepted, and the operation then carries this warning, which you say to the person: "Arm server: apps deployed from a repository are built for x86 and will not run on it. Catalog apps run normally." This spends money for as long as the cluster exists, so it stops to ask a person first and can only ever be allowed ONCE — there is no standing permission for it, because a request that names no existing resource cannot state its own boundary. `region` and `nodeSize` are provider codes (Hetzner: fsn1/cx22, Scaleway: fr-par-1/PRO2-S): take them from the person, never invent one. Returns an operation handle; provisioning takes 8-15 minutes. Call cluster_provider_check for the provider first: a provider this installation cannot connect is refused, and saying so before asking the person to approve spares them an approval that cannot succeed.',
     scope: MCP_SCOPE.INFRA_WRITE,
     inputSchema: {
       name: z
@@ -480,7 +480,7 @@ export const INFRASTRUCTURE_OPERATION_TOOLS: ToolDef[] = [
     name: 'cluster_node_resize',
     routes: ['POST /infrastructure/clusters/:id/nodes/:nodeId/scale'],
     description:
-      'Vertically resize one node: cordon, power off, change the server type at the provider (x86 types only; an arm one is refused), power on, wait for the node to be Ready again. This is a maintenance window of roughly 3-5 minutes during which every pod on that node — dedicated databases included — is down. Call cluster_node_scale_preview first and say the downtime out loud. Growing the local OS disk is deliberately not offered here: it is a one-way change that permanently blocks resizing back down.',
+      'Vertically resize one node: cordon, power off, change the server type at the provider (an arm type is accepted with a warning: "Arm server: apps deployed from a repository are built for x86 and will not run on it. Catalog apps run normally."), power on, wait for the node to be Ready again. This is a maintenance window of roughly 3-5 minutes during which every pod on that node — dedicated databases included — is down. Call cluster_node_scale_preview first and say the downtime out loud. Growing the local OS disk is deliberately not offered here: it is a one-way change that permanently blocks resizing back down.',
     scope: MCP_SCOPE.INFRA_WRITE,
     inputSchema: {
       ...clusterArg,

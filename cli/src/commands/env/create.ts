@@ -28,13 +28,11 @@ import {
 } from '../../config/release-override';
 import { ServerTypeCacheService } from '../../services/server-type-cache.service';
 import { ServerTypeValidatorService } from '../../services/server-type-validator.service';
+import { serverTypeWarning } from 'src/modules/providers/core/catalogue/server-architecture';
 import {
-  architectureOfType,
-  isSupportedArchitecture,
-  offerableSizes,
-  unsupportedArchitectureMessage,
-} from 'src/modules/providers/core/catalogue/server-architecture';
-import { assertX86Host } from '../../lib/server-architecture-view';
+  armWarningLine,
+  warnAboutHostArchitecture,
+} from '../../lib/server-architecture-view';
 
 import {
   getRecommendedServerType,
@@ -334,14 +332,9 @@ export default class EnvCreate extends Command {
         this.exit(1);
       }
 
-      try {
-        await assertX86Host((command) =>
-          sshService.sshExecWithKey({ host, port, user, keyPath, command }),
-        );
-      } catch (e: any) {
-        console.log(chalk.red(`\n❌ ${e.message}\n`));
-        this.exit(1);
-      }
+      await warnAboutHostArchitecture((command) =>
+        sshService.sshExecWithKey({ host, port, user, keyPath, command }),
+      );
 
       if (!flags['skip-precheck']) {
         spinner = ora(`Prechecking ${user}@${host}:${port}...`).start();
@@ -712,23 +705,6 @@ export default class EnvCreate extends Command {
         }
       }
 
-      const requestedArchitecture = architectureOfType(nodeSize, serverTypes);
-      if (
-        requestedArchitecture &&
-        !isSupportedArchitecture(requestedArchitecture)
-      ) {
-        spinner.fail(
-          unsupportedArchitectureMessage(nodeSize, requestedArchitecture),
-        );
-        console.log(
-          chalk.yellow(
-            `Pick an x86 type: flui server-types list --provider ${providerKey}\n`,
-          ),
-        );
-        this.exit(1);
-      }
-      serverTypes = offerableSizes(serverTypes);
-
       if (serverTypes.length > 0) {
         const euRegions = allowedRegions;
         const fallbackRegions = euRegions.filter((r) => r !== region);
@@ -883,6 +859,10 @@ export default class EnvCreate extends Command {
         }
       } else {
         spinner.succeed('Server type validation skipped (no data available)');
+      }
+
+      if (serverTypeWarning(validatedNodeSize, serverTypes ?? [])) {
+        console.log(`\n${armWarningLine()}\n`);
       }
 
       // Warn before provisioning below the documented minimum for a control

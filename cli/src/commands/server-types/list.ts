@@ -6,7 +6,6 @@ import { ServerTypeValidatorService } from '../../services/server-type-validator
 import { CLI_DEFAULTS } from '../../config/defaults';
 import { ProviderFactory } from 'src/modules/providers/core/factories/provider.factory';
 import { CloudProvider } from 'src/modules/providers/enums/cloud-provider.enum';
-import { offerableSizes } from 'src/modules/providers/core/catalogue/server-architecture';
 import { serverTypeTable } from '../../lib/server-types-table';
 import { archLabel } from '../../lib/server-architecture-view';
 
@@ -43,7 +42,7 @@ function parseNumericRange(raw: string): { min?: number; max?: number } | null {
 
 export default class ServerTypesList extends Command {
   static readonly description =
-    'List available server types for a provider. Flui runs on x86 servers only for now, so only x86 types are listed unless --all-architectures is given.';
+    'List available server types for a provider, with the CPU architecture of each';
 
   static readonly examples = [
     '<%= config.bin %> <%= command.id %> --provider hetzner',
@@ -55,7 +54,6 @@ export default class ServerTypesList extends Command {
     '<%= config.bin %> <%= command.id %> --provider scaleway --sort price --desc',
     '<%= config.bin %> <%= command.id %> --provider hetzner --json',
     '<%= config.bin %> <%= command.id %> --provider hetzner --force-refresh',
-    '<%= config.bin %> <%= command.id %> --provider scaleway --all-architectures',
   ];
 
   static readonly flags = {
@@ -90,11 +88,6 @@ export default class ServerTypesList extends Command {
     }),
     'force-refresh': Flags.boolean({
       description: 'Force refresh cache from API',
-      default: false,
-    }),
-    'all-architectures': Flags.boolean({
-      description:
-        'Also list arm server types. They cannot be used to create or resize a node: Flui runs on x86 servers only for now.',
       default: false,
     }),
   };
@@ -151,10 +144,6 @@ export default class ServerTypesList extends Command {
           serverTypes = await fetchFromProvider();
           await cacheService.set(flags.provider, serverTypes);
         }
-      }
-
-      if (!flags['all-architectures'] && serverTypes) {
-        serverTypes = offerableSizes(serverTypes);
       }
 
       // Filter by region if specified
@@ -286,15 +275,6 @@ export default class ServerTypesList extends Command {
       });
 
       for (const line of serverTypeTable(rows)) this.log(line);
-
-      if (flags['all-architectures']) {
-        this.log('');
-        this.log(
-          chalk.dim(
-            '  arm types are listed for reference only: Flui runs on x86 servers only for now.',
-          ),
-        );
-      }
 
       // Show deprecated types if any
       if (deprecatedTypes.length > 0) {

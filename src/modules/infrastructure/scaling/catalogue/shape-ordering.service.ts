@@ -12,11 +12,7 @@ import {
 import { OrderedShapeDto, ShapeCatalogueDto } from './dto/shape-catalogue.dto';
 import { ShapeFactsService } from '../engine/shape-facts.service';
 import { ShapeFact, listMonthlyOf } from '../engine/engine.core';
-import {
-  ServerArchitecture,
-  isSupportedArchitecture,
-  unsupportedArchitectureMessage,
-} from '../../../providers/core/catalogue/server-architecture';
+import { ServerArchitecture } from '../../../providers/core/catalogue/server-architecture';
 
 /** What ordering needs of a group, and nothing more. */
 export interface OrderableGroup {
@@ -48,9 +44,7 @@ interface Candidate {
  *
  * Shapes the group may *not* buy come back too, marked. Naming a shape that is
  * up next to one that is gone is the catalogue informing; leaving it out would
- * be the catalogue quietly editing the group. The one exception is a machine
- * Flui never buys — an arm one, for now: offered nowhere, it is listed only
- * when the group itself names it, and then marked.
+ * be the catalogue quietly editing the group.
  */
 @Injectable()
 export class ShapeOrderingService {
@@ -98,14 +92,9 @@ export class ShapeOrderingService {
   ): Candidate[] {
     const architectureOf = (shape: string): ServerArchitecture | null =>
       facts.find((fact) => fact.shape === shape)?.architecture ?? null;
-    const buyable = (shape: string): boolean => {
-      const architecture = architectureOf(shape);
-      return !architecture || isSupportedArchitecture(architecture);
-    };
-
     const allowed = group.shapes.map((shape, index) => ({
       shape,
-      allowed: buyable(shape),
+      allowed: true,
       architecture: architectureOf(shape),
       availability: this.catalogue.shapeIn(reading, shape),
       rank: 0,
@@ -113,9 +102,7 @@ export class ShapeOrderingService {
     }));
 
     const extra = reading.shapes
-      .filter(
-        (entry) => !group.shapes.includes(entry.shape) && buyable(entry.shape),
-      )
+      .filter((entry) => !group.shapes.includes(entry.shape))
       .map((entry) => ({
         shape: entry.shape,
         allowed: false,
@@ -211,12 +198,6 @@ function outlookOf(
 }
 
 function why(candidate: Candidate, regions: string[]): string {
-  if (
-    candidate.architecture &&
-    !isSupportedArchitecture(candidate.architecture)
-  ) {
-    return `${unsupportedArchitectureMessage(candidate.shape, candidate.architecture)}, so Flui never buys it.`;
-  }
   const excluded = candidate.allowed ? '' : ' This group may not buy it.';
   const availability = candidate.availability;
   if (!availability) {

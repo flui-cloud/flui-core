@@ -4,10 +4,6 @@ import {
   upWhereAllowed,
 } from '../catalogue/catalogue.core';
 import {
-  isSupportedArchitecture,
-  unsupportedArchitectureMessage,
-} from '../../../providers/core/catalogue/server-architecture';
-import {
   CandidateOutcome,
   ConsideredCandidate,
   NodeRequirement,
@@ -209,6 +205,11 @@ export interface LadderInput {
   reserve?: NodeReserve;
   /** What every node of the fleet runs on. Null or absent: unknown or mixed. */
   architecture?: MachineArchitecture | null;
+  /**
+   * Where the fleet does not say what it runs on, the architecture tried
+   * first; set by the ladder itself, never by a caller.
+   */
+  triedFirst?: MachineArchitecture;
 }
 
 export interface LadderRung {
@@ -297,6 +298,19 @@ const NEARNESS: CandidateOutcome[] = [
  * why it did *not* scale.
  */
 export function walkLadder(input: LadderInput): LadderResult {
+  if (input.architecture) return walkRungs(input);
+  const x86 = walkRungs({ ...input, triedFirst: 'x86' });
+  return namesAMachine(x86) ? x86 : walkRungs(input);
+}
+
+function namesAMachine(result: LadderResult): boolean {
+  return (
+    result.chosen !== null ||
+    result.rungs.some((rung) => rung.outcome === 'alert' && rung.shape)
+  );
+}
+
+function walkRungs(input: LadderInput): LadderResult {
   const rungs: LadderRung[] = [];
   const preferred = preferredShape(input);
 
@@ -571,16 +585,6 @@ function refusedBy(input: LadderInput, candidate: Candidate): Verdict | null {
     };
   }
 
-  if (
-    candidate.fact.architecture &&
-    !isSupportedArchitecture(candidate.fact.architecture)
-  ) {
-    return {
-      outcome: REFUSED_BY_LIMIT,
-      note: `${unsupportedArchitectureMessage(candidate.shape, candidate.fact.architecture)}, so Flui never buys it.`,
-    };
-  }
-
   const arch = input.architecture;
   if (
     arch &&
@@ -590,6 +594,18 @@ function refusedBy(input: LadderInput, candidate: Candidate): Verdict | null {
     return {
       outcome: REFUSED_BY_LIMIT,
       note: `${candidate.shape} is an ${archWord(candidate.fact.architecture)} machine and this cluster runs on ${archWord(arch)}: what runs here would not start on it.`,
+    };
+  }
+  const first = input.triedFirst;
+  if (
+    !arch &&
+    first &&
+    candidate.fact.architecture &&
+    candidate.fact.architecture !== first
+  ) {
+    return {
+      outcome: REFUSED_BY_LIMIT,
+      note: `${candidate.shape} is an ${archWord(candidate.fact.architecture)} machine: the fleet does not say what it runs on, so an ${archWord(first)} one is tried first, and an ${archWord(candidate.fact.architecture)} one only where none would do.`,
     };
   }
 
@@ -1121,11 +1137,12 @@ function shapeToAdd(
       regions.map((region) => judge(input, fact.shape, region)),
     );
   const cheapest = (outcome: CandidateOutcome) =>
-    judged
-      .filter((c) => c.outcome === outcome)
-      .sort(
-        (a, b) => (monthlyOf(a) ?? Infinity) - (monthlyOf(b) ?? Infinity),
-      )[0];
+    x86FirstWhereUnknown(
+      input,
+      judged.filter((c) => c.outcome === outcome),
+    ).sort(
+      (a, b) => (monthlyOf(a) ?? Infinity) - (monthlyOf(b) ?? Infinity),
+    )[0];
   const now = cheapest('would-buy');
   if (now) return { shape: now.shape, overBudgetTo: null };
   const pricey = cheapest('over-budget');
@@ -1136,4 +1153,16 @@ function shapeToAdd(
         overBudgetTo: Math.ceil(input.fleet.committedMonthlyEur + monthly),
       }
     : null;
+}
+
+/**
+ * Never mix architectures in a fleet: where it does not say what it runs on,
+ * the x86 machines come first and an arm one is left only where no x86 one is.
+ */
+export function x86FirstWhereUnknown<
+  T extends { fact?: Pick<ShapeFact, 'architecture'> | null },
+>(input: Pick<LadderInput, 'architecture'>, candidates: T[]): T[] {
+  if (input.architecture) return candidates;
+  const x86 = candidates.filter((c) => c.fact?.architecture !== 'arm');
+  return x86.length ? x86 : candidates;
 }

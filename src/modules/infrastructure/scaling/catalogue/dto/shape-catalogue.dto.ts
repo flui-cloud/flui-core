@@ -40,7 +40,7 @@ export class OrderedShapeDto {
     enum: ['x86', 'arm'],
     nullable: true,
     description:
-      'CPU architecture as the provider names it; null where its catalogue was not read. Flui buys x86 only for now: an arm shape is listed only when the group names it, and never as allowed.',
+      'CPU architecture as the provider names it; null where its catalogue was not read. An arm shape is bought like any other, but apps deployed from a repository are built for x86 and will not run on it.',
   })
   @Sensitivity(Sensitivity.PUBLIC)
   architecture: ServerArchitecture | null;

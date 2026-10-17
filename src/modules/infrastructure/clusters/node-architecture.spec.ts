@@ -120,7 +120,7 @@ describe('GET /infrastructure/clusters/:id/nodes', () => {
 });
 
 describe('the BYOS join script', () => {
-  it('stops on a host that is not x86 before it installs anything', () => {
+  it('warns on an arm host before it installs anything, and carries on', () => {
     const service = Object.create(
       ByosNodeJoinService.prototype,
     ) as ByosNodeJoinService;
@@ -145,6 +145,10 @@ describe('the BYOS join script', () => {
     expect(guard).toBeGreaterThan(-1);
     expect(guard).toBeLessThan(script.indexOf('k3s-worker-init.sh'));
     expect(script).toContain('x86_64 | amd64) ;;');
-    expect(script).toContain('Flui runs on x86 servers only for now');
+    expect(script).toContain(
+      'echo "[Flui] Warning: Arm server: apps deployed from a repository are built for x86 and will not run on it. Catalog apps run normally." >&2',
+    );
+    const branches = script.slice(guard, script.indexOf('esac', guard));
+    expect(branches).not.toContain('exit');
   });
 });

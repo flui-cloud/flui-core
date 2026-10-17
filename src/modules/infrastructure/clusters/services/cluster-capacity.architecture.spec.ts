@@ -56,19 +56,22 @@ const build = (currentServerType: string) =>
     { getStatus: async () => ({ volume: null }) } as never,
   );
 
-describe('a capacity plan offers x86 resize targets only', () => {
-  it('leaves arm types out of the candidates, each of which says its architecture', async () => {
+describe('a capacity plan offers every architecture, each named', () => {
+  it('lists arm types beside x86 ones, each saying its architecture', async () => {
     const plan = await build('DEV1-M').getPlan('c1');
 
-    expect(plan.candidates.map((c) => c.name).sort()).toEqual([
-      'DEV1-L',
-      'DEV1-M',
-    ]);
-    expect(plan.candidates.every((c) => c.architecture === 'x86')).toBe(true);
+    expect(plan.candidates.map((c) => [c.name, c.architecture]).sort()).toEqual(
+      [
+        ['COPARM1-2C-8G', 'arm'],
+        ['COPARM1-4C-16G', 'arm'],
+        ['DEV1-L', 'x86'],
+        ['DEV1-M', 'x86'],
+      ],
+    );
     expect(plan.master?.architecture).toBe('x86');
   });
 
-  it('still shows an arm master as what it is, and offers it only x86 targets', async () => {
+  it('shows an arm master as what it is', async () => {
     const plan = await build('COPARM1-2C-8G').getPlan('c1');
 
     expect(plan.master?.architecture).toBe('arm');
@@ -77,10 +80,5 @@ describe('a capacity plan offers x86 resize targets only', () => {
       name: 'COPARM1-2C-8G',
       architecture: 'arm',
     });
-    expect(
-      plan.candidates
-        .filter((c) => c.direction !== 'current')
-        .map((c) => c.architecture),
-    ).not.toContain('arm');
   });
 });

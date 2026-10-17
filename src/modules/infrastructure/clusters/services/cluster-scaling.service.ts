@@ -30,7 +30,10 @@ import { ByosNodeRemovalService } from './byos-node-removal.service';
 import { CloudProvider } from '../../../providers/enums/cloud-provider.enum';
 import { NodeLifeEventsService } from './node-life-events.service';
 import { ProviderFactory } from '../../../providers/core/factories/provider.factory';
-import { assertProviderSellsSupportedType } from '../../../providers/core/catalogue/server-architecture';
+import {
+  ARM_SERVER_WARNING_CODE,
+  providerServerTypeWarning,
+} from '../../../providers/core/catalogue/server-architecture';
 
 export interface AddWorkerJobData {
   operationId: string;
@@ -189,10 +192,15 @@ export class ClusterScalingService {
     // becomes an error four minutes deep in a job nobody is watching, and on a
     // loop it becomes that error every time it runs.
     if (serverType) await this.assertShapeSold(cluster, serverType);
-    await assertProviderSellsSupportedType(
+    const warning = await providerServerTypeWarning(
       this.providerOf(cluster.provider),
       serverType ?? cluster.nodeSize,
     );
+    if (warning) {
+      this.logger.log(
+        `Adding ${count} worker(s) on ${serverType ?? cluster.nodeSize} to ${cluster.name}: ${warning}`,
+      );
+    }
 
     const providerFirewallIds = await this.providerFirewallIdsFor(clusterId);
 
@@ -219,6 +227,11 @@ export class ClusterScalingService {
         operationSteps: steps,
         estimatedDurationInSeconds: 240 * count,
         initiatedBy: by ?? null,
+        ...(warning
+          ? {
+              warnings: [{ code: ARM_SERVER_WARNING_CODE, message: warning }],
+            }
+          : {}),
       },
     });
     const saved = await this.operationRepository.save(operation);

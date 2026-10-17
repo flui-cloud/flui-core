@@ -1,5 +1,6 @@
 import { Command, Args, Flags } from '@oclif/core';
 import chalk from 'chalk';
+import { deployWarningLines } from '../lib/server-architecture-view';
 import ora from 'ora';
 import { confirmPrompt } from '../lib/prompts';
 import { judgeMissingConnection } from '../lib/repo-connection';
@@ -60,6 +61,7 @@ interface SourceDeployResponse {
   status: string;
   workflowUrl?: string;
   workflowRunUrl?: string;
+  warnings?: string[];
 }
 
 interface ApplicationStatusResponse {
@@ -433,6 +435,7 @@ export default class Deploy extends Command {
 
     console.log('');
     console.log(`  ${chalk.bold('App:')}    ${deploy.name} (${deploy.slug})`);
+    for (const line of deployWarningLines(deploy.warnings)) console.log(line);
     if (deploy.workflowUrl) {
       console.log(
         `  ${chalk.bold('Workflow:')} ${chalk.dim(deploy.workflowUrl)}`,

@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   ConflictException,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { Repository } from 'typeorm';
@@ -1313,23 +1314,32 @@ describe('what the node limits cost', () => {
   });
 });
 
-describe('a group names x86 machines only', () => {
+describe('a group may name arm machines', () => {
   const sizes = [
     { id: '1', name: 'cx23', architecture: 'x86' },
     { id: '2', name: 'cax11', architecture: 'arm' },
   ];
 
-  it('refuses an arm shape with a reason that says so', async () => {
+  it('saves a group that names an arm shape and notes the warning', async () => {
+    const log = jest
+      .spyOn(Logger.prototype, 'log')
+      .mockImplementation(() => undefined);
     const { service, groups } = make('hetzner', [], sizes);
     await expect(
       service.create('c-1', write({ shapes: ['cx23', 'cax11'] })),
-    ).rejects.toThrow('Flui runs on x86 servers only for now; cax11 is arm');
-    expect(groups.save).not.toHaveBeenCalled();
+    ).resolves.toBeDefined();
+    expect(groups.save).toHaveBeenCalled();
+    expect(log).toHaveBeenCalledWith(
+      expect.stringContaining(
+        'names cax11: Arm server: apps deployed from a repository are built for x86 and will not run on it. Catalog apps run normally.',
+      ),
+    );
+    log.mockRestore();
   });
 
-  it('refuses an arm shape added to an existing group, and keeps one it already had', async () => {
+  it('accepts an arm shape added to an existing group', async () => {
     const { service, groups } = make('hetzner', [], sizes);
-    const stored = {
+    groups.findOne.mockResolvedValue({
       id: 'g-1',
       clusterId: 'c-1',
       name: 'general',
@@ -1337,7 +1347,7 @@ describe('a group names x86 machines only', () => {
       desiredNodes: 1,
       maxNodes: 3,
       regions: ['fsn1'],
-      shapes: ['cax11'],
+      shapes: ['cx23'],
       strategy: 'cheapest',
       settleSeconds: 30,
       hourlyBillingOnly: true,
@@ -1345,15 +1355,9 @@ describe('a group names x86 machines only', () => {
       provision: 'manual',
       standingOrders: [],
       requirement: null,
-    };
-    groups.findOne.mockResolvedValue({ ...stored, shapes: ['cx23'] });
+    });
     await expect(
       service.update('g-1', { shapes: ['cx23', 'cax11'] }),
-    ).rejects.toThrow('cax11 is arm');
-
-    groups.findOne.mockResolvedValue({ ...stored });
-    await expect(
-      service.update('g-1', { shapes: ['cax11', 'cx23'] }),
     ).resolves.toBeDefined();
   });
 });

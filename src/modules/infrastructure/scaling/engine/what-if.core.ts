@@ -2,11 +2,12 @@ import {
   LadderInput,
   LadderResult,
   NODE_RESERVE,
+  ShapeFact,
   monthlyFrom,
+  x86FirstWhereUnknown,
 } from './engine.core';
 import { checkFit } from './fit.core';
 import { FleetRoom } from './room.core';
-import { isSupportedArchitecture } from '../../../providers/core/catalogue/server-architecture';
 
 export interface WhatIfAsk {
   cpuMillicores: number;
@@ -84,13 +85,10 @@ export function largestBuyable(
 ): MachineRoom | null {
   const cap = withinCap ? input.group.maxMonthlyCost : null;
   const committed = input.fleet.committedMonthlyEur;
-  let best: MachineRoom | null = null;
+  const rooms: { fact: ShapeFact; room: MachineRoom }[] = [];
   for (const name of input.group.shapes) {
     const fact = input.shapes.shapes.find((entry) => entry.shape === name);
     if (!fact || fact.deprecated) continue;
-    if (fact.architecture && !isSupportedArchitecture(fact.architecture)) {
-      continue;
-    }
     if (
       input.architecture &&
       fact.architecture &&
@@ -111,9 +109,12 @@ export function largestBuyable(
       cpuMillicores: Math.max(0, fact.cores * 1000 - reserve.cpuMillicores),
       memoryMi: Math.max(0, fact.memoryMi - reserve.memoryMi),
     };
-    if (!best || room.memoryMi > best.memoryMi) best = room;
+    rooms.push({ fact, room });
   }
-  return best;
+  return x86FirstWhereUnknown(input, rooms).reduce<MachineRoom | null>(
+    (best, { room }) => (!best || room.memoryMi > best.memoryMi ? room : best),
+    null,
+  );
 }
 
 export function largestNode(room: FleetRoom): MachineRoom | null {

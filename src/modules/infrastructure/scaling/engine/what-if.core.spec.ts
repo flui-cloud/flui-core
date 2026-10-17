@@ -185,13 +185,14 @@ describe('what if an app asked for this much', () => {
 });
 
 describe('the largest machine a group may buy', () => {
-  it('never counts an arm one', () => {
-    const arm = shape({
-      shape: 'cax41',
-      cores: 16,
-      memoryMi: 32768,
-      architecture: 'arm',
-    });
+  const arm = shape({
+    shape: 'cax41',
+    cores: 16,
+    memoryMi: 32768,
+    architecture: 'arm',
+  });
+
+  it('counts an x86 one first where the fleet does not say', () => {
     expect(
       largestBuyable(
         ladderInput(
@@ -201,5 +202,27 @@ describe('the largest machine a group may buy', () => {
         ),
       )?.shape,
     ).toBe('cx33');
+  });
+
+  it('counts the arm one for a fleet that runs on arm, or where it is the only one', () => {
+    expect(
+      largestBuyable({
+        ...ladderInput(
+          { cpuMillicores: 100, memoryMi: 100, replicas: 1 },
+          { shapes: ['cax41', 'cx33'] },
+          [arm, CX33],
+        ),
+        architecture: 'arm',
+      })?.shape,
+    ).toBe('cax41');
+    expect(
+      largestBuyable(
+        ladderInput(
+          { cpuMillicores: 100, memoryMi: 100, replicas: 1 },
+          { shapes: ['cax41'] },
+          [arm],
+        ),
+      )?.shape,
+    ).toBe('cax41');
   });
 });

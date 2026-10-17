@@ -52,6 +52,7 @@ import {
 } from '../../../dns/utils/nip-token.util';
 import { HostnameMode } from '../../../dns/enums/hostname-mode.enum';
 import { managementNetworkOn } from '../../networking/management-network.state';
+import type { OperationWarning } from '../processors/control-hub-hooks';
 
 /**
  * Service responsible for cluster creation logic
@@ -82,6 +83,7 @@ export class ClusterCreationService {
    */
   async createCluster(
     dto: CreateClusterDto,
+    warnings: OperationWarning[] = [],
   ): Promise<InfrastructureOperationEntity> {
     this.logger.log(`Creating cluster: ${dto.name}`);
 
@@ -291,6 +293,7 @@ export class ClusterCreationService {
         providerFirewallId, // Single firewall ID (not array) — null when deferred
         operationSteps: operationSteps, // Fixed: was 'steps', now 'operationSteps'
         desiredFirewallRules: firewallDeferred ? desiredRules : undefined,
+        ...(warnings.length ? { warnings } : {}),
       },
     });
 

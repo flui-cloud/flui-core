@@ -15,10 +15,7 @@ import {
   ClusterCapacityPlanDto,
 } from '../dto/cluster-capacity-plan.dto';
 import { ClusterStorageService } from './cluster-storage.service';
-import {
-  isSupportedArchitecture,
-  normaliseArchitecture,
-} from '../../../providers/core/catalogue/server-architecture';
+import { normaliseArchitecture } from '../../../providers/core/catalogue/server-architecture';
 
 @Injectable()
 export class ClusterCapacityService {
@@ -162,11 +159,6 @@ export class ClusterCapacityService {
     const currentMonthly = this.parseMonthly(currentSize);
     const candidates: CapacityCandidateDto[] = sizes
       .filter((s) => !s.deprecated)
-      .filter(
-        (s) =>
-          s.name === currentSize?.name ||
-          isSupportedArchitecture(s.architecture),
-      )
       .map((s) => {
         const monthly = this.parseMonthly(s);
         let direction: 'upgrade' | 'downgrade' | 'current';

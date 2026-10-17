@@ -178,33 +178,32 @@ describe('ClusterValidationService node size', () => {
     const validate = (nodeSize: string) =>
       (
         service as unknown as {
-          validateNodeSize(p: string, r: string, n: string): Promise<void>;
+          validateNodeSize(
+            p: string,
+            r: string,
+            n: string,
+          ): Promise<string | null>;
         }
       ).validateNodeSize('scaleway', 'fr-par-1', nodeSize);
     return { validate, getNodeSizes };
   }
 
-  it('refuses an arm server type with a reason that says so', async () => {
+  it('allows an arm server type and warns about it', async () => {
     const { validate, getNodeSizes } = build([
       { id: 'DEV1-M', name: 'DEV1-M', architecture: 'x86' },
       { id: 'COPARM1-2C-8G', name: 'COPARM1-2C-8G', architecture: 'arm' },
     ]);
 
-    await expect(validate('COPARM1-2C-8G')).rejects.toThrow(
-      'Flui runs on x86 servers only for now; COPARM1-2C-8G is arm',
+    await expect(validate('COPARM1-2C-8G')).resolves.toBe(
+      'Arm server: apps deployed from a repository are built for x86 and will not run on it. Catalog apps run normally.',
     );
-    expect(getNodeSizes).toHaveBeenCalledWith(
-      'scaleway',
-      'fr-par-1',
-      undefined,
-      true,
-    );
+    expect(getNodeSizes).toHaveBeenCalledWith('scaleway', 'fr-par-1');
   });
 
-  it('accepts an x86 server type', async () => {
+  it('accepts an x86 server type without a warning', async () => {
     const { validate } = build([
       { id: 'DEV1-M', name: 'DEV1-M', architecture: 'x86' },
     ]);
-    await expect(validate('DEV1-M')).resolves.toBeUndefined();
+    await expect(validate('DEV1-M')).resolves.toBeNull();
   });
 });

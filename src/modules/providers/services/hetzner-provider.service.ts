@@ -1081,9 +1081,8 @@ export class HetznerProviderService implements ICloudProvider {
   }
 
   /**
-   * Get available node sizes (server types) from Hetzner, arm ones included:
-   * the catalogue stays whole so an existing arm node can still be priced, and
-   * whoever offers a type to choose filters it (`offerableSizes`).
+   * Get available node sizes (server types) from Hetzner, arm ones included,
+   * each with its architecture.
    * @param includeAvailability If true, includes real-time availability data from /datacenters endpoint (NOT cached)
    */
   async getNodeSizes(

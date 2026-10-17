@@ -27,6 +27,7 @@ import { getScriptsBaseUrl } from '../../../../config/bootstrap.config';
 import { buildSystemNipHostname } from '../../../dns/utils/nip-hostname.util';
 import { SharedStorageExportReconciler } from './shared-storage-export.reconciler';
 import { K3S_DEFAULT_VERSION } from '../constants';
+import { ARM_SERVER_WARNING } from '../../../providers/core/catalogue/server-architecture';
 
 const TOKEN_TTL_MS = 30 * 60 * 1000;
 const RULESET_PATH = '/etc/flui/flui-firewall.nft';
@@ -320,9 +321,11 @@ set -euo pipefail
 
 case "$(uname -m)" in
   x86_64 | amd64) ;;
+  aarch64 | arm64)
+    echo "[Flui] Warning: ${ARM_SERVER_WARNING}" >&2
+    ;;
   *)
-    echo "[Flui] This host is $(uname -m). Flui runs on x86 servers only for now; nothing was installed." >&2
-    exit 1
+    echo "[Flui] Warning: this host reports $(uname -m), an architecture Flui does not know; continuing." >&2
     ;;
 esac
 
