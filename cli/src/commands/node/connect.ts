@@ -11,6 +11,7 @@ import { CliSshService } from '../../services/cli-ssh.service';
 import { CloudProvider } from 'src/modules/providers/enums/cloud-provider.enum';
 import { ClusterStatus } from 'src/modules/infrastructure/clusters/entities/cluster.entity';
 import { printContextBanner } from '../../lib/context-banner';
+import { assertX86Host } from '../../lib/server-architecture-view';
 
 export default class NodeConnect extends Command {
   static readonly description =
@@ -85,8 +86,6 @@ export default class NodeConnect extends Command {
     );
 
     const problems: string[] = [];
-    if (!/x86_64|aarch64|arm64/.test(arch))
-      problems.push(`unsupported architecture: ${arch}`);
     if (memMb > 0 && memMb < 1800)
       problems.push(`low memory: ${memMb}MB (recommend ≥2GB)`);
     if (k3s !== 'none') problems.push(`k3s already installed at ${k3s}`);
@@ -185,6 +184,15 @@ export default class NodeConnect extends Command {
               "     Pass --master-ip <address-reachable-from-the-worker> (e.g. the master's private/LAN IP).\n",
           ),
         );
+      }
+
+      try {
+        await assertX86Host((command) =>
+          sshService.sshExecWithKey({ host, port, user, keyPath, command }),
+        );
+      } catch (e: any) {
+        console.log(chalk.red(`\n❌ ${e.message}\n`));
+        this.exit(1);
       }
 
       if (!flags['skip-precheck']) {

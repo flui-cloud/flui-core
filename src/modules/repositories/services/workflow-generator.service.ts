@@ -308,6 +308,7 @@ ${runtimeSetup}
         uses: docker/build-push-action@v5
         with:
           context: .
+          platforms: linux/amd64
           push: true
           tags: \${{ steps.meta.outputs.tags }}
           labels: \${{ steps.meta.outputs.labels }}
@@ -721,6 +722,7 @@ ${this.registryLoginStep(params.registry)}
         uses: docker/build-push-action@v5
         with:
           context: ${buildContext}${dockerfileLine}
+          platforms: linux/amd64
           push: true
           tags: \${{ steps.meta.outputs.tags }}
           labels: \${{ steps.meta.outputs.labels }}

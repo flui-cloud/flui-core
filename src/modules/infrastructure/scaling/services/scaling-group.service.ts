@@ -66,6 +66,7 @@ import {
   NodeStatus,
   NodeType,
 } from '../../clusters/entities/cluster-node.entity';
+import { assertSupportedServerType } from '../../../providers/core/catalogue/server-architecture';
 
 const DEFAULT_DECISION_LIMIT = 50;
 const DEFAULT_GROUP_NAME = 'default';
@@ -179,6 +180,16 @@ export class ScalingGroupService {
     return [
       shapeNameOf(cluster.nodeSize, await this.sizesOf(cluster.provider)),
     ];
+  }
+
+  /** A group may name only machines Flui would buy: x86 ones, for now. */
+  private async assertShapesSupported(
+    provider: string,
+    shapes: string[],
+  ): Promise<void> {
+    if (!shapes.length) return;
+    const sizes = await this.sizesOf(provider);
+    for (const shape of shapes) assertSupportedServerType(shape, sizes);
   }
 
   private async sizesOf(provider: string): Promise<NodeSizeDto[]> {
@@ -467,6 +478,9 @@ export class ScalingGroupService {
   ): Promise<ScalingGroupResponseDto> {
     const cluster = await this.clusterOrFail(clusterId);
     const capability = this.capabilityOf(cluster.provider);
+    if (dto.shapes?.length) {
+      await this.assertShapesSupported(cluster.provider, dto.shapes);
+    }
 
     const draft = this.groups.create({
       clusterId,
@@ -520,6 +534,12 @@ export class ScalingGroupService {
       group.maxNodes = dto.bounds.max;
     }
     if (dto.regions !== undefined) group.regions = dto.regions;
+    if (dto.shapes?.length) {
+      await this.assertShapesSupported(
+        cluster.provider,
+        dto.shapes.filter((shape) => !group.shapes?.includes(shape)),
+      );
+    }
     if (dto.shapes !== undefined) group.shapes = dto.shapes;
     if (dto.strategy !== undefined) group.strategy = dto.strategy;
     if (dto.settleSeconds !== undefined) {

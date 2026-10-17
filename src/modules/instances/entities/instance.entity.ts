@@ -9,6 +9,7 @@ import { InstanceType } from './instance-type.enum';
 import { InstanceStatus } from './instance-status.enum';
 import { InstanceOwnership } from './instance-ownership.enum';
 import { CloudProvider } from '../../providers/enums/cloud-provider.enum';
+import { ServerArchitecture } from '../../providers/core/catalogue/server-architecture';
 
 @Entity('instances')
 export class InstanceEntity {
@@ -98,6 +99,9 @@ export class InstanceEntity {
    * belongs to relative to the one answering the request.
    */
   ownership?: InstanceOwnership;
+
+  /** Read from the provider's own server record at list time, not persisted. */
+  architecture?: ServerArchitecture | null;
 
   @CreateDateColumn({ type: 'timestamptz' })
   createdAt: Date;

@@ -4,6 +4,7 @@ import { InstanceType } from '../entities/instance-type.enum';
 import { InstanceStatus } from '../entities/instance-status.enum';
 import { InstanceOwnership } from '../entities/instance-ownership.enum';
 import { CloudProvider } from '../../providers/enums/cloud-provider.enum';
+import { ServerArchitecture } from '../../providers/core/catalogue/server-architecture';
 
 export class IpAddressConfigDto {
   @Sensitivity(Sensitivity.NETWORK_IDENTIFIER)
@@ -159,6 +160,16 @@ export class InstanceDto {
     required: false,
   })
   ownership?: InstanceOwnership;
+
+  @Sensitivity(Sensitivity.PUBLIC)
+  @ApiProperty({
+    enum: ['x86', 'arm'],
+    nullable: true,
+    required: false,
+    description:
+      'CPU architecture of the server type; null where the provider does not say',
+  })
+  architecture?: ServerArchitecture | null;
 
   @Sensitivity(Sensitivity.PUBLIC)
   @ApiProperty({ description: 'Creation timestamp' })

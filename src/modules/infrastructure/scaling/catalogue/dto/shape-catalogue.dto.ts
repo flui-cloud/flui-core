@@ -2,6 +2,7 @@ import { ApiProperty } from '@nestjs/swagger';
 import { Sensitivity } from '../../../../mask/decorators/sensitivity.decorator';
 import { AvailabilityOutlookDto } from '../../dto/scaling-response.dto';
 import { CATALOGUE_READINGS, CatalogueReadingState } from '../catalogue.core';
+import { ServerArchitecture } from '../../../../providers/core/catalogue/server-architecture';
 
 export class ShapeSpecDto {
   @ApiProperty()
@@ -34,6 +35,15 @@ export class OrderedShapeDto {
       'False when this group may not buy it. Listed anyway — the catalogue informs, it does not decide.',
   })
   allowed: boolean;
+
+  @ApiProperty({
+    enum: ['x86', 'arm'],
+    nullable: true,
+    description:
+      'CPU architecture as the provider names it; null where its catalogue was not read. Flui buys x86 only for now: an arm shape is listed only when the group names it, and never as allowed.',
+  })
+  @Sensitivity(Sensitivity.PUBLIC)
+  architecture: ServerArchitecture | null;
 
   @ApiProperty({
     type: AvailabilityOutlookDto,

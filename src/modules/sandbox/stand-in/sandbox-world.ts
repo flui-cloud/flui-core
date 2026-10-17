@@ -92,6 +92,7 @@ export function exampleInstances(now: number) {
         cpuCores: machine.cpuCores,
         ramMb: machine.ramMb,
         diskMb: machine.diskMb,
+        architecture: 'x86',
         osType: 'Ubuntu 24.04',
         productName: machine.productName,
         productType: 'shared-vcpu',

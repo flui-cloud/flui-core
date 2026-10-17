@@ -3,6 +3,7 @@ import chalk from 'chalk';
 import ora from 'ora';
 import { CliNodeService } from '../../lib/services/cli-node.service';
 import { resolveCluster } from '../../lib/resolve-cluster';
+import { archCell } from '../../lib/server-architecture-view';
 
 export default class NodeList extends Command {
   static readonly description =
@@ -60,10 +61,10 @@ export default class NodeList extends Command {
       console.log(chalk.cyan('\n  Cluster Nodes\n'));
       console.log(
         chalk.dim(
-          `  ${'ID'.padEnd(38)} ${'ROLE'.padEnd(10)} ${'STATUS'.padEnd(12)} ${'IP'.padEnd(18)} NAME`,
+          `  ${'ID'.padEnd(38)} ${'ROLE'.padEnd(10)} ${'STATUS'.padEnd(12)} ${'ARCH'.padEnd(6)} ${'IP'.padEnd(18)} NAME`,
         ),
       );
-      console.log(chalk.dim('  ' + '─'.repeat(96)));
+      console.log(chalk.dim('  ' + '─'.repeat(103)));
 
       for (const node of nodes) {
         const name =
@@ -84,7 +85,7 @@ export default class NodeList extends Command {
             : '';
 
         console.log(
-          `  ${node.id.padEnd(38)} ${roleColored} ${statusColored} ${ip} ${name}${taint}`,
+          `  ${node.id.padEnd(38)} ${roleColored} ${statusColored} ${archCell(node.architecture, 6)} ${ip} ${name}${taint}`,
         );
       }
 

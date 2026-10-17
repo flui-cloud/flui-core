@@ -15,6 +15,7 @@ import { CloudProvider } from '../../../providers/enums/cloud-provider.enum';
 import { CacheService } from '../../../common/cache/cache.service';
 import { CacheCategory } from '../../../common/cache/enums/cache-category.enum';
 import { ServerResponseDto } from '../../servers/dto/server-response.dto';
+import { assertSupportedServerType } from '../../../providers/core/catalogue/server-architecture';
 
 /**
  * Service responsible for cluster validation logic
@@ -151,7 +152,10 @@ export class ClusterValidationService {
     const nodeSizes = await this.managementService.getNodeSizes(
       provider as any,
       region,
+      undefined,
+      true,
     );
+    assertSupportedServerType(nodeSize, nodeSizes);
 
     // Accept both name and ID for flexibility
     const hasValidSize = nodeSizes.some(

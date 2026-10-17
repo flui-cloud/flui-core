@@ -6,6 +6,9 @@ import { ServerTypeValidatorService } from '../../services/server-type-validator
 import { CLI_DEFAULTS } from '../../config/defaults';
 import { ProviderFactory } from 'src/modules/providers/core/factories/provider.factory';
 import { CloudProvider } from 'src/modules/providers/enums/cloud-provider.enum';
+import { offerableSizes } from 'src/modules/providers/core/catalogue/server-architecture';
+import { serverTypeTable } from '../../lib/server-types-table';
+import { archLabel } from '../../lib/server-architecture-view';
 
 /**
  * Parse a numeric filter expression into an inclusive {min, max} range.
@@ -39,7 +42,8 @@ function parseNumericRange(raw: string): { min?: number; max?: number } | null {
 }
 
 export default class ServerTypesList extends Command {
-  static readonly description = 'List available server types for a provider';
+  static readonly description =
+    'List available server types for a provider. Flui runs on x86 servers only for now, so only x86 types are listed unless --all-architectures is given.';
 
   static readonly examples = [
     '<%= config.bin %> <%= command.id %> --provider hetzner',
@@ -51,6 +55,7 @@ export default class ServerTypesList extends Command {
     '<%= config.bin %> <%= command.id %> --provider scaleway --sort price --desc',
     '<%= config.bin %> <%= command.id %> --provider hetzner --json',
     '<%= config.bin %> <%= command.id %> --provider hetzner --force-refresh',
+    '<%= config.bin %> <%= command.id %> --provider scaleway --all-architectures',
   ];
 
   static readonly flags = {
@@ -85,6 +90,11 @@ export default class ServerTypesList extends Command {
     }),
     'force-refresh': Flags.boolean({
       description: 'Force refresh cache from API',
+      default: false,
+    }),
+    'all-architectures': Flags.boolean({
+      description:
+        'Also list arm server types. They cannot be used to create or resize a node: Flui runs on x86 servers only for now.',
       default: false,
     }),
   };
@@ -141,6 +151,10 @@ export default class ServerTypesList extends Command {
           serverTypes = await fetchFromProvider();
           await cacheService.set(flags.provider, serverTypes);
         }
+      }
+
+      if (!flags['all-architectures'] && serverTypes) {
+        serverTypes = offerableSizes(serverTypes);
       }
 
       // Filter by region if specified
@@ -258,78 +272,27 @@ export default class ServerTypesList extends Command {
           regions.length > 3
             ? `${regions.slice(0, 3).join(', ')}…`
             : regions.join(', ');
-        const availability = computeAvailability(type);
         return {
           id: type.id,
           name: type.name,
           cores: String(type.cores),
           memory: `${type.memory}GB`,
           disk: `${type.disk}GB`,
-          availability,
+          architecture: type.architecture,
+          availability: computeAvailability(type),
           price: formatPrice(validatorService.getFormattedPrice(type).monthly),
           regions: regionsStr,
         };
       });
 
-      const widthOf = (header: string, values: string[], min: number): number =>
-        Math.max(min, header.length, ...values.map((v) => v.length));
+      for (const line of serverTypeTable(rows)) this.log(line);
 
-      const COL = {
-        id: widthOf(
-          'ID',
-          rows.map((r) => r.id),
-          4,
-        ),
-        name: widthOf(
-          'Name',
-          rows.map((r) => r.name),
-          6,
-        ),
-        cpu: widthOf(
-          'vCPU',
-          rows.map((r) => r.cores),
-          4,
-        ),
-        memory: widthOf(
-          'Memory',
-          rows.map((r) => r.memory),
-          6,
-        ),
-        disk: widthOf(
-          'Disk',
-          rows.map((r) => r.disk),
-          5,
-        ),
-        available: widthOf(
-          'Available',
-          rows.map((r) => r.availability.label),
-          9,
-        ),
-        price: widthOf(
-          'Price/Month',
-          rows.map((r) => r.price),
-          11,
-        ),
-      };
-
-      this.log(
-        `  ${chalk.bold('ID'.padEnd(COL.id))} ${chalk.bold('Name'.padEnd(COL.name))} ${chalk.bold('vCPU'.padStart(COL.cpu))} ${chalk.bold('Memory'.padStart(COL.memory))} ${chalk.bold('Disk'.padStart(COL.disk))} ${chalk.bold('Available'.padEnd(COL.available))} ${chalk.bold('Price/Month'.padStart(COL.price))} ${chalk.bold('Regions')}`,
-      );
-      const sepWidth =
-        COL.id +
-        COL.name +
-        COL.cpu +
-        COL.memory +
-        COL.disk +
-        COL.available +
-        COL.price +
-        20 +
-        7;
-      this.log(chalk.dim('  ' + '─'.repeat(sepWidth)));
-
-      for (const row of rows) {
+      if (flags['all-architectures']) {
+        this.log('');
         this.log(
-          `  ${row.id.padEnd(COL.id)} ${row.name.padEnd(COL.name)} ${row.cores.padStart(COL.cpu)} ${row.memory.padStart(COL.memory)} ${row.disk.padStart(COL.disk)} ${row.availability.color(row.availability.label.padEnd(COL.available))} ${row.price.padStart(COL.price)} ${chalk.dim(row.regions)}`,
+          chalk.dim(
+            '  arm types are listed for reference only: Flui runs on x86 servers only for now.',
+          ),
         );
       }
 
@@ -351,7 +314,7 @@ export default class ServerTypesList extends Command {
           const diskCol = `${type.disk}GB`.padEnd(8);
           this.log(
             chalk.dim(
-              `  ${type.id.padEnd(12)} ${type.name.padEnd(10)} ${String(type.cores).padEnd(6)} ${memCol} ${diskCol}`,
+              `  ${type.id.padEnd(12)} ${type.name.padEnd(10)} ${String(type.cores).padEnd(6)} ${memCol} ${diskCol} ${archLabel(type.architecture)}`,
             ),
           );
         }

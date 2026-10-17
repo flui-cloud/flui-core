@@ -1,5 +1,6 @@
 import { Command, Flags } from '@oclif/core';
 import chalk from 'chalk';
+import { archLabel } from '../../lib/server-architecture-view';
 import ora from 'ora';
 import { getNestApp, closeNestApp } from '../../lib/nest-app';
 import {
@@ -132,6 +133,7 @@ export default class EnvCapacity extends Command {
         pad(chalk.bold('CPU'), 5),
         pad(chalk.bold('RAM'), 8),
         pad(chalk.bold('DISK'), 7),
+        pad(chalk.bold('ARCH'), 6),
         pad(chalk.bold('€/MONTH'), 10),
         pad(chalk.bold('Δ/MONTH'), 10),
       ].join('');
@@ -182,6 +184,7 @@ export default class EnvCapacity extends Command {
       pad(String(c.cores), 5),
       pad(`${c.memoryGb} GB`, 8),
       pad(`${c.diskGb} GB`, 7),
+      pad(archLabel(c.architecture), 6),
       pad(`€${c.monthlyCostEur}`, 10),
       pad(deltaColor(deltaStr), 10),
     ].join('');

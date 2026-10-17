@@ -107,7 +107,7 @@ interface Fakes {
 const make = (
   provider = 'hetzner',
   existing: unknown[] = [],
-  sizes: { id: string; name: string }[] = [],
+  sizes: { id: string; name: string; architecture?: string }[] = [],
 ): Fakes => {
   const groups = {
     find: jest.fn().mockResolvedValue(existing),
@@ -1310,5 +1310,50 @@ describe('what the node limits cost', () => {
     await expect(
       service.costOfDraft('c-1', { bounds: { min: 4, max: 3 } }),
     ).rejects.toThrow('min must be <= max');
+  });
+});
+
+describe('a group names x86 machines only', () => {
+  const sizes = [
+    { id: '1', name: 'cx23', architecture: 'x86' },
+    { id: '2', name: 'cax11', architecture: 'arm' },
+  ];
+
+  it('refuses an arm shape with a reason that says so', async () => {
+    const { service, groups } = make('hetzner', [], sizes);
+    await expect(
+      service.create('c-1', write({ shapes: ['cx23', 'cax11'] })),
+    ).rejects.toThrow('Flui runs on x86 servers only for now; cax11 is arm');
+    expect(groups.save).not.toHaveBeenCalled();
+  });
+
+  it('refuses an arm shape added to an existing group, and keeps one it already had', async () => {
+    const { service, groups } = make('hetzner', [], sizes);
+    const stored = {
+      id: 'g-1',
+      clusterId: 'c-1',
+      name: 'general',
+      minNodes: 1,
+      desiredNodes: 1,
+      maxNodes: 3,
+      regions: ['fsn1'],
+      shapes: ['cax11'],
+      strategy: 'cheapest',
+      settleSeconds: 30,
+      hourlyBillingOnly: true,
+      maxMonthlyCost: 40,
+      provision: 'manual',
+      standingOrders: [],
+      requirement: null,
+    };
+    groups.findOne.mockResolvedValue({ ...stored, shapes: ['cx23'] });
+    await expect(
+      service.update('g-1', { shapes: ['cx23', 'cax11'] }),
+    ).rejects.toThrow('cax11 is arm');
+
+    groups.findOne.mockResolvedValue({ ...stored });
+    await expect(
+      service.update('g-1', { shapes: ['cax11', 'cx23'] }),
+    ).resolves.toBeDefined();
   });
 });

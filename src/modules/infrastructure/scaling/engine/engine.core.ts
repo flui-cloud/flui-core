@@ -4,6 +4,10 @@ import {
   upWhereAllowed,
 } from '../catalogue/catalogue.core';
 import {
+  isSupportedArchitecture,
+  unsupportedArchitectureMessage,
+} from '../../../providers/core/catalogue/server-architecture';
+import {
   CandidateOutcome,
   ConsideredCandidate,
   NodeRequirement,
@@ -564,6 +568,16 @@ function refusedBy(input: LadderInput, candidate: Candidate): Verdict | null {
     return {
       outcome: REFUSED_BY_LIMIT,
       note: `${candidate.shape} is a monthly commitment and this group takes hourly billing only.`,
+    };
+  }
+
+  if (
+    candidate.fact.architecture &&
+    !isSupportedArchitecture(candidate.fact.architecture)
+  ) {
+    return {
+      outcome: REFUSED_BY_LIMIT,
+      note: `${unsupportedArchitectureMessage(candidate.shape, candidate.fact.architecture)}, so Flui never buys it.`,
     };
   }
 

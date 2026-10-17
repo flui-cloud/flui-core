@@ -12,6 +12,11 @@ import {
 import { OrderedShapeDto, ShapeCatalogueDto } from './dto/shape-catalogue.dto';
 import { ShapeFactsService } from '../engine/shape-facts.service';
 import { ShapeFact, listMonthlyOf } from '../engine/engine.core';
+import {
+  ServerArchitecture,
+  isSupportedArchitecture,
+  unsupportedArchitectureMessage,
+} from '../../../providers/core/catalogue/server-architecture';
 
 /** What ordering needs of a group, and nothing more. */
 export interface OrderableGroup {
@@ -25,6 +30,7 @@ export interface OrderableGroup {
 interface Candidate {
   shape: string;
   allowed: boolean;
+  architecture: ServerArchitecture | null;
   availability: ShapeAvailability | null;
   rank: number;
   preference: number;
@@ -42,7 +48,9 @@ interface Candidate {
  *
  * Shapes the group may *not* buy come back too, marked. Naming a shape that is
  * up next to one that is gone is the catalogue informing; leaving it out would
- * be the catalogue quietly editing the group.
+ * be the catalogue quietly editing the group. The one exception is a machine
+ * Flui never buys — an arm one, for now: offered nowhere, it is listed only
+ * when the group itself names it, and then marked.
  */
 @Injectable()
 export class ShapeOrderingService {
@@ -63,7 +71,7 @@ export class ShapeOrderingService {
       : null;
     const reading = own ? withProviderStock(outside, own) : outside;
 
-    const candidates = this.candidates(group, reading);
+    const candidates = this.candidates(group, reading, own?.shapes ?? []);
     candidates.sort(byUsefulness);
 
     return {
@@ -86,20 +94,32 @@ export class ShapeOrderingService {
   private candidates(
     group: OrderableGroup,
     reading: CatalogueReading,
+    facts: ShapeFact[],
   ): Candidate[] {
+    const architectureOf = (shape: string): ServerArchitecture | null =>
+      facts.find((fact) => fact.shape === shape)?.architecture ?? null;
+    const buyable = (shape: string): boolean => {
+      const architecture = architectureOf(shape);
+      return !architecture || isSupportedArchitecture(architecture);
+    };
+
     const allowed = group.shapes.map((shape, index) => ({
       shape,
-      allowed: true,
+      allowed: buyable(shape),
+      architecture: architectureOf(shape),
       availability: this.catalogue.shapeIn(reading, shape),
       rank: 0,
       preference: index,
     }));
 
     const extra = reading.shapes
-      .filter((entry) => !group.shapes.includes(entry.shape))
+      .filter(
+        (entry) => !group.shapes.includes(entry.shape) && buyable(entry.shape),
+      )
       .map((entry) => ({
         shape: entry.shape,
         allowed: false,
+        architecture: architectureOf(entry.shape),
         availability: entry,
         rank: 0,
         preference: Number.MAX_SAFE_INTEGER,
@@ -120,6 +140,7 @@ export class ShapeOrderingService {
     return {
       shape: candidate.shape,
       allowed: candidate.allowed,
+      architecture: candidate.architecture,
       outlook: outlookOf(candidate.availability, regions, ageSeconds),
       why: why(candidate, regions),
       facts: null,
@@ -190,6 +211,12 @@ function outlookOf(
 }
 
 function why(candidate: Candidate, regions: string[]): string {
+  if (
+    candidate.architecture &&
+    !isSupportedArchitecture(candidate.architecture)
+  ) {
+    return `${unsupportedArchitectureMessage(candidate.shape, candidate.architecture)}, so Flui never buys it.`;
+  }
   const excluded = candidate.allowed ? '' : ' This group may not buy it.';
   const availability = candidate.availability;
   if (!availability) {

@@ -163,6 +163,7 @@ export class ContaboProviderService implements ICloudProvider {
     instance.cpuCores = contaboInstance.cpuCores;
     instance.ramMb = contaboInstance.ramMb;
     instance.diskMb = contaboInstance.diskMb;
+    instance.architecture = null;
     instance.osType = contaboInstance.osType;
     instance.ipConfig = contaboInstance.ipConfig;
     instance.macAddress = contaboInstance.macAddress;

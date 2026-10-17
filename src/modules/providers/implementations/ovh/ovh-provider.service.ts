@@ -297,6 +297,7 @@ export class OvhProviderService implements ICloudProvider {
     instance.cpuCores = size?.cores ?? 0;
     instance.ramMb = (size?.memory ?? 0) * 1024;
     instance.diskMb = (size?.disk ?? 0) * 1024;
+    instance.architecture = s.architecture ?? null;
     instance.osType = null;
     instance.ipConfig = {
       v4: s.public_ip
@@ -993,12 +994,13 @@ function mapOvhStatusToInstanceStatus(novaStatus: string): InstanceStatus {
  * @flui-cloud/infra declares its own CloudProvider enum (nominally distinct
  * from Flui's, even though the values overlap) — its ServerResponseDto.provider
  * is typed against that enum, not ours. Re-stamp it with the local enum value
- * so the DTO satisfies flui-core's own ServerResponseDto type.
+ * so the DTO satisfies flui-core's own ServerResponseDto type. Every flavor
+ * Flui sells on OVH is x86 (see ovh-nova-flavors), so its servers are too.
  */
 function toLocalServerDto<T extends { provider: unknown }>(
   s: T,
-): Omit<T, 'provider'> & { provider: CloudProvider } {
-  return { ...s, provider: CloudProvider.OVH };
+): Omit<T, 'provider'> & { provider: CloudProvider; architecture: 'x86' } {
+  return { ...s, provider: CloudProvider.OVH, architecture: 'x86' };
 }
 
 /**

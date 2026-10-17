@@ -789,6 +789,7 @@ describe('OvhProviderService.listInstances', () => {
       cpuCores: 2,
       ramMb: 4096,
       diskMb: 51200,
+      architecture: 'x86',
       ipConfig: { v4: { ip: '91.134.239.43', gateway: '', netmaskCidr: 32 } },
     });
     // classifyOwnership() in InstancesService reads metadata.labels as a

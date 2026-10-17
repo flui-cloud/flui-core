@@ -163,3 +163,48 @@ describe('ClusterValidationService.validateCreateClusterRequest — name gate', 
     ).rejects.toThrow(ConflictException);
   });
 });
+
+describe('ClusterValidationService node size', () => {
+  function build(
+    sizes: Array<{ id: string; name: string; architecture: string }>,
+  ) {
+    const getNodeSizes = jest.fn().mockResolvedValue(sizes);
+    const service = new ClusterValidationService(
+      {} as never,
+      { getNodeSizes } as never,
+      {} as never,
+      {} as never,
+    );
+    const validate = (nodeSize: string) =>
+      (
+        service as unknown as {
+          validateNodeSize(p: string, r: string, n: string): Promise<void>;
+        }
+      ).validateNodeSize('scaleway', 'fr-par-1', nodeSize);
+    return { validate, getNodeSizes };
+  }
+
+  it('refuses an arm server type with a reason that says so', async () => {
+    const { validate, getNodeSizes } = build([
+      { id: 'DEV1-M', name: 'DEV1-M', architecture: 'x86' },
+      { id: 'COPARM1-2C-8G', name: 'COPARM1-2C-8G', architecture: 'arm' },
+    ]);
+
+    await expect(validate('COPARM1-2C-8G')).rejects.toThrow(
+      'Flui runs on x86 servers only for now; COPARM1-2C-8G is arm',
+    );
+    expect(getNodeSizes).toHaveBeenCalledWith(
+      'scaleway',
+      'fr-par-1',
+      undefined,
+      true,
+    );
+  });
+
+  it('accepts an x86 server type', async () => {
+    const { validate } = build([
+      { id: 'DEV1-M', name: 'DEV1-M', architecture: 'x86' },
+    ]);
+    await expect(validate('DEV1-M')).resolves.toBeUndefined();
+  });
+});

@@ -39,9 +39,18 @@ import {
 } from './services/autoscale-actuation';
 import { EncryptionService } from '../../shared/encryption/services/encryption.service';
 import {
+  ServerArchitecture,
+  normaliseArchitecture,
+} from '../../providers/core/catalogue/server-architecture';
+import {
   ReconcileStatusResponseDto,
   ClusterPowerOperationResponseDto,
 } from './dto/cluster-power-management.dto';
+
+export interface LiveNodeFacts {
+  takesNewApps: boolean;
+  architecture: ServerArchitecture | null;
+}
 
 export interface CreateClusterJobData {
   operationId: string;
@@ -185,13 +194,14 @@ export class ClustersService {
   }
 
   /**
-   * Whether each node takes new apps, read from the cluster itself: a taint or
-   * a cordon is the fact, and any flag stored about it is only a memory of it.
-   * Null when the cluster could not be asked.
+   * What the cluster itself says about each node, by node name, from one
+   * listing: whether it takes new apps (a taint or a cordon is the fact, and
+   * any flag stored about it is only a memory of it) and the CPU architecture
+   * it runs on. Null when the cluster could not be asked.
    */
-  async nodesTakingWork(
+  async liveNodeFacts(
     clusterId: string,
-  ): Promise<Map<string, boolean> | null> {
+  ): Promise<Map<string, LiveNodeFacts> | null> {
     const cluster = await this.clusterRepository.findOne({
       where: { id: clusterId },
     });
@@ -206,10 +216,16 @@ export class ClustersService {
       return new Map(
         (nodes.items ?? []).map((node) => [
           node.metadata?.name ?? '',
-          !node.spec?.unschedulable &&
-            !(node.spec?.taints ?? []).some(
-              (t) => t.effect === 'NoSchedule' || t.effect === 'NoExecute',
+          {
+            takesNewApps:
+              !node.spec?.unschedulable &&
+              !(node.spec?.taints ?? []).some(
+                (t) => t.effect === 'NoSchedule' || t.effect === 'NoExecute',
+              ),
+            architecture: normaliseArchitecture(
+              node.status?.nodeInfo?.architecture,
             ),
+          },
         ]),
       );
     } catch {

@@ -22,6 +22,7 @@ import { KubernetesService } from '../../shared/services/kubernetes.service';
 import { EncryptionService } from '../../../shared/encryption/services/encryption.service';
 import { BillingIntervalsService } from './billing-intervals.service';
 import { VolumeBillableKind } from '../entities/volume-billable-interval.entity';
+import { assertProviderSellsSupportedType } from '../../../providers/core/catalogue/server-architecture';
 
 export interface ScaleNodeImpactDto {
   clusterId: string;
@@ -132,6 +133,8 @@ export class ClusterNodeScalingService {
         `Provider "${cluster.provider}" does not support power management.`,
       );
     }
+
+    await assertProviderSellsSupportedType(provider, request.targetServerType);
 
     const currentDetails = await provider.getServerDetailsAsDto?.(
       node.providerResourceId,

@@ -73,6 +73,8 @@ type ScalewayResourceId = {
 };
 
 import { toScalewayZone } from './scaleway-zone.util';
+import { normaliseArchitecture } from '../../core/catalogue/server-architecture';
+
 @Injectable()
 export class ScalewayProviderService implements ICloudProvider {
   private readonly logger = new Logger(ScalewayProviderService.name);
@@ -340,6 +342,7 @@ export class ScalewayProviderService implements ICloudProvider {
     entity.ramMb = typeSpec?.ram ? Math.round(typeSpec.ram / 1e6) : 0;
     const volMax = typeSpec?.volumes_constraint?.max_size ?? 0;
     entity.diskMb = volMax > 0 ? Math.round(volMax / 1e6) : 0;
+    entity.architecture = normaliseArchitecture(server.arch);
     entity.osType = null;
     entity.defaultUser = 'root';
     entity.additionalIps = [];
@@ -398,6 +401,7 @@ export class ScalewayProviderService implements ICloudProvider {
       0,
     );
     entity.diskMb = totalDiskBytes > 0 ? Math.round(totalDiskBytes / 1e6) : 0;
+    entity.architecture = null;
     entity.osType = null;
     entity.defaultUser = 'root';
     entity.additionalIps = [];
@@ -453,6 +457,7 @@ export class ScalewayProviderService implements ICloudProvider {
       provider: CloudProvider.SCALEWAY,
       provider_resource_id: this.buildInstanceResourceId(zone, server.id),
       server_type: server.commercial_type || '',
+      architecture: normaliseArchitecture(server.arch),
       location: zone,
       status: server.state || 'unknown',
       public_ip: firstPublicIp || null,

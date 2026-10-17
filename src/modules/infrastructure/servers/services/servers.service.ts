@@ -31,6 +31,7 @@ import { InfrastructureOperationsGateway } from '../../operations/gateway/infras
 import { CacheService } from 'src/modules/common/cache/cache.service';
 import { FirewallProviderFactory } from '../../../providers/core/factories/firewall-provider.factory';
 import { ServerRef } from '../utils/provider-server-ref';
+import { assertProviderSellsSupportedType } from 'src/modules/providers/core/catalogue/server-architecture';
 
 export interface CreateServerJobData {
   operationId: string;
@@ -249,6 +250,10 @@ export class ServersService {
     this.logger.log(`Creating server: ${dto.name} on ${dto.provider}`);
 
     await this.validateCreateServerRequest(dto);
+    await assertProviderSellsSupportedType(
+      this.providerFactory.getProvider(dto.provider),
+      dto.server_type,
+    );
     dto.uuid = crypto.randomUUID();
 
     // user_data must be provided by the caller (typically from bootstrap-scripts repository)

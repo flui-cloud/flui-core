@@ -1113,7 +1113,8 @@ export class ClustersController {
       'provider, region, serverType and hourlyPriceEur. The last three are null ' +
       'where the provider records no such thing — a BYOS machine is the ' +
       "operator's own, so a null price means no price is known, never free. " +
-      'takesNewApps is read from the cluster (a taint or a cordon refuses new apps; on a control cluster with workers that is master protection); null when the cluster could not be asked.',
+      'takesNewApps is read from the cluster (a taint or a cordon refuses new apps; on a control cluster with workers that is master protection); null when the cluster could not be asked. ' +
+      'architecture is the CPU architecture the node reports (x86 or arm); null when the cluster could not be asked or the node does not say.',
   })
   @ApiParam({
     name: 'id',
@@ -1125,9 +1126,9 @@ export class ClustersController {
   })
   @ApiResponse({ status: 404, description: 'Cluster not found' })
   async getClusterNodes(@Param('id') id: string) {
-    const [nodes, takingWork] = await Promise.all([
+    const [nodes, live] = await Promise.all([
       this.clustersService.getClusterNodes(id),
-      this.clustersService.nodesTakingWork(id),
+      this.clustersService.liveNodeFacts(id),
     ]);
     return nodes.map((n) => ({
       id: n.id,
@@ -1140,7 +1141,8 @@ export class ClustersController {
       region: n.region ?? null,
       serverType: n.serverType ?? null,
       hourlyPriceEur: n.hourlyPriceEur ?? null,
-      takesNewApps: takingWork?.get(n.serverName) ?? null,
+      takesNewApps: live?.get(n.serverName)?.takesNewApps ?? null,
+      architecture: live?.get(n.serverName)?.architecture ?? null,
       createdAt: n.createdAt,
       metadata: n.metadata,
     }));

@@ -4,6 +4,7 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  Optional,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
@@ -28,6 +29,8 @@ import {
 import { ByosNodeRemovalService } from './byos-node-removal.service';
 import { CloudProvider } from '../../../providers/enums/cloud-provider.enum';
 import { NodeLifeEventsService } from './node-life-events.service';
+import { ProviderFactory } from '../../../providers/core/factories/provider.factory';
+import { assertProviderSellsSupportedType } from '../../../providers/core/catalogue/server-architecture';
 
 export interface AddWorkerJobData {
   operationId: string;
@@ -73,6 +76,7 @@ export class ClusterScalingService {
     private readonly bounds: ClusterBoundsRegistry,
     private readonly nodeEvents: NodeLifeEventsService,
     private readonly firewallState: FirewallDesiredStateService,
+    @Optional() private readonly providers?: ProviderFactory,
   ) {}
 
   /**
@@ -185,6 +189,10 @@ export class ClusterScalingService {
     // becomes an error four minutes deep in a job nobody is watching, and on a
     // loop it becomes that error every time it runs.
     if (serverType) await this.assertShapeSold(cluster, serverType);
+    await assertProviderSellsSupportedType(
+      this.providerOf(cluster.provider),
+      serverType ?? cluster.nodeSize,
+    );
 
     const providerFirewallIds = await this.providerFirewallIdsFor(clusterId);
 
@@ -246,6 +254,14 @@ export class ClusterScalingService {
       `Queued add-worker (${count}) for cluster ${clusterId} (operation ${saved.id})`,
     );
     return saved;
+  }
+
+  private providerOf(provider: string) {
+    try {
+      return this.providers?.getProvider(provider as CloudProvider) ?? null;
+    } catch {
+      return null;
+    }
   }
 
   private async assertShapeSold(

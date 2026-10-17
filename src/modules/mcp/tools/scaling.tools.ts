@@ -773,7 +773,7 @@ export const SCALING_TOOLS: ToolDef[] = [
         .array(z.string())
         .optional()
         .describe(
-          'What it may buy, in order of preference — the order IS the preference. Refused where there is no catalogue.',
+          'What it may buy, in order of preference — the order IS the preference. x86 types only: Flui runs on x86 servers only for now and refuses an arm shape. Refused where there is no catalogue.',
         ),
       strategy: z
         .enum(['cheapest', 'closest', 'roomiest', 'uniform'])

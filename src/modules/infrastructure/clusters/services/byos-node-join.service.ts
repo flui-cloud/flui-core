@@ -318,6 +318,14 @@ export class ByosNodeJoinService {
 # Flui.cloud BYOS worker join (token-issued). Run as root on the new host.
 set -euo pipefail
 
+case "$(uname -m)" in
+  x86_64 | amd64) ;;
+  *)
+    echo "[Flui] This host is $(uname -m). Flui runs on x86 servers only for now; nothing was installed." >&2
+    exit 1
+    ;;
+esac
+
 export CLUSTER_ID='${esc(p.clusterId)}'
 export CLUSTER_NAME='${esc(p.clusterName)}'
 export SERVER_ID='${esc(p.serverId)}'

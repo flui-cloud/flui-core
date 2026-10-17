@@ -180,7 +180,7 @@ describe('clusters controller — the fence around the cluster key', () => {
               name: 'control',
               provider: 'hetzner',
             }),
-            nodesTakingWork: async () => null,
+            liveNodeFacts: async () => null,
             getClusterNodes: async () => [
               {
                 id: 'node-1',

@@ -48,6 +48,7 @@ import { DeleteServerDto } from 'src/modules/infrastructure/servers/dto/delete-s
 import { SSHKeyDto } from 'src/modules/access/dto/ssh-key.dto';
 import { LabelService } from '../../common/services/label.service';
 import { HetznerNetworkService } from './hetzner-network.service';
+import { normaliseArchitecture } from '../core/catalogue/server-architecture';
 import {
   CreateVNetConfig,
   VNetCreationResult,
@@ -337,6 +338,9 @@ export class HetznerProviderService implements ICloudProvider {
     instance.cpuCores = server.server_type?.cores ?? 0;
     instance.ramMb = (server.server_type?.memory ?? 0) * 1024; // Convert from GB to MB
     instance.diskMb = (server.primary_disk_size ?? 0) * 1024; // Convert from GB to MB
+    instance.architecture = normaliseArchitecture(
+      server.server_type?.architecture,
+    );
 
     // Operating system information
     instance.osType = server.image
@@ -985,6 +989,7 @@ export class HetznerProviderService implements ICloudProvider {
       provider: CloudProvider.HETZNER,
       provider_resource_id: server.id?.toString() ?? '',
       server_type: server.server_type?.name ?? 'unknown',
+      architecture: normaliseArchitecture(server.server_type?.architecture),
       location: serverLocation(server as never)?.name ?? 'unknown',
       status: server.status,
       public_ip: server.public_net?.ipv4?.ip || null,
@@ -1076,8 +1081,9 @@ export class HetznerProviderService implements ICloudProvider {
   }
 
   /**
-   * Get available node sizes (server types) from Hetzner
-   * Filters out ARM architecture servers
+   * Get available node sizes (server types) from Hetzner, arm ones included:
+   * the catalogue stays whole so an existing arm node can still be priced, and
+   * whoever offers a type to choose filters it (`offerableSizes`).
    * @param includeAvailability If true, includes real-time availability data from /datacenters endpoint (NOT cached)
    */
   async getNodeSizes(
@@ -1093,11 +1099,6 @@ export class HetznerProviderService implements ICloudProvider {
 
       let nodeSizes =
         this.nodeSizeMapper.mapHetznerServerTypesToDtos(serverTypes);
-
-      // Filter out ARM architecture servers
-      nodeSizes = nodeSizes.filter(
-        (nodeSize) => nodeSize.architecture !== 'arm',
-      );
 
       if (includeAvailability) {
         const byId = new Map(

@@ -342,6 +342,13 @@ export class ManagementController {
     type: Boolean,
     description: 'Skip cache and fetch fresh data from provider',
   })
+  @ApiQuery({
+    name: 'includeArm',
+    required: false,
+    type: Boolean,
+    description:
+      'Also list arm server types. Off by default: Flui runs on x86 servers only for now, so arm types are never offered for a new or resized node.',
+  })
   @ApiResponse({
     status: 200,
     description: 'Available node sizes (server types)',
@@ -353,8 +360,14 @@ export class ManagementController {
     @Param('provider') provider: CloudProvider,
     @Query('region') region?: string,
     @Query('skipCache') skipCache?: boolean,
+    @Query('includeArm') includeArm?: string,
   ): Promise<NodeSizeOptionDto[]> {
-    return this.managementService.getNodeSizes(provider, region, skipCache);
+    return this.managementService.getNodeSizes(
+      provider,
+      region,
+      skipCache,
+      includeArm === 'true',
+    );
   }
 
   @Get('providers/:provider/pricing')

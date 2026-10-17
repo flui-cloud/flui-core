@@ -7,7 +7,7 @@ import { CacheService } from 'src/modules/common/cache/cache.service';
 import { CloudProvider } from '../../providers/enums/cloud-provider.enum';
 
 describe('ManagementService node sizes cache', () => {
-  const nodeSize = { id: 'DEV1-S', availability: [] };
+  const nodeSize = { id: 'DEV1-S', architecture: 'x86', availability: [] };
 
   function build(getNodeSizes: jest.Mock) {
     const store = new Map<string, unknown>();
@@ -75,5 +75,25 @@ describe('ManagementService node sizes cache', () => {
     await service.clearNodeSizesCache(CloudProvider.SCALEWAY);
 
     expect(store.size).toBe(0);
+  });
+
+  describe('architecture', () => {
+    const arm = { id: 'COPARM1-2C-8G', architecture: 'arm', availability: [] };
+
+    it('offers x86 types only', async () => {
+      const { service } = build(jest.fn().mockResolvedValue([nodeSize, arm]));
+
+      await expect(
+        service.getNodeSizes(CloudProvider.SCALEWAY),
+      ).resolves.toEqual([nodeSize]);
+    });
+
+    it('returns the whole catalogue, arm included, when asked', async () => {
+      const { service } = build(jest.fn().mockResolvedValue([nodeSize, arm]));
+
+      await expect(
+        service.getNodeSizes(CloudProvider.SCALEWAY, undefined, false, true),
+      ).resolves.toEqual([nodeSize, arm]);
+    });
   });
 });

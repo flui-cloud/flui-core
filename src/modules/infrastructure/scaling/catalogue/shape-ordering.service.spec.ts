@@ -341,3 +341,56 @@ describe("the market page shows the provider's own stock", () => {
     );
   });
 });
+
+describe('the market page offers x86 machines only', () => {
+  const fact = (shape: string, architecture: 'x86' | 'arm') => ({
+    shape,
+    cores: 2,
+    memoryMi: 4096,
+    deprecated: false,
+    supportsHourlyBilling: true,
+    architecture,
+    prices: [{ region: 'fsn1', hourlyEur: 0.01, monthlyEur: 5 }],
+    availability: [{ region: 'fsn1', up: true }],
+  });
+
+  function market(shapes: string[]) {
+    const client = {
+      enabled: false,
+      providers: jest.fn(),
+      availability: jest.fn(),
+    } as unknown as VopsCatalogueClient;
+    const facts = {
+      read: jest.fn().mockResolvedValue({
+        read: true,
+        ageSeconds: 5,
+        shapes: [
+          fact('cx23', 'x86'),
+          fact('cx33', 'x86'),
+          fact('cax11', 'arm'),
+          fact('cax21', 'arm'),
+        ],
+      }),
+    } as never;
+    return new ShapeOrderingService(
+      new AvailabilityCatalogueService(client),
+      facts,
+    ).order(group({ shapes, regions: ['fsn1'] }));
+  }
+
+  it('leaves out an arm machine the group does not name', async () => {
+    const result = await market(['cx23']);
+    expect(result.shapes.map((s) => s.shape)).toEqual(['cx23', 'cx33']);
+    expect(result.shapes.map((s) => s.architecture)).toEqual(['x86', 'x86']);
+  });
+
+  it('marks an arm machine the group names as one Flui never buys', async () => {
+    const result = await market(['cax11', 'cx23']);
+    const arm = result.shapes.find((s) => s.shape === 'cax11');
+    expect(arm).toMatchObject({ allowed: false, architecture: 'arm' });
+    expect(arm?.why).toContain(
+      'Flui runs on x86 servers only for now; cax11 is arm',
+    );
+    expect(result.shapes.map((s) => s.shape)).not.toContain('cax21');
+  });
+});

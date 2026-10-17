@@ -1013,11 +1013,89 @@ describe('the ways out name only machines that would hold the app', () => {
     const result = walkLadder({ ...onList(['arm16']), architecture: 'x86' });
     expect(result.chosen).toBeNull();
     expect(result.rungs[0]).toMatchObject({ outcome: 'refused-by-limit' });
-    expect(result.rungs[0].note).toContain('ARM machine');
+    expect(result.rungs[0].note).toContain(
+      'Flui runs on x86 servers only for now; arm16 is arm',
+    );
   });
 
-  it('refuses nothing on architecture where the fleet does not say', () => {
+  it('refuses an ARM machine even where the fleet does not say what it runs on', () => {
     const result = walkLadder({ ...onList(['arm16']), architecture: null });
-    expect(result.chosen?.shape).toBe('arm16');
+    expect(result.chosen).toBeNull();
+    expect(result.rungs[0]).toMatchObject({ outcome: 'refused-by-limit' });
+  });
+
+  it('still refuses an x86 machine to a fleet that runs on ARM', () => {
+    const result = walkLadder({ ...onList(['small']), architecture: 'arm' });
+    expect(result.chosen).toBeNull();
+    expect(result.rungs[0].note).toContain('ARM');
+  });
+});
+
+describe('x86 only', () => {
+  const CAX31 = shape({
+    shape: 'cax31',
+    cores: 8,
+    memoryMi: 16384,
+    architecture: 'arm',
+    prices: [{ region: 'fsn1', hourlyEur: 0.001, monthlyEur: 0.5 }],
+  });
+
+  it('never buys an arm machine, even the cheapest one on the list, on a fleet of unknown architecture', () => {
+    const result = walkLadder(
+      input({
+        group: {
+          provider: 'hetzner',
+          regions: ['fsn1'],
+          shapes: ['cax31', 'cx32'],
+          strategy: 'cheapest',
+          hourlyBillingOnly: false,
+          maxMonthlyCost: null,
+          requirement: null,
+          capability: HETZNER,
+        },
+        shapes: { shapes: [CAX31, CX32], read: true },
+        architecture: null,
+      }),
+    );
+
+    expect(result.chosen).toMatchObject({ shape: 'cx32' });
+    const refused = everyCandidate(
+      input({
+        group: {
+          provider: 'hetzner',
+          regions: ['fsn1'],
+          shapes: ['cax31'],
+          strategy: 'cheapest',
+          hourlyBillingOnly: false,
+          maxMonthlyCost: null,
+          requirement: null,
+          capability: HETZNER,
+        },
+        shapes: { shapes: [CAX31], read: true },
+      }),
+    ).find((c) => c.shape === 'cax31');
+    expect(refused?.outcome).toBe('refused-by-limit');
+    expect(refused?.note).toContain(
+      'Flui runs on x86 servers only for now; cax31 is arm',
+    );
+  });
+
+  it('never proposes an arm machine as the one to add', () => {
+    const block = alarmBlock(
+      input({
+        group: {
+          provider: 'hetzner',
+          regions: ['fsn1'],
+          shapes: ['cx22'],
+          strategy: 'cheapest',
+          hourlyBillingOnly: false,
+          maxMonthlyCost: null,
+          requirement: null,
+          capability: HETZNER,
+        },
+        shapes: { shapes: [CX22, CAX31], read: true },
+      }),
+    );
+    expect(block.exits.map((e) => e.shape)).not.toContain('cax31');
   });
 });

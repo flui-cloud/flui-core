@@ -212,6 +212,7 @@ const ARGS: Record<string, Record<string, unknown>> = {
   cluster_capacity_plan: {},
   cost_overview: {},
   cluster_node_list: {},
+  server_type_list: { provider: 'hetzner' },
   node_install_log: { operationId: 'op1', since: 120 },
   cluster_node_scale_preview: { nodeId: 'n1' },
   cluster_storage_status: {},

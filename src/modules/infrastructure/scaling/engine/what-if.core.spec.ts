@@ -183,3 +183,23 @@ describe('what if an app asked for this much', () => {
     });
   });
 });
+
+describe('the largest machine a group may buy', () => {
+  it('never counts an arm one', () => {
+    const arm = shape({
+      shape: 'cax41',
+      cores: 16,
+      memoryMi: 32768,
+      architecture: 'arm',
+    });
+    expect(
+      largestBuyable(
+        ladderInput(
+          { cpuMillicores: 100, memoryMi: 100, replicas: 1 },
+          { shapes: ['cax41', 'cx33'] },
+          [arm, CX33],
+        ),
+      )?.shape,
+    ).toBe('cx33');
+  });
+});

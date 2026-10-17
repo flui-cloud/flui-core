@@ -1,5 +1,7 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { CloudProvider } from 'src/modules/providers/enums/cloud-provider.enum';
+import { Sensitivity } from 'src/modules/mask/decorators/sensitivity.decorator';
+import { ServerArchitecture } from 'src/modules/providers/core/catalogue/server-architecture';
 
 export class LabelDto {
   @ApiProperty()
@@ -60,6 +62,15 @@ export class ServerResponseDto {
 
   @ApiProperty({ description: 'Server type/size' })
   server_type: string;
+
+  @ApiPropertyOptional({
+    enum: ['x86', 'arm'],
+    nullable: true,
+    description:
+      'CPU architecture of the server type; null where the provider does not say',
+  })
+  @Sensitivity(Sensitivity.PUBLIC)
+  architecture?: ServerArchitecture | null;
 
   @ApiProperty({ description: 'Server location/datacenter' })
   location: string;

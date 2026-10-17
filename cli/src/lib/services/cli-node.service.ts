@@ -11,6 +11,8 @@ export interface NodeSummary {
   createdAt: string;
   /** Read from the cluster; null when it could not be asked, absent from an older API. */
   takesNewApps?: boolean | null;
+  /** CPU architecture the node reports; null when the cluster could not be asked, absent from an older API. */
+  architecture?: 'x86' | 'arm' | null;
   metadata?: Record<string, any>;
 }
 
@@ -58,7 +60,7 @@ export class CliNodeService {
   async removeWorker(nodeId: string): Promise<RemoveWorkerResult> {
     return this.apiClient.delete<RemoveWorkerResult>(
       `/infrastructure/clusters/${this.clusterId}/workers/${nodeId}`,
-      { timeout: 180_000 },
+      { timeout: 960_000 },
     );
   }
 

@@ -6,6 +6,7 @@ import {
 } from './engine.core';
 import { checkFit } from './fit.core';
 import { FleetRoom } from './room.core';
+import { isSupportedArchitecture } from '../../../providers/core/catalogue/server-architecture';
 
 export interface WhatIfAsk {
   cpuMillicores: number;
@@ -87,6 +88,9 @@ export function largestBuyable(
   for (const name of input.group.shapes) {
     const fact = input.shapes.shapes.find((entry) => entry.shape === name);
     if (!fact || fact.deprecated) continue;
+    if (fact.architecture && !isSupportedArchitecture(fact.architecture)) {
+      continue;
+    }
     if (
       input.architecture &&
       fact.architecture &&

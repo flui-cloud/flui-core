@@ -28,6 +28,13 @@ import {
 } from '../../config/release-override';
 import { ServerTypeCacheService } from '../../services/server-type-cache.service';
 import { ServerTypeValidatorService } from '../../services/server-type-validator.service';
+import {
+  architectureOfType,
+  isSupportedArchitecture,
+  offerableSizes,
+  unsupportedArchitectureMessage,
+} from 'src/modules/providers/core/catalogue/server-architecture';
+import { assertX86Host } from '../../lib/server-architecture-view';
 
 import {
   getRecommendedServerType,
@@ -253,8 +260,6 @@ export default class EnvCreate extends Command {
     );
 
     const problems: string[] = [];
-    if (!/x86_64|aarch64|arm64/.test(arch))
-      problems.push(`unsupported architecture: ${arch}`);
     if (memMb > 0 && memMb < 1800)
       problems.push(`low memory: ${memMb}MB (recommend ≥2GB)`);
     if (k3s !== 'none') problems.push(`k3s already installed at ${k3s}`);
@@ -326,6 +331,15 @@ export default class EnvCreate extends Command {
             `   Verify you can reach the host: ssh -p ${port} ${user}@${host}\n`,
           ),
         );
+        this.exit(1);
+      }
+
+      try {
+        await assertX86Host((command) =>
+          sshService.sshExecWithKey({ host, port, user, keyPath, command }),
+        );
+      } catch (e: any) {
+        console.log(chalk.red(`\n❌ ${e.message}\n`));
         this.exit(1);
       }
 
@@ -697,6 +711,23 @@ export default class EnvCreate extends Command {
           serverTypes = [];
         }
       }
+
+      const requestedArchitecture = architectureOfType(nodeSize, serverTypes);
+      if (
+        requestedArchitecture &&
+        !isSupportedArchitecture(requestedArchitecture)
+      ) {
+        spinner.fail(
+          unsupportedArchitectureMessage(nodeSize, requestedArchitecture),
+        );
+        console.log(
+          chalk.yellow(
+            `Pick an x86 type: flui server-types list --provider ${providerKey}\n`,
+          ),
+        );
+        this.exit(1);
+      }
+      serverTypes = offerableSizes(serverTypes);
 
       if (serverTypes.length > 0) {
         const euRegions = allowedRegions;

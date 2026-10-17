@@ -6,6 +6,7 @@ import { ConfigStorage } from './config-storage';
 import { getCredentialSchema } from './provider-credential-schemas';
 import { validateScalewayCredentials } from './scaleway-validator';
 import { validateOvhCredentials } from './ovh-validator';
+import { archLabel } from './server-architecture-view';
 
 const validator = new ServerTypeValidatorService();
 
@@ -579,7 +580,7 @@ export async function selectServerTypePrompt(
     if (price.monthly) priceStr = `€${price.monthly}/mo`;
     else if (price.hourly) priceStr = `€${price.hourly}/hr`;
     return {
-      label: `${type.name.padEnd(10)} — ${type.cores} vCPU, ${type.memory}GB RAM, ${type.disk}GB ${type.storageType.padEnd(7)} ${priceStr}`,
+      label: `${type.name.padEnd(10)} — ${archLabel(type.architecture).padEnd(3)} ${type.cores} vCPU, ${type.memory}GB RAM, ${type.disk}GB ${type.storageType.padEnd(7)} ${priceStr}`,
     };
   });
 
@@ -599,7 +600,7 @@ export function displayDeprecationWarning(
 ): void {
   console.log(`\n⚠️  Server type '${deprecatedType}' is no longer available\n`);
   console.log(
-    `   Recommended alternative: ${suggestedType.name} (${suggestedType.cores} vCPU, ${suggestedType.memory}GB RAM)`,
+    `   Recommended alternative: ${suggestedType.name} (${archLabel(suggestedType.architecture)}, ${suggestedType.cores} vCPU, ${suggestedType.memory}GB RAM)`,
   );
 
   const price = validator.getFormattedPrice(suggestedType);

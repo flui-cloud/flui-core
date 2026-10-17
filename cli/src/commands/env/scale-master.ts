@@ -1,5 +1,6 @@
 import { Command, Flags } from '@oclif/core';
 import chalk from 'chalk';
+import { archLabel } from '../../lib/server-architecture-view';
 import ora from 'ora';
 import { getNestApp, closeNestApp } from '../../lib/nest-app';
 import { printContextBanner } from '../../lib/context-banner';
@@ -118,7 +119,9 @@ export default class EnvScaleMaster extends Command {
       console.log(
         `   ${chalk.bold('From:')}        ${preview.node.currentServerType}`,
       );
-      console.log(`   ${chalk.bold('To:')}          ${targetType}`);
+      console.log(
+        `   ${chalk.bold('To:')}          ${targetType}${cand ? ` (${archLabel(cand.architecture)})` : ''}`,
+      );
       if (cand) {
         let deltaStr: string;
         if (cand.monthlyDeltaEur === 'n/a') deltaStr = 'n/a';

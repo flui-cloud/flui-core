@@ -1,4 +1,6 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { Sensitivity } from '../../../mask/decorators/sensitivity.decorator';
+import { ServerArchitecture } from '../../../providers/core/catalogue/server-architecture';
 
 export class CapacityMasterDto {
   @ApiProperty()
@@ -6,6 +8,15 @@ export class CapacityMasterDto {
 
   @ApiProperty({ description: 'Provider server type (e.g. cx22, DEV1-S)' })
   serverType: string;
+
+  @ApiProperty({
+    enum: ['x86', 'arm'],
+    nullable: true,
+    description:
+      "CPU architecture of the master's server type; null where the catalogue does not name it",
+  })
+  @Sensitivity(Sensitivity.PUBLIC)
+  architecture: ServerArchitecture | null;
 
   @ApiProperty({ description: 'Allocatable CPU in millicores' })
   allocatableCpuMillicores: number;
@@ -60,6 +71,14 @@ export class CapacityCandidateDto {
 
   @ApiProperty({ enum: ['shared', 'dedicated'] })
   cpuType: 'shared' | 'dedicated';
+
+  @ApiProperty({
+    enum: ['x86', 'arm'],
+    description:
+      'CPU architecture. Only x86 types are offered as resize targets; an arm type appears only as the current one.',
+  })
+  @Sensitivity(Sensitivity.PUBLIC)
+  architecture: ServerArchitecture;
 
   @ApiProperty({ description: 'True if deprecated by the provider' })
   deprecated: boolean;
