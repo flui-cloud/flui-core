@@ -10,6 +10,7 @@ import {
   isCompoundProvider,
 } from '../../lib/provider-credential-schemas';
 import { promptInput, promptMaskedInput } from '../../lib/prompts';
+import { isNonInteractive } from '../../lib/non-interactive';
 import { validateScalewayCredentials } from '../../lib/scaleway-validator';
 import { validateOvhCredentials } from '../../lib/ovh-validator';
 
@@ -33,7 +34,7 @@ export default class ConfigSet extends Command {
     value: Args.string({
       required: false,
       description:
-        'Value to store. Omit for compound providers (e.g. scaleway) to enter values interactively, or pass --stdin.',
+        'Value to store. Omit it in a terminal to be asked for a provider credential without echoing it, or pass --stdin.',
     }),
   };
 
@@ -145,11 +146,16 @@ export default class ConfigSet extends Command {
       return;
     }
 
-    if (!value) {
+    let token = value;
+    if (!token && !fromStdin && process.stdin.isTTY && !isNonInteractive()) {
+      const label = schema?.fields[0]?.label ?? `${provider} token`;
+      token = (await promptMaskedInput(`  ${label}`)).trim();
+    }
+    if (!token) {
       console.log(chalk.red(`\nMissing token for provider '${provider}'\n`));
       this.exit(1);
     }
-    storage.saveToken(provider, value);
+    storage.saveToken(provider, token);
     console.log(chalk.green(`\nProvider configured: ${provider}`));
     console.log(chalk.gray(`Location: ${storage.getConfigPath()}`));
     console.log(chalk.gray('Encryption: AES-256-GCM\n'));
