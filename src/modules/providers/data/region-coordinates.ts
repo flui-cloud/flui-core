@@ -21,6 +21,7 @@ const COORDINATES: Record<CloudProvider, Record<string, RegionCoordinates>> = {
     'fr-par': { latitude: 48.8566, longitude: 2.3522 },
     'nl-ams': { latitude: 52.3676, longitude: 4.9041 },
     'pl-waw': { latitude: 52.2297, longitude: 21.0122 },
+    'it-mil': { latitude: 45.4642, longitude: 9.19 },
   },
   [CloudProvider.CONTABO]: {
     EU: { latitude: 48.9737, longitude: 8.1764 },

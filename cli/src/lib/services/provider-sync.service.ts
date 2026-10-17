@@ -1,5 +1,6 @@
 import { ApiClient } from '../api-client';
 import { ConfigStorage } from '../config-storage';
+import { getScalewayRegions } from '../../config/defaults';
 
 /**
  * Provider sync service - Synchronizes CLI provider configuration to API
@@ -62,7 +63,7 @@ export interface ProviderSyncResult {
 // Provider-specific region configurations
 const PROVIDER_REGIONS: Record<CloudProvider, string[]> = {
   [CloudProvider.HETZNER]: ['nbg1', 'fsn1', 'hel1', 'ash', 'hil'],
-  [CloudProvider.SCALEWAY]: ['fr-par', 'nl-ams', 'pl-waw'],
+  [CloudProvider.SCALEWAY]: getScalewayRegions(),
 };
 
 export class ProviderSyncService {

@@ -1403,7 +1403,7 @@ export class ScalewayProviderService implements ICloudProvider {
       CloudProvider.SCALEWAY,
     );
     const headers = { 'X-Auth-Token': token } as Record<string, string>;
-    const zones = ['fr-par-1', 'fr-par-2', 'nl-ams-1', 'pl-waw-1'];
+    const zones = ['fr-par-1', 'fr-par-2', 'nl-ams-1', 'pl-waw-1', 'it-mil-1'];
     const results: ProviderVolumeSummary[] = [];
     for (const zone of zones) {
       try {
@@ -1783,7 +1783,7 @@ export class ScalewayProviderService implements ICloudProvider {
   }
 
   async listVNets(): Promise<VNetDetails[]> {
-    const regions = ['fr-par', 'nl-ams', 'pl-waw'];
+    const regions = ['fr-par', 'nl-ams', 'pl-waw', 'it-mil'];
     const results = await Promise.all(
       regions.map((r) => this.vpcAdapter.listPrivateNetworks(r)),
     );

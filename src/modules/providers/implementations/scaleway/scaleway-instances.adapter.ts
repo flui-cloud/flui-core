@@ -44,6 +44,7 @@ export const INSTANCE_ZONES: CreateServerZoneEnum[] = [
   CreateServerZoneEnum.PlWaw1,
   CreateServerZoneEnum.PlWaw2,
   CreateServerZoneEnum.PlWaw3,
+  CreateServerZoneEnum.ItMil1,
 ];
 
 export interface ScalewayInstanceServerType

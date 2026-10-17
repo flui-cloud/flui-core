@@ -28,6 +28,7 @@ import { CliNodeRepository } from '../lib/repositories/cli-node.repository';
 import { CliFirewallRepository } from '../lib/repositories/cli-firewall.repository';
 import { EncryptionService } from 'src/modules/shared/encryption/services/encryption.service';
 import { CliSshService } from './cli-ssh.service';
+import { getScalewayRegions } from '../config/defaults';
 import { CliCaService } from './cli-ca.service';
 import { ProviderFactory } from 'src/modules/providers/services/provider.factory';
 import { FirewallProviderFactory } from 'src/modules/providers/core/factories/firewall-provider.factory';
@@ -101,7 +102,7 @@ export class CliClustersService {
     // the vault when it needs them.
     const providerRegions =
       createClusterDto.provider === 'scaleway'
-        ? 'fr-par,nl-ams,pl-waw'
+        ? getScalewayRegions().join(',')
         : createClusterDto.provider === 'ovh'
           ? ''
           : 'nbg1,fsn1,hel1,ash,hil';
@@ -153,6 +154,7 @@ export class CliClustersService {
       provider: createClusterDto.provider,
       region: createClusterDto.region,
       nodeSize: createClusterDto.nodeSize,
+      diskSizeGb: createClusterDto.diskSizeGb,
       image: createClusterDto.image || 'ubuntu-24.04',
       nodeCount: 0, // Will be updated during creation
       status: ClusterStatus.CREATING,

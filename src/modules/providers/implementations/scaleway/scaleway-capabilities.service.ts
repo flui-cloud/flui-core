@@ -207,7 +207,7 @@ export class ScalewayCapabilitiesService
         minimumCost: 0.0088, // DEV1-S: 2 vCPU, 2 GB RAM @ €0.0088/hr (practical minimum)
       },
       // Scaleway private networks are REGIONAL: each VNet is confined to a single region.
-      // To connect servers across Paris, Amsterdam and Warsaw you need a VNet per region.
+      // To connect servers across Paris, Amsterdam, Warsaw and Milan you need a VNet per region.
       // Subnets are flat within the region (no zone sub-scoping); routing is not supported.
       vnetTopology: {
         scope: 'regional',
@@ -226,6 +226,11 @@ export class ScalewayCapabilitiesService
             id: 'pl-waw',
             displayName: 'Warsaw (Poland)',
             coveredRegions: ['pl-waw'],
+          },
+          {
+            id: 'it-mil',
+            displayName: 'Milan (Italy)',
+            coveredRegions: ['it-mil'],
           },
         ],
         supportsSubnets: false,
@@ -292,6 +297,7 @@ export class ScalewayCapabilitiesService
       make('fr-par', 'Paris', 'France', 'FR', '🇫🇷'),
       make('nl-ams', 'Amsterdam', 'Netherlands', 'NL', '🇳🇱'),
       make('pl-waw', 'Warsaw', 'Poland', 'PL', '🇵🇱'),
+      make('it-mil', 'Milan', 'Italy', 'IT', '🇮🇹'),
     ];
   }
 

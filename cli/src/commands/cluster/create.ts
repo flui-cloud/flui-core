@@ -140,7 +140,8 @@ export default class ClusterCreate extends Command {
       );
     }
 
-    const nodeSize = flags['node-size'] ?? getRecommendedServerType(provider);
+    const nodeSize =
+      flags['node-size'] ?? getRecommendedServerType(provider, region);
 
     const fluiNetwork = flags['flui-network'] || !!flags['network-cidr'];
     if (fluiNetwork && flags.vnet) {

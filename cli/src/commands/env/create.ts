@@ -94,7 +94,7 @@ export default class EnvCreate extends Command {
     'disk-size': Flags.integer({
       description:
         'Root disk size in GB. ' +
-        'Required for network-storage instance types (Scaleway PRO2, ENT1). ' +
+        'Network-storage instance types (Scaleway BASIC3, STANDARD3, PRO2) default to 40. ' +
         'Optional for local-SSD types — defaults to the included size of the instance type.',
     }),
     detached: Flags.boolean({
@@ -573,9 +573,9 @@ export default class EnvCreate extends Command {
 
     const cloudProvider =
       CLOUD_PROVIDER_BY_KEY[providerKey] ?? CloudProvider.HETZNER;
-    const nodeSize =
-      flags['node-size'] || getRecommendedServerType(providerKey);
     const region = flags.region || getDefaultRegion(providerKey);
+    const nodeSize =
+      flags['node-size'] || getRecommendedServerType(providerKey, region);
     const allowedRegions = getSupportedRegions(providerKey);
 
     if (!allowedRegions.includes(region)) {
@@ -870,16 +870,25 @@ export default class EnvCreate extends Command {
       // share this one node, and Redis in particular can hang indefinitely
       // waiting on memory below MIN_SPECS.observability.
       const resolvedType = serverTypes?.find((t) => t.id === validatedNodeSize);
+      const diskSizeGb =
+        flags['disk-size'] ??
+        (resolvedType?.storageType === 'network'
+          ? CLI_DEFAULTS.MIN_SPECS.observability.disk
+          : undefined);
       if (resolvedType && !flags['allow-undersized']) {
         const min = CLI_DEFAULTS.MIN_SPECS.observability;
+        const disk =
+          resolvedType.storageType === 'network'
+            ? (diskSizeGb ?? 0)
+            : resolvedType.disk;
         const undersized =
           resolvedType.cores < min.cores ||
           resolvedType.memory < min.memory ||
-          resolvedType.disk < min.disk;
+          disk < min.disk;
         if (undersized) {
           console.log(
             chalk.yellow(
-              `\n⚠  ${validatedNodeSize} (${resolvedType.cores} vCPU / ${resolvedType.memory}GB / ${resolvedType.disk}GB) is below the ` +
+              `\n⚠  ${validatedNodeSize} (${resolvedType.cores} vCPU / ${resolvedType.memory}GB / ${disk}GB) is below the ` +
                 `recommended minimum for a control cluster (${min.cores} vCPU / ${min.memory}GB / ${min.disk}GB — ` +
                 `Postgres, Redis, Zitadel and observability all run on this one node). It may never reach READY.\n`,
             ),
@@ -900,6 +909,7 @@ export default class EnvCreate extends Command {
       console.log(chalk.cyan('\n🚀 Creating Flui Control Cluster (K3s)\n'));
       console.log(chalk.dim(`   Provider: ${providerKey}`));
       console.log(chalk.dim(`   Node Size: ${validatedNodeSize}`));
+      if (diskSizeGb) console.log(chalk.dim(`   Disk: ${diskSizeGb} GB`));
       console.log(chalk.dim(`   Region: ${validatedRegion}`));
       console.log(chalk.dim(`   Worker Nodes: ${flags['node-count']}\n`));
 
@@ -1113,7 +1123,7 @@ export default class EnvCreate extends Command {
           : undefined,
         adminEmail,
         acmeStaging,
-        flags['disk-size'],
+        diskSizeGb,
         {
           sharedStorageEnabled: !flags['no-shared-storage'],
           sharedStorageVolumeSizeGb: flags['shared-storage-size'],

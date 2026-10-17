@@ -11,8 +11,8 @@ export const CLI_DEFAULTS = {
   HETZNER_REGIONS: ['nbg1', 'fsn1', 'hel1', 'ash', 'hil', 'sin'] as const,
   DEFAULT_HETZNER_REGION: 'nbg1' as const,
 
-  // Scaleway sells instances from these three and nowhere else.
-  SCALEWAY_REGIONS: ['fr-par', 'nl-ams', 'pl-waw'] as const,
+  // Scaleway sells instances from these four and nowhere else.
+  SCALEWAY_REGIONS: ['fr-par', 'nl-ams', 'pl-waw', 'it-mil'] as const,
   DEFAULT_SCALEWAY_REGION: 'fr-par' as const,
 
   // OVH region codes. Not a catalogue: the real list comes from the Keystone
@@ -25,7 +25,14 @@ export const CLI_DEFAULTS = {
 
   FALLBACK_SERVER_TYPES: {
     hetzner: ['cx23', 'cx33', 'cx32', 'cpx21', 'cx42', 'cpx31'],
-    scaleway: ['DEV1-M', 'DEV1-L', 'GP1-XS', 'GP1-S'],
+    scaleway: [
+      'DEV1-M',
+      'DEV1-L',
+      'GP1-XS',
+      'GP1-S',
+      'BASIC3-X2C-8G',
+      'BASIC3-X4C-8G',
+    ],
     // The d2 family does not exist in Milan or Paris — those regions carry
     // only the current-generation c3/b3/r3 shapes — so c3-4 and b3-8, the two
     // that are present in all nine regions, follow the d2 entries rather than
@@ -45,6 +52,12 @@ export const CLI_DEFAULTS = {
     // MIN_SPECS.observability below (~€0.0206/h).
     ovh: 'd2-4',
   },
+
+  // Regions where the provider's recommended type is not sold. Milan carries
+  // only the current-generation shapes, which boot from a network volume.
+  SERVER_TYPE_BY_REGION: {
+    scaleway: { 'it-mil': 'BASIC3-X2C-8G' },
+  } as Record<string, Record<string, string>>,
 
   MIN_SPECS: {
     observability: {
@@ -74,8 +87,15 @@ export const DEPRECATION_STRATEGY = {
 export type SupportedProvider =
   keyof typeof CLI_DEFAULTS.RECOMMENDED_SERVER_TYPES;
 
-export function getRecommendedServerType(provider: string): string {
+export function getRecommendedServerType(
+  provider: string,
+  region?: string,
+): string {
+  const regional = region
+    ? CLI_DEFAULTS.SERVER_TYPE_BY_REGION[provider]?.[region]
+    : undefined;
   return (
+    regional ||
     CLI_DEFAULTS.RECOMMENDED_SERVER_TYPES[provider as SupportedProvider] ||
     CLI_DEFAULTS.RECOMMENDED_SERVER_TYPES.hetzner
   );

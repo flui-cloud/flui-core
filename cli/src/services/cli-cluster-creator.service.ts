@@ -358,6 +358,7 @@ export class CliClusterCreatorService {
         user_data: masterUserData,
         firewalls: firewallId ? [firewallId] : undefined,
         networks: envVnet ? [envVnet.vnetProviderResourceId] : undefined,
+        diskSizeGb: cluster.diskSizeGb,
         attachedVolumes: sharedStorageEnabled
           ? [
               {
@@ -566,6 +567,7 @@ export class CliClusterCreatorService {
             user_data: workerUserData,
             firewalls: firewallId ? [firewallId] : undefined,
             networks: envVnet ? [envVnet.vnetProviderResourceId] : undefined,
+            diskSizeGb: cluster.diskSizeGb,
           });
 
           workerNode.providerResourceId = workerServer.serverId;
