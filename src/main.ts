@@ -164,10 +164,18 @@ async function bootstrap() {
     });
     app.useWebSocketAdapter(ioAdapter);
   } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    // Redis is required like it is for the queues: a copy emitting only to
+    // its own sockets would silently lose events once the API is scaled out.
+    if (process.env.SKIP_STARTUP_CHECKS !== 'true') {
+      new Logger('Websockets').error(
+        `Redis refused the websocket adapter (${reason}); stopping rather than keeping events within this copy of the API`,
+      );
+      await ioAdapter.close();
+      process.exit(1);
+    }
     new Logger('Websockets').warn(
-      `Websocket events stay within this copy of the API: Redis refused the adapter (${
-        error instanceof Error ? error.message : String(error)
-      })`,
+      `Websocket events stay within this copy of the API: Redis refused the adapter (${reason})`,
     );
   }
 

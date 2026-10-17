@@ -142,6 +142,8 @@ describe('ByosNodeRemovalService', () => {
     expect(masterCalls[0].host).toBe('10.89.0.2');
     expect(masterCalls[0].command).toContain('cordon flui-byos-worker-1');
     expect(masterCalls[1].command).toContain('drain flui-byos-worker-1');
+    expect(masterCalls[1].command).toContain('--timeout=660s');
+    expect(masterCalls[1].timeout).toBe(680_000);
     expect(masterCalls[2].command).toContain('delete node flui-byos-worker-1');
     expect(masterCalls[2].command).toContain(
       'flui-byos-worker-1.node-password.k3s',

@@ -2,7 +2,7 @@ import { Injectable, Logger, Optional } from '@nestjs/common';
 import { ModuleRef } from '@nestjs/core';
 import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
-import { IsNull, LessThanOrEqual, Repository } from 'typeorm';
+import { FindOptionsWhere, IsNull, LessThanOrEqual, Repository } from 'typeorm';
 import { IamRoleBindingEntity } from '../entities/iam-role-binding.entity';
 import { UserEntity } from '../../auth/entities/user.entity';
 import { BUILTIN_ROLES, IamRole } from '../constants/iam-roles';
@@ -49,9 +49,13 @@ export class GrantNoticeService {
     });
     for (const grant of ending) {
       if (!grant.expiresAt || grant.expiresAt <= now) continue;
+      const claimed = await this.claim(
+        { id: grant.id, expiringNoticeAt: IsNull() },
+        { expiringNoticeAt: now },
+      );
+      if (!claimed) continue;
       const lent = grant.expiresAt.getTime() - grant.createdAt.getTime();
       if (lent > DAY_MS) await this.announce('expiring', grant);
-      await this.bindings.update(grant.id, { expiringNoticeAt: now });
     }
 
     const ended = await this.bindings.find({
@@ -61,12 +65,30 @@ export class GrantNoticeService {
       },
     });
     for (const grant of ended) {
-      await this.announce('expired', grant);
-      await this.bindings.update(grant.id, {
-        expiredNoticeAt: now,
-        expiringNoticeAt: grant.expiringNoticeAt ?? now,
-      });
+      const claimed = await this.claim(
+        { id: grant.id, expiredNoticeAt: IsNull() },
+        {
+          expiredNoticeAt: now,
+          expiringNoticeAt: grant.expiringNoticeAt ?? now,
+        },
+      );
+      if (claimed) await this.announce('expired', grant);
     }
+  }
+
+  /**
+   * Marks the notice as sent in the statement that checks nobody marked it
+   * yet: of two copies of the API sweeping together, only one announces.
+   */
+  private async claim(
+    where: FindOptionsWhere<IamRoleBindingEntity>,
+    sent: Pick<
+      Partial<IamRoleBindingEntity>,
+      'expiringNoticeAt' | 'expiredNoticeAt'
+    >,
+  ): Promise<boolean> {
+    const result = await this.bindings.update(where, sent);
+    return (result.affected ?? 0) > 0;
   }
 
   private async announce(

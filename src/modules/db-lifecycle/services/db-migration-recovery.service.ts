@@ -11,6 +11,7 @@ import {
   DB_LIFECYCLE_JOB_TYPES,
   DB_LIFECYCLE_QUEUE,
 } from '../db-lifecycle.constants';
+import { withAdvisoryLockWaiting } from '../../common/leadership/advisory-lock';
 
 /**
  * After a restart, physical migrations are handed back to their jobs unless
@@ -30,9 +31,15 @@ export class DbMigrationRecoveryService implements OnApplicationBootstrap {
 
   async onApplicationBootstrap(): Promise<void> {
     try {
-      const held = await this.heldMigrationIds();
-      await this.resumeRuns(held);
-      await this.resumeCutovers(held);
+      await withAdvisoryLockWaiting(
+        this.migRepo.manager.connection,
+        'db-migration-recovery',
+        async () => {
+          const held = await this.heldMigrationIds();
+          await this.resumeRuns(held);
+          await this.resumeCutovers(held);
+        },
+      );
     } catch (err: any) {
       this.logger.error(
         `[db-migration] could not resume interrupted migrations: ${err?.message ?? err}`,
@@ -54,9 +61,11 @@ export class DbMigrationRecoveryService implements OnApplicationBootstrap {
       })
     ).filter((m) => !held.has(m.id));
     for (const mig of stuck) {
-      await this.queue.add(DB_LIFECYCLE_JOB_TYPES.RUN_DB_MIGRATION, {
-        migrationId: mig.id,
-      });
+      await this.queue.add(
+        DB_LIFECYCLE_JOB_TYPES.RUN_DB_MIGRATION,
+        { migrationId: mig.id },
+        { jobId: `resume-run:${mig.id}:${mig.updatedAt?.getTime() ?? 0}` },
+      );
       this.logger.warn(
         `[db-migration] ${mig.id} was ${mig.status} at start-up with no job — resuming it`,
       );
@@ -74,9 +83,11 @@ export class DbMigrationRecoveryService implements OnApplicationBootstrap {
       })
     ).filter((m) => !held.has(m.id));
     for (const mig of stuck) {
-      await this.queue.add(DB_LIFECYCLE_JOB_TYPES.RUN_DB_CUTOVER, {
-        migrationId: mig.id,
-      });
+      await this.queue.add(
+        DB_LIFECYCLE_JOB_TYPES.RUN_DB_CUTOVER,
+        { migrationId: mig.id },
+        { jobId: `resume-cutover:${mig.id}:${mig.updatedAt?.getTime() ?? 0}` },
+      );
       this.logger.warn(
         `[db-migration] ${mig.id} was in cutover at start-up — asking the destination where it stands${
           pausedAndOpen(mig.poolerCut)

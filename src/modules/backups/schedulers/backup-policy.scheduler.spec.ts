@@ -75,7 +75,7 @@ describe('BackupPolicyScheduler, the first run a policy ever gets', () => {
  */
 describe('BackupPolicyScheduler, a policy whose cluster is gone', () => {
   const PAST = new Date(Date.now() - 60_000);
-  function make(cluster: Record<string, unknown> | null) {
+  function make(cluster: Record<string, unknown> | null, claimable = true) {
     const scheduler = Object.create(
       BackupPolicyScheduler.prototype,
     ) as BackupPolicyScheduler;
@@ -90,13 +90,14 @@ describe('BackupPolicyScheduler, a policy whose cluster is gone', () => {
       metadata: { keep: 'me' },
     };
     const saved: Record<string, unknown>[] = [];
-    const updated: { id: string; patch: Record<string, unknown> }[] = [];
+    const updated: { id: unknown; patch: Record<string, unknown> }[] = [];
     const jobs: unknown[] = [];
     r.logger = { log: jest.fn(), warn: jest.fn(), error: jest.fn() };
     r.policyRepo = {
       find: jest.fn(async () => [policy]),
-      update: jest.fn(async (id: string, patch: Record<string, unknown>) => {
+      update: jest.fn(async (id: unknown, patch: Record<string, unknown>) => {
         updated.push({ id, patch });
+        return { affected: claimable ? 1 : 0 };
       }),
       save: jest.fn(async (p: Record<string, unknown>) => {
         saved.push({ ...p });
@@ -110,7 +111,7 @@ describe('BackupPolicyScheduler, a policy whose cluster is gone', () => {
         jobs.push(args);
       }),
     };
-    return { scheduler, saved, updated, jobs };
+    return { scheduler, saved, updated, jobs, policy, r };
   }
 
   it('pauses it with the reason instead of launching a job, when the cluster was deleted', async () => {
@@ -154,5 +155,37 @@ describe('BackupPolicyScheduler, a policy whose cluster is gone', () => {
     const h = make({ status: 'deleted', deletedAt: new Date() });
     await expect(h.scheduler.retireGoneClusterPolicies()).resolves.toBe(1);
     expect(h.saved[0]).toMatchObject({ status: 'paused' });
+  });
+
+  it('claims the run before queueing it, moving it forward only while it is still due', async () => {
+    const h = make({ status: 'ready' });
+    await h.scheduler.tick();
+    expect(h.updated).toHaveLength(1);
+    const [{ id, patch }] = h.updated;
+    expect(id).toMatchObject({ id: 'p-1', nextRunAt: expect.anything() });
+    expect(patch.lastRunAt).toBeInstanceOf(Date);
+    expect((patch.nextRunAt as Date).getTime()).toBeGreaterThan(Date.now());
+    expect(h.jobs).toHaveLength(1);
+  });
+
+  it('does not queue a run another copy of the API already claimed', async () => {
+    const h = make({ status: 'ready' }, false);
+    await h.scheduler.tick();
+    expect(h.updated).toHaveLength(1);
+    expect(h.jobs).toHaveLength(0);
+  });
+
+  it('gives the claim back when the run cannot be queued, so the next tick tries again', async () => {
+    const h = make({ status: 'ready' });
+    (h.r.jobsService as { createOnDemand: jest.Mock }).createOnDemand = jest.fn(
+      async () => {
+        throw new Error('redis down');
+      },
+    );
+    await h.scheduler.tick();
+    expect(h.updated).toHaveLength(2);
+    const claimedNext = h.updated[0].patch.nextRunAt;
+    expect(h.updated[1].id).toEqual({ id: 'p-1', nextRunAt: claimedNext });
+    expect(h.updated[1].patch).toEqual({ lastRunAt: null, nextRunAt: PAST });
   });
 });

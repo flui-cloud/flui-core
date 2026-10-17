@@ -5,7 +5,8 @@ import {
   OnModuleInit,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { DataSource, Repository } from 'typeorm';
+import { withAdvisoryLockWaiting } from '../../common/leadership/advisory-lock';
 import { ConfigService } from '@nestjs/config';
 import { promises as fs } from 'node:fs';
 import * as path from 'node:path';
@@ -30,10 +31,15 @@ export class GitHubIntegrationConfigService implements OnModuleInit {
     private readonly installationRepo: Repository<GitHubAppInstallationEntity>,
     private readonly configService: ConfigService,
     private readonly encryptionService: EncryptionService,
+    private readonly dataSource: DataSource,
   ) {}
 
   async onModuleInit(): Promise<void> {
-    await this.migrateFromEnvIfNeeded();
+    await withAdvisoryLockWaiting(
+      this.dataSource,
+      'boot-seed:github-integration-config',
+      () => this.migrateFromEnvIfNeeded(),
+    );
   }
 
   private async migrateFromEnvIfNeeded(): Promise<void> {

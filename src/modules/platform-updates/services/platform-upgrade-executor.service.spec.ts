@@ -294,6 +294,12 @@ function build(setup: Setup = {}) {
     ]),
   ) as never;
   const encryption = { decrypt: jest.fn(() => 'kubeconfig') };
+  const apiSizing = {
+    reconcile: jest.fn(() => {
+      calls.push('api-sizing');
+      return Promise.resolve();
+    }),
+  };
 
   const checks = new PlatformUpgradeChecksService(
     clusters as never,
@@ -313,6 +319,7 @@ function build(setup: Setup = {}) {
     k3s as never,
     declaredImages as never,
     checks,
+    apiSizing as never,
   );
   service.sleep = () => Promise.resolve();
   service.runningVersion = setup.runningVersion ?? TARGET;
@@ -338,6 +345,7 @@ function build(setup: Setup = {}) {
     backupJobsService,
     k3s,
     declaredImages,
+    apiSizing,
   };
 }
 
@@ -353,6 +361,7 @@ describe('PlatformUpgradeExecutorService', () => {
       'backup:11111111-1111-4111-8111-111111111111',
       'manifests:ctl',
       'manifests:w1',
+      'api-sizing',
       'image:fluiWeb',
       'k3s:w1',
       `declare:web:${TARGET}`,
@@ -380,6 +389,20 @@ describe('PlatformUpgradeExecutorService', () => {
       });
     }
     expect(manifests.apply).toHaveBeenCalledTimes(2);
+  });
+
+  it('puts the API back to its chosen size once the manifests are written', async () => {
+    const { service, apiSizing } = build();
+    await service.execute('op-1');
+    expect(apiSizing.reconcile).toHaveBeenCalledTimes(1);
+  });
+
+  it('carries on with the update when the API cannot be resized', async () => {
+    const { service, row, apiSizing } = build();
+    apiSizing.reconcile.mockRejectedValueOnce(new Error('no leader'));
+    await service.execute('op-1');
+    expect(row().status).toBe(OperationStatus.COMPLETED);
+    expect(phaseStatus(row().metadata)[1]).toEqual(['manifests', 'done']);
   });
 
   it('gives each phase a deadline while it runs', async () => {

@@ -5,8 +5,15 @@ jest.mock('jose', () => ({}));
 jest.mock('@octokit/rest', () => ({ Octokit: class {} }));
 jest.mock('@octokit/auth-app', () => ({ createAppAuth: jest.fn() }));
 jest.mock('libsodium-wrappers', () => ({ ready: Promise.resolve() }));
+jest.mock('../../common/leadership/advisory-lock', () =>
+  jest.requireActual('../../common/leadership/testing/fake-advisory-locks'),
+);
 
 import { FullMigrationProcessor } from './full-migration.processor';
+import {
+  holdLock,
+  resetFakeLocks,
+} from '../../common/leadership/testing/fake-advisory-locks';
 import {
   FullCutoverMode,
   FullMigrationStatus,
@@ -34,6 +41,7 @@ function setup(
   const db = children.db;
   const app = children.app;
   const fmRepo = {
+    manager: {},
     findOne: jest.fn(async () => ({ ...row })),
     save: jest.fn(async (e: any) => Object.assign(row, e)),
   };
@@ -97,6 +105,30 @@ function setup(
 const job = { data: { migrationId: 'fm-1' } } as any;
 
 describe('FullMigrationProcessor run, delivered again', () => {
+  beforeEach(() => resetFakeLocks());
+
+  it('leaves a migration another copy of the API is driving alone and tries again later', async () => {
+    const { proc, dbMig, appMig, ops } = setup({});
+    const queue = { add: jest.fn(async () => undefined) };
+    const release = holdLock('full-migration:fm-1');
+    await proc.run({
+      ...job,
+      id: '3',
+      name: 'run-full-migration',
+      opts: {},
+      queue,
+    });
+    release();
+    expect(ops.load).not.toHaveBeenCalled();
+    expect(dbMig.create).not.toHaveBeenCalled();
+    expect(appMig.create).not.toHaveBeenCalled();
+    expect(queue.add).toHaveBeenCalledWith(
+      'run-full-migration',
+      { migrationId: 'fm-1', heldRetries: 1 },
+      { delay: 60_000, jobId: expect.stringMatching(/^3:held:\d+$/) },
+    );
+  });
+
   it('re-attaches to its DB leg in DB_REPLICATING and carries on, never creating a second one', async () => {
     const { proc, row, dbMig, appMig, ops } = setup(
       { status: FullMigrationStatus.DB_REPLICATING, dbMigrationId: 'db-1' },
@@ -184,7 +216,9 @@ describe('FullMigrationProcessor run, delivered again', () => {
     );
     const first = ctx.proc.run(job);
     await new Promise((r) => setImmediate(r));
-    await ctx.proc.run(job);
+    const queue = { add: jest.fn(async () => undefined) };
+    await ctx.proc.run({ ...job, id: '4', name: 'run', opts: {}, queue });
+    expect(queue.add).toHaveBeenCalledTimes(1);
     release();
     await first;
     expect(ctx.dbMig.create).toHaveBeenCalledTimes(1);

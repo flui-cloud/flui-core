@@ -6,7 +6,8 @@ import {
   Inject,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { DataSource, Repository } from 'typeorm';
+import { withAdvisoryLockWaiting } from '../../common/leadership/advisory-lock';
 import { ApiKeyService } from '../services/api-key.service';
 import { SERVICE_IDENTITY } from '../constants/service-identities';
 import {
@@ -102,9 +103,16 @@ export class BootstrapSeeder implements OnModuleInit {
       | ProviderBootstrapSeederRegistration[]
       | null,
     private readonly billingIntervals: BillingIntervalsService,
+    private readonly dataSource: DataSource,
   ) {}
 
   async onModuleInit() {
+    await withAdvisoryLockWaiting(this.dataSource, 'boot-seed:bootstrap', () =>
+      this.seed(),
+    );
+  }
+
+  private async seed(): Promise<void> {
     this.logEnvSummary();
 
     const results: Record<string, 'ok' | 'skipped' | 'error'> = {};

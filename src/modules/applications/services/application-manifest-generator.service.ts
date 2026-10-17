@@ -39,6 +39,7 @@ import {
   renderPgbouncerIni,
   renderUserlist,
 } from '../utils/db-pooler.core';
+import { isPlatformApi } from '../schedulers/platform-api-sizing';
 
 export interface GeneratedManifest {
   kind: ApplicationResourceKind;
@@ -224,6 +225,16 @@ function ephemeralLine(value: string | undefined, indent: string): string {
 }
 
 export const DEFAULT_TARGET_CPU = 80;
+
+/**
+ * The API runs long jobs (migrations, backups, builds) in-process: it grows
+ * quickly but gives copies back one at a time after ten quiet minutes, so a
+ * passing dip does not cut work in flight.
+ */
+export const PLATFORM_API_HPA_BEHAVIOR: ApplicationHpaBehavior = {
+  scaleUp: { stabilizationWindowSeconds: 0, step: 2 },
+  scaleDown: { stabilizationWindowSeconds: 600, step: 1 },
+};
 
 @Injectable()
 export class ApplicationManifestGeneratorService {
@@ -927,7 +938,10 @@ export class ApplicationManifestGeneratorService {
       .replaceAll('{{METRICS_BLOCK}}', this.renderMetricsBlock(app))
       .replaceAll(
         '{{BEHAVIOR_BLOCK}}',
-        this.renderHpaBehaviorBlock(app.scaling?.horizontal?.behavior),
+        this.renderHpaBehaviorBlock(
+          app.scaling?.horizontal?.behavior ??
+            (isPlatformApi(app) ? PLATFORM_API_HPA_BEHAVIOR : undefined),
+        ),
       );
 
     return {

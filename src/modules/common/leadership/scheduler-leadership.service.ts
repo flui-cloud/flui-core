@@ -12,6 +12,7 @@ const LOCK_CLASS = 0x464c5549;
 const LOCK_OBJECT = 1;
 
 const POLL_MS = Number(process.env.FLUI_LEADERSHIP_POLL_MS) || 5000;
+const DRAIN_MS = Number(process.env.FLUI_SCHEDULER_DRAIN_MS) || 25_000;
 
 /**
  * Prefix for a job that keeps this copy's own memory up to date rather than
@@ -27,7 +28,9 @@ export const LOCAL_JOB = 'local:';
  * shortage. The copy holding a session-level Postgres advisory lock is the
  * leader and keeps the jobs running; the others stop theirs. The lock lives
  * on a connection of its own, so it goes with the copy: when that copy stops
- * or loses the database, another one takes over within a poll.
+ * or loses the database, another one takes over within a poll. On shutdown it
+ * keeps the lock until the runs already started have finished, for a while,
+ * so the next leader never starts the same work beside them.
  */
 @Injectable()
 export class SchedulerLeadershipService
@@ -39,6 +42,8 @@ export class SchedulerLeadershipService
   private timer: NodeJS.Timeout | null = null;
   private checking = false;
   private readonly listeners = new Set<(leader: boolean) => void>();
+  private readonly inFlight = new Set<Promise<void>>();
+  private readonly tracked = new WeakSet<object>();
 
   constructor(
     private readonly dataSource: DataSource,
@@ -67,7 +72,30 @@ export class SchedulerLeadershipService
     if (this.timer) clearInterval(this.timer);
     this.setLeader(false);
     this.applyToJobs();
+    await this.drain();
     await this.release();
+  }
+
+  /** Waits for the runs in flight, bounded so a stuck one cannot hold the shutdown. */
+  async drain(timeoutMs = DRAIN_MS): Promise<void> {
+    if (this.inFlight.size === 0) return;
+    this.logger.log(
+      `Waiting up to ${Math.round(timeoutMs / 1000)}s for ${this.inFlight.size} scheduled run(s) to finish`,
+    );
+    let timer: NodeJS.Timeout | undefined;
+    const finished = await Promise.race([
+      Promise.all([...this.inFlight]).then(() => true),
+      new Promise<false>((resolve) => {
+        timer = setTimeout(() => resolve(false), timeoutMs);
+        timer.unref();
+      }),
+    ]);
+    if (timer) clearTimeout(timer);
+    if (!finished) {
+      this.logger.warn(
+        `${this.inFlight.size} scheduled run(s) still going after ${Math.round(timeoutMs / 1000)}s; letting the lock go anyway`,
+      );
+    }
   }
 
   /** Takes the lock if it is free, confirms it is still held, and makes the jobs agree. */
@@ -125,9 +153,42 @@ export class SchedulerLeadershipService
   private applyToJobs(): void {
     for (const [name, job] of this.registry.getCronJobs()) {
       if (name.startsWith(LOCAL_JOB)) continue;
+      this.trackRuns(job);
       if (this.leader && !job.isActive) job.start();
       if (!this.leader && job.isActive) job.stop();
     }
+  }
+
+  /**
+   * The cron library fires a job without awaiting it, so a run is only seen by
+   * wrapping the job's callbacks; `_callbacks` is its internal list.
+   */
+  private trackRuns(job: object): void {
+    if (this.tracked.has(job)) return;
+    const callbacks = (job as { _callbacks?: unknown })._callbacks;
+    if (!Array.isArray(callbacks)) return;
+    this.tracked.add(job);
+    callbacks.forEach((callback: (...args: unknown[]) => unknown, i) => {
+      callbacks[i] = this.tracking(callback);
+    });
+  }
+
+  private tracking(
+    callback: (...args: unknown[]) => unknown,
+  ): (...args: unknown[]) => unknown {
+    const inFlight = this.inFlight;
+    return function (this: unknown, ...args: unknown[]) {
+      const result = callback.apply(this, args);
+      if (result instanceof Promise) {
+        const settled = result.then(
+          () => undefined,
+          () => undefined,
+        );
+        inFlight.add(settled);
+        void settled.then(() => inFlight.delete(settled));
+      }
+      return result;
+    };
   }
 
   /**

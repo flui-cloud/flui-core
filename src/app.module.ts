@@ -85,6 +85,8 @@ import { AttachedServicesModule } from './modules/attached-services/attached-ser
         extra: {
           options: '-c timezone=UTC',
           application_name: API_APPLICATION_NAME,
+          max: Number(configService.get('DB_POOL_MAX', 10)) || 10,
+          connectionTimeoutMillis: 30_000,
         },
         entities,
         // Prod aligns the schema through versioned migrations run at boot;

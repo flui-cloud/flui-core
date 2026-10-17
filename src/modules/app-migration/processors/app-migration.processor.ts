@@ -29,8 +29,13 @@ import { AppMigrationBridgeLeg } from './app-migration.bridge-leg';
 import { AppMigrationRecord } from './app-migration.record';
 import { AppMigrationRoutes } from './app-migration.routes';
 import { AppMigrationWorkloads } from './app-migration.workloads';
+import { withAdvisoryLock } from '../../common/leadership/advisory-lock';
+import {
+  HeldRetryData,
+  retryHeldDelivery,
+} from '../../common/leadership/held-delivery';
 
-interface AppMigrationJobData {
+interface AppMigrationJobData extends HeldRetryData {
   migrationId: string;
 }
 
@@ -46,7 +51,6 @@ interface AppMigrationJobData {
 @Processor(APP_MIGRATION_QUEUE)
 export class AppMigrationProcessor {
   private readonly logger = new Logger(AppMigrationProcessor.name);
-  private readonly provisioning = new Set<string>();
   private readonly record: AppMigrationRecord;
   private readonly routes: AppMigrationRoutes;
   private readonly workloads: AppMigrationWorkloads;
@@ -104,10 +108,20 @@ export class AppMigrationProcessor {
 
   @Process(APP_MIGRATION_JOB_TYPES.RUN_APP_MIGRATION)
   async run(job: Job<AppMigrationJobData>): Promise<void> {
-    const mig = await this.migRepo.findOne({
-      where: { id: job.data.migrationId },
-    });
-    if (!mig) throw new Error(`Migration ${job.data.migrationId} not found`);
+    const id = job.data.migrationId;
+    const outcome = await withAdvisoryLock(
+      this.migRepo.manager.connection,
+      `app-migration:${id}`,
+      () => this.runHeld(id),
+    );
+    if (!outcome.ran) {
+      await retryHeldDelivery(job, this.logger, `[app-migration] ${id} run`);
+    }
+  }
+
+  private async runHeld(id: string): Promise<void> {
+    const mig = await this.migRepo.findOne({ where: { id } });
+    if (!mig) throw new Error(`Migration ${id} not found`);
     // A run delivered again (a restart, a lapsed lock) resumes provisioning,
     // which is idempotent; past it, the state belongs to the cutover jobs.
     if (
@@ -119,18 +133,7 @@ export class AppMigrationProcessor {
       );
       return;
     }
-    if (this.provisioning.has(mig.id)) {
-      this.logger.warn(
-        `[app-migration] ${mig.id} run delivered again while this process still provisions it — skipped`,
-      );
-      return;
-    }
-    this.provisioning.add(mig.id);
-    try {
-      await this.provision(mig);
-    } finally {
-      this.provisioning.delete(mig.id);
-    }
+    await this.provision(mig);
   }
 
   private async provision(mig: AppMigrationEntity): Promise<void> {

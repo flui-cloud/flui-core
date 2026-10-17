@@ -1,6 +1,8 @@
 import { Injectable, Logger, OnApplicationBootstrap } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bull';
 import { Queue } from 'bull';
+import { DataSource } from 'typeorm';
+import { withAdvisoryLockWaiting } from '../../common/leadership/advisory-lock';
 import {
   OIDC_BOOTSTRAP_QUEUE,
   OIDC_BOOTSTRAP_JOB,
@@ -24,12 +26,18 @@ export class OidcBootstrapSeeder implements OnApplicationBootstrap {
     @InjectQueue(OIDC_BOOTSTRAP_QUEUE)
     private readonly queue: Queue,
     private readonly oidcBootstrapService: OidcBootstrapService,
+    private readonly dataSource: DataSource,
   ) {}
 
   async onApplicationBootstrap(): Promise<void> {
     const authMode = (process.env.AUTH_MODE ?? '').toLowerCase();
     if (authMode !== 'oidc') return;
+    await withAdvisoryLockWaiting(this.dataSource, 'boot-seed:oidc', () =>
+      this.seed(),
+    );
+  }
 
+  private async seed(): Promise<void> {
     // OIDC_AUDIENCE is the client ID of the OIDC app and is empty until the
     // provider app has been created — it is the authoritative marker of
     // "bootstrap done". OIDC_ISSUER is set up-front by the bootstrap manifests,

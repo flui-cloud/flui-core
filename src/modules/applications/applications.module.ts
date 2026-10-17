@@ -298,6 +298,7 @@ import { FluiRegistryModule } from '../flui-registry/flui-registry.module';
     ApplicationBuildWatcherService,
     ApplicationReleaseService,
     SystemAppCatalogService,
+    PlatformApiSizingScheduler,
     DeployConfigService,
     DedicatedPlacementService,
     ScheduledJobsService,

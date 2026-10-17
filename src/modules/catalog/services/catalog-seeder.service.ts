@@ -1,6 +1,8 @@
 import { Injectable, Logger, OnApplicationBootstrap } from '@nestjs/common';
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { DataSource } from 'typeorm';
+import { withAdvisoryLockWaiting } from '../../common/leadership/advisory-lock';
 import { getProjectPath } from '../../../common/utils/project-root.util';
 import { CatalogAppDefinitionRepository } from '../repositories/catalog-app-definition.repository';
 import { CatalogManifestLoaderService } from './catalog-manifest-loader.service';
@@ -58,9 +60,16 @@ export class CatalogSeederService implements OnApplicationBootstrap {
   constructor(
     private readonly repo: CatalogAppDefinitionRepository,
     private readonly loader: CatalogManifestLoaderService,
+    private readonly dataSource: DataSource,
   ) {}
 
   async onApplicationBootstrap(): Promise<void> {
+    await withAdvisoryLockWaiting(this.dataSource, 'boot-seed:catalog', () =>
+      this.seed(),
+    );
+  }
+
+  private async seed(): Promise<void> {
     const seedDir = getProjectPath('src', 'modules', 'catalog', 'seed');
     let files: string[];
     try {

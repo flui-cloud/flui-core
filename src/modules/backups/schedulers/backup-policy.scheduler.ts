@@ -67,15 +67,18 @@ export class BackupPolicyScheduler implements OnApplicationBootstrap {
           continue;
         }
 
-        await this.jobsService.createOnDemand(
-          policy.userId,
-          { policyId: policy.id },
-          BackupJobTriggerType.SCHEDULED,
-        );
-        await this.policyRepo.update(policy.id, {
-          lastRunAt: now,
-          nextRunAt: this.computeNextRun(policy.cronSchedule, now),
-        });
+        const nextRunAt = this.computeNextRun(policy.cronSchedule, now);
+        if (!(await this.claim(policy, now, nextRunAt))) continue;
+        try {
+          await this.jobsService.createOnDemand(
+            policy.userId,
+            { policyId: policy.id },
+            BackupJobTriggerType.SCHEDULED,
+          );
+        } catch (err) {
+          await this.unclaim(policy, nextRunAt);
+          throw err;
+        }
         this.logger.log(
           `[backup-scheduler] enqueued policy=${policy.id} cron=${policy.cronSchedule}`,
         );
@@ -85,6 +88,36 @@ export class BackupPolicyScheduler implements OnApplicationBootstrap {
         );
       }
     }
+  }
+
+  /**
+   * Moves the run forward in the same statement that checks it is still due,
+   * so of two copies of the API reading the policy together only one fires it.
+   */
+  private async claim(
+    policy: BackupPolicyEntity,
+    now: Date,
+    nextRunAt: Date,
+  ): Promise<boolean> {
+    const claimed = await this.policyRepo.update(
+      { id: policy.id, nextRunAt: LessThanOrEqual(now) },
+      { lastRunAt: now, nextRunAt },
+    );
+    return (claimed.affected ?? 0) > 0;
+  }
+
+  /** A run that could not be queued stays due for the next tick. */
+  private async unclaim(
+    policy: BackupPolicyEntity,
+    claimedNextRunAt: Date,
+  ): Promise<void> {
+    await this.policyRepo.update(
+      { id: policy.id, nextRunAt: claimedNextRunAt },
+      {
+        lastRunAt: policy.lastRunAt ?? (null as never),
+        nextRunAt: policy.nextRunAt,
+      },
+    );
   }
 
   /**

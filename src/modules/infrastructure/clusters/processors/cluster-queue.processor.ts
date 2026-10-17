@@ -2171,8 +2171,8 @@ export class ClusterQueueProcessor {
         try {
           await this.runOnMaster(
             masterIp,
-            `kubectl drain ${nodeName} --ignore-daemonsets --delete-emptydir-data --timeout=120s`,
-            150000,
+            `kubectl drain ${nodeName} --ignore-daemonsets --delete-emptydir-data --timeout=660s`,
+            680000,
           );
         } catch (e) {
           warnings.push({

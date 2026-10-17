@@ -32,9 +32,13 @@ class FakeDatabase {
   }
 }
 
-const job = () => {
+const job = (callback: () => unknown = () => undefined) => {
   let active = true;
   return {
+    _callbacks: [callback],
+    fire(this: { _callbacks: Array<() => unknown> }) {
+      return this._callbacks[0]();
+    },
     get isActive() {
       return active;
     },
@@ -47,8 +51,8 @@ const job = () => {
   };
 };
 
-const copy = (db: FakeDatabase) => {
-  const jobs = [job(), job()];
+const copy = (db: FakeDatabase, callback?: () => unknown) => {
+  const jobs = [job(callback), job()];
   const local = job();
   let runner: ReturnType<FakeDatabase['runner']> | null = null;
   const service = new SchedulerLeadershipService(
@@ -125,5 +129,51 @@ describe('one copy of the API runs the scheduled work', () => {
     await a.service.check();
     await a.service.onApplicationShutdown();
     expect(seen).toEqual([false, true, false]);
+  });
+
+  it('keeps the lock until a run already started has finished', async () => {
+    const db = new FakeDatabase();
+    let finish!: () => void;
+    const a = copy(
+      db,
+      () => new Promise<void>((resolve) => (finish = resolve)),
+    );
+    const b = copy(db);
+    await a.service.check();
+    void a.jobs[0].fire();
+
+    let stopped = false;
+    const stopping = a.service
+      .onApplicationShutdown()
+      .then(() => (stopped = true));
+    await new Promise((r) => setImmediate(r));
+    expect(stopped).toBe(false);
+    await b.service.check();
+    expect(b.service.isLeader()).toBe(false);
+
+    finish();
+    await stopping;
+    await b.service.check();
+    expect(b.service.isLeader()).toBe(true);
+  });
+
+  it('does not wait for ever on a run that never ends', async () => {
+    const db = new FakeDatabase();
+    const a = copy(db, () => new Promise<void>(() => undefined));
+    await a.service.check();
+    void a.jobs[0].fire();
+    const started = Date.now();
+    await a.service.drain(50);
+    expect(Date.now() - started).toBeLessThan(1000);
+  });
+
+  it('passes a failing run through to the cron library unchanged', async () => {
+    const db = new FakeDatabase();
+    const a = copy(db, async () => {
+      throw new Error('tick failed');
+    });
+    await a.service.check();
+    await expect(a.jobs[0].fire()).rejects.toThrow('tick failed');
+    await a.service.drain(50);
   });
 });

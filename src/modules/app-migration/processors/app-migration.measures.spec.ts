@@ -5,6 +5,9 @@ jest.mock('jose', () => ({}));
 jest.mock('@octokit/rest', () => ({ Octokit: class {} }));
 jest.mock('@octokit/auth-app', () => ({ createAppAuth: jest.fn() }));
 jest.mock('libsodium-wrappers', () => ({ ready: Promise.resolve() }));
+jest.mock('../../common/leadership/advisory-lock', () =>
+  jest.requireActual('../../common/leadership/testing/fake-advisory-locks'),
+);
 
 import { AppMigrationProcessor } from './app-migration.processor';
 import {
@@ -38,6 +41,7 @@ function setup(opts: { volumes: boolean; dnsStuck?: boolean }) {
   };
   const processor = new AppMigrationProcessor(
     {
+      manager: {},
       findOne: jest.fn(async () => mig),
       save: jest.fn(async (m: any) => m),
     } as any,

@@ -39,8 +39,13 @@ import { FullMigrationBridgeFirst } from './full-migration.bridge-first';
 import { FullMigrationFinalizer } from './full-migration.finalize';
 import { FullMigrationRunContext } from './full-migration.run-context';
 import { describeError } from '../../shared/utils/error.util';
+import { withAdvisoryLock } from '../../common/leadership/advisory-lock';
+import {
+  HeldRetryData,
+  retryHeldDelivery,
+} from '../../common/leadership/held-delivery';
 
-interface FullMigrationJobData {
+interface FullMigrationJobData extends HeldRetryData {
   migrationId: string;
 }
 
@@ -56,7 +61,6 @@ interface FullMigrationJobData {
 @Processor(FULL_MIGRATION_QUEUE)
 export class FullMigrationProcessor {
   private readonly logger = new Logger(FullMigrationProcessor.name);
-  private readonly driving = new Set<string>();
   private readonly legs: FullMigrationLegs;
   private readonly bridgeFirst: FullMigrationBridgeFirst;
   private readonly finalizer: FullMigrationFinalizer;
@@ -98,27 +102,28 @@ export class FullMigrationProcessor {
 
   @Process(FULL_MIGRATION_JOB_TYPES.RUN_FULL_MIGRATION)
   async run(job: Job<FullMigrationJobData>): Promise<void> {
-    const fm = await this.ops.load(job.data.migrationId);
+    const id = job.data.migrationId;
+    // Bull hands a job whose lock lapsed to a worker again while the first
+    // handler may still be running, here or on another copy: only one drives it.
+    const outcome = await withAdvisoryLock(
+      this.fmRepo.manager.connection,
+      `full-migration:${id}`,
+      () => this.runHeld(id),
+    );
+    if (!outcome.ran) {
+      await retryHeldDelivery(job, this.logger, `[full-migration] ${id} run`);
+    }
+  }
+
+  private async runHeld(id: string): Promise<void> {
+    const fm = await this.ops.load(id);
     if (!RESUMABLE_RUN_STATES.includes(fm.status)) {
       this.logger.warn(
         `[full-migration] ${fm.id} run delivery skipped (state ${fm.status})`,
       );
       return;
     }
-    // Bull hands a job whose lock lapsed to a worker again while the first
-    // handler may still be running in this process: only one drives it.
-    if (this.driving.has(fm.id)) {
-      this.logger.warn(
-        `[full-migration] ${fm.id} run delivered again while this process still drives it — skipped`,
-      );
-      return;
-    }
-    this.driving.add(fm.id);
-    try {
-      await this.drive(fm);
-    } finally {
-      this.driving.delete(fm.id);
-    }
+    await this.drive(fm);
   }
 
   /**

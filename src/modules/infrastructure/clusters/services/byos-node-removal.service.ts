@@ -29,7 +29,7 @@ interface RemovalWarning {
 
 const CERT_TTL_SECONDS = 300;
 const RULESET_PATH = '/etc/flui/flui-firewall.nft';
-const DRAIN_TIMEOUT_MS = 140_000;
+const DRAIN_TIMEOUT_MS = 680_000;
 const SSH_TIMEOUT_MS = 90_000;
 
 @Injectable()
@@ -76,7 +76,7 @@ export class ByosNodeRemovalService {
       await this.runOnMaster(
         masterTarget,
         this.withKubectl(
-          `$KCTL drain ${nodeName} --ignore-daemonsets --delete-emptydir-data --force --timeout=120s`,
+          `$KCTL drain ${nodeName} --ignore-daemonsets --delete-emptydir-data --force --timeout=660s`,
         ),
         DRAIN_TIMEOUT_MS,
         warnings,

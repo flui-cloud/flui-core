@@ -40,6 +40,7 @@ import {
 } from '../utils/upgrade-state.util';
 import { K3S_CONTROLLER_WAIT_MS } from '../utils/k3s-plans.util';
 import { failingChecksMessage } from '../utils/upgrade-checks.util';
+import { PlatformApiSizingScheduler } from '../../applications/schedulers/platform-api-sizing.scheduler';
 
 const POLL_MS = 10_000;
 const MANIFEST_ROLLOUT_WAIT = { timeoutMs: 5 * 60_000, settleMs: 30_000 };
@@ -94,6 +95,7 @@ export class PlatformUpgradeExecutorService {
     private readonly k3s: K3sUpgradeService,
     private readonly declaredImages: DeclaredImageService,
     private readonly verification: PlatformUpgradeChecksService,
+    private readonly apiSizing?: PlatformApiSizingScheduler,
   ) {}
 
   async execute(operationId: string): Promise<void> {
@@ -285,6 +287,7 @@ export class PlatformUpgradeExecutorService {
   private async manifestsPhase(operationId: string): Promise<Outcome> {
     const { metadata } = (await this.records.load(operationId))!;
     const clusters = phaseOf(metadata, 'manifests').clusters ?? [];
+    let wrote = false;
     for (const cluster of clusters) {
       if (cluster.status === 'done' || cluster.status === 'skipped') continue;
       const mark = (patch: Partial<UpgradePhaseCluster>) =>
@@ -316,6 +319,7 @@ export class PlatformUpgradeExecutorService {
           planId: fresh.planId,
           awaitRollout: MANIFEST_ROLLOUT_WAIT,
         });
+        wrote = true;
         await mark({
           status: 'done',
           wrote: result.wrote,
@@ -330,7 +334,22 @@ export class PlatformUpgradeExecutorService {
         );
       }
     }
+    if (wrote) await this.reassertApiSize();
     return 'done';
+  }
+
+  /**
+   * The API manifest leaves its replica count to this installation, and
+   * applying it can bring the API down to one copy until the next sizing tick.
+   */
+  private async reassertApiSize(): Promise<void> {
+    try {
+      await this.apiSizing?.reconcile();
+    } catch (error) {
+      this.logger.warn(
+        `Could not put the API back to its chosen size after the manifests: ${(error as Error).message}`,
+      );
+    }
   }
 
   private async imagesPhase(operationId: string): Promise<Outcome> {

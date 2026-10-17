@@ -3,6 +3,9 @@ jest.mock('@octokit/rest', () => ({ Octokit: jest.fn() }));
 jest.mock('@octokit/auth-app', () => ({ createAppAuth: jest.fn() }));
 jest.mock('jwks-rsa', () => ({ JwksClient: jest.fn() }));
 jest.mock('jose', () => ({}));
+jest.mock('../../common/leadership/advisory-lock', () =>
+  jest.requireActual('../../common/leadership/testing/fake-advisory-locks'),
+);
 
 import { Logger } from '@nestjs/common';
 import { AdminSeeder } from './admin.seeder';
@@ -40,6 +43,7 @@ describe('seeding the first administrator', () => {
         }),
       } as never,
       { create: jest.fn((x: unknown) => x), save: jest.fn() } as never,
+      {} as never,
     );
     await seeder.onModuleInit();
     return users;

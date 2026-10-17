@@ -83,7 +83,11 @@ describe('CatalogSeederService never reaches a private definition', () => {
         checksum: 'sum',
       })),
     };
-    const seeder = new CatalogSeederService(repo as never, loader as never);
+    const seeder = new CatalogSeederService(
+      repo as never,
+      loader as never,
+      {} as never,
+    );
 
     await (
       seeder as unknown as { seedFile(p: string): Promise<void> }

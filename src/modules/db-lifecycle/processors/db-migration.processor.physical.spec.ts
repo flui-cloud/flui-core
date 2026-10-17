@@ -5,8 +5,16 @@ jest.mock('jose', () => ({}));
 jest.mock('@octokit/rest', () => ({ Octokit: class {} }));
 jest.mock('@octokit/auth-app', () => ({ createAppAuth: jest.fn() }));
 jest.mock('libsodium-wrappers', () => ({ ready: Promise.resolve() }));
+jest.mock('../../common/leadership/advisory-lock', () =>
+  jest.requireActual('../../common/leadership/testing/fake-advisory-locks'),
+);
 
 import { DbMigrationProcessor } from './db-migration.processor';
+import {
+  holdLock,
+  resetFakeLocks,
+  takenLocks,
+} from '../../common/leadership/testing/fake-advisory-locks';
 import {
   DbCutoverMode,
   DbMigrationMode,
@@ -44,6 +52,7 @@ function setup(over: Record<string, any> = {}) {
     ...over.mig,
   };
   const migRepo = {
+    manager: {},
     findOne: jest.fn(async () => ({ ...row })),
     save: jest.fn(async (m: any) => {
       Object.assign(row, m);
@@ -229,6 +238,7 @@ function setup(over: Record<string, any> = {}) {
   );
   (proc as any).sleep = jest.fn(async () => undefined);
   return {
+    migRepo,
     proc,
     row,
     calls,
@@ -247,6 +257,72 @@ function setup(over: Record<string, any> = {}) {
 const job = { data: { migrationId: 'm1' } } as any;
 
 describe('DbMigrationProcessor, physical path', () => {
+  beforeEach(() => resetFakeLocks());
+
+  it('runs a migration under its own lock', async () => {
+    const { proc, installer } = setup({
+      mig: { cutoverMode: DbCutoverMode.MANUAL },
+    });
+    await proc.run(job);
+    expect(takenLocks).toEqual(['db-migration:m1']);
+    expect(installer.install).toHaveBeenCalledTimes(1);
+  });
+
+  it('queues a delivery again later while another worker still runs the same migration', async () => {
+    const { proc, installer, migRepo } = setup({
+      mig: { cutoverMode: DbCutoverMode.MANUAL },
+    });
+    const queue = { add: jest.fn(async () => undefined) };
+    const release = holdLock('db-migration:m1');
+    await proc.run({
+      data: { migrationId: 'm1', heldRetries: 2 },
+      id: 'resume-run:m1:5:held:100',
+      name: 'run-db-migration',
+      opts: { removeOnComplete: true },
+      queue,
+    } as any);
+    release();
+    expect(migRepo.findOne).not.toHaveBeenCalled();
+    expect(migRepo.save).not.toHaveBeenCalled();
+    expect(installer.install).not.toHaveBeenCalled();
+    expect(queue.add).toHaveBeenCalledWith(
+      'run-db-migration',
+      { migrationId: 'm1', heldRetries: 3 },
+      {
+        removeOnComplete: true,
+        delay: 60_000,
+        jobId: expect.stringMatching(/^resume-run:m1:5:held:\d+$/),
+      },
+    );
+  });
+
+  it('gives up after an hour of held retries', async () => {
+    const { proc } = setup();
+    const queue = { add: jest.fn(async () => undefined) };
+    const release = holdLock('db-migration:m1');
+    await proc.run({
+      data: { migrationId: 'm1', heldRetries: 60 },
+      id: 'x',
+      name: 'run-db-migration',
+      opts: {},
+      queue,
+    } as any);
+    release();
+    expect(queue.add).not.toHaveBeenCalled();
+  });
+
+  it('does not start a logical migration over when a held retry finds it already begun', async () => {
+    const { proc, installer, migRepo } = setup({
+      mig: {
+        kind: DbReplicationKind.LOGICAL,
+        status: DbMigrationStatus.SYNCED,
+      },
+    });
+    await proc.run({ data: { migrationId: 'm1', heldRetries: 1 } } as any);
+    expect(migRepo.save).not.toHaveBeenCalled();
+    expect(installer.install).not.toHaveBeenCalled();
+  });
+
   it('installs the destination as a standby with the source identity, on the master when there is no worker', async () => {
     const { proc, installer } = setup({
       mig: { cutoverMode: DbCutoverMode.MANUAL },

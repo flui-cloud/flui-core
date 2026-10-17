@@ -42,8 +42,13 @@ import { DbLogicalMigrationRun } from './db-migration.logical';
 import { DbPhysicalCopy } from './db-migration.physical-copy';
 import { DbPhysicalCompletion } from './db-migration.physical-complete';
 import { DbPhysicalCutover } from './db-migration.physical-cutover';
+import { withAdvisoryLock } from '../../common/leadership/advisory-lock';
+import {
+  HeldRetryData,
+  retryHeldDelivery,
+} from '../../common/leadership/held-delivery';
 
-interface DbMigrationJobData {
+interface DbMigrationJobData extends HeldRetryData {
   migrationId: string;
 }
 
@@ -119,18 +124,36 @@ export class DbMigrationProcessor {
 
   @Process(DB_LIFECYCLE_JOB_TYPES.RUN_DB_MIGRATION)
   async run(job: Job<DbMigrationJobData>): Promise<void> {
-    const mig = await this.migRepo.findOne({
-      where: { id: job.data.migrationId },
-    });
-    if (!mig) throw new Error(`Migration ${job.data.migrationId} not found`);
+    const id = job.data.migrationId;
+    const outcome = await withAdvisoryLock(
+      this.migRepo.manager.connection,
+      `db-migration:${id}`,
+      () => this.runHeld(id, !!job.data.heldRetries),
+    );
+    if (!outcome.ran) {
+      await retryHeldDelivery(job, this.logger, `[db-migration] ${id} run`);
+    }
+  }
+
+  private async runHeld(id: string, heldRetry = false): Promise<void> {
+    const mig = await this.migRepo.findOne({ where: { id } });
+    if (!mig) throw new Error(`Migration ${id} not found`);
+    const physical =
+      mig.mode === DbMigrationMode.LIVE &&
+      mig.kind === DbReplicationKind.PHYSICAL;
+    // The logical path starts over from the install, so a retry queued while
+    // another worker held the run must not repeat it once that run has begun.
+    if (heldRetry && !physical && mig.status !== DbMigrationStatus.PENDING) {
+      this.logger.warn(
+        `[db-migration] ${mig.id} held retry skipped (state ${mig.status})`,
+      );
+      return;
+    }
     this.logger.log(`[db-migration] Starting ${mig.id} (${mig.mode})`);
     mig.startedAt = new Date();
     await this.migRepo.save(mig);
 
-    if (
-      mig.mode === DbMigrationMode.LIVE &&
-      mig.kind === DbReplicationKind.PHYSICAL
-    ) {
+    if (physical) {
       await this.runPhysical(mig);
       return;
     }

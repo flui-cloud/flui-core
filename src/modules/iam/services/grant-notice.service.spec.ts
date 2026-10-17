@@ -27,7 +27,7 @@ function grant(over: Partial<IamRoleBindingEntity>): IamRoleBindingEntity {
 }
 
 function harness(rows: IamRoleBindingEntity[]) {
-  const updates: Array<[string, Record<string, unknown>]> = [];
+  const updates: Array<[Record<string, unknown>, Record<string, unknown>]> = [];
   const bindings = {
     find: jest.fn(async ({ where }: { where: Record<string, unknown> }) => {
       const upTo = (where.expiresAt as { value: Date }).value;
@@ -40,11 +40,24 @@ function harness(rows: IamRoleBindingEntity[]) {
             : !r.expiredNoticeAt),
       );
     }),
-    update: jest.fn(async (id: string, patch: Record<string, unknown>) => {
-      updates.push([id, patch]);
-      const row = rows.find((r) => r.id === id);
-      if (row) Object.assign(row, patch);
-    }),
+    update: jest.fn(
+      async (
+        where: Record<string, unknown>,
+        patch: Record<string, unknown>,
+      ) => {
+        updates.push([where, patch]);
+        const row = rows.find(
+          (r) =>
+            r.id === where.id &&
+            Object.keys(where).every(
+              (k) => k === 'id' || !r[k as keyof IamRoleBindingEntity],
+            ),
+        );
+        if (!row) return { affected: 0 };
+        Object.assign(row, patch);
+        return { affected: 1 };
+      },
+    ),
   };
   const users = {
     find: async () => [{ id: 'admin-1', email: 'admin@customer.example' }],
@@ -70,7 +83,7 @@ function harness(rows: IamRoleBindingEntity[]) {
     config as never,
     moduleRef as never,
   );
-  return { svc, emitAlert, send, updates };
+  return { svc, emitAlert, send, updates, bindings };
 }
 
 describe('GrantNoticeService', () => {
@@ -118,6 +131,27 @@ describe('GrantNoticeService', () => {
     );
     expect(recipients).not.toContain('op@support.example');
     expect(send.mock.calls[0][0].subject).toContain('has ended');
+  });
+
+  it('stays quiet when another copy of the API claimed the notice first', async () => {
+    const row = grant({});
+    const { svc, send, bindings } = harness([row]);
+    bindings.update.mockResolvedValueOnce({ affected: 0 });
+    await svc.sweep(NOW);
+    expect(send).not.toHaveBeenCalled();
+    expect(bindings.update.mock.calls[0][0]).toMatchObject({ id: 'g1' });
+    expect(bindings.update.mock.calls[0][0]).toHaveProperty('expiringNoticeAt');
+  });
+
+  it('announces the end only when its own claim marked it', async () => {
+    const row = grant({
+      expiresAt: new Date(NOW.getTime() - HOUR),
+      expiringNoticeAt: new Date(NOW.getTime() - 20 * HOUR),
+    });
+    const { svc, send, bindings } = harness([row]);
+    bindings.update.mockResolvedValueOnce({ affected: 0 });
+    await svc.sweep(NOW);
+    expect(send).not.toHaveBeenCalled();
   });
 
   it('announces a temporary grant when it is made, and nothing for a standing one', async () => {

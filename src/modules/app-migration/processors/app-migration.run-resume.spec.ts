@@ -5,8 +5,15 @@ jest.mock('jose', () => ({}));
 jest.mock('@octokit/rest', () => ({ Octokit: class {} }));
 jest.mock('@octokit/auth-app', () => ({ createAppAuth: jest.fn() }));
 jest.mock('libsodium-wrappers', () => ({ ready: Promise.resolve() }));
+jest.mock('../../common/leadership/advisory-lock', () =>
+  jest.requireActual('../../common/leadership/testing/fake-advisory-locks'),
+);
 
 import { AppMigrationProcessor } from './app-migration.processor';
+import {
+  holdLock,
+  resetFakeLocks,
+} from '../../common/leadership/testing/fake-advisory-locks';
 import {
   AppCutoverMode,
   AppMigrationStatus,
@@ -21,6 +28,7 @@ function setup(status: AppMigrationStatus) {
     status,
   };
   const migRepo = {
+    manager: {},
     findOne: jest.fn(async () => ({ ...row })),
     save: jest.fn(async (m: any) => Object.assign(row, m)),
   };
@@ -42,12 +50,42 @@ function setup(status: AppMigrationStatus) {
     {} as any,
   );
   (proc as any).prepareBridge = jest.fn(async () => undefined);
-  return { proc, row, materializer };
+  return { proc, row, materializer, migRepo };
 }
 
 const job = { data: { migrationId: 'am-1' } } as any;
 
 describe('AppMigrationProcessor run, delivered again', () => {
+  beforeEach(() => resetFakeLocks());
+
+  it('leaves a migration another copy of the API is provisioning alone and tries again later', async () => {
+    const { proc, row, materializer, migRepo } = setup(
+      AppMigrationStatus.PENDING,
+    );
+    const queue = { add: jest.fn(async () => undefined) };
+    const release = holdLock('app-migration:am-1');
+    await proc.run({
+      ...job,
+      id: '7',
+      name: 'run-app-migration',
+      opts: { attempts: 1 },
+      queue,
+    });
+    release();
+    expect(migRepo.findOne).not.toHaveBeenCalled();
+    expect(materializer.materializeOnCluster).not.toHaveBeenCalled();
+    expect(row.status).toBe(AppMigrationStatus.PENDING);
+    expect(queue.add).toHaveBeenCalledWith(
+      'run-app-migration',
+      { migrationId: 'am-1', heldRetries: 1 },
+      expect.objectContaining({
+        delay: 60_000,
+        attempts: 1,
+        jobId: expect.stringMatching(/^7:held:\d+$/),
+      }),
+    );
+  });
+
   it('resumes a run left in PROVISIONING and reaches READY', async () => {
     const { proc, row, materializer } = setup(AppMigrationStatus.PROVISIONING);
     await proc.run(job);
@@ -76,7 +114,9 @@ describe('AppMigrationProcessor run, delivered again', () => {
     );
     const first = ctx.proc.run(job);
     await new Promise((r) => setImmediate(r));
-    await ctx.proc.run(job);
+    const queue = { add: jest.fn(async () => undefined) };
+    await ctx.proc.run({ ...job, id: '8', name: 'run', opts: {}, queue });
+    expect(queue.add).toHaveBeenCalledTimes(1);
     release();
     await first;
     expect(ctx.materializer.materializeOnCluster).toHaveBeenCalledTimes(1);

@@ -1,4 +1,13 @@
+jest.mock('../../common/leadership/advisory-lock', () =>
+  jest.requireActual('../../common/leadership/testing/fake-advisory-locks'),
+);
+
 import { RELEASE } from '../../../config/release.config';
+import {
+  holdLock,
+  resetFakeLocks,
+  takenLocks,
+} from '../../common/leadership/testing/fake-advisory-locks';
 import { PlatformUpdateResumeService } from './platform-update-resume.service';
 import {
   OperationStatus,
@@ -39,10 +48,11 @@ function operation(over: {
   } as never;
 }
 
-function build(rows: unknown[]) {
+function build(rows: unknown[], affected = 1) {
   const repo = {
+    manager: {},
     find: jest.fn().mockResolvedValue(rows),
-    save: jest.fn().mockImplementation((v) => v),
+    update: jest.fn().mockResolvedValue({ affected }),
   };
   const queue = { add: jest.fn() };
   return {
@@ -93,6 +103,65 @@ function phased(over: {
   return base as never;
 }
 
+beforeEach(() => resetFakeLocks());
+
+describe('PlatformUpdateResumeService across copies of the API', () => {
+  it('lets one booting copy at a time look, each reading the operation inside the lock', async () => {
+    const order: string[] = [];
+    let release!: () => void;
+    const first = build([]);
+    first.repo.find.mockImplementationOnce(async () => {
+      order.push('first:read');
+      await new Promise<void>((r) => (release = r));
+      return [];
+    });
+    const second = build([]);
+    second.repo.find.mockImplementationOnce(async () => {
+      order.push('second:read');
+      return [];
+    });
+    const a = first.service.onApplicationBootstrap();
+    const b = second.service.onApplicationBootstrap();
+    await new Promise((r) => setImmediate(r));
+    expect(order).toEqual(['first:read']);
+    release();
+    await Promise.all([a, b]);
+    expect(order).toEqual(['first:read', 'second:read']);
+    expect(takenLocks).toEqual([
+      'platform-update-resume',
+      'platform-update-resume',
+    ]);
+  });
+
+  it('does not queue the continuation when another copy already moved the operation on', async () => {
+    const { service, queue } = build(
+      [
+        phased({
+          targetVersion: RELEASE.version,
+          awaitingSelfRestart: true,
+          running: 'images',
+          deadlineInMs: 5 * MIN,
+        }),
+      ],
+      0,
+    );
+    await service.onApplicationBootstrap();
+    expect(queue.add).not.toHaveBeenCalled();
+  });
+
+  it('leaves the watchdog round to the copy resuming after its restart', async () => {
+    const long = new Date(Date.now() - 20 * 60 * 1000).toISOString();
+    const { service, repo } = build([
+      operation({ targetVersion: '99.0.0', awaitingSince: long }),
+    ]);
+    const release = holdLock('platform-update-resume');
+    await service.failStalled();
+    release();
+    expect(repo.find).not.toHaveBeenCalled();
+    expect(repo.update).not.toHaveBeenCalled();
+  });
+});
+
 describe('PlatformUpdateResumeService — phased updates', () => {
   it('continues with K3s and the checks after the restart, instead of completing', async () => {
     const { service, repo, queue } = build([
@@ -105,8 +174,9 @@ describe('PlatformUpdateResumeService — phased updates', () => {
     ]);
     await service.onApplicationBootstrap();
 
-    const saved = repo.save.mock.calls[0][0];
-    expect(saved.status).toBe(OperationStatus.IN_PROGRESS);
+    const [where, saved] = repo.update.mock.calls[0];
+    expect(where).toEqual({ id: 'op-1', status: OperationStatus.IN_PROGRESS });
+    expect(saved.status).toBeUndefined();
     expect(saved.metadata.awaitingSelfRestart).toBe(false);
     expect(
       saved.metadata.phases.find((p: { key: string }) => p.key === 'images')
@@ -130,7 +200,7 @@ describe('PlatformUpdateResumeService — phased updates', () => {
       }),
     ]);
     await service.failStalled();
-    expect(repo.save).not.toHaveBeenCalled();
+    expect(repo.update).not.toHaveBeenCalled();
   });
 
   it('fails the phase that overran its deadline, keeping where it stopped and what to do', async () => {
@@ -143,7 +213,7 @@ describe('PlatformUpdateResumeService — phased updates', () => {
     ]);
     await service.failStalled();
 
-    const saved = repo.save.mock.calls[0][0];
+    const saved = repo.update.mock.calls[0][1];
     expect(saved.status).toBe(OperationStatus.FAILED);
     expect(saved.metadata.failedPhase).toBe('k3s');
     expect(saved.metadata.guidance).toMatch(/never downgrade/i);
@@ -160,7 +230,7 @@ describe('PlatformUpdateResumeService — phased updates', () => {
       }),
     ]);
     await service.failStalled();
-    const saved = repo.save.mock.calls[0][0];
+    const saved = repo.update.mock.calls[0][1];
     expect(saved.status).toBe(OperationStatus.FAILED);
     expect(saved.errorMessage).toContain('never came back on 99.0.0');
     expect(saved.metadata.failedPhase).toBe('images');
@@ -174,7 +244,7 @@ describe('PlatformUpdateResumeService', () => {
     ]);
     await service.onApplicationBootstrap();
 
-    const saved = repo.save.mock.calls[0][0];
+    const saved = repo.update.mock.calls[0][1];
     expect(saved.status).toBe(OperationStatus.COMPLETED);
     expect(saved.progress).toBe(100);
     expect(saved.metadata.awaitingSelfRestart).toBe(false);
@@ -184,7 +254,7 @@ describe('PlatformUpdateResumeService', () => {
   it('leaves it alone when the old pod merely restarted', async () => {
     const { service, repo } = build([operation({ targetVersion: '99.0.0' })]);
     await service.onApplicationBootstrap();
-    expect(repo.save).not.toHaveBeenCalled();
+    expect(repo.update).not.toHaveBeenCalled();
   });
 
   it('does not touch an operation that is not awaiting a restart', async () => {
@@ -193,13 +263,13 @@ describe('PlatformUpdateResumeService', () => {
     ]);
     await service.onApplicationBootstrap();
     await service.failStalled();
-    expect(repo.save).not.toHaveBeenCalled();
+    expect(repo.update).not.toHaveBeenCalled();
   });
 
   it('waits before calling a rollout stalled', async () => {
     const { service, repo } = build([operation({ targetVersion: '99.0.0' })]);
     await service.failStalled();
-    expect(repo.save).not.toHaveBeenCalled();
+    expect(repo.update).not.toHaveBeenCalled();
   });
 
   it('fails an update whose API never came back on the new version', async () => {
@@ -209,7 +279,7 @@ describe('PlatformUpdateResumeService', () => {
     ]);
     await service.failStalled();
 
-    const saved = repo.save.mock.calls[0][0];
+    const saved = repo.update.mock.calls[0][1];
     expect(saved.status).toBe(OperationStatus.FAILED);
     expect(saved.errorMessage).toContain('never came back on 99.0.0');
     expect(saved.metadata.components[0].status).toBe('failed');
@@ -221,6 +291,6 @@ describe('PlatformUpdateResumeService', () => {
       operation({ targetVersion: RELEASE.version, awaitingSince: long }),
     ]);
     await service.failStalled();
-    expect(repo.save.mock.calls[0][0].status).toBe(OperationStatus.COMPLETED);
+    expect(repo.update.mock.calls[0][1].status).toBe(OperationStatus.COMPLETED);
   });
 });

@@ -1,7 +1,8 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { DataSource, Repository } from 'typeorm';
+import { withAdvisoryLockWaiting } from '../../common/leadership/advisory-lock';
 import * as bcrypt from 'bcrypt';
 import * as crypto from 'node:crypto';
 import { IdentityRole, UserEntity } from '../entities/user.entity';
@@ -31,13 +32,19 @@ export class AdminSeeder implements OnModuleInit {
     private readonly userRepo: Repository<UserEntity>,
     @InjectRepository(IamRoleBindingEntity)
     private readonly bindingRepo: Repository<IamRoleBindingEntity>,
+    private readonly dataSource: DataSource,
   ) {}
 
   async onModuleInit() {
     if (process.env.AUTH_MODE !== 'local') {
       return;
     }
+    await withAdvisoryLockWaiting(this.dataSource, 'boot-seed:admin', () =>
+      this.seed(),
+    );
+  }
 
+  private async seed(): Promise<void> {
     const email =
       this.configService.get<string>('ADMIN_EMAIL') || 'admin@flui.cloud';
 

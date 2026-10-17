@@ -5,6 +5,9 @@ jest.mock('jose', () => ({}));
 jest.mock('@octokit/rest', () => ({ Octokit: class {} }));
 jest.mock('@octokit/auth-app', () => ({ createAppAuth: jest.fn() }));
 jest.mock('libsodium-wrappers', () => ({ ready: Promise.resolve() }));
+jest.mock('../../common/leadership/advisory-lock', () =>
+  jest.requireActual('../../common/leadership/testing/fake-advisory-locks'),
+);
 
 import { AppMigrationProcessor } from './app-migration.processor';
 import {
@@ -81,6 +84,7 @@ function setup(
   let flipped = false;
   let staleReads = opts.staleReadsAfterFlip ?? 0;
   const migRepo = {
+    manager: {},
     findOne: jest.fn(async () => mig),
     save: jest.fn(async (m: any) => m),
     update: jest.fn(async () => undefined),

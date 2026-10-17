@@ -9,6 +9,11 @@ import { Cron, CronExpression } from '@nestjs/schedule';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Queue } from 'bull';
 import { Repository } from 'typeorm';
+import { QueryDeepPartialEntity } from 'typeorm/query-builder/QueryPartialEntity';
+import {
+  withAdvisoryLock,
+  withAdvisoryLockWaiting,
+} from '../../common/leadership/advisory-lock';
 import { RELEASE } from '../../../config/release.config';
 import {
   InfrastructureOperationEntity,
@@ -33,6 +38,7 @@ import {
 } from '../utils/upgrade-state.util';
 
 const STALL_TIMEOUT_MS = 15 * 60 * 1_000;
+const LOCK_NAME = 'platform-update-resume';
 
 /**
  * Closes the step nobody was left to close.
@@ -57,7 +63,17 @@ export class PlatformUpdateResumeService implements OnApplicationBootstrap {
     private readonly queue?: Queue<PlatformUpdateJobData>,
   ) {}
 
+  /**
+   * Every copy of the API on the new version boots into this: one at a time,
+   * each reading the operation afresh, so only the first one continues it.
+   */
   async onApplicationBootstrap(): Promise<void> {
+    await withAdvisoryLockWaiting(this.dataSource, LOCK_NAME, () =>
+      this.resumeAwaiting(),
+    );
+  }
+
+  private async resumeAwaiting(): Promise<void> {
     const pending = await this.awaiting();
     for (const operation of pending) {
       const metadata = operation.metadata as PlatformUpdateOperationMetadata;
@@ -83,6 +99,12 @@ export class PlatformUpdateResumeService implements OnApplicationBootstrap {
     process.env.PLATFORM_UPDATE_WATCHDOG_CRON || CronExpression.EVERY_MINUTE,
   )
   async failStalled(): Promise<void> {
+    await withAdvisoryLock(this.dataSource, LOCK_NAME, () =>
+      this.failStalledHeld(),
+    );
+  }
+
+  private async failStalledHeld(): Promise<void> {
     await this.failOverduePhases();
     const pending = await this.awaiting();
     for (const operation of pending) {
@@ -99,18 +121,19 @@ export class PlatformUpdateResumeService implements OnApplicationBootstrap {
       }
       const message = `The API never came back on ${metadata.targetVersion}; it is still serving ${RELEASE.version}. The other components were left on their new versions — roll back or retry from Updates.`;
       this.logger.error(`Platform update ${operation.id} stalled: ${message}`);
-      operation.status = OperationStatus.FAILED;
-      operation.errorMessage = message;
-      operation.completedAt = new Date();
-      operation.metadata = {
-        ...metadata,
-        awaitingSelfRestart: false,
-        components: metadata.components.map((c) =>
-          c.status === 'running' ? { ...c, status: 'failed' as const } : c,
-        ),
-        error: message,
-      };
-      await this.operationRepository.save(operation);
+      await this.settle(operation.id, {
+        status: OperationStatus.FAILED,
+        errorMessage: message,
+        completedAt: new Date(),
+        metadata: {
+          ...metadata,
+          awaitingSelfRestart: false,
+          components: metadata.components.map((c) =>
+            c.status === 'running' ? { ...c, status: 'failed' as const } : c,
+          ),
+          error: message,
+        },
+      });
     }
   }
 
@@ -122,8 +145,10 @@ export class PlatformUpdateResumeService implements OnApplicationBootstrap {
     operation: InfrastructureOperationEntity,
     metadata: PlatformUpgradeMetadata,
   ): Promise<void> {
-    operation.metadata = continuedAfterRestart(metadata, new Date());
-    await this.operationRepository.save(operation);
+    const settled = await this.settle(operation.id, {
+      metadata: continuedAfterRestart(metadata, new Date()),
+    });
+    if (!settled) return;
     if (this.queue) await enqueueUpgrade(this.queue, operation.id);
     this.logger.log(
       `Platform update ${operation.id}: the API is on ${RELEASE.version}; continuing with K3s and the checks.`,
@@ -159,11 +184,12 @@ export class PlatformUpdateResumeService implements OnApplicationBootstrap {
         RELEASE.version,
         now,
       );
-      operation.status = OperationStatus.FAILED;
-      operation.errorMessage = `${message} ${failed.guidance ?? ''}`.trim();
-      operation.completedAt = now;
-      operation.metadata = failed;
-      await this.operationRepository.save(operation);
+      await this.settle(operation.id, {
+        status: OperationStatus.FAILED,
+        errorMessage: `${message} ${failed.guidance ?? ''}`.trim(),
+        completedAt: now,
+        metadata: failed,
+      });
     }
   }
 
@@ -195,25 +221,54 @@ export class PlatformUpdateResumeService implements OnApplicationBootstrap {
     operation: InfrastructureOperationEntity,
     metadata: PlatformUpdateOperationMetadata,
   ): Promise<void> {
-    operation.status = OperationStatus.COMPLETED;
-    operation.progress = 100;
-    operation.currentStep = OperationStep.PLATFORM_UPDATE_VERIFY;
-    operation.currentStepIndex = Math.max(
-      (metadata.operationSteps?.length ?? 4) - 1,
-      0,
-    );
-    operation.completedAt = new Date();
-    operation.metadata = {
-      ...metadata,
-      awaitingSelfRestart: false,
-      components: metadata.components.map((c) =>
-        c.status === 'running' ? { ...c, status: 'done' as const } : c,
-      ),
-      message: `Updated to Flui ${metadata.targetVersion}.`,
-    };
-    await this.operationRepository.save(operation);
+    const settled = await this.settle(operation.id, {
+      status: OperationStatus.COMPLETED,
+      progress: 100,
+      currentStep: OperationStep.PLATFORM_UPDATE_VERIFY,
+      currentStepIndex: Math.max((metadata.operationSteps?.length ?? 4) - 1, 0),
+      completedAt: new Date(),
+      metadata: {
+        ...metadata,
+        awaitingSelfRestart: false,
+        components: metadata.components.map((c) =>
+          c.status === 'running' ? { ...c, status: 'done' as const } : c,
+        ),
+        message: `Updated to Flui ${metadata.targetVersion}.`,
+      },
+    });
+    if (!settled) return;
     this.logger.log(
       `Platform update ${operation.id} completed: this build is ${RELEASE.version}.`,
     );
+  }
+
+  /**
+   * Writes only the fields this decision owns, and only while the operation is
+   * still running: a newer outcome recorded meanwhile is never overwritten.
+   */
+  private async settle(
+    id: string,
+    changes: Partial<
+      Pick<
+        InfrastructureOperationEntity,
+        | 'status'
+        | 'errorMessage'
+        | 'completedAt'
+        | 'progress'
+        | 'currentStep'
+        | 'currentStepIndex'
+        | 'metadata'
+      >
+    >,
+  ): Promise<boolean> {
+    const result = await this.operationRepository.update(
+      { id, status: OperationStatus.IN_PROGRESS },
+      changes as QueryDeepPartialEntity<InfrastructureOperationEntity>,
+    );
+    return (result.affected ?? 0) > 0;
+  }
+
+  private get dataSource() {
+    return this.operationRepository.manager.connection;
   }
 }
