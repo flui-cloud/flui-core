@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { ActionCycleController } from './action-cycle.controller';
 import { ActionCycleService } from './action-cycle.service';
+import { ActionSubjectNames } from './action-subject-names';
 import { ActionProposalEntity } from './entities/action-proposal.entity';
 import { AgentConcessionEntity } from './entities/agent-concession.entity';
 import { InfrastructureOperationEntity } from '../infrastructure/servers/entities/infrastructure-operations.entity';
@@ -26,7 +27,7 @@ import { InfrastructureOperationEntity } from '../infrastructure/servers/entitie
     ]),
   ],
   controllers: [ActionCycleController],
-  providers: [ActionCycleService],
+  providers: [ActionCycleService, ActionSubjectNames],
   exports: [ActionCycleService],
 })
 export class ActionCycleModule {}

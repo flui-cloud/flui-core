@@ -37,6 +37,10 @@ function service(opts: {
     concessions as never,
     {} as never,
     { get: () => 'https://console.test' } as never,
+    {
+      label: (_action: string, binding?: Record<string, string>) =>
+        Promise.resolve(binding ? { ...binding, id: 'flui-managed' } : binding),
+    } as never,
   );
   return { svc, saved, concessions };
 }
@@ -77,6 +81,8 @@ describe('an action a person answers every time', () => {
     );
     expect(concessions.find).not.toHaveBeenCalled();
     expect(saved[0]?.offersAlways).toBe(false);
+    expect(saved[0]?.sentence).toBe('remove application flui-managed for good');
+    expect(saved[0]?.binding).toEqual({ id: 'a1' });
   });
 
   it('refuses "always" on a request raised before the action joined the list', async () => {
@@ -94,5 +100,26 @@ describe('an action a person answers every time', () => {
     await expect(
       svc.decideProposal('p1', 'u1', PROPOSAL_DECISION.ALWAYS),
     ).rejects.toBeInstanceOf(ForbiddenException);
+  });
+
+  it('asks an expired question again in today’s words, under the same id', async () => {
+    const { svc, saved } = service({
+      proposal: {
+        id: 'p-old',
+        ownerUserId: 'u1',
+        action: REMOVE.action,
+        status: PROPOSAL_STATUS.PENDING,
+        sentence: 'remove application a1 for good',
+        offersAlways: true,
+        expiresAt: new Date(Date.now() - 60_000),
+      },
+    });
+
+    await expect(svc.authorize(attempt)).rejects.toBeInstanceOf(
+      ForbiddenException,
+    );
+    expect(saved[0]?.id).toBe('p-old');
+    expect(saved[0]?.sentence).toBe('remove application flui-managed for good');
+    expect(saved[0]?.offersAlways).toBe(false);
   });
 });

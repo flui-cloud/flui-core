@@ -16,6 +16,7 @@ import { DecideProposalDto } from './dto/decide-proposal.dto';
 import { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import { actorFromRequest } from '../auth/utils/actor.util';
 import { RequestWithApiKey } from '../auth/strategies/api-key.strategy';
+import { asksEveryTime } from './action-cycle.core';
 
 export const AGENT_MAY_NOT_DECIDE_CODE = 'AGENT_MAY_NOT_DECIDE';
 
@@ -55,13 +56,14 @@ export class ActionCycleController {
     summary: 'Requests your agents have raised and are waiting on you',
   })
   async listProposals(@Req() req: Request, @Query('status') status?: string) {
-    return this.cycle.listProposals(this.userId(req), status);
+    const proposals = await this.cycle.listProposals(this.userId(req), status);
+    return proposals.map(withAsking);
   }
 
   @Get('proposals/:id')
   @ApiOperation({ summary: 'One request, with what "always" would concede' })
   async getProposal(@Req() req: Request, @Param('id') id: string) {
-    return this.cycle.ownProposal(id, this.userId(req));
+    return withAsking(await this.cycle.ownProposal(id, this.userId(req)));
   }
 
   @Post('proposals/:id/decide')
@@ -163,4 +165,14 @@ export class ActionCycleController {
         'retry this one.',
     });
   }
+}
+
+/**
+ * Whether "always" is withheld because the action asks every time, which a
+ * person should read as the reason rather than a request that named no edge.
+ */
+function withAsking<T extends { action: string }>(
+  proposal: T,
+): T & { asksEveryTime: boolean } {
+  return { ...proposal, asksEveryTime: asksEveryTime(proposal.action) };
 }

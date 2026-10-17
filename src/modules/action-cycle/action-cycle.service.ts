@@ -3,6 +3,7 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  Optional,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -29,6 +30,7 @@ import {
   renderRoute,
 } from './action-cycle.core';
 import { ActionCycleDecl } from './action-cycle.decorator';
+import { ActionSubjectNames } from './action-subject-names';
 import {
   InfrastructureOperationEntity,
   OperationStatus,
@@ -80,6 +82,7 @@ export class ActionCycleService {
     @InjectRepository(InfrastructureOperationEntity)
     private readonly operations: Repository<InfrastructureOperationEntity>,
     private readonly config: ConfigService,
+    @Optional() private readonly subjectNames?: ActionSubjectNames,
   ) {}
 
   /**
@@ -209,21 +212,34 @@ export class ActionCycleService {
     existing: ActionProposalEntity | null,
   ): Promise<ActionProposalEntity> {
     const expiresAt = new Date(Date.now() + PROPOSAL_TTL_MS);
-    if (existing?.status === PROPOSAL_STATUS.PENDING) {
-      if (isProposalLive(existing)) return existing;
-      existing.expiresAt = expiresAt;
-      return this.proposals.save(existing);
+    if (
+      existing?.status === PROPOSAL_STATUS.PENDING &&
+      isProposalLive(existing)
+    ) {
+      return existing;
     }
 
     // Composed here and stored, so what a person reads is what was written
     // down: the clause is the only part of the sentence that depends on the
     // body, and the body is hashed and dropped a line above.
+    const shown =
+      (await this.subjectNames?.label(attempt.decl.action, binding)) ?? binding;
     const sentence = composeSentence(
       attempt.decl.sentence,
-      binding,
+      shown,
       attempt.decl.clause,
       attempt.body,
     );
+    const offersAlways =
+      !!binding && !!attempt.keyId && !asksEveryTime(attempt.decl.action);
+
+    // An expired question is asked again under the same id, in today's words.
+    if (existing?.status === PROPOSAL_STATUS.PENDING) {
+      existing.expiresAt = expiresAt;
+      existing.sentence = sentence;
+      existing.offersAlways = offersAlways;
+      return this.proposals.save(existing);
+    }
     return this.proposals.save(
       this.proposals.create({
         ownerUserId: attempt.ownerUserId,
@@ -236,8 +252,7 @@ export class ActionCycleService {
         // The mockup's rule, mechanically: a request that cannot state its own
         // edge is not allowed to offer a standing permission. Both halves have
         // to hold — a declared edge, and a credential to attach it to.
-        offersAlways:
-          !!binding && !!attempt.keyId && !asksEveryTime(attempt.decl.action),
+        offersAlways,
         estimateRef: attempt.decl.estimate
           ? (renderRoute(attempt.decl.estimate, attempt.params) ?? null)
           : null,

@@ -85,6 +85,20 @@ export function asksEveryTime(action: string): boolean {
   return ALWAYS_ASK_ACTIONS.has(action);
 }
 
+/**
+ * The table holding the thing a route's `:id` names, where a person would
+ * rather read its name than its id. Routes that name nothing else are absent.
+ */
+const SUBJECT_TABLES: readonly [RegExp, string][] = [
+  [/^[A-Z]+ \/applications\/:id(\/|$)/, 'applications'],
+  [/^[A-Z]+ \/auth\/api-keys\/:id(\/|$)/, 'api_keys'],
+  [/^[A-Z]+ \/infrastructure\/clusters\/:id(\/|$)/, 'infrastructure_clusters'],
+];
+
+export function subjectTableOf(action: string): string | undefined {
+  return SUBJECT_TABLES.find(([route]) => route.test(action))?.[1];
+}
+
 /** Raised when an agent's call has no standing permission to proceed. */
 export const ACTION_PROPOSAL_CODE = 'ACTION_PROPOSAL_PENDING';
 
