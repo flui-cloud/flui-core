@@ -6,6 +6,7 @@ import {
   IsString,
   MaxLength,
 } from 'class-validator';
+import { Sensitivity } from '../../mask/decorators/sensitivity.decorator';
 
 export class UpdateApiKeyScopesDto {
   @ApiPropertyOptional({
@@ -14,6 +15,7 @@ export class UpdateApiKeyScopesDto {
     description:
       "The key's new, complete list of scopes. Send this or `add`, not both.",
   })
+  @Sensitivity(Sensitivity.PUBLIC)
   @IsOptional()
   @IsArray()
   @ArrayUnique()
@@ -28,6 +30,7 @@ export class UpdateApiKeyScopesDto {
       'when it asks for one more tool: the request a person reads then names ' +
       'only what changes.',
   })
+  @Sensitivity(Sensitivity.PUBLIC)
   @IsOptional()
   @IsArray()
   @ArrayUnique()
@@ -40,6 +43,7 @@ export class UpdateApiKeyScopesDto {
       'so it is read as their claim, not as a fact.',
     maxLength: 200,
   })
+  @Sensitivity(Sensitivity.ARBITRARY_TEXT)
   @IsOptional()
   @IsString()
   @MaxLength(200)
