@@ -1,0 +1,54 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="72 106 1110 1110">
+  <title>Flui</title>
+  <defs>
+    <linearGradient id="wingL" x1="80" y1="600" x2="627" y2="420" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#0030F6"/>
+      <stop offset="1" stop-color="#0080FC"/>
+    </linearGradient>
+    <linearGradient id="wingR" x1="627" y1="420" x2="1173" y2="600" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#0A9BFC"/>
+      <stop offset="0.5" stop-color="#33C6FD"/>
+      <stop offset="1" stop-color="#00E6FC"/>
+    </linearGradient>
+    <linearGradient id="chevL" x1="320" y1="650" x2="627" y2="800" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#00A6FC"/>
+      <stop offset="1" stop-color="#0038F8"/>
+    </linearGradient>
+    <linearGradient id="chevR" x1="627" y1="800" x2="940" y2="650" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#0078FC"/>
+      <stop offset="1" stop-color="#00E8FC"/>
+    </linearGradient>
+    <linearGradient id="l2L" x1="320" y1="650" x2="627" y2="800" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#A0C8FB"/>
+      <stop offset="1" stop-color="#98C1FD"/>
+    </linearGradient>
+    <linearGradient id="l2R" x1="627" y1="800" x2="940" y2="650" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#9FD8FD"/>
+      <stop offset="1" stop-color="#AEF2FD"/>
+    </linearGradient>
+    <linearGradient id="l3L" x1="320" y1="650" x2="627" y2="800" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#C7DEFC"/>
+      <stop offset="1" stop-color="#C2DAFE"/>
+    </linearGradient>
+    <linearGradient id="l3R" x1="627" y1="800" x2="940" y2="650" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#C6E8FE"/>
+      <stop offset="1" stop-color="#CFF7FE"/>
+    </linearGradient>
+    <clipPath id="left"><rect x="0" y="0" width="627" height="1254"/></clipPath>
+    <clipPath id="right"><rect x="627" y="0" width="627" height="1254"/></clipPath>
+    <path id="wing" d="M605 296 Q627 282 649 296 L1135 570 C1160 585 1172 600 1174 610 C1174 615 1170 615 1166 612 C1110 578 1050 563 990 563 C870 563 760 620 652 698 Q627 714 602 698 C494 620 384 563 264 563 C204 563 144 578 88 612 C84 615 79 615 80 610 C82 600 94 585 119 570 Z"/>
+    <path id="chev" d="M332 652 L382 626 Q404 614 426 626 L627 730 L828 626 Q850 614 872 626 L922 652 Q944 670 922 688 L650 832 Q627 844 604 832 L332 688 Q310 670 332 652 Z"/>
+  </defs>
+  <use href="#wing" clip-path="url(#left)" fill="url(#wingL)"/>
+  <use href="#wing" clip-path="url(#right)" fill="url(#wingR)"/>
+  <g transform="translate(0 196)">
+    <use href="#chev" clip-path="url(#left)" fill="url(#l3L)"/>
+    <use href="#chev" clip-path="url(#right)" fill="url(#l3R)"/>
+  </g>
+  <g transform="translate(0 98)">
+    <use href="#chev" clip-path="url(#left)" fill="url(#l2L)"/>
+    <use href="#chev" clip-path="url(#right)" fill="url(#l2R)"/>
+  </g>
+  <use href="#chev" clip-path="url(#left)" fill="url(#chevL)"/>
+  <use href="#chev" clip-path="url(#right)" fill="url(#chevR)"/>
+</svg>

@@ -1,125 +1,96 @@
 <p align="center">
-  <img src="docs/assets/logo.png" alt="Flui" width="120">
+  <img src="docs/assets/flui-mark.svg" alt="Flui" width="96">
 </p>
 <h1 align="center">Flui</h1>
- 
+
 <p align="center">
-  <strong>The platform for independent cloud.</strong>
-</p>
-<p align="center">
-  <em>Open source. Multi-provider. Yours to own and run.</em>
+  <strong>Build your cloud platform on the providers you choose, and on servers you own.</strong>
 </p>
 <p align="center">
   <a href="LICENSE"><img alt="License: AGPL-3.0" src="https://img.shields.io/badge/license-AGPL--3.0-blue.svg"></a>
   <a href="https://docs.flui.cloud"><img alt="Docs" src="https://img.shields.io/badge/docs-docs.flui.cloud-3DA5FF"></a>
-  <a href="https://github.com/flui-cloud/core/actions/workflows/docker-publish.yml"><img alt="Build" src="https://github.com/flui-cloud/core/actions/workflows/docker-publish.yml/badge.svg"></a>
-  <a href="https://github.com/flui-cloud/core/actions/workflows/security.yml"><img alt="Security scan" src="https://github.com/flui-cloud/core/actions/workflows/security.yml/badge.svg"></a>
   <a href="https://www.npmjs.com/package/@flui-cloud/cli"><img alt="npm" src="https://img.shields.io/npm/v/@flui-cloud/cli.svg"></a>
+  <a href="https://github.com/flui-cloud/flui-core/actions/workflows/docker-publish.yml"><img alt="Build" src="https://github.com/flui-cloud/flui-core/actions/workflows/docker-publish.yml/badge.svg"></a>
+  <a href="https://github.com/flui-cloud/flui-core/actions/workflows/security.yml"><img alt="Security scan" src="https://github.com/flui-cloud/flui-core/actions/workflows/security.yml/badge.svg"></a>
 </p>
 <p align="center">
-  <em>Flui is built around the <a href="https://github.com/flui-cloud/flui-spec"><code>flui.yaml</code></a> open specification.</em>
+  <a href="https://flui.cloud">Website</a> ·
+  <a href="https://flui.cloud/#install">Install</a> ·
+  <a href="https://docs.flui.cloud">Docs</a> ·
+  <a href="https://github.com/flui-cloud/flui-spec">flui.yaml spec</a>
 </p>
 
-Flui is the open source platform for running independent cloud — modern infrastructure that works on the providers you choose, on the servers you own, or both. You bring the cloud credentials; Flui provisions a production-ready environment in about five minutes and runs your applications on it.
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/topology-app-dark.png">
+    <img src="docs/assets/topology-app-light.png" alt="The Flui dashboard mapping one application with the services, databases and queues it talks to, and the traffic reaching it from the internet" width="820">
+  </picture>
+</p>
 
-At its core, Flui is built around `flui.yaml` — an open manifest specification that describes a cloud application end-to-end, independently of any single platform implementation. The control plane is open source. The runtime lives on infrastructure you own. Every dependency Flui ships is open source too.
+Flui turns regional cloud providers and servers you own into one cloud platform. It provisions the servers, the private network, the firewall and the certificates, installs a Kubernetes runtime and runs your applications on it, with observability, autoscaling and managed databases built in. You work through a dashboard, a CLI or an AI agent, and you never need to know Kubernetes.
 
-<p align="center"><img src="docs/assets/headline-no-icon.png" alt="Flui" /><img src="docs/assets/diagram-v2.png" alt="Flui" /></p>
+The whole platform runs on infrastructure you own. There is no Flui-hosted control plane in the middle, and every component Flui ships is open source.
 
-## Why Flui
+If Flui is useful to you, a ⭐ helps other people find it.
 
-Modern cloud experience and infrastructure ownership shouldn't require lock-in. Today, the tools to run production workloads on your own infrastructure are either fragmented (raw Kubernetes), proprietary (managed PaaS), or coupled to a specific implementation.
+## Why
 
-Flui exists to provide a complete platform around an open specification — `flui.yaml` — that any cloud-native application can adopt, independently of the platform that runs it. The result: a self-hosted control plane today, and a vendor-neutral way of describing cloud applications for the long term.
+Choosing a cloud provider shouldn't be a vow made at the altar. A provider can be the right choice today and the wrong one tomorrow, or excellent for one part of your system while another fits the rest better.
 
-Supported infrastructure is centered on **European cloud providers**, while a pluggable adapter model keeps the door open to any provider.
+Flui does not try to be another giant. It builds a platform on top of the providers that already exist: it speaks each one's API, gives them one model to work with, and is honest about what each one can and cannot do. Where a provider lacks something, Flui completes it (a firewall on the host, a private network over WireGuard). Where another provider does it better, Flui composes them (servers from one, DNS from another).
 
-## Quickstart
+The goal is a real choice, and the freedom to choose again: move applications and data to another provider without rebuilding everything on top of them.
+
+## Install
+
+You need Node.js 18 or later and either a cloud account (Hetzner, Scaleway or OVHcloud) or a Linux server you can reach over SSH.
+
+**On a cloud provider**
 
 ```bash
-# 1. Install the CLI
 npm install -g @flui-cloud/cli
-
-# 2. Save your provider API token (encrypted, kept locally)
-flui config set hetzner YOUR_HETZNER_TOKEN     # or: scaleway YOUR_SCALEWAY_TOKEN
-
-# 3. Provision your environment (~5 minutes, valid HTTPS included)
-flui env create --region nbg1 --node-size cx32
-
-# 4. Sign in to the platform that just came up on your cluster
-flui auth login
+flui vault init                    # a passphrase that seals your keys on this machine
+flui config set hetzner            # asks for the key; it never leaves your machine
+flui server-types list --provider hetzner --region nbg1 --fits
+flui env create --provider hetzner --region nbg1 --node-size cx23
 ```
 
-When `flui env create` returns, your environment is reachable over HTTPS at a stable `nip.io` URL — no domain required. Bring your own domain whenever you want; Flui handles the certificate dance for you.
+**On a server you already have**
 
-Full guide → [docs.flui.cloud](https://docs.flui.cloud).
+```bash
+npm install -g @flui-cloud/cli
+flui vault init
+flui env create --host <your-server-ip>
+```
+
+In about seven minutes you get a running platform with its own HTTPS address, no domain required. The [install page](https://flui.cloud/#install) builds these commands for the provider, city and server size you pick, and the [guide](https://docs.flui.cloud/tasks/get-flui-running/) covers every option.
 
 ## What you get
 
-A complete platform, not a starter kit. `flui env create` returns an environment ready for production:
+- **Infrastructure handled for you.** Servers, private networks, firewalls, DNS and TLS certificates, created through each provider's own API. One rule model for the firewall, whether the provider enforces it or Flui does on the host.
+- **Several providers in one installation.** A control cluster manages workload clusters on other providers and on your own servers, connected over the Flui network (WireGuard). Keep backups on a different provider, or move an application from one to another.
+- **Autoscaling with a spending cap.** Scaling groups add and remove servers between a minimum and a maximum, within a monthly budget, and wait out a server type that is temporarily sold out.
+- **Observability from the first minute.** Metrics, logs and alerts are installed with the platform and shown where you need them: on each application, each cluster, its traffic.
+- **Managed databases and a catalog.** PostgreSQL, MariaDB, Redis and more, with backups, point-in-time recovery for supported engines, connection pooling, an SQL console and migration between clusters. Plus ready-to-run applications and framework templates.
+- **Dashboard, CLI and AI agents on the same API.** Agents connect over MCP with keys you can limit to one area, cluster or application, and changes they ask for wait for a person to approve them.
 
-- **Automatic routing and HTTPS** — no ingress configuration, no certificate manager to babysit. ACME automation included (HTTP-01, DNS-01 with wildcard, multi-domain SAN).
-- **Built-in observability** — metrics, logs, dashboards, unified across every workload.
-- **Single sign-on** for the platform and the apps you deploy on it.
-- **Network, firewall and DNS** managed through the same CLI as your applications.
-- **Real-time metrics, logs, scaling and lifecycle controls** for every app — from the CLI or the dashboard, both backed by the same `flui.yaml`.
-- **No central tenant.** The Flui API and dashboard run on your environment, not on someone else's cloud.
+## Describe your app in flui.yaml
 
-## How you deploy an app
-
-Three starting points, one open manifest format:
-
-- **From the catalog** — pick a curated, self-hosted app (PostgreSQL, MariaDB, MinIO, Vaultwarden, Meilisearch, Uptime Kuma, …) and deploy in seconds.
-- **From a framework template** — fork a template repo, push your code, Flui builds and deploys.
-- **From your own `flui.yaml`** — write a manifest for any custom application.
-  Whatever path you choose, every deploy converges on a `flui.yaml` your team can review, version, and replay.
-
-```console
-$ flui deploy ./flui.yaml
-
-  Deploy from source
-
-  File:    ./flui.yaml
-  Cluster: production
-  Repo:    acme/my-blog
-  Branch:  main
-
-  ✓ Build triggered
-
-  App:      my-blog (my-blog-a1b2)
-  Workflow: https://github.com/acme/my-blog/actions/workflows/flui-build.yml
-
-  Waiting for build + deploy to complete (up to 35 min)…
-
-  ✓ Building image via GitHub Actions     1m 38s
-  ✓ Deploying to cluster                     24s
-  ✓ Rolling out update                       12s
-  ✓ "my-blog" is live
-
-  URL: https://my-blog-a1b2.49-12-34-56.nip.io
-  Run `flui app status my-blog-a1b2` for details.
-```
-
-## The `flui.yaml` manifest
-
-At the core of Flui sits `flui.yaml` — an open specification for describing cloud applications independently of any single platform. The CLI and the dashboard operate on this format. So can other tools.
+An application declares what it needs next to its code, without naming a provider or a Kubernetes resource. The format is an [open specification](https://github.com/flui-cloud/flui-spec) with its own schema and versioning, so other tools can read and write it too.
 
 ```yaml
+apiVersion: flui.cloud/v1beta1
 kind: Application
-apiVersion: flui/v1
-
 metadata:
-  name: my-blog
-
+  name: marketing-site
 build:
   strategy: dockerfile
   dockerfile: ./Dockerfile
-
 deploy:
   port: 3000
   exposure: public
   healthcheck:
-    path: /health
+    path: /api/health
   resources:
     profile: small
   scaling:
@@ -130,64 +101,39 @@ deploy:
     tls: true
 ```
 
-> **`flui.yaml` is an open specification, governed independently from Flui.** Schema, examples, versioning policy and semantics live at **[github.com/flui-cloud/flui-spec](https://github.com/flui-cloud/flui-spec)** in a dedicated public repository. The spec is versioned independently from Flui itself, so any tool — not just this one — can read, write, and validate `flui.yaml` files. It exists to give cloud applications a vendor-neutral description format.
-
-Validate any manifest locally with:
-
 ```bash
-flui catalog validate ./my-app.flui.yaml
+flui app init nextjs          # or start from a framework template
+flui catalog validate ./flui.yaml
+flui deploy ./flui.yaml       # builds with GitHub Actions and rolls it out
 ```
+
+## How it fits together
+
+The **control cluster** runs Flui itself: the API, the dashboard, identity and the observability stack. **Workload clusters** run your applications, on the same provider or on others, and each starts with a single server. The runtime is [K3s](https://k3s.io); the rest is open source too: Traefik, cert-manager, VictoriaMetrics, Loki, Grafana, Zitadel, PostgreSQL and Redis.
+
+Read more in the docs: [what Flui is](https://docs.flui.cloud/concepts/00-what-is-flui/), [multi-cluster topology](https://docs.flui.cloud/concepts/05-multi-cluster-topology/), [the network Flui builds](https://docs.flui.cloud/concepts/10-the-network-flui-builds/), [scaling groups](https://docs.flui.cloud/concepts/27-scaling-groups/), [the assistant and MCP](https://docs.flui.cloud/concepts/24-the-flui-assistant-and-mcp/).
 
 ## Status
 
-Flui is in **alpha**. I use it daily, the surface area is large, and things will change before 1.0.
+Flui is in **alpha**. It already runs real workloads, the surface is large, and things will change before 1.0. Supported providers today are Hetzner, Scaleway and OVHcloud, plus any Linux server reachable over SSH.
 
-| Working today                                                      | In progress                                       |
-| ------------------------------------------------------------------ | ------------------------------------------------- |
-| `flui env create` end-to-end on Hetzner & Scaleway                 | BYOS — install Flui on any SSH-reachable machine  |
-| HTTPS out of the box (nip.io + ACME HTTP-01, DNS-01 wildcard, SAN) | Contabo provider exposed in the CLI               |
-| Catalog of 20+ self-hosted apps and framework templates            | Catalog Level 2 — composed multi-component stacks |
-| `flui.yaml` deploys with CLI validation                            | npm publication of `@flui-cloud/cli`              |
-| Real-time metrics, logs, HPA + VPA scaling, lifecycle ops          | API stabilization toward 1.0                      |
-| Network, firewall, DNS, dashboard, observability stack             |                                                   |
+## Repositories
 
-## Architecture
-
-The control plane — this repo (API and CLI), [`dashboard`](https://github.com/flui-cloud/dashboard), and the [`flui-spec`](https://github.com/flui-cloud/flui-spec) — talks to your cloud provider and provisions a K3s-based cluster. The [`bootstrap-scripts`](https://github.com/flui-cloud/bootstrap-scripts) repo holds the cloud-init that installs the runtime and the built-in stack on each node.
-
-> The boundary that matters is between _Flui control plane_ and _user-owned infrastructure_. Everything past that line — the cluster, the data, the certificates, the workloads — is yours.
-
-Architecture deep dive → **[docs.flui.cloud/architecture](https://docs.flui.cloud/architecture)**.
-
-Every component Flui ships is open source — by design, not by accident. Traefik and cert-manager for ingress, Prometheus, Loki, Grafana and Vector for observability, Zitadel for identity, PostgreSQL and Redis for data, K3s as the cluster runtime. Flui builds on the open source ecosystem rather than competing with it.
-
-## Repository ecosystem
-
-- **core** _(you are here)_ — backend API and CLI
-- **[dashboard](https://github.com/flui-cloud/dashboard)** — Angular dashboard
-- **[bootstrap-scripts](https://github.com/flui-cloud/bootstrap-scripts)** — provisioning scripts and runtime manifests
-- **[flui-spec](https://github.com/flui-cloud/flui-spec)** — open specification of the `flui.yaml` manifest format
-  More at [github.com/flui-cloud](https://github.com/flui-cloud).
-
-## Links
-
-- [Documentation](https://docs.flui.cloud) — guides, references, tutorials
-- [Website](https://flui.cloud) — what Flui is and who it's for
-- [Roadmap](https://github.com/orgs/flui-cloud/projects) — what's in progress, what's next
-- [Issues](https://github.com/flui-cloud/core/issues) — bugs, requests, discussions
+- **flui-core** (this repository): the API and the CLI
+- **[flui-dashboard](https://github.com/flui-cloud/flui-dashboard)**: the web dashboard
+- **[flui-spec](https://github.com/flui-cloud/flui-spec)**: the `flui.yaml` specification
+- **[bootstrap-scripts](https://github.com/flui-cloud/bootstrap-scripts)**: what gets installed on each server
 
 ## Contributing
 
-Issues and pull requests are welcome. For substantial changes, open an issue first to discuss the direction. The codebase is TypeScript (NestJS for the API, oclif for the CLI) and uses `pnpm`.
-
-Local development means running several components side by side, or pointing the CLI at a stage environment on a supported provider. The current recommended workflow is in the [contributor setup guide](https://docs.flui.cloud).
+Flui is meant to grow as a community project, and contributions of every size help: code, docs, a new provider integration, a framework template, a bug report. Something not working? [Open an issue](https://github.com/flui-cloud/flui-core/issues) and include the output of `flui version`. For larger changes, open an issue first so we can agree on the direction. The code is TypeScript (NestJS for the API, oclif for the CLI) and uses `pnpm`. The shared workflow is in [CONTRIBUTING.md](https://github.com/flui-cloud/.github/blob/main/CONTRIBUTING.md).
 
 ## License
 
-Flui is released under the [GNU Affero General Public License v3](LICENSE). Fully open source — no open core, no enterprise edition gating features.
+[GNU Affero General Public License v3](LICENSE).
 
 ---
 
 <p align="center">
-  <em>Built and maintained by <a href="https://gojodigital.com/">Dawit</a>.</em>
+  If Flui helps you, <a href="https://github.com/flui-cloud/flui-core">star it on GitHub</a>.
 </p>
