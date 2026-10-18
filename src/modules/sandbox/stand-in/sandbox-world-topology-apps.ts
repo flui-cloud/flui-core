@@ -107,7 +107,7 @@ export const WORLD_STACKS: WorldStack[] = [
   { key: 'media', name: 'Media', primary: 'imgproxy' },
   { key: 'cache-queue', name: 'Cache & queue', primary: 'nats' },
   { key: 'storefront-us', name: 'Storefront US', primary: 'storefront' },
-  { key: 'orders-us', name: 'Orders US', primary: 'orders-reader' },
+  { key: 'orders-us', name: 'Auth US', primary: 'auth-proxy' },
   { key: 'edge-asia', name: 'Edge Asia', primary: 'edge-cache' },
   { key: 'staging-shop', name: 'Staging shop', primary: 'storefront' },
 ];

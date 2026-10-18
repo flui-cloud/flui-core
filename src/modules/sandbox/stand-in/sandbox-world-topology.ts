@@ -49,7 +49,7 @@ import { FIREWALL_RULES } from './sandbox-world';
 import { inboundOf } from '../../topology/utils/topology-inbound.util';
 
 /** Providers whose firewall Flui applies; the others are listed without one, as on a real fleet. */
-const MANAGED_FIREWALL = new Set(['hetzner', 'scaleway']);
+const MANAGED_FIREWALL = new Set(['hetzner', 'scaleway', 'ovh']);
 import { ExampleShape } from './sandbox-world-fleet';
 import {
   WORLD_APPS,

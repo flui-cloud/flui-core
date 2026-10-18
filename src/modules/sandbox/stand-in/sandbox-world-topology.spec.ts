@@ -195,7 +195,7 @@ describe('the example topology looks like a real, busy fleet', () => {
       false,
     );
     for (const cluster of world.clusters) {
-      expect(cluster.inbound === null).toBe(cluster.provider === 'contabo');
+      expect(cluster.inbound).not.toBeNull();
     }
   });
 
@@ -232,9 +232,9 @@ describe('the example topology looks like a real, busy fleet', () => {
     ).toBe(true);
   });
 
-  it('keeps the fleet level sparse: two cross-cluster links', () => {
-    expect(world.links.filter((l) => l.crossCluster)).toHaveLength(2);
-    expect(world.clusterLinks).toHaveLength(2);
+  it('links apps only within their cluster, as Flui does', () => {
+    expect(world.links.filter((l) => l.crossCluster)).toHaveLength(0);
+    expect(world.clusterLinks).toHaveLength(0);
   });
 
   it('has a few believable problems and no wall of red', () => {
