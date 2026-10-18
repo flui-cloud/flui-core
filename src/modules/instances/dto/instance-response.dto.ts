@@ -1,3 +1,4 @@
+import { Sensitivity } from '../../mask/decorators/sensitivity.decorator';
 import { ApiProperty } from '@nestjs/swagger';
 import { InstanceDto } from './instance.dto';
 import { ProviderErrorDto } from './provider-error.dto';
@@ -18,6 +19,7 @@ export class InstanceResponseDto {
     description: 'List of instances',
     type: [InstanceDto],
   })
+  @Sensitivity(Sensitivity.PUBLIC)
   data: InstanceDto[];
 
   @ApiProperty({
@@ -25,6 +27,7 @@ export class InstanceResponseDto {
     type: [ProviderErrorDto],
     required: false,
   })
+  @Sensitivity(Sensitivity.PUBLIC)
   partialErrors?: ProviderErrorDto[];
 
   constructor(instances: InstanceDto[], errors?: ProviderErrorDto[]) {

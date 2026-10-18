@@ -24,27 +24,35 @@ import { CertificatePhaseDto } from '../../dns/dto/certificate-phase.dto';
 
 export class GatewayRouteDto {
   @ApiProperty({ description: 'Endpoint id backing this route.' })
+  @Sensitivity(Sensitivity.PUBLIC)
   endpointId: string;
 
   @ApiProperty({ description: 'Route hostname (fqdn).' })
+  @Sensitivity(Sensitivity.NETWORK_IDENTIFIER, { screenOnly: true })
   host: string;
 
   @ApiProperty({ description: 'PathPrefix the route matches.', example: '/' })
+  @Sensitivity(Sensitivity.PUBLIC)
   path: string;
 
   @ApiProperty({ description: 'Application id owning the route.' })
+  @Sensitivity(Sensitivity.PUBLIC)
   applicationId: string;
 
   @ApiProperty({ description: 'Backing service, `<name>:<port>`.' })
+  @Sensitivity(Sensitivity.PUBLIC)
   service: string;
 
   @ApiProperty({ enum: EndpointType })
+  @Sensitivity(Sensitivity.PUBLIC)
   endpointType: EndpointType;
 
   @ApiProperty({ description: 'True when HTTPS is active on the route.' })
+  @Sensitivity(Sensitivity.PUBLIC)
   tlsEnabled: boolean;
 
   @ApiPropertyOptional({ enum: CertificateStatus })
+  @Sensitivity(Sensitivity.PUBLIC)
   certificateStatus?: CertificateStatus | null;
 
   @ApiPropertyOptional({ type: CertificatePhaseDto })
@@ -52,18 +60,23 @@ export class GatewayRouteDto {
   certificatePhase?: CertificatePhaseDto;
 
   @ApiPropertyOptional({ type: GatewayAuthPolicyDto })
+  @Sensitivity(Sensitivity.PUBLIC)
   auth?: GatewayAuthPolicyDto | null;
 
   @ApiPropertyOptional({ type: GatewayRateLimitPolicyDto })
+  @Sensitivity(Sensitivity.PUBLIC)
   rateLimit?: GatewayRateLimitPolicyDto | null;
 
   @ApiPropertyOptional({ type: [String] })
+  @Sensitivity(Sensitivity.NETWORK_IDENTIFIER, { screenOnly: true })
   allowIps?: string[] | null;
 
   @ApiProperty({ enum: ReconciliationStatus })
+  @Sensitivity(Sensitivity.PUBLIC)
   reconciliationStatus: ReconciliationStatus;
 
   @ApiPropertyOptional({ description: 'Last reconciliation error, if any.' })
+  @Sensitivity(Sensitivity.ARBITRARY_TEXT)
   errorMessage?: string | null;
 }
 
@@ -75,9 +88,11 @@ export class GatewayRouteSyncDto extends GatewayRouteDto {
 
 export class ClusterGatewayRouteDto extends GatewayRouteDto {
   @ApiPropertyOptional({ description: 'Owning application name.' })
+  @Sensitivity(Sensitivity.PUBLIC)
   applicationName?: string | null;
 
   @ApiPropertyOptional({ description: 'Owning application slug.' })
+  @Sensitivity(Sensitivity.PUBLIC)
   applicationSlug?: string | null;
 }
 

@@ -153,21 +153,26 @@ export class ContainerResourcesDto {
 
 export class ContainerRuntimeDetailDto {
   @ApiProperty({ example: 'app' })
+  @Sensitivity(Sensitivity.PUBLIC)
   name: string;
 
   @ApiProperty({ example: 'nginx:1.25' })
+  @Sensitivity(Sensitivity.TENANT_IDENTITY)
   image: string;
 
   @ApiProperty({ type: ContainerResourcesDto })
+  @Sensitivity(Sensitivity.PUBLIC)
   requests: ContainerResourcesDto;
 
   @ApiProperty({ type: ContainerResourcesDto })
+  @Sensitivity(Sensitivity.PUBLIC)
   limits: ContainerResourcesDto;
 
   @ApiPropertyOptional({
     type: ContainerResourcesDto,
     description: 'Live usage from metrics-server (null if not available)',
   })
+  @Sensitivity(Sensitivity.PUBLIC)
   usage?: ContainerResourcesDto;
 }
 
@@ -245,20 +250,35 @@ export class PodPlacementDto {
   ready: boolean;
 }
 
+export class RestartPendingDto {
+  @ApiProperty({
+    type: [String],
+    description:
+      'Each variable a restart would apply: added, changed or removed. Names only.',
+  })
+  @Sensitivity(Sensitivity.PUBLIC)
+  changes: string[];
+}
+
 export class AppRuntimeResponseDto {
   @ApiProperty({ example: 'a1b2c3d4-...' })
+  @Sensitivity(Sensitivity.PUBLIC)
   appId: string;
 
   @ApiProperty({ example: 'my-app' })
+  @Sensitivity(Sensitivity.PUBLIC)
   deploymentName: string;
 
   @ApiProperty({ example: 'default' })
+  @Sensitivity(Sensitivity.TENANT_IDENTITY, { screenOnly: true })
   namespace: string;
 
   @ApiProperty({ type: ReplicaStatusDto })
+  @Sensitivity(Sensitivity.PUBLIC)
   replicas: ReplicaStatusDto;
 
   @ApiProperty({ type: [ContainerRuntimeDetailDto] })
+  @Sensitivity(Sensitivity.PUBLIC)
   containers: ContainerRuntimeDetailDto[];
 
   @ApiPropertyOptional({
@@ -270,12 +290,13 @@ export class AppRuntimeResponseDto {
   pods?: PodPlacementDto[];
 
   @ApiPropertyOptional({
+    type: RestartPendingDto,
     nullable: true,
     description:
       'Set when saved variables have not reached the running pods yet: a restart applies them. `changes` names each variable (added / changed / removed), never a value.',
   })
   @Sensitivity(Sensitivity.PUBLIC)
-  restartPending?: { changes: string[] } | null;
+  restartPending?: RestartPendingDto | null;
 
   @Sensitivity(Sensitivity.PUBLIC)
   @ApiPropertyOptional({

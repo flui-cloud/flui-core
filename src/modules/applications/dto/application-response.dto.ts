@@ -488,6 +488,7 @@ export class ApplicationResponseDto {
     description:
       'When persistenceScope=dedicated, the Kubernetes node name the pod is pinned to. Null until the deploy auto-assigns the worker with the most free capacity.',
   })
+  @Sensitivity(Sensitivity.NETWORK_IDENTIFIER)
   dedicatedNodeName?: string | null;
 
   @ApiProperty({
@@ -520,6 +521,7 @@ export class ApplicationResponseDto {
       'run is first observed. Frontend can link to this directly without ' +
       'resolving owner/repo itself.',
   })
+  @Sensitivity(Sensitivity.TENANT_IDENTITY)
   workflowRunUrl?: string;
 
   @ApiPropertyOptional({

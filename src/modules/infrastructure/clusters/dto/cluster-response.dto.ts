@@ -8,32 +8,38 @@ export class VNetAttachmentInfoDto {
     description: 'VNet UUID',
     example: 'a1b2c3d4-e5f6-7890-abcd-ef1234567890',
   })
+  @Sensitivity(Sensitivity.PUBLIC)
   vnetId: string;
 
   @ApiProperty({
     description: 'Subnet UUID',
     example: 'b2c3d4e5-f6a7-8901-bcde-f12345678901',
   })
+  @Sensitivity(Sensitivity.PUBLIC)
   subnetId: string;
 
   @ApiProperty({
     description: 'Private IP address assigned in VNet',
     example: '10.0.1.5',
   })
+  @Sensitivity(Sensitivity.NETWORK_IDENTIFIER)
   privateIp: string;
 
   @ApiPropertyOptional({
     description: 'Timestamp when the node was attached to VNet',
     example: '2024-01-15T10:30:00Z',
   })
+  @Sensitivity(Sensitivity.PUBLIC)
   attachedAt?: string;
 }
 
 export class ClusterNodeDto {
   @ApiProperty({ description: 'Node ID' })
+  @Sensitivity(Sensitivity.PUBLIC)
   id: string;
 
   @ApiProperty({ description: 'Server name' })
+  @Sensitivity(Sensitivity.NETWORK_IDENTIFIER)
   serverName: string;
 
   @ApiProperty({
@@ -41,9 +47,11 @@ export class ClusterNodeDto {
     enum: ['master', 'worker'],
     example: 'worker',
   })
+  @Sensitivity(Sensitivity.PUBLIC)
   nodeType: string;
 
   @ApiProperty({ description: 'Node IP address', example: '10.0.1.10' })
+  @Sensitivity(Sensitivity.NETWORK_IDENTIFIER)
   ipAddress: string;
 
   @ApiProperty({
@@ -51,12 +59,14 @@ export class ClusterNodeDto {
     enum: ['creating', 'joining', 'ready', 'error', 'deleting'],
     example: 'ready',
   })
+  @Sensitivity(Sensitivity.PUBLIC)
   status: string;
 
   @ApiPropertyOptional({
     description: 'VNet attachment information',
     type: VNetAttachmentInfoDto,
   })
+  @Sensitivity(Sensitivity.PUBLIC)
   vnetInfo?: VNetAttachmentInfoDto;
 
   @ApiPropertyOptional({
@@ -65,6 +75,7 @@ export class ClusterNodeDto {
     example: 'running',
     enum: ['running', 'off', 'starting', 'stopping', 'unknown'],
   })
+  @Sensitivity(Sensitivity.PUBLIC)
   provider_status?: string;
 
   @ApiPropertyOptional({
@@ -72,32 +83,40 @@ export class ClusterNodeDto {
       'Whether node status is synced with provider state (only included when include_real_status=true)',
     example: true,
   })
+  @Sensitivity(Sensitivity.PUBLIC)
   is_synced?: boolean;
 
   @ApiProperty({ description: 'Node creation timestamp' })
+  @Sensitivity(Sensitivity.PUBLIC)
   createdAt: Date;
 }
 
 export class ClusterResponseDto {
   @ApiProperty({ description: 'Cluster ID' })
+  @Sensitivity(Sensitivity.PUBLIC)
   id: string;
 
   @ApiProperty({ description: 'Cluster name', example: 'production-cluster' })
+  @Sensitivity(Sensitivity.PUBLIC)
   name: string;
 
   @ApiProperty({
     description: 'Cloud provider',
     example: 'hetzner',
   })
+  @Sensitivity(Sensitivity.PUBLIC)
   provider: string;
 
   @ApiProperty({ description: 'Region', example: 'fsn1' })
+  @Sensitivity(Sensitivity.PUBLIC)
   region: string;
 
   @ApiProperty({ description: 'Node size', example: 'cx22' })
+  @Sensitivity(Sensitivity.PUBLIC)
   nodeSize: string;
 
   @ApiProperty({ description: 'Current number of nodes', example: 3 })
+  @Sensitivity(Sensitivity.PUBLIC)
   nodeCount: number;
 
   @ApiProperty({
@@ -105,6 +124,7 @@ export class ClusterResponseDto {
     enum: ['creating', 'ready', 'scaling', 'error', 'deleting', 'deleted'],
     example: 'ready',
   })
+  @Sensitivity(Sensitivity.PUBLIC)
   status: string;
 
   @ApiProperty({
@@ -112,33 +132,39 @@ export class ClusterResponseDto {
     enum: ClusterType,
     example: ClusterType.WORKLOAD,
   })
+  @Sensitivity(Sensitivity.PUBLIC)
   clusterType: ClusterType;
 
   @ApiProperty({ description: 'Autoscaling enabled', example: false })
+  @Sensitivity(Sensitivity.PUBLIC)
   autoscalingEnabled: boolean;
 
   @ApiPropertyOptional({
     description: 'Minimum nodes (autoscaling)',
     example: 2,
   })
+  @Sensitivity(Sensitivity.PUBLIC)
   minNodes?: number;
 
   @ApiPropertyOptional({
     description: 'Maximum nodes (autoscaling)',
     example: 5,
   })
+  @Sensitivity(Sensitivity.PUBLIC)
   maxNodes?: number;
 
   @ApiPropertyOptional({
     description: 'K3s version',
     example: RELEASE.k3s.version,
   })
+  @Sensitivity(Sensitivity.PUBLIC)
   k3sVersion?: string;
 
   @ApiPropertyOptional({
     description: 'Master node IP address',
     example: '10.0.1.10',
   })
+  @Sensitivity(Sensitivity.NETWORK_IDENTIFIER)
   masterIpAddress?: string;
 
   @ApiPropertyOptional({
@@ -156,12 +182,14 @@ export class ClusterResponseDto {
     description: 'VNet UUID if cluster is attached to a VNet',
     example: 'a1b2c3d4-e5f6-7890-abcd-ef1234567890',
   })
+  @Sensitivity(Sensitivity.PUBLIC)
   vnetId?: string;
 
   @ApiPropertyOptional({
     description: 'VNet name if cluster is attached to a VNet',
     example: 'production-vnet',
   })
+  @Sensitivity(Sensitivity.PUBLIC)
   vnetName?: string;
 
   @ApiPropertyOptional({
@@ -169,6 +197,7 @@ export class ClusterResponseDto {
       'Grafana Prometheus datasource UID (if cluster is registered to observability)',
     example: 'dfb2lmgjxfaioe',
   })
+  @Sensitivity(Sensitivity.PUBLIC)
   grafanaPrometheusUid?: string;
 
   @ApiPropertyOptional({
@@ -176,12 +205,14 @@ export class ClusterResponseDto {
       'Grafana Loki datasource UID (if cluster is registered to observability)',
     example: 'aek3nqjxfbcpqf',
   })
+  @Sensitivity(Sensitivity.PUBLIC)
   grafanaLokiUid?: string;
 
   @ApiProperty({
     description: 'Cluster nodes',
     type: [ClusterNodeDto],
   })
+  @Sensitivity(Sensitivity.PUBLIC)
   nodes: ClusterNodeDto[];
 
   @ApiPropertyOptional({
@@ -190,6 +221,7 @@ export class ClusterResponseDto {
     example: 'all_running',
     enum: ['all_running', 'all_stopped', 'mixed', 'unknown'],
   })
+  @Sensitivity(Sensitivity.PUBLIC)
   cluster_real_status?: string;
 
   @ApiPropertyOptional({
@@ -197,11 +229,14 @@ export class ClusterResponseDto {
       'Whether cluster status is synced with all nodes real state (only included when include_real_status=true)',
     example: true,
   })
+  @Sensitivity(Sensitivity.PUBLIC)
   is_synced?: boolean;
 
   @ApiProperty({ description: 'Cluster creation timestamp' })
+  @Sensitivity(Sensitivity.PUBLIC)
   createdAt: Date;
 
   @ApiProperty({ description: 'Last update timestamp' })
+  @Sensitivity(Sensitivity.PUBLIC)
   updatedAt: Date;
 }

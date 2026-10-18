@@ -469,6 +469,11 @@ export class ApplicationsController {
       'Track progress via the returned operation (polling or WebSocket subscribe:application).',
   })
   @ApiParam({ name: 'id', description: 'Application ID' })
+  @ApiQuery({
+    name: 'onlyThis',
+    required: false,
+    description: "'true' removes this component alone from a composed install",
+  })
   @ApiResponse({
     status: 202,
     type: DeleteApplicationResponseDto,

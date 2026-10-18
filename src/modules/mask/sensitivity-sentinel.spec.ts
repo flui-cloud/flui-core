@@ -478,7 +478,6 @@ const MASK_EXEMPT: string[] = [
   'ApplicationResponseDto.composedAppName', // modules/applications/dto/application-response.dto.ts
   'ApplicationResponseDto.createdAt', // modules/applications/dto/application-response.dto.ts
   'ApplicationResponseDto.currentRevisionId', // modules/applications/dto/application-response.dto.ts
-  'ApplicationResponseDto.dedicatedNodeName', // modules/applications/dto/application-response.dto.ts
   'ApplicationResponseDto.deployOnPush', // modules/applications/dto/application-response.dto.ts
   'ApplicationResponseDto.description', // modules/applications/dto/application-response.dto.ts
   'ApplicationResponseDto.endpointCertificateStatus', // modules/applications/dto/application-response.dto.ts
@@ -516,7 +515,6 @@ const MASK_EXEMPT: string[] = [
   'ApplicationResponseDto.updatedAt', // modules/applications/dto/application-response.dto.ts
   'ApplicationResponseDto.userId', // modules/applications/dto/application-response.dto.ts
   'ApplicationResponseDto.workflowRunId', // modules/applications/dto/application-response.dto.ts
-  'ApplicationResponseDto.workflowRunUrl', // modules/applications/dto/application-response.dto.ts
   'ApplicationResponseDto.workloadKind', // modules/applications/dto/application-response.dto.ts
   'ApplicationScalingDto.enabled', // modules/applications/dto/create-application.dto.ts
   'ApplicationScalingDto.maxReplicas', // modules/applications/dto/create-application.dto.ts
@@ -659,11 +657,6 @@ const MASK_EXEMPT: string[] = [
   'AppRevisionResponseDto.revisionNumber', // modules/applications/dto/application-response.dto.ts
   'AppRevisionResponseDto.rollbackReason', // modules/applications/dto/application-response.dto.ts
   'AppRevisionResponseDto.status', // modules/applications/dto/application-response.dto.ts
-  'AppRuntimeResponseDto.appId', // modules/applications/dto/app-management.dto.ts
-  'AppRuntimeResponseDto.containers', // modules/applications/dto/app-management.dto.ts
-  'AppRuntimeResponseDto.deploymentName', // modules/applications/dto/app-management.dto.ts
-  'AppRuntimeResponseDto.namespace', // modules/applications/dto/app-management.dto.ts
-  'AppRuntimeResponseDto.replicas', // modules/applications/dto/app-management.dto.ts
   'AppStatusMetricsDto.ready_ratio', // modules/observability/dto/application-metrics.dto.ts
   'AppStatusMetricsDto.replicas_desired', // modules/observability/dto/application-metrics.dto.ts
   'AppStatusMetricsDto.replicas_ready', // modules/observability/dto/application-metrics.dto.ts
@@ -1203,8 +1196,6 @@ const MASK_EXEMPT: string[] = [
   'ClusterDnsZoneResponseDto.reconciliationStatus', // modules/dns/dto/cluster-dns-zone-response.dto.ts
   'ClusterDnsZoneResponseDto.updatedAt', // modules/dns/dto/cluster-dns-zone-response.dto.ts
   'ClusterDnsZoneResponseDto.wildcardCertificate', // modules/dns/dto/cluster-dns-zone-response.dto.ts
-  'ClusterGatewayRouteDto.applicationName', // modules/applications/dto/gateway-route.dto.ts
-  'ClusterGatewayRouteDto.applicationSlug', // modules/applications/dto/gateway-route.dto.ts
   'ClusterHealthHistoryQueryDto.end', // modules/observability/dto/cluster-health.dto.ts
   'ClusterHealthHistoryQueryDto.start', // modules/observability/dto/cluster-health.dto.ts
   'ClusterHealthHistoryQueryDto.step', // modules/observability/dto/cluster-health.dto.ts
@@ -1241,42 +1232,11 @@ const MASK_EXEMPT: string[] = [
   'ClusterMetricsResponseDto.cluster_id', // modules/observability/dto/server-metrics-response.dto.ts
   'ClusterMetricsResponseDto.servers', // modules/observability/dto/server-metrics-response.dto.ts
   'ClusterMetricsResponseDto.timestamp', // modules/observability/dto/server-metrics-response.dto.ts
-  'ClusterNodeDto.createdAt', // modules/infrastructure/clusters/dto/cluster-response.dto.ts
-  'ClusterNodeDto.id', // modules/infrastructure/clusters/dto/cluster-response.dto.ts
-  'ClusterNodeDto.ipAddress', // modules/infrastructure/clusters/dto/cluster-response.dto.ts
-  'ClusterNodeDto.is_synced', // modules/infrastructure/clusters/dto/cluster-response.dto.ts
-  'ClusterNodeDto.nodeType', // modules/infrastructure/clusters/dto/cluster-response.dto.ts
-  'ClusterNodeDto.provider_status', // modules/infrastructure/clusters/dto/cluster-response.dto.ts
-  'ClusterNodeDto.serverName', // modules/infrastructure/clusters/dto/cluster-response.dto.ts
-  'ClusterNodeDto.status', // modules/infrastructure/clusters/dto/cluster-response.dto.ts
-  'ClusterNodeDto.vnetInfo', // modules/infrastructure/clusters/dto/cluster-response.dto.ts
   'ClusterPowerOperationResponseDto.cluster_id', // modules/infrastructure/clusters/dto/cluster-power-management.dto.ts
   'ClusterPowerOperationResponseDto.created_at', // modules/infrastructure/clusters/dto/cluster-power-management.dto.ts
   'ClusterPowerOperationResponseDto.estimated_duration', // modules/infrastructure/clusters/dto/cluster-power-management.dto.ts
   'ClusterPowerOperationResponseDto.operation_id', // modules/infrastructure/clusters/dto/cluster-power-management.dto.ts
   'ClusterPowerOperationResponseDto.status', // modules/infrastructure/clusters/dto/cluster-power-management.dto.ts
-  'ClusterResponseDto.autoscalingEnabled', // modules/infrastructure/clusters/dto/cluster-response.dto.ts
-  'ClusterResponseDto.cluster_real_status', // modules/infrastructure/clusters/dto/cluster-response.dto.ts
-  'ClusterResponseDto.clusterType', // modules/infrastructure/clusters/dto/cluster-response.dto.ts
-  'ClusterResponseDto.createdAt', // modules/infrastructure/clusters/dto/cluster-response.dto.ts
-  'ClusterResponseDto.grafanaLokiUid', // modules/infrastructure/clusters/dto/cluster-response.dto.ts
-  'ClusterResponseDto.grafanaPrometheusUid', // modules/infrastructure/clusters/dto/cluster-response.dto.ts
-  'ClusterResponseDto.id', // modules/infrastructure/clusters/dto/cluster-response.dto.ts
-  'ClusterResponseDto.is_synced', // modules/infrastructure/clusters/dto/cluster-response.dto.ts
-  'ClusterResponseDto.k3sVersion', // modules/infrastructure/clusters/dto/cluster-response.dto.ts
-  'ClusterResponseDto.masterIpAddress', // modules/infrastructure/clusters/dto/cluster-response.dto.ts
-  'ClusterResponseDto.maxNodes', // modules/infrastructure/clusters/dto/cluster-response.dto.ts
-  'ClusterResponseDto.minNodes', // modules/infrastructure/clusters/dto/cluster-response.dto.ts
-  'ClusterResponseDto.name', // modules/infrastructure/clusters/dto/cluster-response.dto.ts
-  'ClusterResponseDto.nodeCount', // modules/infrastructure/clusters/dto/cluster-response.dto.ts
-  'ClusterResponseDto.nodes', // modules/infrastructure/clusters/dto/cluster-response.dto.ts
-  'ClusterResponseDto.nodeSize', // modules/infrastructure/clusters/dto/cluster-response.dto.ts
-  'ClusterResponseDto.provider', // modules/infrastructure/clusters/dto/cluster-response.dto.ts
-  'ClusterResponseDto.region', // modules/infrastructure/clusters/dto/cluster-response.dto.ts
-  'ClusterResponseDto.status', // modules/infrastructure/clusters/dto/cluster-response.dto.ts
-  'ClusterResponseDto.updatedAt', // modules/infrastructure/clusters/dto/cluster-response.dto.ts
-  'ClusterResponseDto.vnetId', // modules/infrastructure/clusters/dto/cluster-response.dto.ts
-  'ClusterResponseDto.vnetName', // modules/infrastructure/clusters/dto/cluster-response.dto.ts
   'ClusterScalingDecisionDto.groupId', // modules/infrastructure/scaling/dto/scaling-response.dto.ts
   'ClusterScalingDecisionDto.groupName', // modules/infrastructure/scaling/dto/scaling-response.dto.ts
   'ClusterScalingGroupRefDto.bounds', // modules/infrastructure/scaling/dto/scaling-response.dto.ts
@@ -1413,11 +1373,6 @@ const MASK_EXEMPT: string[] = [
   'ContainerResourcesDto.memory', // modules/applications/dto/application-response.dto.ts
   'ContainerResourceSpecDto.cpu', // modules/applications/dto/app-management.dto.ts
   'ContainerResourceSpecDto.memory', // modules/applications/dto/app-management.dto.ts
-  'ContainerRuntimeDetailDto.image', // modules/applications/dto/app-management.dto.ts
-  'ContainerRuntimeDetailDto.limits', // modules/applications/dto/app-management.dto.ts
-  'ContainerRuntimeDetailDto.name', // modules/applications/dto/app-management.dto.ts
-  'ContainerRuntimeDetailDto.requests', // modules/applications/dto/app-management.dto.ts
-  'ContainerRuntimeDetailDto.usage', // modules/applications/dto/app-management.dto.ts
   'CpuMetricsDto.cores', // modules/observability/dto/server-metrics-response.dto.ts
   'CpuMetricsDto.usage_percent', // modules/observability/dto/server-metrics-response.dto.ts
   'CrashDiagnosisDto.applicationId', // modules/scaling/dto/crash-diagnosis.dto.ts
@@ -1974,19 +1929,6 @@ const MASK_EXEMPT: string[] = [
   'GatewayRateLimitPolicyDto.average', // modules/dns/dto/gateway-config.dto.ts
   'GatewayRateLimitPolicyDto.burst', // modules/dns/dto/gateway-config.dto.ts
   'GatewayRateLimitPolicyDto.period', // modules/dns/dto/gateway-config.dto.ts
-  'GatewayRouteDto.allowIps', // modules/applications/dto/gateway-route.dto.ts
-  'GatewayRouteDto.applicationId', // modules/applications/dto/gateway-route.dto.ts
-  'GatewayRouteDto.auth', // modules/applications/dto/gateway-route.dto.ts
-  'GatewayRouteDto.certificateStatus', // modules/applications/dto/gateway-route.dto.ts
-  'GatewayRouteDto.endpointId', // modules/applications/dto/gateway-route.dto.ts
-  'GatewayRouteDto.endpointType', // modules/applications/dto/gateway-route.dto.ts
-  'GatewayRouteDto.errorMessage', // modules/applications/dto/gateway-route.dto.ts
-  'GatewayRouteDto.host', // modules/applications/dto/gateway-route.dto.ts
-  'GatewayRouteDto.path', // modules/applications/dto/gateway-route.dto.ts
-  'GatewayRouteDto.rateLimit', // modules/applications/dto/gateway-route.dto.ts
-  'GatewayRouteDto.reconciliationStatus', // modules/applications/dto/gateway-route.dto.ts
-  'GatewayRouteDto.service', // modules/applications/dto/gateway-route.dto.ts
-  'GatewayRouteDto.tlsEnabled', // modules/applications/dto/gateway-route.dto.ts
   'GatewayStatusDto.routes', // modules/applications/dto/gateway-route.dto.ts
   'GatewayStatusDto.synced', // modules/applications/dto/gateway-route.dto.ts
   'GatewayStatusDto.total', // modules/applications/dto/gateway-route.dto.ts
@@ -2214,8 +2156,6 @@ const MASK_EXEMPT: string[] = [
   'InstanceMetricsDto.memory', // modules/instances/dto/instance-metrics.dto.ts
   'InstanceMetricsDto.network', // modules/instances/dto/instance-metrics.dto.ts
   'InstanceMetricsDto.timestamp', // modules/instances/dto/instance-metrics.dto.ts
-  'InstanceResponseDto.data', // modules/instances/dto/instance-response.dto.ts
-  'InstanceResponseDto.partialErrors', // modules/instances/dto/instance-response.dto.ts
   'InventoryNodeDto.id', // modules/infrastructure/clusters/dto/cluster-inventory.dto.ts
   'InventoryNodeDto.name', // modules/infrastructure/clusters/dto/cluster-inventory.dto.ts
   'InventoryNodeDto.privateIp', // modules/infrastructure/clusters/dto/cluster-inventory.dto.ts
@@ -2755,8 +2695,6 @@ const MASK_EXEMPT: string[] = [
   'ProviderDefinitionDto.name', // modules/management/dto/provider-definition.dto.ts
   'ProviderDefinitionDto.pricingUrl', // modules/management/dto/provider-definition.dto.ts
   'ProviderDefinitionDto.websiteUrl', // modules/management/dto/provider-definition.dto.ts
-  'ProviderErrorDto.message', // modules/instances/dto/provider-error.dto.ts
-  'ProviderErrorDto.provider', // modules/instances/dto/provider-error.dto.ts
   'ProviderFeaturesDto.backups', // modules/management/dto/provider-capabilities.dto.ts
   'ProviderFeaturesDto.dnsZones', // modules/management/dto/provider-capabilities.dto.ts
   'ProviderFeaturesDto.loadBalancers', // modules/management/dto/provider-capabilities.dto.ts
@@ -3656,10 +3594,6 @@ const MASK_EXEMPT: string[] = [
   'VNetAttachmentDto.subnetId', // modules/infrastructure/servers/dto/server-response.dto.ts
   'VNetAttachmentDto.vnetId', // modules/infrastructure/servers/dto/server-response.dto.ts
   'VNetAttachmentDto.vnetName', // modules/infrastructure/servers/dto/server-response.dto.ts
-  'VNetAttachmentInfoDto.attachedAt', // modules/infrastructure/clusters/dto/cluster-response.dto.ts
-  'VNetAttachmentInfoDto.privateIp', // modules/infrastructure/clusters/dto/cluster-response.dto.ts
-  'VNetAttachmentInfoDto.subnetId', // modules/infrastructure/clusters/dto/cluster-response.dto.ts
-  'VNetAttachmentInfoDto.vnetId', // modules/infrastructure/clusters/dto/cluster-response.dto.ts
   'VNetConfigDto.autoAssignIp', // modules/infrastructure/clusters/dto/create-cluster.dto.ts
   'VNetConfigDto.subnetId', // modules/infrastructure/clusters/dto/create-cluster.dto.ts
   'VNetConfigDto.vnetId', // modules/infrastructure/clusters/dto/create-cluster.dto.ts
