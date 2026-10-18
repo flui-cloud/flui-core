@@ -4,11 +4,14 @@
  * The same history in the group's page and on the cluster's Scaling tab.
  */
 import {
+  CLUSTER_ID,
   hoursAgo,
+  MACHINES,
   mark,
   REGION,
   SandboxStandInQuery,
 } from './sandbox-world-core';
+import { WORLD_SERVERS, worldRequested } from './sandbox-world-topology-data';
 import { BURST_WORKER, SERVER_PRICES } from './sandbox-world-fleet';
 import {
   BOUNDS,
@@ -18,6 +21,13 @@ import {
   SCALING_GROUP_ID,
   SCALING_GROUP_NAME,
 } from './sandbox-world-scaling';
+
+const MAIN = WORLD_SERVERS.filter((server) => server.clusterId === CLUSTER_ID);
+const RESERVED_PCT = Math.round(
+  (MAIN.reduce((sum, s) => sum + worldRequested(s).memMi, 0) /
+    MAIN.reduce((sum, s) => sum + s.ramMb, 0)) *
+    100,
+);
 
 type Params = Record<string, string | undefined>;
 
@@ -77,7 +87,7 @@ function decisionsOf(now: number, collapse: boolean) {
     ...decision(1, LAST_LOOK_HOURS, {
       force: 'opportunity',
       outcome: 'declined',
-      saw: '3 nodes, 46% of memory reserved, nothing waiting.',
+      saw: `${MACHINES.length} nodes, ${RESERVED_PCT}% of memory reserved, nothing waiting.`,
       did: 'Nothing.',
       why: `The fleet is at its minimum of ${BOUNDS.min} nodes, so there is nothing to give back.`,
     }),
@@ -92,7 +102,7 @@ function decisionsOf(now: number, collapse: boolean) {
       outcome: 'node-removed',
       saw: `${BURST_WORKER.name} empty since its last application moved.`,
       did: `Gave back ${BURST_WORKER.name} (${burst.serverType}, ${REGION}).`,
-      why: 'A quiet night: the two other workers held everything that ran on it, with room to spare.',
+      why: 'A quiet night: the other workers held everything that ran on it, with room to spare.',
       bought: true,
       operation: done('2', removed),
     }),

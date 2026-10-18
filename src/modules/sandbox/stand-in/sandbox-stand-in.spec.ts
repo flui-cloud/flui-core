@@ -10,7 +10,8 @@ import {
   exampleMailConnections,
   exampleMailOverview,
 } from './sandbox-world-mail';
-import { APPS, PROVIDER, ZONE_NAME } from './sandbox-world-core';
+import { APPS, CLUSTER_ID, PROVIDER, ZONE_NAME } from './sandbox-world-core';
+import { WORLD_SERVERS } from './sandbox-world-topology-data';
 import { exampleProviderConfigurations } from './sandbox-world';
 import {
   exampleProviderHealth,
@@ -243,8 +244,14 @@ describe('the example world', () => {
 
   // Constraint 2: sections that do not agree with each other read as broken
   // rather than as a demonstration.
-  it('points the firewall at the machines the fleet actually lists', () => {
-    const machines = exampleInstances(NOW).data.map((m) => m.name);
+  it("points the main cluster's firewall at the machines the fleet actually lists", () => {
+    const main = new Set<string>(
+      WORLD_SERVERS.filter((s) => s.clusterId === CLUSTER_ID).map((s) => s.id),
+    );
+    const machines = exampleInstances(NOW)
+      .data.filter((m) => main.has(m.id))
+      .map((m) => m.name);
+    expect(machines).toHaveLength(main.size);
     const [firewall] = exampleFirewalls(NOW);
     const covered = firewall.clusterInfo.nodes.map((n) => n.serverName);
 

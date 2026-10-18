@@ -57,13 +57,14 @@ export class SandboxProjectionInterceptor implements NestInterceptor {
 
     // A route shown for real on the guest's own cluster can answer from the
     // example world when it names the example cluster; the header says which.
-    context
-      .switchToHttp()
-      .getResponse<Response>()
-      .setHeader(
+    // A server-sent event stream has already written its headers by now.
+    const response = context.switchToHttp().getResponse<Response>();
+    if (!response.headersSent) {
+      response.setHeader(
         SANDBOX_LEVEL_HEADER,
         standIn ? 'stand-in' : sandboxLevelOf(req.method, path, route),
       );
+    }
 
     if (standIn) {
       return from(

@@ -39,6 +39,21 @@ export const SANDBOX_ALLOW_EXAMPLE: SandboxAllowRule[] = [
     level: 'stand-in',
     why: 'See what a fleet of machines looks like.',
   },
+  // Answered by the topology controller itself from the example world, so the
+  // response still passes through mask mode; the instance's own map never
+  // reaches a guest.
+  {
+    verbs: ['GET'],
+    pattern: '/topology',
+    level: 'stand-in',
+    why: 'See a whole fleet at a glance: services, servers and where each replica runs.',
+  },
+  {
+    verbs: ['GET'],
+    pattern: '/topology/stream',
+    level: 'stand-in',
+    why: 'Watch the example fleet change live.',
+  },
   {
     verbs: ['GET'],
     pattern: '/vnets',

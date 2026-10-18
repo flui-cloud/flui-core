@@ -4,7 +4,7 @@ import {
   TopologyAppKind,
   TopologyAppStatus,
 } from '../enums/topology.enums';
-import { TopologyAppDto, TopologyClusterDto } from '../dto/topology.dto';
+import { TopologyAppDto } from '../dto/topology.dto';
 
 const logger = new Logger('TopologyValidation');
 
@@ -65,12 +65,11 @@ export function validateAndFilterApps(
   return valid;
 }
 
-export function validateClusterApps(
-  cluster: TopologyClusterDto,
-): TopologyClusterDto {
-  const serverIds = new Set(cluster.servers.map((s) => s.id));
-  return {
-    ...cluster,
-    apps: validateAndFilterApps(cluster.apps, serverIds, cluster.id),
-  };
+export function validateApps(
+  apps: TopologyAppDto[],
+  serverIds: Set<string>,
+  clusterId: string,
+): { apps: TopologyAppDto[]; dropped: number } {
+  const valid = validateAndFilterApps(apps, serverIds, clusterId);
+  return { apps: valid, dropped: apps.length - valid.length };
 }

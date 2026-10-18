@@ -14,11 +14,7 @@ import {
 import { KubernetesService } from '../../shared/services/kubernetes.service';
 import { EncryptionService } from '../../../shared/encryption/services/encryption.service';
 import { withTimeout } from '../../shared/utils/with-timeout.util';
-import {
-  appOfPod,
-  podLimit,
-  podRequest,
-} from '../../clusters/services/unschedulable-pods.service';
+import { podRequest } from '../../clusters/services/unschedulable-pods.service';
 import {
   DrainApplication,
   DrainBudget,
@@ -28,7 +24,8 @@ import {
 } from './drain.core';
 import { NODE_RESERVE } from './engine.core';
 import { FitCheck, MovingPod, NodeRoom, checkFit } from './fit.core';
-import { FleetRoom, NodeRoomInput, fleetRoom } from './room.core';
+import { FleetRoom, fleetRoom, isControlPlane, takesWork } from './room.core';
+import { nodeRoomInputs } from './room-inputs';
 
 /**
  * The metrics client calls `fetch` itself, outside the deadline every other
@@ -218,53 +215,14 @@ export class DrainFeasibilityService {
         }),
       ]);
 
-      const requested = new Map<string, { cpu: number; memory: number }>();
-      const limited = new Map<string, { cpu: number; memory: number }>();
-      const appsOn = new Map<string, Set<string>>();
-      for (const pod of pods.items ?? []) {
-        const on = pod.spec?.nodeName;
-        if (!on || releasing(pod)) continue;
-        const ask = podRequest(pod, this.kubernetes);
-        const sum = requested.get(on) ?? { cpu: 0, memory: 0 };
-        sum.cpu += ask.cpuMillicores;
-        sum.memory += ask.memoryMi;
-        requested.set(on, sum);
-        const cap = podLimit(pod, this.kubernetes);
-        const ceiling = limited.get(on) ?? { cpu: 0, memory: 0 };
-        ceiling.cpu += cap.cpuMillicores;
-        ceiling.memory += cap.memoryMi;
-        limited.set(on, ceiling);
-        if (pod.metadata?.labels?.['flui-app-id']) {
-          const here = appsOn.get(on) ?? new Set<string>();
-          here.add(appOfPod(pod));
-          appsOn.set(on, here);
-        }
-      }
       const usage = await this.nodeUsage(kubeconfig);
-
-      const inputs: NodeRoomInput[] = (nodes.items ?? []).map((item) => {
-        const name = item.metadata?.name ?? '';
-        const allocatable = item.status?.allocatable ?? {};
-        const used = requested.get(name) ?? { cpu: 0, memory: 0 };
-        return {
-          name,
-          role: isControlPlane(item) ? 'master' : 'worker',
-          takesWork: takesWork(item, false),
-          allocatable: {
-            cpuMillicores: this.kubernetes.parseCpu(allocatable['cpu'] ?? '0'),
-            memoryMi: this.kubernetes.parseMemory(allocatable['memory'] ?? '0'),
-          },
-          requested: { cpuMillicores: used.cpu, memoryMi: used.memory },
-          limits: {
-            cpuMillicores: limited.get(name)?.cpu ?? 0,
-            memoryMi: limited.get(name)?.memory ?? 0,
-          },
-          used: usage?.get(name) ?? null,
-          apps: [...(appsOn.get(name) ?? [])].sort((a, b) =>
-            a < b ? -1 : Number(a > b),
-          ),
-        };
-      });
+      const inputs = nodeRoomInputs(
+        nodes.items ?? [],
+        pods.items ?? [],
+        usage,
+        this.kubernetes,
+        releasing,
+      );
 
       return fleetRoom(inputs, NODE_RESERVE);
     } catch (err) {
@@ -352,29 +310,6 @@ function stays(pod: k8s.V1Pod): boolean {
     pod.metadata?.annotations?.['kubernetes.io/config.mirror'],
   );
   return owner === 'DaemonSet' || mirror;
-}
-
-function isControlPlane(node: k8s.V1Node): boolean {
-  const labels = node.metadata?.labels ?? {};
-  return (
-    'node-role.kubernetes.io/control-plane' in labels ||
-    'node-role.kubernetes.io/master' in labels
-  );
-}
-
-/**
- * A machine that would take evicted work: ready, not cordoned, and not refusing
- * new pods by taint. A taint is read as a refusal whatever it tolerates, which
- * can keep a node that could have gone — the cheaper of the two mistakes.
- */
-function takesWork(node: k8s.V1Node, reopensMaster: boolean): boolean {
-  if (node.spec?.unschedulable) return false;
-  const ready = (node.status?.conditions ?? []).find((c) => c.type === 'Ready');
-  if (ready?.status !== 'True') return false;
-  const refuses = (node.spec?.taints ?? []).some(
-    (taint) => taint.effect === 'NoSchedule' || taint.effect === 'NoExecute',
-  );
-  return !refuses || (reopensMaster && isControlPlane(node));
 }
 
 /** The claims whose volume lives on this machine and does not follow a pod. */

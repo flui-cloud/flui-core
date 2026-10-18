@@ -3,7 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, IsNull } from 'typeorm';
 import { CatalogInstallEntity } from '../../catalog/entities/catalog-install.entity';
 import { ApplicationEntity } from '../entities/application.entity';
-import { ApplicationExposure } from '../enums/application-exposure.enum';
+import { installIdOf, pickPrimaryComponent } from './application-grouping.core';
 import { ApplicationStatus } from '../enums/application-status.enum';
 import {
   ApplicationGroupDto,
@@ -17,8 +17,6 @@ import {
 import { ApplicationResponseDto } from '../dto/application-response.dto';
 import { ReconciliationStatus } from '../../infrastructure/shared/enums/reconciliation-status.enum';
 import { AuthenticatedUser } from '../../auth/interfaces/authenticated-user.interface';
-
-const CATALOG_INSTALL_LABEL = 'flui.cloud/catalog-install';
 
 const STATUS_SEVERITY: ApplicationStatus[] = [
   ApplicationStatus.FAILED,
@@ -61,7 +59,7 @@ export class ApplicationGroupingService {
     const byInstall = new Map<string, ApplicationEntity[]>();
     const standalone: ApplicationEntity[] = [];
     for (const app of apps) {
-      const installId = this.installIdOf(app);
+      const installId = installIdOf(app);
       if (installId && installById.has(installId)) {
         const bucket = byInstall.get(installId) ?? [];
         bucket.push(app);
@@ -105,12 +103,6 @@ export class ApplicationGroupingService {
     }
 
     return groups.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
-  }
-
-  private installIdOf(app: ApplicationEntity): string | undefined {
-    return (
-      app.metadata?.catalogInstallId ?? app.labels?.[CATALOG_INSTALL_LABEL]
-    );
   }
 
   private toComposedGroup(
@@ -186,16 +178,7 @@ export class ApplicationGroupingService {
     install: CatalogInstallEntity,
     components: ApplicationEntity[],
   ): ApplicationEntity | undefined {
-    if (install.resolvedFqdn) {
-      const byFqdn = components.find((c) =>
-        install.resolvedFqdn!.startsWith(`${c.slug}.`),
-      );
-      if (byFqdn) return byFqdn;
-    }
-    return (
-      components.find((c) => c.exposure === ApplicationExposure.PUBLIC) ??
-      components[0]
-    );
+    return pickPrimaryComponent(install.resolvedFqdn, components);
   }
 
   private aggregateStatus(statuses: ApplicationStatus[]): ApplicationStatus {

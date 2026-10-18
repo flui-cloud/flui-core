@@ -39,6 +39,7 @@ const HTTP = [
   'Head',
   'Options',
   'All',
+  'Sse',
 ];
 
 interface RouteRecord {
@@ -128,7 +129,7 @@ function collectRoutes(): RouteRecord[] {
         routes.push({
           file: file.slice(SRC.length + 1).replace(/\\/g, '/'),
           controller: node.name?.text ?? '?',
-          method: nameOf(verb).toUpperCase(),
+          method: nameOf(verb) === 'Sse' ? 'GET' : nameOf(verb).toUpperCase(),
           path,
           handler: ts.isIdentifier(member.name) ? member.name.text : '?',
           permission: permission ? argsOf(permission)[0] : undefined,
@@ -668,5 +669,34 @@ describe('the identity provider mail route', () => {
     expect(permissionValue(sync.permission)).toBe(
       IAM_PERMISSION.CLUSTER_MANAGE,
     );
+  });
+});
+
+describe('server-sent event routes', () => {
+  const streams = ROUTES.filter((r) =>
+    ['/topology/stream', '/demo/events'].includes(r.path),
+  );
+
+  it('are read as GET routes, so no stream escapes the comparison', () => {
+    expect(streams.map((r) => `${r.method} ${r.path}`).sort()).toEqual([
+      'GET /demo/events',
+      'GET /topology/stream',
+    ]);
+  });
+
+  it('put the topology stream behind the same permission as its snapshot', () => {
+    const [snapshot] = ROUTES.filter(
+      (r) => r.method === 'GET' && r.path === '/topology',
+    );
+    const stream = streams.find((r) => r.path === '/topology/stream');
+    expect(permissionValue(snapshot.permission)).toBe(IAM_PERMISSION.APP_READ);
+    expect(permissionValue(stream?.permission)).toBe(IAM_PERMISSION.APP_READ);
+  });
+
+  it('leave the demo status stream public, and only that one', () => {
+    const unguarded = streams.filter((r) => !r.permission);
+    expect(unguarded.map((r) => [r.path, r.isPublic])).toEqual([
+      ['/demo/events', true],
+    ]);
   });
 });

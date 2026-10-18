@@ -1,7 +1,7 @@
 /**
  * What the example fleet costs, and how it changed this month.
  *
- * Pricing, Scaling and Storage all describe the same three machines and the
+ * Pricing, Scaling and Storage all describe the same machines and the
  * same shared volume, and the one worker the scaling group added for a busy
  * afternoon and gave back after a quiet night. Declared once, here, so the
  * bill shows the machine the decision history talks about, for the hours the
@@ -16,10 +16,11 @@ import { MACHINES } from './sandbox-world-core';
 export const CURRENCY = 'EUR';
 export const VAT_PERCENT = 19;
 
-/** List prices of the two shapes the example fleet uses, excluding VAT. */
+/** List prices of the shapes the example fleet uses, excluding VAT. */
 export const SERVER_PRICES = {
   CPX31: { serverType: 'cpx31', hourlyNet: 0.0218, monthlyNet: 13.6 },
   CPX41: { serverType: 'cpx41', hourlyNet: 0.0403, monthlyNet: 25.2 },
+  CAX31: { serverType: 'cax31', hourlyNet: 0.0201, monthlyNet: 12.49 },
 } as const;
 
 export type ExampleShape = keyof typeof SERVER_PRICES;

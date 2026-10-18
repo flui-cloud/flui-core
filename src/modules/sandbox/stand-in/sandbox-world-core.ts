@@ -53,6 +53,11 @@ export const REGION_NAME = 'Falkenstein, Germany';
 export const NETWORK_RANGE = '10.10.0.0/16';
 export const SUBNET_RANGE = '10.10.1.0/24';
 
+/** A machine's address on the example subnet. */
+function subnetHost(host: number): string {
+  return [10, 10, 1, host].join('.');
+}
+
 /** Marked like everything else: nothing in this world goes out undeclared. */
 export const EXAMPLE_REGION = mark({
   id: REGION,
@@ -61,7 +66,7 @@ export const EXAMPLE_REGION = mark({
   country: 'DE',
 });
 
-/** The three machines everything else in this world refers to. */
+/** The machines of the main cluster, the ones every other section refers to. */
 export const MACHINES = [
   {
     id: 'example-server-1',
@@ -71,7 +76,8 @@ export const MACHINES = [
     ramMb: 8192,
     diskMb: 163_840,
     productName: 'CPX31',
-    privateIp: '10.10.1.11',
+    architecture: 'x86',
+    privateIp: subnetHost(11),
     publicIp: '203.0.113.11',
   },
   {
@@ -82,7 +88,8 @@ export const MACHINES = [
     ramMb: 16_384,
     diskMb: 327_680,
     productName: 'CPX41',
-    privateIp: '10.10.1.12',
+    architecture: 'x86',
+    privateIp: subnetHost(12),
     publicIp: '203.0.113.12',
   },
   {
@@ -93,8 +100,45 @@ export const MACHINES = [
     ramMb: 16_384,
     diskMb: 327_680,
     productName: 'CPX41',
-    privateIp: '10.10.1.13',
+    architecture: 'x86',
+    privateIp: subnetHost(13),
     publicIp: '203.0.113.13',
+  },
+  {
+    id: 'example-server-5',
+    name: 'flui-worker-4',
+    role: 'worker',
+    cpuCores: 8,
+    ramMb: 16_384,
+    diskMb: 327_680,
+    productName: 'CPX41',
+    architecture: 'x86',
+    privateIp: subnetHost(15),
+    publicIp: '203.0.113.15',
+  },
+  {
+    id: 'example-server-6',
+    name: 'flui-arm-1',
+    role: 'worker',
+    cpuCores: 8,
+    ramMb: 16_384,
+    diskMb: 327_680,
+    productName: 'CAX31',
+    architecture: 'arm',
+    privateIp: subnetHost(16),
+    publicIp: '203.0.113.16',
+  },
+  {
+    id: 'example-server-7',
+    name: 'flui-arm-2',
+    role: 'worker',
+    cpuCores: 8,
+    ramMb: 16_384,
+    diskMb: 327_680,
+    productName: 'CAX31',
+    architecture: 'arm',
+    privateIp: subnetHost(17),
+    publicIp: '203.0.113.17',
   },
 ] as const;
 

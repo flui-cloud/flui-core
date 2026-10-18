@@ -1,4 +1,5 @@
 import * as k8s from '@kubernetes/client-node';
+import { createHash } from 'node:crypto';
 import {
   PodPlacement,
   resolvePrimaryServerId,
@@ -9,14 +10,17 @@ import {
   TopologyAppCategory,
   TopologyAppKind,
   TopologyAppStatus,
+  TopologyArchitecture,
+  TopologyExposure,
+  TopologyFluiNetwork,
   TopologyHealthStatus,
   TopologyScalingMode,
   TopologyServerRole,
+  TopologyWorkloadKind,
 } from '../enums/topology.enums';
 import {
   TopologyAppDto,
   TopologyAppReplicaDto,
-  TopologyClusterDto,
   TopologyServerDto,
 } from '../dto/topology.dto';
 import { makeTopologySlug } from '../utils/slug.util';
@@ -28,13 +32,47 @@ import {
 export const FLUI_MANAGED_LABEL_SELECTOR =
   'app.kubernetes.io/managed-by=flui-cloud';
 
+export interface ServerRecord {
+  id: string;
+  providerResourceId: string | null;
+  serverType: string | null;
+  isMaster: boolean;
+  privateNetwork: boolean;
+  fluiNetwork: TopologyFluiNetwork;
+}
+
 export interface ClusterContext {
   id: string;
-  name: string;
-  displayName: string;
   provider: string;
-  region: string;
-  controlPlaneNodeNames: Set<string>;
+  /** The server records of this cluster, by node name. */
+  records: Map<string, ServerRecord>;
+}
+
+/** A node Flui holds no record of keeps an id that does not carry its name. */
+export function serverIdFor(
+  clusterId: string,
+  nodeName: string,
+  record?: ServerRecord,
+): string {
+  if (record) return record.id;
+  const digest = createHash('sha256').update(nodeName).digest('hex');
+  return `node:${clusterId}:${digest.slice(0, 12)}`;
+}
+
+export function architectureOf(node: k8s.V1Node): TopologyArchitecture | null {
+  const arch = node.status?.nodeInfo?.architecture ?? '';
+  if (arch === 'amd64' || arch === '386') return TopologyArchitecture.X86;
+  if (arch.startsWith('arm')) return TopologyArchitecture.ARM;
+  return null;
+}
+
+export function takesWork(node: k8s.V1Node): boolean {
+  if (node.spec?.unschedulable) return false;
+  const ready = (node.status?.conditions ?? []).find((c) => c.type === 'Ready');
+  if (ready?.status !== 'True') return false;
+  return !(node.spec?.taints ?? []).some(
+    (t) => t.effect === 'NoSchedule' || t.effect === 'NoExecute',
+  );
 }
 
 export function mapNodesToServers(
@@ -43,30 +81,29 @@ export function mapNodesToServers(
 ): TopologyServerDto[] {
   return nodes.map((n) => {
     const name = n.metadata?.name ?? '';
+    const record = ctx.records.get(name);
+    const labels = n.metadata?.labels ?? {};
     const isControlPlane =
-      ctx.controlPlaneNodeNames.has(name) ||
-      Boolean(n.metadata?.labels?.['node-role.kubernetes.io/control-plane']) ||
-      Boolean(n.metadata?.labels?.['node-role.kubernetes.io/master']);
-
-    const cpuStr = n.status?.capacity?.['cpu'] ?? '0';
-    const memStr = n.status?.capacity?.['memory'] ?? '0';
-    const storageStr = n.status?.capacity?.['ephemeral-storage'] ?? '0';
-
+      record?.isMaster ||
+      'node-role.kubernetes.io/control-plane' in labels ||
+      'node-role.kubernetes.io/master' in labels;
     return {
-      id: name,
-      name,
-      displayName: name,
+      id: serverIdFor(ctx.id, name, record),
+      clusterId: ctx.id,
+      nodeName: name,
+      provider: ctx.provider,
+      providerResourceId: record?.providerResourceId ?? null,
+      serverType: record?.serverType ?? null,
+      architecture: architectureOf(n),
       role: isControlPlane
         ? TopologyServerRole.CONTROL_PLANE
         : TopologyServerRole.WORKER,
+      takesWork: takesWork(n),
       status: nodeReadyToHealth(n),
-      specs: {
-        cpuCores: parseCpuCores(cpuStr),
-        memoryMB: Math.round(parseMemoryBytes(memStr) / (1024 * 1024)),
-        storageGB: Math.round(
-          parseMemoryBytes(storageStr) / (1024 * 1024 * 1024),
-        ),
-      },
+      capacity: null,
+      podCount: 0,
+      privateNetwork: record?.privateNetwork ?? false,
+      fluiNetwork: record?.fluiNetwork ?? TopologyFluiNetwork.NONE,
     };
   });
 }
@@ -76,12 +113,6 @@ function nodeReadyToHealth(node: k8s.V1Node): TopologyHealthStatus {
   if (ready?.status === 'True') return TopologyHealthStatus.HEALTHY;
   if (ready?.status === 'False') return TopologyHealthStatus.DOWN;
   return TopologyHealthStatus.DEGRADED;
-}
-
-function parseCpuCores(s: string): number {
-  if (!s) return 0;
-  if (s.endsWith('m')) return Number.parseInt(s.slice(0, -1), 10) / 1000;
-  return Number.parseFloat(s);
 }
 
 function parseMemoryBytes(s: string): number {
@@ -117,6 +148,7 @@ export function parseMemoryMB(s?: string | null): number {
 
 interface WorkloadDescriptor {
   appId: string;
+  workloadKind: TopologyWorkloadKind;
   name: string;
   displayName: string;
   namespace: string;
@@ -132,12 +164,60 @@ interface WorkloadDescriptor {
   labels: Record<string, string>;
   hpaEnabled: boolean;
   scalingNote: string | null;
+  /** Where its configuration lives: plain values and config maps, never secrets. */
+  config: WorkloadConfig;
+}
+
+export interface WorkloadConfig {
+  entries: { key: string; value: string }[];
+  /** Config maps loaded whole (`envFrom`). */
+  configMaps: string[];
+  /** Single keys taken from a config map, under the variable name they become. */
+  configMapKeys: { name: string; key: string; as: string }[];
+}
+
+/** What a pod template says about its configuration, secrets left out by construction. */
+export function configOf(
+  template: k8s.V1PodTemplateSpec | undefined,
+): WorkloadConfig {
+  const config: WorkloadConfig = {
+    entries: [],
+    configMaps: [],
+    configMapKeys: [],
+  };
+  const spec = template?.spec;
+  for (const c of [
+    ...(spec?.initContainers ?? []),
+    ...(spec?.containers ?? []),
+  ]) {
+    addContainerConfig(config, c);
+  }
+  return config;
+}
+
+function addContainerConfig(config: WorkloadConfig, c: k8s.V1Container): void {
+  for (const e of c.env ?? []) {
+    if (typeof e.value === 'string') {
+      config.entries.push({ key: e.name, value: e.value });
+    }
+    const ref = e.valueFrom?.configMapKeyRef;
+    if (ref?.name) {
+      config.configMapKeys.push({ name: ref.name, key: ref.key, as: e.name });
+    }
+  }
+  for (const from of c.envFrom ?? []) {
+    if (from.configMapRef?.name) config.configMaps.push(from.configMapRef.name);
+  }
+  // A command can name a host too: an init container waiting on `nc -z postgres 5432`.
+  const command = [...(c.command ?? []), ...(c.args ?? [])].join(' ');
+  if (command) config.entries.push({ key: 'COMMAND', value: command });
 }
 
 export function describeDeployment(d: k8s.V1Deployment): WorkloadDescriptor {
   return describeWorkload({
     spec: d.spec ?? {},
     metadata: d.metadata,
+    workloadKind: TopologyWorkloadKind.DEPLOYMENT,
     scalingMode: TopologyScalingMode.MANUAL,
     desiredReplicas: d.spec?.replicas ?? 0,
   });
@@ -147,6 +227,7 @@ export function describeStatefulSet(s: k8s.V1StatefulSet): WorkloadDescriptor {
   return describeWorkload({
     spec: s.spec ?? {},
     metadata: s.metadata,
+    workloadKind: TopologyWorkloadKind.STATEFULSET,
     scalingMode: TopologyScalingMode.STATEFULSET,
     desiredReplicas: s.spec?.replicas ?? 0,
   });
@@ -156,6 +237,7 @@ export function describeDaemonSet(d: k8s.V1DaemonSet): WorkloadDescriptor {
   return describeWorkload({
     spec: d.spec ?? {},
     metadata: d.metadata,
+    workloadKind: TopologyWorkloadKind.DAEMONSET,
     scalingMode: TopologyScalingMode.DAEMONSET,
     desiredReplicas: d.status?.desiredNumberScheduled ?? 0,
   });
@@ -167,6 +249,7 @@ interface DescribeArgs {
     selector?: k8s.V1LabelSelector;
   };
   metadata?: k8s.V1ObjectMeta;
+  workloadKind: TopologyWorkloadKind;
   scalingMode: TopologyScalingMode;
   desiredReplicas: number;
 }
@@ -195,6 +278,7 @@ function describeWorkload(args: DescribeArgs): WorkloadDescriptor {
 
   return {
     appId,
+    workloadKind: args.workloadKind,
     name,
     displayName,
     namespace: meta.namespace ?? 'default',
@@ -210,6 +294,7 @@ function describeWorkload(args: DescribeArgs): WorkloadDescriptor {
     labels,
     hpaEnabled: false,
     scalingNote: null,
+    config: configOf(args.spec.template),
   };
 }
 
@@ -244,14 +329,17 @@ export function summarizePod(pod: k8s.V1Pod): PodStatusSummary {
 export function buildAppDto(
   workload: WorkloadDescriptor,
   pods: k8s.V1Pod[],
-  serverIds: string[],
+  servers: TopologyServerDto[],
+  clusterId: string,
 ): TopologyAppDto {
   const podSummaries = pods.map(summarizePod);
+  const serverIds = servers.map((s) => s.id);
+  const serverIdByNode = new Map(servers.map((s) => [s.nodeName, s.id]));
   const placements: PodPlacement[] = pods
     .filter((p) => p.spec?.nodeName)
     .map((p) => ({
       podName: p.metadata?.name ?? '',
-      serverId: p.spec?.nodeName,
+      serverId: serverIdByNode.get(p.spec!.nodeName!) ?? p.spec!.nodeName!,
       ordinal: statefulSetOrdinal(p.metadata?.name ?? ''),
     }));
 
@@ -285,10 +373,10 @@ export function buildAppDto(
     )[0].serverId;
   }
 
-  const kind: TopologyAppKind = resolveTopologyKind(
-    workload.name,
-    workload.declaredKind,
-  );
+  // Whatever runs in the platform's own namespaces is Flui's, whatever its name.
+  const kind: TopologyAppKind = PLATFORM_NAMESPACES.has(workload.namespace)
+    ? TopologyAppKind.SYSTEM
+    : resolveTopologyKind(workload.name, workload.declaredKind);
   const category: TopologyAppCategory = resolveTopologyCategory(
     workload.name,
     kind,
@@ -310,6 +398,11 @@ export function buildAppDto(
 
   return {
     id: workload.appId,
+    clusterId,
+    stackId: `app:${workload.appId}`,
+    groupKey: `app:${workload.appId}`,
+    workloadKind: workload.workloadKind,
+    exposure: TopologyExposure.CLUSTER,
     name: workload.name,
     slug: makeTopologySlug(workload.name),
     displayName: workload.displayName,
@@ -327,13 +420,13 @@ export function buildAppDto(
     replicaCount,
     scalingMode: workload.scalingMode,
     scalingNote,
-    labels: workload.labels,
+    projectId: null,
   };
 }
 
 export function deriveClusterStatus(
-  servers: TopologyServerDto[],
-  apps: TopologyAppDto[],
+  servers: Pick<TopologyServerDto, 'status'>[],
+  apps: Pick<TopologyAppDto, 'status'>[],
 ): TopologyHealthStatus {
   if (servers.length === 0) return TopologyHealthStatus.DOWN;
   if (servers.some((s) => s.status === TopologyHealthStatus.DOWN)) {
@@ -345,19 +438,32 @@ export function deriveClusterStatus(
   return TopologyHealthStatus.HEALTHY;
 }
 
-export function buildClusterDto(
-  ctx: ClusterContext,
-  servers: TopologyServerDto[],
-  apps: TopologyAppDto[],
-): TopologyClusterDto {
-  return {
-    id: ctx.id,
-    name: ctx.name,
-    displayName: ctx.displayName,
-    provider: ctx.provider,
-    region: ctx.region,
-    status: deriveClusterStatus(servers, apps),
-    servers,
-    apps,
-  };
+const PLATFORM_NAMESPACES = new Set([
+  'flui-system',
+  'flui-control',
+  'kube-system',
+]);
+
+export const LIST_PAGE_SIZE = 10;
+const MAX_PAGES = 200;
+
+/**
+ * A list read a page at a time. One answer holding every object of a large
+ * cluster is a body a slow link can cut short, and memory spent all at once.
+ */
+export async function listAll<T>(
+  page: (next?: string) => Promise<{
+    items?: T[];
+    metadata?: { _continue?: string };
+  }>,
+): Promise<T[]> {
+  const items: T[] = [];
+  let next: string | undefined;
+  for (let i = 0; i < MAX_PAGES; i++) {
+    const res = await page(next);
+    items.push(...(res.items ?? []));
+    next = res.metadata?._continue;
+    if (!next) break;
+  }
+  return items;
 }

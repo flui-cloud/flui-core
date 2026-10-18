@@ -7,6 +7,8 @@
  * the system on each node is set aside first, exactly as the engine does.
  */
 
+import type * as k8s from '@kubernetes/client-node';
+
 export interface NodeRoomInput {
   name: string;
   role: 'master' | 'worker';
@@ -71,4 +73,27 @@ export function fleetRoom(
     nodes: withFree,
     largestFit: roomiest ? { ...roomiest.free, node: roomiest.name } : null,
   };
+}
+
+export function isControlPlane(node: k8s.V1Node): boolean {
+  const labels = node.metadata?.labels ?? {};
+  return (
+    'node-role.kubernetes.io/control-plane' in labels ||
+    'node-role.kubernetes.io/master' in labels
+  );
+}
+
+/**
+ * A machine that would take evicted work: ready, not cordoned, and not refusing
+ * new pods by taint. A taint is read as a refusal whatever it tolerates, which
+ * can keep a node that could have gone — the cheaper of the two mistakes.
+ */
+export function takesWork(node: k8s.V1Node, reopensMaster = false): boolean {
+  if (node.spec?.unschedulable) return false;
+  const ready = (node.status?.conditions ?? []).find((c) => c.type === 'Ready');
+  if (ready?.status !== 'True') return false;
+  const refuses = (node.spec?.taints ?? []).some(
+    (taint) => taint.effect === 'NoSchedule' || taint.effect === 'NoExecute',
+  );
+  return !refuses || (reopensMaster && isControlPlane(node));
 }

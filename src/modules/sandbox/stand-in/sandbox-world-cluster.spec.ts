@@ -197,7 +197,7 @@ describe('the example cluster tabs', () => {
       }
     });
 
-    it('prices the three machines of the example world, and the worker it gave back', () => {
+    it('prices the machines of the example world, and the worker it gave back', () => {
       const active = mtd.nodes.filter((n) => n.status === 'active');
       expect(
         active.map((n) => n.serverName).sort((a, b) => a.localeCompare(b)),

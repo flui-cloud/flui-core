@@ -3505,55 +3505,6 @@ const MASK_EXEMPT: string[] = [
   'TemplateResponseDto.repo', // modules/templates/dto/template.dto.ts
   'TemplateResponseDto.repoUrl', // modules/templates/dto/template.dto.ts
   'TemplateResponseDto.version', // modules/templates/dto/template.dto.ts
-  'TopologyAppDto.category', // modules/topology/dto/topology.dto.ts
-  'TopologyAppDto.cpuLimitM', // modules/topology/dto/topology.dto.ts
-  'TopologyAppDto.cpuRequestM', // modules/topology/dto/topology.dto.ts
-  'TopologyAppDto.displayName', // modules/topology/dto/topology.dto.ts
-  'TopologyAppDto.id', // modules/topology/dto/topology.dto.ts
-  'TopologyAppDto.kind', // modules/topology/dto/topology.dto.ts
-  'TopologyAppDto.labels', // modules/topology/dto/topology.dto.ts
-  'TopologyAppDto.name', // modules/topology/dto/topology.dto.ts
-  'TopologyAppDto.namespace', // modules/topology/dto/topology.dto.ts
-  'TopologyAppDto.primaryServerId', // modules/topology/dto/topology.dto.ts
-  'TopologyAppDto.ramLimitMB', // modules/topology/dto/topology.dto.ts
-  'TopologyAppDto.ramRequestMB', // modules/topology/dto/topology.dto.ts
-  'TopologyAppDto.replicaCount', // modules/topology/dto/topology.dto.ts
-  'TopologyAppDto.replicas', // modules/topology/dto/topology.dto.ts
-  'TopologyAppDto.scalingMode', // modules/topology/dto/topology.dto.ts
-  'TopologyAppDto.scalingNote', // modules/topology/dto/topology.dto.ts
-  'TopologyAppDto.slug', // modules/topology/dto/topology.dto.ts
-  'TopologyAppDto.status', // modules/topology/dto/topology.dto.ts
-  'TopologyAppDto.statusReason', // modules/topology/dto/topology.dto.ts
-  'TopologyAppReplicaDto.count', // modules/topology/dto/topology.dto.ts
-  'TopologyAppReplicaDto.serverId', // modules/topology/dto/topology.dto.ts
-  'TopologyClusterDto.apps', // modules/topology/dto/topology.dto.ts
-  'TopologyClusterDto.displayName', // modules/topology/dto/topology.dto.ts
-  'TopologyClusterDto.id', // modules/topology/dto/topology.dto.ts
-  'TopologyClusterDto.name', // modules/topology/dto/topology.dto.ts
-  'TopologyClusterDto.provider', // modules/topology/dto/topology.dto.ts
-  'TopologyClusterDto.region', // modules/topology/dto/topology.dto.ts
-  'TopologyClusterDto.servers', // modules/topology/dto/topology.dto.ts
-  'TopologyClusterDto.status', // modules/topology/dto/topology.dto.ts
-  'TopologyResponseDto.clusters', // modules/topology/dto/topology.dto.ts
-  'TopologyResponseDto.fetchedAt', // modules/topology/dto/topology.dto.ts
-  'TopologyResponseDto.stats', // modules/topology/dto/topology.dto.ts
-  'TopologyResponseDto.version', // modules/topology/dto/topology.dto.ts
-  'TopologyServerDto.displayName', // modules/topology/dto/topology.dto.ts
-  'TopologyServerDto.id', // modules/topology/dto/topology.dto.ts
-  'TopologyServerDto.name', // modules/topology/dto/topology.dto.ts
-  'TopologyServerDto.role', // modules/topology/dto/topology.dto.ts
-  'TopologyServerDto.specs', // modules/topology/dto/topology.dto.ts
-  'TopologyServerDto.status', // modules/topology/dto/topology.dto.ts
-  'TopologyServerSpecsDto.cpuCores', // modules/topology/dto/topology.dto.ts
-  'TopologyServerSpecsDto.memoryMB', // modules/topology/dto/topology.dto.ts
-  'TopologyServerSpecsDto.storageGB', // modules/topology/dto/topology.dto.ts
-  'TopologyStatsDto.errorCount', // modules/topology/dto/topology.dto.ts
-  'TopologyStatsDto.totalApps', // modules/topology/dto/topology.dto.ts
-  'TopologyStatsDto.totalClusters', // modules/topology/dto/topology.dto.ts
-  'TopologyStatsDto.totalRamMB', // modules/topology/dto/topology.dto.ts
-  'TopologyStatsDto.totalReplicas', // modules/topology/dto/topology.dto.ts
-  'TopologyStatsDto.totalServers', // modules/topology/dto/topology.dto.ts
-  'TopologyStatsDto.warningCount', // modules/topology/dto/topology.dto.ts
   'TrafficHistoryPointDto.p95_seconds', // modules/observability/dto/application-traffic.dto.ts
   'TrafficHistoryPointDto.rate_4xx', // modules/observability/dto/application-traffic.dto.ts
   'TrafficHistoryPointDto.rate_5xx', // modules/observability/dto/application-traffic.dto.ts

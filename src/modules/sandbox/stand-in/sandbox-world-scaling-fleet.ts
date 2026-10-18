@@ -48,13 +48,15 @@ export function exampleClusterNodes(now: number) {
   );
 }
 
-const MEMORY_MI: Record<ExampleShape, number> = {
+export const MEMORY_MI: Record<ExampleShape, number> = {
   CPX31: 7600,
   CPX41: 15_800,
+  CAX31: 15_800,
 };
-const CPU_MILLICORES: Record<ExampleShape, number> = {
+export const CPU_MILLICORES: Record<ExampleShape, number> = {
   CPX31: 3800,
   CPX41: 7800,
+  CAX31: 7800,
 };
 
 /** The window the page asked for, the way the real route reads it. */

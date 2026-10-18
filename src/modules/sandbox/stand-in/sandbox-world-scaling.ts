@@ -7,7 +7,7 @@
  * is "nothing to do", which is what a healthy group says most of the time.
  *
  * The bounds count every node, the master included, because that is what the
- * real group counts: two to four workers are bounds of three to five.
+ * real group counts: five to seven workers are bounds of six to eight.
  *
  * The labels, the sentence that says what the group may do and the cost
  * scenarios are produced by the same functions the real group uses, from the
@@ -31,15 +31,22 @@ import {
   fleetLifetimes,
   SERVER_PRICES,
 } from './sandbox-world-fleet';
+import type { ExampleShape } from './sandbox-world-fleet';
+import { CPU_MILLICORES, MEMORY_MI } from './sandbox-world-scaling-fleet';
+import {
+  WORLD_APPS,
+  WORLD_SERVERS,
+  worldRequested,
+} from './sandbox-world-topology-data';
 
 type Params = Record<string, string | undefined>;
 
 export const SCALING_GROUP_ID = 'example-scaling-group-1';
 export const SCALING_GROUP_NAME = 'northwind-workers';
 
-export const BOUNDS = { min: 3, desired: 3, max: 5 };
+export const BOUNDS = { min: 6, desired: 6, max: 8 };
 const SHAPES = [SERVER_PRICES.CPX41, SERVER_PRICES.CPX31];
-export const CEILING_EUR = 130;
+export const CEILING_EUR = 180;
 const CAPABILITY = {
   provider: PROVIDER,
   canProvision: true,
@@ -50,6 +57,7 @@ const CAPABILITY = {
 const SPECS: Record<string, { cores: number; memoryMi: number }> = {
   cpx31: { cores: 4, memoryMi: 8192 },
   cpx41: { cores: 8, memoryMi: 16_384 },
+  cax31: { cores: 8, memoryMi: 16_384 },
 };
 
 const CATALOGUE_AGE_SECONDS = 420;
@@ -277,30 +285,23 @@ export function exampleScalingGroup(
   });
 }
 
-/** Where the example nodes stand: room on every worker, nothing waiting. */
-const ROOM = [
-  {
-    name: 'flui-edge-1',
-    role: 'master',
-    cpu: [3800, 1450, 900],
-    mem: [7600, 3100, 2600],
-    apps: [],
-  },
-  {
-    name: 'flui-worker-1',
-    role: 'worker',
-    cpu: [7800, 3200, 1700],
-    mem: [15_800, 7400, 6100],
-    apps: ['storefront', 'orders-api'],
-  },
-  {
-    name: 'flui-worker-2',
-    role: 'worker',
-    cpu: [7800, 2900, 1400],
-    mem: [15_800, 6800, 5900],
-    apps: ['orders-db', 'internal-tools'],
-  },
-] as const;
+/** Where the example nodes stand, by the same numbers the Topology page draws. */
+const ROOM = WORLD_SERVERS.filter(
+  (server) => server.clusterId === CLUSTER_ID,
+).map((server) => {
+  const shape = server.serverType.toUpperCase() as ExampleShape;
+  const cpu = CPU_MILLICORES[shape];
+  const mem = MEMORY_MI[shape];
+  return {
+    name: server.name,
+    role: server.role,
+    cpu: [cpu, worldRequested(server).cpuM, Math.round(cpu * server.used.cpu)],
+    mem: [mem, worldRequested(server).memMi, Math.round(mem * server.used.mem)],
+    apps: WORLD_APPS.filter(
+      (app) => app.clusterId === CLUSTER_ID && app.on[server.name],
+    ).map((app) => app.slug),
+  };
+});
 
 export function exampleScalingPreview(
   _now?: number,

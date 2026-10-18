@@ -2,8 +2,6 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import { IsNull, Repository } from 'typeorm';
-import * as k8s from '@kubernetes/client-node';
-
 import {
   ClusterEntity,
   ClusterStatus,
@@ -12,41 +10,53 @@ import {
   ClusterNodeEntity,
   NodeType,
 } from '../../infrastructure/clusters/entities/cluster-node.entity';
-import { KubernetesService } from '../../infrastructure/shared/services/kubernetes.service';
-import { EncryptionService } from '../../shared/encryption/services/encryption.service';
-
-import { TopologyResponseDto, TopologyClusterDto } from '../dto/topology.dto';
+import { WireGuardPeerEntity } from '../../infrastructure/networking/entities/wireguard-peer.entity';
+import { managementNetworkSwitch } from '../../infrastructure/networking/management-network.state';
+import { exampleTopology } from '../../sandbox/stand-in/sandbox-world-topology';
+import { TopologyResponseDto } from '../dto/topology.dto';
+import { inboundOf } from '../utils/topology-inbound.util';
+import { assignStacks } from '../utils/topology-enrich.util';
+import { ClusterContext, ServerRecord } from './topology-k8s.helper';
+import { TopologyLinksService } from './topology-links.service';
+import { TopologyRecordsService } from './topology-records.service';
+import { TopologyClusterReader } from './topology-cluster-reader.service';
 import {
-  TopologyAppStatus,
-  TopologyHealthStatus,
-} from '../enums/topology.enums';
-import { buildMockTopology } from '../data/topology.fixtures';
-import { validateClusterApps } from '../utils/topology-validation.util';
-import {
-  ClusterContext,
-  FLUI_MANAGED_LABEL_SELECTOR,
-  buildAppDto,
-  buildClusterDto,
-  describeDaemonSet,
-  describeDeployment,
-  describeStatefulSet,
-  mapNodesToServers,
-} from './topology-k8s.helper';
+  ClusterPart,
+  answerWithin,
+  assembleResponse,
+  clusterDto,
+  fluiNetworkOf,
+} from './topology-assembly.util';
 
 const FLUI_MOCK_ENV = 'FLUI_TOPOLOGY_MOCK';
+/** A cluster gets this long to answer; past it the map is drawn without waiting for it. */
+const CLUSTER_DEADLINE_MS = 20_000;
+/** A cluster that did not answer is asked again after this, not on every poll. */
+const RETRY_SILENT_MS = 60_000;
+/** While a cluster is silent its last known apps stay on the map, for this long at most. */
+const KEEP_LAST_KNOWN_MS = 10 * 60_000;
 
+/** The fleet's topology: every cluster read, joined with Flui's records, one snapshot. */
 @Injectable()
 export class TopologyService {
   private readonly logger = new Logger(TopologyService.name);
+  private readonly lastGood = new Map<
+    string,
+    { part: ClusterPart; at: number }
+  >();
+  private readonly silentUntil = new Map<string, number>();
 
   constructor(
     @InjectRepository(ClusterEntity)
     private readonly clusterRepo: Repository<ClusterEntity>,
     @InjectRepository(ClusterNodeEntity)
     private readonly nodeRepo: Repository<ClusterNodeEntity>,
-    private readonly kubernetesService: KubernetesService,
-    private readonly encryptionService: EncryptionService,
+    @InjectRepository(WireGuardPeerEntity)
+    private readonly peerRepo: Repository<WireGuardPeerEntity>,
     private readonly configService: ConfigService,
+    private readonly linksService: TopologyLinksService,
+    private readonly records: TopologyRecordsService,
+    private readonly reader: TopologyClusterReader,
   ) {}
 
   isMockMode(): boolean {
@@ -54,166 +64,138 @@ export class TopologyService {
   }
 
   async buildTopology(): Promise<TopologyResponseDto> {
-    if (this.isMockMode()) {
-      return buildMockTopology();
-    }
+    if (this.isMockMode()) return exampleTopology(Date.now());
 
     const clusters = await this.clusterRepo.find({
       where: { deletedAt: IsNull() },
       order: { createdAt: 'ASC' },
     });
-    // Will not answer, and asking costs the full connect timeout on every poll.
-    const reachable = clusters.filter(
-      (c) =>
-        c.status !== ClusterStatus.LOST && c.status !== ClusterStatus.STOPPED,
+    const parts = await Promise.all(
+      clusters.map((cluster) => this.buildClusterPart(cluster)),
     );
-
-    const clusterDtos = await Promise.all(
-      reachable.map(async (cluster) => this.buildClusterTopology(cluster)),
+    const apps = parts.flatMap((p) => p.apps);
+    await this.records.adoptPlatformRecords(apps);
+    const [records, members, firewalls] = await Promise.all([
+      this.records.appRecords(apps),
+      this.records.overlayMembers(),
+      this.records.firewalls(clusters.map((c) => c.id)),
+    ]);
+    const [installs, projects] = await Promise.all([
+      this.records.installRecords(records),
+      this.records.projectRecords(records),
+    ]);
+    const stacks = assignStacks(apps, records, installs);
+    const networkOn = managementNetworkSwitch().enabled;
+    const clusterDtos = parts.map((p) =>
+      clusterDto(p, stacks, {
+        networkOn,
+        member: members.has(p.cluster.id),
+        inbound: inboundOf(firewalls.get(p.cluster.id)),
+      }),
     );
-
-    const validClusters = clusterDtos
-      .filter((c): c is TopologyClusterDto => c !== null)
-      .map(validateClusterApps);
-
-    return assembleResponse(validClusters);
-  }
-
-  private async buildClusterTopology(
-    cluster: ClusterEntity,
-  ): Promise<TopologyClusterDto | null> {
-    if (!cluster.kubeconfigEncrypted) {
-      this.logger.warn(
-        `Skipping cluster ${cluster.id}: no kubeconfig configured`,
-      );
-      return null;
-    }
-
-    const clusterNodes = await this.nodeRepo.find({
-      where: { clusterId: cluster.id },
-    });
-    const controlPlaneNodeNames = new Set(
-      clusterNodes
-        .filter((n) => n.nodeType === NodeType.MASTER)
-        .map((n) => n.serverName),
-    );
-
-    const ctx: ClusterContext = {
-      id: cluster.id,
-      name: cluster.name,
-      displayName: cluster.name,
-      provider: cluster.provider,
-      region: cluster.region,
-      controlPlaneNodeNames,
-    };
-
-    try {
-      const kubeconfig = this.encryptionService.decrypt(
-        cluster.kubeconfigEncrypted,
-      );
-      const { coreApi, appsApi } =
-        this.kubernetesService.getKubeClient(kubeconfig);
-
-      const [
-        nodesRes,
-        deploymentsRes,
-        statefulSetsRes,
-        daemonSetsRes,
-        podsRes,
-      ] = await Promise.all([
-        coreApi.listNode(),
-        appsApi.listDeploymentForAllNamespaces({
-          labelSelector: FLUI_MANAGED_LABEL_SELECTOR,
-        }),
-        appsApi.listStatefulSetForAllNamespaces({
-          labelSelector: FLUI_MANAGED_LABEL_SELECTOR,
-        }),
-        appsApi.listDaemonSetForAllNamespaces({
-          labelSelector: FLUI_MANAGED_LABEL_SELECTOR,
-        }),
-        coreApi.listPodForAllNamespaces({
-          labelSelector: FLUI_MANAGED_LABEL_SELECTOR,
-        }),
-      ]);
-
-      const servers = mapNodesToServers(nodesRes.items ?? [], ctx);
-      const serverIds = servers.map((s) => s.id);
-      const pods = podsRes.items ?? [];
-
-      const apps = [
-        ...(deploymentsRes.items ?? []).map(describeDeployment),
-        ...(statefulSetsRes.items ?? []).map(describeStatefulSet),
-        ...(daemonSetsRes.items ?? []).map(describeDaemonSet),
-      ].map((workload) => {
-        const matchingPods = pods.filter(
-          (p) =>
-            podMatchesSelector(p, workload.selectorMatchLabels) &&
-            p.metadata?.namespace === workload.namespace,
-        );
-        return buildAppDto(workload, matchingPods, serverIds);
+    const { links, clusterLinks } = await this.linksService
+      .build(
+        apps,
+        stacks,
+        clusterDtos,
+        parts.flatMap((p) =>
+          p.refs.map((r) => ({ ...r, clusterId: p.cluster.id })),
+        ),
+      )
+      .catch((err: Error) => {
+        this.logger.warn(`Topology links unavailable: ${err.message}`);
+        return { links: [], clusterLinks: [] };
       });
 
-      return buildClusterDto(ctx, servers, apps);
-    } catch (error) {
-      this.logger.error(
-        `Failed to build topology for cluster ${cluster.id}: ${(error as Error).message}`,
+    return assembleResponse({
+      clusters: clusterDtos,
+      links,
+      clusterLinks,
+      servers: parts.flatMap((p) => p.servers),
+      stacks,
+      apps,
+      projects,
+      droppedApps: parts.reduce((sum, p) => sum + p.dropped, 0),
+    });
+  }
+
+  private async buildClusterPart(cluster: ClusterEntity): Promise<ClusterPart> {
+    const empty = {
+      cluster,
+      reached: false,
+      servers: [],
+      apps: [],
+      dropped: 0,
+      refs: [],
+    };
+    // Will not answer, and asking costs the full connect timeout on every poll.
+    if (
+      cluster.status === ClusterStatus.LOST ||
+      cluster.status === ClusterStatus.STOPPED ||
+      !cluster.kubeconfigEncrypted
+    ) {
+      return empty;
+    }
+
+    const [rows, peers] = await Promise.all([
+      this.nodeRepo.find({ where: { clusterId: cluster.id } }),
+      this.peerRepo.find({
+        where: { clusterId: cluster.id },
+        select: ['nodeId', 'status'],
+      }),
+    ]);
+    const peerOf = new Map(
+      peers.filter((p) => p.nodeId).map((p) => [p.nodeId!, p.status]),
+    );
+    const ctx: ClusterContext = {
+      id: cluster.id,
+      provider: cluster.provider,
+      records: new Map<string, ServerRecord>(
+        rows.map((n) => [
+          n.serverName,
+          {
+            id: n.id,
+            providerResourceId: n.providerResourceId || null,
+            serverType: n.serverType ?? null,
+            isMaster: n.nodeType === NodeType.MASTER,
+            privateNetwork: !!n.subnetId,
+            fluiNetwork: fluiNetworkOf(peerOf.get(n.id)),
+          },
+        ]),
+      ),
+    };
+
+    const silent = this.silentUntil.get(cluster.id);
+    if (silent && Date.now() < silent) return this.lastKnown(cluster, empty);
+    try {
+      const part = await answerWithin(
+        this.reader.read(cluster, ctx),
+        CLUSTER_DEADLINE_MS,
       );
-      return {
-        id: ctx.id,
-        name: ctx.name,
-        displayName: ctx.displayName,
-        provider: ctx.provider,
-        region: ctx.region,
-        status: TopologyHealthStatus.DOWN,
-        servers: [],
-        apps: [],
-      };
-    }
-  }
-}
-
-function podMatchesSelector(
-  pod: k8s.V1Pod,
-  matchLabels: Record<string, string>,
-): boolean {
-  const podLabels = pod.metadata?.labels ?? {};
-  for (const [k, v] of Object.entries(matchLabels)) {
-    if (podLabels[k] !== v) return false;
-  }
-  return true;
-}
-
-function assembleResponse(clusters: TopologyClusterDto[]): TopologyResponseDto {
-  let totalServers = 0;
-  let totalApps = 0;
-  let totalReplicas = 0;
-  let totalRamMB = 0;
-  let errorCount = 0;
-  let warningCount = 0;
-
-  for (const c of clusters) {
-    totalServers += c.servers.length;
-    totalApps += c.apps.length;
-    for (const a of c.apps) {
-      totalReplicas += a.replicaCount;
-      totalRamMB += a.ramRequestMB * a.replicaCount;
-      if (a.status === TopologyAppStatus.ERROR) errorCount++;
-      else if (a.status === TopologyAppStatus.WARNING) warningCount++;
+      if (this.silentUntil.delete(cluster.id)) {
+        this.logger.log(`Cluster ${cluster.id} answers the topology again`);
+      }
+      this.lastGood.set(cluster.id, { part, at: Date.now() });
+      return part;
+    } catch (error) {
+      // Said once per silence, not on every poll.
+      if (!this.silentUntil.has(cluster.id)) {
+        this.logger.error(
+          `Failed to build topology for cluster ${cluster.id}: ${(error as Error).message}`,
+        );
+      }
+      this.silentUntil.set(cluster.id, Date.now() + RETRY_SILENT_MS);
+      return this.lastKnown(cluster, empty);
     }
   }
 
-  return {
-    version: '1',
-    fetchedAt: new Date().toISOString(),
-    clusters,
-    stats: {
-      totalClusters: clusters.length,
-      totalServers,
-      totalApps,
-      totalReplicas,
-      totalRamMB,
-      errorCount,
-      warningCount,
-    },
-  };
+  /** The cluster's last answer, drawn as not answering, so a short silence does not empty the map. */
+  private lastKnown(cluster: ClusterEntity, empty: ClusterPart): ClusterPart {
+    const known = this.lastGood.get(cluster.id);
+    if (!known || Date.now() - known.at > KEEP_LAST_KNOWN_MS) return empty;
+    return { ...known.part, cluster, reached: false };
+  }
 }
+
+export { assembleResponse } from './topology-assembly.util';
+export type { TopologyParts } from './topology-assembly.util';

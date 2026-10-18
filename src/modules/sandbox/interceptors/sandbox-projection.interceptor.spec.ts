@@ -106,6 +106,33 @@ describe('SandboxProjectionInterceptor', () => {
     expect(scopes.resolve).not.toHaveBeenCalled();
   });
 
+  it("lets a guest's event stream through, whose headers are already sent", async () => {
+    const req = {
+      method: 'GET',
+      path: '/api/v1/topology/stream',
+      route: { path: '/api/v1/topology/stream' },
+      [SANDBOX_GUEST_REQUEST]: { userId: 'guest-1' },
+    };
+    const ctx = {
+      getType: () => 'http',
+      switchToHttp: () => ({
+        getRequest: () => req,
+        getResponse: () => ({
+          headersSent: true,
+          setHeader: () => {
+            throw new Error(
+              'Cannot set headers after they are sent to the client',
+            );
+          },
+        }),
+      }),
+    } as unknown as ExecutionContext;
+    const event = { type: 'heartbeat', data: { ts: 'now' } };
+    expect(
+      await firstValueFrom(interceptor.intercept(ctx, handler(event))),
+    ).toBe(event);
+  });
+
   it('ignores non-http contexts', async () => {
     const ctx = { getType: () => 'ws' } as unknown as ExecutionContext;
     const body = { ping: true };

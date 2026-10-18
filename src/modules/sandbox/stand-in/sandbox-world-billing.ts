@@ -1,7 +1,7 @@
 /**
  * The Pricing tab of a cluster: the example organisation's month so far.
  *
- * The real answer is the operator's invoice. This one is three machines, the
+ * The real answer is the operator's invoice. This one is the example machines, the
  * worker the scaling group added and gave back, and the shared volume — priced
  * by the same rules the real bill follows, so the numbers add up the way a
  * person checking them expects.

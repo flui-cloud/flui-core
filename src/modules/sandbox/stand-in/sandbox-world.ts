@@ -13,9 +13,10 @@
  *    the database would be picked up by the reconcilers, which would try to talk
  *    to it, and a fake cluster would become a nameable target. This is a service
  *    that answers, not something that exists.
- * 2. **It is one world.** One connected provider, three machines, one network, a
+ * 2. **It is one world.** One main cluster with its machines, one network, a
  *    firewall whose rules name those machines, a zone with its records, a couple
- *    of backups of the workload that runs on them. Sections that do not agree
+ *    of backups of the workload that runs on them; around it the smaller clusters
+ *    the Topology page draws (`sandbox-world-topology-data.ts`). Sections that do not agree
  *    with each other read as broken rather than as a demonstration.
  * 3. **It is alive.** Every date is computed from `now`. A backup pinned to a
  *    fixed date is the oldest thing in the demo within a week.
@@ -47,10 +48,14 @@ import {
   ORG_NAME,
   PROVIDER,
   REGION,
-  REGION_NAME,
   SUBNET_RANGE,
   ZONE_NAME,
 } from './sandbox-world-core';
+import {
+  WORLD_CLUSTERS,
+  WORLD_SERVERS,
+  exampleProviderId,
+} from './sandbox-world-topology-data';
 
 export { SANDBOX_EXAMPLE_FLAG } from './sandbox-world-core';
 
@@ -74,39 +79,48 @@ export function exampleProviderConfigurations(now: number) {
   ];
 }
 
+/** Every machine of the example fleet, on whichever provider runs its cluster. */
 export function exampleInstances(now: number) {
   return {
-    data: MACHINES.map((machine, index) =>
-      mark({
-        id: machine.id,
+    data: WORLD_SERVERS.map((server, index) => {
+      const cluster = WORLD_CLUSTERS.find((c) => c.id === server.clusterId)!;
+      const machine = MACHINES.find((m) => m.id === server.id);
+      const publicIp = machine?.publicIp ?? `203.0.113.${100 + index}`;
+      const privateIp = machine?.privateIp ?? `10.20.${index}.11`;
+      return mark({
+        id: server.id,
         userId: 'example',
-        name: machine.name,
-        displayName: machine.name,
+        name: server.name,
+        displayName: server.name,
         type: 'cloud',
-        provider: PROVIDER,
-        providerId: `example-${index + 1}`,
+        provider: cluster.provider,
+        providerId: exampleProviderId(server.id),
         status: 'running',
-        dataCenter: `${REGION}-dc14`,
-        region: REGION,
-        regionName: REGION_NAME,
-        cpuCores: machine.cpuCores,
-        ramMb: machine.ramMb,
-        diskMb: machine.diskMb,
-        architecture: 'x86',
+        dataCenter: `${cluster.region}-dc1`,
+        region: cluster.region,
+        regionName: cluster.regionName,
+        cpuCores: server.cpuCores,
+        ramMb: server.ramMb,
+        diskMb: server.ramMb * 20,
+        architecture: server.architecture,
         osType: 'Ubuntu 24.04',
-        productName: machine.productName,
+        productName: server.serverType.toUpperCase(),
         productType: 'shared-vcpu',
         ownership: 'self',
         // The interface reads `ipConfig.v4.ip`. These addresses are in the
         // documentation range (RFC 5737) and belong to nothing.
         ipConfig: {
-          v4: { ip: machine.publicIp, gateway: '203.0.113.1', netmaskCidr: 32 },
+          v4: {
+            ip: publicIp,
+            gateway: '203.0.113.1',
+            netmaskCidr: 32,
+          },
         },
-        additionalIps: [machine.privateIp],
+        additionalIps: [privateIp],
         createdAt: daysAgo(now, 26),
         updatedAt: minutesAgo(now, 4),
-      }),
-    ),
+      });
+    }),
     partialErrors: [],
   };
 }
@@ -144,7 +158,7 @@ export function exampleVNets(now: number) {
  * The rules of the example firewall. Applied as written: the record says what
  * was asked for and what reached the machines, and here they are the same.
  */
-const FIREWALL_RULES = [
+export const FIREWALL_RULES = [
   {
     id: 'allow-https',
     direction: 'in' as const,

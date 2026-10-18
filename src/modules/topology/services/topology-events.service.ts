@@ -10,18 +10,24 @@ import { TopologyService } from './topology.service';
 import { TopologyAppStatus, TopologyEventType } from '../enums/topology.enums';
 import {
   TopologyAppDto,
-  TopologyClusterDto,
+  TopologyResponseDto,
+  TopologyServerCapacityChangeDto,
   TopologyServerDto,
+  TopologyStreamPayloadDto,
 } from '../dto/topology.dto';
 
 export interface TopologyChange {
   event: TopologyEventType;
-  data: unknown;
+  data: TopologyStreamPayloadDto;
 }
 
 const HEARTBEAT_MS = 15_000;
 const POLL_INTERVAL_MS = 10_000;
-const MOCK_FLIP_INTERVAL_MS = 30_000;
+/** Someone asked within this long, or holds a stream open: the map is kept fresh. */
+const WATCHED_FOR_MS = 2 * 60_000;
+/** Older than this, a snapshot is rebuilt before it is served (once, for everyone asking). */
+const STALE_AFTER_MS = 2 * 60_000;
+const CAPACITY_EVERY_MS = 30_000;
 const STATUS_DEBOUNCE_MS = 1_000;
 
 @Injectable()
@@ -36,22 +42,29 @@ export class TopologyEventsService implements OnModuleInit, OnModuleDestroy {
   );
 
   private pollTimer?: NodeJS.Timeout;
-  private mockTimer?: NodeJS.Timeout;
+  private latest?: TopologyResponseDto;
+  private latestAt = 0;
+  private building?: Promise<TopologyResponseDto>;
+  private watchers = 0;
+  private askedAt = 0;
+  private stopped = false;
+  private apps = new Map<string, TopologyAppDto>();
+  private servers = new Map<string, TopologyServerDto>();
+  private sentCapacity = new Map<string, string>();
+  private sentLinks = '';
+  private capacitySentAt = 0;
+  private readonly debouncedStatus = new Map<string, NodeJS.Timeout>();
 
-  private lastSnapshot: Map<string, TopologyAppDto> = new Map();
-  private lastServers: Map<string, TopologyServerDto> = new Map();
-  private readonly debouncedStatus: Map<
-    string,
-    { status: TopologyAppStatus; reason: string | null; timer: NodeJS.Timeout }
-  > = new Map();
-
-  readonly changes$: Observable<TopologyChange> = merge(
-    this.heartbeat$,
+  readonly changes$: Observable<TopologyChange> =
     new Observable<TopologyChange>((subscriber) => {
-      const sub = this.subject.subscribe(subscriber);
-      return () => sub.unsubscribe();
-    }),
-  );
+      this.watchers += 1;
+      this.schedule();
+      const sub = merge(this.heartbeat$, this.subject).subscribe(subscriber);
+      return () => {
+        this.watchers -= 1;
+        sub.unsubscribe();
+      };
+    });
 
   constructor(private readonly topologyService: TopologyService) {}
 
@@ -61,62 +74,90 @@ export class TopologyEventsService implements OnModuleInit, OnModuleDestroy {
    * liveness probe that kills at 90. The poll below refreshes on its own.
    */
   onModuleInit(): void {
-    if (this.topologyService.isMockMode()) {
-      this.startMockEmitter();
-      return;
-    }
-    void this.refreshSnapshot().catch((err: Error) => {
+    void this.refresh().catch((err: Error) => {
       this.logger.error(`First topology snapshot failed: ${err.message}`);
     });
-    this.pollTimer = setInterval(() => {
-      this.refreshSnapshot().catch((err) =>
-        this.logger.error(`Topology poll failed: ${(err as Error).message}`),
-      );
-    }, POLL_INTERVAL_MS);
+    this.schedule();
   }
 
   onModuleDestroy(): void {
-    if (this.pollTimer) clearInterval(this.pollTimer);
-    if (this.mockTimer) clearInterval(this.mockTimer);
-    for (const { timer } of this.debouncedStatus.values()) {
-      clearTimeout(timer);
-    }
+    this.stopped = true;
+    if (this.pollTimer) clearTimeout(this.pollTimer);
+    for (const timer of this.debouncedStatus.values()) clearTimeout(timer);
     this.debouncedStatus.clear();
     this.subject.complete();
   }
 
-  private async refreshSnapshot(): Promise<void> {
-    const topology = await this.topologyService.buildTopology();
-    const newApps = new Map<string, TopologyAppDto>();
-    const newServers = new Map<string, TopologyServerDto>();
-
-    for (const cluster of topology.clusters) {
-      for (const server of cluster.servers) {
-        newServers.set(scopedKey(cluster.id, server.id), server);
-      }
-      for (const app of cluster.apps) {
-        newApps.set(app.id, app);
-      }
+  /**
+   * The shared snapshot every caller is served from: never one cluster read
+   * per request. A stale one is rebuilt first, by one build all callers wait on.
+   */
+  async snapshot(): Promise<TopologyResponseDto> {
+    this.askedAt = Date.now();
+    this.schedule();
+    if (this.latest && Date.now() - this.latestAt < STALE_AFTER_MS) {
+      return this.latest;
     }
-
-    this.diffAndEmit(newApps, newServers, topology.clusters);
-
-    this.lastSnapshot = newApps;
-    this.lastServers = newServers;
+    return this.refresh();
   }
 
-  private diffAndEmit(
-    newApps: Map<string, TopologyAppDto>,
-    newServers: Map<string, TopologyServerDto>,
-    clusters: TopologyClusterDto[],
-  ): void {
-    for (const [id, app] of newApps) {
-      const prev = this.lastSnapshot.get(id);
+  /** Clusters are read again only while someone looks at the map. */
+  private watched(): boolean {
+    return this.watchers > 0 || Date.now() - this.askedAt < WATCHED_FOR_MS;
+  }
+
+  /** The next poll starts after the last one ends, so slow clusters never pile builds up. */
+  private schedule(): void {
+    if (this.stopped || this.pollTimer) return;
+    this.pollTimer = setTimeout(() => {
+      this.pollTimer = undefined;
+      if (!this.watched()) return;
+      this.refresh()
+        .catch((err: Error) =>
+          this.logger.error(`Topology poll failed: ${err.message}`),
+        )
+        .finally(() => this.schedule());
+    }, POLL_INTERVAL_MS);
+  }
+
+  /** One build at a time; whoever asks meanwhile gets the one in flight. */
+  private refresh(): Promise<TopologyResponseDto> {
+    this.building ??= this.refreshSnapshot().finally(() => {
+      this.building = undefined;
+    });
+    return this.building;
+  }
+
+  private async refreshSnapshot(): Promise<TopologyResponseDto> {
+    const topology = await this.topologyService.buildTopology();
+    const apps = new Map(topology.apps.map((a) => [a.id, a]));
+    const servers = new Map(topology.servers.map((s) => [s.id, s]));
+    // The first snapshot is the baseline, not news: diffing it against an
+    // empty one would announce every app as just deployed.
+    if (this.latest) {
+      this.diffApps(apps);
+      this.diffServers(servers);
+      this.emitPeriodic(topology);
+    } else {
+      this.rememberCapacity(topology.servers);
+      this.sentLinks = linksKey(topology);
+    }
+    this.latest = topology;
+    this.latestAt = Date.now();
+    this.apps = apps;
+    this.servers = servers;
+    return topology;
+  }
+
+  private emit(event: TopologyEventType, data: TopologyStreamPayloadDto): void {
+    this.subject.next({ event, data });
+  }
+
+  private diffApps(next: Map<string, TopologyAppDto>): void {
+    for (const [id, app] of next) {
+      const prev = this.apps.get(id);
       if (!prev) {
-        this.subject.next({
-          event: TopologyEventType.APP_DEPLOYED,
-          data: app,
-        });
+        this.emit(TopologyEventType.APP_DEPLOYED, { app });
         continue;
       }
       if (
@@ -129,119 +170,108 @@ export class TopologyEventsService implements OnModuleInit, OnModuleDestroy {
         prev.replicaCount !== app.replicaCount ||
         !sameReplicaPlacement(prev, app)
       ) {
-        this.subject.next({
-          event: TopologyEventType.APP_SCALED,
-          data: {
-            appId: app.id,
-            replicas: app.replicas,
-            replicaCount: app.replicaCount,
-            scalingNote: app.scalingNote,
-          },
+        this.emit(TopologyEventType.APP_SCALED, {
+          appId: app.id,
+          clusterId: app.clusterId,
+          replicas: app.replicas,
+          replicaCount: app.replicaCount,
+          scalingNote: app.scalingNote,
         });
       }
     }
+    for (const [id, app] of this.apps) {
+      if (!next.has(id)) {
+        this.emit(TopologyEventType.APP_REMOVED, {
+          appId: id,
+          clusterId: app.clusterId,
+        });
+      }
+    }
+  }
 
-    for (const id of this.lastSnapshot.keys()) {
-      if (!newApps.has(id)) {
-        this.subject.next({
-          event: TopologyEventType.APP_REMOVED,
-          data: { appId: id },
+  private diffServers(next: Map<string, TopologyServerDto>): void {
+    for (const [id, server] of next) {
+      if (!this.servers.has(id)) {
+        this.emit(TopologyEventType.SERVER_ADDED, {
+          clusterId: server.clusterId,
+          server,
         });
       }
     }
+    for (const [id, server] of this.servers) {
+      if (!next.has(id)) {
+        this.emit(TopologyEventType.SERVER_REMOVED, {
+          clusterId: server.clusterId,
+          serverId: id,
+        });
+      }
+    }
+  }
 
-    const clusterByServerKey = new Map<string, string>();
-    for (const c of clusters) {
-      for (const s of c.servers) {
-        clusterByServerKey.set(scopedKey(c.id, s.id), c.id);
-      }
+  /** Capacity and links move every poll; they are sent every 30 s, and only when they changed. */
+  private emitPeriodic(topology: TopologyResponseDto): void {
+    if (Date.now() - this.capacitySentAt < CAPACITY_EVERY_MS) return;
+    const changed = topology.servers.filter(
+      (s) => this.sentCapacity.get(s.id) !== capacityKey(s),
+    );
+    this.rememberCapacity(topology.servers);
+    if (changed.length) {
+      this.emit(TopologyEventType.SERVER_CAPACITY, {
+        capacities: changed.map(capacityChange),
+      });
     }
-    for (const [key, server] of newServers) {
-      if (!this.lastServers.has(key)) {
-        const clusterId = clusterByServerKey.get(key);
-        if (clusterId) {
-          this.subject.next({
-            event: TopologyEventType.SERVER_ADDED,
-            data: { clusterId, server },
-          });
-        }
-      }
+    const links = linksKey(topology);
+    if (links !== this.sentLinks) {
+      this.sentLinks = links;
+      this.emit(TopologyEventType.LINKS_CHANGED, {
+        links: topology.links,
+        clusterLinks: topology.clusterLinks,
+      });
     }
-    for (const [key, server] of this.lastServers) {
-      if (!newServers.has(key)) {
-        const [clusterId] = key.split('::');
-        this.subject.next({
-          event: TopologyEventType.SERVER_REMOVED,
-          data: { clusterId, serverId: server.id },
-        });
-      }
-    }
+  }
+
+  private rememberCapacity(servers: TopologyServerDto[]): void {
+    this.capacitySentAt = Date.now();
+    this.sentCapacity = new Map(servers.map((s) => [s.id, capacityKey(s)]));
   }
 
   private queueStatusChange(app: TopologyAppDto): void {
     const existing = this.debouncedStatus.get(app.id);
-    if (existing) clearTimeout(existing.timer);
-
+    if (existing) clearTimeout(existing);
     const timer = setTimeout(() => {
       this.debouncedStatus.delete(app.id);
-      this.subject.next({
-        event: TopologyEventType.APP_STATUS_CHANGED,
-        data: {
-          appId: app.id,
-          status: app.status,
-          statusReason: app.statusReason,
-        },
+      this.emit(TopologyEventType.APP_STATUS_CHANGED, {
+        appId: app.id,
+        clusterId: app.clusterId,
+        status: app.status as TopologyAppStatus,
+        statusReason: app.statusReason,
       });
     }, STATUS_DEBOUNCE_MS);
-
-    this.debouncedStatus.set(app.id, {
-      status: app.status,
-      reason: app.statusReason,
-      timer,
-    });
-  }
-
-  private startMockEmitter(): void {
-    this.refreshSnapshot().catch((err) =>
-      this.logger.error(
-        `Mock topology snapshot failed: ${(err as Error).message}`,
-      ),
-    );
-
-    const statuses: TopologyAppStatus[] = [
-      TopologyAppStatus.RUNNING,
-      TopologyAppStatus.WARNING,
-      TopologyAppStatus.ERROR,
-    ];
-    const reasons: Record<TopologyAppStatus, string | null> = {
-      [TopologyAppStatus.RUNNING]: null,
-      [TopologyAppStatus.WARNING]: 'Restart spike',
-      [TopologyAppStatus.ERROR]: 'CrashLoopBackOff',
-      [TopologyAppStatus.STOPPED]: null,
-    };
-
-    this.mockTimer = setInterval(() => {
-      const ids = [...this.lastSnapshot.keys()];
-      if (ids.length === 0) return;
-      const id = ids[Math.floor(Math.random() * ids.length)];
-      const status = statuses[Math.floor(Math.random() * statuses.length)];
-      this.subject.next({
-        event: TopologyEventType.APP_STATUS_CHANGED,
-        data: { appId: id, status, statusReason: reasons[status] },
-      });
-    }, MOCK_FLIP_INTERVAL_MS);
+    this.debouncedStatus.set(app.id, timer);
   }
 }
 
-function scopedKey(clusterId: string, serverId: string): string {
-  return `${clusterId}::${serverId}`;
+export function capacityChange(
+  server: TopologyServerDto,
+): TopologyServerCapacityChangeDto {
+  return {
+    serverId: server.id,
+    clusterId: server.clusterId,
+    capacity: server.capacity,
+    podCount: server.podCount,
+  };
+}
+
+function linksKey(topology: TopologyResponseDto): string {
+  return JSON.stringify([topology.links, topology.clusterLinks]);
+}
+
+function capacityKey(server: TopologyServerDto): string {
+  return JSON.stringify([server.capacity, server.podCount]);
 }
 
 function sameReplicaPlacement(a: TopologyAppDto, b: TopologyAppDto): boolean {
   if (a.replicas.length !== b.replicas.length) return false;
   const aMap = new Map(a.replicas.map((r) => [r.serverId, r.count]));
-  for (const r of b.replicas) {
-    if (aMap.get(r.serverId) !== r.count) return false;
-  }
-  return true;
+  return b.replicas.every((r) => aMap.get(r.serverId) === r.count);
 }

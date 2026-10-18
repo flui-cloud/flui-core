@@ -47,5 +47,60 @@ export enum TopologyEventType {
   APP_REMOVED = 'app.removed',
   SERVER_ADDED = 'server.added',
   SERVER_REMOVED = 'server.removed',
+  SERVER_CAPACITY = 'server.capacity',
+  LINKS_CHANGED = 'links.changed',
   HEARTBEAT = 'heartbeat',
+}
+
+export enum TopologyClusterType {
+  CONTROL = 'control',
+  WORKLOAD = 'workload',
+  OBSERVABILITY = 'observability',
+}
+
+export enum TopologyOverlay {
+  TUNNEL = 'tunnel',
+  PUBLIC_ADDRESS = 'public-address',
+  OFF = 'off',
+}
+
+export enum TopologyArchitecture {
+  X86 = 'x86',
+  ARM = 'arm',
+}
+
+export enum TopologyStackType {
+  COMPOSED = 'composed',
+  STANDALONE = 'standalone',
+}
+
+export enum TopologyWorkloadKind {
+  DEPLOYMENT = 'deployment',
+  STATEFULSET = 'statefulset',
+  DAEMONSET = 'daemonset',
+}
+
+export enum TopologyExposure {
+  PUBLIC = 'public',
+  INTERNAL = 'internal',
+  CLUSTER = 'cluster',
+}
+
+export enum TopologyLinkSource {
+  GATEWAY_ROUTE = 'gateway-route',
+  ATTACHED_SERVICE = 'attached-service',
+  CATALOG_DEPENDENCY = 'catalog-dependency',
+  ENV_REFERENCE = 'env-reference',
+}
+
+export enum TopologyEndpointKind {
+  INTERNET = 'internet',
+  APP = 'app',
+}
+
+export enum TopologyFluiNetwork {
+  ACTIVE = 'active',
+  PENDING = 'pending',
+  STALE = 'stale',
+  NONE = 'none',
 }

@@ -92,13 +92,19 @@ export const SANDBOX_AREAS: SandboxArea[] = [
     key: 'pricing',
     area: 'What a cluster costs',
     level: 'stand-in',
-    why: 'The real bill is the operator\u2019s. This is an example month for three machines and a volume, priced the way Flui prices your own.',
+    why: 'The real bill is the operator\u2019s. This is an example month for the example machines and a volume, priced the way Flui prices your own.',
   },
   {
     key: 'scaling',
     area: 'Scaling',
     level: 'stand-in',
     why: 'Adding and giving back machines is the instance\u2019s decision, so this is an example group with its own limits, costs and history of decisions.',
+  },
+  {
+    key: 'topology',
+    area: 'Topology',
+    level: 'stand-in',
+    why: 'The real map is the operator\u2019s whole fleet, so this is an example company\u2019s: five clusters, their servers and the apps on them, changing live.',
   },
   {
     key: 'dns-zones',
