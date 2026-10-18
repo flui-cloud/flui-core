@@ -76,7 +76,7 @@ export default class EnvCreate extends Command {
       char: 'p',
       description:
         "Cloud provider for the control cluster (default: the profile's configured provider). " +
-        'OVH has no CLI-side firewall automation yet — pass --no-configure-firewall.',
+        'On OVH the firewall is applied on the server itself at first boot.',
       options: ['hetzner', 'scaleway', 'ovh'],
     }),
     'node-size': Flags.string({

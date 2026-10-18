@@ -43,27 +43,29 @@ The goal is a real choice, and the freedom to choose again: move applications an
 
 ## Install
 
-You need Node.js 18 or later and either a cloud account (Hetzner, Scaleway or OVHcloud) or a Linux server you can reach over SSH.
+You need Node.js 18 or later, and somewhere for Flui to run.
 
-**On a cloud provider**
+**On a server you already have** (Ubuntu 22.04 or 24.04, x86 or ARM, reachable over SSH)
 
 ```bash
 npm install -g @flui-cloud/cli
 flui vault init                    # a passphrase that seals your keys on this machine
+flui env create --host <your-server-ip>
+```
+
+Without `--ssh-key` it asks for the password once and never stores it.
+
+**On a cloud provider** (Hetzner, Scaleway or OVHcloud: Flui creates the server, private network and firewall)
+
+```bash
+npm install -g @flui-cloud/cli
+flui vault init
 flui config set hetzner            # asks for the key; it never leaves your machine
 flui server-types list --provider hetzner --region nbg1 --fits
 flui env create --provider hetzner --region nbg1 --node-size cx23
 ```
 
-**On a server you already have**
-
-```bash
-npm install -g @flui-cloud/cli
-flui vault init
-flui env create --host <your-server-ip>
-```
-
-In about seven minutes you get a running platform with its own HTTPS address, no domain required. The [install page](https://flui.cloud/#install) builds these commands for the provider, city and server size you pick, and the [guide](https://docs.flui.cloud/tasks/get-flui-running/) covers every option.
+In about five minutes, depending on the machine and its network, you get a running platform with its own HTTPS address, no domain required. The [install page](https://flui.cloud/#install) builds these commands for the provider, city and server size you pick, and the [guide](https://docs.flui.cloud/tasks/get-flui-running/) covers every option.
 
 ## What you get
 
