@@ -34,17 +34,16 @@ export interface ReleaseManifest {
 }
 
 export const RELEASE: ReleaseManifest = {
-  version: '0.13.0-rc.21',
-  // A commit ref, not a tag. It moved: the API and Postgres get more CPU, the
-  // API no longer pins its own replica count, and its copies get ten minutes
-  // to finish in-process work before they stop.
-  bootstrapRef: '1525ed8',
+  version: '0.14.0-rc.1',
+  // A commit ref, not a tag. It moved: Loki caps how much write-ahead log it
+  // replays on a restart, and Zitadel files one-time codes under Flui.
+  bootstrapRef: '8231774',
   images: {
     // Release tags: the tag build is what makes an image exist under the
-    // release's own name. Both repositories are tagged `v0.13.0-rc.21`, so a
+    // release's own name. Both repositories are tagged `v0.14.0-rc.1`, so a
     // rollout never waits on a pull that cannot succeed.
-    fluiApi: '0.13.0-rc.21',
-    fluiWeb: '0.13.0-rc.21',
+    fluiApi: '0.14.0-rc.1',
+    fluiWeb: '0.14.0-rc.1',
     // Pinned by its own version, not the platform's: 0.7.0 is the sign-in
     // relay that asks the API, which this API's gateway installs expect.
     fluiAuthz: '0.7.0',

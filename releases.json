@@ -2,6 +2,32 @@
   "schemaVersion": 2,
   "releases": [
     {
+      "version": "0.14.0-rc.1",
+      "publishedAt": "2026-10-18T20:52:00.282Z",
+      "bootstrapRef": "8231774",
+      "images": {
+        "fluiApi": "0.14.0-rc.1",
+        "fluiWeb": "0.14.0-rc.1",
+        "fluiAuthz": "0.7.0"
+      },
+      "notes": [
+        "Topology: a live map of clusters, servers, applications and the links between them, narrowed to what each person may see, with a full-window view.",
+        "Agents can ask for a scope they are missing, and every destructive call waits for a person to approve it, naming the application, key or cluster.",
+        "The first install is harder to get wrong: flui vault init opens the vault, provider tokens are asked without echo and checked, and --fits lists only sizes that suit Flui.",
+        "New installations: Loki caps the write-ahead log it replays on a restart, so a restart cannot loop on out-of-memory."
+      ],
+      "migrations": 0,
+      "requiresBootstrap": true,
+      "k3s": {
+        "version": "v1.35.4+k3s1"
+      },
+      "systemComponents": {
+        "certManager": "v1.17.1",
+        "systemUpgradeController": "v0.20.2"
+      },
+      "manifestSets": ["control"]
+    },
+    {
       "version": "0.13.0-rc.21",
       "publishedAt": "2026-10-17T11:47:54.342Z",
       "bootstrapRef": "1525ed8",
