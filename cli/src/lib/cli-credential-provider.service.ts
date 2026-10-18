@@ -47,7 +47,7 @@ export class CliCredentialProviderService implements ICredentialProvider {
     if (!token) {
       throw new NotFoundException(
         `No API token configured for ${providerName}. ` +
-          `Run: flui config set ${providerName} YOUR_TOKEN`,
+          `Run: flui config set ${providerName}  (it asks for the key)`,
       );
     }
 

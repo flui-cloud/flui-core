@@ -6,6 +6,7 @@ import { ConfigStorage } from './config-storage';
 import { getCredentialSchema } from './provider-credential-schemas';
 import { validateScalewayCredentials } from './scaleway-validator';
 import { validateOvhCredentials } from './ovh-validator';
+import { validateHetznerToken } from './hetzner-validator';
 import { archLabel } from './server-architecture-view';
 
 const validator = new ServerTypeValidatorService();
@@ -276,9 +277,7 @@ async function pickProviderToConfigure(
     items,
   );
   if (index === -1) {
-    console.log(
-      chalk.dim('\n   Cancelled. Run: flui config set hetzner YOUR_TOKEN\n'),
-    );
+    console.log(chalk.dim('\n   Cancelled. Run: flui config set hetzner\n'));
     return null;
   }
   return SUPPORTED_PROVIDERS[index];
@@ -333,6 +332,19 @@ export async function runProviderSetupWizard(
 
   const collected = await collectProviderCredentials(schema);
   if (!collected) return null;
+
+  if (selectedProvider.id === 'hetzner') {
+    process.stdout.write(
+      chalk.dim('\n   Validating the token with Hetzner...'),
+    );
+    const result = await validateHetznerToken(collected[schema.fields[0].key]);
+    process.stdout.write('\r\u001B[2K');
+    if (!result.success) {
+      console.log(chalk.red(`   ✖ ${result.message}\n`));
+      return null;
+    }
+    console.log(chalk.green(`   ✔ ${result.message}`));
+  }
 
   if (selectedProvider.id === 'scaleway') {
     process.stdout.write(

@@ -3,6 +3,7 @@ import { INestApplication } from '@nestjs/common';
 import { CliModule } from '../cli.module';
 import { ProfileManager } from './profile-manager';
 import { withCliEncryptionKey } from './vault/encryption-key-env';
+import { CliLogger } from './cli-logger';
 
 let appInstance: INestApplication | null = null;
 
@@ -31,7 +32,7 @@ export async function getNestApp(): Promise<INestApplication> {
     // This is required for TypeORM and Bull to work properly
     appInstance = await withCliEncryptionKey(() =>
       NestFactory.create(CliModule, {
-        logger: ['error', 'warn'], // Only show errors and warnings
+        logger: new CliLogger({ logLevels: ['error', 'warn'] }),
         abortOnError: true, // Exit on errors to see what's wrong
       }),
     );

@@ -53,10 +53,12 @@ export const CLI_DEFAULTS = {
     ovh: 'd2-4',
   },
 
-  // Regions where the provider's recommended type is not sold. Milan carries
-  // only the current-generation shapes, which boot from a network volume.
+  // Regions where the provider's recommended type is not sold. Scaleway Milan
+  // carries only the current-generation shapes, which boot from a network volume.
   SERVER_TYPE_BY_REGION: {
     scaleway: { 'it-mil': 'BASIC3-X2C-8G' },
+    // CX is sold in Germany and Finland only; elsewhere Hetzner sells CPX.
+    hetzner: { ash: 'cpx21', hil: 'cpx21', sin: 'cpx22' },
   } as Record<string, Record<string, string>>,
 
   MIN_SPECS: {

@@ -1,6 +1,5 @@
 import { Command, Flags } from '@oclif/core';
 import chalk from 'chalk';
-import { spawn } from 'node:child_process';
 import { join } from 'node:path';
 import { ProfileManager } from '../../lib/profile-manager';
 import { ConfigStorage } from '../../lib/config-storage';
@@ -18,6 +17,7 @@ import {
   redactCommand,
 } from '../../lib/vault/flui-processes';
 import { askAgent, socketPath } from '../../lib/vault/vault-agent';
+import { startVaultAgent } from '../../lib/vault/start-agent';
 import {
   DEFAULT_IDLE_MS,
   DEFAULT_MAX_MS,
@@ -293,24 +293,7 @@ export default class VaultUnlock extends Command {
    * undoes the whole exercise.
    */
   private async startAgent(passphrase: string): Promise<void> {
-    const child = spawn(
-      process.argv[0],
-      [process.argv[1], 'vault', 'agent', '--stdin'],
-      {
-        detached: true,
-        stdio: ['pipe', 'ignore', 'ignore'],
-      },
-    );
-    child.stdin?.end(passphrase);
-    child.unref();
-
-    const deadline = Date.now() + 10_000;
-    while (Date.now() < deadline) {
-      await new Promise((resolve) => setTimeout(resolve, 200));
-      const status = await askAgent({ op: 'status' });
-      if (status?.ok) return;
-    }
-
+    if (await startVaultAgent(passphrase)) return;
     this.error(
       `The vault agent did not start. Expected its socket at ${socketPath()}.`,
       { exit: 1 },

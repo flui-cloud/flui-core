@@ -12,5 +12,8 @@ describe('CLI defaults', () => {
     expect(getRecommendedServerType('scaleway', 'fr-par')).toBe('DEV1-M');
     expect(getRecommendedServerType('scaleway')).toBe('DEV1-M');
     expect(getRecommendedServerType('hetzner', 'it-mil')).toBe('cx23');
+    expect(getRecommendedServerType('hetzner', 'ash')).toBe('cpx21');
+    expect(getRecommendedServerType('hetzner', 'sin')).toBe('cpx22');
+    expect(getRecommendedServerType('hetzner', 'nbg1')).toBe('cx23');
   });
 });

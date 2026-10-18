@@ -11,8 +11,10 @@ import {
 } from '../../lib/provider-credential-schemas';
 import { promptInput, promptMaskedInput } from '../../lib/prompts';
 import { isNonInteractive } from '../../lib/non-interactive';
+import { requireOpenVault } from '../../lib/vault/require-vault';
 import { validateScalewayCredentials } from '../../lib/scaleway-validator';
 import { validateOvhCredentials } from '../../lib/ovh-validator';
+import { validateHetznerToken } from '../../lib/hetzner-validator';
 
 export default class ConfigSet extends Command {
   static readonly description =
@@ -122,6 +124,13 @@ export default class ConfigSet extends Command {
     value: string | undefined,
     fromStdin = false,
   ): Promise<void> {
+    // Before asking for the key: a person who pastes it and only then learns
+    // there is nowhere to keep it has to find it and paste it again.
+    try {
+      requireOpenVault();
+    } catch (error) {
+      this.error((error as Error).message, { exit: 1 });
+    }
     const schema = getCredentialSchema(provider);
 
     if (isCompoundProvider(provider)) {
@@ -154,6 +163,17 @@ export default class ConfigSet extends Command {
     if (!token) {
       console.log(chalk.red(`\nMissing token for provider '${provider}'\n`));
       this.exit(1);
+    }
+    // A person typed it, so it is checked; a script piping it in on --stdin
+    // decides for itself, and some pipe a placeholder on purpose.
+    if (provider === 'hetzner' && !fromStdin) {
+      process.stdout.write(chalk.dim('Validating token...'));
+      const result = await validateHetznerToken(token);
+      process.stdout.write('\r\u001B[2K');
+      if (!result.success) {
+        console.log(chalk.red(`✖ ${result.message}`));
+        this.exit(1);
+      }
     }
     storage.saveToken(provider, token);
     console.log(chalk.green(`\nProvider configured: ${provider}`));

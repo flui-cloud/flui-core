@@ -58,6 +58,7 @@ import { SshMode } from '../../lib/ssh-mode';
 import { PREFERENCES } from '../../config/preferences-schema';
 import { contextLabelPair, contextTag } from '../../lib/context-stamp';
 import { requireOpenVault } from '../../lib/vault/require-vault';
+import { isOclifExit, refusedKeyHint } from '../../lib/provider-refusal';
 
 export default class EnvCreate extends Command {
   static readonly description = 'Create control cluster infrastructure on K3s';
@@ -989,11 +990,15 @@ export default class EnvCreate extends Command {
           `VNet ready: ${envVnetInfo.vnetProviderResourceId} (subnet ${envVnetInfo.subnetIpRange})`,
         );
       } catch (error) {
-        spinner.fail(`VNet provisioning failed: ${(error as Error).message}`);
+        const message = (error as Error).message;
+        spinner.fail(`VNet provisioning failed: ${message}`);
+        const refused = refusedKeyHint(message, providerKey);
         console.log(
-          chalk.red(
-            '\n   Cannot proceed without an environment VNet. The control cluster and all workload clusters must share a private network.',
-          ),
+          refused
+            ? chalk.yellow(`\n   ${refused}`)
+            : chalk.red(
+                '\n   Cannot proceed without an environment VNet. The control cluster and all workload clusters must share a private network.',
+              ),
         );
         this.exit(1);
       }
@@ -1596,7 +1601,10 @@ export default class EnvCreate extends Command {
         }
       }
     } catch (error) {
-      spinner.fail('Failed to create control cluster');
+      // A step that already said what went wrong and called `this.exit()`:
+      // clean up as below, but do not report the exit itself as the error.
+      const exiting = isOclifExit(error);
+      if (!exiting) spinner.fail('Failed to create control cluster');
       emitEvent({
         type: 'failed',
         phase: 'create',
@@ -1628,6 +1636,8 @@ export default class EnvCreate extends Command {
         }
       }
 
+      if (exiting) throw error;
+
       console.log(chalk.red('\n❌ Error:\n'));
 
       if (error instanceof Error) {
@@ -1643,9 +1653,7 @@ export default class EnvCreate extends Command {
         ) {
           console.log(chalk.yellow('\n💡 Hint:'));
           console.log(`   Make sure you've set your ${providerKey} API token:`);
-          const setCmd = chalk.cyan(
-            `flui config set ${providerKey} YOUR_TOKEN`,
-          );
+          const setCmd = chalk.cyan(`flui config set ${providerKey}`);
           console.log(`   ${setCmd}\n`);
         }
       } else {

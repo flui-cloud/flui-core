@@ -2,6 +2,7 @@ import { Command, Flags } from '@oclif/core';
 import chalk from 'chalk';
 import { randomBytes } from 'node:crypto';
 import { VaultFile } from '../../lib/vault/vault-file';
+import { startVaultAgent } from '../../lib/vault/start-agent';
 import { promptMaskedInput } from '../../lib/prompts';
 import { refuseToAsk } from '../../lib/non-interactive';
 import { stdinRequested, stdinValue } from '../../lib/stdin-value';
@@ -94,10 +95,8 @@ export default class VaultInit extends Command {
       this.exit(1);
     }
 
-    const passphrase =
-      flags.stdin || stdinRequested()
-        ? stdinValue()
-        : await this.askForPassphrase();
+    const typed = !(flags.stdin || stdinRequested());
+    const passphrase = typed ? await this.askForPassphrase() : stdinValue();
 
     if (!passphrase) {
       this.error('A vault passphrase cannot be empty.', { exit: 1 });
@@ -113,12 +112,19 @@ export default class VaultInit extends Command {
           '   means losing every credential this machine has sealed.\n',
       ),
     );
+    // Typed a moment ago: asking for it again on the very next command would
+    // be the first thing anyone following the install steps trips over.
+    const open = typed && (await startVaultAgent(passphrase));
     this.log(chalk.cyan('   Next:\n'));
+    if (!open) {
+      this.log(
+        `   ${chalk.cyan('flui vault unlock')}      open it for this session`,
+      );
+    } else {
+      this.log(chalk.dim('   It is open for this session.\n'));
+    }
     this.log(
-      `   ${chalk.cyan('flui vault unlock')}      open it for this session`,
-    );
-    this.log(
-      `   ${chalk.cyan('flui config set hetzner --stdin')}   store a provider token\n`,
+      `   ${chalk.cyan('flui config set <provider>')}   store a provider key (hetzner, scaleway, ovh)\n`,
     );
   }
 

@@ -8,6 +8,8 @@ import { ProviderFactory } from 'src/modules/providers/core/factories/provider.f
 import { CloudProvider } from 'src/modules/providers/enums/cloud-provider.enum';
 import { serverTypeTable } from '../../lib/server-types-table';
 import { archLabel } from '../../lib/server-architecture-view';
+import { FIT, fitsFlui } from '../../lib/server-type-fit';
+import { refusedKeyHint } from '../../lib/provider-refusal';
 
 /**
  * Parse a numeric filter expression into an inclusive {min, max} range.
@@ -47,6 +49,7 @@ export default class ServerTypesList extends Command {
   static readonly examples = [
     '<%= config.bin %> <%= command.id %> --provider hetzner',
     '<%= config.bin %> <%= command.id %> --provider hetzner --region fsn1',
+    '<%= config.bin %> <%= command.id %> --provider ovh --region EU-SOUTH-MIL --fits',
     '<%= config.bin %> <%= command.id %> --provider scaleway --memory 16',
     '<%= config.bin %> <%= command.id %> --provider scaleway --memory 8-32',
     '<%= config.bin %> <%= command.id %> --provider scaleway --memory -32',
@@ -71,6 +74,14 @@ export default class ServerTypesList extends Command {
       char: 'm',
       description:
         'Filter by RAM in GB: exact "16", range "8-32", min "8-", or max "-32"',
+    }),
+    fits: Flags.boolean({
+      description: `Only the types to start Flui on: x86, billed by the hour, ${FIT.minCores}–${FIT.maxCores} vCPU, ${FIT.minMemory}–${FIT.maxMemory} GB, at most €${FIT.maxMonthlyPrice}/month (see --max-price)`,
+      default: false,
+    }),
+    'max-price': Flags.integer({
+      description: 'Leave out types above this price, in € per month',
+      min: 1,
     }),
     sort: Flags.string({
       char: 's',
@@ -177,22 +188,33 @@ export default class ServerTypesList extends Command {
       }
 
       // Filter out deprecated types
-      const activeTypes = serverTypes?.filter((type) => !type.deprecated) || [];
+      let activeTypes = serverTypes?.filter((type) => !type.deprecated) || [];
       const deprecatedTypes =
         serverTypes?.filter((type) => type.deprecated) || [];
+
+      // Missing/zero prices count as unknown — €0.00 means the provider
+      // didn't return a price (e.g. bare-metal types).
+      const priceOf = (type: (typeof activeTypes)[number]): number => {
+        const raw = validatorService.getFormattedPrice(type).monthly;
+        const n = raw ? Number.parseFloat(raw) : Number.NaN;
+        return Number.isFinite(n) && n > 0 ? n : Number.POSITIVE_INFINITY;
+      };
+
+      const cap = flags['max-price'];
+      if (flags.fits) {
+        activeTypes = activeTypes.filter((type) =>
+          fitsFlui(type, priceOf(type), cap ?? FIT.maxMonthlyPrice),
+        );
+      } else if (cap !== undefined) {
+        activeTypes = activeTypes.filter((type) => priceOf(type) <= cap);
+      }
 
       if (activeTypes.length === 0) {
         this.log(chalk.yellow('No active server types found'));
         return;
       }
 
-      // Sort (default: cheapest first). Missing/zero prices sort last —
-      // €0.00 means the provider didn't return a price (e.g. bare-metal types).
-      const priceOf = (type: (typeof activeTypes)[number]): number => {
-        const raw = validatorService.getFormattedPrice(type).monthly;
-        const n = raw ? Number.parseFloat(raw) : Number.NaN;
-        return Number.isFinite(n) && n > 0 ? n : Number.POSITIVE_INFINITY;
-      };
+      // Sort (default: cheapest first); unknown prices sort last.
       const dir = flags.desc ? -1 : 1;
       activeTypes.sort((a, b) => {
         switch (flags.sort) {
@@ -322,6 +344,10 @@ export default class ServerTypesList extends Command {
       process.exitCode = 1;
       const message = error instanceof Error ? error.message : String(error);
       this.logToStderr(chalk.red(`Failed to list server types: ${message}`));
+      const hint =
+        refusedKeyHint(message, flags.provider) ??
+        `Store or replace the ${flags.provider} key with:  flui config set ${flags.provider}`;
+      this.logToStderr(chalk.yellow(`   ${hint}`));
     } finally {
       await closeNestApp();
     }

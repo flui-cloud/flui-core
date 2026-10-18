@@ -591,7 +591,8 @@ export class CliSshService {
     if (result.status !== 0) {
       throw new Error(
         `Could not authorize the SSH key on ${user}@${opts.host} (ssh exit ${result.status ?? result.signal}). ` +
-          'Check the password and that the host allows password login.',
+          `If ssh said it could not connect, the host is not reachable on port ${opts.port ?? 22} from this machine: check the address and its firewall. ` +
+          'Otherwise check the password and that the host allows password login.',
       );
     }
   }
