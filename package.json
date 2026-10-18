@@ -40,6 +40,7 @@
     "test:cov": "jest --coverage",
     "test:debug": "node --inspect-brk -r tsconfig-paths/register -r ts-node/register node_modules/.bin/jest --runInBand",
     "test:e2e": "jest --config ./test/jest-e2e.json",
+    "test:types": "tsc -p tsconfig.spec.json",
     "openapi-generator": "openapi-generator-cli",
     "generate:contabo-client": "npm run openapi-generator -- generate -i ./src/modules/providers/implementations/contabo/openapi.json -g typescript-axios -o ./src/modules/providers/implementations/contabo/generated --additional-properties=npmName=contabo-api,supportsES6=true,withInterfaces=true",
     "generate:hetzner-client": "npm run openapi-generator -- generate -i ./src/modules/providers/implementations/hetzner/openapi.json -g typescript-axios -o ./src/modules/providers/implementations/hetzner/generated --additional-properties=npmName=hetzner-api,supportsES6=true,withInterfaces=true",
@@ -219,7 +220,12 @@
     ],
     "testRegex": ".*\\.spec\\.ts$",
     "transform": {
-      "^.+\\.(t|j)s$": "ts-jest"
+      "^.+\\.(t|j)s$": [
+        "ts-jest",
+        {
+          "tsconfig": "tsconfig.spec.json"
+        }
+      ]
     },
     "transformIgnorePatterns": [
       "node_modules/.pnpm/(?!jose@|ip-cidr@)"
@@ -229,6 +235,8 @@
     ],
     "coverageDirectory": "coverage",
     "testEnvironment": "node",
+    "maxWorkers": "50%",
+    "workerIdleMemoryLimit": "1GB",
     "setupFiles": [
       "<rootDir>/test/jest-setup.ts"
     ]

@@ -8,19 +8,14 @@ import {
 
 import type { ProbeParam } from './probe-catalog';
 
+export type { ProbeValueType } from './probe-expectation';
 export {
   ProbeExpectationProblem,
-  ProbeValueType,
   interpretExpected,
 } from './probe-expectation';
 
-export {
-  ProbeCard,
-  ProbeParam,
-  probeCards,
-  requireDeclaredPairs,
-  taken,
-} from './probe-catalog';
+export type { ProbeCard, ProbeParam } from './probe-catalog';
+export { probeCards, requireDeclaredPairs, taken } from './probe-catalog';
 
 /**
  * A named, read-only question about live state that an entry may lean on.

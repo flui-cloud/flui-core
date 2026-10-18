@@ -25,13 +25,14 @@ import { SANDBOX_ALLOW_OWN } from './sandbox-fence-own';
 import { SANDBOX_ALLOW_SHOWN } from './sandbox-fence-shown';
 import { SANDBOX_ALLOW_EXAMPLE } from './sandbox-fence-example';
 
-export {
+export type {
   HttpVerb,
   SandboxAllowRule,
   SandboxLevel,
-  routeMatches,
 } from './sandbox-fence-core';
-export { SandboxArea, SANDBOX_AREAS } from './sandbox-areas';
+export { routeMatches } from './sandbox-fence-core';
+export type { SandboxArea } from './sandbox-areas';
+export { SANDBOX_AREAS } from './sandbox-areas';
 
 export const SANDBOX_ALLOWLIST: SandboxAllowRule[] = [
   ...SANDBOX_ALLOW_OWN,

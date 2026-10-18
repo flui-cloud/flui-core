@@ -1,7 +1,7 @@
 import { HttpVerb, routeMatches } from '../constants/sandbox-fence';
 import { SandboxStandInQuery } from './sandbox-world-core';
 
-export { SandboxStandInQuery } from './sandbox-world-core';
+export type { SandboxStandInQuery } from './sandbox-world-core';
 import {
   exampleBackupDestinations,
   exampleBackupJobs,
