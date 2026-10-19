@@ -20,8 +20,12 @@ import { ChatCompletionMessage, ToolCall } from '../interfaces/chat-completion';
 import { cacheKey, modelView, parseArgs, recordTool } from './tool-call.util';
 import { READ_SURFACE_TOOL } from './surface-block.util';
 import { AssistantPendingActionsService } from './assistant-pending-actions.service';
+import { AssistantProposalsService } from './assistant-proposals.service';
+import { isOfferedToGuest } from '../../mcp/services/sandbox-tool-visibility';
 
 const DESTRUCTIVE_DISABLED_REASON = 'destructive disabled';
+const NOT_PROPOSED_REASON = 'not proposed';
+const NOT_OFFERED_REASON = 'not offered';
 
 /**
  * Dispatches one assistant turn's tool calls: read/plan tools run transparently,
@@ -37,6 +41,7 @@ export class AssistantToolExecutionService {
     private readonly audit: McpAuditRepository,
     private readonly cycleRoutes: ActionCycleRoutes,
     private readonly pendingActions: AssistantPendingActionsService,
+    private readonly proposals: AssistantProposalsService,
   ) {}
 
   /**
@@ -84,7 +89,10 @@ export class AssistantToolExecutionService {
           content: call.content,
         });
       }
-      if (pending.length) return pending;
+      if (pending.length) {
+        await this.proposals.issue(ctx.user.userId, pending);
+        return pending;
+      }
     }
 
     for (const tc of toolCalls) {
@@ -104,7 +112,7 @@ export class AssistantToolExecutionService {
     executed: Map<string, string>,
   ): Promise<string> {
     const def = findTool(tc.function.name);
-    if (def && ctx.scopes.has(def.scope)) {
+    if (def && ctx.scopes.has(def.scope) && offeredTo(ctx, def)) {
       const tier = SCOPE_TIER[def.scope];
       if (tier === 'destructive' && !ctx.allowDestructive) {
         await recordTool(
@@ -146,6 +154,27 @@ export class AssistantToolExecutionService {
           error: 'denied by user',
         });
         return `DENIED by the user — '${tc.function.name}' was NOT executed and nothing changed. Tell the user it was cancelled; never claim it was done.`;
+      }
+      if (
+        (tier === 'write' || tier === 'destructive') &&
+        !(await this.proposals.redeem(ctx.user.userId, tc))
+      ) {
+        await recordTool(
+          this.audit,
+          ctx,
+          tc.function.name,
+          def,
+          false,
+          NOT_PROPOSED_REASON,
+          { args: parseArgs(tc) },
+        );
+        steps.push({
+          toolCallId: tc.id,
+          name: tc.function.name,
+          ok: false,
+          error: NOT_PROPOSED_REASON,
+        });
+        return `Refused: '${tc.function.name}' does not match an action this assistant proposed (expired, already used, or changed). It was NOT executed and nothing changed. Tell the user, and propose it again if they still want it.`;
       }
     }
     return this.execOne(tc, ctx, steps, executed, approved.has(tc.id));
@@ -191,6 +220,18 @@ export class AssistantToolExecutionService {
         error: 'missing scope',
       });
       return `Refused: missing required scope '${def.scope}'.`;
+    }
+    if (!offeredTo(ctx, def)) {
+      await recordTool(this.audit, ctx, name, def, false, NOT_OFFERED_REASON, {
+        args: parseArgs(tc),
+      });
+      steps.push({
+        toolCallId: tc.id,
+        name,
+        ok: false,
+        error: NOT_OFFERED_REASON,
+      });
+      return `Refused: '${name}' is not available in this sandbox.`;
     }
     if (SCOPE_TIER[def.scope] === 'destructive' && !ctx.allowDestructive) {
       await recordTool(
@@ -389,4 +430,8 @@ export class AssistantToolExecutionService {
       return message;
     }
   }
+}
+
+function offeredTo(ctx: AgentRunContext, def: ToolDef): boolean {
+  return !ctx.isSandbox || isOfferedToGuest(def);
 }

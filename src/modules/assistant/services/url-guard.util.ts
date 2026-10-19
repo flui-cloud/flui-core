@@ -54,9 +54,61 @@ export function collectHosts(texts: string[]): Set<string> {
   return hosts;
 }
 
+// Hosts the assistant may cite from its knowledge: Flui's documentation and source.
+export const DOCUMENTATION_HOSTS: ReadonlySet<string> = new Set([
+  'docs.flui.cloud',
+  'flui.cloud',
+  'www.flui.cloud',
+  'github.com',
+  'gitlab.com',
+]);
+
+const PLACEHOLDER_TLDS = new Set([
+  'example',
+  'test',
+  'invalid',
+  'localhost',
+  'local',
+]);
+const PLACEHOLDER_DOMAINS = ['example.com', 'example.org', 'example.net'];
+const DOC_IP_PREFIXES = ['127.', '192.0.2.', '198.51.100.', '203.0.113.'];
+
+/**
+ * Hosts that read as an illustration rather than a claim about a real
+ * endpoint: reserved example domains (RFC 2606/6761), loopback, the
+ * documentation IP ranges (RFC 5737) and "your-…" stand-ins.
+ */
+export function isPlaceholderHost(host: string): boolean {
+  const name = host.replace(/:\d+$/, '').replace(/\.$/, '');
+  if (name === 'localhost') return true;
+  if (DOC_IP_PREFIXES.some((p) => name.startsWith(p))) return true;
+  const labels = name.split('.');
+  if (PLACEHOLDER_TLDS.has(labels.at(-1) ?? '')) return true;
+  if (PLACEHOLDER_DOMAINS.some((d) => name === d || name.endsWith(`.${d}`))) {
+    return true;
+  }
+  return labels.some((l) => /^your[-_]?[a-z]/.test(l));
+}
+
+// A URL that runs straight into a template marker (`https://app.<your-domain>`).
+const TEMPLATE_FOLLOWER = /^[<{$]/;
+const TEMPLATE_IN_HOST = /^https?:\/\/[^/]*[{}$]/i;
+
+function urlMatches(text: string): { url: string; index: number }[] {
+  const out: { url: string; index: number }[] = [];
+  for (const m of text.matchAll(URL_RE)) {
+    const index = m.index ?? 0;
+    if (TEMPLATE_FOLLOWER.test(text.slice(index + m[0].length))) continue;
+    if (TEMPLATE_IN_HOST.test(m[0])) continue;
+    out.push({ url: stripTrailing(m[0]), index });
+  }
+  return out;
+}
+
 /**
  * URLs in `content` whose host is NOT in `allowedHosts` — i.e. not sourced from a
- * tool/user and not a verified endpoint. Returns the offending URLs as written.
+ * tool/user and not a verified endpoint — and is not an obvious placeholder.
+ * Returns the offending URLs as written.
  */
 export function findUnverifiedUrls(
   content: string,
@@ -64,14 +116,51 @@ export function findUnverifiedUrls(
 ): string[] {
   const offenders: string[] = [];
   const seen = new Set<string>();
-  for (const url of extractUrls(content)) {
+  for (const { url } of urlMatches(content)) {
     const host = hostOf(url);
     if (!host) continue;
-    if (allowedHosts.has(host)) continue;
+    if (allowedHosts.has(host) || isPlaceholderHost(host)) continue;
     const key = normalizeUrl(url) ?? url;
     if (seen.has(key)) continue;
     seen.add(key);
     offenders.push(url);
   }
   return offenders;
+}
+
+export const URL_PLACEHOLDER = '<app-url>';
+
+function codeRanges(text: string): [number, number][] {
+  const ranges: [number, number][] = [];
+  for (const m of text.matchAll(/```[\s\S]*?(?:```|$)|`[^`\n]+`/g)) {
+    ranges.push([m.index ?? 0, (m.index ?? 0) + m[0].length]);
+  }
+  return ranges;
+}
+
+/**
+ * Removes the given URLs without touching anything else: a markdown link keeps
+ * its text, a URL inside code becomes a placeholder the reader can fill in, and
+ * a bare URL in prose becomes the same placeholder as inline code.
+ */
+export function stripUrls(content: string, urls: string[]): string {
+  if (!urls.length) return content;
+  const targets = new Set(urls);
+  let out = content.replace(
+    /\[([^\]\n]{1,300})\]\((https?:\/\/[^\s)]{1,2048})\)/g,
+    (whole, label: string, url: string) =>
+      targets.has(stripTrailing(url)) ? label : whole,
+  );
+  const ranges = codeRanges(out);
+  const inCode = (i: number) => ranges.some(([a, b]) => i >= a && i < b);
+  const hits = urlMatches(out)
+    .filter((m) => targets.has(m.url))
+    .sort((a, b) => b.index - a.index);
+  for (const { url, index } of hits) {
+    const replacement = inCode(index)
+      ? URL_PLACEHOLDER
+      : `\`${URL_PLACEHOLDER}\``;
+    out = out.slice(0, index) + replacement + out.slice(index + url.length);
+  }
+  return out;
 }

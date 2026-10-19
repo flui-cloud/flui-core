@@ -39,6 +39,8 @@ function isNotFound(err: unknown): boolean {
 export const CATALOG_TOOLS: ToolDef[] = [
   defineTool({
     name: 'catalog_search',
+    summary:
+      'Search the catalog of installable apps and building blocks by name, category or tag.',
     routes: ['GET /catalog'],
     description:
       'Search the Flui catalog of installable apps and building blocks by free-text name, category, or tags. The search is tolerant: if no exact match is found it falls back to the closest apps by name similarity, so prefer searching by the app NAME the user said rather than guessing a slug. Results may be near-matches ranked by relevance — read the `name` to pick the right one (confirm with the user if ambiguous).',
@@ -83,6 +85,8 @@ export const CATALOG_TOOLS: ToolDef[] = [
   }),
   defineTool({
     name: 'catalog_get_app',
+    summary:
+      'Detail of one catalog app: inputs, dependencies and whether it can be installed on the cluster now.',
     routes: ['GET /catalog/:slug'],
     description:
       'Get the full detail of one catalog app by slug: required user inputs, dependencies, exposure, and whether it can be installed on the target cluster right now. ALWAYS call this before app_install and check `installable` — if it is false the install will be refused, so tell the user the missing requirement (e.g. the cluster needs DNS + TLS for internal apps) and how to resolve it instead of attempting the install. If the slug is wrong the error lists the closest slugs ("did you mean …") — retry with one of those rather than telling the user the app is absent. The cluster is auto-resolved when there is a single one.',

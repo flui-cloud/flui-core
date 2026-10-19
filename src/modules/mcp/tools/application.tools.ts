@@ -68,6 +68,8 @@ function removalPreviewView(raw: unknown): unknown {
 export const APPLICATION_TOOLS: ToolDef[] = [
   defineTool({
     name: 'operation_status',
+    summary:
+      'Outcome of a background operation by operationId; pass applicationId when it belongs to an app.',
     routes: [
       'GET /infrastructure/operations/:id',
       'GET /applications/:id/operations',
@@ -148,6 +150,8 @@ export const APPLICATION_TOOLS: ToolDef[] = [
   }),
   defineTool({
     name: 'project_list',
+    summary:
+      'Projects you can create applications in; apps of one project share their building blocks.',
     routes: ['GET /projects'],
     description:
       "List the projects you can create applications in. A project is where an application lives and runs: applications of one project share a namespace, so they can use each other's building blocks. Pass a project's id as projectId to app_deploy_image, app_deploy_from_yaml or app_install; omitted, the application goes to your personal project. An application never changes project once created.",
@@ -165,6 +169,8 @@ export const APPLICATION_TOOLS: ToolDef[] = [
   }),
   defineTool({
     name: 'app_list',
+    summary:
+      'Applications deployed on a cluster, filterable by kind (e.g. DATABASE) and lowercase status.',
     routes: ['GET /clusters/:clusterId/applications'],
     description:
       'List deployed applications on a cluster. clusterId is optional: if omitted and there is a single cluster, it is used automatically — only call cluster_list first when several clusters exist. Optional filters: category (system | user), kind (DATABASE | APPLICATION | TOOL | SYSTEM), status (lowercase: running, degraded, failed, ...). To find DATABASES use kind=DATABASE — "database" is a kind, NOT a category. Omit a filter to list everything.',
@@ -224,6 +230,8 @@ export const APPLICATION_TOOLS: ToolDef[] = [
   }),
   defineTool({
     name: 'app_get',
+    summary:
+      'One application by id: status, image, replicas, access URL and any operation in progress.',
     routes: ['GET /applications/:id'],
     description:
       'Get one application by id: status, config, image, replicas, access URL, and any in-flight deploy/rollback operation.',
@@ -271,6 +279,8 @@ export const APPLICATION_TOOLS: ToolDef[] = [
   }),
   defineTool({
     name: 'app_status',
+    summary:
+      'Live runtime health of an application: replicas desired/ready and rollout state.',
     routes: ['GET /applications/:id/runtime'],
     description:
       'Live runtime status of an application: replica counts (desired/ready/available), containers and rollout state — the current health, not the stored config.',
@@ -300,6 +310,8 @@ export const APPLICATION_TOOLS: ToolDef[] = [
   }),
   defineTool({
     name: 'app_debug',
+    summary:
+      'Why an application is failing or stuck: pod phase, crash reasons, missing secrets, recent events.',
     routes: ['GET /applications/:id/debug/pods'],
     description:
       "Diagnose WHY an application is failing, crashing or stuck — use this when app_status shows pods not ready or app_logs returns nothing (a pod that never started has no logs). Returns each pod's phase, per-container readiness/restart count and the exact failure reason (CrashLoopBackOff, ImagePullBackOff, OOMKilled, exit codes), any missing mounted Secrets/ConfigMaps, and the most recent Kubernetes events. For a failed CATALOG install (which is multi-component), call app_list to find its component apps, then app_debug the one that is not running. id is a single application id.",
@@ -316,6 +328,8 @@ export const APPLICATION_TOOLS: ToolDef[] = [
   }),
   defineTool({
     name: 'app_releases',
+    summary:
+      'Release history of an application (deploys and rollbacks), most recent first.',
     routes: ['GET /applications/:id/releases'],
     description:
       'List the deploy/rollback release history of an application, most recent first.',
@@ -337,6 +351,8 @@ export const APPLICATION_TOOLS: ToolDef[] = [
   }),
   defineTool({
     name: 'app_events',
+    summary:
+      'History of an application: deploys, rollbacks, scaling, most recent first.',
     routes: ['GET /applications/:id/events'],
     description:
       'List audit/history events for an application (deploy, rollback, scale, ...), most recent first.',
@@ -356,6 +372,8 @@ export const APPLICATION_TOOLS: ToolDef[] = [
   }),
   defineTool({
     name: 'app_manifest_validate',
+    summary:
+      'Check a flui.yaml (kind: Application) without deploying: schema, plus whether it would deploy here (wouldDeploy, checks).',
     routes: ['POST /applications/manifest/validate'],
     description:
       'Check a flui.yaml you wrote (kind: Application) WITHOUT deploying it. Two halves, and they answer different questions: the schema says the file is well-formed, and `checks` say whether it would land HERE — the target cluster, the connected repository, the credentials the build needs, live capacity against the resources it asks for, whether it would create an application or update one, and how it is reached. A manifest can satisfy the schema perfectly and fail every one of the checks. Read `wouldDeploy` for the verdict, and read each check by its status: `fail` blocks, `warn` is a consequence to relay rather than a problem to fix, and `unknown` means this installation COULD NOT ANSWER — never report an unknown as a failure, and never rewrite a manifest because of one. Deploying onto the control cluster is supported and shows as a `warn`, not an error: it is the normal shape for a single-machine installation. Use this for kind: Application; `spec_validate` is the catalog contract and will reject an Application manifest as the wrong kind. The response also carries `effectiveYaml`, the manifest as it would actually be applied once the branch environment and any stored overrides are merged in.',

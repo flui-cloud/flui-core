@@ -7,5 +7,5 @@ export const SCALEWAY_INFERENCE: InferenceCapability = {
   models: [],
   euDataResidency: true,
   sharesComputeCredentials: true,
-  defaultModel: 'mistral-small-3.2-24b-instruct-2506',
+  defaultModel: 'deepseek-v4-flash-0731',
 };

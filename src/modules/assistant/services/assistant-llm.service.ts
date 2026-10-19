@@ -56,6 +56,9 @@ export class AssistantLlmService {
   ): Promise<void> {
     if (!endpoint.spender) return;
     const estimated = !usage;
+    if (usage) {
+      this.logger.debug(`Usage ${request.model}: ${JSON.stringify(usage)}`);
+    }
     const promptTokens =
       usage?.prompt_tokens ?? roughTokens(JSON.stringify(request.messages));
     const completionTokens =
@@ -68,7 +71,9 @@ export class AssistantLlmService {
       endpoint: endpoint.baseUrl,
       promptTokens,
       completionTokens,
+      cachedPromptTokens: cachedPromptTokens(usage),
       estimated,
+      ipHash: endpoint.spender.ipHash,
     });
   }
 
@@ -247,4 +252,17 @@ export class AssistantLlmService {
  */
 function roughTokens(text: string): number {
   return Math.ceil(text.length / 4);
+}
+
+/** OpenAI-style `prompt_tokens_details`, DeepSeek's own field, or the Anthropic-compatible one. */
+export function cachedPromptTokens(
+  usage: ChatCompletionUsage | undefined,
+): number {
+  if (!usage) return 0;
+  return (
+    usage.prompt_tokens_details?.cached_tokens ??
+    usage.prompt_cache_hit_tokens ??
+    usage.cache_read_input_tokens ??
+    0
+  );
 }

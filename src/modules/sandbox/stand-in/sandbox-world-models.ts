@@ -22,11 +22,11 @@ export function exampleInferenceProviders() {
       euDataResidency: true,
       configured: true,
       models: [
-        'mistral-small-3.2-24b-instruct-2506',
-        'llama-3.3-70b-instruct',
+        'deepseek-v4-flash-0731',
+        'gpt-oss-120b',
         'qwen2.5-coder-32b-instruct',
       ],
-      defaultModel: 'mistral-small-3.2-24b-instruct-2506',
+      defaultModel: 'deepseek-v4-flash-0731',
     }),
   ];
 }

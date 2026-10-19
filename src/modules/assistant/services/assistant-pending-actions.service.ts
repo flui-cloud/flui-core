@@ -17,6 +17,7 @@ import { ToolCall } from '../interfaces/chat-completion';
 import { ChatActionRequest, chatActionRequest } from './action-cycle-reach';
 import { cacheKey, modelView, parseArgs, recordTool } from './tool-call.util';
 import { describePending } from './assistant-turn.util';
+import { isOfferedToGuest } from '../../mcp/services/sandbox-tool-visibility';
 
 /**
  * A call the cycle settled while it was being asked about, so there is nothing
@@ -66,6 +67,7 @@ export class AssistantPendingActionsService {
     for (const tc of toolCalls) {
       const def = findTool(tc.function.name);
       if (!def || !ctx.scopes.has(def.scope)) continue;
+      if (ctx.isSandbox && !isOfferedToGuest(def)) continue;
       const tier = SCOPE_TIER[def.scope];
       if (tier !== 'write' && tier !== 'destructive') continue;
       // A disabled destructive op cannot run — never offer a confirmation for it;

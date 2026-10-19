@@ -31,6 +31,8 @@ interface AgentSkillPayload {
 export const ONBOARDING_TOOLS: ToolDef[] = [
   defineTool({
     name: 'get_started',
+    summary:
+      'How this Flui instance is operated: deployment, secrets and approvals. Call it before acting.',
     routes: ['GET /auth/agent-skill', 'POST /auth/agent-skill/check-in'],
     description:
       "How to operate this Flui instance — call this first, before anything else. Returns the instructions that teach an agent how work is done here (deployment, secrets, the action-cycle pattern for anything that needs a person's say-so) and records that this credential has just read them, so whoever issued it can see the connection is alive.",

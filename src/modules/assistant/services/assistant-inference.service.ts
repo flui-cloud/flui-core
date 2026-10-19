@@ -13,7 +13,7 @@ import {
   PolicyEngine,
 } from '../../iam/interfaces/policy-engine.interface';
 import { principalFromUser } from '../../iam/interfaces/iam.types';
-import { UserEntity } from '../../auth/entities/user.entity';
+import { USER_KIND, UserEntity } from '../../auth/entities/user.entity';
 import { InferenceUsageService } from '../../inference/services/inference-usage.service';
 import { CloudProvider } from '../../providers/enums/cloud-provider.enum';
 import {
@@ -23,6 +23,10 @@ import {
 import { InferenceClientService } from '../../inference/services/inference-client.service';
 import { InferenceEndpoint } from '../../providers/interfaces/inference-capability';
 import { pickChatModel } from '../assistant.constants';
+import { GuestInferenceGuardService } from './guest-inference-guard.service';
+
+export const GUEST_BUDGET_SPENT_MESSAGE =
+  'This sandbox has used the share of assistant time it comes with. Everything else in it keeps working, and your own coding agent can carry on over MCP — that one runs on your account, not this instance.';
 
 export interface InferenceSelection {
   model?: string;
@@ -41,22 +45,8 @@ export class AssistantInferenceService {
     @InjectRepository(UserEntity)
     private readonly users: Repository<UserEntity>,
     private readonly usage: InferenceUsageService,
+    private readonly antifraud: GuestInferenceGuardService,
   ) {}
-
-  /**
-   * How many tokens one guest's area may spend before the door closes.
-   *
-   * A number of *tokens* rather than of questions, because a question is not a
-   * unit of anything: the same sentence costs ten times more once the model is
-   * reading logs back. The screen turns it into a ring, which is the one form
-   * a visitor can read without being taught what a token is.
-   */
-  private guestBudget(): number {
-    const raw = Number(
-      this.config.get<string>('SANDBOX_INFERENCE_TOKEN_BUDGET'),
-    );
-    return Number.isFinite(raw) && raw > 0 ? raw : 200_000;
-  }
 
   /**
    * Where a guest's inference is decided for them, and the reason it is decided
@@ -77,16 +67,18 @@ export class AssistantInferenceService {
    * request: the same rule the comment below states for the principal.
    * Hiding the model picker in the interface is a courtesy; this is the refusal.
    */
-  private async pinnedForGuest(
-    principal: InferencePrincipal,
-  ): Promise<{ endpoint: InferenceEndpoint; source: string } | null> {
+  private async pinnedForGuest(principal: InferencePrincipal): Promise<{
+    endpoint: InferenceEndpoint;
+    source: string;
+    visitor: boolean;
+  } | null> {
     // The row, not the request: a binding can be addressed to an email as well
     // as to an id — the sandbox's own grants are — so asking IAM with half a
     // principal would answer "not a guest" for every guest.
     if (!principal.userId) return null;
     const user = await this.users.findOne({
       where: { id: principal.userId },
-      select: { id: true, email: true, role: true, isAdmin: true },
+      select: { id: true, email: true, role: true, isAdmin: true, kind: true },
     });
     if (!user) return null;
 
@@ -107,6 +99,7 @@ export class AssistantInferenceService {
     return {
       endpoint: { ...endpoint, pinnedModel },
       source: pinnedModel ? `guest:${pinnedModel}` : 'guest',
+      visitor: user.kind === USER_KIND.VISITOR,
     };
   }
 
@@ -126,13 +119,22 @@ export class AssistantInferenceService {
       // Before the call, not after: a budget checked afterwards is a budget
       // that is always overspent by exactly one turn, and the turn that
       // overspends it is the one reading a long log back.
-      await this.assertGuestHasBudget(principal.userId);
+      const admitted = await this.antifraud.admit(
+        principal.userId,
+        guest.visitor,
+      );
+      await this.assertGuestHasBudget(principal.userId, admitted.budget);
       return {
-        ...guest,
         endpoint: {
           ...guest.endpoint,
-          spender: { userId: principal.userId, guest: true, surface },
+          spender: {
+            userId: principal.userId,
+            guest: true,
+            surface,
+            ...(admitted.ipHash ? { ipHash: admitted.ipHash } : {}),
+          },
         },
+        source: guest.source,
       };
     }
 
@@ -215,16 +217,17 @@ export class AssistantInferenceService {
    * the product; one that says "this area has used its share" teaches them
    * something true about how it is run.
    */
-  private async assertGuestHasBudget(userId: string): Promise<void> {
-    const budget = this.guestBudget();
+  private async assertGuestHasBudget(
+    userId: string,
+    budget: number,
+  ): Promise<void> {
     const spent = await this.usage.tokensFor(userId);
     if (spent < budget) return;
     throw new HttpException(
       {
         statusCode: HttpStatus.TOO_MANY_REQUESTS,
         code: 'SANDBOX_INFERENCE_BUDGET_SPENT',
-        message:
-          'This sandbox has used the share of assistant time it comes with. Everything else in it keeps working, and your own coding agent can carry on over MCP — that one runs on your account, not this instance.',
+        message: GUEST_BUDGET_SPENT_MESSAGE,
         spent,
         budget,
       },
@@ -239,10 +242,21 @@ export class AssistantInferenceService {
 
   /** What one area has spent, and what it was given. For the ring on screen. */
   async guestUsage(userId: string): Promise<{ spent: number; budget: number }> {
+    const user = await this.users.findOne({
+      where: { id: userId },
+      select: { id: true, kind: true },
+    });
     return {
       spent: await this.usage.tokensFor(userId),
-      budget: this.guestBudget(),
+      budget: await this.antifraud.budgetFor(user?.kind === USER_KIND.VISITOR),
     };
+  }
+
+  /** The off-topic gate refused a guest: counted, so a run of them pauses the assistant for that person. */
+  async noteOffTopic(endpoint: InferenceEndpoint): Promise<void> {
+    const spender = endpoint.spender;
+    if (!spender?.guest || !spender.userId) return;
+    await this.antifraud.noteOffTopic(spender.userId);
   }
 
   async resolveModel(
@@ -251,7 +265,8 @@ export class AssistantInferenceService {
   ): Promise<string> {
     // Before the caller's own choice, and that order is the point.
     if (endpoint.pinnedModel) return endpoint.pinnedModel;
-    if (sel.model) return sel.model;
+    // A guest whose endpoint names no model still does not get to name one.
+    if (sel.model && !endpoint.spender?.guest) return sel.model;
     // Model ids are provider-specific, so prefer the source's own default.
     if (endpoint.defaultModel) return endpoint.defaultModel;
     const override = this.config.get<string>('ASSISTANT_DEFAULT_MODEL');

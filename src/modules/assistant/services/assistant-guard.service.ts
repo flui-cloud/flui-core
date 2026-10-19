@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { InferenceEndpoint } from '../../providers/interfaces/inference-capability';
+import { ChatCompletionRequest } from '../interfaces/chat-completion';
 import { AssistantLlmService } from './assistant-llm.service';
 
 /** Minimal message shape the gate/router reads (role + text). */
@@ -21,6 +22,43 @@ In the user's own language, in one or two short, warm sentences: say you are the
 
 const FALLBACK_REFUSAL =
   "I'm the Flui Assistant — I can only help with Flui (the platform, its CLI, flui.yaml, the catalog, and install/troubleshooting). Ask me anything about those, for example how to create your first cluster.";
+
+// Reasoning models spend their output budget thinking before they answer; 64
+// tokens left gpt-oss and deepseek with no content at all.
+const ROUTER_MAX_TOKENS = 1024;
+const REFUSAL_MAX_TOKENS = 512;
+
+const ROUTER_REASONING: Array<{
+  model: RegExp;
+  effort: NonNullable<ChatCompletionRequest['reasoning_effort']>;
+}> = [
+  { model: /gpt-oss/i, effort: 'low' },
+  { model: /deepseek/i, effort: 'none' },
+];
+
+export function routerReasoningEffort(
+  model: string,
+): ChatCompletionRequest['reasoning_effort'] {
+  return ROUTER_REASONING.find((r) => r.model.test(model))?.effort;
+}
+
+const LEADING_WRAP = new Set(['`', "'", '"', '*', '-', '.', '[', '(']);
+const TRAILING_WRAP = new Set(['`', "'", '"', '*', '.', ']', ')']);
+
+function stripWrapping(s: string): string {
+  let start = 0;
+  let end = s.length;
+  while (start < end && LEADING_WRAP.has(s[start])) start++;
+  while (end > start && TRAILING_WRAP.has(s[end - 1])) end--;
+  return s.slice(start, end);
+}
+
+export function parseRouterIds(out: string): string[] {
+  return out
+    .split(/[\s,]+/)
+    .map((s) => stripWrapping(s).trim())
+    .filter(Boolean);
+}
 
 export interface RouteDecision {
   offTopic: boolean;
@@ -44,6 +82,7 @@ export class AssistantGuardService {
       role: m.role,
       content: m.content,
     }));
+    const reasoningEffort = routerReasoningEffort(model);
     const result = await this.llm.chat(endpoint, {
       model,
       messages: [
@@ -54,18 +93,15 @@ export class AssistantGuardService {
         ...recent,
       ],
       temperature: 0,
-      max_tokens: 64,
+      max_tokens: ROUTER_MAX_TOKENS,
+      ...(reasoningEffort ? { reasoning_effort: reasoningEffort } : {}),
       stream: false,
     });
     const out = result.choices?.[0]?.message?.content?.trim() ?? '';
     if (out.toUpperCase().includes('OFF_TOPIC')) {
       return { offTopic: true, sectionIds: [] };
     }
-    const sectionIds = out
-      .split(/[\s,]+/)
-      .map((s) => s.trim())
-      .filter(Boolean);
-    return { offTopic: false, sectionIds };
+    return { offTopic: false, sectionIds: parseRouterIds(out) };
   }
 
   async refusal(
@@ -75,6 +111,7 @@ export class AssistantGuardService {
   ): Promise<string> {
     const lastUser =
       [...messages].reverse().find((m) => m.role === 'user')?.content ?? '';
+    const reasoningEffort = routerReasoningEffort(model);
     try {
       const result = await this.llm.chat(endpoint, {
         model,
@@ -83,7 +120,8 @@ export class AssistantGuardService {
           { role: 'user', content: lastUser },
         ],
         temperature: 0.2,
-        max_tokens: 120,
+        max_tokens: REFUSAL_MAX_TOKENS,
+        ...(reasoningEffort ? { reasoning_effort: reasoningEffort } : {}),
         stream: false,
       });
       return result.choices?.[0]?.message?.content?.trim() || FALLBACK_REFUSAL;

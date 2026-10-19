@@ -50,3 +50,124 @@ describe('KnowledgeService.docLinksFor', () => {
     expect(service.docLinksFor(['does/not-exist'])).toEqual([]);
   });
 });
+
+describe('KnowledgeService.selectSections', () => {
+  const service = new KnowledgeService();
+
+  it('keeps the known ids the router chose, at most four, without duplicates', () => {
+    expect(
+      service.selectSections(
+        [
+          'cli/backups',
+          'not/a-section',
+          'cli/backups',
+          'cli/databases',
+          'cli/deploy',
+          'cli/environments',
+          'cli/applications',
+        ],
+        'anything',
+      ),
+    ).toEqual({
+      sectionIds: [
+        'cli/backups',
+        'cli/databases',
+        'cli/deploy',
+        'cli/environments',
+      ],
+      via: 'router',
+    });
+  });
+
+  it('matches the question against titles when the router gave nothing usable', () => {
+    const pick = service.selectSections(
+      ['not/a-section'],
+      'How do I configure firewalls for my cluster?',
+    );
+    expect(pick.via).toBe('lexical');
+    expect(pick.sectionIds).toContain('concepts/12-firewalls');
+    expect(pick.sectionIds.length).toBeLessThanOrEqual(3);
+  });
+
+  it('finds the backup pages for a backup question', () => {
+    const pick = service.selectSections([], 'how are backups restored?');
+    expect(pick.via).toBe('lexical');
+    expect(pick.sectionIds).toContain('cli/backups');
+  });
+
+  it('never picks the generated CLI reference as a fallback', () => {
+    expect(service.lexicalMatch('cli reference command flags')).not.toContain(
+      'cli/reference',
+    );
+  });
+
+  it('falls back to the introduction only when nothing matches', () => {
+    expect(service.selectSections([], 'ciao?')).toEqual({
+      sectionIds: ['concepts/00-what-is-flui'],
+      via: 'fallback',
+    });
+  });
+});
+
+describe('KnowledgeService.getSystemContext', () => {
+  const service = new KnowledgeService();
+
+  it('labels each section in plain words, never with a host-like source id', () => {
+    const context = service.getSystemContext([
+      'concepts/03-cluster-as-a-concept',
+      'cli/reference',
+      'flui-manifest/schema',
+    ]);
+    expect(context).toContain(
+      '## The cluster as a concept\n_(Flui documentation)_',
+    );
+    expect(context).toContain('_(CLI reference)_');
+    expect(context).toContain('_(flui.yaml specification)_');
+    expect(context).not.toMatch(/source: |flui-docs|oclif-manifest|flui-spec/);
+  });
+});
+
+describe('KnowledgeService prompt order for the provider cache', () => {
+  const service = new KnowledgeService();
+  const stable = '# Acting with tools\nfixed note';
+
+  function commonPrefix(a: string, b: string): string {
+    let i = 0;
+    while (i < a.length && a[i] === b[i]) i++;
+    return a.slice(0, i);
+  }
+
+  it('keeps guardrails, binding and the fixed note ahead of anything that changes per turn', () => {
+    const one = service.getSystemContext(['concepts/03-cluster-as-a-concept'], {
+      stable,
+      page: '<surface>apps page, revision 4</surface>',
+    });
+    const two = service.getSystemContext(['cli/reference'], {
+      stable,
+      page: '<surface>backups page, revision 9</surface>',
+    });
+    const base = service.getBaseContext({
+      stable,
+      page: '<surface>apps page, revision 4</surface>',
+    });
+
+    const shared = commonPrefix(one, two);
+    expect(shared).toContain(stable);
+    expect(shared).toContain('# Environment you are assisting');
+    expect(shared).not.toContain('<surface>');
+    expect(commonPrefix(one, base)).toContain(stable);
+  });
+
+  it('puts the page after the knowledge and before the closing reminder', () => {
+    const context = service.getSystemContext(
+      ['concepts/03-cluster-as-a-concept'],
+      { stable, page: '<surface>x</surface>' },
+    );
+    const knowledge = context.indexOf('# Flui knowledge');
+    const page = context.indexOf('<surface>x</surface>');
+    const reminder = context.lastIndexOf('# Reminder');
+    expect(context.indexOf(stable)).toBeLessThan(knowledge);
+    expect(knowledge).toBeLessThan(page);
+    expect(page).toBeLessThan(reminder);
+  });
+});

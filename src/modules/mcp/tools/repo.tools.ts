@@ -88,6 +88,8 @@ async function resolveRepositoryId(
 export const REPO_TOOLS: ToolDef[] = [
   defineTool({
     name: 'template_list',
+    summary:
+      'Official starter templates (framework, language) for scaffolding a new project.',
     routes: ['GET /templates'],
     description:
       'List the official Flui starter templates (framework, language, version) used to scaffold a new project before deploying it.',
@@ -123,6 +125,8 @@ export const REPO_TOOLS: ToolDef[] = [
   }),
   defineTool({
     name: 'repo_list',
+    summary:
+      'GitHub repositories connected to Flui for this user, and why the list is empty when it is.',
     routes: ['GET /repositories', 'GET /repositories/github/status'],
     description:
       'List the GitHub repositories connected to Flui (deployable sources) for the current user. An empty list also says WHY it is empty — whether GitHub is connected and you simply have no repositories yet, or GitHub was never connected at all, which need opposite advice.',

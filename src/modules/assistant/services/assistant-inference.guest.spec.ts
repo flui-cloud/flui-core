@@ -9,6 +9,8 @@ jest.mock('../../inference/services/inference-client.service', () => ({
 }));
 
 import { AssistantInferenceService } from './assistant-inference.service';
+import { GuestInferenceGuardService } from './guest-inference-guard.service';
+import { guestInferenceLimits } from './guest-inference-limits';
 import { CloudProvider } from '../../providers/enums/cloud-provider.enum';
 
 const INSTANCE_ENDPOINT = {
@@ -59,6 +61,16 @@ const build = (over: {
       })[key],
   };
   const usage = { tokensFor: async () => over.spent ?? 0 };
+  const antifraud = new GuestInferenceGuardService(
+    {
+      limits: async () =>
+        guestInferenceLimits((key) => config.get(key) as string | undefined),
+    } as never,
+    usage as never,
+    {} as never,
+    {} as never,
+    config as never,
+  );
   const policy = {
     resolveAccess: async () => ({ isSandbox: over.guest }),
   };
@@ -80,6 +92,7 @@ const build = (over: {
       policy as never,
       users as never,
       usage as never,
+      antifraud,
     ),
   };
 };

@@ -2,11 +2,15 @@ import { Injectable } from '@nestjs/common';
 import { AuthenticatedUser } from '../../auth/interfaces/authenticated-user.interface';
 import { ChatCompletionRequestDto } from '../dto/chat-completion-request.dto';
 import { ChatCompletionResponse } from '../interfaces/chat-completion';
-import { DEFAULT_ASSISTANT_TEMPERATURE } from '../assistant.constants';
+import {
+  DEFAULT_ASSISTANT_TEMPERATURE,
+  outputTokenLimit,
+} from '../assistant.constants';
 import { AssistantInferenceService } from './assistant-inference.service';
 import { AssistantLlmService } from './assistant-llm.service';
 import { AssistantGuardService } from './assistant-guard.service';
 import { KnowledgeService } from './knowledge.service';
+import { lastUserText } from './assistant-turn.util';
 import { AssistantAuditRepository } from '../repositories/assistant-audit.repository';
 
 @Injectable()
@@ -28,17 +32,18 @@ export class AssistantService {
       user,
     );
     const model = await this.inference.resolveModel(dto, endpoint);
+    const messages = dto.messages.filter((m) => m.role !== 'system');
 
     // One cheap call gates off-topic AND selects which knowledge to inject, so the
     // answer prompt stays small instead of the whole 76k-token corpus.
     const route = await this.guard.route(
       endpoint,
       model,
-      dto.messages,
+      messages,
       this.knowledge.getIndexPrompt(),
     );
     if (route.offTopic) {
-      const content = await this.guard.refusal(endpoint, model, dto.messages);
+      const content = await this.guard.refusal(endpoint, model, messages);
       await this.record(user, model, `${source}:refused`, dto);
       return this.refusalResponse(model, content);
     }
@@ -48,12 +53,17 @@ export class AssistantService {
       messages: [
         {
           role: 'system',
-          content: this.knowledge.getSystemContext(route.sectionIds),
+          content: this.knowledge.getSystemContext(
+            this.knowledge.selectSections(
+              route.sectionIds,
+              lastUserText(messages),
+            ).sectionIds,
+          ),
         },
-        ...dto.messages.map((m) => ({ role: m.role, content: m.content })),
+        ...messages.map((m) => ({ role: m.role, content: m.content })),
       ],
       temperature: dto.temperature ?? DEFAULT_ASSISTANT_TEMPERATURE,
-      max_tokens: dto.maxTokens,
+      max_tokens: outputTokenLimit(endpoint.spender, dto.maxTokens),
       stream: false,
     });
 

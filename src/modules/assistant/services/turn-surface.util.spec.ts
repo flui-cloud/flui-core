@@ -1,5 +1,10 @@
 import { SurfaceSnapshot } from '@flui-cloud/semantic-surface';
-import { acceptTurnSurface } from './turn-surface.util';
+import { Logger } from '@nestjs/common';
+import {
+  acceptTurnSurface,
+  surfaceRejection,
+  surfaceRejectionCounts,
+} from './turn-surface.util';
 
 function snapshot(
   overrides: Partial<SurfaceSnapshot['surface']> = {},
@@ -90,5 +95,55 @@ describe('acceptTurnSurface', () => {
     circular.self = circular;
     expect(() => acceptTurnSurface(circular)).not.toThrow();
     expect(acceptTurnSurface(circular)).toBeUndefined();
+  });
+});
+
+describe('surface rejection reasons', () => {
+  const { surfaceRejection, surfaceRejectionCounts } = jest.requireActual(
+    './turn-surface.util',
+  );
+  const { Logger } = jest.requireActual('@nestjs/common');
+
+  function valid(): SurfaceSnapshot {
+    return {
+      schemaVersion: '0.2',
+      app: { id: 'flui-dashboard' },
+      surface: {
+        id: 'p',
+        route: '/p',
+        revision: 2,
+        generatedAt: '2026-08-24T10:00:00Z',
+      },
+      attention: [{ scopeId: 'p', reason: 'route' }],
+      scopes: [{ id: 'p', kind: 'page' }],
+    };
+  }
+
+  it('says nothing about an absent surface', () => {
+    expect(surfaceRejection(undefined).rejection).toBeNull();
+  });
+
+  it('names the schema, the revision echo and the semantic errors', () => {
+    expect(surfaceRejection({ nope: true }).rejection?.kind).toBe('schema');
+    expect(surfaceRejection(valid(), 7).rejection).toEqual({
+      kind: 'revision',
+      detail: 'echo 7 != snapshot 2',
+    });
+    const broken = valid();
+    broken.attention = [{ scopeId: 'missing', reason: 'route' }];
+    const semantic = surfaceRejection(broken).rejection!;
+    expect(semantic.kind).toBe('semantics');
+    expect(semantic.detail).toContain('missing');
+  });
+
+  it('logs the reason at debug level and counts it', () => {
+    const debug = jest.spyOn(Logger.prototype, 'debug').mockImplementation();
+    const before = surfaceRejectionCounts().revision;
+    expect(acceptTurnSurface(valid(), 9)).toBeUndefined();
+    expect(surfaceRejectionCounts().revision).toBe(before + 1);
+    expect(debug).toHaveBeenCalledWith(
+      expect.stringContaining('Surface dropped (revision)'),
+    );
+    debug.mockRestore();
   });
 });

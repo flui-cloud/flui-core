@@ -1,7 +1,7 @@
 import { MailModule } from '../mail/mail.module';
 import { Module } from '@nestjs/common';
 import { DiscoveryModule } from '@nestjs/core';
-import { TypeOrmModule } from '@nestjs/typeorm';
+import { getRepositoryToken, TypeOrmModule } from '@nestjs/typeorm';
 import { InferenceModule } from '../inference/inference.module';
 import { IamModule } from '../iam/iam.module';
 import { McpModule } from '../mcp/mcp.module';
@@ -29,11 +29,25 @@ import { AssistantService } from './services/assistant.service';
 import { AssistantAgentService } from './services/assistant-agent.service';
 import { AssistantToolExecutionService } from './services/assistant-tool-execution.service';
 import { AssistantPendingActionsService } from './services/assistant-pending-actions.service';
+import { AssistantProposalsService } from './services/assistant-proposals.service';
 import { AssistantGenerationService } from './services/assistant-generation.service';
 import { ActionCycleRoutes } from './services/action-cycle-routes.service';
 import { KnowledgeService } from './services/knowledge.service';
 import { AssistantRecommendationsService } from './services/assistant-recommendations.service';
 import { AssistantController } from './controllers/assistant.controller';
+import {
+  GUEST_INFERENCE_THROTTLER,
+  GuestInferenceGuardService,
+} from './services/guest-inference-guard.service';
+import { GuestInferenceSettingsService } from './services/guest-inference-settings.service';
+import {
+  API_CONFIG_READER,
+  controlApiConfigReader,
+} from './services/api-config-reader';
+import { AppConfigService } from '../applications/services/app-config.service';
+import { ClusterEntity } from '../infrastructure/clusters/entities/cluster.entity';
+import { EncryptionModule } from '../shared/encryption/encryption.module';
+import { sharedThrottlerStorage } from '../../common/throttling/redis-throttler.storage';
 
 @Module({
   imports: [
@@ -41,7 +55,12 @@ import { AssistantController } from './controllers/assistant.controller';
     // BEFORE it makes a call, and the decorations are the only honest source.
     DiscoveryModule,
     MailModule,
-    TypeOrmModule.forFeature([AssistantMessageLogEntity, UserEntity]),
+    TypeOrmModule.forFeature([
+      AssistantMessageLogEntity,
+      UserEntity,
+      ClusterEntity,
+    ]),
+    EncryptionModule,
     InferenceModule,
     McpModule,
     IamModule,
@@ -66,6 +85,7 @@ import { AssistantController } from './controllers/assistant.controller';
     AssistantAgentService,
     AssistantToolExecutionService,
     AssistantPendingActionsService,
+    AssistantProposalsService,
     AssistantGenerationService,
     AssistantInferenceService,
     AssistantLlmService,
@@ -74,6 +94,17 @@ import { AssistantController } from './controllers/assistant.controller';
     KnowledgeService,
     AssistantRecommendationsService,
     AssistantAuditRepository,
+    GuestInferenceSettingsService,
+    GuestInferenceGuardService,
+    {
+      provide: API_CONFIG_READER,
+      inject: [getRepositoryToken(ClusterEntity), AppConfigService],
+      useFactory: controlApiConfigReader,
+    },
+    {
+      provide: GUEST_INFERENCE_THROTTLER,
+      useFactory: () => sharedThrottlerStorage(),
+    },
   ],
   // Reusable inference plumbing for other modules (e.g. the DB console copilot):
   // endpoint resolution (native/BYO/default) + OpenAI-compatible transport with param recovery.

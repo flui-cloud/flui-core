@@ -29,6 +29,7 @@ export interface ChatCompletionRequest {
   temperature?: number;
   max_tokens?: number;
   max_completion_tokens?: number;
+  reasoning_effort?: 'none' | 'low' | 'medium' | 'high';
   stream?: boolean;
   tools?: ChatTool[];
   tool_choice?: 'auto' | 'none' | 'required';
@@ -79,6 +80,9 @@ export interface ChatCompletionUsage {
   prompt_tokens: number;
   completion_tokens: number;
   total_tokens: number;
+  prompt_tokens_details?: { cached_tokens?: number | null } | null;
+  prompt_cache_hit_tokens?: number;
+  cache_read_input_tokens?: number;
 }
 
 export interface ChatCompletionResponse {

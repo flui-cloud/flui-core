@@ -10,6 +10,63 @@ const KB = kbData as unknown as CompiledKb;
 // still gets grounded context instead of the whole 76k-token corpus.
 const FALLBACK_SECTION_IDS = ['concepts/00-what-is-flui'];
 
+// Plain words, never the raw source id: models turned `flui-docs` into an
+// invented host (https://flui-docs/...).
+const SOURCE_LABELS: Record<string, string> = {
+  'flui-docs': 'Flui documentation',
+  'flui-spec': 'flui.yaml specification',
+  'oclif-manifest': 'CLI reference',
+  'flui-dashboard-map': 'dashboard map',
+  'flui-authored': 'Flui capabilities',
+};
+
+const MAX_ROUTED_SECTIONS = 4;
+const MAX_LEXICAL_SECTIONS = 3;
+// The generated CLI reference alone is ~50k tokens: never a fallback pick.
+const MAX_LEXICAL_BODY_CHARS = 50_000;
+const STOPWORDS = new Set(
+  (
+    'the and for with how what when where which who why can does do did are is was ' +
+    'you your yours this that these those from into onto about have has had not ' +
+    'all any some our out use using get set its there their them they then ' +
+    'than but one two way flui want need make should would could will'
+  ).split(' '),
+);
+
+export type SectionPick = 'router' | 'lexical' | 'fallback';
+
+/** `stable` is identical for every turn of every user; `page` is the surface block. */
+export interface PromptParts {
+  stable?: string;
+  page?: string;
+}
+
+export interface SectionSelection {
+  sectionIds: string[];
+  via: SectionPick;
+}
+
+function stem(token: string): string {
+  if (token.length <= 4) return token;
+  return token.replace(/(ings|ing|ies|es|ed|s)$/, '');
+}
+
+function terms(text: string): Set<string> {
+  const out = new Set<string>();
+  for (const raw of text.toLowerCase().split(/[^a-z0-9]+/)) {
+    if (raw.length < 3 || STOPWORDS.has(raw)) continue;
+    out.add(stem(raw));
+  }
+  return out;
+}
+
+interface LexicalEntry {
+  id: string;
+  title: Set<string>;
+  path: Set<string>;
+  headings: Set<string>;
+}
+
 // Published docs site (Astro Starlight). A section id is its content path under
 // src/content/docs minus the extension, so the public route is one pure function of
 // the id — no per-page mapping to maintain. Only `flui-docs` sections have a page;
@@ -28,6 +85,24 @@ export class KnowledgeService {
   private readonly sectionsById = new Map<string, KbSection>(
     KB.sections.map((s) => [s.id, s]),
   );
+  private readonly lexicalIndex: LexicalEntry[] = KB.sections
+    .filter((s) => s.body.length <= MAX_LEXICAL_BODY_CHARS)
+    .map((s) => ({
+      id: s.id,
+      title: terms(s.title),
+      path: terms(
+        s.id
+          .split('/')
+          .map((segment) => segment.replace(/^\d+-/, ''))
+          .join(' '),
+      ),
+      headings: terms(
+        s.body
+          .split('\n')
+          .filter((line) => line.startsWith('## ') || line.startsWith('### '))
+          .join(' '),
+      ),
+    }));
   private readonly binding = this.composeBinding();
   private readonly reminder = SYSTEM_REMINDER;
   private readonly continuationReminder = CONTINUATION_REMINDER;
@@ -37,20 +112,64 @@ export class KnowledgeService {
     return KB.sections.map((s) => `${s.id} — ${s.title}`).join('\n');
   }
 
-  getSystemContext(sectionIds?: string[]): string {
+  /**
+   * The sections a turn is grounded in: the router's known ids when it gave any,
+   * otherwise a lexical match of the question against section titles, paths and
+   * headings, and only then the generic introduction.
+   */
+  selectSections(routedIds: string[], query: string): SectionSelection {
+    const known = [
+      ...new Set(routedIds.filter((id) => this.sectionsById.has(id))),
+    ].slice(0, MAX_ROUTED_SECTIONS);
+    if (known.length) return { sectionIds: known, via: 'router' };
+    const lexical = this.lexicalMatch(query);
+    if (lexical.length) return { sectionIds: lexical, via: 'lexical' };
+    return { sectionIds: [...FALLBACK_SECTION_IDS], via: 'fallback' };
+  }
+
+  lexicalMatch(query: string, limit = MAX_LEXICAL_SECTIONS): string[] {
+    const wanted = terms(query);
+    if (!wanted.size) return [];
+    return this.lexicalIndex
+      .map((entry, order) => {
+        let score = 0;
+        for (const t of wanted) {
+          if (entry.title.has(t)) score += 3;
+          if (entry.path.has(t)) score += 2;
+          if (entry.headings.has(t)) score += 1;
+        }
+        return { id: entry.id, score, order };
+      })
+      .filter((e) => e.score > 0)
+      .sort((a, b) => b.score - a.score || a.order - b.order)
+      .slice(0, limit)
+      .map((e) => e.id);
+  }
+
+  /**
+   * Stable first, variable last: providers bill a repeated prompt prefix at the
+   * cached rate, so guardrails, binding and the caller's fixed notes lead, and
+   * the per-turn knowledge and page follow.
+   */
+  getSystemContext(sectionIds?: string[], parts: PromptParts = {}): string {
     const sections = this.resolveSections(sectionIds);
     const corpus = sections
       .map(
-        (s) => `## ${s.title}\n_(${s.id} · source: ${s.source})_\n\n${s.body}`,
+        (s) =>
+          `## ${s.title}\n_(${SOURCE_LABELS[s.source] ?? 'Flui'})_\n\n${s.body}`,
       )
       .join('\n\n');
     return [
       KB.guardrails,
       this.binding,
+      parts.stable,
       '# Flui knowledge',
       corpus,
+      parts.page,
       this.reminder,
-    ].join('\n\n');
+    ]
+      .filter(Boolean)
+      .join('\n\n');
   }
 
   /**
@@ -59,10 +178,16 @@ export class KnowledgeService {
    * first decision (answer vs. act); re-sending it each loop iteration is pure token
    * burn (and trips per-minute rate limits on small models). Guardrails persist.
    */
-  getBaseContext(): string {
-    return [KB.guardrails, this.binding, this.continuationReminder].join(
-      '\n\n',
-    );
+  getBaseContext(parts: PromptParts = {}): string {
+    return [
+      KB.guardrails,
+      this.binding,
+      parts.stable,
+      parts.page,
+      this.continuationReminder,
+    ]
+      .filter(Boolean)
+      .join('\n\n');
   }
 
   /**

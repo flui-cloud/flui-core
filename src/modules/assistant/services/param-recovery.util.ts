@@ -11,6 +11,7 @@ const ADAPTABLE = new Set<string>([
   'tool_choice',
   'frequency_penalty',
   'presence_penalty',
+  'reasoning_effort',
 ]);
 
 // OpenAI-style 400s often name the replacement param, e.g.

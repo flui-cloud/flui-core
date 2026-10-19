@@ -2,7 +2,9 @@ import {
   collectHosts,
   findUnverifiedUrls,
   hostOf,
+  isPlaceholderHost,
   normalizeUrl,
+  stripUrls,
 } from './url-guard.util';
 
 describe('url-guard.util', () => {
@@ -58,6 +60,67 @@ describe('url-guard.util', () => {
       expect(findUnverifiedUrls(content, new Set())).toEqual([
         'https://x.flui.app',
       ]);
+    });
+  });
+
+  describe('placeholders', () => {
+    it.each([
+      'example.com',
+      'app.example.com',
+      'example.org',
+      'localhost',
+      'localhost:3000',
+      '127.0.0.1:8080',
+      '203.0.113.7',
+      'app.your-domain.com',
+      'yourdomain.com',
+      'my-app.test',
+      'api.local',
+    ])('treats %s as a placeholder', (host) => {
+      expect(isPlaceholderHost(host)).toBe(true);
+    });
+
+    it.each([
+      'immich-444f95-server.flui.app',
+      'my-app.203-0-113-7.nip.io',
+      'api.acme.com',
+      'examples.dev',
+    ])('treats %s as a real-looking host', (host) => {
+      expect(isPlaceholderHost(host)).toBe(false);
+    });
+
+    it('never flags placeholder or template URLs', () => {
+      const content = [
+        'Open https://app.example.com or http://localhost:3000/health.',
+        'Your app lives at https://app.<your-domain> once DNS is set.',
+        'Template: https://{{ app }}.acme.com',
+      ].join('\n');
+      expect(findUnverifiedUrls(content, new Set())).toEqual([]);
+    });
+  });
+
+  describe('stripUrls', () => {
+    it('keeps the label of a markdown link', () => {
+      expect(
+        stripUrls('See [the guide](https://x.flui.app/guide).', [
+          'https://x.flui.app/guide',
+        ]),
+      ).toBe('See the guide.');
+    });
+
+    it('puts a bare placeholder inside code and an inline-code one in prose', () => {
+      const content =
+        'Visit https://x.flui.app now.\n```yaml\nurl: https://x.flui.app\n```';
+      expect(stripUrls(content, ['https://x.flui.app'])).toBe(
+        'Visit `<app-url>` now.\n```yaml\nurl: <app-url>\n```',
+      );
+    });
+
+    it('leaves other URLs untouched', () => {
+      const content = 'Docs: https://docs.flui.cloud/a and https://x.flui.app';
+      expect(stripUrls(content, ['https://x.flui.app'])).toBe(
+        'Docs: https://docs.flui.cloud/a and `<app-url>`',
+      );
     });
   });
 });

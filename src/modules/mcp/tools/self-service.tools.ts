@@ -57,6 +57,8 @@ import {
 export const SELF_SERVICE_TOOLS: ToolDef[] = [
   defineTool({
     name: 'my_permissions',
+    summary:
+      'What you may and may not do here (and what a trial leaves out). Read it before saying something is impossible.',
     routes: [
       'GET /me/permissions',
       'GET /me/sections',
@@ -358,6 +360,8 @@ export const SELF_SERVICE_TOOLS: ToolDef[] = [
 
   defineTool({
     name: 'app_metrics',
+    summary:
+      'CPU, memory, replicas and disk usage of an application, now or over time (sinceMinutes).',
     routes: [
       'GET /observability/applications/:id/metrics',
       'GET /observability/applications/:id/metrics/history',
@@ -402,6 +406,8 @@ export const SELF_SERVICE_TOOLS: ToolDef[] = [
 
   defineTool({
     name: 'app_variables',
+    summary:
+      "An application's variables: plain values, which secret keys are set, which still need a value. Secret values are never returned.",
     routes: ['GET /variables/applications/:appId'],
     description:
       "Read an application's configuration: the plain variables with their values, the sensitive keys that are configured, and the keys declared but still waiting for somebody to supply a value. A sensitive value is never returned here, by anybody, and cannot be — asking a second time does not help, and inventing one to fill the gap is the one thing you must not do. Read this before writing a variable, so you merge into what is there instead of guessing at it.",

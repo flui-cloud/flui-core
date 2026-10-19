@@ -156,6 +156,8 @@ export const OBSERVABILITY_TOOLS: ToolDef[] = [
   }),
   defineTool({
     name: 'app_logs',
+    summary:
+      "Show an application's recent logs to the user (pass applicationId). You see only counts, never the lines.",
     routes: [
       'GET /observability/applications/:id/logs',
       'GET /observability/clusters/:clusterId/apps/logs',

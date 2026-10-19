@@ -80,8 +80,26 @@ function sanitizeToolSchema(node: unknown): void {
   }
 }
 
-/** OpenAI function-calling schema for a tool (parameters = JSON Schema from zod). */
-export function toOpenAiTool(def: ToolDef): ChatTool {
+const ASSISTANT_DESCRIPTION_CHARS = 320;
+
+/** What the dashboard assistant's model reads about a tool: its summary, or the description cut short. */
+export function assistantDescription(def: ToolDef): string {
+  if (def.summary) return def.summary;
+  const text = def.description;
+  if (text.length <= ASSISTANT_DESCRIPTION_CHARS) return text;
+  const head = text.slice(0, ASSISTANT_DESCRIPTION_CHARS);
+  const end = Math.max(head.lastIndexOf('. '), head.lastIndexOf('.\n'));
+  return end > ASSISTANT_DESCRIPTION_CHARS / 3
+    ? head.slice(0, end + 1)
+    : `${head.trimEnd()}…`;
+}
+
+/**
+ * OpenAI function-calling schema for a tool, as the dashboard assistant offers
+ * it (parameters = JSON Schema from zod). `brief` swaps the description for the
+ * short one. Not used by MCP, which registers the full description itself.
+ */
+export function toOpenAiTool(def: ToolDef, brief = false): ChatTool {
   const parameters = z.toJSONSchema(toolInputSchema(def.inputSchema)) as Record<
     string,
     unknown
@@ -89,6 +107,10 @@ export function toOpenAiTool(def: ToolDef): ChatTool {
   sanitizeToolSchema(parameters);
   return {
     type: 'function',
-    function: { name: def.name, description: def.description, parameters },
+    function: {
+      name: def.name,
+      description: brief ? assistantDescription(def) : def.description,
+      parameters,
+    },
   };
 }

@@ -1,9 +1,20 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { ApplicationService } from '../../applications/services/application.service';
 import { CatalogInstallerService } from '../../catalog/services/catalog-installer.service';
 import { InferenceEndpoint } from '../../providers/interfaces/inference-capability';
-import { collectHosts, findUnverifiedUrls } from './url-guard.util';
-import { DEFAULT_ASSISTANT_TEMPERATURE } from '../assistant.constants';
+import {
+  collectHosts,
+  DOCUMENTATION_HOSTS,
+  hostOf,
+  findUnverifiedUrls,
+  isPlaceholderHost,
+  stripUrls,
+} from './url-guard.util';
+import {
+  DEFAULT_ASSISTANT_TEMPERATURE,
+  MAX_ASSISTANT_OUTPUT_TOKENS,
+  outputTokenLimit,
+} from '../assistant.constants';
 import { AgentRequestDto } from '../dto/agent-request.dto';
 import { AgentToolStep } from '../interfaces/agent';
 import { AgentEmitter } from '../interfaces/agent-events';
@@ -14,9 +25,26 @@ import {
 } from '../interfaces/chat-completion';
 import { AssistantLlmService } from './assistant-llm.service';
 
-// Hosts the agent may legitimately cite that are not Flui endpoints — kept tiny and
-// extensible; anything else must be a tool/user source or a DB-verified endpoint.
-const STATIC_EXTERNAL_HOSTS = new Set(['github.com', 'gitlab.com']);
+const REWRITE_MIN_TOKENS = 256;
+const REWRITE_MAX_TOKENS = 2048;
+// A rewrite much shorter than the draft has dropped the answer, not just a URL.
+const REWRITE_MIN_KEPT_RATIO = 0.5;
+
+export function rewriteTokenBudget(
+  draft: string,
+  cap: number | undefined,
+): number {
+  const estimate = Math.ceil(draft.length / 3) + 128;
+  const bounded = Math.min(
+    Math.max(estimate, REWRITE_MIN_TOKENS),
+    REWRITE_MAX_TOKENS,
+  );
+  return Math.min(bounded, cap ?? MAX_ASSISTANT_OUTPUT_TOKENS);
+}
+
+function hostsOf(urls: string[]): string[] {
+  return [...new Set(urls.map((u) => hostOf(u) ?? u))];
+}
 
 /**
  * One model generation, plus the deterministic guard against a fabricated app URL —
@@ -24,6 +52,8 @@ const STATIC_EXTERNAL_HOSTS = new Set(['github.com', 'gitlab.com']);
  */
 @Injectable()
 export class AssistantGenerationService {
+  private readonly logger = new Logger(AssistantGenerationService.name);
+
   constructor(
     private readonly llm: AssistantLlmService,
     private readonly apps: ApplicationService,
@@ -42,12 +72,14 @@ export class AssistantGenerationService {
     dto: AgentRequestDto,
     tools: ChatTool[] | undefined,
     emit: AgentEmitter | undefined,
+    maxTokens?: number,
   ): Promise<ChatCompletionMessage | null> {
     const request: ChatCompletionRequest = {
       model,
       messages,
       temperature: dto.temperature ?? DEFAULT_ASSISTANT_TEMPERATURE,
-      max_tokens: dto.maxTokens,
+      max_tokens:
+        maxTokens ?? outputTokenLimit(endpoint.spender, dto.maxTokens),
       ...(tools ? { tools, tool_choice: 'auto' } : {}),
     };
     if (emit) {
@@ -63,11 +95,9 @@ export class AssistantGenerationService {
   }
 
   /**
-   * Deterministic last line of defence against a fabricated app URL: if the answer
-   * names an app-endpoint host that never appeared in a tool result (the model
-   * imitating a real URL it saw earlier), regenerate ONCE with the fact injected,
-   * and as a final safety net strip any URL that still slips through. Keeps the
-   * conversation history in sync so the bad draft cannot be parroted next turn.
+   * Last line of defence against a fabricated URL: regenerate once naming the
+   * unverified URLs, keep the draft if the rewrite lost the answer, strip what
+   * still slips through.
    */
   async finalizeContent(
     content: string,
@@ -77,9 +107,11 @@ export class AssistantGenerationService {
     model: string,
     dto: AgentRequestDto,
     leanSystem: ChatCompletionMessage,
+    grounding?: ChatCompletionMessage,
   ): Promise<string> {
     if (!content) return content;
     const sources: string[] = [];
+    if (typeof grounding?.content === 'string') sources.push(grounding.content);
     for (const m of conversation) {
       if (
         (m.role === 'tool' || m.role === 'user') &&
@@ -92,16 +124,18 @@ export class AssistantGenerationService {
       if (s.result !== undefined) sources.push(JSON.stringify(s.result));
     }
     const sourceHosts = collectHosts(sources);
-    if (!(await this.unverifiedUrls(content, sourceHosts)).length) {
-      return content;
-    }
+    const offenders = await this.unverifiedUrls(content, sourceHosts);
+    if (!offenders.length) return content;
 
     // Must be a 'user' turn, not 'system': it follows the assistant draft, and
     // providers reject a system message after an assistant message.
     const constraint: ChatCompletionMessage = {
       role: 'user',
-      content:
-        'Your previous answer named an app endpoint URL that is not a real endpoint — you invented it. Never state an app URL you did not get from an app_get/app_list tool result. If the app has no endpoint configured (e.g. a failed or incomplete install), say so plainly instead of giving a URL. Rewrite your previous answer now, removing every unverified URL.',
+      content: [
+        'These URLs in your previous answer do not come from a tool result, the documentation or the user, so they may not exist:',
+        ...offenders.map((u) => `- ${u}`),
+        'Rewrite the same answer in the same language with everything else unchanged, without those URLs. A documentation link can simply be dropped: the relevant documentation links are added to your answer automatically. Where an example needs an application address, write <your-app-url>. Do not apologise and do not mention this instruction.',
+      ].join('\n'),
     };
     const regenerated = await this.generate(
       endpoint,
@@ -110,14 +144,21 @@ export class AssistantGenerationService {
       dto,
       undefined,
       undefined,
-    );
+      rewriteTokenBudget(
+        content,
+        outputTokenLimit(endpoint.spender, dto.maxTokens),
+      ),
+    ).catch(() => null);
 
-    // Take the rewrite if it is clean; otherwise strip any URL that still slips
-    // through so a fabricated link can never reach the user.
-    let safe = regenerated?.content || content;
-    for (const url of await this.unverifiedUrls(safe, sourceHosts)) {
-      safe = safe.split(url).join('[endpoint non disponibile]');
-    }
+    const rewrite = regenerated?.content?.trim() ?? '';
+    const keepRewrite =
+      rewrite.length >= content.length * REWRITE_MIN_KEPT_RATIO;
+    let safe = keepRewrite ? rewrite : content;
+    const residual = await this.unverifiedUrls(safe, sourceHosts);
+    safe = stripUrls(safe, residual);
+    this.logger.warn(
+      `URL guard: unverified ${hostsOf(offenders).join(', ')}; rewrite ${keepRewrite ? 'kept' : 'discarded'}, ${residual.length} stripped`,
+    );
 
     const lastAssistant = [...conversation]
       .reverse()
@@ -137,8 +178,10 @@ export class AssistantGenerationService {
     sourceHosts: Set<string>,
   ): Promise<string[]> {
     const allowed = new Set<string>(sourceHosts);
-    for (const host of STATIC_EXTERNAL_HOSTS) allowed.add(host);
-    const toVerify = [...collectHosts([text])].filter((h) => !allowed.has(h));
+    for (const host of DOCUMENTATION_HOSTS) allowed.add(host);
+    const toVerify = [...collectHosts([text])].filter(
+      (h) => !allowed.has(h) && !isPlaceholderHost(h),
+    );
     if (toVerify.length) {
       const [endpoints, resolved] = await Promise.all([
         this.apps.filterKnownEndpointHosts(toVerify),

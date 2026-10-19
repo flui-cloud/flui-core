@@ -6,7 +6,10 @@ jest.mock('../../inference/services/inference-usage.service', () => ({
   InferenceUsageService: class InferenceUsageService {},
 }));
 
-import { AssistantLlmService } from './assistant-llm.service';
+import {
+  AssistantLlmService,
+  cachedPromptTokens,
+} from './assistant-llm.service';
 
 const build = () => {
   const recorded: Record<string, unknown>[] = [];
@@ -63,6 +66,50 @@ describe('who gets billed for a call', () => {
       completionTokens: 7,
       estimated: false,
     });
+  });
+
+  // Scaleway reports the cached share the OpenAI way; the ledger keeps it so the
+  // bill can be priced at the cached rate.
+  it('keeps the share of the prompt the provider served from its cache', async () => {
+    const { service, recorded } = build();
+    guardedRequest.mockResolvedValue({
+      data: {
+        choices: [{ message: { role: 'assistant', content: 'hi' } }],
+        usage: {
+          prompt_tokens: 41313,
+          completion_tokens: 199,
+          total_tokens: 41512,
+          prompt_tokens_details: {
+            cached_tokens: 24576,
+            created_cache_tokens: 0,
+          },
+        },
+      },
+    });
+
+    await service.chat(
+      endpoint({ userId: 'u1', guest: false, surface: 'assistant' }) as never,
+      request,
+    );
+
+    expect(recorded[0]).toMatchObject({
+      promptTokens: 41313,
+      cachedPromptTokens: 24576,
+    });
+  });
+
+  it('reads the cached share from the other shapes providers use', () => {
+    const base = { prompt_tokens: 10, completion_tokens: 1, total_tokens: 11 };
+    expect(cachedPromptTokens(undefined)).toBe(0);
+    expect(cachedPromptTokens(base)).toBe(0);
+    expect(
+      cachedPromptTokens({
+        ...base,
+        prompt_tokens_details: { cached_tokens: null },
+      }),
+    ).toBe(0);
+    expect(cachedPromptTokens({ ...base, prompt_cache_hit_tokens: 7 })).toBe(7);
+    expect(cachedPromptTokens({ ...base, cache_read_input_tokens: 5 })).toBe(5);
   });
 
   // The platform calling on its own behalf — the on-topic router, a background

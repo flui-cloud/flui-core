@@ -1,3 +1,4 @@
+import { Logger } from '@nestjs/common';
 import {
   acceptSurface,
   SurfaceSnapshot,
@@ -23,19 +24,68 @@ import {
  * `agent-ask.controller.ts`): the two must agree, or the client's own state
  * is already muddled and neither half can be trusted.
  */
-export function acceptTurnSurface(
+export type SurfaceRejection =
+  | { kind: 'schema'; detail: string }
+  | { kind: 'revision'; detail: string }
+  | { kind: 'semantics'; detail: string };
+
+const logger = new Logger('TurnSurface');
+const rejected: Record<SurfaceRejection['kind'], number> = {
+  schema: 0,
+  revision: 0,
+  semantics: 0,
+};
+
+export function surfaceRejectionCounts(): Readonly<typeof rejected> {
+  return { ...rejected };
+}
+
+/** Why a snapshot would be dropped, or null when it is accepted (or absent). */
+export function surfaceRejection(
   surface: unknown,
   surfaceRevision?: number,
-): SurfaceSnapshot | undefined {
-  const { snapshot } = acceptSurface(surface);
-  if (!snapshot) return undefined;
+): { snapshot?: SurfaceSnapshot; rejection: SurfaceRejection | null } {
+  if (surface === undefined || surface === null) return { rejection: null };
+  const { snapshot, reason } = acceptSurface(surface);
+  if (!snapshot) {
+    return { rejection: { kind: 'schema', detail: reason ?? 'invalid' } };
+  }
   if (
     surfaceRevision !== undefined &&
     surfaceRevision !== snapshot.surface.revision
   ) {
+    return {
+      rejection: {
+        kind: 'revision',
+        detail: `echo ${surfaceRevision} != snapshot ${snapshot.surface.revision}`,
+      },
+    };
+  }
+  const errors = validateSurfaceSemantics(snapshot).filter(
+    (issue) => issue.severity === 'error',
+  );
+  if (errors.length) {
+    return {
+      rejection: {
+        kind: 'semantics',
+        detail: errors.map((e) => `${e.code} at ${e.path}`).join('; '),
+      },
+    };
+  }
+  return { snapshot, rejection: null };
+}
+
+export function acceptTurnSurface(
+  surface: unknown,
+  surfaceRevision?: number,
+): SurfaceSnapshot | undefined {
+  const { snapshot, rejection } = surfaceRejection(surface, surfaceRevision);
+  if (rejection) {
+    rejected[rejection.kind] += 1;
+    logger.debug(
+      `Surface dropped (${rejection.kind}): ${rejection.detail.slice(0, 300)}`,
+    );
     return undefined;
   }
-  const issues = validateSurfaceSemantics(snapshot);
-  if (issues.some((issue) => issue.severity === 'error')) return undefined;
   return snapshot;
 }

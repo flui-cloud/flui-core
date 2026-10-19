@@ -1,6 +1,7 @@
 import type { AgentRunContext } from './assistant-agent.service';
 import { ALL_TOOLS, toOpenAiTool } from '../../mcp/tools/tool-registry';
 import { isOfferedToGuest } from '../../mcp/services/sandbox-tool-visibility';
+import { isGuestAssistantTool } from './guest-assistant-tools';
 import { READ_SURFACE_TOOL } from './surface-block.util';
 import {
   AgentResult,
@@ -95,6 +96,10 @@ export function chatTurns(
     .map((m) => ({ role: m.role, content: m.content }));
 }
 
+export function lastUserText(turns: RouteMessage[]): string {
+  return [...turns].reverse().find((m) => m.role === 'user')?.content ?? '';
+}
+
 /**
  * Tools the user is allowed to see, as OpenAI function schemas.
  *
@@ -103,12 +108,15 @@ export function chatTurns(
  * would actually be answered with. `/assistant/v1/chat` is not open to a
  * guest today, so nothing leaked — but the day it opens, one filtered list
  * and one unfiltered list is exactly the kind of second path the whole move
- * to a single tool registry was meant to remove.
+ * to a single tool registry was meant to remove. A guest is narrowed once more,
+ * to the hand-picked read-only set in `guest-assistant-tools.ts`.
  */
 export function toolsForUser(ctx: AgentRunContext): ChatTool[] {
   const tools = ALL_TOOLS.filter(
-    (d) => ctx.scopes.has(d.scope) && (!ctx.isSandbox || isOfferedToGuest(d)),
-  ).map(toOpenAiTool);
+    (d) =>
+      ctx.scopes.has(d.scope) &&
+      (!ctx.isSandbox || (isOfferedToGuest(d) && isGuestAssistantTool(d.name))),
+  ).map((d) => toOpenAiTool(d, ctx.isSandbox));
   // Not in ALL_TOOLS (see AgentRunContext.semanticSurface's own doc comment) —
   // offered only on a turn that actually carries a Surface, per vops's own
   // precedent: "a tool that always answers 'there is no surface' teaches a

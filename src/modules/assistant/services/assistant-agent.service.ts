@@ -1,4 +1,4 @@
-import { Inject, Injectable } from '@nestjs/common';
+import { Inject, Injectable, Logger } from '@nestjs/common';
 import { destructiveToolsAllowed } from '../../mcp/constants/mcp-scopes';
 import { ConfigService } from '@nestjs/config';
 import { AuthenticatedUser } from '../../auth/interfaces/authenticated-user.interface';
@@ -50,7 +50,10 @@ import { AgentRequestDto } from '../dto/agent-request.dto';
 import { AgentResult, AgentToolStep, DocLink } from '../interfaces/agent';
 import { AgentEmitter } from '../interfaces/agent-events';
 import { ChatCompletionMessage, ChatTool } from '../interfaces/chat-completion';
-import { AssistantInferenceService } from './assistant-inference.service';
+import {
+  AssistantInferenceService,
+  GUEST_BUDGET_SPENT_MESSAGE,
+} from './assistant-inference.service';
 import { AssistantGenerationService } from './assistant-generation.service';
 import { AssistantGuardService } from './assistant-guard.service';
 import { KnowledgeService } from './knowledge.service';
@@ -58,14 +61,11 @@ import { AGENT_TOOL_NOTE } from '../policy';
 import { principalFromUser } from '../../iam/interfaces/iam.types';
 import { SurfaceSnapshot } from '@flui-cloud/semantic-surface';
 import { acceptTurnSurface } from './turn-surface.util';
-import {
-  renderSurfaceBlock,
-  semanticSurfaceRef,
-  withSurfaceBlock,
-} from './surface-block.util';
+import { renderSurfaceBlock, semanticSurfaceRef } from './surface-block.util';
 import { AssistantToolExecutionService } from './assistant-tool-execution.service';
 import {
   chatTurns,
+  lastUserText,
   collectUiActions,
   emitSteps,
   message,
@@ -115,6 +115,8 @@ export type AgentRunContext = McpToolContext & {
 
 @Injectable()
 export class AssistantAgentService {
+  private readonly logger = new Logger(AssistantAgentService.name);
+
   constructor(
     private readonly inference: AssistantInferenceService,
     private readonly toolExecution: AssistantToolExecutionService,
@@ -182,13 +184,15 @@ export class AssistantAgentService {
     );
     const ctx = this.buildContext(user, credential, isSandbox, actor, surface);
     const approved = new Set(dto.approvedToolCallIds ?? []);
-    const conversation: ChatCompletionMessage[] = dto.messages.map((m) => ({
-      role: m.role,
-      content: m.content ?? null,
-      tool_calls: m.tool_calls,
-      tool_call_id: m.tool_call_id,
-      name: m.name,
-    }));
+    const conversation: ChatCompletionMessage[] = dto.messages
+      .filter((m) => m.role !== 'system')
+      .map((m) => ({
+        role: m.role,
+        content: m.content ?? null,
+        tool_calls: m.tool_calls,
+        tool_call_id: m.tool_call_id,
+        name: m.name,
+      }));
     const steps: AgentToolStep[] = [];
 
     // The lean context (guardrails + binding only) carries every tool-continuation
@@ -197,7 +201,7 @@ export class AssistantAgentService {
     // per-minute tokens on small models. Guardrails persist in both.
     const leanSystem: ChatCompletionMessage = {
       role: 'system',
-      content: `${this.knowledge.getBaseContext()}\n\n${AGENT_TOOL_NOTE}`,
+      content: this.knowledge.getBaseContext({ stable: AGENT_TOOL_NOTE }),
     };
 
     // A resume (the tail holds the tool_calls the user just decided on) is already
@@ -215,11 +219,22 @@ export class AssistantAgentService {
     // missing surface leaves `firstSystem` byte-for-byte what it was before
     // this field existed (see the safety test).
     const surfaceBlock = renderSurfaceBlock(surface);
-    let firstSystem = withSurfaceBlock(leanSystem, surfaceBlock);
+    let firstSystem: ChatCompletionMessage = surfaceBlock
+      ? {
+          role: 'system',
+          content: this.knowledge.getBaseContext({
+            stable: AGENT_TOOL_NOTE,
+            page: surfaceBlock,
+          }),
+        }
+      : leanSystem;
     // Doc links for the topics this turn is grounded in — surfaced on the final answer.
     // A resume already made its KB-grounded decision (no router call), so it carries none.
     let docLinks: DocLink[] = [];
-    if (!isResume) {
+    // A guest's resume is not taken on trust: whether a turn is a resume is
+    // read off history the client wrote, and skipping the guard is what makes
+    // the paid model answer anything.
+    if (!isResume || isSandbox) {
       const turns = chatTurns(conversation);
       const route = await this.guard.route(
         endpoint,
@@ -228,18 +243,26 @@ export class AssistantAgentService {
         this.knowledge.getIndexPrompt(),
       );
       if (route.offTopic) {
+        await this.inference.noteOffTopic(endpoint);
         const content = await this.guard.refusal(endpoint, model, turns);
         conversation.push({ role: 'assistant', content });
         return { type: 'message', content, steps, messages: conversation };
       }
-      docLinks = this.knowledge.docLinksFor(route.sectionIds);
-      firstSystem = withSurfaceBlock(
-        {
-          role: 'system',
-          content: `${this.knowledge.getSystemContext(route.sectionIds)}\n\n${AGENT_TOOL_NOTE}`,
-        },
-        surfaceBlock,
+      const selection = this.knowledge.selectSections(
+        route.sectionIds,
+        lastUserText(turns),
       );
+      this.logger.log(
+        `Grounded via ${selection.via}: ${selection.sectionIds.join(', ')}`,
+      );
+      docLinks = this.knowledge.docLinksFor(selection.sectionIds);
+      firstSystem = {
+        role: 'system',
+        content: this.knowledge.getSystemContext(selection.sectionIds, {
+          stable: AGENT_TOOL_NOTE,
+          page: surfaceBlock,
+        }),
+      };
     }
 
     // Idempotency across the whole conversation: a write/destructive action already
@@ -303,6 +326,9 @@ export class AssistantAgentService {
       state;
     const executed = state.executed;
     for (let i = 0; i < MAX_ITERATIONS; i++) {
+      if (i > 0 && (await this.guestBudgetSpent(endpoint))) {
+        return this.budgetStop(steps, conversation, state.docLinks);
+      }
       const msg = await this.generation.generate(
         endpoint,
         model,
@@ -328,6 +354,7 @@ export class AssistantAgentService {
           model,
           dto,
           state.leanSystem,
+          state.firstSystem,
         );
         return message(safe, steps, conversation, state.docLinks);
       }
@@ -356,6 +383,9 @@ export class AssistantAgentService {
       if (steps.length === stepsBefore) break;
     }
 
+    if (await this.guestBudgetSpent(endpoint)) {
+      return this.budgetStop(steps, conversation, state.docLinks);
+    }
     // Force one final answer WITHOUT tools so the user gets a synthesis instead of a
     // dead-end (weaker models never stop calling tools on their own).
     const finalMsg = await this.generation.generate(
@@ -375,8 +405,30 @@ export class AssistantAgentService {
       model,
       dto,
       state.leanSystem,
+      state.firstSystem,
     );
     return message(safeFinal, steps, conversation, state.docLinks);
+  }
+
+  private async guestBudgetSpent(
+    endpoint: InferenceEndpoint,
+  ): Promise<boolean> {
+    const userId = endpoint.spender?.guest ? endpoint.spender.userId : null;
+    if (!userId) return false;
+    const { spent, budget } = await this.inference.guestUsage(userId);
+    return spent >= budget;
+  }
+
+  private budgetStop(
+    steps: AgentToolStep[],
+    conversation: ChatCompletionMessage[],
+    docLinks: DocLink[],
+  ): AgentResult {
+    conversation.push({
+      role: 'assistant',
+      content: GUEST_BUDGET_SPENT_MESSAGE,
+    });
+    return message(GUEST_BUDGET_SPENT_MESSAGE, steps, conversation, docLinks);
   }
 
   private buildContext(

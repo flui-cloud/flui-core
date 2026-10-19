@@ -134,6 +134,12 @@ export interface McpToolContext {
 export interface ToolDef<Shape extends ZodRawShape = ZodRawShape> {
   name: string;
   description: string;
+  /**
+   * One or two lines for the dashboard assistant's model when it serves a
+   * sandbox guest, whose token budget pays for every tool on every step. MCP
+   * and operators always get the full `description`.
+   */
+  summary?: string;
   inputSchema: Shape;
   scope: McpScope;
   /**

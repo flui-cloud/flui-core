@@ -12,3 +12,28 @@ export function pickChatModel(models: string[]): string | undefined {
   );
   return chat ?? models[0];
 }
+
+export const MAX_ASSISTANT_OUTPUT_TOKENS = 8192;
+const DEFAULT_GUEST_OUTPUT_TOKENS = 2048;
+
+/**
+ * The `max_tokens` actually sent: the caller's number clamped to the ceiling,
+ * and for a guest never more than `SANDBOX_ASSISTANT_MAX_TOKENS`, because a
+ * guest's turn is paid by the instance.
+ */
+export function outputTokenLimit(
+  spender: { guest: boolean } | undefined,
+  requested: number | undefined,
+): number | undefined {
+  const asked =
+    requested === undefined
+      ? undefined
+      : Math.min(requested, MAX_ASSISTANT_OUTPUT_TOKENS);
+  if (!spender?.guest) return asked;
+  const raw = Number(process.env.SANDBOX_ASSISTANT_MAX_TOKENS);
+  const cap = Math.min(
+    Number.isFinite(raw) && raw > 0 ? raw : DEFAULT_GUEST_OUTPUT_TOKENS,
+    MAX_ASSISTANT_OUTPUT_TOKENS,
+  );
+  return Math.min(asked ?? cap, cap);
+}

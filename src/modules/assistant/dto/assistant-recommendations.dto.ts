@@ -1,21 +1,21 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
 export class RecommendedProviderDto {
-  @ApiProperty({ description: 'Provider key', example: 'mistral' })
+  @ApiProperty({ description: 'Provider key', example: 'scaleway' })
   key: string;
 
-  @ApiProperty({ description: 'Human-readable label', example: 'Mistral' })
+  @ApiProperty({ description: 'Human-readable label', example: 'Scaleway' })
   label: string;
 
   @ApiProperty({
     description: 'Why this provider is recommended',
-    example: 'Generous free tier — recommended to get started',
+    example: 'EU inference on the credential you already use for your servers',
   })
   reason: string;
 
   @ApiProperty({
     description: 'Version-pinned model id preselected for this provider',
-    example: 'mistral-small-2506',
+    example: 'deepseek-v4-flash-0731',
   })
   defaultModel: string;
 }
