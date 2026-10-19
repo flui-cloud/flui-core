@@ -100,7 +100,7 @@ export interface KnowledgeSources {
 
 export const KNOWLEDGE_SOURCES: KnowledgeSources = {
   docsRepo: 'dawit-io/flui-docs',
-  docsRef: 'b15332bf2ced531ea0c9252b178334cb0a7930a2',
+  docsRef: '66da24c09953f0860bc206a41b80ff99dad13a7c',
   specRepo: 'flui-cloud/flui-spec',
   specRef: 'v0.5.0',
 };

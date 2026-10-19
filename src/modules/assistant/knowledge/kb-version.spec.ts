@@ -33,17 +33,6 @@ const CLI_VERSION = (
   ) as { version: string }
 ).version;
 
-/**
- * 0.14.0-rc.1 was built from the local docs checkout because the pinned
- * docsRef lacks the task guides; this exemption names that build and expires
- * with the release. To close it: push flui-docs, set KNOWLEDGE_SOURCES.docsRef,
- * run `FLUI_KB_SOURCE=remote pnpm kb`, delete this exemption.
- */
-const PENDING_DOCS_REF: { release: string; builtFromDocs: string } | null = {
-  release: '0.14.0-rc.1',
-  builtFromDocs: '2910f64eac2d27b2e0fdafa740c21deeac4d14d0',
-};
-
 const ids = KB.sections.map((s) => s.id);
 const docsSections = KB.sections.filter((s) => s.source === 'flui-docs');
 const prefixed = (prefix: string): number =>
@@ -66,23 +55,9 @@ describe('the compiled assistant knowledge base', () => {
     });
   });
 
-  describe('docs provenance', () => {
-    const exempt =
-      PENDING_DOCS_REF !== null && RELEASE.version === PENDING_DOCS_REF.release;
-
-    (exempt ? it.skip : it)(
-      'was built from the pinned docsRef, not a local checkout',
-      () => {
-        expect(SOURCES.docs.ref).toBe(KNOWLEDGE_SOURCES.docsRef);
-        expect(SOURCES.docs.dirty ?? false).toBe(false);
-      },
-    );
-
-    it('carries a D-K5 exemption only for the release and build it names', () => {
-      if (PENDING_DOCS_REF === null) return;
-      expect(RELEASE.version).toBe(PENDING_DOCS_REF.release);
-      expect(SOURCES.docs.ref).toBe(PENDING_DOCS_REF.builtFromDocs);
-    });
+  it('was built from the pinned docsRef with no local edits', () => {
+    expect(SOURCES.docs.ref).toBe(KNOWLEDGE_SOURCES.docsRef);
+    expect(SOURCES.docs.dirty ?? false).toBe(false);
   });
 
   describe('contents', () => {
