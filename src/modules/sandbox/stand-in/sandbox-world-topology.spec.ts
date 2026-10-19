@@ -1,3 +1,5 @@
+jest.mock('@kubernetes/client-node', () => ({}));
+
 import { firstValueFrom, take, toArray } from 'rxjs';
 import {
   exampleTopology,
@@ -5,12 +7,18 @@ import {
   exampleTopologyStream,
 } from './sandbox-world-topology';
 import { APPS, CLUSTER_ID, MACHINES } from './sandbox-world-core';
+import {
+  applyScope,
+  exampleScope,
+} from '../../topology/services/topology-scope.service';
 import { exampleClusterFirewall, exampleInstances } from './sandbox-world';
 import { exampleScalingPreview } from './sandbox-world-scaling';
 import { SCALING_GROUP_ID } from './sandbox-world-scaling';
 import {
+  TopologyAppKind,
   TopologyAppStatus,
   TopologyArchitecture,
+  TopologyClusterType,
   TopologyEndpointKind,
   TopologyEventType,
   TopologyOverlay,
@@ -242,6 +250,108 @@ describe('the example topology looks like a real, busy fleet', () => {
       world.stats.errorCount + world.stats.warningCount,
     ).toBeLessThanOrEqual(3);
     expect(world.stats.warningCount).toBeGreaterThanOrEqual(1);
+  });
+});
+
+describe('the example control cluster runs what Flui runs for itself', () => {
+  const control = world.clusters.find(
+    (c) => c.type === TopologyClusterType.CONTROL,
+  )!;
+  const platform = world.apps.filter((a) => a.kind === TopologyAppKind.SYSTEM);
+  const bySlug = (name: string) => platform.find((a) => a.name === name)!;
+  const controlServers = new Set(
+    world.servers.filter((s) => s.clusterId === control.id).map((s) => s.id),
+  );
+
+  it('flags every platform app as system, on the control cluster only', () => {
+    expect(platform.map((a) => a.name).sort()).toEqual(
+      [
+        'alertmanager',
+        'cert-manager',
+        'cert-manager-cainjector',
+        'cert-manager-webhook',
+        'coredns',
+        'flui-api',
+        'flui-web',
+        'grafana',
+        'kube-state-metrics',
+        'loki',
+        'metrics-server',
+        'postgres',
+        'redis',
+        'traefik',
+        'vmagent',
+        'vmalert',
+        'vmsingle',
+        'zitadel',
+      ].sort(),
+    );
+    for (const app of platform) {
+      expect(app.clusterId).toBe(control.id);
+      expect(app.projectId).toBeNull();
+      for (const r of app.replicas)
+        expect(controlServers.has(r.serverId)).toBe(true);
+    }
+    expect(
+      world.apps.filter(
+        (a) => a.clusterId === control.id && a.kind !== TopologyAppKind.SYSTEM,
+      ),
+    ).toHaveLength(0);
+  });
+
+  it('puts each one in the namespace its manifests install it in', () => {
+    expect(bySlug('flui-api').namespace).toBe('flui-system');
+    expect(bySlug('postgres').namespace).toBe('flui-system');
+    expect(bySlug('zitadel').namespace).toBe('flui-system');
+    expect(bySlug('vmsingle').namespace).toBe('flui-control');
+    expect(bySlug('alertmanager').namespace).toBe('flui-control');
+    expect(bySlug('traefik').namespace).toBe('kube-system');
+    expect(bySlug('cert-manager').namespace).toBe('cert-manager');
+  });
+
+  it('links them inside the control cluster, on the ports they listen on', () => {
+    const label = (from: string, to: string) =>
+      world.links.find(
+        (l) => l.from.appId === bySlug(from).id && l.to.appId === bySlug(to).id,
+      )?.label;
+    expect(label('flui-api', 'postgres')).toBe(':5432');
+    expect(label('flui-api', 'redis')).toBe(':6379');
+    expect(label('zitadel', 'postgres')).toBe(':5432');
+    expect(label('vmagent', 'vmsingle')).toBe(':8428');
+    expect(label('vmalert', 'vmsingle')).toBe(':8428');
+    expect(label('vmalert', 'alertmanager')).toBe(':9093');
+    expect(label('grafana', 'loki')).toBe(':3100');
+    const ids = new Set(platform.map((a) => a.id));
+    for (const link of world.links.filter(
+      (l) => l.from.appId && ids.has(l.from.appId),
+    )) {
+      expect(ids.has(link.to.appId!)).toBe(true);
+      expect(link.crossCluster).toBe(false);
+    }
+  });
+
+  it('keeps the control servers requested below what they hold', () => {
+    for (const server of world.servers.filter((s) =>
+      controlServers.has(s.id),
+    )) {
+      const c = server.capacity!;
+      expect(c.requestedMemMi).toBeLessThan(c.allocatableMemMi! * 0.5);
+      expect(c.requestedCpuM).toBeLessThan(c.allocatableCpuM! * 0.75);
+    }
+  });
+
+  it('shows them to a guest who asks for system apps, and only then', () => {
+    const shown = applyScope(world, exampleScope(world, true));
+    const hidden = applyScope(world, exampleScope(world, false));
+    expect(
+      shown.apps.filter((a) => a.kind === TopologyAppKind.SYSTEM),
+    ).toHaveLength(platform.length);
+    expect(hidden.apps.some((a) => a.kind === TopologyAppKind.SYSTEM)).toBe(
+      false,
+    );
+    expect(shown.clusters.find((c) => c.id === control.id)!.counts.apps).toBe(
+      platform.length,
+    );
   });
 });
 

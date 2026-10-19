@@ -24,6 +24,7 @@ import {
 import { WORLD_APPS_EU_A } from './sandbox-world-topology-apps-eu';
 import { WORLD_APPS_EU_B } from './sandbox-world-topology-apps-eu-2';
 import { WORLD_APPS_OTHER } from './sandbox-world-topology-apps-other';
+import { WORLD_APPS_CONTROL } from './sandbox-world-topology-apps-control';
 
 export * from './sandbox-world-topology-fleet';
 export * from './sandbox-world-topology-apps';
@@ -32,6 +33,7 @@ export const WORLD_APPS: WorldApp[] = [
   ...WORLD_APPS_EU_A,
   ...WORLD_APPS_EU_B,
   ...WORLD_APPS_OTHER,
+  ...WORLD_APPS_CONTROL,
 ];
 
 export interface WorldLink {
@@ -101,7 +103,7 @@ export const WORLD_LINKS: WorldLink[] = [
   route(US, 'docs', 6, 0, 'us.docs.northwind-labs.eu'),
   route(ASIA, 'edge-cache', 90, 0.5, 'asia.shop.northwind-labs.eu'),
   route(CONTROL, 'flui-api', 6, 0, 'api.northwind-labs.eu'),
-  route(CONTROL, 'flui-dashboard', 3, 0, 'flui.northwind-labs.eu'),
+  route(CONTROL, 'flui-web', 3, 0, 'flui.northwind-labs.eu'),
   route(CONTROL, 'zitadel', 2, 0, 'login.northwind-labs.eu'),
   route(STAGING, 'storefront', 1, 0, 'staging.shop.northwind-labs.eu'),
 
@@ -136,8 +138,14 @@ export const WORLD_LINKS: WorldLink[] = [
   uses(ASIA, 'edge-cache', 'edge-api', 'env-reference'),
   uses(ASIA, 'edge-cache', 'image-cache', 'env-reference'),
   uses(ASIA, 'edge-api', 'edge-sessions'),
-  uses(CONTROL, 'flui-api', 'postgres'),
-  uses(CONTROL, 'flui-api', 'redis'),
+  uses(CONTROL, 'flui-api', 'postgres', 'env-reference'),
+  uses(CONTROL, 'flui-api', 'redis', 'env-reference'),
+  uses(CONTROL, 'zitadel', 'postgres', 'env-reference'),
+  uses(CONTROL, 'vmagent', 'vmsingle', 'env-reference'),
+  uses(CONTROL, 'vmalert', 'vmsingle', 'env-reference'),
+  uses(CONTROL, 'vmalert', 'alertmanager', 'env-reference'),
+  uses(CONTROL, 'grafana', 'vmsingle', 'env-reference'),
+  uses(CONTROL, 'grafana', 'loki', 'env-reference'),
   uses(STAGING, 'orders-api', 'orders-db'),
   uses(STAGING, 'storefront', 'orders-api', 'env-reference'),
 ];

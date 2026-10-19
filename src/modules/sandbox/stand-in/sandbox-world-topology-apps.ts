@@ -22,6 +22,8 @@ export interface WorldApp {
   name: string;
   category: WorldCategory;
   system?: boolean;
+  /** Where a platform app runs; user apps get their own `northwind-*` namespace. */
+  namespace?: 'flui-system' | 'flui-control' | 'kube-system' | 'cert-manager';
   workload: 'deployment' | 'statefulset' | 'daemonset';
   exposure: 'public' | 'internal' | 'cluster';
   ramMb: number;

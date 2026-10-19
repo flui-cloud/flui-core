@@ -207,9 +207,7 @@ function appDto(app: WorldApp, now: number): TopologyAppDto {
     kind: app.system ? TopologyAppKind.SYSTEM : TopologyAppKind.USER,
     workloadKind: app.workload as TopologyWorkloadKind,
     exposure: app.exposure as TopologyExposure,
-    namespace: app.system
-      ? 'flui-system'
-      : `northwind-${app.stack ?? app.slug}`,
+    namespace: app.namespace ?? `northwind-${app.stack ?? app.slug}`,
     ...statusOf(app, now),
     ramRequestMB: app.ramMb,
     ramLimitMB: app.ramMb * 2,
