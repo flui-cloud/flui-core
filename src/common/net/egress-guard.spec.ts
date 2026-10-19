@@ -205,6 +205,74 @@ describe('which addresses this installation will connect to', () => {
       expect(res.status).toBe(200);
     });
 
+    describe('which statuses resolve', () => {
+      let statusServer: http.Server;
+      let sPort: number;
+
+      beforeAll(async () => {
+        statusServer = http.createServer((req, res) => {
+          const code = Number((req.url ?? '/200').slice(1)) || 200;
+          res.writeHead(code, { 'content-type': 'application/json' });
+          res.end(JSON.stringify({ status: code }));
+        });
+        await new Promise<void>((resolve) =>
+          statusServer.listen(0, '127.0.0.1', resolve),
+        );
+        sPort = (statusServer.address() as { port: number }).port;
+      });
+
+      afterAll(async () => {
+        await new Promise<void>((resolve) =>
+          statusServer.close(() => resolve()),
+        );
+      });
+
+      const allow = { allowedHosts: ['localhost'] };
+
+      it.each([404, 429, 500])(
+        'rejects a %i like axios does when the caller chose nothing',
+        async (code) => {
+          await expect(
+            guardedRequest({ url: `http://localhost:${sPort}/${code}` }, allow),
+          ).rejects.toMatchObject({ response: { status: code } });
+        },
+      );
+
+      it('rejects a non-2xx even when the caller spelled validateStatus as undefined', async () => {
+        await expect(
+          guardedRequest(
+            {
+              url: `http://localhost:${sPort}/429`,
+              validateStatus: undefined,
+            },
+            allow,
+          ),
+        ).rejects.toMatchObject({ response: { status: 429 } });
+      });
+
+      it('resolves a 2xx', async () => {
+        const res = await guardedRequest(
+          { url: `http://localhost:${sPort}/201` },
+          allow,
+        );
+        expect(res.status).toBe(201);
+      });
+
+      it('resolves any status for a caller that handles statuses itself', async () => {
+        const res = await guardedRequest(
+          { url: `http://localhost:${sPort}/404`, validateStatus: () => true },
+          allow,
+        );
+        expect(res.status).toBe(404);
+      });
+
+      it('still rejects a non-2xx at the end of followed redirects', async () => {
+        await expect(
+          guardedRequest({ url: `http://localhost:${sPort}/503` }, allow, 3),
+        ).rejects.toMatchObject({ response: { status: 503 } });
+      });
+    });
+
     it('does not follow redirects by default, at the wire and not just in config', async () => {
       const redirector = http.createServer((req, res) => {
         if (req.url === '/redir') {

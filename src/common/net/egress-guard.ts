@@ -356,6 +356,19 @@ export function guardedRequestOptions(
   };
 }
 
+function isSuccessStatus(status: number): boolean {
+  return status >= 200 && status < 300;
+}
+
+// Passing `validateStatus: undefined` to axios resolves every status, so an
+// absent caller choice must become axios's own default, not undefined.
+function finalValidateStatus(
+  chosen: AxiosRequestConfig['validateStatus'],
+): AxiosRequestConfig['validateStatus'] {
+  if (chosen === undefined) return isSuccessStatus;
+  return chosen;
+}
+
 /**
  * The way to make one of these requests. Prefer it to assembling the pieces.
  *
@@ -390,9 +403,8 @@ export async function guardedRequest<T = unknown>(
         hop < maxGuardedRedirects
           ? (status) =>
               (status >= 300 && status < 400) ||
-              (config.validateStatus?.(status) ??
-                (status >= 200 && status < 300))
-          : config.validateStatus,
+              (config.validateStatus?.(status) ?? isSuccessStatus(status))
+          : finalValidateStatus(config.validateStatus),
     });
 
     const location =
