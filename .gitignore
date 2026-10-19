@@ -97,6 +97,7 @@ ngrok.yml
 # Assistant KB — fetched from pinned refs at build, not committed (only dist/kb.json is)
 src/modules/assistant/knowledge/sources/concepts/
 src/modules/assistant/knowledge/sources/cli-prose/
+src/modules/assistant/knowledge/sources/tasks/
 src/modules/assistant/knowledge/sources/flui-manifest.schema.json
 src/modules/assistant/knowledge/sources/SOURCES.lock.json
 src/modules/assistant/knowledge/generated/

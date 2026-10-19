@@ -9,12 +9,16 @@ and human-auditable. Everything here is committed so behavior is predictable and
 ```
 sources/      hand-authored + vendored snapshots (the inputs)
   guardrails.md                 — authored: identity, scope fence, version-awareness, no-invention, safety
-  concepts/                     — vendored from flui-docs (kb:sync)
+  authored/capabilities.md      — authored: what Flui does and does not do (evidence in HTML comments, stripped at build)
+  authored/dashboard-map.yaml   — authored: one entry per dashboard page (rendered by kb:dashboard-map)
+  concepts/                     — vendored from flui-docs, .md and .mdx (kb:sync)
+  tasks/                        — vendored from flui-docs task guides, .mdx (kb:sync)
   cli-prose/                    — vendored from flui-docs (kb:sync)
   flui-manifest.schema.json     — vendored from flui-spec (kb:sync)
   SOURCES.lock.json             — git refs of the vendored sources
 generated/    derived, do not edit by hand
   cli-reference.generated.md    — from `oclif manifest` (kb:cli-ref) — ground truth for commands/flags
+  dashboard-map.generated.md    — from authored/dashboard-map.yaml, checked against ../flui-dashboard (kb:dashboard-map)
   version-manifest.generated.json — version binding (kb:version)
 dist/         compiled artifact consumed by the assistant
   kb.json                       — machine artifact (system context)
@@ -31,13 +35,20 @@ runtime mismatch (live platform vs. the matrix it was built against) instead of 
 ## Regenerate
 
 ```bash
-pnpm kb            # sync → cli-ref → version → build   (full pipeline)
+pnpm kb            # sync → dashboard-map → cli-ref → version → build   (full pipeline)
 # or individually:
 pnpm kb:sync       # fetch concepts/cli prose + schema from flui-docs / flui-spec
 pnpm kb:cli-ref    # render the CLI reference from `oclif manifest`
 pnpm kb:version    # stamp the version manifest from release.config + cli/package.json + schema
+pnpm kb:dashboard-map  # check the dashboard map against the dashboard checkout and render it
 pnpm kb:build      # compile sources + generated → dist/kb.json + dist/kb.md
 ```
+
+`kb:build` cleans MDX with `scripts/kb-mdx.ts` (imports dropped, tabs become `**Label:**`
+lines, screenshot and diagram captions kept as text, HTML comments stripped outside code)
+and fails on any component it does not know. Pages with `draft: true` are left out.
+`kb-version.spec.ts` fails when `kb.json` disagrees with the CLI version, `RELEASE` or the
+pinned `docsRef`, or lacks the task guides and authored pages.
 
 Only `dist/kb.json` is committed; the fetched sources are gitignored working files.
 

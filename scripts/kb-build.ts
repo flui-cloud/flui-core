@@ -1,20 +1,24 @@
 /**
  * kb-build — compile the knowledge base into a single versioned artifact.
  *
- * Fuses the hand-authored guardrails, the generated version manifest + CLI reference,
- * and the vendored concept/CLI prose + flui.yaml schema into:
+ * Fuses the hand-authored guardrails and pages (capabilities), the generated version
+ * manifest, CLI reference and dashboard map, and the synced docs (concepts, task guides,
+ * CLI prose; MDX cleaned by kb-mdx) + flui.yaml schemas into:
  *   - dist/kb.json  — machine artifact consumed by the assistant (system context)
  *   - dist/kb.md    — one concatenated, human-inspectable document
  * Both are committed and stamped with the compatibility matrix, so behavior is auditable.
  */
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import * as yaml from 'js-yaml';
+import { cleanMdx, leftoverComponents, stripHtmlComments } from './kb-mdx';
 
 const ROOT = path.resolve(__dirname, '..');
 const KB = path.join(ROOT, 'src/modules/assistant/knowledge');
 const SRC = path.join(KB, 'sources');
 const GEN = path.join(KB, 'generated');
 const DIST = path.join(KB, 'dist');
+const AUTHORED = path.join(SRC, 'authored');
 
 interface Section {
   id: string;
@@ -38,34 +42,97 @@ interface CompiledKb {
   sections: Section[];
 }
 
-function readFrontmatter(raw: string): { title?: string; body: string } {
-  if (!raw.startsWith('---')) return { body: raw };
+function readFrontmatter(raw: string): {
+  title?: string;
+  draft: boolean;
+  body: string;
+} {
+  if (!raw.startsWith('---')) return { draft: false, body: raw };
   const end = raw.indexOf('\n---', 3);
-  if (end === -1) return { body: raw };
+  if (end === -1) return { draft: false, body: raw };
   const header = raw.slice(3, end);
   const body = raw.slice(end + 4).replace(/^\s*\n/, '');
-  const titleLine = header
-    .split('\n')
-    .find((l) => l.trim().startsWith('title:'));
-  const title = titleLine
-    ?.slice(titleLine.indexOf(':') + 1)
-    .trim()
-    .replace(/^["']|["']$/g, '');
-  return { title, body };
+  const field = (name: string): string | undefined => {
+    const line = header.split('\n').find((l) => l.startsWith(`${name}:`));
+    return line
+      ?.slice(line.indexOf(':') + 1)
+      .trim()
+      .replace(/^["']|["']$/g, '');
+  };
+  return { title: field('title'), draft: field('draft') === 'true', body };
 }
 
+const skippedDrafts: string[] = [];
+const markupProblems: string[] = [];
+
+/**
+ * Draft pages are not published on docs.flui.cloud, so they stay out: the
+ * assistant would link a page that 404s and repeat text the author has not
+ * released.
+ */
 function loadDir(dir: string, source: string, prefix: string): Section[] {
   if (!fs.existsSync(dir)) return [];
   return fs
     .readdirSync(dir)
-    .filter((f) => f.endsWith('.md'))
+    .filter((f) => /\.mdx?$/.test(f))
     .sort()
-    .map((file) => {
+    .flatMap((file) => {
       const raw = fs.readFileSync(path.join(dir, file), 'utf8');
-      const { title, body } = readFrontmatter(raw);
-      const id = `${prefix}/${file.replace(/\.md$/, '')}`;
-      return { id, title: title ?? id, source, body: body.trim() };
+      const { title, draft, body } = readFrontmatter(raw);
+      const id = `${prefix}/${file.replace(/\.mdx?$/, '')}`;
+      if (draft) {
+        skippedDrafts.push(id);
+        return [];
+      }
+      const text = file.endsWith('.mdx')
+        ? cleanMdx(body)
+        : stripHtmlComments(body).trim();
+      for (const tag of new Set(leftoverComponents(text))) {
+        markupProblems.push(`${id}: ${tag}`);
+      }
+      return [{ id, title: title ?? id, source, body: text }];
     });
+}
+
+function requiredPage(
+  file: string,
+  id: string,
+  source: string,
+  hint: string,
+): Section {
+  if (!fs.existsSync(file)) {
+    throw new Error(
+      `kb-build: ${path.relative(ROOT, file)} is missing — ${hint}`,
+    );
+  }
+  const { title, body } = readFrontmatter(fs.readFileSync(file, 'utf8'));
+  const text = stripHtmlComments(body).trim();
+  return { id, title: title ?? id, source, body: text };
+}
+
+function authoredSections(): Section[] {
+  return [
+    requiredPage(
+      path.join(AUTHORED, 'capabilities.md'),
+      'authored/capabilities',
+      'flui-authored',
+      'the capabilities page is part of the knowledge base.',
+    ),
+    requiredPage(
+      path.join(GEN, 'dashboard-map.generated.md'),
+      'authored/dashboard-map',
+      'flui-dashboard-map',
+      'run `pnpm kb:dashboard-map` (needs a flui-dashboard checkout).',
+    ),
+  ];
+}
+
+function dashboardMapProvenance(): unknown {
+  const map = yaml.load(
+    fs.readFileSync(path.join(AUTHORED, 'dashboard-map.yaml'), 'utf8'),
+    { schema: yaml.JSON_SCHEMA },
+  ) as { generatedFrom?: unknown };
+  return map?.generatedFrom ?? null;
 }
 
 /**
@@ -143,10 +210,18 @@ function main(): void {
 
   const sections: Section[] = [
     ...loadDir(path.join(SRC, 'concepts'), 'flui-docs', 'concepts'),
+    ...loadDir(path.join(SRC, 'tasks'), 'flui-docs', 'tasks'),
+    ...authoredSections(),
     ...cliReferenceSection(),
     ...loadDir(path.join(SRC, 'cli-prose'), 'flui-docs', 'cli'),
     ...schemaSection(),
   ];
+
+  if (markupProblems.length) {
+    throw new Error(
+      `kb-build: MDX markup left after cleaning (teach scripts/kb-mdx.ts the component):\n  ${markupProblems.join('\n  ')}`,
+    );
+  }
 
   const kb: CompiledKb = {
     kbVersion: version.kbVersion,
@@ -154,7 +229,14 @@ function main(): void {
       cli: version.cli,
       platform: version.platform,
       spec: version.spec,
-      sources: sourcesLock?.syncedFrom ?? null,
+      sources: sourcesLock
+        ? {
+            ...sourcesLock.syncedFrom,
+            dashboardMap: dashboardMapProvenance(),
+            counts: sourcesLock.counts,
+            skippedDrafts,
+          }
+        : null,
     },
     guardrails,
     sections,
@@ -187,7 +269,7 @@ function main(): void {
   fs.writeFileSync(path.join(DIST, 'kb.md'), md.join('\n') + '\n');
 
   console.log(
-    `kb-build: v${kb.kbVersion} · ${sections.length} sections · platform ${kb.compatibility.platform.version} · spec ${kb.compatibility.spec.application.apiVersion} + ${kb.compatibility.spec.catalogApp.apiVersion}`,
+    `kb-build: v${kb.kbVersion} · ${sections.length} sections (${skippedDrafts.length} drafts skipped) · platform ${kb.compatibility.platform.version} · spec ${kb.compatibility.spec.application.apiVersion} + ${kb.compatibility.spec.catalogApp.apiVersion}`,
   );
 }
 

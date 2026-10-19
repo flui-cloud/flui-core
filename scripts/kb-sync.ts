@@ -1,7 +1,7 @@
 /**
  * kb-sync — materialize the KB sources from the pinned knowledge refs.
  *
- * Fetches flui-docs (concepts + CLI prose) and the flui-spec schema at the refs pinned in
+ * Fetches flui-docs (concepts, task guides, CLI prose; .md and .mdx) and the flui-spec schema at the refs pinned in
  * release.config (`KNOWLEDGE_SOURCES`), into a gitignored working tree — no committed doc
  * copies, so there is no duplication to drift. A local checkout can be used instead via
  * FLUI_DOCS_DIR / FLUI_SPEC_DIR (offline dev). Only the compiled dist/kb.json is committed.
@@ -53,17 +53,27 @@ function copyMarkdownDir(from: string, to: string): number {
     throw new Error(`Source docs dir not found: ${from}`);
   fs.rmSync(to, { recursive: true, force: true });
   fs.mkdirSync(to, { recursive: true });
-  const files = fs.readdirSync(from).filter((f) => f.endsWith('.md'));
+  const files = fs.readdirSync(from).filter((f) => /\.mdx?$/.test(f));
   for (const file of files) {
     fs.copyFileSync(path.join(from, file), path.join(to, file));
   }
   return files.length;
 }
 
-function resolveDocsRoot(): { root: string; ref: string; origin: string } {
+function resolveDocsRoot(): {
+  root: string;
+  ref: string;
+  origin: string;
+  dirty?: boolean;
+} {
   const local = localDir('FLUI_DOCS_DIR', 'flui-docs');
   if (local) {
-    return { root: local, ref: gitRef(local), origin: 'local' };
+    return {
+      root: local,
+      ref: gitRef(local),
+      origin: 'local',
+      dirty: gitDirty(local),
+    };
   }
   try {
     return {
@@ -135,6 +145,22 @@ function gitRef(dir: string): string {
   }
 }
 
+function gitDirty(dir: string): boolean {
+  try {
+    return (
+      execFileSync(
+        'git',
+        ['-C', dir, 'status', '--porcelain', '--', 'src/content/docs'],
+        {
+          encoding: 'utf8',
+        },
+      ).trim().length > 0
+    );
+  } catch {
+    return true;
+  }
+}
+
 function main(): void {
   fs.mkdirSync(SRC, { recursive: true });
   const docs = resolveDocsRoot();
@@ -142,6 +168,10 @@ function main(): void {
   const concepts = copyMarkdownDir(
     path.join(docsContent, 'concepts'),
     path.join(SRC, 'concepts'),
+  );
+  const tasks = copyMarkdownDir(
+    path.join(docsContent, 'tasks'),
+    path.join(SRC, 'tasks'),
   );
   const cli = copyMarkdownDir(
     path.join(docsContent, 'cli'),
@@ -155,6 +185,7 @@ function main(): void {
         repo: KNOWLEDGE_SOURCES.docsRepo,
         ref: docs.ref,
         origin: docs.origin,
+        ...(docs.dirty === undefined ? {} : { dirty: docs.dirty }),
       },
       spec: {
         repo: KNOWLEDGE_SOURCES.specRepo,
@@ -162,7 +193,7 @@ function main(): void {
         origin: spec.origin,
       },
     },
-    counts: { concepts, cliProse: cli, schema: SCHEMA_FILES.length },
+    counts: { concepts, tasks, cliProse: cli, schema: SCHEMA_FILES.length },
   };
   fs.writeFileSync(
     path.join(SRC, 'SOURCES.lock.json'),
@@ -170,7 +201,7 @@ function main(): void {
   );
 
   console.log(
-    `kb-sync: ${concepts} concepts + ${cli} cli docs + schema (docs ${docs.origin} ${docs.ref.slice(0, 7)}, spec ${spec.origin} ${spec.ref})`,
+    `kb-sync: ${concepts} concepts + ${tasks} task guides + ${cli} cli docs + schema (docs ${docs.origin} ${docs.ref.slice(0, 7)}${docs.dirty ? ' DIRTY' : ''}, spec ${spec.origin} ${spec.ref})`,
   );
   if (docs.origin === 'local' || spec.origin === 'local') {
     console.warn(
