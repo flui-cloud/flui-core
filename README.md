@@ -22,8 +22,8 @@
 
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/topology-app-dark.png">
-    <img src="docs/assets/topology-app-light.png" alt="The Flui dashboard mapping one application with the services, databases and queues it talks to, and the traffic reaching it from the internet" width="820">
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/flui-overview-dark.png">
+    <img src="docs/assets/flui-overview-light.png" alt="What Flui builds on your providers, a control plane on servers you own joined to each provider by the Flui network, next to the three ways to drive it: the dashboard, the flui CLI and AI agents over MCP" width="100%">
   </picture>
 </p>
 
