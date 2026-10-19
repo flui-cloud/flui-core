@@ -2,6 +2,32 @@
   "schemaVersion": 2,
   "releases": [
     {
+      "version": "0.14.0-rc.3",
+      "publishedAt": "2026-10-19T14:57:07.547Z",
+      "bootstrapRef": "8231774",
+      "images": {
+        "fluiApi": "0.14.0-rc.3",
+        "fluiWeb": "0.14.0-rc.3",
+        "fluiAuthz": "0.7.0"
+      },
+      "notes": [
+        "Demo visitors spend fewer tokens per question: a turn is admitted only when the remaining share covers it, a turn that runs out still ends with a short answer, and the knowledge sent for a guest question is capped.",
+        "Messages for demo visitors no longer mention a sandbox or agents they cannot use; the off-topic pause is reported before the rate limit.",
+        "The demo strip invites visitors to star flui-core on GitHub, and no longer shows them the destructive-actions notice.",
+        "Topology opens the fleet drawn by app in full, with problems and their neighbours one click away."
+      ],
+      "migrations": 0,
+      "requiresBootstrap": false,
+      "k3s": {
+        "version": "v1.35.4+k3s1"
+      },
+      "systemComponents": {
+        "certManager": "v1.17.1",
+        "systemUpgradeController": "v0.20.2"
+      },
+      "manifestSets": []
+    },
+    {
       "version": "0.14.0-rc.2",
       "publishedAt": "2026-10-19T08:00:28.552Z",
       "bootstrapRef": "8231774",
