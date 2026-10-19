@@ -41,6 +41,52 @@ export interface PromptParts {
   page?: string;
 }
 
+/**
+ * A turn's system prompt in two messages. `stable` is byte-identical for every
+ * turn of every user, so a provider that caches whole messages already seen
+ * serves it from the cache; `turn` holds what changes.
+ */
+export interface SystemPrompt {
+  stable: string;
+  turn: string;
+}
+
+/** How much knowledge a turn may carry, for callers whose tokens are capped. */
+export interface KnowledgeCap {
+  maxSections: number;
+  maxChars: number;
+}
+
+export const VISITOR_KNOWLEDGE_CAP: KnowledgeCap = {
+  maxSections: 2,
+  maxChars: 12_000,
+};
+
+export const GUEST_KNOWLEDGE_CAP: KnowledgeCap = {
+  maxSections: 3,
+  maxChars: 24_000,
+};
+
+const EXCERPT_NOTE = '_(Excerpt: the rest of this page is not included.)_';
+
+export function excerpt(body: string, maxChars: number): string {
+  if (body.length <= maxChars) return body;
+  const room = Math.max(maxChars - EXCERPT_NOTE.length - 2, 0);
+  const heading = Math.max(
+    body.lastIndexOf('\n## ', room),
+    body.lastIndexOf('\n### ', room),
+  );
+  const paragraph = body.lastIndexOf('\n\n', room);
+  const cut = excerptCut(heading, paragraph, room);
+  return `${body.slice(0, cut).trimEnd()}\n\n${EXCERPT_NOTE}`;
+}
+
+function excerptCut(heading: number, paragraph: number, room: number): number {
+  if (heading >= room / 2) return heading;
+  if (paragraph >= room / 2) return paragraph;
+  return room;
+}
+
 export interface SectionSelection {
   sectionIds: string[];
   via: SectionPick;
@@ -152,24 +198,25 @@ export class KnowledgeService {
    * the per-turn knowledge and page follow.
    */
   getSystemContext(sectionIds?: string[], parts: PromptParts = {}): string {
-    const sections = this.resolveSections(sectionIds);
-    const corpus = sections
-      .map(
-        (s) =>
-          `## ${s.title}\n_(${SOURCE_LABELS[s.source] ?? 'Flui'})_\n\n${s.body}`,
-      )
-      .join('\n\n');
-    return [
-      KB.guardrails,
-      this.binding,
-      parts.stable,
-      '# Flui knowledge',
-      corpus,
-      parts.page,
-      this.reminder,
-    ]
-      .filter(Boolean)
-      .join('\n\n');
+    return joined(this.systemPrompt(sectionIds, parts));
+  }
+
+  systemPrompt(
+    sectionIds?: string[],
+    parts: PromptParts = {},
+    cap?: KnowledgeCap,
+  ): SystemPrompt {
+    return {
+      stable: this.stablePrefix(parts.stable),
+      turn: [
+        '# Flui knowledge',
+        this.corpus(this.resolveSections(sectionIds), cap),
+        parts.page,
+        this.reminder,
+      ]
+        .filter(Boolean)
+        .join('\n\n'),
+    };
   }
 
   /**
@@ -179,15 +226,21 @@ export class KnowledgeService {
    * burn (and trips per-minute rate limits on small models). Guardrails persist.
    */
   getBaseContext(parts: PromptParts = {}): string {
-    return [
-      KB.guardrails,
-      this.binding,
-      parts.stable,
-      parts.page,
-      this.continuationReminder,
-    ]
-      .filter(Boolean)
-      .join('\n\n');
+    return joined(this.basePrompt(parts));
+  }
+
+  basePrompt(parts: PromptParts = {}): SystemPrompt {
+    return {
+      stable: this.stablePrefix(parts.stable),
+      turn: [parts.page, this.continuationReminder]
+        .filter(Boolean)
+        .join('\n\n'),
+    };
+  }
+
+  /** The sections a capped turn actually carries, in the router's order. */
+  capSections(sectionIds: string[], cap?: KnowledgeCap): string[] {
+    return cap ? sectionIds.slice(0, cap.maxSections) : sectionIds;
   }
 
   /**
@@ -224,6 +277,24 @@ export class KnowledgeService {
     };
   }
 
+  private stablePrefix(stable?: string): string {
+    return [KB.guardrails, this.binding, stable].filter(Boolean).join('\n\n');
+  }
+
+  private corpus(sections: KbSection[], cap?: KnowledgeCap): string {
+    const picked = cap ? sections.slice(0, cap.maxSections) : sections;
+    let left = cap?.maxChars ?? Infinity;
+    return picked
+      .map((s, i) => {
+        const body = cap
+          ? excerpt(s.body, Math.floor(left / (picked.length - i)))
+          : s.body;
+        left -= body.length;
+        return `## ${s.title}\n_(${SOURCE_LABELS[s.source] ?? 'Flui'})_\n\n${body}`;
+      })
+      .join('\n\n');
+  }
+
   private resolveSections(sectionIds?: string[]): KbSection[] {
     if (!sectionIds) return KB.sections;
     const picked = sectionIds
@@ -245,4 +316,8 @@ export class KnowledgeService {
       `- Knowledge base version: ${KB.kbVersion}`,
     ].join('\n');
   }
+}
+
+function joined(prompt: SystemPrompt): string {
+  return [prompt.stable, prompt.turn].filter(Boolean).join('\n\n');
 }

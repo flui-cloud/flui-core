@@ -83,6 +83,9 @@ export class InferenceResolverService {
       baseUrl: inference.baseUrl,
       apiKey,
       defaultModel: inference.defaultModel,
+      ...(inference.acceptsSeveralSystemMessages
+        ? { acceptsSeveralSystemMessages: true }
+        : {}),
     };
   }
 

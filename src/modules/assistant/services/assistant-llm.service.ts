@@ -254,6 +254,14 @@ function roughTokens(text: string): number {
   return Math.ceil(text.length / 4);
 }
 
+/** The same rough count, for a prompt not sent yet: what a guest turn is admitted on. */
+export function estimatePromptTokens(
+  messages: ChatCompletionMessage[],
+  tools?: unknown[],
+): number {
+  return roughTokens(JSON.stringify(messages) + JSON.stringify(tools ?? []));
+}
+
 /** OpenAI-style `prompt_tokens_details`, DeepSeek's own field, or the Anthropic-compatible one. */
 export function cachedPromptTokens(
   usage: ChatCompletionUsage | undefined,

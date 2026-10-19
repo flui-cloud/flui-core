@@ -8,4 +8,5 @@ export const SCALEWAY_INFERENCE: InferenceCapability = {
   euDataResidency: true,
   sharesComputeCredentials: true,
   defaultModel: 'deepseek-v4-flash-0731',
+  acceptsSeveralSystemMessages: true,
 };

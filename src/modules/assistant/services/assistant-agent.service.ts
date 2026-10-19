@@ -49,14 +49,26 @@ import { InferenceEndpoint } from '../../providers/interfaces/inference-capabili
 import { AgentRequestDto } from '../dto/agent-request.dto';
 import { AgentResult, AgentToolStep, DocLink } from '../interfaces/agent';
 import { AgentEmitter } from '../interfaces/agent-events';
-import { ChatCompletionMessage, ChatTool } from '../interfaces/chat-completion';
+import {
+  ChatCompletionMessage,
+  ChatTool,
+  ToolCall,
+} from '../interfaces/chat-completion';
 import {
   AssistantInferenceService,
-  GUEST_BUDGET_SPENT_MESSAGE,
+  guestBudgetMessage,
 } from './assistant-inference.service';
 import { AssistantGenerationService } from './assistant-generation.service';
 import { AssistantGuardService } from './assistant-guard.service';
-import { KnowledgeService } from './knowledge.service';
+import {
+  GUEST_KNOWLEDGE_CAP,
+  KnowledgeCap,
+  KnowledgeService,
+  SystemPrompt,
+  VISITOR_KNOWLEDGE_CAP,
+} from './knowledge.service';
+import { estimatePromptTokens } from './assistant-llm.service';
+import { outputTokenLimit } from '../assistant.constants';
 import { AGENT_TOOL_NOTE } from '../policy';
 import { principalFromUser } from '../../iam/interfaces/iam.types';
 import { SurfaceSnapshot } from '@flui-cloud/semantic-surface';
@@ -74,6 +86,29 @@ import {
 import { McpToolContext } from '../../mcp/tools/mcp-tool.util';
 
 const MAX_ITERATIONS = 8;
+const CLOSING_MAX_TOKENS = 1024;
+const DEFAULT_OUTPUT_TOKENS = 2048;
+
+const CLOSING_NOTE = {
+  visitor:
+    'The assistant time for this visit is almost used up, so this is your last answer in this conversation. Answer now from what you already have, briefly and in the language of the conversation, without calling tools. End with one short sentence saying that the assistant time for this visit is used up and that signing in gives them their own space with assistant time of its own.',
+  guest:
+    'The assistant time of this sandbox is almost used up, so this is your last answer in this conversation. Answer now from what you already have, briefly and in the language of the conversation, without calling tools. End with one short sentence saying that this sandbox has used its assistant time and that their own coding agent can carry on over MCP.',
+};
+
+type GuestRoom = 'loop' | 'closing' | 'none';
+
+function systemMessages(prompt: SystemPrompt): ChatCompletionMessage[] {
+  return [
+    { role: 'system', content: prompt.stable },
+    { role: 'system', content: prompt.turn },
+  ];
+}
+
+function knowledgeCap(endpoint: InferenceEndpoint): KnowledgeCap | undefined {
+  if (!endpoint.spender?.guest) return undefined;
+  return endpoint.spender.visitor ? VISITOR_KNOWLEDGE_CAP : GUEST_KNOWLEDGE_CAP;
+}
 // Server-wide enablement for destructive (delete/uninstall) tools — same flag as the
 // headless MCP server. Default off: the assistant refuses them and tells the user how
 // to enable, instead of offering a confirmation it cannot honour.
@@ -112,6 +147,22 @@ export type AgentRunContext = McpToolContext & {
    */
   semanticSurface?: SurfaceSnapshot;
 };
+
+interface LoopState {
+  endpoint: InferenceEndpoint;
+  model: string;
+  dto: AgentRequestDto;
+  ctx: AgentRunContext;
+  approved: Set<string>;
+  conversation: ChatCompletionMessage[];
+  steps: AgentToolStep[];
+  firstSystem: ChatCompletionMessage[];
+  leanSystem: ChatCompletionMessage[];
+  tools: ChatTool[];
+  executed: Map<string, string>;
+  docLinks: DocLink[];
+  emit?: AgentEmitter;
+}
 
 @Injectable()
 export class AssistantAgentService {
@@ -199,10 +250,10 @@ export class AssistantAgentService {
     // iteration and the final synthesis — the KB corpus is dead weight once the model
     // is reasoning over tool results, and re-sending it each loop is what spikes
     // per-minute tokens on small models. Guardrails persist in both.
-    const leanSystem: ChatCompletionMessage = {
-      role: 'system',
-      content: this.knowledge.getBaseContext({ stable: AGENT_TOOL_NOTE }),
-    };
+    const leanSystem = systemMessages(
+      this.knowledge.basePrompt({ stable: AGENT_TOOL_NOTE }),
+    );
+    const cap = knowledgeCap(endpoint);
 
     // A resume (the tail holds the tool_calls the user just decided on) is already
     // past its KB-grounded decision: skip the router LLM call (already on-topic) and
@@ -219,15 +270,22 @@ export class AssistantAgentService {
     // missing surface leaves `firstSystem` byte-for-byte what it was before
     // this field existed (see the safety test).
     const surfaceBlock = renderSurfaceBlock(surface);
-    let firstSystem: ChatCompletionMessage = surfaceBlock
-      ? {
-          role: 'system',
-          content: this.knowledge.getBaseContext({
+    let firstSystem = surfaceBlock
+      ? systemMessages(
+          this.knowledge.basePrompt({
             stable: AGENT_TOOL_NOTE,
             page: surfaceBlock,
           }),
-        }
+        )
       : leanSystem;
+    const tools = toolsForUser(ctx);
+    if (cap) {
+      await this.inference.assertGuestCanAffordTurn(
+        endpoint,
+        estimatePromptTokens([...firstSystem, ...conversation], tools) +
+          Math.ceil(cap.maxChars / 4),
+      );
+    }
     // Doc links for the topics this turn is grounded in — surfaced on the final answer.
     // A resume already made its KB-grounded decision (no router call), so it carries none.
     let docLinks: DocLink[] = [];
@@ -252,17 +310,18 @@ export class AssistantAgentService {
         route.sectionIds,
         lastUserText(turns),
       );
+      const sectionIds = this.knowledge.capSections(selection.sectionIds, cap);
       this.logger.log(
-        `Grounded via ${selection.via}: ${selection.sectionIds.join(', ')}`,
+        `Grounded via ${selection.via}: ${sectionIds.join(', ')}`,
       );
-      docLinks = this.knowledge.docLinksFor(selection.sectionIds);
-      firstSystem = {
-        role: 'system',
-        content: this.knowledge.getSystemContext(selection.sectionIds, {
-          stable: AGENT_TOOL_NOTE,
-          page: surfaceBlock,
-        }),
-      };
+      docLinks = this.knowledge.docLinksFor(sectionIds);
+      firstSystem = systemMessages(
+        this.knowledge.systemPrompt(
+          sectionIds,
+          { stable: AGENT_TOOL_NOTE, page: surfaceBlock },
+          cap,
+        ),
+      );
     }
 
     // Idempotency across the whole conversation: a write/destructive action already
@@ -293,7 +352,7 @@ export class AssistantAgentService {
       steps,
       firstSystem,
       leanSystem,
-      tools: toolsForUser(ctx),
+      tools,
       executed,
       docLinks,
       emit,
@@ -307,47 +366,157 @@ export class AssistantAgentService {
    * re-run, no duplicate UI step), and an iteration that adds no new step means the
    * model is only looping → break to a final, tool-less synthesis.
    */
-  private async runLoop(state: {
-    endpoint: InferenceEndpoint;
-    model: string;
-    dto: AgentRequestDto;
-    ctx: AgentRunContext;
-    approved: Set<string>;
-    conversation: ChatCompletionMessage[];
-    steps: AgentToolStep[];
-    firstSystem: ChatCompletionMessage;
-    leanSystem: ChatCompletionMessage;
-    tools: ChatTool[];
-    executed: Map<string, string>;
-    docLinks: DocLink[];
-    emit?: AgentEmitter;
-  }): Promise<AgentResult> {
-    const { endpoint, model, dto, ctx, approved, conversation, steps, emit } =
-      state;
-    const executed = state.executed;
+  private async runLoop(state: LoopState): Promise<AgentResult> {
     for (let i = 0; i < MAX_ITERATIONS; i++) {
-      if (i > 0 && (await this.guestBudgetSpent(endpoint))) {
-        return this.budgetStop(steps, conversation, state.docLinks);
-      }
-      const msg = await this.generation.generate(
-        endpoint,
-        model,
-        [i === 0 ? state.firstSystem : state.leanSystem, ...conversation],
-        dto,
-        state.tools,
-        emit,
+      const round = await this.iterate(state, i);
+      if (round === 'looping') break;
+      if (round !== 'progress') return round;
+    }
+
+    const room = await this.guestRoom(state);
+    if (room !== 'loop') return this.closeTurn(state, room);
+    // Force one final answer WITHOUT tools so the user gets a synthesis instead of a
+    // dead-end (weaker models never stop calling tools on their own).
+    const finalMsg = await this.generation.generate(
+      state.endpoint,
+      state.model,
+      [...state.leanSystem, ...state.conversation],
+      state.dto,
+      undefined,
+      state.emit,
+    );
+    if (finalMsg) state.conversation.push(finalMsg);
+    return this.answer(state, finalMsg?.content ?? '');
+  }
+
+  private async iterate(
+    state: LoopState,
+    i: number,
+  ): Promise<AgentResult | 'progress' | 'looping'> {
+    if (i > 0) {
+      const room = await this.guestRoom(state, state.tools);
+      if (room !== 'loop') return this.closeTurn(state, room);
+    }
+    const system = i === 0 ? state.firstSystem : state.leanSystem;
+    const msg = await this.generation.generate(
+      state.endpoint,
+      state.model,
+      [...system, ...state.conversation],
+      state.dto,
+      state.tools,
+      state.emit,
+    );
+    if (!msg) {
+      return message(
+        'No response from the inference endpoint.',
+        state.steps,
+        state.conversation,
       );
-      if (!msg) {
-        return message(
-          'No response from the inference endpoint.',
-          steps,
-          conversation,
-        );
-      }
-      conversation.push(msg);
-      if (!msg.tool_calls?.length) {
+    }
+    state.conversation.push(msg);
+    if (!msg.tool_calls?.length) return this.answer(state, msg.content ?? '');
+    return this.toolRound(state, msg.tool_calls);
+  }
+
+  private async answer(
+    state: LoopState,
+    content: string,
+  ): Promise<AgentResult> {
+    const safe = await this.generation.finalizeContent(
+      content,
+      state.conversation,
+      state.steps,
+      state.endpoint,
+      state.model,
+      state.dto,
+      state.leanSystem,
+      state.firstSystem,
+    );
+    return message(safe, state.steps, state.conversation, state.docLinks);
+  }
+
+  /**
+   * Runs one round of tool calls. `looping` when every call was a cached
+   * repeat: the model is going round in circles and should synthesize from
+   * what it already has.
+   */
+  private async toolRound(
+    state: LoopState,
+    toolCalls: ToolCall[],
+  ): Promise<AgentResult | 'progress' | 'looping'> {
+    const { steps, conversation } = state;
+    const stepsBefore = steps.length;
+    const pending = await this.toolExecution.resolveToolCalls(
+      toolCalls,
+      state.ctx,
+      state.approved,
+      conversation,
+      steps,
+      true,
+      state.executed,
+    );
+    emitSteps(state.emit, steps, stepsBefore);
+    if (pending.length) {
+      return {
+        type: 'pending_action',
+        pending,
+        uiActions: collectUiActions(steps),
+        steps,
+        messages: conversation,
+      };
+    }
+    return steps.length === stepsBefore ? 'looping' : 'progress';
+  }
+
+  /**
+   * Whether a guest's turn may take another step: `loop` when what is left
+   * covers the next call and a closing answer after it, `closing` when it
+   * covers only a short answer without tools, `none` when not even that.
+   */
+  private async guestRoom(
+    state: LoopState,
+    tools?: ChatTool[],
+  ): Promise<GuestRoom> {
+    const remaining = await this.inference.guestRemaining(state.endpoint);
+    if (remaining === null) return 'loop';
+    const prompt = [...state.leanSystem, ...state.conversation];
+    const closing = estimatePromptTokens(prompt) + CLOSING_MAX_TOKENS;
+    const next =
+      estimatePromptTokens(prompt, tools) +
+      (outputTokenLimit(state.endpoint.spender, state.dto.maxTokens) ??
+        DEFAULT_OUTPUT_TOKENS);
+    if (remaining >= next + closing) return 'loop';
+    return remaining >= closing ? 'closing' : 'none';
+  }
+
+  /** Ends a guest's turn on its budget with a short answer from what it gathered, when there is room for one. */
+  private async closeTurn(
+    state: LoopState,
+    room: Exclude<GuestRoom, 'loop'>,
+  ): Promise<AgentResult> {
+    const { endpoint, model, dto, conversation, steps } = state;
+    if (room === 'closing') {
+      const note: ChatCompletionMessage = {
+        role: 'user',
+        content: endpoint.spender?.visitor
+          ? CLOSING_NOTE.visitor
+          : CLOSING_NOTE.guest,
+      };
+      const closing = await this.generation
+        .generate(
+          endpoint,
+          model,
+          [...state.leanSystem, ...conversation, note],
+          dto,
+          undefined,
+          state.emit,
+          CLOSING_MAX_TOKENS,
+        )
+        .catch(() => null);
+      if (closing?.content) {
+        conversation.push(closing);
         const safe = await this.generation.finalizeContent(
-          msg.content ?? '',
+          closing.content,
           conversation,
           steps,
           endpoint,
@@ -358,77 +527,14 @@ export class AssistantAgentService {
         );
         return message(safe, steps, conversation, state.docLinks);
       }
-      const stepsBefore = steps.length;
-      const pending = await this.toolExecution.resolveToolCalls(
-        msg.tool_calls,
-        ctx,
-        approved,
-        conversation,
-        steps,
-        true,
-        executed,
-      );
-      emitSteps(emit, steps, stepsBefore);
-      if (pending.length) {
-        return {
-          type: 'pending_action',
-          pending,
-          uiActions: collectUiActions(steps),
-          steps,
-          messages: conversation,
-        };
-      }
-      // Every call this round was a cached repeat — the model is looping. Stop and
-      // let it synthesize from what it already has.
-      if (steps.length === stepsBefore) break;
     }
-
-    if (await this.guestBudgetSpent(endpoint)) {
-      return this.budgetStop(steps, conversation, state.docLinks);
-    }
-    // Force one final answer WITHOUT tools so the user gets a synthesis instead of a
-    // dead-end (weaker models never stop calling tools on their own).
-    const finalMsg = await this.generation.generate(
-      endpoint,
-      model,
-      [state.leanSystem, ...conversation],
-      dto,
-      undefined,
-      emit,
-    );
-    if (finalMsg) conversation.push(finalMsg);
-    const safeFinal = await this.generation.finalizeContent(
-      finalMsg?.content ?? '',
-      conversation,
-      steps,
-      endpoint,
-      model,
-      dto,
-      state.leanSystem,
-      state.firstSystem,
-    );
-    return message(safeFinal, steps, conversation, state.docLinks);
+    return this.budgetStop(state);
   }
 
-  private async guestBudgetSpent(
-    endpoint: InferenceEndpoint,
-  ): Promise<boolean> {
-    const userId = endpoint.spender?.guest ? endpoint.spender.userId : null;
-    if (!userId) return false;
-    const { spent, budget } = await this.inference.guestUsage(userId);
-    return spent >= budget;
-  }
-
-  private budgetStop(
-    steps: AgentToolStep[],
-    conversation: ChatCompletionMessage[],
-    docLinks: DocLink[],
-  ): AgentResult {
-    conversation.push({
-      role: 'assistant',
-      content: GUEST_BUDGET_SPENT_MESSAGE,
-    });
-    return message(GUEST_BUDGET_SPENT_MESSAGE, steps, conversation, docLinks);
+  private budgetStop(state: LoopState): AgentResult {
+    const content = guestBudgetMessage(state.endpoint.spender?.visitor);
+    state.conversation.push({ role: 'assistant', content });
+    return message(content, state.steps, state.conversation, state.docLinks);
   }
 
   private buildContext(

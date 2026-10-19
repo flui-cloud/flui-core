@@ -42,6 +42,30 @@ export function rewriteTokenBudget(
   return Math.min(bounded, cap ?? MAX_ASSISTANT_OUTPUT_TOKENS);
 }
 
+/**
+ * A provider not known to take several system messages gets them joined into
+ * one, the exact text a single message carried before the prompt was split.
+ */
+export function fitSystemMessages(
+  endpoint: InferenceEndpoint,
+  messages: ChatCompletionMessage[],
+): ChatCompletionMessage[] {
+  if (endpoint.acceptsSeveralSystemMessages) return messages;
+  let lead = 0;
+  while (lead < messages.length && messages[lead].role === 'system') lead++;
+  if (lead < 2) return messages;
+  return [
+    {
+      role: 'system',
+      content: messages
+        .slice(0, lead)
+        .map((m) => m.content ?? '')
+        .join('\n\n'),
+    },
+    ...messages.slice(lead),
+  ];
+}
+
 function hostsOf(urls: string[]): string[] {
   return [...new Set(urls.map((u) => hostOf(u) ?? u))];
 }
@@ -76,7 +100,7 @@ export class AssistantGenerationService {
   ): Promise<ChatCompletionMessage | null> {
     const request: ChatCompletionRequest = {
       model,
-      messages,
+      messages: fitSystemMessages(endpoint, messages),
       temperature: dto.temperature ?? DEFAULT_ASSISTANT_TEMPERATURE,
       max_tokens:
         maxTokens ?? outputTokenLimit(endpoint.spender, dto.maxTokens),
@@ -106,12 +130,14 @@ export class AssistantGenerationService {
     endpoint: InferenceEndpoint,
     model: string,
     dto: AgentRequestDto,
-    leanSystem: ChatCompletionMessage,
-    grounding?: ChatCompletionMessage,
+    leanSystem: ChatCompletionMessage[],
+    grounding: ChatCompletionMessage[] = [],
   ): Promise<string> {
     if (!content) return content;
     const sources: string[] = [];
-    if (typeof grounding?.content === 'string') sources.push(grounding.content);
+    for (const m of grounding) {
+      if (typeof m.content === 'string') sources.push(m.content);
+    }
     for (const m of conversation) {
       if (
         (m.role === 'tool' || m.role === 'user') &&
@@ -140,7 +166,7 @@ export class AssistantGenerationService {
     const regenerated = await this.generate(
       endpoint,
       model,
-      [leanSystem, ...conversation, constraint],
+      [...leanSystem, ...conversation, constraint],
       dto,
       undefined,
       undefined,

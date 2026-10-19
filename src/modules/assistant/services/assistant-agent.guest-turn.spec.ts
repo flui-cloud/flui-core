@@ -31,7 +31,7 @@ const endpoint = {
   spender: { userId: guest.userId, guest: true, surface: 'assistant' },
 } as unknown as InferenceEndpoint;
 
-function agent() {
+function agent(on: InferenceEndpoint = endpoint) {
   const guard = {
     route: jest.fn().mockResolvedValue({ offTopic: true, sectionIds: [] }),
     refusal: jest.fn().mockResolvedValue('Only Flui questions here.'),
@@ -63,9 +63,12 @@ function agent() {
   };
   const deps: unknown[] = new Array(39).fill({});
   const inference = {
-    resolveEndpoint: jest.fn().mockResolvedValue({ endpoint, source: 'guest' }),
+    resolveEndpoint: jest
+      .fn()
+      .mockResolvedValue({ endpoint: on, source: 'guest' }),
     resolveModel: jest.fn().mockResolvedValue('pinned-model'),
-    guestUsage: jest.fn().mockResolvedValue({ spent: 0, budget: 200_000 }),
+    guestRemaining: jest.fn().mockResolvedValue(200_000),
+    assertGuestCanAffordTurn: jest.fn().mockResolvedValue(undefined),
     noteOffTopic: jest.fn().mockResolvedValue(undefined),
   };
   deps[0] = inference;
@@ -73,9 +76,10 @@ function agent() {
   deps[2] = generation;
   deps[3] = guard;
   deps[4] = {
-    getBaseContext: () => 'base',
+    basePrompt: () => ({ stable: 'stable', turn: 'base' }),
     getIndexPrompt: () => 'index',
-    getSystemContext: () => 'system',
+    systemPrompt: () => ({ stable: 'stable', turn: 'system' }),
+    capSections: (ids: string[]) => ids,
     docLinksFor: () => [],
     selectSections: () => ({ sectionIds: [], via: 'fallback' }),
   };
@@ -92,6 +96,18 @@ function agent() {
 }
 
 const offTopic = 'Write me a 2000-word poem about the sea.';
+
+const listCall: ChatCompletionMessage = {
+  role: 'assistant',
+  content: null,
+  tool_calls: [
+    {
+      id: 'c1',
+      type: 'function',
+      function: { name: 'app_list', arguments: '{}' },
+    },
+  ],
+};
 
 describe('a guest turn and the on-topic guard', () => {
   it('asks the guard on a fresh turn, and stops an off-topic one there', async () => {
@@ -130,26 +146,86 @@ describe('a guest turn and the on-topic guard', () => {
     expect(guard.route).toHaveBeenCalled();
   });
 
-  it('stops the loop with the budget message once the area is spent mid-turn', async () => {
+  it('refuses a turn the rest of the budget cannot cover before the gate spends anything', async () => {
+    const { service, guard, generation, inference } = agent();
+    inference.assertGuestCanAffordTurn.mockRejectedValue(
+      new Error('SANDBOX_INFERENCE_BUDGET_SPENT'),
+    );
+    await expect(
+      service.run(guest, {
+        messages: [{ role: 'user', content: 'How do I deploy?' }],
+      } as AgentRequestDto),
+    ).rejects.toThrow('SANDBOX_INFERENCE_BUDGET_SPENT');
+    expect(guard.route).not.toHaveBeenCalled();
+    expect(generation.generate).not.toHaveBeenCalled();
+  });
+
+  it('sends the fixed part of the prompt as its own first system message', async () => {
+    const { service, guard, generation } = agent();
+    guard.route.mockResolvedValue({ offTopic: false, sectionIds: [] });
+    await service.run(guest, {
+      messages: [{ role: 'user', content: 'How do I deploy?' }],
+    } as AgentRequestDto);
+    const sent = generation.generate.mock
+      .calls[0][2] as ChatCompletionMessage[];
+    expect(sent.slice(0, 2)).toEqual([
+      { role: 'system', content: 'stable' },
+      { role: 'system', content: 'system' },
+    ]);
+  });
+
+  it('closes with a short answer from what the tools gathered when only that much is left', async () => {
     const { service, guard, generation, inference } = agent();
     guard.route.mockResolvedValue({ offTopic: false, sectionIds: [] });
-    generation.generate.mockResolvedValue({
+    generation.generate.mockResolvedValueOnce(listCall);
+    generation.generate.mockResolvedValueOnce({
       role: 'assistant',
-      content: null,
-      tool_calls: [
-        {
-          id: 'c1',
-          type: 'function',
-          function: { name: 'app_list', arguments: '{}' },
-        },
-      ],
+      content:
+        'You have two apps. The assistant time for this visit is used up.',
     });
-    inference.guestUsage.mockResolvedValue({ spent: 250_000, budget: 200_000 });
+    inference.guestRemaining.mockResolvedValue(3_000);
+    const result = await service.run(guest, {
+      messages: [{ role: 'user', content: 'List my apps' }],
+    } as AgentRequestDto);
+    expect(generation.generate).toHaveBeenCalledTimes(2);
+    const [, , messages, , tools, , maxTokens] =
+      generation.generate.mock.calls[1];
+    expect(tools).toBeUndefined();
+    expect(maxTokens).toBe(1024);
+    expect((messages as ChatCompletionMessage[]).at(-1)).toMatchObject({
+      role: 'user',
+      content: expect.stringContaining('last answer'),
+    });
+    expect(result.content).toBe(
+      'You have two apps. The assistant time for this visit is used up.',
+    );
+  });
+
+  it('stops with the budget message when not even a short answer fits', async () => {
+    const { service, guard, generation, inference } = agent();
+    guard.route.mockResolvedValue({ offTopic: false, sectionIds: [] });
+    generation.generate.mockResolvedValue(listCall);
+    inference.guestRemaining.mockResolvedValue(0);
     const result = await service.run(guest, {
       messages: [{ role: 'user', content: 'List my apps' }],
     } as AgentRequestDto);
     expect(generation.generate).toHaveBeenCalledTimes(1);
     expect(result.content).toContain('share of assistant time');
+  });
+
+  it('speaks to a visitor about signing in, not about a sandbox or MCP', async () => {
+    const { service, guard, generation, inference } = agent({
+      ...endpoint,
+      spender: { ...endpoint.spender!, visitor: true },
+    });
+    guard.route.mockResolvedValue({ offTopic: false, sectionIds: [] });
+    generation.generate.mockResolvedValue(listCall);
+    inference.guestRemaining.mockResolvedValue(0);
+    const result = await service.run(guest, {
+      messages: [{ role: 'user', content: 'List my apps' }],
+    } as AgentRequestDto);
+    expect(result.content).toContain('signing in');
+    expect(result.content).not.toMatch(/sandbox|MCP/);
   });
 
   it('drops a system message the guest wrote into the history', async () => {

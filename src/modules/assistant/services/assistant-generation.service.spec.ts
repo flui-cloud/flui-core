@@ -7,6 +7,7 @@ jest.mock('../../catalog/services/catalog-installer.service', () => ({
 
 import {
   AssistantGenerationService,
+  fitSystemMessages,
   rewriteTokenBudget,
 } from './assistant-generation.service';
 import { ChatCompletionMessage } from '../interfaces/chat-completion';
@@ -44,15 +45,9 @@ describe('AssistantGenerationService.finalizeContent', () => {
       { role: 'assistant', content },
     ];
     return service
-      .finalizeContent(
-        content,
-        conversation,
-        [],
-        endpoint,
-        'm',
-        {} as never,
+      .finalizeContent(content, conversation, [], endpoint, 'm', {} as never, [
         lean,
-      )
+      ])
       .then((out) => ({ out, conversation }));
   }
 
@@ -88,8 +83,8 @@ describe('AssistantGenerationService.finalizeContent', () => {
       endpoint,
       'm',
       {} as never,
-      lean,
-      grounding,
+      [lean],
+      [grounding],
     );
     expect(out).toBe(content);
     expect(llm.chat).not.toHaveBeenCalled();
@@ -145,6 +140,29 @@ describe('AssistantGenerationService.finalizeContent', () => {
       'Go to https://shop-1a2b.flui.app please.',
     );
     expect(out).toBe('Go to `<app-url>` please.');
+  });
+});
+
+describe('fitSystemMessages', () => {
+  const split: ChatCompletionMessage[] = [
+    { role: 'system', content: 'stable' },
+    { role: 'system', content: 'turn' },
+    { role: 'user', content: 'q' },
+  ];
+
+  it('keeps the fixed system message apart for a provider verified to take several', () => {
+    const endpoint = {
+      acceptsSeveralSystemMessages: true,
+    } as unknown as InferenceEndpoint;
+    expect(fitSystemMessages(endpoint, split)).toBe(split);
+  });
+
+  it('joins them into the single message other providers got before', () => {
+    const endpoint = { baseUrl: 'http://byo' } as unknown as InferenceEndpoint;
+    expect(fitSystemMessages(endpoint, split)).toEqual([
+      { role: 'system', content: 'stable\n\nturn' },
+      { role: 'user', content: 'q' },
+    ]);
   });
 });
 

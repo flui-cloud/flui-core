@@ -10,12 +10,14 @@ export const GUEST_INFERENCE_KEYS = [
   'SANDBOX_INFERENCE_PER_IP_HOUR',
   'SANDBOX_INFERENCE_OFFTOPIC_PER_HOUR',
   'SANDBOX_INFERENCE_OFFTOPIC_COOLDOWN_MINUTES',
+  'SANDBOX_INFERENCE_TURN_ALLOWANCE',
 ] as const;
 
 export type GuestInferenceKey = (typeof GUEST_INFERENCE_KEYS)[number];
 
 export const DEFAULT_GUEST_TOKEN_BUDGET = 200_000;
 const DEFAULT_OFFTOPIC_COOLDOWN_MINUTES = 15;
+export const DEFAULT_GUEST_TURN_ALLOWANCE = 4_000;
 
 export interface GuestInferenceLimits {
   enabled: boolean;
@@ -30,6 +32,8 @@ export interface GuestInferenceLimits {
   perIpHour: number | null;
   offTopicPerHour: number | null;
   offTopicCooldownMs: number;
+  /** Tokens a turn needs on top of its first prompt (gate, answer) to be admitted. */
+  turnAllowance: number;
 }
 
 const limit = (raw: string | undefined): number | null => {
@@ -67,5 +71,8 @@ export function guestInferenceLimits(
     offTopicCooldownMs:
       (limit(read('SANDBOX_INFERENCE_OFFTOPIC_COOLDOWN_MINUTES')) ??
         DEFAULT_OFFTOPIC_COOLDOWN_MINUTES) * 60_000,
+    turnAllowance:
+      nonNegative(read('SANDBOX_INFERENCE_TURN_ALLOWANCE')) ??
+      DEFAULT_GUEST_TURN_ALLOWANCE,
   };
 }

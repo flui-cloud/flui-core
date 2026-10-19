@@ -179,12 +179,45 @@ describe('GuestInferenceGuardService', () => {
       await expect(guard.admit('u2', false, NOW)).resolves.toBeTruthy();
     });
 
+    it('show the pause, not the rate limit, to someone retrying during it, and do not count the retries', async () => {
+      const { guard, throttler } = build({
+        SANDBOX_INFERENCE_OFFTOPIC_PER_HOUR: '1',
+        SANDBOX_INFERENCE_PER_MINUTE: '2',
+      });
+      await guard.noteOffTopic('u1');
+      await guard.noteOffTopic('u1');
+      throttler.increment.mockClear();
+
+      for (let i = 0; i < 4; i++) {
+        await expect(guard.admit('u1', false, NOW)).rejects.toMatchObject({
+          response: { code: GUEST_INFERENCE_CODE.OFFTOPIC_COOLDOWN },
+        });
+      }
+      expect(throttler.increment).not.toHaveBeenCalled();
+    });
+
     it('are not counted while the limit is unset', async () => {
       const { guard, throttler } = build();
 
       await guard.noteOffTopic('u1');
 
       expect(throttler.increment).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('what a refusal offers', () => {
+    it('offers MCP to a signed-in guest and not to a visitor, who has no account for an agent', async () => {
+      const env = { SANDBOX_INFERENCE_ENABLED: 'false' };
+      await expect(
+        build(env).guard.admit('g1', false, NOW),
+      ).rejects.toMatchObject({
+        response: { message: expect.stringContaining('MCP') },
+      });
+      const visitor = await build(env)
+        .guard.admit('v1', true, NOW)
+        .catch((e: { response: { message: string } }) => e.response.message);
+      expect(visitor).toContain('Everything else in the demo keeps working.');
+      expect(visitor).not.toContain('MCP');
     });
   });
 

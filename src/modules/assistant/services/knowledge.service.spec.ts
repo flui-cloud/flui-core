@@ -1,4 +1,8 @@
-import { KnowledgeService } from './knowledge.service';
+import {
+  excerpt,
+  KnowledgeService,
+  VISITOR_KNOWLEDGE_CAP,
+} from './knowledge.service';
 
 describe('KnowledgeService.docLinksFor', () => {
   const service = new KnowledgeService();
@@ -169,5 +173,72 @@ describe('KnowledgeService prompt order for the provider cache', () => {
     expect(context.indexOf(stable)).toBeLessThan(knowledge);
     expect(knowledge).toBeLessThan(page);
     expect(page).toBeLessThan(reminder);
+  });
+});
+
+describe('KnowledgeService system prompt in two messages', () => {
+  const service = new KnowledgeService();
+  const stable = '# Acting with tools\nfixed note';
+
+  it('keeps the first message byte-identical across turns, knowledge and pages', () => {
+    const one = service.systemPrompt(['concepts/03-cluster-as-a-concept'], {
+      stable,
+      page: '<surface>apps page, revision 4</surface>',
+    });
+    const two = service.systemPrompt(['cli/reference'], {
+      stable,
+      page: '<surface>backups page, revision 9</surface>',
+    });
+    const lean = service.basePrompt({ stable, page: '<surface>x</surface>' });
+    expect(two.stable).toBe(one.stable);
+    expect(lean.stable).toBe(one.stable);
+    expect(one.stable).toContain(stable);
+    expect(one.stable).toContain('# Environment you are assisting');
+    expect(one.stable).not.toContain('# Flui knowledge');
+    expect(one.turn.startsWith('# Flui knowledge')).toBe(true);
+    expect(one.turn).toContain('<surface>apps page, revision 4</surface>');
+    expect(lean.turn).toContain('# Reminder');
+  });
+
+  it('joins back into exactly the single message it replaces', () => {
+    const parts = { stable, page: '<surface>x</surface>' };
+    const prompt = service.systemPrompt(['concepts/00-what-is-flui'], parts);
+    expect(service.getSystemContext(['concepts/00-what-is-flui'], parts)).toBe(
+      `${prompt.stable}\n\n${prompt.turn}`,
+    );
+  });
+});
+
+describe('KnowledgeService knowledge cap for guests', () => {
+  const service = new KnowledgeService();
+  const ids = [
+    'flui-manifest/schema',
+    'concepts/17-the-flui-manifest',
+    'cli/deploy',
+    'tasks/deploy-an-application',
+  ];
+
+  it('carries fewer sections and a bounded amount of text for a visitor', () => {
+    const capped = service.systemPrompt(ids, {}, VISITOR_KNOWLEDGE_CAP).turn;
+    const full = service.systemPrompt(ids).turn;
+    expect(service.capSections(ids, VISITOR_KNOWLEDGE_CAP)).toEqual(
+      ids.slice(0, 2),
+    );
+    expect(full).toContain('## Deploy\n_(');
+    expect(capped).not.toContain('## Deploy\n_(');
+    expect(capped.length).toBeLessThan(VISITOR_KNOWLEDGE_CAP.maxChars + 1_000);
+    expect(full.length).toBeGreaterThan(capped.length * 4);
+    expect(service.capSections(ids)).toEqual(ids);
+  });
+
+  it('cuts a long page at a heading and says it is an excerpt', () => {
+    const body = ['# Top', 'a'.repeat(400), '## Second', 'b'.repeat(400)].join(
+      '\n',
+    );
+    const cut = excerpt(body, 600);
+    expect(cut).toContain('a'.repeat(400));
+    expect(cut).not.toContain('## Second');
+    expect(cut).toContain('Excerpt');
+    expect(excerpt(body, 10_000)).toBe(body);
   });
 });

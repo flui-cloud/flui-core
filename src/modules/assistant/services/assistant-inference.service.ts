@@ -28,6 +28,13 @@ import { GuestInferenceGuardService } from './guest-inference-guard.service';
 export const GUEST_BUDGET_SPENT_MESSAGE =
   'This sandbox has used the share of assistant time it comes with. Everything else in it keeps working, and your own coding agent can carry on over MCP — that one runs on your account, not this instance.';
 
+export const VISITOR_BUDGET_SPENT_MESSAGE =
+  'You have used the assistant time that comes with a visit to this demo. Everything else in the demo keeps working, and signing in gives you your own space with assistant time of its own.';
+
+export function guestBudgetMessage(visitor: boolean | undefined): string {
+  return visitor ? VISITOR_BUDGET_SPENT_MESSAGE : GUEST_BUDGET_SPENT_MESSAGE;
+}
+
 export interface InferenceSelection {
   model?: string;
   provider?: CloudProvider;
@@ -123,7 +130,11 @@ export class AssistantInferenceService {
         principal.userId,
         guest.visitor,
       );
-      await this.assertGuestHasBudget(principal.userId, admitted.budget);
+      await this.assertGuestHasBudget(
+        principal.userId,
+        admitted.budget,
+        guest.visitor,
+      );
       return {
         endpoint: {
           ...guest.endpoint,
@@ -131,6 +142,7 @@ export class AssistantInferenceService {
             userId: principal.userId,
             guest: true,
             surface,
+            visitor: guest.visitor,
             ...(admitted.ipHash ? { ipHash: admitted.ipHash } : {}),
           },
         },
@@ -220,19 +232,43 @@ export class AssistantInferenceService {
   private async assertGuestHasBudget(
     userId: string,
     budget: number,
+    visitor: boolean,
   ): Promise<void> {
     const spent = await this.usage.tokensFor(userId);
     if (spent < budget) return;
-    throw new HttpException(
-      {
-        statusCode: HttpStatus.TOO_MANY_REQUESTS,
-        code: 'SANDBOX_INFERENCE_BUDGET_SPENT',
-        message: GUEST_BUDGET_SPENT_MESSAGE,
-        spent,
-        budget,
-      },
-      HttpStatus.TOO_MANY_REQUESTS,
-    );
+    throw budgetSpent(visitor, spent, budget);
+  }
+
+  /**
+   * Admits a guest's turn only if what is left covers its first prompt plus the
+   * configured allowance, so a turn is refused before it spends rather than
+   * cut off halfway through.
+   */
+  async assertGuestCanAffordTurn(
+    endpoint: InferenceEndpoint,
+    promptTokens: number,
+  ): Promise<void> {
+    const spender = endpoint.spender;
+    if (!spender?.guest || !spender.userId) return;
+    const [remaining, allowance] = await Promise.all([
+      this.guestRemaining(endpoint),
+      this.antifraud.turnAllowance(),
+    ]);
+    const needed = promptTokens + allowance;
+    if (remaining === null || remaining >= needed) return;
+    const budget = await this.antifraud.budgetFor(!!spender.visitor);
+    throw budgetSpent(spender.visitor, budget - remaining, budget, needed);
+  }
+
+  /** Tokens a guest endpoint may still spend; null for anyone else. */
+  async guestRemaining(endpoint: InferenceEndpoint): Promise<number | null> {
+    const spender = endpoint.spender;
+    if (!spender?.guest || !spender.userId) return null;
+    const [spent, budget] = await Promise.all([
+      this.usage.tokensFor(spender.userId),
+      this.antifraud.budgetFor(!!spender.visitor),
+    ]);
+    return Math.max(budget - spent, 0);
   }
 
   /** Whether this person is a guest at all — the screen asks before drawing a ring. */
@@ -283,4 +319,23 @@ export class AssistantInferenceService {
     }
     return chat;
   }
+}
+
+function budgetSpent(
+  visitor: boolean | undefined,
+  spent: number,
+  budget: number,
+  needed?: number,
+): HttpException {
+  return new HttpException(
+    {
+      statusCode: HttpStatus.TOO_MANY_REQUESTS,
+      code: 'SANDBOX_INFERENCE_BUDGET_SPENT',
+      message: guestBudgetMessage(visitor),
+      spent,
+      budget,
+      ...(needed ? { needed } : {}),
+    },
+    HttpStatus.TOO_MANY_REQUESTS,
+  );
 }

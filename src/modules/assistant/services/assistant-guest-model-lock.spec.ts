@@ -153,9 +153,10 @@ function agentWith(inference: AssistantInferenceService) {
   deps[2] = generation;
   deps[3] = guard;
   deps[4] = {
-    getBaseContext: () => 'base',
+    basePrompt: () => ({ stable: 'stable', turn: 'base' }),
     getIndexPrompt: () => 'index',
-    getSystemContext: () => 'system',
+    systemPrompt: () => ({ stable: 'stable', turn: 'system' }),
+    capSections: (ids: string[]) => ids,
     docLinksFor: () => [],
     selectSections: () => ({ sectionIds: [], via: 'fallback' }),
   };

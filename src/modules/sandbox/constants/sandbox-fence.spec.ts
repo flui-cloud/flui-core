@@ -407,6 +407,11 @@ describe('sandbox allowlist', () => {
     expect(sandboxLevelOf('GET', '/showcase')).toBe(area?.level);
   });
 
+  it('promises no space of their own to a visitor or a guest without an area', () => {
+    expect(SHOWCASE_BANNER).toContain('read-only');
+    expect(SHOWCASE_BANNER).not.toMatch(/yours alone|your own/i);
+  });
+
   /**
    * The rules of the place, reaching the person acting in it.
    *

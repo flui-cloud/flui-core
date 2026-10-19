@@ -19,6 +19,11 @@ export interface InferenceCapability {
   sharesComputeCredentials: boolean;
   /** Provider-specific default chat model id (model ids are not portable across providers). */
   defaultModel?: string;
+  /**
+   * Verified to take a fixed first system message followed by a per-turn one,
+   * which is what lets its prompt cache serve the fixed part across turns.
+   */
+  acceptsSeveralSystemMessages?: boolean;
 }
 
 export interface InferenceEndpoint {
@@ -36,6 +41,8 @@ export interface InferenceEndpoint {
    * object cannot be forgotten by the seventh caller added next year.
    */
   pinnedModel?: string;
+  /** Copied from `InferenceCapability.acceptsSeveralSystemMessages`; absent on a BYO connection. */
+  acceptsSeveralSystemMessages?: boolean;
   /**
    * On whose behalf this call is made, for the ledger and for the budget.
    *
@@ -49,5 +56,6 @@ export interface InferenceEndpoint {
     guest: boolean;
     surface: string;
     ipHash?: string | null;
+    visitor?: boolean;
   };
 }

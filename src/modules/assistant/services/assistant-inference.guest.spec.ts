@@ -8,7 +8,11 @@ jest.mock('../../inference/services/inference-client.service', () => ({
   InferenceClientService: class InferenceClientService {},
 }));
 
-import { AssistantInferenceService } from './assistant-inference.service';
+import {
+  AssistantInferenceService,
+  GUEST_BUDGET_SPENT_MESSAGE,
+  guestBudgetMessage,
+} from './assistant-inference.service';
 import { GuestInferenceGuardService } from './guest-inference-guard.service';
 import { guestInferenceLimits } from './guest-inference-limits';
 import { CloudProvider } from '../../providers/enums/cloud-provider.enum';
@@ -193,6 +197,61 @@ describe('what a sandbox guest may choose about inference', () => {
     });
   });
 
+  it('tells a signed-in guest about their sandbox and a visitor about signing in', () => {
+    expect(guestBudgetMessage(false)).toBe(GUEST_BUDGET_SPENT_MESSAGE);
+    const visitor = guestBudgetMessage(true);
+    expect(visitor).not.toMatch(/sandbox|MCP/);
+    expect(visitor).toContain('signing in');
+  });
+
+  describe('admitting a turn on what it is expected to cost', () => {
+    const guestEndpoint = {
+      baseUrl: 'https://llm.example/v1',
+      apiKey: 'k',
+      spender: { userId: 'u1', guest: true, surface: 'assistant' },
+    };
+
+    it('refuses before spending when what is left does not cover the first prompt and the allowance', async () => {
+      const { service } = build({ guest: true, budget: '20000', spent: 9000 });
+      await expect(
+        service.assertGuestCanAffordTurn(guestEndpoint, 8000),
+      ).rejects.toMatchObject({
+        response: {
+          code: 'SANDBOX_INFERENCE_BUDGET_SPENT',
+          spent: 9000,
+          budget: 20000,
+          needed: 12000,
+        },
+      });
+    });
+
+    it('admits the turn when the rest covers it', async () => {
+      const { service } = build({ guest: true, budget: '20000', spent: 4000 });
+      await expect(
+        service.assertGuestCanAffordTurn(guestEndpoint, 8000),
+      ).resolves.toBeUndefined();
+    });
+
+    it('never asks for a member', async () => {
+      const { service } = build({ guest: false, budget: '1', spent: 999 });
+      await expect(
+        service.assertGuestCanAffordTurn(
+          {
+            ...guestEndpoint,
+            spender: { ...guestEndpoint.spender, guest: false },
+          },
+          50_000,
+        ),
+      ).resolves.toBeUndefined();
+      await expect(
+        service.guestRemaining({
+          ...guestEndpoint,
+          spender: { ...guestEndpoint.spender, guest: false },
+        }),
+      ).resolves.toBeNull();
+    });
+  });
+
   it('says what is left, for the ring on screen', async () => {
     const { service } = build({ guest: true, budget: '1000', spent: 250 });
 
@@ -215,6 +274,7 @@ describe('what a sandbox guest may choose about inference', () => {
       userId: 'u1',
       guest: true,
       surface: 'console:db',
+      visitor: false,
     });
   });
 

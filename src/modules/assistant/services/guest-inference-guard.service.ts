@@ -31,8 +31,12 @@ export const GUEST_INFERENCE_CODE = {
   ADDRESS_CAP: 'SANDBOX_INFERENCE_ADDRESS_CAP',
 } as const;
 
-const STILL_WORKS =
-  'Everything else in the demo keeps working, and your own coding agent can carry on over MCP.';
+/** A visitor has no account for a coding agent to act on, so MCP is offered only to a signed-in guest. */
+export function stillWorks(visitor: boolean): string {
+  return visitor
+    ? 'Everything else in the demo keeps working.'
+    : 'Everything else in the demo keeps working, and your own coding agent can carry on over MCP.';
+}
 
 export interface GuestThrottler extends ThrottlerStorage {
   blockedSeconds(key: string, throttlerName: string): Promise<number>;
@@ -64,6 +68,10 @@ export class GuestInferenceGuardService {
     return this.budgetOf(await this.settings.limits(), visitor);
   }
 
+  async turnAllowance(): Promise<number> {
+    return (await this.settings.limits()).turnAllowance;
+  }
+
   async admit(
     userId: string,
     visitor: boolean,
@@ -74,22 +82,22 @@ export class GuestInferenceGuardService {
       throw new ServiceUnavailableException({
         statusCode: HttpStatus.SERVICE_UNAVAILABLE,
         code: GUEST_INFERENCE_CODE.OFF,
-        message: `The assistant is paused on this demo right now. ${STILL_WORKS}`,
+        message: `The assistant is paused on this demo right now. ${stillWorks(visitor)}`,
       });
     }
     if (visitor && limits.visitorBudget === 0) {
       throw new ForbiddenException({
         statusCode: HttpStatus.FORBIDDEN,
         code: GUEST_INFERENCE_CODE.VISITORS_CLOSED,
-        message: `The assistant opens once you sign in. ${STILL_WORKS}`,
+        message: `The assistant opens once you sign in. ${stillWorks(true)}`,
       });
     }
     const ip = currentClientIp();
     const ipHash = ip ? this.hashAddress(ip) : null;
-    await this.countRequest(userId, ipHash, limits);
     await this.assertNotCoolingDown(userId, limits);
-    await this.assertInstanceDailyCap(limits, now);
-    await this.assertAddressCap(ipHash, limits, now);
+    await this.countRequest(userId, ipHash, limits);
+    await this.assertInstanceDailyCap(limits, now, visitor);
+    await this.assertAddressCap(ipHash, limits, now, visitor);
     return {
       budget: this.budgetOf(limits, visitor),
       ipHash: limits.ipDailyTokens ? ipHash : null,
@@ -169,6 +177,7 @@ export class GuestInferenceGuardService {
   private async assertInstanceDailyCap(
     limits: GuestInferenceLimits,
     now: Date,
+    visitor: boolean,
   ): Promise<void> {
     if (!limits.instanceDailyTokens) return;
     const dayStart = new Date(
@@ -178,7 +187,7 @@ export class GuestInferenceGuardService {
     if (spent < limits.instanceDailyTokens) return;
     throw tooMany(
       GUEST_INFERENCE_CODE.DAILY_CAP,
-      `The demo has used today's assistant time for all guests. It comes back at midnight UTC. ${STILL_WORKS}`,
+      `The demo has used today's assistant time for all guests. It comes back at midnight UTC. ${stillWorks(visitor)}`,
       Math.ceil((dayStart.getTime() + DAY_MS - now.getTime()) / 1000),
     );
   }
@@ -187,6 +196,7 @@ export class GuestInferenceGuardService {
     ipHash: string | null,
     limits: GuestInferenceLimits,
     now: Date,
+    visitor: boolean,
   ): Promise<void> {
     if (!limits.ipDailyTokens || !ipHash) return;
     const spent = await this.usage.tokensForAddress(
@@ -196,7 +206,7 @@ export class GuestInferenceGuardService {
     if (spent < limits.ipDailyTokens) return;
     throw tooMany(
       GUEST_INFERENCE_CODE.ADDRESS_CAP,
-      `The assistant time for your network is used up for today. ${STILL_WORKS}`,
+      `The assistant time for your network is used up for today. ${stillWorks(visitor)}`,
     );
   }
 }

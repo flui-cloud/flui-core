@@ -17,7 +17,17 @@ describe('guestInferenceLimits', () => {
       perIpHour: null,
       offTopicPerHour: null,
       offTopicCooldownMs: 15 * 60_000,
+      turnAllowance: 4_000,
     });
+  });
+
+  it('reads the per-turn allowance, zero included', () => {
+    expect(
+      from({ SANDBOX_INFERENCE_TURN_ALLOWANCE: '6000' }).turnAllowance,
+    ).toBe(6_000);
+    expect(from({ SANDBOX_INFERENCE_TURN_ALLOWANCE: '0' }).turnAllowance).toBe(
+      0,
+    );
   });
 
   it('is switched off only by an explicit false', () => {
