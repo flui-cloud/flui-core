@@ -122,8 +122,8 @@ async function bootstrap() {
   // not an interceptor: an interceptor returns an Observable that Nest
   // subscribes to after the interceptor chain has returned, i.e. outside any
   // AsyncLocalStorage.run() opened around it. See auth/utils/actor-context.
-  app.use((_req: unknown, _res: unknown, next: () => void) =>
-    runWithActorContext(next),
+  app.use((req: { ip?: string }, _res: unknown, next: () => void) =>
+    runWithActorContext(next, req.ip),
   );
 
   app.set('trust proxy', trustProxySetting());

@@ -46,6 +46,8 @@ describe('MigrationMeasures1790000000029', () => {
       'IdentityConsoleState1790000000040',
       'ControlPeerPerNode1790000000041',
       'AppHistoryIndexes1790000000042',
+      'InferenceUsageIpHash1790000000043',
+      'InferenceUsageCachedTokens1790000000044',
     ]);
   });
 });

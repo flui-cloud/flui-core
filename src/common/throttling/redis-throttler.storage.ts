@@ -77,6 +77,18 @@ export class RedisThrottlerStorage implements ThrottlerStorage {
       );
     }
   }
+
+  /** How long `key` stays blocked, without counting. Zero when Redis does not answer. */
+  async blockedSeconds(key: string, throttlerName: string): Promise<number> {
+    try {
+      const ms = await this.redis.pttl(
+        `flui:throttle:${throttlerName}:${key}:blocked`,
+      );
+      return ms > 0 ? Math.ceil(ms / 1000) : 0;
+    } catch {
+      return 0;
+    }
+  }
 }
 
 let shared: RedisThrottlerStorage | null = null;

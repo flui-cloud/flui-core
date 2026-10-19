@@ -63,3 +63,34 @@ describe('rate limits shared by every copy of the API', () => {
     expect(record.isBlocked).toBe(false);
   });
 });
+
+describe('how long a key stays blocked', () => {
+  it('reads the block without counting', async () => {
+    const pttl = jest.fn(async () => 90_500);
+    const storage = new RedisThrottlerStorage(() => ({ pttl }) as never);
+
+    expect(await storage.blockedSeconds('offtopic:u1', 'guest-inference')).toBe(
+      91,
+    );
+    expect(pttl).toHaveBeenCalledWith(
+      'flui:throttle:guest-inference:offtopic:u1:blocked',
+    );
+  });
+
+  it('says not blocked when there is no block or Redis does not answer', async () => {
+    const none = new RedisThrottlerStorage(
+      () => ({ pttl: async () => -2 }) as never,
+    );
+    const down = new RedisThrottlerStorage(
+      () =>
+        ({
+          pttl: async () => {
+            throw new Error('down');
+          },
+        }) as never,
+    );
+
+    expect(await none.blockedSeconds('k', 'n')).toBe(0);
+    expect(await down.blockedSeconds('k', 'n')).toBe(0);
+  });
+});

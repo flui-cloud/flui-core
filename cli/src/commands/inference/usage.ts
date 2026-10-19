@@ -97,10 +97,15 @@ export default class InferenceUsage extends Command {
       const guessed = m.estimated
         ? chalk.dim(`  (${m.estimated} counted from the text)`)
         : '';
+      const cached = m.cachedPromptTokens
+        ? chalk.dim(
+            `  (${thousands(m.cachedPromptTokens)} prompt tokens from the provider's cache)`,
+          )
+        : '';
       this.log(
         `     ${m.model.padEnd(38)} ${String(m.calls).padStart(5)} calls  ${thousands(
           tokens,
-        ).padStart(11)} tokens${money(tokens, perMillion)}${guessed}`,
+        ).padStart(11)} tokens${money(tokens, perMillion)}${cached}${guessed}`,
       );
     }
 

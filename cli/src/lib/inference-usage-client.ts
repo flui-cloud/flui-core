@@ -6,6 +6,7 @@ export interface UsageByModel {
   calls: number;
   promptTokens: number;
   completionTokens: number;
+  cachedPromptTokens?: number;
   estimated: number;
 }
 

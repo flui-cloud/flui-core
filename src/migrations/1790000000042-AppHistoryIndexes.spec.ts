@@ -28,12 +28,8 @@ describe('AppHistoryIndexes1790000000042', () => {
     ]);
   });
 
-  it('runs last, after the control peer per node', () => {
-    expect(migrations[migrations.length - 1]).toBe(
-      AppHistoryIndexes1790000000042,
-    );
-    expect(migrations[migrations.length - 2].name).toBe(
-      'ControlPeerPerNode1790000000041',
-    );
+  it('runs right after the control peer per node', () => {
+    const at = migrations.indexOf(AppHistoryIndexes1790000000042);
+    expect(migrations[at - 1].name).toBe('ControlPeerPerNode1790000000041');
   });
 });

@@ -5,6 +5,7 @@ jest.mock('@kubernetes/client-node', () => ({}));
 
 import {
   DEFAULT_SPEND_THRESHOLDS,
+  guestSpendThresholds,
   InferenceSpendAlertService,
   spendThresholds,
 } from './inference-spend-alert.service';
@@ -25,10 +26,23 @@ describe('spendThresholds', () => {
   });
 });
 
+describe('guestSpendThresholds', () => {
+  it('sends nothing unless the operator names a threshold', () => {
+    expect(guestSpendThresholds(undefined)).toEqual([]);
+    expect(guestSpendThresholds('')).toEqual([]);
+  });
+
+  it('reads the same list format as the instance thresholds', () => {
+    expect(guestSpendThresholds('3000000,1000000')).toEqual([
+      1_000_000, 3_000_000,
+    ]);
+  });
+});
+
 describe('InferenceSpendAlertService', () => {
   const NOW = new Date('2026-10-07T15:00:00Z');
 
-  const build = (spent: number) => {
+  const build = (spent: number, guestSpent = 0) => {
     const seen = new Set<string>();
     const alerts = {
       record: jest.fn(async (batch: Array<{ fingerprint: string }>) =>
@@ -40,7 +54,10 @@ describe('InferenceSpendAlertService', () => {
       ),
     };
     const mail = { deliver: jest.fn(async () => true) };
-    const usage = { totalSince: jest.fn(async () => spent) };
+    const usage = {
+      totalSince: jest.fn(async () => spent),
+      guestTotalSince: jest.fn(async () => guestSpent),
+    };
     const service = new InferenceSpendAlertService(
       usage as never,
       alerts as never,
@@ -49,7 +66,29 @@ describe('InferenceSpendAlertService', () => {
     return { service, alerts, mail, usage };
   };
 
-  afterEach(() => delete process.env.INFERENCE_SPEND_ALERT_DAILY_TOKENS);
+  afterEach(() => {
+    delete process.env.INFERENCE_SPEND_ALERT_DAILY_TOKENS;
+    delete process.env.SANDBOX_INFERENCE_ALERT_DAILY_TOKENS;
+  });
+
+  it('does not read guest spend while no guest threshold is set', async () => {
+    const { service, usage } = build(0, 9_000_000);
+
+    expect(await service.check(NOW)).toBe(0);
+    expect(usage.guestTotalSince).not.toHaveBeenCalled();
+  });
+
+  it('mails about guest spend apart from the instance total', async () => {
+    process.env.INFERENCE_SPEND_ALERT_DAILY_TOKENS = 'off';
+    process.env.SANDBOX_INFERENCE_ALERT_DAILY_TOKENS = '1000000';
+    const { service, alerts } = build(0, 1_500_000);
+
+    expect(await service.check(NOW)).toBe(1);
+    expect(alerts.record.mock.calls[0][0][0]).toMatchObject({
+      fingerprint: 'inference-guest-spend-2026-10-07-1000000',
+      alertname: InferenceSpendAlertService.GUEST_ALERTNAME,
+    });
+  });
 
   it('mails once for every threshold the day has crossed, and only once', async () => {
     const { service, mail } = build(21_000_000);

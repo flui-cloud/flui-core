@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { Cron, CronExpression } from '@nestjs/schedule';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { IsNull, LessThan, Not, Repository } from 'typeorm';
 import { InferenceUsageEventEntity } from '../entities/inference-usage-event.entity';
 import { SandboxVisitorEntity } from '../../sandbox/entities/sandbox-visitor.entity';
 
@@ -12,14 +13,19 @@ export interface UsageRecord {
   surface: string;
   promptTokens: number;
   completionTokens: number;
+  cachedPromptTokens?: number;
   estimated?: boolean;
+  ipHash?: string | null;
 }
+
+export const IP_HASH_RETENTION_MS = 48 * 3_600_000;
 
 export interface UsageByModel {
   model: string;
   calls: number;
   promptTokens: number;
   completionTokens: number;
+  cachedPromptTokens: number;
   estimated: number;
 }
 
@@ -43,6 +49,8 @@ export interface UsageByKind {
 
 /** Still a visitor, or one removed before it became an account: its spend stays a visitor's. */
 const VISITOR_SQL = 'sv."userId" IS NOT NULL AND sv."upgradedAt" IS NULL';
+const TOKENS_SQL = 'COALESCE(SUM(u."promptTokens" + u."completionTokens"), 0)';
+const SINCE_SQL = 'u."createdAt" >= :since';
 const KIND_SQL = `CASE WHEN u."userId" IS NULL THEN 'platform' WHEN ${VISITOR_SQL} THEN 'visitor' WHEN u.guest THEN 'guest' ELSE 'person' END`;
 
 /**
@@ -71,7 +79,15 @@ export class InferenceUsageService {
         surface: usage.surface.slice(0, 64),
         promptTokens: Math.max(0, Math.round(usage.promptTokens)),
         completionTokens: Math.max(0, Math.round(usage.completionTokens)),
+        cachedPromptTokens: Math.max(
+          0,
+          Math.min(
+            Math.round(usage.cachedPromptTokens ?? 0),
+            Math.round(usage.promptTokens),
+          ),
+        ),
         estimated: !!usage.estimated,
+        ipHash: usage.ipHash ?? null,
       });
     } catch (error) {
       this.logger.warn(
@@ -86,9 +102,9 @@ export class InferenceUsageService {
   async tokensFor(userId: string, since?: Date): Promise<number> {
     const qb = this.events
       .createQueryBuilder('u')
-      .select('COALESCE(SUM(u."promptTokens" + u."completionTokens"), 0)', 'n')
+      .select(TOKENS_SQL, 'n')
       .where('u."userId" = :userId', { userId });
-    if (since) qb.andWhere('u."createdAt" >= :since', { since });
+    if (since) qb.andWhere(SINCE_SQL, { since });
     const row = await qb.getRawOne<{ n: string }>();
     return Number(row?.n ?? 0);
   }
@@ -97,10 +113,56 @@ export class InferenceUsageService {
   async totalSince(since: Date): Promise<number> {
     const row = await this.events
       .createQueryBuilder('u')
-      .select('COALESCE(SUM(u."promptTokens" + u."completionTokens"), 0)', 'n')
-      .where('u."createdAt" >= :since', { since })
+      .select(TOKENS_SQL, 'n')
+      .where(SINCE_SQL, { since })
       .getRawOne<{ n: string }>();
     return Number(row?.n ?? 0);
+  }
+
+  /** What every guest together has spent since a moment. The instance's daily cap reads it. */
+  async guestTotalSince(since: Date): Promise<number> {
+    const row = await this.events
+      .createQueryBuilder('u')
+      .select(TOKENS_SQL, 'n')
+      .where('u.guest = true')
+      .andWhere(SINCE_SQL, { since })
+      .getRawOne<{ n: string }>();
+    return Number(row?.n ?? 0);
+  }
+
+  /** What the guests behind one address have spent since a moment. */
+  async tokensForAddress(ipHash: string, since: Date): Promise<number> {
+    const row = await this.events
+      .createQueryBuilder('u')
+      .select(TOKENS_SQL, 'n')
+      .where('u."ipHash" = :ipHash', { ipHash })
+      .andWhere(SINCE_SQL, { since })
+      .getRawOne<{ n: string }>();
+    return Number(row?.n ?? 0);
+  }
+
+  async forgetAddresses(now = new Date()): Promise<number> {
+    const result = await this.events.update(
+      {
+        ipHash: Not(IsNull()),
+        createdAt: LessThan(new Date(now.getTime() - IP_HASH_RETENTION_MS)),
+      },
+      { ipHash: null },
+    );
+    return result.affected ?? 0;
+  }
+
+  @Cron(CronExpression.EVERY_HOUR)
+  async forgetAddressesTick(): Promise<void> {
+    try {
+      await this.forgetAddresses();
+    } catch (error) {
+      this.logger.warn(
+        `Could not clear old guest address hashes: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
   }
 
   async byModel(since?: Date): Promise<UsageByModel[]> {
@@ -110,15 +172,17 @@ export class InferenceUsageService {
       .addSelect('COUNT(*)', 'calls')
       .addSelect('COALESCE(SUM(u."promptTokens"), 0)', 'prompt')
       .addSelect('COALESCE(SUM(u."completionTokens"), 0)', 'completion')
+      .addSelect('COALESCE(SUM(u."cachedPromptTokens"), 0)', 'cached')
       .addSelect('COUNT(*) FILTER (WHERE u.estimated)', 'estimated')
       .groupBy('u.model')
       .orderBy('completion', 'DESC');
-    if (since) qb.where('u."createdAt" >= :since', { since });
+    if (since) qb.where(SINCE_SQL, { since });
     const rows = await qb.getRawMany<{
       model: string;
       calls: string;
       prompt: string;
       completion: string;
+      cached: string;
       estimated: string;
     }>();
     return rows.map((r) => ({
@@ -126,6 +190,7 @@ export class InferenceUsageService {
       calls: Number(r.calls),
       promptTokens: Number(r.prompt),
       completionTokens: Number(r.completion),
+      cachedPromptTokens: Number(r.cached ?? 0),
       estimated: Number(r.estimated),
     }));
   }
@@ -138,13 +203,10 @@ export class InferenceUsageService {
       .select(KIND_SQL, 'kind')
       .addSelect('COUNT(DISTINCT u."userId")', 'people')
       .addSelect('COUNT(*)', 'calls')
-      .addSelect(
-        'COALESCE(SUM(u."promptTokens" + u."completionTokens"), 0)',
-        'tokens',
-      )
+      .addSelect(TOKENS_SQL, 'tokens')
       .groupBy('1')
       .orderBy('tokens', 'DESC');
-    if (since) qb.where('u."createdAt" >= :since', { since });
+    if (since) qb.where(SINCE_SQL, { since });
     const rows = await qb.getRawMany<{
       kind: UsageKind;
       people: string;
@@ -168,15 +230,12 @@ export class InferenceUsageService {
       .addSelect('BOOL_OR(u.guest)', 'guest')
       .addSelect(`BOOL_OR(${VISITOR_SQL})`, 'visitor')
       .addSelect('COUNT(*)', 'calls')
-      .addSelect(
-        'COALESCE(SUM(u."promptTokens" + u."completionTokens"), 0)',
-        'tokens',
-      )
+      .addSelect(TOKENS_SQL, 'tokens')
       .addSelect('MAX(u."createdAt")', 'lastAt')
       .groupBy('u."userId"')
       .orderBy('tokens', 'DESC')
       .limit(limit);
-    if (since) qb.where('u."createdAt" >= :since', { since });
+    if (since) qb.where(SINCE_SQL, { since });
     const rows = await qb.getRawMany<{
       userId: string | null;
       guest: boolean;

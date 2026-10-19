@@ -50,11 +50,19 @@ export interface Actor {
  * acts for nobody in particular, so the columns stay null rather than
  * inheriting whichever request happened to enqueue the job.
  */
-const storage = new AsyncLocalStorage<{ actor?: Actor; grantId?: string }>();
+const storage = new AsyncLocalStorage<{
+  actor?: Actor;
+  grantId?: string;
+  clientIp?: string;
+}>();
 
-/** Opens an empty context for one request. */
-export function runWithActorContext<T>(fn: () => T): T {
-  return storage.run({}, fn);
+/** Opens an empty context for one request, with the client address Express resolved behind the trusted proxies. */
+export function runWithActorContext<T>(fn: () => T, clientIp?: string): T {
+  return storage.run(clientIp ? { clientIp } : {}, fn);
+}
+
+export function currentClientIp(): string | undefined {
+  return storage.getStore()?.clientIp;
 }
 
 /** Opens a context that already knows its actor — entry points without a guard, and tests. */

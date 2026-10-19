@@ -48,5 +48,6 @@ export interface InferenceEndpoint {
     userId: string | null;
     guest: boolean;
     surface: string;
+    ipHash?: string | null;
   };
 }

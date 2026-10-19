@@ -96,6 +96,8 @@ import { IdentityEmail1790000000039 } from './1790000000039-IdentityEmail';
 import { IdentityConsoleState1790000000040 } from './1790000000040-IdentityConsoleState';
 import { ControlPeerPerNode1790000000041 } from './1790000000041-ControlPeerPerNode';
 import { AppHistoryIndexes1790000000042 } from './1790000000042-AppHistoryIndexes';
+import { InferenceUsageIpHash1790000000043 } from './1790000000043-InferenceUsageIpHash';
+import { InferenceUsageCachedTokens1790000000044 } from './1790000000044-InferenceUsageCachedTokens';
 import { BackfillArtifactApplicationId1787500000000 } from './1787500000000-BackfillArtifactApplicationId';
 import { WireGuardHubKeySealed1790000000000 } from './1790000000000-WireGuardHubKeySealed';
 import { RecoverNodeAccessOperation1790000000001 } from './1790000000001-RecoverNodeAccessOperation';
@@ -205,4 +207,6 @@ export const migrations = [
   IdentityConsoleState1790000000040,
   ControlPeerPerNode1790000000041,
   AppHistoryIndexes1790000000042,
+  InferenceUsageIpHash1790000000043,
+  InferenceUsageCachedTokens1790000000044,
 ];

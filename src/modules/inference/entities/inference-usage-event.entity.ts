@@ -21,6 +21,9 @@ import {
 @Entity('inference_usage_events')
 @Index('idx_inference_usage_user_created', ['userId', 'createdAt'])
 @Index('idx_inference_usage_created', ['createdAt'])
+@Index('idx_inference_usage_ip_created', ['ipHash', 'createdAt'], {
+  where: '"ipHash" IS NOT NULL',
+})
 export class InferenceUsageEventEntity {
   @PrimaryGeneratedColumn('uuid')
   id: string;
@@ -32,6 +35,10 @@ export class InferenceUsageEventEntity {
   /** True when that person was a sandbox guest, so the instance paid. */
   @Column({ type: 'boolean', default: false })
   guest: boolean;
+
+  /** Keyed hash of a guest's address, for the per-address budget; cleared after two days. */
+  @Column({ type: 'varchar', length: 64, nullable: true })
+  ipHash: string | null;
 
   @Column({ length: 128 })
   model: string;
@@ -49,6 +56,10 @@ export class InferenceUsageEventEntity {
 
   @Column({ type: 'integer', default: 0 })
   completionTokens: number;
+
+  /** The part of `promptTokens` the provider served from its prompt cache, billed at its cached rate. */
+  @Column({ type: 'integer', default: 0 })
+  cachedPromptTokens: number;
 
   /**
    * True when the provider did not report a count and this was worked out from
