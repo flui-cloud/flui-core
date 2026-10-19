@@ -2,6 +2,33 @@
   "schemaVersion": 2,
   "releases": [
     {
+      "version": "0.14.0-rc.2",
+      "publishedAt": "2026-10-19T08:00:28.552Z",
+      "bootstrapRef": "8231774",
+      "images": {
+        "fluiApi": "0.14.0-rc.2",
+        "fluiWeb": "0.14.0-rc.2",
+        "fluiAuthz": "0.7.0"
+      },
+      "notes": [
+        "The assistant defaults to deepseek-v4-flash on Scaleway and answers from a richer knowledge base: the task guides, a page of what Flui does and does not do, and a map of the dashboard.",
+        "Demo guests keep the model and a read-only set of tools chosen by the instance; approvals only confirm actions the assistant itself proposed.",
+        "Guest inference can be limited per instance, address and account through environment variables, all off until set; flui inference usage shows cached prompt tokens.",
+        "Topology opens on the service map drawn by app, with system apps shown until the viewer chooses otherwise.",
+        "Provider errors such as an exhausted quota now reach the person instead of an empty answer."
+      ],
+      "migrations": 2,
+      "requiresBootstrap": false,
+      "k3s": {
+        "version": "v1.35.4+k3s1"
+      },
+      "systemComponents": {
+        "certManager": "v1.17.1",
+        "systemUpgradeController": "v0.20.2"
+      },
+      "manifestSets": []
+    },
+    {
       "version": "0.14.0-rc.1",
       "publishedAt": "2026-10-18T20:52:00.282Z",
       "bootstrapRef": "8231774",
