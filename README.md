@@ -1,3 +1,6 @@
+
+
+
 <p align="center">
   <img src="docs/assets/flui-mark.svg" alt="Flui" width="96">
 </p>
@@ -20,12 +23,7 @@
   <a href="https://github.com/flui-cloud/flui-spec">flui.yaml spec</a>
 </p>
 
-<p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/flui-overview-dark.png">
-    <img src="docs/assets/flui-overview-light.png" alt="What Flui builds on your providers, a control plane on servers you own joined to each provider by the Flui network, next to the three ways to drive it: the dashboard, the flui CLI and AI agents over MCP" width="100%">
-  </picture>
-</p>
+https://github.com/user-attachments/assets/815f782a-dda3-45bf-9d7a-744bf011df8f
 
 Flui turns regional cloud providers and servers you own into one cloud platform. It provisions the servers, the private network, the firewall and the certificates, installs a Kubernetes runtime and runs your applications on it, with observability, autoscaling and managed databases built in. You work through a dashboard, a CLI or an AI agent, and you never need to know Kubernetes.
 
