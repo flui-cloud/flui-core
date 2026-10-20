@@ -2,6 +2,35 @@
   "schemaVersion": 2,
   "releases": [
     {
+      "version": "0.14.0-rc.4",
+      "publishedAt": "2026-10-20T17:07:07.283Z",
+      "bootstrapRef": "57f11b2",
+      "images": {
+        "fluiApi": "0.14.0-rc.4",
+        "fluiWeb": "0.14.0-rc.4",
+        "fluiAuthz": "0.7.0"
+      },
+      "notes": [
+        "Lowering a scaling group's floor or target now shows, before anything is saved, which machine would go, what runs on it and where it starts again, Flui's own parts first: on the dashboard, in the CLI (confirm with --yes) and for agents.",
+        "A machine is never emptied while the Flui API runs on it or while what it runs has nowhere else to go: the removal waits and touches nothing, and the scaling page says why.",
+        "When the last worker of a control cluster leaves, its master takes apps again before anything is moved.",
+        "A node purchase or removal that stopped halfway is closed within minutes, and its node is put back in service, so the scaling group is never left waiting on it.",
+        "The queues of long operations now live on the master and on disk, so changes to the workers no longer lose them.",
+        "The example fleet demo visitors explore is now a small shop in production: a production, a staging and a control cluster, with modest copies and traffic.",
+        "Topology draws the apps Flui runs for itself as one quiet platform node per cluster, which leads to each of them."
+      ],
+      "migrations": 0,
+      "requiresBootstrap": true,
+      "k3s": {
+        "version": "v1.35.4+k3s1"
+      },
+      "systemComponents": {
+        "certManager": "v1.17.1",
+        "systemUpgradeController": "v0.20.2"
+      },
+      "manifestSets": ["control"]
+    },
+    {
       "version": "0.14.0-rc.3",
       "publishedAt": "2026-10-19T14:57:07.547Z",
       "bootstrapRef": "8231774",
