@@ -14,7 +14,8 @@ export type GiveBackReasonKind =
   | 'not-restarted'
   | 'no-interruption'
   | 'placed-by-machine'
-  | 'master';
+  | 'master'
+  | 'runs-flui-api';
 
 export interface GiveBackItem {
   label: string;
@@ -37,6 +38,7 @@ const REASON_OF: Record<DrainBlockerKind, GiveBackReasonKind> = {
   'disruption-budget': 'no-interruption',
   'not-evictable': 'placed-by-machine',
   'is-master': 'master',
+  'runs-flui-api': 'runs-flui-api',
 };
 
 const WORDING: Record<
@@ -70,10 +72,16 @@ const WORDING: Record<
     fix: 'Nothing replaces the master of a cluster in place. Rebuild the cluster if it has to change.',
     sentence: () => "it is the cluster's master",
   },
+  'runs-flui-api': {
+    title: 'Runs the Flui API, which carries out the removal',
+    fix: 'Nothing is changed while the Flui API runs here. The removal waits until it runs on another machine.',
+    sentence: () => 'the Flui API runs on it',
+  },
 };
 
 const ORDER: GiveBackReasonKind[] = [
   'master',
+  'runs-flui-api',
   DATA_ON_NODE,
   'no-interruption',
   'not-restarted',

@@ -45,6 +45,7 @@ import {
 } from './engine.core';
 import { ShapeFactsService } from './shape-facts.service';
 import { DrainCheck, drainSummary } from './drain.core';
+import { pickRemovable } from './removable.core';
 import { giveBackReasons, giveBackSentence } from './give-back.core';
 import { fitSummary } from './fit.core';
 import { DrainFeasibilityService } from './drain-feasibility.service';
@@ -112,13 +113,6 @@ type DecisionDraft = Omit<
   | 'fulfilledExpansions'
   | 'fulfilledReplacements'
 >;
-
-/** A node the fleet could give back, named so something can actually remove it. */
-interface RemovableNode {
-  id: string;
-  name: string;
-  hourlyEur: number | null;
-}
 
 /**
  * The two forces on one fleet, decided and never acted on.
@@ -952,39 +946,6 @@ function addIntent(rung: LadderRung, fleet: FleetFacts): ScalingIntent {
     fleetMonthlyEur: fleet.committedMonthlyEur,
     unpricedNodes: fleet.unpricedNodes,
     fleetNodes: fleet.nodes,
-  };
-}
-
-/**
- * Which node the fleet gives back.
- *
- * The one a standing order named, when it named one. Otherwise the dearest
- * worker: coming back to the target is about the bill, and giving back the
- * cheapest machine of an oversized fleet is the version of this that costs
- * money to run. Never the master, and never a node already leaving.
- */
-function pickRemovable(
-  rows: ClusterNodeEntity[],
-  named: string | null,
-): RemovableNode | null {
-  const workers = rows.filter(
-    (row) =>
-      row.nodeType !== NodeType.MASTER && row.status !== NodeStatus.DELETING,
-  );
-  if (!workers.length) return null;
-
-  const chosen =
-    workers.find((row) => row.serverName === named || row.id === named) ??
-    [...workers].sort(
-      (a, b) =>
-        (b.hourlyPriceEur ?? -1) - (a.hourlyPriceEur ?? -1) ||
-        a.serverName.localeCompare(b.serverName),
-    )[0];
-
-  return {
-    id: chosen.id,
-    name: chosen.serverName,
-    hourlyEur: chosen.hourlyPriceEur ?? null,
   };
 }
 

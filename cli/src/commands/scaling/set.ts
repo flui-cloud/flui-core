@@ -17,6 +17,7 @@ import type {
 import type { EditScalingGroupDto } from 'src/modules/infrastructure/scaling/dto/scaling-group.dto';
 import { changeOf } from '../../lib/scaling-set';
 import { boundProblem, costLines } from '../../lib/scaling-view';
+import { printRemoval, removalNeedsYes } from '../../lib/scaling-removal-view';
 
 function hasSpendingCeiling(maxMonthlyCost: unknown): boolean {
   return Number(maxMonthlyCost) > 0;
@@ -100,6 +101,11 @@ export default class ScalingSet extends Command {
       description: 'Show each setting before and after; write nothing',
       default: false,
     }),
+    yes: Flags.boolean({
+      description:
+        'Save lower limits that give a machine back, after reading which one and what runs on it',
+      default: false,
+    }),
   };
 
   async run(): Promise<void> {
@@ -151,6 +157,14 @@ export default class ScalingSet extends Command {
       }
       for (const line of lines) console.log(`  ${chalk.cyan('•')} ${line}`);
 
+      const removal = lowers(group, next)
+        ? await client.removalPreview(group.id, {
+            min: next.bounds.min,
+            desired: next.bounds.desired,
+          })
+        : null;
+      if (removal?.removes) printRemoval(removal);
+
       if (flags['dry-run']) {
         const cost = await client.cost(group.clusterId, {
           bounds: { min: next.bounds.min, max: next.bounds.max },
@@ -160,6 +174,11 @@ export default class ScalingSet extends Command {
         });
         printCost(cost);
         console.log(chalk.dim('\n  Nothing was written (--dry-run).\n'));
+        return;
+      }
+
+      if (removal?.removes && !flags.yes) {
+        console.log(chalk.dim(`\n  ${removalNeedsYes(removal)}\n`));
         return;
       }
 
@@ -176,6 +195,17 @@ export default class ScalingSet extends Command {
       process.exitCode = 1;
     }
   }
+}
+
+/** Whether the floor or the target goes down, the two changes that can give a machine back. */
+function lowers(
+  before: ScalingGroupResponseDto,
+  after: ScalingGroupResponseDto,
+): boolean {
+  return (
+    after.bounds.min < before.bounds.min ||
+    after.bounds.desired < before.bounds.desired
+  );
 }
 
 function merged(

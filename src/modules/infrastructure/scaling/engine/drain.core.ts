@@ -18,7 +18,8 @@ export type DrainBlockerKind =
   | 'no-controller'
   | 'disruption-budget'
   | 'not-evictable'
-  | 'is-master';
+  | 'is-master'
+  | 'runs-flui-api';
 
 /** The application something on the node belongs to, when Flui deployed it. */
 export interface DrainApplication {
@@ -43,7 +44,24 @@ export interface DrainCheck {
   cleared: string[];
   /** The node asked about. Absent on checks recorded before it was kept. */
   node?: string;
+  /** What emptying the node would start again elsewhere. Absent on older checks. */
+  moves?: DrainMove[];
 }
+
+export interface DrainMove {
+  /** The application's name, or the component's when Flui did not deploy it. */
+  what: string;
+  /** Part of the platform itself rather than something a person deployed. */
+  system: boolean;
+  application?: DrainApplication | null;
+}
+
+/** Where the platform's own parts run. */
+export const SYSTEM_NAMESPACES = new Set([
+  'flui-system',
+  'flui-control',
+  'kube-system',
+]);
 
 export interface DrainPod {
   name: string;
@@ -123,51 +141,7 @@ export function checkDrain(subject: DrainSubject): DrainCheck {
   const evictable = subject.pods.filter((pod) => pod.ownerKind !== DAEMONSET);
 
   for (const pod of evictable) {
-    const where = `${pod.namespace}/${pod.name}`;
-    const application = pod.application ?? null;
-
-    if (pod.mirror) {
-      blockers.push({
-        kind: 'not-evictable',
-        what: where,
-        fix: 'This part is placed by the machine itself and cannot be moved. Remove it from the machine first.',
-        application,
-      });
-      continue;
-    }
-
-    if (!pod.ownerKind) {
-      blockers.push({
-        kind: 'no-controller',
-        what: where,
-        fix: 'Nothing would start this again elsewhere. Deploy it as an app, or delete it and accept that it goes.',
-        application,
-      });
-    }
-
-    // A dedicated application's volume is the reason it is dedicated, and it
-    // is already named once for it.
-    if (
-      pod.boundVolumes.length &&
-      !(application && dedicated.has(application.id))
-    ) {
-      blockers.push({
-        kind: 'bound-volume',
-        what: `${where} → ${pod.boundVolumes.join(', ')}`,
-        fix: 'The disk lives on this machine and does not travel. Move the data, or give the app storage that any machine can reach.',
-        application,
-      });
-    }
-
-    const refusing = budgetRefusing(pod, subject.budgets);
-    if (refusing) {
-      blockers.push({
-        kind: 'disruption-budget',
-        what: `${refusing.namespace}/${refusing.name} (covers ${where})`,
-        fix: 'The budget permits no further disruption. Scale the workload up, or relax the budget, before this node can be emptied.',
-        application,
-      });
-    }
+    blockers.push(...podBlockers(pod, dedicated, subject.budgets));
   }
 
   if (daemons.length) {
@@ -202,7 +176,98 @@ export function checkDrain(subject: DrainSubject): DrainCheck {
     node: subject.nodeName,
     blockers,
     cleared,
+    moves: movesOf(evictable),
   };
+}
+
+function podBlockers(
+  pod: DrainPod,
+  dedicated: Set<string>,
+  budgets: DrainBudget[],
+): DrainBlocker[] {
+  const where = `${pod.namespace}/${pod.name}`;
+  const application = pod.application ?? null;
+  const blockers: DrainBlocker[] = [];
+
+  // The removal is carried out by the API itself: a drain that evicts it stops
+  // the removal halfway, with the node cordoned and the operation left running
+  // for nobody to finish.
+  if (isFluiApi(pod)) {
+    blockers.push({
+      kind: 'runs-flui-api',
+      what: where,
+      fix: 'The Flui API runs on this machine and is what carries out the removal, so emptying it would stop the removal halfway. Nothing is changed: the removal waits until the Flui API runs on another machine.',
+      application,
+    });
+  }
+
+  if (pod.mirror) {
+    blockers.push({
+      kind: 'not-evictable',
+      what: where,
+      fix: 'This part is placed by the machine itself and cannot be moved. Remove it from the machine first.',
+      application,
+    });
+    return blockers;
+  }
+
+  if (!pod.ownerKind) {
+    blockers.push({
+      kind: 'no-controller',
+      what: where,
+      fix: 'Nothing would start this again elsewhere. Deploy it as an app, or delete it and accept that it goes.',
+      application,
+    });
+  }
+
+  // A dedicated application's volume is the reason it is dedicated, and it is
+  // already named once for it.
+  if (
+    pod.boundVolumes.length &&
+    !(application && dedicated.has(application.id))
+  ) {
+    blockers.push({
+      kind: 'bound-volume',
+      what: `${where} → ${pod.boundVolumes.join(', ')}`,
+      fix: 'The disk lives on this machine and does not travel. Move the data, or give the app storage that any machine can reach.',
+      application,
+    });
+  }
+
+  const refusing = budgetRefusing(pod, budgets);
+  if (refusing) {
+    blockers.push({
+      kind: 'disruption-budget',
+      what: `${refusing.namespace}/${refusing.name} (covers ${where})`,
+      fix: 'The budget permits no further disruption. Scale the workload up, or relax the budget, before this node can be emptied.',
+      application,
+    });
+  }
+  return blockers;
+}
+
+function isFluiApi(pod: DrainPod): boolean {
+  return pod.namespace === 'flui-system' && pod.labels['app'] === 'flui-api';
+}
+
+/** One entry per application or component, however many replicas it runs here. */
+function movesOf(pods: DrainPod[]): DrainMove[] {
+  const seen = new Map<string, DrainMove>();
+  for (const pod of pods) {
+    const what =
+      pod.application?.slug ??
+      pod.labels['app.kubernetes.io/name'] ??
+      pod.labels['app'] ??
+      pod.name;
+    const key = `${pod.namespace}/${what}`;
+    if (seen.has(key)) continue;
+    seen.set(key, {
+      what,
+      system: SYSTEM_NAMESPACES.has(pod.namespace),
+      application: pod.application ?? null,
+    });
+  }
+  return [...seen.values()];
 }
 
 function budgetRefusing(
@@ -231,6 +296,15 @@ function covers(
   return Object.entries(selector).every(
     ([key, value]) => labels[key] === value,
   );
+}
+
+/** What emptying a node starts again elsewhere, the platform's own parts first. */
+export function movesSentence(moves: DrainMove[]): string | null {
+  if (!moves.length) return null;
+  const named = [...moves]
+    .sort((a, b) => Number(b.system) - Number(a.system))
+    .map((move) => (move.system ? `${move.what} (Flui)` : move.what));
+  return `Started again on another machine: ${named.join(', ')}.`;
 }
 
 /** One line naming what stands in the way, for a decision that has to say it. */

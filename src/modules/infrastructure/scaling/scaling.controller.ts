@@ -44,6 +44,7 @@ import {
   ScalingFloorDto,
   EditScalingGroupDto,
   WriteScalingGroupDto,
+  RemovalPreviewRequestDto,
 } from './dto/scaling-group.dto';
 import {
   ClusterScalingDecisionDto,
@@ -51,10 +52,12 @@ import {
   ScalingCostDto,
   ScalingDecisionResponseDto,
   ScalingGroupResponseDto,
+  RemovalPreviewDto,
 } from './dto/scaling-response.dto';
 import { ShapeOrderingService } from './catalogue/shape-ordering.service';
 import { ScalingEngineService } from './engine/scaling-engine.service';
 import { ScalingReconcilerService } from './engine/scaling-reconciler.service';
+import { RemovalPreviewService } from './services/removal-preview.service';
 import { byOf } from './scaling-actor';
 import {
   ScalingPreviewDto,
@@ -111,6 +114,7 @@ export class ScalingController {
     private readonly ordering: ShapeOrderingService,
     private readonly engine: ScalingEngineService,
     private readonly reconciler: ScalingReconcilerService,
+    private readonly removals: RemovalPreviewService,
   ) {}
 
   @Get('scaling')
@@ -485,6 +489,28 @@ export class ScalingController {
     @Body() body: WhatIfRequestDto,
   ): Promise<WhatIfAnswerDto> {
     return this.engine.whatIf(clusterId, askOf(body));
+  }
+
+  @Post('scaling-groups/:id/removal-preview')
+  @RequirePermission(IAM_PERMISSION.CLUSTER_READ)
+  @HttpCode(200)
+  @ApiOperation({
+    summary: 'What saving these node limits would do to the machines',
+    description:
+      'Asked before a lower target or floor is saved: whether the group would give a machine back, which one, what runs on it and where it would start again (Flui’s own parts first), whether the master of a control cluster is opened first, and, when the machine cannot go yet, why the removal would wait with nothing touched. The same checks the group makes before a removal; spends nothing and changes nothing.',
+  })
+  @ApiParam({ name: 'id', description: GROUP_ID })
+  @ApiResponse({ status: 200, type: RemovalPreviewDto })
+  @ApiResponse(GROUP_MISSING)
+  async removalPreview(
+    @Param('id') id: string,
+    @Body() body: RemovalPreviewRequestDto,
+  ): Promise<RemovalPreviewDto> {
+    const preview = await this.removals.preview(id, body);
+    return {
+      ...preview,
+      moves: preview.moves.map(({ what, system }) => ({ what, system })),
+    };
   }
 
   @Post('clusters/:clusterId/scaling/cost')

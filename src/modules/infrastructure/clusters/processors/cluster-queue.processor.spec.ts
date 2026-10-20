@@ -9,6 +9,7 @@ import {
 } from '../../servers/entities/infrastructure-operations.entity';
 import { HostnameMode } from '../../../dns/enums/hostname-mode.enum';
 import { getOperationSteps } from '../../operations/helpers/operation-steps.helper';
+import { DrainFeasibilityService } from '../../scaling/engine/drain-feasibility.service';
 
 /**
  * The writer (ClusterCreationService) only ever nests the request DTO under
@@ -246,20 +247,55 @@ describe('ClusterQueueProcessor.handleRemoveWorker', () => {
       },
       hostCommand: { run: runImpl },
       nodeEvents,
-      moduleRef: extra.moduleRef,
+      moduleRef: extra.moduleRef ?? {
+        get: (token: unknown) =>
+          token === DrainFeasibilityService ? (extra.drain ?? fine()) : null,
+      },
     });
 
+    const queue = { add: jest.fn().mockResolvedValue(undefined) };
     const run = () =>
       processor.handleRemoveWorker({
         id: 'job-1',
+        name: 'remove-worker',
+        opts: {},
+        queue,
         data: {
           operationId: operation.id,
           clusterId: cluster.id,
           nodeId: node.id,
+          heldRetries: extra.heldRetries,
         },
       } as never);
 
-    return { run, operation, nodeRepository, nodeEvents, node };
+    return { run, operation, nodeRepository, nodeEvents, node, queue };
+  }
+
+  /** A node whose work can go elsewhere, with what would move. */
+  function fine(moves: unknown[] = []) {
+    return {
+      check: jest.fn().mockResolvedValue({
+        ok: true,
+        blockers: [],
+        cleared: [],
+        moves,
+      }),
+      roomElsewhere: jest.fn().mockResolvedValue({
+        fits: true,
+        needs: { cpuMillicores: 0, memoryMi: 0 },
+        room: { cpuMillicores: 0, memoryMi: 0 },
+        stranded: [],
+      }),
+    };
+  }
+
+  /** The readiness probe answers `ready`; every other command succeeds. */
+  function readyIs(ready: string) {
+    return jest
+      .fn()
+      .mockImplementation((_target, command: string) =>
+        Promise.resolve(command.includes('kubectl get node') ? ready : ''),
+      );
   }
 
   /** Answers the drain with a failure and the readiness probe with `ready`. */
@@ -283,7 +319,9 @@ describe('ClusterQueueProcessor.handleRemoveWorker', () => {
 
     await t.run();
 
-    const commands = run.mock.calls.map((c) => c[1] as string);
+    const commands = run.mock.calls
+      .map((c) => c[1] as string)
+      .filter((c) => !c.includes('kubectl get node'));
     expect(commands[0]).toContain('kubectl cordon');
     expect(commands[1]).toContain('kubectl drain');
     expect(commands[2]).toContain('kubectl delete node');
@@ -305,9 +343,13 @@ describe('ClusterQueueProcessor.handleRemoveWorker', () => {
         return [];
       }),
     };
+    const drain = fine();
     const t = build(jest.fn().mockResolvedValue(''), {
       clusterType: ClusterType.CONTROL,
-      moduleRef: { get: () => membership },
+      moduleRef: {
+        get: (token: unknown) =>
+          token === DrainFeasibilityService ? drain : membership,
+      },
     });
 
     await t.run();
@@ -366,6 +408,152 @@ describe('ClusterQueueProcessor.handleRemoveWorker', () => {
     expect(t.nodeEvents.record.mock.calls[0][0].warning).toContain(
       'could not be emptied cleanly',
     );
+  });
+
+  it('touches nothing when what runs on the node has nowhere to go, and says so', async () => {
+    const run = readyIs("'True'");
+    const drain = fine();
+    drain.check.mockResolvedValue({
+      ok: false,
+      blockers: [
+        {
+          kind: 'runs-flui-api',
+          what: 'flui-system/flui-api-5f597b7d65-gcrhj',
+          fix: 'The Flui API runs on this machine and is what carries out the removal. Nothing is changed.',
+        },
+      ],
+      cleared: [],
+      moves: [],
+    });
+    const t = build(run, { drain });
+
+    await expect(t.run()).rejects.toThrow(/^Nothing was changed/);
+
+    const commands = run.mock.calls.map((c) => c[1] as string);
+    expect(commands.some((c) => c.includes('kubectl cordon'))).toBe(false);
+    expect(commands.some((c) => c.includes('kubectl drain'))).toBe(false);
+    expect(t.nodeRepository.save).not.toHaveBeenCalled();
+    expect(t.operation.status).toBe(OperationStatus.FAILED);
+  });
+
+  it('holds on silence: a cluster that cannot be asked is not a yes', async () => {
+    const drain = fine();
+    drain.check.mockResolvedValue(null);
+    const t = build(readyIs("'True'"), { drain });
+
+    await expect(t.run()).rejects.toThrow(/could not be asked/);
+    expect(t.nodeRepository.delete).not.toHaveBeenCalled();
+  });
+
+  it('holds when the work on the node would not fit on the machines that stay', async () => {
+    const drain = fine();
+    drain.roomElsewhere.mockResolvedValue({
+      fits: false,
+      needs: { cpuMillicores: 500, memoryMi: 512 },
+      room: { cpuMillicores: 0, memoryMi: 0 },
+      stranded: ['flui-api'],
+    });
+    const run = readyIs("'True'");
+    const t = build(run, { drain });
+
+    await expect(t.run()).rejects.toThrow(/^Nothing was changed/);
+    expect(
+      run.mock.calls.some((c) => String(c[1]).includes('kubectl cordon')),
+    ).toBe(false);
+  });
+
+  it('lists what it started again elsewhere, the platform first', async () => {
+    const drain = fine([
+      { what: 'storefront', system: false },
+      { what: 'flui-web', system: true },
+    ]);
+    const t = build(readyIs("'True'"), { drain });
+
+    await t.run();
+
+    const moved = (
+      t.operation.metadata.warnings as Array<{ code: string; reason: string }>
+    ).find((w) => w.code === 'APPS_MOVED');
+    expect(moved?.reason).toBe(
+      'Started again on another machine: flui-web (Flui), storefront.',
+    );
+  });
+
+  describe('on a copy of the API that runs on the node itself', () => {
+    const before = process.env.NODE_NAME;
+    beforeEach(() => {
+      process.env.NODE_NAME = 'workload-1-worker-1';
+    });
+    afterEach(() => {
+      if (before === undefined) delete process.env.NODE_NAME;
+      else process.env.NODE_NAME = before;
+    });
+
+    it('hands the removal to another copy and touches nothing', async () => {
+      const run = jest.fn().mockResolvedValue('');
+      const t = build(run);
+
+      await t.run();
+
+      expect(run).not.toHaveBeenCalled();
+      expect(t.queue.add).toHaveBeenCalledWith(
+        'remove-worker',
+        expect.objectContaining({ heldRetries: 1 }),
+        expect.objectContaining({ delay: 60_000 }),
+      );
+      expect(t.operation.status).toBe(OperationStatus.PENDING);
+    });
+
+    it('stops, having changed nothing, when no other copy ever takes it', async () => {
+      const run = jest.fn().mockResolvedValue('');
+      const t = build(run, { heldRetries: 5 });
+
+      await expect(t.run()).rejects.toThrow(
+        /^Nothing was changed: the Flui API/,
+      );
+
+      expect(run).not.toHaveBeenCalled();
+      expect(t.queue.add).not.toHaveBeenCalled();
+      expect(t.operation.status).toBe(OperationStatus.FAILED);
+    });
+  });
+
+  it('goes ahead on a copy that runs on another node', async () => {
+    const before = process.env.NODE_NAME;
+    process.env.NODE_NAME = 'workload-1-master';
+    try {
+      const t = build(jest.fn().mockResolvedValue(''));
+      await t.run();
+      expect(t.nodeRepository.delete).toHaveBeenCalledWith({ id: 'node-w1' });
+    } finally {
+      if (before === undefined) delete process.env.NODE_NAME;
+      else process.env.NODE_NAME = before;
+    }
+  });
+
+  it('opens the master of a control cluster before emptying its last worker', async () => {
+    const order: string[] = [];
+    const run = jest.fn().mockImplementation((_target, command: string) => {
+      if (command.includes('kubectl cordon')) order.push('cordon');
+      return Promise.resolve('');
+    });
+    const t = build(run, { clusterType: ClusterType.CONTROL });
+    const opened = jest
+      .spyOn(
+        ClusterQueueProcessor.prototype as unknown as {
+          applyMasterProtection: () => Promise<void>;
+        },
+        'applyMasterProtection',
+      )
+      .mockImplementation(async () => {
+        order.push('open master');
+      });
+
+    await t.run();
+
+    expect(order[0]).toBe('open master');
+    expect(order.indexOf('cordon')).toBeGreaterThan(0);
+    opened.mockRestore();
   });
 });
 

@@ -100,6 +100,7 @@ import { CostsService } from './services/costs.service';
 import { CostRecordBackfillService } from './services/cost-record-backfill.service';
 import { CostsController } from './costs.controller';
 import { NodeLifeEventsService } from './services/node-life-events.service';
+import { LostNodeOperationsService } from './services/lost-node-operations.service';
 import { ScalingBellService } from './services/scaling-bell.service';
 import { UserEntity } from '../../auth/entities/user.entity';
 import { UserEventsModule } from '../../auth/gateway/user-events.module';
@@ -175,6 +176,7 @@ import { IamModule } from '../../iam/iam.module';
   ],
   providers: [
     NodeLifeEventsService,
+    LostNodeOperationsService,
     ScalingBellService,
     ClusterRebuildService,
     ControlRestoreSourceService,

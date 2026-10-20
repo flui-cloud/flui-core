@@ -26,6 +26,7 @@ import { ScalingReconcilerScheduler } from './engine/scaling-reconciler.schedule
 import { ObservabilityModule } from '../../observability/observability.module';
 import { ScalingAlarmService } from './engine/scaling-alarm.service';
 import { ScalingActuatorService } from './engine/scaling-actuator.service';
+import { RemovalPreviewService } from './services/removal-preview.service';
 import { DrainFeasibilityService } from './engine/drain-feasibility.service';
 import { NodeReserveService } from './engine/node-reserve.service';
 
@@ -57,6 +58,7 @@ import { NodeReserveService } from './engine/node-reserve.service';
   controllers: [ScalingController],
   providers: [
     ScalingGroupService,
+    RemovalPreviewService,
     ScalingOverviewService,
     { provide: CATALOGUE_HTTP, useClass: FetchCatalogueHttp },
     VopsCatalogueClient,

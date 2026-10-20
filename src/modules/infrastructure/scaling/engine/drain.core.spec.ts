@@ -188,3 +188,52 @@ describe('naming each application once', () => {
     expect(check.blockers[0].application).toEqual(app);
   });
 });
+
+describe('the machine the Flui API runs on', () => {
+  const api = pod({
+    name: 'flui-api-5f597b7d65-gcrhj',
+    namespace: 'flui-system',
+    labels: { app: 'flui-api' },
+  });
+
+  it('is refused, because the API is what carries out the removal', () => {
+    const check = checkDrain(subject({ pods: [api, pod()] }));
+
+    expect(check.ok).toBe(false);
+    expect(check.blockers.map((b) => b.kind)).toEqual(['runs-flui-api']);
+    expect(drainSummary(check)).toContain('Nothing is changed');
+  });
+
+  it('is not confused with an app that happens to be called flui-api elsewhere', () => {
+    const lookalike = pod({
+      namespace: 'flui-apps',
+      labels: { app: 'flui-api' },
+    });
+    expect(checkDrain(subject({ pods: [lookalike] })).ok).toBe(true);
+  });
+});
+
+describe('what emptying the node would move', () => {
+  it('lists each application once and tells the platform apart', () => {
+    const app = { id: 'a3', slug: 'storefront' };
+    const check = checkDrain(
+      subject({
+        pods: [
+          pod({ name: 'storefront-1', application: app }),
+          pod({ name: 'storefront-2', application: app }),
+          pod({
+            name: 'flui-web-676dbf7c95-fb65k',
+            namespace: 'flui-system',
+            labels: { app: 'flui-web' },
+          }),
+          pod({ name: 'node-exporter-x', ownerKind: 'DaemonSet' }),
+        ],
+      }),
+    );
+
+    expect(check.moves).toEqual([
+      { what: 'storefront', system: false, application: app },
+      { what: 'flui-web', system: true, application: null },
+    ]);
+  });
+});

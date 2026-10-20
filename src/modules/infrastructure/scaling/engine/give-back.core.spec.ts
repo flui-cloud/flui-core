@@ -77,3 +77,32 @@ describe('why a node above the target cannot go back', () => {
     );
   });
 });
+
+describe('a node that runs the Flui API', () => {
+  it('is named as such, ahead of what an application could fix', () => {
+    const reasons = giveBackReasons(
+      check([
+        {
+          kind: 'bound-volume',
+          what: 'ns/linkding-7c9 → data',
+          fix: 'x',
+          application: { id: 'a2', slug: 'linkding' },
+        },
+        {
+          kind: 'runs-flui-api',
+          what: 'flui-system/flui-api-5f597b7d65-gcrhj',
+          fix: 'x',
+        },
+      ]),
+    );
+
+    expect(reasons.map((r) => r.kind)).toEqual([
+      'runs-flui-api',
+      'data-on-node',
+    ]);
+    expect(reasons[0].items).toEqual([
+      { label: 'flui-api-5f597b7d65-gcrhj', applicationId: null },
+    ]);
+    expect(giveBackSentence(reasons)).toContain('the Flui API runs on it');
+  });
+});

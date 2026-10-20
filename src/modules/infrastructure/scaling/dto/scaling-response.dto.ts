@@ -634,6 +634,7 @@ export class GiveBackReasonDto {
       'no-interruption',
       'placed-by-machine',
       'master',
+      'runs-flui-api',
     ],
   })
   kind: GiveBackReasonKind;
@@ -835,4 +836,77 @@ export class ClusterScalingRowDto {
     description: 'The one line that has to read from across the room',
   })
   needsPerson: string | null;
+}
+
+export class DrainMoveDto {
+  @Sensitivity(Sensitivity.ARBITRARY_TEXT)
+  @ApiProperty({
+    description:
+      'The application, or the component when Flui did not deploy it',
+  })
+  what: string;
+
+  @Sensitivity(Sensitivity.PUBLIC)
+  @ApiProperty({
+    description: 'Part of Flui itself rather than something a person deployed',
+  })
+  system: boolean;
+}
+
+/** What saving new node limits would do to the machines. */
+export class RemovalPreviewDto {
+  @Sensitivity(Sensitivity.PUBLIC)
+  @ApiProperty()
+  removes: boolean;
+
+  @Sensitivity(Sensitivity.PUBLIC)
+  @ApiProperty()
+  fleet: number;
+
+  @Sensitivity(Sensitivity.PUBLIC)
+  @ApiProperty({
+    description: 'The resting point: the larger of the target and the floor',
+  })
+  target: number;
+
+  @Sensitivity(Sensitivity.PUBLIC)
+  @ApiProperty({ description: 'How many machines would leave, one at a time' })
+  leaving: number;
+
+  @Sensitivity(Sensitivity.ARBITRARY_TEXT)
+  @ApiProperty({ type: String, nullable: true })
+  node: string | null;
+
+  @Sensitivity(Sensitivity.PUBLIC)
+  @ApiProperty({ type: String, nullable: true })
+  shape: string | null;
+
+  @Sensitivity(Sensitivity.PUBLIC)
+  @ApiProperty({ description: 'Whether the first removal could start now' })
+  proceeds: boolean;
+
+  @Sensitivity(Sensitivity.PUBLIC)
+  @ApiProperty({
+    description: "A control cluster's master takes apps again first",
+  })
+  opensMaster: boolean;
+
+  @Sensitivity(Sensitivity.PUBLIC)
+  @ApiProperty({ type: [DrainMoveDto] })
+  moves: DrainMoveDto[];
+
+  @Sensitivity(Sensitivity.PUBLIC)
+  @ApiProperty({ type: [GiveBackReasonDto] })
+  waitsFor: GiveBackReasonDto[];
+
+  @Sensitivity(Sensitivity.ARBITRARY_TEXT)
+  @ApiProperty({ description: 'The whole answer in one line' })
+  sentence: string;
+
+  @Sensitivity(Sensitivity.ARBITRARY_TEXT)
+  @ApiProperty({
+    description:
+      'The same without the list of what moves, for a screen that lists it apart',
+  })
+  headline: string;
 }

@@ -5,6 +5,7 @@ import {
   resolveGroup,
   scalingErrorLines,
 } from '../../lib/scaling-client';
+import { printRemoval, removalNeedsYes } from '../../lib/scaling-removal-view';
 
 export default class ScalingFloor extends Command {
   static readonly description =
@@ -13,6 +14,7 @@ export default class ScalingFloor extends Command {
   static readonly examples = [
     '<%= config.bin %> <%= command.id %> 3',
     '<%= config.bin %> <%= command.id %> 2 general --cluster prod-eu',
+    '<%= config.bin %> <%= command.id %> 1 --yes',
   ];
 
   static readonly args = {
@@ -32,6 +34,11 @@ export default class ScalingFloor extends Command {
       char: 'c',
       description: 'Cluster name or ID (default: auto-detect)',
     }),
+    yes: Flags.boolean({
+      description:
+        'Save a lower floor that gives a machine back, after reading which one and what runs on it',
+      default: false,
+    }),
   };
 
   async run(): Promise<void> {
@@ -40,6 +47,19 @@ export default class ScalingFloor extends Command {
     try {
       const client = ScalingClient.open();
       const { group } = await resolveGroup(client, flags.cluster, args.group);
+      if (args.min < group.bounds.min) {
+        const preview = await client.removalPreview(group.id, {
+          min: args.min,
+          desired: args.min,
+        });
+        if (preview.removes) {
+          printRemoval(preview);
+          if (!flags.yes) {
+            console.log(chalk.dim(`\n  ${removalNeedsYes(preview)}\n`));
+            return;
+          }
+        }
+      }
       const saved = await client.setFloor(group.id, args.min);
       const { min, desired, max } = saved.bounds;
       console.log(

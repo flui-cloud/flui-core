@@ -72,10 +72,15 @@ import {
   leaveControlHub,
   operationWarnings,
 } from './control-hub-hooks';
+import { removalPreflight } from './removal-preflight';
+import { movesSentence } from '../../scaling/engine/drain.core';
+import { retryHeldDelivery } from '../../../common/leadership/held-delivery';
 
 /** cert-manager's webhooks register after the cluster reports ready. */
 const ZONE_RECONCILE_ATTEMPTS = 5;
 const ZONE_RECONCILE_DELAY_MS = 30_000;
+
+const REMOVAL_HAND_ON_LIMIT = 5;
 
 @Processor('infrastructure')
 export class ClusterQueueProcessor {
@@ -2136,6 +2141,16 @@ export class ClusterQueueProcessor {
       const node = cluster.nodes?.find((n) => n.id === nodeId);
       if (!node) throw new Error(`Node ${nodeId} not in cluster ${clusterId}`);
 
+      if (await this.handedOn(job, node.serverName)) return;
+      warnings.push(...(await this.holdUnsafeRemoval(cluster, node)));
+      // The master of a control cluster takes apps again once the last worker
+      // is gone. Opening it after the drain left everything the worker ran with
+      // nowhere to start, the API and the dashboard among them.
+      await this.maybeUntaintMasterOnScaleIn(
+        cluster,
+        (cluster.nodes?.length ?? 1) - 1,
+      );
+
       // STEP 0 - CORDON
       await this.updateOperationStep(operationId, 0, 0, {
         status: OperationStatus.IN_PROGRESS,
@@ -2435,6 +2450,75 @@ export class ClusterQueueProcessor {
       } as InfrastructureOperationFailedDto);
       throw error;
     }
+  }
+
+  /**
+   * A copy of the API never empties the node it runs on: the drain would stop
+   * it, and the removal with it, halfway. It hands the job to another copy a
+   * minute later; when no other copy ever takes it, it says so and touches
+   * nothing.
+   */
+  private async handedOn(
+    job: Job<RemoveWorkerJobData>,
+    nodeName: string,
+  ): Promise<boolean> {
+    if (!process.env.NODE_NAME || process.env.NODE_NAME !== nodeName) {
+      return false;
+    }
+    if ((job.data.heldRetries ?? 0) >= REMOVAL_HAND_ON_LIMIT) {
+      throw new Error(
+        `Nothing was changed: the Flui API that took this removal runs on ${nodeName} itself, and no other copy took it after ${REMOVAL_HAND_ON_LIMIT} tries. Run a copy of the Flui API on another machine first.`,
+      );
+    }
+    await retryHeldDelivery(
+      job,
+      this.logger,
+      `Removal of ${nodeName} (this copy runs on it)`,
+    );
+    return true;
+  }
+
+  /**
+   * Refuses a removal that would leave something with nowhere to run, before
+   * the node is touched. A node the control plane has already lost is let
+   * through: what ran there is gone, and holding the removal back would only
+   * strand a server nobody is using.
+   */
+  private async holdUnsafeRemoval(
+    cluster: ClusterEntity,
+    node: ClusterNodeEntity,
+  ): Promise<
+    Array<{ code: string; reason: string; details?: Record<string, any> }>
+  > {
+    if (cluster.masterIpAddress) {
+      try {
+        const ready = await this.runOnMaster(
+          cluster.masterIpAddress,
+          `kubectl get node ${node.serverName} -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}'`,
+          30000,
+        );
+        if (ready.trim().replaceAll("'", '') !== 'True') return [];
+      } catch {
+        // Unreadable is not lost: the preflight below asks again and holds.
+      }
+    }
+    const preflight = await removalPreflight(
+      cluster,
+      node,
+      this.moduleRef,
+      this.logger,
+    );
+    if (preflight.held) throw new Error(preflight.held);
+    const line = movesSentence(preflight.moves);
+    return line
+      ? [
+          {
+            code: 'APPS_MOVED',
+            reason: line,
+            details: { moves: preflight.moves },
+          },
+        ]
+      : [];
   }
 
   /**

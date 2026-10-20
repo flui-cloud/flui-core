@@ -798,11 +798,40 @@ describe('scaling_group_set', () => {
     );
     expect(calls).toEqual([
       {
+        method: 'POST',
+        path: '/infrastructure/scaling-groups/g1/removal-preview',
+        body: { min: 1, desired: 3 },
+      },
+      {
         method: 'PATCH',
         path: '/infrastructure/scaling-groups/g1',
         body: { bounds: { min: 1, desired: 3, max: 5 } },
       },
     ]);
+  });
+
+  it('says which machine lower limits give back, and what runs on it', async () => {
+    const removal = {
+      removes: true,
+      proceeds: true,
+      node: 'prod-worker-2',
+      moves: [{ what: 'flui-web', system: true }],
+      waitsFor: [],
+      sentence:
+        'Saving gives back prod-worker-2 (cx23). Started again on another machine: flui-web (Flui).',
+    };
+    const { calls, data } = await call(
+      'scaling_group_set',
+      { groupId: 'g1', bounds: { min: 1, desired: 1, max: 5 } },
+      (r) => (r.path.endsWith('/removal-preview') ? removal : GROUP),
+    );
+
+    expect(calls.map((c) => c.method)).toEqual(['POST', 'PATCH']);
+    expect(data.removal).toMatchObject({
+      says: removal.sentence,
+      node: 'prod-worker-2',
+      startsNow: true,
+    });
   });
 
   it('writes a new group against the sole cluster', async () => {

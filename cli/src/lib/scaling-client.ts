@@ -4,6 +4,7 @@ import type {
   ScalingCostDto,
   ScalingDecisionResponseDto,
   ScalingGroupResponseDto,
+  RemovalPreviewDto,
 } from 'src/modules/infrastructure/scaling/dto/scaling-response.dto';
 import type { ScalingCostRequestDto } from 'src/modules/infrastructure/scaling/dto/scaling-group.dto';
 import type { ScalingPreviewDto } from 'src/modules/infrastructure/scaling/dto/scaling-preview.dto';
@@ -211,6 +212,17 @@ export class ScalingClient {
     return this.api.patch<ScalingGroupResponseDto>(
       `/infrastructure/scaling-groups/${id}/floor`,
       { min },
+    );
+  }
+
+  /** Which machine lower limits would give back and what runs on it; writes nothing. */
+  removalPreview(
+    id: string,
+    proposed: { min?: number; desired?: number },
+  ): Promise<RemovalPreviewDto> {
+    return this.api.post<RemovalPreviewDto>(
+      `/infrastructure/scaling-groups/${id}/removal-preview`,
+      proposed,
     );
   }
 

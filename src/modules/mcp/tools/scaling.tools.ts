@@ -5,12 +5,14 @@ import {
 } from '../../infrastructure/scaling/scaling.core';
 import { MCP_SCOPE } from '../constants/mcp-scopes';
 import {
+  McpToolContext,
   ToolDef,
   coerceBoolean,
   coerceNumber,
   defineTool,
   resolveClusterId,
 } from './mcp-tool.util';
+import type { RemovalPreviewDto as RemovalDto } from '../../infrastructure/scaling/dto/scaling-response.dto';
 import {
   scalingConsequenceOf,
   ScalingGroupAuthorityFacts,
@@ -361,6 +363,58 @@ function standingOrderView(order: StandingOrderDto): Record<string, unknown> {
         drainableMeans: drainNote(order.drainable ?? null),
       }
     : base;
+}
+
+/**
+ * What lower limits would give back, asked before they are saved. Null when
+ * they remove nothing or the preview could not be read: the group checks again
+ * before it removes anything, so a missing preview never blocks the write.
+ */
+async function removalOf(
+  ctx: McpToolContext,
+  groupId: string,
+  bounds: { min?: number; desired?: number },
+): Promise<RemovalDto | null> {
+  try {
+    const preview = await ctx.api.post<RemovalDto>(
+      `/infrastructure/scaling-groups/${enc(groupId)}/removal-preview`,
+      { min: bounds.min, desired: bounds.desired },
+    );
+    return preview.removes ? preview : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The write, with the removal carried into whatever comes back: a write that
+ * stops for a person's approval returns only a message, so the removal rides
+ * on it — the person is asked about a machine, and the agent has to say which.
+ */
+async function withRemoval<T>(
+  removal: RemovalDto | null,
+  write: () => Promise<T>,
+): Promise<T> {
+  try {
+    return await write();
+  } catch (error) {
+    if (removal && error instanceof Error) {
+      error.message = `${error.message} If approved: ${removal.sentence}`;
+    }
+    throw error;
+  }
+}
+
+function removalView(removal: RemovalDto): Record<string, unknown> {
+  return {
+    says: removal.sentence,
+    node: removal.node,
+    startsNow: removal.proceeds,
+    moves: removal.moves,
+    waitsFor: removal.waitsFor,
+    relay:
+      'Tell the person which machine goes and what runs on it, Flui’s own parts first, before or with the answer to the approval.',
+  };
 }
 
 function groupView(group: GroupDto): Record<string, unknown> {
@@ -839,11 +893,16 @@ export const SCALING_TOOLS: ToolDef[] = [
       );
 
       if (groupId) {
-        const group = await ctx.api.patch<GroupDto>(
-          `/infrastructure/scaling-groups/${enc(groupId)}`,
-          body,
+        const removal = args.bounds
+          ? await removalOf(ctx, groupId, args.bounds)
+          : null;
+        const group = await withRemoval(removal, () =>
+          ctx.api.patch<GroupDto>(
+            `/infrastructure/scaling-groups/${enc(groupId)}`,
+            body,
+          ),
         );
-        return written(group, 'changed');
+        return { ...written(group, 'changed'), removal };
       }
 
       if (!args.name || !args.bounds) {
@@ -859,13 +918,19 @@ export const SCALING_TOOLS: ToolDef[] = [
       return written(group, 'written');
     },
     forModel: (data) => {
-      const d = data as { outcome: string; group: GroupDto; note: string };
+      const d = data as {
+        outcome: string;
+        group: GroupDto;
+        note: string;
+        removal?: RemovalDto | null;
+      };
       return {
         outcome: d.outcome,
         authorises: authorisedBy(d.group),
         acts: d.group.acts ?? null,
         actsMeans: actuationNote(d.group.acts),
         group: groupView(d.group),
+        ...(d.removal ? { removal: removalView(d.removal) } : {}),
         note: d.note,
       };
     },
@@ -993,12 +1058,25 @@ export const SCALING_TOOLS: ToolDef[] = [
       groupId: z.string(),
       min: coerceNumber(z.number().int().min(1).max(20)),
     },
-    run: (args, ctx) =>
-      ctx.api.patch<GroupDto>(
-        `/infrastructure/scaling-groups/${enc(args.groupId)}/floor`,
-        { min: args.min },
-      ),
-    forModel: (data) => groupView(data as GroupDto),
+    run: async (args, ctx) => {
+      const removal = await removalOf(ctx, args.groupId, {
+        min: args.min,
+        desired: args.min,
+      });
+      const group = await withRemoval(removal, () =>
+        ctx.api.patch<GroupDto>(
+          `/infrastructure/scaling-groups/${enc(args.groupId)}/floor`,
+          { min: args.min },
+        ),
+      );
+      return removal?.removes ? { ...group, removal } : group;
+    },
+    forModel: (data) => {
+      const d = data as GroupDto & { removal?: RemovalDto | null };
+      return d.removal
+        ? { ...groupView(d), removal: removalView(d.removal) }
+        : groupView(d);
+    },
   }),
 
   defineTool({

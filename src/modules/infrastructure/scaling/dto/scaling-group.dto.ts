@@ -261,3 +261,18 @@ export class ApprovePurchaseDto {
   @IsString()
   region: string;
 }
+
+/** Node limits a person is about to save, previewed before they are. */
+export class RemovalPreviewRequestDto {
+  @IsOptional()
+  @IsInt()
+  @Min(MIN_FLEET_NODES)
+  @Max(MAX_FLEET_NODES)
+  min?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(MIN_FLEET_NODES)
+  @Max(MAX_FLEET_NODES)
+  desired?: number;
+}

@@ -53,6 +53,8 @@ export interface RemoveWorkerJobData {
   operationId: string;
   clusterId: string;
   nodeId: string;
+  /** How many times a copy running on the node handed the work on. */
+  heldRetries?: number;
 }
 
 const MAX_WORKERS_PER_CALL = 5;
@@ -409,9 +411,12 @@ export class ClusterScalingService {
       nodeId,
     };
 
+    // Longer than the drain (11 min) and the provider deletion wait (10 min)
+    // together: a job the queue times out while it is still draining reads as
+    // lost, and the node would be put back in service halfway through.
     await this.infrastructureQueue.add('remove-worker', jobData, {
       attempts: 1,
-      timeout: 600000,
+      timeout: 1_800_000,
     });
 
     this.logger.log(
