@@ -62,8 +62,8 @@ describe('the example cluster tabs', () => {
       expect(report.claims.every((c) => c.reason.length > 0)).toBe(true);
     });
 
-    it('keeps snapshots of the orders database', () => {
-      const ordersDb = APPS.find((a) => a.slug === 'orders-db')!;
+    it('keeps snapshots of the shop database', () => {
+      const ordersDb = APPS.find((a) => a.slug === 'postgres')!;
       const snapshots = exampleClusterSnapshots(NOW);
       expect(snapshots.length).toBeGreaterThan(0);
       for (const snap of snapshots) {

@@ -45,7 +45,7 @@ export const inDays = (now: number, days: number): string =>
 export const ORG_NAME = 'Northwind Labs';
 export const ZONE_NAME = 'northwind-labs.eu';
 export const CLUSTER_ID = 'example-cluster-1';
-export const CLUSTER_NAME = 'northwind-prod';
+export const CLUSTER_NAME = 'production';
 
 export const PROVIDER = 'hetzner';
 export const REGION = 'fsn1';
@@ -66,79 +66,46 @@ export const EXAMPLE_REGION = mark({
   country: 'DE',
 });
 
-/** The machines of the main cluster, the ones every other section refers to. */
+/**
+ * The machines of the production cluster, the ones every other section refers
+ * to: one control plane kept for the platform and two workers that run the shop.
+ */
 export const MACHINES = [
   {
     id: 'example-server-1',
-    name: 'flui-edge-1',
+    name: 'production-1',
     role: 'master',
     cpuCores: 4,
     ramMb: 8192,
-    diskMb: 163_840,
-    productName: 'CPX31',
+    diskMb: 81_920,
+    productName: 'CX33',
     architecture: 'x86',
     privateIp: subnetHost(11),
     publicIp: '203.0.113.11',
   },
   {
     id: 'example-server-2',
-    name: 'flui-worker-1',
+    name: 'production-2',
     role: 'worker',
     cpuCores: 8,
     ramMb: 16_384,
-    diskMb: 327_680,
-    productName: 'CPX41',
+    diskMb: 163_840,
+    productName: 'CX43',
     architecture: 'x86',
     privateIp: subnetHost(12),
     publicIp: '203.0.113.12',
   },
   {
     id: 'example-server-3',
-    name: 'flui-worker-2',
+    name: 'production-3',
     role: 'worker',
     cpuCores: 8,
     ramMb: 16_384,
-    diskMb: 327_680,
-    productName: 'CPX41',
+    diskMb: 163_840,
+    productName: 'CX43',
     architecture: 'x86',
     privateIp: subnetHost(13),
     publicIp: '203.0.113.13',
-  },
-  {
-    id: 'example-server-5',
-    name: 'flui-worker-4',
-    role: 'worker',
-    cpuCores: 8,
-    ramMb: 16_384,
-    diskMb: 327_680,
-    productName: 'CPX41',
-    architecture: 'x86',
-    privateIp: subnetHost(15),
-    publicIp: '203.0.113.15',
-  },
-  {
-    id: 'example-server-6',
-    name: 'flui-arm-1',
-    role: 'worker',
-    cpuCores: 8,
-    ramMb: 16_384,
-    diskMb: 327_680,
-    productName: 'CAX31',
-    architecture: 'arm',
-    privateIp: subnetHost(16),
-    publicIp: '203.0.113.16',
-  },
-  {
-    id: 'example-server-7',
-    name: 'flui-arm-2',
-    role: 'worker',
-    cpuCores: 8,
-    ramMb: 16_384,
-    diskMb: 327_680,
-    productName: 'CAX31',
-    architecture: 'arm',
-    privateIp: subnetHost(17),
-    publicIp: '203.0.113.17',
   },
 ] as const;
 
@@ -199,31 +166,31 @@ export const APPS = [
     slug: 'storefront',
     name: 'Storefront',
     kind: 'application',
-    project: 'commerce',
+    project: 'shop',
     tags: ['production'],
   },
   {
     id: 'example-app-2',
-    slug: 'orders-api',
-    name: 'Orders API',
+    slug: 'api',
+    name: 'API',
     kind: 'application',
-    project: 'commerce',
+    project: 'shop',
     tags: ['production'],
   },
   {
     id: 'example-app-3',
-    slug: 'orders-db',
-    name: 'Orders database',
+    slug: 'postgres',
+    name: 'Postgres',
     kind: 'database',
-    project: 'commerce',
+    project: 'shop',
     tags: ['production', 'stateful'],
   },
   {
     id: 'example-app-4',
-    slug: 'internal-tools',
-    name: 'Internal tools',
+    slug: 'worker',
+    name: 'Worker',
     kind: 'application',
-    project: 'platform',
-    tags: ['staging'],
+    project: 'shop',
+    tags: ['production'],
   },
 ] as const;

@@ -40,13 +40,14 @@ export const clusterOf = (params?: Params): string =>
 
 const namespaceOf = (app: (typeof APPS)[number]): string => `p-${app.project}`;
 
-const [STOREFRONT, , ORDERS_DB, INTERNAL_TOOLS] = APPS;
+const [, , POSTGRES] = APPS;
+const SHOP = APPS[0];
 
 /** The claims on the shared volume: the applications that keep data. */
 const CLAIMS = [
-  { app: STOREFRONT, name: 'data-storefront-0', gb: 5 },
-  { app: ORDERS_DB, name: 'data-orders-db-0', gb: 20 },
-  { app: INTERNAL_TOOLS, name: 'data-internal-tools-0', gb: 2 },
+  { app: POSTGRES, name: 'data-postgres-0', gb: 20 },
+  { app: SHOP, name: 'data-meilisearch-0', gb: 4 },
+  { app: SHOP, name: 'data-redis-0', gb: 1 },
 ];
 
 export function exampleClusterStorage(
@@ -97,7 +98,7 @@ export function exampleOrphanedClaims(
   const claims = [
     mark({
       name: 'data-search-0',
-      namespace: namespaceOf(INTERNAL_TOOLS),
+      namespace: namespaceOf(SHOP),
       requested: '5Gi',
       requestedBytes,
       sizeLabel: formatStorageBytes(requestedBytes),
@@ -122,23 +123,23 @@ export function exampleOrphanedClaims(
   });
 }
 
-/** Two copies of the orders database, the one application whose data matters most. */
+/** Two copies of the shop's database, the one application whose data matters most. */
 export function exampleClusterSnapshots(now: number) {
-  const claim = CLAIMS.find((c) => c.app.id === ORDERS_DB.id)!;
+  const claim = CLAIMS.find((c) => c.app.id === POSTGRES.id)!;
   const snapshot = (index: number, createdAt: string, usedGib: number) =>
     mark({
       exportId: `example-snapshot-${index}`,
       sink: 'pvc-clone',
-      namespace: namespaceOf(ORDERS_DB),
+      namespace: namespaceOf(POSTGRES),
       sourcePvcName: claim.name,
-      appId: ORDERS_DB.id,
+      appId: POSTGRES.id,
       sizeGb: claim.gb,
       actualBytes: Math.round(usedGib * GIB),
       createdAt,
       ready: true,
       labels: {
         'flui.cloud/managed-by': 'flui-cloud',
-        'flui-app-id': ORDERS_DB.id,
+        'flui-app-id': POSTGRES.id,
         'flui.cloud/source-pvc': claim.name,
         'flui.cloud/snapshot-trigger': 'manual',
       },

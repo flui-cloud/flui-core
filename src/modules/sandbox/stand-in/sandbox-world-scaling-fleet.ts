@@ -21,8 +21,17 @@ import {
   MACHINES_SINCE_DAYS,
   SERVER_PRICES,
 } from './sandbox-world-fleet';
+import { WORLD_SERVERS, worldRequested } from './sandbox-world-topology-data';
 
 type Params = Record<string, string | undefined>;
+
+/** What the production cluster holds reserved, by the same numbers Topology draws. */
+const RESERVED = WORLD_SERVERS.filter((s) => s.clusterId === CLUSTER_ID)
+  .map(worldRequested)
+  .reduce(
+    (sum, r) => ({ memMi: sum.memMi + r.memMi, cpuM: sum.cpuM + r.cpuM }),
+    { memMi: 0, cpuM: 0 },
+  );
 
 const HOUR = 3_600_000;
 const MAX_POINTS = 400;
@@ -49,14 +58,12 @@ export function exampleClusterNodes(now: number) {
 }
 
 export const MEMORY_MI: Record<ExampleShape, number> = {
-  CPX31: 7600,
-  CPX41: 15_800,
-  CAX31: 15_800,
+  CX33: 7600,
+  CX43: 15_800,
 };
 export const CPU_MILLICORES: Record<ExampleShape, number> = {
-  CPX31: 3800,
-  CPX41: 7800,
-  CAX31: 7800,
+  CX33: 3800,
+  CX43: 7800,
 };
 
 /** The window the page asked for, the way the real route reads it. */
@@ -121,9 +128,13 @@ export function exampleFleetHistory(
       unpricedNodes: 0,
       load: alive.length
         ? {
-            reservedMemoryMi: Math.round(17_300 + 3000 * daytime),
+            reservedMemoryMi: Math.round(
+              RESERVED.memMi * (0.93 + 0.1 * daytime),
+            ),
             capacityMemoryMi: memory,
-            reservedCpuMillicores: Math.round(7550 + 1800 * daytime),
+            reservedCpuMillicores: Math.round(
+              RESERVED.cpuM * (0.9 + 0.15 * daytime),
+            ),
             capacityCpuMillicores: cpu,
           }
         : null,

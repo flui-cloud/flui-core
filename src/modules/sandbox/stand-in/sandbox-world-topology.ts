@@ -62,6 +62,7 @@ import {
   exampleProviderId,
   WorldServer,
   worldRequested,
+  exampleNamespaceOf,
   exampleProjectOf,
   WORLD_PROJECTS,
 } from './sandbox-world-topology-data';
@@ -76,38 +77,24 @@ const round1 = (n: number) => Math.round(n * 10) / 10;
 const wave = (now: number, periodMs: number, phase: number) =>
   Math.sin((2 * Math.PI * now) / periodMs + phase);
 
-const BILLING = 'example-app-1-billing-api';
-const EDGE_API = 'example-app-3-edge-api';
+const WORKER = 'example-app-4';
 const STOREFRONT = 'example-app-1';
 
-/** The billing API runs out of memory, restarts, runs out again. */
-function billingFailing(now: number): boolean {
-  return Math.floor(now / 20_000) % 2 === 0;
-}
-
-/** The storefront gets one more replica for a minute and a half, every three. */
+/** The storefront takes a third replica for three minutes in every twelve. */
 function storefrontBusy(now: number): boolean {
-  return Math.floor(now / 90_000) % 2 === 1;
+  return Math.floor(now / 180_000) % 4 === 3;
 }
 
 function placement(app: WorldApp, now: number): Record<string, number> {
   if (app.id !== STOREFRONT || !storefrontBusy(now)) return app.on;
-  return { ...app.on, 'flui-arm-2': (app.on['flui-arm-2'] ?? 0) + 1 };
+  return { ...app.on, 'production-2': (app.on['production-2'] ?? 0) + 1 };
 }
 
-function statusOf(app: WorldApp, now: number) {
-  if (app.id === BILLING) {
-    return billingFailing(now)
-      ? {
-          status: TopologyAppStatus.ERROR,
-          statusReason: 'CrashLoopBackOff · OOMKilled',
-        }
-      : { status: TopologyAppStatus.WARNING, statusReason: 'Restarting' };
-  }
-  if (app.id === EDGE_API) {
+function statusOf(app: WorldApp) {
+  if (app.id === WORKER) {
     return {
       status: TopologyAppStatus.WARNING,
-      statusReason: 'Restarted 7 times in the last hour',
+      statusReason: 'Restarted 3 times in the last hour · OOMKilled',
     };
   }
   return { status: TopologyAppStatus.RUNNING, statusReason: null };
@@ -120,6 +107,9 @@ function allocatable(server: WorldServer) {
     mem: MEMORY_MI[shape] ?? Math.round(server.ramMb * 0.95),
   };
 }
+
+const singleServer = (clusterId: string) =>
+  WORLD_SERVERS.filter((s) => s.clusterId === clusterId).length === 1;
 
 function serverDto(
   server: WorldServer,
@@ -144,7 +134,7 @@ function serverDto(
       server.role === 'master'
         ? TopologyServerRole.CONTROL_PLANE
         : TopologyServerRole.WORKER,
-    takesWork: server.role === 'worker' || cluster.id === 'example-cluster-5',
+    takesWork: server.role === 'worker' || singleServer(cluster.id),
     status: TopologyHealthStatus.HEALTHY,
     capacity: {
       allocatableCpuM: room.cpu,
@@ -207,10 +197,10 @@ function appDto(app: WorldApp, now: number): TopologyAppDto {
     kind: app.system ? TopologyAppKind.SYSTEM : TopologyAppKind.USER,
     workloadKind: app.workload as TopologyWorkloadKind,
     exposure: app.exposure as TopologyExposure,
-    namespace: app.namespace ?? `northwind-${app.stack ?? app.slug}`,
-    ...statusOf(app, now),
+    namespace: exampleNamespaceOf(app),
+    ...statusOf(app),
     ramRequestMB: app.ramMb,
-    ramLimitMB: app.ramMb * 2,
+    ramLimitMB: app.limitMb ?? app.ramMb * 2,
     cpuRequestM: app.cpuM,
     cpuLimitM: app.cpuM * 2,
     primaryServerId: replicas[0].serverId,
@@ -268,8 +258,6 @@ function linksOf(now: number, apps: TopologyAppDto[]): TopologyLinkDto[] {
     const target = WORLD_APPS.find((a) => a.id === link.to)!;
     const fromCluster = link.from ? clusterOf.get(link.from) : undefined;
     const crossCluster = !!fromCluster && fromCluster !== target.clusterId;
-    const failing =
-      link.to === BILLING && billingFailing(now) ? 64 : link.errorPct;
     return {
       id: `example-link-${index + 1}`,
       from: link.from
@@ -294,7 +282,7 @@ function linksOf(now: number, apps: TopologyAppDto[]): TopologyLinkDto[] {
               rps: round1(
                 link.rps * (1 + 0.18 * wave(now, 120_000, index * 0.7)),
               ),
-              errorPct: round1(failing ?? 0),
+              errorPct: round1(link.errorPct ?? 0),
             },
     };
   });

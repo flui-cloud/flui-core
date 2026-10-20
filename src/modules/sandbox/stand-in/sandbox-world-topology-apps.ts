@@ -22,11 +22,13 @@ export interface WorldApp {
   name: string;
   category: WorldCategory;
   system?: boolean;
-  /** Where a platform app runs; user apps get their own `northwind-*` namespace. */
-  namespace?: 'flui-system' | 'flui-control' | 'kube-system' | 'cert-manager';
+  /** Where a platform app runs; user apps run in their project's namespace. */
+  namespace?: 'flui-system' | 'flui-control';
   workload: 'deployment' | 'statefulset' | 'daemonset';
   exposure: 'public' | 'internal' | 'cluster';
   ramMb: number;
+  /** Twice the request when absent. */
+  limitMb?: number;
   cpuM: number;
   /** Replicas per server, by server name. */
   on: Record<string, number>;
@@ -43,7 +45,7 @@ export interface WorldStack {
 
 const EXISTING = new Map<string, string>(APPS.map((a) => [a.slug, a.id]));
 
-/** One example app, written positionally: sixty of them read best as a table. */
+/** One example app, written positionally: a list of them reads best as a table. */
 type WorldAppRow = [
   clusterId: WorldClusterId,
   stack: string | undefined,
@@ -89,27 +91,12 @@ export const worldApp = (...row: WorldAppRow): WorldApp => {
   };
 };
 
-export const EU = CLUSTER_ID as WorldClusterId;
-export const US: WorldClusterId = 'example-cluster-2';
-export const ASIA: WorldClusterId = 'example-cluster-3';
-export const CONTROL: WorldClusterId = 'example-cluster-4';
-export const STAGING: WorldClusterId = 'example-cluster-5';
+export const PRODUCTION = CLUSTER_ID as WorldClusterId;
+export const STAGING: WorldClusterId = 'example-cluster-2';
+export const CONTROL: WorldClusterId = 'example-cluster-3';
 
+/** The shop's own code, deployed together from one manifest; its services are catalogue apps beside it. */
 export const WORLD_STACKS: WorldStack[] = [
-  { key: 'storefront', name: 'Storefront', primary: 'storefront' },
-  { key: 'orders', name: 'Orders', primary: 'orders-api' },
-  { key: 'auth', name: 'Auth', primary: 'auth' },
-  { key: 'billing', name: 'Billing', primary: 'billing-api' },
-  { key: 'search', name: 'Search', primary: 'search' },
-  { key: 'cms', name: 'CMS', primary: 'cms' },
-  { key: 'notifications', name: 'Notifications', primary: 'notify-api' },
-  { key: 'analytics', name: 'Analytics', primary: 'plausible' },
-  { key: 'bi', name: 'BI', primary: 'metabase' },
-  { key: 'automation', name: 'Automation', primary: 'n8n' },
-  { key: 'media', name: 'Media', primary: 'imgproxy' },
-  { key: 'cache-queue', name: 'Cache & queue', primary: 'nats' },
-  { key: 'storefront-us', name: 'Storefront US', primary: 'storefront' },
-  { key: 'orders-us', name: 'Auth US', primary: 'auth-proxy' },
-  { key: 'edge-asia', name: 'Edge Asia', primary: 'edge-cache' },
-  { key: 'staging-shop', name: 'Staging shop', primary: 'storefront' },
+  { key: 'shop', name: 'Shop', primary: 'storefront' },
+  { key: 'shop-staging', name: 'Shop', primary: 'storefront' },
 ];

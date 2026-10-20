@@ -21,8 +21,8 @@ import {
   TopologyClusterType,
   TopologyEndpointKind,
   TopologyEventType,
+  TopologyHealthStatus,
   TopologyOverlay,
-  TopologyStackType,
 } from '../../topology/enums/topology.enums';
 
 const NOW = Date.parse('2026-10-17T15:00:00Z');
@@ -105,62 +105,143 @@ describe('the example topology holds together', () => {
   });
 });
 
-describe('the example topology looks like a real, busy fleet', () => {
-  it('has a handful of clusters, one of them held on its public address', () => {
-    expect(world.clusters.length).toBeGreaterThanOrEqual(4);
+describe('the example topology looks like a small shop in production', () => {
+  const byName = (cluster: string) =>
+    world.clusters.find((c) => c.name === cluster)!;
+  const appsOf = (cluster: string) =>
+    world.apps
+      .filter((a) => a.clusterId === byName(cluster).id)
+      .map((a) => a.name);
+
+  it('has a production, a staging and a control cluster, on real regions', () => {
     expect(
-      world.clusters.filter(
-        (c) => c.overlay === TopologyOverlay.PUBLIC_ADDRESS,
-      ),
-    ).toHaveLength(1);
+      world.clusters.map((c) => [c.name, c.provider, c.region, c.type]),
+    ).toEqual([
+      ['production', 'hetzner', 'fsn1', TopologyClusterType.WORKLOAD],
+      ['staging', 'scaleway', 'fr-par', TopologyClusterType.WORKLOAD],
+      ['flui-control', 'hetzner', 'nbg1', TopologyClusterType.CONTROL],
+    ]);
+    expect(
+      world.clusters.every((c) => c.overlay === TopologyOverlay.TUNNEL),
+    ).toBe(true);
   });
 
-  it('has 16 to 20 servers, at least two of them arm, one of them nearly full', () => {
-    expect(world.servers.length).toBeGreaterThanOrEqual(16);
-    expect(world.servers.length).toBeLessThanOrEqual(20);
-    expect(
-      world.servers.filter((s) => s.architecture === TopologyArchitecture.ARM)
-        .length,
-    ).toBeGreaterThanOrEqual(2);
-    const memory = world.servers.map((s) => s.capacity!.usedMemPct!);
-    expect(memory.filter((m) => m >= 90)).toHaveLength(1);
-    expect(memory.filter((m) => m >= 90)[0]).toBeLessThanOrEqual(94);
-    expect(Math.min(...memory)).toBeGreaterThanOrEqual(30);
+  it('runs production on one control plane and two workers, the others on one server each', () => {
+    const servers = (cluster: string) =>
+      world.servers
+        .filter((s) => s.clusterId === byName(cluster).id)
+        .map((s) => `${s.nodeName}:${s.serverType}:${s.role}`);
+    expect(servers('production')).toEqual([
+      'production-1:cx33:control-plane',
+      'production-2:cx43:worker',
+      'production-3:cx43:worker',
+    ]);
+    expect(servers('staging')).toEqual(['staging-1:DEV1-L:control-plane']);
+    expect(servers('flui-control')).toEqual([
+      'flui-control-1:cx33:control-plane',
+    ]);
+    for (const server of world.servers) {
+      expect(server.architecture).toBe(TopologyArchitecture.X86);
+      expect(server.capacity!.usedMemPct).toBeGreaterThanOrEqual(30);
+      expect(server.capacity!.usedMemPct).toBeLessThanOrEqual(75);
+    }
   });
 
-  it('has 60 to 80 apps in 12 or more composed stacks', () => {
-    expect(world.apps.length).toBeGreaterThanOrEqual(60);
-    expect(world.apps.length).toBeLessThanOrEqual(80);
-    expect(
-      world.stacks.filter((s) => s.type === TopologyStackType.COMPOSED).length,
-    ).toBeGreaterThanOrEqual(12);
+  it('runs the shop and its sites in production, a smaller copy in staging', () => {
+    expect(appsOf('production').sort()).toEqual(
+      [
+        'api',
+        'docs',
+        'meilisearch',
+        'postgres',
+        'redis',
+        'storefront',
+        'umami',
+        'worker',
+      ].sort(),
+    );
+    expect(appsOf('staging').sort()).toEqual(['api', 'postgres', 'storefront']);
   });
 
-  it('runs one app on two clusters under one group', () => {
+  it('keeps replicas modest: two of what serves requests, one of the rest', () => {
+    const replicas = Object.fromEntries(
+      world.apps
+        .filter((a) => a.clusterId === CLUSTER_ID)
+        .map((a) => [a.name, a.replicaCount]),
+    );
+    expect(replicas.api).toBe(2);
+    expect([2, 3]).toContain(replicas.storefront);
+    for (const name of ['worker', 'postgres', 'redis', 'meilisearch']) {
+      expect(replicas[name]).toBe(1);
+    }
+    expect(world.apps.every((a) => a.replicaCount <= 3)).toBe(true);
+  });
+
+  it('keeps user apps off the production control plane', () => {
+    const master = world.servers.find((s) => s.nodeName === 'production-1')!;
+    expect(master.takesWork).toBe(false);
+    expect(world.apps.some((a) => a.primaryServerId === master.id)).toBe(false);
+  });
+
+  it('links the shop the way a real one is wired, inside each cluster', () => {
+    const named = (id: string | undefined) =>
+      world.apps.find((a) => a.id === id)!;
+    const edges = world.links
+      .filter((l) => l.from.kind === TopologyEndpointKind.APP)
+      .filter((l) => named(l.from.appId).kind !== TopologyAppKind.SYSTEM)
+      .map((l) => {
+        const from = named(l.from.appId);
+        const cluster = world.clusters.find((c) => c.id === from.clusterId)!;
+        return `${cluster.name}: ${from.name}>${named(l.to.appId).name}`;
+      });
+    expect(edges.sort()).toEqual(
+      [
+        'production: storefront>api',
+        'production: api>postgres',
+        'production: api>redis',
+        'production: api>meilisearch',
+        'production: worker>postgres',
+        'production: worker>redis',
+        'production: umami>postgres',
+        'staging: storefront>api',
+        'staging: api>postgres',
+      ].sort(),
+    );
+  });
+
+  it('publishes the storefront, the docs and the analytics, and nothing internal', () => {
+    const routed = world.links
+      .filter((l) => l.from.kind === TopologyEndpointKind.INTERNET)
+      .map((l) => world.apps.find((a) => a.id === l.to.appId)!)
+      .filter((a) => a.kind !== TopologyAppKind.SYSTEM)
+      .map((a) => `${a.clusterId === CLUSTER_ID ? '' : 'staging '}${a.name}`);
+    expect(routed.sort()).toEqual(
+      ['docs', 'staging storefront', 'storefront', 'umami'].sort(),
+    );
+  });
+
+  it('runs the same shop on two clusters under the same groups', () => {
     const byGroup = new Map<string, Set<string>>();
     for (const app of world.apps) {
       const clusters = byGroup.get(app.groupKey) ?? new Set<string>();
       clusters.add(app.clusterId);
       byGroup.set(app.groupKey, clusters);
     }
-    expect([...byGroup.values()].filter((c) => c.size > 1)).toHaveLength(1);
+    expect(
+      [...byGroup.entries()]
+        .filter(([, c]) => c.size > 1)
+        .map(([key]) => key)
+        .sort(),
+    ).toEqual(['group:api', 'group:postgres', 'group:storefront']);
   });
 
-  it('piles more than half of one app on one server, exactly once', () => {
-    const piled = world.apps.filter(
-      (a) =>
-        a.replicaCount >= 2 &&
-        a.replicas.some((r) => r.count > a.replicaCount / 2),
-    );
-    expect(piled.map((a) => a.name)).toEqual(['orders-api']);
-  });
-
-  it('measures traffic on gateway routes only, within a believable range', () => {
+  it('measures modest traffic on gateway routes only', () => {
     for (const link of world.links) {
       if (link.from.kind === TopologyEndpointKind.INTERNET) {
         expect(link.traffic.measured).toBe(true);
-        expect(link.traffic.rps).toBeGreaterThanOrEqual(0.5);
-        expect(link.traffic.rps).toBeLessThanOrEqual(460);
+        expect(link.traffic.rps).toBeGreaterThan(0);
+        expect(link.traffic.rps).toBeLessThanOrEqual(40);
+        expect(link.traffic.errorPct).toBeLessThan(1);
       } else {
         expect(link.traffic).toEqual({
           measured: false,
@@ -185,7 +266,7 @@ describe('the example topology looks like a real, busy fleet', () => {
     }
   });
 
-  it('opens the ports the example firewall page lists, and shows the Contabo cluster without one', () => {
+  it('opens the ports the example firewall page lists, on every cluster', () => {
     const page = exampleClusterFirewall(NOW, { clusterId: CLUSTER_ID });
     const main = world.clusters.find((c) => c.id === CLUSTER_ID)!;
     const byText = (a: string | null, b: string | null) =>
@@ -207,37 +288,24 @@ describe('the example topology looks like a real, busy fleet', () => {
     }
   });
 
-  it('puts apps in a few projects that exist, platform apps and a few strays in none', () => {
-    const ids = new Set(world.projects.map((p) => p.id));
-    expect(ids.size).toBeGreaterThanOrEqual(3);
+  it('puts every user app in a project, in that project namespace, and platform apps in none', () => {
+    const projects = new Map(world.projects.map((p) => [p.id, p.name]));
+    expect([...projects.values()]).toEqual(['Shop', 'Website']);
     for (const app of world.apps) {
-      if (app.projectId) expect(ids.has(app.projectId)).toBe(true);
-      if (app.kind === 'system') expect(app.projectId).toBeNull();
+      if (app.kind === TopologyAppKind.SYSTEM) {
+        expect(app.projectId).toBeNull();
+      } else {
+        expect(projects.has(app.projectId!)).toBe(true);
+        expect(app.namespace).toBe(
+          `p-${projects.get(app.projectId!)!.toLowerCase()}`,
+        );
+      }
     }
-    const strays = world.apps.filter(
-      (a) => !a.projectId && a.kind !== 'system',
-    );
-    expect(strays.length).toBeGreaterThan(0);
-    for (const id of ids)
-      expect(world.apps.some((a) => a.projectId === id)).toBe(true);
   });
 
-  it('connects every server to the Flui network but the held cluster and one newcomer', () => {
-    const off = world.servers.filter((s) => s.fluiNetwork !== 'active');
-    expect(off.map((s) => `${s.nodeName}:${s.fluiNetwork}`)).toEqual([
-      'us-worker-4:pending',
-      'asia-node-1:stale',
-      'asia-node-2:stale',
-      'asia-node-3:stale',
-    ]);
-    const held = world.clusters.find(
-      (c) => c.overlay === TopologyOverlay.PUBLIC_ADDRESS,
-    )!;
-    expect(
-      world.servers
-        .filter((s) => !s.privateNetwork)
-        .every((s) => s.clusterId === held.id),
-    ).toBe(true);
+  it('connects every server to the Flui network', () => {
+    expect(world.servers.every((s) => s.fluiNetwork === 'active')).toBe(true);
+    expect(world.servers.every((s) => s.privateNetwork)).toBe(true);
   });
 
   it('links apps only within their cluster, as Flui does', () => {
@@ -245,11 +313,21 @@ describe('the example topology looks like a real, busy fleet', () => {
     expect(world.clusterLinks).toHaveLength(0);
   });
 
-  it('has a few believable problems and no wall of red', () => {
+  it('has exactly one problem: the worker running into its memory limit', () => {
+    expect(world.stats.errorCount).toBe(0);
+    const troubled = world.apps.filter(
+      (a) => a.status !== TopologyAppStatus.RUNNING,
+    );
+    expect(troubled.map((a) => [a.name, a.status])).toEqual([
+      ['worker', TopologyAppStatus.WARNING],
+    ]);
+    expect(troubled[0].statusReason).toMatch(/OOMKilled/);
+    expect(troubled[0].ramLimitMB - troubled[0].ramRequestMB).toBeLessThan(
+      troubled[0].ramRequestMB / 2,
+    );
     expect(
-      world.stats.errorCount + world.stats.warningCount,
-    ).toBeLessThanOrEqual(3);
-    expect(world.stats.warningCount).toBeGreaterThanOrEqual(1);
+      world.clusters.every((c) => c.status === TopologyHealthStatus.HEALTHY),
+    ).toBe(true);
   });
 });
 
@@ -263,23 +341,17 @@ describe('the example control cluster runs what Flui runs for itself', () => {
     world.servers.filter((s) => s.clusterId === control.id).map((s) => s.id),
   );
 
-  it('flags every platform app as system, on the control cluster only', () => {
+  it('flags every app Flui labels as its own as system, on the control cluster only', () => {
     expect(platform.map((a) => a.name).sort()).toEqual(
       [
         'alertmanager',
-        'cert-manager',
-        'cert-manager-cainjector',
-        'cert-manager-webhook',
-        'coredns',
         'flui-api',
         'flui-web',
         'grafana',
         'kube-state-metrics',
         'loki',
-        'metrics-server',
         'postgres',
         'redis',
-        'traefik',
         'vmagent',
         'vmalert',
         'vmsingle',
@@ -305,8 +377,6 @@ describe('the example control cluster runs what Flui runs for itself', () => {
     expect(bySlug('zitadel').namespace).toBe('flui-system');
     expect(bySlug('vmsingle').namespace).toBe('flui-control');
     expect(bySlug('alertmanager').namespace).toBe('flui-control');
-    expect(bySlug('traefik').namespace).toBe('kube-system');
-    expect(bySlug('cert-manager').namespace).toBe('cert-manager');
   });
 
   it('links them inside the control cluster, on the ports they listen on', () => {
@@ -360,33 +430,18 @@ describe('the example topology is deterministic and alive', () => {
     expect(exampleTopology(NOW)).toEqual(world);
   });
 
-  it('flaps the billing API, scales the storefront, drifts capacity and moves traffic within three minutes', () => {
+  it('scales the storefront, drifts capacity and moves traffic, without flapping a status', () => {
     const events: TopologyEventType[] = [];
-    for (let t = NOW; t < NOW + 180_000; t += 5_000) {
+    for (let t = NOW; t < NOW + 720_000; t += 5_000) {
       events.push(...exampleTopologyChanges(t, t + 5_000).map((c) => c.event));
     }
     const count = (e: TopologyEventType) =>
       events.filter((x) => x === e).length;
-    expect(count(TopologyEventType.APP_STATUS_CHANGED)).toBeGreaterThanOrEqual(
-      8,
-    );
+    expect(count(TopologyEventType.APP_STATUS_CHANGED)).toBe(0);
     expect(count(TopologyEventType.APP_SCALED)).toBe(2);
-    expect(count(TopologyEventType.SERVER_CAPACITY)).toBe(6);
-    expect(count(TopologyEventType.LINKS_CHANGED)).toBe(18);
-    expect(count(TopologyEventType.HEARTBEAT)).toBe(12);
-  });
-
-  it('flaps only between warning and error', () => {
-    for (let t = NOW; t < NOW + 120_000; t += 5_000) {
-      for (const change of exampleTopologyChanges(t, t + 5_000)) {
-        if (change.event === TopologyEventType.APP_STATUS_CHANGED) {
-          expect([
-            TopologyAppStatus.WARNING,
-            TopologyAppStatus.ERROR,
-          ]).toContain(change.data.status);
-        }
-      }
-    }
+    expect(count(TopologyEventType.SERVER_CAPACITY)).toBe(24);
+    expect(count(TopologyEventType.LINKS_CHANGED)).toBe(72);
+    expect(count(TopologyEventType.HEARTBEAT)).toBe(48);
   });
 
   it('streams the same events as the change function, tick by tick', async () => {

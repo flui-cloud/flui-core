@@ -570,8 +570,8 @@ questions:
     question: 'Spiegami questa vista, cosa rappresentano i riquadri?'
     must_include:
       - cluster
-      - northwind
-    source: 'guest topology = exampleTopology (topology.controller.ts:72-76); clusters northwind-prod/us/asia/staging, flui-control (sandbox-world-topology-fleet.ts:42-72)'
+      - production
+    source: 'guest topology = exampleTopology (topology.controller.ts:72-76); clusters production (Hetzner fsn1), staging (Scaleway fr-par), flui-control (Hetzner nbg1) (sandbox-world-topology-fleet.ts); the control cluster platform apps are drawn as one Flui platform node'
 
   - id: pg3
     group: pagina-corrente
@@ -590,7 +590,7 @@ questions:
     must_include:
       - sandbox-workload-staging
       - hetzner
-    source: 'guest cluster list on staging-hz shows the shared real cluster sandbox-workload-staging (Hetzner Cloud, fsn1, 2 nodes), observed in the screenshot 19/10; the Northwind example world is only on Topology'
+    source: 'guest cluster list on staging-hz shows the shared real cluster sandbox-workload-staging (Hetzner Cloud, fsn1, 2 nodes), observed in the screenshot 19/10; the example world (production, staging, flui-control) is only on Topology'
 
   # ---------------------------------------------------------------- tools
   # Tool questions are graded against a state snapshot taken around each run;

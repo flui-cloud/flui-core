@@ -1,13 +1,13 @@
 /**
  * The Scaling section, on the example organisation's cluster.
  *
- * One group on `northwind-prod`, buying on its own within a spending ceiling,
+ * One group on `production`, buying on its own within a spending ceiling,
  * that has done exactly one thing worth telling this week: it bought a worker
  * on a busy afternoon and gave it back after a quiet night. Everything since
  * is "nothing to do", which is what a healthy group says most of the time.
  *
  * The bounds count every node, the master included, because that is what the
- * real group counts: five to seven workers are bounds of six to eight.
+ * real group counts: two to four workers are bounds of three to five.
  *
  * The labels, the sentence that says what the group may do and the cost
  * scenarios are produced by the same functions the real group uses, from the
@@ -42,11 +42,11 @@ import {
 type Params = Record<string, string | undefined>;
 
 export const SCALING_GROUP_ID = 'example-scaling-group-1';
-export const SCALING_GROUP_NAME = 'northwind-workers';
+export const SCALING_GROUP_NAME = 'production-workers';
 
-export const BOUNDS = { min: 6, desired: 6, max: 8 };
-const SHAPES = [SERVER_PRICES.CPX41, SERVER_PRICES.CPX31];
-export const CEILING_EUR = 180;
+export const BOUNDS = { min: 3, desired: 3, max: 5 };
+const SHAPES = [SERVER_PRICES.CX43, SERVER_PRICES.CX33];
+export const CEILING_EUR = 60;
 const CAPABILITY = {
   provider: PROVIDER,
   canProvision: true,
@@ -55,9 +55,8 @@ const CAPABILITY = {
 };
 
 const SPECS: Record<string, { cores: number; memoryMi: number }> = {
-  cpx31: { cores: 4, memoryMi: 8192 },
-  cpx41: { cores: 8, memoryMi: 16_384 },
-  cax31: { cores: 8, memoryMi: 16_384 },
+  cx33: { cores: 4, memoryMi: 8192 },
+  cx43: { cores: 8, memoryMi: 16_384 },
 };
 
 const CATALOGUE_AGE_SECONDS = 420;
@@ -69,60 +68,50 @@ const CATALOGUE_AGE_SECONDS = 420;
  */
 const MARKET_EXTRAS = [
   {
-    shape: 'cx22',
+    shape: 'cx23',
     cores: 2,
     memoryMi: 4096,
-    hourlyEur: 0.006,
-    monthlyEur: 3.79,
+    hourlyEur: 0.0056,
+    monthlyEur: 2.99,
     state: 'available',
     upIn: [REGION, 'nbg1', 'hel1'],
     downIn: [],
   },
   {
-    shape: 'cx32',
-    cores: 4,
-    memoryMi: 8192,
-    hourlyEur: 0.0109,
-    monthlyEur: 6.8,
-    state: 'available',
-    upIn: [REGION, 'nbg1', 'hel1'],
-    downIn: [],
-  },
-  {
-    shape: 'cx42',
-    cores: 8,
-    memoryMi: 16_384,
-    hourlyEur: 0.0263,
-    monthlyEur: 16.4,
-    state: 'available',
-    upIn: [REGION, 'nbg1'],
-    downIn: [],
-  },
-  {
-    shape: 'cpx21',
-    cores: 3,
-    memoryMi: 4096,
-    hourlyEur: 0.0121,
-    monthlyEur: 7.55,
-    state: 'available',
-    upIn: [REGION, 'nbg1', 'hel1'],
-    downIn: [],
-  },
-  {
-    shape: 'cpx51',
+    shape: 'cx53',
     cores: 16,
     memoryMi: 32_768,
-    hourlyEur: 0.088,
-    monthlyEur: 54.9,
+    hourlyEur: 0.0385,
+    monthlyEur: 23.99,
     state: 'limited',
     upIn: ['nbg1'],
     downIn: [REGION],
   },
   {
+    shape: 'cpx32',
+    cores: 4,
+    memoryMi: 8192,
+    hourlyEur: 0.0167,
+    monthlyEur: 10.49,
+    state: 'available',
+    upIn: [REGION, 'nbg1', 'hel1'],
+    downIn: [],
+  },
+  {
+    shape: 'cpx42',
+    cores: 8,
+    memoryMi: 16_384,
+    hourlyEur: 0.0306,
+    monthlyEur: 19.09,
+    state: 'available',
+    upIn: [REGION, 'nbg1'],
+    downIn: [],
+  },
+  {
     shape: 'cax21',
     cores: 4,
     memoryMi: 8192,
-    hourlyEur: 0.0104,
+    hourlyEur: 0.0112,
     monthlyEur: 6.49,
     state: 'available',
     upIn: [REGION, 'nbg1', 'hel1'],

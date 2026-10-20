@@ -101,7 +101,7 @@ export function exampleInstances(now: number) {
         regionName: cluster.regionName,
         cpuCores: server.cpuCores,
         ramMb: server.ramMb,
-        diskMb: server.ramMb * 20,
+        diskMb: server.ramMb * 10,
         architecture: server.architecture,
         osType: 'Ubuntu 24.04',
         productName: server.serverType.toUpperCase(),
@@ -130,7 +130,7 @@ export function exampleVNets(now: number) {
     mark({
       id: 'example-vnet-1',
       providerResourceId: 'example-net-1',
-      name: 'northwind-net',
+      name: 'production-net',
       provider: PROVIDER,
       ipRange: NETWORK_RANGE,
       status: 'ACTIVE',
@@ -138,7 +138,7 @@ export function exampleVNets(now: number) {
       subnets: [
         mark({
           id: 'example-subnet-1',
-          name: 'northwind-subnet',
+          name: 'production-subnet',
           ipRange: SUBNET_RANGE,
           region: REGION,
           type: 'cloud',
@@ -206,7 +206,7 @@ export function exampleFirewalls(now: number) {
   return [
     mark({
       id: 'example-firewall-1',
-      name: 'northwind-edge',
+      name: 'production-firewall',
       provider: PROVIDER,
       providerFirewallId: 'example-fw-1',
       clusterId: CLUSTER_ID,

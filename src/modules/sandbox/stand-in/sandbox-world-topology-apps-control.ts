@@ -29,12 +29,12 @@ const platform = (...row: Platform): WorldApp => {
   );
 };
 
-const MASTER = { 'control-master-1': 1 };
-const WORKER = { 'control-worker-1': 1 };
+const NODE = { 'flui-control-1': 1 };
 
 /**
- * The control cluster: what Flui runs for itself, named, placed and sized as
- * its own manifests install it.
+ * The control cluster: what Flui runs for itself, named and placed as its own
+ * manifests install it. Only what carries Flui's label, the way the real map
+ * reads a cluster; the ingress, DNS and certificate machinery stays off it.
  */
 export const WORLD_APPS_CONTROL: WorldApp[] = [
   platform(
@@ -45,7 +45,7 @@ export const WORLD_APPS_CONTROL: WorldApp[] = [
     'deployment',
     'public',
     [256, 250],
-    { ...MASTER, ...WORKER },
+    NODE,
     3000,
   ),
   platform(
@@ -56,7 +56,7 @@ export const WORLD_APPS_CONTROL: WorldApp[] = [
     'deployment',
     'public',
     [32, 25],
-    WORKER,
+    NODE,
     80,
   ),
   platform(
@@ -67,7 +67,7 @@ export const WORLD_APPS_CONTROL: WorldApp[] = [
     'statefulset',
     'cluster',
     [256, 250],
-    MASTER,
+    NODE,
     5432,
   ),
   platform(
@@ -78,7 +78,7 @@ export const WORLD_APPS_CONTROL: WorldApp[] = [
     'deployment',
     'cluster',
     [16, 25],
-    MASTER,
+    NODE,
     6379,
   ),
   platform(
@@ -89,7 +89,7 @@ export const WORLD_APPS_CONTROL: WorldApp[] = [
     'deployment',
     'public',
     [256, 100],
-    WORKER,
+    NODE,
     8080,
   ),
   platform(
@@ -100,7 +100,7 @@ export const WORLD_APPS_CONTROL: WorldApp[] = [
     'deployment',
     'cluster',
     [128, 50],
-    WORKER,
+    NODE,
     8428,
   ),
   platform(
@@ -111,7 +111,7 @@ export const WORLD_APPS_CONTROL: WorldApp[] = [
     'deployment',
     'cluster',
     [32, 20],
-    WORKER,
+    NODE,
     8429,
   ),
   platform(
@@ -122,7 +122,7 @@ export const WORLD_APPS_CONTROL: WorldApp[] = [
     'deployment',
     'cluster',
     [32, 20],
-    WORKER,
+    NODE,
     8880,
   ),
   platform(
@@ -133,7 +133,7 @@ export const WORLD_APPS_CONTROL: WorldApp[] = [
     'deployment',
     'cluster',
     [32, 10],
-    WORKER,
+    NODE,
     9093,
   ),
   platform(
@@ -144,7 +144,7 @@ export const WORLD_APPS_CONTROL: WorldApp[] = [
     'deployment',
     'cluster',
     [128, 50],
-    WORKER,
+    NODE,
     3100,
   ),
   platform(
@@ -155,7 +155,7 @@ export const WORLD_APPS_CONTROL: WorldApp[] = [
     'deployment',
     'cluster',
     [128, 50],
-    WORKER,
+    NODE,
     3000,
   ),
   platform(
@@ -166,72 +166,7 @@ export const WORLD_APPS_CONTROL: WorldApp[] = [
     'deployment',
     'cluster',
     [32, 10],
-    WORKER,
+    NODE,
     8080,
-  ),
-  platform(
-    'kube-system',
-    'traefik',
-    'Traefik',
-    'infra',
-    'deployment',
-    'cluster',
-    [64, 50],
-    MASTER,
-    443,
-  ),
-  platform(
-    'kube-system',
-    'coredns',
-    'CoreDNS',
-    'infra',
-    'deployment',
-    'cluster',
-    [70, 100],
-    MASTER,
-    53,
-  ),
-  platform(
-    'kube-system',
-    'metrics-server',
-    'metrics-server',
-    'monitoring',
-    'deployment',
-    'cluster',
-    [70, 100],
-    MASTER,
-    10250,
-  ),
-  platform(
-    'cert-manager',
-    'cert-manager',
-    'cert-manager',
-    'infra',
-    'deployment',
-    'cluster',
-    [64, 10],
-    WORKER,
-    9402,
-  ),
-  platform(
-    'cert-manager',
-    'cert-manager-webhook',
-    'cert-manager webhook',
-    'infra',
-    'deployment',
-    'cluster',
-    [32, 10],
-    WORKER,
-    10250,
-  ),
-  platform(
-    'cert-manager',
-    'cert-manager-cainjector',
-    'cert-manager cainjector',
-    'infra',
-    'deployment',
-    'cluster',
-    [64, 10],
-    WORKER,
   ),
 ];

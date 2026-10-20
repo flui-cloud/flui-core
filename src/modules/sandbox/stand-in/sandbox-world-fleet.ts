@@ -18,9 +18,8 @@ export const VAT_PERCENT = 19;
 
 /** List prices of the shapes the example fleet uses, excluding VAT. */
 export const SERVER_PRICES = {
-  CPX31: { serverType: 'cpx31', hourlyNet: 0.0218, monthlyNet: 13.6 },
-  CPX41: { serverType: 'cpx41', hourlyNet: 0.0403, monthlyNet: 25.2 },
-  CAX31: { serverType: 'cax31', hourlyNet: 0.0201, monthlyNet: 12.49 },
+  CX33: { serverType: 'cx33', hourlyNet: 0.0099, monthlyNet: 5.99 },
+  CX43: { serverType: 'cx43', hourlyNet: 0.0193, monthlyNet: 11.99 },
 } as const;
 
 export type ExampleShape = keyof typeof SERVER_PRICES;
@@ -28,7 +27,7 @@ export type ExampleShape = keyof typeof SERVER_PRICES;
 /** The shared volume on the master, the one disk every application's data lives on. */
 export const SHARED_VOLUME = {
   id: 'example-volume-1',
-  sizeGb: 100,
+  sizeGb: 60,
   monthlyNetPerGb: 0.044,
 } as const;
 
@@ -42,9 +41,9 @@ const HOUR = 3_600_000;
  */
 export const BURST_WORKER = {
   id: 'example-server-4',
-  name: 'flui-worker-3',
+  name: 'production-4',
   role: 'worker',
-  productName: 'CPX41' as ExampleShape,
+  productName: 'CX43' as ExampleShape,
   addedHoursAgo: 150,
   removedHoursAgo: 129,
 } as const;

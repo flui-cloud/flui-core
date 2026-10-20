@@ -91,7 +91,7 @@ export function exampleBackupPolicies(now: number) {
       id: HOURLY_ID,
       userId: 'example',
       clusterId: CLUSTER_ID,
-      name: 'Hourly, the orders database',
+      name: 'Hourly, the shop database',
       scope: 'applications',
       scopeSelector: { applicationIds: [APPS[2].id] },
       includePvcs: false,
