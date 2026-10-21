@@ -73,6 +73,7 @@ import {
   operationWarnings,
 } from './control-hub-hooks';
 import { removalPreflight } from './removal-preflight';
+import { MasterEvacuationService } from '../services/master-evacuation.service';
 import { movesSentence } from '../../scaling/engine/drain.core';
 import { retryHeldDelivery } from '../../../common/leadership/held-delivery';
 
@@ -2652,10 +2653,35 @@ export class ClusterQueueProcessor {
           `(control-plane:NoSchedule). New pods will schedule on workers. ` +
           `Disable with 'flui env set-master-protection off'.`,
       );
+      await this.moveOffMaster(cluster, kubeconfig);
     } else {
       this.logger.warn(
         `[master-protection] Master of control cluster ${cluster.name} untainted ` +
           `— cluster is single-node again, workloads can schedule on the master.`,
+      );
+    }
+  }
+
+  private async moveOffMaster(
+    cluster: ClusterEntity,
+    kubeconfig: string,
+  ): Promise<void> {
+    try {
+      const evacuation = this.moduleRef?.get(MasterEvacuationService, {
+        strict: false,
+      });
+      if (!evacuation) return;
+      const plan = await evacuation.moveOff(kubeconfig);
+      const moved = plan.move.map((ref) => `${ref.namespace}/${ref.name}`);
+      this.logger.log(
+        `[master-protection] ${cluster.name}: moving to workers [${moved.join(', ')}]` +
+          (plan.stays.length
+            ? `; staying for lack of room [${plan.stays.join(', ')}]`
+            : ''),
+      );
+    } catch (err) {
+      this.logger.warn(
+        `[master-protection] ${cluster.name}: could not move work off the master: ${(err as Error).message}`,
       );
     }
   }
