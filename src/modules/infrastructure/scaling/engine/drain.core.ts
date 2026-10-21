@@ -102,6 +102,11 @@ export interface DrainSubject {
   dedicatedApps: DrainApplication[];
   pods: DrainPod[];
   budgets: DrainBudget[];
+  /**
+   * Ready copies of the Flui API on other nodes. While one runs elsewhere, the
+   * copy here is just another replica to move; absent is read as none.
+   */
+  apiCopiesElsewhere?: number;
 }
 
 const DAEMONSET = 'DaemonSet';
@@ -141,7 +146,11 @@ export function checkDrain(subject: DrainSubject): DrainCheck {
   const evictable = subject.pods.filter((pod) => pod.ownerKind !== DAEMONSET);
 
   for (const pod of evictable) {
-    blockers.push(...podBlockers(pod, dedicated, subject.budgets));
+    blockers.push(
+      ...podBlockers(pod, dedicated, subject.budgets, {
+        apiElsewhere: (subject.apiCopiesElsewhere ?? 0) > 0,
+      }),
+    );
   }
 
   if (daemons.length) {
@@ -184,19 +193,21 @@ function podBlockers(
   pod: DrainPod,
   dedicated: Set<string>,
   budgets: DrainBudget[],
+  api: { apiElsewhere: boolean },
 ): DrainBlocker[] {
   const where = `${pod.namespace}/${pod.name}`;
   const application = pod.application ?? null;
   const blockers: DrainBlocker[] = [];
 
-  // The removal is carried out by the API itself: a drain that evicts it stops
-  // the removal halfway, with the node cordoned and the operation left running
-  // for nobody to finish.
-  if (isFluiApi(pod)) {
+  // The removal is carried out by the API itself: a drain that evicts its only
+  // copy stops the removal halfway, with the node cordoned and the operation
+  // left running for nobody to finish. With a copy elsewhere, the work is
+  // handed to that one and this copy is just another replica to move.
+  if (isFluiApi(pod) && !api.apiElsewhere) {
     blockers.push({
       kind: 'runs-flui-api',
       what: where,
-      fix: 'The Flui API runs on this machine and is what carries out the removal, so emptying it would stop the removal halfway. Nothing is changed: the removal waits until the Flui API runs on another machine.',
+      fix: 'The only copy of the Flui API runs on this machine and is what carries out the removal, so emptying it would stop the removal halfway. Nothing is changed: the removal waits until a copy of the Flui API runs on another machine.',
       application,
     });
   }

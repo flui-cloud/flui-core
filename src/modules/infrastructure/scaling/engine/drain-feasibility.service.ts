@@ -77,12 +77,16 @@ export class DrainFeasibilityService {
       const coreApi = kc.makeApiClient(k8s.CoreV1Api);
       const policyApi = kc.makeApiClient(k8s.PolicyV1Api);
 
-      const [pods, volumes, budgets] = await Promise.all([
+      const [pods, volumes, budgets, api] = await Promise.all([
         coreApi.listPodForAllNamespaces({
           fieldSelector: `spec.nodeName=${node.serverName},status.phase!=Succeeded,status.phase!=Failed`,
         }),
         coreApi.listPersistentVolume(),
         policyApi.listPodDisruptionBudgetForAllNamespaces(),
+        coreApi.listNamespacedPod({
+          namespace: 'flui-system',
+          labelSelector: 'app=flui-api',
+        }),
       ]);
 
       const pinned = pinnedClaims(volumes.items ?? [], node.serverName);
@@ -95,6 +99,9 @@ export class DrainFeasibilityService {
         dedicatedApps,
         pods: running.map((pod) => toDrainPod(pod, pinned, owners)),
         budgets: (budgets.items ?? []).map(toDrainBudget),
+        apiCopiesElsewhere: (api.items ?? []).filter(
+          (pod) => pod.spec?.nodeName !== node.serverName && ready(pod),
+        ).length,
       });
     } catch (err) {
       this.logger.warn(
@@ -301,6 +308,12 @@ const APP_ID_LABEL = 'flui-app-id';
 function finished(pod: k8s.V1Pod): boolean {
   const phase = pod.status?.phase;
   return phase === 'Succeeded' || phase === 'Failed';
+}
+
+function ready(pod: k8s.V1Pod): boolean {
+  return (pod.status?.conditions ?? []).some(
+    (c) => c.type === 'Ready' && c.status === 'True',
+  );
 }
 
 /** Pods that run on every machine, or that the machine itself placed, go with it. */

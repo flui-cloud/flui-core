@@ -204,6 +204,15 @@ describe('the machine the Flui API runs on', () => {
     expect(drainSummary(check)).toContain('Nothing is changed');
   });
 
+  it('lets the node go when another copy of the API runs elsewhere', () => {
+    const check = checkDrain(
+      subject({ pods: [api, pod()], apiCopiesElsewhere: 1 }),
+    );
+
+    expect(check.ok).toBe(true);
+    expect(check.moves?.map((m) => m.what)).toContain('flui-api');
+  });
+
   it('is not confused with an app that happens to be called flui-api elsewhere', () => {
     const lookalike = pod({
       namespace: 'flui-apps',

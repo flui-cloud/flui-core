@@ -213,13 +213,14 @@ describe('whether a node can be emptied', () => {
     status: { phase },
   });
 
-  function checking(pods: unknown[]) {
+  function checking(pods: unknown[], apiPods: unknown[] = []) {
     const coreApi = {
       listPodForAllNamespaces: jest.fn(async () => ({ items: pods })),
       listPersistentVolume: jest.fn(async () => ({ items: [] })),
       listPodDisruptionBudgetForAllNamespaces: jest.fn(async () => ({
         items: [],
       })),
+      listNamespacedPod: jest.fn(async () => ({ items: apiPods })),
     };
     const service = new DrainFeasibilityService(
       { find: async () => [] } as never,
@@ -234,6 +235,35 @@ describe('whether a node can be emptied', () => {
    * owner, finished for days, and were named as reasons the
    * node could not be given back.
    */
+  it('lets the only copy of the API hold its node, and a second copy elsewhere free it', async () => {
+    const apiPod = (name: string, nodeName: string) => ({
+      metadata: {
+        name,
+        namespace: 'flui-system',
+        labels: { app: 'flui-api' },
+        ownerReferences: [{ kind: 'ReplicaSet' }],
+      },
+      spec: { nodeName },
+      status: {
+        phase: 'Running',
+        conditions: [{ type: 'Ready', status: 'True' }],
+      },
+    });
+    const here = apiPod('flui-api-a', 'worker-2');
+
+    const alone = await checking([here], [here]).service.check(
+      cluster(),
+      leaving,
+    );
+    expect(alone?.blockers.map((b) => b.kind)).toEqual(['runs-flui-api']);
+
+    const paired = await checking(
+      [here],
+      [here, apiPod('flui-api-b', 'master-1')],
+    ).service.check(cluster(), leaving);
+    expect(paired?.ok).toBe(true);
+  });
+
   it('is not held up by runs that already ended', async () => {
     const { service, coreApi } = checking([
       run('echo-29840964-4pw54', 'Succeeded'),
@@ -250,6 +280,7 @@ describe('whether a node can be emptied', () => {
   });
 
   it('does not keep a node for an application that was deleted', async () => {
+    const apiPods: unknown[] = [];
     const find = jest.fn(async () => []);
     const coreApi = {
       listPodForAllNamespaces: jest.fn(async () => ({ items: [] })),
@@ -257,6 +288,7 @@ describe('whether a node can be emptied', () => {
       listPodDisruptionBudgetForAllNamespaces: jest.fn(async () => ({
         items: [],
       })),
+      listNamespacedPod: jest.fn(async () => ({ items: apiPods })),
     };
     const service = new DrainFeasibilityService(
       { find } as never,
