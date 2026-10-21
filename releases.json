@@ -2,6 +2,31 @@
   "schemaVersion": 2,
   "releases": [
     {
+      "version": "0.14.0-rc.6",
+      "publishedAt": "2026-10-21T17:33:46.907Z",
+      "bootstrapRef": "f9afb81",
+      "images": {
+        "fluiApi": "0.14.0-rc.6",
+        "fluiWeb": "0.14.0-rc.6",
+        "fluiAuthz": "0.7.0"
+      },
+      "notes": [
+        "When a control cluster gets its first worker, the platform components that keep nothing on the master move to the workers, so the master keeps room for the API.",
+        "A copy of the API that is shutting down stops taking new work, and a dropped live-update connection no longer stops a copy mid-job.",
+        "An update can no longer put the API back on the version it is replacing: a retried rollout keeps its target, the update stops at once if the API rollout misses it, and the master always declares the new images before the update finishes."
+      ],
+      "migrations": 0,
+      "requiresBootstrap": false,
+      "k3s": {
+        "version": "v1.35.4+k3s1"
+      },
+      "systemComponents": {
+        "certManager": "v1.17.1",
+        "systemUpgradeController": "v0.20.2"
+      },
+      "manifestSets": []
+    },
+    {
       "version": "0.14.0-rc.5",
       "publishedAt": "2026-10-21T07:34:48.182Z",
       "bootstrapRef": "f9afb81",
