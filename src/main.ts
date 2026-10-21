@@ -101,6 +101,14 @@ function addEnumVarnamesExtension<T>(document: T): T {
 }
 
 async function bootstrap() {
+  // A copy carries infrastructure jobs that run for minutes; one stray promise
+  // nobody awaited must not take them all down with the process.
+  process.on('unhandledRejection', (reason) => {
+    new Logger('Process').error(
+      `Unhandled rejection: ${reason instanceof Error ? reason.message : String(reason)}`,
+      reason instanceof Error ? reason.stack : undefined,
+    );
+  });
   await performPreBootstrapChecks();
   if (await runMigrationsOnce()) {
     process.env.FLUI_MIGRATIONS_DONE_AT_BOOT = 'true';
@@ -171,7 +179,7 @@ async function bootstrap() {
       new Logger('Websockets').error(
         `Redis refused the websocket adapter (${reason}); stopping rather than keeping events within this copy of the API`,
       );
-      await ioAdapter.close();
+      await ioAdapter.dispose();
       process.exit(1);
     }
     new Logger('Websockets').warn(

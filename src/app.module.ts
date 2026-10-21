@@ -65,6 +65,7 @@ import { DemoModule } from './modules/demo/demo.module';
 import { MaskModule } from './modules/mask/mask.module';
 import { PlatformUpdatesModule } from './modules/platform-updates/platform-updates.module';
 import { AttachedServicesModule } from './modules/attached-services/attached-services.module';
+import { QueueIntakeModule } from './common/queues/queue-intake.module';
 
 @Module({
   imports: [
@@ -73,6 +74,7 @@ import { AttachedServicesModule } from './modules/attached-services/attached-ser
       envFilePath: ['.env.local', '.env'],
     }),
     CacheModule,
+    QueueIntakeModule,
     TypeOrmModule.forRootAsync({
       imports: [ConfigModule],
       useFactory: (configService: ConfigService) => ({

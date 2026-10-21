@@ -25,11 +25,12 @@ export class RedisIoAdapter extends IoAdapter {
     const { createAdapter } = await import('@socket.io/redis-adapter');
     const pub = new Redis({ ...options, lazyConnect: true });
     const sub = pub.duplicate();
+    keepPublishFailuresLocal(pub, this.logger);
     this.clients = [pub, sub];
     try {
       await Promise.all([pub.connect(), sub.connect()]);
     } catch (err) {
-      await this.close();
+      await this.dispose();
       throw err;
     }
     this.adapter = createAdapter(pub, sub, { key: 'flui:socket.io' });
@@ -42,7 +43,13 @@ export class RedisIoAdapter extends IoAdapter {
     return server;
   }
 
-  async close(): Promise<void> {
+  /**
+   * Runs after Nest has closed every socket.io server through `close(server)`,
+   * which must stay the inherited one: shadowing it left the websocket
+   * connections open, and the HTTP server waiting on them never let shutdown
+   * reach the queues.
+   */
+  async dispose(): Promise<void> {
     await Promise.all(this.clients.map((c) => this.closeClient(c)));
   }
 
@@ -60,4 +67,21 @@ export class RedisIoAdapter extends IoAdapter {
     }
     client.disconnect();
   }
+}
+
+/**
+ * The adapter publishes without awaiting, so a publish rejected by a closed or
+ * reconnecting client became an unhandled rejection that ended the process,
+ * whatever job it was running. A lost broadcast is only a missed live update.
+ */
+function keepPublishFailuresLocal(client: Redis, logger: Logger): void {
+  const publish = client.publish.bind(client) as (
+    channel: string | Buffer,
+    message: string | Buffer,
+  ) => Promise<number>;
+  client.publish = ((channel: string | Buffer, message: string | Buffer) =>
+    publish(channel, message).catch((err: Error) => {
+      logger.warn(`Websocket event not shared: ${err.message}`);
+      return 0;
+    })) as Redis['publish'];
 }

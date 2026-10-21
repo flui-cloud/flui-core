@@ -16,6 +16,10 @@ class FakeRedis {
     return new FakeRedis();
   }
 
+  publish = jest.fn((_channel: string, _message: string) =>
+    Promise.reject(new Error('Connection is closed.')),
+  );
+
   connect = jest.fn(async () => {
     const behaviour = connectAs.shift();
     if (behaviour) return behaviour();
@@ -56,7 +60,7 @@ describe('RedisIoAdapter', () => {
       expect(client.quit).not.toHaveBeenCalled();
       expect(client.disconnect).toHaveBeenCalled();
     }
-    await expect(adapter.close()).resolves.toBeUndefined();
+    await expect(adapter.dispose()).resolves.toBeUndefined();
   });
 
   it('does not wait on a quit Redis never answers', async () => {
@@ -65,7 +69,7 @@ describe('RedisIoAdapter', () => {
     await adapter.connect({ host: 'redis' });
 
     let closed = false;
-    const closing = adapter.close().then(() => (closed = true));
+    const closing = adapter.dispose().then(() => (closed = true));
     await jest.advanceTimersByTimeAsync(2_000);
     await closing;
 
@@ -74,5 +78,20 @@ describe('RedisIoAdapter', () => {
       expect(client.quit).toHaveBeenCalled();
       expect(client.disconnect).toHaveBeenCalled();
     }
+  });
+
+  it('keeps a publish Redis refuses from ending the process', async () => {
+    const adapter = new RedisIoAdapter({} as any);
+    await adapter.connect({ host: 'redis' });
+
+    await expect(
+      instances[0].publish('flui:socket.io#/#', 'event'),
+    ).resolves.toBe(0);
+  });
+
+  it('leaves closing each socket.io server to the inherited close', () => {
+    expect(
+      Object.prototype.hasOwnProperty.call(RedisIoAdapter.prototype, 'close'),
+    ).toBe(false);
   });
 });
