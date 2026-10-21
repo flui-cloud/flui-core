@@ -411,6 +411,8 @@ export interface PlatformUpdateOperationMetadata extends BaseOperationMetadata {
   migrations: number;
   awaitingSelfRestart?: boolean;
   awaitingSince?: string;
+  /** The deploy that replaces the API, watched while the update waits on it. */
+  controlPlaneDeployId?: string;
 }
 
 export interface K3sNodeUpgradeState {

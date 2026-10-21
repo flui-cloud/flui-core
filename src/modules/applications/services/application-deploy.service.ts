@@ -44,6 +44,7 @@ import { normalizeMonorepoImageRef } from '../utils/image-ref.util';
 import { CatalogInstallEntity } from '../../catalog/entities/catalog-install.entity';
 import { CatalogInstallStatus } from '../../catalog/enums/catalog-install-status.enum';
 import { liveBundleSiblings } from '../utils/bundle-siblings.util';
+import { stillCarried } from '../utils/deploy-in-flight.util';
 
 export interface DeployApplicationJobData {
   operationId: string;
@@ -825,7 +826,11 @@ export class ApplicationDeployService {
       },
       order: { createdAt: 'DESC' },
     });
-    if (existingOp && existingOp.metadata?.imageRef === imageRef) {
+    if (
+      existingOp &&
+      existingOp.metadata?.imageRef === imageRef &&
+      stillCarried(existingOp, new Date())
+    ) {
       this.logger.log(
         `Deploy for ${app.name} with imageRef ${imageRef} already in progress (op ${existingOp.id}), returning existing operation`,
       );

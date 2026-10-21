@@ -175,10 +175,12 @@ export class PlatformUpdatesService {
     const apps = await this.componentApps();
     const readings = {} as Record<PlatformComponentKey, ComponentReading>;
     for (const def of PLATFORM_UPDATE_COMPONENTS) {
-      // A row whose imageRef is empty or digest-pinned carries no version to
-      // report, so it falls through to the cluster rather than answering null:
-      // the row proves the component was discovered once, not what it runs now.
-      const tag = this.tagOf(apps.get(def.key)?.imageRef);
+      // What was seen running, not what was last asked for: a deploy records the
+      // wanted image before it rolls out, and an update resumed after a restart
+      // would otherwise skip a component that never moved. A row with no tag
+      // falls through to the cluster rather than answering null.
+      const app = apps.get(def.key);
+      const tag = this.tagOf(app?.observedImageRef ?? app?.imageRef);
       readings[def.key] = tag
         ? { installed: true, version: tag, observed: true }
         : await this.readFromCluster(def);

@@ -64,7 +64,7 @@ export class ImageRolloutService {
   async replaceControlPlane(
     component: Component,
     applicationId: string | undefined,
-  ): Promise<void> {
+  ): Promise<string> {
     if (!applicationId) {
       throw new Error(
         'Flui API has no system-app row on the control cluster to deploy through.',
@@ -73,7 +73,11 @@ export class ImageRolloutService {
     this.logger.log(
       `Rolling out the control plane to ${component.targetVersion}; this process ends here and the new pod continues the operation.`,
     );
-    await this.deployService.setDesiredImage(applicationId, component.imageRef);
+    const deploy = await this.deployService.setDesiredImage(
+      applicationId,
+      component.imageRef,
+    );
+    return deploy.id;
   }
 
   private async awaitOperation(id: string): Promise<OperationStatus> {

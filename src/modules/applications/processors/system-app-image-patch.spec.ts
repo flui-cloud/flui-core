@@ -5,7 +5,10 @@ jest.mock('ip-cidr', () => ({}));
 jest.mock('@octokit/rest', () => ({}));
 jest.mock('@octokit/auth-app', () => ({}));
 
-import { ApplicationDeployProcessor } from './application-deploy.processor';
+import {
+  ApplicationDeployProcessor,
+  withQueuedImage,
+} from './application-deploy.processor';
 import { ApplicationStatus } from '../enums/application-status.enum';
 import { OperationType } from '../../infrastructure/servers/entities/infrastructure-operations.entity';
 
@@ -17,6 +20,7 @@ import { OperationType } from '../../infrastructure/servers/entities/infrastruct
 describe("updating one of the platform's own apps", () => {
   it('leaves the app running once the rollout has finished', async () => {
     const update = jest.fn().mockResolvedValue(undefined);
+    const operationUpdate = jest.fn().mockResolvedValue(undefined);
     const processor = Object.create(
       ApplicationDeployProcessor.prototype,
     ) as ApplicationDeployProcessor;
@@ -37,6 +41,10 @@ describe("updating one of the platform's own apps", () => {
         emitOperationCompleted: jest.fn(),
       },
       updateOperation: jest.fn().mockResolvedValue(undefined),
+      operationRepository: {
+        findOne: jest.fn().mockResolvedValue({ id: 'op-1', metadata: {} }),
+        save: operationUpdate,
+      },
     });
 
     await (
@@ -68,5 +76,30 @@ describe("updating one of the platform's own apps", () => {
         observedImageRef: 'ghcr.io/flui-cloud/core:abc1234',
       }),
     );
+    expect(operationUpdate).toHaveBeenCalledWith({
+      id: 'op-1',
+      metadata: { rolledImageRef: 'ghcr.io/flui-cloud/core:abc1234' },
+    });
+  });
+});
+
+describe("a retried update of one of the platform's own apps", () => {
+  const row = { imageRef: 'ghcr.io/flui-cloud/core:0.14.0-rc.3' };
+
+  it('rolls out the image it was queued for, not the one a restart wrote back', () => {
+    expect(
+      withQueuedImage(row, 'update', 'ghcr.io/flui-cloud/core:0.14.0-rc.5')
+        .imageRef,
+    ).toBe('ghcr.io/flui-cloud/core:0.14.0-rc.5');
+  });
+
+  it('leaves a rollback to the revision it restores', () => {
+    expect(
+      withQueuedImage(row, 'rollback', 'ghcr.io/flui-cloud/core:0.14.0-rc.5'),
+    ).toBe(row);
+  });
+
+  it('keeps the row when the job carries no image', () => {
+    expect(withQueuedImage(row, 'update', undefined)).toBe(row);
   });
 });

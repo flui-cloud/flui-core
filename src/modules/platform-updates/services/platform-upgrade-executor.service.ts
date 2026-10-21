@@ -396,7 +396,13 @@ export class PlatformUpgradeExecutorService {
       }
       op.currentStep = OperationStep.PLATFORM_UPDATE_CONTROL_PLANE;
     });
-    await this.images.replaceControlPlane(api, appIds.get('fluiApi'));
+    const deployId = await this.images.replaceControlPlane(
+      api,
+      appIds.get('fluiApi'),
+    );
+    await this.records.mutate(operationId, (m) => {
+      m.controlPlaneDeployId = deployId;
+    });
     return 'parked';
   }
 
@@ -472,6 +478,11 @@ export class PlatformUpgradeExecutorService {
   }
 
   private async verify(operationId: string): Promise<Outcome> {
+    // The manifests phase wrote the old tags on the master and K3s re-applies
+    // them at every start. The K3s phase declares the new ones before it
+    // restarts anything, but an update with nothing for K3s to do never gets
+    // there, so the checks start by declaring what now runs.
+    await this.declareControlImages(operationId);
     for (;;) {
       const { metadata } = (await this.records.load(operationId))!;
       const checks = await this.verification.checks(metadata);

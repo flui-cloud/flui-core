@@ -1,8 +1,19 @@
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  NotFoundException,
+  Optional,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { In, Repository } from 'typeorm';
 import * as crypto from 'node:crypto';
 import { ClusterEntity } from '../../infrastructure/clusters/entities/cluster.entity';
+import {
+  InfrastructureOperationEntity,
+  OperationStatus,
+  OperationType,
+} from '../../infrastructure/servers/entities/infrastructure-operations.entity';
+import { stillCarried } from '../utils/deploy-in-flight.util';
 import { ApplicationEntity } from '../entities/application.entity';
 import { KubernetesService } from '../../infrastructure/shared/services/kubernetes.service';
 import { EncryptionService } from '../../shared/encryption/services/encryption.service';
@@ -46,6 +57,9 @@ export class SystemAppCatalogService {
     private readonly encryptionService: EncryptionService,
     private readonly applicationsRepository: ApplicationsRepository,
     private readonly appResourcesRepository: AppResourcesRepository,
+    @Optional()
+    @InjectRepository(InfrastructureOperationEntity)
+    private readonly operations?: Repository<InfrastructureOperationEntity>,
   ) {}
 
   getCatalogForClusterType(clusterType: string): SystemAppDefinition[] {
@@ -385,8 +399,13 @@ export class SystemAppCatalogService {
           appDef.imageSource.containerName,
         );
       if (currentImage) {
+        // What runs is always recorded; what is wanted is left alone while a
+        // deploy is carrying it, or a copy booting mid-rollout would hand the
+        // retried deploy the image it is replacing.
+        const deploying = await this.deployInFlight(appId);
         await this.applicationsRepository.update(appId, {
-          imageRef: currentImage,
+          observedImageRef: currentImage,
+          ...(deploying ? {} : { imageRef: currentImage }),
         });
       }
     } catch (err) {
@@ -394,6 +413,22 @@ export class SystemAppCatalogService {
         `Failed to refresh imageRef for ${appDef.name}: ${(err as Error).message}`,
       );
     }
+  }
+
+  private async deployInFlight(appId: string): Promise<boolean> {
+    if (!this.operations) return false;
+    const op = await this.operations.findOne({
+      where: {
+        resourceId: appId,
+        operationType: In([
+          OperationType.DEPLOY_APPLICATION,
+          OperationType.ROLLBACK_APPLICATION,
+        ]),
+        status: In([OperationStatus.PENDING, OperationStatus.IN_PROGRESS]),
+      },
+      order: { createdAt: 'DESC' },
+    });
+    return op ? stillCarried(op, new Date()) : false;
   }
 
   private async findResourceOnK8s(

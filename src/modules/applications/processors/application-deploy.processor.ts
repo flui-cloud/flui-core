@@ -80,6 +80,20 @@ import {
 /** The restore point is seconds; the copies it starts are not waited for. */
 const PRE_DEPLOY_BACKUP_TIMEOUT_MS = 2 * 60 * 1000;
 
+/**
+ * A system app's row takes its image from the live Deployment whenever a copy
+ * of the API boots, so a job retried after a restart would roll out whatever
+ * happens to be running. It rolls out the image it was queued for instead.
+ */
+export function withQueuedImage<T extends { imageRef?: string | null }>(
+  app: T,
+  deployType: 'initial' | 'update' | 'rollback',
+  queuedImageRef: string | undefined,
+): T {
+  if (deployType === 'rollback' || !queuedImageRef) return app;
+  return { ...app, imageRef: queuedImageRef };
+}
+
 @Processor('application-deploy')
 export class ApplicationDeployProcessor {
   private readonly logger = new Logger(ApplicationDeployProcessor.name);
@@ -422,7 +436,7 @@ export class ApplicationDeployProcessor {
         app.systemProtected
       ) {
         await this.handleSystemAppImagePatch(
-          appForManifests,
+          withQueuedImage(appForManifests, deployType, pinnedImageRef),
           kubeconfig,
           operationId,
           opType,
@@ -845,6 +859,7 @@ export class ApplicationDeployProcessor {
       observedImageRef: app.imageRef,
     });
 
+    await this.recordRolledImage(operationId, app.imageRef);
     await this.updateOperation(
       operationId,
       OperationStatus.COMPLETED,
@@ -1096,6 +1111,19 @@ export class ApplicationDeployProcessor {
       hashes[`${m.kind}/${m.name}`] = hash;
     }
     return hashes;
+  }
+
+  /** What the deploy actually put on the cluster, which can differ from what it was asked for. */
+  private async recordRolledImage(
+    operationId: string,
+    imageRef: string,
+  ): Promise<void> {
+    const op = await this.operationRepository.findOne({
+      where: { id: operationId },
+    });
+    if (!op) return;
+    op.metadata = { ...op.metadata, rolledImageRef: imageRef };
+    await this.operationRepository.save(op);
   }
 
   private async updateOperation(

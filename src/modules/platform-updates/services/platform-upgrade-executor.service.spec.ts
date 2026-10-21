@@ -366,6 +366,7 @@ describe('PlatformUpgradeExecutorService', () => {
       'k3s:w1',
       `declare:web:${TARGET}`,
       'k3s:ctl',
+      `declare:web:${TARGET}`,
     ]);
     expect(row().status).toBe(OperationStatus.COMPLETED);
     expect(phaseStatus(row().metadata)).toEqual([
@@ -478,8 +479,35 @@ describe('PlatformUpgradeExecutorService', () => {
       `declare:api:${TARGET}`,
       `declare:web:${TARGET}`,
       'k3s:ctl',
+      `declare:api:${TARGET}`,
+      `declare:web:${TARGET}`,
     ]);
     expect(row().status).toBe(OperationStatus.COMPLETED);
+  });
+
+  it('declares the new API on the master even when K3s has nothing to do', async () => {
+    const parked = metadata({
+      apiMoves: true,
+      statuses: { backup: 'done', manifests: 'done', images: 'running' },
+    });
+    parked.components = parked.components.map((c) => ({
+      ...c,
+      status: c.key === 'fluiApi' ? 'running' : 'done',
+    }));
+    parked.phases = parked.phases.map((p) =>
+      p.key === 'k3s' ? { ...p, status: 'skipped' as const } : p,
+    );
+    const { service, calls } = build({
+      meta: continuedAfterRestart(parked, new Date()),
+      runningVersion: TARGET,
+    });
+    service.now = (() => {
+      let t = Date.now();
+      return () => (t += 60 * 60_000);
+    })();
+    await service.execute('op-1');
+    expect(calls).toContain(`declare:api:${TARGET}`);
+    expect(calls).not.toContain('k3s:ctl');
   });
 
   it('does nothing twice: a rerun skips phases done and targets already reached', async () => {
@@ -490,7 +518,12 @@ describe('PlatformUpgradeExecutorService', () => {
     });
     await service.execute('op-1');
     expect(manifests.apply).not.toHaveBeenCalled();
-    expect(calls).toEqual(['k3s:w1', `declare:web:${TARGET}`, 'k3s:ctl']);
+    expect(calls).toEqual([
+      'k3s:w1',
+      `declare:web:${TARGET}`,
+      'k3s:ctl',
+      `declare:web:${TARGET}`,
+    ]);
     expect(row().status).toBe(OperationStatus.COMPLETED);
   });
 

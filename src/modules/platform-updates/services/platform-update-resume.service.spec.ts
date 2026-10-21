@@ -52,6 +52,7 @@ function build(rows: unknown[], affected = 1) {
   const repo = {
     manager: {},
     find: jest.fn().mockResolvedValue(rows),
+    findOne: jest.fn().mockResolvedValue(null),
     update: jest.fn().mockResolvedValue({ affected }),
   };
   const queue = { add: jest.fn() };
@@ -234,6 +235,62 @@ describe('PlatformUpdateResumeService — phased updates', () => {
     expect(saved.status).toBe(OperationStatus.FAILED);
     expect(saved.errorMessage).toContain('never came back on 99.0.0');
     expect(saved.metadata.failedPhase).toBe('images');
+  });
+});
+
+describe('PlatformUpdateResumeService — the deploy that replaces the API', () => {
+  function waitingOn(deploy: Record<string, unknown>) {
+    const op = phased({
+      targetVersion: '99.0.0',
+      awaitingSelfRestart: true,
+      running: 'images',
+      deadlineInMs: 30 * MIN,
+    }) as unknown as { metadata: PlatformUpgradeMetadata };
+    op.metadata.controlPlaneDeployId = 'deploy-1';
+    const t = build([op]);
+    t.repo.findOne.mockResolvedValue(deploy);
+    return t;
+  }
+
+  it('stops waiting at once when that deploy rolled out another image', async () => {
+    const { service, repo } = waitingOn({
+      status: OperationStatus.COMPLETED,
+      metadata: { rolledImageRef: 'ghcr.io/flui-cloud/core:old' },
+    });
+    await service.failStalled();
+
+    const saved = repo.update.mock.calls[0][1];
+    expect(saved.status).toBe(OperationStatus.FAILED);
+    expect(saved.errorMessage).toContain(
+      'rolled out ghcr.io/flui-cloud/core:old instead of ghcr.io/flui-cloud/core:x',
+    );
+    expect(saved.metadata.failedPhase).toBe('images');
+    expect(saved.metadata.awaitingSelfRestart).toBe(false);
+  });
+
+  it('stops waiting at once when that deploy failed', async () => {
+    const { service, repo } = waitingOn({
+      status: OperationStatus.FAILED,
+      errorMessage: 'image pull failed',
+    });
+    await service.failStalled();
+    expect(repo.update.mock.calls[0][1].errorMessage).toContain(
+      'did not finish: image pull failed',
+    );
+  });
+
+  it('keeps waiting while that deploy runs, and once it rolled out the target', async () => {
+    for (const deploy of [
+      { status: OperationStatus.IN_PROGRESS, metadata: {} },
+      {
+        status: OperationStatus.COMPLETED,
+        metadata: { rolledImageRef: 'ghcr.io/flui-cloud/core:x' },
+      },
+    ]) {
+      const { service, repo } = waitingOn(deploy);
+      await service.failStalled();
+      expect(repo.update).not.toHaveBeenCalled();
+    }
   });
 });
 

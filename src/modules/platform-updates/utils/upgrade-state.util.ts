@@ -1,4 +1,7 @@
-import { OperationStep } from '../../infrastructure/servers/entities/infrastructure-operations.entity';
+import {
+  OperationStatus,
+  OperationStep,
+} from '../../infrastructure/servers/entities/infrastructure-operations.entity';
 import {
   PlatformUpgradeMetadata,
   UpgradePhaseKey,
@@ -212,4 +215,36 @@ export function controlImagesToDeclare(metadata: PlatformUpgradeMetadata): {
     return ref && c.fromVersion ? [`${ref.repository}:${c.fromVersion}`] : [];
   });
   return { moved, previous };
+}
+
+/**
+ * Why a parked update can stop waiting for the new API: the deploy meant to
+ * bring it never will. Null while that deploy is running, or once it rolled out
+ * the target, because old copies keep answering for minutes after the new ones
+ * are up and are not a failure.
+ */
+export function controlPlaneDeployFailure(
+  deploy: {
+    status: OperationStatus;
+    errorMessage?: string | null;
+    metadata?: { rolledImageRef?: string } | null;
+  } | null,
+  targetImageRef: string,
+): string | null {
+  if (!deploy) return null;
+  if (
+    deploy.status === OperationStatus.FAILED ||
+    deploy.status === OperationStatus.CANCELLED
+  ) {
+    return `The deploy that replaces the API did not finish: ${deploy.errorMessage ?? deploy.status.toLowerCase()}.`;
+  }
+  const rolled = deploy.metadata?.rolledImageRef;
+  if (
+    deploy.status === OperationStatus.COMPLETED &&
+    rolled &&
+    rolled !== targetImageRef
+  ) {
+    return `The deploy that replaces the API rolled out ${rolled} instead of ${targetImageRef}.`;
+  }
+  return null;
 }

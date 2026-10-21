@@ -33,6 +33,7 @@ import {
 } from '../interfaces/platform-upgrade.interface';
 import {
   continuedAfterRestart,
+  controlPlaneDeployFailure,
   failedMetadata,
   overduePhase,
 } from '../utils/upgrade-state.util';
@@ -161,6 +162,11 @@ export class PlatformUpdateResumeService implements OnApplicationBootstrap {
     for (const operation of running) {
       const metadata = operation.metadata;
       if (!isUpgradeMetadata(metadata)) continue;
+      const replacementFailed = await this.controlPlaneDeployFailed(metadata);
+      if (replacementFailed) {
+        await this.failPhase(operation, metadata, 'images', replacementFailed);
+        continue;
+      }
       const overdue = overduePhase(metadata, Date.now());
       if (!overdue) continue;
       if (
@@ -175,22 +181,47 @@ export class PlatformUpdateResumeService implements OnApplicationBootstrap {
         overdue.key === 'images' && metadata.awaitingSelfRestart
           ? `The API never came back on ${metadata.targetVersion}; it is still serving ${RELEASE.version}.`
           : `${overdue.title} did not finish before its deadline.`;
-      this.logger.error(`Platform update ${operation.id} stalled: ${message}`);
-      const now = new Date();
-      const failed = failedMetadata(
-        metadata,
-        overdue.key,
-        message,
-        RELEASE.version,
-        now,
-      );
-      await this.settle(operation.id, {
-        status: OperationStatus.FAILED,
-        errorMessage: `${message} ${failed.guidance ?? ''}`.trim(),
-        completedAt: now,
-        metadata: failed,
-      });
+      await this.failPhase(operation, metadata, overdue.key, message);
     }
+  }
+
+  /**
+   * The update is parked on a deploy that has already ended without the new
+   * API: waiting for the phase deadline would only keep the screen saying the
+   * control plane is restarting.
+   */
+  private async controlPlaneDeployFailed(
+    metadata: PlatformUpgradeMetadata,
+  ): Promise<string | null> {
+    if (!metadata.awaitingSelfRestart || !metadata.controlPlaneDeployId) {
+      return null;
+    }
+    const api = metadata.components.find((c) => c.key === 'fluiApi');
+    if (!api) return null;
+    const deploy = await this.operationRepository.findOne({
+      where: { id: metadata.controlPlaneDeployId },
+    });
+    return controlPlaneDeployFailure(
+      deploy as Parameters<typeof controlPlaneDeployFailure>[0],
+      api.imageRef,
+    );
+  }
+
+  private async failPhase(
+    operation: InfrastructureOperationEntity,
+    metadata: PlatformUpgradeMetadata,
+    key: Parameters<typeof failedMetadata>[1],
+    message: string,
+  ): Promise<void> {
+    this.logger.error(`Platform update ${operation.id} stalled: ${message}`);
+    const now = new Date();
+    const failed = failedMetadata(metadata, key, message, RELEASE.version, now);
+    await this.settle(operation.id, {
+      status: OperationStatus.FAILED,
+      errorMessage: `${message} ${failed.guidance ?? ''}`.trim(),
+      completedAt: now,
+      metadata: failed,
+    });
   }
 
   private async inProgress(): Promise<InfrastructureOperationEntity[]> {
