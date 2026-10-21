@@ -2,6 +2,30 @@
   "schemaVersion": 2,
   "releases": [
     {
+      "version": "0.14.0-rc.5",
+      "publishedAt": "2026-10-21T07:34:48.182Z",
+      "bootstrapRef": "f9afb81",
+      "images": {
+        "fluiApi": "0.14.0-rc.5",
+        "fluiWeb": "0.14.0-rc.5",
+        "fluiAuthz": "0.7.0"
+      },
+      "notes": [
+        "The Flui API runs its first copy on the master, which a scale-in never gives back, so removing a worker no longer has to move the API that carries out the removal.",
+        "A worker that runs one copy of the API can now be given back while another copy runs elsewhere; only a machine with the only copy holds its removal back."
+      ],
+      "migrations": 0,
+      "requiresBootstrap": true,
+      "k3s": {
+        "version": "v1.35.4+k3s1"
+      },
+      "systemComponents": {
+        "certManager": "v1.17.1",
+        "systemUpgradeController": "v0.20.2"
+      },
+      "manifestSets": ["control"]
+    },
+    {
       "version": "0.14.0-rc.4",
       "publishedAt": "2026-10-20T17:07:07.283Z",
       "bootstrapRef": "57f11b2",

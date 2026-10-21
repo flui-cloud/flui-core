@@ -34,16 +34,16 @@ export interface ReleaseManifest {
 }
 
 export const RELEASE: ReleaseManifest = {
-  version: '0.14.0-rc.4',
+  version: '0.14.0-rc.5',
   // A commit ref, not a tag. It moved: Loki caps how much write-ahead log it
   // replays on a restart, and Zitadel files one-time codes under Flui.
-  bootstrapRef: '57f11b2',
+  bootstrapRef: 'f9afb81',
   images: {
     // Release tags: the tag build is what makes an image exist under the
-    // release's own name. Both repositories are tagged `v0.14.0-rc.4`, so a
+    // release's own name. Both repositories are tagged `v0.14.0-rc.5`, so a
     // rollout never waits on a pull that cannot succeed.
-    fluiApi: '0.14.0-rc.4',
-    fluiWeb: '0.14.0-rc.4',
+    fluiApi: '0.14.0-rc.5',
+    fluiWeb: '0.14.0-rc.5',
     // Pinned by its own version, not the platform's: 0.7.0 is the sign-in
     // relay that asks the API, which this API's gateway installs expect.
     fluiAuthz: '0.7.0',
@@ -100,7 +100,7 @@ export interface KnowledgeSources {
 
 export const KNOWLEDGE_SOURCES: KnowledgeSources = {
   docsRepo: 'dawit-io/flui-docs',
-  docsRef: 'a71dad21c89767cf091aaf1d4c5cae4618a0dee6',
+  docsRef: 'c32a6697278c97bdb033d854004fa7aad3e868d0',
   specRepo: 'flui-cloud/flui-spec',
   specRef: 'v0.5.0',
 };
