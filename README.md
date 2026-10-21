@@ -21,6 +21,8 @@
 
 https://github.com/user-attachments/assets/815f782a-dda3-45bf-9d7a-744bf011df8f
 
+**[Try the live demo](https://demo-app.flui.cloud/try)**: a read-only Flui instance, no account needed.
+
 Flui is an open source platform built to manage infrastructure (servers, clusters, virtual networks, firewalls, DNS, certificates) and make it all work together, so that you can deploy applications and follow their whole lifecycle, on European cloud providers or on Ubuntu servers you own. The providers supported today are Hetzner, Scaleway and OVHcloud.
 
 Flui makes sense when you have a fleet of servers to manage, and it is overkill for simple cases where one server is enough. Flui puts the user experience in an opinionated dashboard, designed around the concepts of application and cluster. It uses K3s as its engine, but you don't need to know Kubernetes to use it. So it is not an interface on top of K3s: it is a cloud platform, with a dashboard, a CLI and MCP as the touchpoints for the people and agents who use it.
