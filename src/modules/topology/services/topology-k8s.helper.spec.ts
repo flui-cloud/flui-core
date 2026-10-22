@@ -42,6 +42,7 @@ const ctx = {
         id: RECORD,
         providerResourceId: '48120331',
         serverType: 'cx33',
+        region: 'nbg1',
         isMaster: true,
         privateNetwork: true,
         fluiNetwork: TopologyFluiNetwork.ACTIVE,
@@ -69,6 +70,7 @@ describe('mapNodesToServers', () => {
       provider: 'hetzner',
       providerResourceId: '48120331',
       serverType: 'cx33',
+      region: 'nbg1',
       architecture: TopologyArchitecture.X86,
       role: TopologyServerRole.CONTROL_PLANE,
       takesWork: true,
@@ -83,6 +85,7 @@ describe('mapNodesToServers', () => {
     expect(servers[1]).toMatchObject({
       providerResourceId: null,
       serverType: null,
+      region: null,
       architecture: TopologyArchitecture.ARM,
       role: TopologyServerRole.WORKER,
       takesWork: false,

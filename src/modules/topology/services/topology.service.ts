@@ -162,6 +162,7 @@ export class TopologyService {
             id: n.id,
             providerResourceId: n.providerResourceId || null,
             serverType: n.serverType ?? null,
+            region: n.region ?? null,
             isMaster: n.nodeType === NodeType.MASTER,
             privateNetwork: !!n.subnetId,
             fluiNetwork: fluiNetworkOf(peerOf.get(n.id)),

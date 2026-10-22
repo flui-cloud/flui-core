@@ -36,6 +36,7 @@ export interface ServerRecord {
   id: string;
   providerResourceId: string | null;
   serverType: string | null;
+  region: string | null;
   isMaster: boolean;
   privateNetwork: boolean;
   fluiNetwork: TopologyFluiNetwork;
@@ -94,6 +95,7 @@ export function mapNodesToServers(
       provider: ctx.provider,
       providerResourceId: record?.providerResourceId ?? null,
       serverType: record?.serverType ?? null,
+      region: record?.region ?? null,
       architecture: architectureOf(n),
       role: isControlPlane
         ? TopologyServerRole.CONTROL_PLANE

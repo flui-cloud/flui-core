@@ -126,6 +126,7 @@ function serverDto(
     provider: cluster.provider,
     providerResourceId: exampleProviderId(server.id),
     serverType: server.serverType,
+    region: cluster.region,
     architecture:
       server.architecture === 'arm'
         ? TopologyArchitecture.ARM

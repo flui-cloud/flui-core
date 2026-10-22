@@ -75,6 +75,16 @@ export class TopologyServerDto {
   @Sensitivity(Sensitivity.PUBLIC)
   serverType: string | null;
 
+  @ApiProperty({
+    type: String,
+    nullable: true,
+    example: 'nbg1',
+    description:
+      'Where the provider placed this server; null for a machine Flui did not create',
+  })
+  @Sensitivity(Sensitivity.PUBLIC)
+  region: string | null;
+
   @ApiProperty({ enum: TopologyArchitecture, nullable: true })
   @Sensitivity(Sensitivity.PUBLIC)
   architecture: TopologyArchitecture | null;
