@@ -22,6 +22,7 @@ import { OPERATING_CONTEXT_TOOLS } from './operating-context.tools';
 import { SELF_SERVICE_TOOLS } from './self-service.tools';
 import { INFRASTRUCTURE_OPERATION_TOOLS } from './infrastructure-operations.tools';
 import { SCALING_TOOLS } from './scaling.tools';
+import { TOPOLOGY_TOOLS } from './topology.tools';
 import { PLATFORM_UPDATE_TOOLS } from './platform-update.tools';
 
 /**
@@ -39,6 +40,7 @@ export const ALL_TOOLS: ToolDef[] = [
   ...CATALOG_TOOLS,
   ...SPEC_TOOLS,
   ...INFRASTRUCTURE_TOOLS,
+  ...TOPOLOGY_TOOLS,
   ...INFRASTRUCTURE_OPERATION_TOOLS,
   ...SCALING_TOOLS,
   ...PLATFORM_UPDATE_TOOLS,

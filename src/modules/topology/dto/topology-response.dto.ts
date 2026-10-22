@@ -1,4 +1,4 @@
-import { ApiProperty } from '@nestjs/swagger';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Sensitivity } from '../../mask/decorators/sensitivity.decorator';
 import { TopologyAppDto, TopologyStackDto } from './topology-app.dto';
 import { TopologyClusterDto } from './topology-cluster.dto';
@@ -98,4 +98,13 @@ export class TopologyResponseDto {
   @ApiProperty({ type: TopologyStatsDto })
   @Sensitivity(Sensitivity.PUBLIC)
   stats: TopologyStatsDto;
+
+  @ApiPropertyOptional({
+    description:
+      "The dashboard's base address, so a client can link into Topology: <dashboardUrl>/topology",
+    example: 'https://dashboard.example.com',
+  })
+  // The address of the dashboard the person is already looking at: masking it hides nothing.
+  @Sensitivity(Sensitivity.PUBLIC)
+  dashboardUrl?: string;
 }

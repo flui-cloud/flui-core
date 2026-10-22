@@ -34,6 +34,7 @@ const ARGS: Record<string, Record<string, unknown>> = {
   },
   access_grant_remove: { grantId: 'g1' },
   cluster_list: {},
+  topology_get: {},
   cluster_resources: {},
   cluster_orphaned_volumes: {},
   control_restore_plan: {},
@@ -325,6 +326,19 @@ const ARRAY_PATHS = [
 ];
 
 function replyFor(path: string): unknown {
+  if (path.startsWith('/topology')) {
+    return {
+      version: '2',
+      generatedAt: '2026-10-22T10:00:00.000Z',
+      clusters: [],
+      servers: [],
+      stacks: [],
+      apps: [],
+      links: [],
+      clusterLinks: [],
+      projects: [],
+    };
+  }
   if (path === '/infrastructure/clusters') return [{ id: 'c1', name: 'one' }];
   if (path.startsWith('/infrastructure/scaling-groups/')) {
     return path.endsWith('/decisions') ? [] : SCALING_GROUP;
@@ -471,6 +485,7 @@ describe('strada B — the whole tool catalogue goes over the wire', () => {
    */
   it.each([
     ['app_get', 'GET /applications/a1'],
+    ['topology_get', 'GET /topology'],
     ['app_status', 'GET /applications/a1/runtime'],
     ['app_availability', 'GET /applications/a1/availability'],
     ['app_egress', 'GET /applications/a1/egress'],

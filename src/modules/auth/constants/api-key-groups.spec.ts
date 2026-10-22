@@ -164,6 +164,7 @@ describe('permission groups — the taxonomy', () => {
         'spec_validate',
         'template_get',
         'template_list',
+        'topology_get',
       ].sort(byName),
     );
   });

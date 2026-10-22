@@ -68,18 +68,28 @@ export class TopologyController {
     @Query('system') system?: string,
   ): Promise<TopologyResponseDto> {
     const includeSystem = isOn(system);
+    const dashboardUrl = this.topologyService.dashboardUrl();
     // A guest sees the example organisation, answered here rather than by the
     // fence's stand-in so the response still passes through mask mode.
     if (req[SANDBOX_GUEST_REQUEST]) {
       const world = exampleTopology(Date.now());
-      return applyScope(world, exampleScope(world, includeSystem));
+      return {
+        ...applyScope(world, exampleScope(world, includeSystem)),
+        dashboardUrl,
+      };
     }
     const snapshot = await this.eventsService.snapshot();
     // Local development only: the example world has no permissions to narrow by.
     if (this.topologyService.isMockMode()) {
-      return applyScope(snapshot, exampleScope(snapshot, includeSystem));
+      return {
+        ...applyScope(snapshot, exampleScope(snapshot, includeSystem)),
+        dashboardUrl,
+      };
     }
-    return this.scopeService.scope(req.user, snapshot, includeSystem);
+    return {
+      ...(await this.scopeService.scope(req.user, snapshot, includeSystem)),
+      dashboardUrl,
+    };
   }
 
   @Sse('stream')

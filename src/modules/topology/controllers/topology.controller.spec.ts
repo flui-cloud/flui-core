@@ -27,6 +27,7 @@ function make() {
       scope as never,
       {
         isMockMode: () => false,
+        dashboardUrl: () => 'https://dashboard.example.com',
       } as never,
     ),
     events,
@@ -44,6 +45,7 @@ describe('TopologyController', () => {
       [SANDBOX_GUEST_REQUEST]: { userId: 'u1' },
     } as never);
     expect(out.version).toBe('2');
+    expect(out.dashboardUrl).toBe('https://dashboard.example.com');
     expect(out.clusters.map((c) => c.id)).toEqual(
       WORLD_CLUSTERS.map((c) => c.id),
     );
@@ -51,10 +53,13 @@ describe('TopologyController', () => {
     expect(scope.scope).not.toHaveBeenCalled();
   });
 
-  it('narrows the real snapshot to the caller', async () => {
+  it('narrows the real snapshot to the caller and says where the dashboard is', async () => {
     const { controller, scope } = make();
     const out = await controller.getTopology({ user } as never);
-    expect(out).toEqual({ scoped: true });
+    expect(out).toEqual({
+      scoped: true,
+      dashboardUrl: 'https://dashboard.example.com',
+    });
     expect(scope.scope).toHaveBeenCalledWith(user, { real: true }, false);
   });
 

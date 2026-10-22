@@ -19,6 +19,7 @@ import { assignStacks } from '../utils/topology-enrich.util';
 import { ClusterContext, ServerRecord } from './topology-k8s.helper';
 import { TopologyLinksService } from './topology-links.service';
 import { TopologyRecordsService } from './topology-records.service';
+import { dashboardBaseUrl } from '../../action-cycle/action-cycle.core';
 import { TopologyClusterReader } from './topology-cluster-reader.service';
 import {
   ClusterPart,
@@ -61,6 +62,10 @@ export class TopologyService {
 
   isMockMode(): boolean {
     return this.configService.get<string>(FLUI_MOCK_ENV) === 'true';
+  }
+
+  dashboardUrl(): string {
+    return dashboardBaseUrl((key) => this.configService.get<string>(key));
   }
 
   async buildTopology(): Promise<TopologyResponseDto> {

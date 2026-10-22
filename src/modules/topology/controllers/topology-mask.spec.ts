@@ -118,6 +118,7 @@ describe('topology snapshot under mask mode', () => {
       servers: [server],
       apps: [{ id: 'a1', namespace: NAMESPACE }],
       links: [],
+      dashboardUrl: 'https://dashboard.acme.io',
     };
     const next = { handle: () => from([body]) } as CallHandler;
     const out = JSON.stringify(
@@ -134,5 +135,6 @@ describe('topology snapshot under mask mode', () => {
       expect(out).not.toContain(real);
     }
     expect(out).toContain('"port":"443"');
+    expect(out).toContain('"dashboardUrl":"https://dashboard.acme.io"');
   });
 });

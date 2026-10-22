@@ -119,6 +119,12 @@ async function resume(
   return { calls, steps, content: String(last.content) };
 }
 
+/**
+ * Hidden routes a guest may still reach, where what comes back is the example
+ * world the guest's own dashboard shows: never the instance's data.
+ */
+const EXAMPLE_ONLY: Record<string, string> = { 'GET /topology': 'stand-in' };
+
 const hiddenButInScope = ALL_TOOLS.filter(
   (d) => guestScopes.has(d.scope) && !isOfferedToGuest(d),
 );
@@ -147,6 +153,7 @@ describe('a guest resuming a conversation it wrote itself', () => {
         'github_setup',
         'log_sources',
         'template_get',
+        'topology_get',
       ].sort((a, b) => a.localeCompare(b)),
     );
   });
@@ -162,7 +169,7 @@ describe('a guest resuming a conversation it wrote itself', () => {
         const [verb, path] = route.split(' ');
         expect({ route, level: sandboxLevelOf(verb, path) }).toEqual({
           route,
-          level: 'closed',
+          level: EXAMPLE_ONLY[route] ?? 'closed',
         });
       }
     }

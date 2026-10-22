@@ -95,3 +95,26 @@ describe('TopologyService, a cluster that does not answer', () => {
     });
   });
 });
+
+describe('TopologyService, the dashboard address', () => {
+  const withConfig = (env: Record<string, string>) => {
+    const service = Object.create(TopologyService.prototype) as TopologyService;
+    (service as unknown as Record<string, unknown>).configService = {
+      get: (key: string) => env[key],
+    };
+    return service;
+  };
+
+  it('reads it the way every other dashboard link does', () => {
+    expect(
+      withConfig({
+        FRONTEND_URL: 'https://dashboard.acme.io',
+        DASHBOARD_URL: 'https://other.acme.io',
+      }).dashboardUrl(),
+    ).toBe('https://dashboard.acme.io');
+    expect(
+      withConfig({ DASHBOARD_URL: 'https://other.acme.io' }).dashboardUrl(),
+    ).toBe('https://other.acme.io');
+    expect(withConfig({}).dashboardUrl()).toBe('http://localhost:4200');
+  });
+});
