@@ -2,6 +2,31 @@
   "schemaVersion": 2,
   "releases": [
     {
+      "version": "0.14.0-rc.7",
+      "publishedAt": "2026-10-22T21:27:03.701Z",
+      "bootstrapRef": "f9afb81",
+      "images": {
+        "fluiApi": "0.14.0-rc.7",
+        "fluiWeb": "0.14.0-rc.7",
+        "fluiAuthz": "0.7.0"
+      },
+      "notes": [
+        "Scaling groups can spread a fleet across regions: each new machine goes to the allowed region that has the fewest, and a machine given back comes from the region that has the most.",
+        "Topology can group the map by server: each server shows its location, the copies of every app that run on it, and the links that reach them.",
+        "flui topology shows the fleet from the terminal, and agents can read it with topology_get."
+      ],
+      "migrations": 0,
+      "requiresBootstrap": false,
+      "k3s": {
+        "version": "v1.35.4+k3s1"
+      },
+      "systemComponents": {
+        "certManager": "v1.17.1",
+        "systemUpgradeController": "v0.20.2"
+      },
+      "manifestSets": []
+    },
+    {
       "version": "0.14.0-rc.6",
       "publishedAt": "2026-10-21T17:33:46.907Z",
       "bootstrapRef": "f9afb81",

@@ -34,16 +34,16 @@ export interface ReleaseManifest {
 }
 
 export const RELEASE: ReleaseManifest = {
-  version: '0.14.0-rc.6',
+  version: '0.14.0-rc.7',
   // A commit ref, not a tag. Unchanged since 0.14.0-rc.5: this release moves
-  // only the API.
+  // only the API and the dashboard.
   bootstrapRef: 'f9afb81',
   images: {
     // Release tags: the tag build is what makes an image exist under the
-    // release's own name. Both repositories are tagged `v0.14.0-rc.6`, so a
+    // release's own name. Both repositories are tagged `v0.14.0-rc.7`, so a
     // rollout never waits on a pull that cannot succeed.
-    fluiApi: '0.14.0-rc.6',
-    fluiWeb: '0.14.0-rc.6',
+    fluiApi: '0.14.0-rc.7',
+    fluiWeb: '0.14.0-rc.7',
     // Pinned by its own version, not the platform's: 0.7.0 is the sign-in
     // relay that asks the API, which this API's gateway installs expect.
     fluiAuthz: '0.7.0',
@@ -100,7 +100,7 @@ export interface KnowledgeSources {
 
 export const KNOWLEDGE_SOURCES: KnowledgeSources = {
   docsRepo: 'dawit-io/flui-docs',
-  docsRef: '5d7eff4fa9bd5f0dbc035429b946090a247ce909',
+  docsRef: '78c1aea6be96cffcfe5849c1c9b0ebac03b0a294',
   specRepo: 'flui-cloud/flui-spec',
   specRef: 'v0.5.0',
 };
