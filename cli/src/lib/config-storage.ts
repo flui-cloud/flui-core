@@ -59,6 +59,7 @@ interface ConfigData {
   tokens: Record<string, TokenMetadata>; // provider -> token with metadata
   credentials: Record<string, any>; // provider -> encrypted credentials
   apiUrl?: string; // Flui API URL
+  dashboardUrl?: string;
   apiKey?: string; // Flui API key for CLI M2M access (encrypted)
   // Non-secret user preferences (email, paths, defaults). Plain text — never store secrets here.
   preferences?: Record<string, unknown>;
@@ -459,6 +460,18 @@ export class ConfigStorage {
     config.apiUrl = url;
     config.metadata.apiUrlUpdatedAt = new Date().toISOString();
     this.writeConfig(config);
+  }
+
+  public saveDashboardUrl(url: string): void {
+    const config = this.readConfig();
+    if (config.dashboardUrl === url) return;
+    config.dashboardUrl = url;
+    this.writeConfig(config);
+  }
+
+  /** Where this installation's dashboard answers, as `flui env status` last read it. */
+  public getDashboardUrl(): string | null {
+    return this.readConfig().dashboardUrl ?? null;
   }
 
   /**

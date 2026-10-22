@@ -205,6 +205,9 @@ export default class EnvStatus extends Command {
       );
       spinner.succeed('Endpoints resolved');
       this.renderEndpoints(endpoints);
+      if (endpoints.fluiWeb?.effectiveUrl) {
+        new ConfigStorage().saveDashboardUrl(endpoints.fluiWeb.effectiveUrl);
+      }
 
       const passwords = cluster.metadata?.observabilityStack?.passwords;
       if (passwords) {

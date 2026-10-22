@@ -41,6 +41,7 @@
     "@aws-sdk/s3-request-presigner": "^3.1041.0",
     "@flui-cloud/infra": "^0.5.1",
     "@flui-cloud/spec": "^0.11.0",
+    "@inquirer/prompts": "^7.10.1",
     "@kubernetes/client-node": "^1.4.0",
     "@nestjs/axios": "^4.0.0",
     "@nestjs/bull": "^11.0.4",
@@ -213,6 +214,9 @@
       },
       "repo": {
         "description": "GitHub repositories connected to Flui, and what they say about themselves"
+      },
+      "topology": {
+        "description": "The fleet as the dashboard Topology shows it: clusters, apps, servers and what needs attention"
       },
       "repo:map": {
         "description": "Read a repository into deployable units, services, inputs and a verdict — and act on it"
