@@ -618,7 +618,11 @@ export class ScalingEngineService {
     }
 
     const named = orders.find((order) => order.kind === 'replace')?.replaces;
-    const candidate = pickRemovable(rows, named ?? null);
+    const candidate = pickRemovable(
+      rows,
+      named ?? null,
+      group.strategy === 'spread',
+    );
     if (!candidate) {
       return words(
         'Nothing.',

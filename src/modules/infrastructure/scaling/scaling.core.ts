@@ -8,6 +8,7 @@ export const PLACEMENT_STRATEGIES = [
   'closest',
   'roomiest',
   'uniform',
+  'spread',
 ] as const;
 
 /**

@@ -80,6 +80,7 @@ const input = (over: Partial<LadderInput> = {}): LadderInput => ({
   fleet: {
     nodes: 2,
     shapes: ['cx32', 'cx32'],
+    regions: ['fsn1', 'fsn1'],
     committedMonthlyEur: 10.8,
     unpricedNodes: 0,
   },
@@ -98,6 +99,60 @@ const reading = (
   shapes,
   ageSeconds,
   stale: false,
+});
+
+describe('spreading the fleet across regions', () => {
+  const everywhere = shape({
+    shape: 'cax11',
+    prices: ['fsn1', 'nbg1', 'hel1'].map((region) => ({
+      region,
+      hourlyEur: 0.0096,
+      monthlyEur: 5.99,
+    })),
+  });
+  const across = (strategy: 'spread' | 'uniform', regions: string[]) =>
+    walkLadder(
+      input({
+        group: {
+          provider: 'hetzner',
+          regions: ['fsn1', 'nbg1', 'hel1'],
+          shapes: ['cax11'],
+          strategy,
+          hourlyBillingOnly: false,
+          maxMonthlyCost: null,
+          requirement: null,
+          capability: HETZNER,
+        },
+        shapes: { shapes: [everywhere], read: true },
+        fleet: {
+          nodes: regions.length,
+          shapes: regions.map(() => 'cax11'),
+          regions,
+          committedMonthlyEur: 0,
+          unpricedNodes: 0,
+        },
+      }),
+    ).chosen?.region;
+
+  it('buys each node in the region that holds the fewest, the declared order breaking ties', () => {
+    expect(across('spread', ['fsn1'])).toBe('nbg1');
+    expect(across('spread', ['fsn1', 'nbg1'])).toBe('hel1');
+    expect(across('spread', ['fsn1', 'nbg1', 'hel1'])).toBe('fsn1');
+  });
+
+  it('stays home with any other strategy, which is why spreading needs its own', () => {
+    expect(across('uniform', ['fsn1'])).toBe('fsn1');
+    expect(across('uniform', ['fsn1', 'nbg1'])).toBe('fsn1');
+  });
+
+  it('counts the nodes of each region the fleet already has', () => {
+    expect(
+      fleetOf([{ region: 'fsn1' }, { region: 'nbg1' }, { region: null }], {
+        nodes: 0,
+        shape: null,
+      }).regions,
+    ).toEqual(['fsn1', 'nbg1']);
+  });
 });
 
 describe('the urgency ladder', () => {
@@ -339,6 +394,7 @@ describe('the urgency ladder', () => {
         fleet: {
           nodes: 2,
           shapes: ['cx32', 'cx32'],
+          regions: ['fsn1', 'fsn1'],
           committedMonthlyEur: 10.8,
           unpricedNodes: 0,
         },
@@ -555,6 +611,7 @@ describe('the strategies, among the shapes that already fit', () => {
       fleet: {
         nodes: 2,
         shapes: ['cpx41', 'cpx41'],
+        regions: ['fsn1', 'fsn1'],
         committedMonthlyEur: 40,
         unpricedNodes: 0,
       },
@@ -622,6 +679,7 @@ describe('what the ceiling could and could not prove', () => {
       fleet: {
         nodes: 2 + unpricedNodes,
         shapes: ['cx32', 'cx32'],
+        regions: ['fsn1', 'fsn1'],
         committedMonthlyEur: 10.8,
         unpricedNodes,
       },

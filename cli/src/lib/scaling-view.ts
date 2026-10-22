@@ -271,6 +271,8 @@ const STRATEGY_MEANINGS: Record<PlacementStrategy, string> = {
   roomiest:
     'the largest that stays within the limits, so the next piece of work fits too',
   uniform: 'the same shape as the nodes already running',
+  spread:
+    'the region this group may buy in that holds the fewest nodes, so the fleet sits in as many places as it has nodes',
 };
 
 /**

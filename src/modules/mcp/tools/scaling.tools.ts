@@ -2,6 +2,7 @@ import { z } from 'zod';
 import {
   MAX_FLEET_NODES,
   MIN_FLEET_NODES,
+  PLACEMENT_STRATEGIES,
 } from '../../infrastructure/scaling/scaling.core';
 import { MCP_SCOPE } from '../constants/mcp-scopes';
 import {
@@ -830,10 +831,10 @@ export const SCALING_TOOLS: ToolDef[] = [
           'What it may buy, in order of preference — the order IS the preference. An arm shape is accepted: "Arm server: apps deployed from a repository are built for x86 and will not run on it. Catalog apps run normally." A fleet never mixes architectures. Refused where there is no catalogue.',
         ),
       strategy: z
-        .enum(['cheapest', 'closest', 'roomiest', 'uniform'])
+        .enum(PLACEMENT_STRATEGIES)
         .optional()
         .describe(
-          'How to choose among the shapes that already fit. Fitting is a precondition, not one of these.',
+          'How to choose among the shapes that already fit. Fitting is a precondition, not one of these. "spread" buys each node in the allowed region holding the fewest nodes and gives back from the region holding the most: with regions fsn1,nbg1,hel1 and min 3, one node in each.',
         ),
       settleSeconds: coerceNumber(z.number().int().min(0).max(3600))
         .optional()

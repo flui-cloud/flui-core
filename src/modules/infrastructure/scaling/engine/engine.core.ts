@@ -77,6 +77,8 @@ export interface FleetFacts {
   nodes: number;
   /** The shape of each node, where the fleet knows it. */
   shapes: string[];
+  /** The region of each node, where the fleet knows it. */
+  regions: string[];
   /** What the priced nodes already commit to. A floor, not the whole bill. */
   committedMonthlyEur: number;
   unpricedNodes: number;
@@ -134,6 +136,7 @@ export function fleetOf(
       shapes: fallback.shape
         ? Array.from({ length: fallback.nodes }, () => fallback.shape as string)
         : [],
+      regions: [],
       committedMonthlyEur: 0,
       unpricedNodes: fallback.nodes,
     };
@@ -148,6 +151,9 @@ export function fleetOf(
     shapes: rows
       .map((row) => row.serverType)
       .filter((shape): shape is string => Boolean(shape)),
+    regions: rows
+      .map((row) => row.region)
+      .filter((region): region is string => Boolean(region)),
     committedMonthlyEur: priced.reduce(
       (total, row) =>
         total +
@@ -242,11 +248,15 @@ interface Candidate {
   regionRank: number;
 }
 
-const STEPS: {
+interface LadderStep {
   describes: string;
   preferredOnly: boolean;
   homeOnly: boolean;
-}[] = [
+  /** Every region the group may buy in at once, the cluster's own included. */
+  everywhere?: boolean;
+}
+
+const STEPS: LadderStep[] = [
   {
     describes: 'The first machine on the list, in the cluster’s own region',
     preferredOnly: true,
@@ -269,6 +279,24 @@ const STEPS: {
       'Any machine on the list that is big enough, in any region this group may buy in',
     preferredOnly: false,
     homeOnly: false,
+  },
+];
+
+/** `spread` has no home to try first: the region with the fewest nodes is where it looks. */
+const SPREAD_STEPS: LadderStep[] = [
+  {
+    describes:
+      'The first machine on the list, in the region this group may buy in that holds the fewest nodes',
+    preferredOnly: true,
+    homeOnly: false,
+    everywhere: true,
+  },
+  {
+    describes:
+      'Any machine on the list that is big enough, in the region this group may buy in that holds the fewest nodes',
+    preferredOnly: false,
+    homeOnly: false,
+    everywhere: true,
   },
 ];
 
@@ -321,7 +349,8 @@ function walkRungs(input: LadderInput): LadderResult {
     !preferred &&
     input.group.shapes.length === 0 &&
     input.shapes.shapes.length === 0;
-  const steps = nothingToName ? STEPS.slice(0, 1) : STEPS;
+  const ladder = input.group.strategy === 'spread' ? SPREAD_STEPS : STEPS;
+  const steps = nothingToName ? ladder.slice(0, 1) : ladder;
 
   for (const [index, step] of steps.entries()) {
     const rung = walkStep(input, index + 1, step, preferred);
@@ -340,7 +369,7 @@ function walkRungs(input: LadderInput): LadderResult {
 
   const asks = alarmAsk(input, rungs);
   rungs.push({
-    step: STEPS.length + 1,
+    step: ladder.length + 1,
     describes: 'Nothing left to try',
     shape: null,
     region: null,
@@ -392,11 +421,11 @@ function shapesFor(
 function walkStep(
   input: LadderInput,
   step: number,
-  shape: { describes: string; preferredOnly: boolean; homeOnly: boolean },
+  shape: LadderStep,
   preferred: string | null,
 ): LadderRung {
   const shapes = shapesFor(input, shape.preferredOnly, preferred);
-  const regions = regionsFor(input, shape.homeOnly);
+  const regions = regionsFor(input, shape.homeOnly, shape.everywhere);
 
   if (!shapes.length) {
     return {
@@ -470,7 +499,11 @@ function asAlert(rung: LadderRung, input: LadderInput): LadderRung {
  * are the ones it may buy in: an empty allow-list is "anywhere", never
  * "nowhere".
  */
-function regionsFor(input: LadderInput, homeOnly: boolean): string[] {
+function regionsFor(
+  input: LadderInput,
+  homeOnly: boolean,
+  everywhere = false,
+): string[] {
   const declared = input.group.regions.length
     ? input.group.regions
     : offeredRegions(input);
@@ -478,6 +511,7 @@ function regionsFor(input: LadderInput, homeOnly: boolean): string[] {
   const allowed = reachable
     ? declared.filter((region) => reachable.includes(region))
     : declared;
+  if (everywhere) return allowed;
   if (homeOnly) {
     return allowed.includes(input.clusterRegion) ? [input.clusterRegion] : [];
   }
@@ -730,19 +764,31 @@ function regionRank(input: LadderInput, region: string): number {
 }
 
 /**
- * The four strategies choose among the shapes that already survived the filter.
+ * The strategies choose among the shapes that already survived the filter.
  * None of them can promote a shape that does not hold the request, because such
  * a shape never reaches here.
  */
 function rank(candidates: Candidate[], input: LadderInput): Candidate[] {
   const preferred = preferredShape(input);
-  const compare = comparator(input.group.strategy, preferred);
+  const crowd = nodesByRegion(input.fleet.regions);
+  const compare = comparator(
+    input.group.strategy,
+    preferred,
+    (region) => crowd.get(region) ?? 0,
+  );
   return [...candidates].sort(compare);
+}
+
+export function nodesByRegion(regions: string[]): Map<string, number> {
+  const count = new Map<string, number>();
+  for (const region of regions) count.set(region, (count.get(region) ?? 0) + 1);
+  return count;
 }
 
 function comparator(
   strategy: PlacementStrategy,
   preferred: string | null,
+  nodesIn: (region: string) => number,
 ): (a: Candidate, b: Candidate) => number {
   switch (strategy) {
     case 'cheapest':
@@ -764,6 +810,12 @@ function comparator(
         a.preference - b.preference ||
         a.regionRank - b.regionRank ||
         byPrice(a, b);
+    case 'spread':
+      return (a, b) =>
+        nodesIn(a.region) - nodesIn(b.region) ||
+        a.preference - b.preference ||
+        byPrice(a, b) ||
+        a.regionRank - b.regionRank;
   }
 }
 

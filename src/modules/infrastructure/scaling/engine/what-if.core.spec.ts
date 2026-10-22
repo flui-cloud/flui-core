@@ -69,6 +69,7 @@ const ladderInput = (
   fleet: {
     nodes: 1,
     shapes: ['cx33'],
+    regions: [],
     committedMonthlyEur: 8.49,
     unpricedNodes: 0,
   },

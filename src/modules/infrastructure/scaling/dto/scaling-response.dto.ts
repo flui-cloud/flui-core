@@ -6,6 +6,7 @@ import { GiveBackReasonKind } from '../engine/give-back.core';
 import {
   CandidateOutcome,
   DecisionOutcome,
+  PLACEMENT_STRATEGIES,
   PlacementStrategy,
   ProvisionMode,
   ScalingForce,
@@ -449,7 +450,7 @@ export class ScalingGroupResponseDto {
   @ApiProperty({ type: [String], description: 'In order of preference' })
   shapes: string[];
 
-  @ApiProperty({ enum: ['cheapest', 'closest', 'roomiest', 'uniform'] })
+  @ApiProperty({ enum: PLACEMENT_STRATEGIES })
   strategy: PlacementStrategy;
 
   @ApiProperty({

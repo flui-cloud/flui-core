@@ -50,7 +50,9 @@ export class RemovalPreviewService {
     const min = proposed.min ?? group.minNodes;
     const desired = Math.max(proposed.desired ?? group.desiredNodes, min);
     const leaving = rows.length > desired;
-    const candidate = leaving ? pickRemovable(rows, null) : null;
+    const candidate = leaving
+      ? pickRemovable(rows, null, group.strategy === 'spread')
+      : null;
     const node = candidate
       ? rows.find((row) => row.id === candidate.id)
       : undefined;
