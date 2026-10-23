@@ -108,6 +108,7 @@ export function serverView(
           'Type',
           `${s.serverType ?? '—'} · ${ARCH[s.architecture ?? ''] ?? '—'}`,
         ],
+        ['Region', s.region ?? '—'],
         ['Memory used', percent(cap?.usedMemPct), usePaint(cap?.usedMemPct)],
         ['CPU used', percent(cap?.usedCpuPct), usePaint(cap?.usedCpuPct)],
         ['Mem reserved', reserved],

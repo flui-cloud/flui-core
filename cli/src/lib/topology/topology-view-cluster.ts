@@ -80,14 +80,20 @@ function appSections(groups: AppGroup[], t: Snapshot): TopologySection[] {
 }
 
 const SERVER_COLUMNS: Column[] = [
-  { width: 20 },
-  { width: 13 },
+  { width: 17 },
+  { width: 7 },
+  { width: 6 },
   { width: 9 },
   { width: 4 },
   { width: 6, align: 'right' },
-  { width: 5, align: 'right' },
+  { width: 4, align: 'right' },
   { width: 8, align: 'right' },
 ];
+
+const SHORT_ROLE: Record<string, string> = {
+  'control-plane': 'control',
+  worker: 'worker',
+};
 
 function serverEntry(s: TopologyServerDto): TopologyEntry {
   const mem = s.capacity?.usedMemPct;
@@ -97,7 +103,8 @@ function serverEntry(s: TopologyServerDto): TopologyEntry {
     target: { type: 'server', id: s.id },
     line: row(SERVER_COLUMNS, [
       s.nodeName,
-      ROLE[s.role] ?? s.role,
+      SHORT_ROLE[s.role] ?? ROLE[s.role] ?? s.role,
+      s.region ?? '—',
       s.serverType ?? '—',
       ARCH[s.architecture ?? ''] ?? '—',
       { text: percent(mem), paint: usePaint(mem) },
@@ -157,6 +164,7 @@ export function clusterView(
         header: row(SERVER_COLUMNS, [
           'SERVER',
           'ROLE',
+          'REGION',
           'TYPE',
           'ARCH',
           'MEMORY',

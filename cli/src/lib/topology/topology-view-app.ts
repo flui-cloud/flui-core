@@ -112,15 +112,17 @@ export function appView(t: Snapshot, id: string): TopologyView | null {
       target: { type: 'server', id: r.serverId },
       line: row(
         [
-          { width: 24 },
+          { width: 20 },
           { width: 6, align: 'right' },
           { width: 14 },
+          { width: 6 },
           { width: 22 },
         ],
         [
           s?.nodeName ?? r.serverId,
           `×${r.count}`,
           { text: s ? (ROLE[s.role] ?? s.role) : '', paint: chalk.dim },
+          { text: s?.region ?? '—', paint: chalk.dim },
           {
             text: s
               ? `memory ${percent(s.capacity?.usedMemPct)} · cpu ${percent(s.capacity?.usedCpuPct)}`
