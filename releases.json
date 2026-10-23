@@ -2,6 +2,30 @@
   "schemaVersion": 2,
   "releases": [
     {
+      "version": "0.14.0-rc.9",
+      "publishedAt": "2026-10-23T08:28:09.132Z",
+      "bootstrapRef": "f9afb81",
+      "images": {
+        "fluiApi": "0.14.0-rc.9",
+        "fluiWeb": "0.14.0-rc.9",
+        "fluiAuthz": "0.7.0"
+      },
+      "notes": [
+        "Topology grouped by server stacks the servers one under the other, with the apps of each in the same columns: what the Internet reaches on the left, data on the right.",
+        "flui topology shows the region of each server, in the cluster's servers, an app's Runs on list and the server view."
+      ],
+      "migrations": 0,
+      "requiresBootstrap": false,
+      "k3s": {
+        "version": "v1.35.4+k3s1"
+      },
+      "systemComponents": {
+        "certManager": "v1.17.1",
+        "systemUpgradeController": "v0.20.2"
+      },
+      "manifestSets": []
+    },
+    {
       "version": "0.14.0-rc.8",
       "publishedAt": "2026-10-22T22:10:07.076Z",
       "bootstrapRef": "f9afb81",
