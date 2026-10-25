@@ -19,7 +19,12 @@
   <a href="https://github.com/flui-cloud/flui-spec">flui.yaml spec</a>
 </p>
 
-https://github.com/user-attachments/assets/815f782a-dda3-45bf-9d7a-744bf011df8f
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/flui-architecture-dark.svg">
+    <img src="docs/assets/flui-architecture-light.svg" alt="What Flui builds on your providers, a control plane on servers you own joined to each provider by the Flui network, next to the three ways to drive it: the dashboard, the flui CLI and AI agents over MCP" width="100%">
+  </picture>
+</p>
 
 **[Try the live demo](https://demo-app.flui.cloud/try)**: a read-only Flui instance, no account needed.
 
