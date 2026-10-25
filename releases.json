@@ -2,6 +2,29 @@
   "schemaVersion": 2,
   "releases": [
     {
+      "version": "0.14.0-rc.10",
+      "publishedAt": "2026-10-23T13:43:24.036Z",
+      "bootstrapRef": "f9afb81",
+      "images": {
+        "fluiApi": "0.14.0-rc.10",
+        "fluiWeb": "0.14.0-rc.10",
+        "fluiAuthz": "0.7.1"
+      },
+      "notes": [
+        "Built on Node.js 22.23.4, which fixes the October 2026 Node.js security issues (CVE-2026-111497 and others). The API and the sign-in relay (flui-authz 0.7.1) both run on it."
+      ],
+      "migrations": 0,
+      "requiresBootstrap": false,
+      "k3s": {
+        "version": "v1.35.4+k3s1"
+      },
+      "systemComponents": {
+        "certManager": "v1.17.1",
+        "systemUpgradeController": "v0.20.2"
+      },
+      "manifestSets": []
+    },
+    {
       "version": "0.14.0-rc.9",
       "publishedAt": "2026-10-23T08:28:09.132Z",
       "bootstrapRef": "f9afb81",
