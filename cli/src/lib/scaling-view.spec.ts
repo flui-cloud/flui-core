@@ -80,7 +80,7 @@ const group = (
     acts: true,
     says: 'This installation may commit up to €200 a month on its own, and only through groups set to buy automatically.',
     mode: 'automatic',
-    label: 'Automatic — buys up to 5 nodes (spending ceiling €40/mo)',
+    label: 'Automatic — adds up to 5 nodes (spending ceiling €40/mo)',
     attention: false,
   },
   standingOrders: [
@@ -167,7 +167,7 @@ describe('prices', () => {
 describe('describeCapability', () => {
   it('says a provider that can buy, buys', () => {
     expect(describeCapability(hetzner)).toContain('can add servers');
-    expect(capabilityLabel(hetzner)).toBe('can buy');
+    expect(capabilityLabel(hetzner)).toBe('can add');
   });
 
   // Read from the flags, never from the name: a catalogue without a create API
@@ -360,7 +360,7 @@ describe('the ceiling of a fleet that should hold no nodes', () => {
   it('reads 0 as a statement about the fleet, not as a group switched off', () => {
     expect(ceilingOf(0, 'manual').value).toBe(0);
     expect(ceilingOf(0, 'manual').meaning).toContain('somebody attached');
-    expect(ceilingOf(0, 'automatic').meaning).toContain('buy nothing');
+    expect(ceilingOf(0, 'automatic').meaning).toContain('add nothing');
   });
 
   it('leaves every other ceiling saying what it always said', () => {
@@ -477,14 +477,14 @@ describe('describeActuation', () => {
           acts: false,
           says: 'This group decides and does not act. Set it to buy automatically for anything it decides to reach a provider.',
           mode: 'manual',
-          label: 'Manual — Flui does not buy',
+          label: 'Manual — Flui does not add nodes',
           attention: true,
         },
       }),
     );
     expect(acting?.verdict).toBe('no');
     expect(acting?.says).toContain('decides and does not act');
-    expect(acting?.label).toBe('Manual — Flui does not buy');
+    expect(acting?.label).toBe('Manual — Flui does not add nodes');
     expect(acting?.attention).toBe(true);
   });
 
@@ -708,7 +708,7 @@ describe('the preview — what it would do, spending nothing', () => {
   });
 
   it('says an alarm is an alarm rather than showing an empty purchase', () => {
-    expect(describeChosen(preview())).toContain('an alarm, not a purchase');
+    expect(describeChosen(preview())).toContain('an alarm, not a new node');
     expect(
       describeChosen(
         preview({

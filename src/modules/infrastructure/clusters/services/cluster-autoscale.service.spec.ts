@@ -111,7 +111,7 @@ describe('ClusterAutoscaleService.computeWarning', () => {
     );
     expect(result.level).toBe(AutoscaleWarningLevel.WARN_NEEDS_AUTOSCALE);
     expect(result.message).toContain('Add a worker');
-    expect(result.message).toContain('buy automatically');
+    expect(result.message).toContain('add nodes automatically');
     // The old advice was to switch on a flag that adds nothing.
     expect(result.message).not.toContain('enable autoscaling');
   });

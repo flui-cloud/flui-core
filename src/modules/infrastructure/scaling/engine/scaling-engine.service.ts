@@ -376,7 +376,7 @@ export class ScalingEngineService {
         why:
           fleet.nodes >= group.desiredNodes
             ? 'The fleet is at its target and no standing order is open, so there is nothing for the patient side to do.'
-            : 'No standing order is open, and being below the target buys nothing on its own — the target is approached when the market allows, never on the clock.',
+            : 'No standing order is open, and being below the target adds nothing on its own — the target is approached when the market allows, never on the clock.',
         asks: null,
         shape: null,
         region: null,
@@ -427,7 +427,7 @@ export class ScalingEngineService {
         saw,
         did: 'Waiting.',
         why: airless
-          ? `A replacement buys the stand-in before it drains the node it stands in for, so it needs the fleet to sit one above its target of ${group.desiredNodes} for a while. This group's ceiling is ${group.maxNodes}, which leaves no room for that. Raise the ceiling, or replace the node by hand.`
+          ? `A replacement adds the stand-in before it drains the node it stands in for, so it needs the fleet to sit one above its target of ${group.desiredNodes} for a while. This group's ceiling is ${group.maxNodes}, which leaves no room for that. Raise the ceiling, or replace the node by hand.`
           : `Nothing the standing orders wait for can be had yet. ${reasonsOf(rungs)}`.trim(),
         asks: null,
         shape: null,
@@ -450,13 +450,13 @@ export class ScalingEngineService {
     }
 
     if (!input.group.capability.canProvision) {
-      const asks = `${rung.shape} is available in ${rung.region}${priced(rung, input)}. Buy one and join it with \`flui node connect\` to reach the target of ${group.desiredNodes} nodes. Flui cannot create a server on ${input.group.provider}.`;
+      const asks = `${rung.shape} is available in ${rung.region}${priced(rung, input)}. Create one and join it with \`flui node connect\` to reach the target of ${group.desiredNodes} nodes. Flui cannot create a server on ${input.group.provider}.`;
       return {
         force: 'opportunity',
         outcome: 'alerted',
         saw,
         did: 'Raised an alarm naming the machine to attach.',
-        why: `The shape this group waits for is available, and buying it is the one step nothing here can take.`,
+        why: `The shape this group waits for is available, and creating it is the one step nothing here can take.`,
         asks,
         shape: rung.shape,
         region: rung.region,
@@ -507,7 +507,7 @@ export class ScalingEngineService {
         outcome: 'declined',
         saw,
         did: 'Nothing.',
-        why: `This group waits to replace ${order.replaces}, and no node of this fleet goes by that name — most often because the replacement already happened and the order outlived it. Nothing is bought for a replacement whose other half does not exist: point the order at another node, or take it out.`,
+        why: `This group waits to replace ${order.replaces}, and no node of this fleet goes by that name — most often because the replacement already happened and the order outlived it. Nothing is added for a replacement whose other half does not exist: point the order at another node, or take it out.`,
         asks: null,
         shape: rung.shape,
         region: rung.region,
@@ -525,7 +525,7 @@ export class ScalingEngineService {
         outcome: 'declined',
         saw,
         did: 'Nothing.',
-        why: `The cluster could not be asked whether ${target.serverName} can be emptied, and an unanswered cluster is not an empty one. Nothing is bought until it answers.`,
+        why: `The cluster could not be asked whether ${target.serverName} can be emptied, and an unanswered cluster is not an empty one. Nothing is added until it answers.`,
         asks: null,
         shape: rung.shape,
         region: rung.region,
@@ -542,7 +542,7 @@ export class ScalingEngineService {
         outcome: 'declined',
         saw,
         did: 'Nothing.',
-        why: `${target.serverName} cannot be emptied, so nothing is bought to replace it. ${drainSummary(drain)}`,
+        why: `${target.serverName} cannot be emptied, so nothing is added to replace it. ${drainSummary(drain)}`,
         asks: null,
         shape: rung.shape,
         region: rung.region,
@@ -557,7 +557,7 @@ export class ScalingEngineService {
       force: 'opportunity',
       outcome: 'declined',
       saw,
-      did: `Would buy a ${rung.shape} in ${rung.region}${priced(rung, input)} to replace ${target.serverName}, which can be emptied.`,
+      did: `Would add a ${rung.shape} in ${rung.region}${priced(rung, input)} to replace ${target.serverName}, which can be emptied.`,
       why: notActed(input),
       asks: null,
       shape: rung.shape,
@@ -613,7 +613,7 @@ export class ScalingEngineService {
     if (!rows.length) {
       return words(
         'Nothing.',
-        `The fleet is above its target of ${group.desiredNodes}, and no node of it is recorded — nothing can be given back by name.`,
+        `The fleet is above its target of ${group.desiredNodes}, and no node of it is recorded — nothing can be removed by name.`,
       );
     }
 
@@ -651,7 +651,7 @@ export class ScalingEngineService {
         saw,
         did: 'Raised an alarm: the fleet is above its target and cannot come back on its own.',
         why: `${candidate.name} cannot be emptied. ${drainSummary(drain)}`,
-        asks: `${candidate.name} is above the target of ${group.desiredNodes} ${group.desiredNodes === 1 ? 'node' : 'nodes'} and cannot go back: ${giveBackSentence(giveBackReasons(drain))}. Keep it, or clear what is in the way.`,
+        asks: `${candidate.name} is above the target of ${group.desiredNodes} ${group.desiredNodes === 1 ? 'node' : 'nodes'} and cannot be removed: ${giveBackSentence(giveBackReasons(drain))}. Keep it, or clear what is in the way.`,
         shape: null,
         region: null,
         hourlyEur: candidate.hourlyEur,
@@ -859,7 +859,7 @@ function withinSettleWindow(
   // age would turn a missing timestamp into an indefinite wait.
   if (oldest === null) return null;
   if (oldest >= settleSeconds) return null;
-  return `The oldest has waited ${oldest}s of the ${settleSeconds}s this group waits before buying — long enough to be sure it is really stuck, and not just starting.`;
+  return `The oldest has waited ${oldest}s of the ${settleSeconds}s this group waits before adding a node — long enough to be sure it is really stuck, and not just starting.`;
 }
 
 /** What a person would count: the things they deployed, not the units underneath. */

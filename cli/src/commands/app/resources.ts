@@ -50,7 +50,7 @@ export default class AppResources extends Command {
     }),
     'dry-run': Flags.boolean({
       description:
-        'Write nothing: show the values as they would be stored and where the replicas would run — on a node already there, on a machine the scaling group would buy or propose, or nowhere yet',
+        'Write nothing: show the values as they would be stored and where the replicas would run — on a node already there, on a node the scaling group would add or propose, or nowhere yet',
       default: false,
     }),
     'apply-proposal': Flags.boolean({

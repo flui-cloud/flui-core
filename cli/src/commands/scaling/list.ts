@@ -27,7 +27,7 @@ import {
 
 export default class ScalingList extends Command {
   static readonly description =
-    'One line per cluster: what it may buy, what it is spending, and what is waiting.\n' +
+    'One line per cluster: what it may add, what it is spending, and what is waiting.\n' +
     'Clusters with no scaling group are listed too, and so are the ones that can only raise an alarm — ' +
     'the two cases a filter would hide precisely when somebody is needed.';
 
@@ -153,7 +153,7 @@ export default class ScalingList extends Command {
       chalk.dim(
         '  BOUNDS is min/target/max nodes. The minimum is held now and always; the target is only\n' +
           '  approached when the market allows; the maximum is as far as urgency may go right now.\n' +
-          '  CEILING is the spending ceiling: the safety net checked before every purchase.\n' +
+          '  CEILING is the spending ceiling: the safety net checked before every node it adds.\n' +
           '  `flui scaling get` shows what the limits cost, from the minimum to the maximum.',
       ),
     );

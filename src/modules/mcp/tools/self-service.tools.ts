@@ -180,7 +180,7 @@ export const SELF_SERVICE_TOOLS: ToolDef[] = [
       'POST /applications/:id/resources/consequence',
     ],
     description:
-      'Change how much CPU and memory an application may use. This is the cure for the OOMKilled that app_debug reports — where app_debug already carries an appliable suggestion, app_crash_apply applies exactly that. Raise the memory LIMIT, because a container is killed for crossing its limit, never for crossing its request — the request only reserves room on a node. Quantities are Kubernetes ones: cpu as cores ("1", "0.5") or millicores ("500m"), memory as "256Mi", "1Gi"; they are stored as whole Mi and millicores, and a limit below its request is refused. Only what you pass is changed; anything left out keeps its current value. The pods are replaced to apply it, so the application restarts. Pass dryRun first to write nothing and learn where the replicas would run with the new requests — on a node already there, on a machine the scaling group would buy (automatic) or only propose (manual), or nowhere yet — and say that consequence to the person before applying.',
+      'Change how much CPU and memory an application may use. This is the cure for the OOMKilled that app_debug reports — where app_debug already carries an appliable suggestion, app_crash_apply applies exactly that. Raise the memory LIMIT, because a container is killed for crossing its limit, never for crossing its request — the request only reserves room on a node. Quantities are Kubernetes ones: cpu as cores ("1", "0.5") or millicores ("500m"), memory as "256Mi", "1Gi"; they are stored as whole Mi and millicores, and a limit below its request is refused. Only what you pass is changed; anything left out keeps its current value. The pods are replaced to apply it, so the application restarts. Pass dryRun first to write nothing and learn where the replicas would run with the new requests — on a node already there, on a node the scaling group would add (automatic) or only propose (manual), or nowhere yet — and say that consequence to the person before applying.',
     scope: MCP_SCOPE.APP_WRITE,
     inputSchema: {
       id: z.string(),
@@ -232,7 +232,7 @@ export const SELF_SERVICE_TOOLS: ToolDef[] = [
     name: 'app_resource_proposal',
     routes: ['GET /applications/:id/resources/proposal'],
     description:
-      'The memory change Flui proposes for an application, if any, and what applying it would do. Built from an open out-of-memory diagnosis and a week of memory use: a limit the app keeps reaching, or a reservation far below what it uses. Each proposal has its reasons, the values that would be written, where the replicas would then run (a node already there, a machine a scaling group would buy or only propose, or nowhere yet), whether the app stops while it restarts, and — when the limit rises — whether the app must also be configured to use the memory. `proposal` is null when nothing asks for a change. Writes nothing: tell the person the reasons and the consequence; only app_resource_proposal_apply changes anything.',
+      'The memory change Flui proposes for an application, if any, and what applying it would do. Built from an open out-of-memory diagnosis and a week of memory use: a limit the app keeps reaching, or a reservation far below what it uses. Each proposal has its reasons, the values that would be written, where the replicas would then run (a node already there, a node a scaling group would add or only propose, or nowhere yet), whether the app stops while it restarts, and — when the limit rises — whether the app must also be configured to use the memory. `proposal` is null when nothing asks for a change. Writes nothing: tell the person the reasons and the consequence; only app_resource_proposal_apply changes anything.',
     scope: MCP_SCOPE.APP_READ,
     inputSchema: { id: z.string() },
     run: (args, ctx) =>
@@ -243,7 +243,7 @@ export const SELF_SERVICE_TOOLS: ToolDef[] = [
     name: 'app_resource_proposal_apply',
     routes: ['POST /applications/:id/resources/proposal/apply'],
     description:
-      'Apply the memory change app_resource_proposal shows, as it stands now, and record who applied it and why. Call it only when the person has read the proposal and asked for it to be applied — never on your own initiative: a larger limit lets one application take memory promised to others, and a larger request can make a scaling group buy a node. The pods are replaced, so the application restarts. Refused when nothing asks for a change any more.',
+      'Apply the memory change app_resource_proposal shows, as it stands now, and record who applied it and why. Call it only when the person has read the proposal and asked for it to be applied — never on your own initiative: a larger limit lets one application take memory promised to others, and a larger request can make a scaling group add a node. The pods are replaced, so the application restarts. Refused when nothing asks for a change any more.',
     scope: MCP_SCOPE.APP_WRITE,
     inputSchema: { id: z.string() },
     run: (args, ctx) =>

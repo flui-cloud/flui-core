@@ -92,7 +92,7 @@ describe('describeAutoscaleActuation', () => {
       AutoscaleActuation.ALERT_ONLY_UNSIZED,
       'byos',
     );
-    expect(sized).toContain('name the size to buy and what it costs');
+    expect(sized).toContain('name the size to create and what it costs');
     expect(unsized).not.toContain('what it costs');
     expect(unsized).toContain('how much CPU and memory');
   });

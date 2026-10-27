@@ -100,7 +100,7 @@ describe('what if an app asked for this much', () => {
     const answer = answerWhatIf(small, room(1000), [group(small, 'automatic')]);
     expect(answer.verdict).toBe('fits');
     expect(answer.node).toBe('master');
-    expect(answer.sentence).toBe('Fits on master: nothing is bought.');
+    expect(answer.sentence).toBe('Fits on master: no node is added.');
   });
 
   it('counts every replica, not just one', () => {
@@ -118,7 +118,7 @@ describe('what if an app asked for this much', () => {
       monthlyEur: 8.49,
     });
     expect(answer.sentence).toContain(
-      'Flui would buy a cx33 in fsn1 (€8.49 a month)',
+      'Flui would add a cx33 in fsn1 (€8.49 a month)',
     );
   });
 
@@ -145,7 +145,7 @@ describe('what if an app asked for this much', () => {
     const tooBig = answerWhatIf(huge, room(1000), [group(huge, 'automatic')]);
     expect(tooBig.verdict).toBe('nothing-hosts');
     expect(tooBig.sentence).toContain(
-      'bigger than any machine the group may buy',
+      'bigger than any machine the group may add',
     );
   });
 

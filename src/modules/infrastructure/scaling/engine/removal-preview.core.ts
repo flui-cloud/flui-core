@@ -82,13 +82,13 @@ function previewOf(input: RemovalPreviewInput): RemovalPreview {
     return {
       ...base,
       sentence:
-        'The cluster is above the new target, but every node in it is the master or already leaving, so nothing would be given back.',
+        'The cluster is above the new target, but every node in it is the master or already leaving, so nothing would be removed.',
     };
   }
   if (!input.drain || (input.drain.ok && !input.fit)) {
     return {
       ...base,
-      sentence: `Flui would give back ${node}, but the cluster could not be asked what runs on it. Nothing on ${node} is touched until it answers.`,
+      sentence: `Flui would remove ${node}, but the cluster could not be asked what runs on it. Nothing on ${node} is touched until it answers.`,
     };
   }
   if (!input.drain.ok) {
@@ -96,20 +96,21 @@ function previewOf(input: RemovalPreviewInput): RemovalPreview {
     return {
       ...base,
       waitsFor,
-      sentence: `Flui would give back ${node}, but not now: ${giveBackSentence(waitsFor)}. The removal waits, and nothing on ${node} is touched.`,
+      sentence: `Flui would remove ${node}, but not now: ${giveBackSentence(waitsFor)}. The removal waits, and nothing on ${node} is touched.`,
     };
   }
   if (input.fit && !input.fit.fits) {
     return {
       ...base,
-      sentence: `Flui would give back ${node}, but not now: ${fitSummary(input.fit)} The removal waits, and nothing on ${node} is touched.`,
+      sentence: `Flui would remove ${node}, but not now: ${fitSummary(input.fit)} The removal waits, and nothing on ${node} is touched.`,
     };
   }
 
   const opensMaster = input.controlCluster && input.fleet - 1 === 1;
-  const parts = [
-    `Saving gives back ${node}${input.candidate?.shape ? ` (${input.candidate.shape})` : ''}.`,
-  ];
+  const shape = input.candidate?.shape
+    ? ' (' + input.candidate.shape + ')'
+    : '';
+  const parts = [`Saving removes ${node}${shape}.`];
   if (opensMaster) {
     parts.push(
       'The master takes apps again first, so what runs on it has somewhere to start.',

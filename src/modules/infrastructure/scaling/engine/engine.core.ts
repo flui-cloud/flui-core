@@ -264,7 +264,7 @@ const STEPS: LadderStep[] = [
   },
   {
     describes:
-      'The first machine on the list, in any region this group may buy in',
+      'The first machine on the list, in any region this group may add nodes in',
     preferredOnly: true,
     homeOnly: false,
   },
@@ -276,7 +276,7 @@ const STEPS: LadderStep[] = [
   },
   {
     describes:
-      'Any machine on the list that is big enough, in any region this group may buy in',
+      'Any machine on the list that is big enough, in any region this group may add nodes in',
     preferredOnly: false,
     homeOnly: false,
   },
@@ -286,14 +286,14 @@ const STEPS: LadderStep[] = [
 const SPREAD_STEPS: LadderStep[] = [
   {
     describes:
-      'The first machine on the list, in the region this group may buy in that holds the fewest nodes',
+      'The first machine on the list, in the region this group may add nodes in that holds the fewest nodes',
     preferredOnly: true,
     homeOnly: false,
     everywhere: true,
   },
   {
     describes:
-      'Any machine on the list that is big enough, in the region this group may buy in that holds the fewest nodes',
+      'Any machine on the list that is big enough, in the region this group may add nodes in that holds the fewest nodes',
     preferredOnly: false,
     homeOnly: false,
     everywhere: true,
@@ -605,7 +605,7 @@ function refusedBy(input: LadderInput, candidate: Candidate): Verdict | null {
   if (candidate.fact.deprecated) {
     return {
       outcome: REFUSED_BY_LIMIT,
-      note: `${candidate.shape} is deprecated: buying one now buys a machine on its way out.`,
+      note: `${candidate.shape} is deprecated: adding one now adds a machine on its way out.`,
     };
   }
   if (
@@ -834,16 +834,16 @@ function byRoom(a: Candidate, b: Candidate): number {
 
 function noShapeNote(input: LadderInput): string {
   return input.group.capability.hasCatalogue
-    ? `No machines are chosen, so there is nothing this group may buy on ${input.group.provider}.`
+    ? `No machines are chosen, so there is nothing this group may add on ${input.group.provider}.`
     : `${input.group.provider} publishes no catalogue, so no rung can name a shape here.`;
 }
 
 function noRegionNote(input: LadderInput, homeOnly: boolean): string {
   if (homeOnly) {
-    return `The cluster sits in ${input.clusterRegion}, which is not among the regions this group may buy in.`;
+    return `The cluster sits in ${input.clusterRegion}, which is not among the regions this group may add nodes in.`;
   }
   return input.group.regions.length
-    ? `There is no second region to try: this group may only buy in ${input.group.regions.join(', ')}.`
+    ? `There is no second region to try: this group may only add nodes in ${input.group.regions.join(', ')}.`
     : 'No other region is known to offer these shapes.';
 }
 
@@ -866,7 +866,7 @@ export function requirementLine(input: LadderInput): string {
 
 function manualPurchaseAsk(rung: LadderRung, input: LadderInput): string {
   const price = pricePhrase(rung, input.shapes) ?? ', price unknown';
-  return `Buy a ${rung.shape} in ${rung.region}${price} and join it with \`flui node connect\`. Flui cannot create a server on ${input.group.provider}.`;
+  return `Create a ${rung.shape} in ${rung.region}${price} and join it with \`flui node connect\`. Flui cannot create a server on ${input.group.provider}.`;
 }
 
 /**
@@ -895,7 +895,7 @@ export function alarmAsk(input: LadderInput, rungs: LadderRung[]): string {
   }
 
   const perMachine = whyEachMachine(input);
-  return `Nothing this group may buy can be had for ${need}. ${perMachine || because} Widen its shapes or regions, raise its spending ceiling, or attach a machine yourself.`;
+  return `Nothing this group may add can be had for ${need}. ${perMachine || because} Widen its shapes or regions, raise its spending ceiling, or attach a machine yourself.`;
 }
 
 /**
@@ -1104,7 +1104,7 @@ export function alarmBlock(input: LadderInput): AlarmBlock {
   const attach = exit('attach', 'Attach a machine yourself');
   if (!input.group.capability.canProvision) {
     return {
-      headline: `Scaling needed — Flui cannot buy a machine on ${input.group.provider}`,
+      headline: `Scaling needed — Flui cannot add a node on ${input.group.provider}`,
       exits: [attach],
     };
   }
@@ -1114,7 +1114,7 @@ export function alarmBlock(input: LadderInput): AlarmBlock {
     regions.map((region) => judge(input, shape, region)),
   );
   const exits: AlarmExit[] = [];
-  let headline = 'Scaling needed — nothing this group may buy can be had';
+  let headline = 'Scaling needed — nothing this group may add can be had';
 
   const atCeiling = input.fleet.nodes >= input.ceiling;
   const overBudget = judged.filter((c) => c.outcome === 'over-budget');
@@ -1131,7 +1131,7 @@ export function alarmBlock(input: LadderInput): AlarmBlock {
   } else if (overBudget.length) {
     headline = 'Scaling needed — blocked by the spending ceiling';
   } else if (!judged.length) {
-    headline = 'Scaling needed — the group names no machine it may buy';
+    headline = 'Scaling needed — the group names no machine it may add';
   } else if (!fits) {
     headline = 'Scaling needed — no machine on the list is big enough';
   } else if (soldOut.length) {

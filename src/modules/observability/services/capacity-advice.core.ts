@@ -151,7 +151,7 @@ function moreCopies(input: CapacityInput, reasons: string[]): CapacityVerdict {
     advice: 'add_replicas',
     sentence:
       verdict === 'buys'
-        ? `Run ${next} copies: the scaling group buys a node for the new one.`
+        ? `Run ${next} copies: the scaling group adds a node for the new one.`
         : `Run ${next} copies: there is room for another one.`,
     reasons,
   };

@@ -147,12 +147,12 @@ export class ScalingReconcilerService {
     const intent = assessment.intent;
     if (!intent || intent.kind === 'remove') {
       throw new ConflictException(
-        `There is nothing to buy right now: ${assessment.did}`,
+        `There is nothing to add right now: ${assessment.did}`,
       );
     }
     if (intent.shape !== expected.shape || intent.region !== expected.region) {
       throw new ConflictException(
-        `The proposal changed since the page was read: it is now a ${intent.shape} in ${intent.region}. Nothing was bought.`,
+        `The proposal changed since the page was read: it is now a ${intent.shape} in ${intent.region}. Nothing was added.`,
       );
     }
 
@@ -163,14 +163,14 @@ export class ScalingReconcilerService {
     const acted = await this.actuator.act(consented, cluster, assessment, true);
     if (!acted?.operationId) {
       throw new ConflictException(
-        `Nothing was bought: ${acted?.why ?? assessment.why}`,
+        `Nothing was added: ${acted?.why ?? assessment.why}`,
       );
     }
 
     const row = rowOf(assessment, {
       ...acted,
       did: `${acted.did} Approved by ${by}.`,
-      why: `${by} approved this one purchase; the group stays manual and buys nothing else on its own.`,
+      why: `${by} approved adding this one node; the group stays manual and adds nothing else on its own.`,
     });
     const saved = await this.decisions.save(this.decisions.create(row));
     await this.bell.ring(saved);
@@ -198,13 +198,13 @@ export class ScalingReconcilerService {
     const intent = assessment.intent;
     if (intent?.kind !== 'remove' || !intent.node) {
       throw new ConflictException(
-        `There is nothing to give back right now: ${assessment.did}`,
+        `There is nothing to remove right now: ${assessment.did}`,
       );
     }
     const named = await this.nodeName(intent.node);
     if (expected.node !== intent.node && expected.node !== named) {
       throw new ConflictException(
-        `The group would now give back ${named ?? intent.node}, not ${expected.node}. Nothing was removed.`,
+        `The group would now remove ${named ?? intent.node}, not ${expected.node}. Nothing was removed.`,
       );
     }
 
@@ -222,7 +222,7 @@ export class ScalingReconcilerService {
     const row = rowOf(assessment, {
       ...acted,
       did: `${acted.did} Approved by ${by}.`,
-      why: `${by} approved giving back this node; the group stays manual and removes nothing else on its own.`,
+      why: `${by} approved removing this node; the group stays manual and removes nothing else on its own.`,
     });
     const saved = await this.decisions.save(this.decisions.create(row));
     await this.bell.ring(saved);

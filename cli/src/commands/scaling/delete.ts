@@ -8,7 +8,7 @@ import {
 
 export default class ScalingDelete extends Command {
   static readonly description =
-    'Remove a scaling group and the decisions it took. No node is removed and no machine stops. The only group of a cluster Flui buys for cannot be removed: its nodes change through it.';
+    'Remove a scaling group and the decisions it took. No node is removed and no machine stops. The only group of a cluster Flui adds nodes to cannot be removed: its nodes change through it.';
 
   static readonly examples = [
     '<%= config.bin %> <%= command.id %> heavy --cluster prod-eu --yes',

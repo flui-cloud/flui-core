@@ -108,7 +108,7 @@ export class DiagnosticEngineService {
         suggestedAction: {
           type: SuggestedActionType.MANUAL,
           message:
-            "The cluster's scaling page says what happens next: the group buys a node, proposes one for a person to approve, or names why no machine fits. Lowering what the app reserves is the other way out.",
+            "The cluster's scaling page says what happens next: the group adds a node, proposes one for a person to approve, or names why no machine fits. Lowering what the app reserves is the other way out.",
         },
       };
     }

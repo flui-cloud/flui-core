@@ -77,7 +77,7 @@ export class ShapeOrderingService {
       says:
         reading === outside
           ? says(reading, group.provider)
-          : `As ${group.provider} itself reports it — the same reading Flui buys from. It orders candidates and decides nothing; the provider accepts or refuses the purchase.`,
+          : `As ${group.provider} itself reports it — the same reading Flui adds nodes from. It orders candidates and decides nothing; the provider accepts or refuses the new server.`,
       shapes: candidates.map((candidate) => ({
         ...this.toDto(candidate, group.regions, reading.ageSeconds),
         facts: specOf(own, candidate.shape, group.regions[0] ?? null),
@@ -198,7 +198,7 @@ function outlookOf(
 }
 
 function why(candidate: Candidate, regions: string[]): string {
-  const excluded = candidate.allowed ? '' : ' This group may not buy it.';
+  const excluded = candidate.allowed ? '' : ' This group may not add it.';
   const availability = candidate.availability;
   if (!availability) {
     return `The catalogue does not name it, which rules nothing out.${excluded}`;
@@ -211,14 +211,14 @@ function why(candidate: Candidate, regions: string[]): string {
     return `Up in ${up.join(', ')}.${excluded}`;
   }
   const elsewhere = availability.upIn.length
-    ? ` Up in ${availability.upIn.join(', ')}, where this group may not buy.`
+    ? ` Up in ${availability.upIn.join(', ')}, where this group may not add nodes.`
     : '';
-  return `Down where this group may buy.${elsewhere}${excluded}`;
+  return `Down where this group may add nodes.${elsewhere}${excluded}`;
 }
 
 const SAYS: Record<CatalogueReadingState, (provider: string) => string> = {
   read: () =>
-    'Ordered by an availability reading. It orders candidates and decides nothing — the provider accepts or refuses the purchase.',
+    'Ordered by an availability reading. It orders candidates and decides nothing — the provider accepts or refuses the new server.',
   'not-published': (provider) =>
     `The catalogue carries ${provider} but publishes no per-location stock for it, so this is the group's own order of preference.`,
   'not-covered': (provider) =>

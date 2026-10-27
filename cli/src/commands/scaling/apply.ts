@@ -19,7 +19,7 @@ import {
 
 export default class ScalingApply extends Command {
   static readonly description =
-    'Write a scaling group from a file — what a cluster may buy for itself, and where it must stop.\n' +
+    'Write a scaling group from a file — what a cluster may add for itself, and where it must stop.\n' +
     'The file is the whole group: a field left out is a field reset to its default, and the same file ' +
     'applied twice leaves the same group. Several groups may live in one file, separated by `---`.\n' +
     'Every bound counts the whole fleet, master included, and sits between 1 and 20.';

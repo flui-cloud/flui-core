@@ -85,7 +85,7 @@ export const OBSERVABILITY_TOOLS: ToolDef[] = [
     name: 'app_capacity_advice',
     routes: ['GET /observability/applications/:id/capacity-advice'],
     description:
-      'Whether one application needs more copies, a node to put them on, or neither, judged on the last minutes: CPU throttling, CPU and memory against their limits, failed health checks, copies waiting for a node and the autoscaler. advice is none, add_replicas (saturated, and next_copy says whether another copy fits, fits in the margin kept free on each node (nothing bought), or makes the scaling group buy a node), add_node (another copy has nowhere to run), wait_for_node, raise_autoscale_max, autoscaler_adding, one_copy_only (data on each copy: more copies do not share the load), watch_memory or unknown. reasons lists what crossed a threshold. It advises; changing the count is app_scale.',
+      'Whether one application needs more copies, a node to put them on, or neither, judged on the last minutes: CPU throttling, CPU and memory against their limits, failed health checks, copies waiting for a node and the autoscaler. advice is none, add_replicas (saturated, and next_copy says whether another copy fits, fits in the margin kept free on each node (no node added), or makes the scaling group add a node), add_node (another copy has nowhere to run), wait_for_node, raise_autoscale_max, autoscaler_adding, one_copy_only (data on each copy: more copies do not share the load), watch_memory or unknown. reasons lists what crossed a threshold. It advises; changing the count is app_scale.',
     scope: MCP_SCOPE.OBS_READ,
     inputSchema: { id: z.string() },
     run: (args, ctx) =>

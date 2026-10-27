@@ -6,7 +6,7 @@ import { resolveClusterRef } from '../../lib/resolve-cluster';
 
 export default class AppScale extends Command {
   static readonly description =
-    'Set how many replicas an application runs: a fixed count (--replicas), or a range the count follows with the CPU load (--min/--max, optionally --cpu). --no-autoscale goes back to a fixed count. Replicas that find no room wait for a node, which is what makes the scaling group buy one. For an app deployed from flui.yaml the range is its `deploy.scaling`.';
+    'Set how many replicas an application runs: a fixed count (--replicas), or a range the count follows with the CPU load (--min/--max, optionally --cpu). --no-autoscale goes back to a fixed count. Replicas that find no room wait for a node, which is what makes the scaling group add one. For an app deployed from flui.yaml the range is its `deploy.scaling`.';
 
   static readonly examples = [
     '<%= config.bin %> <%= command.id %> my-api --replicas 3',

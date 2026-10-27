@@ -60,7 +60,7 @@ export interface RemoveWorkerJobData {
 const MAX_WORKERS_PER_CALL = 5;
 
 export const NODES_THROUGH_GROUP =
-  "A cluster's nodes change through its scaling group: raise its floor to add one (`flui scaling floor <n>`, or + on the cluster's Scaling tab), lower it to give one back. A manual group asks you to approve the purchase or the removal.";
+  "A cluster's nodes change through its scaling group: raise its floor to add one (`flui scaling floor <n>`, or + on the cluster's Scaling tab), lower it to remove one. A manual group asks you to approve the addition or the removal.";
 
 @Injectable()
 export class ClusterScalingService {

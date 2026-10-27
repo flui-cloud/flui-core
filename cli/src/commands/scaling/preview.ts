@@ -31,7 +31,7 @@ type RoomDto = NonNullable<ScalingPreviewDto['room']>;
 export default class ScalingPreview extends Command {
   static readonly description =
     'What a scaling group would do if a node were needed right now — the same engine the reconciler ' +
-    'runs, on demand, buying nothing.\n' +
+    'runs, on demand, adding nothing.\n' +
     'Every rung of the ladder is shown with the reason it lost. `refused-by-limit` is this group’s own ' +
     'rules and not the market, which from the outside looks exactly like an outage.';
 
@@ -109,7 +109,7 @@ export default class ScalingPreview extends Command {
         `  ${group.acts.attention ? chalk.yellow(chalk.bold(label)) : chalk.bold(label)}`,
       );
     }
-    console.log(chalk.dim('  Nothing is bought by asking this.'));
+    console.log(chalk.dim('  Nothing is added by asking this.'));
     console.log('');
 
     console.log(
@@ -160,8 +160,8 @@ export default class ScalingPreview extends Command {
   ): string {
     if (!fit) return chalk.yellow('no node takes new apps');
     const bigger = buys
-      ? 'a bigger one buys a node'
-      : 'a bigger one needs a new node, and this group buys none on its own';
+      ? 'a bigger one adds a node'
+      : 'a bigger one needs a new node, and this group adds none on its own';
     return `the largest app that still fits: ${gib(fit.memoryMi)} · ${cores(fit.cpuMillicores)} (on ${fit.node}); ${bigger}`;
   }
 
@@ -200,7 +200,7 @@ export default class ScalingPreview extends Command {
       console.log('');
       console.log(
         chalk.dim(
-          '  No ladder was walked: there was nothing to buy for, so no shape was weighed.',
+          '  No ladder was walked: there was nothing to add a node for, so no shape was weighed.',
         ),
       );
       return;

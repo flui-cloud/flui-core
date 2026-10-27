@@ -98,7 +98,7 @@ export const SANDBOX_AREAS: SandboxArea[] = [
     key: 'scaling',
     area: 'Scaling',
     level: 'stand-in',
-    why: 'Adding and giving back machines is the instance\u2019s decision, so this is an example group with its own limits, costs and history of decisions.',
+    why: 'Adding and removing nodes is the instance\u2019s decision, so this is an example group with its own limits, costs and history of decisions.',
   },
   {
     key: 'topology',

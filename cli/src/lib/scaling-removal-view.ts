@@ -13,6 +13,6 @@ export function printRemoval(preview: RemovalPreviewDto): void {
 /** The line that asks for --yes before a machine is given back. */
 export function removalNeedsYes(preview: RemovalPreviewDto): string {
   return preview.proceeds
-    ? `This gives back ${preview.node}. Run again with --yes to save it.`
+    ? `This removes ${preview.node}. Run again with --yes to save it.`
     : 'The removal would wait with nothing touched until the reason above is gone. Run again with --yes to save the new limits anyway.';
 }

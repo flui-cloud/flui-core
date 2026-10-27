@@ -113,7 +113,7 @@ export class CapacityAdviceService {
           input.nextCopy = {
             verdict: 'margin',
             sentence:
-              'The cluster places it now, in the margin Flui keeps free on each node; a node is bought only if a copy has to wait.',
+              'The cluster places it now, in the margin Flui keeps free on each node; a node is added only if a copy has to wait.',
           };
         }
       }

@@ -376,9 +376,9 @@ export class ScalingGroupService {
       : '';
     await this.recordPerson(
       group,
-      `${by} let the group buy again.`,
+      `${by} let the group add nodes again.`,
       hold
-        ? `The purchase that failed at ${hold.failedAt.toISOString().slice(11, 16)} UTC no longer holds it back${reason}.`
+        ? `The node that failed to join at ${hold.failedAt.toISOString().slice(11, 16)} UTC no longer holds it back${reason}.`
         : 'Nothing was holding it back.',
       by,
     );
@@ -627,7 +627,7 @@ export class ScalingGroupService {
     });
     if (siblings <= 1 && capability.canProvision && capability.hasCatalogue) {
       throw new BadRequestException(
-        'This is the only scaling group of the cluster, and its nodes change through it: set it to "manual" to stop it buying, or lower its minimum to give nodes back',
+        'This is the only scaling group of the cluster, and its nodes change through it: set it to "manual" to stop it adding nodes, or lower its minimum to remove nodes',
       );
     }
     await this.decisions.delete({ groupId: group.id });
@@ -762,7 +762,7 @@ export class ScalingGroupService {
     // every hour. Refused at the point the promise is made instead.
     if (group.provision === 'automatic' && !hasVnet) {
       throw new BadRequestException(
-        'This cluster has no VNet, so no node can join it: attach one before letting scaling buy, or leave this group on "manual"',
+        'This cluster has no VNet, so no node can join it: attach one before letting scaling add nodes, or leave this group on "manual"',
       );
     }
 
@@ -776,7 +776,7 @@ export class ScalingGroupService {
       );
       if (unreachable.length) {
         throw new BadRequestException(
-          `A node bought in ${unreachable.join(', ')} could not join this cluster: ` +
+          `A node added in ${unreachable.join(', ')} could not join this cluster: ` +
             `its private network reaches ${buyableRegions.join(', ')} and nowhere else`,
         );
       }
@@ -793,7 +793,7 @@ export class ScalingGroupService {
     if (capability.hasCatalogue) {
       if (group.requirement) {
         throw new BadRequestException(
-          `${capability.provider} publishes a catalogue: name the shapes it may buy instead of what a machine must hold`,
+          `${capability.provider} publishes a catalogue: name the shapes it may add instead of what a machine must hold`,
         );
       }
       return;
@@ -840,7 +840,7 @@ export class ScalingGroupService {
       }
       if (node.nodeType === NodeType.MASTER) {
         throw new BadRequestException(
-          `${node.serverName} is the master: it cannot be drained and given back.`,
+          `${node.serverName} is the master: it cannot be drained and removed.`,
         );
       }
       order.replaces = node.serverName;
@@ -856,7 +856,7 @@ export class ScalingGroupService {
     for (const order of group.standingOrders) {
       if (order.kind === 'expand' && order.replaces) {
         throw new BadRequestException(
-          'An expansion buys and adds: it drains nothing, so it names no node to replace',
+          'An expansion only adds: it drains nothing, so it names no node to replace',
         );
       }
       if (order.kind === 'replace' && !order.replaces) {
@@ -866,7 +866,7 @@ export class ScalingGroupService {
       }
       if (!group.shapes.includes(order.shape)) {
         throw new BadRequestException(
-          `Standing order waits for "${order.shape}", which this group may not buy`,
+          `Standing order waits for "${order.shape}", which this group may not add`,
         );
       }
       if (
@@ -874,7 +874,7 @@ export class ScalingGroupService {
         !group.regions.includes(order.region)
       ) {
         throw new BadRequestException(
-          `Standing order waits in "${order.region}", where this group may not buy`,
+          `Standing order waits in "${order.region}", where this group may not add nodes`,
         );
       }
     }
@@ -910,7 +910,7 @@ export class ScalingGroupService {
     if (group.provision !== 'automatic') {
       return {
         acts: false,
-        says: 'Flui names the machine it would buy and a person buys it, or switches the group to automatic. Nothing is bought on its own.',
+        says: 'Flui names the machine it would add and a person adds it, or switches the group to automatic. Nothing is added on its own.',
         ...named,
       };
     }
@@ -919,7 +919,7 @@ export class ScalingGroupService {
     }
     return {
       acts: true,
-      says: `This group buys through the provider API on its own, up to ${group.maxNodes} ${group.maxNodes === 1 ? 'node' : 'nodes'}. Under that, the engine never lets the fleet's monthly list price pass the spending ceiling of €${group.maxMonthlyCost} a month.`,
+      says: `This group adds nodes through the provider API on its own, each one a server the provider bills, up to ${group.maxNodes} ${group.maxNodes === 1 ? 'node' : 'nodes'}. Under that, the engine never lets the fleet's monthly list price pass the spending ceiling of €${group.maxMonthlyCost} a month.`,
       ...named,
     };
   }
@@ -1001,7 +1001,7 @@ function standingOrder(dto: StandingOrderDto): StandingOrderConfig {
 function assertMoneyCeiling(group: ScalingGroupEntity): void {
   if (group.provision === 'automatic' && !buysOnItsOwn(group)) {
     throw new BadRequestException(
-      'A group that buys on its own needs a spending ceiling, the safety net the engine checks before every purchase: set limits.maxMonthlyCost above 0 (the group reports a suggested one that covers its worst case), or leave the group on "manual"',
+      'A group that adds nodes on its own needs a spending ceiling, the safety net the engine checks before every node it adds: set limits.maxMonthlyCost above 0 (the group reports a suggested one that covers its worst case), or leave the group on "manual"',
     );
   }
 }
@@ -1091,7 +1091,7 @@ export function purchaseInFlight(
     return {
       ...base,
       state: 'buying',
-      says: `Buying ${machine} — ${step} (${operation.progress}%)`,
+      says: `Adding ${machine} — ${step} (${operation.progress}%)`,
     };
   }
   const finished = operation.finishedAt ? new Date(operation.finishedAt) : null;
@@ -1112,7 +1112,7 @@ export function purchaseInFlight(
   return {
     ...base,
     state: 'failed',
-    says: `Buying ${machine} failed${operation.error ? ': ' + operation.error : ''}`,
+    says: `Adding ${machine} failed${operation.error ? ': ' + operation.error : ''}`,
   };
 }
 

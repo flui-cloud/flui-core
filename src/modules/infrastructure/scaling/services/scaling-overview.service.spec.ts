@@ -126,7 +126,7 @@ describe('the row a cluster gets whether or not anybody set it up', () => {
     expect(row.acts).toBe(false);
     expect(row.mode).toEqual({
       mode: 'manual',
-      label: 'No group — Flui does not buy',
+      label: 'No group — Flui does not add nodes',
       attention: true,
     });
   });

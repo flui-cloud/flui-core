@@ -21,7 +21,7 @@ export const INFRASTRUCTURE_TOOLS: ToolDef[] = [
       'CPU and memory use of a cluster and whether an app of a given size would fit (canDeploy, reasonMessage).',
     routes: ['GET /infrastructure/clusters/:id/resource-availability'],
     description:
-      'Get the current CPU and memory utilization of a cluster, and whether an app of a given size would run. Call this before any install; pass cpuMillicores, memoryMi and replicas to ask about that app instead of just the headroom. Returns used vs total resources, canDeploy, and — when the free total is not enough — `placement`: whether it still fits on one node, which machine the scaling group would buy (verdict "buys", with price) or only propose because the group is manual ("proposes"), or that no machine it may buy can take it and the app would wait ("nothing-hosts", with `why` machine by machine). Say `reasonMessage` to the person; never promise a node unless the verdict is "buys".',
+      'Get the current CPU and memory utilization of a cluster, and whether an app of a given size would run. Call this before any install; pass cpuMillicores, memoryMi and replicas to ask about that app instead of just the headroom. Returns used vs total resources, canDeploy, and — when the free total is not enough — `placement`: whether it still fits on one node, which machine the scaling group would add as a node (verdict "buys", with price) or only propose because the group is manual ("proposes"), or that no machine it may add can take it and the app would wait ("nothing-hosts", with `why` machine by machine). Say `reasonMessage` to the person; never promise a node unless the verdict is "buys".',
     scope: MCP_SCOPE.APP_READ,
     inputSchema: {
       clusterId: z.string().optional(),

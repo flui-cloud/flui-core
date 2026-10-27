@@ -247,7 +247,7 @@ export function describeCapability(
   if (capability.hasCatalogue) {
     return (
       `Flui cannot add servers on ${capability.provider}: scaling here raises an alarm for a person, ` +
-      'naming the shape it would have bought and what it costs.'
+      'naming the shape it would have added and what it costs.'
     );
   }
   return (
@@ -260,19 +260,20 @@ export function describeCapability(
 export function capabilityLabel(
   capability: ProviderScalingCapabilityDto,
 ): string {
-  if (capability.canProvision) return 'can buy';
+  if (capability.canProvision) return 'can add';
   return capability.hasCatalogue ? 'alarm (named)' : 'alarm (described)';
 }
 
 const STRATEGY_MEANINGS: Record<PlacementStrategy, string> = {
-  cheapest: 'the lowest hourly price, in any region this group may buy in',
+  cheapest:
+    'the lowest hourly price, in any region this group may add nodes in',
   closest:
     'the cluster’s own region first, then the others in the order listed',
   roomiest:
     'the largest that stays within the limits, so the next piece of work fits too',
   uniform: 'the same shape as the nodes already running',
   spread:
-    'the region this group may buy in that holds the fewest nodes, so the fleet sits in as many places as it has nodes',
+    'the region this group may add nodes in that holds the fewest nodes, so the fleet sits in as many places as it has nodes',
 };
 
 /**
@@ -286,7 +287,7 @@ export function describeStrategy(strategy: PlacementStrategy): string {
 
 export function describeSettle(seconds: number): string {
   return (
-    `${seconds}s — how long work must have been stuck before this buys. ` +
+    `${seconds}s — how long work must have been stuck before this adds a node. ` +
     'Flui checks once a minute, so it acts up to a minute after that. ' +
     'Never a wait for a cheaper shape.'
   );
@@ -295,7 +296,7 @@ export function describeSettle(seconds: number): string {
 const BOUND_MEANINGS = {
   min: 'held now, always',
   desired:
-    'approached when the market allows — being under it buys nothing now',
+    'approached when the market allows — being under it adds nothing now',
   max: 'as far as urgency may go right now',
 };
 
@@ -307,7 +308,7 @@ const BOUND_MEANINGS = {
  */
 export function describeZeroCeiling(provision: ProvisionMode): string {
   return provision === 'automatic'
-    ? 'no nodes: urgency may buy nothing'
+    ? 'no nodes: urgency may add nothing'
     : 'no nodes: every machine here is one somebody attached';
 }
 
@@ -350,13 +351,13 @@ export function boundRows(
 }
 
 const CANDIDATE_REASONS: Record<CandidateOutcome, string> = {
-  'would-buy': 'this is the one it would buy',
-  unavailable: 'nothing to buy there right now',
+  'would-buy': 'this is the one it would add',
+  unavailable: 'nothing to add there right now',
   'does-not-fit': 'too small for the work that is waiting',
   'over-budget': 'the spending ceiling would be passed',
   'refused-by-limit':
     'available and affordable, and this group’s own rules exclude it',
-  alert: 'nothing can be bought here — a person is asked instead',
+  alert: 'no node can be added here — a person is asked instead',
 };
 
 export function candidateReason(outcome: CandidateOutcome): string {
@@ -365,10 +366,10 @@ export function candidateReason(outcome: CandidateOutcome): string {
 
 const OUTCOME_MEANINGS: Record<DecisionOutcome, string> = {
   added: 'a node was added',
-  replaced: 'a node was bought and another drained',
+  replaced: 'a node was added and another drained',
   removed: 'a node was drained and removed',
   declined: 'nothing was done, on purpose',
-  alerted: 'nothing could be bought — this asks a person',
+  alerted: 'no node could be added — this asks a person',
   changed: 'a person changed the group',
   'node-ordered': 'a person ordered a machine',
   'node-joined': 'a machine joined the cluster',
@@ -497,7 +498,7 @@ export function describePending(
 export function describeChosen(preview: ScalingPreviewDto): string {
   const chosen = preview.chosen;
   if (!chosen) {
-    return 'nothing would be bought — the answer here is an alarm, not a purchase';
+    return 'no node would be added — the answer here is an alarm, not a new node';
   }
   const where = chosen.region ? ` at ${chosen.region}` : '';
   return `${chosen.shape ?? NO_PRICE}${where} · ${formatEurPerHour(chosen.hourlyEur)}`;
@@ -527,7 +528,7 @@ function willOnlyAsk(group: ScalingGroupResponseDto): string | null {
   }
   if (group.provision === 'manual') {
     return (
-      'This group provisions manually: it will ask a person rather than buy, even though ' +
+      'This group provisions manually: it will ask a person rather than add a node, even though ' +
       `Flui can add servers on ${group.capability.provider}.`
     );
   }

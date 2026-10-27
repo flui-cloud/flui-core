@@ -100,7 +100,7 @@ export function scalingCost(input: CostInput): ScalingCost {
   const { priced, unpriced } = pricesOf(input);
   if (!priced.length) {
     return blank(
-      `${input.provider} publishes no price for ${listed(unpriced)} where this group may buy, so Flui cannot say what it costs.`,
+      `${input.provider} publishes no price for ${listed(unpriced)} where this group may add nodes, so Flui cannot say what it costs.`,
       unpriced,
     );
   }
@@ -236,7 +236,7 @@ function ceilingReading(
       monthlyEur: null,
       nodesWithin: null,
       stopsBeforeMax: false,
-      says: 'No spending ceiling. Buying on its own needs one: it is the safety net the engine checks before every purchase.',
+      says: 'No spending ceiling. Adding nodes on its own needs one: it is the safety net the engine checks before every node it adds.',
     };
   }
   if (!priced) {
@@ -244,7 +244,7 @@ function ceilingReading(
       monthlyEur: cap,
       nodesWithin: null,
       stopsBeforeMax: false,
-      says: `Spending ceiling €${money(cap)} a month, checked before every purchase against the list price of the whole fleet.`,
+      says: `Spending ceiling €${money(cap)} a month, checked before every node it adds against the list price of the whole fleet.`,
     };
   }
   const within = Math.floor(cap / priced.dearest.monthlyEur + 1e-9);
@@ -263,8 +263,8 @@ function ceilingReading(
     stopsBeforeMax: within < input.max,
     says:
       within < input.max
-        ? `Spending ceiling €${money(cap)} a month, below the worst case: the engine stops buying at about ${nodes(within)} of ${priced.dearest.shape} (€${money(priced.dearest.monthlyEur)} a month each), before the maximum of ${input.max}.`
-        : `Spending ceiling €${money(cap)} a month, checked before every purchase against the list price of the whole fleet.`,
+        ? `Spending ceiling €${money(cap)} a month, below the worst case: the engine stops adding nodes at about ${nodes(within)} of ${priced.dearest.shape} (€${money(priced.dearest.monthlyEur)} a month each), before the maximum of ${input.max}.`
+        : `Spending ceiling €${money(cap)} a month, checked before every node it adds against the list price of the whole fleet.`,
   };
 }
 

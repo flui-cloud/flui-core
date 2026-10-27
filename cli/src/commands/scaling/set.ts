@@ -38,7 +38,7 @@ function printCost(cost: ScalingCostDto | null | undefined): void {
 
 export default class ScalingSet extends Command {
   static readonly description =
-    'Change one or more settings of a scaling group and leave the rest as they are. Limits are in nodes (--min, --max); the cost follows and is shown as scenarios. The spending ceiling (--max-monthly) is the safety net underneath, required to buy automatically, and kept unless you name it. --dry-run shows each setting before and after, with what the limits would cost, and writes nothing.';
+    'Change one or more settings of a scaling group and leave the rest as they are. Limits are in nodes (--min, --max); the cost follows and is shown as scenarios. The spending ceiling (--max-monthly) is the safety net underneath, required to add nodes automatically, and kept unless you name it. --dry-run shows each setting before and after, with what the limits would cost, and writes nothing.';
 
   static readonly examples = [
     '<%= config.bin %> <%= command.id %> default --max-monthly 30',
@@ -64,22 +64,22 @@ export default class ScalingSet extends Command {
     }),
     'max-monthly': Flags.string({
       description:
-        'Spending ceiling in euros a month: the safety net the engine checks before every purchase. "none" removes it (only on a manual group: automatic needs one)',
+        'Spending ceiling in euros a month: the safety net the engine checks before every node it adds. "none" removes it (only on a manual group: automatic needs one)',
     }),
     'hourly-only': Flags.boolean({
-      description: 'Buy only machines billed by the hour',
+      description: 'Add only machines billed by the hour',
       allowNo: true,
     }),
     provision: Flags.string({
       description:
-        'automatic: Flui buys on its own up to --max nodes, never past the spending ceiling (required); manual: Flui proposes and a person buys',
+        'automatic: Flui adds nodes on its own up to --max nodes, each a server the provider bills, never past the spending ceiling (required); manual: Flui proposes and a person approves',
       options: [...PROVISION_MODES],
     }),
     shapes: Flags.string({
-      description: 'Machines the group may buy, comma separated',
+      description: 'Machines the group may add, comma separated',
     }),
     regions: Flags.string({
-      description: 'Regions it may buy in, comma separated',
+      description: 'Regions it may add nodes in, comma separated',
     }),
     min: Flags.integer({
       description: 'Min nodes: fewest, master included (1-20)',
@@ -130,7 +130,7 @@ export default class ScalingSet extends Command {
       ) {
         const suggested = group.cost?.suggestedCeilingEur;
         this.error(
-          'Buying automatically needs a spending ceiling, the safety net checked before every purchase.' +
+          'Adding nodes automatically needs a spending ceiling, the safety net checked before every node it adds.' +
             (suggested
               ? ` One covering this group's worst case: --max-monthly ${suggested}`
               : ' Pass --max-monthly.'),

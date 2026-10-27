@@ -164,7 +164,7 @@ describe('the only thing with hands', () => {
     );
 
     expect(h.clusters.addWorkers).not.toHaveBeenCalled();
-    expect(acted?.why).toContain('buys nothing on its own');
+    expect(acted?.why).toContain('adds nothing on its own');
   });
 
   it('asks a person when urgency is held back only by consent', async () => {
@@ -179,7 +179,7 @@ describe('the only thing with hands', () => {
     // A declined row raises no alarm and reaches nobody, so a manual group
     // that promises to "name the machine" would in fact say nothing at all.
     expect(acted?.outcome).toBe('alerted');
-    expect(acted?.asks).toContain('set this group to buy automatically');
+    expect(acted?.asks).toContain('set this group to add nodes automatically');
   });
 
   it('stays a quiet decline for an opportunity nobody is waiting on', async () => {
@@ -264,7 +264,7 @@ describe('the only thing with hands', () => {
     );
 
     expect(h.clusters.addWorkers).not.toHaveBeenCalled();
-    expect(acted).toMatchObject({ outcome: 'alerted', did: 'Bought nothing.' });
+    expect(acted).toMatchObject({ outcome: 'alerted', did: 'Added nothing.' });
     expect(acted?.asks).toContain('ENOENT: private.key');
   });
 

@@ -67,7 +67,7 @@ export function buysOnItsOwn(group: {
 }
 
 export const NO_MONEY_CEILING =
-  'This group is set to automatic but has no spending ceiling, so it buys nothing on its own. The ceiling is the safety net checked before every purchase: set one to let it buy, or approve this one purchase.';
+  'This group is set to automatic but has no spending ceiling, so it adds nothing on its own. The ceiling is the safety net checked before every node it adds: set one to let it add nodes, or approve adding this one node.';
 
 export const STANDING_ORDER_KINDS = ['expand', 'replace'] as const;
 

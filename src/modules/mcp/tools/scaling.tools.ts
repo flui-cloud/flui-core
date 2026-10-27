@@ -146,7 +146,7 @@ interface CostDto {
 }
 
 const COST_NOTE =
-  'The limits are in NODES; money is their consequence. `scenarios` price them with the provider list prices, from always at the minimum to the maximum all month (`lowEur` with the cheapest machine on the list, `highEur` with the dearest; null is a figure that cannot be priced, never 0). `ceiling` is the SPENDING CEILING, a safety net the engine checks before every purchase and never passes: relay `ceiling.says`, and when `stopsBeforeMax` is true say that the ceiling, not the node maximum, will stop the fleet. `suggestedCeilingEur` covers the worst case; propose it only as a suggestion the person confirms. `priced: false` means no price is published or none could be read: say so, never estimate one.';
+  'The limits are in NODES; money is their consequence. `scenarios` price them with the provider list prices, from always at the minimum to the maximum all month (`lowEur` with the cheapest machine on the list, `highEur` with the dearest; null is a figure that cannot be priced, never 0). `ceiling` is the SPENDING CEILING, a safety net the engine checks before every node it adds and never passes: relay `ceiling.says`, and when `stopsBeforeMax` is true say that the ceiling, not the node maximum, will stop the fleet. `suggestedCeilingEur` covers the worst case; propose it only as a suggestion the person confirms. `priced: false` means no price is published or none could be read: say so, never estimate one.';
 
 function eurRange(
   low: number | null,
@@ -269,11 +269,11 @@ function alarmNote(alarm: OpenAlarm | null): string | null {
   if (!alarm) return null;
   const back = alarm.kind === 'give-back' ? alarm.giveBack : null;
   if (!back) {
-    return 'The group needs a machine it cannot get. Read scaling_preview for what blocks the purchase and the ways out it computes.';
+    return 'The group needs a machine it cannot get. Read scaling_preview for what blocks adding a node and the ways out it computes.';
   }
   const cost =
     back.monthlyEur === null ? '' : ` (about €${back.monthlyEur} a month)`;
-  return `Nothing is being bought: the fleet has ${back.nodes} nodes against a target of ${back.target}, and ${back.node ?? 'the node that would go back'}${cost} cannot be emptied. Relay \`giveBack.reasons\` by application, with each reason's fix. Two ways out: keep the node by setting the group's \`bounds.desired\` to ${back.keepNodes} with scaling_group_set, or clear the reasons. Never propose raising the spending ceiling or adding a shape for this alarm.`;
+  return `No node is being added: the fleet has ${back.nodes} nodes against a target of ${back.target}, and ${back.node ?? 'the node that would be removed'}${cost} cannot be emptied. Relay \`giveBack.reasons\` by application, with each reason's fix. Two ways out: keep the node by setting the group's \`bounds.desired\` to ${back.keepNodes} with scaling_group_set, or clear the reasons. Never propose raising the spending ceiling or adding a shape for this alarm.`;
 }
 
 /**
@@ -286,12 +286,12 @@ function alarmNote(alarm: OpenAlarm | null): string | null {
  */
 function capabilityNote(capability: CapabilityDto): string {
   if (capability.canProvision) {
-    return 'Flui can buy servers here through the provider API, so a group may grow the cluster on its own.';
+    return 'Flui can add servers here through the provider API, so a group may grow the cluster on its own; each node it adds is a server the provider bills.';
   }
   if (capability.hasCatalogue) {
-    return 'Flui CANNOT buy servers here. Do not offer to scale this cluster: the most a group can do is raise an alarm naming a shape and its price for a person to buy. Warning is the whole contribution, and it is a real one.';
+    return 'Flui CANNOT add servers here. Do not offer to scale this cluster: the most a group can do is raise an alarm naming a shape and its price for a person to add. Warning is the whole contribution, and it is a real one.';
   }
-  return 'Flui CANNOT buy servers here and there is no catalogue — no shape and no price exist to name. Do not offer to scale, and do not name a server type: an alarm can only state what a machine has to hold (the `requirement`).';
+  return 'Flui CANNOT add servers here and there is no catalogue — no shape and no price exist to name. Do not offer to scale, and do not name a server type: an alarm can only state what a machine has to hold (the `requirement`).';
 }
 
 /** `buy` or `warn`, so a model does not have to infer it from two booleans. */
@@ -325,7 +325,7 @@ function actuationNote(acts: ActuationDto | undefined): string {
   if (!acts.acts) {
     return 'NOTHING this group decides reaches a provider. It decides, writes the decision down, and a person acts. Say that before offering to change anything here, and never report a configured group as one that will grow the cluster.';
   }
-  return `Decisions by this group DO reach a provider, within the ceilings the group itself names: ${acts.says} Those ceilings are on the group and are read over the whole fleet, not per purchase.`;
+  return `Decisions by this group DO reach a provider, within the ceilings the group itself names: ${acts.says} Those ceilings are on the group and are read over the whole fleet, not per node.`;
 }
 
 /**
@@ -344,7 +344,7 @@ function drainNote(drainable: DrainCheckDto | null): string {
   if (drainable.ok) {
     return 'The node this order would empty can be emptied, as of the last pass.';
   }
-  return 'HELD BACK: the node this order would empty CANNOT be emptied, so this order will never proceed and the group waits for a machine it will never buy. Relay every blocker with its `what` and its `fix` — each one names something a person has to change.';
+  return 'HELD BACK: the node this order would empty CANNOT be emptied, so this order will never proceed and the group waits for a machine it will never add. Relay every blocker with its `what` and its `fix` — each one names something a person has to change.';
 }
 
 function standingOrderView(order: StandingOrderDto): Record<string, unknown> {
@@ -444,7 +444,7 @@ function groupView(group: GroupDto): Record<string, unknown> {
       // nothing", which is the opposite of what an absent cap means.
       monthlyCapEur: group.limits.maxMonthlyCost,
       monthlyCapIs:
-        'The spending ceiling: a safety net under the node limits, required to buy automatically and always enforced by the engine.',
+        'The spending ceiling: a safety net under the node limits, required to add nodes automatically and always enforced by the engine.',
     },
     cost: costView(group.cost),
     provision: group.provision,
@@ -457,7 +457,7 @@ function groupView(group: GroupDto): Record<string, unknown> {
     ...(group.purchaseHeld
       ? {
           purchaseHeldMeans:
-            'A purchase failed and this group buys nothing more until someone asks it to try again with scaling_group_retry_purchase. Tell the user what failed first: retrying before the cause is fixed only fails again.',
+            'A node failed to join and this group adds nothing more until someone asks it to try again with scaling_group_retry_purchase. Tell the user what failed first: retrying before the cause is fixed only fails again.',
         }
       : {}),
     authorises: authorisedBy(group),
@@ -523,7 +523,7 @@ function actsNote(row: RowDto): string {
     return 'Flui cannot create a server on this provider at all. Scaling here ends in an alarm addressed to a person, and that is the finished behaviour rather than a setting left off.';
   }
   if (row.acts) {
-    return 'A group here is set to buy automatically, so a decision to add a node reaches the provider.';
+    return 'A group here is set to add nodes automatically, so a decision to add a node reaches the provider.';
   }
   return "Flui COULD create a server here and will not: every group on this cluster is set only to decide. Do not tell anyone a node is coming. Read the group with scaling_group_get — its `acts.says` says so in the installation's own words.";
 }
@@ -576,7 +576,7 @@ export const SCALING_TOOLS: ToolDef[] = [
       'GET /infrastructure/clusters/:clusterId/scaling-groups',
     ],
     description:
-      'Read a cluster’s scaling group — what it may buy, how far it may grow, what it may spend and what the provider actually allows. Pass `groupId` for one group, or `clusterId` (or nothing, with a single cluster) for every group a cluster holds. Read the three bounds as three ROLES, not three numbers: `min` is a floor held right now; `desired` is a target approached only opportunistically and is deliberately NOT AWS’s desired capacity — being below it buys nothing on its own; `max` is how far urgency may reach right now. `settleSeconds` is not patience and never waits for a cheaper shape: it waits to be sure a pod is genuinely stuck rather than mid-schedule. `strategy` chooses only among shapes that ALREADY FIT — fitting is a precondition, never a strategy, so no strategy will ever pick a shape the pending pod cannot run on. The limits are in nodes: `cost` prices them with the provider list prices as scenarios from the minimum to the maximum — relay those, never multiply prices yourself. `monthlyCapEur` is the SPENDING CEILING, a safety net under the node limits that the engine checks before every purchase; null is no ceiling at all, never a ceiling of zero — and an automatic group without one buys nothing on its own (`acts.acts` is false). Check `capability` before proposing anything: it is read from flags, never from the provider’s name. Then check `acts`, which answers the only question anybody has here — WOULD THIS GROUP DO ANYTHING — and is not the same as `capability`: the provider may allow a purchase that a group set only to decide will never make. `acts.says` is the API’s own sentence; relay it rather than rewording it. On a `replace` standing order, `drainable` says whether the node it would empty can be emptied: `ok: false` means that order will never proceed, and `null` is no answer at all rather than a yes.',
+      'Read a cluster’s scaling group — what it may add, how far it may grow, what it may spend and what the provider actually allows. Pass `groupId` for one group, or `clusterId` (or nothing, with a single cluster) for every group a cluster holds. Read the three bounds as three ROLES, not three numbers: `min` is a floor held right now; `desired` is a target approached only opportunistically and is deliberately NOT AWS’s desired capacity — being below it adds nothing on its own; `max` is how far urgency may reach right now. `settleSeconds` is not patience and never waits for a cheaper shape: it waits to be sure a pod is genuinely stuck rather than mid-schedule. `strategy` chooses only among shapes that ALREADY FIT — fitting is a precondition, never a strategy, so no strategy will ever pick a shape the pending pod cannot run on. The limits are in nodes: `cost` prices them with the provider list prices as scenarios from the minimum to the maximum — relay those, never multiply prices yourself. `monthlyCapEur` is the SPENDING CEILING, a safety net under the node limits that the engine checks before every node it adds; null is no ceiling at all, never a ceiling of zero — and an automatic group without one adds nothing on its own (`acts.acts` is false). Check `capability` before proposing anything: it is read from flags, never from the provider’s name. Then check `acts`, which answers the only question anybody has here — WOULD THIS GROUP DO ANYTHING — and is not the same as `capability`: the provider may allow adding a node that a group set only to decide will never add. `acts.says` is the API’s own sentence; relay it rather than rewording it. On a `replace` standing order, `drainable` says whether the node it would empty can be emptied: `ok: false` means that order will never proceed, and `null` is no answer at all rather than a yes.',
     scope: MCP_SCOPE.INFRA_READ,
     inputSchema: {
       groupId: z
@@ -618,7 +618,7 @@ export const SCALING_TOOLS: ToolDef[] = [
       'GET /infrastructure/clusters/:clusterId/scaling',
     ],
     description:
-      'One scaling row per cluster on this instance — INCLUDING the clusters that have no scaling group at all, and the clusters that can do nothing but raise an alarm. Those two are the cases somebody is needed for, so they are never filtered out; `needsPerson` is the one line that says which. Pass `clusterId` for a single cluster, or nothing for all of them. Every row NAMES the groups its cluster holds, so a second group is never invisible and no follow-up read is needed to find one. `monthlyEur: null` means Flui has no bill to show, not that the fleet is free — and where `unpricedNodes` is above 0 the figure is a FLOOR and not the bill, so quote it as one. `nodes` above `max` on a cluster Flui cannot provision was not refused by anything — the machines were attached by hand and the ceiling can only report it. `pendingPods: null` is NOT 0: no group of that cluster could find out what the scheduler was unable to place, so report it as unknown rather than as calm — a cluster mid-outage answers nothing and would otherwise read as the quietest row on the list. `blockedOrders` counts standing orders waiting on a node that cannot be emptied; each one is a purchase that will never happen, and nothing else distinguishes it from patience.',
+      'One scaling row per cluster on this instance — INCLUDING the clusters that have no scaling group at all, and the clusters that can do nothing but raise an alarm. Those two are the cases somebody is needed for, so they are never filtered out; `needsPerson` is the one line that says which. Pass `clusterId` for a single cluster, or nothing for all of them. Every row NAMES the groups its cluster holds, so a second group is never invisible and no follow-up read is needed to find one. `monthlyEur: null` means Flui has no bill to show, not that the fleet is free — and where `unpricedNodes` is above 0 the figure is a FLOOR and not the bill, so quote it as one. `nodes` above `max` on a cluster Flui cannot provision was not refused by anything — the machines were attached by hand and the ceiling can only report it. `pendingPods: null` is NOT 0: no group of that cluster could find out what the scheduler was unable to place, so report it as unknown rather than as calm — a cluster mid-outage answers nothing and would otherwise read as the quietest row on the list. `blockedOrders` counts standing orders waiting on a node that cannot be emptied; each one is a node that will never be added, and nothing else distinguishes it from patience.',
     scope: MCP_SCOPE.INFRA_READ,
     inputSchema: { clusterId: CLUSTER_ID },
     run: (args, ctx) =>
@@ -649,7 +649,7 @@ export const SCALING_TOOLS: ToolDef[] = [
       'GET /infrastructure/clusters/:clusterId/scaling-groups',
     ],
     description:
-      'What was decided on a cluster, and — the half that matters — what was DECLINED, newest first. Ask it of the CLUSTER: pass `clusterId` (or nothing, with a single cluster) and every group answers, each decision naming the group that took it. Pass `groupId` only to narrow it to one group. Never pick a group in order to ask why nothing happened — on a cluster with two groups that answers about the wrong fleet. Read this before ever proposing to scale anything: if the recent decisions are declines, nothing was scaled for the reason each `why` gives, and proposing the same thing again produces the same decline. Declines and alarms are first-class decisions here, not noise: `outcome: "declined"` carries the whole answer in `why`, and `outcome: "alerted"` carries `asks` — the sentence addressed to a person, which nothing in Flui will clear on its own. `considered` lists the candidates walked past with the reason each lost, and two of those reasons must not be collapsed: `over-budget` means the shape cost too much, `refused-by-limit` means it was available and affordable and this group’s own rules excluded it anyway. `outcome: "added"` and `outcome: "removed"` are decisions that reached a provider — a machine was bought, or a node was drained and given back — and their `why` names the gate that let it through. Relay `why` in full on every outcome: where a purchase was refused it says WHICH gate refused it, in words — the group is set to decide and not act, a machine is already on its way, the cluster is not ready, the shape carries no price against a ceiling the group named, the region is outside the cluster’s network — and those are different situations with different fixes. Never flatten one of them to "scaling did not work". An empty list means the group has decided nothing yet, NOT that it looked and found nothing to do.',
+      'What was decided on a cluster, and — the half that matters — what was DECLINED, newest first. Ask it of the CLUSTER: pass `clusterId` (or nothing, with a single cluster) and every group answers, each decision naming the group that took it. Pass `groupId` only to narrow it to one group. Never pick a group in order to ask why nothing happened — on a cluster with two groups that answers about the wrong fleet. Read this before ever proposing to scale anything: if the recent decisions are declines, nothing was scaled for the reason each `why` gives, and proposing the same thing again produces the same decline. Declines and alarms are first-class decisions here, not noise: `outcome: "declined"` carries the whole answer in `why`, and `outcome: "alerted"` carries `asks` — the sentence addressed to a person, which nothing in Flui will clear on its own. `considered` lists the candidates walked past with the reason each lost, and two of those reasons must not be collapsed: `over-budget` means the shape cost too much, `refused-by-limit` means it was available and affordable and this group’s own rules excluded it anyway. `outcome: "added"` and `outcome: "removed"` are decisions that reached a provider — a node was added, or a node was drained and removed — and their `why` names the gate that let it through. Relay `why` in full on every outcome: where adding a node was refused it says WHICH gate refused it, in words — the group is set to decide and not act, a machine is already on its way, the cluster is not ready, the shape carries no price against a ceiling the group named, the region is outside the cluster’s network — and those are different situations with different fixes. Never flatten one of them to "scaling did not work". An empty list means the group has decided nothing yet, NOT that it looked and found nothing to do.',
     scope: MCP_SCOPE.INFRA_READ,
     inputSchema: {
       groupId: z
@@ -779,7 +779,7 @@ export const SCALING_TOOLS: ToolDef[] = [
       'PATCH /infrastructure/scaling-groups/:id',
     ],
     description:
-      'Write or change a cluster’s scaling group — the standing authority for how large it may grow and how much it may spend unattended. Pass `groupId` to change an existing group, or `clusterId` (or nothing, with a single cluster) plus `name` and `bounds` to write a new one. THIS ASKS A PERSON: the route is inside Flui’s action cycle, so the call comes back as a request carrying the figure it derived from your own bounds and limits — "up to 5 nodes, never past a spending ceiling of €40 a month, without asking you" — and you must stop, tell the user exactly what was asked for, and retry the identical call once they have answered. `bounds` is replaced whole and so is `limits`: sending `limits` without `maxMonthlyCost` REMOVES the monthly ceiling, it does not leave it alone, so restate the cap every time. `provision: "automatic"` is refused wherever `capability.canProvision` is false — read scaling_group_get first and do not retry it there — and refused without `limits.maxMonthlyCost` above 0. Reason with the person in NODES (min/max); the money follows — read scaling_cost for the scenarios first. The spending ceiling is a safety net under the node limits, not the main choice: offer the group’s `cost.suggestedCeilingEur` (it covers the worst case) and let the person confirm or change it, never invent one. Where there is no catalogue, `shapes` and `regions` are refused and `requirement` (what a machine must hold) is required instead; where there is one, the reverse. A standing order may only name a shape and a region the group is already allowed to buy, or it is a wait that can never end; `region: "any"` waits for the first of the group’s regions that has the shape, its own first. An `expand` order buys only while the fleet is below `bounds.desired`, whatever the load: to "add one cx33 in fsn1 as soon as it can be had", raise `desired` by one in the same call and add the order; it closes itself once the fleet reaches the target. Every bound counts the whole fleet, master included, so all three sit between 1 and 20. `provision: "automatic"` is what makes a group act without asking again, and `bounds.max` with the spending ceiling `maxMonthlyCost` underneath are the limits it acts within — all three on the group, where a reader can see them. The answer carries `acts` and `acts.says`; relay that sentence rather than rewording it, and never state a monthly figure that is not the one the group itself carries.',
+      'Write or change a cluster’s scaling group — the standing authority for how large it may grow and how much it may spend unattended. Pass `groupId` to change an existing group, or `clusterId` (or nothing, with a single cluster) plus `name` and `bounds` to write a new one. THIS ASKS A PERSON: the route is inside Flui’s action cycle, so the call comes back as a request carrying the figure it derived from your own bounds and limits — "up to 5 nodes, never past a spending ceiling of €40 a month, without asking you" — and you must stop, tell the user exactly what was asked for, and retry the identical call once they have answered. `bounds` is replaced whole and so is `limits`: sending `limits` without `maxMonthlyCost` REMOVES the monthly ceiling, it does not leave it alone, so restate the cap every time. `provision: "automatic"` is refused wherever `capability.canProvision` is false — read scaling_group_get first and do not retry it there — and refused without `limits.maxMonthlyCost` above 0. Reason with the person in NODES (min/max); the money follows — read scaling_cost for the scenarios first. The spending ceiling is a safety net under the node limits, not the main choice: offer the group’s `cost.suggestedCeilingEur` (it covers the worst case) and let the person confirm or change it, never invent one. Where there is no catalogue, `shapes` and `regions` are refused and `requirement` (what a machine must hold) is required instead; where there is one, the reverse. A standing order may only name a shape and a region the group is already allowed to add, or it is a wait that can never end; `region: "any"` waits for the first of the group’s regions that has the shape, its own first. An `expand` order adds nodes only while the fleet is below `bounds.desired`, whatever the load: to "add one cx33 in fsn1 as soon as it can be had", raise `desired` by one in the same call and add the order; it closes itself once the fleet reaches the target. Every bound counts the whole fleet, master included, so all three sit between 1 and 20. `provision: "automatic"` is what makes a group act without asking again, and `bounds.max` with the spending ceiling `maxMonthlyCost` underneath are the limits it acts within — all three on the group, where a reader can see them. The answer carries `acts` and `acts.says`; relay that sentence rather than rewording it, and never state a monthly figure that is not the one the group itself carries.',
     scope: MCP_SCOPE.INFRA_WRITE,
     inputSchema: {
       groupId: z
@@ -805,7 +805,7 @@ export const SCALING_TOOLS: ToolDef[] = [
             .min(MIN_FLEET_NODES)
             .max(MAX_FLEET_NODES)
             .describe(
-              'The target, approached only when the market allows. Not AWS’s desired capacity: being below it buys nothing by itself.',
+              'The target, approached only when the market allows. Not AWS’s desired capacity: being below it adds nothing by itself.',
             ),
           max: z
             .number()
@@ -823,23 +823,25 @@ export const SCALING_TOOLS: ToolDef[] = [
       regions: z
         .array(z.string())
         .optional()
-        .describe('Where it may buy. Refused where there is no catalogue.'),
+        .describe(
+          'Where it may add nodes. Refused where there is no catalogue.',
+        ),
       shapes: z
         .array(z.string())
         .optional()
         .describe(
-          'What it may buy, in order of preference — the order IS the preference. An arm shape is accepted: "Arm server: apps deployed from a repository are built for x86 and will not run on it. Catalog apps run normally." A fleet never mixes architectures. Refused where there is no catalogue.',
+          'What it may add, in order of preference — the order IS the preference. An arm shape is accepted: "Arm server: apps deployed from a repository are built for x86 and will not run on it. Catalog apps run normally." A fleet never mixes architectures. Refused where there is no catalogue.',
         ),
       strategy: z
         .enum(PLACEMENT_STRATEGIES)
         .optional()
         .describe(
-          'How to choose among the shapes that already fit. Fitting is a precondition, not one of these. "spread" buys each node in the allowed region holding the fewest nodes and gives back from the region holding the most: with regions fsn1,nbg1,hel1 and min 3, one node in each.',
+          'How to choose among the shapes that already fit. Fitting is a precondition, not one of these. "spread" adds each node in the allowed region holding the fewest nodes and removes from the region holding the most: with regions fsn1,nbg1,hel1 and min 3, one node in each.',
         ),
       settleSeconds: coerceNumber(z.number().int().min(0).max(3600))
         .optional()
         .describe(
-          'How long a pod must have been stuck before this buys. Never a wait for a cheaper shape.',
+          'How long a pod must have been stuck before this adds a node. Never a wait for a cheaper shape.',
         ),
       limits: z
         .strictObject({
@@ -958,8 +960,11 @@ export const SCALING_TOOLS: ToolDef[] = [
       shapes: z
         .array(z.string())
         .optional()
-        .describe('The machines the group may buy.'),
-      regions: z.array(z.string()).optional().describe('Where it may buy.'),
+        .describe('The machines the group may add.'),
+      regions: z
+        .array(z.string())
+        .optional()
+        .describe('Where it may add nodes.'),
       maxMonthlyCost: z
         .number()
         .min(0)
@@ -1000,7 +1005,7 @@ export const SCALING_TOOLS: ToolDef[] = [
       'GET /infrastructure/clusters/:clusterId/scaling-groups',
     ],
     description:
-      'What a scaling group would do if a node were needed right now, and how much room is left before one is. Buys nothing. `room.nodes` gives each node what apps RESERVE against what it can hold — reservations, not usage: a node idle on every graph can still be full for the next app, and reservations are what make Flui buy. Beside them, `used` is what the node uses now (null when unreadable) and `limits` what its apps may grow to; limits above `allocatable` memory means a spike can make the node stop apps before a new one arrives. `room.largestFit` is the largest app that still fits without buying: anything bigger waits, and the group buys only if its mode (`acts.label` of the group, e.g. "Manual — Flui does not buy") says it does — otherwise it names the machine in an alarm. `ladder` is every rung the engine would walk, each with why it loses; `chosen` the one that would win; `asks` the alarm sentence when nothing can be bought, and `blocked` its headline with the ways out, each computed (`raise-cap` with the smallest spending ceiling that is enough, `raise-max-nodes`, `add-shape` naming a machine that fits the app and runs on the cluster’s architecture, `attach`) — offer those, never invent others; changing a group is scaling_group_set. Use this to answer "are we close to scaling?" — relay largestFit in plain words.',
+      'What a scaling group would do if a node were needed right now, and how much room is left before one is. Adds nothing. `room.nodes` gives each node what apps RESERVE against what it can hold — reservations, not usage: a node idle on every graph can still be full for the next app, and reservations are what make Flui add a node. Beside them, `used` is what the node uses now (null when unreadable) and `limits` what its apps may grow to; limits above `allocatable` memory means a spike can make the node stop apps before a new one arrives. `room.largestFit` is the largest app that still fits without adding a node: anything bigger waits, and the group adds one only if its mode (`acts.label` of the group, e.g. "Manual — Flui does not add nodes") says it does — otherwise it names the machine in an alarm. `ladder` is every rung the engine would walk, each with why it loses; `chosen` the one that would win; `asks` the alarm sentence when no node can be added, and `blocked` its headline with the ways out, each computed (`raise-cap` with the smallest spending ceiling that is enough, `raise-max-nodes`, `add-shape` naming a machine that fits the app and runs on the cluster’s architecture, `attach`) — offer those, never invent others; changing a group is scaling_group_set. Use this to answer "are we close to scaling?" — relay largestFit in plain words.',
     scope: MCP_SCOPE.INFRA_READ,
     inputSchema: {
       groupId: z
@@ -1020,7 +1025,7 @@ export const SCALING_TOOLS: ToolDef[] = [
           throw new Error(
             groups.length
               ? 'This cluster has several scaling groups: pass groupId.'
-              : 'This cluster has no scaling group, so nothing would be bought for it.',
+              : 'This cluster has no scaling group, so no node would be added for it.',
           );
         }
         groupId = groups[0].id;
@@ -1035,7 +1040,7 @@ export const SCALING_TOOLS: ToolDef[] = [
     name: 'scaling_approve_purchase',
     routes: ['POST /infrastructure/scaling-groups/:id/approve-purchase'],
     description:
-      'Buy, once, the machine a MANUAL scaling group proposes (scaling_preview `chosen`). Only when the person asked for this purchase in this conversation — never on your own initiative: it spends money. Pass the shape and region the person saw; if the proposal has changed, nothing is bought and the refusal says what it is now. Every limit still holds (nodes, money, a purchase on its way). The group stays manual. Follow the purchase with operation_status.',
+      'Add, once, the node a MANUAL scaling group proposes (scaling_preview `chosen`). Only when the person asked for this node in this conversation — never on your own initiative: it spends money, the new node is a server the provider bills. Pass the shape and region the person saw; if the proposal has changed, nothing is added and the refusal says what it is now. Every limit still holds (nodes, money, a node on its way). The group stays manual. Follow the new node with operation_status.',
     scope: MCP_SCOPE.INFRA_WRITE,
     inputSchema: {
       groupId: z.string(),
@@ -1053,7 +1058,7 @@ export const SCALING_TOOLS: ToolDef[] = [
     name: 'scaling_group_floor',
     routes: ['PATCH /infrastructure/scaling-groups/:id/floor'],
     description:
-      'Add or remove a node — the only way a cluster changes its nodes: move its scaling group’s floor (`min`, master included). One more: min + 1. One fewer: min − 1. The target moves with it. THIS ASKS A PERSON (action cycle). Then read `acts`: a manual group only proposes — show scaling_preview `chosen` (to buy, with its price) or `giveBack` (the node to remove) and, only if the person asks, call scaling_approve_purchase or scaling_approve_removal; an automatic group acts within its ceilings on its own. BYOS machines are attached with `flui node connect` instead.',
+      'Add or remove a node — the only way a cluster changes its nodes: move its scaling group’s floor (`min`, master included). One more: min + 1. One fewer: min − 1. The target moves with it. THIS ASKS A PERSON (action cycle). Then read `acts`: a manual group only proposes — show scaling_preview `chosen` (to add, with its price) or `giveBack` (the node to remove) and, only if the person asks, call scaling_approve_purchase or scaling_approve_removal; an automatic group acts within its ceilings on its own. BYOS machines are attached with `flui node connect` instead.',
     scope: MCP_SCOPE.INFRA_WRITE,
     inputSchema: {
       groupId: z.string(),
@@ -1084,7 +1089,7 @@ export const SCALING_TOOLS: ToolDef[] = [
     name: 'scaling_approve_removal',
     routes: ['POST /infrastructure/scaling-groups/:id/approve-removal'],
     description:
-      'Give back, once, the node a MANUAL scaling group names (scaling_preview `giveBack`), after its minimum was lowered. Only when the person asked for it in this conversation: the node is drained and deleted, and what was on it moves to the nodes that stay. Pass the node the person saw; if the group names another now, nothing is removed and the refusal says which. The group stays manual. Follow it with operation_status.',
+      'Remove, once, the node a MANUAL scaling group names (scaling_preview `giveBack`), after its minimum was lowered. Only when the person asked for it in this conversation: the node is drained and deleted, and what was on it moves to the nodes that stay. Pass the node the person saw; if the group names another now, nothing is removed and the refusal says which. The group stays manual. Follow it with operation_status.',
     scope: MCP_SCOPE.INFRA_DESTRUCTIVE,
     inputSchema: {
       groupId: z.string(),
@@ -1103,7 +1108,7 @@ export const SCALING_TOOLS: ToolDef[] = [
     name: 'scaling_group_retry_purchase',
     routes: ['POST /infrastructure/scaling-groups/:id/retry-purchase'],
     description:
-      'Let a scaling group buy again after a purchase failed. A failed purchase holds the group back — shown as `purchaseHeld` by scaling_group_get — so a failing one is not retried every minute, possibly leaving a server behind each time. Call this only once the user says the cause is fixed. It buys nothing by itself: the next pass may buy, inside the same bounds and ceiling.',
+      'Let a scaling group add nodes again after a node failed to join. A failed addition holds the group back — shown as `purchaseHeld` by scaling_group_get — so a failing one is not retried every minute, possibly leaving a server behind each time. Call this only once the user says the cause is fixed. It adds nothing by itself: the next pass may add a node, inside the same bounds and ceiling.',
     scope: MCP_SCOPE.INFRA_WRITE,
     inputSchema: { groupId: z.string() },
     run: (args, ctx) =>
@@ -1141,7 +1146,7 @@ function silenceNote(
   groups?: GroupDto[],
 ): string {
   if (rows.length) {
-    return 'A decline is an answer, not a gap. Relay the `why` of the most recent decision rather than proposing the action it already refused, and relay `asks` verbatim on an alarm — nothing here clears one. On `added` and `removed` a machine actually changed and `why` names the gate that let it through; on a decline the same field names the gate that stopped it. Relay `why` in full either way, and never summarise it as "nothing happened". A decision that bought or removed a machine carries `operation`: the decision is written when the purchase is ordered, and `operation.state` says what became of it since — `running` with its `step`, `completed`, or `failed` with its `error`. Report that state, never the decision alone, and follow a running one with operation_status.';
+    return 'A decline is an answer, not a gap. Relay the `why` of the most recent decision rather than proposing the action it already refused, and relay `asks` verbatim on an alarm — nothing here clears one. On `added` and `removed` a machine actually changed and `why` names the gate that let it through; on a decline the same field names the gate that stopped it. Relay `why` in full either way, and never summarise it as "nothing happened". A decision that added or removed a machine carries `operation`: the decision is written when the new node is ordered, and `operation.state` says what became of it since — `running` with its `step`, `completed`, or `failed` with its `error`. Report that state, never the decision alone, and follow a running one with operation_status.';
   }
   if (asked === 'cluster' && groups && !groups.length) {
     return 'This cluster has no scaling group, so nothing has been decided for it. It will not grow and it will raise no alarm — say that, rather than reporting that no scaling was needed.';

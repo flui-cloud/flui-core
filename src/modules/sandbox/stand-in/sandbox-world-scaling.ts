@@ -256,7 +256,7 @@ export function exampleScalingGroup(
     acts: {
       ...mode,
       acts: true,
-      says: `This group buys through the provider API on its own, up to ${BOUNDS.max} nodes. Under that, the engine never lets the fleet's monthly list price pass the spending ceiling of €${CEILING_EUR} a month.`,
+      says: `This group adds nodes through the provider API on its own, each one a server the provider bills, up to ${BOUNDS.max} nodes. Under that, the engine never lets the fleet's monthly list price pass the spending ceiling of €${CEILING_EUR} a month.`,
     },
     requirement: { cpu: '2', memory: '4Gi' },
     purchaseHeld: null,
@@ -352,7 +352,7 @@ export function exampleScalingCatalogue(
     reading: 'read',
     ageSeconds: CATALOGUE_AGE_SECONDS,
     stale: false,
-    says: 'Hetzner Cloud publishes its machines, their prices and where each can be bought.',
+    says: 'Hetzner Cloud publishes its machines, their prices and where each can be added.',
     shapes: SHAPES.map(
       (s): MarketShape => ({
         shape: s.serverType,
@@ -365,7 +365,7 @@ export function exampleScalingCatalogue(
           sinceHours: null,
           ageSeconds: CATALOGUE_AGE_SECONDS,
         },
-        why: 'On this group’s list, and for sale where it may buy.',
+        why: 'On this group’s list, and offered where it may add nodes.',
         facts: {
           ...SPECS[s.serverType],
           hourlyEur: s.hourlyNet,

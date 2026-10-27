@@ -608,7 +608,7 @@ export const APPLICATION_TOOLS: ToolDef[] = [
     name: 'app_autoscale',
     routes: ['PUT /applications/:id/autoscaling'],
     description:
-      'Let an application’s replica count follow its CPU load, between `min` and `max` (1–20), or turn that off with `enabled: false`. Works for apps published from an image as well as from a repository. The cluster is changed at once. Replicas that find no room wait for a node, which is what makes the cluster’s scaling group buy one — say so when the group is manual. For an app deployed from flui.yaml the range lives in its manifest (`deploy.scaling`): the call is refused (409) and you should propose the manifest change instead; only `targetCPU` can be changed here. Refused (400) for an app that keeps data on each replica.',
+      'Let an application’s replica count follow its CPU load, between `min` and `max` (1–20), or turn that off with `enabled: false`. Works for apps published from an image as well as from a repository. The cluster is changed at once. Replicas that find no room wait for a node, which is what makes the cluster’s scaling group add one — say so when the group is manual. For an app deployed from flui.yaml the range lives in its manifest (`deploy.scaling`): the call is refused (409) and you should propose the manifest change instead; only `targetCPU` can be changed here. Refused (400) for an app that keeps data on each replica.',
     scope: MCP_SCOPE.APP_WRITE,
     inputSchema: {
       id: z.string(),

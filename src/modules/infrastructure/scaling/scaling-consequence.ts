@@ -16,7 +16,7 @@ import { buysOnItsOwn } from './scaling.core';
 
 const PROVISION_TAIL: Record<string, string> = {
   automatic: 'without asking you',
-  manual: 'asking a person before each purchase',
+  manual: 'asking a person before each node is added',
 };
 
 export interface ScalingAuthority {
@@ -105,7 +105,7 @@ export function scalingConsequenceOf(
   const nodes = `up to ${group.bounds.max} nodes`;
 
   if (!group.capability.hasCatalogue) {
-    return `${nodes}, and Flui buys none of them: with no catalogue there is no shape and no price to name, so this group can only say what a machine has to hold and raise an alarm for a person`;
+    return `${nodes}, and Flui adds none of them: with no catalogue there is no shape and no price to name, so this group can only say what a machine has to hold and raise an alarm for a person`;
   }
 
   const money =
@@ -114,7 +114,7 @@ export function scalingConsequenceOf(
       : `never past a spending ceiling of €${group.limits.maxMonthlyCost} a month`;
 
   if (!group.capability.canProvision) {
-    return `${nodes}, ${money} — and Flui buys none of them here: it names a shape and its price in an alarm, and a person buys it`;
+    return `${nodes}, ${money} — and Flui adds none of them here: it names a shape and its price in an alarm, and a person adds it`;
   }
 
   return `${nodes}, ${money}, ${PROVISION_TAIL[group.provision]}`;
@@ -129,16 +129,16 @@ export function scalingConsequenceOf(
  */
 export const SCALING_CONSEQUENCE =
   'This becomes the standing limit the cluster is sized against, in nodes. ' +
-  'A group set to buy automatically acts on it without asking again, up to ' +
+  'A group set to add nodes automatically acts on it without asking again, up to ' +
   'its maximum of nodes, and the engine never lets the fleet pass the ' +
   'spending ceiling underneath; one set to decide writes down what it would ' +
-  'have bought and stops. Where the provider has no create API at all, this ' +
+  'have added and stops. Where the provider has no create API at all, this ' +
   'is simply the figure an alarm quotes to a person.';
 
 export const RETRY_PURCHASE_CONSEQUENCE =
-  'The group may buy again from its next pass, inside the same node limits ' +
+  'The group may add nodes again from its next pass, inside the same node limits ' +
   'and spending ceiling. If the cause of the failure is still there, the next ' +
-  'purchase fails the same way and the group holds back again.';
+  'node fails the same way and the group holds back again.';
 
 export type ScalingModeKind = 'automatic' | 'manual' | 'alarm-only';
 
@@ -161,28 +161,28 @@ export function scalingModeLabel(facts: ScalingModeFacts): ScalingModeLabel {
   if (!facts.canProvision) {
     return {
       mode: 'alarm-only',
-      label: `Alarm only — Flui cannot buy on ${facts.provider}`,
+      label: `Alarm only — Flui cannot add nodes on ${facts.provider}`,
       attention: false,
     };
   }
   if (facts.provision !== 'automatic') {
     return {
       mode: 'manual',
-      label: 'Manual — Flui does not buy',
+      label: 'Manual — Flui does not add nodes',
       attention: true,
     };
   }
   if (!buysOnItsOwn(facts)) {
     return {
       mode: 'automatic',
-      label: 'Automatic without a spending ceiling — Flui does not buy',
+      label: 'Automatic without a spending ceiling — Flui does not add nodes',
       attention: true,
     };
   }
   const nodes = `${facts.maxNodes} ${facts.maxNodes === 1 ? 'node' : 'nodes'}`;
   return {
     mode: 'automatic',
-    label: `Automatic — buys up to ${nodes} (spending ceiling €${facts.maxMonthlyCost}/mo)`,
+    label: `Automatic — adds up to ${nodes} (spending ceiling €${facts.maxMonthlyCost}/mo)`,
     attention: false,
   };
 }
@@ -193,30 +193,34 @@ export function noGroupLabel(
   canProvision: boolean,
 ): ScalingModeLabel {
   return canProvision
-    ? { mode: 'manual', label: 'No group — Flui does not buy', attention: true }
+    ? {
+        mode: 'manual',
+        label: 'No group — Flui does not add nodes',
+        attention: true,
+      }
     : {
         mode: 'alarm-only',
-        label: `Alarm only — Flui cannot buy on ${provider}`,
+        label: `Alarm only — Flui cannot add nodes on ${provider}`,
         attention: false,
       };
 }
 
 export const APPROVE_PURCHASE_CONSEQUENCE =
-  'One machine is bought now, the one the group proposes, inside its node ' +
+  'One node is added now, the one the group proposes, inside its node ' +
   'limits and spending ceiling, and billed from the moment it is created. The group ' +
-  'stays manual: nothing else is bought on its own. If the proposal changed ' +
-  'since it was read, nothing is bought.';
+  'stays manual: nothing else is added on its own. If the proposal changed ' +
+  'since it was read, nothing is added.';
 
 export const APPROVE_REMOVAL_CONSEQUENCE =
-  'One node is drained and given back now, the one the group names, and ' +
+  'One node is drained and removed now, the one the group names, and ' +
   'billing for it stops once it is deleted. Its work moves to the nodes that ' +
   'stay. The group stays manual: nothing else is removed on its own. If the ' +
   'group names another node since it was read, nothing is removed.';
 
 export const FLOOR_CONSEQUENCE =
   'The group holds at least this many nodes, master included. Raised above ' +
-  'the nodes there are: a manual group proposes the machine and buys it only ' +
-  'once a person approves; an automatic one buys it within its maximum and ' +
+  'the nodes there are: a manual group proposes the node and adds it only ' +
+  'once a person approves; an automatic one adds it within its maximum and ' +
   'its spending ceiling. ' +
-  'Lowered: the target moves with the floor and the group gives back what is ' +
+  'Lowered: the target moves with the floor and the group removes what is ' +
   'above it — a manual group asks a person first.';

@@ -461,7 +461,7 @@ export const INFRASTRUCTURE_OPERATION_TOOLS: ToolDef[] = [
     name: 'cluster_node_remove',
     routes: ['DELETE /infrastructure/clusters/:id/workers/:nodeId'],
     description:
-      'Detach a machine the person attached themselves (a BYOS node): cordon, drain and remove it from the cluster. Any other node is refused (410): nodes Flui bought go back through the scaling group — lower its minimum with scaling_group_set, and on a manual group approve the removal with scaling_approve_removal. The drain has a 120s timeout: if a PodDisruptionBudget blocks eviction the node is removed anyway and the operation reports a DRAIN_FAILED warning — read the warnings and say so. Refused on the master and below the floor.',
+      'Detach a machine the person attached themselves (a BYOS node): cordon, drain and remove it from the cluster. Any other node is refused (410): nodes Flui added are removed through the scaling group — lower its minimum with scaling_group_set, and on a manual group approve the removal with scaling_approve_removal. The drain has a 120s timeout: if a PodDisruptionBudget blocks eviction the node is removed anyway and the operation reports a DRAIN_FAILED warning — read the warnings and say so. Refused on the master and below the floor.',
     // The one act in this area that takes a machine away from under running
     // workloads, so it sits behind the server-wide destructive flag as well as
     // behind the person's approval. Adding a node back is not the same as not

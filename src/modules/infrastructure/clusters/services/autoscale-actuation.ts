@@ -65,7 +65,7 @@ export function describeAutoscaleActuation(
       return (
         `Flui cannot create a server on ${provider}, so scaling here is an ` +
         `alert, not an action. When the cluster runs out of room Flui can name ` +
-        `the size to buy and what it costs; buying it and attaching it is yours to do.`
+        `the size to create and what it costs; creating it and attaching it is yours to do.`
       );
     case AutoscaleActuation.ALERT_ONLY_UNSIZED:
       return (
@@ -100,7 +100,7 @@ export function describeCapacityOutcome(
     case AutoscaleActuation.NOT_DRIVEN:
       return (
         'The cluster does not have room for this, and nothing adds a node on ' +
-        'its own here. Add one yourself, or let scaling buy for this cluster.'
+        'its own here. Add one yourself, or let scaling add nodes for this cluster.'
       );
     case AutoscaleActuation.ALERT_ONLY_SIZED:
     case AutoscaleActuation.ALERT_ONLY_UNSIZED:

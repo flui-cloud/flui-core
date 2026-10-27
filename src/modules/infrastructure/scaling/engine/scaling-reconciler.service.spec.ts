@@ -454,7 +454,7 @@ describe('a person approving the node a manual group gives back', () => {
     const { service, actuator } = approving(null);
     await expect(
       service.approveRemoval('g-1', { node: 'prod-worker-1' }, 'ada'),
-    ).rejects.toThrow('would now give back prod-worker-2');
+    ).rejects.toThrow('would now remove prod-worker-2');
     expect(actuator.act).not.toHaveBeenCalled();
   });
 
@@ -462,6 +462,6 @@ describe('a person approving the node a manual group gives back', () => {
     const { service } = approving(null, null);
     await expect(
       service.approveRemoval('g-1', { node: 'prod-worker-2' }, 'ada'),
-    ).rejects.toThrow('nothing to give back');
+    ).rejects.toThrow('nothing to remove');
   });
 });

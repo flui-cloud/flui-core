@@ -75,7 +75,7 @@ export function scalingBellOf(
         ...base,
         tone: 'error',
         tab: 'now',
-        title: on('a purchase failed'),
+        title: on('a node failed to join'),
         body: row.why,
         retry: true,
       };
@@ -84,7 +84,7 @@ export function scalingBellOf(
         ...base,
         tone: 'info',
         tab: 'history',
-        title: on('a machine was given back'),
+        title: on('a node was removed'),
         body: row.did,
       };
     case 'alerted':

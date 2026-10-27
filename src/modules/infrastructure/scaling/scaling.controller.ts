@@ -335,7 +335,8 @@ export class ScalingController {
   @ActionCycle({
     action: 'POST /infrastructure/scaling-groups/:id/retry-purchase',
     bind: ['id'],
-    sentence: 'let scaling group {id} buy again after a failed purchase',
+    sentence:
+      'let scaling group {id} add nodes again after a node failed to join',
     consequence: RETRY_PURCHASE_CONSEQUENCE,
   })
   @HttpCode(200)
@@ -379,7 +380,7 @@ export class ScalingController {
   @ActionCycle({
     action: 'POST /infrastructure/scaling-groups/:id/approve-purchase',
     bind: ['id'],
-    sentence: 'buy the machine scaling group {id} proposes, once',
+    sentence: 'add the node scaling group {id} proposes, once',
     consequence: APPROVE_PURCHASE_CONSEQUENCE,
   })
   @HttpCode(200)
@@ -414,7 +415,7 @@ export class ScalingController {
   @ActionCycle({
     action: 'POST /infrastructure/scaling-groups/:id/approve-removal',
     bind: ['id'],
-    sentence: 'give back the node scaling group {id} names, once',
+    sentence: 'remove the node scaling group {id} names, once',
     consequence: APPROVE_REMOVAL_CONSEQUENCE,
   })
   @HttpCode(200)

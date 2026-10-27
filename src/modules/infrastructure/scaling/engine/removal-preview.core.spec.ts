@@ -52,7 +52,7 @@ describe('what saving lower node limits does to the machines', () => {
       leaving: 1,
     });
     expect(preview.sentence).toBe(
-      'Saving gives back staging-worker-1 (cx23). The master takes apps again first, so what runs on it has somewhere to start. Started again on another machine: flui-web (Flui), it-tools.',
+      'Saving removes staging-worker-1 (cx23). The master takes apps again first, so what runs on it has somewhere to start. Started again on another machine: flui-web (Flui), it-tools.',
     );
   });
 
@@ -77,7 +77,7 @@ describe('what saving lower node limits does to the machines', () => {
     expect(preview.proceeds).toBe(false);
     expect(preview.waitsFor.map((r) => r.kind)).toEqual(['runs-flui-api']);
     expect(preview.sentence).toBe(
-      'Flui would give back staging-worker-1, but not now: the Flui API runs on it. The removal waits, and nothing on staging-worker-1 is touched.',
+      'Flui would remove staging-worker-1, but not now: the Flui API runs on it. The removal waits, and nothing on staging-worker-1 is touched.',
     );
   });
 
@@ -125,7 +125,7 @@ describe('the short form a screen shows beside its own list', () => {
     const preview = previewRemoval(input());
 
     expect(preview.headline).toBe(
-      'Saving gives back staging-worker-1 (cx23). The master takes apps again first, so what runs on it has somewhere to start.',
+      'Saving removes staging-worker-1 (cx23). The master takes apps again first, so what runs on it has somewhere to start.',
     );
     expect(preview.sentence).toContain('Started again on another machine');
   });

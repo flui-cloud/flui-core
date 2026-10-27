@@ -8,7 +8,7 @@ import {
 
 export default class ScalingApprove extends Command {
   static readonly description =
-    'Carry out, once, what a manual scaling group proposes: buy the machine it names (floor raised) or give back the node it names (floor lowered). Without --yes it only shows the proposal. Every limit an automatic group meets still holds; the group stays manual and does nothing else on its own.';
+    'Carry out, once, what a manual scaling group proposes: add the node it names (floor raised) or remove the node it names (floor lowered). Without --yes it only shows the proposal. Every limit an automatic group meets still holds; the group stays manual and does nothing else on its own.';
 
   static readonly examples = [
     '<%= config.bin %> <%= command.id %>',
@@ -30,7 +30,7 @@ export default class ScalingApprove extends Command {
     }),
     yes: Flags.boolean({
       char: 'y',
-      description: 'Buy the proposed machine, or give back the named node, now',
+      description: 'Add the proposed node, or remove the named node, now',
       default: false,
     }),
   };
@@ -52,7 +52,7 @@ export default class ScalingApprove extends Command {
 
       if (!chosen?.shape || !chosen.region) {
         console.log(
-          chalk.yellow(`\n  ${group.name} proposes nothing to buy right now.`),
+          chalk.yellow(`\n  ${group.name} proposes nothing to add right now.`),
         );
         if (preview.blocked) {
           console.log(`  ${preview.blocked.headline}`);
@@ -71,7 +71,7 @@ export default class ScalingApprove extends Command {
       );
       if (!flags.yes) {
         console.log(
-          chalk.dim('  Nothing bought. Run again with --yes to buy it once.\n'),
+          chalk.dim('  Nothing added. Run again with --yes to add it once.\n'),
         );
         return;
       }
@@ -105,11 +105,11 @@ export default class ScalingApprove extends Command {
     yes: boolean,
   ): Promise<void> {
     console.log(
-      `\n  ${group.name} would give back ${chalk.bold(node)}: it is drained and deleted, its work moves to the nodes that stay.`,
+      `\n  ${group.name} would remove ${chalk.bold(node)}: it is drained and deleted, its work moves to the nodes that stay.`,
     );
     if (!yes) {
       console.log(
-        chalk.dim('  Nothing removed. Run again with --yes to give it back.\n'),
+        chalk.dim('  Nothing removed. Run again with --yes to remove it.\n'),
       );
       return;
     }

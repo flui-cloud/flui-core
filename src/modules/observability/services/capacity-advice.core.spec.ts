@@ -61,7 +61,7 @@ describe('adviseCapacity', () => {
         },
         limits,
       ).sentence,
-    ).toContain('buys a node');
+    ).toContain('adds a node');
   });
 
   it('asks for a node when the next copy has nowhere to run', () => {

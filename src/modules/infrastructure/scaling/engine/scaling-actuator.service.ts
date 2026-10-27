@@ -281,7 +281,7 @@ export class ScalingActuatorService implements OnModuleInit {
     if (verdict.refusal === 'last-purchase-failed') {
       return {
         outcome: 'alerted',
-        did: 'Bought nothing.',
+        did: 'Added nothing.',
         why: verdict.because,
         asks: verdict.because,
         operationId: null,
@@ -300,8 +300,8 @@ export class ScalingActuatorService implements OnModuleInit {
         asks:
           assessment.asks ??
           (verdict.refusal === 'no-money-ceiling'
-            ? `${assessment.did} Approve this one purchase (Buy on the Now tab, \`flui scaling approve --yes\`), or set a monthly ceiling so the group buys on its own.`
-            : `${assessment.did} Approve this one purchase (Buy on the Now tab, \`flui scaling approve --yes\`), or set this group to buy automatically.`),
+            ? `${assessment.did} Approve adding this one node (Add on the Now tab, \`flui scaling approve --yes\`), or set a monthly ceiling so the group adds nodes on its own.`
+            : `${assessment.did} Approve adding this one node (Add on the Now tab, \`flui scaling approve --yes\`), or set this group to add nodes automatically.`),
         operationId: null,
       };
     }
@@ -330,7 +330,7 @@ export class ScalingActuatorService implements OnModuleInit {
       region,
     );
     this.logger.log(
-      `Scaling bought a ${shape ?? 'default'} for cluster ${cluster.id} (operation ${operation.id})`,
+      `Scaling added a ${shape ?? 'default'} for cluster ${cluster.id} (operation ${operation.id})`,
     );
     return {
       outcome: 'added',

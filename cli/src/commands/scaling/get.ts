@@ -26,7 +26,7 @@ import {
 
 export default class ScalingGet extends Command {
   static readonly description =
-    'Show a scaling group: its limits in nodes, what they cost with the provider prices (from the minimum to the maximum), where and what it may buy, and the spending ceiling underneath.';
+    'Show a scaling group: its limits in nodes, what they cost with the provider prices (from the minimum to the maximum), where and what it may add, and the spending ceiling underneath.';
 
   static readonly examples = [
     '<%= config.bin %> <%= command.id %>',
@@ -127,8 +127,11 @@ export default class ScalingGet extends Command {
         `  ${'paused'.padEnd(11)}${chalk.yellow('sold out')} — the machine ordered at ${new Date(group.purchaseHeld.failedAt).toLocaleTimeString()} was not available and nothing was created; availability decides again at ${new Date(group.purchaseHeld.until).toLocaleTimeString()}`,
       );
     } else if (group.purchaseHeld) {
+      const cause = group.purchaseHeld.error
+        ? ': ' + group.purchaseHeld.error
+        : '';
       console.log(
-        `  ${'held'.padEnd(11)}${chalk.yellow('buys nothing more')} — the purchase of ${new Date(group.purchaseHeld.failedAt).toLocaleString()} failed${group.purchaseHeld.error ? `: ${group.purchaseHeld.error}` : ''}`,
+        `  ${'held'.padEnd(11)}${chalk.yellow('adds nothing more')} — the node it tried to add at ${new Date(group.purchaseHeld.failedAt).toLocaleString()} failed${cause}`,
       );
       console.log(
         chalk.dim(
@@ -215,7 +218,7 @@ export default class ScalingGet extends Command {
     const purchase = group.purchase;
     if (!purchase) return;
     const colour = this.purchaseColour(purchase.state);
-    console.log(`  ${'purchase'.padEnd(11)}${colour(purchase.says)}`);
+    console.log(`  ${'new node'.padEnd(11)}${colour(purchase.says)}`);
     const logHint = chalk.dim(
       `install log: flui operation ${purchase.operation.id} --log`,
     );

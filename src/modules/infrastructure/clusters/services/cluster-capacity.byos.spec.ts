@@ -61,13 +61,17 @@ describe('a capacity plan for machines nobody sold you', () => {
   it('says why there are no sizes and no prices', async () => {
     const plan = await build({ hasAdapter: false }).getPlan('c1');
 
-    expect(plan.message).toContain('brought rather than bought');
+    expect(plan.message).toContain(
+      'attached by hand rather than added by Flui',
+    );
     expect(plan.message).toContain('attaching another machine');
   });
 
   it('leaves a cluster with a real provider untouched', async () => {
     const plan = await build({ hasAdapter: true }).getPlan('c1');
 
-    expect(plan.message).not.toContain('brought rather than bought');
+    expect(plan.message).not.toContain(
+      'attached by hand rather than added by Flui',
+    );
   });
 });

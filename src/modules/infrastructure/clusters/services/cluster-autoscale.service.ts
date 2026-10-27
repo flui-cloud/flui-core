@@ -214,6 +214,6 @@ export class ClusterAutoscaleService {
     if (actuation === AutoscaleActuation.AUTOMATIC) {
       return 'Scaling should add a node within its settle window.';
     }
-    return 'Add a worker, or set this cluster’s scaling group to buy automatically.';
+    return 'Add a worker, or set this cluster’s scaling group to add nodes automatically.';
   }
 }

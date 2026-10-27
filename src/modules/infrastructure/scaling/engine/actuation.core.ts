@@ -121,8 +121,8 @@ export function mayAct(facts: ActuationFacts): ActuationVerdict {
     return no(
       'purchase-in-flight',
       intent.kind === 'remove'
-        ? 'A machine is on its way to this cluster, so the fleet is about to be a different size. Nothing is given back until it has joined or failed — a count that is about to change is not a count to act on.'
-        : 'A machine is already on its way to this cluster. Nothing else is bought until it has joined or failed — an app stays stuck for the whole of a provisioning, and a loop that did not wait would buy one node a minute for it.',
+        ? 'A machine is on its way to this cluster, so the fleet is about to be a different size. Nothing is removed until it has joined or failed — a count that is about to change is not a count to act on.'
+        : 'A machine is already on its way to this cluster. Nothing else is added until it has joined or failed — an app stays stuck for the whole of a provisioning, and a loop that did not wait would add one node a minute for it.',
     );
   }
 
@@ -157,7 +157,7 @@ export function mayAct(facts: ActuationFacts): ActuationVerdict {
   ) {
     return no(
       'outside-the-network',
-      `The shape that won is in ${intent.region}, which this cluster's private network does not reach (it reaches ${facts.reachableRegions.join(', ')}). A machine bought there could not join, so buying it is left to a person who can also arrange the network.`,
+      `The shape that won is in ${intent.region}, which this cluster's private network does not reach (it reaches ${facts.reachableRegions.join(', ')}). A node added there could not join, so adding it is left to a person who can also arrange the network.`,
     );
   }
 
@@ -172,7 +172,7 @@ export function mayAct(facts: ActuationFacts): ActuationVerdict {
     act: true,
     refusal: null,
     because:
-      'This group buys automatically, and the ladder chose within its ceilings.',
+      'This group adds nodes automatically, and the ladder chose within its ceilings.',
   };
 }
 
@@ -188,7 +188,7 @@ function justAddedRefusal(facts: ActuationFacts): ActuationVerdict | null {
   ) {
     return no(
       'just-added',
-      `${joinedPhrase(facts.lastJoinedAt ?? null)} Nothing is given back within ${HOLD_AFTER_ADD_MINUTES} minutes of a node joining — the load that called for it rarely leaves that fast, and giving it back only to buy it again is paid for twice.`,
+      `${joinedPhrase(facts.lastJoinedAt ?? null)} Nothing is removed within ${HOLD_AFTER_ADD_MINUTES} minutes of a node joining — the load that called for it rarely leaves that fast, and removing it only to add it again is paid for twice.`,
     );
   }
   return null;
@@ -201,8 +201,8 @@ function consentRefusal(facts: ActuationFacts): ActuationVerdict | null {
     return no(
       'group-is-manual',
       intent.kind === 'remove'
-        ? 'This group is manual: it names the node it would give back and removes nothing on its own. A person can approve this removal, or set the group to act automatically.'
-        : 'This group is manual: it names the machine and buys nothing on its own. A person can approve this one purchase, or set the group to buy automatically.',
+        ? 'This group is manual: it names the node it would remove and removes nothing on its own. A person can approve this removal, or set the group to act automatically.'
+        : 'This group is manual: it names the machine and adds nothing on its own. A person can approve adding this one node, or set the group to add nodes automatically.',
     );
   }
 
@@ -216,7 +216,7 @@ function consentRefusal(facts: ActuationFacts): ActuationVerdict | null {
     return no(
       'no-money-ceiling',
       intent.kind === 'remove'
-        ? 'This group is set to automatic but names no monthly ceiling in euros, so it acts on nothing on its own — it gives nothing back either. Set a monthly ceiling to let it act.'
+        ? 'This group is set to automatic but names no monthly ceiling in euros, so it acts on nothing on its own — it removes nothing either. Set a monthly ceiling to let it act.'
         : NO_MONEY_CEILING,
     );
   }
@@ -240,7 +240,7 @@ function failedPurchaseRefusal(facts: ActuationFacts): ActuationVerdict | null {
     const cause = error ? `: ${withoutTrailingStops(error)}.` : '.';
     return no(
       'last-purchase-failed',
-      `The last machine Flui tried to add here failed ${when}${cause} Nothing more is bought until that is looked at — a failing purchase retried every minute can leave a server behind each time. Once the cause is fixed, ask this group to try again.`,
+      `The last machine Flui tried to add here failed ${when}${cause} Nothing more is added until that is looked at — a failing addition retried every minute can leave a server behind each time. Once the cause is fixed, ask this group to try again.`,
     );
   }
   return null;
@@ -258,7 +258,7 @@ function clock(at: Date): string {
 function joinedPhrase(at: Date | null): string {
   if (!at) return 'A node joined moments ago.';
   const until = new Date(at.getTime() + HOLD_AFTER_ADD_MINUTES * 60_000);
-  return `A node joined at ${clock(at)}; nothing goes back before ${clock(until)}.`;
+  return `A node joined at ${clock(at)}; nothing is removed before ${clock(until)}.`;
 }
 
 function withoutTrailingStops(text: string): string {

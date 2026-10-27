@@ -123,7 +123,7 @@ describe('ShapeOrderingService', () => {
       ['cx33', true],
       ['cpx41', false],
     ]);
-    expect(result.shapes[1].why).toContain('may not buy');
+    expect(result.shapes[1].why).toContain('may not add');
   });
 
   describe('the reading’s age', () => {
@@ -184,7 +184,7 @@ describe('ShapeOrderingService', () => {
     const result = await service.order(group({ shapes: ['cx33'] }));
 
     expect(result.shapes[0].why).toBe(
-      'Down where this group may buy. Up in hel1, where this group may not buy.',
+      'Down where this group may add nodes. Up in hel1, where this group may not add nodes.',
     );
     expect(result.shapes[0].outlook).toMatchObject({
       upIn: ['hel1'],

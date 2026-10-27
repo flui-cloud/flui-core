@@ -372,7 +372,7 @@ describe('the provider asymmetry reaches the model', () => {
   };
 
   it('lets an agent buy only where the provider declares it can', async () => {
-    expect(await meansOf(GROUP)).toContain('can buy servers');
+    expect(await meansOf(GROUP)).toContain('can add servers');
     const { data } = await call(
       'scaling_group_get',
       { groupId: 'g1' },
@@ -384,7 +384,7 @@ describe('the provider asymmetry reaches the model', () => {
 
   it('tells it to warn, not to scale, where there is a catalogue and no create API', async () => {
     const means = await meansOf(CONTABO);
-    expect(means).toContain('CANNOT buy');
+    expect(means).toContain('CANNOT add');
     expect(means).toContain('naming a shape and its price');
     const { data } = await call(
       'scaling_group_get',
@@ -405,7 +405,7 @@ describe('the provider asymmetry reaches the model', () => {
   it('reads the difference off the flags and never off the provider name', () => {
     const named = { ...CONTABO.capability, provider: 'hetzner' };
     expect(scalingConsequenceOf({ ...CONTABO, capability: named })).toContain(
-      'Flui buys none of them here',
+      'Flui adds none of them here',
     );
   });
 });
@@ -969,7 +969,7 @@ describe('the sentence a person answers is derived, never written down', () => {
   it('says who is asked when the group buys nothing on its own', () => {
     expect(
       scalingConsequenceOf({ ...GROUP, provision: 'manual' as const }),
-    ).toContain('asking a person before each purchase');
+    ).toContain('asking a person before each node is added');
   });
 
   it('turns into an alarm where nothing can be provisioned', () => {
@@ -1028,7 +1028,7 @@ describe('what the descriptions teach a model', () => {
     ['scaling_overview', 'FLOOR and not the bill'],
     ['scaling_overview', 'NAMES the groups its cluster holds'],
     ['scaling_group_get', 'WOULD THIS GROUP DO ANYTHING'],
-    ['scaling_group_get', 'a group set only to decide will never make'],
+    ['scaling_group_get', 'a group set only to decide will never add'],
     ['scaling_group_get', 'that order will never proceed'],
     ['scaling_overview', 'is NOT 0'],
     ['scaling_overview', 'rather than as calm'],

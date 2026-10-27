@@ -167,7 +167,7 @@ describe('the gate between deciding and acting', () => {
     expect(verdict.act).toBe(false);
     expect(verdict.refusal).toBe('just-added');
     expect(verdict.because).toContain(
-      'A node joined at 14:18 UTC; nothing goes back before 14:28 UTC.',
+      'A node joined at 14:18 UTC; nothing is removed before 14:28 UTC.',
     );
   });
 
@@ -252,7 +252,7 @@ describe('the gate between deciding and acting', () => {
   it('gives nothing back on its own either without a money ceiling', () => {
     const verdict = mayAct(facts({ monthlyCap: null, intent: remove() }));
     expect(verdict).toMatchObject({ act: false, refusal: 'no-money-ceiling' });
-    expect(verdict.because).toContain('gives nothing back');
+    expect(verdict.because).toContain('removes nothing either');
   });
 
   it('reads a ceiling of zero as no ceiling', () => {

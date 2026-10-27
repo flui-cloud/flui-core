@@ -195,8 +195,8 @@ export function answerWhatIf(
       node,
       largest,
       sentence: many
-        ? `All ${ask.replicas} replicas fit on the nodes already there: nothing is bought.`
-        : `Fits on ${node}: nothing is bought.`,
+        ? `All ${ask.replicas} replicas fit on the nodes already there: no node is added.`
+        : `Fits on ${node}: no node is added.`,
     };
   }
 
@@ -219,8 +219,8 @@ export function answerWhatIf(
       monthlyEur: monthly,
       largest,
       sentence: automatic
-        ? `${miss}: Flui would buy a ${shape} in ${region}${priced(monthly)}.`
-        : `${miss}. The group is manual: it would propose a ${shape} in ${region}${priced(monthly)} and buy nothing until a person does.`,
+        ? `${miss}: Flui would add a ${shape} in ${region}${priced(monthly)}.`
+        : `${miss}. The group is manual: it would propose a ${shape} in ${region}${priced(monthly)} and add nothing until a person does.`,
     };
   }
 
@@ -230,7 +230,7 @@ export function answerWhatIf(
       ...base,
       verdict: 'nothing-hosts',
       largest,
-      sentence: `${miss}, and this cluster has no scaling group to buy one: it would wait for room.`,
+      sentence: `${miss}, and this cluster has no scaling group to add one: it would wait for room.`,
     };
   }
 
@@ -251,10 +251,10 @@ function nothingHostsSentence(
   ask: WhatIfAsk,
 ): string {
   if (holds(largestBuyable(input), ask)) {
-    return `${miss}, and no machine the group may buy that could take it can be had right now: it would wait for room.`;
+    return `${miss}, and no machine the group may add that could take it can be had right now: it would wait for room.`;
   }
   if (holds(largestBuyable(input, false), ask)) {
     return `${miss}, and a machine that could take it would pass the group's spending ceiling of €${input.group.maxMonthlyCost} a month: it would wait until the spending ceiling is raised.`;
   }
-  return `${miss}, and it is bigger than any machine the group may buy: it would wait for room.`;
+  return `${miss}, and it is bigger than any machine the group may add: it would wait for room.`;
 }

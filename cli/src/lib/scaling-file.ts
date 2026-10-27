@@ -353,7 +353,7 @@ function readStandingOrders(
 
     if (kind === 'expand' && replaces) {
       problems.push(
-        `\`${at}\` expands: it buys and adds without draining anything, so it names no node to replace`,
+        `\`${at}\` expands: it only adds, without draining anything, so it names no node to replace`,
       );
     }
     if (kind === 'replace' && !replaces) {

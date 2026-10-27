@@ -542,10 +542,10 @@ describe('reading a group back', () => {
     groups.findOne?.mockResolvedValue(stored({ provision: 'manual' }));
     const dto = await service.get('g-1');
     expect(dto.acts.acts).toBe(false);
-    expect(dto.acts.says).toContain('Nothing is bought on its own');
+    expect(dto.acts.says).toContain('Nothing is added on its own');
     expect(dto.acts).toMatchObject({
       mode: 'manual',
-      label: 'Manual — Flui does not buy',
+      label: 'Manual — Flui does not add nodes',
       attention: true,
     });
   });
@@ -1060,7 +1060,7 @@ describe('a purchase on its way', () => {
       purchaseInFlight(decision, op({}), new Date('2026-09-25T13:36:00Z')),
     ).toMatchObject({
       state: 'buying',
-      says: 'Buying cx23 in fsn1 — installing (60%)',
+      says: 'Adding cx23 in fsn1 — installing (60%)',
     });
   });
 
@@ -1094,7 +1094,7 @@ describe('a purchase on its way', () => {
       ),
     ).toMatchObject({
       state: 'failed',
-      says: 'Buying cx23 in fsn1 failed: SSH key rejected',
+      says: 'Adding cx23 in fsn1 failed: SSH key rejected',
     });
   });
 });
@@ -1155,7 +1155,7 @@ describe('what a person does to a group is written in its decision log', () => {
       .catch(() => undefined);
     expect(decisions.save?.mock.calls[0]?.[0]).toMatchObject({
       force: 'person',
-      did: 'dawit@example.com let the group buy again.',
+      did: 'dawit@example.com let the group add nodes again.',
     });
   });
 });

@@ -224,7 +224,7 @@ export class ClusterCapacityService {
     hasProvider: boolean;
   }): string | undefined {
     if (!ctx.hasProvider) {
-      return 'The machines of this cluster were brought rather than bought, so there is no size list and no price: what is shown is the room the cluster has now. Adding capacity means attaching another machine.';
+      return 'The machines of this cluster were attached by hand rather than added by Flui, so there is no size list and no price: what is shown is the room the cluster has now. Adding capacity means attaching another machine.';
     }
     if (!ctx.currentServerType) {
       return 'Could not resolve current master server type from provider — costs are shown as n/a.';

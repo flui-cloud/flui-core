@@ -31,7 +31,7 @@ export function lostNodeOperationMessage(
   const lost =
     'Nothing was carrying this any more: the job behind it was lost, usually because the API that ran it was stopped.';
   if (op.operationType === OperationType.ADD_WORKER) {
-    return `${lost} Check the provider for a server that never joined the cluster before buying again.`;
+    return `${lost} Check the provider for a server that never joined the cluster before adding another.`;
   }
   const node = op.nodeName ?? 'The node';
   if (uncordon === 'done') {

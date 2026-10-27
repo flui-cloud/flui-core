@@ -8,7 +8,7 @@ import {
 
 export default class ScalingRetry extends Command {
   static readonly description =
-    'Let a scaling group buy again after a purchase failed. A failed purchase holds the group back so it is not retried every minute; run this once the cause is fixed. It buys nothing by itself — the next pass may, inside the same limits.';
+    'Let a scaling group add nodes again after a node failed to join. A failed addition holds the group back so it is not retried every minute; run this once the cause is fixed. It adds nothing by itself — the next pass may, inside the same limits.';
 
   static readonly examples = [
     '<%= config.bin %> <%= command.id %>',
@@ -40,7 +40,7 @@ export default class ScalingRetry extends Command {
       if (!group.purchaseHeld) {
         console.log(
           chalk.dim(
-            `\n  ${group.name} is not held back: no failed purchase is waiting on anyone.\n`,
+            `\n  ${group.name} is not held back: no failed addition is waiting on anyone.\n`,
           ),
         );
         return;
@@ -48,11 +48,13 @@ export default class ScalingRetry extends Command {
 
       const after = await client.retryPurchase(group.id);
       console.log(
-        chalk.green(`\n  ✔ ${after.name} may buy again from its next pass.`),
+        chalk.green(
+          `\n  ✔ ${after.name} may add nodes again from its next pass.`,
+        ),
       );
       console.log(
         chalk.dim(
-          '  If the cause is still there, the next purchase fails the same way and it holds back again.',
+          '  If the cause is still there, the next node it adds fails the same way and it holds back again.',
         ),
       );
       console.log(

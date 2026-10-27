@@ -367,7 +367,7 @@ export const SANDBOX_ALLOW_EXAMPLE: SandboxAllowRule[] = [
     verbs: ['GET'],
     pattern: '/infrastructure/scaling-groups/:id/catalogue',
     level: 'stand-in',
-    why: 'See the machines the example group may buy, and what they cost.',
+    why: 'See the machines the example group may add, and what they cost.',
   },
   {
     verbs: ['GET'],
