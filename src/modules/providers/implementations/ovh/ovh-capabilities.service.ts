@@ -21,6 +21,7 @@ import { ovhRegionCode, ovhRegionMeta } from './ovh-region-metadata';
 import { ICredentialProvider } from '../../interfaces/credential-provider.interface';
 import { CloudProvider } from '../../enums/cloud-provider.enum';
 import { NodeTopology } from '../../core/node-topology';
+import { HaTopology } from '../../core/ha-topology';
 
 /**
  * Flui-native OVH capabilities — delegates catalog/regions/pricing to
@@ -195,6 +196,10 @@ export class OvhCapabilitiesService implements IProviderCapabilitiesService {
 
   getLogoContentType(): string {
     return this.inner.getLogoContentType();
+  }
+
+  haTopologies(): HaTopology[] {
+    return [];
   }
 
   nodeTopology(): NodeTopology | null {

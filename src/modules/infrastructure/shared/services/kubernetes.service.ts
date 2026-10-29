@@ -107,6 +107,9 @@ const timeOfEvent = (event: k8s.CoreV1Event): number =>
 /** Long enough for the scheduler to have tried every node, short enough not to look like a hang. */
 const ROOM_SETTLE_SECONDS = 45;
 
+/** The busybox K3s already keeps on every node. */
+export const NODE_PROBE_IMAGE = 'rancher/mirrored-library-busybox:1.36.1';
+
 const DNS_RESPREAD_ANNOTATION = 'flui.cloud/dns-respread-at';
 
 @Injectable()
@@ -2854,6 +2857,30 @@ export class KubernetesService {
     hostDir: string,
     script: string,
   ): Promise<string> {
+    return this.runImageOnNode(kubeconfigContent, nodeName, {
+      image: NODE_PROBE_IMAGE,
+      command: ['sh', '-c', script],
+      hostDir,
+      mountPath: '/host',
+    });
+  }
+
+  /**
+   * Runs one container to completion on a given node and returns what it
+   * printed, for images without a shell. With `hostNetwork` it reaches what
+   * the node only serves on its loopback, and measures the node's own links.
+   */
+  async runImageOnNode(
+    kubeconfigContent: string,
+    nodeName: string,
+    run: {
+      image: string;
+      command: string[];
+      hostDir?: string;
+      mountPath?: string;
+      hostNetwork?: boolean;
+    },
+  ): Promise<string> {
     const { coreApi } = this.getKubeClient(kubeconfigContent);
     const namespace = 'kube-system';
     const podName = `flui-node-probe-${randomBytes(4).toString('hex')}`;
@@ -2874,14 +2901,19 @@ export class KubernetesService {
           nodeName,
           restartPolicy: 'Never',
           enableServiceLinks: false,
+          hostNetwork: run.hostNetwork ?? false,
           tolerations: [{ operator: 'Exists' }],
-          volumes: [{ name: 'host', hostPath: { path: hostDir } }],
+          volumes: run.hostDir
+            ? [{ name: 'host', hostPath: { path: run.hostDir } }]
+            : [],
           containers: [
             {
               name: 'probe',
-              image: 'rancher/mirrored-library-busybox:1.36.1',
-              command: ['sh', '-c', script],
-              volumeMounts: [{ name: 'host', mountPath: '/host' }],
+              image: run.image,
+              command: run.command,
+              volumeMounts: run.hostDir
+                ? [{ name: 'host', mountPath: run.mountPath ?? '/host' }]
+                : [],
             },
           ],
         },

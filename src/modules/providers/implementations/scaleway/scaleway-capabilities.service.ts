@@ -10,6 +10,7 @@ import { ProviderRegion } from '../../../management/entities/provider-region.ent
 import { ProviderCapabilities } from '../../../management/entities/provider-capabilities.entity';
 import { CloudProvider } from '../../enums/cloud-provider.enum';
 import { NodeTopology } from '../../core/node-topology';
+import { HaTopology } from '../../core/ha-topology';
 import { toScalewayZone } from './scaleway-zone.util';
 import { ICredentialProvider } from '../../interfaces/credential-provider.interface';
 import {
@@ -188,6 +189,10 @@ export class ScalewayCapabilitiesService
         message: 'Validation failed: ' + error.message,
       };
     }
+  }
+
+  haTopologies(): HaTopology[] {
+    return [];
   }
 
   nodeTopology(location: string | null | undefined): NodeTopology | null {

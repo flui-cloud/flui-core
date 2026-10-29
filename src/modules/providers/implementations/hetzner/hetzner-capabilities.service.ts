@@ -15,6 +15,7 @@ import { ValidationResultDto } from '../../../management/dto/validation-result.d
 import { ProviderRegion } from '../../../management/entities/provider-region.entity';
 import { CloudProvider } from '../../enums/cloud-provider.enum';
 import { NodeTopology } from '../../core/node-topology';
+import { HaTopology } from '../../core/ha-topology';
 import { networkZoneForRegion } from '../../core/network-zones';
 import { ProviderCapabilities } from '../../../management/entities/provider-capabilities.entity';
 import { ICredentialProvider } from '../../interfaces/credential-provider.interface';
@@ -192,6 +193,22 @@ export class HetznerCapabilitiesService
       supportedInstanceTypes: instanceTypes.map((type) => type.id),
       supportedRegions: regions,
     };
+  }
+
+  /**
+   * Measured: Falkenstein and Nuremberg are 3 ms
+   * apart, Helsinki 35 ms from both, so Helsinki votes and never holds the
+   * copy a write waits for.
+   */
+  haTopologies(): HaTopology[] {
+    return [
+      {
+        region: 'eu-central',
+        zones: ['fsn1', 'nbg1', 'hel1'],
+        dataZones: ['fsn1', 'nbg1'],
+        validated: true,
+      },
+    ];
   }
 
   /** Hetzner has no zones inside a location, so the location is the failure domain. */
