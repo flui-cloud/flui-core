@@ -2,6 +2,8 @@ import { z } from 'zod';
 import { MCP_SCOPE } from '../constants/mcp-scopes';
 import { defineTool, resolveClusterId, ToolDef } from './mcp-tool.util';
 
+const enc = encodeURIComponent;
+
 /** Cluster discovery (read tier) — the entry point for any cluster-scoped tool. */
 export const INFRASTRUCTURE_TOOLS: ToolDef[] = [
   defineTool({
@@ -181,5 +183,15 @@ export const INFRASTRUCTURE_TOOLS: ToolDef[] = [
         ...(args.from ? { from: args.from } : {}),
         ...(args.includeStopped ? { includeStopped: true } : {}),
       }),
+  }),
+  defineTool({
+    name: 'cluster_ha_get',
+    routes: ['GET /infrastructure/clusters/:id/high-availability'],
+    description:
+      'What a cluster survives with the nodes it has now (pass the cluster id), as plain sentences in `survives` and `doesNotSurvive`, and its `level`: `standard` or `three-locations` (a server in each of three locations of a validated region, copies of data in the two closest, the third voting only). `topology` names each location with its role, servers and hosts for data, or is null with the reason in `unsupported`; `missing` lists the roles still needed (`server`, `data-host`), where and why; `warnings` flags two servers, which are more fragile than one; cluster_ha_add_node adds what is missing. `observed` is what Flui last measured (as of `observed.at`): where the etcd leader is, the round trip in ms between each pair of locations, and the server Flui reaches the cluster through. Read-only.',
+    scope: MCP_SCOPE.INFRA_READ,
+    inputSchema: { id: z.string() },
+    run: (args, ctx) =>
+      ctx.api.get(`/infrastructure/clusters/${enc(args.id)}/high-availability`),
   }),
 ];

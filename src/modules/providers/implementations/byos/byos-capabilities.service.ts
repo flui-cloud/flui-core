@@ -7,6 +7,7 @@ import {
 import { ProviderRegion } from '../../../management/entities/provider-region.entity';
 import { CloudProvider } from '../../enums/cloud-provider.enum';
 import { NodeTopology } from '../../core/node-topology';
+import { HaTopology } from '../../core/ha-topology';
 import { ProviderCapabilities } from '../../../management/entities/provider-capabilities.entity';
 import {
   ProviderCredentials,
@@ -58,6 +59,10 @@ export class ByosCapabilitiesService implements IProviderCapabilitiesService {
 
   getLogoContentType(): string {
     return 'image/svg+xml';
+  }
+
+  haTopologies(): HaTopology[] {
+    return [];
   }
 
   nodeTopology(): NodeTopology | null {

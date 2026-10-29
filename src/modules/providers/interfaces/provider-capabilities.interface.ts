@@ -3,6 +3,7 @@ import { ProviderRegion } from '../../management/entities/provider-region.entity
 import { ProviderCredentials } from '../../management/entities/credentials.entity';
 import { ValidationResultDto } from '../../management/dto/validation-result.dto';
 import { NodeTopology } from '../core/node-topology';
+import { HaTopology } from '../core/ha-topology';
 
 export interface IProviderCapabilitiesService {
   getAvailableRegions(): Promise<ProviderRegion[]>;
@@ -23,6 +24,11 @@ export interface IProviderCapabilitiesService {
    * the provider has no declared answer, so nothing guesses a failure domain.
    */
   nodeTopology(location: string | null | undefined): NodeTopology | null;
+  /**
+   * The highly available layouts Flui has measured and validated on this
+   * provider, by region. Empty means none yet.
+   */
+  haTopologies(): HaTopology[];
   getLogo(): Buffer;
   getLogoContentType(): string;
   /**
