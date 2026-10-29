@@ -20,6 +20,7 @@ import { buildOvhOpenStackClient } from './ovh-openstack-client.factory';
 import { ovhRegionCode, ovhRegionMeta } from './ovh-region-metadata';
 import { ICredentialProvider } from '../../interfaces/credential-provider.interface';
 import { CloudProvider } from '../../enums/cloud-provider.enum';
+import { NodeTopology } from '../../core/node-topology';
 
 /**
  * Flui-native OVH capabilities — delegates catalog/regions/pricing to
@@ -194,6 +195,10 @@ export class OvhCapabilitiesService implements IProviderCapabilitiesService {
 
   getLogoContentType(): string {
     return this.inner.getLogoContentType();
+  }
+
+  nodeTopology(): NodeTopology | null {
+    return null;
   }
 
   getStaticCapabilities(): ProviderCapabilities {

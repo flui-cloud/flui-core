@@ -2313,6 +2313,77 @@ export class KubernetesService {
     );
   }
 
+  /** The labels of every node, by node name. */
+  async listNodeLabels(
+    kubeconfigContent: string,
+  ): Promise<Map<string, Record<string, string>>> {
+    const { coreApi } = this.getKubeClient(kubeconfigContent);
+    const nodes = (await coreApi.listNode()).items ?? [];
+    return new Map(
+      nodes
+        .filter((node) => node.metadata?.name)
+        .map((node) => [node.metadata!.name!, node.metadata?.labels ?? {}]),
+    );
+  }
+
+  /** The annotations of every node, by node name. */
+  async listNodeAnnotations(
+    kubeconfigContent: string,
+  ): Promise<Map<string, Record<string, string>>> {
+    const { coreApi } = this.getKubeClient(kubeconfigContent);
+    const nodes = (await coreApi.listNode()).items ?? [];
+    return new Map(
+      nodes
+        .filter((node) => node.metadata?.name)
+        .map((node) => [
+          node.metadata!.name!,
+          node.metadata?.annotations ?? {},
+        ]),
+    );
+  }
+
+  /** Adds labels to a node; labels not named are kept. */
+  async addNodeLabels(
+    kubeconfigContent: string,
+    nodeName: string,
+    labels: Record<string, string>,
+  ): Promise<void> {
+    await this.mergeNodeMetadata(kubeconfigContent, nodeName, { labels });
+  }
+
+  /** Adds annotations to a node; annotations not named are kept. */
+  async addNodeAnnotations(
+    kubeconfigContent: string,
+    nodeName: string,
+    annotations: Record<string, string>,
+  ): Promise<void> {
+    await this.mergeNodeMetadata(kubeconfigContent, nodeName, { annotations });
+  }
+
+  private async mergeNodeMetadata(
+    kubeconfigContent: string,
+    nodeName: string,
+    metadata: {
+      labels?: Record<string, string>;
+      annotations?: Record<string, string>;
+    },
+  ): Promise<void> {
+    const client = this.objectApi(kubeconfigContent);
+    const patch = {
+      apiVersion: 'v1',
+      kind: 'Node',
+      metadata: { name: nodeName, ...metadata },
+    } as k8s.KubernetesObject;
+    await client.patch(
+      patch,
+      undefined,
+      undefined,
+      'flui-api',
+      undefined,
+      k8s.PatchStrategy.MergePatch,
+    );
+  }
+
   /**
    * Mark a node unschedulable. Existing pods continue to run; new ones are
    * not placed on it. Used as a precaution before power-cycling a node during

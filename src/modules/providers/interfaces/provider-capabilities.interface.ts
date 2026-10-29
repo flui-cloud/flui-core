@@ -2,6 +2,7 @@ import { ProviderCapabilities } from '../../management/entities/provider-capabil
 import { ProviderRegion } from '../../management/entities/provider-region.entity';
 import { ProviderCredentials } from '../../management/entities/credentials.entity';
 import { ValidationResultDto } from '../../management/dto/validation-result.dto';
+import { NodeTopology } from '../core/node-topology';
 
 export interface IProviderCapabilitiesService {
   getAvailableRegions(): Promise<ProviderRegion[]>;
@@ -17,6 +18,11 @@ export interface IProviderCapabilitiesService {
    * Safe to call without credentials. Use for listing all available providers.
    */
   getStaticCapabilities(): ProviderCapabilities;
+  /**
+   * The zone and region a server placed at this location sits in. Null when
+   * the provider has no declared answer, so nothing guesses a failure domain.
+   */
+  nodeTopology(location: string | null | undefined): NodeTopology | null;
   getLogo(): Buffer;
   getLogoContentType(): string;
   /**

@@ -56,6 +56,10 @@ import { SharedStorageExportScheduler } from './schedulers/shared-storage-export
 import { ClusterDnsSpreadScheduler } from './schedulers/cluster-dns-spread.scheduler';
 import { SharedVolumeModeScheduler } from './schedulers/shared-volume-mode.scheduler';
 import { SharedVolumeModeReconciler } from './services/shared-volume-mode.reconciler';
+import { NodeTopologyScheduler } from './schedulers/node-topology.scheduler';
+import { NodeTopologyReconciler } from './services/node-topology.reconciler';
+import { FluiLocalDirectIoScheduler } from './schedulers/flui-local-direct-io.scheduler';
+import { FluiLocalDirectIoReconciler } from './services/flui-local-direct-io.reconciler';
 import { ClusterDnsSpreadReconciler } from './services/cluster-dns-spread.reconciler';
 import { KubeconfigEndpointPromoter } from './services/kubeconfig-endpoint.promoter';
 import { KubeconfigEndpointScheduler } from './schedulers/kubeconfig-endpoint.scheduler';
@@ -202,6 +206,10 @@ import { IamModule } from '../../iam/iam.module';
     ClusterDnsSpreadScheduler,
     SharedVolumeModeReconciler,
     SharedVolumeModeScheduler,
+    NodeTopologyReconciler,
+    NodeTopologyScheduler,
+    FluiLocalDirectIoReconciler,
+    FluiLocalDirectIoScheduler,
     KubeconfigEndpointPromoter,
     KubeconfigEndpointScheduler,
     ClusterPowerManagementService,
