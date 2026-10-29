@@ -2974,6 +2974,23 @@ export class KubernetesService {
     }
   }
 
+  /** The kubelet's own summary of a node (`stats/summary`), as it publishes it; null when the node does not answer. */
+  async nodeStatsSummary(
+    kubeconfigContent: string,
+    nodeName: string,
+  ): Promise<unknown> {
+    const { coreApi } = this.getKubeClient(kubeconfigContent);
+    try {
+      const raw: unknown = await coreApi.connectGetNodeProxyWithPath({
+        name: nodeName,
+        path: 'stats/summary',
+      });
+      return typeof raw === 'string' ? JSON.parse(raw) : raw;
+    } catch {
+      return null;
+    }
+  }
+
   /** One key of a ConfigMap's data, or null when the ConfigMap or the key is missing. */
   async readConfigMapKey(
     kubeconfigContent: string,

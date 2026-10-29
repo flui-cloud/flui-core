@@ -115,6 +115,7 @@ import { IamModule } from '../../iam/iam.module';
 
 import { HaNodesController } from './ha-nodes.controller';
 import { HaNodesService } from './services/ha-nodes.service';
+import { NodeDisksService } from './services/node-disks.service';
 import { ClusterHaModule } from '../../cluster-ha/cluster-ha.module';
 
 @Module({
@@ -189,6 +190,7 @@ import { ClusterHaModule } from '../../cluster-ha/cluster-ha.module';
   ],
   providers: [
     HaNodesService,
+    NodeDisksService,
     NodeLifeEventsService,
     LostNodeOperationsService,
     MasterEvacuationService,

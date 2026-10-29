@@ -42,6 +42,7 @@ const ARGS: Record<string, Record<string, unknown>> = {
   cluster_replicated_volumes_get: { id: 'c1' },
   cluster_replicated_volumes_enable: { id: 'c1', sizeGiB: 20 },
   cluster_ha_get: { id: 'c1' },
+  cluster_disks_get: { id: 'c1' },
   cluster_ha_add_node: { id: 'c1', role: 'server', zone: 'hel1' },
   dns_wildcard_status: {},
   dns_wildcard_publish: {},
@@ -596,6 +597,7 @@ describe('strada B — the whole tool catalogue goes over the wire', () => {
       'POST /infrastructure/clusters/c1/replicated-volumes',
     ],
     ['cluster_ha_get', 'GET /infrastructure/clusters/c1/high-availability'],
+    ['cluster_disks_get', 'GET /infrastructure/clusters/c1/storage/disks'],
     [
       'cluster_ha_add_node',
       'POST /infrastructure/clusters/c1/high-availability/nodes',
