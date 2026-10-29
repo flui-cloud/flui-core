@@ -101,6 +101,12 @@ export default class EnvStorage extends Command {
       console.log(
         `   ${chalk.bold('Client opts:')} ${chalk.dim(s.nfs.mountOptions)}`,
       );
+      if (s.nfs.durability) {
+        const say = s.nfs.confirmsBeforeDisk ? chalk.yellow : chalk.dim;
+        console.log(
+          `   ${chalk.bold('Durability:')}  ${say(s.nfs.durability)}`,
+        );
+      }
     }
 
     if (s.pvcs) {

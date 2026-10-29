@@ -293,7 +293,7 @@ export const INFRASTRUCTURE_OPERATION_TOOLS: ToolDef[] = [
     name: 'cluster_storage_status',
     routes: ['GET /infrastructure/clusters/:id/storage'],
     description:
-      "The cluster's shared-storage layer: the backing volume and its size, the NFS export and a summary of the claims on it. Read it before cluster_storage_expand — a volume can only ever grow, so the new size has to be chosen once and knowingly.",
+      "The cluster's shared-storage layer: the backing volume and its size, the NFS export, what it promises about confirmed writes (`nfs.durability`: when `confirmsBeforeDisk` is true the newest writes can be lost if the master stops abruptly, so databases belong on dedicated storage) and a summary of the claims on it. Read it before cluster_storage_expand — a volume can only ever grow, so the new size has to be chosen once and knowingly.",
     scope: MCP_SCOPE.INFRA_READ,
     inputSchema: clusterArg,
     run: async (args, ctx) => {
