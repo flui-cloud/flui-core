@@ -6,6 +6,7 @@ import {
 } from '../../interfaces/provider-capabilities.interface';
 import { ProviderRegion } from '../../../management/entities/provider-region.entity';
 import { CloudProvider } from '../../enums/cloud-provider.enum';
+import { NodeTopology } from '../../core/node-topology';
 import { ProviderCapabilities } from '../../../management/entities/provider-capabilities.entity';
 import {
   ProviderCredentials,
@@ -57,6 +58,10 @@ export class ByosCapabilitiesService implements IProviderCapabilitiesService {
 
   getLogoContentType(): string {
     return 'image/svg+xml';
+  }
+
+  nodeTopology(): NodeTopology | null {
+    return null;
   }
 
   getStaticCapabilities(): ProviderCapabilities {

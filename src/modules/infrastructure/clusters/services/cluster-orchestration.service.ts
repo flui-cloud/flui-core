@@ -40,6 +40,7 @@ import { SubnetsService } from '../../vnets/services/subnets.service';
 import { VNetsService } from '../../vnets/services/vnets.service';
 import { NativeSSHConnectionService } from 'src/modules/terminal/services/native-ssh-connection.service';
 import { CapabilitiesProviderFactory } from 'src/modules/providers/core/factories/capabilities-provider.factory';
+import { NodeTopology } from 'src/modules/providers/core/node-topology';
 import { DEFAULT_INTERNAL_CIDRS } from 'src/modules/providers/core/firewall/nftables-ruleset';
 import { getFirewallRulesForClusterType } from '../../firewalls/templates/firewall-rules.template';
 import { InstallLogService } from '../../operations/services/install-log.service';
@@ -115,6 +116,7 @@ export class ClusterOrchestrationService {
     const { caPublicKey, caPrivateKey } = await this.loadCaKeyPair();
 
     const controlClusterIp = await this.resolveControlClusterIp(cluster);
+    const topology = this.topologyOf(cluster.provider, cluster.region);
 
     // Create node record FIRST so we have the node.id for SERVER_ID in cloud-init
     const serverName = `${cluster.name}-master`;
@@ -165,6 +167,7 @@ export class ClusterOrchestrationService {
       instanceId: serverName,
       instanceName: serverName,
       provider: cluster.provider,
+      topology,
       caPublicKey,
       caPrivateKey,
       deployObservabilityStack: isControlClusterType(cluster.clusterType),
@@ -641,6 +644,7 @@ export class ClusterOrchestrationService {
     const serverName = `${cluster.name}-worker-${index}`;
     // Anywhere the cluster's private network reaches; the caller checked that.
     const location = region || cluster.region;
+    const topology = this.topologyOf(cluster.provider, location);
     // A fleet stops being uniform the moment something chooses a shape per
     // node, so the shape travels with the request; the cluster's own size is
     // the default for every caller that never had one to give.
@@ -704,6 +708,7 @@ export class ClusterOrchestrationService {
       instanceId: serverName,
       instanceName: serverName,
       provider: cluster.provider,
+      topology,
       caPublicKey,
       // Multi-cluster observability
       controlClusterIp,
@@ -752,6 +757,7 @@ export class ClusterOrchestrationService {
           instanceId: serverName,
           instanceName: serverName,
           provider: cluster.provider,
+          topology,
           caPublicKey,
           controlClusterIp,
           bootstrapPublicKey: workerBootstrapPublicKeyForCloudInit,
@@ -1421,6 +1427,17 @@ export class ClusterOrchestrationService {
       publicKey: generated.publicKey,
       privateKey: generated.privateKey,
     };
+  }
+
+  private topologyOf(
+    provider: string,
+    location?: string | null,
+  ): NodeTopology | null {
+    const cloud = provider as CloudProvider;
+    if (!this.capabilitiesFactory.isProviderSupported(cloud)) return null;
+    return this.capabilitiesFactory
+      .getCapabilitiesService(cloud)
+      .nodeTopology(location);
   }
 
   /**

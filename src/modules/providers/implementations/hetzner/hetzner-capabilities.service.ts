@@ -14,6 +14,8 @@ import {
 import { ValidationResultDto } from '../../../management/dto/validation-result.dto';
 import { ProviderRegion } from '../../../management/entities/provider-region.entity';
 import { CloudProvider } from '../../enums/cloud-provider.enum';
+import { NodeTopology } from '../../core/node-topology';
+import { networkZoneForRegion } from '../../core/network-zones';
 import { ProviderCapabilities } from '../../../management/entities/provider-capabilities.entity';
 import { ICredentialProvider } from '../../interfaces/credential-provider.interface';
 import {
@@ -190,6 +192,17 @@ export class HetznerCapabilitiesService
       supportedInstanceTypes: instanceTypes.map((type) => type.id),
       supportedRegions: regions,
     };
+  }
+
+  /** Hetzner has no zones inside a location, so the location is the failure domain. */
+  nodeTopology(location: string | null | undefined): NodeTopology | null {
+    const zone = location?.trim().toLowerCase();
+    if (!zone) return null;
+    const region = networkZoneForRegion(
+      this.getStaticCapabilities().vnetTopology,
+      zone,
+    );
+    return region ? { zone, region } : null;
   }
 
   getStaticCapabilities(): ProviderCapabilities {

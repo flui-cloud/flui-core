@@ -13,6 +13,12 @@ import {
   BootstrapPeer,
   encodeBootstrapPeers,
 } from '../../networking/wireguard-config';
+import {
+  NodeTopology,
+  TOPOLOGY_REGION_LABEL,
+  TOPOLOGY_ZONE_LABEL,
+  topologyLabels,
+} from 'src/modules/providers/core/node-topology';
 
 export interface HostFirewallBoot {
   rules: FirewallRule[];
@@ -137,6 +143,9 @@ export interface K3sMasterConfig {
     device?: string;
     sizeGb?: number;
   };
+
+  /** Labelled on the node when it registers, so placement can tell sites apart. */
+  topology?: NodeTopology | null;
 }
 
 export interface K3sWorkerConfig {
@@ -198,6 +207,9 @@ export interface K3sWorkerConfig {
     device?: string;
     sizeGb?: number;
   };
+
+  /** Labelled on the node when it registers, so placement can tell sites apart. */
+  topology?: NodeTopology | null;
 }
 
 /**
@@ -218,6 +230,18 @@ const DEFAULT_LOCAL_STORAGE_GB = 20;
 const POD_NETWORK = '10.42.0.0/16';
 const CIDR_RE = /^[0-9a-fA-F:.]+\/\d{1,3}$/;
 const ANYWHERE = new Set(['0.0.0.0/0', '::/0']);
+
+/** Empty when the provider declares no topology, so the node joins unlabelled as before. */
+export function topologyEnv(topology?: NodeTopology | null): {
+  FLUI_NODE_ZONE: string;
+  FLUI_NODE_REGION: string;
+} {
+  const labels = topologyLabels(topology);
+  return {
+    FLUI_NODE_ZONE: labels[TOPOLOGY_ZONE_LABEL] ?? '',
+    FLUI_NODE_REGION: labels[TOPOLOGY_REGION_LABEL] ?? '',
+  };
+}
 
 /** What the installer records as the release a master was built from. */
 export function installedReleaseEnv(
@@ -428,6 +452,7 @@ export class K3sScriptService {
           FLUI_LOCAL_STORAGE_SIZE_GB: String(
             this.resolveLocalStorage(config.localStorage).sizeGb,
           ),
+          ...topologyEnv(config.topology),
         },
         config.bootstrapPublicKey,
         config.hostFirewall,
@@ -502,6 +527,7 @@ export class K3sScriptService {
           FLUI_LOCAL_STORAGE_SIZE_GB: String(
             this.resolveLocalStorage(config.localStorage).sizeGb,
           ),
+          ...topologyEnv(config.topology),
         },
         config.bootstrapPublicKey,
         config.hostFirewall,

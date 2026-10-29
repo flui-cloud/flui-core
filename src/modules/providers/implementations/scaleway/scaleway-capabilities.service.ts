@@ -9,6 +9,8 @@ import {
 import { ProviderRegion } from '../../../management/entities/provider-region.entity';
 import { ProviderCapabilities } from '../../../management/entities/provider-capabilities.entity';
 import { CloudProvider } from '../../enums/cloud-provider.enum';
+import { NodeTopology } from '../../core/node-topology';
+import { toScalewayZone } from './scaleway-zone.util';
 import { ICredentialProvider } from '../../interfaces/credential-provider.interface';
 import {
   ProviderCredentials,
@@ -186,6 +188,14 @@ export class ScalewayCapabilitiesService
         message: 'Validation failed: ' + error.message,
       };
     }
+  }
+
+  nodeTopology(location: string | null | undefined): NodeTopology | null {
+    const raw = location?.trim().toLowerCase();
+    if (!raw) return null;
+    const zone = toScalewayZone(raw);
+    const region = /^([a-z]{2}-[a-z]{3})-\d+$/.exec(zone)?.[1];
+    return region ? { zone, region } : null;
   }
 
   getStaticCapabilities(): ProviderCapabilities {
