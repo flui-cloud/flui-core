@@ -46,4 +46,17 @@ describe('pickRemovable', () => {
   it('never names the master', () => {
     expect(pickRemovable([fleet[0]], null, true)).toBeNull();
   });
+
+  it('never names a node an operator added for high availability', () => {
+    const server = {
+      ...node('worker-5', 'hel1', 0.05),
+      metadata: { haRole: 'server' },
+    } as unknown as ClusterNodeEntity;
+    const dataHost = {
+      ...node('worker-6', 'nbg1', 0.04),
+      metadata: { haRole: 'data-host' },
+    } as unknown as ClusterNodeEntity;
+    expect(pickRemovable([fleet[0], server, dataHost], null)).toBeNull();
+    expect(pickRemovable([...fleet, server], null)?.name).toBe('worker-4');
+  });
 });

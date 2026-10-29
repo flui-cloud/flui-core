@@ -1748,6 +1748,10 @@ const MASK_EXEMPT: string[] = [
   'DistributionAppDto.k8sNamespace', // modules/visualizations/dto/cluster-app-distribution.dto.ts
   'ActivateDatabaseHaDto.durability', // modules/postgres-ha/dto/activate-database-ha.dto.ts
   'ActivateDatabaseHaDto.force', // modules/postgres-ha/dto/activate-database-ha.dto.ts
+  'AddHaNodeDto.force', // modules/infrastructure/clusters/dto/add-ha-node.dto.ts
+  'AddHaNodeDto.role', // modules/infrastructure/clusters/dto/add-ha-node.dto.ts
+  'AddHaNodeDto.serverType', // modules/infrastructure/clusters/dto/add-ha-node.dto.ts
+  'AddHaNodeDto.zone', // modules/infrastructure/clusters/dto/add-ha-node.dto.ts
   'ClusterStorageNfsDto.confirmsBeforeDisk', // modules/infrastructure/clusters/dto/cluster-storage.dto.ts
   'ClusterStorageNfsDto.durability', // modules/infrastructure/clusters/dto/cluster-storage.dto.ts
   'DistributionAppDto.name', // modules/visualizations/dto/cluster-app-distribution.dto.ts

@@ -1,6 +1,8 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { In, IsNull, Repository } from 'typeorm';
+import { haRoleOf } from '../../clusters/utils/ha-node-role';
+import { REPLICATED_STORAGE_NODE_LABEL } from '../../../replicated-volumes/replicated-volumes.constants';
 import * as k8s from '@kubernetes/client-node';
 import { ApplicationEntity } from '../../../applications/entities/application.entity';
 import {
@@ -33,6 +35,8 @@ import { nodeRoomInputs } from './room-inputs';
  * the reading for as long as the operating system keeps the connection.
  */
 const USAGE_TIMEOUT_MS = 6_000;
+
+const CONTROL_PLANE_LABEL = 'node-role.kubernetes.io/control-plane';
 
 /**
  * Whether a node can be emptied, answered from the cluster itself.
@@ -77,7 +81,7 @@ export class DrainFeasibilityService {
       const coreApi = kc.makeApiClient(k8s.CoreV1Api);
       const policyApi = kc.makeApiClient(k8s.PolicyV1Api);
 
-      const [pods, volumes, budgets, api] = await Promise.all([
+      const [pods, volumes, budgets, api, k8sNode] = await Promise.all([
         coreApi.listPodForAllNamespaces({
           fieldSelector: `spec.nodeName=${node.serverName},status.phase!=Succeeded,status.phase!=Failed`,
         }),
@@ -87,7 +91,9 @@ export class DrainFeasibilityService {
           namespace: 'flui-system',
           labelSelector: 'app=flui-api',
         }),
+        coreApi.readNode({ name: node.serverName }).catch(() => null),
       ]);
+      const labels = k8sNode?.metadata?.labels ?? {};
 
       const pinned = pinnedClaims(volumes.items ?? [], node.serverName);
       const running = (pods.items ?? []).filter((pod) => !finished(pod));
@@ -102,6 +108,9 @@ export class DrainFeasibilityService {
         apiCopiesElsewhere: (api.items ?? []).filter(
           (pod) => pod.spec?.nodeName !== node.serverName && ready(pod),
         ).length,
+        isServer:
+          haRoleOf(node) === 'server' || labels[CONTROL_PLANE_LABEL] === 'true',
+        holdsCopies: labels[REPLICATED_STORAGE_NODE_LABEL] === 'true',
       });
     } catch (err) {
       this.logger.warn(

@@ -15,6 +15,8 @@ export type GiveBackReasonKind =
   | 'no-interruption'
   | 'placed-by-machine'
   | 'master'
+  | 'server'
+  | 'copies'
   | 'runs-flui-api';
 
 export interface GiveBackItem {
@@ -38,6 +40,8 @@ const REASON_OF: Record<DrainBlockerKind, GiveBackReasonKind> = {
   'disruption-budget': 'no-interruption',
   'not-evictable': 'placed-by-machine',
   'is-master': 'master',
+  'is-server': 'server',
+  'holds-copies': 'copies',
   'runs-flui-api': 'runs-flui-api',
 };
 
@@ -71,6 +75,16 @@ const WORDING: Record<
     title: "Is the cluster's master",
     fix: 'Nothing replaces the master of a cluster in place. Rebuild the cluster if it has to change.',
     sentence: () => "it is the cluster's master",
+  },
+  server: {
+    title: 'Is a server of the control plane',
+    fix: 'A server of the control plane is not removed by scaling. A lost one is replaced by adding a server in the same location.',
+    sentence: () => 'it is a server of the control plane',
+  },
+  copies: {
+    title: 'Holds copies of replicated volumes',
+    fix: 'Removing it leaves those volumes with one copy. Add a node for data in the same location first.',
+    sentence: () => 'it holds copies of replicated volumes',
   },
   'runs-flui-api': {
     title: 'Runs the Flui API, which carries out the removal',

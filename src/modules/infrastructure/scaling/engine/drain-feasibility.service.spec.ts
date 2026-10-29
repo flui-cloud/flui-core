@@ -213,7 +213,11 @@ describe('whether a node can be emptied', () => {
     status: { phase },
   });
 
-  function checking(pods: unknown[], apiPods: unknown[] = []) {
+  function checking(
+    pods: unknown[],
+    apiPods: unknown[] = [],
+    labels: Record<string, string> = {},
+  ) {
     const coreApi = {
       listPodForAllNamespaces: jest.fn(async () => ({ items: pods })),
       listPersistentVolume: jest.fn(async () => ({ items: [] })),
@@ -221,6 +225,7 @@ describe('whether a node can be emptied', () => {
         items: [],
       })),
       listNamespacedPod: jest.fn(async () => ({ items: apiPods })),
+      readNode: jest.fn(async () => ({ metadata: { labels } })),
     };
     const service = new DrainFeasibilityService(
       { find: async () => [] } as never,
@@ -289,6 +294,7 @@ describe('whether a node can be emptied', () => {
         items: [],
       })),
       listNamespacedPod: jest.fn(async () => ({ items: apiPods })),
+      readNode: jest.fn(async () => ({ metadata: { labels: {} } })),
     };
     const service = new DrainFeasibilityService(
       { find } as never,
@@ -315,5 +321,44 @@ describe('whether a node can be emptied', () => {
 
     expect(check?.ok).toBe(false);
     expect(check?.blockers.map((b) => b.kind)).toEqual(['no-controller']);
+  });
+});
+
+describe('what the cluster itself says about a node', () => {
+  const coreFor = (labels: Record<string, string>) => ({
+    listPodForAllNamespaces: jest.fn(async () => ({ items: [] })),
+    listPersistentVolume: jest.fn(async () => ({ items: [] })),
+    listPodDisruptionBudgetForAllNamespaces: jest.fn(async () => ({
+      items: [],
+    })),
+    listNamespacedPod: jest.fn(async () => ({ items: [] })),
+    readNode: jest.fn(async () => ({ metadata: { labels } })),
+  });
+  const service = (labels: Record<string, string>) =>
+    new DrainFeasibilityService(
+      { find: async () => [] } as never,
+      {
+        makeKubeConfig: () => ({ makeApiClient: () => coreFor(labels) }),
+      } as never,
+      { decrypt: () => 'kubeconfig' } as never,
+    );
+  const worker = {
+    serverName: 'worker-3',
+    nodeType: NodeType.WORKER,
+  } as ClusterNodeEntity;
+  const cluster = { id: 'c1', kubeconfigEncrypted: 'x' } as ClusterEntity;
+
+  it('refuses a server Flui recorded as a worker, from its control-plane label', async () => {
+    const check = await service({
+      'node-role.kubernetes.io/control-plane': 'true',
+    }).check(cluster, worker);
+    expect(check?.blockers.map((b) => b.kind)).toEqual(['is-server']);
+  });
+
+  it('holds a node prepared for copies of replicated volumes', async () => {
+    const check = await service({
+      'flui.cloud/replicated-storage': 'true',
+    }).check(cluster, worker);
+    expect(check?.blockers.map((b) => b.kind)).toContain('holds-copies');
   });
 });

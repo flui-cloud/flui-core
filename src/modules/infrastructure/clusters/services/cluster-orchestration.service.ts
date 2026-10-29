@@ -15,6 +15,7 @@ import {
   NodeType,
   NodeStatus,
 } from '../entities/cluster-node.entity';
+import { haRoleMetadata, HaNodeRole, k3sRoleOf } from '../utils/ha-node-role';
 import {
   HostFirewallBoot,
   K3sMasterConfig,
@@ -59,6 +60,14 @@ import {
   installLogTarget,
 } from '../utils/install-log-target.util';
 import { managementNetworkOn } from '../../networking/management-network.state';
+
+interface WorkerNodeOptions {
+  providerFirewallIds?: string[];
+  serverType?: string | null;
+  region?: string | null;
+  haRole?: HaNodeRole | null;
+  captureInstallLog?: boolean;
+}
 
 @Injectable()
 export class ClusterOrchestrationService {
@@ -550,9 +559,11 @@ export class ClusterOrchestrationService {
     providerFirewallIds?: string[],
     serverType?: string | null,
     region?: string | null,
+    haRole?: HaNodeRole | null,
   ): Promise<ClusterNodeEntity[]> {
+    const role = haRole ? ` (${haRole})` : '';
     this.logger.log(
-      `Creating ${count} worker nodes for cluster ${cluster.name}`,
+      `Creating ${count} worker nodes for cluster ${cluster.name}${role}`,
     );
 
     const k3sToken = this.encryptionService.decrypt(cluster.k3sTokenEncrypted);
@@ -590,12 +601,15 @@ export class ClusterOrchestrationService {
             k3sToken,
             masterJoinIp,
             operationId,
-            providerFirewallIds,
-            serverType,
-            region,
-            // One log per operation: several workers booting at once would
-            // interleave into the same stream at conflicting offsets.
-            count === 1,
+            {
+              providerFirewallIds,
+              serverType,
+              region,
+              haRole: haRole ?? null,
+              // One log per operation: several workers booting at once would
+              // interleave into the same stream at conflicting offsets.
+              captureInstallLog: count === 1,
+            },
           ),
         );
       }
@@ -636,10 +650,13 @@ export class ClusterOrchestrationService {
     k3sToken: string,
     masterIp: string,
     operationId: string,
-    providerFirewallIds?: string[],
-    serverType?: string | null,
-    region?: string | null,
-    captureInstallLog = false,
+    {
+      providerFirewallIds,
+      serverType,
+      region,
+      haRole = null,
+      captureInstallLog = false,
+    }: WorkerNodeOptions = {},
   ): Promise<ClusterNodeEntity> {
     const serverName = `${cluster.name}-worker-${index}`;
     // Anywhere the cluster's private network reaches; the caller checked that.
@@ -663,10 +680,11 @@ export class ClusterOrchestrationService {
       cluster,
       serverName,
       NodeType.WORKER,
-      { workerIndex: index },
+      { workerIndex: index, ...haRoleMetadata(haRole) },
       shape,
       location,
     );
+    const k3sRole = k3sRoleOf(haRole);
 
     const controlClusterIp = await this.resolveWorkerObservabilityIp(cluster);
 
@@ -704,6 +722,7 @@ export class ClusterOrchestrationService {
       clusterName: cluster.name,
       k3sToken,
       masterIp,
+      k3sRole,
       k3sVersion: cluster.k3sVersion,
       instanceId: serverName,
       instanceName: serverName,
@@ -753,6 +772,7 @@ export class ClusterOrchestrationService {
           clusterName: cluster.name,
           k3sToken,
           masterIp,
+          k3sRole,
           k3sVersion: cluster.k3sVersion,
           instanceId: serverName,
           instanceName: serverName,

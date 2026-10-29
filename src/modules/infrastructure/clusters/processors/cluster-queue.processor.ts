@@ -1899,6 +1899,7 @@ export class ClusterQueueProcessor {
       providerFirewallIds,
       serverType,
       region,
+      haRole,
     } = job.data;
     const startedAt = Date.now();
     this.logger.log(
@@ -1969,6 +1970,7 @@ export class ClusterQueueProcessor {
         providerFirewallIds,
         serverType,
         region,
+        haRole,
       );
 
       await this.updateOperationStep(operationId, 1, 100, {

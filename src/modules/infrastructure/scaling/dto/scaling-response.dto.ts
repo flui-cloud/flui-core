@@ -635,6 +635,8 @@ export class GiveBackReasonDto {
       'no-interruption',
       'placed-by-machine',
       'master',
+      'server',
+      'copies',
       'runs-flui-api',
     ],
   })

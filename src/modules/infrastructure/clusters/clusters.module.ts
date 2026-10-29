@@ -113,8 +113,13 @@ import { UserEntity } from '../../auth/entities/user.entity';
 import { UserEventsModule } from '../../auth/gateway/user-events.module';
 import { IamModule } from '../../iam/iam.module';
 
+import { HaNodesController } from './ha-nodes.controller';
+import { HaNodesService } from './services/ha-nodes.service';
+import { ClusterHaModule } from '../../cluster-ha/cluster-ha.module';
+
 @Module({
   imports: [
+    ClusterHaModule,
     ConfigModule,
     // Both behind forwardRef: applications and backups already reach back
     // here, and a rebuild needs the deploy path and the artifacts at once.
@@ -180,8 +185,10 @@ import { IamModule } from '../../iam/iam.module';
     ClustersController,
     ClusterOrphanedClaimsController,
     CostsController,
+    HaNodesController,
   ],
   providers: [
+    HaNodesService,
     NodeLifeEventsService,
     LostNodeOperationsService,
     MasterEvacuationService,
