@@ -44,6 +44,7 @@ import {
   databaseHaPrimarySelector,
   databaseHaServes,
 } from '../../postgres-ha/postgres-ha.types';
+import { REPLICATED_STORAGE_CLASS } from '../../replicated-volumes/replicated-volumes.constants';
 
 export interface GeneratedManifest {
   kind: ApplicationResourceKind;
@@ -566,6 +567,7 @@ export class ApplicationManifestGeneratorService {
       .replaceAll('{{POD_LABELS_BLOCK}}', this.renderLabelsBlock(labels, 8))
       .replaceAll('{{ANNOTATIONS_BLOCK}}', this.renderLabelsBlock(annotations))
       .replaceAll('{{REPLICAS}}', String(app.replicas ?? 1))
+      .replaceAll('{{STRATEGY_BLOCK}}\n', this.renderStrategyBlock(app))
       .replaceAll('{{IMAGE}}', imageRef)
       .replaceAll('{{PULL_POLICY}}', config.pullPolicy || 'IfNotPresent')
       .replaceAll(
@@ -1045,6 +1047,17 @@ export class ApplicationManifestGeneratorService {
     if (volume.storageClass) return volume.storageClass;
     if (app.persistenceScope === 'dedicated') return 'flui-local';
     return undefined;
+  }
+
+  /**
+   * A replicated volume is attached to one node at a time, so the new pod of a
+   * rolling update would wait for a volume the old pod never lets go.
+   */
+  private renderStrategyBlock(app: ApplicationEntity): string {
+    const replicated = (app.volumes ?? []).some(
+      (v) => this.resolveStorageClass(app, v) === REPLICATED_STORAGE_CLASS,
+    );
+    return replicated ? '  strategy:\n    type: Recreate\n' : '';
   }
 
   private nodePlacement(app: ApplicationEntity): {

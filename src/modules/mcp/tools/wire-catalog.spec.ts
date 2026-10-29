@@ -39,6 +39,8 @@ const ARGS: Record<string, Record<string, unknown>> = {
   cluster_orphaned_volumes: {},
   control_restore_plan: {},
   control_restore_apps: { includeStopped: true },
+  cluster_replicated_volumes_get: { id: 'c1' },
+  cluster_replicated_volumes_enable: { id: 'c1', sizeGiB: 20 },
   cluster_ha_get: { id: 'c1' },
   dns_wildcard_status: {},
   dns_wildcard_publish: {},
@@ -584,6 +586,14 @@ describe('strada B — the whole tool catalogue goes over the wire', () => {
       'GET /infrastructure/clusters/control-restore/plan',
     ],
     ['control_restore_apps', 'POST /infrastructure/clusters/control-restore'],
+    [
+      'cluster_replicated_volumes_get',
+      'GET /infrastructure/clusters/c1/replicated-volumes',
+    ],
+    [
+      'cluster_replicated_volumes_enable',
+      'POST /infrastructure/clusters/c1/replicated-volumes',
+    ],
     ['cluster_ha_get', 'GET /infrastructure/clusters/c1/high-availability'],
     ['access_revocation_preview', 'GET /iam/grants/g1/revocation-preview'],
     ['access_grant_list', 'GET /iam/grants'],

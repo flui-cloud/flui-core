@@ -55,6 +55,7 @@ import { BackupsModule } from './modules/backups/backups.module';
 import { FleetModule } from './modules/fleet/fleet.module';
 import { DbLifecycleModule } from './modules/db-lifecycle/db-lifecycle.module';
 import { PostgresHaModule } from './modules/postgres-ha/postgres-ha.module';
+import { ReplicatedVolumesModule } from './modules/replicated-volumes/replicated-volumes.module';
 import { ClusterHaModule } from './modules/cluster-ha/cluster-ha.module';
 import { StorageModule } from './modules/storage/storage.module';
 import { AppMigrationModule } from './modules/app-migration/app-migration.module';
@@ -165,6 +166,7 @@ import { QueueIntakeModule } from './common/queues/queue-intake.module';
     FleetModule,
     DbLifecycleModule,
     PostgresHaModule,
+    ReplicatedVolumesModule,
     ClusterHaModule,
     AppMigrationModule,
     FullMigrationModule,

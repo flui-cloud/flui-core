@@ -49,6 +49,7 @@ describe('MigrationMeasures1790000000029', () => {
       'InferenceUsageIpHash1790000000043',
       'InferenceUsageCachedTokens1790000000044',
       'DatabaseHa1790000000045',
+      'ReplicatedVolumes1790000000046',
     ]);
   });
 });
