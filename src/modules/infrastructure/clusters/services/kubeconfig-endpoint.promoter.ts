@@ -1,13 +1,13 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { IsNull, Repository } from 'typeorm';
-import * as https from 'node:https';
 import { ClusterEntity, ClusterType } from '../entities/cluster.entity';
 import { NodeType } from '../entities/cluster-node.entity';
 import { EncryptionService } from '../../../shared/encryption/services/encryption.service';
 import { WireGuardPeerService } from '../../networking/services/wireguard-peer.service';
 import { ApiServerSanService } from '../../networking/services/api-server-san.service';
 import { managementNetworkOn } from '../../networking/management-network.state';
+import { apiServerAnswers } from '../../networking/api-server-probe';
 import {
   SERVER_LINE,
   overlayDemotionOf,
@@ -122,7 +122,7 @@ export class KubeconfigEndpointPromoter {
     }
 
     const port = current[3] ?? ':6443';
-    if (!(await this.answers(overlay.nodeAddress, port.slice(1), ca))) {
+    if (!(await apiServerAnswers(overlay.nodeAddress, port.slice(1), ca))) {
       this.logger.log(
         `[kubeconfig] ${cluster.name}: ${overlay.nodeAddress} not answering yet — leaving ${current[2]} in place`,
       );
@@ -137,52 +137,5 @@ export class KubeconfigEndpointPromoter {
       `[kubeconfig] ${cluster.name}: API server moved from ${current[2]} to ${overlay.nodeAddress} over the overlay`,
     );
     return true;
-  }
-
-  /**
-   * Verified against the cluster's own CA, taken from the kubeconfig being
-   * moved — which makes this more than a reachability check. The API server's
-   * certificate has to name the overlay address for a kubeconfig pointing there
-   * to work at all, so a probe that skipped verification could happily promote
-   * a cluster into a permanent TLS failure.
-   *
-   * Any HTTP answer proves the path: 401 is what an unauthenticated probe
-   * should get, and getting it means TCP, TLS and the certificate's names all
-   * worked over the tunnel. Only silence is a failure.
-   */
-  private answers(
-    host: string,
-    port: string,
-    caBase64: string,
-  ): Promise<boolean> {
-    return new Promise((resolve) => {
-      let ca: Buffer;
-      try {
-        ca = Buffer.from(caBase64, 'base64');
-      } catch {
-        resolve(false);
-        return;
-      }
-      const req = https.request(
-        {
-          host,
-          port,
-          path: '/readyz',
-          method: 'GET',
-          timeout: 5000,
-          ca,
-        },
-        (res) => {
-          res.resume();
-          resolve(true);
-        },
-      );
-      req.on('timeout', () => {
-        req.destroy();
-        resolve(false);
-      });
-      req.on('error', () => resolve(false));
-      req.end();
-    });
   }
 }

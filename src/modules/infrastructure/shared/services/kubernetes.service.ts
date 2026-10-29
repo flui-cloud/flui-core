@@ -2316,6 +2316,11 @@ export class KubernetesService {
     );
   }
 
+  async listNodes(kubeconfigContent: string): Promise<k8s.V1Node[]> {
+    const { coreApi } = this.getKubeClient(kubeconfigContent);
+    return (await coreApi.listNode()).items ?? [];
+  }
+
   /** The labels of every node, by node name. */
   async listNodeLabels(
     kubeconfigContent: string,

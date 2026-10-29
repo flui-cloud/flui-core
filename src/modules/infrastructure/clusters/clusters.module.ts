@@ -62,6 +62,8 @@ import { FluiLocalDirectIoScheduler } from './schedulers/flui-local-direct-io.sc
 import { FluiLocalDirectIoReconciler } from './services/flui-local-direct-io.reconciler';
 import { ClusterDnsSpreadReconciler } from './services/cluster-dns-spread.reconciler';
 import { KubeconfigEndpointPromoter } from './services/kubeconfig-endpoint.promoter';
+import { ApiServerFailoverService } from './services/api-server-failover.service';
+import { ApiServerFailoverScheduler } from './schedulers/api-server-failover.scheduler';
 import { KubeconfigEndpointScheduler } from './schedulers/kubeconfig-endpoint.scheduler';
 import { ClusterPowerManagementService } from './services/cluster-power-management.service';
 import { ClusterSshCleanupService } from './services/cluster-ssh-cleanup.service';
@@ -211,6 +213,8 @@ import { IamModule } from '../../iam/iam.module';
     FluiLocalDirectIoReconciler,
     FluiLocalDirectIoScheduler,
     KubeconfigEndpointPromoter,
+    ApiServerFailoverService,
+    ApiServerFailoverScheduler,
     KubeconfigEndpointScheduler,
     ClusterPowerManagementService,
     ClusterSshCleanupService,

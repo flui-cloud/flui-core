@@ -133,8 +133,14 @@ export class ApiServerSanService {
    * certificate for an address nothing has ever handshaken on would restart a
    * live master to reach an endpoint that does not answer.
    */
-  async enrolOverlayAddress(clusterId: string): Promise<SanEnrolmentResult> {
-    const { cluster, master, address } = await this.preflight(clusterId);
+  async enrolOverlayAddress(
+    clusterId: string,
+    nodeId?: string,
+  ): Promise<SanEnrolmentResult> {
+    const { cluster, master, address } = await this.preflight(
+      clusterId,
+      nodeId,
+    );
 
     const target = this.targetFor(cluster, master);
     const out = await this.hostCommand.run(
@@ -166,9 +172,13 @@ export class ApiServerSanService {
    * Everything that must be true before a live master is restarted.
    *
    * Shared by the queued path and the direct one so the two can never disagree
-   * about what makes this safe.
+   * about what makes this safe. `nodeId` names another server of the
+   * cluster; without it, the master.
    */
-  private async preflight(clusterId: string): Promise<{
+  private async preflight(
+    clusterId: string,
+    nodeId?: string,
+  ): Promise<{
     cluster: ClusterEntity;
     master: ClusterNodeEntity;
     address: string;
@@ -192,12 +202,14 @@ export class ApiServerSanService {
       );
     }
 
-    const master = (cluster.nodes ?? []).find(
-      (n) => n.nodeType === NodeType.MASTER,
+    const master = (cluster.nodes ?? []).find((n) =>
+      nodeId ? n.id === nodeId : n.nodeType === NodeType.MASTER,
     );
     if (!master) {
       throw new BadRequestException(
-        `Cluster ${cluster.name} has no master node recorded`,
+        nodeId
+          ? `Cluster ${cluster.name} has no node ${nodeId} recorded`
+          : `Cluster ${cluster.name} has no master node recorded`,
       );
     }
 

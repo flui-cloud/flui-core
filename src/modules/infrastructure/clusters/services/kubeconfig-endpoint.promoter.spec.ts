@@ -1,3 +1,8 @@
+jest.mock('../../networking/api-server-probe', () => ({
+  apiServerAnswers: jest.fn(),
+}));
+
+import { apiServerAnswers } from '../../networking/api-server-probe';
 import { KubeconfigEndpointPromoter } from './kubeconfig-endpoint.promoter';
 
 const kubeconfig = (host: string) =>
@@ -37,8 +42,7 @@ describe('KubeconfigEndpointPromoter', () => {
       } as any,
       { enrolOverlayAddress: enrolSan } as any,
     );
-    (promoter as unknown as { answers: () => Promise<boolean> }).answers =
-      async () => answers;
+    (apiServerAnswers as jest.Mock).mockResolvedValue(answers);
     return { promoter, save, enrolSan };
   };
 
