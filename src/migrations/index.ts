@@ -99,6 +99,7 @@ import { AppHistoryIndexes1790000000042 } from './1790000000042-AppHistoryIndexe
 import { InferenceUsageIpHash1790000000043 } from './1790000000043-InferenceUsageIpHash';
 import { InferenceUsageCachedTokens1790000000044 } from './1790000000044-InferenceUsageCachedTokens';
 import { DatabaseHa1790000000045 } from './1790000000045-DatabaseHa';
+import { ReplicatedVolumes1790000000046 } from './1790000000046-ReplicatedVolumes';
 import { BackfillArtifactApplicationId1787500000000 } from './1787500000000-BackfillArtifactApplicationId';
 import { WireGuardHubKeySealed1790000000000 } from './1790000000000-WireGuardHubKeySealed';
 import { RecoverNodeAccessOperation1790000000001 } from './1790000000001-RecoverNodeAccessOperation';
@@ -211,4 +212,5 @@ export const migrations = [
   InferenceUsageIpHash1790000000043,
   InferenceUsageCachedTokens1790000000044,
   DatabaseHa1790000000045,
+  ReplicatedVolumes1790000000046,
 ];

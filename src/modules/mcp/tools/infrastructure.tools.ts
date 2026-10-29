@@ -185,6 +185,40 @@ export const INFRASTRUCTURE_TOOLS: ToolDef[] = [
       }),
   }),
   defineTool({
+    name: 'cluster_replicated_volumes_get',
+    routes: ['GET /infrastructure/clusters/:id/replicated-volumes'],
+    description:
+      'Whether a cluster offers replicated volumes (pass the cluster id). A replicated volume keeps a synchronous copy in a second location, so an application with one writer comes back there, with its data, when its server or its location is lost; the third location only votes. `enabled` says whether the `flui-replicated` storage class exists; `storageNodes` are the nodes holding copies; `warnings` names copies an application could not follow; `plan` is what enabling would do now (`zones`, `storageNodes`, `tieBreakers`) or why it cannot (`reason`), including a cluster not yet highly available across three locations. An application asks for it with `replicated: true` on a volume in flui.yaml, and moves only if every volume it mounts is replicated. Read-only; to turn it on call cluster_replicated_volumes_enable.',
+    scope: MCP_SCOPE.INFRA_READ,
+    inputSchema: { id: z.string() },
+    run: (args, ctx) =>
+      ctx.api.get(
+        `/infrastructure/clusters/${enc(args.id)}/replicated-volumes`,
+      ),
+  }),
+  defineTool({
+    name: 'cluster_replicated_volumes_enable',
+    routes: ['POST /infrastructure/clusters/:id/replicated-volumes'],
+    description:
+      'Enable replicated volumes on a cluster (pass the cluster id). A node in each of the two locations for data sets aside `sizeGiB` of its own disk (default 20) for copies, the volume engine is installed and the `flui-replicated` storage class appears; the third location casts the tie-breaking vote; existing volumes do not change. `nodes` picks the two nodes, otherwise Flui does. Refused with the reason when the cluster is not yet highly available across three locations of a validated region (`force` accepts a region Flui has not validated), or lacks a node that takes applications in a location for data. A person approves it before it happens. Returns the operation; follow it with operation_status.',
+    scope: MCP_SCOPE.INFRA_WRITE,
+    inputSchema: {
+      id: z.string(),
+      nodes: z.array(z.string()).length(2).optional(),
+      sizeGiB: z.number().int().min(5).max(2000).optional(),
+      force: z.boolean().optional(),
+    },
+    run: (args, ctx) =>
+      ctx.api.post(
+        `/infrastructure/clusters/${enc(args.id)}/replicated-volumes`,
+        {
+          ...(args.nodes && { nodes: args.nodes }),
+          ...(args.sizeGiB && { sizeGiB: args.sizeGiB }),
+          ...(args.force && { force: args.force }),
+        },
+      ),
+  }),
+  defineTool({
     name: 'cluster_ha_get',
     routes: ['GET /infrastructure/clusters/:id/high-availability'],
     description:

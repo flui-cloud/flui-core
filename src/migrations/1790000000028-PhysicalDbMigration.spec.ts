@@ -62,6 +62,7 @@ describe('PhysicalDbMigration1790000000028', () => {
       'InferenceUsageIpHash1790000000043',
       'InferenceUsageCachedTokens1790000000044',
       'DatabaseHa1790000000045',
+      'ReplicatedVolumes1790000000046',
     ]);
     expect(migrations[at - 1].name).toMatch(/179000000002[67]$/);
   });

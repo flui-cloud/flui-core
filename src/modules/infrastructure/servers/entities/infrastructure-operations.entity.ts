@@ -82,6 +82,8 @@ export enum OperationType {
   // Database lifecycle
   MIGRATE_DATABASE = 'migrate_database',
   ACTIVATE_DATABASE_HA = 'activate_database_ha',
+  // Replicated volumes
+  ENABLE_REPLICATED_VOLUMES = 'enable_replicated_volumes',
   // Application lifecycle
   MIGRATE_APPLICATION = 'migrate_application',
   // Full-app lifecycle (app + DB)
@@ -331,6 +333,10 @@ export enum OperationStep {
   DB_HA_FENCE = 'db_ha_fence',
   DB_HA_PROMOTE = 'db_ha_promote',
   DB_HA_SWITCH = 'db_ha_switch',
+  // Replicated volumes
+  REPLICATED_PREPARE_NODES = 'replicated_prepare_nodes',
+  REPLICATED_INSTALL_ENGINE = 'replicated_install_engine',
+  REPLICATED_STORAGE_CLASS = 'replicated_storage_class',
 }
 
 // Base metadata interface - allows additional runtime properties

@@ -9,6 +9,7 @@ metadata:
 {{ANNOTATIONS_BLOCK}}
 spec:
   replicas: {{REPLICAS}}
+{{STRATEGY_BLOCK}}
   selector:
     matchLabels:
       app: {{SLUG}}
