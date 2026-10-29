@@ -77,6 +77,7 @@ import {
 import { NodeAccessRecoveryService } from './services/node-access-recovery.service';
 import { byOf } from '../scaling/scaling-actor';
 import { ClusterStorageService } from './services/cluster-storage.service';
+import { NodeDisksService } from './services/node-disks.service';
 import { ClusterStorageUsageService } from './services/cluster-storage-usage.service';
 import {
   ControlRestoreDto,
@@ -180,6 +181,7 @@ export class ClustersController {
     private readonly clusterScalingService: ClusterScalingService,
     private readonly clusterStorageService: ClusterStorageService,
     private readonly clusterStorageUsageService: ClusterStorageUsageService,
+    private readonly nodeDisksService: NodeDisksService,
     private readonly clusterCapacityService: ClusterCapacityService,
     private readonly clusterNodeScalingService: ClusterNodeScalingService,
     private readonly orphanVolumesService: OrphanVolumesService,
@@ -1086,6 +1088,20 @@ export class ClustersController {
     @Param('id') id: string,
   ): Promise<ClusterStorageStatusDto> {
     return this.clusterStorageService.getStatus(id);
+  }
+
+  @Get(':id/storage/disks')
+  @RequireSection('clusters')
+  @ApiOperation({
+    summary: 'How much room is left on each node',
+    description:
+      'For each node, its own disk (`disk`), where databases and data kept on the node live, and the space set aside for copies of replicated volumes (`copies`, null on a node that holds none), each as total and free GiB. ' +
+      '`warnings` names a node running short, under 15% free or a few GiB: a full disk stops what is kept on it from growing, and a full space for copies refuses new or larger replicated volumes. Read from the nodes as they are now.',
+  })
+  @ApiParam({ name: 'id', description: 'Cluster ID' })
+  @ApiResponse({ status: 404, description: 'Cluster not found' })
+  async getNodeDisks(@Param('id') id: string) {
+    return this.nodeDisksService.view(id);
   }
 
   @Get(':id/storage/usage')

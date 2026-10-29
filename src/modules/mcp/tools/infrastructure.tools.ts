@@ -219,6 +219,16 @@ export const INFRASTRUCTURE_TOOLS: ToolDef[] = [
       ),
   }),
   defineTool({
+    name: 'cluster_disks_get',
+    routes: ['GET /infrastructure/clusters/:id/storage/disks'],
+    description:
+      'How much room is left on each node of a cluster (pass the cluster id): its own disk (`disk`), where databases and data kept on the node live, and the space set aside for copies of replicated volumes (`copies`, null where the node holds none), as total and free GiB. `warnings` names a node running short: a full disk stops what is kept on it from growing, a full space for copies refuses new or larger replicated volumes. Read-only.',
+    scope: MCP_SCOPE.INFRA_READ,
+    inputSchema: { id: z.string() },
+    run: (args, ctx) =>
+      ctx.api.get(`/infrastructure/clusters/${enc(args.id)}/storage/disks`),
+  }),
+  defineTool({
     name: 'cluster_ha_add_node',
     routes: ['POST /infrastructure/clusters/:id/high-availability/nodes'],
     description:
