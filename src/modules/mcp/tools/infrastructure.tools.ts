@@ -219,6 +219,30 @@ export const INFRASTRUCTURE_TOOLS: ToolDef[] = [
       ),
   }),
   defineTool({
+    name: 'cluster_ha_add_node',
+    routes: ['POST /infrastructure/clusters/:id/high-availability/nodes'],
+    description:
+      'Add the node a cluster still needs to survive the loss of a location (pass the cluster id): `role` `server` (also runs the control plane and holds a vote) or `data-host` (takes applications where copies of data live), and `zone`, a location cluster_ha_get lists under `missing` for that role. Flui buys one machine there, of `serverType` or the cluster size, and joins it with its role; scaling never removes it. Anything not missing is refused with the reason. With two servers the cluster is more fragile than with one until the third joins, so add them one after the other. A person approves it before it happens. Returns the operation; follow it with operation_status.',
+    scope: MCP_SCOPE.INFRA_WRITE,
+    inputSchema: {
+      id: z.string(),
+      role: z.enum(['server', 'data-host']),
+      zone: z.string(),
+      serverType: z.string().optional(),
+      force: z.boolean().optional(),
+    },
+    run: (args, ctx) =>
+      ctx.api.post(
+        `/infrastructure/clusters/${enc(args.id)}/high-availability/nodes`,
+        {
+          role: args.role,
+          zone: args.zone,
+          ...(args.serverType && { serverType: args.serverType }),
+          ...(args.force && { force: args.force }),
+        },
+      ),
+  }),
+  defineTool({
     name: 'cluster_ha_get',
     routes: ['GET /infrastructure/clusters/:id/high-availability'],
     description:

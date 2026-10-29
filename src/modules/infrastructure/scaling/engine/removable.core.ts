@@ -3,6 +3,7 @@ import {
   NodeStatus,
   NodeType,
 } from '../../clusters/entities/cluster-node.entity';
+import { haRoleOf } from '../../clusters/utils/ha-node-role';
 
 /** A node the fleet could give back, named so something can actually remove it. */
 export interface RemovableNode {
@@ -19,7 +20,8 @@ export interface RemovableNode {
  * cheapest machine of an oversized fleet is the version of this that costs
  * money to run. A group that spreads its nodes gives back from the region
  * holding the most of them first, so coming down keeps the fleet spread. Never
- * the master, and never a node already leaving. The preview a person reads
+ * the master, never a node an operator added for high availability, and never
+ * a node already leaving. The preview a person reads
  * before saving asks the same function, so the two never name different
  * machines.
  */
@@ -30,7 +32,9 @@ export function pickRemovable(
 ): RemovableNode | null {
   const workers = rows.filter(
     (row) =>
-      row.nodeType !== NodeType.MASTER && row.status !== NodeStatus.DELETING,
+      row.nodeType !== NodeType.MASTER &&
+      row.status !== NodeStatus.DELETING &&
+      !haRoleOf(row),
   );
   if (!workers.length) return null;
 

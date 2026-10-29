@@ -50,4 +50,14 @@ describe('the topology a bootstrap script hands the node', () => {
     expect(script).toContain("export FLUI_NODE_ZONE=''");
     expect(script).toContain("export FLUI_NODE_REGION=''");
   });
+
+  it('joins a server to the control plane only when asked, an agent otherwise', async () => {
+    const service = new K3sScriptService();
+    expect(
+      await service.generateWorkerScript({ ...worker, k3sRole: 'server' }),
+    ).toContain("export FLUI_K3S_ROLE='server'");
+    expect(await service.generateWorkerScript(worker)).toContain(
+      "export FLUI_K3S_ROLE='agent'",
+    );
+  });
 });

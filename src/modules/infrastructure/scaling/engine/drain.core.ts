@@ -19,6 +19,8 @@ export type DrainBlockerKind =
   | 'disruption-budget'
   | 'not-evictable'
   | 'is-master'
+  | 'is-server'
+  | 'holds-copies'
   | 'runs-flui-api';
 
 /** The application something on the node belongs to, when Flui deployed it. */
@@ -107,6 +109,10 @@ export interface DrainSubject {
    * copy here is just another replica to move; absent is read as none.
    */
   apiCopiesElsewhere?: number;
+  /** A server of the control plane, by Flui's record or by the cluster's own label. */
+  isServer?: boolean;
+  /** Prepared to hold copies of replicated volumes. */
+  holdsCopies?: boolean;
 }
 
 const DAEMONSET = 'DaemonSet';
@@ -129,8 +135,33 @@ export function checkDrain(subject: DrainSubject): DrainCheck {
     };
   }
 
+  // A server holds one of the votes the control plane needs, and nothing
+  // shows that in its pods either.
+  if (subject.isServer) {
+    return {
+      ok: false,
+      node: subject.nodeName,
+      blockers: [
+        {
+          kind: 'is-server',
+          what: subject.nodeName,
+          fix: 'A server of the control plane is not removed by scaling. A lost one is replaced by adding a server in the same location.',
+        },
+      ],
+      cleared: [],
+    };
+  }
+
   const blockers: DrainBlocker[] = [];
   const cleared: string[] = [];
+
+  if (subject.holdsCopies) {
+    blockers.push({
+      kind: 'holds-copies',
+      what: subject.nodeName,
+      fix: 'This node holds copies of replicated volumes. Removing it leaves those volumes with one copy; add a node for data in the same location first.',
+    });
+  }
 
   for (const app of subject.dedicatedApps) {
     blockers.push({

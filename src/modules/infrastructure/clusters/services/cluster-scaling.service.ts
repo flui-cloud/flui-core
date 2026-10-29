@@ -29,6 +29,7 @@ import {
 import { ByosNodeRemovalService } from './byos-node-removal.service';
 import { CloudProvider } from '../../../providers/enums/cloud-provider.enum';
 import { NodeLifeEventsService } from './node-life-events.service';
+import { HaNodeRole } from '../utils/ha-node-role';
 import { ProviderFactory } from '../../../providers/core/factories/provider.factory';
 import {
   ARM_SERVER_WARNING_CODE,
@@ -47,6 +48,8 @@ export interface AddWorkerJobData {
    * has to be one the cluster's private network reaches.
    */
   region?: string | null;
+  /** Added by an operator for a role in a cluster across three locations. */
+  haRole?: HaNodeRole | null;
 }
 
 export interface RemoveWorkerJobData {
@@ -150,6 +153,7 @@ export class ClusterScalingService {
     serverType?: string | null,
     region?: string | null,
     by?: string | null,
+    haRole?: HaNodeRole | null,
   ): Promise<InfrastructureOperationEntity> {
     if (count < 1 || count > MAX_WORKERS_PER_CALL) {
       throw new BadRequestException(
@@ -226,6 +230,7 @@ export class ClusterScalingService {
         providerFirewallIds,
         serverType: serverType ?? cluster.nodeSize,
         region: region ?? cluster.region,
+        ...(haRole && { haRole }),
         operationSteps: steps,
         estimatedDurationInSeconds: 240 * count,
         initiatedBy: by ?? null,
@@ -245,6 +250,7 @@ export class ClusterScalingService {
       providerFirewallIds,
       serverType: serverType ?? null,
       region: region ?? null,
+      haRole: haRole ?? null,
     };
 
     await this.infrastructureQueue.add('add-worker', jobData, {

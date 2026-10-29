@@ -245,4 +245,19 @@ describe('what emptying the node would move', () => {
       { what: 'flui-web', system: true, application: null },
     ]);
   });
+
+  it('refuses a server of the control plane by what it is, whatever runs on it', () => {
+    const check = checkDrain(subject({ isServer: true }));
+    expect(check.ok).toBe(false);
+    expect(check.blockers.map((b) => b.kind)).toEqual(['is-server']);
+  });
+
+  it('refuses a node holding copies of replicated volumes, with the reason', () => {
+    const check = checkDrain(subject({ holdsCopies: true }));
+    expect(check.ok).toBe(false);
+    expect(check.blockers[0]).toMatchObject({
+      kind: 'holds-copies',
+      what: 'prod-eu-worker-2',
+    });
+  });
 });

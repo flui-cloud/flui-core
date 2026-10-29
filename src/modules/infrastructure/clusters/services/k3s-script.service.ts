@@ -159,6 +159,8 @@ export interface K3sWorkerConfig {
   clusterName: string;
   k3sToken: string;
   masterIp: string;
+  /** `server` joins the control plane and its datastore; absent is an agent, as always. */
+  k3sRole?: 'agent' | 'server';
   k3sVersion?: string;
   instanceId: string;
   instanceName: string;
@@ -502,6 +504,7 @@ export class K3sScriptService {
           CLUSTER_NAME: config.clusterName,
           K3S_TOKEN: config.k3sToken,
           K3S_URL: `https://${config.masterIp}:6443`,
+          FLUI_K3S_ROLE: config.k3sRole ?? 'agent',
           K3S_VERSION: config.k3sVersion || K3S_DEFAULT_VERSION,
           MASTER_IP: config.masterIp,
           FLUI_CA_PUBLIC_KEY: config.caPublicKey || '',
