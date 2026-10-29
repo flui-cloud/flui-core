@@ -6,17 +6,36 @@ import { KubernetesService } from '../../shared/services/kubernetes.service';
 import { EncryptionService } from '../../../shared/encryption/services/encryption.service';
 
 export const CLUSTER_DNS_REPLICAS = 2;
+const RESPREAD_COOLDOWN_MS = 60 * 60 * 1000;
 
 export type ClusterDnsSpreadOutcome =
   | 'spread'
+  | 'respread'
   | 'already-spread'
   | 'single-node'
   | 'no-cluster-dns'
   | 'unreachable';
 
 /**
+ * Every copy in one location while another location has room: losing that
+ * location takes name resolution with it, and with it every volume that has
+ * to move. Not more than once an hour, in case the scheduler
+ * keeps choosing the same location for its own reasons.
+ */
+export function dnsNeedsRespread(
+  dns: { podZones: string[]; readyZones: string[]; respreadAt?: string },
+  now: number,
+): boolean {
+  if (dns.podZones.length < 2 || new Set(dns.podZones).size > 1) return false;
+  if (dns.readyZones.filter((z) => z !== dns.podZones[0]).length === 0)
+    return false;
+  const last = dns.respreadAt ? Date.parse(dns.respreadAt) : Number.NaN;
+  return Number.isNaN(last) || now - last > RESPREAD_COOLDOWN_MS;
+}
+
+/**
  * Keeps the cluster DNS on two nodes once the cluster has two that are
- * ready.
+ * ready, in two locations when it has them.
  *
  * K3s owns the `coredns` manifest and writes it back when it restarts, which
  * returns it to one copy. Changing that from K3s' side means restarting K3s on
@@ -44,15 +63,27 @@ export class ClusterDnsSpreadReconciler {
       if (nodes.filter((n) => n.ready).length < 2) return 'single-node';
       const dns = await this.kubernetes.readClusterDns(kubeconfig);
       if (!dns) return 'no-cluster-dns';
-      if (dns.replicas >= CLUSTER_DNS_REPLICAS && dns.spreadAcrossNodes) {
-        return 'already-spread';
+      if (
+        dns.replicas >= CLUSTER_DNS_REPLICAS &&
+        dns.spreadAcrossNodes &&
+        dns.spreadAcrossZones
+      ) {
+        if (!dnsNeedsRespread(dns, Date.now())) return 'already-spread';
+        await this.kubernetes.respreadClusterDns(
+          kubeconfig,
+          new Date().toISOString(),
+        );
+        this.logger.log(
+          `[cluster-dns] ${cluster.name}: every copy was in ${dns.podZones[0]}; restarted so they spread over ${dns.readyZones.join(', ')}`,
+        );
+        return 'respread';
       }
       await this.kubernetes.spreadClusterDns(
         kubeconfig,
         Math.max(dns.replicas, CLUSTER_DNS_REPLICAS),
       );
       this.logger.log(
-        `[cluster-dns] ${cluster.name}: ${dns.replicas} → ${Math.max(dns.replicas, CLUSTER_DNS_REPLICAS)} copies, spread across nodes`,
+        `[cluster-dns] ${cluster.name}: ${dns.replicas} → ${Math.max(dns.replicas, CLUSTER_DNS_REPLICAS)} copies, spread across nodes and locations`,
       );
       return 'spread';
     } catch (err) {

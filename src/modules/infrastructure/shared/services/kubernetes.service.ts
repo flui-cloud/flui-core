@@ -1,4 +1,5 @@
 import { randomBytes } from 'node:crypto';
+import { TOPOLOGY_ZONE_LABEL } from '../../../providers/core/node-topology';
 import { ForbiddenException, Injectable, Logger } from '@nestjs/common';
 import * as k8s from '@kubernetes/client-node';
 import { Writable, Readable } from 'node:stream';
@@ -105,6 +106,8 @@ const timeOfEvent = (event: k8s.CoreV1Event): number =>
 
 /** Long enough for the scheduler to have tried every node, short enough not to look like a hang. */
 const ROOM_SETTLE_SECONDS = 45;
+
+const DNS_RESPREAD_ANNOTATION = 'flui.cloud/dns-respread-at';
 
 @Injectable()
 export class KubernetesService {
@@ -2683,20 +2686,69 @@ export class KubernetesService {
   }
 
   /** The cluster DNS (K3s' `coredns` Deployment): its replica count and whether it spreads across nodes. */
-  async readClusterDns(
-    kubeconfigContent: string,
-  ): Promise<{ replicas: number; spreadAcrossNodes: boolean } | null> {
-    const { appsApi } = this.getKubeClient(kubeconfigContent);
+  async readClusterDns(kubeconfigContent: string): Promise<{
+    replicas: number;
+    spreadAcrossNodes: boolean;
+    spreadAcrossZones: boolean;
+    /** Locations of the nodes running a ready copy. */
+    podZones: string[];
+    /** Locations with a ready node that takes workloads. */
+    readyZones: string[];
+    respreadAt?: string;
+  } | null> {
+    const { appsApi, coreApi } = this.getKubeClient(kubeconfigContent);
     try {
       const deployment = await appsApi.readNamespacedDeployment({
         name: 'coredns',
         namespace: 'kube-system',
       });
+      const constraints =
+        deployment.spec?.template?.spec?.topologySpreadConstraints ?? [];
+      const [nodes, pods] = await Promise.all([
+        coreApi.listNode(),
+        coreApi.listNamespacedPod({
+          namespace: 'kube-system',
+          labelSelector: 'k8s-app=kube-dns',
+        }),
+      ]);
+      const zoneOf = new Map(
+        (nodes.items ?? []).map((n) => [
+          n.metadata?.name,
+          n.metadata?.labels?.[TOPOLOGY_ZONE_LABEL],
+        ]),
+      );
+      const ready = (conditions?: Array<{ type: string; status: string }>) =>
+        (conditions ?? []).some(
+          (c) => c.type === 'Ready' && c.status === 'True',
+        );
       return {
         replicas: deployment.spec?.replicas ?? 1,
-        spreadAcrossNodes: (
-          deployment.spec?.template?.spec?.topologySpreadConstraints ?? []
-        ).some((c) => c.topologyKey === 'kubernetes.io/hostname'),
+        spreadAcrossNodes: constraints.some(
+          (c) => c.topologyKey === 'kubernetes.io/hostname',
+        ),
+        spreadAcrossZones: constraints.some(
+          (c) => c.topologyKey === TOPOLOGY_ZONE_LABEL,
+        ),
+        podZones: (pods.items ?? [])
+          .filter((p) => ready(p.status?.conditions))
+          .map((p) => zoneOf.get(p.spec?.nodeName))
+          .filter((z): z is string => !!z),
+        readyZones: [
+          ...new Set(
+            (nodes.items ?? [])
+              .filter(
+                (n) =>
+                  ready(n.status?.conditions) &&
+                  !n.spec?.unschedulable &&
+                  !(n.spec?.taints ?? []).some(
+                    (t) => t.effect === 'NoSchedule',
+                  ),
+              )
+              .map((n) => n.metadata?.labels?.[TOPOLOGY_ZONE_LABEL])
+              .filter((z): z is string => !!z),
+          ),
+        ],
+        respreadAt: deployment.metadata?.annotations?.[DNS_RESPREAD_ANNOTATION],
       };
     } catch (err) {
       if ((err as { code?: number })?.code === 404) return null;
@@ -2705,8 +2757,11 @@ export class KubernetesService {
   }
 
   /**
-   * Runs the cluster DNS as `replicas` copies placed on different nodes when
-   * they can be, so losing one node does not take name resolution with it.
+   * Runs the cluster DNS as `replicas` copies placed on different nodes, and in
+   * different locations, when they can be: losing one node, or a location,
+   * does not take name resolution with it. The volume engine finds its own
+   * controller by name, so a location that held every copy also held up
+   * every volume that had to move.
    */
   async spreadClusterDns(
     kubeconfigContent: string,
@@ -2725,11 +2780,51 @@ export class KubernetesService {
               topologySpreadConstraints: [
                 {
                   maxSkew: 1,
+                  topologyKey: TOPOLOGY_ZONE_LABEL,
+                  whenUnsatisfiable: 'ScheduleAnyway',
+                  labelSelector: { matchLabels: { 'k8s-app': 'kube-dns' } },
+                },
+                {
+                  maxSkew: 1,
                   topologyKey: 'kubernetes.io/hostname',
                   whenUnsatisfiable: 'ScheduleAnyway',
                   labelSelector: { matchLabels: { 'k8s-app': 'kube-dns' } },
                 },
               ],
+            },
+          },
+        } as unknown as k8s.V1DeploymentSpec,
+      } as k8s.V1Deployment,
+      undefined,
+      undefined,
+      'flui-api',
+      undefined,
+      k8s.PatchStrategy.StrategicMergePatch,
+    );
+  }
+
+  /**
+   * Restarts the cluster DNS one copy at a time, so the scheduler places the
+   * copies again: a spread rule only applies when a copy is placed, and copies
+   * placed before the nodes said where they are stay where they landed.
+   */
+  async respreadClusterDns(
+    kubeconfigContent: string,
+    at: string,
+  ): Promise<void> {
+    await this.objectApi(kubeconfigContent).patch(
+      {
+        apiVersion: 'apps/v1',
+        kind: 'Deployment',
+        metadata: {
+          name: 'coredns',
+          namespace: 'kube-system',
+          annotations: { [DNS_RESPREAD_ANNOTATION]: at },
+        },
+        spec: {
+          template: {
+            metadata: {
+              annotations: { 'kubectl.kubernetes.io/restartedAt': at },
             },
           },
         } as unknown as k8s.V1DeploymentSpec,
