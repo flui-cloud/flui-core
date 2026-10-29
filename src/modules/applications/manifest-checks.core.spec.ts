@@ -150,3 +150,74 @@ describe('what only the installation can say about a manifest', () => {
     expect(byId(checksFor(facts()), 'placement').status).toBe('pass');
   });
 });
+
+describe('replicated volumes in a manifest', () => {
+  const replicated = (
+    over: Partial<NonNullable<ManifestFacts['replicatedVolumes']>> = {},
+  ) => ({ declared: true, enabled: true, mismatches: [], ...over });
+
+  it('adds no line for a manifest without replicated volumes', () => {
+    expect(byId(checksFor(facts()), 'replicated-volumes')).toBeUndefined();
+  });
+
+  it('passes when the cluster keeps replicated volumes', () => {
+    const c = byId(
+      checksFor(facts({ replicatedVolumes: replicated() })),
+      'replicated-volumes',
+    );
+    expect(c.status).toBe('pass');
+  });
+
+  it('refuses a cluster without them and says how to enable them', () => {
+    const checks = checksFor(
+      facts({ replicatedVolumes: replicated({ enabled: false }) }),
+    );
+    expect(byId(checks, 'replicated-volumes').status).toBe('fail');
+    expect(byId(checks, 'replicated-volumes').detail).toContain(
+      'flui cluster replicated-volumes control-cluster --enable',
+    );
+    expect(wouldDeploy(checks)).toBe(false);
+  });
+
+  it('does not refuse a cluster it could not read', () => {
+    const checks = checksFor(
+      facts({ replicatedVolumes: replicated({ enabled: null }) }),
+    );
+    expect(byId(checks, 'replicated-volumes').status).toBe('unknown');
+    expect(wouldDeploy(checks)).toBe(true);
+  });
+
+  it('refuses replicated on a volume that already has one copy', () => {
+    const c = byId(
+      checksFor(
+        facts({
+          replicatedVolumes: replicated({
+            mismatches: [{ name: 'data', declared: true }],
+          }),
+        }),
+      ),
+      'replicated-volumes',
+    );
+    expect(c.status).toBe('fail');
+    expect(c.detail).toContain(
+      'Volume "data" already exists with a single copy',
+    );
+  });
+
+  it('refuses dropping replicated from a replicated volume', () => {
+    const c = byId(
+      checksFor(
+        facts({
+          replicatedVolumes: replicated({
+            declared: false,
+            enabled: null,
+            mismatches: [{ name: 'data', declared: false }],
+          }),
+        }),
+      ),
+      'replicated-volumes',
+    );
+    expect(c.status).toBe('fail');
+    expect(c.detail).toContain('Keep replicated: true');
+  });
+});

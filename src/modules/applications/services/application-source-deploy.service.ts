@@ -82,11 +82,19 @@ import {
   normalizeClusterType,
 } from '../../infrastructure/clusters/entities/cluster.entity';
 import {
+  replicatedVolumesRefusal,
   wouldDeploy,
   type CapacityFact,
   type ManifestCheck,
+  type ReplicatedVolumesFact,
 } from '../manifest-checks.core';
 import { allChecksFor, type RepoFacts } from '../manifest-repo-checks.core';
+import {
+  appVolumesFromManifest,
+  declaresReplicatedVolume,
+  volumeReplicationMismatches,
+} from '../utils/manifest-volumes.util';
+import { ReplicatedVolumesService } from '../../replicated-volumes/services/replicated-volumes.service';
 import { manifestSelfFacts } from '../manifest-self-facts.core';
 import { RepoFactsReaderService } from './repo-facts-reader.service';
 import { EndpointType } from '../../dns/enums/endpoint-type.enum';
@@ -202,6 +210,8 @@ export class ApplicationSourceDeployService {
     private readonly attachedServices?: AttachedServicesPort,
     @Optional()
     private readonly registry?: FluiRegistryPublisherService,
+    @Optional()
+    private readonly replicatedVolumes?: ReplicatedVolumesService,
   ) {}
 
   /** Builds push to the instance's own registry, so no GHCR token is needed. */
@@ -384,6 +394,7 @@ export class ApplicationSourceDeployService {
     // a refusal here, not an application that comes up green without its
     // database. Same call the `--validate-only` preview makes.
     await this.validateAttachedServices(manifest);
+    await this.assertReplicatedVolumes(manifest, dto.clusterId, app);
 
     // Resolve the imageRef to use when skipping the build:
     //   1. dto.imageRef (explicit) — wins
@@ -457,7 +468,7 @@ export class ApplicationSourceDeployService {
           ...scalingFromManifest(manifest, null),
           healthProbe: healthProbe as any,
           startCommand: manifest.deploy.startCommand,
-          volumes: (manifest.deploy.volumes as any) ?? [],
+          volumes: appVolumesFromManifest(manifest.deploy.volumes),
           autoDeploy: false,
           metadata: manifestMetadata,
           projectId: dto.projectId,
@@ -678,6 +689,11 @@ export class ApplicationSourceDeployService {
         hasWorkloadCluster: cluster.isControl
           ? await this.hasWorkloadCluster()
           : null,
+        replicatedVolumes: await this.replicatedVolumesFact(
+          manifest,
+          dto.clusterId,
+          existingApp,
+        ),
       },
       manifestSelfFacts(manifest),
       repo,
@@ -719,6 +735,39 @@ export class ApplicationSourceDeployService {
       };
     }
     return this.repoFactsReader.factsFor(userId, { owner, repo, ref: branch });
+  }
+
+  private async replicatedVolumesFact(
+    manifest: ApplicationManifest,
+    clusterId: string,
+    app: ApplicationEntity | null,
+  ): Promise<ReplicatedVolumesFact | null> {
+    const declared = declaresReplicatedVolume(manifest.deploy?.volumes);
+    const mismatches = volumeReplicationMismatches(
+      manifest.deploy?.volumes,
+      app?.volumes,
+    );
+    if (!declared && !mismatches.length) return null;
+    const enabled =
+      declared && this.replicatedVolumes
+        ? await this.replicatedVolumes.isEnabled(clusterId)
+        : null;
+    return { declared, enabled, mismatches };
+  }
+
+  /** The application would otherwise run without the copy its manifest declares. */
+  private async assertReplicatedVolumes(
+    manifest: ApplicationManifest,
+    clusterId: string,
+    app: ApplicationEntity | null,
+  ): Promise<void> {
+    const fact = await this.replicatedVolumesFact(manifest, clusterId, app);
+    if (!fact) return;
+    const refusal = replicatedVolumesRefusal(
+      fact,
+      (await this.readCluster(clusterId)).name,
+    );
+    if (refusal) throw new BadRequestException(refusal);
   }
 
   private async readCluster(clusterId: string): Promise<{
@@ -979,6 +1028,7 @@ export class ApplicationSourceDeployService {
       existingEnv,
     );
     this.warnEnvShadows(existingEnv, manifestEnv);
+    await this.assertReplicatedVolumes(manifest, app.clusterId, app);
 
     const endpointSpecJson = manifest.deploy.domain
       ? JSON.stringify(manifest.deploy.domain)
