@@ -40,6 +40,18 @@ export class ClusterStorageNfsDto {
 
   @ApiProperty({ description: 'NFS mount options applied on the workers' })
   mountOptions: string;
+
+  @ApiProperty({
+    description:
+      'Whether the master confirms a write before it reaches its disk. When true, the most recent confirmed writes can be lost if the master stops abruptly.',
+  })
+  confirmsBeforeDisk: boolean;
+
+  @ApiProperty({
+    description:
+      'What the shared storage promises about confirmed writes, in one sentence',
+  })
+  durability: string;
 }
 
 export class ClusterStoragePvcSummaryDto {

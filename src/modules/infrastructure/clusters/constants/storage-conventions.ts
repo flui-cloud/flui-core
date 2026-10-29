@@ -58,6 +58,26 @@ export const FLUI_FSCACHE_DEFAULT_SIZE_GB = 5;
 export const NFS_EXPORT_OPTIONS = 'rw,async,no_subtree_check,no_root_squash';
 
 /**
+ * What the shared storage promises about a write it has confirmed, read off
+ * the export options so the answer follows what the master actually runs.
+ */
+export function nfsDurability(exportOptions: string): {
+  confirmsBeforeDisk: boolean;
+  durability: string;
+} {
+  const confirmsBeforeDisk = exportOptions
+    .split(',')
+    .map((option) => option.trim())
+    .includes('async');
+  return {
+    confirmsBeforeDisk,
+    durability: confirmsBeforeDisk
+      ? "Writes are confirmed before they reach the master's disk: if the master stops abruptly, the most recent ones can be lost. Keep databases on dedicated storage."
+      : "Writes are confirmed once they are on the master's disk.",
+  };
+}
+
+/**
  * NFS mount options used on workers.
  * - vers=4.2: full POSIX locking and modern features
  * - bg: keep retrying in background if master temporarily unreachable

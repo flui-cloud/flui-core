@@ -17,6 +17,7 @@ import {
   FLUI_SHARED_VOLUME_FS_LABEL,
   FluiStorageClass,
   NFS_EXPORT_OPTIONS,
+  nfsDurability,
   NFS_MOUNT_OPTIONS,
 } from '../constants/storage-conventions';
 import { CloudProvider } from '../../../providers/enums/cloud-provider.enum';
@@ -67,6 +68,7 @@ export class ClusterStorageService {
       exportPath: FLUI_SHARED_STORAGE_PATH,
       exportOptions: NFS_EXPORT_OPTIONS,
       mountOptions: NFS_MOUNT_OPTIONS,
+      ...nfsDurability(NFS_EXPORT_OPTIONS),
     };
 
     result.volume = volume;

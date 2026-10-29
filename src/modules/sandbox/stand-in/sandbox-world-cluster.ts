@@ -17,6 +17,7 @@ import {
   FLUI_SHARED_STORAGE_PATH,
   FLUI_SHARED_VOLUME_FS_LABEL,
   NFS_EXPORT_OPTIONS,
+  nfsDurability,
   NFS_MOUNT_OPTIONS,
 } from '../../infrastructure/clusters/constants/storage-conventions';
 import {
@@ -75,6 +76,7 @@ export function exampleClusterStorage(
       exportPath: FLUI_SHARED_STORAGE_PATH,
       exportOptions: NFS_EXPORT_OPTIONS,
       mountOptions: NFS_MOUNT_OPTIONS,
+      ...nfsDurability(NFS_EXPORT_OPTIONS),
     }),
     pvcs: mark({
       bound: CLAIMS.length,

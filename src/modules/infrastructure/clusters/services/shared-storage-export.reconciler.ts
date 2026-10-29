@@ -19,10 +19,11 @@ import {
 } from '../../../providers/core/host/cluster-private-networks';
 import { CloudProvider } from '../../../providers/enums/cloud-provider.enum';
 import { nfsAllowedNetworks } from './k3s-script.service';
+import { NFS_EXPORT_OPTIONS } from '../constants/storage-conventions';
 
 export const SHARED_STORAGE_PATH = '/var/lib/flui/storage';
 const EXPORTS_FILE = '/etc/exports';
-const EXPORT_OPTIONS = 'rw,async,no_subtree_check,no_root_squash';
+const EXPORT_OPTIONS = NFS_EXPORT_OPTIONS;
 const SCRIPT_TIMEOUT_MS = 6 * 60_000;
 const CERT_TTL_SECONDS = 600;
 
