@@ -16,6 +16,7 @@ import {
   WaitingForRoomError,
   roomWaitSeconds,
 } from '../utils/waits-for-room.util';
+import { runningPodForDatabase } from '../utils/database-pod.util';
 
 export interface ContainerResources {
   cpu: string | null;
@@ -247,6 +248,32 @@ export class KubernetesService {
       'kubectl.kubernetes.io/last-applied-configuration'
     ];
     return JSON.stringify(spec);
+  }
+
+  /**
+   * Applies every document server-side, as `kubectl apply --server-side`
+   * does. For manifests whose objects are too large to carry a
+   * last-applied-configuration annotation, such as operator CRDs.
+   */
+  async serverSideApply(
+    kubeconfigContent: string,
+    manifestYaml: string,
+  ): Promise<number> {
+    const client = this.objectApi(kubeconfigContent);
+    let applied = 0;
+    for (const spec of k8s.loadAllYaml(manifestYaml)) {
+      if (!spec || Object.keys(spec).length === 0) continue;
+      await client.patch(
+        spec,
+        undefined,
+        undefined,
+        'flui-api',
+        true,
+        k8s.PatchStrategy.ServerSideApply,
+      );
+      applied++;
+    }
+    return applied;
   }
 
   /**
@@ -1276,7 +1303,7 @@ export class KubernetesService {
           ].filter(Boolean),
         }
       : await coreApi.listNamespacedPod({ namespace, labelSelector });
-    const pod = (pods.items ?? []).find((p) => p.status?.phase === 'Running');
+    const pod = runningPodForDatabase(pods.items ?? []);
     if (!pod?.metadata?.name) {
       throw new Error(
         `No running pod found with selector "${labelSelector}" in namespace "${namespace}"`,

@@ -14,6 +14,7 @@ import {
   AppAvailability,
   appAvailability,
 } from '../utils/app-availability.core';
+import { databaseHaServes } from '../../postgres-ha/postgres-ha.types';
 
 /**
  * Gathers what the availability rule needs — where the copies run, which
@@ -65,9 +66,13 @@ export class AppAvailabilityService {
 
     const boundTo = new Map(bindings.map((b) => [b.claimName, b.node]));
     const scaling = app.scaling;
-    const desiredCopies = scaling?.enabled
+    // A highly available database is its instances, each on its own disk by
+    // design; the stopped single instance and its volume no longer count.
+    const ha = databaseHaServes(app.databaseHa) ? app.databaseHa : null;
+    const scaledCopies = scaling?.enabled
       ? (scaling.horizontal?.min ?? scaling.minReplicas ?? app.replicas ?? 1)
       : (app.replicas ?? 1);
+    const desiredCopies = ha ? ha.instances : scaledCopies;
 
     return appAvailability({
       desiredCopies,
@@ -82,8 +87,8 @@ export class AppAvailabilityService {
         .map((pod) => pod.spec?.nodeName ?? '')
         .filter(Boolean),
       ingressNodeCount: clusterIngressValues(cluster).length,
-      dedicated: app.persistenceScope === 'dedicated',
-      volumes: claims.map((claim) => ({
+      dedicated: !ha && app.persistenceScope === 'dedicated',
+      volumes: (ha ? [] : claims).map((claim) => ({
         name: claim.name,
         boundToNode: boundTo.get(claim.name) ?? null,
       })),

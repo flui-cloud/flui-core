@@ -81,6 +81,7 @@ export enum OperationType {
   APP_BACKUP_CREATE = 'app_backup_create',
   // Database lifecycle
   MIGRATE_DATABASE = 'migrate_database',
+  ACTIVATE_DATABASE_HA = 'activate_database_ha',
   // Application lifecycle
   MIGRATE_APPLICATION = 'migrate_application',
   // Full-app lifecycle (app + DB)
@@ -324,6 +325,12 @@ export enum OperationStep {
   PLATFORM_UPDATE_BACKUP = 'platform_update_backup',
   PLATFORM_UPDATE_MANIFESTS = 'platform_update_manifests',
   PLATFORM_UPDATE_K3S = 'platform_update_k3s',
+  // Highly available Postgres
+  DB_HA_PREPARE = 'db_ha_prepare',
+  DB_HA_COPY = 'db_ha_copy',
+  DB_HA_FENCE = 'db_ha_fence',
+  DB_HA_PROMOTE = 'db_ha_promote',
+  DB_HA_SWITCH = 'db_ha_switch',
 }
 
 // Base metadata interface - allows additional runtime properties

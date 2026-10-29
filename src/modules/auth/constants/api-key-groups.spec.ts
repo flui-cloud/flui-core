@@ -123,6 +123,8 @@ describe('permission groups — the taxonomy', () => {
         'catalog_search',
         'cluster_list',
         'cluster_resources',
+        'db_ha_enable',
+        'db_ha_get',
         'db_pooler_client_close',
         'db_pooler_get',
         'db_session_cancel',

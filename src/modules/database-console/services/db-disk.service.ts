@@ -7,6 +7,7 @@ import {
   DbConnectionResolveInput,
   DbConnectionResolver,
 } from '../interfaces/db-connection';
+import { runningPodForDatabase } from '../../infrastructure/shared/utils/database-pod.util';
 
 export interface DbDiskInfo {
   available: boolean;
@@ -67,7 +68,7 @@ export class DbDiskService {
       r.target.namespace,
       r.target.podLabelSelector,
     );
-    const pod = pods.find((p) => p.status?.phase === 'Running') ?? pods[0];
+    const pod = runningPodForDatabase(pods) ?? pods[0];
     if (!pod) {
       return { ...EMPTY, available: false, reason: 'No running pod found.' };
     }

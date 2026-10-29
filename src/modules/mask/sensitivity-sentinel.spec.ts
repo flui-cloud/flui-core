@@ -1746,6 +1746,8 @@ const MASK_EXEMPT: string[] = [
   'DistributionAppDto.id', // modules/visualizations/dto/cluster-app-distribution.dto.ts
   'DistributionAppDto.imageRef', // modules/visualizations/dto/cluster-app-distribution.dto.ts
   'DistributionAppDto.k8sNamespace', // modules/visualizations/dto/cluster-app-distribution.dto.ts
+  'ActivateDatabaseHaDto.durability', // modules/postgres-ha/dto/activate-database-ha.dto.ts
+  'ActivateDatabaseHaDto.force', // modules/postgres-ha/dto/activate-database-ha.dto.ts
   'ClusterStorageNfsDto.confirmsBeforeDisk', // modules/infrastructure/clusters/dto/cluster-storage.dto.ts
   'ClusterStorageNfsDto.durability', // modules/infrastructure/clusters/dto/cluster-storage.dto.ts
   'DistributionAppDto.name', // modules/visualizations/dto/cluster-app-distribution.dto.ts

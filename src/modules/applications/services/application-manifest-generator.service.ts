@@ -40,6 +40,10 @@ import {
   renderUserlist,
 } from '../utils/db-pooler.core';
 import { isPlatformApi } from '../schedulers/platform-api-sizing';
+import {
+  databaseHaPrimarySelector,
+  databaseHaServes,
+} from '../../postgres-ha/postgres-ha.types';
 
 export interface GeneratedManifest {
   kind: ApplicationResourceKind;
@@ -482,6 +486,9 @@ export class ApplicationManifestGeneratorService {
    * wherever the database could.
    */
   private poolerPlacement(app: ApplicationEntity): Record<string, unknown> {
+    // The primary of a highly available cluster changes node, so the pooler is
+    // not tied to one.
+    if (databaseHaServes(app.databaseHa)) return {};
     return {
       affinity: {
         podAffinity: {
@@ -637,6 +644,9 @@ export class ApplicationManifestGeneratorService {
     const ephemeralRequest = app.resources?.ephemeralStorage?.request;
     const ephemeralLimit = app.resources?.ephemeralStorage?.limit;
 
+    // Once a highly available cluster serves, the single instance stays at zero
+    // copies: its volume is the way back if the move has to be undone.
+    const replicas = databaseHaServes(app.databaseHa) ? 0 : (app.replicas ?? 1);
     const template = this.loadTemplate('statefulset.yaml');
     const yaml = template
       .replaceAll('{{SLUG}}', app.slug)
@@ -644,7 +654,7 @@ export class ApplicationManifestGeneratorService {
       .replaceAll('{{LABELS_BLOCK}}', this.renderLabelsBlock(labels))
       .replaceAll('{{POD_LABELS_BLOCK}}', this.renderLabelsBlock(labels, 8))
       .replaceAll('{{ANNOTATIONS_BLOCK}}', this.renderLabelsBlock(annotations))
-      .replaceAll('{{REPLICAS}}', String(app.replicas ?? 1))
+      .replaceAll('{{REPLICAS}}', String(replicas))
       .replaceAll('{{IMAGE}}', imageRef)
       .replaceAll('{{PULL_POLICY}}', config.pullPolicy || 'IfNotPresent')
       .replaceAll(
@@ -828,11 +838,20 @@ export class ApplicationManifestGeneratorService {
     const labels = this.buildLabels(app);
 
     const template = this.loadTemplate('service.yaml');
-    const yaml = template
+    let yaml = template
       .replaceAll('{{SLUG}}', app.slug)
       .replaceAll('{{NAMESPACE}}', app.k8sNamespace)
       .replaceAll('{{LABELS_BLOCK}}', this.renderLabelsBlock(labels))
       .replaceAll('{{PORT}}', String(app.port));
+    if (databaseHaServes(app.databaseHa)) {
+      const selector = Object.entries(databaseHaPrimarySelector(app.databaseHa))
+        .map(([k, v]) => `    ${k}: ${v}`)
+        .join('\n');
+      yaml = yaml.replace(
+        `  selector:\n    app: ${app.slug}\n`,
+        `  selector:\n${selector}\n`,
+      );
+    }
 
     return {
       kind: ApplicationResourceKind.SERVICE,

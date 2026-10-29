@@ -48,6 +48,7 @@ describe('MigrationMeasures1790000000029', () => {
       'AppHistoryIndexes1790000000042',
       'InferenceUsageIpHash1790000000043',
       'InferenceUsageCachedTokens1790000000044',
+      'DatabaseHa1790000000045',
     ]);
   });
 });

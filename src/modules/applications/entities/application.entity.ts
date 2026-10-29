@@ -35,6 +35,7 @@ import {
 import type { AppMaintenance } from '../../infrastructure/maintenance/maintenance-window.core';
 import type { AppBackupDecision } from '../../backups/utils/app-backup-decision.rules';
 import type { PoolerSpec } from '../utils/db-pooler.core';
+import type { DatabaseHaSpec } from '../../postgres-ha/postgres-ha.types';
 
 @Entity('applications')
 export class ApplicationEntity {
@@ -171,6 +172,13 @@ export class ApplicationEntity {
    */
   @Column({ type: 'jsonb', nullable: true })
   pooler?: PoolerSpec | null;
+
+  /**
+   * The highly available cluster a managed PostgreSQL moved to. Null is the
+   * single instance, which is what every install made before it existed reads as.
+   */
+  @Column({ type: 'jsonb', nullable: true })
+  databaseHa?: DatabaseHaSpec | null;
 
   @Column({ type: 'uuid', nullable: true })
   currentRevisionId?: string;

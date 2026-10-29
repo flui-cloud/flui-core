@@ -79,6 +79,8 @@ import { FullMigrationEntity } from '../full-migration/entities/full-migration.e
     DbMigrationService,
     DbMigrationViewService,
     DbPoolerCutService,
+    DbPodExecService,
+    DbWriteFenceService,
   ],
 })
 export class DbLifecycleModule {}

@@ -1,4 +1,9 @@
 import { createHash, createHmac, pbkdf2Sync, randomBytes } from 'node:crypto';
+import {
+  DatabaseHaSpec,
+  databaseHaPrimarySelector,
+  databaseHaServes,
+} from '../../postgres-ha/postgres-ha.types';
 
 export type PoolerMode = 'transaction' | 'session';
 
@@ -110,7 +115,12 @@ export function poolerLabels(app: {
  * separate app, so this and the role exec on `flui-app-id` reach the same pod.
  */
 export function poolerUpstreamObjects(
-  app: { id: string; slug: string; k8sNamespace: string },
+  app: {
+    id: string;
+    slug: string;
+    k8sNamespace: string;
+    databaseHa?: DatabaseHaSpec | null;
+  },
   spec: Pick<PoolerSpec, 'upstream' | 'upstreamClusterIP'>,
 ): {
   service: Record<string, unknown>;
@@ -126,7 +136,13 @@ export function poolerUpstreamObjects(
     spec: {
       type: 'ClusterIP',
       ...(spec.upstreamClusterIP ? { clusterIP: spec.upstreamClusterIP } : {}),
-      ...(forward ? {} : { selector: { app: app.slug } }),
+      ...(forward
+        ? {}
+        : {
+            selector: databaseHaServes(app.databaseHa)
+              ? databaseHaPrimarySelector(app.databaseHa)
+              : { app: app.slug },
+          }),
       ports: [
         {
           name: 'postgres',

@@ -103,3 +103,51 @@ describe('the availability of one application, read from its cluster', () => {
     expect(result).toEqual({ highlyAvailable: true, reasons: [] });
   });
 });
+
+describe('the availability of a database that moved to a highly available cluster', () => {
+  const ha = {
+    engine: 'cnpg',
+    cluster: 'orders-db-ha',
+    durability: 'required',
+    instances: 2,
+    state: 'active',
+    since: 'x',
+  };
+
+  it('survives losing a worker once its instances run on two nodes', async () => {
+    const result = await serviceWith({
+      pods: [pod('worker-1'), pod('worker-2')],
+      bindings: [
+        { claimName: 'orders-db-ha-1', node: 'worker-1' },
+        { claimName: 'orders-db-ha-2', node: 'worker-2' },
+        { claimName: 'data-orders-db-0', node: 'worker-2' },
+      ],
+      app: { replicas: 1, persistenceScope: 'dedicated', databaseHa: ha },
+    }).forApplication('a1');
+    expect(result).toEqual({ highlyAvailable: true, reasons: [] });
+  });
+
+  it('says so while only one instance is ready', async () => {
+    const result = await serviceWith({
+      pods: [pod('worker-1'), pod('worker-2', false)],
+      app: { replicas: 1, persistenceScope: 'dedicated', databaseHa: ha },
+    }).forApplication('a1');
+    expect(result.highlyAvailable).toBe(false);
+    expect(result.reasons.map((r) => r.code)).toEqual(['copies_on_one_node']);
+  });
+
+  it('is still a single database while the copy is being built', async () => {
+    const result = await serviceWith({
+      pods: [pod('worker-2')],
+      app: {
+        replicas: 1,
+        persistenceScope: 'dedicated',
+        databaseHa: { ...ha, state: 'copying' },
+      },
+    }).forApplication('a1');
+    expect(result.reasons.map((r) => r.code)).toEqual([
+      'single_copy',
+      'dedicated_placement',
+    ]);
+  });
+});

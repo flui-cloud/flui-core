@@ -7,3 +7,6 @@ export const FLUI_CONTROL_NAMESPACE = 'flui-control';
 
 /** Legacy namespace used by control clusters provisioned before the control-cluster rename. */
 export const FLUI_LEGACY_CONTROL_NAMESPACE = 'flui-observability';
+
+/** The K3s pod network every Flui cluster uses. */
+export const POD_NETWORK = '10.42.0.0/16';

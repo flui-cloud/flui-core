@@ -149,6 +149,8 @@ const ARGS: Record<string, Record<string, unknown>> = {
     backendStart: '2026-10-12T07:00:00.123Z',
   },
   db_pooler_get: { id: 'a1' },
+  db_ha_get: { id: 'a1' },
+  db_ha_enable: { id: 'a1', durability: 'required' },
   db_pooler_client_close: {
     id: 'a1',
     clientId: 5,
@@ -524,6 +526,8 @@ describe('strada B — the whole tool catalogue goes over the wire', () => {
     ['db_session_cancel', 'POST /applications/a1/db/sessions/42/cancel'],
     ['db_session_terminate', 'POST /applications/a1/db/sessions/42/terminate'],
     ['db_pooler_get', 'GET /applications/a1/db/pooler'],
+    ['db_ha_get', 'GET /applications/a1/db/high-availability'],
+    ['db_ha_enable', 'POST /applications/a1/db/high-availability'],
     [
       'db_pooler_client_close',
       'POST /applications/a1/db/pooler/clients/5/close',
