@@ -15,6 +15,11 @@ import { AppResourceEntity } from '../entities/app-resource.entity';
 import { ApplicationStatus } from '../enums/application-status.enum';
 import { ApplicationCategory } from '../enums/application-category.enum';
 import { ApplicationResourceStatus } from '../enums/application-resource-status.enum';
+import {
+  haClusterStatus,
+  servesFromHaCluster,
+} from '../utils/database-ha-status.core';
+import { CNPG_API_VERSION } from '../../postgres-ha/postgres-ha.constants';
 import { readEndpointFailure } from '../utils/endpoint-failure.util';
 
 type K8sResource = {
@@ -434,6 +439,31 @@ export class ApplicationReconciliationService {
     return { allReady, anyFailed, anyDrift, transientFailures };
   }
 
+  private async readinessOf(
+    app: ApplicationEntity,
+    resource: AppResourceEntity,
+    actual: K8sResource,
+    kubeconfig: string,
+  ): Promise<ApplicationResourceStatus> {
+    if (!servesFromHaCluster(app.databaseHa, resource.kind, actual)) {
+      return this.computeResourceStatus(resource.kind, actual);
+    }
+    const cluster = app.databaseHa!.cluster;
+    return haClusterStatus(
+      await this.withK8sRetry(
+        () =>
+          this.kubernetesService.readObject(
+            kubeconfig,
+            CNPG_API_VERSION,
+            'Cluster',
+            cluster,
+            resource.namespace,
+          ),
+        `Cluster/${cluster}`,
+      ),
+    );
+  }
+
   private async reconcileResource(
     app: ApplicationEntity,
     resource: AppResourceEntity,
@@ -506,7 +536,12 @@ export class ApplicationReconciliationService {
     const resourceVersion = actual.metadata?.resourceVersion || '';
 
     // 4. Determine readiness
-    const resourceStatus = this.computeResourceStatus(resource.kind, actual);
+    const resourceStatus = await this.readinessOf(
+      app,
+      resource,
+      actual,
+      kubeconfig,
+    );
 
     // 5. Detect drift: compare actualHash vs desiredHash (unless ignored).
     // When actualHash is null (annotation missing) we cannot verify drift

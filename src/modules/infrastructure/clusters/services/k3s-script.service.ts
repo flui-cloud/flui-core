@@ -5,7 +5,7 @@ import {
   installedReleaseOf,
 } from 'src/config/bootstrap.config';
 import { RELEASE } from 'src/config/release.config';
-import { K3S_DEFAULT_VERSION } from '../constants';
+import { K3S_DEFAULT_VERSION, POD_NETWORK } from '../constants';
 import { FirewallRule } from 'src/modules/providers/interfaces/firewall-provider.interface';
 import { renderHostFirewallPreamble } from 'src/modules/providers/core/firewall/host-firewall-preamble';
 import { overlayRulesetOptions } from 'src/modules/providers/core/firewall/overlay-ruleset-policy';
@@ -227,7 +227,6 @@ export interface K3sWorkerConfig {
  */
 const DEFAULT_LOCAL_STORAGE_GB = 20;
 
-const POD_NETWORK = '10.42.0.0/16';
 const CIDR_RE = /^[0-9a-fA-F:.]+\/\d{1,3}$/;
 const ANYWHERE = new Set(['0.0.0.0/0', '::/0']);
 

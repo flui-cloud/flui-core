@@ -12,6 +12,7 @@ import {
   CONSOLE_TARGET_ABSENT,
   platformFoundationAtTarget,
 } from '../constants/platform-foundations';
+import { runningPodForDatabase } from '../../infrastructure/shared/utils/database-pod.util';
 
 export interface PortForwardTunnel {
   /** Loopback port a TCP client (e.g. a pg.Pool) connects to. */
@@ -200,7 +201,7 @@ export class KubePortForwardService implements OnModuleDestroy {
       namespace: entry.namespace,
       labelSelector: selector,
     });
-    const pod = (pods.items ?? []).find((p) => p.status?.phase === 'Running');
+    const pod = runningPodForDatabase(pods.items ?? []);
     if (!pod?.metadata?.name) {
       // An absence, not a fault. `redis` answered 500 here because discovery
       // labels a bootstrap-created pod with nothing Flui coined: the selector

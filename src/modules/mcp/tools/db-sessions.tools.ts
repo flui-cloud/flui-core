@@ -144,4 +144,31 @@ export const DB_SESSIONS_TOOLS: ToolDef[] = [
     inputSchema: { id: z.string() },
     run: (args, ctx) => ctx.api.get(`/applications/${enc(args.id)}/db/pooler`),
   }),
+  defineTool({
+    name: 'db_ha_get',
+    routes: ['GET /applications/:id/db/high-availability'],
+    description:
+      'Whether a managed PostgreSQL is highly available (pass the database application id). Null `state` is a single instance: losing its server takes the database down until it returns or is restored. Otherwise the highly available cluster (one instance in each of three locations, surviving the loss of a server or of a location), the durability (`required`: no confirmed write is lost, writes wait without a copy; `preferred`: writes go on and the copy catches up) and where a move stands (`copying`, `active`, `failed` with its detail). While active, `placement` is read live: the primary and each copy with its location, whether it can confirm commits, and `flushLagMs` (how long the latest writes took to be safe on it; null when nothing was written lately). Flui moves the primary back to a location for data after a failover.',
+    scope: MCP_SCOPE.APP_READ,
+    inputSchema: { id: z.string() },
+    run: (args, ctx) =>
+      ctx.api.get(`/applications/${enc(args.id)}/db/high-availability`),
+  }),
+  defineTool({
+    name: 'db_ha_enable',
+    routes: ['POST /applications/:id/db/high-availability'],
+    description:
+      "Make a managed PostgreSQL highly available (pass the database application id). Flui builds three instances, one in each of the cluster's three locations, as live copies of the running one, and moves the application to them without stopping it; writes pause for a few seconds and the single instance is kept, stopped, as the way back. A commit waits for whichever copy answers first, which is the close location in practice. Refused with the reason when the database is not Flui's own PostgreSQL, or the cluster is not yet highly available across three locations of a validated region; `force` accepts a region Flui has not validated. A person approves it before it happens. Returns the operation; follow it with db_ha_get.",
+    scope: MCP_SCOPE.APP_WRITE,
+    inputSchema: {
+      id: z.string(),
+      durability: z.enum(['required', 'preferred']).optional(),
+      force: z.boolean().optional(),
+    },
+    run: (args, ctx) =>
+      ctx.api.post(`/applications/${enc(args.id)}/db/high-availability`, {
+        ...(args.durability && { durability: args.durability }),
+        ...(args.force && { force: args.force }),
+      }),
+  }),
 ];

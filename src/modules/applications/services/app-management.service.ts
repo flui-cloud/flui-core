@@ -65,6 +65,8 @@ import {
   StatefulSetVolumeSwapService,
 } from './statefulset-volume-swap.service';
 import { systemReplicasRefusal } from '../schedulers/platform-api-sizing';
+import { databaseHaServes } from '../../postgres-ha/postgres-ha.types';
+import { CNPG_API_VERSION } from '../../postgres-ha/postgres-ha.constants';
 
 /** Rollout poll interval (ms) */
 const ROLLOUT_POLL_INTERVAL_MS = 3000;
@@ -750,6 +752,33 @@ export class AppManagementService {
     return { kind, name, resource };
   }
 
+  /**
+   * A highly available database serves from its cluster's instances; the
+   * single instance it keeps at zero copies would read as none running.
+   */
+  private async haReplicas<T extends object>(
+    app: ApplicationEntity,
+    kubeconfig: string,
+    fallback: T,
+  ): Promise<T | { desired: number; ready: number; available: number }> {
+    const cluster = await this.kubernetesService
+      .readObject(
+        kubeconfig,
+        CNPG_API_VERSION,
+        'Cluster',
+        app.databaseHa!.cluster,
+        app.k8sNamespace,
+      )
+      .catch(() => null);
+    if (!cluster) return fallback;
+    const ready = Number(cluster.status?.readyInstances ?? 0);
+    return {
+      desired: Number(cluster.spec?.instances ?? app.databaseHa!.instances),
+      ready,
+      available: ready,
+    };
+  }
+
   private async buildRuntimeResponse(
     app: ApplicationEntity,
     kubeconfig: string,
@@ -811,7 +840,9 @@ export class AppManagementService {
       };
     });
 
-    const replicas = detail?.replicas ?? {};
+    const replicas = databaseHaServes(app.databaseHa)
+      ? await this.haReplicas(app, kubeconfig, detail?.replicas ?? {})
+      : (detail?.replicas ?? {});
     const pods = await this.kubernetesService
       .listPodsByLabel(kubeconfig, app.k8sNamespace, `flui-app-id=${app.id}`)
       .catch(() => [] as k8s.V1Pod[]);

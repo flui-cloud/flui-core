@@ -26,12 +26,9 @@ describe('InferenceUsageCachedTokens1790000000044', () => {
     ]);
   });
 
-  it('runs last, after the address hash', () => {
-    expect(migrations[migrations.length - 1]).toBe(
-      InferenceUsageCachedTokens1790000000044,
-    );
-    expect(migrations[migrations.length - 2].name).toBe(
-      'InferenceUsageIpHash1790000000043',
-    );
+  it('runs after the address hash, right before the database HA column', () => {
+    const at = migrations.indexOf(InferenceUsageCachedTokens1790000000044);
+    expect(migrations[at - 1].name).toBe('InferenceUsageIpHash1790000000043');
+    expect(migrations[at + 1].name).toBe('DatabaseHa1790000000045');
   });
 });
