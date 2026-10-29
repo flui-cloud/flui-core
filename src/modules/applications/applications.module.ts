@@ -20,6 +20,7 @@ import { RepositoryCredentialEntity } from '../repositories/entities/repository-
 import { AppBuildEntity } from '../app-builds/entities/app-build.entity';
 import { CatalogInstallEntity } from '../catalog/entities/catalog-install.entity';
 import { SandboxTenantEntity } from '../sandbox/entities/sandbox-tenant.entity';
+import { ReplicatedVolumesModule } from '../replicated-volumes/replicated-volumes.module';
 import { SharedInfrastructureModule } from '../infrastructure/shared/shared-infrastructure.module';
 import { EgressModule } from '../infrastructure/egress/egress.module';
 import { ClustersModule } from '../infrastructure/clusters/clusters.module';
@@ -156,6 +157,7 @@ import { FluiRegistryModule } from '../flui-registry/flui-registry.module';
     BullModule.registerQueue({ name: GHCR_SECRET_REFRESH_QUEUE }),
     BullModule.registerQueue({ name: 'backup' }),
     SharedInfrastructureModule,
+    ReplicatedVolumesModule,
     EgressModule,
     EncryptionModule,
     ImagesModule,

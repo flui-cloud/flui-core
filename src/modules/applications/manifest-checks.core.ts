@@ -54,6 +54,17 @@ export interface ManifestFacts {
   targetIsControlCluster: boolean;
   /** Whether this installation has any workload cluster at all. */
   hasWorkloadCluster: boolean | null;
+  /** Absent unless the manifest or the application it updates has a replicated volume. */
+  replicatedVolumes?: ReplicatedVolumesFact | null;
+}
+
+export interface ReplicatedVolumesFact {
+  /** The manifest asks for at least one replicated volume. */
+  declared: boolean;
+  /** Null when the cluster could not be asked. */
+  enabled: boolean | null;
+  /** Volumes the application already has whose storage the manifest now contradicts. */
+  mismatches: Array<{ name: string; declared: boolean }>;
 }
 
 const check = (
@@ -72,6 +83,7 @@ export function checksFor(facts: ManifestFacts): ManifestCheck[] {
     placementCheck(facts),
     identityCheck(facts),
     exposureCheck(facts),
+    ...(facts.replicatedVolumes ? [replicatedVolumesCheck(facts)] : []),
   ];
 }
 
@@ -283,4 +295,46 @@ function exposureCheck(facts: ManifestFacts): ManifestCheck {
         'How it is reached',
         'Public, but no DNS zone is bound to this cluster — it will answer on the default host rather than a name of yours.',
       );
+}
+
+const quoted = (names: string[]) => names.map((n) => `"${n}"`).join(', ');
+
+/** The sentence a deploy is refused with, shared by the preview and the deploy itself. */
+export function replicatedVolumesRefusal(
+  fact: ReplicatedVolumesFact,
+  clusterName: string | null,
+): string | null {
+  const added = fact.mismatches.filter((m) => m.declared).map((m) => m.name);
+  const dropped = fact.mismatches.filter((m) => !m.declared).map((m) => m.name);
+  if (fact.declared && fact.enabled === false) {
+    return `${clusterName ?? 'The cluster'} does not keep replicated volumes. Enable them first with \`flui cluster replicated-volumes ${clusterName ?? '<cluster>'} --enable\`, or remove replicated from the manifest.`;
+  }
+  if (added.length) {
+    return `Volume ${quoted(added)} already exists with a single copy, and replicated is read only when a volume is created, so the application would run without the copy the manifest declares. Remove replicated from it, or deploy under a new name with replicated volumes and restore a backup into the new application (\`flui app backup restore --to\`).`;
+  }
+  if (dropped.length) {
+    return `Volume ${quoted(dropped)} is replicated, and removing replicated from the manifest does not move its data to a single copy. Keep replicated: true on it.`;
+  }
+  return null;
+}
+
+function replicatedVolumesCheck(facts: ManifestFacts): ManifestCheck {
+  const fact = facts.replicatedVolumes!;
+  const title = 'Replicated volumes';
+  const refusal = replicatedVolumesRefusal(fact, facts.clusterName);
+  if (refusal) return check('replicated-volumes', 'fail', title, refusal);
+  if (fact.declared && fact.enabled === null) {
+    return check(
+      'replicated-volumes',
+      'unknown',
+      title,
+      `Whether ${facts.clusterName ?? 'the cluster'} keeps replicated volumes could not be read just now, so this is unanswered, not refused.`,
+    );
+  }
+  return check(
+    'replicated-volumes',
+    'pass',
+    title,
+    `${facts.clusterName ?? 'The cluster'} keeps a second copy of these volumes on another server of the same location.`,
+  );
 }
