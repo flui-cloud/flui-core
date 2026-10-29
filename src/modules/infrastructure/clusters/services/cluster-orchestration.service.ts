@@ -15,7 +15,11 @@ import {
   NodeType,
   NodeStatus,
 } from '../entities/cluster-node.entity';
-import { HostFirewallBoot, K3sScriptService } from './k3s-script.service';
+import {
+  HostFirewallBoot,
+  K3sMasterConfig,
+  K3sScriptService,
+} from './k3s-script.service';
 import { calculateOperationProgressFromSaved } from '../../operations/helpers/operation-steps.helper';
 import { EncryptionService } from '../../../shared/encryption/services/encryption.service';
 import { CloudProvider } from 'src/modules/providers/enums/cloud-provider.enum';
@@ -142,7 +146,7 @@ export class ClusterOrchestrationService {
       controlClusterIp,
     ]);
 
-    const masterScript = await this.k3sScriptService.generateMasterScript({
+    const masterConfig: K3sMasterConfig = {
       serverId: node.id, // IMPORTANT: Pass database node ID for observability metrics
       hostFirewall,
       wgAddress: overlay.address,
@@ -175,7 +179,7 @@ export class ClusterOrchestrationService {
             privateNetworks: sharedStoragePrivateNetworks,
           }
         : undefined,
-    });
+    };
 
     // Bootstrap key for CA enrollment: used only for initial server access to
     // install the CA public key.
@@ -210,34 +214,10 @@ export class ClusterOrchestrationService {
       );
     }
 
-    // Re-generate master script with bootstrap key if needed (cloud-init injection)
-    const finalMasterScript = bootstrapPublicKeyForCloudInit
-      ? await this.k3sScriptService.generateMasterScript({
-          serverId: node.id,
-          hostFirewall,
-          clusterId: cluster.id,
-          clusterName: cluster.name,
-          k3sToken,
-          k3sVersion: cluster.k3sVersion,
-          instanceId: serverName,
-          instanceName: serverName,
-          provider: cluster.provider,
-          caPublicKey,
-          caPrivateKey,
-          deployObservabilityStack: isControlClusterType(cluster.clusterType),
-          controlClusterIp,
-          deployMonitoringAgent:
-            cluster.clusterType === ClusterType.WORKLOAD && !!controlClusterIp,
-          bootstrapPublicKey: bootstrapPublicKeyForCloudInit,
-          sharedStorage: sharedStorageEnabled
-            ? {
-                enabled: true,
-                volumeSizeGb: sharedStorageVolumeSizeGb,
-                privateNetworks: sharedStoragePrivateNetworks,
-              }
-            : undefined,
-        })
-      : masterScript;
+    const finalMasterScript = await this.k3sScriptService.generateMasterScript({
+      ...masterConfig,
+      bootstrapPublicKey: bootstrapPublicKeyForCloudInit,
+    });
 
     // Generate labels for cluster master node
     const labels = this.labelService.generateServerLabels({
