@@ -2974,6 +2974,23 @@ export class KubernetesService {
     }
   }
 
+  /** Every object of a kind in every namespace; empty when the kind is not installed. */
+  async listObjectsEverywhere(
+    kubeconfigContent: string,
+    apiVersion: string,
+    kind: string,
+  ): Promise<any[]> {
+    const client = this.objectApi(kubeconfigContent);
+    try {
+      const response = await client.list(apiVersion, kind);
+      const body = (response as any).body ?? response;
+      return body.items ?? [];
+    } catch (error) {
+      if (this.httpCode(error) === 404) return [];
+      throw error;
+    }
+  }
+
   /** The kubelet's own summary of a node (`stats/summary`), as it publishes it; null when the node does not answer. */
   async nodeStatsSummary(
     kubeconfigContent: string,

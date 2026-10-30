@@ -278,7 +278,7 @@ export const INFRASTRUCTURE_OPERATION_TOOLS: ToolDef[] = [
     name: 'cluster_node_scale_preview',
     routes: ['GET /infrastructure/clusters/:id/nodes/:nodeId/scale/preview'],
     description:
-      'What resizing one node would take down: its current server type, the dedicated workloads on it and the expected downtime. This is the estimate attached to cluster_node_resize — read it first and say the downtime out loud, because everything scheduled on that node, dedicated databases included, is unavailable for the whole window.',
+      'What resizing one node would take down: its current server type, the dedicated workloads on it, the expected downtime and the machine types it could move to (`candidates`, against its own type). On a cluster across three locations `highAvailability.refusal` says why the resize would be refused now (another node being resized, a server down, a copy of a replicated volume behind) and `switchovers` the database primaries handed over first. This is the estimate attached to cluster_node_resize — read it first and say the downtime out loud, because everything scheduled on that node, dedicated databases included, is unavailable for the whole window.',
     scope: MCP_SCOPE.INFRA_READ,
     inputSchema: { ...clusterArg, nodeId: NODE_ID },
     run: async (args, ctx) => {
@@ -481,7 +481,7 @@ export const INFRASTRUCTURE_OPERATION_TOOLS: ToolDef[] = [
     name: 'cluster_node_resize',
     routes: ['POST /infrastructure/clusters/:id/nodes/:nodeId/scale'],
     description:
-      'Vertically resize one node: cordon, power off, change the server type at the provider (an arm type is accepted with a warning: "Arm server: apps deployed from a repository are built for x86 and will not run on it. Catalog apps run normally."), power on, wait for the node to be Ready again. This is a maintenance window of roughly 3-5 minutes during which every pod on that node — dedicated databases included — is down. Call cluster_node_scale_preview first and say the downtime out loud. Growing the local OS disk is deliberately not offered here: it is a one-way change that permanently blocks resizing back down.',
+      'Vertically resize one node: cordon, power off, change the server type at the provider (an arm type is accepted with a warning: "Arm server: apps deployed from a repository are built for x86 and will not run on it. Catalog apps run normally."), power on, wait for the node to be Ready again. This is a maintenance window of roughly 3-5 minutes during which every pod on that node — dedicated databases included — is down. Call cluster_node_scale_preview first and say the downtime out loud. It is queued: the answer is the operation to follow with operation_status, and a job that an API restart interrupts carries on. On a cluster across three locations one node is resized at a time, only while the rest is healthy, and a database primary on the node is handed over first. `copiesGiB` grows the space the node sets aside for copies of replicated volumes once it is back. Growing the local OS disk is deliberately not offered here: it is a one-way change that permanently blocks resizing back down.',
     scope: MCP_SCOPE.INFRA_WRITE,
     inputSchema: {
       ...clusterArg,
@@ -489,12 +489,29 @@ export const INFRASTRUCTURE_OPERATION_TOOLS: ToolDef[] = [
       targetServerType: z
         .string()
         .describe('Provider server type to move to, e.g. `cx32`.'),
+      copiesGiB: z
+        .number()
+        .int()
+        .min(1)
+        .optional()
+        .describe(
+          'New size of the space for copies of replicated volumes on this node, grown once it is back.',
+        ),
     },
     run: async (args, ctx) => {
       const id = await resolveClusterId(ctx, args.clusterId);
-      return ctx.api.post(
+      const operation = await ctx.api.post<{ id: string; status?: string }>(
         `/infrastructure/clusters/${encoded(id)}/nodes/${encoded(args.nodeId)}/scale`,
-        { targetServerType: args.targetServerType },
+        {
+          targetServerType: args.targetServerType,
+          ...(args.copiesGiB && { copiesGiB: args.copiesGiB }),
+        },
+      );
+      return startedOutcome(
+        ctx,
+        operation.id,
+        (operation.status ?? 'PENDING').toUpperCase(),
+        `Resize node ${args.nodeId} to ${args.targetServerType}`,
       );
     },
   }),
