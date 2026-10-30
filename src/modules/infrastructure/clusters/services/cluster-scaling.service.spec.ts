@@ -1,3 +1,5 @@
+jest.mock('@kubernetes/client-node', () => ({}));
+
 import { ClusterBoundsRegistry } from './cluster-bounds.registry';
 import {
   BadRequestException,

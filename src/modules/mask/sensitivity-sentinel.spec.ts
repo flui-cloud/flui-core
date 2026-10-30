@@ -3115,6 +3115,7 @@ const MASK_EXEMPT: string[] = [
   'SandboxVisitorAdmissionRequestDto.turnstileToken', // modules/sandbox/dto/sandbox-visitor-admission.dto.ts
   'SaveGhcrPatDto.expiresAt', // modules/repositories/dto/ghcr-pat.dto.ts
   'SaveGhcrPatDto.token', // modules/repositories/dto/ghcr-pat.dto.ts
+  'ScaleNodeDto.copiesGiB', // modules/infrastructure/clusters/dto/scale-node.dto.ts
   'ScaleNodeDto.targetServerType', // modules/infrastructure/clusters/dto/scale-node.dto.ts
   'ScaleNodeDto.upgradeDisk', // modules/infrastructure/clusters/dto/scale-node.dto.ts
   'ScalingActuationDto.acts', // modules/infrastructure/scaling/dto/scaling-response.dto.ts

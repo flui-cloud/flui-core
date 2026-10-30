@@ -150,6 +150,26 @@ export class ClusterCapacityService {
     };
   }
 
+  /** Machine types a node of this cluster could move to, against its own current type. */
+  async candidatesFor(
+    provider: string,
+    serverType: string | null | undefined,
+  ): Promise<CapacityCandidateDto[]> {
+    let sizes: NodeSizeDto[] = [];
+    try {
+      sizes =
+        (await this.providerFactory
+          .getProvider(provider as CloudProvider)
+          .getNodeSizes?.(false)) ?? [];
+    } catch {
+      return [];
+    }
+    return this.buildCandidates(
+      sizes,
+      serverType ? sizes.find((s) => s.name === serverType) : undefined,
+    );
+  }
+
   private buildCandidates(
     sizes: NodeSizeDto[],
     currentSize: NodeSizeDto | undefined,

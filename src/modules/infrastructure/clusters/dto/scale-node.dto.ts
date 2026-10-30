@@ -17,6 +17,16 @@ export class ScaleNodeDto {
   @IsOptional()
   @IsBoolean()
   upgradeDisk?: boolean;
+
+  @ApiPropertyOptional({
+    description:
+      'New size, in GiB, of the space this node sets aside for copies of replicated volumes, grown once the node is back. Only grows; ignored on a node that holds no copies, and kept when the disk has not the room.',
+    minimum: 1,
+  })
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  copiesGiB?: number;
 }
 
 export class ExpandSharedVolumeDto {

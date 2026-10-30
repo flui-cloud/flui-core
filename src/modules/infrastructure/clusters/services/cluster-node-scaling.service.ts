@@ -3,8 +3,11 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  Optional,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
+import { InjectQueue } from '@nestjs/bull';
+import { Queue } from 'bull';
 import { IsNull, Repository } from 'typeorm';
 import { ClusterEntity } from '../entities/cluster.entity';
 import { ClusterNodeEntity, NodeType } from '../entities/cluster-node.entity';
@@ -26,6 +29,12 @@ import {
   ARM_SERVER_WARNING_CODE,
   providerServerTypeWarning,
 } from '../../../providers/core/catalogue/server-architecture';
+import { ClusterCapacityService } from './cluster-capacity.service';
+import { CapacityCandidateDto } from '../dto/cluster-capacity-plan.dto';
+import {
+  HaResizeReadiness,
+  NodeResizeHaService,
+} from './node-resize-ha.service';
 
 export interface ScaleNodeImpactDto {
   clusterId: string;
@@ -40,11 +49,45 @@ export interface ScaleNodeImpactDto {
   affectedDedicatedApps: Array<{ id: string; slug: string }>;
   expectedDowntimeMs: number;
   warning: string;
+  /** Machine types this node could move to, against its own current type. */
+  candidates: CapacityCandidateDto[];
+  /**
+   * On a cluster across three locations: why the resize would be refused now,
+   * and the primaries handed over before the node goes down. Null elsewhere.
+   */
+  highAvailability: {
+    refusal: string | null;
+    switchovers: Array<{ namespace: string; cluster: string; target: string }>;
+  } | null;
 }
 
 export interface ScaleNodeRequest {
   targetServerType: string;
   upgradeDisk?: boolean;
+  /** New size of the space for copies of replicated volumes on this node, grown once it is back. */
+  copiesGiB?: number;
+}
+
+export interface ScaleNodeJobData {
+  operationId: string;
+}
+
+interface ScaleRun {
+  operationId: string;
+  meta: {
+    clusterId: string;
+    nodeId: string;
+    targetServerType: string;
+    upgradeDisk?: boolean;
+    copiesGiB?: number;
+  };
+  cluster: ClusterEntity;
+  node: ClusterNodeEntity;
+  provider: ReturnType<ProviderFactory['getProvider']>;
+  kubeconfig: string | null;
+  isMaster: boolean;
+  /** Set while the machine is off because of this run, so a failure brings it back. */
+  poweredOff: boolean;
 }
 
 export interface ExpandSharedVolumeRequest {
@@ -69,7 +112,19 @@ export class ClusterNodeScalingService {
     private readonly encryptionService: EncryptionService,
     private readonly billingIntervals: BillingIntervalsService,
     private readonly nodePriceService: NodePriceService,
+    @InjectQueue('infrastructure') private readonly infrastructureQueue: Queue,
+    private readonly capacity: ClusterCapacityService,
+    // Absent in the CLI's own container, which resizes the control cluster's
+    // master in process: a resize there works as it always has.
+    @Optional() private readonly resizeHa?: NodeResizeHaService,
   ) {}
+
+  private haReadiness(
+    cluster: ClusterEntity,
+    node: ClusterNodeEntity,
+  ): Promise<HaResizeReadiness | null> {
+    return this.resizeHa?.readiness(cluster, node) ?? Promise.resolve(null);
+  }
 
   // ─── Impact preview ────────────────────────────────────────────────────────
 
@@ -104,6 +159,11 @@ export class ClusterNodeScalingService {
         slug: a.slug,
       })),
       expectedDowntimeMs: 240000,
+      candidates: await this.capacity.candidatesFor(
+        cluster.provider,
+        details?.server_type ?? node.serverType,
+      ),
+      highAvailability: await this.haReadiness(cluster, node),
       warning:
         affected.length > 0
           ? `Scaling this node will stop ${affected.length} dedicated workload(s) (~3–5 min of downtime). Snapshot them with \`flui app snapshot create\` before proceeding.`
@@ -118,6 +178,7 @@ export class ClusterNodeScalingService {
     nodeId: string,
     request: ScaleNodeRequest,
     userId?: string,
+    options: { queue?: boolean } = {},
   ): Promise<InfrastructureOperationEntity> {
     const { cluster, node } = await this.resolveClusterAndNode(
       clusterId,
@@ -156,6 +217,9 @@ export class ClusterNodeScalingService {
       );
     }
 
+    const ha = await this.haReadiness(cluster, node);
+    if (ha?.refusal) throw new BadRequestException(ha.refusal);
+
     const steps = getOperationSteps(OperationType.SCALE_NODE);
     const operation = this.operationRepository.create({
       operationType: OperationType.SCALE_NODE,
@@ -175,6 +239,8 @@ export class ClusterNodeScalingService {
         currentServerType: currentDetails?.server_type ?? null,
         targetServerType: request.targetServerType,
         upgradeDisk: request.upgradeDisk ?? false,
+        ...(request.copiesGiB && { copiesGiB: request.copiesGiB }),
+        ...(ha && { highAvailability: true }),
         operationSteps: steps,
         ...(warning
           ? {
@@ -184,151 +250,249 @@ export class ClusterNodeScalingService {
       },
     });
     const saved = await this.operationRepository.save(operation);
+    // The control cluster's master runs the API: its resize is run by the
+    // CLI that asked for it, which runScaleNode then does in process.
+    if (options.queue === false) return saved;
+    await this.infrastructureQueue.add(
+      'scale-node',
+      { operationId: saved.id } satisfies ScaleNodeJobData,
+      { attempts: 1, timeout: 30 * 60 * 1000 },
+    );
+    this.logger.log(
+      `Queued scale-node ${node.serverName} → ${request.targetServerType} (operation ${saved.id})`,
+    );
+    return saved;
+  }
 
+  /**
+   * The steps of a resize, each checking where the machine already is, so a
+   * job that runs again after the API restarted carries on instead of
+   * starting over. A failure once the machine is off tries to bring it back,
+   * so a resize that could not finish does not leave a node down.
+   */
+  async runScaleNode(operationId: string): Promise<void> {
+    const operation = await this.operationRepository.findOneOrFail({
+      where: { id: operationId },
+    });
+    const meta = operation.metadata as ScaleRun['meta'];
+    const { cluster, node } = await this.resolveClusterAndNode(
+      meta.clusterId,
+      meta.nodeId,
+    );
+    const run: ScaleRun = {
+      operationId,
+      meta,
+      cluster,
+      node,
+      provider: this.providerFactory.getProvider(
+        cluster.provider as CloudProvider,
+      ),
+      kubeconfig: cluster.kubeconfigEncrypted
+        ? this.encryptionService.decrypt(cluster.kubeconfigEncrypted)
+        : null,
+      isMaster: node.nodeType === NodeType.MASTER,
+      poweredOff: false,
+    };
+
+    await this.operationRepository.update(operationId, {
+      status: OperationStatus.IN_PROGRESS,
+      startedAt: operation.startedAt ?? new Date(),
+    });
     try {
-      saved.status = OperationStatus.IN_PROGRESS;
-      saved.startedAt = new Date();
-      await this.operationRepository.save(saved);
-
-      const isMaster = node.nodeType === NodeType.MASTER;
-
-      // Step 0: precheck → cordon (workers only; for master, the k8s API
-      // goes down with the master so cordoning is pointless and we cannot
-      // call it once power_off starts).
-      if (!isMaster && cluster.kubeconfigEncrypted) {
-        await this.advanceStep(saved.id, 0, 50, {
-          message: 'Cordoning worker node',
-        });
-        const kubeconfig = this.encryptionService.decrypt(
-          cluster.kubeconfigEncrypted,
-        );
-        try {
-          await this.kubernetesService.cordonNode(kubeconfig, node.serverName);
-        } catch (err) {
-          this.logger.warn(
-            `Cordon failed for ${node.serverName}: ${(err as Error).message} — continuing`,
-          );
-        }
-      } else {
-        await this.advanceStep(saved.id, 0, 50, {
-          message: 'Master node: skipping cordon (k8s API co-located)',
-        });
-      }
-      await this.advanceStep(saved.id, 0, 100);
-
-      // Step 1: power off
-      await this.advanceStep(saved.id, 1, 0, {
-        message: 'Powering off node',
-      });
-      await provider.powerOffServer(node.providerResourceId);
-      await this.waitForServerStatus(provider, node.providerResourceId, 'off');
-      await this.advanceStep(saved.id, 1, 100);
-
-      // Step 2: change_type
-      await this.advanceStep(saved.id, 2, 0, {
-        message: `Changing server type → ${request.targetServerType}`,
-      });
-      await provider.changeServerType(node.providerResourceId, {
-        targetServerType: request.targetServerType,
-        upgradeDisk: request.upgradeDisk ?? false,
-      });
-      await this.advanceStep(saved.id, 2, 100);
-
-      // Step 3: power on
-      await this.advanceStep(saved.id, 3, 0, {
-        message: 'Powering on node',
-      });
-      await provider.powerOnServer(node.providerResourceId);
-      await this.waitForServerStatus(
-        provider,
-        node.providerResourceId,
-        'running',
-      );
-      await this.advanceStep(saved.id, 3, 100);
-
-      // Step 4: wait healthy.
-      // For master: TCP probe the public IP on port 80 (Traefik). When
-      // Traefik answers, k3s + ingress controller + master are all up.
-      // For worker: poll k8s API on the (still-alive) master for the
-      // worker's Node Ready=True condition.
-      await this.advanceStep(saved.id, 4, 0, {
-        message: isMaster
-          ? 'Waiting for master ingress (TCP :80) to respond'
-          : 'Waiting for worker node Ready via master k8s API',
-      });
-      if (isMaster) {
-        const masterIp = cluster.masterIpAddress;
-        if (!masterIp) {
-          throw new Error(
-            'Cluster has no masterIpAddress recorded — cannot wait for health',
-          );
-        }
-        await this.waitForTcpOpen(masterIp, 80, 480000, 5000);
-      } else if (cluster.kubeconfigEncrypted) {
-        const kubeconfig = this.encryptionService.decrypt(
-          cluster.kubeconfigEncrypted,
-        );
-        await this.kubernetesService.waitForNodeReady(
-          kubeconfig,
-          node.serverName,
-          480000,
-          5000,
-        );
-        try {
-          await this.kubernetesService.uncordonNode(
-            kubeconfig,
-            node.serverName,
-          );
-        } catch (err) {
-          this.logger.warn(
-            `Uncordon failed for ${node.serverName}: ${(err as Error).message}`,
-          );
-        }
-      }
-      await this.advanceStep(saved.id, 4, 100);
-
-      node.serverType = request.targetServerType;
-      node.hourlyPriceEur = await this.nodePriceService.resolveHourlyEur(
-        cluster.provider,
-        request.targetServerType,
-        cluster.region,
-      );
-      await this.nodeRepository.save(node);
-
-      await this.billingIntervals.openNodeInterval({
-        clusterId: cluster.id,
-        nodeId: node.id,
-        serverName: node.serverName,
-        providerResourceId: node.providerResourceId,
-        provider: cluster.provider,
-        region: cluster.region,
-        serverType: request.targetServerType,
-        nodeType: node.nodeType,
-      });
+      await this.prepareForResize(run);
+      await this.changeMachine(run);
+      await this.waitHealthy(run);
+      await this.recordNewType(run);
 
       // Step 5: finalize
-      await this.advanceStep(saved.id, 5, 100, {
+      await this.advanceStep(operationId, 5, 100, {
         status: OperationStatus.COMPLETED,
-        message: `Node ${node.serverName} scaled to ${request.targetServerType}`,
+        message: `Node ${node.serverName} scaled to ${meta.targetServerType}`,
         completedAt: new Date().toISOString(),
       });
-      saved.status = OperationStatus.COMPLETED;
-      saved.completedAt = new Date();
-      await this.operationRepository.save(saved);
-      return saved;
+      await this.operationRepository.update(operationId, {
+        status: OperationStatus.COMPLETED,
+        completedAt: new Date(),
+      });
     } catch (error) {
-      this.logger.error(
-        `scaleNode failed for node=${nodeId}: ${(error as Error).message}`,
-      );
-      saved.status = OperationStatus.FAILED;
-      saved.metadata = {
-        ...saved.metadata,
-        error: (error as Error).message,
-        failedAt: new Date().toISOString(),
-      };
-      await this.operationRepository.save(saved);
-      throw error;
+      await this.failScaleNode(run, error as Error);
     }
+  }
+
+  /** Step 0: primaries handed over, then cordon. The master is not cordoned: its API goes down with it. */
+  private async prepareForResize(run: ScaleRun): Promise<void> {
+    const { operationId, kubeconfig, node } = run;
+    const ha = kubeconfig ? await this.haReadiness(run.cluster, node) : null;
+    for (const s of ha?.switchovers ?? []) {
+      await this.advanceStep(operationId, 0, 20, {
+        message: `Handing the primary of ${s.namespace}/${s.cluster} over to ${s.target}`,
+      });
+      await this.resizeHa!.switchover(kubeconfig!, s);
+    }
+    if (!run.isMaster && kubeconfig) {
+      await this.advanceStep(operationId, 0, 50, {
+        message: 'Cordoning worker node',
+      });
+      try {
+        await this.kubernetesService.cordonNode(kubeconfig, node.serverName);
+      } catch (err) {
+        this.logger.warn(
+          `Cordon failed for ${node.serverName}: ${(err as Error).message} — continuing`,
+        );
+      }
+    } else {
+      await this.advanceStep(operationId, 0, 50, {
+        message: 'Master node: skipping cordon (k8s API co-located)',
+      });
+    }
+    await this.advanceStep(operationId, 0, 100);
+  }
+
+  /** Steps 1-3, each skipped when the machine is already past it. */
+  private async changeMachine(run: ScaleRun): Promise<void> {
+    const { operationId, provider, node, meta } = run;
+    const details = () =>
+      provider.getServerDetailsAsDto?.(node.providerResourceId);
+    const before = await details();
+
+    // Step 1: power off
+    await this.advanceStep(operationId, 1, 0, {
+      message: 'Powering off node',
+    });
+    if (before?.server_type !== meta.targetServerType) {
+      if (before?.status !== 'off') {
+        await provider.powerOffServer!(node.providerResourceId);
+      }
+      run.poweredOff = true;
+      await this.waitForServerStatus(provider, node.providerResourceId, 'off');
+    }
+    await this.advanceStep(operationId, 1, 100);
+
+    // Step 2: change_type
+    await this.advanceStep(operationId, 2, 0, {
+      message: `Changing server type → ${meta.targetServerType}`,
+    });
+    if ((await details())?.server_type !== meta.targetServerType) {
+      await provider.changeServerType!(node.providerResourceId, {
+        targetServerType: meta.targetServerType,
+        upgradeDisk: meta.upgradeDisk ?? false,
+      });
+    }
+    await this.advanceStep(operationId, 2, 100);
+
+    // Step 3: power on
+    await this.advanceStep(operationId, 3, 0, {
+      message: 'Powering on node',
+    });
+    if ((await details())?.status !== 'running') {
+      await provider.powerOnServer!(node.providerResourceId);
+    }
+    await this.waitForServerStatus(
+      provider,
+      node.providerResourceId,
+      'running',
+    );
+    run.poweredOff = false;
+    await this.advanceStep(operationId, 3, 100);
+  }
+
+  /**
+   * Step 4. For the master: a TCP probe of the public IP on port 80
+   * (Traefik); when Traefik answers, k3s, ingress and master are all up. For a
+   * worker: its Node Ready condition through the master's k8s API. The space
+   * for copies grows once the node is back.
+   */
+  private async waitHealthy(run: ScaleRun): Promise<void> {
+    const { operationId, kubeconfig, node, cluster, meta } = run;
+    await this.advanceStep(operationId, 4, 0, {
+      message: run.isMaster
+        ? 'Waiting for master ingress (TCP :80) to respond'
+        : 'Waiting for worker node Ready via master k8s API',
+    });
+    if (run.isMaster) {
+      const masterIp = cluster.masterIpAddress;
+      if (!masterIp) {
+        throw new Error(
+          'Cluster has no masterIpAddress recorded — cannot wait for health',
+        );
+      }
+      await this.waitForTcpOpen(masterIp, 80, 480000, 5000);
+    } else if (kubeconfig) {
+      await this.kubernetesService.waitForNodeReady(
+        kubeconfig,
+        node.serverName,
+        480000,
+        5000,
+      );
+      try {
+        await this.kubernetesService.uncordonNode(kubeconfig, node.serverName);
+      } catch (err) {
+        this.logger.warn(
+          `Uncordon failed for ${node.serverName}: ${(err as Error).message}`,
+        );
+      }
+    }
+    const grown =
+      meta.copiesGiB && kubeconfig && this.resizeHa
+        ? await this.resizeHa.growCopies(
+            kubeconfig,
+            node.serverName,
+            meta.copiesGiB,
+          )
+        : null;
+    await this.advanceStep(operationId, 4, 100, {
+      ...(grown && { message: grown }),
+    });
+  }
+
+  private async recordNewType(run: ScaleRun): Promise<void> {
+    const { cluster, node, meta } = run;
+    const region = node.region ?? cluster.region;
+    node.serverType = meta.targetServerType;
+    node.hourlyPriceEur = await this.nodePriceService.resolveHourlyEur(
+      cluster.provider,
+      meta.targetServerType,
+      region,
+    );
+    await this.nodeRepository.save(node);
+    await this.billingIntervals.openNodeInterval({
+      clusterId: cluster.id,
+      nodeId: node.id,
+      serverName: node.serverName,
+      providerResourceId: node.providerResourceId,
+      provider: cluster.provider,
+      region,
+      serverType: meta.targetServerType,
+      nodeType: node.nodeType,
+    });
+  }
+
+  private async failScaleNode(run: ScaleRun, error: Error): Promise<void> {
+    const { operationId, node, provider } = run;
+    const message = error.message;
+    this.logger.error(
+      `scaleNode failed for node=${node.serverName}: ${message}`,
+    );
+    const recovery = run.poweredOff
+      ? await provider.powerOnServer!(node.providerResourceId)
+          .then(() => 'powered back on')
+          .catch((err: Error) => `could not be powered back on: ${err.message}`)
+      : null;
+    const current = await this.operationRepository.findOneOrFail({
+      where: { id: operationId },
+    });
+    current.status = OperationStatus.FAILED;
+    current.errorMessage = recovery
+      ? `${message} The node ${recovery}.`
+      : message;
+    current.completedAt = new Date();
+    current.metadata = {
+      ...current.metadata,
+      error: message,
+      ...(recovery && { recovery }),
+      failedAt: new Date().toISOString(),
+    } as InfrastructureOperationEntity['metadata'];
+    await this.operationRepository.save(current);
   }
 
   // ─── Expand shared storage volume ──────────────────────────────────────────

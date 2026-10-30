@@ -977,9 +977,12 @@ export class ClustersController {
   @ApiOperation({
     summary: 'Preview impact of a scale-node operation',
     description:
-      'Returns the current server type, affected dedicated workloads and ' +
-      'expected downtime for a vertical scale of the named node. Use this ' +
-      'before invoking POST .../scale to confirm the maintenance window.',
+      'Returns the current server type, affected dedicated workloads, ' +
+      'expected downtime and the machine types the node could move to ' +
+      '(`candidates`, against its own type) for a vertical scale of the named node. ' +
+      'On a cluster across three locations `highAvailability` says why the resize would be refused now ' +
+      '(another node being resized, a server down, a copy of a replicated volume behind) and which ' +
+      'Postgres primaries are handed over before the node goes down. Use this before POST .../scale.',
   })
   async previewScaleNode(
     @Param('id') id: string,
@@ -1027,15 +1030,18 @@ export class ClustersController {
     summary:
       'Vertically scale a cluster node (power-off → change_type → power-on)',
     description:
-      'Maintenance-window operation. Cordons the node, powers it off, asks the ' +
+      'Maintenance-window operation, queued: returns the operation to follow. Cordons the node, powers it off, asks the ' +
       'provider to change its server type, powers it back on and waits for ' +
       'k3s to report Ready. Total downtime ~3–5 min. All pods scheduled on ' +
-      'the node — including dedicated databases — are unavailable during ' +
-      'this window. Snapshot DBs first.',
+      'the node, dedicated databases included, are unavailable during ' +
+      'this window. Snapshot DBs first. Each step checks where the machine already is, so the job resumes after an API restart; ' +
+      'a failure once the node is off tries to power it back on. On a cluster across three locations one node is resized at a time, ' +
+      'only while every other server is ready and every copy of a replicated volume is up to date, and a Postgres primary on the node is ' +
+      'handed over first. `copiesGiB` grows the space for copies of replicated volumes once the node is back.',
   })
   @ApiResponse({
-    status: 200,
-    description: 'Operation completed successfully',
+    status: 201,
+    description: 'Operation queued',
   })
   async scaleNode(
     @Param('id') id: string,

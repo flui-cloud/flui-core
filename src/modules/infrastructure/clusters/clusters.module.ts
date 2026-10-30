@@ -85,6 +85,7 @@ import { OrphanedClaimsService } from './services/orphaned-claims.service';
 import { ClusterOrphanedClaimsController } from './cluster-orphaned-claims.controller';
 import { ClusterCapacityService } from './services/cluster-capacity.service';
 import { ClusterNodeScalingService } from './services/cluster-node-scaling.service';
+import { NodeResizeHaService } from './services/node-resize-ha.service';
 import { OrphanVolumesService } from './services/orphan-volumes.service';
 import { ApplicationEntity } from '../../applications/entities/application.entity';
 import { ApplicationServiceEntity } from '../../attached-services/entities/application-service.entity';
@@ -116,11 +117,14 @@ import { IamModule } from '../../iam/iam.module';
 import { HaNodesController } from './ha-nodes.controller';
 import { HaNodesService } from './services/ha-nodes.service';
 import { NodeDisksService } from './services/node-disks.service';
+import { NodeScaleProcessor } from './processors/node-scale.processor';
 import { ClusterHaModule } from '../../cluster-ha/cluster-ha.module';
+import { ReplicatedVolumesModule } from '../../replicated-volumes/replicated-volumes.module';
 
 @Module({
   imports: [
     ClusterHaModule,
+    ReplicatedVolumesModule,
     ConfigModule,
     // Both behind forwardRef: applications and backups already reach back
     // here, and a rebuild needs the deploy path and the artifacts at once.
@@ -190,6 +194,7 @@ import { ClusterHaModule } from '../../cluster-ha/cluster-ha.module';
   ],
   providers: [
     HaNodesService,
+    NodeScaleProcessor,
     NodeDisksService,
     NodeLifeEventsService,
     LostNodeOperationsService,
@@ -249,6 +254,7 @@ import { ClusterHaModule } from '../../cluster-ha/cluster-ha.module';
     OrphanedClaimsService,
     ClusterCapacityService,
     ClusterNodeScalingService,
+    NodeResizeHaService,
     OrphanVolumesService,
     K3sScriptService,
     ByosNodeJoinService,

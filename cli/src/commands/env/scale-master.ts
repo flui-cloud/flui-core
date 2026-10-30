@@ -10,6 +10,22 @@ import { ClusterCapacityService } from 'src/modules/infrastructure/clusters/serv
 import { CliNodeRepository } from '../../lib/repositories/cli-node.repository';
 import { NodeType } from 'src/modules/infrastructure/clusters/entities/cluster-node.entity';
 import { confirmByTypingPrompt } from '../../lib/prompts';
+import { getRepositoryToken } from '@nestjs/typeorm';
+import type { INestApplication } from '@nestjs/common';
+import type { Repository } from 'typeorm';
+import { InfrastructureOperationEntity } from 'src/modules/infrastructure/servers/entities/infrastructure-operations.entity';
+
+/** The run reports through the operation record, failures included. */
+async function operationOf(
+  app: INestApplication,
+  id: string,
+): Promise<InfrastructureOperationEntity | null> {
+  return app
+    .get<
+      Repository<InfrastructureOperationEntity>
+    >(getRepositoryToken(InfrastructureOperationEntity))
+    .findOne({ where: { id } });
+}
 
 export default class EnvScaleMaster extends Command {
   static readonly description =
@@ -189,20 +205,10 @@ export default class EnvScaleMaster extends Command {
         }
       }
 
-      const run = ora({
-        text: `Scaling master to ${targetType}...`,
-        color: 'yellow',
-      }).start();
-      try {
-        const op = await scalingService.scaleNode(cluster.id, master.id, {
-          targetServerType: targetType,
-          upgradeDisk: flags.upgradeDisk,
-        });
-        run.succeed(`Master scaled. Operation ${op.id} → ${op.status}`);
-      } catch (error) {
-        run.fail('Scale-master failed');
-        throw error;
-      }
+      await this.scaleInProcess(app, cluster.id, master.id, {
+        targetServerType: targetType,
+        upgradeDisk: flags.upgradeDisk,
+      });
       console.log('');
     } catch (error) {
       console.log(chalk.red('\n❌ Error:\n'));
@@ -212,6 +218,41 @@ export default class EnvScaleMaster extends Command {
       this.exit(1);
     } finally {
       await closeNestApp();
+    }
+  }
+
+  /** The master hosts the API, so its resize runs here and not in the API's queue. */
+  private async scaleInProcess(
+    app: INestApplication,
+    clusterId: string,
+    masterId: string,
+    request: { targetServerType: string; upgradeDisk: boolean },
+  ): Promise<void> {
+    const scalingService = app.get(ClusterNodeScalingService);
+    const run = ora({
+      text: `Scaling master to ${request.targetServerType}...`,
+      color: 'yellow',
+    }).start();
+    try {
+      const queued = await scalingService.scaleNode(
+        clusterId,
+        masterId,
+        request,
+        undefined,
+        { queue: false },
+      );
+      await scalingService.runScaleNode(queued.id);
+      const op = await operationOf(app, queued.id);
+      if (op?.status !== 'COMPLETED') {
+        run.fail(
+          `Scale-master failed: ${op?.errorMessage ?? 'no detail recorded'}`,
+        );
+        this.exit(1);
+      }
+      run.succeed(`Master scaled. Operation ${queued.id} → ${op.status}`);
+    } catch (error) {
+      run.fail('Scale-master failed');
+      throw error;
     }
   }
 }
