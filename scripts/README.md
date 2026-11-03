@@ -21,6 +21,15 @@ Operational scripts for Flui contributors and users.
   pnpm release:index --notes "What changed"
   ```
 
+- `release-notes.ts` — renders the GitHub release page of a version from its
+  `releases.json` entry. CI publishes it on every `v*` tag, after the index;
+  after adding notes by hand, refresh the page with:
+
+  ```bash
+  pnpm release:notes --tag v0.14.0 --out release-notes.md
+  gh release edit v0.14.0 --notes-file release-notes.md
+  ```
+
 ## Cluster
 
 - `verify-cluster.sh` / `verify-cluster.ps1` — verify a provisioned cluster (API + node reachability)

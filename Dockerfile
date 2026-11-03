@@ -9,6 +9,12 @@ COPY . .
 RUN pnpm run build
 
 FROM node:22-alpine
+LABEL org.opencontainers.image.title="Flui API" \
+      org.opencontainers.image.description="Flui API: open source PaaS for European cloud providers and your own servers." \
+      org.opencontainers.image.source="https://github.com/flui-cloud/flui-core" \
+      org.opencontainers.image.url="https://flui.cloud" \
+      org.opencontainers.image.documentation="https://docs.flui.cloud" \
+      org.opencontainers.image.licenses="AGPL-3.0-or-later"
 RUN apk add --no-cache openssh-client
 COPY --from=kopia /bin/kopia /usr/local/bin/kopia
 WORKDIR /app

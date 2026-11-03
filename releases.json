@@ -11,7 +11,7 @@
         "fluiAuthz": "0.7.1"
       },
       "notes": [
-        "Built on Node.js 22.23.4, which fixes the October 2026 Node.js security issues (CVE-2026-111497 and others). The API and the sign-in relay (flui-authz 0.7.1) both run on it."
+        "Runs on Node.js 22.23.4, with the October Node.js security fixes."
       ],
       "migrations": 0,
       "requiresBootstrap": false,
@@ -34,8 +34,7 @@
         "fluiAuthz": "0.7.0"
       },
       "notes": [
-        "Topology grouped by server stacks the servers one under the other, with the apps of each in the same columns: what the Internet reaches on the left, data on the right.",
-        "flui topology shows the region of each server, in the cluster's servers, an app's Runs on list and the server view."
+        "Topology grouped by server is easier to read, and flui topology now shows the region of each server."
       ],
       "migrations": 0,
       "requiresBootstrap": false,
@@ -57,9 +56,7 @@
         "fluiWeb": "0.14.0-rc.8",
         "fluiAuthz": "0.7.0"
       },
-      "notes": [
-        "Selecting a project in Topology draws that project alone: the rest of the fleet no longer takes room on the map."
-      ],
+      "notes": ["In Topology, picking a project now shows only that project."],
       "migrations": 0,
       "requiresBootstrap": false,
       "k3s": {
@@ -81,9 +78,7 @@
         "fluiAuthz": "0.7.0"
       },
       "notes": [
-        "Scaling groups can spread a fleet across regions: each new machine goes to the allowed region that has the fewest, and a machine given back comes from the region that has the most.",
-        "Topology can group the map by server: each server shows its location, the copies of every app that run on it, and the links that reach them.",
-        "flui topology shows the fleet from the terminal, and agents can read it with topology_get."
+        "Scaling groups can spread servers across regions. Topology can group the map by server, and flui topology shows it in the terminal."
       ],
       "migrations": 0,
       "requiresBootstrap": false,
@@ -106,9 +101,7 @@
         "fluiAuthz": "0.7.0"
       },
       "notes": [
-        "When a control cluster gets its first worker, the platform components that keep nothing on the master move to the workers, so the master keeps room for the API.",
-        "A copy of the API that is shutting down stops taking new work, and a dropped live-update connection no longer stops a copy mid-job.",
-        "An update can no longer put the API back on the version it is replacing: a retried rollout keeps its target, the update stops at once if the API rollout misses it, and the master always declares the new images before the update finishes."
+        "Platform updates are more reliable, and the API no longer drops work when one of its copies restarts."
       ],
       "migrations": 0,
       "requiresBootstrap": false,
@@ -546,7 +539,7 @@
       },
       "notes": [
         "An update no longer risks stopping the platform database on an installation built before 0.13.0-rc.9. The update would have replaced the database and cache manifests with ones that run at the platform priority while leaving out the file that creates that priority, so their pods could not start again. The file now comes with them, and an update holds back any manifest whose priority it does not bring.",
-        "Coming from 0.13.0-rc.8: that release cannot run this update itself — its updater stops at the first step, before changing anything. Move the API and the dashboard to 0.13.0-rc.10 first; from there `flui env upgrade` brings the manifests forward.",
+        "Coming from 0.13.0-rc.8: that release cannot run this update itself \u2014 its updater stops at the first step, before changing anything. Move the API and the dashboard to 0.13.0-rc.10 first; from there `flui env upgrade` brings the manifests forward.",
         "Includes everything in 0.13.0-rc.9: one planned update for the whole installation (`flui env upgrade`), access granted for a limited time, the activity record, and alert destinations by email and signed webhook."
       ],
       "migrations": 0,
@@ -570,11 +563,11 @@
         "fluiAuthz": "0.6.0"
       },
       "notes": [
-        "New: one planned update for the whole installation. `flui env upgrade`, or Updates in the dashboard, shows the plan — back up the platform, bring every cluster's system manifests forward, roll out the platform components, upgrade K3s one minor version at a time with workload clusters before the control cluster, then check the result — and changes nothing until you confirm it.",
-        "Coming from 0.13.0-rc.8: that release cannot run this update itself — its updater stops at the first step, before changing anything. Move the API and the dashboard to 0.13.0-rc.9 first; from there `flui env upgrade` brings the manifests forward.",
+        "New: one planned update for the whole installation. `flui env upgrade`, or Updates in the dashboard, shows the plan \u2014 back up the platform, bring every cluster's system manifests forward, roll out the platform components, upgrade K3s one minor version at a time with workload clusters before the control cluster, then check the result \u2014 and changes nothing until you confirm it.",
+        "Coming from 0.13.0-rc.8: that release cannot run this update itself \u2014 its updater stops at the first step, before changing anything. Move the API and the dashboard to 0.13.0-rc.9 first; from there `flui env upgrade` brings the manifests forward.",
         "A new control cluster installs again. The installer pinned by 0.13.0-rc.8 stopped at the first system manifest that declares no values.",
-        "Access can be given for a limited time: `flui iam grant add --expires`, or Access → Temporary access in the dashboard. It lapses on its own, and administrators are told when it is given, the day before it ends and when it ends. The new platform_operator role runs clusters, nodes, updates and backups without reaching any application data.",
-        "Every change, every refused request and every read of application data is recorded: `flui audit list`, or Access → Activity in the dashboard.",
+        "Access can be given for a limited time: `flui iam grant add --expires`, or Access \u2192 Temporary access in the dashboard. It lapses on its own, and administrators are told when it is given, the day before it ends and when it ends. The new platform_operator role runs clusters, nodes, updates and backups without reaching any application data.",
+        "Every change, every refused request and every read of application data is recorded: `flui audit list`, or Access \u2192 Activity in the dashboard.",
         "Alerts reach people outside the dashboard: email and signed webhook destinations, for infrastructure alerts or for everything (`flui alerts destination add`). New alerts fire when a backup fails and when a certificate is not renewed in time."
       ],
       "migrations": 20,
@@ -601,7 +594,7 @@
         "Every alert now names the application it is about. The installer was blanking the label references in every alert annotation, so a firing alert said \"Application  is down\" with nothing in the gap. New nodes get the fix from the bootstrap; an installation already standing repairs it with `flui env refresh-manifests`.",
         "Applications in the demo sandbox are reachable again. A guest's area fenced out the ingress controller itself, so anything a guest deployed answered 502 and never obtained a certificate. Existing guest areas keep the old rule and have to be recycled.",
         "An application's address now appears on its own once the certificate is issued, instead of waiting for somebody to open the networking screens.",
-        "The state Flui shows for an application is re-read every five minutes. It was the outcome of the last deploy, frozen — so a pod that died an hour later still read as running.",
+        "The state Flui shows for an application is re-read every five minutes. It was the outcome of the last deploy, frozen \u2014 so a pod that died an hour later still read as running.",
         "A workload refused by the cluster now says why within seconds, instead of timing out after five minutes with no cause. The same reason is now carried on a cluster that failed to delete.",
         "Every container has a ceiling on what it may write outside its volumes, set on the namespace and overridable per application. Nothing outside the demo sandbox had one, and what fills is the node's own disk.",
         "Installing from the catalog keeps the name you chose, and a restart of the API mid-install no longer leaves two copies of the application.",
@@ -706,8 +699,8 @@
         "fluiAuthz": "0.6.0"
       },
       "notes": [
-        "Cluster rebuild — recover a lost cluster from its last backup without recreating apps by hand.",
-        "Backup quick setup — one command wires a destination, a policy and the first job.",
+        "Cluster rebuild \u2014 recover a lost cluster from its last backup without recreating apps by hand.",
+        "Backup quick setup \u2014 one command wires a destination, a policy and the first job.",
         "MariaDB point-in-time restore joins the Postgres continuous-backup engine.",
         "Server adoption checks ownership before applying firewall rules."
       ],

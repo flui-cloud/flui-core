@@ -61,6 +61,7 @@
     "kb:version": "ts-node -r tsconfig-paths/register ./scripts/kb-version-manifest.ts",
     "kb:dashboard-map": "ts-node -r tsconfig-paths/register ./scripts/kb-dashboard-map.ts",
     "release:index": "ts-node -r tsconfig-paths/register ./scripts/release-index.ts",
+    "release:notes": "ts-node -r tsconfig-paths/register ./scripts/release-notes.ts",
     "kb:build": "ts-node -r tsconfig-paths/register ./scripts/kb-build.ts",
     "assistant:eval": "ts-node --transpile-only ./scripts/assistant-eval/index.ts",
     "kb": "pnpm run kb:sync && pnpm run kb:dashboard-map && pnpm run kb:cli-ref && pnpm run kb:version && pnpm run kb:build",

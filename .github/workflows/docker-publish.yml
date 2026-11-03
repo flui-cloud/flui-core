@@ -129,6 +129,9 @@ jobs:
         run: |
           docker buildx imagetools create \
             $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
+            --annotation "index:org.opencontainers.image.description=Flui API: open source PaaS for European cloud providers and your own servers." \
+            --annotation "index:org.opencontainers.image.source=https://github.com/flui-cloud/flui-core" \
+            --annotation "index:org.opencontainers.image.licenses=AGPL-3.0-or-later" \
             $(printf "${IMAGE_NAME}@sha256:%s " *)
 
       - name: Check what was published
@@ -183,3 +186,16 @@ jobs:
           # without a full lock.
           git pull --rebase origin main
           git push origin HEAD:main
+
+      - name: Publish the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          pnpm release:notes --tag "$TAG" --out "$RUNNER_TEMP/release-notes.md"
+          if [[ "$TAG" == *-* ]]; then kind=--prerelease; else kind=--latest; fi
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            gh release edit "$TAG" --title "Flui ${TAG#v}" --notes-file "$RUNNER_TEMP/release-notes.md" "$kind"
+          else
+            gh release create "$TAG" --verify-tag --title "Flui ${TAG#v}" --notes-file "$RUNNER_TEMP/release-notes.md" "$kind"
+          fi
