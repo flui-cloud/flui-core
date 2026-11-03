@@ -34,16 +34,16 @@ export interface ReleaseManifest {
 }
 
 export const RELEASE: ReleaseManifest = {
-  version: '0.14.0-rc.10',
+  version: '0.14.0',
   // A commit ref, not a tag. Unchanged since 0.14.0-rc.5: this release moves
   // only images.
   bootstrapRef: 'f9afb81',
   images: {
     // Release tags: the tag build is what makes an image exist under the
-    // release's own name. Both repositories are tagged `v0.14.0-rc.10`, so a
+    // release's own name. Both repositories are tagged `v0.14.0`, so a
     // rollout never waits on a pull that cannot succeed.
-    fluiApi: '0.14.0-rc.10',
-    fluiWeb: '0.14.0-rc.10',
+    fluiApi: '0.14.0',
+    fluiWeb: '0.14.0',
     // Pinned by its own version, not the platform's: 0.7.x is the sign-in
     // relay that asks the API, which this API's gateway installs expect.
     fluiAuthz: '0.7.1',
